@@ -19,6 +19,7 @@ import { detailRows, orderLines, ORDER_STATUSES } from "./screens/sales";
 import { fgLots, packLots, rmLots, sfgLots } from "./stock";
 import { controlWork, fullCountDue, type ControlWork } from "./stock-check";
 import { adjustmentReasonLabel } from "./engines/stock-check";
+import { scrapSummary } from "./scrap";
 import type { Tone } from "./ui";
 import { nf } from "./ui";
 
@@ -412,6 +413,26 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
       tiles.push({ l: "Expenses pending verification", v: String(pend.length), href: tileHref("expenses", pend, "Pending") });
     }
     push("Petty cash", tiles);
+  }
+
+  /* ================================================ scrap & empty drums */
+  if (has("emptyDrums")) {
+    const sc = await scrapSummary();
+    const tiles: Tile[] = [
+      { l: "Mahek-owned empty drums", v: nf(sc.mahekAvailable), sub: "available to sell as scrap", href: tileHref("drumStock", null, "") },
+      {
+        l: "Vendor drums to return",
+        v: nf(sc.vendorPending),
+        sub: sc.oldestPendingReturn ? `oldest waiting since ${sc.oldestPendingReturn.since} · ${sc.oldestPendingReturn.supplier}` : "none waiting",
+        tone: sc.oldestPendingReturn && sc.oldestPendingReturn.since < calendarDate(new Date(Date.now() - 30 * 86_400_000)) ? "warn" : undefined,
+        href: tileHref("returnableDrums", null, ""),
+      },
+    ];
+    if (sc.review) tiles.push({ l: "Drums whose owner is not recorded", v: nf(sc.review), sub: "the Production Head decides, lot by lot", tone: "warn", href: tileHref("emptyDrums", null, "") });
+    tiles.push({ l: "Scrap sold this month", v: rupees(sc.saleValueThisMonth), sub: `${nf(sc.soldDrumsThisMonth)} drums among it`, href: tileHref("scrapSales", null, "") });
+    tiles.push({ l: "Scrap receivable outstanding", v: rupees(sc.outstanding), sub: sc.overdue ? `${rupees(sc.overdue)} of it past due` : "nothing past due", tone: sc.overdue ? "danger" : undefined, href: tileHref("scrapBuyers", null, "") });
+    if (sc.highVariance) tiles.push({ l: "Drums with a high tare variance", v: nf(sc.highVariance), sub: "actual empty weight against the supplier's declared tare", tone: "warn", href: tileHref("tareVariance", null, "") });
+    push("Scrap & empty drums", tiles);
   }
 
   /* ========================================================= customers */

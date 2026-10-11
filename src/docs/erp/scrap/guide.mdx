@@ -1,0 +1,66 @@
+**Scrap & empty drums** follows a drum from the day its material is used up to the day it leaves — sold as scrap if it is Mahek's, returned to the supplier if it is theirs — and follows the money a scrap buyer owes until the accountant has matched every rupee.
+
+<Flow caption="A drum, from empty to gone" chart={`
+flowchart LR
+  G[Existing GRN lot] --> U[Material used up]
+  U --> S[Scan the lot label and weigh the empty drum]
+  S --> O{Who owns the lot's drums?}
+  O -- Mahek --> M[Mahek drum stock]
+  O -- Vendor --> V[Vendor returnable]
+  O -- Not recorded --> R[Production Head decides]
+  R --> M
+  R --> V
+  M --> SS[Scrap sale, oldest drums first]
+  SS --> AR[Buyer owes the sale amount]
+  AR --> RC[Accountant matches cash or bank receipts]
+  V --> RD[Return to vendor, oldest drums first]
+`} />
+
+## Weighing an empty drum
+
+Open **Record empty drum** (or go to `/erp/empty-drums` on the phone or tablet at the scale).
+
+1. Scan the drum's lot label, or type the lot number. To name one drum of the lot, add `/` and its number — `ATTOL1228/3`.
+2. The GRN's details appear: material, supplier, lot, PR, how many drums the lot came in, the supplier's declared tare and who owns the drums. The drum boxes show which are already recorded.
+3. Weigh the drum and type its empty weight in kg. The difference from the declared tare is shown as you type.
+4. **Save drum**. It goes into Mahek's stock or the vendor's, by the lot's owner.
+
+Record a drum **the day it is emptied**, while its label can still be read. Once it is recorded the label no longer matters — nobody reads it again to sell or return it.
+
+| What you see | What it means |
+|---|---|
+| *Drum 2 of this lot is already recorded as empty* | That drum was saved before. Nothing is added again. |
+| *All 6 drums of this lot are already recorded* | Every drum of the lot is in. Check the label. |
+| *No GRN lot … was found* | The label does not match a lot. Do not record it another way — tell the Production Head. |
+| *… is above the … kg an empty drum is expected to weigh* | Weigh again. If it really is that, the Production Head can save it with a reason. |
+| **Owner to decide** | The GRN did not say who owns the drums. The drum is saved; the Production Head decides for the whole lot. |
+
+## The tabs
+
+| Tab | What it is for |
+|---|---|
+| **Empty drums** | Every drum ever recorded, with its GRN lot, weight, variance and where it is now. The Production Head decides ownership, corrects a weight or cancels a record here — always with a reason, keeping the original. |
+| **Mahek stock** | The ledger of Mahek-owned drums: emptied in, sold out, cancelled out, and the balance after each. |
+| **Vendor drums** | Each supplier's drums waiting to go back, how long the oldest has waited, and **Return drums**. |
+| **Returns** | Every return, with the drums it took and their lots. |
+| **Scrap sales** | Every sale, what it was worth, what has been received and what is outstanding. **New scrap sale** is here. |
+| **Other scrap** | Plastic, cardboard and other scrap, recorded in batches as it is collected, and what has been sold of it. |
+| **Buyers** | Each scrap buyer: what they bought, paid and still owe, by age. |
+| **Receipts** | Cash and bank receipts from scrap buyers, and which sales each is matched to. |
+| **Tare variance** | Actual empty weight against the supplier's declared tare, by supplier, material and lot. |
+
+## Selling scrap
+
+**New scrap sale** asks for the buyer (pick one or type a new name), the category, the quantity, the unit and the rate. The amount is quantity × rate.
+
+- **Empty metal drums** are sold by number. The ERP takes the **oldest** Mahek-owned empty drums and records which they were — nobody picks out drums or reads labels. A vendor's drum is never offered.
+- **Plastic, cardboard and other scrap** can be sold only up to what has been recorded as collected on **Other scrap**.
+- **Invoice**: if an external invoice was issued, its number is required. If not, leave the reference empty or enter a genuine challan number — the sale's **SS** number identifies it. Never make an invoice number up.
+
+## Getting paid
+
+A sale is never marked paid by the person who sold it. When the buyer's money reaches petty cash or the bank, the accountant records it on **Receipts** and matches it to the buyer's sales — by default oldest first. One receipt can pay several sales and one sale can be paid by several receipts. Outstanding is the sale amount less what has been matched.
+
+## Returning vendor drums
+
+On **Vendor drums**, **Return drums** asks only how many went back, the date and the challan. The oldest of that supplier's waiting drums are marked returned.

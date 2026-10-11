@@ -11769,12 +11769,22 @@ export const erpPurchases = pgTable(
     source: text("source").notNull(),
     /** AI-1: the values were read off a supplier bill and accepted by a person. */
     aiFilled: boolean("ai_filled").notNull().default(false),
+    /**
+     * Who owns this lot's drums once they are empty: `mahek` (they become
+     * scrap stock) or `vendor` (they go back to the supplier). Null means
+     * nobody has said, and a drum emptied from the lot waits for a person to
+     * decide rather than being guessed into either stock.
+     */
+    drumOwnership: text("drum_ownership"),
+    drumOwnershipSetById: text("drum_ownership_set_by_id").references(() => users.id),
+    drumOwnershipSetAt: timestamp("drum_ownership_set_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id").references(() => users.id),
     updatedById: text("updated_by_id"),
   },
   (t) => [
+    check("erp_purchases_drum_ownership_check", sql`${t.drumOwnership} is null or ${t.drumOwnership} in ('mahek', 'vendor')`),
     uniqueIndex("erp_purchases_lot_key").on(t.lotNo),
     index("erp_purchases_pr_idx").on(t.prNumber),
     uniqueIndex("erp_purchases_test_key").on(t.testId),
@@ -12936,6 +12946,248 @@ export const erpStockAdjustments = pgTable(
     ),
     check("erp_stock_adjustments_qty_check", sql`${t.quantity} <> 0`),
     check("erp_stock_adjustments_reason_len_check", sql`length(trim(${t.reason})) >= 10`),
+  ],
+);
+
+/* ---------------------------------------------------------------------------
+ * SCRAP & EMPTY DRUMS (0255). A drum is registered when it becomes EMPTY,
+ * against the GRN lot it arrived in — while its label can still be read — and
+ * keeps that link for good. Mahek-owned drums are scrap stock, sold by
+ * quantity and allocated oldest first; vendor-returnable drums wait to go back
+ * to their supplier and are never sold. Rules: `lib/erp/engines/scrap.ts`.
+ * ------------------------------------------------------------------------- */
+
+export const erpScrapBuyers = pgTable(
+  "erp_scrap_buyers",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    mobile: text("mobile"),
+    gstin: text("gstin"),
+    address: text("address"),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [uniqueIndex("erp_scrap_buyers_name_key").on(sql`lower(${t.name})`)],
+);
+
+/**
+ * A scrap sale. `amount_paise` is quantity × rate, worked out on save; what is
+ * owed on it is the amount less the receipts the accountant matched to it,
+ * read and never stored. A sale with no external invoice carries none —
+ * its SS number is what identifies it, and that is never passed off as one.
+ */
+export const erpScrapSales = pgTable(
+  "erp_scrap_sales",
+  {
+    id: text("id").primaryKey(),
+    saleNo: integer("sale_no").notNull(),
+    saleDate: date("sale_date").notNull(),
+    buyerId: text("buyer_id")
+      .notNull()
+      .references(() => erpScrapBuyers.id),
+    /** drum | plastic | cardboard | other. */
+    category: text("category").notNull(),
+    /** What "other" was. */
+    categoryNote: text("category_note"),
+    quantity: erpQty("quantity").notNull(),
+    /** Drums | Kg | Bags | Pcs. */
+    unit: text("unit").notNull(),
+    ratePaise: bigint("rate_paise", { mode: "number" }).notNull(),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    /** invoice | none. */
+    invoiceKind: text("invoice_kind").notNull(),
+    /** The external invoice number, or a genuine challan/reference where no invoice was issued. */
+    externalRef: text("external_ref"),
+    dueDate: date("due_date"),
+    remark: text("remark"),
+    /** active | cancelled. */
+    status: text("status").notNull().default("active"),
+    cancelReason: text("cancel_reason"),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_scrap_sales_no_key").on(t.saleNo),
+    index("erp_scrap_sales_buyer_idx").on(t.buyerId, t.saleDate),
+    check("erp_scrap_sales_category_check", sql`${t.category} in ('drum', 'plastic', 'cardboard', 'other')`),
+    check("erp_scrap_sales_unit_check", sql`${t.unit} in ('Drums', 'Kg', 'Bags', 'Pcs')`),
+    check("erp_scrap_sales_qty_check", sql`${t.quantity} > 0`),
+    check("erp_scrap_sales_amount_check", sql`${t.amountPaise} >= 0 and ${t.ratePaise} >= 0`),
+    check("erp_scrap_sales_invoice_check", sql`${t.invoiceKind} in ('invoice', 'none')`),
+    check("erp_scrap_sales_invoice_ref_check", sql`${t.invoiceKind} <> 'invoice' or ${t.externalRef} is not null`),
+    check("erp_scrap_sales_status_check", sql`${t.status} in ('active', 'cancelled')`),
+    check("erp_scrap_sales_drum_unit_check", sql`(${t.category} = 'drum') = (${t.unit} = 'Drums')`),
+  ],
+);
+
+/** Vendor-returnable drums handed back to their supplier — a quantity, allocated oldest first. */
+export const erpDrumReturns = pgTable(
+  "erp_drum_returns",
+  {
+    id: text("id").primaryKey(),
+    returnNo: integer("return_no").notNull(),
+    returnDate: date("return_date").notNull(),
+    supplierId: text("supplier_id")
+      .notNull()
+      .references(() => erpSuppliers.id),
+    quantity: integer("quantity").notNull(),
+    challan: text("challan"),
+    remark: text("remark"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [uniqueIndex("erp_drum_returns_no_key").on(t.returnNo), check("erp_drum_returns_qty_check", sql`${t.quantity} > 0`)],
+);
+
+/**
+ * One drum of one GRN lot, registered the moment it was emptied. The lot,
+ * PR, supplier and material are copied on so the link outlives the label;
+ * `declared_tare_kg` is the GRN's figure and `first_weight_kg` the weight as
+ * first entered — a correction moves `weight_kg` and never either of those.
+ */
+export const erpEmptyDrums = pgTable(
+  "erp_empty_drums",
+  {
+    id: text("id").primaryKey(),
+    drumNo: integer("drum_no").notNull(),
+    purchaseId: text("purchase_id")
+      .notNull()
+      .references(() => erpPurchases.id),
+    /** Which drum of the lot, 1 to the GRN's drum count. */
+    seq: integer("seq").notNull(),
+    lotNo: text("lot_no").notNull(),
+    prNumber: integer("pr_number").notNull(),
+    supplierId: text("supplier_id")
+      .notNull()
+      .references(() => erpSuppliers.id),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    inwardId: text("inward_id").references(() => erpInward.id),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    /** mahek | vendor | null (waiting for a decision). */
+    ownership: text("ownership"),
+    declaredTareKg: numeric("declared_tare_kg", { precision: 10, scale: 3, mode: "number" }),
+    weightKg: numeric("weight_kg", { precision: 10, scale: 3, mode: "number" }).notNull(),
+    firstWeightKg: numeric("first_weight_kg", { precision: 10, scale: 3, mode: "number" }).notNull(),
+    /** Why a weight outside the configured limits was let through. */
+    weightNote: text("weight_note"),
+    /** available | returnable | review | sold | returned | cancelled. */
+    status: text("status").notNull(),
+    statusNote: text("status_note"),
+    saleId: text("sale_id").references(() => erpScrapSales.id),
+    returnId: text("return_id").references(() => erpDrumReturns.id),
+    emptiedAt: timestamp("emptied_at", { withTimezone: true }).notNull().defaultNow(),
+    emptiedById: text("emptied_by_id").references(() => users.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_empty_drums_drum_key").on(t.purchaseId, t.seq),
+    uniqueIndex("erp_empty_drums_no_key").on(t.drumNo),
+    index("erp_empty_drums_status_idx").on(t.status, t.emptiedAt),
+    index("erp_empty_drums_supplier_idx").on(t.supplierId, t.status),
+    check("erp_empty_drums_ownership_check", sql`${t.ownership} is null or ${t.ownership} in ('mahek', 'vendor')`),
+    check("erp_empty_drums_status_check", sql`${t.status} in ('available', 'returnable', 'review', 'sold', 'returned', 'cancelled')`),
+    check("erp_empty_drums_weight_check", sql`${t.weightKg} > 0 and ${t.firstWeightKg} > 0`),
+    check("erp_empty_drums_seq_check", sql`${t.seq} > 0`),
+    check(
+      "erp_empty_drums_route_check",
+      sql`(${t.status} in ('available', 'sold') and ${t.ownership} = 'mahek') or (${t.status} in ('returnable', 'returned') and ${t.ownership} = 'vendor') or (${t.status} = 'review' and ${t.ownership} is null) or ${t.status} = 'cancelled'`,
+    ),
+    check("erp_empty_drums_sale_check", sql`(${t.status} = 'sold') = (${t.saleId} is not null)`),
+    check("erp_empty_drums_return_check", sql`(${t.status} = 'returned') = (${t.returnId} is not null)`),
+  ],
+);
+
+/** Plastic, cardboard and other non-drum scrap, recorded in batches as it is collected. */
+export const erpScrapCollections = pgTable(
+  "erp_scrap_collections",
+  {
+    id: text("id").primaryKey(),
+    collectedDate: date("collected_date").notNull(),
+    /** plastic | cardboard | other. */
+    category: text("category").notNull(),
+    categoryNote: text("category_note"),
+    quantity: erpQty("quantity").notNull(),
+    /** Kg | Bags | Pcs. */
+    unit: text("unit").notNull(),
+    godownId: text("godown_id").references(() => erpGodowns.id),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    check("erp_scrap_collections_category_check", sql`${t.category} in ('plastic', 'cardboard', 'other')`),
+    check("erp_scrap_collections_unit_check", sql`${t.unit} in ('Kg', 'Bags', 'Pcs')`),
+    check("erp_scrap_collections_qty_check", sql`${t.quantity} > 0`),
+  ],
+);
+
+/**
+ * Money a scrap buyer paid, as it reached petty cash or the bank — recorded by
+ * the accountant, never by whoever sold the scrap. It counts against a sale
+ * only through an allocation.
+ */
+export const erpScrapReceipts = pgTable(
+  "erp_scrap_receipts",
+  {
+    id: text("id").primaryKey(),
+    receiptNo: integer("receipt_no").notNull(),
+    receiptDate: date("receipt_date").notNull(),
+    buyerId: text("buyer_id")
+      .notNull()
+      .references(() => erpScrapBuyers.id),
+    /** Bank | Cash. */
+    mode: text("mode").notNull(),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    /** UTR, cheque number or cash voucher. */
+    reference: text("reference"),
+    note: text("note"),
+    /** active | void. */
+    status: text("status").notNull().default("active"),
+    voidReason: text("void_reason"),
+    voidedAt: timestamp("voided_at", { withTimezone: true }),
+    voidedById: text("voided_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_scrap_receipts_no_key").on(t.receiptNo),
+    check("erp_scrap_receipts_mode_check", sql`${t.mode} in ('Bank', 'Cash')`),
+    check("erp_scrap_receipts_amount_check", sql`${t.amountPaise} > 0`),
+    check("erp_scrap_receipts_status_check", sql`${t.status} in ('active', 'void')`),
+  ],
+);
+
+/** Part of a receipt matched to one sale. Voided, never deleted. */
+export const erpScrapAllocations = pgTable(
+  "erp_scrap_allocations",
+  {
+    id: text("id").primaryKey(),
+    receiptId: text("receipt_id")
+      .notNull()
+      .references(() => erpScrapReceipts.id),
+    saleId: text("sale_id")
+      .notNull()
+      .references(() => erpScrapSales.id),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    voidedAt: timestamp("voided_at", { withTimezone: true }),
+    voidedById: text("voided_by_id").references(() => users.id),
+    voidReason: text("void_reason"),
+  },
+  (t) => [
+    index("erp_scrap_allocations_sale_idx").on(t.saleId).where(sql`${t.voidedAt} is null`),
+    index("erp_scrap_allocations_receipt_idx").on(t.receiptId).where(sql`${t.voidedAt} is null`),
+    check("erp_scrap_allocations_amount_check", sql`${t.amountPaise} > 0`),
   ],
 );
 
