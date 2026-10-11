@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { Modal } from "@/components/ui/modal";
 import { Badge, Button, Card, cx } from "@/components/ui/primitives";
 import { erpLogisticsAttach, erpLogisticsEditLr, erpLogisticsVoidLr } from "@/lib/actions/erp-logistics";
-import { addDays, rankForLr, shortDay } from "@/lib/erp/engines/logistics";
+import { addDays, lrUploadName, rankForLr, shortDay } from "@/lib/erp/engines/logistics";
 import type { Consignment, UploadedLr } from "@/lib/erp/logistics";
 import { BillRef, DuePill, Empty, LrThumb, NotifyToggle, plural, sumPackages, useAct, lrLabel } from "./common";
 import { LrUpload } from "./lr-upload";
@@ -104,7 +104,7 @@ export function LrDesk({
               <button key={l.id} onClick={() => choose(l.id)} className={cx("flex w-full cursor-pointer gap-3 border-b border-divider px-4 py-3 text-left last:border-0", pick === l.id ? "bg-brand-soft" : "hover:bg-canvas")}>
                 <LrThumb fileId={l.fileId} size={52} />
                 <span className="min-w-0 flex-1">
-                  <span className="block font-mono text-[14px] font-semibold text-ink">{lrLabel(l.lrNo)}</span>
+                  {l.lrNo ? <span className="block font-mono text-[14px] font-semibold text-ink">{lrLabel(l.lrNo)}</span> : <span className="block text-[14px] font-semibold text-warn-ink">Number not typed</span>}
                   <span className="block truncate text-[12px] text-body">{l.transporter ?? "Transporter not given"}</span>
                   <span className="block truncate text-[12px] text-muted">
                     {[l.destination, l.packages != null ? plural(l.packages, "box", "boxes") : null, l.lrDate ? shortDay(l.lrDate) : null].filter(Boolean).join(" · ") || "—"}
@@ -127,7 +127,8 @@ export function LrDesk({
             <>
               <LrThumb fileId={lr.fileId} size={72} />
               <div className="min-w-0 flex-1">
-                <div className="text-[15px] font-semibold text-ink">Which bills does {lrLabel(lr.lrNo)} carry?</div>
+                <div className="text-[15px] font-semibold text-ink">Which bills does {lr.lrNo ? lrLabel(lr.lrNo) : "this LR"} carry?</div>
+                {!lr.lrNo ? <div className="mt-0.5 text-[12px] text-warn-ink">Its number was not typed at upload. Read it off the photo and add it with Edit before attaching — the customer is told it.</div> : null}
                 <div className="text-[12px] text-muted">
                   {[lr.transporter, lr.destination, lr.packages != null ? plural(lr.packages, "box", "boxes") : null, lr.freightTerm ? `freight ${lr.freightTerm}${lr.freightPaise != null ? ` ₹${(lr.freightPaise / 100).toLocaleString("en-IN")}` : ""}` : null].filter(Boolean).join(" · ")}
                 </div>
@@ -211,7 +212,7 @@ export function LrDesk({
               <div className="min-w-[260px] flex-1">
                 <NotifyToggle value={notify} onChange={setNotify} disabled={!notifyOn} />
               </div>
-              <Button variant="primary" disabled={pending || !sel.length || parties.size > 1} onClick={attach}>
+              <Button variant="primary" disabled={pending || !sel.length || parties.size > 1 || !lr.lrNo} title={!lr.lrNo ? "Add the LR number first (Edit)" : undefined} onClick={attach}>
                 Attach LR{notify && notifyOn ? " & tell customer" : ""}
               </Button>
             </div>
@@ -228,7 +229,7 @@ export function LrDesk({
       <Modal
         open={!!voiding}
         onClose={() => setVoiding(null)}
-        title={voiding ? `Void LR ${voiding.lrNo}?` : ""}
+        title={voiding ? `Void ${lrUploadName(voiding.lrNo)}?` : ""}
         footer={
           <>
             <Button onClick={() => setVoiding(null)}>Keep it</Button>
@@ -247,14 +248,14 @@ export function LrDesk({
 
 function EditLr({ lr, transporters, today, onClose }: { lr: UploadedLr; transporters: string[]; today: string; onClose: () => void }) {
   const { run, pending } = useAct();
-  const [v, setV] = useState({ lrNo: lr.lrNo, lrDate: lr.lrDate ?? today, transporter: lr.transporter ?? "", destination: lr.destination ?? "", packages: lr.packages == null ? "" : String(lr.packages), freightTerm: lr.freightTerm ?? "", freight: lr.freightPaise == null ? "" : String(lr.freightPaise / 100), note: lr.note ?? "" });
+  const [v, setV] = useState({ lrNo: lr.lrNo ?? "", lrDate: lr.lrDate ?? today, transporter: lr.transporter ?? "", destination: lr.destination ?? "", packages: lr.packages == null ? "" : String(lr.packages), freightTerm: lr.freightTerm ?? "", freight: lr.freightPaise == null ? "" : String(lr.freightPaise / 100), note: lr.note ?? "" });
   const set = (k: keyof typeof v) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setV({ ...v, [k]: e.target.value });
   const cls = "mt-0.5 block h-8.5 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand";
   return (
     <Modal
       open
       onClose={onClose}
-      title={`Edit LR ${lr.lrNo}`}
+      title={lr.lrNo ? `Edit LR ${lr.lrNo}` : "Edit LR — add its number"}
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>

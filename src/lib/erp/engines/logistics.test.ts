@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { attachRefusal, callDue, customerMessage, dueWord, packagesOf, phaseOf, rankForLr, runningLate, trackingLink, waLink, watiParams, type MessageFacts } from "./logistics";
+import { attachRefusal, callDue, lrRowHasAnything, lrUploadName, customerMessage, dueWord, packagesOf, phaseOf, rankForLr, runningLate, trackingLink, waLink, watiParams, type MessageFacts } from "./logistics";
 
 test("the phase is the stage and the LR together, never stored", () => {
   assert.equal(phaseOf({ lrNo: null, materialStage: "Dispatched" }), "toTransport");
@@ -85,4 +85,14 @@ test("wati params, wa.me links, tracking links and packages", () => {
   assert.equal(trackingLink("https://vrl.example/t?lr={lr}", "LR 1"), "https://vrl.example/t?lr=LR%201");
   assert.equal(trackingLink("javascript:alert(1)", "x"), null);
   assert.equal(packagesOf([{ qtyCans: 13, cansPerBox: 6, boxed: true }, { qtyCans: 4, cansPerBox: null, boxed: false }]), 7);
+});
+
+test("no upload field is required: any one detail makes a row an LR, and an empty row is skipped", () => {
+  assert.equal(lrRowHasAnything({}), false);
+  assert.equal(lrRowHasAnything({ lrNo: "  ", note: "" }), false);
+  assert.equal(lrRowHasAnything({ fileId: "f1" }), true, "a photo alone is enough");
+  assert.equal(lrRowHasAnything({ transporter: "VRL" }), true);
+  assert.equal(lrRowHasAnything({ packages: 0 }), true, "zero boxes is still something typed");
+  assert.equal(lrUploadName("7781"), "LR 7781");
+  assert.equal(lrUploadName(null), "LR (number not typed)");
 });
