@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { CardGrid } from "@/components/ui/card-grid";
 import { Button, Card, cx } from "@/components/ui/primitives";
 import { erpLogisticsUploadLrs } from "@/lib/actions/erp-logistics";
+import { lrRowHasAnything } from "@/lib/erp/engines/logistics";
 import { useAct } from "./common";
 
 /**
@@ -54,7 +55,7 @@ export function LrUpload({ today, transporters, onDone }: { today: string; trans
   const submit = () => {
     setErrors({});
     const items = rows
-      .filter((r) => r.lrNo.trim() || r.fileId)
+      .filter((r) => lrRowHasAnything({ ...r, packages: r.packages ? Number(r.packages) : null, freightRupees: r.freight ? Number(r.freight) : null }))
       .map((r) => ({
         lrNo: r.lrNo,
         lrDate: r.lrDate || null,
@@ -78,7 +79,7 @@ export function LrUpload({ today, transporters, onDone }: { today: string; trans
   };
 
   const busy = rows.some((r) => r.uploading);
-  const filled = rows.filter((r) => r.lrNo.trim() || r.fileId).length;
+  const filled = rows.filter((r) => lrRowHasAnything({ ...r, packages: r.packages ? Number(r.packages) : null, freightRupees: r.freight ? Number(r.freight) : null })).length;
 
   return (
     <div className="space-y-3">
@@ -104,7 +105,7 @@ export function LrUpload({ today, transporters, onDone }: { today: string; trans
               <input type="file" accept="image/*,application/pdf" capture="environment" className="absolute inset-0 cursor-pointer opacity-0" onChange={(ev) => ev.target.files?.[0] && void upload(r.key, ev.target.files[0])} />
             </label>
             <CardGrid min={150} gap="gap-2" className="min-w-0 flex-1">
-              <Box label="LR number *" error={e("lrNo")}>
+              <Box label="LR number" error={e("lrNo")}>
                 <input value={r.lrNo} onChange={(ev) => patch(r.key, { lrNo: ev.target.value.toUpperCase() })} placeholder="e.g. 1048821" className={inp(!!e("lrNo"))} autoFocus={i === rows.length - 1 && i > 0} />
               </Box>
               <Box label="LR date" error={e("lrDate")}>
@@ -121,13 +122,13 @@ export function LrUpload({ today, transporters, onDone }: { today: string; trans
               </Box>
               <Box label="Freight" error={e("freightTerm")}>
                 <span className="flex gap-1">
-                  <select value={r.freightTerm} onChange={(ev) => patch(r.key, { freightTerm: ev.target.value })} className={cx(inp(false), "w-[92px] flex-none")}>
+                  <select value={r.freightTerm} onChange={(ev) => patch(r.key, { freightTerm: ev.target.value })} className={cx(inp(false, "w-[84px]"), "flex-none")}>
                     <option value="">—</option>
                     <option>Paid</option>
                     <option>To pay</option>
                     <option>TBB</option>
                   </select>
-                  <input inputMode="decimal" value={r.freight} onChange={(ev) => patch(r.key, { freight: ev.target.value.replace(/[^\d.]/g, "") })} placeholder="₹" className={inp(false)} />
+                  <input inputMode="decimal" value={r.freight} onChange={(ev) => patch(r.key, { freight: ev.target.value.replace(/[^\d.]/g, "") })} placeholder="₹ amount" className={inp(false, "w-0 min-w-0 flex-1")} />
                 </span>
               </Box>
             </CardGrid>
@@ -151,7 +152,7 @@ export function LrUpload({ today, transporters, onDone }: { today: string; trans
           Add several photos
         </Button>
         <input ref={many} type="file" accept="image/*,application/pdf" multiple className="hidden" onChange={(e) => addPhotos(e.target.files)} />
-        <span className="text-[12px] text-muted">Each photo becomes its own LR row.</span>
+        <span className="text-[12px] text-muted">Each photo becomes its own LR row. Nothing is required — a photo alone is enough.</span>
         <Button variant="primary" className="ml-auto" disabled={pending || busy || !filled} onClick={submit}>
           {busy ? "Waiting for photos…" : `Upload ${filled || ""} LR${filled === 1 ? "" : "s"}`}
         </Button>
@@ -160,7 +161,7 @@ export function LrUpload({ today, transporters, onDone }: { today: string; trans
   );
 }
 
-const inp = (bad: boolean) => cx("h-8.5 w-full rounded-[4px] border bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand", bad ? "border-danger" : "border-line");
+const inp = (bad: boolean, width = "w-full") => cx("h-8.5 rounded-[4px] border bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand", width, bad ? "border-danger" : "border-line");
 
 function Box({ label, error, children }: { label: string; error?: string; children: React.ReactNode }) {
   return (

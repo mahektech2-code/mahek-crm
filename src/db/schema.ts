@@ -12511,7 +12511,8 @@ export const erpLrs = pgTable(
   "erp_lrs",
   {
     id: text("id").primaryKey(),
-    lrNo: text("lr_no").notNull(),
+    /** Optional at upload — logistics may read it off the photo — and required before the LR is attached. */
+    lrNo: text("lr_no"),
     lrDate: date("lr_date"),
     transporter: text("transporter"),
     /** The destination printed on the LR. */

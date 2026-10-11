@@ -239,7 +239,7 @@ export function ComboBox({
               className="animate-fade-in fixed z-[95] flex max-h-[280px] flex-col overflow-hidden rounded-[6px] border border-line bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
             >
               {matches.length ? (
-                <div ref={rowsRef} role="listbox" aria-label={label} className="overflow-y-auto py-1">
+                <div ref={rowsRef} role="listbox" aria-label={label} className="overflow-y-auto overscroll-contain py-1">
                   {matches.map((option, i) => (
                     <div
                       key={option}

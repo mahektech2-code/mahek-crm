@@ -70,7 +70,7 @@ The `update` action still writes `track_status` (`Track` / `Don't Track`) from `
 
 <Code file="src/lib/erp/logistics.ts" symbol="notifyCustomers" collapsed />
 
-- **Page:** `src/app/erp/transport/page.tsx` (a static route ahead of `[slug]`), tabs in `src/app/erp/transport/parts/`, one consignment at `/erp/transport/[id]`, the upload at `/erp/transport/upload`, the public link at `/track/[token]`.
+- **Page:** `src/app/erp/transport/page.tsx` (a static route ahead of `[slug]`), tabs in `src/app/erp/transport/parts/`, one consignment at `/erp/transport/[id]`, the Upload LRs modal in `parts/upload-lrs-button.tsx` (opened from the Logistics header and the Dispatch desk; `/erp/transport/upload` only redirects to it), the public link at `/track/[token]`.
 - **Writes:** `src/lib/actions/erp-logistics.ts`, each through `requireErpWrite("transport")`; the upload also accepts the Dispatch desk.
 - **Wati ticks:** `applyWatiEvent` hands an `etmsg_` id to `applyLogisticsWatiEvent`.
 
@@ -94,7 +94,7 @@ The `update` action still writes `track_status` (`Track` / `Don't Track`) from `
 
 ## Access
 
-- **Module:** <ModuleRef k="erp.transport" />; every tab comes with it. Upload LRs also opens for <ModuleRef k="erp.dispatch" />.
+- **Module:** <ModuleRef k="erp.transport" />; every tab comes with it. The Upload LRs modal also opens for <ModuleRef k="erp.dispatch" />.
 - **Powers:** only `viewSalesAmounts`, for the Monthly sales column of All bills.
 
 ## Tests that pin this
