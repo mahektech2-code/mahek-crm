@@ -8,6 +8,7 @@ import type { ErpContext } from "./access";
 import { featureState, logSuggestion, outcomeOf, readImages } from "./ai";
 import { cleanLrReading, styleLine, type LrStyle, type LrSuggestion } from "./engines/lr-read";
 import { today } from "./screens/common";
+import { erpId } from "./server";
 
 /* ---------------------------------------------------------------------------
  * Upload LRs: a photo or PDF in, the row's fields filled for the person to
@@ -123,4 +124,74 @@ export async function settleLrReadings(ctx: ErpContext, saved: { readingId: stri
 /** Whether the Upload LRs modal should offer to read photos at all. */
 export async function lrReadingOn(): Promise<boolean> {
   return (await featureState("photos", true)).on;
+}
+
+/**
+ * READING LRs ALREADY STORED — the phone's batch upload. Twenty receipts are
+ * photographed and uploaded at once, stored first as photo-only LRs, and read
+ * afterwards, one by one, outside the request that stored them. A reading
+ * FILLS ONLY WHAT IS BLANK on the row (nothing is typed on a batch, but a
+ * person on the LR desk may have got there first), and a number it is unsure
+ * of, or one already on another LR, is left for the desk with a note rather
+ * than written. Nothing here is required for the upload: switched off, or with
+ * no key, the LRs simply wait on the desk to be typed.
+ */
+export async function readStoredLrs(ctx: ErpContext, lrIds: string[]): Promise<{ read: number; skipped: number }> {
+  if (!lrIds.length || !(await lrReadingOn())) return { read: 0, skipped: lrIds.length };
+  const styles = await lrStyles();
+  const system = systemFor(styles);
+  let read = 0, skipped = 0;
+  for (const id of lrIds) {
+    const [lr] = (await db.execute(sql`
+      select id, lr_no as "lrNo", transporter, destination, packages, freight_term as "freightTerm", freight_paise as "freightPaise", note, file_id as "fileId", status
+        from erp_lrs where id = ${id}`)) as unknown as { id: string; lrNo: string | null; transporter: string | null; destination: string | null; packages: number | null; freightTerm: string | null; freightPaise: number | null; note: string | null; fileId: string | null; status: string }[];
+    if (!lr || !lr.fileId || lr.status === "void") { skipped++; continue; }
+    const out = await readImages({ label: "ERP LR batch upload", system, instruction: "Read this lorry receipt.", schema: ReadingSchema, attachmentIds: [lr.fileId] }).catch(() => null);
+    if (!out?.output) { skipped++; continue; }
+    const s = cleanLrReading(out.output, styles, today());
+    /* A number already on another LR is a duplicate photo or a misreading — the desk decides. */
+    const [dup] = s.lrNo
+      ? ((await db.execute(sql`select id from erp_lrs where status <> 'void' and id <> ${id} and upper(lr_no) = ${s.lrNo.toUpperCase()} and lower(coalesce(transporter, '')) = ${(s.transporter ?? lr.transporter ?? "").toLowerCase()}`)) as unknown as { id: string }[])
+      : [];
+    const writeNo = !lr.lrNo && s.lrNo && !dup && !s.checkNumber ? s.lrNo.toUpperCase() : null;
+    const notes = [
+      ...(s.lrNo && !writeNo && !lr.lrNo ? [dup ? `Read ${s.lrNo} off the photo, but that LR is already on the desk — check it is not a second photo.` : `Read ${s.lrNo} off the photo — check the number, then type it.`] : []),
+      ...s.notes,
+    ];
+    const set = {
+      lr_no: writeNo,
+      transporter: lr.transporter ? null : s.transporter,
+      destination: lr.destination ? null : s.destination,
+      packages: lr.packages != null ? null : s.packages,
+      freight_term: lr.freightTerm ? null : s.freightTerm,
+      freight_paise: lr.freightPaise != null || s.freightRupees == null ? null : Math.round(s.freightRupees * 100),
+      lr_date: s.lrDate,
+      note: lr.note || !notes.length ? null : notes.join(" "),
+    };
+    await db.execute(sql`
+      update erp_lrs set
+        lr_no = coalesce(lr_no, ${set.lr_no}),
+        transporter = coalesce(transporter, ${set.transporter}),
+        destination = coalesce(destination, ${set.destination}),
+        packages = coalesce(packages, ${set.packages}::int),
+        freight_term = coalesce(freight_term, ${set.freight_term}),
+        freight_paise = coalesce(freight_paise, ${set.freight_paise}::bigint),
+        lr_date = case when ${set.lr_date}::date is not null and status = 'unassigned' then ${set.lr_date}::date else lr_date end,
+        note = coalesce(note, ${set.note})
+      where id = ${id} and status <> 'void'`);
+    if (s.transporter && !lr.transporter) await db.insert(erpTransporters).values({ id: erpId("etr"), name: s.transporter, updatedById: ctx.user.id }).onConflictDoNothing();
+    const readingId = await logSuggestion({
+      feature: "photos",
+      recordType: "erp_lr",
+      inputRef: lr.fileId,
+      proposed: { ...s, raw: out.output } as unknown as Record<string, unknown>,
+      confidence: { lrNo: s.checkNumber ? "check" : "high" },
+      servedBy: out.model,
+      userId: ctx.actor.id,
+    });
+    const [after] = (await db.execute(sql`select lr_no as "lrNo", lr_date::text as "lrDate", transporter, destination, packages, freight_term as "freightTerm", freight_paise as "freightPaise" from erp_lrs where id = ${id}`)) as unknown as { lrNo: string | null; lrDate: string; transporter: string | null; destination: string | null; packages: number | null; freightTerm: string | null; freightPaise: number | null }[];
+    await settleLrReadings(ctx, [{ readingId, lrId: id, final: { ...after, freightRupees: after.freightPaise == null ? null : Number(after.freightPaise) / 100 } }]);
+    read++;
+  }
+  return { read, skipped };
 }

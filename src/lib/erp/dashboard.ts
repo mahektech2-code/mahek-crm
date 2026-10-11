@@ -19,6 +19,7 @@ import { fgReorderRows, rmReorderRows } from "./screens/movement";
 import { detailRows, orderLines, ORDER_STATUSES } from "./screens/sales";
 import { fgLots, packLots, rmLots, sfgLots } from "./stock";
 import { controlWork, fullCountDue, type ControlWork } from "./stock-check";
+import { openMismatches } from "./floor-checks";
 import { adjustmentReasonLabel } from "./engines/stock-check";
 import type { Tone } from "./ui";
 import { nf } from "./ui";
@@ -92,12 +93,14 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
    * on a blind count, and a red flag stops it until it is resolved.
    */
   if (has("stockCheck")) {
-    const [w, full] = await Promise.all([controlWork(), fullCountDue()]);
+    const [w, full, mism] = await Promise.all([controlWork(), fullCountDue(), openMismatches()]);
     const ids = (l: { id: string; godown: string }[]) => l.filter((x) => inG(x.godown)).map((x) => x.id);
     const acc: Tile[] = [];
     const toCount = ids(w.toCount);
     const dueNow = w.toCount.filter((c) => c.due && inG(c.godown)).length;
     acc.push({ l: "Counts to do", v: String(toCount.length), sub: dueNow ? `${dueNow} due today or overdue · counted blind` : "counted blind — the book is shown after", tone: toCount.length ? "info" : undefined, href: tileHref("countTasks", null, "") });
+    const mis = ids(mism);
+    acc.push({ l: "Stock check mismatches", v: String(mis.length), sub: mis.length ? "the floor counted something the book does not show — review it" : "every stock check matched, or has been reviewed", tone: mis.length ? "danger" : undefined, href: tileHref("floorChecks", mis.length ? mis : null, "Mismatch") });
     acc.push({ l: "Red flags", v: String(ids(w.flags).length), sub: "count differs from the book — recount by somebody else", tone: ids(w.flags).length ? "danger" : undefined, href: tileHref("stockFlags", ids(w.flags), "Red flag") });
     if (ids(w.recounts).length) acc.push({ l: "Recounts out", v: String(ids(w.recounts).length), sub: "waiting for an independent count", tone: "warn", href: tileHref("stockFlags", ids(w.recounts), "Recount out") });
     acc.push({ l: "Under investigation", v: String(ids(w.investigating).length), sub: "the difference is confirmed — find the cause", tone: ids(w.investigating).length ? "warn" : undefined, href: tileHref("stockFlags", ids(w.investigating), "Investigating") });

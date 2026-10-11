@@ -194,9 +194,6 @@ export function parse(css: Css | undefined, inherited: TextStyle = {}): Parsed {
   if (display === "flex" || display === "inline-flex") v.flexDirection = (css.flexDirection as ViewStyle["flexDirection"]) ?? "row";
   if (display === "inline-flex" && !v.alignSelf) v.alignSelf = "flex-start";
   if (v.position === "fixed" as unknown) v.position = "absolute";
-  /* The web's flex items shrink by default (flex: 0 1 auto); native ones do
-     not, and a long name in a row would push its neighbours off the screen. */
-  if (v.flex == null && v.flexShrink == null) v.flexShrink = 1;
   return { view: v, text: t, display, scroll, grid, lines, anim };
 }
 
@@ -221,6 +218,22 @@ export function flat(children: ReactNode, prefix = ""): ReactNode[] {
 /* ------------------------------------------------------------ inheritance */
 
 const TextCtx = createContext<TextStyle>({ color: "#1A1E28", fontSize: 16 });
+
+/**
+ * WHICH WAY THE PARENT LAYS OUT, because shrinking means different things.
+ * In a ROW the web shrinks items (flex: 0 1 auto), and a long name must give
+ * way rather than push its neighbours off the screen. In a COLUMN the web
+ * never squeezes a box below its own content (`min-height: auto`) — native
+ * has no such floor, so an item allowed to shrink there was crushed whenever
+ * a screen or sheet ran short of height: buttons lost their height and their
+ * rounded ends, inputs shrank to a sliver and text was cut through. So an
+ * item shrinks only inside a row, as the design was drawn to.
+ */
+const DirCtx = createContext<"row" | "column">("column");
+
+function shrinkDefault(v: ViewStyle, parent: "row" | "column") {
+  if (v.flex == null && v.flexShrink == null) v.flexShrink = parent === "row" ? 1 : 0;
+}
 export const useInherited = () => useContext(TextCtx);
 
 function inheritable(t: TextStyle): TextStyle {
@@ -287,13 +300,18 @@ type El = { style?: CSSProperties; children?: ReactNode; onClick?: (e: FakeEvent
 type FakeEvent = { stopPropagation: () => void; preventDefault: () => void };
 const EV: FakeEvent = { stopPropagation() {}, preventDefault() {} };
 
-function render(kind: "div" | "span" | "button", { style, children, onClick, "aria-label": label }: El, inherited: TextStyle): ReactElement {
+function render(kind: "div" | "span" | "button", { style, children, onClick, "aria-label": label }: El, inherited: TextStyle, parentDir: "row" | "column"): ReactElement {
   const r = parse(style as Css | undefined, inherited);
+  /* A scrolling box is the one thing in a column that must give way: it is what lets a screen or a sheet fit. */
+  shrinkDefault(r.view, r.scroll ? "row" : parentDir);
   const button = kind === "button" || !!onClick;
   const own = inheritable(r.text);
   const ctx: TextStyle = { ...inherited, ...own };
   if (button && style?.textAlign == null && kind === "button") ctx.textAlign = r.display === "flex" ? ctx.textAlign : "center";
   const kids = flat(children);
+  const dir: "row" | "column" = r.grid ? "column" : r.view.flexDirection === "row" || r.view.flexDirection === "row-reverse" || r.scroll === "x" ? "row" : "column";
+  /* Words sitting directly in a row wrap rather than run off the screen. */
+  const textCtx: TextStyle = dir === "row" ? { ...ctx, flexShrink: 1 } : ctx;
   const flowing = r.display !== "flex" && r.display !== "inline-flex" && r.display !== "grid" && kids.length > 0 && kids.every(isInline);
   const view: ViewStyle = { ...r.view };
   if (button && kind === "button" && r.display !== "flex" && r.display !== "inline-flex") view.justifyContent = view.justifyContent ?? "center";
@@ -322,7 +340,7 @@ function render(kind: "div" | "span" | "button", { style, children, onClick, "ar
     ));
     delete view.gap;
     view.flexDirection = "column";
-  } else body = kids.map((k, i) => wrapText(k, ctx, r.lines, i));
+  } else body = kids.map((k, i) => wrapText(k, textCtx, r.lines, i));
 
   let el: ReactElement;
   if (r.scroll) {
@@ -348,7 +366,11 @@ function render(kind: "div" | "span" | "button", { style, children, onClick, "ar
   } else if (r.anim) {
     el = <Animate name={r.anim} style={view}>{body}</Animate>;
   } else el = <View style={view} accessibilityLabel={label}>{body}</View>;
-  return <TextCtx.Provider value={ctx}>{el}</TextCtx.Provider>;
+  return (
+    <TextCtx.Provider value={ctx}>
+      <DirCtx.Provider value={dir}>{el}</DirCtx.Provider>
+    </TextCtx.Provider>
+  );
 }
 
 /** A bare string or number among views becomes Text in the inherited style. */
@@ -358,13 +380,13 @@ function wrapText(c: ReactNode, ctx: TextStyle, lines?: number, i = 0): ReactNod
 }
 
 export function Div(p: El) {
-  return render("div", p, useContext(TextCtx));
+  return render("div", p, useContext(TextCtx), useContext(DirCtx));
 }
 export function Span(p: El) {
-  return render("span", p, useContext(TextCtx));
+  return render("span", p, useContext(TextCtx), useContext(DirCtx));
 }
 export function Btn(p: El) {
-  return render("button", p, useContext(TextCtx));
+  return render("button", p, useContext(TextCtx), useContext(DirCtx));
 }
 
 /** The root: the text every screen starts from. */
@@ -393,6 +415,7 @@ type InputProps = {
 export function Input({ value, onChange, onKeyDown, inputMode, type, maxLength, autoFocus, placeholder, style, "aria-label": label, autoComplete }: InputProps) {
   const inh = useContext(TextCtx);
   const r = parse(style as Css | undefined, inh);
+  shrinkDefault(r.view, useContext(DirCtx));
   const s: TextStyle = { ...inh, ...r.view, ...r.text } as TextStyle;
   if (s.height != null && s.lineHeight == null) s.paddingVertical = 0;
   return (

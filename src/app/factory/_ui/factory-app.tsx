@@ -17,14 +17,14 @@ import {
   type ScanPurpose,
   type ScanResult,
 } from "@/lib/factory/rules";
-import { CHECK_ITEMS, DOWN, OFFLINE_HOURS, REJ, STEPS, SUBMISSION_VERSION, type Draft, type FactoryData, type Lot, type Proc, type SubmitResult, type Task, type Team } from "@/lib/factory/types";
+import { CHECK_ITEMS, DOWN, OFFLINE_HOURS, REJ, STEPS, SUBMISSION_VERSION, type CheckStage, type CheckUnit, type Draft, type FactoryData, type Lot, type Proc, type SubmitResult, type Task, type Team } from "@/lib/factory/types";
 import { hhmm } from "@/lib/factory/time";
 import type { Me } from "@/lib/actions/factory";
 import { call, NotReceived, PAGE_BUILD, watchBuild } from "./api";
 import { art, ic, qr } from "./art";
 import { avStyle, btn, card, initials, mono, msg, MsgBox, Pill, artWell, type Msg } from "./kit";
 import { CameraScanner, shrinkPhoto } from "./camera";
-import { dropPhoto, forget, keepPhoto, keptPhoto, load, mintKey, readNet, save, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet, mintDrumKey } from "./model";
+import { dropPhoto, forget, keepPhoto, keptPhoto, load, mintKey, readNet, save, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet, mintDrumKey, type StockEntry, mintCheckKey } from "./model";
 
 /* ---------------------------------------------------------------------------
  * THE FACTORY APP — "Mahek Factory App" from the design, screen for screen.
@@ -40,6 +40,13 @@ import { dropPhoto, forget, keepPhoto, keptPhoto, load, mintKey, readNet, save, 
  * ------------------------------------------------------------------------- */
 
 type Props = { initialMe: Me | null; initialData: FactoryData | null; dev: boolean };
+
+
+/* Stock check: how a unit and a kind of stock are said on the floor. */
+const UNIT_WORD: Record<CheckUnit, string> = { Ltr: "litres", Pcs: "pieces", Cans: "cans", Boxes: "boxes" };
+const UNIT_SHORT: Record<CheckUnit, string> = { Ltr: "L", Pcs: "pcs", Cans: "cans", Boxes: "boxes" };
+const STAGE_WORD: Record<CheckStage, string> = { rm: "Raw material", sfg: "Semi-finished", fg: "Filled cans", pack: "Packed boxes" };
+const MISMATCH_REASONS = ["Not entered yet", "Used in production", "Moved to another place", "Damaged or leaked", "Counted wrong before", "Not sure"];
 
 const PC: Record<Proc, string> = { mixing: "flask", filling: "fill", packing: "box", dispatch: "truck" };
 const LI: Record<Lang, number> = { en: 0, hi: 1, mr: 2 };
@@ -84,6 +91,7 @@ export class FactoryApp extends Component<Props, State> {
       sheet: null,
       net: "online",
       toast: "",
+      toastTone: "ok",
       play: null,
       hf: "all",
       asg: null,
@@ -96,6 +104,7 @@ export class FactoryApp extends Component<Props, State> {
       clock: "",
       cam: "wait",
       drum: null,
+      stock: null,
       newBuild: false,
     };
   }
@@ -239,9 +248,10 @@ export class FactoryApp extends Component<Props, State> {
     return key ? (this.state.db?.emp[key]?.n ?? "—") : "—";
   }
 
-  toast(t: string) {
+  /** `warn` for a refusal or an instruction — a tick there would read as done. */
+  toast(t: string, tone: "ok" | "warn" = "ok") {
     clearTimeout(this.tt);
-    this.setState({ toast: t });
+    this.setState({ toast: t, toastTone: tone });
     this.tt = window.setTimeout(() => this.setState({ toast: "" }), 3200);
   }
 
@@ -586,6 +596,273 @@ export class FactoryApp extends Component<Props, State> {
     this.setState({ flow: f, scan: null });
   }
 
+  /* ================================================================ stock check */
+
+  openStock() {
+    const blank: StockEntry = { loading: true, err: null, godown: "", office: [], items: [], stage: "rm", search: "", pick: null, qty: null, bin: "", key: "", saving: false, saved: null, reason: "", reasonSaving: false, reasonSaved: false };
+    this.setState({ sheet: null, route: "stock", stock: blank }, () => void this.loadStock());
+  }
+
+  /** Merges onto the LATEST stock state: a list reload landing after Back must not put the old pick back. */
+  setStock(p: Partial<StockEntry>) {
+    this.setState((st) => (st.stock ? { stock: { ...st.stock, ...p } } : null));
+  }
+
+  async loadStock() {
+    if (!this.state.stock) return;
+    this.setStock({ loading: true, err: null });
+    try {
+      const r = await call("stockKit");
+      if (r.ok) this.setStock({ loading: false, godown: r.godown, office: r.office, items: r.items });
+      else this.setStock({ loading: false, err: { title: r.title, text: r.text, fix: r.fix } });
+    } catch (e) {
+      this.setStock({ loading: false, err: { title: "No network", text: "The stock list could not be loaded.", fix: "Check the Wi-Fi and tap Try again. A stock check needs the network — your count is compared with the book the moment it arrives." } });
+      if (!(e instanceof NotReceived)) throw e;
+    }
+  }
+
+  pickStock(pick: NonNullable<StockEntry["pick"]>) {
+    this.setStock({ pick, qty: null, bin: "", key: mintCheckKey(), saving: false, saved: null, err: null, reason: "", reasonSaving: false, reasonSaved: false });
+  }
+
+  stockQty() {
+    const s = this.state.stock;
+    if (!s?.pick) return;
+    const unit = s.pick.kind === "count" ? s.pick.task.unit : s.pick.item.unit;
+    this.openKp({
+      l: "How many " + UNIT_WORD[unit] + " did you count?", unit: UNIT_WORD[unit], v: s.qty, decimals: unit === "Ltr", allowZero: true, quick: [{ l: "None here", v: 0 }],
+      set: (v) => this.setStock({ qty: v, err: null }),
+    });
+  }
+
+  async saveStock() {
+    const s = this.state.stock;
+    if (!s?.pick || s.saving) return;
+    if (s.qty == null) return this.stockQty();
+    this.setStock({ saving: true, err: null });
+    try {
+      const r = s.pick.kind === "count"
+        ? await call("countSave", { id: s.pick.task.id, qty: s.qty, bin: s.bin || null })
+        : await call("stockCheck", { stage: s.pick.item.stage, itemId: s.pick.item.id, qty: s.qty, bin: s.bin || null, key: s.key });
+      if (r.ok) {
+        this.setStock({ saving: false, saved: r });
+        this.toast(r.matched ? "Saved · matches the book" : "Saved · does not match the book");
+        return;
+      }
+      this.setStock({ saving: false, err: { title: r.title, text: r.text, fix: r.fix } });
+    } catch (e) {
+      this.setStock({ saving: false, err: { title: "No network", text: "The count is not saved yet.", fix: "Check the Wi-Fi and press Save again. It is safe — it will not be saved twice." } });
+      if (!(e instanceof NotReceived)) throw e;
+    }
+  }
+
+  async saveStockReason() {
+    const s = this.state.stock, sv = s?.saved;
+    if (!s || !sv || !s.reason.trim() || s.reasonSaving) return;
+    this.setStock({ reasonSaving: true });
+    try {
+      const r = await call("checkReason", sv.kind, sv.id, s.reason.trim());
+      this.setStock({ reasonSaving: false, reasonSaved: r.ok });
+      this.toast(r.ok ? "Reason saved" : "The office has already looked at it");
+    } catch (e) {
+      this.setStock({ reasonSaving: false });
+      this.toast("No network — the reason is not saved yet");
+      if (!(e instanceof NotReceived)) throw e;
+    }
+  }
+
+  /** Back from a count to the list — reloading it, so what was just counted shows as done. */
+  stockBack() {
+    const s = this.state.stock;
+    if (s?.pick) {
+      const reload = !!s.saved;
+      this.setStock({ pick: null, saved: null, err: null });
+      if (reload) void this.loadStock();
+      return;
+    }
+    this.setState({ route: "more", stock: null });
+  }
+
+  renderStock(): ReactNode {
+    const st = this.state, T = this.T(), s = st.stock;
+    const fact = (l: string, v: string, tone?: string) => (
+      <div key={l} style={{ display: "flex", justifyContent: "space-between", gap: "12px", padding: "10px 0", borderBottom: "1px solid #EDEFF3" }}>
+        <span style={{ fontSize: "15px", color: "#6B7385" }}>{l}</span>
+        <span style={{ fontSize: "15px", fontWeight: 700, color: tone ?? "#1A1E28", textAlign: "right", flex: 1 }}>{v}</span>
+      </div>
+    );
+    const errBox = (e: { title: string; text: string; fix: string }) => (
+      <div style={{ padding: "14px", borderRadius: "14px", background: "#FCECEC" }}>
+        <div style={{ fontSize: "17px", fontWeight: 700, color: "#B3261E" }}>{e.title}</div>
+        <div style={{ fontSize: "15px", lineHeight: "22px", color: "#1A1E28", marginTop: "6px" }}>{e.text}</div>
+        <div style={{ fontSize: "15px", lineHeight: "22px", color: "#1A1E28", marginTop: "6px" }}><span style={{ fontWeight: 700 }}>What to do: </span>{e.fix}</div>
+      </div>
+    );
+    const round = { width: "44px", height: "44px", borderRadius: "50%", border: "none", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" } as CSSProperties;
+    const head = (
+      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+        <button onClick={() => this.stockBack()} aria-label={T.back} style={round}>{ic("back", 22, "#5223E0")}</button>
+        <span style={{ flex: 1 }}>
+          <span style={{ display: "block", fontSize: "20px", fontWeight: 700 }}>Stock check</span>
+          {!!s?.godown && <span style={{ display: "block", fontSize: "13px", color: "#6B7385" }}>{s.godown}</span>}
+        </span>
+        {!s?.pick && <button onClick={() => void this.loadStock()} aria-label="Refresh" style={round}>{ic("sync", 22, "#5223E0")}</button>}
+      </div>
+    );
+    const wrap = (kids: ReactNode) => <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: "14px" }}>{head}{kids}</div>;
+    if (!s) return wrap(null);
+    const inputStyle: CSSProperties = { width: "100%", height: "48px", minHeight: "48px", boxSizing: "border-box", border: "1.5px solid #DDE1E8", borderRadius: "12px", padding: "0 12px", fontSize: "17px", color: "#1A1E28", background: "#FFFFFF" };
+    const p = s.pick;
+
+    /* ---- the answer: matched, or a mismatch and an optional reason */
+    if (p && s.saved) {
+      const sv = s.saved, u = UNIT_SHORT[sv.unit];
+      const ok = sv.matched;
+      const diff = sv.difference == null ? null : (sv.difference > 0 ? "+" : "") + nf(sv.difference) + " " + u;
+      return wrap(
+        <>
+          <div style={{ ...card, padding: "16px", border: "2px solid " + (ok ? "#BFE3CC" : "#F6CFCF") }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <span style={{ width: "52px", height: "52px", flex: "none", borderRadius: "50%", background: ok ? "#E9F5EE" : "#FCECEC", display: "flex", alignItems: "center", justifyContent: "center" }}>{ic(ok ? "check" : "alert", 28, ok ? "#1D7A45" : "#B3261E")}</span>
+              <span style={{ flex: 1 }}>
+                <span style={{ display: "block", fontSize: "22px", fontWeight: 700, color: ok ? "#1D7A45" : "#B3261E" }}>{ok ? "Matches the book" : "Does not match the book"}</span>
+                <span style={{ display: "block", fontSize: "15px", color: "#6B7385" }}>{(sv.no ? sv.no + " · " : "") + sv.item}</span>
+              </span>
+            </div>
+            {fact("You counted", nf(sv.qty) + " " + u)}
+            {sv.book != null && fact("The book says", nf(sv.book) + " " + u)}
+            {!ok && diff && fact("Difference", diff + (sv.difference! > 0 ? " more on the shelf" : " short on the shelf"), "#B3261E")}
+            {sv.kind === "count" && <div style={{ marginTop: "10px", fontSize: "14px", lineHeight: "20px", color: "#3D4453" }}>{sv.message}</div>}
+          </div>
+          {!ok && (
+            <div style={{ ...card, padding: "16px", display: "flex", flexDirection: "column", gap: "10px" }}>
+              <span style={{ fontSize: "17px", fontWeight: 700 }}>Why might it differ? <span style={{ fontWeight: 400, color: "#6B7385" }}>(optional)</span></span>
+              <span style={{ fontSize: "14px", color: "#6B7385" }}>The office has been told either way. A reason helps them find it faster.</span>
+              {s.reasonSaved ? (
+                <div style={{ padding: "12px", borderRadius: "12px", background: "#E9F5EE", color: "#1D7A45", fontSize: "15px" }}>{"Reason saved: " + s.reason}</div>
+              ) : (
+                <>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                    {MISMATCH_REASONS.map((r) => (
+                      <button key={r} onClick={() => this.setStock({ reason: r })} style={{ padding: "8px 12px", borderRadius: "16px", border: "1.5px solid " + (s.reason === r ? "#6835FB" : "#DDE1E8"), background: s.reason === r ? "#F1ECFF" : "#FFFFFF", fontSize: "14px", color: "#1A1E28", cursor: "pointer" }}>{r}</button>
+                    ))}
+                  </div>
+                  <input value={s.reason} onChange={(e) => this.setStock({ reason: String(e.target.value).slice(0, 300) })} maxLength={300} placeholder="Or say it in your words" aria-label="Why it might differ" style={inputStyle} />
+                  <button onClick={() => void this.saveStockReason()} style={btn(!s.reason.trim() || s.reasonSaving ? "off" : "p", 54)}>{s.reasonSaving ? "Saving…" : "Save reason"}</button>
+                </>
+              )}
+            </div>
+          )}
+          <button onClick={() => this.stockBack()} style={btn(ok || s.reasonSaved ? "p" : "s", 58)}>Check the next item</button>
+        </>,
+      );
+    }
+
+    /* ---- counting one item */
+    if (p) {
+      const name = p.kind === "count" ? p.task.item : p.item.name;
+      const unit = p.kind === "count" ? p.task.unit : p.item.unit;
+      const blocked = p.kind === "count" ? p.task.blocked : null;
+      return wrap(
+        <>
+          <div style={{ ...card, padding: "16px" }}>
+            <span style={{ display: "block", fontSize: "21px", lineHeight: "26px", fontWeight: 700 }}>{name}</span>
+            {p.kind === "count" && <span style={{ display: "block", ...mono, fontSize: "14px", fontWeight: 600, color: "#3D4453", marginTop: "2px" }}>{p.task.no + " · asked by the office"}</span>}
+            {fact("Kind", p.kind === "count" ? STAGE_WORD.rm : STAGE_WORD[p.item.stage])}
+            {fact("Godown", p.kind === "count" ? p.task.godown : s.godown)}
+            {fact("Count in", UNIT_WORD[unit])}
+            {p.kind === "count" && fact("Why", p.task.reason)}
+            {p.kind === "count" && p.task.recount && fact("Recount", "Somebody else's count differed from the book", "#8A5C05")}
+          </div>
+          {blocked ? errBox({ title: "Not yours to count", text: blocked, fix: "Leave it for somebody else." }) : (
+            <>
+              <div style={{ fontSize: "14px", lineHeight: "20px", color: "#6B7385" }}>Count every drum, can or box of it here. The book figure is shown only after you save.</div>
+              <button onClick={() => this.stockQty()} style={{ ...card, padding: "16px", display: "flex", alignItems: "center", justifyContent: "space-between", border: "2px solid " + (s.qty == null ? "#6835FB" : "#DDE1E8"), cursor: "pointer", textAlign: "left" }}>
+                <span>
+                  <span style={{ display: "block", fontSize: "15px", color: "#6B7385" }}>What you counted</span>
+                  <span style={{ display: "block", fontSize: "13px", color: "#9BA3B2", marginTop: "2px" }}>Zero if there is none</span>
+                </span>
+                <span style={{ fontSize: s.qty == null ? "18px" : "30px", fontWeight: 700, color: s.qty == null ? "#6835FB" : "#1A1E28", textAlign: "right" }}>{s.qty == null ? "Tap to enter" : nf(s.qty) + " " + UNIT_SHORT[unit]}</span>
+              </button>
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <span style={{ fontSize: "15px", color: "#6B7385" }}>Where (optional)</span>
+                <input value={s.bin} onChange={(e) => this.setStock({ bin: String(e.target.value).slice(0, 120) })} maxLength={120} placeholder="Bay, rack or bin" aria-label="Where" style={inputStyle} />
+              </div>
+              {s.err && errBox(s.err)}
+              <button onClick={() => void this.saveStock()} style={btn(s.qty == null || s.saving ? "off" : "p", 60)}>{s.saving ? "Saving…" : "Save count"}</button>
+            </>
+          )}
+        </>,
+      );
+    }
+
+    /* ---- the list */
+    const q = s.search.trim().toLowerCase();
+    const ofStage = s.items.filter((i) => i.stage === s.stage);
+    const shown = ofStage.filter((i) => !q || i.name.toLowerCase().includes(q));
+    const hereN = ofStage.filter((i) => i.here).length;
+    const doneN = ofStage.filter((i) => i.here && i.checkedToday).length;
+    const misN = s.items.filter((i) => i.checkedToday && !i.checkedToday.matched).length;
+    return wrap(
+      <>
+        {s.err && errBox(s.err)}
+        {s.err && <button onClick={() => void this.loadStock()} style={btn("s", 54)}>Try again</button>}
+        {misN > 0 && (
+          <div style={{ padding: "12px 14px", borderRadius: "14px", background: "#FCECEC", display: "flex", alignItems: "center", gap: "10px" }}>
+            {ic("alert", 22, "#B3261E")}
+            <span style={{ flex: 1, fontSize: "15px", color: "#B3261E", fontWeight: 600 }}>{misN + (misN === 1 ? " item does" : " items do") + " not match the book today. The office has been told."}</span>
+          </div>
+        )}
+        {s.office.length > 0 && (
+          <>
+            <span style={{ fontSize: "18px", fontWeight: 700 }}>Asked by the office</span>
+            {s.office.map((t) => (
+              <button key={t.id} onClick={() => this.pickStock({ kind: "count", task: t })} style={{ ...card, padding: "14px 16px", display: "flex", flexDirection: "column", alignItems: "stretch", gap: "6px", textAlign: "left", cursor: "pointer", border: "1px solid " + (t.overdue ? "#F6CFCF" : "#DDE1E8"), opacity: t.blocked ? 0.6 : 1 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{ fontSize: "17px", fontWeight: 700, flex: 1 }}>{t.item}</span>
+                  <span style={{ ...mono, fontSize: "13px", color: "#6B7385" }}>{t.no}</span>
+                </div>
+                <span style={{ fontSize: "14px", color: "#3D4453" }}>{t.godown + " · " + (t.overdue ? "overdue since " : "due ") + t.due}</span>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                  <Pill l={t.kind} bg="#EDEFF3" fg="#3D4453" />
+                  {t.recount && <Pill l="Recount" bg="#FDF6E7" fg="#8A5C05" />}
+                  {t.forPurchase && <Pill l="Before a purchase" bg="#EAF0FB" fg="#2B5CBF" />}
+                  {t.overdue && <Pill l="Overdue" bg="#FCECEC" fg="#B3261E" />}
+                </div>
+                {t.blocked && <span style={{ fontSize: "13px", color: "#8A5C05" }}>{t.blocked}</span>}
+              </button>
+            ))}
+          </>
+        )}
+        <span style={{ fontSize: "18px", fontWeight: 700 }}>Check any stock</span>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+          {(["rm", "sfg", "fg", "pack"] as CheckStage[]).map((k) => (
+            <button key={k} onClick={() => this.setStock({ stage: k })} style={{ padding: "10px 14px", borderRadius: "18px", border: "none", background: s.stage === k ? "#6835FB" : "#F1ECFF", color: s.stage === k ? "#FFFFFF" : "#5223E0", fontSize: "15px", fontWeight: 600, cursor: "pointer" }}>{STAGE_WORD[k]}</button>
+          ))}
+        </div>
+        <input value={s.search} onChange={(e) => this.setStock({ search: String(e.target.value).slice(0, 60) })} placeholder="Search by name" aria-label="Search" style={inputStyle} />
+        {hereN > 0 && <span style={{ fontSize: "14px", color: "#6B7385" }}>{doneN + " of " + hereN + " on the book here checked today"}</span>}
+        {s.loading && !s.items.length && <div style={{ ...card, padding: "28px 20px", textAlign: "center", fontSize: "16px", color: "#6B7385" }}>Loading the stock…</div>}
+        {!s.loading && !shown.length && <div style={{ ...card, padding: "28px 20px", textAlign: "center", fontSize: "16px", color: "#6B7385" }}>{q ? "Nothing by that name." : "Nothing of this kind yet."}</div>}
+        {shown.slice(0, 200).map((i) => {
+          const c = i.checkedToday;
+          return (
+            <button key={i.stage + i.id} onClick={() => this.pickStock({ kind: "check", item: i })} style={{ ...card, minHeight: "64px", padding: "12px 14px", display: "flex", alignItems: "center", gap: "10px", textAlign: "left", cursor: "pointer", border: "1px solid " + (c && !c.matched ? "#F6CFCF" : "#DDE1E8") }}>
+              <span style={{ flex: 1 }}>
+                <span style={{ display: "block", fontSize: "16px", fontWeight: 600 }}>{i.name}</span>
+                <span style={{ display: "block", fontSize: "13px", color: c ? (c.matched ? "#1D7A45" : "#B3261E") : "#6B7385" }}>
+                  {c ? (c.matched ? "Checked today · matched" : "Checked today · does not match") + " · " + c.by : "Count in " + UNIT_WORD[i.unit] + (i.here ? "" : " · none on the book here")}
+                </span>
+              </span>
+              {c ? ic(c.matched ? "check" : "alert", 22, c.matched ? "#1D7A45" : "#B3261E") : ic("chev", 22)}
+            </button>
+          );
+        })}
+        {shown.length > 200 && <span style={{ fontSize: "14px", color: "#6B7385", textAlign: "center" }}>{"Showing 200 of " + shown.length + " — search to find the rest."}</span>}
+      </>,
+    );
+  }
+
   /* ================================================================ empty drums */
 
   openDrum() {
@@ -642,7 +919,7 @@ export class FactoryApp extends Component<Props, State> {
     );
     const head = (
       <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-        <button onClick={() => this.setState({ route: st.me?.head ? "today" : "home", drum: null })} aria-label={T.back} style={{ width: "44px", height: "44px", borderRadius: "50%", border: "none", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("back", 22, "#5223E0")}</button>
+        <button onClick={() => this.setState({ route: "more", drum: null })} aria-label={T.back} style={{ width: "44px", height: "44px", borderRadius: "50%", border: "none", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("back", 22, "#5223E0")}</button>
         <span style={{ fontSize: "20px", fontWeight: 700 }}>Empty drum entry</span>
       </div>
     );
@@ -1105,7 +1382,10 @@ export class FactoryApp extends Component<Props, State> {
           {isResult && this.renderResult()}
           {shell && R === "sync" && this.renderSync()}
           {shell && R === "help" && this.renderHelp()}
+          {shell && R === "more" && this.renderMore()}
+          {shell && R === "settings" && this.renderSettings()}
           {shell && R === "drum" && this.renderDrum()}
+          {shell && R === "stock" && this.renderStock()}
           {shell && head && R === "today" && this.renderToday()}
           {shell && head && R === "review" && this.renderReview()}
           {shell && head && R === "teams" && this.renderTeams()}
@@ -1114,8 +1394,8 @@ export class FactoryApp extends Component<Props, State> {
 
           {st.sheet && me && this.renderSheet()}
           {st.toast && (
-            <div role="status" style={{ position: "absolute", left: "16px", right: "16px", bottom: "92px", zIndex: 60, display: "flex", alignItems: "center", gap: "10px", background: "#3D14A8", color: "#FFFFFF", borderRadius: "14px", padding: "14px 16px", fontSize: "15px", lineHeight: "20px", boxShadow: "0 8px 24px rgba(26,30,40,0.25)", animation: "fx-up 150ms cubic-bezier(0.2,0,0.2,1)" }}>
-              <span style={{ width: "24px", height: "24px", borderRadius: "50%", background: "rgba(198,255,52,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{ic("check", 15, "#C6FF34")}</span>
+            <div role="status" style={{ position: "absolute", left: "16px", right: "16px", bottom: st.flow ? "132px" : "92px", zIndex: 60, display: "flex", alignItems: "center", gap: "10px", background: st.toastTone === "warn" ? "#8A5C05" : "#3D14A8", color: "#FFFFFF", borderRadius: "14px", padding: "14px 16px", fontSize: "15px", lineHeight: "20px", boxShadow: "0 8px 24px rgba(26,30,40,0.25)", animation: "fx-up 150ms cubic-bezier(0.2,0,0.2,1)" }}>
+              <span style={{ width: "24px", height: "24px", borderRadius: "50%", background: st.toastTone === "warn" ? "rgba(255,231,168,0.25)" : "rgba(198,255,52,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{st.toastTone === "warn" ? ic("alert", 15, "#FFE7A8") : ic("check", 15, "#C6FF34")}</span>
               <span style={{ flex: 1 }}>{st.toast}</span>
             </div>
           )}
@@ -1246,7 +1526,7 @@ export class FactoryApp extends Component<Props, State> {
     const areaWord = (T as Record<string, string>)[me.area] ?? "";
     return (
       <div style={{ flex: "none", display: "flex", alignItems: "center", gap: "10px", padding: "8px 16px 10px 16px", background: "#FFFFFF", borderBottom: "1px solid #EDEFF3" }}>
-        <button onClick={() => this.setState({ sheet: { type: "menu" } })} aria-label="Menu" style={this.av(me.key, 44)}>{me.ini}</button>
+        <button onClick={() => this.setState({ sheet: null, route: "settings" })} aria-label={T.settings} style={this.av(me.key, 44)}>{me.ini}</button>
         <span style={{ flex: 1, minWidth: 0 }}>
           <span style={{ display: "block", fontSize: "17px", fontWeight: 700, lineHeight: "22px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{me.n + (head && !me.scope ? "" : !areaWord ? "" : " · " + areaWord)}</span>
           <span style={{ display: "block", fontSize: "13px", color: "#6B7385", lineHeight: "17px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{db.loc + " · " + db.shift}</span>
@@ -1262,17 +1542,21 @@ export class FactoryApp extends Component<Props, State> {
   renderNav(head: boolean): ReactNode {
     const st = this.state, T = this.T();
     const revN = st.db?.review.length ?? 0;
-    const navW: [string, string, string][] = [["home", "home", T.home], ["scan", "qr", T.scan], ["help", "help", T.help]];
-    const navH: [string, string, string][] = [["today", "list", T.today], ["review", "alert", T.review], ["scan", "qr", T.scan], ["teams", "people", T.teams], ["machines", "chart", T.machines]];
+    const navW: [string, string, string][] = [["home", "home", T.home], ["more", "list", T.more], ["scan", "qr", T.scan], ["sync", "sync", T.sync], ["settings", "badge", T.settings]];
+    const navH: [string, string, string][] = [["today", "list", T.today], ["review", "alert", T.review], ["scan", "qr", T.scan], ["teams", "people", T.teams], ["more", "chart", T.more]];
+    const pendN = st.queue.filter((q) => q.status === "pending").length;
+    /* A page reached from More or Settings keeps its tab lit. */
+    const tabOf: Record<string, string> = { help: "settings", stock: "more", drum: "more", machines: head ? "more" : "machines", sync: head ? "more" : "sync" };
     return (
       <div style={{ flex: "none", height: "78px", background: "#FFFFFF", borderTop: "1px solid #EDEFF3", display: "flex", alignItems: "center", justifyContent: "space-around", padding: "0 6px 8px 6px" }}>
         {(head ? navH : navW).map(([k, icn, l]) => {
-          const on = st.route === k;
+          const on = (tabOf[st.route] ?? st.route) === k;
           const isScan = k === "scan";
           return (
             <button key={k} onClick={() => (isScan ? this.openScan("home") : this.setState({ route: k }))} style={{ flex: 1, height: "70px", border: "none", background: "transparent", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "4px", color: on ? "#5223E0" : "#6B7385", cursor: "pointer" }}>
               <span style={isScan ? { width: "58px", height: "58px", marginTop: "-22px", borderRadius: "50%", background: "#6835FB", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 6px 16px rgba(104,53,251,0.35)", position: "relative" } : { width: "48px", height: "30px", borderRadius: "15px", background: on ? "#F1ECFF" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
                 {ic(icn, isScan ? 28 : 24, isScan ? "#FFFFFF" : undefined)}
+                {k === "sync" && pendN > 0 && <span style={{ position: "absolute", top: "-4px", right: "-8px", minWidth: "18px", height: "18px", padding: "0 5px", borderRadius: "9px", background: "#B77B08", color: "#FFFFFF", fontSize: "11px", fontWeight: 700, lineHeight: "18px", textAlign: "center" }}>{pendN}</span>}
                 {k === "review" && revN > 0 && <span style={{ position: "absolute", top: "-4px", right: "-8px", minWidth: "18px", height: "18px", padding: "0 5px", borderRadius: "9px", background: "#B3261E", color: "#FFFFFF", fontSize: "11px", fontWeight: 700, lineHeight: "18px", textAlign: "center" }}>{revN}</span>}
               </span>
               <span style={{ fontSize: "12px", fontWeight: 600 }}>{l}</span>
@@ -1306,15 +1590,6 @@ export class FactoryApp extends Component<Props, State> {
             <span style={{ display: "block", fontSize: "15px", color: "#DDD2FF", marginTop: "4px" }}>{T.scanAny}</span>
           </span>
         </button>
-        {me.drums && (
-          <button onClick={() => this.openDrum()} style={{ ...card, padding: "14px 16px", display: "flex", alignItems: "center", gap: "12px", textAlign: "left", cursor: "pointer" }}>
-            <span style={{ width: "44px", height: "44px", borderRadius: "12px", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{ic("box", 22, "#5223E0")}</span>
-            <span style={{ flex: 1 }}>
-              <span style={{ display: "block", fontSize: "17px", fontWeight: 700 }}>Empty drum entry</span>
-              <span style={{ display: "block", fontSize: "13px", color: "#6B7385", marginTop: "1px" }}>Scan and weigh a drum once it is empty</span>
-            </span>
-          </button>
-        )}
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginTop: "4px" }}>
           <span style={{ fontSize: "20px", fontWeight: 700 }}>{T.myTasks}</span>
           <span style={{ fontSize: "14px", color: "#6B7385" }}>{open.length + " / " + mine.length}</span>
@@ -1503,7 +1778,7 @@ export class FactoryApp extends Component<Props, State> {
       } else this.setState({ flow: { ...f, step: f.step - 1 } });
     };
     const next = () => {
-      if (block) return this.toast(block);
+      if (block) return this.toast(block, "warn");
       if (key === "review") return void this.submit();
       const flow = { ...f, step: f.step + 1 };
       this.setState({ flow, drafts: { ...st.drafts, [t.id]: flow } });
@@ -1542,7 +1817,15 @@ export class FactoryApp extends Component<Props, State> {
         </div>
         <div style={{ flex: "none", background: "#FFFFFF", borderTop: "1px solid #EDEFF3", padding: "10px 16px 16px 16px" }}>
           {block && <div style={{ fontSize: "14px", lineHeight: "20px", color: "#8A5C05", fontWeight: 600, marginBottom: "8px", textAlign: "center" }}>{block}</div>}
-          <button onClick={next} style={btn(block ? "off" : "p", 62)}>{key === "review" && st.sending ? T.sending : nextL}</button>
+          {key === "identify" ? (
+            /* Both answers to "is this the right product?" sit together — the "no" was hidden in the scroll. */
+            <div style={{ display: "flex", gap: "10px" }}>
+              <button onClick={() => this.openReport(t)} style={{ ...btn("s", 62), flex: 1 }}>{T.wrong}</button>
+              <button onClick={next} style={{ ...btn(block ? "off" : "p", 62), flex: 2 }}>{nextL}</button>
+            </div>
+          ) : (
+            <button onClick={next} style={btn(block ? "off" : "p", 62)}>{key === "review" && st.sending ? T.sending : nextL}</button>
+          )}
         </div>
       </div>
     );
@@ -1593,7 +1876,6 @@ export class FactoryApp extends Component<Props, State> {
           </div>
         )}
         <div style={{ fontSize: "19px", fontWeight: 700, textAlign: "center", marginTop: "4px" }}>{T.isRight}</div>
-        <button onClick={() => this.openReport(t)} style={btn("s", 56)}>{T.wrong}</button>
       </div>
     );
   }
@@ -2054,7 +2336,7 @@ export class FactoryApp extends Component<Props, State> {
             <span style={{ display: "block", fontSize: "15px", lineHeight: "21px", marginTop: "2px" }}>{c[4]}</span>
           </span>
         </div>
-        {!q.length && <div style={{ ...card, padding: "24px 18px", textAlign: "center", fontSize: "16px", color: "#3D4453" }}>{T.allSaved}</div>}
+        {!q.length && <div style={{ fontSize: "15px", lineHeight: "21px", color: "#6B7385", textAlign: "center", padding: "6px 0" }}>Nothing is waiting to send.</div>}
         {q.slice().reverse().map((x) => {
           const t = x.flow.task;
           const badge = x.status === "done" ? ["#E9F5EE", "#1D7A45", T.completed] : x.status === "held" ? ["#FDF6E7", "#8A5C05", "With supervisor"] : x.status === "failed" ? ["#FDF6E7", "#8A5C05", "Check it"] : ["#FDF6E7", "#8A5C05", T.pending];
@@ -2078,13 +2360,126 @@ export class FactoryApp extends Component<Props, State> {
     );
   }
 
+  /* ================================================================ More and Settings
+   * The name used to open one long sheet that mixed the day's work with the
+   * phone's settings. WORK is the More tab — what somebody does on the floor
+   * besides their tasks. SETTINGS is its own page — who they are, the
+   * language, the PIN, help and signing out — opened from the bottom bar or
+   * by tapping their name.
+   * ------------------------------------------------------------------------- */
+
+  menuRow(l: string, s: string, icn: string, run: () => void, tone?: "danger", badge?: number): ReactNode {
+    const red = tone === "danger";
+    return (
+      <button key={l} onClick={run} style={{ display: "flex", alignItems: "center", gap: "14px", width: "100%", minHeight: "68px", padding: "12px 14px", borderRadius: "16px", border: "1px solid " + (red ? "#F6CFCF" : "#DDE1E8"), background: "#FFFFFF", cursor: "pointer" }}>
+        <span style={{ width: "44px", height: "44px", borderRadius: "12px", background: red ? "#FCECEC" : "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{ic(icn, 22, red ? "#B3261E" : "#5223E0")}</span>
+        <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+          <span style={{ display: "block", fontSize: "17px", lineHeight: "22px", fontWeight: 700, color: red ? "#B3261E" : "#1A1E28" }}>{l}</span>
+          {!!s && <span style={{ display: "block", fontSize: "14px", lineHeight: "19px", color: "#6B7385", marginTop: "2px" }}>{s}</span>}
+        </span>
+        {!!badge && <span style={{ minWidth: "26px", height: "26px", padding: "0 8px", borderRadius: "13px", background: "#FDF6E7", color: "#8A5C05", fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{String(badge)}</span>}
+        <span style={{ display: "flex", flex: "none" }}>{ic("chev", 22, "#9BA3B2")}</span>
+      </button>
+    );
+  }
+
+  pageHead(title: string, sub?: string, back?: () => void): ReactNode {
+    const T = this.T();
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: "12px", minHeight: "48px" }}>
+        {back && <button onClick={back} aria-label={T.back} style={{ width: "44px", height: "44px", borderRadius: "22px", border: "none", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flex: "none" }}>{ic("back", 22, "#5223E0")}</button>}
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <span style={{ display: "block", fontSize: "24px", lineHeight: "30px", fontWeight: 700 }}>{title}</span>
+          {!!sub && <span style={{ display: "block", fontSize: "14px", lineHeight: "19px", color: "#6B7385", marginTop: "2px" }}>{sub}</span>}
+        </span>
+      </div>
+    );
+  }
+
+  sectionLabel(l: string): ReactNode {
+    return <div style={{ fontSize: "13px", lineHeight: "18px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "#6B7385", marginTop: "6px" }}>{l}</div>;
+  }
+
+  renderMore(): ReactNode {
+    const st = this.state, T = this.T(), me = st.me!;
+    const pendN = st.queue.filter((q) => q.status === "pending").length;
+    const tools: ReactNode[] = [];
+    if (me.counts) tools.push(this.menuRow("Stock check", "Count any stock and check it against the book", "chart", () => this.openStock()));
+    if (me.drums) tools.push(this.menuRow("Empty drum entry", "Scan and weigh a drum once it is empty", "box", () => this.openDrum()));
+    return (
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px 16px 24px 16px", display: "flex", flexDirection: "column", gap: "10px" }}>
+        {this.pageHead(T.more, "Work besides your tasks")}
+        {this.sectionLabel("Work")}
+        {tools.length ? tools : <div style={{ ...card, padding: "20px", fontSize: "15px", lineHeight: "21px", color: "#6B7385", textAlign: "center" }}>Nothing else to do here. Your tasks are on Home.</div>}
+        {me.head && this.menuRow(T.machines, "Machines and stoppages on the floor", "wrench", () => this.setState({ route: "machines" }))}
+        {me.head && this.menuRow(T.sync, pendN ? pendN + " waiting to send" : "Everything is sent", "sync", () => this.setState({ route: "sync" }), undefined, pendN)}
+        {me.head && this.sectionLabel(T.settings)}
+        {me.head && this.menuRow(T.settings, "Language, PIN, help and sign out", "badge", () => this.setState({ route: "settings" }))}
+      </div>
+    );
+  }
+
+  pickLanguage() {
+    const T = this.T();
+    const LN: Record<Lang, string> = { en: "English", hi: "हिन्दी · Hindi", mr: "मराठी · Marathi" };
+    this.setState({
+      sheet: {
+        type: "reason", title: T.language, sub: "Buttons, steps and spoken help change to this language.", reasons: Object.values(LN), okL: T.ok, sel: LN[this.state.lang],
+        done: (r) => {
+          const k = (Object.keys(LN) as Lang[]).find((x) => LN[x] === r) ?? "en";
+          save(null, "lang", k);
+          void call("setLang", k);
+          this.setState({ lang: k, sheet: null });
+          this.toast(k === "en" ? "Language: English" : k === "hi" ? "भाषा: हिन्दी" : "भाषा: मराठी");
+        },
+      },
+    });
+  }
+
+  askSignOut() {
+    const T = this.T();
+    const pendN = this.state.queue.filter((q) => q.status === "pending").length;
+    if (pendN)
+      return this.setState({ sheet: { type: "reason", title: "Sign out with " + pendN + " job" + (pendN > 1 ? "s" : "") + " waiting?", sub: "It stays on this phone and sends later. No one else can change it.", reasons: ["Yes, sign out"], okL: T.signOut, danger: true, done: () => void this.signOut() } });
+    void this.signOut();
+  }
+
+  renderSettings(): ReactNode {
+    const st = this.state, T = this.T(), me = st.me!, db = this.db();
+    const emp = db.emp[me.key];
+    const LN: Record<Lang, string> = { en: "English", hi: "हिन्दी", mr: "मराठी" };
+    /* Role and badge, each once: "Production Head · production head · —" was three ways of saying one thing. */
+    const role = [emp?.role, emp?.id].filter((x): x is string => !!x && x !== "—" && x !== "-").filter((x, i, a) => a.findIndex((y) => y.toLowerCase() === x.toLowerCase()) === i).join(" · ");
+    return (
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px 16px 24px 16px", display: "flex", flexDirection: "column", gap: "10px" }}>
+        {this.pageHead(T.settings)}
+        <div style={{ ...card, padding: "16px", display: "flex", alignItems: "center", gap: "14px" }}>
+          <span style={this.av(me.key, 56)}>{me.ini}</span>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ display: "block", fontSize: "19px", lineHeight: "24px", fontWeight: 700 }}>{me.n}</span>
+            {!!role && <span style={{ display: "block", fontSize: "14px", lineHeight: "19px", color: "#6B7385", marginTop: "2px" }}>{role}</span>}
+            <span style={{ display: "block", fontSize: "14px", lineHeight: "19px", color: "#6B7385", marginTop: "2px" }}>{db.loc + " · " + db.shift.split(" · ")[0]}</span>
+          </span>
+        </div>
+        {this.sectionLabel("App")}
+        {this.menuRow(T.language, LN[st.lang], "globe", () => this.pickLanguage())}
+        {this.menuRow("Change my PIN", "4 numbers you sign in with", "badge", () => this.setState({ signStep: "newpin", newPin: "", newPin1: "", pinErr: "" }))}
+        {this.props.dev && this.menuRow("Network (preview only)", (T as Record<string, string>)[st.net] + " — tap to change", st.net === "offline" ? "wifioff" : "wifi", () => { const nx = ({ online: "weak", weak: "offline", offline: "online" } as const)[st.net]; this.setNet(nx); this.toast((T as Record<string, string>)[nx]); })}
+        {this.menuRow(T.help, "Short videos and audio", "help", () => this.setState({ route: "help" }))}
+        {this.sectionLabel("Account")}
+        {this.menuRow(T.signOut, "Unsent work stays on this phone", "out", () => this.askSignOut(), "danger")}
+        <div style={{ fontSize: "12px", lineHeight: "16px", color: "#9BA3B2", textAlign: "center", marginTop: "8px" }}>{"Mahek One Factory · " + PAGE_BUILD}</div>
+      </div>
+    );
+  }
+
   renderHelp(): ReactNode {
     const st = this.state, T = this.T(), area = st.me!.area;
     const list = HELP.filter((h) => ["scan", "sync"].indexOf(h[0]) > -1 || area === "head" || h[0] === area).concat(HELP.filter((h) => ["scan", "sync"].indexOf(h[0]) < 0 && h[0] !== area && area !== "head"));
     const p = st.play;
     return (
       <div className="fx-scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: "12px" }}>
-        <div style={{ fontSize: "20px", fontWeight: 700 }}>{T.help}</div>
+        {this.pageHead(T.help, "Short videos and audio", () => this.setState({ route: "settings" }))}
         {list.map((h) => {
           const on = !!p && p.id === h[0];
           const i = on ? Math.min(h[4].length - 1, Math.floor((p!.t / Math.max(1, p!.dur)) * h[4].length)) : 0;
@@ -2150,7 +2545,7 @@ export class FactoryApp extends Component<Props, State> {
             {kpis.filter((k) => !st.me?.scope || PROC[k.l] === st.me.scope).map((k) => (
               <button key={k.l} onClick={() => this.setState({ hf: k.l })} style={{ ...card, padding: "14px", textAlign: "left", cursor: "pointer" }}>
                 <span style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", fontWeight: 700, color: "#3D4453" }}>{ic(k.icn, 16)}{k.l}</span>
-                <span style={{ display: "block", fontSize: "24px", lineHeight: "30px", fontWeight: 700, marginTop: "6px" }}>{nf(k.act) + " / " + nf(k.plan)}</span>
+                <span style={{ display: "block", fontSize: "24px", lineHeight: "30px", fontWeight: 700, marginTop: "6px" }}>{nf(k.act)}<span style={{ fontSize: "15px", fontWeight: 600, color: "#6B7385" }}>{" / " + nf(k.plan)}</span></span>
                 <span style={{ display: "block", fontSize: "13px", color: "#6B7385" }}>{k.unit}</span>
                 <span style={{ display: "block", height: "6px", borderRadius: "3px", background: "#EDEFF3", marginTop: "8px", overflow: "hidden" }}><span style={{ display: "block", height: "6px", width: Math.min(100, pct(k.act, Math.max(1, k.plan))) + "%", background: "#6835FB", borderRadius: "3px" }} /></span>
                 <span style={{ display: "block", fontSize: "12px", color: "#6B7385", marginTop: "6px" }}>{k.sub}</span>
@@ -2176,11 +2571,11 @@ export class FactoryApp extends Component<Props, State> {
               <button key={t.id} onClick={() => this.setState({ sheet: { type: "job", id: t.id } })} style={{ display: "flex", alignItems: "center", gap: "12px", width: "100%", padding: "12px", borderRadius: "18px", border: "1px solid " + (js[3] === "late" ? "#F6CFCF" : "#DDE1E8"), background: "#FFFFFF", cursor: "pointer", boxShadow: js[3] === "late" ? "inset 4px 0 0 #B3261E" : "none" }}>
                 <span style={artWell(54, 14)}>{this.taskArt(t, 46)}</span>
                 <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+                  <span style={{ display: "flex", marginBottom: "4px" }}><Pill l={js[0]} bg={js[1]} fg={js[2]} /></span>
                   <span style={{ display: "block", fontSize: "15px", lineHeight: "20px", fontWeight: 700 }}>{taskName(db, t)}</span>
                   <span style={{ display: "block", fontSize: "13px", color: "#6B7385", marginTop: "1px" }}>{(T as Record<string, string>)[t.proc] + " · " + t.id + " · " + (t.status === "done" ? nf(t.out?.good) + " " + t.out?.unit + " at " + t.out?.at : taskTarget(db, t).split(" · ")[0] + " · due " + t.due)}</span>
                   <span style={{ display: "block", fontSize: "13px", color: "#3D4453", marginTop: "1px" }}>{[tm.owner, tm.op, ...tm.helpers].filter(Boolean).map((k) => this.name(k).split(" ")[0]).join(" · ") + (tm.helpers.length ? "" : " · no helper")}</span>
                 </span>
-                <Pill l={js[0]} bg={js[1]} fg={js[2]} />
               </button>
             );
           })}
@@ -2251,11 +2646,11 @@ export class FactoryApp extends Component<Props, State> {
             <div key={p} style={{ ...card, padding: "14px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                 <span style={{ width: "40px", height: "40px", borderRadius: "12px", background: "#F1ECFF", color: "#5223E0", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{ic(PC[p], 22)}</span>
-                <span style={{ flex: 1 }}>
+                <span style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ display: "block", fontSize: "17px", fontWeight: 700 }}>{(T as Record<string, string>)[p]}</span>
                   <span style={{ display: "block", fontSize: "13px", color: "#6B7385" }}>{done.length + " of " + all.length + " jobs done today"}</span>
                 </span>
-                <span style={{ textAlign: "right" }}>
+                <span style={{ textAlign: "right", flex: "none", maxWidth: "42%" }}>
                   <span style={{ display: "block", fontSize: "22px", fontWeight: 700 }}>{nf(out)}</span>
                   <span style={{ display: "block", fontSize: "12px", color: "#6B7385" }}>{unit}</span>
                 </span>
@@ -2266,10 +2661,10 @@ export class FactoryApp extends Component<Props, State> {
                   <div key={k} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 0", borderBottom: "1px solid #F3F4F7" }}>
                     <span style={this.av(k, 36)}>{this.ini(k)}</span>
                     <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ display: "block", fontSize: "15px", fontWeight: 700 }}>{this.name(k) + (db.emp[k]?.confirm ? " · to confirm" : "")}</span>
-                      <span style={{ display: "block", fontSize: "12px", color: "#6B7385" }}>{ppl[k].role}</span>
+                      <span style={{ display: "block", fontSize: "15px", lineHeight: "20px", fontWeight: 700 }}>{this.name(k)}</span>
+                      <span style={{ display: "block", fontSize: "13px", lineHeight: "18px", color: "#6B7385" }}>{ppl[k].role + (db.emp[k]?.confirm ? " · name to confirm" : "")}</span>
+                      <span style={{ display: "block", fontSize: "13px", lineHeight: "18px", color: "#3D4453" }}>{"In " + ppl[k].done + " of " + ppl[k].jobs + " jobs · " + (db.hours[k] != null ? db.hours[k] + " h" : "no check-in")}</span>
                     </span>
-                    <span style={{ textAlign: "right", fontSize: "13px", color: "#3D4453" }}>{"In " + ppl[k].done + " of " + ppl[k].jobs + " jobs · " + (db.hours[k] != null ? db.hours[k] + " h" : "no check-in")}</span>
                   </div>
                 ))}
               </div>
@@ -2449,55 +2844,6 @@ export class FactoryApp extends Component<Props, State> {
         { l: T.back, run: close, style: { ...btn("s", 58), flex: 1 } },
         { l: st.busy ? T.sending : sh.okL || "Send", run: () => { if (sh.sel && !st.busy) sh.done(sh.sel); }, style: { ...btn(sh.sel && !st.busy ? (sh.danger ? "d" : "p") : "off", 58), flex: 2 } },
       ];
-    }
-
-    if (sh.type === "menu") {
-      const me = st.me!;
-      const db = this.db();
-      const emp = db.emp[me.key];
-      const LN: Record<Lang, string> = { en: "English", hi: "हिन्दी · Hindi", mr: "मराठी · Marathi" };
-      const row = (l: string, s: string, icn: string, run: () => void) => (
-        <button key={l} onClick={run} style={{ display: "flex", alignItems: "center", gap: "12px", width: "100%", minHeight: "64px", padding: "8px 12px", borderRadius: "16px", border: "1px solid #DDE1E8", background: "#FFFFFF", cursor: "pointer" }}>
-          <span style={{ width: "44px", height: "44px", borderRadius: "12px", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{ic(icn, 22, "#5223E0")}</span>
-          <span style={{ flex: 1, textAlign: "left" }}>
-            <span style={{ display: "block", fontSize: "17px", fontWeight: 700 }}>{l}</span>
-            {s && <span style={{ display: "block", fontSize: "13px", color: "#6B7385", marginTop: "1px" }}>{s}</span>}
-          </span>
-          <span style={{ color: "#9BA3B2", display: "flex" }}>{ic("chev", 24)}</span>
-        </button>
-      );
-      const pendN = st.queue.filter((q) => q.status === "pending").length;
-      title = me.n;
-      sub = (emp?.role ?? "") + " · " + (emp?.id ?? "");
-      body = (
-        <>
-          {row(T.language, LN[st.lang], "globe", () =>
-            this.setState({
-              sheet: {
-                type: "reason", title: T.language, sub: "Buttons, steps and spoken help change to this language.", reasons: Object.values(LN), okL: T.ok, sel: LN[st.lang],
-                done: (r) => {
-                  const k = (Object.keys(LN) as Lang[]).find((x) => LN[x] === r) ?? "en";
-                  save(null, "lang", k);
-                  void call("setLang", k);
-                  this.setState({ lang: k, sheet: null });
-                  this.toast(k === "en" ? "Language: English" : k === "hi" ? "भाषा: हिन्दी" : "भाषा: मराठी");
-                },
-              },
-            }),
-          )}
-          {row("Work place", db.loc + " · " + db.shift.split(" · ")[0], "pin", () => this.toast("Your supervisor sets your work place"))}
-          {row(T.sync, pendN + " waiting", "sync", () => this.setState({ sheet: null, route: "sync" }))}
-          {row(T.help, "Short videos and audio", "help", () => this.setState({ sheet: null, route: "help" }))}
-          {me.drums && row("Empty drum entry", "Scan and weigh a drum once it is empty", "box", () => this.openDrum())}
-          {row("Change my PIN", "4 numbers you sign in with", "badge", () => this.setState({ sheet: null, signStep: "newpin", newPin: "", newPin1: "", pinErr: "" }))}
-          {this.props.dev && row("Network (preview only)", (T as Record<string, string>)[st.net] + " — tap to change", st.net === "offline" ? "wifioff" : "wifi", () => { const nx = ({ online: "weak", weak: "offline", offline: "online" } as const)[st.net]; this.setNet(nx); this.toast((T as Record<string, string>)[nx]); })}
-          {row(T.signOut, "Unsent work stays on this phone", "out", () => {
-            if (pendN)
-              return this.setState({ sheet: { type: "reason", title: "Sign out with " + pendN + " job" + (pendN > 1 ? "s" : "") + " waiting?", sub: "It stays on this phone and sends later. No one else can change it.", reasons: ["Yes, sign out"], okL: T.signOut, danger: true, done: () => void this.signOut() } });
-            void this.signOut();
-          })}
-        </>
-      );
     }
 
     if (sh.type === "job") body = this.jobSheet(sh.id, (t, s, b, a) => { title = t; sub = s; acts = a; return b; });

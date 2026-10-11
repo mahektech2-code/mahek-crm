@@ -40,6 +40,11 @@ const OPS = {
   lrKit: A.factoryLrKit,
   readLr: A.factoryReadLr,
   saveLr: A.factorySaveLr,
+  saveLrPhotos: A.factorySaveLrPhotos,
+  stockKit: A.factoryStockKit,
+  stockCheck: A.factoryStockCheck,
+  countSave: A.factoryCountSave,
+  checkReason: A.factoryCheckReason,
 } as const;
 
 export type FactoryOp = keyof typeof OPS;

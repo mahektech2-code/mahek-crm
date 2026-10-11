@@ -320,7 +320,7 @@ export const ST_TONE: Record<string, Tone> = {
   "Partly received": "warn", "Closed short": "muted", Closed: "muted", Cancelled: "muted",
   "Direct purchase": "neutral", Quotation: "info", "Pending approval": "warn", Approved: "success",
   Sent: "info", Selected: "success", "Not selected": "muted",
-  "To count": "info", "Red flag": "danger", "Recount out": "warn", Investigating: "warn", "Stock discrepancy": "danger",
+  "To count": "info", Mismatch: "danger", "Mismatch · reviewed": "warn", "Red flag": "danger", "Recount out": "warn", Investigating: "warn", "Stock discrepancy": "danger",
   "Count stock": "info", "Confirm quantity": "warn", "Exception requested": "warn",
   "In stock": "success", "Scanned for dispatch": "brand", "On hold": "warn", Returned: "info", "Written off": "danger",
   "Empty – available": "success", "Empty – returnable to vendor": "info", "Needs review": "warn", Sold: "neutral",

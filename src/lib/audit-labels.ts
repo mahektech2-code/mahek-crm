@@ -324,6 +324,10 @@ const strong = (s: string): Piece => ({ strong: s });
  * not enough.
  */
 const DESCRIBE: Record<string, Describer> = {
+  /* ---- stock checks */
+  "erp.floorCheck.record": () => ["recorded a stock check"],
+  "erp.floorCheck.review": () => ["reviewed a stock check that did not match the book"],
+  "erp.floorCheck.escalate": () => ["raised a stock check mismatch into a formal count"],
   /* ---- empty drums, scrap sale and scrap receipts */
   "erp.drum.empty": () => ["recorded an empty drum, weighed"],
   "erp.drum.classify": () => ["decided who owns an empty drum"],

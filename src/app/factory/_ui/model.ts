@@ -4,7 +4,7 @@
  * ------------------------------------------------------------------------- */
 import type { Lang } from "@/lib/factory/i18n";
 import type { ScanMeta, ScanPurpose, ScanResult } from "@/lib/factory/rules";
-import type { Draft, FactoryData, Proc, SubmitResult, Task } from "@/lib/factory/types";
+import type { Draft, FactoryData, Proc, SubmitResult, Task, CheckItem, CheckStage, CountTask, StockSave } from "@/lib/factory/types";
 import type { Me, Who } from "@/lib/actions/factory";
 import type { DrumLotView, DrumSaved } from "@/lib/factory/types";
 
@@ -46,7 +46,7 @@ export type KpSheet = {
 export type PeopleSheet = { type: "people"; role: "owner" | "op" | "helpers" | "ver"; multi: boolean; sel: string[]; area: string; onDone?: (sel: string[]) => void };
 export type TilesSheet = { type: "tiles"; title: string; sub?: string; groups: { title?: string; cols?: number; items: { l: string; sub?: string; art?: React.ReactNode; v: string }[] }[]; pick: (v: string) => void };
 export type ReasonSheet = { type: "reason"; title: string; sub?: string; reasons: string[]; okL?: string; sel?: string; danger?: boolean; done: (r: string) => void };
-export type Sheet = KpSheet | PeopleSheet | TilesSheet | ReasonSheet | { type: "menu" } | { type: "job"; id: string } | { type: "assign" };
+export type Sheet = KpSheet | PeopleSheet | TilesSheet | ReasonSheet | { type: "job"; id: string } | { type: "assign" };
 
 export type SignStep = "lang" | "id" | "pin" | "otp" | "newpin";
 
@@ -73,6 +73,8 @@ export type State = {
   sheet: Sheet | null;
   net: Net;
   toast: string;
+  /** `warn` draws the toast as a caution — a refusal is never shown with a tick. */
+  toastTone: "ok" | "warn";
   play: { id: string; t: number; dur: number; on: boolean } | null;
   hf: string;
   asg: { proc: Proc; item: string; qty: number; due: string } | null;
@@ -86,6 +88,8 @@ export type State = {
   cam: "wait" | "live" | "none" | "denied";
   /** Empty drum entry: the lot scanned, the weight typed, and what the server answered. */
   drum: DrumEntry | null;
+  /** Stock check: the office's counts, every item here, the one being counted, and what the server answered. */
+  stock: StockEntry | null;
   /** A newer build is live; the page reloads itself once nothing is in hand. */
   newBuild: boolean;
 };
@@ -210,4 +214,35 @@ export type DrumEntry = {
 
 export function mintDrumKey(): string {
   return "DRM-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+}
+
+/**
+ * Stock check on the phone. Online only, on purpose: the book is read and
+ * snapshotted the moment the server receives the figure, so a figure sent
+ * hours later would be judged against a book that has since moved.
+ */
+export type StockEntry = {
+  loading: boolean;
+  err: { title: string; text: string; fix: string } | null;
+  godown: string;
+  office: CountTask[];
+  items: CheckItem[];
+  stage: CheckStage;
+  search: string;
+  /** What is being counted now. */
+  pick: { kind: "count"; task: CountTask } | { kind: "check"; item: CheckItem } | null;
+  qty: number | null;
+  bin: string;
+  /** Minted when an item is picked; a resend of the same save answers with the first. */
+  key: string;
+  saving: boolean;
+  saved: Extract<StockSave, { ok: true }> | null;
+  /** The optional reason after a mismatch. */
+  reason: string;
+  reasonSaving: boolean;
+  reasonSaved: boolean;
+};
+
+export function mintCheckKey(): string {
+  return "CHK-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
 }

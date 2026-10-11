@@ -12949,6 +12949,65 @@ export const erpStockCounts = pgTable(
 );
 
 /**
+ * A STOCK CHECK FROM THE FLOOR — anybody, any time, any kind of stock. The
+ * person picks an item at their godown, counts it and sends the figure; the
+ * book is read and snapshotted only then, and a check outside its tolerance is
+ * a MISMATCH the office reviews (ERP → Stock accuracy → Stock checks, and the
+ * dashboard). It moves no stock: a real difference on a raw material becomes a
+ * formal count (`stock_count_id`), whose red flag, recount and approved
+ * adjustment are the only way the book changes.
+ */
+export const erpFloorChecks = pgTable(
+  "erp_floor_checks",
+  {
+    id: text("id").primaryKey(),
+    /** rm | sfg | fg | pack — which ledger the book is read from. */
+    stage: text("stage").notNull(),
+    /** A raw material, a formulation, a finished good or a SKU, by `stage`. */
+    itemId: text("item_id").notNull(),
+    itemName: text("item_name").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    /** Ltr | Pcs | Cans | Boxes. */
+    unit: text("unit").notNull(),
+    countedQty: erpQty("counted_qty").notNull(),
+    /** The book at the moment the figure arrived. A snapshot, never recomputed. */
+    bookQty: erpQty("book_qty").notNull(),
+    /** On the shelf and not yet in the book (raw materials: at the gate, under test, unposted). */
+    pendingIn: erpQty("pending_in").notNull().default(0),
+    /** Counted − (book + pending). */
+    difference: erpQty("difference").notNull(),
+    tolerance: erpQty("tolerance").notNull(),
+    matched: boolean("matched").notNull(),
+    /** Why the counter thinks it differs — optional, asked only on a mismatch. */
+    reason: text("reason"),
+    bin: text("bin"),
+    /** factory | erp — where the check was entered. */
+    source: text("source").notNull().default("factory"),
+    /** The phone's own key: a resend answers with the first save. */
+    clientKey: text("client_key"),
+    countedById: text("counted_by_id")
+      .notNull()
+      .references(() => users.id),
+    countedAt: timestamp("counted_at", { withTimezone: true }).notNull().defaultNow(),
+    reviewedById: text("reviewed_by_id").references(() => users.id),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    reviewNote: text("review_note"),
+    /** The formal count a mismatch was escalated into. */
+    stockCountId: text("stock_count_id").references(() => erpStockCounts.id),
+  },
+  (t) => [
+    uniqueIndex("erp_floor_checks_client_key").on(t.clientKey),
+    index("erp_floor_checks_open_idx").on(t.matched, t.reviewedAt),
+    index("erp_floor_checks_item_idx").on(t.stage, t.itemId, t.godownId, t.countedAt),
+    check("erp_floor_checks_stage_check", sql`${t.stage} in ('rm', 'sfg', 'fg', 'pack')`),
+    check("erp_floor_checks_unit_check", sql`${t.unit} in ('Ltr', 'Pcs', 'Cans', 'Boxes')`),
+    check("erp_floor_checks_source_check", sql`${t.source} in ('factory', 'erp')`),
+  ],
+);
+
+/**
  * A STOCK ADJUSTMENT, requested from a flagged count and posted only once a
  * holder of `stockControl` approves it. Never a silent edit: a shortage is
  * written off to Item Lost Record as transfers, a surplus is an inflow entry

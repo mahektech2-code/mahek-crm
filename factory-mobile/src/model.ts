@@ -16,7 +16,7 @@ import { Platform } from "react-native";
 import type { ReactNode } from "react";
 import type { Lang } from "@/lib/factory/i18n";
 import type { ScanMeta, ScanPurpose, ScanResult } from "@/lib/factory/rules";
-import type { Draft, FactoryData, Proc, SubmitResult, Task } from "@/lib/factory/types";
+import type { Draft, FactoryData, Proc, SubmitResult, Task, CheckItem, CheckStage, CountTask, StockSave } from "@/lib/factory/types";
 import type { Me, Who } from "./types";
 import type { DrumLotView, DrumSaved, LoadBoard, LrFields, LrRecent } from "@/lib/factory/types";
 
@@ -59,7 +59,7 @@ export type KpSheet = {
 export type PeopleSheet = { type: "people"; role: "owner" | "op" | "helpers" | "ver"; multi: boolean; sel: string[]; area: string; onDone?: (sel: string[]) => void };
 export type TilesSheet = { type: "tiles"; title: string; sub?: string; groups: { title?: string; cols?: number; items: { l: string; sub?: string; art?: ReactNode; v: string }[] }[]; pick: (v: string) => void };
 export type ReasonSheet = { type: "reason"; title: string; sub?: string; reasons: string[]; okL?: string; sel?: string; danger?: boolean; done: (r: string) => void };
-export type Sheet = KpSheet | PeopleSheet | TilesSheet | ReasonSheet | { type: "menu" } | { type: "job"; id: string } | { type: "assign" };
+export type Sheet = KpSheet | PeopleSheet | TilesSheet | ReasonSheet | { type: "job"; id: string } | { type: "assign" };
 
 export type SignStep = "lang" | "id" | "pin" | "otp" | "newpin";
 
@@ -86,6 +86,8 @@ export type State = {
   sheet: Sheet | null;
   net: Net;
   toast: string;
+  /** `warn` draws the toast as a caution — a refusal is never shown with a tick. */
+  toastTone: "ok" | "warn";
   play: { id: string; t: number; dur: number; on: boolean } | null;
   hf: string;
   asg: { proc: Proc; item: string; qty: number; due: string } | null;
@@ -99,6 +101,8 @@ export type State = {
   cam: "wait" | "live" | "none" | "denied";
   /** Empty drum entry: the lot scanned, the weight typed, and what the server answered. */
   drum: DrumEntry | null;
+  /** Stock check: the office's counts, every item here, the one being counted, and what the server answered. */
+  stock: StockEntry | null;
   /** The order being loaded: its boxes as the ERP holds them. */
   board: LoadBoard | null;
   /** Upload LR: the photo, what was read off it, and what the server answered. */
@@ -124,6 +128,12 @@ export type LrEntry = {
   err: { title: string; text: string; fix: string } | null;
   saving: boolean;
   saved: { id: string; msg: string; lrNo: string | null } | null;
+  /** Many photos at once — the default, because the floor uploads a stack. */
+  many: boolean;
+  /** The photos waiting to go, each with its upload's progress. */
+  tray: { uri: string; fileId: string | null; state: "waiting" | "uploading" | "up" | "failed" }[];
+  batchBusy: boolean;
+  batchMsg: string | null;
 };
 
 /* ------------------------------------------------------------ the phone's memory */
@@ -257,4 +267,35 @@ export type DrumEntry = {
 
 export function mintDrumKey(): string {
   return "DRM-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+}
+
+/**
+ * Stock check on the phone. Online only, on purpose: the book is read and
+ * snapshotted the moment the server receives the figure, so a figure sent
+ * hours later would be judged against a book that has since moved.
+ */
+export type StockEntry = {
+  loading: boolean;
+  err: { title: string; text: string; fix: string } | null;
+  godown: string;
+  office: CountTask[];
+  items: CheckItem[];
+  stage: CheckStage;
+  search: string;
+  /** What is being counted now. */
+  pick: { kind: "count"; task: CountTask } | { kind: "check"; item: CheckItem } | null;
+  qty: number | null;
+  bin: string;
+  /** Minted when an item is picked; a resend of the same save answers with the first. */
+  key: string;
+  saving: boolean;
+  saved: Extract<StockSave, { ok: true }> | null;
+  /** The optional reason after a mismatch. */
+  reason: string;
+  reasonSaving: boolean;
+  reasonSaved: boolean;
+};
+
+export function mintCheckKey(): string {
+  return "CHK-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
 }

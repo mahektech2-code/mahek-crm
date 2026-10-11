@@ -2167,6 +2167,20 @@ inward lines two days old with no register row, transfers whose destination
 has no entry, and packing batches whose cans do not match their boxes. Each
 opens its record; nothing is created.
 
+**ANYBODY ON THE FLOOR CHECKS ANY STOCK, ANY TIME.** Stock check on the
+factory app (every department — `Me.counts`) lists every raw material,
+semi-finished product, filled-can SKU and packed SKU at the person's godown,
+with the office's open counts on top. The list never carries a quantity; the
+book is read when the figure arrives (`lib/erp/floor-checks.ts`, judged by the
+same `judgeCount` and tolerance as a formal count) and stored beside it in
+`erp_floor_checks`. A mismatch is said on the phone with the book and the
+difference, asks for an optional reason, and waits for the office on the
+dashboard tile and ERP → Stock accuracy → Stock checks until it is reviewed
+or, on a raw material, raised into a formal count. A check moves no stock.
+It needs the network on purpose: a figure queued for hours would be judged
+against a book that has moved. An office count from the phone goes through
+the ERP's own `submitCount`.
+
 **PRODUCTION & DISPATCH ARE TRACEABLE, BOX BY BOX.** SFG lot → refill (FG
 filling) lot → packing batch → BOX → order → customer, and back. The lots
 already chained to each other; what `0237_erp_traceability` added is a QC
@@ -8611,6 +8625,28 @@ keeps it in SQLite, and `proxy.ts` turns the header back into the
 person exactly as for the browser. The page at `/factory` still works and is
 what a laptop opens; the queue, the 48 hours, the idempotency key and the old
 -version rules above are the server's and hold for both.
+
+**WORK IS ONE TAB, SETTINGS ANOTHER.** The name used to open one long sheet
+mixing the day's tools with the phone's settings. A worker's bar is Home ·
+More · Scan · Sending · Settings; the Production Head's is Today · Review ·
+Scan · Teams · More, with Machines and Sending inside More. More holds the work
+(Stock check, Empty drum entry, Upload LR); Settings holds who they are, the
+language, the PIN, Help and Sign out, and tapping the name opens it.
+
+**IN A COLUMN NOTHING SHRINKS (`web.tsx`).** The web never squeezes a box below
+its content in a column (`min-height: auto`); native has no such floor, so the
+old blanket `flexShrink: 1` crushed buttons, inputs and cards whenever a screen
+or sheet ran short of height. Items shrink only inside a row, and a scrolling
+box is the one thing in a column that gives way.
+
+**LRs COME IN STACKS.** Upload LR opens on Many photos: up to `LR_BATCH_MAX`
+(20) from the camera or the gallery, uploaded three at a time, and stored in
+one press by `saveLrPhotos` as photo-only LRs for the LR desk to match. A photo
+that fails stays in the tray to resend; a resend stores nothing twice; a file
+that is not the sender's own fresh upload is refused. Reading them is
+secondary: `readStoredLrs` runs after the answer (`after()`), only where
+`erp.ai.photos` is on, fills only blank fields, and leaves an unsure number, or
+one already on the desk, as a note for the desk instead of writing it.
 
 **A SCREEN CHANGE NEEDS A RELEASE; A RULE CHANGE DOES NOT.** The screens are
 in the APK now, so they reach the floor only through the Factory APK
