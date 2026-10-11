@@ -141,10 +141,12 @@ export function freightTermOf(raw: string | null | undefined): LrSuggestion["fre
 }
 
 function validDay(d: string | null | undefined): string | null {
-  if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
-  const t = Date.parse(`${d}T00:00:00Z`);
-  if (Number.isNaN(t)) return null;
-  return new Date(t).toISOString().slice(0, 10) === d ? d : null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d ?? "");
+  if (!m) return null;
+  const [y, mo, day] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  /* A date-only value, so UTC is the honest reading: 2026-02-30 rolls over and is refused. */
+  const t = new Date(Date.UTC(y, mo - 1, day));
+  return t.getUTCFullYear() === y && t.getUTCMonth() === mo - 1 && t.getUTCDate() === day ? d! : null;
 }
 
 function daysBetween(a: string, b: string): number {
