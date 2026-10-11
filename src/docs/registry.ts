@@ -827,6 +827,14 @@ export const DOC_APPS: DocApp[] = [
         written: ALL,
       },
       {
+        slug: "stock-accuracy",
+        title: "Stock accuracy and counting",
+        summary: "Inventory Accuracy Control: a blind count before every purchase and every day, red flags, recounts, causes, approved adjustments and missing records.",
+        group: "Make and store",
+        modules: ["erp.stockCheck"],
+        written: ALL,
+      },
+      {
         slug: "stock-levels",
         title: "Minimum levels and reordering",
         summary: "Raw-material and finished-goods minimums, and raising a requirement from a shortfall.",

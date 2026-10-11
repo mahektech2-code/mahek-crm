@@ -11327,6 +11327,11 @@ export const erpRawMaterials = pgTable(
     purchaseMethod: text("purchase_method").notNull().default("direct"),
     /** The vendor a direct purchase is offered first. A suggestion, never a lock. */
     preferredSupplierId: text("preferred_supplier_id").references(() => erpSuppliers.id),
+    /**
+     * How far a physical count may sit from the book before it is a red flag,
+     * as a percentage of the book. Null: `erp.stockCheck.tolerancePercent`.
+     */
+    countTolerancePercent: numeric("count_tolerance_percent", { precision: 6, scale: 2, mode: "number" }),
     remark: text("remark"),
     active: boolean("active").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -11529,12 +11534,32 @@ export const erpRequisitions = pgTable(
     /** Why a quotation that was not the cheapest landed cost was chosen. */
     selectionNote: text("selection_note"),
     cancelReason: text("cancel_reason"),
+    /**
+     * INVENTORY ACCURACY CONTROL: whether this requirement waits for a blind
+     * physical count before it is bought. COPIED on raise from
+     * `erp.stockCheck.onRequirement`, so a requirement in flight when the
+     * rule changes is never re-routed — and every row from before it reads
+     * false.
+     */
+    stockCheckRequired: boolean("stock_check_required").notNull().default(false),
+    /** The urgent-purchase exception: requested | approved | rejected. */
+    stockExceptionStatus: text("stock_exception_status"),
+    stockExceptionReason: text("stock_exception_reason"),
+    stockExceptionRequestedById: text("stock_exception_requested_by_id").references(() => users.id),
+    stockExceptionDecidedById: text("stock_exception_decided_by_id").references(() => users.id),
+    stockExceptionDecidedAt: timestamp("stock_exception_decided_at", { withTimezone: true }),
+    stockExceptionNote: text("stock_exception_note"),
+    /** A quantity well above what the count justifies, confirmed by a person, with why. */
+    qtyConfirmNote: text("qty_confirm_note"),
+    qtyConfirmedById: text("qty_confirmed_by_id").references(() => users.id),
+    qtyConfirmedAt: timestamp("qty_confirmed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id").references(() => users.id),
     updatedById: text("updated_by_id"),
   },
   (t) => [
+    check("erp_requisitions_stock_exception_check", sql`${t.stockExceptionStatus} is null or ${t.stockExceptionStatus} in ('requested', 'approved', 'rejected')`),
     index("erp_requisitions_status_idx").on(t.status, t.reqDate),
     index("erp_requisitions_req_no_idx").on(t.reqNo),
     check("erp_requisitions_priority_check", sql`${t.priority} in ('Urgent', 'Medium', 'For Stock')`),
@@ -11902,7 +11927,7 @@ export const erpRmEntries = pgTable(
   "erp_rm_entries",
   {
     id: text("id").primaryKey(),
-    /** purchase | transfer. */
+    /** purchase | transfer | adjustment (an approved stock adjustment's surplus — Inventory Accuracy Control). */
     sourceType: text("source_type").notNull(),
     sourceId: text("source_id").notNull(),
     entryDate: date("entry_date").notNull(),
@@ -12800,6 +12825,118 @@ export const erpAlerts = pgTable(
     resolveReason: text("resolve_reason"),
   },
   (t) => [index("erp_alerts_status_idx").on(t.status, t.raisedAt)],
+);
+
+/* ---- Inventory Accuracy Control (AGENTS.md) ---- */
+
+/**
+ * ONE PHYSICAL COUNT of one raw material at one godown. Counted BLIND: the
+ * book figure is snapshotted at the moment the count is submitted and never
+ * shown to the counter before. A count is never edited after it is
+ * submitted — a doubt is a RECOUNT (`recount_of_id`), by somebody else.
+ */
+export const erpStockCounts = pgTable(
+  "erp_stock_counts",
+  {
+    id: text("id").primaryKey(),
+    countNo: integer("count_no").notNull(),
+    /** reorder | cycle | recount | event | full. */
+    kind: text("kind").notNull(),
+    /** open | matched | flagged | recount | investigating | resolved | cancelled. */
+    status: text("status").notNull().default("open"),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    /** Ltr | Pcs — the unit stock is held in. */
+    unit: text("unit").notNull(),
+    requisitionId: text("requisition_id").references(() => erpRequisitions.id),
+    recountOfId: text("recount_of_id"),
+    reason: text("reason").notNull(),
+    assignedToId: text("assigned_to_id").references(() => users.id),
+    dueDate: date("due_date").notNull(),
+    countedQty: erpQty("counted_qty"),
+    bin: text("bin"),
+    lotNote: text("lot_note"),
+    countNote: text("count_note"),
+    countedById: text("counted_by_id").references(() => users.id),
+    countedAt: timestamp("counted_at", { withTimezone: true }),
+    /** The reconciled book at the moment of the count. A snapshot, never recomputed. */
+    bookQty: erpQty("book_qty"),
+    pendingIn: erpQty("pending_in"),
+    pendingOut: erpQty("pending_out"),
+    /** Counted − book. */
+    difference: erpQty("difference"),
+    tolerance: erpQty("tolerance"),
+    /** The assistant's last reading of the possible causes. A suggestion, never an entry. */
+    aiCauses: jsonb("ai_causes").$type<Record<string, unknown>>(),
+    /** book_confirmed | missing_entry | adjusted | cancelled. */
+    resolution: text("resolution"),
+    resolutionNote: text("resolution_note"),
+    resolvedById: text("resolved_by_id").references(() => users.id),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_stock_counts_no_key").on(t.countNo),
+    index("erp_stock_counts_status_idx").on(t.status, t.dueDate),
+    index("erp_stock_counts_item_idx").on(t.rawMaterialId, t.godownId),
+    index("erp_stock_counts_requisition_idx").on(t.requisitionId),
+    uniqueIndex("erp_stock_counts_one_open_key").on(t.rawMaterialId, t.godownId).where(sql`${t.status} = 'open'`),
+    check("erp_stock_counts_kind_check", sql`${t.kind} in ('reorder', 'cycle', 'recount', 'event', 'full')`),
+    check("erp_stock_counts_status_check", sql`${t.status} in ('open', 'matched', 'flagged', 'recount', 'investigating', 'resolved', 'cancelled')`),
+    check("erp_stock_counts_unit_check", sql`${t.unit} in ('Ltr', 'Pcs')`),
+    check("erp_stock_counts_resolution_check", sql`${t.resolution} is null or ${t.resolution} in ('book_confirmed', 'missing_entry', 'adjusted', 'cancelled')`),
+    check("erp_stock_counts_counted_check", sql`(${t.countedQty} is null) = (${t.countedAt} is null)`),
+  ],
+);
+
+/**
+ * A STOCK ADJUSTMENT, requested from a flagged count and posted only once a
+ * holder of `stockControl` approves it. Never a silent edit: a shortage is
+ * written off to Item Lost Record as transfers, a surplus is an inflow entry
+ * of its own, and `posted` names what was written.
+ */
+export const erpStockAdjustments = pgTable(
+  "erp_stock_adjustments",
+  {
+    id: text("id").primaryKey(),
+    countId: text("count_id")
+      .notNull()
+      .references(() => erpStockCounts.id),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    /** Signed: below zero takes stock off, above zero puts it on. */
+    quantity: erpQty("quantity").notNull(),
+    reasonCode: text("reason_code").notNull(),
+    reason: text("reason").notNull(),
+    /** pending | approved | rejected. */
+    status: text("status").notNull().default("pending"),
+    requestedById: text("requested_by_id").references(() => users.id),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+    decidedById: text("decided_by_id").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decisionNote: text("decision_note"),
+    posted: jsonb("posted").$type<{ transfers?: string[]; entry?: string }>(),
+  },
+  (t) => [
+    uniqueIndex("erp_stock_adjustments_one_pending_key").on(t.countId).where(sql`${t.status} = 'pending'`),
+    index("erp_stock_adjustments_status_idx").on(t.status, t.requestedAt),
+    check("erp_stock_adjustments_status_check", sql`${t.status} in ('pending', 'approved', 'rejected')`),
+    check(
+      "erp_stock_adjustments_reason_check",
+      sql`${t.reasonCode} in ('damage', 'spillage', 'evaporation', 'theft', 'unrecorded_issue', 'unrecorded_receipt', 'measurement', 'other')`,
+    ),
+    check("erp_stock_adjustments_qty_check", sql`${t.quantity} <> 0`),
+    check("erp_stock_adjustments_reason_len_check", sql`length(trim(${t.reason})) >= 10`),
+  ],
 );
 
 export const erpAiSuggestions = pgTable(

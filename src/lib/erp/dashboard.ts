@@ -17,6 +17,8 @@ import { loadCustomers, partyStatus } from "./screens/masters";
 import { fgReorderRows, rmReorderRows } from "./screens/movement";
 import { detailRows, orderLines, ORDER_STATUSES } from "./screens/sales";
 import { fgLots, packLots, rmLots, sfgLots } from "./stock";
+import { controlWork, fullCountDue, type ControlWork } from "./stock-check";
+import { adjustmentReasonLabel } from "./engines/stock-check";
 import type { Tone } from "./ui";
 import { nf } from "./ui";
 
@@ -83,6 +85,37 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
     );
   }
 
+  /* ================================================ inventory accuracy */
+  /*
+   * Before purchase, because it is what holds purchase: a requirement waits
+   * on a blind count, and a red flag stops it until it is resolved.
+   */
+  if (has("stockCheck")) {
+    const [w, full] = await Promise.all([controlWork(), fullCountDue()]);
+    const ids = (l: { id: string; godown: string }[]) => l.filter((x) => inG(x.godown)).map((x) => x.id);
+    const acc: Tile[] = [];
+    const toCount = ids(w.toCount);
+    const dueNow = w.toCount.filter((c) => c.due && inG(c.godown)).length;
+    acc.push({ l: "Counts to do", v: String(toCount.length), sub: dueNow ? `${dueNow} due today or overdue · counted blind` : "counted blind — the book is shown after", tone: toCount.length ? "info" : undefined, href: tileHref("countTasks", null, "") });
+    acc.push({ l: "Red flags", v: String(ids(w.flags).length), sub: "count differs from the book — recount by somebody else", tone: ids(w.flags).length ? "danger" : undefined, href: tileHref("stockFlags", ids(w.flags), "Red flag") });
+    if (ids(w.recounts).length) acc.push({ l: "Recounts out", v: String(ids(w.recounts).length), sub: "waiting for an independent count", tone: "warn", href: tileHref("stockFlags", ids(w.recounts), "Recount out") });
+    acc.push({ l: "Under investigation", v: String(ids(w.investigating).length), sub: "the difference is confirmed — find the cause", tone: ids(w.investigating).length ? "warn" : undefined, href: tileHref("stockFlags", ids(w.investigating), "Investigating") });
+    acc.push({
+      l: "Adjustments to approve",
+      v: String(ids(w.adjustments).length),
+      sub: pw("stockControl") ? "you approve these — stock moves only once approved" : "stock moves only once approved",
+      tone: ids(w.adjustments).length ? "danger" : undefined,
+      href: tileHref("stockAdjustments", ids(w.adjustments), "Pending approval"),
+    });
+    acc.push({ l: "Missing records", v: String(w.missing), sub: "batches, fills, receipts and transfers with no stock entry", tone: w.missing ? "warn" : undefined, href: tileHref("missingRecords", null, "") });
+    if (w.accuracy.counted)
+      acc.push({ l: "Counted right first time", v: `${Math.round((w.accuracy.matched / w.accuracy.counted) * 100)}%`, sub: `${w.accuracy.matched} of ${w.accuracy.counted} counts over 30 days`, href: tileHref("stockCounts", null, "") });
+    if (w.repeatCauses.length)
+      acc.push({ l: "Most frequent cause", v: String(w.repeatCauses[0].n), sub: `${adjustmentReasonLabel(w.repeatCauses[0].reason)} · approved adjustments over 90 days${w.repeatCauses.length > 1 ? `, then ${adjustmentReasonLabel(w.repeatCauses[1].reason).toLowerCase()}` : ""}`, tone: w.repeatCauses[0].n >= 3 ? "warn" : undefined, href: tileHref("stockAdjustments", null, "") });
+    if (full.due) acc.push({ l: "Full count due", v: "Due", sub: full.last ? `last full count ${full.last} · every ${full.everyDays} days` : `no full count yet · one is due every ${full.everyDays} days`, tone: "warn", href: tileHref("countTasks", null, "") });
+    push("Inventory accuracy", acc);
+  }
+
   /* ========================================================== purchase */
   const purchase: Tile[] = [];
   /* THE PURCHASE FLOW, one tile per step that is waiting on somebody. */
@@ -93,6 +126,10 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
       const list = ids(stage);
       if (list.length || always) purchase.push({ l, v: String(list.length), sub, tone: list.length ? tone : undefined, href: tileHref("requisitions", list, stage) });
     };
+    tile("Count stock", "Requirements · waiting for a count", "a blind count comes before the purchase", "info");
+    tile("Stock discrepancy", "Requirements · held by a discrepancy", "resolve the count before buying", "danger");
+    tile("Exception requested", "Requirements · urgent purchase to decide", pw("stockControl") ? "you decide these" : "an authorised person decides", "warn");
+    tile("Confirm quantity", "Requirements · confirm quantity", "more than the count justifies", "warn");
     tile("Buyer decision", "Requirements · buyer decision", pw("purchaseBuyer") ? "you decide how these are bought" : "the buyer decides how these are bought", "brand");
     tile("Select vendor", "Requirements · select vendor", "direct purchases with no vendor yet", "warn", true);
     tile("Collect quotations", "Requirements · collect quotations", "not enough quotations in yet", "warn");
@@ -405,4 +442,37 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
 export async function latestDigest(): Promise<{ day: string; text: string; servedBy: string | null } | null> {
   const rows = await q(sql`select day::text as day, text, served_by as "servedBy" from erp_digests order by day desc limit 1`);
   return rows[0] ? { day: String(rows[0].day), text: String(rows[0].text), servedBy: (rows[0].servedBy as string) ?? null } : null;
+}
+
+
+/* ----------------------------------------------- the control, as a flow */
+
+export type FlowStep = { l: string; v: number; sub: string; href: string; tone?: Tone };
+
+/**
+ * Inventory Accuracy Control drawn as the flow it is, with what is waiting at
+ * each step — the strip at the top of the dashboard. Every number opens the
+ * records behind it. Null for somebody who holds neither end of it.
+ */
+export async function accuracyFlow(ctx: ErpContext, godownName: string | null): Promise<{ steps: FlowStep[]; accuracy: ControlWork["accuracy"] } | null> {
+  if (!ctx.screens.has("stockCheck")) return null;
+  const inG = (g: unknown) => !godownName || g === godownName;
+  const [w, work] = await Promise.all([controlWork(), ctx.screens.has("requisitions") ? requirementWork(ctx) : Promise.resolve({} as Record<string, { id: string; godown: string }[]>)]);
+  const ids = (l: { id: string; godown: string }[]) => l.filter((x) => inG(x.godown)).map((x) => x.id);
+  const stage = (...names: string[]) => ids(names.flatMap((n) => work[n] ?? []));
+  const held = stage("Count stock", "Stock discrepancy", "Exception requested", "Confirm quantity");
+  const moving = stage("Buyer decision", "Select vendor", "Collect quotations", "Compare quotations", "Ready for PO");
+  const decide = ids(w.adjustments).length + ids(w.exceptions).length;
+  return {
+    accuracy: w.accuracy,
+    steps: [
+      { l: "Requirement", v: held.length, sub: "held by the stock check", href: tileHref("requisitions", held, "Held by the stock check"), tone: held.length ? "warn" : undefined },
+      { l: "Blind count", v: ids(w.toCount).length, sub: "to count, book hidden", href: tileHref("countTasks", null, ""), tone: ids(w.toCount).length ? "info" : undefined },
+      { l: "Red flag", v: ids(w.flags).length, sub: "beyond tolerance", href: tileHref("stockFlags", ids(w.flags), "Red flag"), tone: ids(w.flags).length ? "danger" : undefined },
+      { l: "Recount", v: ids(w.recounts).length, sub: "by somebody else", href: tileHref("stockFlags", ids(w.recounts), "Recount out"), tone: ids(w.recounts).length ? "warn" : undefined },
+      { l: "Investigate", v: ids(w.investigating).length, sub: `${w.missing} missing record${w.missing === 1 ? "" : "s"} to check`, href: tileHref("stockFlags", ids(w.investigating), "Investigating"), tone: ids(w.investigating).length ? "warn" : undefined },
+      { l: "Approve", v: decide, sub: "adjustments and urgent purchases", href: ids(w.adjustments).length || !ids(w.exceptions).length ? tileHref("stockAdjustments", ids(w.adjustments), "Pending approval") : tileHref("requisitions", ids(w.exceptions), "Urgent purchase"), tone: decide ? "danger" : undefined },
+      { l: "Quotation → PO → GRN", v: moving.length, sub: "cleared, buying continues", href: tileHref("requisitions", moving, "Cleared to buy"), tone: moving.length ? "brand" : undefined },
+    ],
+  };
 }

@@ -29,6 +29,7 @@ export const ERP_POWERS = [
   "employeeAdmin",
   "approveSfgQc",
   "dispatchOverride",
+  "stockControl",
 ] as const;
 
 export type ErpPower = (typeof ERP_POWERS)[number];
@@ -97,6 +98,10 @@ export const ERP_POWER_LABEL: Record<ErpPower, { label: string; source: string }
   dispatchOverride: {
     label: "Approve dispatch overrides; reject or return boxes",
     source: "Lets a box whose product or pack size does not match the order go anyway, with a reason, and marks boxes rejected or returned. Nobody approves their own override request unless they are an ERP administrator.",
+  },
+  stockControl: {
+    label: "Resolve stock discrepancies and approve adjustments",
+    source: "Inventory Accuracy Control: resolves a red-flagged count, approves or rejects a stock adjustment, and approves an urgent purchase while a discrepancy is open. Nobody approves an adjustment or exception they asked for, unless they are an ERP administrator (new in MahekOne).",
   },
 };
 

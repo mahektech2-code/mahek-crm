@@ -86,6 +86,12 @@ const TODAY = "2026-09-20";
 const NONE = "No Transport Charges";
 
 before(async () => {
+  /* This suite is about the flow after the stock check; the check has its own suite (erp-stock-check). */
+  await db
+    .insert(appSettings)
+    .values({ key: "erp.stockCheck.onRequirement", value: false, valueType: "boolean", category: "erp", label: "Count stock before every purchase requirement" })
+    .onConflictDoUpdate({ target: appSettings.key, set: { value: false } });
+  invalidateConfig();
   await db.execute(
     sql`truncate users, erp_raw_materials, erp_suppliers, erp_inward, erp_tests, erp_purchases, erp_rm_entries, erp_requisitions, erp_quotations, erp_purchase_orders, erp_po_lines, erp_user_powers, erp_godown_staff, erp_user_settings, audit_log restart identity cascade`,
   );

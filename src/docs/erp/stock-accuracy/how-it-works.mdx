@@ -1,0 +1,88 @@
+Inventory Accuracy Control makes a purchase depend on the shelf rather than on the book. The book can drift — a batch saved without its receipt, a spill nobody wrote down, a drum sitting at the gate waiting for its test — and a purchase raised against a drifted book buys the wrong amount. So the ERP counts first, compares, and never lets stock move without a person's decision.
+
+## The rules
+
+<Rule title="A requirement waits for a blind count">
+With <Setting k="erp.stockCheck.onRequirement" /> on, every raw-material requirement opens a count of its item at its godown when it is raised, in the same transaction. Until that count matches — or its difference is resolved, or an urgent purchase is approved — the requirement cannot have a method decided, a vendor chosen, a quotation added or selected, or a PO raised. Every one of those is refused on the server, not only drawn disabled.
+</Rule>
+
+<Callout kind="why">
+The setting is **copied onto each requirement** when it is raised, like the purchase rule. Requirements already in flight when it was switched on carry "not required", so nothing in progress was held up on the day it shipped.
+</Callout>
+
+<Rule title="The count is blind">
+The person counting never sees the book first. The book is read — and stored with the count — at the moment the figure is submitted, and only then shown back. A count where the book is visible is a count that tends to agree with it.
+</Rule>
+
+<Rule title="It is compared with the reconciled book">
+The book a count is held against is the ledger stock **plus** goods that are physically there but not yet in the ledger: inward lines at the gate or under test, and register lots not posted for want of a rate. A drum waiting for its test is not a discrepancy.
+</Rule>
+
+<Rule title="A difference beyond tolerance is a red flag">
+The tolerance is a percentage of the book — the item's own on its master record, else <Setting k="erp.stockCheck.tolerancePercent" /> — never smaller than <Setting k="erp.stockCheck.toleranceFloor" />.
+</Rule>
+
+<Rule title="A red flag is recounted by somebody else">
+The recount is counted blind by a different person. It decides what the first count was worth:
+
+| The recount… | Means | Then |
+|---|---|---|
+| matches the book | the first count was wrong | resolved — the book stands |
+| matches the first count | the difference is real | investigating |
+| matches neither | nobody can yet say what is there | flagged again, for another recount |
+
+The recount is compared on today's book, so stock that moved between the two counts does not decide it.
+</Rule>
+
+<Rule title="Causes are suggested, never entered">
+The rules list every record that could explain the difference — for a surplus, goods received and not in stock; for a shortage, recent issues and receipts — and mark one **likely** when its quantity accounts for the gap (or several together do). A shortage nothing explains is a missing **physical** item; a surplus nothing explains is a receipt nobody recorded. The assistant, where switched on (<Setting k="erp.ai.stockCheck.enabled" />), only ranks and explains those records. It is told never to invent one and never to conclude theft.
+</Rule>
+
+<Rule title="Resolving is a person's decision, and it is checked">
+Only somebody with the **stock-control** power resolves a discrepancy. "The missing record is entered" re-reads the book and refuses unless it now agrees with the count. Otherwise the difference becomes an adjustment.
+</Rule>
+
+<Rule title="Never a silent adjustment">
+An adjustment is requested with a coded reason and a sentence, and posts only when somebody **other than its requester** with the stock-control power approves it. A shortage is written off to Item Lost Record as transfers, oldest lot first; a surplus is an inflow entry on the newest lot. A shortage the lots do not hold is refused — no negative stock. Nothing is ever deleted, and every step is in the audit log.
+</Rule>
+
+<Rule title="An open discrepancy stops PO approval">
+A PO whose requirement's shelf has an unresolved red flag cannot be approved, even if the PO was raised before the flag. An urgent purchase approved by the stock-control power lets it through.
+</Rule>
+
+<Rule title="Even a matching count must justify the quantity">
+The count says what is on the shelf; the item's maximum level says what should be. Asking for more than the difference by over <Setting k="erp.stockCheck.unexpectedQtyPercent" />% — or for anything while the shelf is above its maximum — needs the quantity confirmed in words, or a recount.
+</Rule>
+
+## Daily cycle counting
+
+<Rule title="Every day, the shelves most worth checking">
+Each hour the ERP makes sure today's cycle counts are open — at most <Setting k="erp.stockCheck.dailyCount" /> a day. A shelf is due when its class's cycle has passed since it was last counted: class A every <Setting k="erp.stockCheck.cycleDaysA" /> days, B every <Setting k="erp.stockCheck.cycleDaysB" />, C every <Setting k="erp.stockCheck.cycleDaysC" />, halved while it has had a recent discrepancy. Due shelves are ranked by how overdue, their class, how often they move and how often they were wrong.
+</Rule>
+
+ABC is by the value that moved through the shelf over 90 days: the shelves making up the first 80% are A, the next 15% B, the rest C. A full count of a godown is due every <Setting k="erp.stockCheck.fullCountDays" /> days and the dashboard says when; a manager opens it with **Ask for a count**.
+
+## Missing records
+
+The **Missing records** tab looks across the ERP for movements whose stock entry is missing:
+
+| Finding | What it means |
+|---|---|
+| Batch completed, no SFG receipt | An SFG batch line whose yield never reached SFG stock |
+| Filling complete, no FG receipt | A fill whose cans never reached FG stock |
+| Receipt with no inventory entry | A register lot not in raw-material stock — usually its rate is missing |
+| Goods received, not yet in stock | An inward line older than two days with no register row |
+| Transfer issued, not received | A transfer whose destination never got its entry |
+| Packing not matching the cans filled | A packing batch whose cans drawn do not match its boxes |
+
+Each is a missing **transaction**: the goods are where they are, and the book has not caught up. The row opens the record; nothing is created for you.
+
+## Settings
+
+<SettingsTable keys={["erp.stockCheck.onRequirement", "erp.stockCheck.tolerancePercent", "erp.stockCheck.toleranceFloor", "erp.stockCheck.unexpectedQtyPercent", "erp.stockCheck.dailyCount", "erp.stockCheck.cycleDaysA", "erp.stockCheck.cycleDaysB", "erp.stockCheck.cycleDaysC", "erp.stockCheck.fullCountDays", "erp.ai.stockCheck.enabled", "erp.ai.stockCheck.monthlyCap"]} />
+
+## Where the code and the intent disagree today
+
+- **Raw materials only.** Counts cover raw-material stock — the stage purchases are raised for. Semi-finished, finished and packed stock are not yet counted here.
+- **Pending out is zero.** Every consuming record in this ERP is written as the stock is used, so nothing is waiting to leave the book; the column is kept for a ledger that is not.
+- **Requirements raised before the setting** are not held, by design, and neither are requirements for finished goods, which are made rather than bought.

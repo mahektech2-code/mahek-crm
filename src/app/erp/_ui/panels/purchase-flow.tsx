@@ -6,7 +6,8 @@ import { registerPanel, type PanelProps } from "../panels";
 /* ---------------------------------------------------------------------------
  * The purchase flow, drawn in the drawer of a requirement and of a PO:
  *
- *   Requirement → Purchase method → Vendor / quotation → Approval → PO → Receipt
+ *   Requirement → Stock check → Purchase method → Vendor / quotation →
+ *   Approval → PO → Receipt
  *
  * A stepper saying which step is waiting and what happens next, then what
  * this record holds of the flow — the quotations side by side with the lowest
@@ -14,10 +15,10 @@ import { registerPanel, type PanelProps } from "../panels";
  * Everything here is the server's answer; the panel only draws it.
  * ------------------------------------------------------------------------- */
 
-function Stepper({ steps, step, label }: { steps: readonly string[]; step: number; label: string }) {
+export function Stepper({ steps, step, label }: { steps: readonly string[]; step: number; label: string }) {
   const cancelled = step < 0;
   return (
-    <ol className="grid grid-cols-6 gap-1" aria-label={label}>
+    <ol className="grid gap-1" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }} aria-label={label}>
       {steps.map((s, i) => {
         const done = !cancelled && i < step;
         const now = !cancelled && i === step;
