@@ -12386,6 +12386,13 @@ export const erpSfgQc = pgTable(
     /** Pending | Approved | Rejected. */
     status: text("status").notNull().default("Pending"),
     note: text("note"),
+    /**
+     * The Testing list's checks as answered at this decision: test name →
+     * Pass | Fail. Keyed by name so a test renamed or switched off later still
+     * reads back as what was checked. Empty for a decision made before the
+     * checks were asked, and for a reject that stopped at the first failure.
+     */
+    tests: jsonb("tests").$type<Record<string, "Pass" | "Fail">>().notNull().default(sql`'{}'::jsonb`),
     decidedById: text("decided_by_id").references(() => users.id),
     decidedAt: timestamp("decided_at", { withTimezone: true }),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

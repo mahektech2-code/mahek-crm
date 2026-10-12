@@ -1828,6 +1828,13 @@
       "when": 1792532844442,
       "tag": "0263_erp_can_groups_photos",
       "breakpoints": true
+    },
+    {
+      "idx": 261,
+      "version": "7",
+      "when": 1792532944442,
+      "tag": "0264_erp_sfg_qc_tests",
+      "breakpoints": true
     }
   ]
 }

@@ -12,6 +12,8 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
+import { allPassValues, testKey } from "@/lib/erp/engines/sfg-tests";
+import { refValues } from "@/lib/erp/refs";
 import {
   appAccess,
   erpFgFills,
@@ -178,8 +180,23 @@ describe("filling", () => {
     const bulk = await mod("sfgBatches").bulk!.qcReject(await as(admin), all.map((l) => l.id), { note: "Hazy" });
     assert.ok(bulk.ok, JSON.stringify(bulk));
     assert.equal((await mod("sfgBatches").bulk!.qcReject(await as(admin), all.map((l) => l.id), { note: "Hazy" })).ok, false, "already rejected");
-    const ok = await mod("sfgBatches").actions!.qcApprove(await as(admin), line.id, { note: "Viscosity 18 s, clear" });
+    /* The Testing list's active values are asked: a test left unanswered or
+       answered Fail refuses the approval, naming the test; all Pass approves
+       and the answers are stored with the verdict. */
+    const tests = await refValues("testingList");
+    assert.ok(tests.length > 0, "the seeded Testing list has values");
+    const pass = allPassValues(tests);
+    const missing = { ...pass };
+    delete missing[testKey(tests[0])];
+    assert.equal(fieldMsg(await mod("sfgBatches").actions!.qcApprove(await as(admin), line.id, missing)), `Record the ${tests[0]} result before approving`);
+    assert.match(fieldMsg(await mod("sfgBatches").actions!.qcApprove(await as(admin), line.id, { ...pass, [testKey(tests[0])]: "Fail" })), /failed — a lot that fails a test is rejected/);
+    const ok = await mod("sfgBatches").actions!.qcApprove(await as(admin), line.id, { ...pass, note: "Viscosity 18 s, clear" });
     assert.ok(ok.ok, JSON.stringify(ok));
+    const [stored] = (await db.execute(sql`select tests from erp_sfg_qc where lot_code = ${line.lotCode}`)) as unknown as { tests: Record<string, string> }[];
+    assert.deepEqual(Object.keys(stored.tests).sort(), [...tests].sort());
+    assert.ok(Object.values(stored.tests).every((r) => r === "Pass"));
+    const prompt = (await mod("sfgBatches").load(await as(admin))).spec.bulk!.find((b) => b.id === "qcApprove")!.prompt!;
+    assert.deepEqual(prompt.fields.filter((f) => f.k.startsWith("test:")).map((f) => f.l), tests, "the prompt asks each active test");
     const after = await mod("fgFill").load(await as(admin));
     assert.deepEqual(Object.values(after.spec.newForm!.header.find((f) => f.k === "sfgLot")!.optsBy!.map).flat(), ["1ASTOL1"]);
   });
