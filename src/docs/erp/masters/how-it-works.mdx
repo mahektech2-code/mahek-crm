@@ -64,7 +64,7 @@ The **can use** must be a raw material of type Can or Drum — it is the packing
 flowchart LR
   N["New customer<br/>saved in the ERP"] --> P["Pending"]
   P -- "Activate<br/>(status power)" --> A["Active"]
-  A -- "Mark Pending" --> P
+  A -- "Mark pending" --> P
   A -- "Deactivate" --> D["Deactive<br/>= deactivated in MahekOne"]
   P -- "Deactivate" --> D
   D -- "Activate" --> A
@@ -78,7 +78,7 @@ A customer created in the ERP is a MahekOne **lead** (it has never ordered — t
 Deactivate sets the MahekOne customer to `deactivated`, with "Deactivated in the ERP" as the reason, so the CRM stops working it too. Activating a deactivated customer sets it back to active.
 </Rule>
 
-- Activate, Deactivate and Mark Pending need the **customer status** power, checked in the save.
+- Activate, Deactivate and Mark pending need the **customer status** power, checked in the save.
 - Creating a customer needs a business name, a city and a ten-digit mobile, and a name not already used (ignoring capitals).
 - Editing details needs only the screen. An emptied city or mobile keeps the old value, because every MahekOne customer must have both.
 - The list holds every MahekOne **customer**, plus every lead that has an ERP profile.

@@ -15,7 +15,7 @@ flowchart TD
   E -- "Yes" --> F["Bill it<br/>(in Billing and dispatch)"]
   F --> G{"Every box scanned?"}
   G -- "No" --> F
-  G -- "Yes" --> H["Do Verified<br/>Dispatched, transport record opens"]
+  G -- "Yes" --> H["Mark dispatch-verified<br/>Dispatched, transport record opens"]
   F -.->|"Undo billing"| C
 `} />
 
@@ -94,7 +94,7 @@ A line whose billing party was **Pending** when it was taken carries *Pending cu
 
 ## Dispatch verification
 
-<Rule title="Do Verified needs the lots allocated in full, and every box scanned">
+<Rule title="Mark dispatch-verified needs the lots allocated in full, and every box scanned">
 A line whose allocated lots carry box ids leaves only when every box on it has been scanned at the Dispatch desk (setting: <Setting k="erp.dispatch.requireScan" />). Stock packed before box ids existed has nothing to scan, so it is not held back. The dispatch date may not be before the order date.
 </Rule>
 
@@ -151,10 +151,10 @@ A draft becomes an order only through the normal order form, with every rule abo
 | Set the rate / discount | *See sales rate* / *See sales amounts* |
 | Approved By Admin | *Approve orders from pending customers*, and only while the ERP is not taking orders |
 | Mark not verified | ERP administrator |
-| Do Verified from the Dispatch desk | The Orders screen as well as the Dispatch desk |
+| Mark dispatch-verified from the Dispatch desk | The Orders screen as well as the Dispatch desk |
 
 ## Where the code and the intent disagree today
 
 - **Pending hides a whole order once any line of it is billed.** An order with one billed line and one unbilled line vanishes from Pending; the unbilled line is only on *Under process & ready* and *All lines*.
-- **A line marked Not Verify can never be verified again.** Do Verified accepts only a blank or Pending verification; the only way back is to undo billing and bill it again.
+- **A line marked Not Verify can never be verified again.** Mark dispatch-verified accepts only a blank or Pending verification; the only way back is to undo billing and bill it again.
 - **The "Ready but not billed" alert dates Ready from the line's last change**, not from when it became Ready — any edit restarts the clock.

@@ -130,6 +130,7 @@ export function CollapsibleNav({
   railed = false,
   ariaLabel,
   badgeToneFor,
+  showSizes = true,
 }: {
   /** `crm.nav.open`, `sales.nav.open` — one per app. */
   storageKey: string;
@@ -148,6 +149,12 @@ export function CollapsibleNav({
    * Unset, the console's rule applies: red past five, amber below.
    */
   badgeToneFor?: (item: NavRowItem, count: number) => "danger" | "warn";
+  /**
+   * Whether a shut group with nothing waiting says how many screens it holds.
+   * The ERP turns it off: beside its amber badges a grey "8" read as eight
+   * things waiting, and the number answers a question nobody asks.
+   */
+  showSizes?: boolean;
 }) {
   const pathname = usePathname();
 
@@ -281,7 +288,7 @@ export function CollapsibleNav({
               </span>
               {isOpen ? null : waiting > 0 ? (
                 <Badge count={waiting} tone="warn" />
-              ) : (
+              ) : !showSizes ? null : (
                 /* How much is behind the door, where nothing is waiting behind
                  * it. Drawn quietly, and deliberately NOT a badge: a count of
                  * rows and a count of things needing a decision must never be

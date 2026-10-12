@@ -93,7 +93,7 @@ export const recipesScreen: ScreenModule = {
               screen: "recipes",
               id: "new",
               title: "Set a recipe",
-              sub: "What one batch of the product takes, in litres — every raw material, including one bought in Kg. Saving a raw material the product already has replaces its quantity.",
+              sub: "What one batch takes, in litres, for every raw material.",
               submit: "Save recipe",
               lineLabel: "Raw material (litres)",
               header: [{ k: "product", l: "SFG product", t: "select", req: true, opts: forms.map((f) => f.name) }],
@@ -105,7 +105,7 @@ export const recipesScreen: ScreenModule = {
             }
           : undefined,
         newLabel: "Set a recipe",
-        noDataLine: "No recipes yet. A recipe lists, in litres, what one batch of an SFG product takes, so a batch can start from it and a heavy one is noticed.",
+        noDataLine: "No recipes yet. A recipe is what one batch of an SFG product takes, in litres.",
       },
       rows: rows.map(
         (x): ListRow => ({
@@ -140,7 +140,7 @@ export const recipesScreen: ScreenModule = {
       return {
         ...base,
         title: `New SFG batch · ${x.product}`,
-        sub: "From the recipe, in litres. Pick the lot for each raw material from what is at the godown; change a quantity if this batch is different.",
+        sub: "Quantities come from the recipe, in litres. Pick a lot for each raw material.",
         init: { ...base.init, product: x.product, batches: "1" },
         initLines: lines.map((r) => ({ item: r.item, qty: String(Number(r.r.qtyPerBatch)) })),
       };

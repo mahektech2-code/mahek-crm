@@ -25,7 +25,7 @@ How these orders then reach MahekOne's order book — the CRM, targets and outst
   />
   <WfPanel title="Customer A" side>
     <WfText muted>Dispatch today · standing instructions</WfText>
-    <WfBar><WfButton primary>Bill it</WfButton><WfButton>Edit</WfButton><WfButton>ADD More</WfButton><WfButton>Scan boxes at dispatch</WfButton><Hotspot n={6} /></WfBar>
+    <WfBar><WfButton primary>Bill it</WfButton><WfButton>Edit</WfButton><WfButton>Add another</WfButton><WfButton>Scan boxes at dispatch</WfButton><Hotspot n={6} /></WfBar>
   </WfPanel>
 </Wireframe>
 
@@ -73,7 +73,7 @@ You are told the order number and how many lines were saved. If a line has no ra
 </Step>
 </Steps>
 
-To add another SKU to an order already saved, open any of its lines and press **ADD More**. The order number, date, godown and parties stay as they were.
+To add another SKU to an order already saved, open any of its lines and press **Add another**. The order number, date, godown and parties stay as they were.
 
 <Callout kind="note" title="Orders from a Pending customer">
 An order whose billing party is still **Pending** is marked *Pending customer* and cannot be billed until it is approved. Who approves it depends on whether the ERP is where orders are taken — see [The ERP and MahekOne's order book](/docs/erp/order-book).
@@ -124,7 +124,7 @@ If anything is missing, hovering the button says exactly what: *Needs a Tally bi
       ["7 Oct", "1249", <b key="c">Customer C</b>, "PU Sealer – 4 Liter (4 Can/Box)", "₹21,240", "8 Oct", "Verified", <WfPill key="d" tone="success">Sales target reached</WfPill>],
     ]}
   />
-  <WfBar><WfButton primary>Do Verified</WfButton><WfButton>Extra expenses</WfButton><WfButton>Change GST</WfButton><WfButton>Print dispatch labels</WfButton><Hotspot n={2} /></WfBar>
+  <WfBar><WfButton primary>Mark dispatch-verified</WfButton><WfButton>Extra expenses</WfButton><WfButton>Change GST</WfButton><WfButton>Print dispatch labels</WfButton><Hotspot n={2} /></WfBar>
 </Wireframe>
 
 <Hotspots items={[
@@ -134,7 +134,7 @@ If anything is missing, hovering the button says exactly what: *Needs a Tally bi
 
 | Action | What it does |
 |---|---|
-| **Do Verified** | Asks for the **dispatch date** and marks the line **Verified** and **Dispatched**. Needs the lots allocated in full and every box scanned. The date cannot be before the order date. The first verified line of a bill opens its record on [Transport](/docs/erp/transport). |
+| **Mark dispatch-verified** | Asks for the **dispatch date** and marks the line **Verified** and **Dispatched**. Needs the lots allocated in full and every box scanned. The date cannot be before the order date. The first verified line of a bill opens its record on [Transport](/docs/erp/transport). |
 | **Extra expenses** | Records extra freight on the line, once. It is added to the line's cost, and to the bill's record on Logistics. |
 | **Change GST** | 18% or 0%, until the line is verified. 18% bills from *Mahek Marketing India*, 0% from *Mylac*. |
 | **Mark not verified** | ERP administrators only. Sets the line's verification to *Not Verify*. |
@@ -142,7 +142,7 @@ If anything is missing, hovering the button says exactly what: *Needs a Tally bi
 | **Scan its boxes / Dispatch desk** | Opens the order at the Dispatch desk. |
 | **Trace this order** | Opens [Traceability](/docs/erp/traceability) on the order. |
 
-Do Verified and Extra expenses can also be done to a selection of lines at once.
+Mark dispatch-verified and Extra expenses can also be done to a selection of lines at once.
 
 ### What the drawer shows
 
@@ -221,7 +221,7 @@ Hover it: it names everything still missing — approval, Ready, the allocation,
 <Faq q="Where do I allocate lots?">
 At the Dispatch desk, by scanning each box onto the order. For old stock with no box labels, the desk has **Allocate a lot by hand**.
 </Faq>
-<Faq q="Do Verified says 'Scan the boxes first'.">
+<Faq q="Mark dispatch-verified says 'Scan the boxes first'.">
 At least one lot on the line has box ids, so every box has to be scanned at the Dispatch desk before the line can be verified.
 </Faq>
 <Faq q="An order disappeared from Pending but one of its lines is not billed.">

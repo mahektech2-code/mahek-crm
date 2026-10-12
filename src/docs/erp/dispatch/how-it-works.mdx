@@ -7,7 +7,7 @@ A **box** is one physical unit with its own id — `BX-…` for a box from a pac
 | Box state | Meaning |
 |---|---|
 | In stock | On the shelf, can be scanned |
-| Scanned for dispatch | On an order, waiting for Do Verified |
+| Scanned for dispatch | On an order, waiting for Mark dispatch-verified |
 | Dispatched | Gone |
 | On hold | Cannot be scanned until released |
 | Rejected / Returned / Written off / Cancelled | Cannot be scanned |
@@ -64,7 +64,7 @@ A mismatch override is the company deciding to send something the customer did n
 
 Only one override per box per order line can be open (waiting or approved) at a time. The same power also lets a person reject a box, or mark one returned by the customer, on Boxes & labels.
 
-## Do Verified waits for every box
+## Mark dispatch-verified waits for every box
 
 <Rule title="The scan gate">
 A line must have every box scanned before it can be dispatch-verified **if any lot allocated to it has box ids**. A line whose lots have none — stock packed before box ids existed — is not held back, because there is nothing to scan. The whole gate is switched by <Setting k="erp.dispatch.requireScan" />.
@@ -74,7 +74,7 @@ A line must have every box scanned before it can be dispatch-verified **if any l
 Refusing every line without box labels would have stopped dispatch on the day scanning shipped. Old stock runs down on its own; new packing batches always mint their boxes.
 </Callout>
 
-Do Verified then marks each scanned box **dispatched** with the date, the line Verified and Dispatched, and opens the bill's transport record. It is the same action as on [Orders → Billing & dispatch](/docs/erp/orders), with the same rules, from whichever screen it is pressed.
+Mark dispatch-verified then marks each scanned box **dispatched** with the date, the line Verified and Dispatched, and opens the bill's transport record. It is the same action as on [Orders → Billing & dispatch](/docs/erp/orders), with the same rules, from whichever screen it is pressed.
 
 ## What is recorded
 
@@ -94,7 +94,7 @@ The [Traceability](/docs/erp/traceability) dashboard counts today's mismatches, 
 | Open the desk, scan, take off, request an override | The Dispatch desk screen |
 | Approve or decline an override | The Dispatch desk and *Approve dispatch overrides* — and not your own request, unless an ERP administrator |
 | Allocate a lot by hand | The Orders screen as well |
-| Do Verified from the desk | The Orders screen as well |
+| Mark dispatch-verified from the desk | The Orders screen as well |
 | Print dispatch labels | The Orders screen or the Dispatch desk |
 
 <SettingsTable keys={["erp.dispatch.requireScan"]} />

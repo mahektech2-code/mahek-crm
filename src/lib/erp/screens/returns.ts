@@ -280,7 +280,7 @@ async function vendorForm(ctx: ErpContext) {
     { k: "remarks", l: "Remarks", t: "area", mic: true, wide: true },
     { k: "photo", l: "Photo / document", t: "photo" },
   ];
-  return { screen: "vendorReturns", id: "new", title: "Raise a purchase return", sub: "Against the original GRN lot. Approval issues the debit note; the stock leaves only when the goods return outward is confirmed.", submit: "Raise return", header, init: { date: today() } };
+  return { screen: "vendorReturns", id: "new", title: "Raise a purchase return", sub: "Against the original GRN lot. Approval issues the debit note.", submit: "Raise return", header, init: { date: today() } };
 }
 
 const vendorReturns: ScreenModule = {
@@ -312,7 +312,7 @@ const vendorReturns: ScreenModule = {
         sortDefault: ["date", -1],
         newForm: await vendorForm(ctx),
         newLabel: "Raise purchase return",
-        noDataLine: "No purchase returns. Raise one against the GRN lot that was found defective, damaged or wrong.",
+        noDataLine: "No purchase returns. Raise one against a defective or wrong GRN lot.",
       },
       rows: rows.map((r): ListRow => {
         const stage = vStage(r);
@@ -585,7 +585,7 @@ const debitNotes: ScreenModule = {
         chips: "status",
         readOnly: true,
         sortDefault: ["date", -1],
-        noDataLine: "No debit notes. One is issued when a purchase return is approved — it reduces what is owed to the vendor and moves no stock.",
+        noDataLine: "No debit notes. One is issued when a purchase return is approved.",
       },
       rows: rows.map((r): ListRow => ({
         id: String(r.id),
@@ -657,7 +657,7 @@ const returnOutwards: ScreenModule = {
         chips: "status",
         godownKey: "godown",
         sortDefault: ["date", -1],
-        noDataLine: "No goods return outwards. One is prepared from an approved purchase return; stock leaves only when it is confirmed.",
+        noDataLine: "No return outwards. Stock leaves only when one is confirmed.",
       },
       rows: rows.map((r): ListRow => {
         const status = String(r.status);
@@ -817,7 +817,7 @@ async function customerForm() {
     screen: "customerReturns",
     id: "new",
     title: "Record a customer return",
-    sub: "Against the dispatched order line and the lot that went on it. The material goes into quarantine when it is received — never straight into saleable stock.",
+    sub: "Against the dispatched order line. Received material goes into quarantine.",
     submit: "Record return",
     init: { date: today() },
     header: [
@@ -997,8 +997,8 @@ async function customerScreen(ctx: ErpContext, key: "customerReturns" | "returnQ
       ...(key === "customerReturns" ? { newForm: await customerForm(), newLabel: "Record customer return" } : {}),
       noDataLine:
         key === "customerReturns"
-          ? "No customer returns. Record one against the dispatched order line the material went out on."
-          : "Nothing in quarantine. Returned material waits here, out of saleable stock, until QC decides.",
+          ? "No customer returns. Record one against the dispatched order line."
+          : "Nothing in quarantine. Returned material waits here until QC decides.",
     },
     rows: list.map(({ r, d }) => customerRowFor(ctx, r, d, godowns)),
   };
@@ -1308,7 +1308,7 @@ const reworkOrders: ScreenModule = {
         groups: ["status"],
         chips: "status",
         godownKey: "godown",
-        noDataLine: "No rework. QC opens one when returned material can be recovered through the SFG process.",
+        noDataLine: "No rework. QC opens one when returned material can be recovered.",
       },
       rows: rows.map((r): ListRow => {
         const open = r.status === "open";
@@ -1423,7 +1423,7 @@ const wasteDisposals: ScreenModule = {
         hidden: [],
         groups: ["status"],
         chips: "status",
-        noDataLine: "No waste. Returned material that can be neither reused nor sold as scrap is disposed of from here.",
+        noDataLine: "No waste. Material that cannot be reused or sold is disposed of here.",
       },
       rows: rows.map((r): ListRow => ({
         id: String(r.id),

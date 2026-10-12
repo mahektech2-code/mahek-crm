@@ -1,5 +1,5 @@
 import { Badge as CrmBadge, type Tone as CrmTone } from "@/components/ui/primitives";
-import type { Tone } from "@/lib/erp/ui";
+import type { ColSpec, ListRow, Tone } from "@/lib/erp/ui";
 import { useKit } from "./kit";
 
 /*
@@ -59,3 +59,11 @@ export function rowTone(flags: string[], vocab: Record<string, [string, Tone]>):
 export function AiChip({ label }: { label: string }) {
   return <CrmBadge tone="brand">{label}</CrmBadge>;
 }
+
+/** "Under Process" and "Under process", or "Requested" twice: a flag that only
+    repeats the row's status says nothing the status badge has not. */
+export function flagsBesideStatus(r: ListRow, cols: ColSpec[], words: Record<string, [string, Tone]>): string[] {
+  const said = new Set(cols.filter((c) => c.t === "s").map((c) => String(r.v[c.k] ?? "").trim().toLowerCase()).filter(Boolean));
+  return r.flags.filter((f) => !said.has((words[f]?.[0] ?? f).trim().toLowerCase()));
+}
+

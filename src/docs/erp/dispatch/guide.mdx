@@ -50,8 +50,8 @@ An order reaches the queue the moment one of its lines is marked **Ready** on [O
     ]}
   />
   <WfCard title="Dispatch verification">
-    <WfText muted>PU Sealer – 4 Liter: 2 of 2 still to scan. Do Verified waits for every box.</WfText>
-    <WfBar><WfInput placeholder="2026-10-10" /><WfButton primary>Do Verified</WfButton><Hotspot n={5} /></WfBar>
+    <WfText muted>PU Sealer – 4 Liter: 2 of 2 still to scan. Mark dispatch-verified waits for every box.</WfText>
+    <WfBar><WfInput placeholder="2026-10-10" /><WfButton primary>Mark dispatch-verified</WfButton><Hotspot n={5} /></WfBar>
   </WfCard>
 </Wireframe>
 
@@ -60,7 +60,7 @@ An order reaches the queue the moment one of its lines is marked **Ready** on [O
   <span key="2"><b>Progress.</b> Boxes scanned across the order's Ready lines.</span>,
   <span key="3"><b>A stopped box.</b> What was wrong, in words, with the way to ask for an override when the box is the wrong product or pack size.</span>,
   <span key="4"><b>Each line.</b> Its lots and how many boxes are scanned. The badge says Dispatched, Not Ready, All scanned, To scan, or Scan optional.</span>,
-  <span key="5"><b>Do Verified.</b> Once every box is scanned and the lines are billed, this marks the order dispatched.</span>,
+  <span key="5"><b>Mark dispatch-verified.</b> Once every box is scanned and the lines are billed, this marks the order dispatched.</span>,
 ]} />
 
 <Steps>
@@ -80,11 +80,11 @@ The loaders can scan the boxes on the **Mahek Factory** phone app instead: open 
 A red panel says why. See [What stops a box](#what-stops-a-box) below.
 </Step>
 <Step title="Verify once everything is scanned">
-When every box is scanned and the lines are billed, pick the dispatch date and press **Do Verified**. The boxes become **dispatched**, the order leaves the queue, and the bill appears on [Transport](/docs/erp/transport).
+When every box is scanned and the lines are billed, pick the dispatch date and press **Mark dispatch-verified**. The boxes become **dispatched**, the order leaves the queue, and the bill appears on [Transport](/docs/erp/transport).
 </Step>
 </Steps>
 
-<Callout kind="note" title="Who can press Do Verified">
+<Callout kind="note" title="Who can press Mark dispatch-verified">
 Verifying is the office's step on **Orders → Billing & dispatch**. The desk offers the same button to people who also hold the Orders screen. Anybody else sees *Billing & dispatch is not on your account, so somebody in the office verifies.*
 </Callout>
 
@@ -133,7 +133,7 @@ A box scanned by mistake can be taken off the order before dispatch: press **Tak
 
 ## Stock packed before box labels
 
-Stock packed before box ids existed has no label to scan. On such a line the badge reads **Scan optional**, and people who hold the Orders screen see **Allocate a lot by hand** — pick the lot and the quantity as you would have before. Do Verified does not wait for scans on these lines.
+Stock packed before box ids existed has no label to scan. On such a line the badge reads **Scan optional**, and people who hold the Orders screen see **Allocate a lot by hand** — pick the lot and the quantity as you would have before. Mark dispatch-verified does not wait for scans on these lines.
 
 ## Printing dispatch labels
 
@@ -146,7 +146,7 @@ The label sheet has three buttons. **Send to printer** sends the labels straight
 <Faq q="The order is not in the queue.">
 None of its lines is Ready yet, or every Ready line is already dispatch-verified. Mark the lines Ready on Orders.
 </Faq>
-<Faq q="Do Verified is greyed out.">
+<Faq q="Mark dispatch-verified is greyed out.">
 Either a line still has boxes to scan (the panel above the button says how many), or nothing on the order is billed yet. Bill the lines on Orders → Under process & ready first.
 </Faq>
 <Faq q="I scanned a box from a different lot than the one on the order. Is that wrong?">

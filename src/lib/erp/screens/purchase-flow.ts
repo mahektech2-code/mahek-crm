@@ -418,7 +418,7 @@ export async function requisitionForm(ctx: ErpContext, init?: Record<string, str
       id: "edit",
       recordId: r!.id,
       title: `Edit ${r!.reqNo ? `${requirementLabel(r!.reqNo)} · ` : ""}${editing.item}`,
-      sub: "One item of the requirement. The item and its purchase rule are fixed once raised; everything else can change until it is on a PO.",
+      sub: "The item and its purchase rule are fixed; the rest can change until it is on a PO.",
       submit: "Save item",
       init: {
         date: r!.reqDate,
@@ -454,7 +454,7 @@ export async function requisitionForm(ctx: ErpContext, init?: Record<string, str
     screen: "requisitions",
     id: "new",
     title: "New purchase requirement",
-    sub: "Step 1 of the purchase flow. List every item the department needs; each item's purchase rule decides where it goes next.",
+    sub: "Every item the department needs.",
     submit: "Raise requirement",
     init: { date: today(), godown: ctx.workingGodown?.name ?? "", priority: "Medium", ...(offered.length === 1 ? { department: offered[0] } : {}), ...headerInit },
     initLines: start ? [{ item: start, required: init?.required ?? "" }] : undefined,
@@ -585,6 +585,7 @@ function flowPanel(v: ReqView, st: Stage, money: boolean, minQuotations: number)
   const ranked = rankQuotes(v.quotes, v.r.requiredQty, today());
   return {
     kind: "purchaseFlow",
+    covers: ["reqNo", "method", "stage", "vendor", "po"],
     data: {
       steps: FLOW_STEPS,
       step: st.step,
@@ -594,7 +595,7 @@ function flowPanel(v: ReqView, st: Stage, money: boolean, minQuotations: number)
         ...(v.r.reqNo ? [{ l: "Requirement", v: requirementLabel(v.r.reqNo) }] : []),
         ...stockFacts(v),
         { l: "Purchase rule", v: methodLabel(v.rule) },
-        { l: "Method", v: v.method ? methodLabel(v.method) : "Waiting for the buyer" },
+        ...(v.method && v.method === v.rule ? [] : [{ l: "Method", v: v.method ? methodLabel(v.method) : "Waiting for the buyer" }]),
         ...(v.r.methodNote ? [{ l: "Buyer's note", v: v.r.methodNote }] : []),
         { l: "Vendor", v: v.supplier ?? "Not chosen yet" },
         ...(v.r.selectionNote ? [{ l: "Why this quotation", v: v.r.selectionNote }] : []),
@@ -1147,7 +1148,7 @@ async function quotationForm(ctx: ErpContext, opts: { requisitionId?: string; qu
     id: editing ? "edit" : "new",
     recordId: editing?.id,
     title: editing ? `Edit quotation · ${editing.supplier}` : "Add a quotation",
-    sub: "One vendor's price for one requirement. Quotations are compared on landed cost: rate × quantity, its GST, and the freight.",
+    sub: "Compared on landed cost: rate × quantity, GST and freight.",
     submit: editing ? "Save quotation" : "Add quotation",
     init: editing
       ? {
@@ -1385,7 +1386,7 @@ const quotations: ScreenModule = {
         sortDefault: ["rank", 1],
         newForm: money ? (form ?? undefined) : undefined,
         newLabel: "Add quotation",
-        noDataLine: "No quotations yet. A requirement collects them when its item's purchase rule is Quotation.",
+        noDataLine: "No quotations yet. Items bought by quotation collect them here.",
       },
       rows,
     };
@@ -1499,7 +1500,7 @@ export async function purchaseOrderForm(ctx: ErpContext, opts: { supplierId?: st
     title: po ? `Edit ${poLabel(po.po.poNumber)}` : "New purchase order",
     sub: po
       ? "Only a PO still awaiting approval is edited. Saving keeps it waiting for approval."
-      : "Raised from requirements whose vendor is chosen. It goes for approval on save, and only an approved PO can be sent or received against.",
+      : "Goes for approval on save. Only an approved PO is sent or received against.",
     submit: po ? "Save PO" : "Raise PO for approval",
     lineLabel: "Item",
     init: {
@@ -1640,6 +1641,7 @@ function poPanel(p: PoView, money: boolean) {
   if (p.po.closedAt) history.push({ l: p.po.status === "Cancelled" ? "Cancelled" : "Closed", v: `${stampLine(null, p.po.closedAt).replace(/^Created /, "")}${p.po.closeReason ? ` — ${p.po.closeReason}` : ""}` });
   return {
     kind: "purchaseOrder",
+    covers: ["items", "value", "received"],
     data: {
       steps: FLOW_STEPS,
       step,

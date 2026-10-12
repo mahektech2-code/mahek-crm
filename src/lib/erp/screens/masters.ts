@@ -133,7 +133,7 @@ async function rawMaterialForm(ctx: ErpContext, id?: string): Promise<FormSpec> 
         req: true,
         sec: "Purchase rule",
         opts: PURCHASE_METHODS.map((m) => m.label),
-        hint: "Direct purchase: pick the vendor, raise the PO (boxes, cans, stationery, routine chemicals). Quotation: collect and compare quotations first (price-sensitive chemicals). Buyer decision: the buyer chooses per requirement.",
+        hint: "Direct: pick the vendor and raise the PO. Quotation: compare quotations first. Buyer decides: chosen per requirement.",
       },
       {
         k: "preferredSupplier",
@@ -737,7 +737,7 @@ const productsScreen: ScreenModule = {
         hidden,
         groups: ["sfg"],
         chips: "kind",
-        noDataLine: "No products yet. The catalogue is maintained in the Admin Console → Catalogue.",
+        noDataLine: "No products yet. The catalogue is kept in Admin Console → Catalogue.",
       },
       rows: rows.map((r) => {
         const cpb = r.cpb ?? 1;
@@ -904,7 +904,7 @@ async function customerEditForm(id: string, mine = false): Promise<FormSpec | nu
     id: "edit",
     recordId: id,
     title: `Edit ${r.name}`,
-    sub: "Changes here are the ERP's. The name, the tagged sales person and the price list are set where the account is managed.",
+    sub: "Name, sales person and price list are set where the account is managed.",
     submit: "Save changes",
     init: {
       grade: r.p?.grade ?? "",
@@ -1044,11 +1044,11 @@ const customersScreen: ScreenModule = {
         const st = partyStatus(r);
         const actions: ActionSpec[] = [];
         if (st !== "Active")
-          actions.push({ id: "activate", l: "Activate", primary: true, why, confirm: "Are You Sure! This Party Is Verified By Admin" });
+          actions.push({ id: "activate", l: "Activate", primary: true, why, confirm: "Activate this party? Its orders can then move." });
         if (st !== "Deactive")
           actions.push({ id: "deactivate", l: "Deactivate", why, confirm: `Deactivate ${r.name}? New orders will not be accepted.` });
         if (st === "Active")
-          actions.push({ id: "pend", l: "Mark Pending", why, confirm: "Are You Sure!" });
+          actions.push({ id: "pend", l: "Mark pending", why, confirm: "Mark this party pending? Its orders wait until it is activated again." });
         actions.push({ id: "edit", l: "Edit details", loadsForm: true });
         return {
           id: r.id,
@@ -1484,7 +1484,7 @@ const priceListsScreen: ScreenModule = {
         hidden,
         groups: ["list"],
         readOnly: true,
-        noDataLine: "No published price list yet. Lists are written and published on the Price Desk.",
+        noDataLine: "No published price list yet. Lists are published on the Price Desk.",
       },
       rows: rows.map((r) => ({
         id: r.id,
