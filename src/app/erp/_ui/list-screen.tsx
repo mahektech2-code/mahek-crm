@@ -52,7 +52,9 @@ export type ListTab = {
  */
 export function ListTabs({ label, tabs, toggle }: { label: string; tabs: ListTab[]; toggle?: { label: string; href: string } | null }) {
   return (
-    <nav aria-label={`${label} lists`} className="mb-4 flex items-center overflow-x-auto border-b border-line">
+    /* Tabs WRAP rather than scroll: on a tablet Orders and Logistics have more
+       tabs than fit, and a tab scrolled out of sight is one nobody finds. */
+    <nav aria-label={`${label} lists`} className="mb-4 flex flex-wrap items-center border-b border-line">
       {tabs.map((t) => (
         <Link
           key={t.key}
