@@ -41,6 +41,7 @@ import {
   mbosDocuments,
   mbosSamples,
   mbosUserTerritories,
+  notifications,
   orders,
   products,
   users,
@@ -67,7 +68,7 @@ import {
   recordDistributorAgreement,
   submitForManagementReview,
 } from "@/lib/actions/distributor-appointment";
-import { reassignLead } from "@/lib/actions/sales";
+import { bulkReassignLeads, reassignLead } from "@/lib/actions/sales";
 import {
   convertProspect,
   markLeadLost,
@@ -397,9 +398,11 @@ describe("R — the reads are counted in the database", () => {
     assert.ok(refs.lostReasons.length > 0);
     assert.ok(refs.failureReasons.length > 0);
     assert.ok(refs.sampleReasons.length > 0);
-    assert.deepEqual(refs.salesmen.map((s) => s.name).sort(), ["Salesman A", "Salesman B"]);
+    const ids = new Set(refs.salesmen.map((s) => s.id));
+    assert.ok(ids.has(salesA.id) && ids.has(salesB.id), "salesmen can be given a lead");
+    assert.ok(ids.has(telecaller.id), "and so can a telecaller - every active CRM or Salesman App person");
+    assert.equal(refs.salesmen.length, ids.size, "each person once, by id");
     assert.equal(refs.me.id, manager.id);
-    assert.ok(!refs.salesmen.some((s) => s.id === telecaller.id), "only people who hold the Salesman App can be given a lead");
   });
 });
 
@@ -756,16 +759,55 @@ describe("M — every mutation persists, and the screen is told what the databas
     assert.equal(bogus.ok, false, "the reason list is configuration");
   });
 
-  test("reassign: persists, notifies, and refuses somebody who cannot hold a book", async () => {
+  test("reassign: persists for a salesman AND a telecaller, notifies, and refuses an unknown account", async () => {
     const lead = await makeLead({ leadStage: "prospect", ...fullProspectFields() });
     const r = await reassignLead({ leadId: lead.id, salesmanId: salesB.id });
     assert.equal(r.ok, true, r.ok ? "" : r.error);
     assert.equal((await row(lead.id)).ownerId, salesB.id);
     assert.equal((await pipelineLead(lead.id, DAY))!.lead.owner, "Salesman B");
 
-    const bad = await reassignLead({ leadId: lead.id, salesmanId: telecaller.id });
-    assert.equal(bad.ok, false, "a telecaller holds no Salesman App, so cannot be given a lead");
-    assert.equal((await row(lead.id)).ownerId, salesB.id, "nothing moved");
+    const toTelecaller = await reassignLead({ leadId: lead.id, salesmanId: telecaller.id });
+    assert.equal(toTelecaller.ok, true, toTelecaller.ok ? "" : toTelecaller.error);
+    assert.equal((await row(lead.id)).ownerId, telecaller.id, "a telecaller is given it, by id");
+    const told = await db.select().from(notifications).where(eq(notifications.userId, telecaller.id));
+    assert.ok(told.some((n) => n.href === `/crm/leads/${lead.id}`), "told, with a web route they can open");
+
+    const bad = await reassignLead({ leadId: lead.id, salesmanId: "usr_does_not_exist" });
+    assert.equal(bad.ok, false, "an id that is nobody is refused");
+    assert.equal((await row(lead.id)).ownerId, telecaller.id, "nothing moved");
+  });
+
+  test("reassign to a salesman with NO area says it will not show on the handset; with an area it will", async () => {
+    const fresh = await makeUser("Fresh Salesman", "associate", [{ app: "field", role: "associate" }], manager.id);
+    const lead = await makeLead({ leadStage: "prospect", ...fullProspectFields() });
+
+    const noArea = await reassignLead({ leadId: lead.id, salesmanId: fresh.id });
+    assert.equal(noArea.ok, true, noArea.ok ? "" : noArea.error);
+    assert.equal((await row(lead.id)).ownerId, fresh.id, "assigned either way");
+    assert.match(noArea.ok ? (noArea.message ?? "") : "", /will NOT show on their Salesman App handset/);
+
+    await db.insert(mbosUserTerritories).values({ id: id("ter"), userId: fresh.id, kind: "state", region: "Maharashtra" });
+    const other = await makeLead({ leadStage: "prospect", ...fullProspectFields() });
+    const withArea = await reassignLead({ leadId: other.id, salesmanId: fresh.id });
+    assert.equal(withArea.ok, true, withArea.ok ? "" : withArea.error);
+    assert.match(withArea.ok ? (withArea.message ?? "") : "", /reaches their Salesman App handset at the next sync/);
+  });
+
+  test("bulk reassign: a telecaller and a salesman are each accepted, an unknown id is refused", async () => {
+    const a = await makeLead({ leadStage: "prospect", ...fullProspectFields() });
+    const b = await makeLead({ leadStage: "prospect", ...fullProspectFields() });
+
+    const toTelecaller = await bulkReassignLeads({ leadIds: [a.id], salesmanId: telecaller.id });
+    assert.equal(toTelecaller.ok, true, toTelecaller.ok ? "" : toTelecaller.error);
+    assert.equal((await row(a.id)).ownerId, telecaller.id);
+
+    const toSalesman = await bulkReassignLeads({ leadIds: [b.id], salesmanId: salesB.id });
+    assert.equal(toSalesman.ok, true, toSalesman.ok ? "" : toSalesman.error);
+    assert.equal((await row(b.id)).ownerId, salesB.id);
+
+    const bad = await bulkReassignLeads({ leadIds: [a.id], salesmanId: "usr_does_not_exist" });
+    assert.equal(bad.ok, false);
+    assert.equal((await row(a.id)).ownerId, telecaller.id, "nothing moved");
   });
 
   test("next action: persists with its owner, and refuses an owner who cannot sign in", async () => {

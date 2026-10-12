@@ -68,6 +68,11 @@ import {
   type TerritoryKind,
 } from "@/lib/services/territory-service";
 import { bookIdsIgnoringTerritory } from "@/lib/services/mbos-service";
+import {
+  assignableOwner,
+  placeSentence,
+  type OwnerPlace,
+} from "@/lib/services/lead-desk-assignment-service";
 import { refreshDayMoney, repriceDay, rescoreLeg } from "@/lib/services/expense-submit-service";
 import { ensureDay } from "@/lib/services/expense-service";
 import { writeHometowns } from "@/lib/services/hometown-service";
@@ -297,6 +302,37 @@ async function tell(userId: string, title: string, body: string, mbosHref: strin
      REFUSED — a screen that by construction cannot contain either. Null is the
      honest default and falls through to `/notifications`. */
   await notifyUsers([{ userId, title, body, mbosHref }]).catch(() => {});
+}
+
+/**
+ * TELL WHOEVER WAS JUST GIVEN LEAD(S), saying where they will find them.
+ *
+ * `tell` only ever carried a handset route, which was right while the new owner
+ * was always a salesman. A telecaller or a CRM-only account is given a web
+ * route instead, and a handset person with no allocated area is told the
+ * truth: it is theirs, and it will show once an area is set.
+ */
+async function notifyNewOwner(
+  to: { id: string; place: OwnerPlace; noArea: boolean },
+  n: { id: string | null; title: string; body: string; handsetHref: string },
+) {
+  const where =
+    to.place === "handset"
+      ? to.noArea
+        ? " It will show on your handset once an area is allocated to you."
+        : " It is on your handset at the next sync."
+      : to.place === "crm"
+        ? " It is in your All Leads."
+        : " It is on your Calling desk.";
+  await notifyUsers([
+    {
+      userId: to.id,
+      title: n.title,
+      body: `${n.body}${where}`,
+      href: to.place === "handset" ? undefined : n.id ? `/crm/leads/${n.id}` : "/crm/leads",
+      mbosHref: to.place === "handset" ? n.handsetHref : null,
+    },
+  ]).catch(() => {});
 }
 
 /** The handset screen an approval's decision is about. */
@@ -2345,23 +2381,17 @@ export async function reassignLead(input: {
       return ok(undefined, "Already theirs.");
     }
 
-    const [salesman] = await db
-      .select({ id: users.id, name: users.name, active: users.active })
-      .from(users)
-      .innerJoin(
-        appAccess,
-        and(eq(appAccess.userId, users.id), eq(appAccess.app, "field")),
-      )
-      .where(eq(users.id, input.salesmanId))
-      .limit(1);
+    /* ANY ACTIVE CRM OR SALESMAN APP ACCOUNT, by id — the same set the "New
+       owner" list and the Change owner list offer (`assignableOwner`), so an
+       offered choice is never refused. This asked for the Salesman App alone,
+       which refused every telecaller. Where the lead will appear for them is
+       said in the confirmation rather than assumed. */
+    const salesman = await assignableOwner(input.salesmanId);
     if (!salesman) {
       return err(
-        "That person does not hold the Salesman App, so a lead cannot be put on their handset.",
+        "That person has no active CRM or Salesman App account, so a lead given to them would not be visible to anybody.",
         "validation",
       );
-    }
-    if (!salesman.active) {
-      return err(`${salesman.name}'s account is closed.`, "validation");
     }
 
     const [previousOwner] = lead.ownerId
@@ -2390,12 +2420,12 @@ export async function reassignLead(input: {
       afterState: { assignedToUserId: input.salesmanId } as never,
     });
 
-    await tell(
-      input.salesmanId,
-      `${leadLabel(lead)} is now yours`,
-      `${user.name} assigned you this lead${lead.city ? ` in ${lead.city}` : ""}. It is on your handset at the next sync.`,
-      `/lead?id=${encodeURIComponent(input.leadId)}`,
-    );
+    await notifyNewOwner(salesman, {
+      id: input.leadId,
+      title: `${leadLabel(lead)} is now yours`,
+      body: `${user.name} assigned you this lead${lead.city ? ` in ${lead.city}` : ""}.`,
+      handsetHref: `/lead?id=${encodeURIComponent(input.leadId)}`,
+    });
     if (previousOwner) {
       await tell(
         previousOwner.id,
@@ -2406,7 +2436,9 @@ export async function reassignLead(input: {
     }
 
     refresh();
-    return okVoid(`${leadLabel(lead)} reassigned to ${salesman.name}.`);
+    return okVoid(
+      `${leadLabel(lead)} reassigned to ${salesman.name}.${placeSentence(salesman.name, salesman.place, salesman.noArea)}`,
+    );
   } catch (e) {
     return fromThrown(e);
   }
@@ -2801,19 +2833,14 @@ export async function bulkReassignLeads(input: {
   try {
     const user = await requireSalesAccess({ modules: LEAD_MODULES, manager: true });
 
-    const [salesman] = await db
-      .select({ id: users.id, name: users.name, active: users.active })
-      .from(users)
-      .innerJoin(appAccess, and(eq(appAccess.userId, users.id), eq(appAccess.app, "field")))
-      .where(eq(users.id, input.salesmanId))
-      .limit(1);
+    /* The same set `reassignLead` accepts and the picker offers. */
+    const salesman = await assignableOwner(input.salesmanId);
     if (!salesman) {
       return err(
-        "That person does not hold the Salesman App, so leads cannot be put on their handset.",
+        "That person has no active CRM or Salesman App account, so leads given to them would not be visible to anybody.",
         "validation",
       );
     }
-    if (!salesman.active) return err(`${salesman.name}'s account is closed.`, "validation");
 
     const { leads, missing } = await bulkLeads(input.leadIds);
     if (!leads.length && !missing.length) return err("Nothing selected.", "validation");
@@ -2849,12 +2876,12 @@ export async function bulkReassignLeads(input: {
         })),
       );
 
-      await tell(
-        input.salesmanId,
-        `${plural(moving.length, "lead")} ${moving.length === 1 ? "is" : "are"} now yours`,
-        `${user.name} assigned them to you. They are on your handset at the next sync.`,
-        "/leads",
-      );
+      await notifyNewOwner(salesman, {
+        id: null,
+        title: `${plural(moving.length, "lead")} ${moving.length === 1 ? "is" : "are"} now yours`,
+        body: `${user.name} assigned them to you.`,
+        handsetHref: "/leads",
+      });
 
       /* One message per person who lost work, not one per lead. */
       const lost = new Map<string, number>();
@@ -2873,7 +2900,12 @@ export async function bulkReassignLeads(input: {
 
     refresh();
     const outcome = { done: moving.length, failed };
-    return ok(outcome, bulkMessage(outcome, `moved to ${salesman.name}`));
+    return ok(
+      outcome,
+      `${bulkMessage(outcome, `moved to ${salesman.name}`)}${
+        moving.length ? placeSentence(salesman.name, salesman.place, salesman.noArea) : ""
+      }`,
+    );
   } catch (e) {
     return fromThrown(e);
   }

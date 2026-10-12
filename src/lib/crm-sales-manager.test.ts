@@ -872,8 +872,8 @@ describe("E — the Sales Manager's Edit: six fields, inside the book, and nothi
   });
 
   test("a refused owner leaves the earlier fields saved and says so", async () => {
-    // noModule holds no Salesman App, so `reassignLead` refuses them.
-    const r = await editLeadBasics(sixFields(mineA.id, { ownerId: noModule.id, leadManagerId: null }));
+    // An id that is no active CRM or Salesman App account is refused by `reassignLead`.
+    const r = await editLeadBasics(sixFields(mineA.id, { ownerId: "usr_does_not_exist", leadManagerId: null }));
     assert.equal(r.ok, false);
     assert.match(r.ok ? "" : r.error, /Already saved: .*city/);
     const after = await row(mineA.id);

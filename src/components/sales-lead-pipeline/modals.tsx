@@ -1207,7 +1207,7 @@ function ReassignModal({ lead, onClose }: ModalProps) {
       footer={<Footer onClose={onClose} label="Reassign" disabled={!owner || owner === lead.ownerId} onSave={() => void doReassign(owner)} />}
     >
       <FormError />
-      <Field label="New owner" className="mb-3" hint="Only people who hold the Salesman App can be given a lead.">
+      <Field label="New owner" className="mb-3" hint="Any active CRM or Salesman App person can be given a lead. Where it will appear for them is shown once it is done.">
         <Select value={owner} onChange={(e) => setOwner(e.target.value)}>
           <option value="">Choose…</option>
           {refs.salesmen.map((p) => (
