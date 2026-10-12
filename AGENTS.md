@@ -3750,6 +3750,17 @@ used only for a day with neither: a position is evidence the phone was on, and
 a forgotten punch-out left the tracker recording through the evening at home,
 so the day used to close at 23:58.
 
+**AND NOTHING CLOSES A DAY ANY MORE, which reverses the paragraph above
+(October 2026).** Field salesmen who start at ten at night to travel between
+cities were punched out by the nightly `markMissedCheckouts` while still on
+the road, so it is gone: only a punch-out ends a day. A day nobody punched out
+of stays open and carries no verdict until a regularisation closes it. The
+handset's start-of-day tidy-up (`state/boot.tsx`) closes nothing on or after
+the stretch still running (`runningSince`), and the positions route accepts
+an open day's trail for `mbos.location.serviceMaxDayHours` from the start of
+that stretch instead of stopping at midnight, the same ceiling the handset's
+recorder keeps.
+
 **A regularisation request is something somebody asked for.** The handset sends
 `regularisationRequested: true` on every punch-in outside the radius, reason or
 none; with a company-wide base location that filed a "request" for every

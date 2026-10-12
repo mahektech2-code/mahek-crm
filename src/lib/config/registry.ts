@@ -6438,6 +6438,7 @@ export type Config = {
   "mbos.location.unplannedVisitsPerDay": number;
   "mbos.location.trackWhileWorking": boolean;
   "mbos.location.trackEverySeconds": number;
+  "mbos.location.serviceMaxDayHours": number;
   "mbos.location.trailKeepEverySeconds": number;
   "mbos.location.trailStalledAfterMisses": number;
   "mbos.location.queueRetentionDays": number;

@@ -4,7 +4,6 @@ import { db } from "@/db";
 import { mbosAttendanceDays, mbosDevices, mbosPositions } from "@/db/schema";
 import { authenticate } from "@/lib/services/mbos-service";
 import { getConfig } from "@/lib/config/store";
-import { dayBoundaryWindow } from "@/lib/business-date";
 import { readDeviceState } from "@/lib/mbos/device-state";
 
 /* ---------------------------------------------------------------------------
@@ -126,6 +125,13 @@ const MAX_BATCH = 500;
  */
 const EDGE_GRACE_MS = 2 * 60_000;
 
+/** When the stretch still open began: the last session's `inAt`, else the day's check-in. */
+function openStretchStart(sessions: unknown, checkInAt: number): number {
+  if (!Array.isArray(sessions)) return checkInAt;
+  const last = sessions[sessions.length - 1] as { inAt?: unknown; outAt?: unknown } | undefined;
+  return last && last.outAt == null && typeof last.inAt === "number" ? last.inAt : checkInAt;
+}
+
 /**
  * The id a fix would have if the handset had minted one.
  *
@@ -237,6 +243,7 @@ export async function POST(request: Request) {
       day: mbosAttendanceDays.day,
       checkInAt: mbosAttendanceDays.checkInAt,
       checkOutAt: mbosAttendanceDays.checkOutAt,
+      sessions: mbosAttendanceDays.sessions,
     })
     .from(mbosAttendanceDays)
     .where(
@@ -256,35 +263,25 @@ export async function POST(request: Request) {
   }
 
   /*
-   * AN OPEN DAY ENDS WHEN ITS DAY DOES, not never.
+   * AN OPEN DAY ENDS AT THE TRACKER'S OWN CEILING, not at midnight and not
+   * never.
    *
-   * It used to run to infinity, on the reasoning that an open day is one still
-   * being worked. That is true of TODAY and of nothing else: once a day is
-   * over, `markMissedCheckouts` closes it at the last evidence it can see —
-   * and where it can see none it deliberately leaves the check-out null, marks
-   * the day `auto_checked_out` and never looks at it again. So a test check-in
-   * nobody used became a session with no end, and every fix that person sent
-   * afterwards fell inside it. On production two such days from August
-   * authorised a salesman's trail through the night and a whole un-checked-in
-   * day a month later, which is the beacon on somebody's evening this route
-   * exists to refuse.
-   *
-   * The end is the day's own closing boundary, from the working-day
-   * configuration, so "which day does this fix belong to" is answered here the
-   * way the attendance row's `day` was. A day worked past midnight and not yet
-   * closed refuses its after-midnight fixes as `no-session-yet` or `partial` —
-   * the handset keeps them — and the nightly close decides the rest.
+   * Never was wrong: a test check-in nobody closed became a session with no
+   * end, and a month later it authorised a salesman's whole night. Midnight
+   * was wrong the other way: a salesman who punches in at ten at night to
+   * travel between cities works through it, and every fix after twelve was
+   * refused while he was plainly on duty. Nothing closes a day automatically
+   * any more — only a punch-out does — so the end of an open day is the same
+   * ceiling the handset's recorder keeps, `mbos.location.serviceMaxDayHours`,
+   * counted from the start of the stretch still open. One number on both
+   * ends, so the phone never records what the office would refuse.
    */
-  const workingDay = {
-    timezone: config["workingDay.timezone"],
-    dayBoundaryHour: config["workingDay.dayBoundaryHour"],
-    workingDays: config["workingDay.workingDays"],
-  };
+  const maxDayMs = Math.max(1, config["mbos.location.serviceMaxDayHours"]) * 3_600_000;
   const windows = sessions.map((s) => ({
     from: s.checkInAt!.getTime() - EDGE_GRACE_MS,
     to: s.checkOutAt
       ? s.checkOutAt.getTime() + EDGE_GRACE_MS
-      : Date.parse(dayBoundaryWindow(s.day, workingDay).end),
+      : openStretchStart(s.sessions, s.checkInAt!.getTime()) + maxDayMs,
   }));
 
   const inside = values.filter((v) => {

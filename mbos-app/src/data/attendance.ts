@@ -559,6 +559,16 @@ async function bindSelfie(mediaId: string, attendanceId: string): Promise<void> 
   await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [attendanceId, mediaId]);
 }
 
+/**
+ * When the stretch he is still punched in on began, or null if he is not
+ * punched in. A night shift punched in at ten is still running after
+ * midnight, so the start-of-day tidy-up closes nothing from that point on.
+ */
+export async function runningSince(userId: string): Promise<number | null> {
+  const row = await currentRow(userId);
+  return openSession(sessionsOf(row))?.inAt ?? null;
+}
+
 /** Is the day running right now? Drives which button Home shows. */
 export async function dayState(userId: string): Promise<{
   started: boolean;
@@ -604,7 +614,12 @@ export async function autoCloseMissedCheckouts(userId: string): Promise<number> 
     'SELECT * FROM attendance_days WHERE userId = ? AND checkInAt IS NOT NULL AND checkOutAt IS NULL AND day < ?',
     [userId, today()],
   );
+  /* A night shift is not a missed punch-out: the day he punched in on at ten
+     last night is still running after midnight, and only he ends it. */
+  const running = await currentRow(userId);
+  const stillRunning = running && openSession(sessionsOf(running)) ? running.id : null;
   for (const r of rows) {
+    if (r.id === stillRunning) continue;
     await run('UPDATE attendance_days SET autoMarked = 1 WHERE id = ?', [r.id]);
   }
   return rows.length;

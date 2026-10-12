@@ -92,5 +92,5 @@ The phone and the Sales Dashboard both count missed punch-outs over the last <Se
 ## Where the code and the intent disagree today
 
 - <Setting k="mbos.attendance.selfieRequired" /> is on the Settings screen, but no code reads it: the selfie is required by the type of `checkIn` and `checkOut` whatever the setting says (`mbos-app/src/data/attendance.ts`).
-- <Setting k="mbos.attendance.autoCheckOutHour" /> is not read by any code; forgotten days are closed at the last evidence instead (`src/lib/mbos-jobs.ts` `markMissedCheckouts`).
+- <Setting k="mbos.attendance.autoCheckOutHour" /> is not read by any code. Nothing punches a salesman out automatically: a day stays open until he punches out, so a night shift that starts at 10 pm runs past midnight. A forgotten punch-out is corrected by regularisation.
 - <Setting k="mbos.location.trackEverySeconds" /> is passed to Android as `timeInterval`, which expo-location drops on Android; the effective cadence is the JavaScript throttle above.

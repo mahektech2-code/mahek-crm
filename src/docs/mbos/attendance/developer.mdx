@@ -16,7 +16,7 @@ The day is written locally in `mbos-app/src/data/attendance.ts`, gated by `data/
 | Cadence (pure) | `mbos-app/src/engines/cadence.ts` | `shouldKeepFix` |
 | Server — day | `src/lib/actions/mbos.ts` `handleAttendance` | Upsert per person per day, bind selfies, derive worked seconds and status |
 | Server — trail | `src/app/api/mbos/positions/route.ts` | Batches of fixes, session matching, device state |
-| Server — jobs | `src/lib/mbos-jobs.ts` `markMissedCheckouts`; `src/lib/services/attachment-service.ts` `sweepAttendanceSelfies` | Nightly close at last evidence; hourly selfie sweep |
+| Server — jobs | `src/lib/services/attachment-service.ts` `sweepAttendanceSelfies` | Hourly selfie sweep. Nothing closes a day automatically |
 
 ## Punching in
 
@@ -44,7 +44,7 @@ What to notice:
   sessions: "jsonb — the list as the handset reported it, with inSelfieId and outSelfieId on each. Not a cache: never rebuilt from the two marks.",
   check_in_selfie_id: "First-in mirror. Written only once the attachment row exists — a foreign key must not refuse a punch-in over a photo still uploading. The sessions list holds every id regardless.",
   check_out_selfie_id: "Last-out mirror, same rule.",
-  auto_checked_out: "Closed by markMissedCheckouts rather than by a button press.",
+  auto_checked_out: "Closed by the old nightly auto punch-out (removed October 2026) rather than by a button press. Nothing sets it now.",
   worked_seconds: "Derived on the server from sessions. The handset's own figure is ignored.",
   setup_unverified: "The readiness rows that were not ticked when the day opened.",
 }} />
@@ -53,9 +53,7 @@ What to notice:
 
 ### Forgotten punch-outs
 
-<Code file="src/lib/mbos-jobs.ts" symbol="markMissedCheckouts" collapsed />
-
-Activity first, position only where there is no activity, and the last open session is closed at the same instant and marked `autoClosed`. Without closing the session, `workedSecondsOf` read the day as still running and the verdict job skipped it for ever.
+Nothing punches a salesman out but the salesman. A nightly job used to close every day still open after midnight at the last thing he did; field salesmen who start at ten at night to travel between cities were punched out while still on the road, so it was removed in October 2026. A day with no punch-out stays open and carries no verdict until a regularisation closes it. On the handset, `runningSince` in `mbos-app/src/data/attendance.ts` keeps the start-of-day tidy-up in `state/boot.tsx` away from a stretch still running. The trail of an open day is accepted for <Setting k="mbos.location.serviceMaxDayHours" /> hours from the start of the open stretch (`src/app/api/mbos/positions/route.ts`), the same ceiling the handset's recorder keeps.
 
 ### Selfie retention
 
@@ -133,6 +131,6 @@ Positions stay on their own endpoint and id scheme. Folding a changing value int
 | Gap | Where |
 |---|---|
 | `mbos.attendance.selfieRequired` is never read; selfies are always required | `mbos-app/src/data/attendance.ts` `checkIn`/`checkOut` |
-| `mbos.attendance.autoCheckOutHour` is never read | `src/lib/mbos-jobs.ts` `markMissedCheckouts` |
+| `mbos.attendance.autoCheckOutHour` is never read, and nothing punches anybody out automatically | `src/lib/config/registry.ts` |
 | `mbos.location.trackEverySeconds` reaches Android as `timeInterval`, which is ignored there | `mbos-app/src/sync/trail.ts` `start` |
 | The handset's `autoCloseMissedCheckouts` only flags local rows; the real close is the server job | `mbos-app/src/data/attendance.ts` |
