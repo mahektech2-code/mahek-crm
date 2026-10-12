@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { erpGodowns, erpRawMaterials } from "@/db/schema";
 import type { ErpContext } from "../access";
 import type { ErpPower } from "../powers";
-import type { ColSpec } from "../ui";
+import type { ColSpec, FieldSpec } from "../ui";
 import { err, type Result } from "@/lib/result";
 import { calendarDate } from "@/lib/business-date";
 
@@ -13,6 +13,9 @@ import { calendarDate } from "@/lib/business-date";
 export type Col = ColSpec & { pw?: ErpPower };
 
 export const has = (ctx: ErpContext) => (p: string) => ctx.powers.has(p as ErpPower);
+
+/** An ERP manager or administrator — who runs alerts, recipes, verifies expenses and edits help videos. */
+export const isErpManager = (ctx: Pick<ErpContext, "administrator" | "level">): boolean => ctx.administrator || ctx.level === "manager";
 
 export type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -27,6 +30,15 @@ export async function godownOptions(ctx: ErpContext, opts: { lost?: boolean } = 
     .where(eq(erpGodowns.status, "active"))
     .orderBy(asc(erpGodowns.name));
   return rows.filter((g) => !g.reserved || (opts.lost !== false && ctx.powers.has("lostStock")));
+}
+
+/**
+ * The godown picker on a form, said once: a required select of the godowns the
+ * form may offer (from `godownOptions`). A form adds what is its own — read
+ * only on an edit, a default, a hint — through `over`.
+ */
+export function godownField(gds: { name: string }[], over: Partial<FieldSpec> = {}): FieldSpec {
+  return { k: "godown", l: "Godown", t: "select", req: true, opts: gds.map((g) => g.name), ...over } as FieldSpec;
 }
 
 export async function godownIdByName(name: string | null): Promise<string | null> {

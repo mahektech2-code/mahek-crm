@@ -118,13 +118,13 @@ export default async function ErpLabels({ searchParams }: { searchParams: Promis
         <div className="flex flex-wrap items-center justify-end gap-3 no-print">
           {order != null ? <Link href={`/erp/dispatch?order=${order}`}>Dispatch desk</Link> : null}
           {copiesShown != null ? (
-            <form method="get" className="flex items-center gap-2 text-[13px]">
+            <form method="get" className="flex items-center gap-2 text-meta">
               {sfg ? <input type="hidden" name="sfg" value={sfg} /> : null}
               {one("godown") ? <input type="hidden" name="godown" value={one("godown")} /> : null}
               {purchase ? <input type="hidden" name="purchase" value={purchase} /> : null}
               <label htmlFor="copies">Copies</label>
-              <input id="copies" name="copies" type="number" min={1} max={MAX_COPIES} defaultValue={copiesShown} className="h-9 w-[72px] rounded-[4px] border border-line-strong bg-surface px-2 text-sm" />
-              <button type="submit" className="h-9 cursor-pointer rounded-[4px] border border-line-strong bg-surface px-3 text-sm hover:bg-canvas">
+              <input id="copies" name="copies" type="number" min={1} max={MAX_COPIES} defaultValue={copiesShown} className="h-9 w-[72px] rounded-control border border-line-strong bg-surface px-2 text-sm" />
+              <button type="submit" className="h-9 cursor-pointer rounded-control border border-line-strong bg-surface px-3 text-sm hover:bg-canvas">
                 Set
               </button>
             </form>

@@ -1,3 +1,4 @@
+import { APP_TIMEZONE } from "@/lib/business-date";
 import Link from "next/link";
 import { erpContext } from "@/lib/erp/access";
 import { accuracyFlow, dashboardSections, latestDigest } from "@/lib/erp/dashboard";
@@ -16,9 +17,9 @@ export default async function ErpDashboard() {
   const where = ctx.workingGodown?.name ?? null;
   const [sections, digest, flow] = await Promise.all([dashboardSections(ctx, where), latestDigest(), accuracyFlow(ctx, where)]);
   const first = ctx.user.name.split(" ")[0];
-  const hour = Number(new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", hour12: false }));
+  const hour = Number(new Date().toLocaleString("en-IN", { timeZone: APP_TIMEZONE, hour: "numeric", hour12: false }));
   const hello = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
-  const today = new Date().toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", weekday: "long", day: "numeric", month: "short", year: "numeric" });
+  const today = new Date().toLocaleDateString("en-IN", { timeZone: APP_TIMEZONE, weekday: "long", day: "numeric", month: "short", year: "numeric" });
   const moneyOff = !ctx.powers.has("viewPurchaseMoney") && !ctx.powers.has("viewSalesAmounts");
 
   return (
@@ -28,7 +29,7 @@ export default async function ErpDashboard() {
     >
       {digest ? (
         <Callout tone="brand" className="block">
-          <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-[#5223E0] uppercase">
+          <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-brand-hover uppercase">
             Yesterday · {digest.day}
             {digest.servedBy && digest.servedBy !== "rules" ? " · summarised by AI from the figures below" : ""}
           </span>
@@ -48,7 +49,7 @@ export default async function ErpDashboard() {
             {flow.steps.map((st, i) => (
               <div key={st.l} className="min-w-0 border-r border-b border-divider">
                 <Link href={st.href} className="flex h-full flex-col gap-0.5 px-4 py-3 no-underline hover:bg-canvas hover:no-underline">
-                  <span className="flex items-center gap-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+                  <span className="flex items-center gap-1.5 text-2xs font-medium tracking-[0.04em] text-muted uppercase">
                     <span className="grid size-4 flex-none place-items-center rounded-full bg-canvas text-[10px] text-body">{i + 1}</span>
                     <span className="truncate" title={st.l}>
                       {st.l}

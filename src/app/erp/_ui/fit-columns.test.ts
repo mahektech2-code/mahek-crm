@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { ColSpec } from "@/lib/erp/ui";
-import { CHECK_COL, essentialKeys, fitColumns, minWidth } from "./fit-columns";
+import { BADGE_COL_MAX, badgeWidth, CHECK_COL, essentialKeys, fitColumns, minWidth } from "./fit-columns";
 
 const col = (k: string, t: ColSpec["t"], l = k): ColSpec => ({ k, l, t });
 
@@ -70,4 +70,18 @@ test("a long heading word widens its column rather than overflowing it", () => {
 test("the first column is drawn even when nothing fits", () => {
   const fit = fitColumns({ cols: WIDE, avail: 50 });
   assert.equal(fit.shown.length, 1);
+});
+
+test("a status or flags column is as wide as its longest badge, up to a ceiling", () => {
+  const cols: ColSpec[] = [
+    { k: "name", l: "Name", t: "b" },
+    { k: "status", l: "Status", t: "s" },
+    { k: "f", l: "Flags", t: "f" },
+  ];
+  const fit = fitColumns({ cols, avail: 1200, badgeChars: { status: 17, f: 400 } });
+  assert.equal(fit.widths.status, badgeWidth(17));
+  assert.ok(fit.widths.status > 112);
+  assert.equal(fit.widths.f, BADGE_COL_MAX);
+  /* No badge yet: the kind's own floor. */
+  assert.equal(minWidth(cols[1]), 112);
 });

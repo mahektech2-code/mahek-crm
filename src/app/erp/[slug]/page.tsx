@@ -1,8 +1,9 @@
 import { notFound, redirect } from "next/navigation";
 import { erpContext } from "@/lib/erp/access";
-import { erpHref, erpScreenBySlug } from "@/lib/erp/registry";
+import { erpScreenBySlug } from "@/lib/erp/registry";
 import { screenModule } from "@/lib/erp/screens";
-import { ListScreen, type ListTab } from "../_ui/list-screen";
+import { ListScreen } from "../_ui/list-screen";
+import { screenTabs } from "../_ui/screen-tabs";
 
 /**
  * Every list screen in the ERP. The screen's module on the server decides the
@@ -48,11 +49,7 @@ export default async function ErpScreenPage({
      `fl` what to call them. */
   const filter = sp.f ? { label: sp.fl ?? "Filtered", ids: sp.f.split(",") } : null;
 
-  const base = erpHref(screen);
-  const at = (k: string) => (k === views[0]?.key ? base : `${base}?view=${k}`);
-  const tabs: ListTab[] = views.map((v) => ({ key: v.key, label: v.label, href: at(v.key), active: v.key === key || v.alt?.key === key }));
-  const current = views.find((v) => v.key === key || v.alt?.key === key);
-  const toggle = current?.alt ? (current.alt.key === key ? { label: current.alt.back, href: at(current.key) } : { label: current.alt.label, href: at(current.alt.key) }) : null;
+  const { tabs, toggle } = await screenTabs(ctx, screen, key);
 
   return (
     <ListScreen

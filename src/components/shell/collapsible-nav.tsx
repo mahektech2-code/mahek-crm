@@ -56,6 +56,12 @@ export type NavRowGroup = {
    */
   icon: string;
   items: NavRowItem[];
+  /**
+   * A group that holds ONE screen drawn as that screen's own row, in its
+   * place, rather than a heading that opens onto a list of one — "Logistics ›
+   * Logistics" is a click that tells nobody anything.
+   */
+  flat?: boolean;
 };
 
 /* ---------------------------------------------------------------------------
@@ -221,6 +227,18 @@ export function CollapsibleNav({
       ))}
 
       {groups.map((group) => {
+        if (group.flat && group.items.length === 1)
+          return (
+            <div key={group.label} className="mt-1 first:mt-2">
+              <Row
+                item={group.items[0]}
+                active={isRowActive(group.items[0], pathname)}
+                count={countFor(group.items[0])}
+                renderIcon={renderIcon}
+                badgeToneFor={badgeToneFor}
+              />
+            </div>
+          );
         const isOpen = open === group.label;
         /*
          * A SHUT GROUP STILL SAYS WHAT IS WAITING.
@@ -243,19 +261,22 @@ export function CollapsibleNav({
               aria-expanded={isOpen}
               aria-controls={panelId}
               className={cx(
-                "relative mb-px flex min-h-9 w-full cursor-pointer items-center gap-2.5 rounded-[4px] pr-2 pl-2.5 text-left text-sm whitespace-nowrap",
+                "relative mb-px flex min-h-9 w-full cursor-pointer items-center gap-2.5 rounded-[4px] py-1.5 pr-2 pl-2.5 text-left text-sm",
                 /*
                  * THE GROUP YOU ARE IN IS MARKED WHETHER OR NOT IT IS OPEN.
                  * Opening another shuts this one, which would otherwise leave
                  * nothing anywhere saying which screen you are standing on.
                  */
                 activeGroup === group.label
-                  ? "font-medium text-[#5223E0]"
+                  ? "font-medium text-brand-hover"
                   : "text-body hover:bg-canvas hover:text-ink",
               )}
             >
               <span className="flex flex-none">{renderIcon(group.icon, 18)}</span>
-              <span className="min-w-0 flex-1 overflow-hidden text-ellipsis">
+              {/* A long name ("Complaints & credit notes") takes a second
+                  line rather than ending in "…" — a cut-off heading is one
+                  nobody can read. */}
+              <span className="min-w-0 flex-1 leading-[18px] break-words">
                 {group.label}
               </span>
               {isOpen ? null : waiting > 0 ? (
@@ -326,7 +347,7 @@ function Row({
       aria-current={active ? "page" : undefined}
       title={railed ? item.label : undefined}
       className={cx(
-        "relative mb-px flex items-center gap-2.5 rounded-[4px] border-l-[3px] text-sm whitespace-nowrap no-underline hover:no-underline",
+        "relative mb-px flex items-center gap-2.5 rounded-[4px] border-l-[3px] text-sm no-underline hover:no-underline",
         railed
           ? "min-h-9 justify-center border-l-transparent px-0"
           : /* The indent is the hierarchy. A sub-module drawn flush with its
@@ -335,7 +356,7 @@ function Row({
             ? "min-h-8 pr-2.5 pl-[25px]"
             : "min-h-9 pr-2.5 pl-[9px]",
         active
-          ? cx("font-medium text-[#5223E0]", !railed && "border-l-brand")
+          ? cx("font-medium text-brand-hover", !railed && "border-l-brand")
           : "border-l-transparent text-body hover:bg-canvas hover:text-ink",
       )}
     >
@@ -347,7 +368,7 @@ function Row({
       </span>
       {railed ? null : (
         <>
-          <span className="relative z-1 min-w-0 flex-1 overflow-hidden text-ellipsis">
+          <span className="relative z-1 min-w-0 flex-1 py-1.5 leading-[18px] break-words">
             {item.label}
           </span>
           {count > 0 ? <Badge count={count} tone={tone} /> : null}

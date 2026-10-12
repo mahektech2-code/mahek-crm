@@ -1,4 +1,5 @@
 import "server-only";
+import { erpLink } from "../registry";
 import { asc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { erpDrumAdjustments, erpGodowns, erpScrapBuyers, erpScrapEntries, erpSuppliers, users } from "@/db/schema";
@@ -10,7 +11,7 @@ import { refValues } from "../refs";
 import { erpAudit, erpId, int, num, paise, stampLine, text, type ScreenModule } from "../server";
 import type { ActionSpec, ColSpec, FieldSpec, FormSpec, ListRow } from "../ui";
 import { fd, inr, nf } from "../ui";
-import { godownIdByName, godownOptions, today } from "./common";
+import { godownField, godownIdByName, godownOptions, today } from "./common";
 import {
   AGE_BUCKETS,
   DRUM_CATEGORY,
@@ -400,7 +401,7 @@ const emptyDrums: ScreenModule = {
         sortDefault: ["emptied", 1],
         newForm: form,
         newLabel: "Record empty drum",
-        tools: [{ id: "sell", l: "Sell drums", href: "/erp/scrap-sales", why: sellWhy }],
+        tools: [{ id: "sell", l: "Sell drums", href: erpLink("scrapSales"), why: sellWhy }],
         noDataLine: "No Mahek-owned empty drums in stock. Drums appear here once they are scanned empty and weighed.",
       },
       rows: rows.map((d) => drumRow(ctx, d, limits, hist, [{ id: "sell", l: "Sell as scrap", primary: true, why: sellWhy, form: oneDrumSale(base, d) }])),
@@ -432,7 +433,7 @@ const drumReturnable: ScreenModule = {
         chips: "age",
         godownKey: "godown",
         sortDefault: ["emptied", 1],
-        tools: [{ id: "return", l: "Return drums", href: "/erp/drum-returns", primary: true, why: why(ctx, "scrapSale") }],
+        tools: [{ id: "return", l: "Return drums", href: erpLink("drumReturns"), primary: true, why: why(ctx, "scrapSale") }],
         noDataLine: "No supplier-owned drums waiting to be returned.",
       },
       rows: rows.map((d) => {
@@ -1021,7 +1022,7 @@ const scrapStockScreen: ScreenModule = {
         flags: [],
         title: `${DRUM_CATEGORY} · ${d.godown}`,
         header: "Mahek-owned empty drums only. Vendor-returnable drums are never scrap.",
-        actions: [{ id: "open", l: "Open the drums", href: "/erp/empty-drums" }],
+        actions: [{ id: "open", l: "Open the drums", href: erpLink("emptyDrums") }],
       })),
       ...stock
         .filter((s) => s.available !== 0)
@@ -1055,7 +1056,7 @@ const scrapStockScreen: ScreenModule = {
           header: [
             { k: "date", l: "Date", t: "date", req: true },
             { k: "category", l: "Category", t: "select", req: true, opts: cats },
-            { k: "godown", l: "Godown", t: "select", req: true, opts: gOpts.map((g) => g.name) },
+            godownField(gOpts),
             { k: "quantity", l: "Quantity", t: "num", req: true, min: 0.001 },
             { k: "unit", l: "Unit", t: "select", req: true, opts: ["Kg", "Pcs"] },
             { k: "note", l: "Note", t: "area", mic: true },

@@ -42,8 +42,8 @@ export function ColumnsMenu({
         aria-expanded={open}
         title={folded ? `${folded} more column${folded > 1 ? "s" : ""} in each record — open a row to see them, or choose which to show` : "Choose which columns to show"}
         className={cx(
-          "inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-[4px] border px-2.5 text-[13px] whitespace-nowrap",
-          chosen ? "border-brand bg-brand-soft font-medium text-[#5223E0]" : "border-line bg-surface text-body hover:bg-canvas",
+          "inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-control border px-2.5 text-meta whitespace-nowrap",
+          chosen ? "border-brand bg-brand-soft font-medium text-brand-hover" : "border-line bg-surface text-body hover:bg-canvas",
         )}
       >
         Columns
@@ -55,8 +55,8 @@ export function ColumnsMenu({
       {open ? (
         <>
           <div onClick={() => setOpen(false)} className="fixed inset-0 z-40" />
-          <div className="animate-fade-in absolute top-10 right-0 z-50 w-[300px] max-w-[90vw] overflow-hidden rounded-[6px] border border-line bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]">
-            <div className="border-b border-divider px-3 py-2.5 text-[12px] leading-[1.45] text-muted">
+          <div className="animate-fade-in absolute top-10 right-0 z-50 w-[300px] max-w-[90vw] overflow-hidden rounded-card border border-line bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]">
+            <div className="border-b border-divider px-3 py-2.5 text-xs leading-[1.45] text-muted">
               The list shows what fits your screen. Every column is in the record a row opens.
               {fit.dropped ? (
                 <span className="mt-1 block text-warn-ink">
@@ -73,7 +73,7 @@ export function ColumnsMenu({
                     key={c.k}
                     title={room ? undefined : "No room at this width — hide another column first"}
                     className={cx(
-                      "flex min-h-8 items-center gap-2.5 px-3 py-1 text-[13px]",
+                      "flex min-h-8 items-center gap-2.5 px-3 py-1 text-meta",
                       room ? "cursor-pointer text-ink hover:bg-canvas" : "cursor-not-allowed text-muted",
                     )}
                   >
@@ -82,21 +82,21 @@ export function ColumnsMenu({
                       checked={on}
                       disabled={!room}
                       onChange={() => toggle(c.k)}
-                      className="h-[15px] w-[15px] cursor-pointer accent-[#6835FB] disabled:cursor-not-allowed"
+                      className="h-[15px] w-[15px] cursor-pointer accent-brand disabled:cursor-not-allowed"
                     />
                     <span className="min-w-0 flex-1 truncate">{c.l}</span>
-                    {!room ? <span className="flex-none text-[11px]">No room</span> : null}
+                    {!room ? <span className="flex-none text-2xs">No room</span> : null}
                   </label>
                 );
               })}
             </div>
             <div className="flex items-center justify-between border-t border-divider px-3 py-2">
-              <span className="text-[12px] text-muted">{chosen ? "Your choice" : "Chosen to fit"}</span>
+              <span className="text-xs text-muted">{chosen ? "Your choice" : "Chosen to fit"}</span>
               <button
                 type="button"
                 disabled={!chosen}
                 onClick={() => onChoose(null)}
-                className="cursor-pointer text-[13px] font-medium text-[#5223E0] hover:underline disabled:cursor-default disabled:text-muted disabled:no-underline"
+                className="cursor-pointer text-meta font-medium text-brand-hover hover:underline disabled:cursor-default disabled:text-muted disabled:no-underline"
               >
                 Reset
               </button>

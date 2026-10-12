@@ -1,4 +1,6 @@
 import "server-only";
+import { erpLink } from "../registry";
+import { APP_TIMEZONE } from "@/lib/business-date";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
@@ -98,7 +100,7 @@ async function billChoices(): Promise<{ bills: Record<string, string[]>; goods: 
       from bills b
       join customers c on c.id = b.customer_id
       left join orders o on o.id = b.order_id
-     where b.bill_date >= (now() at time zone 'Asia/Kolkata')::date - 365
+     where b.bill_date >= (now() at time zone ${APP_TIMEZONE})::date - 365
      order by b.bill_date desc
   `)) as unknown as { party: string; bill: string; date: string; goods: string[] | null }[];
   const out = { bills: {} as Record<string, string[]>, goods: {} as Record<string, string[]>, billDate: {} as Record<string, string> };
@@ -301,7 +303,7 @@ function toRow(ctx: ErpContext, x: Row, files: Map<string, string[]>, canIssue: 
     actions.push({ id: "aiComplaintReject", l: "Reject the suggestion", confirm: "Reject the suggested type and summary?" });
   } else if (ai?.on && c.description) actions.push({ id: "aiComplaintRead", l: "Suggest type and summary", ai: true });
   actions.push({ id: "more", l: "Add More Credit", loadsForm: true });
-  actions.push({ id: "customer", l: "View customer", href: `/erp/customers?open=${c.customerId}` });
+  actions.push({ id: "customer", l: "View customer", href: erpLink("customers", { open: c.customerId }) });
   for (const f of files.get(c.id) ?? []) actions.push({ id: `file-${f}`, l: "Open attachment", href: `/api/attachments/${f}` });
   const response = c.resolvedAt ? Math.round((c.resolvedAt.getTime() - c.createdAt.getTime()) / 3600000) : null;
   return {

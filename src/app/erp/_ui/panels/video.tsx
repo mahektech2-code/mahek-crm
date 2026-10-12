@@ -12,7 +12,7 @@ function VideoPanel({ data }: PanelProps) {
   const v = data as Video;
   if (v.youtube)
     return (
-      <div className="relative overflow-hidden rounded-[6px] bg-ink pt-[56.25%]">
+      <div className="relative overflow-hidden rounded-card bg-ink pt-[56.25%]">
         <iframe
           src={`https://www.youtube-nocookie.com/embed/${v.youtube}`}
           title="Help video"
@@ -22,8 +22,8 @@ function VideoPanel({ data }: PanelProps) {
         />
       </div>
     );
-  if (v.file) return <video src={`/api/attachments/${v.file}`} controls className="w-full rounded-[6px] bg-ink" />;
-  return <span className="text-[13px] text-muted">{v.url ? "That link is not a YouTube video the ERP can play." : "No video attached."}</span>;
+  if (v.file) return <video src={`/api/attachments/${v.file}`} controls className="w-full rounded-card bg-ink" />;
+  return <span className="text-meta text-muted">{v.url ? "That link is not a YouTube video the ERP can play." : "No video attached."}</span>;
 }
 
 registerPanel("video", (p) => <VideoPanel {...p} />);

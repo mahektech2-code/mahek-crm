@@ -1,5 +1,6 @@
 import "server-only";
 import { and, eq, sql } from "drizzle-orm";
+import { orderTraceCode } from "../trace-links";
 import { db } from "@/db";
 import {
   bills,
@@ -822,7 +823,7 @@ async function customerForm() {
     header: [
       { k: "line", l: "Original order line and lot", t: "select", req: true, opts: lines.map(opt), hint: "Billed, dispatched lines with something not already returned.", wide: true },
       { k: "customer", l: "Customer", t: "text", readOnly: true, fillBy: fill((l) => l.customer) },
-      { k: "invoice", l: "Sales invoice", t: "text", readOnly: true, fillBy: fill((l) => l.billNo ?? `ORDER-${l.orderNo} (no Tally bill number)`) },
+      { k: "invoice", l: "Sales invoice", t: "text", readOnly: true, fillBy: fill((l) => l.billNo ?? `${orderTraceCode(l.orderNo)} (no Tally bill number)`) },
       { k: "outward", l: "Goods outward", t: "text", readOnly: true, fillBy: fill((l) => `Dispatched ${l.dispatchDate ? fd(l.dispatchDate) : ""} from ${l.godown}`) },
       { k: "product", l: "Product · batch", t: "text", readOnly: true, fillBy: fill((l) => `${l.sku} · ${l.lotCode}`) },
       { k: "sent", l: "Sent · already returned", t: "text", readOnly: true, fillBy: fill((l) => `${nf(l.sent)} ${unitOf(l)} · ${nf(l.returned)} returned`) },
@@ -943,7 +944,7 @@ function customerRowFor(ctx: ErpContext, r: CustomerRow, ds: DecisionRow[], godo
     fields: [
       { l: "Customer", v: r.customer },
       { l: "Original sales invoice", v: r.billNo ?? "No Tally bill number" },
-      { l: "Original goods outward", v: `ORDER-${r.orderNo}` },
+      { l: "Original goods outward", v: orderTraceCode(r.orderNo) },
       { l: "Product · batch", v: `${r.sku} · ${r.lot}` },
       { l: "Return quantity", v: `${nf(r.qty)} ${unit} · ${nf(r.litres)} L` },
       { l: "Reason", v: reasonLabel(r.reason, "customer") },
@@ -1033,7 +1034,7 @@ async function approveCredit(ctx: ErpContext, id: string, step: 1 | 2): Promise<
         loggedById: ctx.actor.id,
         loggedByName: ctx.actor.name,
         category: complaintCategoryFor(r.reason),
-        description: `Material returned: ${customerReturnLabel(r.no)} — ${nf(r.received)} ${r.unit.toLowerCase()} of ${r.sku}, lot ${r.lot}, on ORDER-${r.orderNo}${r.billNo ? ` (bill ${r.billNo})` : ""}. Reason: ${reasonLabel(r.reason, "customer")}.${r.remarks ? ` ${r.remarks}` : ""}`,
+        description: `Material returned: ${customerReturnLabel(r.no)} — ${nf(r.received)} ${r.unit.toLowerCase()} of ${r.sku}, lot ${r.lot}, on ${orderTraceCode(r.orderNo)}${r.billNo ? ` (bill ${r.billNo})` : ""}. Reason: ${reasonLabel(r.reason, "customer")}.${r.remarks ? ` ${r.remarks}` : ""}`,
         requestCn: true,
         billId: bill?.id ?? null,
         goodsDescription: `${customerReturnLabel(r.no)} · ${r.sku} · lot ${r.lot} · ${nf(r.received)} ${r.unit.toLowerCase()}`,

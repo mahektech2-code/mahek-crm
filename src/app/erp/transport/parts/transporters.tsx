@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { Modal } from "@/components/ui/modal";
 import { Drawer, DrawerHeader } from "@/components/ui/overlays";
-import { Badge, Button, Card, cx } from "@/components/ui/primitives";
+import { Badge, Button, Card, controlClass, cx } from "@/components/ui/primitives";
 import { erpLogisticsTransporter } from "@/lib/actions/erp-logistics";
 import { checkGstin } from "@/lib/engines/lead-scan";
 import type { Transporter, TransporterGodown } from "@/lib/erp/logistics";
@@ -34,7 +34,7 @@ export function Transporters({ rows, tree, labels, load, canWrite }: { rows: Tra
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <span className="text-[13px] text-muted">
+        <span className="text-meta text-muted">
           {rows.length} transporter{rows.length === 1 ? "" : "s"} · {rows.reduce((n, t) => n + t.godowns.length, 0)} godowns
         </span>
         {canWrite ? (
@@ -44,7 +44,7 @@ export function Transporters({ rows, tree, labels, load, canWrite }: { rows: Tra
         ) : null}
       </div>
       <Card className="overflow-hidden">
-        <div className={`grid ${COLS} gap-3 border-b border-divider bg-canvas px-4 py-2 text-[12px] font-medium text-muted`}>
+        <div className={`grid ${COLS} gap-3 border-b border-divider bg-canvas px-4 py-2 text-xs font-medium text-muted`}>
           <span>Transporter</span>
           <span>Godowns</span>
           <span>Main contact</span>
@@ -63,20 +63,20 @@ export function Transporters({ rows, tree, labels, load, canWrite }: { rows: Tra
                 <span className="min-w-0">
                   <span className="block truncate font-medium text-ink">{t.name}</span>
                   {t.gstin || t.consignmentLabel ? (
-                    <span className="block truncate text-[12px] text-muted">
+                    <span className="block truncate text-xs text-muted">
                       {t.gstin ? <span className="font-mono">{t.gstin}</span> : null}
                       {t.gstin && t.consignmentLabel ? " · " : null}
                       {t.consignmentLabel}
                     </span>
                   ) : null}
-                  {!t.active ? <Badge tone="muted">Not in use</Badge> : t.trackingUrl ? <span className="text-[12px] text-success">Online tracking</span> : null}
+                  {!t.active ? <Badge tone="muted">Not in use</Badge> : t.trackingUrl ? <span className="text-xs text-success">Online tracking</span> : null}
                 </span>
                 <GodownCell t={t} byId={byId} />
                 <span className="min-w-0" onClick={(e) => e.stopPropagation()}>
-                  {t.contactPerson ? <span className="block truncate text-[13px] text-body">{t.contactPerson}</span> : null}
+                  {t.contactPerson ? <span className="block truncate text-meta text-body">{t.contactPerson}</span> : null}
                   <CallLink phone={t.phone} name={t.name} />
                 </span>
-                <span className="text-[13px] text-body">{l.active ? `${l.active} bill${l.active === 1 ? "" : "s"}${l.road ? ` · ${l.road} on road` : ""}` : "—"}</span>
+                <span className="text-meta text-body">{l.active ? `${l.active} bill${l.active === 1 ? "" : "s"}${l.road ? ` · ${l.road} on road` : ""}` : "—"}</span>
                 <span className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
                   <Button size="sm" variant="ghost" onClick={() => setOpen(t.id)}>
                     View
@@ -123,15 +123,15 @@ const townOf = (g: TransporterGodown, byId: PlaceLookup) => (g.placeId && byId.g
 
 /** The godowns' towns, the first two named; the full paths ride on the hover. */
 function GodownCell({ t, byId }: { t: Transporter; byId: PlaceLookup }) {
-  if (!t.godowns.length) return <span className="text-[13px] text-muted">None added</span>;
+  if (!t.godowns.length) return <span className="text-meta text-muted">None added</span>;
   const names = [...new Set(t.godowns.map((g) => townOf(g, byId)))];
   return (
     <span className="min-w-0" title={t.godowns.map((g) => [g.label, placePath(g.placeId, byId) || g.address].filter(Boolean).join(" — ")).join("\n")}>
-      <span className="block truncate text-[13px] text-body">
+      <span className="block truncate text-meta text-body">
         {names.slice(0, 2).join(", ")}
         {names.length > 2 ? <span className="text-muted"> +{names.length - 2}</span> : null}
       </span>
-      <span className="block text-[12px] text-muted">
+      <span className="block text-xs text-muted">
         {t.godowns.length} godown{t.godowns.length === 1 ? "" : "s"} · {t.godowns.reduce((n, g) => n + g.contacts.length, 0)} people
       </span>
     </span>
@@ -182,21 +182,21 @@ function TransporterDetails({
             <section>
               <div className="mb-2 flex items-baseline justify-between">
                 <h3 className="text-sm font-semibold text-ink">Godowns</h3>
-                <span className="text-[12px] text-muted">{t.godowns.length || "None"}</span>
+                <span className="text-xs text-muted">{t.godowns.length || "None"}</span>
               </div>
               {t.godowns.length ? (
                 <div className="space-y-3">
                   {t.godowns.map((g, i) => (
-                    <div key={g.id} className="rounded-[6px] border border-line">
+                    <div key={g.id} className="rounded-card border border-line">
                       <div className="border-b border-divider bg-canvas px-3 py-2">
                         <div className="text-sm font-medium text-ink">{g.label || `Godown ${i + 1}`}</div>
-                        <div className="text-[12px] text-muted">{placePath(g.placeId, byId) || "Town not picked"}</div>
+                        <div className="text-xs text-muted">{placePath(g.placeId, byId) || "Town not picked"}</div>
                         {g.lat != null && g.lng != null ? (
-                          <a href={`https://www.google.com/maps?q=${g.lat},${g.lng}`} target="_blank" rel="noreferrer" className="mt-0.5 block text-[12px]">
+                          <a href={`https://www.google.com/maps?q=${g.lat},${g.lng}`} target="_blank" rel="noreferrer" className="mt-0.5 block text-xs">
                             Pin {g.lat.toFixed(5)}, {g.lng.toFixed(5)} — open the map
                           </a>
                         ) : (
-                          <div className="mt-0.5 text-[12px] text-muted">No pin yet</div>
+                          <div className="mt-0.5 text-xs text-muted">No pin yet</div>
                         )}
                       </div>
                       {g.contacts.length ? (
@@ -204,22 +204,22 @@ function TransporterDetails({
                           {g.contacts.map((c) => (
                             <li key={c.id} className="flex items-start justify-between gap-3 px-3 py-2">
                               <span className="min-w-0">
-                                <span className="block text-[13px] font-medium text-ink">{c.name || "No name"}</span>
+                                <span className="block text-meta font-medium text-ink">{c.name || "No name"}</span>
                               </span>
                               <span className="flex shrink-0 flex-col items-end gap-0.5">
-                                {c.phones.length ? c.phones.map((p) => <CallLink key={p} phone={p} name={c.name} />) : <span className="text-[12px] text-muted">No number</span>}
+                                {c.phones.length ? c.phones.map((p) => <CallLink key={p} phone={p} name={c.name} />) : <span className="text-xs text-muted">No number</span>}
                               </span>
                             </li>
                           ))}
                         </ul>
                       ) : (
-                        <div className="px-3 py-2 text-[12px] text-muted">Nobody added here yet.</div>
+                        <div className="px-3 py-2 text-xs text-muted">Nobody added here yet.</div>
                       )}
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="rounded-[6px] border border-dashed border-line px-3 py-4 text-center text-[13px] text-muted">No godowns added yet.</div>
+                <div className="rounded-card border border-dashed border-line px-3 py-4 text-center text-meta text-muted">No godowns added yet.</div>
               )}
             </section>
           </div>
@@ -239,7 +239,7 @@ function TransporterDetails({
 function Fact({ k, children }: { k: string; children: React.ReactNode }) {
   return (
     <div className="min-w-0">
-      <dt className="text-[12px] text-muted">{k}</dt>
+      <dt className="text-xs text-muted">{k}</dt>
       <dd className="mt-0.5 text-ink">{children ?? <span className="text-muted">—</span>}</dd>
     </div>
   );
@@ -294,7 +294,7 @@ function EditTransporter({
   const [adding, setAdding] = useState(false);
   const labelOptions = v.consignmentLabel && !labels.includes(v.consignmentLabel) ? [...labels, v.consignmentLabel] : labels;
 
-  const cls = "mt-1 block h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand";
+  const cls = controlClass({ className: "mt-1 block h-8.5" });
   const gst = checkGstin(v.gstin);
   const gstBad = !!gst && gst.check === "invalid";
 
@@ -344,7 +344,7 @@ function EditTransporter({
         </>
       }
     >
-      <div className="space-y-5 text-[12px] text-muted">
+      <div className="space-y-5 text-xs text-muted">
         <section>
           <SectionTitle>Company</SectionTitle>
           <div className="grid grid-cols-2 gap-3">
@@ -417,7 +417,7 @@ function EditTransporter({
               {errAt("trackingUrl") ? <span className="mt-1 block text-danger">{errAt("trackingUrl")}</span> : null}
             </label>
             <label className="col-span-2 flex items-center gap-2 text-sm text-body">
-              <input type="checkbox" checked={v.active} onChange={(e) => setV({ ...v, active: e.target.checked })} className="accent-[#6835FB]" /> In use
+              <input type="checkbox" checked={v.active} onChange={(e) => setV({ ...v, active: e.target.checked })} className="accent-brand" /> In use
             </label>
           </div>
         </section>
@@ -430,11 +430,11 @@ function EditTransporter({
               const townErr = errAt(`${at}.placeId`);
               const pinErr = errAt(`${at}.pin`);
               return (
-                <div key={g.key} className={cx("rounded-[6px] border", townErr ? "border-danger" : "border-line")}>
+                <div key={g.key} className={cx("rounded-card border", townErr ? "border-danger" : "border-line")}>
                   <div className="flex items-center justify-between border-b border-divider bg-canvas px-3 py-2">
                     <span className="text-sm font-medium text-ink">Godown {gi + 1}</span>
                     {godowns.length > 1 ? (
-                      <button type="button" onClick={() => setGodowns((gs) => gs.filter((x) => x.key !== g.key))} className="text-[12px] text-muted hover:text-danger">
+                      <button type="button" onClick={() => setGodowns((gs) => gs.filter((x) => x.key !== g.key))} className="text-xs text-muted hover:text-danger">
                         Remove godown
                       </button>
                     ) : null}
@@ -477,11 +477,11 @@ function EditTransporter({
                     <div>
                       <div className="mb-1">Location pin</div>
                       <PinField value={g.pin} error={!!pinErr} onChange={(pin) => setG(g.key, { pin })} />
-                      {pinErr ? <span className="mt-1 block text-danger">{pinErr}</span> : <span className="mt-1 block text-[12px] text-muted">Latitude, longitude — pick it on the map, type it, or use this device&apos;s location when standing in the godown.</span>}
+                      {pinErr ? <span className="mt-1 block text-danger">{pinErr}</span> : <span className="mt-1 block text-xs text-muted">Latitude, longitude — pick it on the map, type it, or use this device&apos;s location when standing in the godown.</span>}
                     </div>
 
                     <div>
-                      <div className="mb-1.5 text-[12px] font-medium text-body">People at this godown</div>
+                      <div className="mb-1.5 text-xs font-medium text-body">People at this godown</div>
                       <div className="space-y-2">
                         {g.people.map((p, pi) => {
                           const pErr = errAt(`${at}.c${pi + 1}`);
@@ -513,7 +513,7 @@ function EditTransporter({
                           );
                         })}
                       </div>
-                      <button type="button" onClick={() => setG(g.key, { people: [...g.people, blankPerson()] })} className="mt-2 text-[12px] font-medium text-brand">
+                      <button type="button" onClick={() => setG(g.key, { people: [...g.people, blankPerson()] })} className="mt-2 text-xs font-medium text-brand">
                         + Add a person
                       </button>
                     </div>
@@ -535,7 +535,7 @@ function SectionTitle({ children, hint }: { children: React.ReactNode; hint?: st
   return (
     <div className="mb-2.5 border-b border-divider pb-1.5">
       <div className="text-sm font-semibold text-ink">{children}</div>
-      {hint ? <div className="mt-0.5 text-[12px] text-muted">{hint}</div> : null}
+      {hint ? <div className="mt-0.5 text-xs text-muted">{hint}</div> : null}
     </div>
   );
 }

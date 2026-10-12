@@ -25,6 +25,33 @@ The ERP is **data-driven**. One registry (`lib/erp/registry.ts`) lists every scr
 The engines in `lib/erp/engines/` perform **no I/O**, like every engine in MahekOne. The form previews a figure with the same function the server stores it with (`calc` names on derived fields map to `lib/erp/calcs/`), so the preview and the save cannot disagree.
 </Callout>
 
+## One home for each shared piece
+
+The ERP is about a hundred screens and tabs. Anything two of them draw or decide the same way has ONE home, so a change is one edit. Before writing something a second time, look here.
+
+| Piece | Its home | Used by |
+|---|---|---|
+| A page's frame, title and the line under it | `Page` in `src/app/erp/_ui/page-head.tsx`; title and sub from the registry's screen | Every list (`ListScreen`), Dashboard, Logistics, Dispatch, Trace, Settings, a bill's road |
+| "Type or scan a code, press Go" | `QuickFind` in `page-head.tsx` | Trace, Dispatch desk |
+| Small links in a header's corner | `PageLinks` in `page-head.tsx` | Dispatch order, a bill's road |
+| A screen's tabs and each tab's count | `screenTabs` in `src/app/erp/_ui/screen-tabs.ts`, drawn by `ListTabs` | The generic list route and Logistics |
+| What is waiting, per list | `erpNavCounts` in `src/lib/erp/counts.ts` (cached per request) | Sidebar badges (summed over tabs) and tab badges |
+| Which order lines are Pending / being worked | `isPendingLine`, `isWorkingLine` in `screens/sales.ts` | The Orders tabs, their badges, the dashboard |
+| Order-line columns and their headings | `ORDER_COL` / `orderCols` in `screens/sales.ts` | Orders tabs, Billing & dispatch |
+| A line's extra expenses | `setExtraExpenses`, `EXTRA_EXPENSE_PROMPT` in `screens/sales.ts` | Orders → Billing & dispatch, Logistics → Paid freight |
+| The godown picker on a form | `godownField` in `screens/common.ts` | Every form with a godown |
+| Is this person an ERP manager | `isErpManager` in `screens/common.ts` | Alerts, recipes, help videos, expenses, stock counts |
+| A power's refusal sentence | `powerRefusal` in `src/lib/erp/access.ts` | Every handler that checks a power |
+| Running a write outside a list | `useAct` in `src/app/erp/_ui/use-act.ts` (`resultError` for the wording) | Logistics, Settings; a list's own actions use `useErpUi().finish`, which reports in the same words |
+| "Are you sure — and why?" | `ReasonDialog` in `transport/parts/common.tsx` | Void an LR, reopen a delivered bill |
+| A drawer panel's stepper and figure tile | `Stepper`, `Figure` in `src/app/erp/_ui/panels/parts.tsx` | Purchase flow, returns, stock count, scrap panels |
+| A text control's look | `controlClass` / `Input` / `Textarea` in `src/components/ui/primitives.tsx` | ERP form fields, Logistics toolbars, Trace, Dispatch |
+| A callout (warn, danger, brand, success) | `Callout` in `primitives.tsx` | Form summaries, Trace's missing links, the dashboard digest |
+| How wide a column is | `fitColumns` in `src/app/erp/_ui/fit-columns.ts` — status and flag columns as wide as their longest badge | Every list |
+| Links to the bespoke screens | `erpLink` (lists and tabs, `registry.ts`); `erpTraceHref`, `orderTraceCode`, `erpDispatchHref`, `erpPoHref`, `erpBillRoadHref`, `erpLabelsHref` (`trace-links.ts`) | Never type `/erp/…` |
+| Money, dates and timestamps | `inr`, `inrRate`, `nf`, `fd`, `rupeesField` (`src/lib/erp/ui.ts`); `stamp`, `phoneDisplay` (`src/lib/format.ts`); `APP_TIMEZONE` | Every screen — never `toLocaleString` with a typed zone |
+| Colours, radii, type sizes | Tokens in `src/app/globals.css`: `brand`, `brand-hover`, `brand-deep`, `whatsapp`; `rounded-control`, `rounded-card`; `text-2xs` (11px), `text-xs`, `text-meta` (13px), `text-sm`, `text-md` (15px) | Never a hex value or `text-[13px]` |
+
 ## A request, end to end
 
 <Flow caption="GET /erp/stock?view=fgStock" chart={`
@@ -109,7 +136,7 @@ It runs in the nightly pass (`runNightly` in `lib/jobs.ts`, right after `erp-ale
 
 <Code file="src/lib/erp/counts.ts" symbol="erpNavCounts" collapsed />
 
-A badge for a screen with tabs is the sum over `erpKeysOf(screen)` in the layout, so Transport's badge is its Pending LR count.
+A badge for a screen with tabs is the sum over `erpKeysOf(screen)` in the layout, and each tab draws its own figure through `screenTabs`: Logistics' LR desk, On the road and Customer messages each carry their own count (LRs to attach, calls due, messages to send), and the sidebar shows their sum.
 
 ## Access and modules
 
@@ -152,6 +179,5 @@ A tile and a badge that count with different queries will disagree.
 
 | Gap | Where |
 |---|---|
-| Settings page subtitle differs from the registry's `sub` for the same screen | `src/app/erp/settings/page.tsx`; `registry.ts` `settings` |
 | The departments module still documents a removed Departments page | `src/lib/erp/departments.ts` header and `DepartmentStep.key` |
 | The units register reads at most the newest 5,000 boxes, with nothing on the screen saying so | `src/lib/erp/screens/units.ts` `unitRows` |

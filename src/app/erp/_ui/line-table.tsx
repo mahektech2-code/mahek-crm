@@ -25,7 +25,7 @@ import { Icon } from "./icons";
 
 type Line = Record<string, string>;
 
-const CELL = "h-8 w-full rounded-[4px] border bg-surface px-2 text-sm text-ink outline-none focus:border-brand";
+const CELL = "h-8 w-full rounded-control border bg-surface px-2 text-sm text-ink outline-none focus:border-brand";
 
 export function LineTable({
   spec,
@@ -134,15 +134,15 @@ export function LineTable({
       </div>
 
       {paste.open ? (
-        <div className="grid gap-2 rounded-[6px] border border-brand-softer bg-brand-soft/40 p-3">
-          <span className="text-[13px] text-body">{add?.pasteHint ?? `One ${noun} a row, its quantity last.`}</span>
-          {paste.note ? <span className="text-[13px] font-medium text-ink">{paste.note}</span> : null}
+        <div className="grid gap-2 rounded-card border border-brand-softer bg-brand-soft/40 p-3">
+          <span className="text-meta text-body">{add?.pasteHint ?? `One ${noun} a row, its quantity last.`}</span>
+          {paste.note ? <span className="text-meta font-medium text-ink">{paste.note}</span> : null}
           <textarea
             value={paste.text}
             onChange={(e) => setPaste((p) => ({ ...p, text: e.target.value }))}
             rows={6}
             placeholder={"Toluene, 200\nMEK\t50\nTin can 5L 120"}
-            className="w-full rounded-[4px] border border-line bg-surface px-2.5 py-2 font-mono text-[13px] text-ink outline-none focus:border-brand"
+            className="w-full rounded-control border border-line bg-surface px-2.5 py-2 font-mono text-meta text-ink outline-none focus:border-brand"
           />
           <div className="flex gap-2">
             <Button variant="primary" onClick={applyPaste} disabled={!paste.text.trim()}>
@@ -152,19 +152,19 @@ export function LineTable({
           </div>
         </div>
       ) : paste.note ? (
-        <span className="text-[13px] text-success">{paste.note}</span>
+        <span className="text-meta text-success">{paste.note}</span>
       ) : null}
 
-      <div className="min-w-0 overflow-hidden rounded-[6px] border border-line">
+      <div className="min-w-0 overflow-hidden rounded-card border border-line">
         <div className="flex items-center justify-between gap-3 border-b border-divider bg-canvas px-3 py-2">
-          <span className="text-[13px] font-semibold text-ink">
+          <span className="text-meta font-semibold text-ink">
             {lines.length ? `${lines.length.toLocaleString("en-IN")} ${noun}${lines.length === 1 ? "" : "s"}` : `No ${noun}s yet`}
             {missingQty ? <span className="ml-2 font-normal text-warn-ink">· {missingQty} without a quantity</span> : null}
             {lineErrors ? <span className="ml-2 font-normal text-danger">· {lineErrors} to fix</span> : null}
           </span>
           {lines.length > 12 ? (
             <span className="relative w-56">
-              <input value={find} onChange={(e) => setFind(e.target.value)} placeholder="Find in this list" className={cx(CELL, "h-7 border-line pr-7 text-[13px]")} />
+              <input value={find} onChange={(e) => setFind(e.target.value)} placeholder="Find in this list" className={cx(CELL, "h-7 border-line pr-7 text-meta")} />
               <span className="pointer-events-none absolute top-1.5 right-2 flex text-muted">
                 <Icon n="search" s={14} />
               </span>
@@ -173,11 +173,11 @@ export function LineTable({
         </div>
         {lines.length === 0 ? (
           <div className="grid place-items-center gap-1 px-4 py-10 text-center">
-            <span className="flex size-9 items-center justify-center rounded-full bg-brand-soft text-[#5223E0]">
+            <span className="flex size-9 items-center justify-center rounded-full bg-brand-soft text-brand-hover">
               <Icon n="cart" />
             </span>
             <span className="text-sm font-medium text-ink">Search above to add the first {noun}</span>
-            <span className="text-[13px] text-muted">or paste a whole list from a spreadsheet — a hundred items take the same few seconds as one.</span>
+            <span className="text-meta text-muted">or paste a whole list from a spreadsheet — a hundred items take the same few seconds as one.</span>
           </div>
         ) : (
           <div className="max-h-[52vh] overflow-y-auto">
@@ -190,7 +190,7 @@ export function LineTable({
                 <col style={{ width: 40 }} />
               </colgroup>
               <thead className="sticky top-0 z-10 bg-surface">
-                <tr className="border-b border-divider text-left text-[11px] font-semibold tracking-[0.04em] text-muted uppercase">
+                <tr className="border-b border-divider text-left text-2xs font-semibold tracking-[0.04em] text-muted uppercase">
                   <th className="px-3 py-2 font-semibold">#</th>
                   {fields.map((f) => (
                     <th key={f.k} className={cx("px-2 py-2 font-semibold", f.t === "num" && "text-right")}>
@@ -203,7 +203,7 @@ export function LineTable({
               <tbody>
                 {shown.map(({ l, i }) => (
                   <tr key={i} className={cx("border-b border-divider last:border-b-0 align-middle", flash === i ? "bg-brand-soft" : "hover:bg-canvas/60")}>
-                    <td className="px-3 py-2 text-[13px] text-muted tabular-nums">{i + 1}</td>
+                    <td className="px-3 py-2 text-meta text-muted tabular-nums">{i + 1}</td>
                     {fields.map((f) => {
                       const err = errs[`l${i}.${f.k}`];
                       const values = { ...h, ...l };
@@ -222,7 +222,7 @@ export function LineTable({
                       } else if (f.t === "derived") {
                         const v = runCalc(f.calc, { h, l, lines, i, data });
                         cell = (
-                          <span className="block truncate py-1.5 text-[13px] text-body" title={v}>
+                          <span className="block truncate py-1.5 text-meta text-body" title={v}>
                             {v || "—"}
                           </span>
                         );
@@ -276,7 +276,7 @@ export function LineTable({
                         onClick={() => remove(i)}
                         title={`Remove ${l[pickField.k] || "this line"}`}
                         aria-label={`Remove ${l[pickField.k] || "this line"}`}
-                        className="inline-flex size-7 cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-danger-soft hover:text-danger"
+                        className="inline-flex size-7 cursor-pointer items-center justify-center rounded-control text-muted hover:bg-danger-soft hover:text-danger"
                       >
                         ×
                       </button>
@@ -285,7 +285,7 @@ export function LineTable({
                 ))}
                 {fl && !shown.length ? (
                   <tr>
-                    <td colSpan={fields.length + 2} className="px-3 py-4 text-center text-[13px] text-muted">
+                    <td colSpan={fields.length + 2} className="px-3 py-4 text-center text-meta text-muted">
                       Nothing on the list matches “{find}”
                     </td>
                   </tr>
@@ -330,7 +330,7 @@ function ItemSearch({
   };
   return (
     <span className="relative block">
-      <span className="pointer-events-none absolute top-2.5 left-2.5 flex text-[#5223E0]">
+      <span className="pointer-events-none absolute top-2.5 left-2.5 flex text-brand-hover">
         <Icon n="plus" s={15} />
       </span>
       <input
@@ -357,10 +357,10 @@ function ItemSearch({
             if (matches[hi]) choose(matches[hi]);
           } else if (e.key === "Escape") setOpen(false);
         }}
-        className="h-9 w-full rounded-[4px] border border-brand-softer bg-surface pr-3 pl-8 text-sm text-ink outline-none placeholder:text-muted focus:border-brand disabled:bg-canvas"
+        className="h-9 w-full rounded-control border border-brand-softer bg-surface pr-3 pl-8 text-sm text-ink outline-none placeholder:text-muted focus:border-brand disabled:bg-canvas"
       />
       {open && offered.length ? (
-        <span className="absolute top-10 right-0 left-0 z-30 block max-h-[280px] overflow-y-auto rounded-[6px] border border-line bg-surface py-1 shadow-[0_8px_24px_rgba(22,22,22,0.12)]">
+        <span className="absolute top-10 right-0 left-0 z-30 block max-h-[280px] overflow-y-auto rounded-card border border-line bg-surface py-1 shadow-[0_8px_24px_rgba(22,22,22,0.12)]">
           {matches.map((x, i) => (
             <button
               type="button"
@@ -376,7 +376,7 @@ function ItemSearch({
               {picked.has(x) ? <span className="flex-none text-xs text-muted">on the list · jump to it</span> : null}
             </button>
           ))}
-          {!matches.length ? <span className="block px-3 py-2.5 text-[13px] text-muted">Nothing matches “{q}”</span> : null}
+          {!matches.length ? <span className="block px-3 py-2.5 text-meta text-muted">Nothing matches “{q}”</span> : null}
           {ql && offered.filter((x) => x.toLowerCase().includes(ql)).length > 50 ? (
             <span className="block border-t border-divider px-3 py-2 text-xs text-muted">More match — keep typing</span>
           ) : null}

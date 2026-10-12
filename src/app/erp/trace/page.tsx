@@ -1,10 +1,13 @@
 import Link from "next/link";
+import { stamp } from "@/lib/format";
 import { redirect } from "next/navigation";
 import { erpContext } from "@/lib/erp/access";
+import { erpScreen } from "@/lib/erp/registry";
 import { traceCode, traceDashboard, type TraceResult } from "@/lib/erp/traceability";
-import { Badge, Card, cx, Dot } from "@/components/ui/primitives";
+import { Badge, Callout, Card, cx, Dot } from "@/components/ui/primitives";
 import { CardGrid } from "@/components/ui/card-grid";
-import { Page } from "../_ui/page-head";
+import { Page, QuickFind } from "../_ui/page-head";
+import { erpDispatchHref, erpTraceHref } from "@/lib/erp/trace-links";
 
 /**
  * TRACEABILITY — one search box that takes anything a person has in hand: a
@@ -18,6 +21,9 @@ import { Page } from "../_ui/page-head";
  */
 export const dynamic = "force-dynamic";
 
+/* The title and the line under it are the registry's, as on every list. */
+const SCREEN = erpScreen("trace")!;
+
 export default async function ErpTrace({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const ctx = await erpContext();
   if (!ctx.screens.has("trace")) redirect("/erp");
@@ -26,24 +32,14 @@ export default async function ErpTrace({ searchParams }: { searchParams: Promise
   const [result, dash] = await Promise.all([qv ? traceCode(qv) : Promise.resolve(null), qv ? Promise.resolve(null) : traceDashboard()]);
 
   return (
-    <Page title="Traceability" sub="Any box id, lot, batch, order or bill — where it came from, and where it went.">
-      <form action="/erp/trace" method="get" className="mb-5 flex max-w-[760px] gap-2">
-        <input
-          name="q"
-          defaultValue={qv}
-          autoFocus
-          placeholder="Scan or type: BX-261008-000125, an SFG lot, FG12NA, FP40NA, order 1256, a bill number…"
-          className="h-10 flex-1 rounded-[4px] border border-line bg-surface px-3 font-mono text-sm text-ink outline-none focus:border-brand"
-        />
-        <button type="submit" className="h-10 rounded-[4px] bg-brand px-4 text-sm font-medium text-white hover:opacity-90">
-          Trace
-        </button>
+    <Page title={SCREEN.label} sub={SCREEN.sub}>
+      <QuickFind action="/erp/trace" name="q" defaultValue={qv} mono button="Trace" className="max-w-[760px]" placeholder="Scan or type: BX-261008-000125, an SFG lot, FG12NA, FP40NA, order 1256, a bill number…">
         {qv ? (
-          <Link href="/erp/trace" className="flex h-10 items-center px-2 text-sm">
+          <Link href="/erp/trace" className="flex h-9 items-center px-2 text-sm">
             Dashboard
           </Link>
         ) : null}
-      </form>
+      </QuickFind>
 
       {qv && !result ? (
         <Card className="max-w-[760px] px-5 py-4 text-sm text-body">
@@ -65,9 +61,9 @@ function Dashboard({ d }: { d: NonNullable<Awaited<ReturnType<typeof traceDashbo
           {d.today.map((t) => (
             <Link key={t.l} href={t.href ?? "#"} className="no-underline hover:no-underline">
               <Card className="h-full px-4 py-3 hover:border-brand">
-                <span className="block text-[12px] text-muted">{t.l}</span>
+                <span className="block text-xs text-muted">{t.l}</span>
                 <span className="block text-xl font-semibold text-ink tabular-nums">{t.v}</span>
-                {t.sub ? <span className="block text-[12px] text-muted">{t.sub}</span> : null}
+                {t.sub ? <span className="block text-xs text-muted">{t.sub}</span> : null}
               </Card>
             </Link>
           ))}
@@ -82,7 +78,7 @@ function Dashboard({ d }: { d: NonNullable<Awaited<ReturnType<typeof traceDashbo
                 <span className={cx("text-2xl font-semibold tabular-nums", e.n ? (e.tone === "bad" ? "text-danger" : "text-warn-ink") : "text-muted")}>{e.n}</span>
                 <span className="min-w-0">
                   <span className="block text-sm font-medium text-ink">{e.l}</span>
-                  <span className="block text-[12px] text-muted">{e.sub}</span>
+                  <span className="block text-xs text-muted">{e.sub}</span>
                 </span>
               </Card>
             </Link>
@@ -98,13 +94,13 @@ function Dashboard({ d }: { d: NonNullable<Awaited<ReturnType<typeof traceDashbo
                 <ScanBadge result={s.result} />
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm text-ink">{s.message}</span>
-                  <span className="block text-[12px] text-muted">
-                    <Link href={`/erp/trace?q=${encodeURIComponent(s.code)}`} className="font-mono">
+                  <span className="block text-xs text-muted">
+                    <Link href={erpTraceHref(s.code)} className="font-mono">
                       {s.code}
                     </Link>
                     {s.orderNo ? (
                       <>
-                        {" "}· <Link href={`/erp/dispatch?order=${s.orderNo}`}>order {s.orderNo}</Link>
+                        {" "}· <Link href={erpDispatchHref(s.orderNo)}>order {s.orderNo}</Link>
                       </>
                     ) : null}
                     {s.by ? ` · ${s.by}` : ""} · {stamp(s.at)}
@@ -133,10 +129,6 @@ function ScanBadge({ result }: { result: string }) {
   return <Badge tone={t}>{l}</Badge>;
 }
 
-function stamp(iso: string): string {
-  return new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-}
-
 function TraceView({ r }: { r: TraceResult }) {
   return (
     <div className="flex flex-col gap-5">
@@ -149,14 +141,14 @@ function TraceView({ r }: { r: TraceResult }) {
           <dl className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-x-6 gap-y-2">
             {r.facts.map((f) => (
               <div key={f.l}>
-                <dt className="text-[12px] text-muted">{f.l}</dt>
+                <dt className="text-xs text-muted">{f.l}</dt>
                 <dd className="text-sm text-ink">{f.href ? <Link href={f.href}>{f.v}</Link> : f.v}</dd>
               </div>
             ))}
           </dl>
         ) : null}
         {r.links.length ? (
-          <div className="mt-3 flex flex-wrap gap-3 text-[13px]">
+          <div className="mt-3 flex flex-wrap gap-3 text-meta">
             {r.links.map((l) => (
               <Link key={l.l} href={l.href!}>
                 {l.l} →
@@ -167,11 +159,11 @@ function TraceView({ r }: { r: TraceResult }) {
       </Card>
 
       {r.missing.length ? (
-        <div className="rounded-[4px] border border-warn-line border-l-[3px] border-l-warn bg-warn-soft px-4 py-2.5 text-[13px] text-warn-ink">
+        <Callout className="mb-0 block text-meta text-warn-ink">
           {r.missing.map((m) => (
             <div key={m}>{m}</div>
           ))}
-        </div>
+        </Callout>
       ) : null}
 
       <div className="grid gap-5 lg:grid-cols-2">
@@ -184,20 +176,20 @@ function TraceView({ r }: { r: TraceResult }) {
                   <Card className="overflow-hidden">
                     <div className="flex items-center gap-2 border-b border-divider bg-canvas px-4 py-2">
                       <Badge tone="brand">{b.stage}</Badge>
-                      <span className="truncate font-mono text-[13px] text-ink">{b.title}</span>
+                      <span className="truncate font-mono text-meta text-ink">{b.title}</span>
                     </div>
                     {b.facts.length ? (
                       <dl className="grid grid-cols-2 gap-x-4 gap-y-1 px-4 py-2">
                         {b.facts.map((f) => (
                           <div key={f.l}>
-                            <dt className="text-[11px] text-muted">{f.l}</dt>
-                            <dd className="text-[13px] text-ink">{f.v}</dd>
+                            <dt className="text-2xs text-muted">{f.l}</dt>
+                            <dd className="text-meta text-ink">{f.v}</dd>
                           </div>
                         ))}
                       </dl>
                     ) : null}
                     {b.rows.map((x, j) => (
-                      <div key={j} className="flex items-center gap-2 border-t border-divider px-4 py-1.5 text-[13px]">
+                      <div key={j} className="flex items-center gap-2 border-t border-divider px-4 py-1.5 text-meta">
                         <Dot tone={x.tone === "warn" ? "warn" : x.tone === "bad" ? "danger" : "neutral"} />
                         {x.href ? <Link href={x.href}>{x.text}</Link> : <span className="text-body">{x.text}</span>}
                       </div>
@@ -220,14 +212,14 @@ function TraceView({ r }: { r: TraceResult }) {
               </div>
               {f.rows.map((x, j) => (
                 <div key={j} className="border-t border-divider px-4 py-1.5 first:border-0">
-                  <span className="block text-[13px] text-ink">{x.href ? <Link href={x.href}>{x.text}</Link> : x.text}</span>
-                  {x.sub ? <span className="block text-[12px] text-muted">{x.sub}</span> : null}
+                  <span className="block text-meta text-ink">{x.href ? <Link href={x.href}>{x.text}</Link> : x.text}</span>
+                  {x.sub ? <span className="block text-xs text-muted">{x.sub}</span> : null}
                 </div>
               ))}
             </Card>
           ))}
           <Card className="overflow-hidden">
-            <div className="border-b border-divider bg-canvas px-4 py-2 text-[13px] font-medium text-ink">Customers</div>
+            <div className="border-b border-divider bg-canvas px-4 py-2 text-meta font-medium text-ink">Customers</div>
             {r.customers.length ? (
               r.customers.map((c, i) => (
                 <div key={i} className="flex items-start gap-3 border-t border-divider px-4 py-2 first:border-0">
@@ -235,7 +227,7 @@ function TraceView({ r }: { r: TraceResult }) {
                     <Link href={c.href} className="block text-sm font-medium">
                       {c.customer}
                     </Link>
-                    <span className="block text-[12px] text-muted">
+                    <span className="block text-xs text-muted">
                       Order {c.orderNo}
                       {c.bill ? ` · bill ${c.bill}` : ""} · {c.sku} · lot{c.lots.length > 1 ? "s" : ""} {c.lots.join(", ")}
                     </span>
@@ -254,9 +246,9 @@ function TraceView({ r }: { r: TraceResult }) {
           </Card>
           {r.stock.length ? (
             <Card className="overflow-hidden">
-              <div className="border-b border-divider bg-canvas px-4 py-2 text-[13px] font-medium text-ink">Still in stock</div>
+              <div className="border-b border-divider bg-canvas px-4 py-2 text-meta font-medium text-ink">Still in stock</div>
               {r.stock.map((s, i) => (
-                <div key={i} className="flex justify-between border-t border-divider px-4 py-1.5 text-[13px] first:border-0">
+                <div key={i} className="flex justify-between border-t border-divider px-4 py-1.5 text-meta first:border-0">
                   <span>
                     <span className="font-mono">{s.lot}</span> · {s.where}
                   </span>
@@ -273,7 +265,7 @@ function TraceView({ r }: { r: TraceResult }) {
           <h3 className="mb-2 text-sm font-semibold text-ink">History</h3>
           <Card className="overflow-hidden">
             {r.history.map((h, i) => (
-              <div key={i} className="flex gap-3 border-t border-divider px-4 py-1.5 text-[13px] first:border-0">
+              <div key={i} className="flex gap-3 border-t border-divider px-4 py-1.5 text-meta first:border-0">
                 <span className="w-32 flex-none text-muted">{stamp(h.at)}</span>
                 <span className="flex-1 text-ink">{h.text}</span>
                 <span className="text-muted">{h.by ?? ""}</span>

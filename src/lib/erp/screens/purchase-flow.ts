@@ -22,6 +22,7 @@ import type { ErpContext } from "../access";
 import { refValues } from "../refs";
 import { categoriesFor, categoriesForDepartment, requirementDepartmentsFor, requirementRefusal, requirementVisibleTo } from "../departments";
 import { erpLink } from "../registry";
+import { erpPoHref } from "../trace-links";
 import { erpAudit, erpId, nextNumber, num, paise, rupeesField, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
 import type { ActionSpec, ColSpec, FormSpec, ListRow, ToolResult } from "../ui";
 import { fd, inr, inrRate, nf } from "../ui";
@@ -1660,7 +1661,7 @@ function poPanel(p: PoView, money: boolean) {
       }),
       totals: money ? { amount: inr(t.amountPaise), gst: inr(t.gstPaise), freight: inr(t.freightPaise), total: inr(t.totalPaise) } : null,
       history,
-      print: p.po.approvedAt && p.po.status !== "Rejected" ? `/erp/po/${p.po.id}` : null,
+      print: p.po.approvedAt && p.po.status !== "Rejected" ? erpPoHref(p.po.id) : null,
     },
   };
 }
@@ -1760,7 +1761,7 @@ const purchaseOrders: ScreenModule = {
           why: anyReceived ? "Goods were received against it — close it short instead" : "",
           prompt: { title: `Cancel ${poLabel(p.po.poNumber)}`, sub: "Its requirements return to Ready for PO, keeping their vendor.", submit: "Cancel PO", fields: [{ k: "reason", l: "Reason", t: "area", req: true }] },
         });
-      if (p.po.approvedAt && s !== "Rejected") actions.push({ id: "print", l: "Print PO", href: `/erp/po/${p.po.id}` });
+      if (p.po.approvedAt && s !== "Rejected") actions.push({ id: "print", l: "Print PO", href: erpPoHref(p.po.id) });
       const flags: string[] = [];
       if (s === "Pending approval") flags.push("awaitingApproval");
       if (RECEIVABLE_PO.includes(s) && p.po.deliveryDate < day) flags.push("deliveryLate");
@@ -1891,7 +1892,7 @@ const purchaseOrders: ScreenModule = {
           ? { label: "Open WhatsApp", href: `https://wa.me/91${digits.slice(-10)}?text=${encodeURIComponent(message)}` }
           : via === "Email" && p.supplierEmail
             ? { label: "Open email", href: `mailto:${p.supplierEmail}?subject=${encodeURIComponent(`Purchase order ${poLabel(p.po.poNumber)}`)}&body=${encodeURIComponent(message)}` }
-            : { label: "Open the PO to print", href: `/erp/po/${p.po.id}` };
+            : { label: "Open the PO to print", href: erpPoHref(p.po.id) };
       const data: ToolResult = {
         dialog: {
           title: `${poLabel(p.po.poNumber)} · sent by ${via}`,

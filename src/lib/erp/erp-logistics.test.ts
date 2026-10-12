@@ -27,6 +27,7 @@ import {
   erpRefValues,
   erpTransporterGodowns,
   erpTransporters,
+  erpOrderDetails,
   erpTransports,
   finishedGoods,
   places,
@@ -246,6 +247,18 @@ describe("dispatch opens the transport record (§18)", () => {
     assert.equal((await mod("paidFreight").load(ctx)).rows.length, 0);
     const [t] = await db.select().from(erpTransports);
     assert.equal(t.extraExpensePaise, 25000);
+  });
+
+  test("an extra expense entered on Orders → Billing & dispatch reaches the transport record too", async () => {
+    /* Orders had its own copy of the writer, and it skipped the transport record. */
+    const ctx = await as(admin);
+    await db.update(erpOrderDetails).set({ extraExpensesPaise: null });
+    await db.update(erpTransports).set({ extraExpensePaise: null });
+    const { rows } = await mod("orderDetails").load(ctx);
+    const res = await mod("orderDetails").actions!.extra(ctx, rows[0].id, { amount: "125" });
+    assert.ok(res.ok, JSON.stringify(res));
+    const [t] = await db.select().from(erpTransports);
+    assert.equal(t.extraExpensePaise, 12500);
   });
 });
 

@@ -1855,6 +1855,19 @@ an ERP administrator, so taking that away ends the preview too. A designation
 has nobody behind it, so lists that belong to a person answer for the
 administrator, and the banner says so. `erpAudit` always records the actor.
 
+**ONE HOME FOR EACH SHARED PIECE, and the map is in the docs.** The ERP
+grew screen by screen and copies drifted: extra expenses had two writers (one
+skipped the transport record), Logistics drew its own tab strip, the same
+order column had three headings, the dashboard listed the stock-control
+counts twice. ERP → Overview → Developer, "One home for each shared piece",
+names the single home of every piece two screens share — page frame and
+`QuickFind`, `screenTabs` and `erpNavCounts` (a tab's badge is the figure the
+sidebar sums), `isPendingLine`/`isWorkingLine`, `ORDER_COL`, `godownField`,
+`isErpManager`, `useAct`, `controlClass`, the link builders in
+`trace-links.ts`, the type and colour tokens. Look there before writing
+something a second time; never type an `/erp/…` URL, a hex brand colour, a
+pixel font size or a time zone.
+
 **Every write goes through four server actions** (`lib/actions/erp.ts`): run
 an action, run a bulk action, submit a form, load a form (which writes nothing
 and is the one a preview may open). Each re-checks that

@@ -34,7 +34,7 @@ export function ToTransport({ rows, today, canWrite }: { rows: Consignment[]; to
   return (
     <div className="space-y-4">
       {canWrite ? (
-        <div className={cx("sticky top-0 z-10 flex flex-wrap items-center gap-2 rounded-[6px] border px-4 py-2.5", sel.length ? "border-brand bg-brand-soft" : "border-line bg-surface")}>
+        <div className={cx("sticky top-0 z-10 flex flex-wrap items-center gap-2 rounded-card border px-4 py-2.5", sel.length ? "border-brand bg-brand-soft" : "border-line bg-surface")}>
           <span className="mr-2 text-sm font-medium text-ink">{sel.length ? `${plural(sel.length, "bill")} ticked` : "Tick bills to plan them"}</span>
           <Button size="sm" disabled={!sel.length || pending} onClick={() => due(today)}>
             Reaches today
@@ -43,7 +43,7 @@ export function ToTransport({ rows, today, canWrite }: { rows: Consignment[]; to
             Reaches tomorrow
           </Button>
           <span className="flex items-center gap-1">
-            <input type="date" value={day} min={today} onChange={(e) => setDay(e.target.value)} className="h-8 rounded-[4px] border border-line bg-surface px-2 text-[13px]" />
+            <input type="date" value={day} min={today} onChange={(e) => setDay(e.target.value)} className="h-8 rounded-control border border-line bg-surface px-2 text-meta" />
             <Button size="sm" disabled={!sel.length || pending || !day} onClick={() => due(day)}>
               Set day
             </Button>
@@ -53,7 +53,7 @@ export function ToTransport({ rows, today, canWrite }: { rows: Consignment[]; to
             Reached transporter
           </Button>
           {sel.length ? (
-            <button className="ml-auto cursor-pointer text-[13px] text-muted hover:underline" onClick={clear}>
+            <button className="ml-auto cursor-pointer text-meta text-muted hover:underline" onClick={clear}>
               Clear
             </button>
           ) : null}
@@ -68,10 +68,10 @@ export function ToTransport({ rows, today, canWrite }: { rows: Consignment[]; to
         return (
           <Card key={transporter} className="overflow-hidden">
             <div className="flex flex-wrap items-center gap-3 border-b border-divider bg-canvas px-4 py-2.5">
-              {canWrite ? <input type="checkbox" checked={all} onChange={() => setMany(ids, !all)} className="h-[15px] w-[15px] accent-[#6835FB]" aria-label={`Tick every bill for ${transporter}`} /> : null}
+              {canWrite ? <input type="checkbox" checked={all} onChange={() => setMany(ids, !all)} className="h-[15px] w-[15px] accent-brand" aria-label={`Tick every bill for ${transporter}`} /> : null}
               <div className="min-w-0">
-                <div className="text-[15px] font-semibold text-ink">{transporter}</div>
-                <div className="text-[12px] text-muted">
+                <div className="text-md font-semibold text-ink">{transporter}</div>
+                <div className="text-xs text-muted">
                   {plural(bills.length, "bill")} · {boxes != null ? plural(boxes, "box", "boxes") : "boxes not counted"} · {sumLitres(bills)} L{dueToday ? ` · ${dueToday} due today or late` : ""}
                 </div>
               </div>
@@ -84,7 +84,7 @@ export function ToTransport({ rows, today, canWrite }: { rows: Consignment[]; to
                 ) : null}
               </div>
             </div>
-            <div className="grid grid-cols-[28px_minmax(120px,1fr)_minmax(160px,1.6fr)_110px_96px_90px_130px] gap-3 border-b border-divider px-4 py-1.5 text-[12px] font-medium text-muted">
+            <div className="grid grid-cols-[28px_minmax(120px,1fr)_minmax(160px,1.6fr)_110px_96px_90px_130px] gap-3 border-b border-divider px-4 py-1.5 text-xs font-medium text-muted">
               <span />
               <span>Bill</span>
               <span>Goes to</span>
@@ -95,18 +95,18 @@ export function ToTransport({ rows, today, canWrite }: { rows: Consignment[]; to
             </div>
             {bills.map((b) => (
               <div key={b.id} className={cx("grid grid-cols-[28px_minmax(120px,1fr)_minmax(160px,1.6fr)_110px_96px_90px_130px] items-center gap-3 border-b border-divider px-4 py-2 text-sm last:border-0", ticked.has(b.id) && "bg-brand-soft/40")}>
-                {canWrite ? <input type="checkbox" checked={ticked.has(b.id)} onChange={() => toggle(b.id)} className="h-[15px] w-[15px] accent-[#6835FB]" aria-label={`Tick ${b.billNo ?? b.orderNo}`} /> : <span />}
+                {canWrite ? <input type="checkbox" checked={ticked.has(b.id)} onChange={() => toggle(b.id)} className="h-[15px] w-[15px] accent-brand" aria-label={`Tick ${b.billNo ?? b.orderNo}`} /> : <span />}
                 <span className="min-w-0">
                   <BillRef c={b} />
-                  <span className="block truncate text-[12px] text-muted">Order {b.orderNo}{b.godown ? ` · ${b.godown}` : ""}</span>
+                  <span className="block truncate text-xs text-muted">Order {b.orderNo}{b.godown ? ` · ${b.godown}` : ""}</span>
                 </span>
                 <span className="min-w-0">
                   <span className="block truncate font-medium text-ink">{b.deliveryParty}</span>
-                  <span className="block truncate text-[12px] text-muted">{b.area ?? b.partyCity ?? "—"}{b.deliveryParty !== b.party ? ` · billed to ${b.party}` : ""}</span>
+                  <span className="block truncate text-xs text-muted">{b.area ?? b.partyCity ?? "—"}{b.deliveryParty !== b.party ? ` · billed to ${b.party}` : ""}</span>
                 </span>
-                <span className="text-[13px] text-body">{b.billDate ? shortDay(b.billDate) : "—"}</span>
+                <span className="text-meta text-body">{b.billDate ? shortDay(b.billDate) : "—"}</span>
                 <span>{canWrite ? <BoxInput id={b.id} value={b.packages} /> : (b.packages ?? "—")}</span>
-                <span className="tabular-nums text-[13px]">{b.litres ?? "—"}</span>
+                <span className="tabular-nums text-meta">{b.litres ?? "—"}</span>
                 <span>{b.transportDueOn ? <DuePill day={b.transportDueOn} today={today} /> : <Badge tone="muted">Not planned</Badge>}</span>
               </div>
             ))}
@@ -134,7 +134,7 @@ export function BoxInput({ id, value }: { id: string; value: number | null }) {
       onChange={(e) => setV(e.target.value.replace(/[^\d]/g, ""))}
       onBlur={save}
       onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-      className="h-8 w-16 rounded-[4px] border border-line bg-surface px-2 text-sm tabular-nums outline-none focus:border-brand"
+      className="h-8 w-16 rounded-control border border-line bg-surface px-2 text-sm tabular-nums outline-none focus:border-brand"
       aria-label="Boxes"
     />
   );

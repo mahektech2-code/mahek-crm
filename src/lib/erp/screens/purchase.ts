@@ -16,7 +16,7 @@ import {
   users,
 } from "@/db/schema";
 import { err, fieldErr, okVoid, type Result } from "@/lib/result";
-import type { ErpContext } from "../access";
+import { powerRefusal, type ErpContext } from "../access";
 import { refValues } from "../refs";
 import { erpLabelsHref } from "../trace-links";
 import {
@@ -51,7 +51,7 @@ import {
 import { lotLandings, rmLots, type LotLanding } from "../stock";
 import { bindErpFiles } from "../attachments";
 import { dutyKit } from "../material-duties-server";
-import { godownIdByName, godownOptions, has, today, type Col, type Tx } from "./common";
+import { type Col, godownField, godownIdByName, godownOptions, has, today, type Tx } from "./common";
 import { RECEIVABLE_PO, poLabel, receivableQuantity } from "../engines/purchase-flow";
 import { OWNERSHIP_LABEL, ownershipByLabel } from "../engines/drums";
 
@@ -393,7 +393,7 @@ async function inwardForm(ctx: ErpContext, init?: Record<string, string>, opts: 
       },
       { k: "supplier", l: "Vendor", t: "derived", calc: "inward.supplier" },
       { k: "date", l: "Date received", t: "date", req: true },
-      { k: "godown", l: "Godown", t: "select", req: true, opts: gds.map((g) => g.name), fillBy: { by: ["po"], map: rx.godownOf }, hint: "The PO's deliver-to godown, unless the goods came somewhere else." },
+      godownField(gds, { fillBy: { by: ["po"], map: rx.godownOf }, hint: "The PO's deliver-to godown, unless the goods came somewhere else." }),
       ...COST_FIELDS,
     ],
     line: [
@@ -864,7 +864,7 @@ async function testForm(ctx: ErpContext, testId?: string): Promise<FormSpec | nu
       { k: "video", l: "Test video", t: "video", when: { k: "line", notEmpty: true } },
       { k: "tester", l: "Tester", t: "select", req: true, opts: testers.map((u) => u.name) },
       { k: "date", l: "Testing date", t: "date", req: true },
-      { k: "godown", l: "Godown", t: "select", req: true, opts: gds.map((g) => g.name) },
+      godownField(gds),
       { k: "remark", l: "Remark", t: "area", mic: true },
     ],
   };
@@ -1324,7 +1324,7 @@ async function purchaseForm(ctx: ErpContext, id?: string): Promise<FormSpec | nu
         ] as FieldSpec[])
       : []),
     { k: "billNumber", l: "Bill number", t: "text" },
-    { k: "godown", l: "Godown", t: "select", req: true, opts: gds.map((g) => g.name) },
+    godownField(gds),
     { k: "notes", l: "Notes", t: "area", mic: true },
     { k: "remark", l: "Remark", t: "area", mic: true },
   ];
@@ -1596,7 +1596,7 @@ const register: ScreenModule = {
       return (await import("../ai-bills")).rejectBill(ctx, id);
     },
     async rate(ctx, id, values) {
-      if (!ctx.powers.has("viewPurchaseMoney")) return err("Purchase money is not on your account.", "not_permitted");
+      if (!ctx.powers.has("viewPurchaseMoney")) return err(powerRefusal("viewPurchaseMoney"), "not_permitted");
       const rate = paise(values.rate);
       if (rate == null || rate <= 0) return fieldErr("rate", "Rate is required");
       let posted = false;
@@ -1610,7 +1610,7 @@ const register: ScreenModule = {
       return okVoid(posted ? `Posted · ${nf(p.availableLitres)} of lot ${p.lotNo} now in stock` : "Rate saved");
     },
     async billReceived(ctx, id, values) {
-      if (!ctx.powers.has("viewPurchaseMoney")) return err("Purchase money is not on your account.", "not_permitted");
+      if (!ctx.powers.has("viewPurchaseMoney")) return err(powerRefusal("viewPurchaseMoney"), "not_permitted");
       const billNo = text(values.billNo);
       if (!billNo) return fieldErr("billNo", "Bill number is required");
       /* A bill in hand is the Invoice Received step, not a second flag beside it. */
@@ -1622,7 +1622,7 @@ const register: ScreenModule = {
       return okVoid(`Bill ${billNo} recorded`);
     },
     async billNotReceived(ctx, id) {
-      if (!ctx.powers.has("viewPurchaseMoney")) return err("Purchase money is not on your account.", "not_permitted");
+      if (!ctx.powers.has("viewPurchaseMoney")) return err(powerRefusal("viewPurchaseMoney"), "not_permitted");
       const [p] = await db.select({ status: erpPurchases.status }).from(erpPurchases).where(eq(erpPurchases.id, id));
       if (!p) return err("That purchase no longer exists.", "not_found");
       if (p.status === "Purchase Matched" || p.status === "Purchase Verified") return err("A purchase matched to its bill has its bill.", "rule_violation");
@@ -1634,7 +1634,7 @@ const register: ScreenModule = {
       return okVoid("Marked bill not received");
     },
     async status(ctx, id, values) {
-      if (!ctx.powers.has("viewPurchaseMoney")) return err("Purchase money is not on your account.", "not_permitted");
+      if (!ctx.powers.has("viewPurchaseMoney")) return err(powerRefusal("viewPurchaseMoney"), "not_permitted");
       const status = text(values.status);
       const allowed = settableStatuses(ctx.powers.has("verifyPurchase"));
       if (!status || !allowed.includes(status)) return fieldErr("status", status === "Purchase Verified" ? "Only the verifier sets Purchase Verified" : "Pick a status");
@@ -1655,7 +1655,7 @@ const register: ScreenModule = {
   },
   bulk: {
     async billReceivedMany(ctx, ids) {
-      if (!ctx.powers.has("viewPurchaseMoney")) return err("Purchase money is not on your account.", "not_permitted");
+      if (!ctx.powers.has("viewPurchaseMoney")) return err(powerRefusal("viewPurchaseMoney"), "not_permitted");
       await db
         .update(erpPurchases)
         .set({ billReceived: "Received", status: sql`case when ${erpPurchases.status} = 'Pending' then 'Invoice Received' else ${erpPurchases.status} end`, updatedAt: new Date(), updatedById: ctx.user.id })

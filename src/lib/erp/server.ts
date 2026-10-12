@@ -1,4 +1,5 @@
 import "server-only";
+import { APP_TIMEZONE } from "@/lib/business-date";
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
@@ -120,16 +121,14 @@ export function multi(v: string | undefined): string[] {
     .filter(Boolean);
 }
 
-/** Paise → a rupees string for pre-filling a form. */
-export function rupeesField(p: number | null | undefined): string {
-  return p == null ? "" : String(p / 100);
-}
+/* Client-safe, so a client form pre-fills a figure the same way a server form does. */
+export { rupeesField } from "./ui";
 
 export function stampLine(by: string | null | undefined, at: Date | string | null | undefined): string {
   if (!at) return by ? `Created by ${by}` : "";
   const d = typeof at === "string" ? new Date(at) : at;
   const when = d.toLocaleString("en-IN", {
-    timeZone: "Asia/Kolkata",
+    timeZone: APP_TIMEZONE,
     day: "numeric",
     month: "short",
     year: "numeric",

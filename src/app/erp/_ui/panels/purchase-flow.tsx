@@ -2,6 +2,7 @@
 
 import { cx, SectionLabel } from "@/components/ui/primitives";
 import { registerPanel, type PanelProps } from "../panels";
+import { Stepper } from "./parts";
 
 /* ---------------------------------------------------------------------------
  * The purchase flow, drawn in the drawer of a requirement and of a PO:
@@ -14,27 +15,6 @@ import { registerPanel, type PanelProps } from "../panels";
  * landed cost marked, or the PO's lines with what has arrived against each.
  * Everything here is the server's answer; the panel only draws it.
  * ------------------------------------------------------------------------- */
-
-export function Stepper({ steps, step, label }: { steps: readonly string[]; step: number; label: string }) {
-  const cancelled = step < 0;
-  return (
-    <ol className="grid gap-1" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }} aria-label={label}>
-      {steps.map((s, i) => {
-        const done = !cancelled && i < step;
-        const now = !cancelled && i === step;
-        return (
-          <li key={s} className="grid min-w-0 gap-1">
-            <span className={cx("h-1.5 rounded-full", done ? "bg-success" : now ? "bg-brand" : "bg-divider")} />
-            <span className={cx("text-[11px] leading-[14px] break-words", now ? "font-semibold text-ink" : done ? "text-body" : "text-muted")} title={s}>
-              {done ? "✓ " : ""}
-              {s}
-            </span>
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
 
 type Fact = { l: string; v: string; href?: string };
 type QuoteRow = {
@@ -63,13 +43,13 @@ type Flow = {
 function PurchaseFlow({ data }: PanelProps) {
   const f = data as Flow;
   return (
-    <section className="grid gap-3 rounded-[6px] border border-line p-3.5">
+    <section className="grid gap-3 rounded-card border border-line p-3.5">
       <div className="flex items-baseline justify-between gap-3">
         <SectionLabel>Purchase flow</SectionLabel>
         <span className="text-xs text-muted">{f.stage}</span>
       </div>
       <Stepper steps={f.steps} step={f.step} label="Purchase flow" />
-      <div className={cx("rounded-[4px] px-3 py-2 text-[13px]", f.step < 0 ? "bg-canvas text-muted" : "bg-brand-soft text-[#5223E0]")}>
+      <div className={cx("rounded-control px-3 py-2 text-meta", f.step < 0 ? "bg-canvas text-muted" : "bg-brand-soft text-brand-hover")}>
         <span className="font-semibold">Next · </span>
         {f.next}
       </div>
@@ -79,7 +59,7 @@ function PurchaseFlow({ data }: PanelProps) {
             <dt className="text-xs font-medium tracking-[0.04em] text-muted uppercase">{x.l}</dt>
             <dd className="mt-0.5 text-sm break-words text-ink">
               {x.href ? (
-                <a href={x.href} className="text-[#5223E0] underline-offset-2 hover:underline">
+                <a href={x.href} className="text-brand-hover underline-offset-2 hover:underline">
                   {x.v}
                 </a>
               ) : (
@@ -106,7 +86,7 @@ function PurchaseFlow({ data }: PanelProps) {
                 <div
                   key={q.vendor}
                   className={cx(
-                    "rounded-[4px] border px-3 py-2 text-[13px]",
+                    "rounded-control border px-3 py-2 text-meta",
                     q.selected ? "border-success/40 bg-success-soft/50" : "border-divider",
                     q.expired && "text-muted",
                   )}
@@ -114,18 +94,18 @@ function PurchaseFlow({ data }: PanelProps) {
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                       <span className="font-medium text-ink">{q.vendor}</span>
-                      {q.selected ? <span className="rounded-[3px] bg-success-soft px-1 text-[11px] text-success">Selected</span> : null}
-                      {q.lowest ? <span className="rounded-[3px] bg-brand-soft px-1 text-[11px] text-[#5223E0]">Lowest</span> : null}
-                      {q.expired ? <span className="rounded-[3px] bg-canvas px-1 text-[11px]">Expired</span> : null}
+                      {q.selected ? <span className="rounded-[3px] bg-success-soft px-1 text-2xs text-success">Selected</span> : null}
+                      {q.lowest ? <span className="rounded-[3px] bg-brand-soft px-1 text-2xs text-brand-hover">Lowest</span> : null}
+                      {q.expired ? <span className="rounded-[3px] bg-canvas px-1 text-2xs">Expired</span> : null}
                       {q.document ? (
-                        <a href={`/api/attachments/${q.document}`} target="_blank" rel="noreferrer" className="text-[11px] text-[#5223E0] hover:underline">
+                        <a href={`/api/attachments/${q.document}`} target="_blank" rel="noreferrer" className="text-2xs text-brand-hover hover:underline">
                           file
                         </a>
                       ) : null}
                     </div>
                     {f.quotes!.money ? (
                       <span className="flex-none text-right">
-                        <span className="block text-[11px] tracking-[0.04em] text-muted uppercase">Landed</span>
+                        <span className="block text-2xs tracking-[0.04em] text-muted uppercase">Landed</span>
                         <span className="font-semibold text-ink tabular-nums">{q.landed}</span>
                       </span>
                     ) : null}
@@ -139,7 +119,7 @@ function PurchaseFlow({ data }: PanelProps) {
                       ["Terms", q.terms],
                     ].map(([l, v]) => (
                       <div key={l} className="min-w-0">
-                        <dt className="text-[11px] tracking-[0.04em] text-muted uppercase">{l}</dt>
+                        <dt className="text-2xs tracking-[0.04em] text-muted uppercase">{l}</dt>
                         <dd className="break-words text-body tabular-nums">{v || "—"}</dd>
                       </div>
                     ))}
@@ -148,7 +128,7 @@ function PurchaseFlow({ data }: PanelProps) {
               ))}
             </div>
           ) : (
-            <span className="text-[13px] text-muted">No quotations yet. Add each vendor&apos;s quotation as it comes in.</span>
+            <span className="text-meta text-muted">No quotations yet. Add each vendor&apos;s quotation as it comes in.</span>
           )}
           {!f.quotes.money ? <span className="text-xs text-muted">Rates and landed costs are not shown on your account.</span> : null}
         </div>
@@ -171,11 +151,11 @@ type PoData = {
 function PurchaseOrder({ data }: PanelProps) {
   const p = data as PoData;
   return (
-    <section className="grid gap-3 rounded-[6px] border border-line p-3.5">
+    <section className="grid gap-3 rounded-card border border-line p-3.5">
       <div className="flex items-baseline justify-between gap-3">
         <SectionLabel>Purchase flow</SectionLabel>
         {p.print ? (
-          <a href={p.print} className="text-xs text-[#5223E0] hover:underline">
+          <a href={p.print} className="text-xs text-brand-hover hover:underline">
             Open the printable PO
           </a>
         ) : null}
@@ -183,16 +163,16 @@ function PurchaseOrder({ data }: PanelProps) {
       <Stepper steps={p.steps} step={p.step} label="Purchase flow" />
       {/* A row per line rather than a seven-column table: the item and what it
           costs on top, the quantities beneath — readable at a drawer's width. */}
-      <div className="overflow-hidden rounded-[4px] border border-divider text-[13px]">
+      <div className="overflow-hidden rounded-control border border-divider text-meta">
         {p.lines.map((l, i) => (
           <div key={i} className={cx("px-3 py-2", i > 0 && "border-t border-divider")}>
             <div className="flex items-baseline justify-between gap-3">
-              <a href={l.requirement} className="min-w-0 font-medium break-words text-ink hover:text-[#5223E0] hover:underline" title="Open its requirement">
+              <a href={l.requirement} className="min-w-0 font-medium break-words text-ink hover:text-brand-hover hover:underline" title="Open its requirement">
                 {l.item}
               </a>
               {p.money ? <span className="flex-none font-semibold text-ink tabular-nums">{l.total}</span> : null}
             </div>
-            <dl className="mt-1 grid grid-cols-5 gap-x-3 text-[12px]">
+            <dl className="mt-1 grid grid-cols-5 gap-x-3 text-xs">
               {[
                 ["Ordered", l.ordered, ""],
                 ["Received", l.received, l.done ? "text-success" : ""],
@@ -201,7 +181,7 @@ function PurchaseOrder({ data }: PanelProps) {
                 ["GST", l.gst, ""],
               ].map(([k, v, tone]) => (
                 <div key={k} className="min-w-0">
-                  <dt className="text-[11px] text-muted">{k}</dt>
+                  <dt className="text-2xs text-muted">{k}</dt>
                   <dd className={cx("truncate text-body tabular-nums", tone)} title={v}>
                     {v}
                   </dd>
@@ -219,7 +199,7 @@ function PurchaseOrder({ data }: PanelProps) {
       </div>
       <dl className="grid gap-1.5">
         {p.history.map((h) => (
-          <div key={h.l} className="flex gap-2 text-[13px]">
+          <div key={h.l} className="flex gap-2 text-meta">
             <dt className="w-28 flex-none text-muted">{h.l}</dt>
             <dd className="min-w-0 text-ink">{h.v}</dd>
           </div>

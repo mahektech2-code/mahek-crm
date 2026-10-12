@@ -61,7 +61,7 @@ export function DrawerHeader({
       <button
         onClick={onClose}
         aria-label="Close"
-        className="flex h-7 w-7 flex-none cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-body"
+        className="flex h-7 w-7 flex-none cursor-pointer items-center justify-center rounded-control text-muted hover:bg-canvas hover:text-body"
       >
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
           <path d="M6 6l12 12M18 6 6 18" />
@@ -164,7 +164,7 @@ function ConfirmDialogBody({
                 setError(null);
               }}
               className={cx(
-                "h-16 w-full resize-y rounded-[4px] border bg-surface px-2.5 py-2 pr-9 text-sm outline-none focus:border-brand",
+                "h-16 w-full resize-y rounded-control border bg-surface px-2.5 py-2 pr-9 text-sm outline-none focus:border-brand",
                 error ? "border-danger" : "border-line",
               )}
             />
@@ -323,7 +323,7 @@ export function RowMenu({ items }: { items: MenuItem[] }) {
           else place();
         }}
         className={cx(
-          "flex h-7 w-7 cursor-pointer items-center justify-center rounded-[4px] border text-muted",
+          "flex h-7 w-7 cursor-pointer items-center justify-center rounded-control border text-muted",
           open
             ? "border-line-strong bg-canvas text-body"
             : "border-line bg-surface hover:bg-canvas hover:text-body",
@@ -346,7 +346,7 @@ export function RowMenu({ items }: { items: MenuItem[] }) {
               }}
               /* Above the modals (z-70): a row menu inside a dialog — the price
                  list editor's grid has one per line — was drawn underneath it. */
-              className="animate-fade-in fixed z-[95] flex flex-col overflow-hidden rounded-[6px] border border-line bg-surface py-1 shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
+              className="animate-fade-in fixed z-[95] flex flex-col overflow-hidden rounded-card border border-line bg-surface py-1 shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
             >
               {items.map((item, i) => (
                 <button
@@ -440,9 +440,9 @@ export function FilterPills<T extends string>({
           key={o.key}
           onClick={() => onChange(o.key)}
           className={cx(
-            "h-8 cursor-pointer rounded-[4px] border px-2.5 text-[13px]",
+            "h-8 cursor-pointer rounded-control border px-2.5 text-[13px]",
             value === o.key
-              ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
+              ? "border-brand bg-brand-soft font-medium text-brand-hover"
               : "border-line bg-surface text-body hover:bg-canvas",
           )}
         >
@@ -469,7 +469,7 @@ export function SelectionBar({
 }) {
   if (!count) return null;
   return (
-    <div className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3.5 rounded-[6px] bg-ink px-3.5 py-2.5 text-white shadow-[0_8px_24px_rgba(22,22,22,0.12)]">
+    <div className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3.5 rounded-card bg-ink px-3.5 py-2.5 text-white shadow-[0_8px_24px_rgba(22,22,22,0.12)]">
       <span className="text-sm font-medium">{count} selected</span>
       <span className="h-[18px] w-px bg-body" />
       {children}

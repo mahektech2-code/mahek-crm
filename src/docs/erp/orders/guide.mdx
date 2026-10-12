@@ -16,7 +16,7 @@ How these orders then reach MahekOne's order book — the CRM, targets and outst
   <WfBar><WfText muted>3 selected</WfText><WfButton>Ready</WfButton><WfButton>Under Process</WfButton><WfButton>Bill it</WfButton><WfButton>Undo billing</WfButton><Hotspot n={3} /></WfBar>
   <WfTable
     highlight={0}
-    columns={["Order no", "Status", "Billing party", "Description of goods", "Order qty", "Boxes", "Rate", "Can quantity verification", "Tally bill no", "Flags"]}
+    columns={["Order no", "Status", "Billing party", "Description of goods", "Order qty", "Boxes", "Rate", "Allocation", "Tally bill no", "Flags"]}
     rows={[
       ["1256", "Ready", <b key="a">Customer A</b>, "Nano Thinner – 1 Liter (12 Can/Box)", "36", "3", "₹210", <span key="b">Done <Hotspot n={4} /></span>, "", <span key="c"><WfPill tone="success">Ready · fully allocated</WfPill> <WfPill tone="warn">Bill no / rate missing</WfPill> <Hotspot n={5} /></span>],
       ["1256", "Ready", <b key="d">Customer A</b>, "PU Sealer – 4 Liter (4 Can/Box)", "8", "2", "₹890", "Add More Quantity", "", <WfPill key="e" tone="danger">Ready · short of allocation</WfPill>],
@@ -33,7 +33,7 @@ How these orders then reach MahekOne's order book — the CRM, targets and outst
   <span key="1"><b>New order.</b> One order, one line per SKU. The order number is given when you save.</span>,
   <span key="2"><b>Tabs.</b> Each is one step. Holding the Orders screen opens all seven.</span>,
   <span key="3"><b>Bulk actions.</b> Tick rows (or a whole order number group) and act on them together.</span>,
-  <span key="4"><b>Can quantity verification.</b> Whether the lots set aside for the line add up to what it needs: <i>Done</i>, <i>Add More Quantity</i> or <i>Remove Some Quantity</i>.</span>,
+  <span key="4"><b>Allocation.</b> Whether the lots set aside for the line add up to what it needs: <i>Done</i>, <i>Add More Quantity</i> or <i>Remove Some Quantity</i>.</span>,
   <span key="5"><b>Flags.</b> What state the line is in and what it is still missing.</span>,
   <span key="6"><b>The line's drawer.</b> Every action on one line. A button that cannot be used yet says why when you hover it.</span>,
 ]} />
@@ -106,7 +106,7 @@ Once the office has entered the bill in Tally, press **Bill it**. It needs, in t
 
 1. approval, if the customer is Pending;
 2. status **Ready**;
-3. lots allocated in full (*Can quantity verification* reads **Done**);
+3. lots allocated in full (*Allocation* reads **Done**);
 4. a **Tally bill no.** (set it from **Edit**);
 5. a **rate**.
 
@@ -124,7 +124,7 @@ If anything is missing, hovering the button says exactly what: *Needs a Tally bi
       ["7 Oct", "1249", <b key="c">Customer C</b>, "PU Sealer – 4 Liter (4 Can/Box)", "₹21,240", "8 Oct", "Verified", <WfPill key="d" tone="success">Sales target reached</WfPill>],
     ]}
   />
-  <WfBar><WfButton primary>Do Verified</WfButton><WfButton>Extra Expenses</WfButton><WfButton>Change GST</WfButton><WfButton>Print dispatch labels</WfButton><Hotspot n={2} /></WfBar>
+  <WfBar><WfButton primary>Do Verified</WfButton><WfButton>Extra expenses</WfButton><WfButton>Change GST</WfButton><WfButton>Print dispatch labels</WfButton><Hotspot n={2} /></WfBar>
 </Wireframe>
 
 <Hotspots items={[
@@ -135,14 +135,14 @@ If anything is missing, hovering the button says exactly what: *Needs a Tally bi
 | Action | What it does |
 |---|---|
 | **Do Verified** | Asks for the **dispatch date** and marks the line **Verified** and **Dispatched**. Needs the lots allocated in full and every box scanned. The date cannot be before the order date. The first verified line of a bill opens its record on [Transport](/docs/erp/transport). |
-| **Extra Expenses** | Records extra freight on the line, once. It is added to the line's cost. |
+| **Extra expenses** | Records extra freight on the line, once. It is added to the line's cost, and to the bill's record on Logistics. |
 | **Change GST** | 18% or 0%, until the line is verified. 18% bills from *Mahek Marketing India*, 0% from *Mylac*. |
-| **Not Verify** | ERP administrators only. Marks a line *Not Verify*. |
+| **Mark not verified** | ERP administrators only. Sets the line's verification to *Not Verify*. |
 | **Print dispatch labels** | Opens the label sheet for the order: one 80 × 80 mm label for every box or can on it. |
 | **Scan its boxes / Dispatch desk** | Opens the order at the Dispatch desk. |
 | **Trace this order** | Opens [Traceability](/docs/erp/traceability) on the order. |
 
-Do Verified and Extra Expenses can also be done to a selection of lines at once.
+Do Verified and Extra expenses can also be done to a selection of lines at once.
 
 ### What the drawer shows
 
@@ -150,7 +150,7 @@ Besides the columns, a billed line shows the delivery party, litres dispatched, 
 
 ## Labels
 
-The **Labels** tab is the list the labels are printed from: every line being prepared, with its order id, parties, area, transporter, weight and **No of label** — one a box on a boxed line, one a can otherwise. Open a line and press **Print dispatch labels** for the whole order's labels, or press download to take the list as a file.
+The **Labels** tab is the list the labels are printed from: every line being prepared, with its order id, parties, area, transporter, weight and **Labels** — one a box on a boxed line, one a can otherwise. Open a line and press **Print dispatch labels** for the whole order's labels, or press **Export** to take the list as a file.
 
 ### The four labels
 

@@ -2,7 +2,7 @@
 
 import { useContext, useId, useState } from "react";
 import type { FieldSpec } from "@/lib/erp/ui";
-import { cx } from "@/components/ui/primitives";
+import { controlClass, cx } from "@/components/ui/primitives";
 import { DictateButton, joinDictation } from "@/components/ui/dictate";
 import { Icon } from "./icons";
 import { ErpVoice } from "./voice";
@@ -16,10 +16,8 @@ import { PinField } from "./pin-field";
  * hint.
  * ------------------------------------------------------------------------- */
 
-const CONTROL = "w-full rounded-[4px] border bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand";
-
 function control(err: boolean, extra?: string) {
-  return cx(CONTROL, "h-8.5", err ? "border-danger" : "border-line", extra);
+  return controlClass({ invalid: err, className: cx("h-8.5", extra) });
 }
 
 export function Field({
@@ -48,7 +46,7 @@ export function Field({
     f.conf === "check" || f.conf === "not found"
       ? "bg-warn-soft text-warn-ink"
       : f.conf || f.t === "suggest"
-        ? "bg-brand-soft text-[#5223E0]"
+        ? "bg-brand-soft text-brand-hover"
         : f.t === "derived"
           ? "bg-divider text-muted"
           : "text-muted";
@@ -61,13 +59,13 @@ export function Field({
     <Wrap className={cx("block min-w-0", f.wide && "col-span-full")} {...(grouped ? { role: "group", "aria-label": f.l } : {})}>
       <span className="mb-1 flex items-center gap-1.5 text-xs font-medium tracking-[0.04em] text-muted uppercase">
         {f.l}
-        {tag ? <span className={cx("rounded-[3px] px-1.5 text-[11px] font-medium tracking-normal normal-case", tagTone)}>{tag}</span> : null}
+        {tag ? <span className={cx("rounded-[3px] px-1.5 text-2xs font-medium tracking-normal normal-case", tagTone)}>{tag}</span> : null}
       </span>
       <Control f={f} value={value} error={!!error} opts={opts} derived={derived} onChange={onChange} onMic={onMic} onUseSuggestion={onUseSuggestion} />
       {error ? (
-        <span className="mt-1 block text-[13px] text-danger">{error}</span>
+        <span className="mt-1 block text-meta text-danger">{error}</span>
       ) : f.hint ? (
-        <span className="mt-1 block text-[13px] text-muted">{f.hint}</span>
+        <span className="mt-1 block text-meta text-muted">{f.hint}</span>
       ) : null}
     </Wrap>
   );
@@ -99,7 +97,7 @@ function Control({
       <span
         className={cx(
           /* pre-line: a calculation may list several lines, one per lot. */
-          "flex min-h-8.5 items-center whitespace-pre-line rounded-[4px] border border-dashed bg-canvas px-2.5 py-1.5 text-sm tabular-nums",
+          "flex min-h-8.5 items-center whitespace-pre-line rounded-control border border-dashed bg-canvas px-2.5 py-1.5 text-sm tabular-nums",
           error ? "border-danger" : "border-line",
           derived ? "text-ink" : "text-line-strong",
         )}
@@ -112,13 +110,13 @@ function Control({
   if (f.t === "suggest") {
     const has = !!derived;
     return (
-      <span className={cx("flex min-h-8.5 items-center gap-2 rounded-[4px] border border-dashed border-brand-softer bg-brand-soft/50 py-1 pr-1 pl-2.5 text-sm", has ? "text-[#3D14A8]" : "text-muted")}>
+      <span className={cx("flex min-h-8.5 items-center gap-2 rounded-control border border-dashed border-brand-softer bg-brand-soft/50 py-1 pr-1 pl-2.5 text-sm", has ? "text-brand-deep" : "text-muted")}>
         <span className="min-w-0 flex-1">{has ? derived : "Keep typing the description for a suggestion"}</span>
         {has ? (
           <button
             type="button"
             onClick={() => onUseSuggestion?.(derived!)}
-            className="h-7 flex-none cursor-pointer rounded-[4px] border border-brand bg-surface px-2.5 text-[13px] font-medium text-[#5223E0] hover:bg-brand-soft"
+            className="h-7 flex-none cursor-pointer rounded-control border border-brand bg-surface px-2.5 text-meta font-medium text-brand-hover hover:bg-brand-soft"
           >
             Use it
           </button>
@@ -133,7 +131,7 @@ function Control({
           value={value}
           readOnly={f.readOnly}
           onChange={(e) => onChange(e.target.value)}
-          className={cx(CONTROL, "h-[72px] resize-y py-2 pr-9 leading-[21px]", error ? "border-danger" : "border-line")}
+          className={controlClass({ invalid: !!error, className: "h-[72px] resize-y py-2 pr-9 leading-[21px]" })}
         />
         {f.mic && voice && !f.readOnly ? (
           /* AI-3: the CRM's own dictation — same providers, same modal, same
@@ -150,7 +148,7 @@ function Control({
             type="button"
             onClick={onMic}
             title="Dictate — speak in any language"
-            className="absolute right-2 bottom-3 flex h-7 w-7 cursor-pointer items-center justify-center rounded-full border border-brand-softer bg-brand-soft text-[#5223E0]"
+            className="absolute right-2 bottom-3 flex h-7 w-7 cursor-pointer items-center justify-center rounded-full border border-brand-softer bg-brand-soft text-brand-hover"
           >
             <Icon n="mic" />
           </button>
@@ -178,8 +176,8 @@ function Control({
       onChange(next.join("|"));
     };
     return (
-      <span className={cx("flex min-h-8.5 flex-wrap gap-1.5 rounded-[4px] border bg-surface p-1.5", error ? "border-danger" : "border-line")}>
-        {opts.length === 0 ? <span className="p-1 text-[13px] text-muted">Nothing available</span> : null}
+      <span className={cx("flex min-h-8.5 flex-wrap gap-1.5 rounded-control border bg-surface p-1.5", error ? "border-danger" : "border-line")}>
+        {opts.length === 0 ? <span className="p-1 text-meta text-muted">Nothing available</span> : null}
         {opts.map((o) => {
           const on = chosen.includes(o);
           return (
@@ -188,8 +186,8 @@ function Control({
               key={o}
               onClick={() => toggle(o)}
               className={cx(
-                "h-7 cursor-pointer rounded-[4px] border px-2.5 text-[13px]",
-                on ? "border-brand bg-brand-soft font-medium text-[#5223E0]" : "border-line bg-surface text-body hover:bg-canvas",
+                "h-7 cursor-pointer rounded-control border px-2.5 text-meta",
+                on ? "border-brand bg-brand-soft font-medium text-brand-hover" : "border-line bg-surface text-body hover:bg-canvas",
               )}
             >
               {on ? "✓ " : ""}
@@ -246,7 +244,7 @@ function Combo({ value, opts, error, onChange }: { value: string; opts: string[]
         <Icon n="search" />
       </span>
       {open ? (
-        <span className="absolute top-10 right-0 left-0 z-50 block max-h-[300px] overflow-y-auto rounded-[6px] border border-line bg-surface py-1 shadow-[0_8px_24px_rgba(22,22,22,0.12)]">
+        <span className="absolute top-10 right-0 left-0 z-50 block max-h-[300px] overflow-y-auto rounded-card border border-line bg-surface py-1 shadow-[0_8px_24px_rgba(22,22,22,0.12)]">
           {m.slice(0, 8).map((x) => (
             <button
               type="button"
@@ -265,7 +263,7 @@ function Combo({ value, opts, error, onChange }: { value: string; opts: string[]
           {m.length > 8 ? (
             <span className="block border-t border-divider px-3 py-2 text-xs text-muted">{(m.length - 8).toLocaleString("en-IN")} more — keep typing</span>
           ) : null}
-          {m.length === 0 ? <span className="block px-3 py-2.5 text-[13px] text-muted">Nothing matches “{q}”</span> : null}
+          {m.length === 0 ? <span className="block px-3 py-2.5 text-meta text-muted">Nothing matches “{q}”</span> : null}
         </span>
       ) : null}
     </span>
@@ -335,7 +333,7 @@ function ScanField({ value, opts, error, onChange }: { value: string; opts: stri
         <Icon n="scan" />
       </span>
       {open && opts.length ? (
-        <span id={listId} role="listbox" className="absolute top-10 right-0 left-0 z-50 block max-h-[300px] overflow-y-auto rounded-[6px] border border-line bg-surface py-1 shadow-[0_8px_24px_rgba(22,22,22,0.12)]">
+        <span id={listId} role="listbox" className="absolute top-10 right-0 left-0 z-50 block max-h-[300px] overflow-y-auto rounded-card border border-line bg-surface py-1 shadow-[0_8px_24px_rgba(22,22,22,0.12)]">
           {shown.map((x, i) => (
             <button
               type="button"
@@ -355,7 +353,7 @@ function ScanField({ value, opts, error, onChange }: { value: string; opts: stri
           {m.length > 8 ? (
             <span className="block border-t border-divider px-3 py-2 text-xs text-muted">{(m.length - 8).toLocaleString("en-IN")} more — keep typing</span>
           ) : null}
-          {m.length === 0 ? <span className="block px-3 py-2.5 text-[13px] text-muted">No lot with stock here matches — what you scanned is still kept</span> : null}
+          {m.length === 0 ? <span className="block px-3 py-2.5 text-meta text-muted">No lot with stock here matches — what you scanned is still kept</span> : null}
         </span>
       ) : null}
     </span>
@@ -406,7 +404,7 @@ function PhotoPicker({
     <span className="block">
       <span
         className={cx(
-          "relative flex h-10 w-full cursor-pointer items-center gap-2 rounded-[4px] border px-3 text-sm",
+          "relative flex h-10 w-full cursor-pointer items-center gap-2 rounded-control border px-3 text-sm",
           done ? "border-success bg-success-soft text-success" : cx("border-dashed bg-surface text-body hover:bg-canvas", error ? "border-danger" : "border-line-strong"),
         )}
       >
@@ -426,13 +424,13 @@ function PhotoPicker({
               onChange("");
               setName("");
             }}
-            className="relative z-1 ml-auto cursor-pointer text-[13px] text-success hover:underline"
+            className="relative z-1 ml-auto cursor-pointer text-meta text-success hover:underline"
           >
             Remove
           </button>
         ) : null}
       </span>
-      {upErr ? <span className="mt-1 block text-[13px] text-danger">{upErr}</span> : null}
+      {upErr ? <span className="mt-1 block text-meta text-danger">{upErr}</span> : null}
     </span>
   );
 }
@@ -444,7 +442,7 @@ function CsvPicker({ value, error, onChange }: { value: string; error: boolean; 
   return (
     <span
       className={cx(
-        "relative flex h-10 w-full cursor-pointer items-center gap-2 rounded-[4px] border px-3 text-sm",
+        "relative flex h-10 w-full cursor-pointer items-center gap-2 rounded-control border px-3 text-sm",
         value ? "border-success bg-success-soft text-success" : cx("border-dashed bg-surface text-body hover:bg-canvas", error ? "border-danger" : "border-line-strong"),
       )}
     >

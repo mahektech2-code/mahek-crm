@@ -24,7 +24,7 @@ export default async function PurchaseOrderPrint({ params }: { params: Promise<{
     return (
       <div className="p-6 text-sm text-body">
         {poLabel(p.po.poNumber)} is {p.po.status.toLowerCase()} — a PO is printed once it is approved.{" "}
-        <a href={back} className="text-[#5223E0] underline">
+        <a href={back} className="text-brand-hover underline">
           Back to the PO
         </a>
       </div>
@@ -33,7 +33,7 @@ export default async function PurchaseOrderPrint({ params }: { params: Promise<{
     return (
       <div className="p-6 text-sm text-body">
         The printed PO carries its rates, and purchase money is not on your account.{" "}
-        <a href={back} className="text-[#5223E0] underline">
+        <a href={back} className="text-brand-hover underline">
           Back to the PO
         </a>
       </div>
@@ -43,12 +43,12 @@ export default async function PurchaseOrderPrint({ params }: { params: Promise<{
     <div className="mx-auto grid w-full max-w-[860px] gap-4 p-6">
       <style>{`@media print { body * { visibility: hidden; } .po-paper, .po-paper * { visibility: visible; } .po-paper { position: absolute; inset: 0 auto auto 0; width: 100%; border: 0 !important; } }`}</style>
       <div className="flex items-center justify-between gap-3 print:hidden">
-        <a href={back} className="text-sm text-[#5223E0] hover:underline">
+        <a href={back} className="text-sm text-brand-hover hover:underline">
           ← Back to {poLabel(p.po.poNumber)}
         </a>
         <PrintButton />
       </div>
-      <article className="po-paper grid gap-5 rounded-[6px] border border-line bg-white p-8 text-[13px] text-ink">
+      <article className="po-paper grid gap-5 rounded-card border border-line bg-white p-8 text-meta text-ink">
         <header className="flex items-start justify-between gap-6">
           <div>
             <div className="text-lg font-semibold">Mahek Marketing India</div>

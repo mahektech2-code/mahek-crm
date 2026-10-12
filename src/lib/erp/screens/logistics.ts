@@ -1,7 +1,7 @@
 import "server-only";
 import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { complaints, customers, employees, erpCredits, erpExpenses, erpGodowns, erpOrderDetails, erpTransports, erpVideos, users } from "@/db/schema";
+import { complaints, customers, employees, erpCredits, erpExpenses, erpGodowns, erpTransports, erpVideos, users } from "@/db/schema";
 import { categoryLabel } from "@/lib/complaint-labels";
 import { complaintRows, requestStatus } from "./complaints";
 import { calendarDate } from "@/lib/business-date";
@@ -14,9 +14,9 @@ import { fd, inr } from "../ui";
 import { cashBalances, cashKey } from "../engines/cash";
 import { monthId } from "../engines/sales";
 import { refValues } from "../refs";
-import { godownIdByName, godownOptions, has, today, type Col } from "./common";
+import { type Col, godownField, godownIdByName, godownOptions, has, isErpManager, today } from "./common";
 import { customerForm, loadCustomers, phoneContacts, saveCustomerDetails } from "./masters";
-import { detailRows } from "./sales";
+import { detailRows, EXTRA_EXPENSE_PROMPT, setExtraExpenses } from "./sales";
 import { syncBookOrders } from "../book";
 import { CLOSED, STAGES } from "../engines/logistics";
 
@@ -196,45 +196,34 @@ const paidFreight: ScreenModule = {
   async load(ctx) {
     const { rows } = await detailRows();
     const shown = rows.filter((r) => r.l.billing.freightTerm === "Paid" && r.d.extraExpensesPaise == null);
-    const cols: ColSpec[] = [
-      { k: "party", l: "Billing party", t: "b" },
-      { k: "extra", l: "Extra expenses", t: "m" },
-      { k: "sku", l: "Description of goods", t: "t", w: 240 },
-      { k: "litres", l: "Litres", t: "n" },
-      { k: "payment", l: "Payment type", t: "s" },
-      { k: "transporter", l: "Transporter", t: "t" },
-    ];
-    const bulk: BulkSpec[] = [{ id: "extra", l: "Extra Expenses", prompt: { title: "Enter Extra Expenses", submit: "Save", fields: [{ k: "amount", l: "Extra expenses (₹)", t: "num", req: true, min: 0 }] } }];
-    void ctx;
+    /* The same gate Orders → Billing & dispatch puts on these columns. */
+    const { cols, hidden, hiddenKeys } = visibleCols(
+      [
+        { k: "party", l: "Billing party", t: "b" },
+        { k: "extra", l: "Extra expenses", t: "m" },
+        { k: "sku", l: "Description of goods", t: "t", w: 240 },
+        { k: "litres", l: "Litres", t: "n" },
+        { k: "payment", l: "Payment type", t: "s", pw: "viewCost" },
+        { k: "transporter", l: "Transporter", t: "t" },
+      ],
+      has(ctx),
+    );
+    const bulk: BulkSpec[] = [{ id: "extra", l: "Extra expenses", prompt: EXTRA_EXPENSE_PROMPT }];
     return {
-      spec: { screen: "paidFreight", cols, hidden: [], groups: ["transporter"], agg: { k: "extra", l: "extra expenses" }, bulk, noDataLine: "Every paid-freight line has its extra expense." },
+      spec: { screen: "paidFreight", cols, hidden, groups: ["transporter"], agg: { k: "extra", l: "extra expenses" }, bulk, noDataLine: "Every paid-freight line has its extra expense." },
       rows: shown.map((r) => ({
         id: r.l.o.id,
-        v: { party: r.l.billing.name, extra: r.d.extraExpensesPaise, sku: r.l.sku.name, litres: r.litres, payment: r.l.billing.freightTerm, transporter: r.l.o.transporter ?? r.l.delivery.p?.transporter ?? "—" },
+        v: withoutHidden({ party: r.l.billing.name, extra: r.d.extraExpensesPaise, sku: r.l.sku.name, litres: r.litres, payment: r.l.billing.freightTerm, transporter: r.l.o.transporter ?? r.l.delivery.p?.transporter ?? "—" }, hiddenKeys),
         flags: [],
         title: `${r.l.billing.name} · order ${r.l.o.orderNo}`,
-        actions: [{ id: "extra", l: "Extra Expenses", primary: true, prompt: { title: "Enter Extra Expenses", submit: "Save", fields: [{ k: "amount", l: "Extra expenses (₹)", t: "num", req: true, min: 0 }] } }],
+        actions: [{ id: "extra", l: "Extra expenses", primary: true, prompt: EXTRA_EXPENSE_PROMPT }],
       })),
     };
   },
-  actions: { extra: (ctx, id, v) => setExtra(ctx, [id], v) },
-  bulk: { extra: (ctx, ids, v) => setExtra(ctx, ids, v) },
+  actions: { extra: (ctx, id, v) => setExtraExpenses(ctx, [id], v) },
+  bulk: { extra: (ctx, ids, v) => setExtraExpenses(ctx, ids, v) },
 };
 
-async function setExtra(ctx: ErpContext, ids: string[], values: Record<string, string>): Promise<Result<unknown>> {
-  const amount = paise(values.amount);
-  if (amount == null || amount < 0) return fieldErr("amount", "Extra expenses are required");
-  const res = await db
-    .update(erpOrderDetails)
-    .set({ extraExpensesPaise: amount, updatedAt: new Date(), updatedById: ctx.user.id })
-    .where(and(inArray(erpOrderDetails.orderId, ids), sql`${erpOrderDetails.extraExpensesPaise} is null`))
-    .returning({ id: erpOrderDetails.orderId });
-  if (!res.length) return err("Extra expenses are already entered on these lines.", "rule_violation");
-  /* The bill's transport record carries the same figure, copied when it opened. */
-  await db.execute(sql`update erp_transports t set extra_expense_paise = ${amount} where t.id in ${ids} and t.extra_expense_paise is null`);
-  await erpAudit(ctx, "erp.detail.extra", "erp_order_detail", res.map((r) => r.id).join(","), null, { amount });
-  return okVoid(`Extra expenses on ${res.length} line${res.length === 1 ? "" : "s"}`);
-}
 
 /** Active employees from HRMS: who can be given petty cash or spend it. */
 async function activeEmployees(): Promise<{ name: string; position: string | null }[]> {
@@ -266,7 +255,7 @@ async function cashForm(ctx: ErpContext, kind: "credit" | "expense"): Promise<Fo
   ]);
   const common: FieldSpec[] = [
     { k: "date", l: "Date", t: "date", req: true },
-    { k: "godown", l: "Godown", t: "select", req: true, opts: gds.map((g) => g.name) },
+    godownField(gds),
     { k: "who", l: kind === "credit" ? "Employee" : "Expense by", t: "select", req: true, opts: names },
     { k: "mode", l: kind === "credit" ? "Credit mode" : "Expense mode", t: "select", req: true, opts: MODES },
   ];
@@ -373,7 +362,7 @@ const expenses: ScreenModule = {
       { k: "status", l: "Status", t: "s" },
       { k: "who", l: "Expense by", t: "t" },
     ];
-    const verifier = ctx.administrator || ctx.level === "manager";
+    const verifier = isErpManager(ctx);
     return {
       spec: {
         screen: "expenses",
@@ -441,7 +430,7 @@ const expenses: ScreenModule = {
 };
 
 async function setExpenseStatus(ctx: ErpContext, ids: string[], status: "Verify" | "Pending"): Promise<Result<unknown>> {
-  if (!(ctx.administrator || ctx.level === "manager")) return err("A manager verifies expenses.", "not_permitted");
+  if (!isErpManager(ctx)) return err("A manager verifies expenses.", "not_permitted");
   await db.update(erpExpenses).set({ status, updatedAt: new Date(), updatedById: ctx.user.id }).where(inArray(erpExpenses.id, ids));
   await erpAudit(ctx, `erp.expense.${status.toLowerCase()}`, "erp_expense", ids.join(","));
   return okVoid(`${ids.length} expense${ids.length === 1 ? "" : "s"} ${status === "Verify" ? "verified" : "back to Pending"}`);
@@ -526,7 +515,7 @@ const videos: ScreenModule = {
       { k: "description", l: "Description", t: "t", w: 320 },
       { k: "source", l: "Source", t: "s" },
     ];
-    const editor = ctx.administrator || ctx.level === "manager";
+    const editor = isErpManager(ctx);
     return {
       spec: {
         screen: "videos",
@@ -569,7 +558,7 @@ const videos: ScreenModule = {
   },
   forms: {
     async new(ctx, h) {
-      if (!(ctx.administrator || ctx.level === "manager")) return err("A manager adds help videos.", "not_permitted");
+      if (!isErpManager(ctx)) return err("A manager adds help videos.", "not_permitted");
       const title = text(h.title);
       if (!title) return fieldErr("title", "Title is required");
       const youtube = h.source !== "From File Upload";
@@ -588,7 +577,7 @@ const videos: ScreenModule = {
   },
   actions: {
     async delete(ctx, id) {
-      if (!(ctx.administrator || ctx.level === "manager")) return err("A manager removes help videos.", "not_permitted");
+      if (!isErpManager(ctx)) return err("A manager removes help videos.", "not_permitted");
       await db.delete(erpVideos).where(eq(erpVideos.id, id));
       await erpAudit(ctx, "erp.video.delete", "erp_video", id);
       return okVoid("Video removed");

@@ -48,9 +48,9 @@ export function GodownPicker({
         title={label}
         aria-expanded={open}
         className={cx(
-          "inline-flex max-w-[260px] cursor-pointer items-center gap-1.5 rounded-[4px] text-[13px] whitespace-nowrap",
+          "inline-flex max-w-[260px] cursor-pointer items-center gap-1.5 rounded-control text-meta whitespace-nowrap",
           look === "chip"
-            ? "h-6 bg-brand-soft px-2 font-medium text-[#5223E0]"
+            ? "h-6 bg-brand-soft px-2 font-medium text-brand-hover"
             : "h-8 border border-line bg-surface px-2.5 text-body hover:bg-canvas",
         )}
       >
@@ -63,7 +63,7 @@ export function GodownPicker({
           <div onClick={() => setOpen(false)} className="fixed inset-0 z-40" />
           <div
             className={cx(
-              "animate-fade-in absolute top-10 z-50 w-[320px] max-w-[90vw] overflow-hidden rounded-[6px] border border-line bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]",
+              "animate-fade-in absolute top-10 z-50 w-[320px] max-w-[90vw] overflow-hidden rounded-card border border-line bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]",
               align === "right" ? "right-0" : "left-0",
             )}
           >
@@ -73,7 +73,7 @@ export function GodownPicker({
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 placeholder={placeholder ?? `Search ${items.length} godowns`}
-                className="h-8 w-full rounded-[4px] border border-line px-2.5 text-[13px] outline-none focus:border-brand"
+                className="h-8 w-full rounded-control border border-line px-2.5 text-meta outline-none focus:border-brand"
               />
             </div>
             <div className="max-h-[340px] overflow-y-auto py-1">
@@ -87,7 +87,7 @@ export function GodownPicker({
                   }}
                   className={cx(
                     "flex min-h-9 w-full cursor-pointer items-center justify-between gap-2.5 px-3 py-1.5 text-left text-sm",
-                    it.v === value ? "bg-brand-soft text-[#5223E0]" : "text-ink hover:bg-canvas",
+                    it.v === value ? "bg-brand-soft text-brand-hover" : "text-ink hover:bg-canvas",
                   )}
                 >
                   <span className="min-w-0 truncate">{it.l}</span>
@@ -101,7 +101,7 @@ export function GodownPicker({
               </div>
             ) : null}
             {match.length === 0 ? (
-              <div className="px-3 py-3 text-[13px] text-muted">{noneLine ?? `No godown matches “${q}”`}</div>
+              <div className="px-3 py-3 text-meta text-muted">{noneLine ?? `No godown matches “${q}”`}</div>
             ) : null}
           </div>
         </>

@@ -1,12 +1,13 @@
 "use client";
 
+import { Page } from "./page-head";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ColSpec, ListRow, ListSpec, Tone } from "@/lib/erp/ui";
 import { cellText, inr, nf } from "@/lib/erp/ui";
 import { Icon as ShellIcon } from "@/components/shell/icons";
-import { Button, Card, cx, EmptyState, MetricStrip, PageHeader, SortableTh, Td, Th, Tr, type Metric } from "@/components/ui/primitives";
+import { Button, Card, cx, EmptyState, MetricStrip, SortableTh, Td, Th, Tr, type Metric } from "@/components/ui/primitives";
 import { SelectionBar, Tabs } from "@/components/ui/overlays";
 import { Pager } from "@/components/ui/pager";
 import { FlagBadge, rowTone, StatusBadge } from "./badge";
@@ -51,7 +52,9 @@ export type ListTab = {
  */
 export function ListTabs({ label, tabs, toggle }: { label: string; tabs: ListTab[]; toggle?: { label: string; href: string } | null }) {
   return (
-    <nav aria-label={`${label} lists`} className="mb-4 flex items-center overflow-x-auto border-b border-line">
+    /* Tabs WRAP rather than scroll: on a tablet Orders and Logistics have more
+       tabs than fit, and a tab scrolled out of sight is one nobody finds. */
+    <nav aria-label={`${label} lists`} className="mb-4 flex flex-wrap items-center border-b border-line">
       {tabs.map((t) => (
         <Link
           key={t.key}
@@ -63,12 +66,12 @@ export function ListTabs({ label, tabs, toggle }: { label: string; tabs: ListTab
           )}
         >
           {t.label}
-          {t.count ? <span className="rounded-full bg-warn px-1.5 text-[11px] leading-[18px] font-medium text-white">{t.count}</span> : null}
+          {t.count ? <span className="rounded-full bg-warn px-1.5 text-2xs leading-[18px] font-medium text-white">{t.count}</span> : null}
         </Link>
       ))}
       <span className="flex-1" />
       {toggle ? (
-        <Link href={toggle.href} className="px-2 py-2.5 text-[13px] font-medium text-[#5223E0] hover:underline">
+        <Link href={toggle.href} className="px-2 py-2.5 text-meta font-medium text-brand-hover hover:underline">
           {toggle.label}
         </Link>
       ) : null}
@@ -250,7 +253,13 @@ export function ListScreen({
   const headCols = gk && spec.groupHead ? spec.groupHead.map((k) => cols.find((c) => c.k === k)).filter((c): c is ColSpec => !!c) : [];
   // The group's own key is the header's first word, so its rows need not repeat it.
   const lineCols = headCols.length ? cols.filter((c) => !headCols.includes(c) && !gk?.includes(c.k)) : cols;
-  const fit = fitColumns({ cols: lineCols, avail, check: bulkOn, chosen: chosenCols });
+  /* The longest badge each status and flags column will draw on these rows. */
+  const badgeChars: Record<string, number> = {};
+  for (const c of lineCols) {
+    if (c.t === "s") badgeChars[c.k] = rows.reduce((n, r) => Math.max(n, r.v[c.k] == null ? 0 : String(r.v[c.k]).length), 0);
+    if (c.t === "f") badgeChars[c.k] = rows.reduce((n, r) => r.flags.reduce((m, f) => Math.max(m, (FLAG[f]?.[0] ?? f).length), n), 0);
+  }
+  const fit = fitColumns({ cols: lineCols, avail, check: bulkOn, chosen: chosenCols, badgeChars });
   const shownCols = fit.shown;
 
   const exportCsv = () => {
@@ -308,41 +317,37 @@ export function ListScreen({
   };
 
   return (
-    <div className="px-6 pt-6 pb-10">
-      <PageHeader
-        title={label}
-        subtitle={sub}
-        actions={
-          <>
-            <Button variant="secondary" onClick={exportCsv} title="Download these rows, as filtered, as CSV">
-              Export
+    <Page
+      title={label}
+      sub={sub}
+      actions={
+        <>
+          {/* One export for every list: it used to sit beside a "Download"
+              that did exactly the same thing on the stock and label lists. */}
+          <Button variant="secondary" onClick={exportCsv} title="Download these rows, as filtered, as CSV">
+            <Icon n="dl" />
+            Export
+          </Button>
+          {(spec.tools ?? []).map((t) => (
+            <Button
+              key={t.id}
+              variant={t.primary ? "primary" : "secondary"}
+              disabled={!!t.why}
+              title={t.why}
+              onClick={() => ui.tool(spec.screen, t)}
+            >
+              {t.l}
             </Button>
-            {spec.download ? (
-              <Button variant="secondary" onClick={exportCsv}>
-                <Icon n="dl" />
-                Download
-              </Button>
-            ) : null}
-            {(spec.tools ?? []).map((t) => (
-              <Button
-                key={t.id}
-                variant={t.primary ? "primary" : "secondary"}
-                disabled={!!t.why}
-                title={t.why}
-                onClick={() => ui.tool(spec.screen, t)}
-              >
-                {t.l}
-              </Button>
-            ))}
-            {spec.newForm && !spec.readOnly ? (
-              <Button variant="primary" onClick={() => spec.newForm && ui.openForm(spec.newForm)}>
-                <ShellIcon name="plus" size={16} />
-                {spec.newLabel ?? "New"}
-              </Button>
-            ) : null}
-          </>
-        }
-      />
+          ))}
+          {spec.newForm && !spec.readOnly ? (
+            <Button variant="primary" onClick={() => spec.newForm && ui.openForm(spec.newForm)}>
+              <ShellIcon name="plus" size={16} />
+              {spec.newLabel ?? "New"}
+            </Button>
+          ) : null}
+        </>
+      }
+    >
 
       {tabs && tabs.length > 1 ? <ListTabs label={label} tabs={tabs} toggle={toggle} /> : null}
 
@@ -370,7 +375,7 @@ export function ListScreen({
                 setPage(1);
               }}
               placeholder="Search this list"
-              className="h-8 w-full rounded-[4px] border border-line pr-7 pl-7.5 text-sm outline-none focus:border-brand"
+              className="h-8 w-full rounded-control border border-line pr-7 pl-7.5 text-sm outline-none focus:border-brand"
             />
             {q ? (
               <button onClick={() => setQ("")} aria-label="Clear search" className="absolute top-1.5 right-1.5 flex h-5 w-5 cursor-pointer items-center justify-center text-muted hover:text-body">
@@ -383,7 +388,7 @@ export function ListScreen({
               value={chip}
               onChange={(e) => pickChip(e.target.value)}
               aria-label={colOf(spec.chips!).l}
-              className="h-8 cursor-pointer rounded-[4px] border border-line bg-surface px-2.5 text-[13px] text-body outline-none focus:border-brand"
+              className="h-8 cursor-pointer rounded-control border border-line bg-surface px-2.5 text-meta text-body outline-none focus:border-brand"
             >
               <option value="">All {colOf(spec.chips!).l.toLowerCase()} · {nf(filtered.length)}</option>
               {chips.map((c) => (
@@ -413,15 +418,15 @@ export function ListScreen({
               }}
               aria-pressed={!!gk}
               className={cx(
-                "h-8 cursor-pointer rounded-[4px] border px-2.5 text-[13px] whitespace-nowrap",
-                gk ? "border-brand bg-brand-soft font-medium text-[#5223E0]" : "border-line bg-surface text-body hover:bg-canvas",
+                "h-8 cursor-pointer rounded-control border px-2.5 text-meta whitespace-nowrap",
+                gk ? "border-brand bg-brand-soft font-medium text-brand-hover" : "border-line bg-surface text-body hover:bg-canvas",
               )}
             >
               Group by {spec.groups.map((k) => lowerFirst(colOf(k).l)).join(" · ")}
             </button>
           ) : null}
           {filter ? (
-            <span className="inline-flex h-8 items-center gap-1.5 rounded-[4px] border border-brand bg-brand-soft pr-1 pl-2.5 text-[13px] font-medium text-[#5223E0]">
+            <span className="inline-flex h-8 items-center gap-1.5 rounded-control border border-brand bg-brand-soft pr-1 pl-2.5 text-meta font-medium text-brand-hover">
               From dashboard · {filter.label}
               <button onClick={() => router.replace(home)} aria-label="Remove filter" className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-[3px] hover:bg-brand-softer">
                 <ShellIcon name="close" size={14} />
@@ -431,14 +436,14 @@ export function ListScreen({
           <span className="flex-1" />
           {!spec.cards && cols.length > 1 ? <ColumnsMenu cols={lineCols} fit={fit} chosen={chosenCols} onChoose={setChosenCols} /> : null}
           {spec.hidden.length ? (
-            <span className="flex items-center gap-1.5 text-[13px] text-muted" title={`Not on your account: ${spec.hidden.map((x) => x.l).join(", ")}`}>
+            <span className="flex items-center gap-1.5 text-meta text-muted" title={`Not on your account: ${spec.hidden.map((x) => x.l).join(", ")}`}>
               <Icon n="lock" s={14} />
               {spec.hidden.length} column{spec.hidden.length > 1 ? "s" : ""} hidden
             </span>
           ) : null}
         </div>
 
-        {spec.scopedLine ? <div className="border-b border-divider bg-brand-soft/40 px-4 py-2 text-[13px] text-[#5223E0]">{spec.scopedLine}</div> : null}
+        {spec.scopedLine ? <div className="border-b border-divider bg-brand-soft/40 px-4 py-2 text-meta text-brand-hover">{spec.scopedLine}</div> : null}
 
         {rows.length === 0 ? (
           <EmptyState
@@ -471,21 +476,21 @@ export function ListScreen({
                     <button
                       key={r.id}
                       onClick={() => setOpenId(r.id)}
-                      className="flex cursor-pointer flex-col overflow-hidden rounded-[6px] border border-line bg-surface text-left hover:border-brand"
+                      className="flex cursor-pointer flex-col overflow-hidden rounded-card border border-line bg-surface text-left hover:border-brand"
                     >
                       <span className="flex aspect-[3/2] items-center justify-center bg-canvas">
                         {src ? (
                           // eslint-disable-next-line @next/next/no-img-element -- a private attachment, read through the scoped endpoint
                           <img src={src} alt={String(r.v[spec.cards!.title] ?? "")} className="h-full w-full object-cover" loading="lazy" />
                         ) : (
-                          <span className="px-3 text-center text-[12px] text-muted">{spec.cards!.empty}</span>
+                          <span className="px-3 text-center text-xs text-muted">{spec.cards!.empty}</span>
                         )}
                       </span>
                       <span className="grid gap-0.5 px-3 py-2">
-                        <span className="truncate text-[14px] font-semibold text-ink">{String(r.v[spec.cards!.title] ?? "")}</span>
+                        <span className="truncate text-sm font-semibold text-ink">{String(r.v[spec.cards!.title] ?? "")}</span>
                         {spec.cards!.lines.map((k) =>
                           r.v[k] ? (
-                            <span key={k} className="truncate text-[12px] text-muted">
+                            <span key={k} className="truncate text-xs text-muted">
                               {String(r.v[k])}
                             </span>
                           ) : null,
@@ -517,7 +522,7 @@ export function ListScreen({
                             pageRows.forEach((r) => (n[r.id] = !allOnPage));
                             setSel(n);
                           }}
-                          className="h-[15px] w-[15px] cursor-pointer accent-[#6835FB]"
+                          className="h-[15px] w-[15px] cursor-pointer accent-brand"
                         />
                       </Th>
                     ) : null}
@@ -558,8 +563,8 @@ export function ListScreen({
                             <tr key={`g:${g}`} className="border-b border-divider bg-canvas">
                               <td colSpan={shownCols.length + (bulkOn ? 1 : 0)} className="px-3 py-2">
                                 <span className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
-                                  <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">{gk.map((k) => colOf(k).l).join(" · ")}</span>
-                                  <span className="text-[13px] font-semibold text-ink">{g || "—"}</span>
+                                  <span className="text-2xs font-medium tracking-[0.04em] text-muted uppercase">{gk.map((k) => colOf(k).l).join(" · ")}</span>
+                                  <span className="text-meta font-semibold text-ink">{g || "—"}</span>
                                   {headCols.map((c) => (
                                     <GroupFact key={c.k} c={c} v={rs[0]?.v[c.k]} />
                                   ))}
@@ -571,7 +576,7 @@ export function ListScreen({
                                         rs.forEach((x) => (n[x.id] = !allSel));
                                         setSel(n);
                                       }}
-                                      className="h-6 cursor-pointer rounded-[4px] border border-line bg-surface px-2 text-xs text-[#5223E0] hover:bg-brand-soft"
+                                      className="h-6 cursor-pointer rounded-control border border-line bg-surface px-2 text-xs text-brand-hover hover:bg-brand-soft"
                                     >
                                       {allSel ? "Clear" : `Select all ${rs.length}`}
                                     </button>
@@ -593,7 +598,7 @@ export function ListScreen({
                                 checked={!!sel[r.id]}
                                 aria-label="Select row"
                                 onChange={() => setSel((s) => ({ ...s, [r.id]: !s[r.id] }))}
-                                className="h-[15px] w-[15px] cursor-pointer accent-[#6835FB]"
+                                className="h-[15px] w-[15px] cursor-pointer accent-brand"
                               />
                             </Td>
                           ) : null}
@@ -636,7 +641,7 @@ export function ListScreen({
                 grouped.list.forEach((r) => (n[r.id] = true));
                 setSel(n);
               }}
-              className="cursor-pointer text-[13px] text-line-strong underline-offset-2 hover:text-white hover:underline"
+              className="cursor-pointer text-meta text-line-strong underline-offset-2 hover:text-white hover:underline"
             >
               Select all {nf(total)}
             </button>
@@ -650,7 +655,7 @@ export function ListScreen({
       ) : null}
 
       {open ? <RecordDrawer key={open.id} screen={spec} kind={label} row={open} onClose={closeRec} /> : null}
-    </div>
+    </Page>
   );
 }
 
@@ -665,7 +670,7 @@ function GroupFact({ c, v }: { c: ColSpec; v: ListRow["v"][string] | undefined }
   const text = cellText(c, v);
   if (v == null || text === "" || text === "—") return null;
   if (c.t === "s") return <StatusBadge value={String(v)} />;
-  if (c.t === "b") return <span className="text-[13px] font-semibold text-ink">{text}</span>;
+  if (c.t === "b") return <span className="text-meta font-semibold text-ink">{text}</span>;
   return (
     <span className="text-xs text-muted">
       {c.l} <span className={cx("text-body", c.t === "mono" && "font-mono")}>{text}</span>
@@ -682,7 +687,9 @@ function Cell({ c, r, edge }: { c: ColSpec; r: ListRow; edge?: string }) {
     const words = r.flags.map((f) => flags[f]?.[0] ?? f).join(", ");
     return (
       <Td className={cx(edge, "overflow-hidden")} title={words || undefined}>
-        <span className="flex gap-1 overflow-hidden">
+        {/* Two flags on one row wrap onto a second line rather than the
+            second being cut off at the column's edge. */}
+        <span className="flex flex-wrap gap-1 overflow-hidden py-0.5">
           {r.flags.map((f) => (
             <FlagBadge key={f} flag={f} />
           ))}
@@ -712,7 +719,7 @@ function Cell({ c, r, edge }: { c: ColSpec; r: ListRow; edge?: string }) {
         "truncate tabular-nums",
         c.t === "b" ? "font-medium text-ink" : empty ? "text-line-strong" : undefined,
         !empty && (c.t === "ph" || c.t === "em" || c.t === "map") && "text-brand",
-        c.t === "mono" && "font-mono text-[13px]",
+        c.t === "mono" && "font-mono text-meta",
       )}
     >
       {txt}
