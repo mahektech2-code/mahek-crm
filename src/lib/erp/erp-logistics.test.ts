@@ -369,51 +369,64 @@ describe("my customers", () => {
 });
 
 describe("transporters", () => {
-  test("a GST number is checked, godowns are one town each with their people, and a new consignment name joins the list", async () => {
+  test("a godown is a state, district, city and area with its own GST number; an unlisted rung is added once; a new consignment name joins the list", async () => {
     const ctx = await as(admin);
-    const st = id("plc"), di = id("plc"), di2 = id("plc"), ci = id("plc");
+    const di = id("plc"), ci = id("plc"), ar = id("plc"), di2 = id("plc");
+    /* The state is the real one: a godown's GST number is checked against its NAME. */
+    await db.insert(places).values({ id: id("plc"), kind: "state", name: "Maharashtra", key: "maharashtra", parentId: null }).onConflictDoNothing();
+    const [mh] = await db.select().from(places).where(sql`${places.kind} = 'state' and ${places.key} = 'maharashtra' and ${places.parentId} is null`);
+    const st = mh.id;
     await db.insert(places).values([
-      { id: st, kind: "state", name: `Tstate ${tag}`, key: `tstate${tag}`, parentId: null },
       { id: di, kind: "district", name: `Tdist ${tag}`, key: `tdist${tag}`, parentId: st },
       { id: ci, kind: "city", name: `Tcity ${tag}`, key: `tcity${tag}`, parentId: di },
+      { id: ar, kind: "area", name: `Tarea ${tag}`, key: `tarea${tag}`, parentId: ci },
       { id: di2, kind: "district", name: `Udist ${tag}`, key: `udist${tag}`, parentId: st },
     ]);
+    const MH = "27AAPCS1234A1ZN";
+    const full = { state: { id: mh.id }, district: { id: di }, city: { id: ci }, area: { id: ar } };
 
     assert.equal(msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, gstin: "27ABCDE1234F1Z9" })), "That GST number does not check out — it is 15 characters, like 27ABCDE1234F1Z5");
-    assert.equal(msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, godowns: [{ label: "Main" }] })), "Pick the place for godown 1");
+    assert.equal(msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, godowns: [{ label: "Main" }] })), "Main: Pick the state");
+    assert.equal(msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, godowns: [{ label: "Main", place: { ...full, area: undefined } }] })), "Main: Pick the area, or add it if it is not listed");
+    assert.equal(msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, godowns: [{ label: "Main", place: full }] })), "Main: give its GST number");
+    assert.match(msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, godowns: [{ label: "Main", place: full, gstin: "24AAPCS1234A1ZT" }] })), /registered in Gujarat, but the godown is in Maharashtra/);
     assert.equal(
-      msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, godowns: [{ placeId: di, contacts: [{ name: "Ravi", phones: ["9820011001", "9820011002", "9820011003", "9820011004"] }] }] })),
+      msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, godowns: [{ place: full, gstin: MH, contacts: [{ name: "Ravi", phones: ["9820011001", "9820011002", "9820011003", "9820011004"] }] }] })),
       "A person takes up to 3 numbers",
     );
+    assert.equal(msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, godowns: [{ place: full, gstin: MH, lat: 19.2, lng: null }] })), "A pin is a latitude and a longitude — give both, or neither");
 
-    /* A godown is filed at a state and a district; a city is not one of the two. A pin is both halves. */
-    assert.equal(msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, godowns: [{ placeId: ci }] })), "That place is no longer on the list. Pick the state and district again.");
-    assert.equal(msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, godowns: [{ placeId: di, lat: 19.2, lng: null }] })), "A pin is a latitude and a longitude — give both, or neither");
-
+    /* The second godown's city and area are not listed: they are added under the picked district. */
+    const added = { state: { id: mh.id }, district: { id: di2 }, city: { name: `Vcity ${tag}` }, area: { name: `Varea ${tag}` } };
     const godowns = [
-      { label: "Main godown", placeId: di, lat: 19.2094, lng: 73.0939, address: "Plot 4", contacts: [{ name: "Ravi", role: "Booking", phones: ["9820011001", "", "022 2567 1234"] }, { name: "Asha", phones: ["9820011009"] }] },
-      { placeId: di2, contacts: [{ name: " ", phones: [""] }] },
+      { label: "Main godown", place: full, gstin: MH, lat: 19.2094, lng: 73.0939, address: "Plot 4", contacts: [{ name: "Ravi", role: "Booking", phones: ["9820011001", "", "022 2567 1234"] }, { name: "Asha", phones: ["9820011009"] }] },
+      { place: added, gstin: MH.toLowerCase(), contacts: [{ name: " ", phones: [""] }] },
     ];
     assert.ok((await L.saveTransporter(ctx, { name: `Road ${tag}`, gstin: "27aapcs1234a1zn", consignmentLabel: "  docket   number ", godowns })).ok);
     const [t] = await db.select().from(erpTransporters).where(eq(erpTransporters.name, `Road ${tag}`));
-    assert.equal(t.gstin, "27AAPCS1234A1ZN");
+    assert.equal(t.gstin, MH);
     assert.equal(t.consignmentLabel, "docket number");
-    /* The call buttons read the first person's name and numbers off the row. */
     assert.deepEqual([t.contactPerson, t.phone, t.altPhone], ["Ravi", "9820011001", "022 2567 1234"]);
     const list = await db.select().from(erpRefValues).where(sql`${erpRefValues.listKey} = 'consignmentLabel' and lower(${erpRefValues.value}) = 'docket number'`);
     assert.equal(list.length, 1);
     const read = (await L.transporters()).find((x) => x.id === t.id)!;
-    assert.deepEqual(read.godowns.map((g) => [g.label, g.placeId, g.lat, g.lng, g.contacts.length]), [["Main godown", di, 19.2094, 73.0939, 2], [null, di2, null, null, 0]]);
-    assert.deepEqual(read.godowns[0].contacts.map((c) => c.phones), [["9820011001", "022 2567 1234"], ["9820011009"]]);
+    assert.deepEqual(read.godowns.map((g) => [g.label, g.gstin, g.lat, g.contacts.length]), [["Main godown", MH, 19.2094, 2], [null, MH, null, 0]]);
+    assert.equal(read.godowns[0].placeId, ar);
+    const [vArea] = await db.select().from(places).where(eq(places.id, read.godowns[1].placeId!));
+    const [vCity] = await db.select().from(places).where(eq(places.id, vArea.parentId!));
+    assert.deepEqual([vArea.kind, vArea.name, vCity.kind, vCity.name, vCity.parentId], ["area", `Varea ${tag}`, "city", `Vcity ${tag}`, di2]);
 
-    /* A known name keeps the list's spelling; leaving godowns out leaves them alone. */
+    /* Typing the same city again, any spelling, files under the one already added. */
+    const again = { ...added, city: { name: `VCITY  ${tag}`.toLowerCase() }, area: { name: `Warea ${tag}` } };
+    assert.ok((await L.saveTransporter(ctx, { id: t.id, name: `Road ${tag}`, godowns: [...read.godowns.map((g) => ({ ...g, place: undefined })), { place: again, gstin: MH }] })).ok);
+    const cities = await db.select().from(places).where(sql`${places.kind} = 'city' and ${places.parentId} = ${di2}`);
+    assert.equal(cities.length, 1);
+
+    /* Leaving godowns out leaves them alone; saving them back keeps their ids; a godown taken off goes with its people. */
     assert.ok((await L.saveTransporter(ctx, { id: t.id, name: `Road ${tag}`, consignmentLabel: "gr number" })).ok);
-    const [again] = await db.select().from(erpTransporters).where(eq(erpTransporters.id, t.id));
-    assert.equal(again.consignmentLabel, "GR Number");
-    assert.equal(again.phone, "9820011001");
-    assert.equal((await db.select().from(erpTransporterGodowns).where(eq(erpTransporterGodowns.transporterId, t.id))).length, 2);
-
-    /* Saving the godowns back keeps their ids; a godown taken off goes with its people. */
+    const [row] = await db.select().from(erpTransporters).where(eq(erpTransporters.id, t.id));
+    assert.equal(row.consignmentLabel, "GR Number");
+    assert.equal((await db.select().from(erpTransporterGodowns).where(eq(erpTransporterGodowns.transporterId, t.id))).length, 3);
     const keep = read.godowns[0];
     assert.ok((await L.saveTransporter(ctx, { id: t.id, name: `Road ${tag}`, godowns: [{ ...keep, contacts: keep.contacts.slice(1) }] })).ok);
     const after = (await L.transporters()).find((x) => x.id === t.id)!;
@@ -422,4 +435,5 @@ describe("transporters", () => {
     assert.equal(after.contactPerson, "Asha");
   });
 });
+
 

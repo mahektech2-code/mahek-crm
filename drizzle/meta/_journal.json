@@ -1814,6 +1814,13 @@
       "when": 1792532684442,
       "tag": "0261_factory_multi_department",
       "breakpoints": true
+    },
+    {
+      "idx": 259,
+      "version": "7",
+      "when": 1792532744442,
+      "tag": "0262_transporter_godown_gstin",
+      "breakpoints": true
     }
   ]
 }
