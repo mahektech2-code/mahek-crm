@@ -157,7 +157,12 @@ export async function pipelineRefs(): Promise<PipelineRefs> {
     /* EVERYBODY A LEAD CAN BE GIVEN TO: every active person holding the CRM or
        the Salesman App - telecallers and salesmen alike, the same list the Change
        owner list offers. `reassignLead` accepts exactly this set (by id). */
-    salesmen: team.map((s) => ({ id: s.id, name: s.name })),
+    salesmen: team.map((s) => ({
+      id: s.id,
+      name: s.name,
+      ...(s.canOwn ? {} : { blocked: s.blockedReason ?? "no access" }),
+      ...(s.disambiguator ? { tag: s.disambiguator } : {}),
+    })),
     actionOwners: owners.map((o) => ({ id: o.id, name: o.name })),
     me: { id: user.id, name: user.name },
   };

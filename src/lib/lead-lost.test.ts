@@ -246,7 +246,7 @@ describe("B/C — the Lost list, and where each row was lost from", () => {
     const byId = new Map(owners.map((o) => [o.value, o.count]));
     assert.equal(byId.get(quiet.id), 0, "somebody with nothing lost is offered, at zero");
     assert.equal(byId.get(associate.id), 1, "the owner of a lost lead keeps its count");
-    for (const p of await ownerChoices()) {
+    for (const p of (await ownerChoices()).filter((x) => x.canOwn)) {
       assert.ok(byId.has(p.id), `${p.name} must be offered`);
     }
     assert.equal(new Set(owners.map((o) => o.value)).size, owners.length, "nobody is listed twice");

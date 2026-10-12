@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, inArray, ne } from "drizzle-orm";
+import { and, eq, inArray, ne, notInArray } from "drizzle-orm";
 import { db } from "@/db";
 import { appAccess, mbosUserTerritories, users } from "@/db/schema";
 import { canOpenModule } from "@/lib/access";
@@ -47,8 +47,27 @@ async function crmAccounts(): Promise<(DeskPerson & { role: string })[]> {
  */
 export type OwnerPlace = "desk" | "crm" | "handset";
 
-/** A person the Change owner list offers. `canOwn` is false only for somebody a lead cannot be given to at all. */
-export type OwnerChoice = DeskPerson & { canOwn: boolean; place: OwnerPlace };
+/**
+ * A person the Change owner list offers.
+ *
+ * `canOwn` false is somebody who EXISTS and cannot be given a lead YET - an
+ * active account with neither the CRM nor the Salesman App. They are listed,
+ * not hidden, so a name somebody expects is never simply missing, and `place`
+ * is `none` with `blockedReason` saying what has to happen first. Nothing here
+ * grants them anything.
+ *
+ * `disambiguator` is set only where two accounts share a name, so they can be
+ * told apart in a picker (and are never merged: the value is the user id).
+ */
+export type OwnerChoice = DeskPerson & {
+  canOwn: boolean;
+  place: OwnerPlace | "none";
+  blockedReason?: string;
+  disambiguator?: string;
+};
+
+export const NO_ACCESS_REASON =
+  "no CRM or Salesman App access - grant one on the Access screen first";
 
 /** Active people who hold the CRM or the Salesman App, with which of the two. Name order, one row each. */
 async function assignableAccounts(): Promise<Array<DeskPerson & { crm: boolean; field: boolean }>> {
@@ -90,8 +109,38 @@ async function placeOf(p: { id: string; crm: boolean }): Promise<OwnerPlace> {
  */
 export async function ownerChoices(): Promise<OwnerChoice[]> {
   const out: OwnerChoice[] = [];
-  for (const u of await assignableAccounts()) {
+  const assignable = await assignableAccounts();
+  for (const u of assignable) {
     out.push({ id: u.id, name: u.name, canOwn: true, place: await placeOf(u) });
+  }
+
+  /* Active accounts that cannot be given a lead yet are listed after everybody
+     who can, flagged and unselectable. An assignment to them would be invisible
+     (they hold no app that shows a lead), and granting them an app is somebody's
+     decision on the Access screen - never a side effect of picking a name. */
+  const have = new Set(assignable.map((u) => u.id));
+  const others = await db
+    .select({ id: users.id, name: users.name })
+    .from(users)
+    .where(have.size ? and(eq(users.active, true), notInArray(users.id, Array.from(have))) : eq(users.active, true))
+    .orderBy(users.name, users.id);
+  for (const u of others) {
+    out.push({ id: u.id, name: u.name, canOwn: false, place: "none", blockedReason: NO_ACCESS_REASON });
+  }
+
+  /* Two accounts with one name stay two entries (the value is the id); a short
+     tag lets a person tell them apart. Only where there is a clash. */
+  const byName = new Map<string, OwnerChoice[]>();
+  for (const c of out) {
+    const key = c.name.trim().toLowerCase();
+    byName.set(key, [...(byName.get(key) ?? []), c]);
+  }
+  for (const group of byName.values()) {
+    if (group.length < 2) continue;
+    for (const c of group) {
+      const where = c.place === "none" ? "no access" : c.place === "handset" ? "Salesman App" : c.place === "crm" ? "CRM" : "CRM desk";
+      c.disambiguator = `${where}, id …${c.id.slice(-4)}`;
+    }
   }
   return out;
 }

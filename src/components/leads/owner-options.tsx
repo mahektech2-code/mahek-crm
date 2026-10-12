@@ -27,14 +27,19 @@ export type OwnerPerson = {
    * choice is never silent about where the lead lands. Optional because the
    * Calling desk's own assign list predates it.
    */
-  place?: "desk" | "crm" | "handset";
+  place?: "desk" | "crm" | "handset" | "none";
+  /** Why somebody listed cannot be chosen yet (no CRM or Salesman App access). */
+  blockedReason?: string;
+  /** Tells two accounts with one name apart; never merges them (the value is the id). */
+  disambiguator?: string;
 };
 
 function labelFor(p: OwnerPerson): string {
-  if (p.canOwn === false) return `${p.name} (no Calling desk)`;
-  if (p.place === "crm") return `${p.name} (All Leads, no desk)`;
-  if (p.place === "handset") return `${p.name} (Salesman App)`;
-  return p.name;
+  const who = p.disambiguator ? `${p.name} · ${p.disambiguator}` : p.name;
+  if (p.canOwn === false) return p.place === "none" ? who : `${who} (no Calling desk)`;
+  if (p.place === "crm") return `${who} (All Leads, no desk)`;
+  if (p.place === "handset") return `${who} (Salesman App)`;
+  return who;
 }
 
 /** What the action takes: `null` is Unassigned. */
@@ -48,14 +53,28 @@ export function firstChoosable(people: OwnerPerson[]): string {
 }
 
 export function OwnerOptions({ people }: { people: OwnerPerson[] }) {
+  /* Somebody with NO CRM or Salesman App access is listed last, grouped and
+     unselectable, saying why: a name the office expects is never simply
+     missing, and a lead is never handed to somebody who could not see it. */
+  const blocked = people.filter((p) => p.place === "none");
+  const rest = people.filter((p) => p.place !== "none");
   return (
     <>
       <option value={UNASSIGNED}>Unassigned</option>
-      {people.map((p) => (
+      {rest.map((p) => (
         <option key={p.id} value={p.id} disabled={p.canOwn === false}>
           {labelFor(p)}
         </option>
       ))}
+      {blocked.length ? (
+        <optgroup label="Cannot be given a lead yet - no CRM or Salesman App access">
+          {blocked.map((p) => (
+            <option key={p.id} value={p.id} disabled title={p.blockedReason}>
+              {labelFor(p)}
+            </option>
+          ))}
+        </optgroup>
+      ) : null}
     </>
   );
 }

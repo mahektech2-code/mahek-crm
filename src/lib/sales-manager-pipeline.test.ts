@@ -402,6 +402,9 @@ describe("R — the reads are counted in the database", () => {
     assert.ok(ids.has(salesA.id) && ids.has(salesB.id), "salesmen can be given a lead");
     assert.ok(ids.has(telecaller.id), "and so can a telecaller - every active CRM or Salesman App person");
     assert.equal(refs.salesmen.length, ids.size, "each person once, by id");
+    const blocked = refs.salesmen.filter((s) => s.blocked);
+    assert.ok(blocked.every((s) => !ids.has("") && /no CRM or Salesman App access/.test(s.blocked ?? "")));
+    assert.ok(!refs.salesmen.find((s) => s.id === telecaller.id)?.blocked, "a telecaller is choosable");
     assert.equal(refs.me.id, manager.id);
   });
 });

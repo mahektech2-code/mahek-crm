@@ -281,7 +281,8 @@ export async function lostLeadOwnerOptions(): Promise<Array<FilterOption & { cou
   }));
   const present = new Set(out.map((o) => o.value));
   for (const p of await ownerChoices()) {
-    if (!present.has(p.id)) out.push({ value: p.id, label: p.name, count: 0 });
+    /* Somebody who cannot be given a lead owns no lost lead either. */
+    if (p.canOwn && !present.has(p.id)) out.push({ value: p.id, label: p.name, count: 0 });
   }
   /* Owners of lost leads first, busiest first (as before); the rest by name. */
   return [...out.filter((o) => o.count > 0), ...out.filter((o) => o.count === 0).sort((a, b) => a.label.localeCompare(b.label))];

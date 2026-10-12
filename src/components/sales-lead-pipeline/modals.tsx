@@ -1210,9 +1210,18 @@ function ReassignModal({ lead, onClose }: ModalProps) {
       <Field label="New owner" className="mb-3" hint="Any active CRM or Salesman App person can be given a lead. Where it will appear for them is shown once it is done.">
         <Select value={owner} onChange={(e) => setOwner(e.target.value)}>
           <option value="">Choose…</option>
-          {refs.salesmen.map((p) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
+          {refs.salesmen.filter((p) => !p.blocked).map((p) => (
+            <option key={p.id} value={p.id}>{p.tag ? `${p.name} (${p.tag})` : p.name}</option>
           ))}
+          {refs.salesmen.some((p) => p.blocked) ? (
+            <optgroup label="Cannot be given a lead yet - no CRM or Salesman App access">
+              {refs.salesmen.filter((p) => p.blocked).map((p) => (
+                <option key={p.id} value={p.id} disabled>
+                  {p.tag ? `${p.name} (${p.tag})` : p.name}
+                </option>
+              ))}
+            </optgroup>
+          ) : null}
         </Select>
       </Field>
       <Field label="Sales manager" className="mb-1">

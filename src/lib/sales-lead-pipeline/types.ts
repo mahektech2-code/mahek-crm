@@ -471,7 +471,14 @@ export type PipelineFunnelData = {
 /* ------------------------------------------------------- reference data */
 
 export type Coded = { code: string; label: string };
-export type Person = { id: string; name: string };
+export type Person = {
+  id: string;
+  name: string;
+  /** Set when this person is listed but cannot be given a lead yet; says why. */
+  blocked?: string;
+  /** Tells two accounts with one name apart. */
+  tag?: string;
+};
 
 /**
  * The lists a dialog offers, read from configuration and the real user tables

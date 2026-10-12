@@ -34,6 +34,8 @@ let gone: U; // an inactive account
 let fieldOnly: U; // the Salesman App and nothing else
 let twinA: U; // two accounts that share a name,
 let twinB: U; // told apart by id
+let noAccess: U; // active, but holds neither the CRM nor the Salesman App
+let sameNameNoAccess: U; // shares a name with `seema`, and has no access
 
 async function makeUser(name: string, role: "associate" | "manager", apps: Array<"crm" | "field"> = ["crm"], active = true) {
   const [row] = await db
@@ -86,6 +88,8 @@ beforeEach(async () => {
   fieldOnly = await makeUser("Field Only", "associate", ["field"]); // Salesman App, no CRM at all
   twinA = await makeUser("Twin Name", "associate");
   twinB = await makeUser("Twin Name", "associate", ["field"]); // same name, a different account
+  noAccess = await makeUser("Factory Only", "associate", []);
+  sameNameNoAccess = await makeUser("Seema Roy", "associate", []);
   plain = await makeUser("Plain Caller", "associate");
   for (const u of [manager, ravi, seema, plain]) await grantDesk(u.id);
   // A CRM account with NO module rows holds every module, the desk included, so "no Calling
@@ -104,7 +108,10 @@ after(async () => {
 describe("who the list shows", () => {
   test("every active CRM or Salesman App account, in name order, every one choosable", async () => {
     const choices = await ownerChoices();
-    assert.deepEqual(choices.map((c) => c.name), [...choices.map((c) => c.name)].sort((a, b) => a.localeCompare(b)));
+    /* Name order within each group: everybody choosable first, then the ones who cannot be yet. */
+    for (const group of [choices.filter((c) => c.canOwn), choices.filter((c) => !c.canOwn)]) {
+      assert.deepEqual(group.map((c) => c.name), [...group.map((c) => c.name)].sort((x, y) => x.localeCompare(y)));
+    }
     const byId = new Map(choices.map((c) => [c.id, c]));
     for (const u of [manager, ravi, seema, heena, plain, fieldOnly, twinA, twinB]) {
       assert.equal(byId.get(u.id)?.canOwn, true, `${u.name} must be choosable`);
@@ -113,6 +120,43 @@ describe("who the list shows", () => {
     assert.equal(byId.get(heena.id)?.place, "crm", "CRM but no desk: in All Leads");
     assert.equal(byId.get(fieldOnly.id)?.place, "handset", "Salesman App only: on the handset");
     assert.equal(byId.has(gone.id), false, "an inactive account is not offered");
+  });
+
+  test("an active account with no CRM or Salesman App access is listed, flagged and not choosable", async () => {
+    const choices = await ownerChoices();
+    const c = choices.find((x) => x.id === noAccess.id);
+    assert.ok(c, "listed, so the name is never simply missing");
+    assert.equal(c.canOwn, false);
+    assert.equal(c.place, "none");
+    assert.match(c.blockedReason ?? "", /no CRM or Salesman App access/);
+    const firstBlocked = choices.findIndex((x) => !x.canOwn);
+    assert.ok(choices.slice(firstBlocked).every((x) => !x.canOwn), "blocked ones come after everybody choosable");
+    assert.equal(choices.some((x) => x.id === gone.id), false, "an inactive account is still not listed");
+  });
+
+  test("handing a lead to somebody with no access is refused, says why, and writes nothing", async () => {
+    const l = await lead();
+    const r = await assignDeskLead({ customerId: l.id, ownerId: noAccess.id });
+    assert.equal(r.ok, false);
+    assert.match(!r.ok ? r.error : "", /no active CRM or Salesman App account/);
+    assert.equal((await row(l.id)).ownerId, ravi.id);
+    assert.equal(await count("audit_log", l.id), 0);
+    const bulk = await bulkAssignDeskLeads({ leadIds: [l.id], ownerId: noAccess.id });
+    assert.equal(bulk.ok, false);
+    assert.equal((await row(l.id)).ownerId, ravi.id);
+  });
+
+  test("two Seema Roy accounts stay two entries, each tagged, and only the one with access is choosable", async () => {
+    const both = (await ownerChoices()).filter((c) => c.id === seema.id || c.id === sameNameNoAccess.id);
+    assert.equal(both.length, 2);
+    assert.notEqual(both[0].disambiguator, both[1].disambiguator);
+    assert.ok(both.every((c) => c.disambiguator));
+    assert.equal(both.find((c) => c.id === seema.id)?.canOwn, true);
+    assert.equal(both.find((c) => c.id === sameNameNoAccess.id)?.canOwn, false);
+    const l = await lead();
+    const r = await assignDeskLead({ customerId: l.id, ownerId: seema.id });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.equal((await row(l.id)).ownerId, seema.id, "the lead goes to the account picked, by id");
   });
 
   test("two accounts with one name are two entries, told apart by id", async () => {
