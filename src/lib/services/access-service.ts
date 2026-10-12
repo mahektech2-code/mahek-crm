@@ -9,7 +9,7 @@ import { asc, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appAccess, appModuleAccess, employees, erpUserPowers, hireUserRoles, hrmsUserPowers, users } from "@/db/schema";
 import { APPS, type AppId } from "@/lib/apps";
-import type { CrewRole, FactoryDept, FactoryPlace } from "@/lib/factory/departments";
+import { placeFromRow, type CrewRole, type FactoryDept, type FactoryPlace } from "@/lib/factory/departments";
 import { isAlwaysOpen, moduleAllowed, moduleKeysForApp, modulesForApp } from "@/lib/modules";
 
 /* ---------------------------------------------------------------------------
@@ -261,11 +261,11 @@ export async function listAccess(): Promise<AccessRow[]> {
     db.select({ userId: hireUserRoles.userId, role: hireUserRoles.role }).from(hireUserRoles),
     designationStandings(),
     db.execute(sql`
-      select s.user_id as "userId", s.area, s.badge_code as badge, s.hr_confirmed as "hrConfirmed",
-             (select d.role from factory_team_defaults d where d.user_id = s.user_id and d.proc = s.area limit 1) as crew
-        from factory_staff s`) as unknown as Promise<{ userId: string; area: FactoryDept; badge: string | null; hrConfirmed: boolean; crew: CrewRole | null }[]>,
+      select s.user_id as "userId", s.area, s.areas, s.badge_code as badge, s.hr_confirmed as "hrConfirmed",
+             (select coalesce(json_object_agg(d.proc, d.role), '{}'::json) from factory_team_defaults d where d.user_id = s.user_id) as crews
+        from factory_staff s`) as unknown as Promise<{ userId: string; area: FactoryDept; areas: FactoryDept[] | null; badge: string | null; hrConfirmed: boolean; crews: Record<string, CrewRole> }[]>,
   ]);
-  const placeByUser = new Map(factoryRows.map((r) => [r.userId, { dept: r.area, crew: r.crew, badge: r.badge, hrConfirmed: r.hrConfirmed } as FactoryPlace]));
+  const placeByUser = new Map(factoryRows.map((r) => [r.userId, placeFromRow(r)]));
   const hireRoleByUser = new Map(hireRoleRows.map((r) => [r.userId, r.role]));
   const hrmsPowersByUser = new Map<string, string[]>();
   for (const p of hrmsPowerRows) hrmsPowersByUser.set(p.userId, [...(hrmsPowersByUser.get(p.userId) ?? []), p.power]);

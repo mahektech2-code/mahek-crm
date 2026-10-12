@@ -28,7 +28,8 @@ import { requirePlatformAdminUser, widestRole, type Role } from "@/lib/access-co
 import { ERP_POWERS } from "@/lib/erp/powers";
 import { HRMS_POWERS } from "@/lib/hrms/powers";
 import { HIRE_ROLES, ROLE_LABEL } from "@/lib/hire/roles";
-import { CREW_ROLES, crewLabel, DEPT_LABEL, isProc, placeProblem, type CrewRole, type FactoryDept, type FactoryPlace } from "@/lib/factory/departments";
+import { CREW_ROLES, cleanDepts, crewLabel, isProc, placeFromRow, placeProblem, placeWords, procsOf, type CrewRole, type FactoryDept, type FactoryPlace } from "@/lib/factory/departments";
+import type { Proc } from "@/lib/factory/types";
 import {
   employeesForLink,
   listCandidates,
@@ -311,22 +312,43 @@ async function writeHireRole(userId: string, role: string | null, by: string) {
 
 async function currentFactoryPlace(userId: string): Promise<FactoryPlace | null> {
   const [row] = (await db.execute(sql`
-    select s.area, s.badge_code as badge, s.hr_confirmed as "hrConfirmed",
-           (select d.role from factory_team_defaults d where d.user_id = s.user_id and d.proc = s.area limit 1) as crew
-      from factory_staff s where s.user_id = ${userId}`)) as unknown as { area: FactoryDept; badge: string | null; hrConfirmed: boolean; crew: CrewRole | null }[];
-  return row ? { dept: row.area, crew: row.crew, badge: row.badge, hrConfirmed: row.hrConfirmed } : null;
+    select s.area, s.areas, s.badge_code as badge, s.hr_confirmed as "hrConfirmed",
+           (select coalesce(json_object_agg(d.proc, d.role), '{}'::json) from factory_team_defaults d where d.user_id = s.user_id) as crews
+      from factory_staff s where s.user_id = ${userId}`)) as unknown as { area: FactoryDept; areas: FactoryDept[] | null; badge: string | null; hrConfirmed: boolean; crews: Record<string, CrewRole> }[];
+  return row ? placeFromRow(row) : null;
 }
 
 const samePlace = (a: FactoryPlace | null, b: FactoryPlace | null) =>
-  !!a && !!b ? a.dept === b.dept && (a.crew ?? null) === (b.crew ?? null) && (a.badge || null) === (b.badge || null) && a.hrConfirmed === b.hrConfirmed : a === b;
+  !!a && !!b
+    ? a.depts.join() === b.depts.join() &&
+      JSON.stringify(cleanCrews(a)) === JSON.stringify(cleanCrews(b)) &&
+      (a.badge || null) === (b.badge || null) &&
+      a.hrConfirmed === b.hrConfirmed
+    : a === b;
+
+/** The seats that mean something: a known role, in a production department the place ticks, in a stable order. */
+function cleanCrews(p: { depts: readonly string[]; crews?: Partial<Record<string, string | null>> | null }): Partial<Record<Proc, CrewRole>> {
+  const out: Partial<Record<Proc, CrewRole>> = {};
+  for (const d of procsOf(p.depts)) {
+    const c = p.crews?.[d];
+    if (c && (CREW_ROLES as readonly string[]).includes(c)) out[d] = c as CrewRole;
+  }
+  return out;
+}
 
 /** The floor place after this save: `undefined` where it does not change, null to take it away. */
 function wantedFactoryPlace(input: SetAccessInput, keepsFactory: boolean, current: FactoryPlace | null, level: string): { next: FactoryPlace | null | undefined; error?: string } {
   if (!keepsFactory) return { next: current ? null : undefined };
   if (input.factoryPlace === undefined) return { next: undefined };
   const raw = input.factoryPlace;
+  if (raw) {
+    /* Refused rather than quietly dropped: a typo'd department must not save as fewer departments. */
+    const listed = Array.isArray(raw.depts) ? raw.depts : [];
+    const problem = placeProblem({ depts: listed, crews: raw.crews ?? {}, badge: raw.badge ?? null, hrConfirmed: raw.hrConfirmed !== false }, level);
+    if (problem) return { next: undefined, error: problem };
+  }
   const p: FactoryPlace | null = raw
-    ? { dept: raw.dept, crew: raw.crew && (CREW_ROLES as readonly string[]).includes(raw.crew) ? raw.crew : null, badge: raw.badge?.trim() || null, hrConfirmed: raw.hrConfirmed !== false }
+    ? { depts: cleanDepts(raw.depts), crews: cleanCrews(raw), badge: raw.badge?.trim() || null, hrConfirmed: raw.hrConfirmed !== false }
     : null;
   const problem = placeProblem(p, level);
   if (problem) return { next: undefined, error: problem };
@@ -334,10 +356,10 @@ function wantedFactoryPlace(input: SetAccessInput, keepsFactory: boolean, curren
 }
 
 /**
- * Writes the place: the staff row, and their seat in the department's
- * standing crew. One person in charge and one operator per department — a
- * new one in that seat takes it — and any number of helpers. The PIN on the
- * staff row is theirs and is never touched here.
+ * Writes the place: the staff row with every department, and their seat in
+ * each department's standing crew. One person in charge and one operator per
+ * department — a new one in that seat takes it — and any number of helpers.
+ * The PIN on the staff row is theirs and is never touched here.
  */
 async function writeFactoryPlace(userId: string, p: FactoryPlace | null) {
   await db.transaction(async (tx) => {
@@ -346,22 +368,22 @@ async function writeFactoryPlace(userId: string, p: FactoryPlace | null) {
       await tx.execute(sql`delete from factory_staff where user_id = ${userId}`);
       return;
     }
-    const label = p.crew ? crewLabel(p.dept, p.crew) : p.dept === "head" ? "Production Head" : null;
+    const depts = cleanDepts(p.depts);
+    const seats = Object.entries(p.crews).filter((e): e is [Proc, CrewRole] => !!e[1] && isProc(e[0]));
+    const label = depts[0] === "head" ? "Production Head" : seats.length === 1 ? crewLabel(seats[0][0], seats[0][1]) : null;
     await tx.execute(sql`
-      insert into factory_staff (user_id, area, role_label, badge_code, hr_confirmed)
-      values (${userId}, ${p.dept}, ${label}, ${p.badge}, ${p.hrConfirmed})
-      on conflict (user_id) do update set area = excluded.area, role_label = excluded.role_label,
+      insert into factory_staff (user_id, area, areas, role_label, badge_code, hr_confirmed)
+      values (${userId}, ${depts[0]}, ${sql.param(depts)}::text[], ${label}, ${p.badge}, ${p.hrConfirmed})
+      on conflict (user_id) do update set area = excluded.area, areas = excluded.areas, role_label = excluded.role_label,
         badge_code = excluded.badge_code, hr_confirmed = excluded.hr_confirmed, updated_at = now()`);
-    if (p.crew && isProc(p.dept)) {
-      if (p.crew === "owner" || p.crew === "operator")
-        await tx.execute(sql`delete from factory_team_defaults where proc = ${p.dept} and role = ${p.crew}`);
-      await tx.execute(sql`insert into factory_team_defaults (proc, role, user_id) values (${p.dept}, ${p.crew}, ${userId}) on conflict do nothing`);
+    for (const [proc, crew] of seats) {
+      if (crew === "owner" || crew === "operator") await tx.execute(sql`delete from factory_team_defaults where proc = ${proc} and role = ${crew}`);
+      await tx.execute(sql`insert into factory_team_defaults (proc, role, user_id) values (${proc}, ${crew}, ${userId}) on conflict do nothing`);
     }
   });
 }
 
-const factoryPlaceWord = (p: FactoryPlace | null) =>
-  p ? DEPT_LABEL[p.dept] + (p.crew ? " · " + crewLabel(p.dept, p.crew) : "") + (p.hrConfirmed ? "" : " · to confirm with HR") : "no department";
+const factoryPlaceWord = (p: FactoryPlace | null) => placeWords(p).replace("still to confirm", "to confirm");
 
 const hireRoleWord = (r: string | null) => (r ? (ROLE_LABEL as Record<string, string>)[r] ?? r : "level default");
 

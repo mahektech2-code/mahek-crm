@@ -3,6 +3,11 @@
 import { Component, type CSSProperties, type ReactNode } from "react";
 import { L, STEP_T, type Lang, type Words } from "@/lib/factory/i18n";
 import {
+  worksIn,
+  myDepts,
+  inDept,
+  DEPT_TINT,
+  activeDept,
   jobStatus,
   lotName,
   lotUnit,
@@ -85,6 +90,7 @@ export class FactoryApp extends Component<Props, State> {
       newPin: "",
       newPin1: "",
       route: props.initialMe?.head ? "today" : "home",
+      dept: null,
       scan: null,
       flow: null,
       result: null,
@@ -168,6 +174,7 @@ export class FactoryApp extends Component<Props, State> {
       drafts: load<Record<string, Flow>>(me, "drafts", {}),
       started: load<Record<string, 1>>(me, "started", {}),
       results: load<Record<string, SubmitResult>>(me, "results", {}),
+      dept: load<Proc | null>(me, "dept", null),
     };
   }
 
@@ -269,6 +276,61 @@ export class FactoryApp extends Component<Props, State> {
   }
 
   /** Today's work, with anything still waiting in this phone's queue shown as waiting. */
+  /** The department the screen is showing, for somebody who works several; null is all of theirs. */
+  dept(): Proc | null {
+    const me = this.state.me;
+    return me ? activeDept(me, this.state.dept) : null;
+  }
+
+  /** Switch the department the screens show. Remembered on this phone, per person. */
+  pickDept(d: Proc | null) {
+    const me = this.state.me!;
+    save(me.key, "dept", d);
+    /* No toast: the pill and the chips already say which work is showing. */
+    this.setState({ dept: d, sheet: null, hf: "all" });
+  }
+
+  /** The department switch: a pill under the name for somebody who works more than one department. */
+  deptPill(): ReactNode {
+    const me = this.state.me!, T = this.T();
+    if (myDepts(me).length < 2) return null;
+    const d = this.dept();
+    const tint = d ? DEPT_TINT[d] : ["#F1ECFF", "#3D14A8"];
+    return (
+      <button onClick={() => this.setState({ sheet: { type: "dept" } })} aria-label={T.whichWork} style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "28px", padding: "0 6px 0 10px", marginTop: "3px", borderRadius: "14px", border: "1.5px solid " + tint[1] + "33", background: tint[0], color: tint[1], fontSize: "13px", fontWeight: 700, cursor: "pointer", maxWidth: "100%" }}>
+        {ic(d ? PC[d] : "list", 15)}
+        <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d ? (T as Record<string, string>)[d] : T.allWork}</span>
+        {ic("chev", 16)}
+      </button>
+    );
+  }
+
+  /** The department chips across the top of a list: all of theirs, then each one with its open jobs. */
+  deptChips(): ReactNode {
+    const me = this.state.me!, T = this.T();
+    const ds = myDepts(me);
+    if (ds.length < 2) return null;
+    const d = this.dept();
+    const open = (p: Proc | null) => this.tasks().filter((t) => t.status !== "done" && inDept(me, p, t.proc)).length;
+    const chip = (p: Proc | null) => {
+      const on = d === p;
+      const n = open(p);
+      return (
+        <button key={p ?? "all"} onClick={() => !on && this.pickDept(p)} aria-pressed={on} style={{ flex: "none", display: "flex", alignItems: "center", gap: "6px", height: "40px", padding: "0 14px", borderRadius: "20px", border: on ? "none" : "1px solid #DDE1E8", background: on ? "#6835FB" : "#FFFFFF", color: on ? "#FFFFFF" : "#3D4453", fontSize: "14px", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+          {ic(p ? PC[p] : "list", 17, on ? "#FFFFFF" : undefined)}
+          {p ? (T as Record<string, string>)[p] : T.allWork}
+          <span style={{ minWidth: "22px", height: "22px", padding: "0 6px", borderRadius: "11px", background: on ? "rgba(255,255,255,0.22)" : n ? "#F1ECFF" : "#F7F8FA", color: on ? "#FFFFFF" : n ? "#3D14A8" : "#6B7385", fontSize: "12px", lineHeight: "22px", textAlign: "center" }}>{n}</span>
+        </button>
+      );
+    };
+    return (
+      <div role="tablist" aria-label={T.whichWork} style={{ display: "flex", flexWrap: "wrap", gap: "8px", padding: "2px 0 4px 0" }}>
+        {chip(null)}
+        {ds.map((p) => chip(p))}
+      </div>
+    );
+  }
+
   tasks(): Task[] {
     const db = this.state.db;
     if (!db) return [];
@@ -472,7 +534,7 @@ export class FactoryApp extends Component<Props, State> {
     }
     if (P === "home") {
       const me = st.me!;
-      this.tasks().filter((t) => (me.head || t.proc === me.area) && t.status !== "done").slice(0, 4).forEach((t) => add(taskCode(t), taskName(db, t).slice(0, 22), 1));
+      this.tasks().filter((t) => (me.head || inDept(me, this.dept(), t.proc)) && t.status !== "done").slice(0, 4).forEach((t) => add(taskCode(t), taskName(db, t).slice(0, 22), 1));
       const anyLot = lots.find((x) => x.status === "ok" && x.loc === db.loc);
       if (anyLot) add(anyLot.code, "Lot label", 1);
       add("8901234567890", "Supplier barcode", 0);
@@ -537,7 +599,7 @@ export class FactoryApp extends Component<Props, State> {
       }
       return;
     }
-    const r = resolveScan(code, { db: this.db(), purpose: sc.purpose, meta: sc.meta, area: st.me?.head ? "head" : st.me?.area, task: st.flow?.task, d: st.flow?.d });
+    const r = resolveScan(code, { db: this.db(), purpose: sc.purpose, meta: sc.meta, area: st.me?.head ? "head" : st.me?.area, areas: st.me && !st.me.head ? myDepts(st.me) : undefined, task: st.flow?.task, d: st.flow?.d });
     this.setState({ scan: { ...sc, res: { ...r, manual: !!manual } } });
   }
 
@@ -1524,12 +1586,15 @@ export class FactoryApp extends Component<Props, State> {
     const n = st.net;
     const c = q ? ["#FDF6E7", "#8A5C05", "#B77B08"] : n === "offline" ? ["#F7F8FA", "#3D4453", "#6B7385"] : n === "weak" ? ["#FDF6E7", "#8A5C05", "#B77B08"] : ["#E9F5EE", "#1D7A45", "#1D7A45"];
     const areaWord = (T as Record<string, string>)[me.area] ?? "";
+    /* Several departments: the pill under the name says which one the screens
+       are showing, and opens the switch. */
+    const multi = myDepts(me).length > 1;
     return (
       <div style={{ flex: "none", display: "flex", alignItems: "center", gap: "10px", padding: "8px 16px 10px 16px", background: "#FFFFFF", borderBottom: "1px solid #EDEFF3" }}>
         <button onClick={() => this.setState({ sheet: null, route: "settings" })} aria-label={T.settings} style={this.av(me.key, 44)}>{me.ini}</button>
         <span style={{ flex: 1, minWidth: 0 }}>
-          <span style={{ display: "block", fontSize: "17px", fontWeight: 700, lineHeight: "22px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{me.n + (head && !me.scope ? "" : !areaWord ? "" : " · " + areaWord)}</span>
-          <span style={{ display: "block", fontSize: "13px", color: "#6B7385", lineHeight: "17px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{db.loc + " · " + db.shift}</span>
+          <span style={{ display: "block", fontSize: "17px", fontWeight: 700, lineHeight: "22px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{me.n + (multi || (head && !me.scope) ? "" : !areaWord ? "" : " · " + areaWord)}</span>
+          {multi ? this.deptPill() : <span style={{ display: "block", fontSize: "13px", color: "#6B7385", lineHeight: "17px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{db.loc + " · " + db.shift}</span>}
         </span>
         <button onClick={() => this.setState({ route: "sync" })} style={{ height: "36px", padding: "0 12px", borderRadius: "18px", border: "none", background: c[0], color: c[1], fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", whiteSpace: "nowrap", flex: "none" }}>
           <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: c[2], animation: q ? "fx-pulse 1.4s ease-in-out infinite" : "none" }} />
@@ -1572,7 +1637,9 @@ export class FactoryApp extends Component<Props, State> {
   renderHome(): ReactNode {
     const st = this.state, T = this.T(), me = st.me!, db = this.db();
     const now = this.now();
-    const mine = this.tasks().filter((t) => t.proc === me.area);
+    /* Every department of theirs, or the one picked at the top. */
+    const d = this.dept();
+    const mine = this.tasks().filter((t) => inDept(me, d, t.proc));
     const open = mine.filter((t) => t.status !== "done");
     const done = mine.filter((t) => t.status === "done");
     const q = st.queue.filter((x) => x.status === "pending").length;
@@ -1594,6 +1661,7 @@ export class FactoryApp extends Component<Props, State> {
           <span style={{ fontSize: "20px", fontWeight: 700 }}>{T.myTasks}</span>
           <span style={{ fontSize: "14px", color: "#6B7385" }}>{open.length + " / " + mine.length}</span>
         </div>
+        {this.deptChips()}
         {!open.length && <div style={{ background: "#FFFFFF", border: "1px solid #DDE1E8", borderRadius: "16px", padding: "28px 20px", textAlign: "center", fontSize: "16px", color: "#6B7385" }}>You have no work right now. New work will show here.</div>}
         {open.map((t) => {
           const over = t.due < now && t.status === "ready";
@@ -2513,7 +2581,10 @@ export class FactoryApp extends Component<Props, State> {
   /* ---------------------------------------------------------------- the head's screens */
 
   renderToday(): ReactNode {
-    const st = this.state, T = this.T(), db = this.db(), tasks = this.tasks(), now = this.now();
+    const st = this.state, T = this.T(), db = this.db(), now = this.now();
+    /* A supervisor of several departments sees all of them, or the one picked at the top. */
+    const dsel = this.dept();
+    const tasks = this.tasks().filter((t) => inDept(st.me!, dsel, t.proc));
     const sum = <X,>(a: X[], f: (x: X) => number) => a.reduce((x, y) => x + f(y), 0);
     const by = (p: Proc) => tasks.filter((t) => t.proc === p);
     const mix = by("mixing"), fil = by("filling"), pk = by("packing"), ds = by("dispatch");
@@ -2533,6 +2604,8 @@ export class FactoryApp extends Component<Props, State> {
     const flags: [string, number, string, string, string][] = [["Late", tasks.filter((t) => status(t)[3] === "late").length, "late", "#FCECEC", "#B3261E"], ["To check", db.review.length, "review", "#FDF6E7", "#8A5C05"], ["Waiting to send", st.queue.filter((x) => x.status === "pending").length, "progress", "#F1ECFF", "#3D14A8"]];
     const filters: [string, string][] = [["all", "All"], ["late", "Late"], ["todo", "Not started"], ["progress", "Working"], ["done", "Done"], ["blocked", "Blocked"], ["Mixing", "Mixing"], ["Filling", "Filling"], ["Packing", "Packing"], ["Dispatch", "Dispatch"]];
     const PROC: Record<string, Proc> = { Mixing: "mixing", Filling: "filling", Packing: "packing", Dispatch: "dispatch" };
+    /* Dispatch work comes from orders, so it is never given by hand. */
+    const giveable = myDepts(st.me!).filter((p) => p !== "dispatch");
     const ORDER: Record<string, number> = { late: 0, progress: 1, todo: 2, blocked: 3, done: 4 };
     const list = tasks
       .filter((t) => st.hf === "all" || (PROC[st.hf] ? t.proc === PROC[st.hf] : status(t)[3] === st.hf))
@@ -2542,7 +2615,7 @@ export class FactoryApp extends Component<Props, State> {
         <div className="fx-scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "14px 16px 96px 16px", display: "flex", flexDirection: "column", gap: "12px" }}>
           <div style={{ fontSize: "14px", color: "#6B7385" }}>{db.dateLine + " · " + db.loc + " · " + db.shift.split(" · ")[0] + " · now " + now}</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-            {kpis.filter((k) => !st.me?.scope || PROC[k.l] === st.me.scope).map((k) => (
+            {kpis.filter((k) => inDept(st.me!, dsel, PROC[k.l])).map((k) => (
               <button key={k.l} onClick={() => this.setState({ hf: k.l })} style={{ ...card, padding: "14px", textAlign: "left", cursor: "pointer" }}>
                 <span style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", fontWeight: 700, color: "#3D4453" }}>{ic(k.icn, 16)}{k.l}</span>
                 <span style={{ display: "block", fontSize: "24px", lineHeight: "30px", fontWeight: 700, marginTop: "6px" }}>{nf(k.act)}<span style={{ fontSize: "15px", fontWeight: 600, color: "#6B7385" }}>{" / " + nf(k.plan)}</span></span>
@@ -2580,7 +2653,7 @@ export class FactoryApp extends Component<Props, State> {
             );
           })}
         </div>
-        {st.me?.scope !== "dispatch" && <button onClick={() => this.setState({ sheet: { type: "assign" }, asg: this.defaultAsg(st.me?.scope ?? "mixing") })} style={{ position: "absolute", right: "16px", bottom: "94px", height: "56px", padding: "0 20px", border: "none", borderRadius: "28px", background: "#6835FB", color: "#FFFFFF", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", gap: "8px", boxShadow: "0 8px 20px rgba(104,53,251,0.35)", cursor: "pointer", zIndex: 5 }}>{ic("plus", 22, "#FFFFFF")}Give a task</button>}
+        {giveable.length > 0 && <button onClick={() => this.setState({ sheet: { type: "assign" }, asg: this.defaultAsg(dsel && (giveable as Proc[]).includes(dsel) ? dsel : giveable[0]) })} style={{ position: "absolute", right: "16px", bottom: "94px", height: "56px", padding: "0 20px", border: "none", borderRadius: "28px", background: "#6835FB", color: "#FFFFFF", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", gap: "8px", boxShadow: "0 8px 20px rgba(104,53,251,0.35)", cursor: "pointer", zIndex: 5 }}>{ic("plus", 22, "#FFFFFF")}Give a task</button>}
       </>
     );
   }
@@ -2625,7 +2698,7 @@ export class FactoryApp extends Component<Props, State> {
     return (
       <div className="fx-scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "14px 16px 20px 16px", display: "flex", flexDirection: "column", gap: "12px" }}>
         <div style={{ display: "flex", gap: "10px", padding: "12px 14px", borderRadius: "14px", background: "#F1ECFF", color: "#3D14A8", fontSize: "14px", lineHeight: "20px", fontWeight: 600 }}>Each job is counted once for the team. A 1,000 L batch is 1,000 L for the mixing team — never 1,000 L for each of the three people.</div>
-        {(this.state.me?.scope ? [this.state.me.scope] : (["mixing", "filling", "packing", "dispatch"] as Proc[])).map((p) => {
+        {(this.dept() ? [this.dept()!] : myDepts(this.state.me!)).map((p) => {
           const all = tasks.filter((t) => t.proc === p);
           const done = all.filter((t) => t.status === "done");
           const unit = { mixing: "litres", filling: "good cans + drums", packing: "boxes", dispatch: "orders checked" }[p];
@@ -2769,7 +2842,7 @@ export class FactoryApp extends Component<Props, State> {
       const RL = { owner: "Who is in charge?", op: "Who ran the machine?", helpers: "Who helped? Choose all", ver: "Who checked the work?" };
       const pool = Object.keys(db.emp)
         .filter((k) => db.emp[k].area !== "head" || sh.role === "ver" || sh.role === "owner")
-        .sort((a, b) => Number(db.emp[b].area === sh.area) - Number(db.emp[a].area === sh.area));
+        .sort((a, b) => Number(worksIn(db.emp[b], sh.area)) - Number(worksIn(db.emp[a], sh.area)));
       title = RL[sh.role];
       sub = sh.multi ? "Tap everyone who helped. Tap again to remove." : "Tap one person.";
       body = (
@@ -2844,6 +2917,34 @@ export class FactoryApp extends Component<Props, State> {
         { l: T.back, run: close, style: { ...btn("s", 58), flex: 1 } },
         { l: st.busy ? T.sending : sh.okL || "Send", run: () => { if (sh.sel && !st.busy) sh.done(sh.sel); }, style: { ...btn(sh.sel && !st.busy ? (sh.danger ? "d" : "p") : "off", 58), flex: 2 } },
       ];
+    }
+
+    if (sh.type === "dept") {
+      const me = st.me!, cur = this.dept();
+      title = T.whichWork;
+      sub = T.whichWorkSub;
+      const row = (p: Proc | null) => {
+        const on = cur === p;
+        const n = this.tasks().filter((t) => t.status !== "done" && inDept(me, p, t.proc)).length;
+        const tint = p ? DEPT_TINT[p] : ["#F1ECFF", "#3D14A8"];
+        return (
+          <button key={p ?? "all"} onClick={() => this.pickDept(p)} aria-pressed={on} style={{ display: "flex", alignItems: "center", gap: "14px", minHeight: "76px", padding: "12px 14px", borderRadius: "18px", border: on ? "3px solid #6835FB" : "1px solid #DDE1E8", background: on ? "#F7F4FF" : "#FFFFFF", textAlign: "left", cursor: "pointer" }}>
+            <span style={{ width: "52px", height: "52px", flex: "none", borderRadius: "14px", background: tint[0], color: tint[1], display: "flex", alignItems: "center", justifyContent: "center" }}>{ic(p ? PC[p] : "list", 28)}</span>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: "block", fontSize: "18px", lineHeight: "23px", fontWeight: 700 }}>{p ? (T as Record<string, string>)[p] : T.allWork}</span>
+              <span style={{ display: "block", fontSize: "14px", color: n ? "#3D4453" : "#6B7385", marginTop: "2px" }}>{n ? n + " " + T.jobsOpen : T.noneOpen}</span>
+            </span>
+            {on && <span style={{ width: "28px", height: "28px", flex: "none", borderRadius: "50%", background: "#6835FB", display: "flex", alignItems: "center", justifyContent: "center" }}>{ic("check", 18, "#FFFFFF")}</span>}
+          </button>
+        );
+      };
+      body = (
+        <>
+          {row(null)}
+          {myDepts(me).map((p) => row(p))}
+        </>
+      );
+      acts = [{ l: T.back, run: close, style: btn("s", 56) }];
     }
 
     if (sh.type === "job") body = this.jobSheet(sh.id, (t, s, b, a) => { title = t; sub = s; acts = a; return b; });
@@ -2931,9 +3032,9 @@ export class FactoryApp extends Component<Props, State> {
 
   assignSheet(out: (title: string, sub: string, body: ReactNode, acts: { l: string; run: () => void; style: CSSProperties }[]) => ReactNode): ReactNode {
     const st = this.state, T = this.T(), db = this.db();
-    const a = st.asg ?? this.defaultAsg("mixing");
+    const a = st.asg ?? this.defaultAsg(myDepts(st.me!).find((p) => p !== "dispatch") ?? "mixing");
     const set = (p: Partial<NonNullable<State["asg"]>>) => this.setState({ asg: { ...a, ...p } });
-    const PR = ([["mixing", "flask"], ["filling", "fill"], ["packing", "box"]] as [Proc, string][]).filter(([k]) => !st.me?.scope || st.me.scope === k);
+    const PR = ([["mixing", "flask"], ["filling", "fill"], ["packing", "box"]] as [Proc, string][]).filter(([k]) => myDepts(st.me!).includes(k));
     const items =
       a.proc === "mixing" ? Object.keys(db.sfg).filter((k) => db.sfg[k].recipe.length).map((k) => ({ v: k, l: db.sfg[k].short + " base", art: art("tank", db.sfg[k].col, db.sfg[k].short, 48) }))
       : a.proc === "filling" ? Object.keys(db.sku).map((k) => ({ v: k, l: db.sku[k].n.replace("Mahek ", "") + " " + db.sku[k].size, art: art(db.sku[k].kind, db.sku[k].col, db.sku[k].tag, 48) }))

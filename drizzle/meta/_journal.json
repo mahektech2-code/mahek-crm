@@ -1807,6 +1807,13 @@
       "when": 1792532584442,
       "tag": "0260_erp_floor_checks",
       "breakpoints": true
+    },
+    {
+      "idx": 258,
+      "version": "7",
+      "when": 1792532684442,
+      "tag": "0261_factory_multi_department",
+      "breakpoints": true
     }
   ]
 }

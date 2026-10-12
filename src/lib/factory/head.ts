@@ -27,8 +27,8 @@ const n = (v: unknown) => Number(v ?? 0) || 0;
 
 const NOT_HEAD = "Only the Production Head can do that.";
 /** A supervisor of one department acts on that department's work only. */
-const outOfScope = (fc: FactoryCtx, proc: string) => !!fc.scope && fc.scope !== proc;
-const notYours = (fc: FactoryCtx) => "You supervise " + fc.scope + " only. Ask the Production Head.";
+const outOfScope = (fc: FactoryCtx, proc: string) => !!fc.scopes && !fc.scopes.includes(proc as Proc);
+const notYours = (fc: FactoryCtx) => "You supervise " + (fc.scopes ?? []).join(" and ") + " only. Ask the Production Head.";
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 async function taskAt(fc: FactoryCtx, id: string) {

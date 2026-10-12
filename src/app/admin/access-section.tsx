@@ -84,7 +84,7 @@ import { ADMIN } from "@/lib/admin-routes";
 const APPS = grantableApps();
 
 import { conflictsFor } from "@/lib/role-conflicts";
-import { CREW_ROLES, crewLabel, DEPT_LABEL, FACTORY_DEPTS, isProc, placeProblem, placeSentence, type CrewRole, type FactoryDept, type FactoryPlace } from "@/lib/factory/departments";
+import { cleanDepts, CREW_ROLES, crewLabel, DEPT_LABEL, FACTORY_DEPTS, isProc, placeProblem, placeSentence, placeWords, procsOf, type CrewRole, type FactoryDept, type FactoryPlace } from "@/lib/factory/departments";
 
 /*
  * THE SAME THREE IN EVERY APP.
@@ -1433,7 +1433,7 @@ function AccessStep({
      raises the Factory level with it, as a designation sets the ERP's. */
   const pickPlace = (p: FactoryPlace | null) => {
     onFactoryPlace(p);
-    if (p?.dept === "head" && (roleDraft.factory ?? "associate") === "associate") onRoleDraft({ ...roleDraft, factory: "manager" });
+    if (p?.depts.includes("head") && (roleDraft.factory ?? "associate") === "associate") onRoleDraft({ ...roleDraft, factory: "manager" });
   };
   const current = designationId ? (designations.find((d) => d.id === designationId) ?? null) : null;
   const erpStanding = current && draft.erp ? standingOf(current, draft.erp, roleDraft.erp ?? "associate", powers) : null;
@@ -2552,11 +2552,6 @@ function EmployeeLinkDialog({
 
 /* ------------------------------------------------------------ the factory floor */
 
-function placeWords(p: FactoryPlace | null): string {
-  if (!p) return "no department";
-  return DEPT_LABEL[p.dept] + (p.crew ? " · " + crewLabel(p.dept, p.crew) : "") + (p.hrConfirmed ? "" : " · still to confirm with HR");
-}
-
 /**
  * WHERE THEY WORK ON THE FLOOR, under the Factory grant: the department, their
  * seat in its standing crew, their badge, and whether HR has confirmed the
@@ -2565,51 +2560,78 @@ function placeWords(p: FactoryPlace | null): string {
  */
 function FactoryPlaceRow({ value, onPick, level, error }: { value: FactoryPlace | null; onPick: (p: FactoryPlace | null) => void; level: string; error?: string }) {
   const p = value;
+  const base: FactoryPlace = p ?? { depts: [], crews: {}, badge: null, hrConfirmed: true };
   const set = (patch: Partial<FactoryPlace>) => {
-    const base: FactoryPlace = p ?? { dept: "mixing", crew: null, badge: null, hrConfirmed: true };
     const next = { ...base, ...patch };
-    if (!isProc(next.dept)) next.crew = null;
-    onPick(next);
+    /* A seat only exists in a ticked production department. */
+    const crews: FactoryPlace["crews"] = {};
+    for (const d of procsOf(next.depts)) if (next.crews[d]) crews[d] = next.crews[d];
+    next.crews = crews;
+    onPick(next.depts.length || next.badge || p ? next : null);
+  };
+  /* The whole floor already covers every department: ticking it clears the
+     rest, and ticking a department clears the whole floor. */
+  const toggle = (d: FactoryDept) => {
+    const on = base.depts.includes(d);
+    const depts = on ? base.depts.filter((x) => x !== d) : d === "head" ? ["head" as FactoryDept] : cleanDepts([...base.depts.filter((x) => x !== "head"), d]);
+    if (!depts.length && !base.badge) return onPick(null);
+    set({ depts });
   };
   const problem = error || placeProblem(p, level);
   const label = "w-[132px] flex-none pt-[5px] text-[10px] leading-[14px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase";
   const select = "h-7 cursor-pointer rounded-[4px] border border-line bg-surface px-1.5 text-[13px] text-ink";
+  const head = base.depts.includes("head");
+  const ticked = FACTORY_DEPTS.filter((d) => base.depts.includes(d));
   return (
     <div className="flex flex-col gap-1 border-t border-divider bg-surface px-2.5 py-1.5">
       <div className="flex items-start gap-2">
-        <span className={label}>Department</span>
-        <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
-          <select
-            value={p?.dept ?? ""}
-            aria-label="Factory department"
-            onChange={(e) => (e.target.value ? set({ dept: e.target.value as FactoryDept }) : onPick(null))}
-            className={select}
-          >
-            <option value="">Choose a department</option>
-            {FACTORY_DEPTS.map((d) => (
-              <option key={d} value={d}>
-                {DEPT_LABEL[d]}
-              </option>
-            ))}
-          </select>
-          {p && isProc(p.dept) ? (
-            <select
-              value={p.crew ?? ""}
-              aria-label="Seat in the crew"
-              onChange={(e) => set({ crew: (e.target.value || null) as CrewRole | null })}
-              className={select}
-            >
-              <option value="">No standing seat</option>
-              {CREW_ROLES.map((c) => (
-                <option key={c} value={c}>
-                  {crewLabel(p.dept, c)}
-                </option>
+        <span className={label}>Departments</span>
+        <span className="flex min-w-0 flex-1 flex-col gap-1">
+          <span className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Factory departments">
+            {FACTORY_DEPTS.map((d) => {
+              const on = base.depts.includes(d);
+              const muted = head && d !== "head";
+              return (
+                <label
+                  key={d}
+                  title={muted ? "The whole floor already covers this department" : undefined}
+                  className={
+                    "flex h-7 cursor-pointer items-center gap-1.5 rounded-[4px] border px-2 text-[13px] " +
+                    (on ? "border-brand bg-brand-soft text-ink" : "border-line bg-surface text-body hover:bg-canvas") +
+                    (muted ? " opacity-60" : "")
+                  }
+                >
+                  <input type="checkbox" checked={on || muted} onChange={() => toggle(d)} className="h-[14px] w-[14px] cursor-pointer accent-[#6835FB]" />
+                  {d === "head" ? "Whole floor" : DEPT_LABEL[d]}
+                </label>
+              );
+            })}
+          </span>
+          {ticked.filter(isProc).length ? (
+            <span className="flex flex-col gap-1">
+              {ticked.filter(isProc).map((d) => (
+                <span key={d} className="flex items-center gap-2 text-[13px] text-body">
+                  <span className="w-[140px] flex-none truncate">{DEPT_LABEL[d]}</span>
+                  <select
+                    value={base.crews[d] ?? ""}
+                    aria-label={`Seat in the ${DEPT_LABEL[d]} crew`}
+                    onChange={(e) => set({ crews: { ...base.crews, [d]: (e.target.value || undefined) as CrewRole | undefined } })}
+                    className={select}
+                  >
+                    <option value="">No standing seat</option>
+                    {CREW_ROLES.map((c) => (
+                      <option key={c} value={c}>
+                        {crewLabel(d, c)}
+                      </option>
+                    ))}
+                  </select>
+                </span>
               ))}
-            </select>
+            </span>
           ) : null}
         </span>
       </div>
-      {p ? (
+      {p && p.depts.length ? (
         <div className="flex items-start gap-2">
           <span className={label}>Badge · HR</span>
           <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
