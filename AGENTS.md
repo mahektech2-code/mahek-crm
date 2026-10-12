@@ -8397,29 +8397,37 @@ deleted — voided with a reason. One LR is one delivery party (`attachRefusal`)
 Once attached, the LR is the unit on the road: every update moves every bill
 under it. Every step writes `erp_transport_events`, append-only.
 
-**A TRANSPORTER'S GODOWNS ARE ROWS, A DISTRICT AND A PIN EACH, WITH THEIR OWN PEOPLE.**
-`erp_transporter_godowns` is a godown: a name, ONE place on the reviewed tree
-picked State → District on the godown's row (two dropdowns, the second listing
-only what is under the first; the narrowest pick is the place), and its PIN —
-`lat`/`lng`, both or neither (a check constraint), picked on the map, typed,
-or read off the device standing in it. The pin is what matters: it is what a
-handset or the factory app can read and write without anybody choosing from a
-list. City and area are not asked; `0259` moved every godown saved at a city or
-an area up to its district, and the form reads one the same way
-(`godownPlace`). There is no address on the form; a godown that carried one
-keeps it unseen. A single searchable list of every city and area in the
-country, tried for a while, was too long to use. The ERP's pin fields fetch
-the tile key from `/api/erp/map-key` (anybody holding the ERP; the live key in
-the pool), which is also what gives the ERP's own godown pin its map. "Find in map" opens the map in a pop-up; a click
-or a drag writes the pin into the field at once. A person at a godown is a
-name and one phone number on the form (more numbers saved earlier are kept).
-`erp_transporter_contacts`
-is a person there, with up to three numbers (a check constraint holds the
-three). It replaced four cascading state/district/city/area pickers (0253),
-which made two states' worth of godowns a puzzle; `0255` carried each picked
-place in as a godown and the old contact columns in as its first person.
-`lib/erp/transporter-godowns.ts` is the rule, pure: the form and
-`saveTransporter` both run `cleanGodowns`. The godowns are saved WHOLE, ids
+**A TRANSPORTER'S GODOWNS ARE ROWS, AN AREA AND A GST NUMBER EACH, WITH THEIR
+OWN PEOPLE — and that is a reversal.** `erp_transporter_godowns` is a godown: a
+name, ONE AREA of the reviewed place tree picked State → District → City → Area,
+every rung required, each list narrowed by the one above; its own GST number
+(`gstin`, `0262`); its PIN (`lat`/`lng`, both or neither); and its people. It
+was picked at a district only, and `0259` had moved every city and area up to
+it — Mahek asked for all four. The tree is built from where CUSTOMERS are, so
+it is missing places a godown can be in (211 of its 581 cities carry no area):
+a district, city or area that is not listed is TYPED under the rung above and
+created on save by `placeFor` in `logistics.ts`, matched first on `placeKey`
+under the same parent so it is never made twice — a typed name that is already
+listed IS the listed one (`resolvePick`). A state is never typed: the picker
+offers the country's (`INDIA_STATES`). GST is registered per state, so a
+godown's number must check out AND its first two digits must name the
+godown's state (`godownGstProblem`); the transporter's own `gstin` is now the
+optional head-office number. The transporter form lists the godowns and each
+opens in its own modal (`GodownDialog`), whose Done runs the same
+`cleanGodowns` as the save. A godown saved before this reads at its district
+with no GST number and is refused on the next save until both are given —
+editing a transporter is when the gap is filled, never silently. The places a
+godown adds are ordinary `places` rows with `shops = 0`, so the customer place
+filters may list them. `lib/erp/transporter-godowns.ts` is the rule, pure. The pin is
+picked on the map, typed, or read off the device standing in it; the ERP's pin
+fields fetch the tile key from `/api/erp/map-key` (anybody holding the ERP; the
+live key in the pool), and "Find in map" writes a click or a drag into the
+field at once. There is no address on the form; a godown that carried one
+keeps it unseen. `erp_transporter_contacts` is a person there, with up to three
+numbers (a check constraint holds the three); the form shows a name and one
+number, and more numbers saved earlier are kept. `0255` carried each earlier
+picked place in as a godown and the old contact columns in as its first person.
+The godowns are saved WHOLE, ids
 kept only where they were this transporter's own. `erp_transporters.phone`,
 `alt_phone` and `contact_person` are MIRRORS of the first person with a
 number (`mirrorsFrom`), written on save, because the call buttons on bills and

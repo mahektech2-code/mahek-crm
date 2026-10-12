@@ -12708,8 +12708,14 @@ export const erpTransporterGodowns = pgTable(
       .references(() => erpTransporters.id, { onDelete: "cascade" }),
     /** What they call it — "Main godown", "Booking office". */
     label: text("label"),
-    /** The town (a city or an area node). Null for a godown typed before towns were picked. */
+    /**
+     * The AREA the godown is in, State → District → City → Area all picked (or
+     * added) on the godown dialog. A godown saved before that is filed at a
+     * district and asks for its city and area the next time it is edited.
+     */
     placeId: text("place_id").references(() => places.id, { onDelete: "set null" }),
+    /** This godown's own GST number — registered per state, so the first two digits name the state it is in. Null only on godowns saved before it was asked. */
+    gstin: text("gstin"),
     /** Street, landmark. No longer asked for; kept where a godown had one. */
     address: text("address"),
     /** Where the godown is, as a map pin: picked on the map, typed, or read off a device standing in it. Both or neither. */
