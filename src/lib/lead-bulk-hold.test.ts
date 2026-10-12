@@ -266,7 +266,9 @@ describe("a lead that has ended cannot be paused", () => {
 
   test("the evaluator itself answers cannot_park, for any door that shares it", async () => {
     const a = await makeLead({ leadStage: "lost" });
-    const lead = await rowOf(a.id);
+    const row = await rowOf(a.id);
+    // The evaluator takes the two columns it reads, with the stage known to be set.
+    const lead = { id: row.id, leadStage: "lost" as const, leadSalesType: "direct" as const };
     const gate = await leadGateInput(a.id);
     assert.ok(gate);
     const d = await evaluateLeadStageMove({ lead, gate: gate!, to: "on_hold", canOverride: false });
