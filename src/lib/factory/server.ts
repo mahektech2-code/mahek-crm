@@ -14,6 +14,7 @@ import { fgLots, packLots, rmLevelAvailable, rmLots, sfgLots } from "@/lib/erp/s
 import { dayLine, hhmm } from "./time";
 import type { Area, BoxSku, Emp, FactoryData, FgSku, Lot, Order, Proc, ReviewItem, SfgProduct, Task, Team } from "./types";
 import { PROCS } from "./types";
+import { cleanDepts, isProc, supervises } from "./departments";
 
 /* ---------------------------------------------------------------------------
  * Who is on the floor, where, and what the floor looks like right now.
@@ -29,6 +30,9 @@ const n = (v: unknown) => Number(v ?? 0) || 0;
 /** `(a, b, c)` as bound parameters — never `null` for an empty list, which matches nothing either way. */
 export const inList = (ids: string[]) => (ids.length ? sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})` : sql`(null)`);
 
+/** A text[] bound as one parameter — a person's departments. */
+export const textArray = (xs: string[]) => sql`${sql.param(xs)}::text[]`;
+
 /** A colour per product family, from the design's palette, stable by name. */
 const PALETTE = ["#2B5CBF", "#B77B08", "#1D7A45", "#5223E0", "#B3261E", "#3D4453", "#0E7C86", "#8A5C05"];
 const colourOf = (name: string) => {
@@ -42,13 +46,18 @@ export type FactoryCtx = {
   level: "associate" | "manager" | "admin";
   /** A Production Head: manager or admin on the Factory grant, or a staff row saying so. */
   head: boolean;
+  /** Their home department — the first of `areas`, or "head" for the whole floor. */
   area: Area;
+  /** Every department they work in. A worker may do the jobs of any of them. */
+  areas: Area[];
   /**
-   * The department a SUPERVISOR is limited to: a manager placed in mixing
-   * supervises mixing only. Null is the whole floor — the Production Head, or
-   * a manager placed in quality. Meaningless for a worker, whose own area
-   * already limits them to their own work.
+   * The departments a SUPERVISOR is limited to: a manager placed in mixing and
+   * filling supervises those two. Null is the whole floor — the Production
+   * Head, or a manager placed in quality. Meaningless for a worker, whose own
+   * areas already limit them to their own work.
    */
+  scopes: Proc[] | null;
+  /** The one department of `scopes` when there is exactly one — what a phone built before several departments reads. */
   scope: Proc | null;
   roleLabel: string | null;
   godown: { id: string; name: string };
@@ -84,27 +93,36 @@ export async function contextFor(user: User): Promise<FactoryCtx | null> {
   const apps = await listUserApps(user.id);
   if (!apps.includes("factory")) return null;
   const level = ((await levelInApp(user, "factory")) ?? "associate") as FactoryCtx["level"];
-  const [staff] = await q<{ area: Area; role_label: string | null; lang: FactoryCtx["lang"] }>(
-    sql`select area, role_label, lang from factory_staff where user_id = ${user.id}`,
+  const [staff] = await q<{ area: Area; areas: Area[] | null; role_label: string | null; lang: FactoryCtx["lang"] }>(
+    sql`select area, areas, role_label, lang from factory_staff where user_id = ${user.id}`,
   );
   const godown = await godownFor(user.id);
   if (!godown) return null;
-  const head = level !== "associate" || staff?.area === "head";
-  const dept = staff?.area ?? null;
-  const scope = head && dept && dept !== "head" && dept !== "qc" ? (dept as Proc) : null;
+  const areas = cleanDepts(staff?.areas?.length ? staff.areas : staff ? [staff.area] : []) as Area[];
+  const head = level !== "associate" || areas.includes("head");
+  const scopes = head ? supervises(areas, "manager") : null;
+  const procs = areas.filter(isProc);
   const drumDepts = (await getConfig())["erp.drums.factoryDepartments"].split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
   return {
-    drums: head || (!!dept && drumDepts.includes(dept)),
-    dispatch: (head && (!scope || scope === "dispatch")) || dept === "dispatch",
+    drums: head || areas.some((a) => drumDepts.includes(a)),
+    dispatch: (head && (!scopes || scopes.includes("dispatch"))) || areas.includes("dispatch"),
     user,
     level,
     head,
-    scope,
-    area: head && !scope ? "head" : (staff?.area ?? "mixing"),
+    scopes,
+    scope: scopes?.length === 1 ? scopes[0] : null,
+    area: head && !scopes ? "head" : (procs[0] ?? areas[0] ?? "mixing"),
+    areas: areas.length ? areas : [head ? "head" : "mixing"],
     roleLabel: staff?.role_label ?? null,
     godown,
     lang: staff?.lang ?? "en",
   };
+}
+
+/** May this person do (worker) or run (supervisor) a job of this department? */
+export function worksOn(fc: FactoryCtx, proc: string): boolean {
+  if (fc.head) return !fc.scopes || fc.scopes.includes(proc as Proc);
+  return fc.areas.includes(proc as Area);
 }
 
 export async function requireFactory(): Promise<FactoryCtx> {
@@ -393,8 +411,8 @@ export async function ordersFor(godown: { id: string; name: string }, m: Masters
 const AREA_WORD: Record<string, string> = { head: "Production Head", mixing: "Mixing", filling: "Filling", packing: "Packing", dispatch: "Dispatch", qc: "Quality" };
 
 export async function people(godownId: string): Promise<{ emp: Record<string, Emp>; hours: Record<string, number> }> {
-  const rows = await q<{ id: string; name: string; phone: string | null; area: Area; roleLabel: string | null; badge: string | null; code: string | null; confirmed: boolean; empId: string | null }>(sql`
-    select u.id, u.name, u.phone, s.area, s.role_label as "roleLabel", s.badge_code as badge, e.employee_code as code,
+  const rows = await q<{ id: string; name: string; phone: string | null; area: Area; areas: Area[] | null; roleLabel: string | null; badge: string | null; code: string | null; confirmed: boolean; empId: string | null }>(sql`
+    select u.id, u.name, u.phone, s.area, s.areas, s.role_label as "roleLabel", s.badge_code as badge, e.employee_code as code,
            s.hr_confirmed as confirmed, u.employee_id as "empId"
       from factory_staff s
       join users u on u.id = s.user_id and u.active
@@ -402,13 +420,16 @@ export async function people(godownId: string): Promise<{ emp: Record<string, Em
      order by case s.area when 'head' then 0 when 'mixing' then 1 when 'filling' then 2 when 'packing' then 3 when 'dispatch' then 4 else 5 end, u.name`);
   const emp: Record<string, Emp> = {};
   for (const r of rows) {
+    const areas = cleanDepts(r.areas?.length ? r.areas : [r.area]) as Area[];
+    const word = areas.map((a) => AREA_WORD[a]).join(" & ");
     emp[r.id] = {
       key: r.id,
       n: r.name,
       ph: "",
       /* "Production Head · production head" said the job twice. */
-      role: AREA_WORD[r.area] + (r.roleLabel && r.roleLabel.toLowerCase() !== AREA_WORD[r.area].toLowerCase() ? " · " + r.roleLabel.toLowerCase() : ""),
-      area: r.area,
+      role: word + (r.roleLabel && r.roleLabel.toLowerCase() !== word.toLowerCase() ? " · " + r.roleLabel.toLowerCase() : ""),
+      area: areas[0] ?? r.area,
+      ...(areas.length > 1 ? { areas } : null),
       id: r.code ?? "—",
       badge: r.badge ?? r.code ?? undefined,
       confirm: !r.confirmed || undefined,
@@ -535,8 +556,8 @@ export async function bootstrap(fc: FactoryCtx): Promise<FactoryData> {
   const [lots, { emp, hours }, teams, open] = await Promise.all([lotsFor(fc.godown, m), people(fc.godown.id), teamDefaults(), openPackBatches(fc.godown.id)]);
   const orders = await ordersFor(fc.godown, m, lots);
   await ensureDispatchTasks(fc, orders, teams);
-  /* A department supervisor's floor is their department. */
-  const tasks = (await tasksFor(fc.godown.id, open)).filter((t) => !fc.head || !fc.scope || t.proc === fc.scope);
+  /* A department supervisor's floor is their departments. */
+  const tasks = (await tasksFor(fc.godown.id, open)).filter((t) => !fc.head || !fc.scopes || fc.scopes.includes(t.proc));
   for (const t of tasks) {
     if (t.proc === "dispatch" && t.status !== "done" && t.order && orders[t.order]?.blocked) t.status = "blocked";
   }
@@ -548,7 +569,7 @@ export async function bootstrap(fc: FactoryCtx): Promise<FactoryData> {
   if (!named.has(fc.user.id)) missing.add(fc.user.id);
   if (missing.size) {
     const extra = await q<{ id: string; name: string }>(sql`select id, name from users where id in ${inList([...missing])}`);
-    for (const u of extra) emp[u.id] = { key: u.id, n: u.name, ph: "", role: u.id === fc.user.id && fc.head ? "Production Head" : "Not on the factory list", area: u.id === fc.user.id ? fc.area : "qc", id: "—" };
+    for (const u of extra) emp[u.id] = { key: u.id, n: u.name, ph: "", role: u.id === fc.user.id && fc.head ? "Production Head" : "Not on the factory list", area: u.id === fc.user.id ? fc.area : "qc", ...(u.id === fc.user.id && fc.areas.length > 1 ? { areas: fc.areas } : null), id: "—" };
   }
   if (fc.user.phone) emp[fc.user.id].ph = fc.user.phone.replace(/\D/g, "").slice(-10);
 
@@ -558,7 +579,7 @@ export async function bootstrap(fc: FactoryCtx): Promise<FactoryData> {
       select r.id, r.kind, r.task_id as "taskId", r.title, r.body, r.meta from factory_reviews r
         join factory_tasks t on t.id = r.task_id
        where r.status = 'open' and t.godown_id = ${fc.godown.id}
-         and (${fc.head && fc.scope ? fc.scope : null}::text is null or t.proc = ${fc.head && fc.scope ? fc.scope : null})
+         and (${!fc.head || !fc.scopes} or t.proc = any(${textArray(fc.scopes ?? [])}))
        order by r.created_at desc`),
     q<{ task: string; at: string; who: string; detail: string | null }>(sql`
       select a.entity_id as task, a.at as at, coalesce(u.name, 'System') as who, a.after_state->>'detail' as detail
@@ -568,7 +589,7 @@ export async function bootstrap(fc: FactoryCtx): Promise<FactoryData> {
     q<{ reason: string; min: number }>(sql`
       select reason, sum(minutes)::int as min from factory_downtime
        where godown_id = ${fc.godown.id} and recorded_at > now() - interval '7 days'
-         and (${fc.head && fc.scope ? fc.scope : null}::text is null or proc = ${fc.head && fc.scope ? fc.scope : null})
+         and (${!fc.head || !fc.scopes} or proc = any(${textArray(fc.scopes ?? [])}))
        group by reason`),
     q<{ c: number }>(sql`select count(*)::int as c from audit_log where actor_app = 'factory' and action = 'factory.duplicate' and at > now() - interval '7 days'`),
     q<{ c: number }>(sql`select count(*)::int as c from factory_reviews where kind = 'correction' and decision = 'approved' and decided_at > now() - interval '7 days'`),

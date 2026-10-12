@@ -1,7 +1,8 @@
 import { Linking, Platform } from 'react-native';
 import * as Application from 'expo-application';
+import * as Device from 'expo-device';
 import { BASE } from '../sync/api';
-import { updateVerdict, type UpdateVerdict } from '../engines/app-update';
+import { runs32BitOnly, updateVerdict, type UpdateVerdict } from '../engines/app-update';
 
 /**
  * ASKING WHETHER THIS HANDSET IS BEHIND.
@@ -45,7 +46,11 @@ export async function checkForUpdate(): Promise<UpdateVerdict> {
     });
     clearTimeout(timer);
     if (!response.ok) return { kind: 'current' };
-    return updateVerdict(await response.json(), Number.isFinite(installed) ? installed : null);
+    return updateVerdict(
+      await response.json(),
+      Number.isFinite(installed) ? installed : null,
+      runs32BitOnly(Device.supportedCpuArchitectures),
+    );
   } catch {
     /* No signal, a captive portal, a timeout, HTML where JSON was expected.
        None of it is the salesman's to know about. */

@@ -417,7 +417,7 @@ describe("staffed from Admin Console → Access, with department-level permissio
   test("the Access dialog's place writes the department and the crew seat, and taking the app away takes them", async () => {
     const [p] = await db.insert(users).values({ id: "usr_newhelper", name: "New Helper", email: "nh@x.test", phone: "9000000010", passwordHash: "x", role: "associate", initials: "NH" }).returning();
     setTestUser(admin);
-    const r = await setAccess({ userId: p.id, grants: grant("associate") as never, factoryPlace: { dept: "packing", crew: "helper", badge: "EMP-9010", hrConfirmed: false } });
+    const r = await setAccess({ userId: p.id, grants: grant("associate") as never, factoryPlace: { depts: ["packing"], crews: { packing: "helper" }, badge: "EMP-9010", hrConfirmed: false } });
     assert.ok(r.ok, r.ok ? "" : r.error);
     const [row] = await q<{ area: string; badge: string; confirmed: boolean }>(sql`select area, badge_code as badge, hr_confirmed as confirmed from factory_staff where user_id = ${p.id}`);
     assert.deepEqual([row.area, row.badge, row.confirmed], ["packing", "EMP-9010", false]);
@@ -436,7 +436,7 @@ describe("staffed from Admin Console → Access, with department-level permissio
   test("the whole floor needs the manager level", async () => {
     const [p] = await db.insert(users).values({ id: "usr_wannahead", name: "Wanna Head", email: "wh@x.test", phone: "9000000011", passwordHash: "x", role: "associate", initials: "WH" }).returning();
     setTestUser(admin);
-    const r = await setAccess({ userId: p.id, grants: grant("associate") as never, factoryPlace: { dept: "head", crew: null, badge: null, hrConfirmed: true } });
+    const r = await setAccess({ userId: p.id, grants: grant("associate") as never, factoryPlace: { depts: ["head"], crews: {}, badge: null, hrConfirmed: true } });
     assert.equal(r.ok, false);
   });
 
@@ -444,7 +444,7 @@ describe("staffed from Admin Console → Access, with department-level permissio
     const [p] = await db.insert(users).values({ id: "usr_mixsup", name: "Mixing Supervisor", email: "ms@x.test", phone: "9000000012", passwordHash: "x", role: "manager", initials: "MS" }).returning();
     await db.execute(sql`insert into erp_godown_staff (godown_id, user_id) values ('erpg_bhiwandi', ${p.id})`);
     setTestUser(admin);
-    const r = await setAccess({ userId: p.id, grants: grant("manager") as never, factoryPlace: { dept: "mixing", crew: null, badge: null, hrConfirmed: true } });
+    const r = await setAccess({ userId: p.id, grants: grant("manager") as never, factoryPlace: { depts: ["mixing"], crews: {}, badge: null, hrConfirmed: true } });
     assert.ok(r.ok, r.ok ? "" : r.error);
     setTestUser(p as User);
     const fc = (await contextFor(p as User))!;
@@ -461,6 +461,38 @@ describe("staffed from Admin Console → Access, with department-level permissio
     const { fc: head, data: all } = await as("vijay");
     assert.equal(head.scope, null, "the Production Head is the whole floor");
     assert.ok(new Set(all.tasks.map((t) => t.proc)).size > 1);
+  });
+
+  test("somebody can work several departments: a crew seat in each, jobs from each, nothing from the rest", async () => {
+    const [p] = await db.insert(users).values({ id: "usr_twodept", name: "Two Dept", email: "td@x.test", phone: "9000000013", passwordHash: "x", role: "associate", initials: "TD" }).returning();
+    await db.execute(sql`insert into erp_godown_staff (godown_id, user_id) values ('erpg_bhiwandi', ${p.id})`);
+    setTestUser(admin);
+    const bad = await setAccess({ userId: p.id, grants: grant("associate") as never, factoryPlace: { depts: ["mixing", "nowhere"] as never, crews: {}, badge: null, hrConfirmed: true } });
+    assert.equal(bad.ok, false, "an unknown department is refused, never dropped");
+    const seatless = await setAccess({ userId: p.id, grants: grant("associate") as never, factoryPlace: { depts: ["mixing"], crews: { packing: "helper" }, badge: null, hrConfirmed: true } });
+    assert.equal(seatless.ok, false, "a seat needs its department ticked");
+    const r = await setAccess({ userId: p.id, grants: grant("associate") as never, factoryPlace: { depts: ["packing", "mixing"], crews: { mixing: "helper", packing: "operator" }, badge: null, hrConfirmed: true } });
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    const [row] = await q<{ area: string; areas: string[] }>(sql`select area, areas from factory_staff where user_id = ${p.id}`);
+    assert.deepEqual([row.area, row.areas], ["mixing", ["mixing", "packing"]], "stored in department order, home first");
+    const seats = await q<{ proc: string; role: string }>(sql`select proc, role from factory_team_defaults where user_id = ${p.id} order by proc`);
+    assert.deepEqual(seats.map((x) => x.proc + ":" + x.role), ["mixing:helper", "packing:operator"]);
+    const fc = (await contextFor(p as User))!;
+    assert.deepEqual(fc.areas, ["mixing", "packing"]);
+    assert.equal(fc.head, false);
+    const { worksOn } = await import("./server");
+    assert.ok(worksOn(fc, "mixing") && worksOn(fc, "packing"));
+    assert.equal(worksOn(fc, "filling"), false, "a department they were not given is not theirs");
+
+    /* A manager of two departments supervises both, and only those. */
+    setTestUser(admin);
+    assert.ok((await setAccess({ userId: p.id, grants: grant("manager") as never, factoryPlace: { depts: ["mixing", "packing"], crews: {}, badge: null, hrConfirmed: true } })).ok);
+    const mc = (await contextFor(p as User))!;
+    assert.deepEqual(mc.scopes, ["mixing", "packing"]);
+    assert.equal(mc.scope, null, "an old phone reads one department, and there are two");
+    const data = await bootstrap(mc);
+    assert.ok(data.tasks.every((t) => t.proc === "mixing" || t.proc === "packing"));
+    assert.equal((await assignTask(mc, { proc: "filling", item: Object.keys(data.sku)[0], qty: 1, due: "16:00" })).ok, false, "filling is not theirs to give");
   });
 });
 

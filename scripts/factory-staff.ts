@@ -38,8 +38,11 @@ async function main() {
     return;
   }
   const who = process.argv.slice(2).find((x) => !x.startsWith("--"));
-  const area = arg("area");
-  if (!who || !area || !AREAS.includes(area)) throw new Error("Usage: npm run factory:staff -- <mobile|email> --area=" + AREAS.join("|") + " [--role=…] [--badge=…] [--crew=" + CREW.join("|") + "] [--unconfirmed]");
+  /* --area takes one department or several, comma-separated: mixing,filling. */
+  const areas = (arg("area") ?? "").split(",").map((a) => a.trim()).filter(Boolean);
+  const area = areas.includes("head") ? "head" : areas[0];
+  if (!who || !area || areas.some((a) => !AREAS.includes(a))) throw new Error("Usage: npm run factory:staff -- <mobile|email> --area=" + AREAS.join("|") + "[,…] [--role=…] [--badge=…] [--crew=" + CREW.join("|") + "] [--unconfirmed]");
+  const allAreas = area === "head" ? ["head"] : AREAS.filter((a) => areas.includes(a));
   const user = await findAccount(who);
   if (!user) throw new Error("No MahekOne account for " + who + ". Create it from Admin Console → Access first.");
   const crew = arg("crew");
@@ -53,10 +56,11 @@ async function main() {
     insert into app_access (id, user_id, app, role) values (${"aca_" + randomUUID().slice(0, 12)}, ${user.id}, 'factory', ${level})
     on conflict do nothing`);
   await db.execute(sql`
-    insert into factory_staff (user_id, area, role_label, badge_code, hr_confirmed, pin_hash)
-    values (${user.id}, ${area}, ${arg("role") ?? null}, ${arg("badge") ?? null}, ${!flag("unconfirmed")}, ${pin ? await hashPassword(pin) : null})
+    insert into factory_staff (user_id, area, areas, role_label, badge_code, hr_confirmed, pin_hash)
+    values (${user.id}, ${allAreas[0]}, ${sql`${sql.param(allAreas)}::text[]`}, ${arg("role") ?? null}, ${arg("badge") ?? null}, ${!flag("unconfirmed")}, ${pin ? await hashPassword(pin) : null})
     on conflict (user_id) do update set
       area = excluded.area,
+      areas = excluded.areas,
       role_label = coalesce(excluded.role_label, factory_staff.role_label),
       badge_code = coalesce(excluded.badge_code, factory_staff.badge_code),
       hr_confirmed = excluded.hr_confirmed,
@@ -67,7 +71,7 @@ async function main() {
     if (crew === "owner" || crew === "operator") await db.execute(sql`delete from factory_team_defaults where proc = ${area} and role = ${crew}`);
     await db.execute(sql`insert into factory_team_defaults (proc, role, user_id) values (${area}, ${crew}, ${user.id}) on conflict do nothing`);
   }
-  console.log(`${user.name} is on the floor: ${area}${crew ? " · " + crew : ""}${level === "manager" ? " · Production Head" : ""}.`);
+  console.log(`${user.name} is on the floor: ${allAreas.join(", ")}${crew ? " · " + crew : ""}${level === "manager" ? " · Production Head" : ""}.`);
 }
 
 main()

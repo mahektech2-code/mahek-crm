@@ -18,7 +18,10 @@ export type Emp = {
   ph: string;
   /** "Mixing · machine operator" */
   role: string;
+  /** Their home department. */
   area: Area;
+  /** Every department they work in, when it is more than one. Absent on an older server, or for one department. */
+  areas?: Area[];
   /** Employee code, e.g. MMI-0231. */
   id: string;
   /** What the badge QR says, when the person has one. */

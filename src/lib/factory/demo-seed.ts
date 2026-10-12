@@ -28,7 +28,7 @@ import { ERP_POWERS } from "@/lib/erp/powers";
 import { approvedPoLine } from "@/lib/erp/po-fixture";
 import { screenModule } from "@/lib/erp/screens";
 import { rmLots } from "@/lib/erp/stock";
-import { nextTaskId, teamDefaults, writeTeam } from "./server";
+import { nextTaskId, teamDefaults, textArray, writeTeam } from "./server";
 
 /* ---------------------------------------------------------------------------
  * A factory floor to look at: the design's people, products and orders, made
@@ -49,7 +49,8 @@ export const FLOOR: [string, string, string, string, string, string | null, bool
   ["vijay", "Vijay Deshmukh", "9822014142", "head", "Production Head", "EMP-0142", true, "manager"],
   ["rakesh", "Rakesh", "9850220207", "mixing", "Responsible", null, false, "associate"],
   ["anil", "Anil", "9850220231", "mixing", "Machine operator", "EMP-0231", false, "associate"],
-  ["gangaram", "Gangaram", "9850220233", "mixing", "Helper", null, false, "associate"],
+  /* Works two departments, so the phone's department switcher has somebody to show. */
+  ["gangaram", "Gangaram", "9850220233", "mixing,filling", "Helper", null, false, "associate"],
   ["sujit", "Sujit", "9850220240", "filling", "Responsible", null, false, "associate"],
   ["kamalkant", "Kamalkant", "9850220244", "filling", "Machine operator", "EMP-0244", false, "associate"],
   ["ramtih", "Ramtih", "9850220246", "filling", "Helper", null, false, "associate"],
@@ -101,8 +102,8 @@ export async function seedFactoryFloor(opts: { pin?: string; date?: string } = {
     await db.insert(appAccess).values({ id: id("aca"), userId: u.id, app: "factory", role: level });
     await db.insert(erpGodownStaff).values({ godownId: GODOWN_ID, userId: u.id }).onConflictDoNothing();
     await db.execute(sql`
-      insert into factory_staff (user_id, area, role_label, badge_code, pin_hash, hr_confirmed)
-      values (${u.id}, ${area}, ${label}, ${badge}, ${pinHash}, ${confirmed})`);
+      insert into factory_staff (user_id, area, areas, role_label, badge_code, pin_hash, hr_confirmed)
+      values (${u.id}, ${area.split(",")[0]}, ${textArray(area.split(","))}, ${label}, ${badge}, ${pinHash}, ${confirmed})`);
   }
   for (const [proc, rows] of Object.entries(TEAMS))
     for (const [k, role] of rows)

@@ -14810,6 +14810,12 @@ export const factoryStaff = pgTable(
     userId: text("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
     /** head | mixing | filling | packing | dispatch | qc */
     area: text("area").notNull(),
+    /**
+     * Every department they work in — `area` is the first of these, their
+     * home department. A worker may do the jobs of any of them; the phone
+     * switches between them.
+     */
+    areas: text("areas").array().notNull().default(sql`'{}'::text[]`),
     /** "Machine operator", "Helper" — the words under their name. */
     roleLabel: text("role_label"),
     badgeCode: text("badge_code").unique(),
@@ -14822,6 +14828,7 @@ export const factoryStaff = pgTable(
   },
   (t) => [
     check("factory_staff_area_check", sql`${t.area} in ('head', 'mixing', 'filling', 'packing', 'dispatch', 'qc')`),
+    check("factory_staff_areas_check", sql`${t.areas} <@ ARRAY['head','mixing','filling','packing','dispatch','qc']::text[] AND cardinality(${t.areas}) > 0 AND ${t.area} = ANY(${t.areas})`),
     check("factory_staff_lang_check", sql`${t.lang} in ('en', 'hi', 'mr')`),
   ],
 );

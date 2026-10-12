@@ -5978,7 +5978,10 @@ and to the droplet as the one stable `/downloads/mbos.apk`. It is
 `workflow_dispatch` — `gh workflow run "MBOS APK" --ref main -f
 api_base=https://one.mahekindia.com -f publish=true` — because sideloading has
 no staged rollout and no rollback, so a release is a decision somebody makes.
-`api_base` is baked into the bundle and cannot be changed afterwards.
+`api_base` is baked into the bundle and cannot be changed afterwards. It
+builds TWO APKs — `mbos.apk` (64-bit ARM) and `mbos-32bit.apk` (32-bit, for
+the "Android Go" phones that refused the first with "App not installed") — and
+`engines/app-update.ts` hands each phone the one its Android runs.
 
 A release built by hand and copied up skips the signature check, the versioned
 archive and any record of what shipped, and puts the app back on whichever
@@ -8618,6 +8621,25 @@ the place with it. The seat writes `factory_team_defaults` — one person in
 charge and one operator per department, any number of helpers — which is what
 every new job starts with. `npm run factory:staff` does the same from a
 terminal, for a pilot.
+
+**A PERSON MAY WORK SEVERAL DEPARTMENTS, and the phone switches between
+them.** The Department row is a set of checkboxes, not a dropdown: a loader
+who helps on the packing line is in Dispatch AND Packing, with a crew seat
+answered per ticked department. `factory_staff.areas` is the whole list
+(`0261`); `area` stays its first, so every reader that knows one department
+reads the one it always read. The whole floor is a list of one (ticking it
+clears the rest — it already covers them), and `cleanDepts` keeps the stored
+order fixed. An associate does the jobs of any of their departments
+(`worksOn`); a manager supervises exactly the ticked ones (`FactoryCtx.scopes`,
+null for the whole floor or quality). `scope` is still sent, as the one
+department when there is exactly one, because an APK in the field reads it.
+On the phone, `myDepts`/`activeDept`/`inDept` in `lib/factory/rules.ts` (pure,
+shared by both apps) decide what shows: somebody with more than one department
+gets a pill under their name that opens "Which work are you doing now?", and
+chips across My work — All my work, then each department with its open jobs.
+The pick is a VIEW, remembered per person on the phone, and never a
+permission: scanning a task of another of their departments still opens it,
+and the server never reads the pick.
 
 **Loading is CHECKED, never dispatched.** The dispatch team scans the
 allocated lots, loads exactly what the order takes, ticks the checklist and
