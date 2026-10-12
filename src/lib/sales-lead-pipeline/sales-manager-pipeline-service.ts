@@ -55,7 +55,8 @@ import {
 } from "@/lib/services/lead-record-service";
 import { QUAL_NEXT } from "@/lib/services/lead-qualification-flow-service";
 import { leadTileCounts } from "@/lib/services/lead-views-service";
-import { fieldTeam, leadsPage, leadsVisible, managerScope } from "@/lib/services/sales-service";
+import { leadsPage, leadsVisible, managerScope } from "@/lib/services/sales-service";
+import { ownerChoices } from "@/lib/services/lead-desk-assignment-service";
 
 import { STAGE_LABEL, ladderFor } from "./reference";
 import type {
@@ -139,7 +140,7 @@ export async function pipelineRefs(): Promise<PipelineRefs> {
   const [user, config, team, owners] = await Promise.all([
     requireUser(),
     getConfig(),
-    fieldTeam(),
+    ownerChoices(),
     nextActionOwnerCandidates(),
   ]);
 
@@ -153,10 +154,10 @@ export async function pipelineRefs(): Promise<PipelineRefs> {
     prospectReasons: coded(config["leads.prospectReasons"]),
     sampleReasons: coded(config["leads.sampleReasons"]),
     orderBlockers: coded(config["leads.orderBlockers"]),
-    /* Only people who can actually be given a book: an ACTIVE account holding
-       the Salesman App. `reassignLead` refuses anybody else, so offering them
-       would put the refusal after the choice. */
-    salesmen: team.filter((s) => s.active).map((s) => ({ id: s.id, name: s.name })),
+    /* EVERYBODY A LEAD CAN BE GIVEN TO: every active person holding the CRM or
+       the Salesman App - telecallers and salesmen alike, the same list the Change
+       owner list offers. `reassignLead` accepts exactly this set (by id). */
+    salesmen: team.map((s) => ({ id: s.id, name: s.name })),
     actionOwners: owners.map((o) => ({ id: o.id, name: o.name })),
     me: { id: user.id, name: user.name },
   };

@@ -1,7 +1,7 @@
 import "server-only";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import { db } from "@/db";
-import { appAccess, users } from "@/db/schema";
+import { appAccess, mbosUserTerritories, users } from "@/db/schema";
 import { canOpenModule } from "@/lib/access";
 import { canFor } from "@/lib/access-control";
 import { notifyUsers } from "@/lib/notify";
@@ -103,16 +103,53 @@ export async function ownerChoices(): Promise<OwnerChoice[]> {
  */
 export async function assignableOwner(
   id: string,
-): Promise<(DeskPerson & { place: OwnerPlace }) | null> {
+): Promise<(DeskPerson & { place: OwnerPlace; noArea: boolean }) | null> {
   const found = (await assignableAccounts()).find((p) => p.id === id);
-  return found ? { id: found.id, name: found.name, place: await placeOf(found) } : null;
+  if (!found) return null;
+  const place = await placeOf(found);
+  return {
+    id: found.id,
+    name: found.name,
+    place,
+    noArea: place === "handset" ? await lacksWorkingArea(found.id) : false,
+  };
 }
 
-/** The sentence that says where a lead handed to somebody will be, for the toast. Empty on a desk. */
-export function placeSentence(name: string, place: OwnerPlace): string {
+/**
+ * A handset-only person with NO allocated area has an empty book: territory
+ * narrows what reaches the phone and "no territory means no book" for anybody
+ * but a manager or an admin (`territoryExempt` in `mbos-service.ts`, whose
+ * definition this repeats rather than imports - that file is the handset's
+ * whole sync). A lead given to such a person is assigned and is on their
+ * handset at no point until an area is set, so the confirmation must say so
+ * rather than imply it will arrive.
+ *
+ * Only the working kinds count: a `region` row is a manager's oversight patch
+ * and never allocates a book.
+ */
+async function lacksWorkingArea(userId: string): Promise<boolean> {
+  const [u] = await db.select({ role: users.role }).from(users).where(eq(users.id, userId)).limit(1);
+  if (!u || u.role === "manager" || u.role === "admin") return false;
+  const rows = await db
+    .select({ id: mbosUserTerritories.id })
+    .from(mbosUserTerritories)
+    .where(and(eq(mbosUserTerritories.userId, userId), ne(mbosUserTerritories.kind, "region")))
+    .limit(1);
+  return rows.length === 0;
+}
+
+/**
+ * The sentence that says where a lead handed to somebody will be, for the
+ * toast. Empty on a desk. `noArea` is the handset caveat: assigned, but not on
+ * the phone until somebody allocates the person an area.
+ */
+export function placeSentence(name: string, place: OwnerPlace, noArea = false): string {
   if (place === "desk") return "";
-  return place === "crm"
-    ? ` ${name} does not hold the Calling desk, so it is in their All Leads list rather than on a desk.`
+  if (place === "crm") {
+    return ` ${name} does not hold the Calling desk, so it is in their All Leads list rather than on a desk.`;
+  }
+  return noArea
+    ? ` ${name} has no CRM login and no area allocated, so it is assigned to them but will NOT show on their Salesman App handset until an area is set for them.`
     : ` ${name} has no CRM login, so it reaches their Salesman App handset at the next sync.`;
 }
 

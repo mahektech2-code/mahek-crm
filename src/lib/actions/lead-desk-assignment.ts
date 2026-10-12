@@ -80,7 +80,7 @@ type AssignResult =
  * them.
  */
 /** `null` is UNASSIGNED: the lead goes back to the pool nobody's desk holds. */
-type Target = { id: string; name: string; place: OwnerPlace } | null;
+type Target = { id: string; name: string; place: OwnerPlace; noArea?: boolean } | null;
 
 async function assignOne(
   ctx: Actor,
@@ -256,7 +256,7 @@ export async function assignDeskLead(
     return ok(
       { ownerName: target?.name ?? "Unassigned" },
       target
-        ? `Assigned to ${target.name}.${placeSentence(target.name, target.place)}`
+        ? `Assigned to ${target.name}.${placeSentence(target.name, target.place, target.noArea)}`
         : "Unassigned — it is on nobody's desk until somebody is given it.",
     );
   } catch (e) {
@@ -308,7 +308,7 @@ export async function bulkAssignDeskLeads(
 
     refresh();
     const head = target
-      ? `${done} ${done === 1 ? "lead" : "leads"} now ${target.name}'s.${placeSentence(target.name, target.place)}`
+      ? `${done} ${done === 1 ? "lead" : "leads"} now ${target.name}'s.${placeSentence(target.name, target.place, target.noArea)}`
       : `${done} ${done === 1 ? "lead" : "leads"} now unassigned.`;
     return ok(
       { done, failed },
