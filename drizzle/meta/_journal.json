@@ -1821,6 +1821,13 @@
       "when": 1792532744442,
       "tag": "0262_transporter_godown_gstin",
       "breakpoints": true
+    },
+    {
+      "idx": 260,
+      "version": "7",
+      "when": 1792532844442,
+      "tag": "0263_erp_can_groups_photos",
+      "breakpoints": true
     }
   ]
 }

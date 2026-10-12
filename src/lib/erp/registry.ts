@@ -91,7 +91,10 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Masters",
     icon: "db",
     screens: [
-      s("rawMaterials", "raw-materials", "Raw materials", "Everything the business buys, with density and required tests for chemicals.", true),
+      s("rawMaterials", "raw-materials", "Raw materials", "Everything the business buys, with density and required tests for chemicals, and photos for cans.", true, [
+        v("rawMaterials", "All materials"),
+        v("canGroups", "Can groups"),
+      ]),
       s("suppliers", "suppliers", "Purchase parties", "Suppliers, grouped by state.", true),
       s("products", "products", "Products", "Finished goods: what each is made of and how it is packed.", true),
       s("customers", "customers", "Sales parties", "Customers. A Pending party must be activated before its orders move.", true),

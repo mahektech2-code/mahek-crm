@@ -63,6 +63,9 @@ const files = [
   "src/lib/erp/erp-scrap.test.ts",
   "src/lib/erp/erp-returns.test.ts",
   "src/lib/erp/erp-material-duties.test.ts",
+  // Can photos and look-alike can groups: grouping by name never moves a can
+  // somebody placed, photos are capped and taken off without deleting.
+  "src/lib/erp/erp-can-groups.test.ts",
   // Purchase and production, department by department.
   "src/lib/erp/erp-departments.test.ts",
   "src/lib/erp/erp-production.test.ts",

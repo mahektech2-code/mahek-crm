@@ -408,6 +408,19 @@ function PhotoPicker({
           done ? "border-success bg-success-soft text-success" : cx("border-dashed bg-surface text-body hover:bg-canvas", error ? "border-danger" : "border-line-strong"),
         )}
       >
+        {done && kind === "photo" ? (
+          /* A photo already attached shows itself, so a form reopened on a record says WHICH
+             picture it holds; a PDF has no picture and the thumbnail simply hides. */
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={`/api/attachments/${value}`}
+            alt=""
+            className="h-7 w-7 shrink-0 rounded-sm border border-success/30 bg-surface object-cover"
+            onError={(e) => {
+              e.currentTarget.style.display = "none";
+            }}
+          />
+        ) : null}
         {busy ? "Uploading…" : done ? `✓ ${name || "Attached"}` : kind === "video" ? "Record or upload a video" : "Take or upload a photo"}
         <input
           type="file"

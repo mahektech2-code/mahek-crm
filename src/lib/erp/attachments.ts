@@ -13,7 +13,7 @@ import { listUserApps, listUserModules } from "@/lib/access";
  * none of these has a customer behind it that decides who should see it.
  * ------------------------------------------------------------------------- */
 
-export type ErpParent = "erp_test" | "erp_purchase" | "erp_transport" | "erp_video" | "erp_quotation" | "erp_lr" | "erp_vendor_return" | "erp_customer_return" | "erp_waste";
+export type ErpParent = "erp_test" | "erp_purchase" | "erp_transport" | "erp_video" | "erp_quotation" | "erp_lr" | "erp_vendor_return" | "erp_customer_return" | "erp_waste" | "erp_raw_material" | "erp_material_group";
 
 /*
  * The screen each kind of file is read under. `complaint` is not an ERP parent
@@ -34,6 +34,9 @@ const SCREENS: Record<ErpParent | "complaint", string[]> = {
   erp_vendor_return: ["vendorReturns"],
   erp_customer_return: ["customerReturns"],
   erp_waste: ["customerReturns"],
+  /* A can's photos and its group's: whoever may open Raw materials sees them. */
+  erp_raw_material: ["rawMaterials"],
+  erp_material_group: ["rawMaterials"],
   complaint: ["requests", "myCustomers"],
 };
 
