@@ -138,26 +138,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    services:
-      db:
-        image: public.ecr.aws/docker/library/postgres:16
-        env:
-          POSTGRES_USER: mahek
-          POSTGRES_PASSWORD: mahek
-          POSTGRES_DB: mahekone
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U mahek -d mahekone"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
     env:
       DATABASE_URL: postgresql://mahek:mahek@127.0.0.1:5432/mahekone
 
     steps:
       - uses: actions/checkout@v7
+
+      # Not a `services:` container: see .github/actions/postgres.
+      - uses: ./.github/actions/postgres
 
       - uses: actions/setup-node@v7
         with:
@@ -182,7 +170,7 @@ jobs:
 
   # THE SIX §11 JOURNEYS AND EVERYTHING ELSE THAT NEEDS A REAL POSTGRES.
   #
-  # One matrix entry is one runner, one Postgres service container and one
+  # One matrix entry is one runner, one Postgres container and one
   # `mahekone_test`. `run-integration.mjs --shard i/N` takes a balanced slice of
   # its file list (see scripts/integration-shards.mjs) and runs it serially, so
   # no two suites ever share a database. They do not need `next build` — they
@@ -201,26 +189,14 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4]
 
-    services:
-      db:
-        image: public.ecr.aws/docker/library/postgres:16
-        env:
-          POSTGRES_USER: mahek
-          POSTGRES_PASSWORD: mahek
-          POSTGRES_DB: mahekone
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U mahek -d mahekone"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
     env:
       DATABASE_URL: postgresql://mahek:mahek@127.0.0.1:5432/mahekone
 
     steps:
       - uses: actions/checkout@v7
+
+      # Not a `services:` container: see .github/actions/postgres.
+      - uses: ./.github/actions/postgres
 
       - uses: actions/setup-node@v7
         with:
@@ -371,7 +347,12 @@ jobs:
             done
           }
           for img in $(grep -E '^\s+image: [a-z]' docker-compose.yml | awk '{print $2}' | grep -v '\$'); do
-            pull "public.ecr.aws/docker/library/$img" && docker tag "public.ecr.aws/docker/library/$img" "$img"
+            if pull "public.ecr.aws/docker/library/$img"; then
+              docker tag "public.ecr.aws/docker/library/$img" "$img"
+            else
+              echo "::warning::the mirror refused $img; pulling it from Docker Hub"
+              pull "$img" || exit 1
+            fi
           done
           docker images
 
@@ -426,12 +407,18 @@ jobs:
           echo "packages: $PKGS"
           # Pulled first, with retries: the mirror's "toomanyrequests" is a
           # refused download, not an answer about these packages.
+          # Docker Hub is the fallback when the mirror keeps refusing.
+          img=public.ecr.aws/docker/library/ubuntu:24.04
           for wait in 10 20 40 80 0; do
-            docker pull public.ecr.aws/docker/library/ubuntu:24.04 && break
-            [ "$wait" = 0 ] && exit 1
+            docker pull "$img" && break
+            if [ "$wait" = 0 ]; then
+              img=docker.io/library/ubuntu:24.04
+              docker pull "$img" || exit 1
+              break
+            fi
             echo "pull refused; trying again in ${wait}s"; sleep "$wait"
           done
-          docker run --rm public.ecr.aws/docker/library/ubuntu:24.04 sh -c "
+          docker run --rm "$img" sh -c "
             apt-get update -qq >/dev/null 2>&1
             apt-get install -s $PKGS >/dev/null
           "
@@ -444,27 +431,15 @@ jobs:
   links:
     runs-on: ubuntu-latest
 
-    services:
-      db:
-        image: public.ecr.aws/docker/library/postgres:16
-        env:
-          POSTGRES_USER: mahek
-          POSTGRES_PASSWORD: mahek
-          POSTGRES_DB: mahekone
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U mahek -d mahekone"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
     env:
       DATABASE_URL: postgresql://mahek:mahek@127.0.0.1:5432/mahekone
       BASE_URL: http://127.0.0.1:3000
 
     steps:
       - uses: actions/checkout@v7
+
+      # Not a `services:` container: see .github/actions/postgres.
+      - uses: ./.github/actions/postgres
 
       - uses: actions/setup-node@v7
         with:
