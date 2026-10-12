@@ -546,9 +546,24 @@ export function Field({
   );
 }
 
-const CONTROL =
-  "w-full rounded-control border border-line bg-surface px-2.5 text-sm text-ink " +
-  "outline-none focus:border-brand";
+/**
+ * A text control's look — border, radius, padding, focus ring — said ONCE, so
+ * a screen that has to draw a bare `<input>` (a date in a toolbar, a cell in a
+ * line table) draws the same box as `Input`. The border colour is chosen here
+ * rather than layered, because two border colours on one element are decided
+ * by stylesheet order, not by which was meant.
+ */
+export function controlClass({
+  invalid = false,
+  warn = false,
+  className,
+}: { invalid?: boolean; warn?: boolean; className?: string } = {}): string {
+  return cx(
+    "w-full rounded-control border bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand",
+    invalid ? "border-danger" : warn ? "border-warn" : "border-line",
+    className,
+  );
+}
 
 export function Input({
   className,
@@ -558,7 +573,7 @@ export function Input({
   return (
     <input
       {...props}
-      className={cx(CONTROL, "h-8.5", invalid && "border-danger", className)}
+      className={controlClass({ invalid, className: cx("h-8.5", className) })}
     />
   );
 }
@@ -590,12 +605,10 @@ export function Textarea({
   return (
     <textarea
       {...props}
-      className={cx(
-        CONTROL,
-        "resize-y py-2 leading-[21px]",
-        invalid && "border-danger",
-        className,
-      )}
+      className={controlClass({
+        invalid,
+        className: cx("resize-y py-2 leading-[21px]", className),
+      })}
     />
   );
 }

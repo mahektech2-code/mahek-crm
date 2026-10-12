@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Modal } from "@/components/ui/modal";
-import { Badge, Button, Card, cx } from "@/components/ui/primitives";
+import { Badge, Button, Card, controlClass, cx } from "@/components/ui/primitives";
 import { erpLogisticsAttach, erpLogisticsEditLr, erpLogisticsVoidLr } from "@/lib/actions/erp-logistics";
 import { addDays, lrUploadName, rankForLr, shortDay } from "@/lib/erp/engines/logistics";
 import type { Consignment, UploadedLr } from "@/lib/erp/logistics";
@@ -236,7 +236,7 @@ function EditLr({ lr, transporters, today, onClose }: { lr: UploadedLr; transpor
   const { run, pending } = useAct();
   const [v, setV] = useState({ lrNo: lr.lrNo ?? "", lrDate: lr.lrDate ?? today, transporter: lr.transporter ?? "", destination: lr.destination ?? "", packages: lr.packages == null ? "" : String(lr.packages), freightTerm: lr.freightTerm ?? "", freight: lr.freightPaise == null ? "" : rupeesField(lr.freightPaise), note: lr.note ?? "" });
   const set = (k: keyof typeof v) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setV({ ...v, [k]: e.target.value });
-  const cls = "mt-0.5 block h-8.5 w-full rounded-control border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand";
+  const cls = controlClass({ className: "mt-0.5 block h-8.5" });
   return (
     <Modal
       open

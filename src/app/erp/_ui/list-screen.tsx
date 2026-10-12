@@ -251,7 +251,13 @@ export function ListScreen({
   const headCols = gk && spec.groupHead ? spec.groupHead.map((k) => cols.find((c) => c.k === k)).filter((c): c is ColSpec => !!c) : [];
   // The group's own key is the header's first word, so its rows need not repeat it.
   const lineCols = headCols.length ? cols.filter((c) => !headCols.includes(c) && !gk?.includes(c.k)) : cols;
-  const fit = fitColumns({ cols: lineCols, avail, check: bulkOn, chosen: chosenCols });
+  /* The longest badge each status and flags column will draw on these rows. */
+  const badgeChars: Record<string, number> = {};
+  for (const c of lineCols) {
+    if (c.t === "s") badgeChars[c.k] = rows.reduce((n, r) => Math.max(n, r.v[c.k] == null ? 0 : String(r.v[c.k]).length), 0);
+    if (c.t === "f") badgeChars[c.k] = rows.reduce((n, r) => r.flags.reduce((m, f) => Math.max(m, (FLAG[f]?.[0] ?? f).length), n), 0);
+  }
+  const fit = fitColumns({ cols: lineCols, avail, check: bulkOn, chosen: chosenCols, badgeChars });
   const shownCols = fit.shown;
 
   const exportCsv = () => {
@@ -679,7 +685,9 @@ function Cell({ c, r, edge }: { c: ColSpec; r: ListRow; edge?: string }) {
     const words = r.flags.map((f) => flags[f]?.[0] ?? f).join(", ");
     return (
       <Td className={cx(edge, "overflow-hidden")} title={words || undefined}>
-        <span className="flex gap-1 overflow-hidden">
+        {/* Two flags on one row wrap onto a second line rather than the
+            second being cut off at the column's edge. */}
+        <span className="flex flex-wrap gap-1 overflow-hidden py-0.5">
           {r.flags.map((f) => (
             <FlagBadge key={f} flag={f} />
           ))}

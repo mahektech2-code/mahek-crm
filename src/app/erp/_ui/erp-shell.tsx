@@ -187,7 +187,8 @@ export function ErpShell({
     .filter((g) => !PINNED_GROUPS.has(g.id))
     .map((g) => {
       const icon = GROUP_ICON[g.icon] ?? g.icon;
-      return { label: g.label, icon, items: g.screens.map((s) => toRow(s, icon)) };
+      /* A flat group's one row wears the group's icon, so it looks the same shut or open. */
+      return { label: g.label, icon, items: g.screens.map((s) => (g.single ? { ...toRow(s, icon), icon } : toRow(s, icon))), flat: g.single };
     });
   const counts = new Map(nav.flatMap((g) => g.screens.map((s) => [s.href, s.count ?? 0] as const)));
 

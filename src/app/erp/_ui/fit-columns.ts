@@ -48,9 +48,23 @@ export const CHECK_COL = 36;
  * that word plus the sort chevron and padding. Headings are 12px uppercase
  * with letter spacing, which is about 7.6px a character.
  */
-export function minWidth(c: ColSpec): number {
+export function minWidth(c: ColSpec, badgeChars?: number): number {
   const word = Math.max(0, ...c.l.split(/\s+/).map((w) => w.length));
-  return Math.max(c.w ?? MIN[c.t], Math.ceil(word * 7.6) + 24 + 16);
+  const base = Math.max(c.w ?? MIN[c.t], Math.ceil(word * 7.6) + 24 + 16);
+  return BADGED.has(c.t) && badgeChars ? Math.max(base, badgeWidth(badgeChars)) : base;
+}
+
+/**
+ * A status or a flag is a BADGE, and a badge cut to "Under Proc…" or "Add
+ * More Qua…" says nothing. So those columns are at least as wide as their
+ * longest badge on the rows in hand (11px text, about 6.4px a character, plus
+ * the badge's and the cell's padding) — up to a ceiling, past which the hover
+ * still carries the whole of it.
+ */
+const BADGED: ReadonlySet<ColType> = new Set(["s", "f"]);
+export const BADGE_COL_MAX = 210;
+export function badgeWidth(chars: number): number {
+  return Math.min(BADGE_COL_MAX, Math.ceil(chars * 6.4) + 12 + 32);
 }
 
 /** Kinds that take what is left over: text reads better wider, numbers do not. */
@@ -87,6 +101,7 @@ export function fitColumns({
   avail,
   check = false,
   chosen = null,
+  badgeChars,
 }: {
   cols: ColSpec[];
   /** The width the table has, in px. */
@@ -95,7 +110,10 @@ export function fitColumns({
   check?: boolean;
   /** A person's own pick of column keys, or null for the automatic set. */
   chosen?: string[] | null;
+  /** For a status or flags column, the longest badge it will draw, in characters. */
+  badgeChars?: Record<string, number>;
 }): ColumnFit {
+  const mw = (c: ColSpec) => minWidth(c, badgeChars?.[c.k]);
   const room = Math.max(0, avail - (check ? CHECK_COL : 0));
   const known = new Set(cols.map((c) => c.k));
   const pick = chosen?.filter((k) => known.has(k)) ?? null;
@@ -109,7 +127,7 @@ export function fitColumns({
   const keep = new Set<string>();
   let used = 0;
   for (const k of order) {
-    const w = minWidth(byKey.get(k)!);
+    const w = mw(byKey.get(k)!);
     /* The first column is drawn even on a screen too narrow for it: a list
        with no columns at all is not a narrower list, it is a broken one. */
     if (used + w <= room || keep.size === 0) {
@@ -128,7 +146,7 @@ export function fitColumns({
 
   /* Share what is left over, to the text columns where there are any. */
   const widths: Record<string, number> = {};
-  for (const c of shown) widths[c.k] = minWidth(c);
+  for (const c of shown) widths[c.k] = mw(c);
   const spare = Math.max(0, room - used);
   const growers = shown.filter((c) => GROWS.has(c.t));
   const takers = growers.length ? growers : shown;
@@ -147,7 +165,7 @@ export function fitColumns({
     dropped: pick?.length ? pick.length - shown.length : 0,
     roomFor: (k) => {
       const c = byKey.get(k);
-      return !!c && used + minWidth(c) <= room;
+      return !!c && used + mw(c) <= room;
     },
   };
 }

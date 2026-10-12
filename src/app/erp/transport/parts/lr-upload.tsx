@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { CardGrid } from "@/components/ui/card-grid";
-import { Button, Card, cx } from "@/components/ui/primitives";
+import { Button, Card, controlClass, cx } from "@/components/ui/primitives";
 import { erpLogisticsReadLr, erpLogisticsUploadLrs } from "@/lib/actions/erp-logistics";
 import { lrRowHasAnything } from "@/lib/erp/engines/logistics";
 import { useAct } from "./common";
@@ -239,7 +239,7 @@ export function LrUpload({ today, transporters, canRead = false, onDone }: { tod
   );
 }
 
-const inp = (bad: boolean, width = "w-full", check = false) => cx("h-8.5 rounded-control border bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand", width, bad ? "border-danger" : check ? "border-warn" : "border-line");
+const inp = (bad: boolean, width = "w-full", check = false) => controlClass({ invalid: bad, warn: check, className: cx("h-8.5", width) });
 
 function Box({ label, error, read, check, children }: { label: string; error?: string; read?: boolean; check?: boolean; children: React.ReactNode }) {
   return (

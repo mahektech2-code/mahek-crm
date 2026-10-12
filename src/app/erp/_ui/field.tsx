@@ -2,7 +2,7 @@
 
 import { useContext, useId, useState } from "react";
 import type { FieldSpec } from "@/lib/erp/ui";
-import { cx } from "@/components/ui/primitives";
+import { controlClass, cx } from "@/components/ui/primitives";
 import { DictateButton, joinDictation } from "@/components/ui/dictate";
 import { Icon } from "./icons";
 import { ErpVoice } from "./voice";
@@ -16,10 +16,8 @@ import { PinField } from "./pin-field";
  * hint.
  * ------------------------------------------------------------------------- */
 
-const CONTROL = "w-full rounded-control border bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand";
-
 function control(err: boolean, extra?: string) {
-  return cx(CONTROL, "h-8.5", err ? "border-danger" : "border-line", extra);
+  return controlClass({ invalid: err, className: cx("h-8.5", extra) });
 }
 
 export function Field({
@@ -133,7 +131,7 @@ function Control({
           value={value}
           readOnly={f.readOnly}
           onChange={(e) => onChange(e.target.value)}
-          className={cx(CONTROL, "h-[72px] resize-y py-2 pr-9 leading-[21px]", error ? "border-danger" : "border-line")}
+          className={controlClass({ invalid: !!error, className: "h-[72px] resize-y py-2 pr-9 leading-[21px]" })}
         />
         {f.mic && voice && !f.readOnly ? (
           /* AI-3: the CRM's own dictation — same providers, same modal, same

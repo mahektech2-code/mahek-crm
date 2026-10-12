@@ -5,7 +5,7 @@ import { erpLink } from "@/lib/erp/registry";
 import { useMemo, useState } from "react";
 import { Modal } from "@/components/ui/modal";
 import { FilterPills } from "@/components/ui/overlays";
-import { Badge, Button, Card, cx } from "@/components/ui/primitives";
+import { Badge, Button, Card, controlClass, cx } from "@/components/ui/primitives";
 import { erpLogisticsClearIssue, erpLogisticsDelivered, erpLogisticsIssue, erpLogisticsUpdate } from "@/lib/actions/erp-logistics";
 import { addDays, callDue, daysBetween, ISSUES, ROAD_STAGES, runningLate, shortDay, STAGE_SHORT, trackingLink, type Stage } from "@/lib/erp/engines/logistics";
 import type { Consignment } from "@/lib/erp/logistics";
@@ -164,7 +164,7 @@ function ActionDialog({ dialog, today, callEveryDays, notifyOn, onClose }: { dia
   const [date, setDate] = useState(today);
   const [receivedBy, setReceivedBy] = useState("");
   const [notify, setNotify] = useState(true);
-  const cls = "mt-0.5 block h-8.5 w-full rounded-control border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand";
+  const cls = controlClass({ className: "mt-0.5 block h-8.5" });
 
   const title = dialog.kind === "update" ? `Update ${lrLabel(c.lrNo)}` : dialog.kind === "issue" ? `A problem with ${lrLabel(c.lrNo)}` : `${lrLabel(c.lrNo)} delivered`;
   const save = () => {

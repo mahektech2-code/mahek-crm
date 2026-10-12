@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { Modal } from "@/components/ui/modal";
 import { Drawer, DrawerHeader } from "@/components/ui/overlays";
-import { Badge, Button, Card, cx } from "@/components/ui/primitives";
+import { Badge, Button, Card, controlClass, cx } from "@/components/ui/primitives";
 import { erpLogisticsTransporter } from "@/lib/actions/erp-logistics";
 import { checkGstin } from "@/lib/engines/lead-scan";
 import type { Transporter, TransporterGodown } from "@/lib/erp/logistics";
@@ -294,7 +294,7 @@ function EditTransporter({
   const [adding, setAdding] = useState(false);
   const labelOptions = v.consignmentLabel && !labels.includes(v.consignmentLabel) ? [...labels, v.consignmentLabel] : labels;
 
-  const cls = "mt-1 block h-9 w-full rounded-control border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand";
+  const cls = controlClass({ className: "mt-1 block h-8.5" });
   const gst = checkGstin(v.gstin);
   const gstBad = !!gst && gst.check === "invalid";
 
