@@ -317,12 +317,17 @@ describe("reassignment changes the owner and nothing about who raised the lead",
     assert.equal((await row(lead.id)).ownerId, tele.id);
   });
 
-  test("a lead can only go to somebody who holds the desk — and never to a field-app picker", async () => {
+  test("a lead can go to a Salesman App holder, by id, and says it reaches the handset; an unknown id is refused", async () => {
     const lead = await makeLead();
     setTestUser(mgr);
-    const r = await assignDeskLead({ customerId: lead.id, ownerId: fieldUser.id });
-    assert.equal(r.ok, false);
+    const nobody = await assignDeskLead({ customerId: lead.id, ownerId: "usr_does_not_exist" });
+    assert.equal(nobody.ok, false);
     assert.equal((await row(lead.id)).ownerId, tele.id);
+
+    const r = await assignDeskLead({ customerId: lead.id, ownerId: fieldUser.id });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.match(r.ok ? (r.message ?? "") : "", /Salesman App handset/);
+    assert.equal((await row(lead.id)).ownerId, fieldUser.id);
   });
 
   test("a next action owed by the old owner follows; the manager's verification does not", async () => {

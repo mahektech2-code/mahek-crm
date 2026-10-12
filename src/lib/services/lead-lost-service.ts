@@ -6,6 +6,7 @@ import { LEGACY_SALES_TYPE, UNASSIGNED, splitFilter, type FilterOption } from ".
 import { stageLabel, type LeadSalesType, type LeadStage } from "../lead-labels";
 import { startOfMonth, startOfWeek, type BusinessDate } from "../business-date";
 import { leadsVisible, managerScope } from "./sales-service";
+import { ownerChoices } from "./lead-desk-assignment-service";
 
 /* ---------------------------------------------------------------------------
  * LEAD MANAGEMENT → LOST — the central record of every lead closed lost,
@@ -245,13 +246,22 @@ export async function lostLeadsPage(
 }
 
 /**
- * Owners, counted over the scoped Lost book — the one filter option here that
- * has to be read off the data rather than offered as a fixed list. Lead type
- * and stage-at-loss are drawn from `SALES_TYPE_BUCKETS` and `ALL_LEAD_STAGES`
- * directly, and Lost reason from `LOST_REASONS`: all three are closed
- * vocabularies already declared in `lib/lead-labels.ts` and `lib/lead-filters.ts`,
- * so offering them again here would be a second list waiting to drift from the
- * first the day a rung or a reason is added.
+ * Owners, counted over the scoped Lost book.
+ *
+ * Lead type and stage-at-loss are drawn from `SALES_TYPE_BUCKETS` and
+ * `ALL_LEAD_STAGES` directly, and Lost reason from `LOST_REASONS`: all three are
+ * closed vocabularies already declared in `lib/lead-labels.ts` and
+ * `lib/lead-filters.ts`, so offering them again here would be a second list
+ * waiting to drift from the first the day a rung or a reason is added.
+ *
+ * THE NAMES ARE THE SAME PEOPLE THE CHANGE OWNER LIST OFFERS. This used to be
+ * only whoever currently owns a lost lead, so the filter looked like half the
+ * team was missing — and a person with nothing lost yet could not be picked at
+ * all. Everybody `ownerChoices()` names is here, with a count of zero where they
+ * own none; whoever owns a lost lead and is NOT in that list (a closed account,
+ * or nobody) is kept, because a filter that drops an owner of real rows would
+ * hide those leads from the very screen that lists them. Counts are still over
+ * the scoped book, and values are user ids, so the filter itself is unchanged.
  */
 export async function lostLeadOwnerOptions(): Promise<Array<FilterOption & { count: number }>> {
   const scope = await managerScope();
@@ -264,11 +274,17 @@ export async function lostLeadOwnerOptions(): Promise<Array<FilterOption & { cou
      group by c.owner_id, u.name
      order by count(*) desc, u.name asc
   `);
-  return rows.map((o) => ({
+  const out: Array<FilterOption & { count: number }> = rows.map((o) => ({
     value: o.value ?? UNASSIGNED,
     label: o.label ?? "Nobody",
     count: Number(o.count),
   }));
+  const present = new Set(out.map((o) => o.value));
+  for (const p of await ownerChoices()) {
+    if (!present.has(p.id)) out.push({ value: p.id, label: p.name, count: 0 });
+  }
+  /* Owners of lost leads first, busiest first (as before); the rest by name. */
+  return [...out.filter((o) => o.count > 0), ...out.filter((o) => o.count === 0).sort((a, b) => a.label.localeCompare(b.label))];
 }
 
 export type LostLeadTiles = {

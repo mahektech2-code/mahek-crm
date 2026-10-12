@@ -13,7 +13,12 @@ import { notifyUser } from "@/lib/notify";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
 import { MBOS_EVENT, writeTimelineEvent } from "@/lib/timeline";
 import { leadRow } from "@/lib/services/lead-service";
-import { DESK_MODULE, deskHolders } from "@/lib/services/lead-desk-assignment-service";
+import {
+  DESK_MODULE,
+  assignableOwner,
+  placeSentence,
+  type OwnerPlace,
+} from "@/lib/services/lead-desk-assignment-service";
 import { LEAD_BULK_CAP } from "@/lib/services/sales-service";
 
 /* ---------------------------------------------------------------------------
@@ -75,7 +80,7 @@ type AssignResult =
  * them.
  */
 /** `null` is UNASSIGNED: the lead goes back to the pool nobody's desk holds. */
-type Target = { id: string; name: string } | null;
+type Target = { id: string; name: string; place: OwnerPlace } | null;
 
 async function assignOne(
   ctx: Actor,
@@ -166,7 +171,14 @@ async function assignOne(
       title: `A lead was assigned to you: ${lead.name}`,
       body: `${ctx.user.name} put it on your calling desk.`,
       kind: "info",
-      href: `/crm/leads/calling-desk/${lead.id}`,
+      /* Where it will actually be for THEM: a person with no Calling desk is
+         sent to the record, and a handset-only person to no web route at all. */
+      href:
+        target.place === "desk"
+          ? `/crm/leads/calling-desk/${lead.id}`
+          : target.place === "crm"
+            ? `/crm/leads/${lead.id}`
+            : undefined,
     }).catch(() => {});
   }
   if (lead.ownerId && lead.ownerId !== ctx.user.id && lead.ownerId !== (target?.id ?? null)) {
@@ -206,12 +218,16 @@ async function requireAssigner(): Promise<{ ctx: Actor } | { refusal: ReturnType
   return { ctx };
 }
 
-async function desk(ownerId: string) {
-  return (await deskHolders()).find((h) => h.id === ownerId) ?? null;
+/* Anybody active who holds the CRM or the Salesman App — the same people the
+   picker offers (`ownerChoices`), so an offered choice is never refused. The
+   Calling desk used to be required here; it no longer is, and `placeSentence`
+   says where the lead lands when it is not on one. */
+async function assignee(ownerId: string) {
+  return assignableOwner(ownerId);
 }
 
-const NOT_ON_A_DESK =
-  "That person cannot open the Calling desk, so a lead given to them would not be on any desk they can see. Grant it on the Access screen first.";
+const NOT_ASSIGNABLE =
+  "That person has no active CRM or Salesman App account, so a lead given to them would not be visible to anybody. Grant them an app on the Access screen first.";
 
 export async function assignDeskLead(
   input: z.input<typeof schema>,
@@ -224,10 +240,10 @@ export async function assignDeskLead(
     const gate = await requireAssigner();
     if ("refusal" in gate) return gate.refusal;
 
-    /* `null` is Unassigned and needs no desk; anybody else must hold one. */
-    const target = p.ownerId === null ? null : await desk(p.ownerId);
+    /* `null` is Unassigned; anybody else must be an active CRM or Salesman App account. */
+    const target = p.ownerId === null ? null : await assignee(p.ownerId);
     if (p.ownerId !== null && !target) {
-      return err(NOT_ON_A_DESK, "rule_violation", [{ field: "ownerId", message: "Does not hold the Calling desk." }]);
+      return err(NOT_ASSIGNABLE, "rule_violation", [{ field: "ownerId", message: "Not an active CRM or Salesman App account." }]);
     }
 
     const done = await assignOne(gate.ctx, p.customerId, target);
@@ -239,7 +255,9 @@ export async function assignDeskLead(
     refresh(p.customerId);
     return ok(
       { ownerName: target?.name ?? "Unassigned" },
-      target ? `Assigned to ${target.name}.` : "Unassigned — it is on nobody's desk until somebody is given it.",
+      target
+        ? `Assigned to ${target.name}.${placeSentence(target.name, target.place)}`
+        : "Unassigned — it is on nobody's desk until somebody is given it.",
     );
   } catch (e) {
     return fromThrown(e);
@@ -267,9 +285,9 @@ export async function bulkAssignDeskLeads(
     const gate = await requireAssigner();
     if ("refusal" in gate) return gate.refusal;
 
-    const target = parsed.data.ownerId === null ? null : await desk(parsed.data.ownerId);
+    const target = parsed.data.ownerId === null ? null : await assignee(parsed.data.ownerId);
     if (parsed.data.ownerId !== null && !target) {
-      return err(NOT_ON_A_DESK, "rule_violation", [{ field: "ownerId", message: "Does not hold the Calling desk." }]);
+      return err(NOT_ASSIGNABLE, "rule_violation", [{ field: "ownerId", message: "Not an active CRM or Salesman App account." }]);
     }
 
     const ids = Array.from(new Set(parsed.data.leadIds)).slice(0, LEAD_BULK_CAP);
@@ -290,7 +308,7 @@ export async function bulkAssignDeskLeads(
 
     refresh();
     const head = target
-      ? `${done} ${done === 1 ? "lead" : "leads"} now ${target.name}'s.`
+      ? `${done} ${done === 1 ? "lead" : "leads"} now ${target.name}'s.${placeSentence(target.name, target.place)}`
       : `${done} ${done === 1 ? "lead" : "leads"} now unassigned.`;
     return ok(
       { done, failed },
