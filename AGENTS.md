@@ -1868,9 +1868,10 @@ sidebar sums), `isPendingLine`/`isWorkingLine`, `ORDER_COL`, `godownField`,
 something a second time; never type an `/erp/…` URL, a hex brand colour, a
 pixel font size or a time zone.
 
-**Every write goes through four server actions** (`lib/actions/erp.ts`): run
-an action, run a bulk action, submit a form, load a form (which writes nothing
-and is the one a preview may open). Each re-checks that
+**Every write goes through five server actions** (`lib/actions/erp.ts`): run
+an action, run a bulk action, run a header tool (a `ToolSpec` with no `href`,
+answered by the module's `tools`), submit a form, load a form (which writes
+nothing and is the one a preview may open). Each re-checks that
 the person holds the SCREEN before the screen module's own handler checks any
 power, because a server action is a URL and a hidden button is not a
 permission. Screen modules live in `lib/erp/screens/`; a module is a loader
@@ -2108,6 +2109,30 @@ asking, so an answer can never hold a row or column their screen would not.
 a tablet at the godown gate — and every other app keeps it. It was lost once
 in a header refactor and every ERP page sat at 1100px; below 1280px the ERP
 header draws Feedback and the account chip as icons so it fits a tablet.
+
+## Can photos and groups
+
+**A CAN IS RECOGNISED BY SIGHT, SO IT CARRIES PHOTOS AND A GROUP.** Raw
+materials of type Can take up to three photos each ("Photos" on the row,
+attachments under `erp_raw_material`), and belong to at most one look-alike
+group (`erp_raw_materials.group_id` → `erp_material_groups`, 0262): one print
+in several sizes — "Mahek Yellow", "Naked". A group has a name anybody holding
+Raw materials can change, up to three photos of its own
+(`erp_material_group`), and its members. Both photo kinds are read under the
+Raw materials screen; taking one off marks it removed, never deletes it
+(`lib/erp/can-photos.ts`). The limits are `MAX_CAN_PHOTOS` and
+`MAX_GROUP_PHOTOS`.
+
+**GROUPS ARE A TAB, AND GROUPING BY NAME IS A SUGGESTION.** Raw materials →
+Can groups (`screens/can-groups.ts`) draws each group as a card with its photo
+(else its first can's). "Group cans by name" reads each ungrouped active can's
+FAMILY — its name with the size and the words every can carries taken out
+(`engines/can-groups.ts`, pure) — joins it to an existing group of that family,
+or makes a new group where two or more share one. It never moves a can
+somebody already grouped (`group_id is null` is in the write too), leaves a
+can whose name is only a size, and lists what it left. A mistake is fixed by
+Edit group (rename, tick the cans — ticking one moves it here), Rename, Delete
+group (its cans stay, not grouped), or a can's own Edit form.
 
 ## Inventory Accuracy Control
 

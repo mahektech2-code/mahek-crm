@@ -52,6 +52,17 @@ Notes on what it does:
 
 The form is `dutiesForm`, opened by the administrator-only **Who does what** action; `saveDuties` refuses anybody but `ctx.administrator`, and refuses a named person who no longer holds the ERP or a designation that no longer exists. `dutyKit(ctx)` is what every purchase screen asks: `kit.allows(materialId, duty, fallback)` and `kit.refusal(material, duty)`.
 
+## Can photos and groups
+
+<Code file="src/lib/erp/engines/can-groups.ts" symbol="planCanGroups" />
+
+<DbTable name="erp_material_groups" note={{
+  name: "Unique per material type, whatever its capitals.",
+  material_type: "Always Can today.",
+}} />
+
+`erp_raw_materials.group_id` names the group (0262). Photos are attachments under `erp_raw_material` and `erp_material_group`, read under the Raw materials screen (`lib/erp/attachments.ts`) and written by `setPhotos` in `lib/erp/can-photos.ts`, which binds only the person's own fresh uploads and marks the rest removed. The tab is `screens/can-groups.ts`; "Group cans by name" is its `groupByName` tool, run through `erpRunTool`. `erp-can-groups.test.ts` pins it.
+
 ## Suppliers
 
 <DbTable name="erp_suppliers" only={["name", "party_code", "area", "location", "state", "credit_days", "mobile", "whatsapp", "broker", "grade", "email", "gstin", "active"]} note={{ party_code: "Own party code — the first part of every lot number bought from them.", active: "Retire sets false." }} />

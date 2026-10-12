@@ -1814,6 +1814,13 @@
       "when": 1792532684442,
       "tag": "0261_factory_multi_department",
       "breakpoints": true
+    },
+    {
+      "idx": 259,
+      "version": "7",
+      "when": 1792532784442,
+      "tag": "0262_erp_can_groups_photos",
+      "breakpoints": true
     }
   ]
 }

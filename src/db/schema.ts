@@ -644,6 +644,10 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
   "erp_customer_return",
   /** A waste disposal's certificate or receipt (0258). */
   "erp_waste",
+  /** A can's own photographs, up to three (0262). */
+  "erp_raw_material",
+  /** A can group's photographs, up to three (0262). */
+  "erp_material_group",
   /* HRMS parents: read under the HRMS screen the record lives on (see
      lib/hrms/attachments.ts), never under a customer's scope. */
   "hrms_attendance",
@@ -11308,6 +11312,28 @@ export const erpRefValues = pgTable(
  * A chemical carries a density (kg → litre) and the tests every lot must pass;
  * both are required for chemicals and meaningless otherwise (spec §4.1).
  */
+/**
+ * A group of look-alike cans (0262): "Mahek Yellow", "Plain", "Naked" — one
+ * print in several sizes, so the floor can recognise a can by its group's
+ * photographs. A name somebody can change, up to three photos of its own
+ * (attachments under `erp_material_group`), and its members are the raw
+ * materials whose `group_id` names it.
+ */
+export const erpMaterialGroups = pgTable(
+  "erp_material_groups",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    materialType: text("material_type").notNull().default("Can"),
+    remark: text("remark"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [uniqueIndex("erp_material_groups_name_key").on(t.materialType, sql`lower(${t.name})`)],
+);
+
 export const erpRawMaterials = pgTable(
   "erp_raw_materials",
   {
@@ -11339,6 +11365,11 @@ export const erpRawMaterials = pgTable(
      */
     countTolerancePercent: numeric("count_tolerance_percent", { precision: 6, scale: 2, mode: "number" }),
     remark: text("remark"),
+    /**
+     * The look-alike group a can belongs to (0262). Filled by "Group by name"
+     * only where it is empty, so a can somebody moved stays where they put it.
+     */
+    groupId: text("group_id").references(() => erpMaterialGroups.id, { onDelete: "set null" }),
     active: boolean("active").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -11347,6 +11378,7 @@ export const erpRawMaterials = pgTable(
   },
   (t) => [
     uniqueIndex("erp_raw_materials_name_key").on(t.name),
+    index("erp_raw_materials_group_idx").on(t.groupId),
     check("erp_raw_materials_purchase_method_check", sql`${t.purchaseMethod} in ('direct', 'quotation', 'buyer')`),
     uniqueIndex("erp_raw_materials_serial_key").on(t.serialNo),
     check("erp_raw_materials_unit_check", sql`${t.unit} in ('Kg', 'Litre', 'Unit')`),

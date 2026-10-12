@@ -30,6 +30,8 @@ export type FormHandler = (
   lines: Values[],
   recordId?: string,
 ) => Promise<Result<unknown>>;
+/** A header button that acts on the screen rather than on a record (ToolSpec). */
+export type ToolHandler = (ctx: ErpContext, values: Values) => Promise<Result<unknown>>;
 /** Building a form on demand (an "Edit" opened from a record). */
 export type FormBuilder = (ctx: ErpContext, recordId?: string) => Promise<FormSpec | null>;
 
@@ -39,6 +41,8 @@ export type ScreenModule = {
   actions?: Record<string, ActionHandler>;
   bulk?: Record<string, BulkHandler>;
   forms?: Record<string, FormHandler>;
+  /** Header buttons (ToolSpec) that act on the screen as a whole. */
+  tools?: Record<string, ToolHandler>;
   /** Forms built for one record on demand — keyed by the action id that opens them. */
   formLoaders?: Record<string, (ctx: ErpContext, id: string) => Promise<FormSpec | null>>;
 };

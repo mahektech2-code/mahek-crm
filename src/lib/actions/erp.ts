@@ -18,7 +18,7 @@ import type { FormSpec } from "@/lib/erp/ui";
 import { erpAudit } from "@/lib/erp/server";
 
 /* ---------------------------------------------------------------------------
- * The ERP's writes, all through four doors.
+ * The ERP's writes, all through five doors.
  *
  * Every generic screen asks one of these, naming the screen and the action or
  * form; each re-checks that the person holds the screen (a server action is a
@@ -62,6 +62,20 @@ export async function erpRunBulk(screen: string, action: string, ids: string[], 
     if (!handler) return err("That action is not available.", "not_found");
     if (!ids.length) return err("Nothing selected.");
     const res = await handler(ctx, ids, values);
+    if (res.ok) revalidate(screen);
+    return res;
+  } catch (e) {
+    return refused(e);
+  }
+}
+
+/** A header button that acts on the screen as a whole ("Group cans by name"). */
+export async function erpRunTool(screen: string, tool: string, values: Record<string, string> = {}): Promise<Result<unknown>> {
+  try {
+    const ctx = await requireErpWrite(screen);
+    const handler = screenModule(screen)?.tools?.[tool];
+    if (!handler) return err("That action is not available.", "not_found");
+    const res = await handler(ctx, values);
     if (res.ok) revalidate(screen);
     return res;
   } catch (e) {

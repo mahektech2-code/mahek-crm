@@ -329,6 +329,8 @@ const DESCRIBE: Record<string, Describer> = {
   "erp.floorCheck.review": () => ["reviewed a stock check that did not match the book"],
   "erp.floorCheck.escalate": () => ["raised a stock check mismatch into a formal count"],
   /* ---- empty drums, scrap sale and scrap receipts */
+  "erp.rawMaterial.photos": () => ["changed a can's photos"],
+  "erp.canGroup.byName": () => ["grouped the cans by name"],
   "erp.drum.empty": () => ["recorded an empty drum, weighed"],
   "erp.drum.classify": () => ["decided who owns an empty drum"],
   "erp.drum.weight": () => ["corrected an empty drum's weight"],
@@ -1093,6 +1095,7 @@ export const VERBS: Record<string, string> = {
 export const NOUNS: Record<string, string> = {
   logistics: "consignment",
   rawMaterial: "raw material",
+  canGroup: "can group",
   supplier: "supplier",
   product: "product",
   customer: "customer",
