@@ -32,7 +32,26 @@ export type ReleaseManifest = {
   versionCode: number;
   /** Where the APK is. Absolute, because a handset has no site to be relative to. */
   url: string;
+  /**
+   * Where the 32-bit APK is, for a phone whose Android runs only 32-bit code.
+   * `url` is the 64-bit build and will not install there. Absent on a
+   * manifest from before the 32-bit build existed.
+   */
+  url32?: string;
 };
+
+/**
+ * WHICH OF THE TWO APKs THIS PHONE RUNS, from the ABIs Android reports
+ * (expo-device `supportedCpuArchitectures`). A phone that lists `arm64-v8a`
+ * takes the 64-bit build; one that lists only 32-bit ABIs — an "Android Go"
+ * handset, often on a 64-bit chip — takes the 32-bit one. Null or an empty
+ * list is a phone that would not say, and the 64-bit build is the answer that
+ * has always been given.
+ */
+export function runs32BitOnly(abis: readonly string[] | null | undefined): boolean {
+  if (!abis || abis.length === 0) return false;
+  return !abis.includes('arm64-v8a') && abis.some((a) => a.startsWith('armeabi'));
+}
 
 export type UpdateVerdict =
   /** Nothing to do, or nothing trustworthy to act on. */
@@ -57,6 +76,7 @@ export type UpdateVerdict =
 export function updateVerdict(
   manifest: unknown,
   installedVersionCode: number | null,
+  thirtyTwoBit = false,
 ): UpdateVerdict {
   if (installedVersionCode === null || !Number.isFinite(installedVersionCode)) {
     /* This build cannot say what it is, so it cannot know it is behind. */
@@ -75,11 +95,20 @@ export function updateVerdict(
   }
   if (m.versionCode <= installedVersionCode) return { kind: 'current' };
 
+  /* A 32-bit phone is never handed the 64-bit file: it would download, fail
+     to install, and teach him the card is broken. With no 32-bit build
+     published there is nothing that would install, so nothing is offered. */
+  let url = m.url;
+  if (thirtyTwoBit) {
+    if (typeof m.url32 !== 'string' || !m.url32.startsWith('https://')) return { kind: 'current' };
+    url = m.url32;
+  }
+
   return {
     kind: 'available',
     /* The NAME is what a person recognises; where it is missing the code
        stands in rather than the card saying "undefined is available". */
     version: typeof m.version === 'string' && m.version.trim() ? m.version.trim() : String(m.versionCode),
-    url: m.url,
+    url,
   };
 }

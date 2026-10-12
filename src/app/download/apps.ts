@@ -33,6 +33,11 @@ export type DownloadApp = {
   /** What to expect the first time it opens. */
   firstRun: string;
   apk: string;
+  /**
+   * The same app built for 32-bit Android — the cheap "Android Go" phones the
+   * main APK will not install on ("App not installed"). Only MBOS has one.
+   */
+  apk32?: string;
   manifest: string;
   /** Said under the button: the warning every sideloaded APK raises. */
   note: string;
@@ -70,6 +75,7 @@ export const DOWNLOAD_APPS: Record<DownloadAppId, DownloadApp> = {
     firstRun:
       "The first time it opens it asks for location (choose “Allow all the time”), camera, microphone and notifications, and to turn off battery saving for MBOS. Say yes to each — your day cannot be recorded without them.",
     apk: "/downloads/mbos.apk",
+    apk32: "/downloads/mbos-32bit.apk",
     manifest: "/downloads/mbos.json",
     note: `${PLAY_STORE_NOTE} Already installed? Download again to update — nothing to uninstall, nothing lost.`,
   },

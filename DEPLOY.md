@@ -411,6 +411,15 @@ itself compares, and it is what `nativeBuildVersion` reports beside the
 version, so move both. Nothing pins either — `runtimeVersion` is the
 `fingerprint` policy precisely so that it does not.
 
+**One run makes TWO APKs**, one per processor (`plugins/withLeanAndroid.js`):
+`/downloads/mbos.apk` is 64-bit ARM, as it always was, and
+`/downloads/mbos-32bit.apk` is for the cheap 32-bit "Android Go" phones that
+answered the 64-bit file with "App not installed". Both are signed, checked
+and published by the same steps, and `mbos.json` names both (`url`, `url32`),
+so the in-app update check hands each phone the file it can install and the
+download page offers the 32-bit one under "Download for older phones". Android
+older than 7.0 cannot run MBOS at all — that is React Native's own floor.
+
 **`api_base` is baked into the bundle** and cannot be changed after the build,
 so a build made against the wrong one is a broken binary rather than a wrong
 setting. The workflow refuses anything that is not https or that ends in a

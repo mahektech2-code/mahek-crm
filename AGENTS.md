@@ -5965,7 +5965,10 @@ and to the droplet as the one stable `/downloads/mbos.apk`. It is
 `workflow_dispatch` — `gh workflow run "MBOS APK" --ref main -f
 api_base=https://one.mahekindia.com -f publish=true` — because sideloading has
 no staged rollout and no rollback, so a release is a decision somebody makes.
-`api_base` is baked into the bundle and cannot be changed afterwards.
+`api_base` is baked into the bundle and cannot be changed afterwards. It
+builds TWO APKs — `mbos.apk` (64-bit ARM) and `mbos-32bit.apk` (32-bit, for
+the "Android Go" phones that refused the first with "App not installed") — and
+`engines/app-update.ts` hands each phone the one its Android runs.
 
 A release built by hand and copied up skips the signature check, the versioned
 archive and any record of what shipped, and puts the app back on whichever

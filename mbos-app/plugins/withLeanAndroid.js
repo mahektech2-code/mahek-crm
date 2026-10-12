@@ -17,13 +17,23 @@ const { withAppBuildGradle, withDangerousMod, withGradleProperties } = require('
  * `withReleaseSigning.js` gives: `android/` is rebuilt by `expo prebuild` on
  * every release, so anything set by hand there is gone the next time.
  *
- * IF A 32-BIT PHONE JOINS THE TEAM — some cheap "Android Go" handsets run a
- * 32-bit Android on a 64-bit chip — do not put `armeabi-v7a` back into this one
- * APK. Build a second APK for it, so nobody else downloads its code.
+ * A 32-BIT PHONE GETS AN APK OF ITS OWN, never a share of this one. Cheap
+ * "Android Go" handsets run a 32-bit Android, often on a 64-bit chip, and the
+ * 64-bit APK told them "App not installed" — which is how some of the field
+ * could not install MBOS at all. So one build now makes TWO APKs through
+ * Gradle's ABI split: `app-arm64-v8a-release.apk`, published as `mbos.apk`
+ * exactly as before, and `app-armeabi-v7a-release.apk`, published as
+ * `mbos-32bit.apk`. Neither carries the other's native code, so nobody
+ * downloads more than his phone runs. Both have the same versionCode — a phone
+ * only ever holds one of them, and the update check
+ * (`engines/app-update.ts`) hands each phone the file its processor runs.
+ *
+ * Android older than 7.0 (API 24) cannot be helped here: that is React
+ * Native's own floor, not a setting of ours.
  */
 const GRADLE_PROPERTIES = {
-  // 64-bit ARM only. See above.
-  reactNativeArchitectures: 'arm64-v8a',
+  // 64-bit and 32-bit ARM, each in its own APK — see above. No x86.
+  reactNativeArchitectures: 'arm64-v8a,armeabi-v7a',
   // R8: removes unused Java/Kotlin code, and the resources nothing references.
   'android.enableMinifyInReleaseBuilds': 'true',
   'android.enableShrinkResourcesInReleaseBuilds': 'true',
@@ -105,6 +115,16 @@ android {
     packagingOptions {
         jniLibs {
             excludes += [${excludes}]
+        }
+    }
+    // One APK per processor: the 64-bit one stays mbos.apk, the 32-bit one is
+    // mbos-32bit.apk. No universal APK, so neither carries the other's code.
+    splits {
+        abi {
+            enable true
+            reset()
+            include 'arm64-v8a', 'armeabi-v7a'
+            universalApk false
         }
     }
 }
