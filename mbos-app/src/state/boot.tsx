@@ -8,7 +8,7 @@ import * as trail from '../sync/trail';
 import { currentSession, sessionOpen, setSessionOpen, type Session } from '../data/session';
 import { loadFeedbackPrefs } from '../data/feedback-prefs';
 import { primeSounds } from '../components/ui/feedback';
-import { autoCloseMissedCheckouts, dayState } from '../data/attendance';
+import { autoCloseMissedCheckouts, dayState, runningSince } from '../data/attendance';
 import { syncPunchOutReminders } from '../native/punch-out-reminder';
 import { closeOpenVisits } from '../data/visits';
 import { closeStaleLegs, closeStaleSessions } from '../data/travel';
@@ -236,16 +236,23 @@ async function runDayBoundaryWork(userId: string): Promise<void> {
   try {
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
+    /* NOTHING PUNCHES HIM OUT BUT HIM. A salesman who punched in at ten last
+       night to travel between cities is still working after midnight, so the
+       boundary is the start of the stretch he is still on where that is
+       earlier: his punch-in session, the journey he is on and the visit he is
+       in are all left running. Only what is older than that is tidied. */
+    const since = await runningSince(userId);
+    const boundary = since != null ? Math.min(startOfToday.getTime(), since) : startOfToday.getTime();
 
-    await closeOpenVisits(startOfToday.getTime());
+    await closeOpenVisits(boundary);
     /* A journey nobody arrived at, closed for the same reason a visit nobody
        checked out of is. Nothing else ever ends a leg, so one left open
        overnight was read as this morning's — see `openLegOf`. */
-    await closeStaleLegs(userId, startOfToday.getTime());
+    await closeStaleLegs(userId, boundary);
     /* And the session he punched in on and never out of. Nothing closes one
        but a punch-out, so a phone switched off on Friday evening would greet
        its owner on Monday still on Friday's meter reading. */
-    await closeStaleSessions(userId, startOfToday.getTime());
+    await closeStaleSessions(userId, boundary);
     await autoCloseMissedCheckouts(userId);
     /* On every open, because Android may drop a scheduled alarm across a
        reboot or an app update, and because a day closed overnight above must

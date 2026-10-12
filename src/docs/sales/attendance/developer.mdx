@@ -14,7 +14,7 @@ Attendance is one row per salesman per day in `mbos_attendance_days`, written by
 | Verdict rule | `src/lib/engines/attendance.ts`, `src/lib/services/attendance-verdict-service.ts` | `workedSecondsOf`, `attendanceVerdict`, `recomputeAttendanceVerdicts` |
 | Sync write | `src/lib/actions/mbos.ts` | `attendanceSchema`, `handleAttendance` |
 | Review | `src/lib/actions/sales.ts` | `reviewDayEvidence` |
-| Jobs | `src/lib/mbos-jobs.ts` | `markMissedCheckouts` (nightly), `judgeRecentDays` and `sweepSelfies` (hourly) |
+| Jobs | `src/lib/mbos-jobs.ts` | `judgeRecentDays` and `sweepSelfies` (hourly). Nothing closes a day automatically |
 | Photo access | `src/lib/services/attachment-service.ts` | `canReadAttendanceSelfie`, `sweepAttendanceSelfies` |
 | Handset | `mbos-app/src/data/attendance.ts` | `checkIn`/`checkOut` take a non-nullable selfie id; geofence measured here |
 
@@ -33,7 +33,6 @@ sequenceDiagram
   M->>DB: knownAttachments — keep a selfie id only if its row exists
   M->>DB: upsert mbos_attendance_days (sessions jsonb always carries every id)
   H->>DB: media queue drains, attachments land, re-send fills the FK columns
-  J->>DB: nightly markMissedCheckouts closes yesterday at the last evidence
   J->>DB: recomputeAttendanceVerdicts writes status + worked_seconds
   J->>DB: hourly sweepAttendanceSelfies removes images past retention
   S->>DB: attendanceForDay(day) narrowed by onlyMine(scope, u.id)
@@ -51,7 +50,7 @@ sequenceDiagram
 
 ## Closing and judging
 
-<Code file="src/lib/mbos-jobs.ts" symbol="markMissedCheckouts" collapsed />
+A day with no punch-out stays open: nothing closes it automatically, so a night shift that starts at 10 pm runs past midnight. It is judged once a punch-out or a regularisation closes it.
 
 <Code file="src/lib/engines/attendance.ts" symbol="workedSecondsOf" collapsed />
 
@@ -79,7 +78,7 @@ The sweep anchors on `uploaded_at` (arrival), removes the bytes before marking t
   sessions: "jsonb [{inAt, outAt, inSelfieId, outSelfieId, autoClosed?}] as the handset reported it. Not a cache.",
   check_in_selfie_id: "First-in mirror. Written only once the attachment row exists.",
   check_out_selfie_id: "Last-out mirror.",
-  auto_checked_out: "Closed by markMissedCheckouts, never by a person.",
+  auto_checked_out: "Closed by the old nightly auto punch-out, removed October 2026. Nothing sets it now.",
   worked_seconds: "Derived. Null with a check-in means not measured.",
   status: "Derived cache, defaults to absent — read through readAttendanceVerdict.",
   within_geofence: "Measured on the handset against mbos.attendance.baseLocation.",
@@ -114,7 +113,7 @@ The sweep anchors on `uploaded_at` (arrival), removes the bytes before marking t
 The sweep removes the image only. "Taken and deleted" and "never taken" must stay distinguishable on the record a payslip is read against.
 </Step>
 <Step title="Never invent a closing time">
-`markMissedCheckouts` closes at evidence or not at all. Do not add a fixed hour.
+Nothing punches a salesman out but the salesman. Do not add an automatic close, at a fixed hour or at the last evidence.
 </Step>
 <Step title="Gate any new photograph read on the module, then the scope">
 Anything reachable from `/api/attachments` must ask `canOpenModule` before `managerScope`.
@@ -128,7 +127,7 @@ The type is the rule; a screen that forgets to ask cannot omit it.
 
 | Gap | Where |
 |---|---|
-| `mbos.attendance.autoCheckOutHour` is read by nothing; its description promises a fixed closing hour | `registry.ts`; `mbos-jobs.ts` `markMissedCheckouts` |
+| `mbos.attendance.autoCheckOutHour` is read by nothing; its description promises a fixed closing hour, and nothing closes a day automatically | `registry.ts` |
 | `mbos.attendance.selfieRequired` is read by nothing; the photograph is mandatory in the handset's types | `registry.ts`; `mbos-app/src/data/attendance.ts` |
 | The geofence is not re-measured on the server; `within_geofence` is the handset's word | `actions/mbos.ts` `handleAttendance` |
 | The empty state says "Nobody holds the Salesman App" when the cause can also be scope narrowing | `attendance/page.tsx` |
