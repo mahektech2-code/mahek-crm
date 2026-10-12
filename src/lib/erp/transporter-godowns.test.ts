@@ -64,8 +64,11 @@ test("each godown has its own GST number, registered in the godown's state", () 
   assert.equal(godownGstProblem(MH, "Maharashtra"), null);
   assert.match(godownGstProblem(GJ, "Maharashtra") ?? "", /registered in Gujarat, but the godown is in Maharashtra/);
   assert.match(godownGstProblem("27AAPCS1234A1ZX", "Maharashtra") ?? "", /does not check out/);
+  /* Optional: a godown with no GST number saves; one that is given is checked. */
   const none = cleanGodowns([{ label: "Main", place: narpoli }], nodes);
-  assert.deepEqual(none, { ok: false, field: "g1.gstin", message: "Main: give its GST number" });
+  assert.ok(none.ok && none.godowns[0].gstin === null);
+  const wrong = cleanGodowns([{ label: "Main", place: narpoli, gstin: GJ }], nodes);
+  assert.equal(!wrong.ok && wrong.field, "g1.gstin");
   const two = cleanGodowns(
     [
       { place: narpoli, gstin: MH.toLowerCase() },

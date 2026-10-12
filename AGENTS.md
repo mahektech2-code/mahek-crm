@@ -8456,7 +8456,7 @@ under it. Every step writes `erp_transport_events`, append-only.
 OWN PEOPLE — and that is a reversal.** `erp_transporter_godowns` is a godown: a
 name, ONE AREA of the reviewed place tree picked State → District → City → Area,
 every rung required, each list narrowed by the one above; its own GST number
-(`gstin`, `0262`); its PIN (`lat`/`lng`, both or neither); and its people. It
+(`gstin`, `0262`), OPTIONAL — GST is mandatory nowhere on a transporter; its PIN (`lat`/`lng`, both or neither); and its people. It
 was picked at a district only, and `0259` had moved every city and area up to
 it — Mahek asked for all four. The tree is built from where CUSTOMERS are, so
 it is missing places a godown can be in (211 of its 581 cities carry no area):
@@ -8465,12 +8465,12 @@ created on save by `placeFor` in `logistics.ts`, matched first on `placeKey`
 under the same parent so it is never made twice — a typed name that is already
 listed IS the listed one (`resolvePick`). A state is never typed: the picker
 offers the country's (`INDIA_STATES`). GST is registered per state, so a
-godown's number must check out AND its first two digits must name the
-godown's state (`godownGstProblem`); the transporter's own `gstin` is now the
+godown's number, where one is given, must check out AND its first two digits
+must name the godown's state (`godownGstProblem`); the transporter's own `gstin` is now the
 optional head-office number. The transporter form lists the godowns and each
 opens in its own modal (`GodownDialog`), whose Done runs the same
 `cleanGodowns` as the save. A godown saved before this reads at its district
-with no GST number and is refused on the next save until both are given —
+and is refused on the next save until its city and area are picked —
 editing a transporter is when the gap is filled, never silently. The places a
 godown adds are ordinary `places` rows with `shops = 0`, so the customer place
 filters may list them. `lib/erp/transporter-godowns.ts` is the rule, pure. The pin is
