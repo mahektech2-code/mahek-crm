@@ -16,7 +16,7 @@ import { PLACE_KINDS, placeKey, type PlaceKind } from "@/lib/place-parse";
  * that is already listed is the listed one. A state is never typed: it is
  * picked from the country's own list (`INDIA_STATES`).
  *
- * A godown also carries its OWN GST number. GST is registered per state, so a
+ * A godown may carry its OWN GST number — optional. GST is registered per state, so a
  * transporter's godowns in two states have two numbers, and the first two
  * digits of each name the state it was registered in — which has to be the
  * state the godown is picked in.
@@ -57,7 +57,8 @@ export type Godown = {
   label: string | null;
   /** State first, area last; a rung with a null id is created on save. */
   place: ResolvedRung[];
-  gstin: string;
+  /** Optional. */
+  gstin: string | null;
   address: string | null;
   lat: number | null;
   lng: number | null;
@@ -190,7 +191,7 @@ export function resolvePick(pick: PlacePick, byId: PlaceLookup, nodes: PlaceOpti
 /**
  * A godown's GST number, checked: its checksum, and that its first two digits
  * name the state the godown is picked in. Null is fine here — whether it is
- * REQUIRED is the save's question, asked in `cleanGodowns`.
+ * given is the save's question, asked in `cleanGodowns`; it is never required.
  */
 export function godownGstProblem(raw: string | null | undefined, stateName: string | null): string | null {
   const g = checkGstin(raw);
@@ -226,9 +227,9 @@ export function cleanGodowns(input: GodownInput[], nodes: PlaceOption[]): { ok: 
     const place = resolvePick(pick, byId, nodes);
     if (!place.ok) return { ok: false, field: `${at}.place.${place.kind}`, message: `${cap(name)}: ${place.message}` };
 
+    /* Optional: a godown without a GST number saves. One that is given has to check out. */
     const gst = checkGstin(g.gstin);
-    if (!gst) return { ok: false, field: `${at}.gstin`, message: `${cap(name)}: give its GST number` };
-    const gstBad = godownGstProblem(gst.gstin, place.rungs[0].name);
+    const gstBad = gst ? godownGstProblem(gst.gstin, place.rungs[0].name) : null;
     if (gstBad) return { ok: false, field: `${at}.gstin`, message: `${cap(name)}: ${gstBad}` };
 
     const contacts: Contact[] = [];
@@ -248,7 +249,7 @@ export function cleanGodowns(input: GodownInput[], nodes: PlaceOption[]): { ok: 
     const hasLng = g.lng != null && Number.isFinite(g.lng);
     if (hasLat !== hasLng) return { ok: false, field: `${at}.pin`, message: "A pin is a latitude and a longitude — give both, or neither" };
     if (hasLat && (Math.abs(g.lat as number) > 90 || Math.abs(g.lng as number) > 180)) return { ok: false, field: `${at}.pin`, message: "That pin is not on the map — latitude is −90 to 90, longitude −180 to 180" };
-    out.push({ id: g.id ?? null, label: tidy(g.label), place: place.rungs, gstin: gst.gstin, address: tidy(g.address), lat: hasLat ? (g.lat as number) : null, lng: hasLng ? (g.lng as number) : null, contacts });
+    out.push({ id: g.id ?? null, label: tidy(g.label), place: place.rungs, gstin: gst?.gstin ?? null, address: tidy(g.address), lat: hasLat ? (g.lat as number) : null, lng: hasLng ? (g.lng as number) : null, contacts });
   }
   return { ok: true, godowns: out };
 }

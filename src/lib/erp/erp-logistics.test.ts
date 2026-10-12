@@ -388,7 +388,6 @@ describe("transporters", () => {
     assert.equal(msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, gstin: "27ABCDE1234F1Z9" })), "That GST number does not check out — it is 15 characters, like 27ABCDE1234F1Z5");
     assert.equal(msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, godowns: [{ label: "Main" }] })), "Main: Pick the state");
     assert.equal(msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, godowns: [{ label: "Main", place: { ...full, area: undefined } }] })), "Main: Pick the area, or add it if it is not listed");
-    assert.equal(msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, godowns: [{ label: "Main", place: full }] })), "Main: give its GST number");
     assert.match(msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, godowns: [{ label: "Main", place: full, gstin: "24AAPCS1234A1ZT" }] })), /registered in Gujarat, but the godown is in Maharashtra/);
     assert.equal(
       msg(await L.saveTransporter(ctx, { name: `Road ${tag}`, godowns: [{ place: full, gstin: MH, contacts: [{ name: "Ravi", phones: ["9820011001", "9820011002", "9820011003", "9820011004"] }] }] })),

@@ -143,7 +143,7 @@ function townOf(g: TransporterGodown, byId: PlaceLookup): string {
 }
 
 /** Whether a stored godown still owes the fields the dialog now requires. */
-const incomplete = (g: { placeId: string | null; gstin: string | null }, byId: PlaceLookup) => !placeChain(g.placeId, byId).area || !g.gstin;
+const incomplete = (g: { placeId: string | null }, byId: PlaceLookup) => !placeChain(g.placeId, byId).area;
 
 /** The godowns' towns, the first two named; the full paths ride on the hover. */
 function GodownCell({ t, byId }: { t: Transporter; byId: PlaceLookup }) {
@@ -216,8 +216,8 @@ function TransporterDetails({
                         <div className="text-sm font-medium text-ink">{g.label || `Godown ${i + 1}`}</div>
                         <div className="text-xs text-muted">{placePath(g.placeId, byId) || "Town not picked"}</div>
                         <div className="mt-0.5 text-xs">
-                          {g.gstin ? <span className="font-mono text-body">GST {g.gstin}</span> : <span className="text-warning">No GST number yet</span>}
-                          {incomplete(g, byId) && g.gstin ? <span className="text-warning"> · City and area not picked yet</span> : null}
+                          {g.gstin ? <span className="font-mono text-body">GST {g.gstin}</span> : <span className="text-muted">No GST number</span>}
+                          {incomplete(g, byId) ? <span className="text-warning"> · City and area not picked yet</span> : null}
                         </div>
                         {g.lat != null && g.lng != null ? (
                           <a href={`https://www.google.com/maps?q=${g.lat},${g.lng}`} target="_blank" rel="noreferrer" className="mt-0.5 block text-xs">
@@ -392,7 +392,7 @@ function EditTransporter({
                 ) : gst?.check === "corrected" ? (
                   <span className="mt-1 block">Will be saved as {gst.gstin}.</span>
                 ) : (
-                  <span className="mt-1 block">Optional. Each godown carries its own GST number below.</span>
+                  <span className="mt-1 block">Optional. Each godown can carry its own GST number below.</span>
                 )}
               </label>
               <label>
@@ -450,12 +450,12 @@ function EditTransporter({
           </section>
 
           <section>
-            <SectionTitle hint="Each godown is a state, district, city and area, with its own GST number, its pin and the people to ring there.">Godowns</SectionTitle>
+            <SectionTitle hint="Each godown is a state, district, city and area, with its GST number if it has one, its pin and the people to ring there.">Godowns</SectionTitle>
             <div className="space-y-2">
               {godowns.map((g, gi) => {
                 const wrong = problemAt === gi ? problem?.message : null;
                 const path = pickPath(g.place, byId);
-                const owes = !g.place.area || !g.gstin.trim();
+                const owes = !g.place.area;
                 const people = g.people.filter((p) => p.name.trim() || p.phones.some((x) => x.trim()));
                 return (
                   <div key={g.key} className={cx("flex items-start gap-3 rounded-card border px-3 py-2.5", wrong ? "border-danger" : "border-line")}>
@@ -468,7 +468,7 @@ function EditTransporter({
                         {people.length ? `${people.length} ${people.length === 1 ? "person" : "people"}` : "Nobody to ring yet"}
                         {g.pin.trim() ? " · pinned" : ""}
                       </div>
-                      {wrong ? <div className="mt-1 text-danger">{wrong}</div> : owes ? <div className="mt-1 text-warning">Needs {[!g.place.area && "its city and area", !g.gstin.trim() && "a GST number"].filter(Boolean).join(" and ")} before it saves.</div> : null}
+                      {wrong ? <div className="mt-1 text-danger">{wrong}</div> : owes ? <div className="mt-1 text-warning">Needs its city and area before it saves.</div> : null}
                     </div>
                     <div className="flex shrink-0 gap-1">
                       <Button size="sm" onClick={() => setEditing(g.key)}>
@@ -581,7 +581,7 @@ function GodownDialog({
         </div>
 
         <label className="block">
-          GST number at this godown
+          GST number at this godown (optional)
           <input
             value={g.gstin}
             onChange={(e) => set({ gstin: e.target.value.toUpperCase() })}
@@ -594,7 +594,7 @@ function GodownDialog({
           ) : registered ? (
             <span className="mt-1 block text-success">Registered in {registered}.</span>
           ) : (
-            <span className="mt-1 block">GST is registered per state, so its first two digits must be the code for the state picked above.</span>
+            <span className="mt-1 block">Optional. If given, GST is registered per state, so its first two digits must be the code for the state picked above.</span>
           )}
         </label>
 
