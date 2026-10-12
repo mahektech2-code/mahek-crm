@@ -4,6 +4,7 @@
  * no test framework to install.
  */
 import { execFileSync } from "node:child_process";
+import { filesForShard, shardFromArgv } from "./integration-shards.mjs";
 
 process.env.NODE_ENV = "test";
 
@@ -274,8 +275,27 @@ const files = [
   "src/lib/whatsapp-read-write.test.ts",
 ];
 
+/*
+ * `--shard i/N` runs one balanced slice of the list above — see
+ * integration-shards.mjs. Each shard is its own CI job with its own database,
+ * and within it the files still run one after the other. Without the flag
+ * every file runs, exactly as before.
+ */
+let shard = null;
+try {
+  shard = shardFromArgv(process.argv.slice(2));
+} catch (e) {
+  console.error(`${e.message}
+Usage: run-integration.mjs [--shard i/N]`);
+  process.exit(2);
+}
+const selected = shard ? filesForShard(files, shard) : files;
+if (shard) {
+  console.log(`Shard ${shard.index}/${shard.count}: ${selected.length} of ${files.length} suites.`);
+}
+
 let failed = 0;
-for (const file of files) {
+for (const file of selected) {
   try {
     execFileSync("npx", ["tsx", "--conditions=react-server", "--test", file], {
       stdio: "inherit",
@@ -288,6 +308,6 @@ for (const file of files) {
 }
 
 if (failed) {
-  console.error(`${failed} of ${files.length} integration suites failed.`);
+  console.error(`${failed} of ${selected.length} integration suites failed.`);
   process.exit(1);
 }
