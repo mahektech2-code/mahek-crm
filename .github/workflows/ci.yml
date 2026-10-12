@@ -14,7 +14,128 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ci:
+  # THE OLD SINGLE `ci` JOB IS FIVE JOBS NOW, and `ci` at the bottom is the one
+  # status that means "all of them".
+  #
+  # It ran lint, the handset's checks, the engine tests, the build and then
+  # ~105 integration files one after another — about 29 of its ~37 minutes was
+  # that last step, every other step waiting behind the one before it. The
+  # integration files cannot run concurrently AGAINST ONE DATABASE (each suite
+  # truncates the same tables), so they are split across jobs instead: each
+  # shard is its own runner with its own Postgres service container, and inside
+  # it the files still run strictly one after another. Nothing was removed and
+  # nothing was reordered within a database.
+  #
+  # Each job repeats `npm ci` (about twenty seconds, cached) rather than
+  # sharing a workspace between jobs, which would be an artifact upload and
+  # download for about as much time as it saves.
+
+  lint:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://mahek:mahek@127.0.0.1:5432/mahekone
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          # The Dockerfile builds and runs on node:24-alpine, so 24 is what
+          # production is. Testing on 22 here meant the gate a change passes
+          # and the runtime it lands on were different versions — and the
+          # deploy's own test job already ran 24, so the disagreement was
+          # settled after the merge rather than before it.
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # The db:* and test:* scripts read .env.local, which is never committed.
+      # Writing it here keeps CI running the same commands as a developer
+      # rather than a second set that could drift.
+      - name: Write .env.local
+        run: echo "DATABASE_URL=\"$DATABASE_URL\"" > .env.local
+
+      - run: npm run lint
+
+  # The field app is React Native and lints itself, with its own config and its
+  # own rules — the root run ignores it precisely because linting an Expo app
+  # with `eslint-config-next` produced 23 errors that were about the wrong
+  # framework. Taking it out of that run must not mean nobody checks it, so it
+  # has its own job.
+  #
+  # `npm ci` in its own directory: it is a separate package with its own
+  # lockfile, not a workspace of the root one. The root `npm ci` is still run
+  # first because the Factory app imports the server's pure rules from ../src.
+  #
+  # AND ITS TYPES AND ITS TESTS, which nothing ran until they were added here:
+  # a local tree usually cannot resolve `@maplibre/maplibre-react-native` at
+  # all, so `tsc` skips every call into it and a wrong argument reaches an APK
+  # — which cannot be recalled — with nothing in between having looked. A fresh
+  # `npm ci` is exactly the tree that can check it.
+  mobile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Field app lint
+        run: |
+          cd mbos-app
+          npm ci
+          npm run lint
+
+      - name: Field app types
+        run: |
+          cd mbos-app
+          npm run typecheck
+
+      - name: Field app engine tests
+        run: |
+          cd mbos-app
+          npm run test
+
+      # The Factory app is a second React Native package. It imports the
+      # server's pure factory rules from ../src, so its types are checked
+      # against them on every change to either side.
+      - name: Factory app types
+        run: |
+          cd factory-mobile
+          npm ci
+          npm run typecheck
+
+  engine-tests:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://mahek:mahek@127.0.0.1:5432/mahekone
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Write .env.local
+        run: echo "DATABASE_URL=\"$DATABASE_URL\"" > .env.local
+
+      - name: Engine tests
+        run: npm run test
+
+      # Pure, and no database: it reads the integration runner's file list as
+      # text and proves every file is in exactly one shard.
+      - name: Integration sharding
+        run: node --test scripts/integration-shards.test.mjs
+
+  # `next build` against a migrated, catalogued database, as it always was.
+  build:
     runs-on: ubuntu-latest
 
     services:
@@ -40,86 +161,116 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          # The Dockerfile builds and runs on node:24-alpine, so 24 is what
-          # production is. Testing on 22 here meant the gate a change passes
-          # and the runtime it lands on were different versions — and the
-          # deploy's own test job already ran 24, so the disagreement was
-          # settled after the merge rather than before it.
           node-version: 24
           cache: npm
 
       - run: npm ci
 
-      # The db:* and test:* scripts read .env.local, which is never committed.
-      # Writing it here keeps CI running the same commands as a developer
-      # rather than a second set that could drift.
       - name: Write .env.local
         run: echo "DATABASE_URL=\"$DATABASE_URL\"" > .env.local
-
-      - run: npm run lint
-
-      # The field app is React Native and lints itself, with its own config and
-      # its own rules — the root run ignores it precisely because linting an
-      # Expo app with `eslint-config-next` produced 23 errors that were about
-      # the wrong framework. Taking it out of that run must not mean nobody
-      # checks it, so it gets its own step here.
-      #
-      # `npm ci` in its own directory: it is a separate package with its own
-      # lockfile, not a workspace of the root one.
-      - name: Field app lint
-        run: |
-          cd mbos-app
-          npm ci
-          npm run lint
-
-      # AND ITS TYPES AND ITS TESTS, which nothing ran until now.
-      #
-      # Both scripts existed in `mbos-app/package.json` and neither was called
-      # by anything, so the handset's engines were tested only when somebody
-      # remembered to, and its types only on a laptop that happened to have the
-      # native packages installed. That is the half that matters most here: a
-      # local tree usually cannot resolve `@maplibre/maplibre-react-native` at
-      # all, so `tsc` skips every call into it and a wrong argument reaches an
-      # APK — which cannot be recalled — with nothing in between having looked.
-      # A fresh `npm ci` above is exactly the tree that can check it.
-      - name: Field app types
-        run: |
-          cd mbos-app
-          npm run typecheck
-
-      - name: Field app engine tests
-        run: |
-          cd mbos-app
-          npm run test
-
-      # The Factory app is a second React Native package. It imports the
-      # server's pure factory rules from ../src, so its types are checked
-      # against them on every change to either side.
-      - name: Factory app types
-        run: |
-          cd factory-mobile
-          npm ci
-          npm run typecheck
-
-      - name: Engine tests
-        run: npm run test
 
       - name: Apply migrations
         run: npm run db:migrate
 
       # `npm run build` used to run this itself, back when the build had a
       # database beside it. It is a deploy step now — see deploy.yml — so CI
-      # has to say it out loud or the journeys run against an empty catalogue.
+      # has to say it out loud.
       - name: Import the catalogue
         run: npm run catalogue:deploy
 
       - run: npm run build
 
+  # THE SIX §11 JOURNEYS AND EVERYTHING ELSE THAT NEEDS A REAL POSTGRES.
+  #
+  # One matrix entry is one runner, one Postgres service container and one
+  # `mahekone_test`. `run-integration.mjs --shard i/N` takes a balanced slice of
+  # its file list (see scripts/integration-shards.mjs) and runs it serially, so
+  # no two suites ever share a database. They do not need `next build` — they
+  # run through tsx — so they do not wait for it.
+  #
+  # `fail-fast` is off so one red shard does not hide what the others found,
+  # which is the same reason the runner itself goes on past a failed file.
+  #
+  # The shard count is written twice on this job: the matrix and the `/4` in
+  # the run line. The sharding test covers any N.
+  integration:
+    name: integration (${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+
+    services:
+      db:
+        image: public.ecr.aws/docker/library/postgres:16
+        env:
+          POSTGRES_USER: mahek
+          POSTGRES_PASSWORD: mahek
+          POSTGRES_DB: mahekone
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mahek -d mahekone"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://mahek:mahek@127.0.0.1:5432/mahekone
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Write .env.local
+        run: echo "DATABASE_URL=\"$DATABASE_URL\"" > .env.local
+
+      # `test:db` creates and migrates `mahekone_test` itself, from the
+      # `postgres` admin database; the suites never read `mahekone`.
       - name: Create mahekone_test
         run: npm run test:db
 
-      - name: Journey tests
-        run: npm run test:integration
+      # `lint`, `test` and `build` each run this as an npm pre-hook, and the
+      # single job these suites used to share ran it before them, so the
+      # gitignored `src/docs/_generated/*.json` always existed by now. A shard
+      # runs none of those scripts. No suite is known to read the files, and
+      # this costs a second, so the assumption is not left to be tested by a
+      # red shard.
+      - name: Generate the docs index
+        run: node scripts/docs-index.mjs
+
+      - name: Journey tests (shard ${{ matrix.shard }}/4)
+        run: npm run test:integration -- --shard ${{ matrix.shard }}/4
+
+  # THE ONE STATUS THAT MEANS "THE CI JOB PASSED", under the name it always
+  # had. Anything that asks for `ci` — a branch rule, a habit, a script reading
+  # check names — gets the same answer as before: green only if every job above
+  # was green. `always()` is what makes a failed or cancelled dependency
+  # produce a red `ci` rather than a skipped one, and a skipped required check
+  # reads as passing in some configurations.
+  ci:
+    needs: [lint, mobile, engine-tests, build, integration]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every part of CI passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: ${RESULTS}"
+          for r in ${RESULTS}; do
+            if [ "$r" != "success" ]; then
+              echo "::error::At least one CI job did not succeed (${RESULTS})."
+              exit 1
+            fi
+          done
 
   # THE IMAGE IS BUILT ON EVERY PR, and pushed nowhere.
   #

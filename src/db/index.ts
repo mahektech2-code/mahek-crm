@@ -115,6 +115,25 @@ const sql =
      * thing to watch in `log_min_duration_statement` rather than to assume.
      */
     prepare: process.env.DATABASE_PREPARE !== "false",
+
+    /*
+     * THE INTEGRATION SUITES TRUNCATE ... CASCADE BEFORE EVERY TEST, and
+     * Postgres answers each one with a NOTICE per table it cascaded into —
+     * 368,000 of them, about 3.3 million log lines, in one CI run. The notices
+     * carry nothing: the cascade is the point of the statement.
+     *
+     * Only under `NODE_ENV=test` (the integration runner sets it) and only the
+     * NOTICE severity. A WARNING or anything else is printed exactly as the
+     * driver's own default would, and errors never come through here at all.
+     * Production and development keep the default handler.
+     */
+    ...(process.env.NODE_ENV === "test"
+      ? {
+          onnotice: (notice: { severity?: string }) => {
+            if (notice.severity !== "NOTICE") console.log(notice);
+          },
+        }
+      : {}),
   });
 
 /* In EVERY environment. See the note above the pool: the dev-only version of
