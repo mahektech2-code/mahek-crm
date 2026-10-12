@@ -9,7 +9,11 @@ import type { DownloadApp, DownloadAppId } from "./apps";
  * Null where there is none yet or it cannot be read: the page then simply
  * says nothing about a version, never a wrong one.
  */
-export type Release = { version: string };
+export type Release = {
+  version: string;
+  /** A 32-bit build was published beside it (`url32` in the manifest). */
+  has32Bit: boolean;
+};
 
 const TTL_MS = 10 * 60 * 1000;
 const cache = new Map<DownloadAppId, { at: number; release: Release | null }>();
@@ -29,12 +33,15 @@ export async function currentRelease(
         signal: AbortSignal.timeout(3000),
       });
       if (r.ok) {
-        const body = (await r.json()) as { version?: unknown };
+        const body = (await r.json()) as { version?: unknown; url32?: unknown };
         if (
           typeof body.version === "string" &&
           /^[\w.+-]{1,32}$/.test(body.version)
         )
-          release = { version: body.version };
+          release = {
+            version: body.version,
+            has32Bit: typeof body.url32 === "string" && body.url32.length > 0,
+          };
       }
     } catch {
       /* Not published yet, or unreachable: no version is shown. */

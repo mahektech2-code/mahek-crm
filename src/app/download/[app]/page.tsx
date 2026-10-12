@@ -150,6 +150,12 @@ function MobileHero({
       <p className="mt-4 text-[15px] leading-6 text-white/85">{app.headline}</p>
       <DownloadButton app={app} variant="lime" className="mt-5" />
       <Facts release={release} className="mt-3 text-white/65" />
+      <OlderPhones
+        app={app}
+        release={release}
+        className="mt-2 text-white/65"
+        linkClassName="font-medium text-brand-lime underline"
+      />
       <p className="mt-3 text-xs leading-5 text-white/60">{app.note}</p>
     </section>
   );
@@ -181,6 +187,7 @@ function DesktopDownload({
         <div className="min-w-0 flex-1">
           <DownloadButton app={app} variant="brand" />
           <Facts release={release} className="mt-2.5 text-muted" />
+          <OlderPhones app={app} release={release} className="mt-1.5 text-muted" />
         </div>
         <div className="flex flex-none flex-col items-center gap-1.5">
           <div
@@ -233,6 +240,35 @@ function DownloadButton({
       </svg>
       Download for Android
     </a>
+  );
+}
+
+/**
+ * The 32-bit build, for a phone the main APK will not install on. It cannot
+ * be chosen for him — a browser does not say which Android a phone runs — so
+ * it is named by the symptom he actually sees. Once installed, the app's own
+ * update check hands each phone the right file by itself.
+ */
+function OlderPhones({
+  app,
+  release,
+  className = "",
+  linkClassName = "font-medium text-brand underline",
+}: {
+  app: DownloadApp;
+  release: Release | null;
+  className?: string;
+  linkClassName?: string;
+}) {
+  /* Only once a release has published one — before that the link is a 404. */
+  if (!app.apk32 || !release?.has32Bit) return null;
+  return (
+    <p className={`text-xs ${className}`}>
+      Phone says “App not installed” or “not compatible”?{" "}
+      <a href={app.apk32} download className={linkClassName}>
+        Download for older phones
+      </a>
+    </p>
   );
 }
 
