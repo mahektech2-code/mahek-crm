@@ -210,6 +210,8 @@ const files = [
   // by the server, a mixed batch reported by name, and a bulk loss reversed by
   // the existing reopen with its history intact.
   "src/lib/lead-bulk-lost.test.ts",
+  // All Leads -> Change stage -> On hold: the answers a park demands, per-lead owners, ended leads refused.
+  "src/lib/lead-bulk-hold.test.ts",
   // A lead still at the old new/contacted stage moves to Suspect once it has a
   // funnel sales type; every other off-ladder move is still refused.
   "src/lib/lead-move-to-suspect.test.ts",

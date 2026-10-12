@@ -672,9 +672,13 @@ export async function leadRecord(customerId: string): Promise<LeadRecord | null>
 
 export type LeadMoveKind = "passed" | "overridden" | "reverted";
 
+/** Rungs a lead has finished at. None of them can be paused. */
+const ENDED_STAGES: readonly LeadStage[] = ["lost", "won", "customer", "active_distributor"];
+
 export type LeadMoveRefusalCode =
   | "not_on_funnel"
   | "same_stage"
+  | "cannot_park"
   | "off_ladder"
   | "gate_shut"
   | "override_not_offered"
@@ -804,6 +808,28 @@ export async function evaluateLeadStageMove(input: {
    * screen: the same split the resume date and the next action already live
    * under, two blocks down in that file.
    */
+  /*
+   * §— A LEAD THAT HAS ENDED CANNOT BE PAUSED. Asked BEFORE the park shortcut
+   * below, which answers "passed" for any lead and any stage: parking a Lost
+   * lead would walk it out of Lost by a side door that is not a reopen, and
+   * parking a Won or Customer lead does not record a pause - it overwrites the
+   * record of a sale. The record's own Park control was withheld on these four
+   * stages for exactly that reason ("the server would cheerfully accept"), which
+   * left the server itself unguarded for every other door - the All Leads bulk
+   * action among them. A pause belongs to a lead that is still being worked.
+   */
+  if (isParked(to) && ENDED_STAGES.includes(from)) {
+    return {
+      ok: false,
+      code: "cannot_park",
+      message:
+        from === "lost"
+          ? "A Lost lead is reopened, not put on hold. Reopen it first if it is being worked again."
+          : `${stageLabel(from)} is a sale on the record, so it cannot be put on hold. On hold is a pause for a lead that is still being worked.`,
+      missing: [],
+    };
+  }
+
   if (isParked(to)) {
     return { ok: true, kind: "passed", overriddenConditions: [] };
   }
