@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Badge,
@@ -33,7 +34,6 @@ import {
   Tabs,
 } from "@/components/ui/overlays";
 import { CustomerContactsPanel } from "@/components/customers/customer-contacts-panel";
-import { AddCustomerDialog } from "@/components/customers/add-customer-dialog";
 import { birthdaySentence, type UpcomingBirthday } from "@/lib/customer-contacts";
 import {
   loadCustomerEditor,
@@ -81,6 +81,14 @@ import {
 } from "@/lib/account-types";
 import { UNASSIGNED_FILTER_VALUE } from "@/lib/am-filters";
 import { bookUnchangedNote } from "@/lib/seat-effects";
+
+/* The Add customer form carries its own validation (zod, a third of this
+   page's JavaScript), and only the ledger desk ever opens it — so it is
+   loaded on the first press rather than with the list. */
+const AddCustomerDialog = dynamic(
+  () => import("@/components/customers/add-customer-dialog").then((m) => m.AddCustomerDialog),
+  { ssr: false },
+);
 
 export type Row = {
   id: string;
@@ -1611,7 +1619,8 @@ export function CustomersScreen({
         }}
       />
 
-      <AddCustomerDialog
+      {adding ? (
+        <AddCustomerDialog
         open={adding}
         onClose={() => setAdding(false)}
         onAdded={(added) => {
@@ -1627,6 +1636,7 @@ export function CustomersScreen({
         canAssignSalesManager={canAssignSalesManager}
         canDecideCredit={canDecideCredit}
       />
+      ) : null}
 
       <CustomerForm
         open={Boolean(editing)}

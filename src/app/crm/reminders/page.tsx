@@ -1,11 +1,13 @@
 import { requireUser } from "@/lib/auth";
 import { canFor } from "@/lib/access-control";
 import { getScope, scopeLabel, managesHere } from "@/lib/scope";
-import { listCustomers } from "@/lib/queries";
 import { listReminders } from "@/lib/services/worklist-services";
 import { RemindersScreen } from "./reminders-screen";
 
 export const metadata = { title: "Reminders - MahekOne CRM" };
+
+/** How far back the Done tab reaches. Older ones live on the customer's timeline. */
+const CLOSED_WITHIN_DAYS = 60;
 
 export default async function RemindersPage() {
   const user = await requireUser();
@@ -13,9 +15,8 @@ export default async function RemindersPage() {
   const managerHere = await managesHere(user, "crm");
   const scope = await getScope(user);
 
-  const [rows, customers, canClose] = await Promise.all([
-    listReminders(),
-    listCustomers(),
+  const [rows, canClose] = await Promise.all([
+    listReminders(undefined, { closedWithinDays: CLOSED_WITHIN_DAYS }),
     /*
      * WHO MAY CLOSE ONE BY HAND — the capability, never the role.
      *
@@ -36,7 +37,7 @@ export default async function RemindersPage() {
       isTeamView={scope === "team" && managerHere}
       canClose={canClose}
       rows={rows}
-      customers={customers.map((c) => ({ id: c.id, name: c.name }))}
+      closedWithinDays={CLOSED_WITHIN_DAYS}
     />
   );
 }

@@ -51,7 +51,7 @@ import {
 } from "../business-date";
 import { err, ok, okVoid, type Result } from "../result";
 import { shortDateWithYear } from "../format";
-import { nextStepForCustomer } from "./queue-service";
+import { nextStepsForCustomers } from "./queue-service";
 import {
   customerFilterClause,
   customerFiltersOnly,
@@ -141,7 +141,42 @@ export type ReminderRow = {
   lastCall: { on: string; answered: boolean; byName: string | null } | null;
 };
 
-export async function listReminders(view?: ReminderView): Promise<ReminderRow[]> {
+/**
+ * The pending callbacks on a set of customers — the open promises the Call
+ * History draws beside each call. Same scope as `listReminders`, without the
+ * next-step check that screen needs and this one does not.
+ */
+export async function pendingRemindersFor(
+  customerIds: string[],
+): Promise<Array<{ customerId: string; note: string | null; dueDate: string }>> {
+  if (!customerIds.length) return [];
+  const ctx = await resolveScope();
+  const ids = scopedUserIds(ctx.scope);
+  return db
+    .select({ customerId: reminders.customerId, note: reminders.note, dueDate: reminders.dueDate })
+    .from(reminders)
+    .where(
+      and(
+        eq(reminders.status, "pending"),
+        inArray(reminders.customerId, [...new Set(customerIds)]),
+        ids ? inArray(reminders.assignedUserId, ids) : undefined,
+      ),
+    )
+    .orderBy(asc(reminders.dueDate));
+}
+
+export async function listReminders(
+  view?: ReminderView,
+  opts: {
+    /**
+     * Leave out reminders CLOSED more than this many days ago. Every pending
+     * one is always read. The Reminders screen passes it so a book's years of
+     * ticked promises are not serialised into every visit; the customer's own
+     * timeline keeps the whole history.
+     */
+    closedWithinDays?: number;
+  } = {},
+): Promise<ReminderRow[]> {
   const ctx = await resolveScope();
   const ids = scopedUserIds(ctx.scope);
   const config = await getConfig();
@@ -163,7 +198,15 @@ export async function listReminders(view?: ReminderView): Promise<ReminderRow[]>
     .innerJoin(customers, eq(customers.id, reminders.customerId))
     .innerJoin(users, eq(users.id, reminders.assignedUserId))
     // A trashed lead's callbacks wait with it, and come back if it does.
-    .where(and(isNull(customers.deletedAt), ids ? inArray(reminders.assignedUserId, ids) : undefined))
+    .where(
+      and(
+        isNull(customers.deletedAt),
+        ids ? inArray(reminders.assignedUserId, ids) : undefined,
+        opts.closedWithinDays != null
+          ? sql`(${reminders.status} = 'pending' or ${reminders.closedAt} >= now() - make_interval(days => ${opts.closedWithinDays}::int))`
+          : undefined,
+      ),
+    )
     .orderBy(asc(reminders.dueDate));
 
   // Only a FUTURE pending reminder can be the thing standing between a
@@ -174,15 +217,14 @@ export async function listReminders(view?: ReminderView): Promise<ReminderRow[]>
   const candidates = rows.filter(
     ({ reminder: r }) => r.status === "pending" && r.dueDate > day,
   );
+  /* ONE pass for every candidate's customer. It was `nextStepForCustomer`
+     once per reminder — a full queue read each — which on a real book was
+     thousands of reads and most of this screen's ten seconds. */
+  const steps = await nextStepsForCustomers(candidates.map(({ reminder: r }) => r.customerId));
   const conflicts = new Set(
-    (
-      await Promise.all(
-        candidates.map(async ({ reminder: r }) => {
-          const step = await nextStepForCustomer(r.customerId);
-          return step?.promise?.reminderId === r.id ? r.id : null;
-        }),
-      )
-    ).filter((id): id is string => id !== null),
+    candidates
+      .filter(({ reminder: r }) => steps.get(r.customerId)?.promise?.reminderId === r.id)
+      .map(({ reminder: r }) => r.id),
   );
 
   const dateOpts = {
