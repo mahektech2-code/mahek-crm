@@ -213,6 +213,10 @@ beforeEach(async () => {
   salesA = await makeUser("Salesman A", "associate", [{ app: "field", role: "associate" }], manager.id);
   salesB = await makeUser("Salesman B", "associate", [{ app: "field", role: "associate" }], manager.id);
   telecaller = await makeUser("Tele Caller", "associate", [{ app: "crm", role: "associate" }]);
+  // The handset book is narrowed by area, and the leads here are in Nashik.
+  for (const s of [salesA, salesB]) {
+    await db.insert(mbosUserTerritories).values({ id: id("ter"), userId: s.id, kind: "city", region: "Nashik", parent: "" });
+  }
   boss = await makeUser("Big Boss", "admin", [
     { app: "sales", role: "admin" },
     { app: "admin", role: "admin" },
@@ -780,20 +784,25 @@ describe("M — every mutation persists, and the screen is told what the databas
     assert.equal((await row(lead.id)).ownerId, telecaller.id, "nothing moved");
   });
 
-  test("reassign to a salesman with NO area says it will not show on the handset; with an area it will", async () => {
+  test("reassign to a salesman with NO area is refused, and with an area that covers the lead it is saved", async () => {
     const fresh = await makeUser("Fresh Salesman", "associate", [{ app: "field", role: "associate" }], manager.id);
-    const lead = await makeLead({ leadStage: "prospect", ...fullProspectFields() });
+    const lead = await makeLead({ leadStage: "prospect", ...fullProspectFields() }); // Nashik
+    const before = (await row(lead.id)).ownerId;
 
     const noArea = await reassignLead({ leadId: lead.id, salesmanId: fresh.id });
-    assert.equal(noArea.ok, true, noArea.ok ? "" : noArea.error);
-    assert.equal((await row(lead.id)).ownerId, fresh.id, "assigned either way");
-    assert.match(noArea.ok ? (noArea.message ?? "") : "", /will NOT show on their Salesman App handset/);
+    assert.equal(noArea.ok, false, "an empty handset book would make this an invisible assignment");
+    assert.match(noArea.ok ? "" : noArea.error, /no area allocated/);
+    assert.equal((await row(lead.id)).ownerId, before, "nothing moved");
 
-    await db.insert(mbosUserTerritories).values({ id: id("ter"), userId: fresh.id, kind: "state", region: "Maharashtra" });
-    const other = await makeLead({ leadStage: "prospect", ...fullProspectFields() });
-    const withArea = await reassignLead({ leadId: other.id, salesmanId: fresh.id });
-    assert.equal(withArea.ok, true, withArea.ok ? "" : withArea.error);
-    assert.match(withArea.ok ? (withArea.message ?? "") : "", /reaches their Salesman App handset at the next sync/);
+    await db.insert(mbosUserTerritories).values({ id: id("ter"), userId: fresh.id, kind: "city", region: "Pune", parent: "" });
+    const wrong = await reassignLead({ leadId: lead.id, salesmanId: fresh.id });
+    assert.equal(wrong.ok, false, "an area that does not cover Nashik");
+    assert.match(wrong.ok ? "" : wrong.error, /does not cover this lead/);
+
+    await db.insert(mbosUserTerritories).values({ id: id("ter"), userId: fresh.id, kind: "city", region: "Nashik", parent: "" });
+    const ok = await reassignLead({ leadId: lead.id, salesmanId: fresh.id });
+    assert.equal(ok.ok, true, ok.ok ? "" : ok.error);
+    assert.equal((await row(lead.id)).ownerId, fresh.id);
   });
 
   test("bulk reassign: a telecaller and a salesman are each accepted, an unknown id is refused", async () => {

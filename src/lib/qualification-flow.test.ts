@@ -180,6 +180,8 @@ beforeEach(async () => {
   globalMgr = await makeUser("Global Manager", "manager", [["crm", "manager"]], ["crm.sales-manager"]);
   salesman = await makeUser("Rakesh Field", "associate", [["field", "associate"]]);
   await db.insert(mbosUserTerritories).values({ id: id("ut"), userId: salesman.id, kind: "state", region: "Madhya Pradesh", parent: "" });
+  // The lead reassigned in the "named" test is in Nashik; a handset person only receives what their area covers.
+  await db.insert(mbosUserTerritories).values({ id: id("ut"), userId: salesman.id, kind: "city", region: "Nashik", parent: "" });
   productId = id("prd");
   await db.insert(products).values({ id: productId, name: "PU Thinner - 20 Liter (Loose)" });
 });

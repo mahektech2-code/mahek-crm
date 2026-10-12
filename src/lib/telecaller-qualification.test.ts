@@ -324,6 +324,12 @@ describe("reassignment changes the owner and nothing about who raised the lead",
     assert.equal(nobody.ok, false);
     assert.equal((await row(lead.id)).ownerId, tele.id);
 
+    const noArea = await assignDeskLead({ customerId: lead.id, ownerId: fieldUser.id });
+    assert.equal(noArea.ok, false, "no area allocated: it would be an invisible assignment");
+    assert.equal((await row(lead.id)).ownerId, tele.id);
+
+    // The lead is in Nashik; an area that covers it makes the assignment real.
+    await db.insert(mbosUserTerritories).values({ id: id("ut"), userId: fieldUser.id, kind: "city", region: "Nashik", parent: "" });
     const r = await assignDeskLead({ customerId: lead.id, ownerId: fieldUser.id });
     assert.equal(r.ok, true, r.ok ? "" : r.error);
     assert.match(r.ok ? (r.message ?? "") : "", /Salesman App handset/);

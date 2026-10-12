@@ -36,7 +36,9 @@ export type OwnerPerson = {
 
 function labelFor(p: OwnerPerson): string {
   const who = p.disambiguator ? `${p.name} · ${p.disambiguator}` : p.name;
-  if (p.canOwn === false) return p.place === "none" ? who : `${who} (no Calling desk)`;
+  if (p.canOwn === false) {
+    return p.place === "none" ? `${who} - ${(p.blockedReason ?? "cannot be given a lead yet").split(" - ")[0]}` : `${who} (no Calling desk)`;
+  }
   if (p.place === "crm") return `${who} (All Leads, no desk)`;
   if (p.place === "handset") return `${who} (Salesman App)`;
   return who;
@@ -67,7 +69,7 @@ export function OwnerOptions({ people }: { people: OwnerPerson[] }) {
         </option>
       ))}
       {blocked.length ? (
-        <optgroup label="Cannot be given a lead yet - no CRM or Salesman App access">
+        <optgroup label="Cannot be given a lead yet">
           {blocked.map((p) => (
             <option key={p.id} value={p.id} disabled title={p.blockedReason}>
               {labelFor(p)}

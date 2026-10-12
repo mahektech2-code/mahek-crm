@@ -1,7 +1,9 @@
 import "server-only";
-import { and, eq, inArray, ne, notInArray } from "drizzle-orm";
+import { and, eq, inArray, ne, notInArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appAccess, mbosUserTerritories, users } from "@/db/schema";
+import { territoryClause } from "@/lib/territory-rules";
+import { territoriesFor } from "@/lib/services/territory-service";
 import { canOpenModule } from "@/lib/access";
 import { canFor } from "@/lib/access-control";
 import { notifyUsers } from "@/lib/notify";
@@ -69,6 +71,40 @@ export type OwnerChoice = DeskPerson & {
 export const NO_ACCESS_REASON =
   "no CRM or Salesman App access - grant one on the Access screen first";
 
+export const NO_AREA_REASON =
+  "no area allocated - set one for them first, or a lead given to them would never reach their handset";
+
+/**
+ * WOULD THIS LEAD ACTUALLY REACH THIS PERSON'S HANDSET? Null means yes (or the
+ * question does not apply); otherwise the sentence that says why not.
+ *
+ * Territory narrows a salesman's book - it is not a permission, and it is not
+ * relaxed here - so a lead given to somebody whose allocated area does not
+ * cover it is saved and then invisible to them. That is refused rather than
+ * warned about. A manager or an admin is exempt, exactly as on the handset
+ * (`territoryExempt`), and only the working kinds count (`region` is an
+ * oversight patch and never allocates a book). Asked per lead, by the same
+ * `territoryClause` the handset's own book is built with, so the answer
+ * cannot differ from what the phone would show.
+ */
+export async function handsetRefusal(
+  person: { id: string; name: string },
+  leadId: string,
+): Promise<string | null> {
+  const [u] = await db.select({ role: users.role }).from(users).where(eq(users.id, person.id)).limit(1);
+  if (!u || u.role === "manager" || u.role === "admin") return null;
+  const working = (await territoriesFor(person.id)).filter((t) => t.kind !== "region");
+  if (!working.length) {
+    return `${person.name} has no area allocated, so a lead given to them would never reach their Salesman App handset. Set an area for them first.`;
+  }
+  const rows = await db.execute<{ ok: number }>(
+    sql`select 1 as ok from customers where customers.id = ${leadId} and ${territoryClause(working)} limit 1`,
+  );
+  return rows.length
+    ? null
+    : `${person.name}'s allocated area does not cover this lead, so it would never reach their Salesman App handset. Change their area or choose somebody else.`;
+}
+
 /** Active people who hold the CRM or the Salesman App, with which of the two. Name order, one row each. */
 async function assignableAccounts(): Promise<Array<DeskPerson & { crm: boolean; field: boolean }>> {
   const rows = await db
@@ -111,7 +147,15 @@ export async function ownerChoices(): Promise<OwnerChoice[]> {
   const out: OwnerChoice[] = [];
   const assignable = await assignableAccounts();
   for (const u of assignable) {
-    out.push({ id: u.id, name: u.name, canOwn: true, place: await placeOf(u) });
+    const place = await placeOf(u);
+    /* A handset-only person with NO allocated area has an empty book, so
+       nothing given to them would ever reach the phone. Listed, with the
+       reason, and not choosable until somebody allocates an area. */
+    if (place === "handset" && (await lacksWorkingArea(u.id))) {
+      out.push({ id: u.id, name: u.name, canOwn: false, place: "none", blockedReason: NO_AREA_REASON });
+      continue;
+    }
+    out.push({ id: u.id, name: u.name, canOwn: true, place });
   }
 
   /* Active accounts that cannot be given a lead yet are listed after everybody
@@ -142,7 +186,10 @@ export async function ownerChoices(): Promise<OwnerChoice[]> {
       c.disambiguator = `${where}, id …${c.id.slice(-4)}`;
     }
   }
-  return out;
+  /* Everybody choosable first, then everybody who cannot be given a lead yet
+     (no access, or no area). Name order within each; the sort is stable. */
+  const compare = (x: OwnerChoice, y: OwnerChoice) => x.name.localeCompare(y.name) || x.id.localeCompare(y.id);
+  return [...out.filter((c) => c.canOwn), ...out.filter((c) => !c.canOwn).sort(compare)];
 }
 
 /**

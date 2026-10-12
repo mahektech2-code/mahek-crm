@@ -70,6 +70,7 @@ import {
 import { bookIdsIgnoringTerritory } from "@/lib/services/mbos-service";
 import {
   assignableOwner,
+  handsetRefusal,
   placeSentence,
   type OwnerPlace,
 } from "@/lib/services/lead-desk-assignment-service";
@@ -2394,6 +2395,14 @@ export async function reassignLead(input: {
       );
     }
 
+    /* The new owner has to be able to SEE it. Territory narrows a handset
+       book and is not relaxed here, so a lead outside their allocated area is
+       refused rather than saved invisible. */
+    if (salesman.place === "handset") {
+      const why = await handsetRefusal(salesman, input.leadId);
+      if (why) return err(why, "validation");
+    }
+
     const [previousOwner] = lead.ownerId
       ? await db
           .select({ id: users.id, name: users.name })
@@ -2846,7 +2855,19 @@ export async function bulkReassignLeads(input: {
     if (!leads.length && !missing.length) return err("Nothing selected.", "validation");
 
     const failed = [...missing];
+    const unreachable = new Map<string, string>();
+    if (salesman.place === "handset") {
+      for (const l of leads) {
+        const why = await handsetRefusal(salesman, l.id);
+        if (why) unreachable.set(l.id, why);
+      }
+    }
     const moving = leads.filter((l) => {
+      const why = unreachable.get(l.id);
+      if (why) {
+        failed.push({ id: l.id, name: leadLabel(l), why });
+        return false;
+      }
       if (l.leadArchived) {
         failed.push({ id: l.id, name: leadLabel(l), why: "archived — restore it first" });
         return false;

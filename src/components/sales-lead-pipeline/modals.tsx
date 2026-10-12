@@ -1214,10 +1214,10 @@ function ReassignModal({ lead, onClose }: ModalProps) {
             <option key={p.id} value={p.id}>{p.tag ? `${p.name} (${p.tag})` : p.name}</option>
           ))}
           {refs.salesmen.some((p) => p.blocked) ? (
-            <optgroup label="Cannot be given a lead yet - no CRM or Salesman App access">
+            <optgroup label="Cannot be given a lead yet">
               {refs.salesmen.filter((p) => p.blocked).map((p) => (
-                <option key={p.id} value={p.id} disabled>
-                  {p.tag ? `${p.name} (${p.tag})` : p.name}
+                <option key={p.id} value={p.id} disabled title={p.blocked}>
+                  {p.tag ? `${p.name} (${p.tag})` : p.name} - {(p.blocked ?? "").split(" - ")[0]}
                 </option>
               ))}
             </optgroup>

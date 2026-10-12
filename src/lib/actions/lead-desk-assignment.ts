@@ -16,6 +16,7 @@ import { leadRow } from "@/lib/services/lead-service";
 import {
   DESK_MODULE,
   assignableOwner,
+  handsetRefusal,
   placeSentence,
   type OwnerPlace,
 } from "@/lib/services/lead-desk-assignment-service";
@@ -108,6 +109,13 @@ async function assignOne(
       backOfficeAmId: lead.backOfficeAmId,
       leadManagerId: lead.leadManagerId,
     });
+  }
+  /* NO INVISIBLE ASSIGNMENTS: a Salesman App person whose allocated area does
+     not cover this lead would be given it and never see it. Territory is not
+     relaxed - the assignment is refused, in words, and nothing is written. */
+  if (target && target.place === "handset") {
+    const why = await handsetRefusal(target, lead.id);
+    if (why) return { ok: false, code: "rule_violation", error: why, leadName: lead.name };
   }
   if ((lead.ownerId ?? null) === (target?.id ?? null)) return { ok: true, changed: false, leadName: lead.name };
 

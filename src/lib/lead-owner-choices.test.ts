@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, appModuleAccess, customers, notifications, timelineEvents, users } from "@/db/schema";
+import { appAccess, appModuleAccess, customers, mbosUserTerritories, notifications, timelineEvents, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { assignDeskLead, bulkAssignDeskLeads } from "@/lib/actions/lead-desk-assignment";
@@ -34,6 +34,8 @@ let gone: U; // an inactive account
 let fieldOnly: U; // the Salesman App and nothing else
 let twinA: U; // two accounts that share a name,
 let twinB: U; // told apart by id
+let fieldNoArea: U; // Salesman App, and no area allocated: an empty handset book
+let fieldWrongArea: U; // Salesman App, area allocated but not where the leads are
 let noAccess: U; // active, but holds neither the CRM nor the Salesman App
 let sameNameNoAccess: U; // shares a name with `seema`, and has no access
 
@@ -89,6 +91,12 @@ beforeEach(async () => {
   twinA = await makeUser("Twin Name", "associate");
   twinB = await makeUser("Twin Name", "associate", ["field"]); // same name, a different account
   noAccess = await makeUser("Factory Only", "associate", []);
+  fieldNoArea = await makeUser("Field No Area", "associate", ["field"]);
+  fieldWrongArea = await makeUser("Field Wrong Area", "associate", ["field"]);
+  // Leads here are in Pune. A handset person only sees what their area covers.
+  for (const [u, city] of [[fieldOnly, "Pune"], [twinB, "Pune"], [fieldWrongArea, "Nagpur"]] as const) {
+    await db.insert(mbosUserTerritories).values({ id: id("ter"), userId: u.id, kind: "city", region: city, parent: "" });
+  }
   sameNameNoAccess = await makeUser("Seema Roy", "associate", []);
   plain = await makeUser("Plain Caller", "associate");
   for (const u of [manager, ravi, seema, plain]) await grantDesk(u.id);
@@ -132,6 +140,35 @@ describe("who the list shows", () => {
     const firstBlocked = choices.findIndex((x) => !x.canOwn);
     assert.ok(choices.slice(firstBlocked).every((x) => !x.canOwn), "blocked ones come after everybody choosable");
     assert.equal(choices.some((x) => x.id === gone.id), false, "an inactive account is still not listed");
+  });
+
+  test("a Salesman App person with NO area is listed but not choosable, and is refused with nothing written", async () => {
+    const c = (await ownerChoices()).find((x) => x.id === fieldNoArea.id);
+    assert.ok(c);
+    assert.equal(c.canOwn, false);
+    assert.match(c.blockedReason ?? "", /no area allocated/);
+    const l = await lead();
+    const r = await assignDeskLead({ customerId: l.id, ownerId: fieldNoArea.id });
+    assert.equal(r.ok, false);
+    assert.match(!r.ok ? r.error : "", /no area allocated/);
+    assert.equal((await row(l.id)).ownerId, ravi.id);
+    assert.equal(await count("audit_log", l.id), 0);
+  });
+
+  test("an area that does not cover the lead is refused: no invisible assignment", async () => {
+    const l = await lead(); // Pune
+    const r = await assignDeskLead({ customerId: l.id, ownerId: fieldWrongArea.id });
+    assert.equal(r.ok, false);
+    assert.match(!r.ok ? r.error : "", /does not cover this lead/);
+    assert.equal((await row(l.id)).ownerId, ravi.id);
+
+    const bulk = await bulkAssignDeskLeads({ leadIds: [l.id], ownerId: fieldWrongArea.id });
+    assert.equal(bulk.ok && bulk.data.done, 0);
+    assert.match(bulk.ok ? (bulk.data.failed[0]?.why ?? "") : "", /does not cover this lead/);
+
+    const covered = await assignDeskLead({ customerId: l.id, ownerId: fieldOnly.id });
+    assert.equal(covered.ok, true, covered.ok ? "" : covered.error);
+    assert.equal((await row(l.id)).ownerId, fieldOnly.id, "an area that covers it is accepted");
   });
 
   test("handing a lead to somebody with no access is refused, says why, and writes nothing", async () => {

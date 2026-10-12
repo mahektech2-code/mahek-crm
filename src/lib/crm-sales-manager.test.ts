@@ -28,7 +28,7 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, appModuleAccess, customers, employeeReporting, employees, products, timelineEvents, users } from "@/db/schema";
+import { appAccess, appModuleAccess, customers, employeeReporting, employees, mbosUserTerritories, products, timelineEvents, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { canOpenModule } from "@/lib/access";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
@@ -160,6 +160,13 @@ beforeEach(async () => {
   noModule = await makeUser("Tele Caller", "associate", [{ app: "crm", role: "associate" }], ["crm.leads"]);
   salesman = await makeUser("Salesman One", "associate", [{ app: "field", role: "associate" }]);
   salesman2 = await makeUser("Salesman Two", "associate", [{ app: "field", role: "associate" }]);
+  // A handset book is narrowed by area; the leads in this file are in Nashik.
+  // Virar is where one test moves a lead before reassigning it.
+  for (const sm of [salesman, salesman2]) {
+    for (const city of ["Nashik", "Virar"]) {
+      await db.insert(mbosUserTerritories).values({ id: id("ter"), userId: sm.id, kind: "city", region: city, parent: "" });
+    }
+  }
   productId = id("prd");
   await db.insert(products).values({ id: productId, name: "PU Thinner - 20 Liter (Loose)" });
 
