@@ -394,17 +394,21 @@ describe("C — assignment and what each person sees", () => {
     assert.ok(told.some((n) => n.href === `/crm/leads/calling-desk/${leadId}`), "she is told a lead has landed on her desk");
   });
 
-  test("a lead can only be handed to somebody who holds the desk, and only by somebody who may hand work out", async () => {
+  test("Reassign accepts any active CRM account, an unknown id is refused, and only somebody who may hand work out can", async () => {
     const enquiryId = await makeEnquiry("QUOTE");
     const r = await createLead(enquiryId, { ownerId: null });
     assert.ok(r.ok);
     const leadId = r.data.customerId;
 
     setTestUser(boss);
-    const toOutsider = await assignDeskLead({ customerId: leadId, ownerId: crmOnly.id });
-    assert.equal(toOutsider.ok, false, "a desk nobody can open would swallow it");
-    assert.equal(!toOutsider.ok && toOutsider.code, "rule_violation");
+    const toNobody = await assignDeskLead({ customerId: leadId, ownerId: "usr_does_not_exist" });
+    assert.equal(toNobody.ok, false, "an id that is not an account is refused");
+    assert.equal(!toNobody.ok && toNobody.code, "rule_violation");
     assert.equal((await db.select().from(customers).where(eq(customers.id, leadId)))[0].ownerId, null);
+
+    const toCrmOnly = await assignDeskLead({ customerId: leadId, ownerId: crmOnly.id });
+    assert.equal(toCrmOnly.ok, true, "a CRM account with no desk now receives it, in their All Leads");
+    assert.equal((await db.select().from(customers).where(eq(customers.id, leadId)))[0].ownerId, crmOnly.id);
 
     setTestUser(telecaller);
     const byAssociate = await assignDeskLead({ customerId: leadId, ownerId: telecaller.id });
