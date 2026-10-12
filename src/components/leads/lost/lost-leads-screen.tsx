@@ -19,7 +19,7 @@ import {
 } from "@/components/console/parts";
 import { shortDate } from "@/lib/format";
 import { SALES_TYPE_BUCKETS, type FilterOption } from "@/lib/lead-filters";
-import { ReopenLostDialog, type ReopenOffer } from "./reopen-lost-dialog";
+import { BulkReopenDialog, ReopenLostDialog, type ReopenOffer } from "./reopen-lost-dialog";
 import {
   ALL_LEAD_STAGES,
   LOST_REASONS,
@@ -98,6 +98,11 @@ export function LostLeadsScreen({
   const router = useRouter();
   const search = useSearchParams();
   const [reversing, setReversing] = React.useState<LostLeadRow | null>(null);
+  /* WHAT IS TICKED. Held as ids, and acted on only where the id is on the page
+     being shown: a page change or a new filter simply stops counting the rows
+     that left, so a hidden selection can never be reversed by accident. */
+  const [picked, setPicked] = React.useState<Set<string>>(new Set());
+  const [bulkOpen, setBulkOpen] = React.useState(false);
 
   const navigate = React.useCallback(
     (patch: Record<string, string | number | undefined>) => {
@@ -139,6 +144,32 @@ export function LostLeadsScreen({
     filters.reason.length > 0 ||
     Boolean(filters.lostFrom) ||
     Boolean(filters.lostTo);
+
+  /* A lost lead the desk may not reverse (a failed verification belongs to the
+     Sales Manager) is not offered a box: ticking it would only be refused. */
+  const selectable = leads.filter(
+    (l) => !(reopen?.seat === "calling_desk" && l.lostReason === VERIFICATION_FAILED_CODE),
+  );
+  const chosen = selectable.filter((l) => picked.has(l.id));
+  const allOnPage = selectable.length > 0 && chosen.length === selectable.length;
+  const someOnPage = chosen.length > 0 && !allOnPage;
+
+  function toggleOne(id: string) {
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function toggleAll() {
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (allOnPage) for (const l of selectable) next.delete(l.id);
+      else for (const l of selectable) next.add(l.id);
+      return next;
+    });
+  }
 
   function clearFilters() {
     setTyped("");
@@ -193,11 +224,33 @@ export function LostLeadsScreen({
             </div>
           ) : (
             <>
+              {reopen && chosen.length > 0 ? (
+                <div className="flex flex-wrap items-center gap-3 border-b border-line bg-canvas px-4 py-2 text-[13px]">
+                  <span className="font-medium text-ink">{plural(chosen.length, "lead")} selected</span>
+                  <Button onClick={() => setBulkOpen(true)}>Reverse {chosen.length}</Button>
+                  <Button onClick={() => setPicked(new Set())}>Clear selection</Button>
+                </div>
+              ) : null}
               <Table
                 chrome={false}
-                minWidth={reopen ? 1380 : 1270}
+                minWidth={reopen ? 1424 : 1270}
                 head={
                   <>
+                    {reopen ? (
+                      <HeadCell width={44}>
+                        <input
+                          type="checkbox"
+                          checked={allOnPage}
+                          ref={(el) => {
+                            if (el) el.indeterminate = someOnPage;
+                          }}
+                          disabled={selectable.length === 0}
+                          onChange={toggleAll}
+                          aria-label="Select every lead on this page"
+                          className="cursor-pointer accent-[#5223E0]"
+                        />
+                      </HeadCell>
+                    ) : null}
                     <HeadCell width={240}>Customer</HeadCell>
                     <HeadCell width={150}>Lead type</HeadCell>
                     <HeadCell width={150}>Owner</HeadCell>
@@ -211,7 +264,20 @@ export function LostLeadsScreen({
                 }
               >
                 {leads.map((l, i) => (
-                  <Row key={l.id} striped={i % 2 === 1}>
+                  <Row key={l.id} striped={i % 2 === 1} selected={picked.has(l.id)}>
+                    {reopen ? (
+                      <Cell>
+                        {selectable.some((x) => x.id === l.id) ? (
+                          <input
+                            type="checkbox"
+                            checked={picked.has(l.id)}
+                            onChange={() => toggleOne(l.id)}
+                            aria-label={`Select ${l.name}`}
+                            className="cursor-pointer accent-[#5223E0]"
+                          />
+                        ) : null}
+                      </Cell>
+                    ) : null}
                     <Cell truncate={240}>
                       <Link
                         href={leadHref(workspace, `leads/${l.id}`)}
@@ -291,6 +357,17 @@ export function LostLeadsScreen({
           )}
         </div>
       )}
+      {bulkOpen && reopen && chosen.length > 0 ? (
+        <BulkReopenDialog
+          key={chosen.map((l) => l.id).join(",")}
+          leads={chosen}
+          offer={reopen}
+          onClose={() => {
+            setBulkOpen(false);
+            setPicked(new Set());
+          }}
+        />
+      ) : null}
       {reversing && reopen ? (
         <ReopenLostDialog key={reversing.id} lead={reversing} offer={reopen} onClose={() => setReversing(null)} />
       ) : null}
