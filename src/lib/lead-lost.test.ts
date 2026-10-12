@@ -40,6 +40,7 @@ import { advanceLeadStage } from "@/lib/actions/leads";
 import { today } from "@/lib/recompute";
 import { NURTURE_SOURCE_TYPE } from "@/lib/engines/lead-nurture";
 import { lostLeadsPage, lostLeadOwnerOptions, lostLeadTiles } from "@/lib/services/lead-lost-service";
+import { ownerChoices } from "@/lib/services/lead-desk-assignment-service";
 import { applyLeadStageMove, evaluateLeadStageMove, leadGateInput, leadRow } from "@/lib/services/lead-service";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -233,6 +234,24 @@ describe("B/C — the Lost list, and where each row was lost from", () => {
 
     const owners = await lostLeadOwnerOptions();
     assert.ok(owners.some((o) => o.value === salesman.id && o.count === 1));
+  });
+
+  test("the owner filter offers everybody the Change owner list does, with a zero where they own none", async () => {
+    const quiet = await makeUser("Quiet Person", "associate");
+    const a = await makeLead({ name: "Lost A", leadStage: "qualified", ownerId: associate.id });
+    const r = await advanceLeadStage({ customerId: a.id, to: "lost", reasonCode: "price" });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+
+    const owners = await lostLeadOwnerOptions();
+    const byId = new Map(owners.map((o) => [o.value, o.count]));
+    assert.equal(byId.get(quiet.id), 0, "somebody with nothing lost is offered, at zero");
+    assert.equal(byId.get(associate.id), 1, "the owner of a lost lead keeps its count");
+    for (const p of await ownerChoices()) {
+      assert.ok(byId.has(p.id), `${p.name} must be offered`);
+    }
+    assert.equal(new Set(owners.map((o) => o.value)).size, owners.length, "nobody is listed twice");
+    assert.equal(owners[0].count, 1, "owners of lost leads come first");
+    assert.ok(owners.some((o) => o.count === 0), "somebody with nothing lost is offered, at zero");
   });
 
   test("the summary tiles count the same book, and the breakdown says which rung", async () => {
