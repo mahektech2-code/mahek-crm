@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { guardSql } from "./sql-guard";
 import { TtlCache, normaliseQuestion, normaliseSql } from "./cache";
 import { TABLES, allowedTables, buildViews, visibleColumns } from "./catalog";
+import { CRM_TABLES } from "./crm-catalog";
+import { accessRules } from "./boundary";
 
 /* --------------------------------------------------------------- the guard */
 
@@ -111,4 +113,42 @@ test("an associate's customers leave out the leads nobody holds", () => {
   const cust = (b: typeof own) => b.statements.find((s) => s.includes('view "customers"'))!;
   assert.ok(!cust(own).includes("owner_id is null"));
   assert.ok(cust(mgr).includes("owner_id is null"));
+});
+
+/* ------------------------------------------------------- the access boundary */
+
+const spec = (tables: typeof TABLES, name: string) => tables.find((t) => t.table === name)!;
+
+test("a product's cost is in no view, and its price is not on the Sales Dashboard's", () => {
+  const cols = ["id", "name", "packing_cost_paise", "selling_price_paise"];
+  assert.deepEqual(visibleColumns(spec(TABLES, "products"), cols, new Set(), true), ["id", "name"]);
+  assert.deepEqual(visibleColumns(spec(CRM_TABLES, "products"), cols, new Set(), true), ["id", "name", "selling_price_paise"]);
+});
+
+test("a company-wide shop count is shown only to a reader nothing narrows", () => {
+  for (const tables of [TABLES, CRM_TABLES]) {
+    const places = spec(tables, "places");
+    assert.deepEqual(visibleColumns(places, ["id", "name", "shops"], new Set(), false), ["id", "name"]);
+    assert.deepEqual(visibleColumns(places, ["id", "name", "shops"], new Set(), true), ["id", "name", "shops"]);
+  }
+  const cols = new Map([["places", ["id", "name", "shops"]]]);
+  const own = buildViews({ salesmanIds: ["me"], selfId: "me", own: true, modules: new Set(), columns: cols });
+  assert.ok(!own.statements.some((s) => s.includes('"shops"')));
+});
+
+test("an employee's private life is in no view, whatever screens the reader holds", () => {
+  const cols = ["id", "name", "department", "date_of_birth", "address", "personal_mobile", "child1_birthday", "company_mobile"];
+  assert.deepEqual(visibleColumns(spec(TABLES, "employees"), cols, new Set(["sales.salary"]), true), ["id", "name", "department", "company_mobile"]);
+});
+
+test("a narrowed reader is told to decline company questions; profit is declined for everybody", () => {
+  for (const kind of ["crm", "sales"] as const) {
+    const own = accessRules("own", kind).join("\n");
+    assert.match(own, /company's total revenue/);
+    assert.match(own, /Never present one as a company figure/);
+    assert.match(own, /not in their book/);
+    const national = accessRules("national", kind).join("\n");
+    assert.match(national, /Profit, margin/);
+    assert.doesNotMatch(national, /company's total revenue/, "a national reader may be asked about the company");
+  }
 });
