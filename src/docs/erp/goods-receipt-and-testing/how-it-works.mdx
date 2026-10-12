@@ -5,8 +5,8 @@ flowchart TD
   G["Goods receipt against an approved PO<br/>one PR number for the delivery"] --> L{"Each line: does the item<br/>have a testing list?"}
   L -- "Yes" --> T["Purchase test<br/>evidence per required test"]
   T --> V{"Verifier"}
-  V -- "Do Verify" --> RG["Register row<br/>at the PO line's rate and GST"]
-  V -- "Do Not Verified" --> NV["Not verified<br/>no register row"]
+  V -- "Verify" --> RG["Register row<br/>at the PO line's rate and GST"]
+  V -- "Mark not verified" --> NV["Not verified<br/>no register row"]
   L -- "No" --> RG
   RG --> R{"Rate above zero?"}
   R -- "Yes" --> S["Raw-material stock entry<br/>litres, at its godown, under its lot"]
@@ -47,7 +47,7 @@ The test asks for what the item's testing list names: a pH photo, a smell (Good,
 </Rule>
 
 <Rule title="Only the verifier decides, and only on complete evidence">
-**Do Verify** needs the **Verify quality tests** power and is refused while any required evidence is missing. A verified test is closed: its evidence cannot be changed until it is marked Not Verified.
+**Verify** needs the **Verify quality tests** power and is refused while any required evidence is missing. A verified test is closed: its evidence cannot be changed until it is marked Not Verified.
 </Rule>
 
 <Rule title="Verifying creates the register row, once">
@@ -115,11 +115,11 @@ The Drum labels tab is the register's chemical lots **at your working godown onl
 | Act | Needs |
 |---|---|
 | Receive goods, add lines, transport and costs | The Purchases screen |
-| Record test evidence | The Purchase testing screen, and the material's test duty if one is named |
-| Do Verify / Do Not Verified | Verify quality tests |
+| Record test evidence | The Lot testing screen, and the material's test duty if one is named |
+| Verify / Mark not verified | Verify quality tests |
 | See rates, GST, amounts, landing cost, the stage; enter a rate; record the bill; change status | See purchase money |
 | Set Purchase Verified | Set a purchase to Purchase Verified |
-| Do Pending | Set a verified purchase back to Pending |
+| Back to pending | Set a verified purchase back to Pending |
 
 ## Settings
 
@@ -128,4 +128,4 @@ The Drum labels tab is the register's chemical lots **at your working godown onl
 ## Where the code and the intent disagree today
 
 - The refusal for a missing own-vehicle rate says the rate is set "in ERP settings"; it is a MahekOne setting in the Admin Console, not on the ERP's Settings screen.
-- A lot entered by hand on the register (**New purchase** or **Add More**) is registered — and, with a rate, put into stock — without a test, even for a chemical whose item requires one. Only lots that come through goods receipt are sent to the tester.
+- A lot entered by hand on the register (**New purchase** or **Add another**) is registered — and, with a rate, put into stock — without a test, even for a chemical whose item requires one. Only lots that come through goods receipt are sent to the tester.

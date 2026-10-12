@@ -70,7 +70,7 @@ export function Overview({
           <div className="flex items-center justify-between border-b border-divider px-4 py-3">
             <div>
               <div className="text-md font-semibold text-ink">Calls to make today</div>
-              <div className="text-xs text-muted">Ring the transporter, then update the LR on the road.</div>
+              <div className="text-xs text-muted">Ring the transporter, then update the LR.</div>
             </div>
             <Link href={erpLink("trackLr", { filter: "calls" })}>
               <Button size="sm">Open</Button>
@@ -103,7 +103,7 @@ export function Overview({
         <Card className="overflow-hidden">
           <div className="border-b border-divider px-4 py-3">
             <div className="text-md font-semibold text-ink">Needs attention</div>
-            <div className="text-xs text-muted">Everything that is not moving the way it should.</div>
+            <div className="text-xs text-muted">What is not moving as it should.</div>
           </div>
           <Attention label="Problems on the road" tone="danger" href={erpLink("trackLr", { filter: "issue" })} items={issues.map((g) => ({ key: g.key, main: `${lrLabel(g.bills[0].lrNo)} · ${g.bills[0].deliveryParty}`, sub: `${g.bills.find((b) => b.issue)?.issue}${g.bills.find((b) => b.issue)?.issueNote ? ` — ${g.bills.find((b) => b.issue)?.issueNote}` : ""}` }))} />
           <Attention label="Running late" tone="warn" href={erpLink("trackLr", { filter: "late" })} items={late.map((g) => ({ key: g.key, main: `${lrLabel(g.bills[0].lrNo)} · ${g.bills[0].deliveryParty}`, sub: g.bills[0].expectedDeliveryOn ? `Expected ${shortDay(g.bills[0].expectedDeliveryOn)}` : `${daysBetween(g.bills[0].billDate ?? today, today)} days since dispatch` }))} />
@@ -144,11 +144,13 @@ export function Delivered({ rows, canWrite }: { rows: Consignment[]; canWrite: b
   const avg = took.length ? Math.round((took.reduce((a, b) => a + b, 0) / took.length) * 10) / 10 : null;
   return (
     <div className="space-y-3">
-      <div className="text-meta text-muted">
-        {plural(sorted.length, "bill")} delivered in the last 45 days{avg != null ? ` · ${avg} days from dispatch to delivery on average` : ""}.
-      </div>
+      {sorted.length ? (
+        <div className="text-meta text-muted">
+          {plural(sorted.length, "bill")} delivered in the last 45 days{avg != null ? ` · ${avg} days from dispatch to delivery on average` : ""}.
+        </div>
+      ) : null}
       <Card className="overflow-hidden">
-        <div className="grid grid-cols-[minmax(110px,1fr)_minmax(150px,1.5fr)_minmax(110px,1fr)_minmax(110px,1fr)_96px_96px_70px_minmax(100px,1fr)_70px] gap-3 border-b border-divider bg-canvas px-4 py-2 text-xs font-medium text-muted">
+        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_76px_76px_44px_minmax(0,1fr)_64px] gap-3 border-b border-divider bg-canvas px-4 py-2 text-xs font-medium text-muted">
           <span>Bill</span>
           <span>Party</span>
           <span>LR</span>
@@ -161,7 +163,7 @@ export function Delivered({ rows, canWrite }: { rows: Consignment[]; canWrite: b
         </div>
         {sorted.length ? (
           sorted.map((c) => (
-            <div key={c.id} className="grid grid-cols-[minmax(110px,1fr)_minmax(150px,1.5fr)_minmax(110px,1fr)_minmax(110px,1fr)_96px_96px_70px_minmax(100px,1fr)_70px] items-center gap-3 border-b border-divider px-4 py-2 text-sm last:border-0">
+            <div key={c.id} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_76px_76px_44px_minmax(0,1fr)_64px] items-center gap-3 border-b border-divider px-4 py-2 text-sm last:border-0">
               <BillRef c={c} />
               <span className="truncate">{c.deliveryParty}</span>
               <span className="truncate font-mono text-meta">{c.lrNo ?? "—"}</span>

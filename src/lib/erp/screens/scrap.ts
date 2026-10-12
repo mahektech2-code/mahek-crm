@@ -144,7 +144,7 @@ async function emptyForm(ctx: ErpContext): Promise<FormSpec> {
     screen: "emptyDrums",
     id: "empty",
     title: "Record an empty drum",
-    sub: "Scan the drum's GRN/lot label while it is still readable, and weigh the drum completely empty. The GRN, supplier, material and lot come from the label — nothing else is typed.",
+    sub: "Scan the drum's lot label and weigh it empty. Everything else comes from the label.",
     submit: "Save empty drum",
     init: { godown: ctx.workingGodown?.name ?? "", different: "No" },
     header: [
@@ -402,7 +402,7 @@ const emptyDrums: ScreenModule = {
         newForm: form,
         newLabel: "Record empty drum",
         tools: [{ id: "sell", l: "Sell drums", href: erpLink("scrapSales"), why: sellWhy }],
-        noDataLine: "No Mahek-owned empty drums in stock. Drums appear here once they are scanned empty and weighed.",
+        noDataLine: "No Mahek-owned empty drums. Drums appear once scanned empty and weighed.",
       },
       rows: rows.map((d) => drumRow(ctx, d, limits, hist, [{ id: "sell", l: "Sell as scrap", primary: true, why: sellWhy, form: oneDrumSale(base, d) }])),
     };
@@ -459,7 +459,7 @@ const drumReview: ScreenModule = {
         cols: drumCols([{ k: "reason", l: "Why", t: "t" }]),
         hidden: [],
         groups: ["supplier"],
-        noDataLine: "Nothing waiting. A drum lands here when its GRN and its supplier say nothing about who owns it, or the GRN has no drum count.",
+        noDataLine: "Nothing to review. A drum lands here when nobody recorded who owns it.",
       },
       rows: rows.map((d) => {
           const row = drumRow(ctx, d, limits, hist, [
@@ -596,7 +596,7 @@ const drumAdjustments: ScreenModule = {
       screen: "drumAdjustments",
       id: "new",
       title: "Ask for a drum correction",
-      sub: "Opening stock adds drums that were here before MahekOne recorded them; a write-off takes away drums that are gone, oldest first. Somebody else approves it before any drum moves.",
+      sub: "Opening stock or a write-off. Somebody else approves it before any drum moves.",
       submit: "Ask for approval",
       header: [
         { k: "kind", l: "What", t: "select", req: true, opts: [ADJ_KIND.opening, ADJ_KIND.write_off] },
@@ -705,7 +705,7 @@ async function returnForm(ctx: ErpContext, supplier?: string): Promise<FormSpec>
     screen: "drumReturns",
     id: "new",
     title: "Returnable drum outward",
-    sub: "Enter how many drums went back. The oldest of that supplier's waiting drums are allocated — nobody has to find each drum.",
+    sub: "How many drums went back. The oldest waiting drums are taken first.",
     submit: "Save outward",
     init: { date: today(), supplier: supplier ?? "" },
     header: [
@@ -1050,7 +1050,7 @@ const scrapStockScreen: ScreenModule = {
           screen: "scrapStock",
           id: "new",
           title: "Record scrap",
-          sub: "Plastic bags, cardboard and other scrap are recorded by category, a batch at a time — no record per bag or box. Empty drums are recorded from their label on Empty drums.",
+          sub: "Plastic, cardboard and other scrap, by category. Empty drums are recorded on Empty drums.",
           submit: "Save",
           init: { date: today(), godown: ctx.workingGodown?.name ?? "", unit: "Kg" },
           header: [
@@ -1248,7 +1248,7 @@ const cashReceipts: ScreenModule = {
       screen: "cashReceipts",
       id: "new",
       title: "Record a receipt",
-      sub: "Money that came into petty cash or the bank from a scrap buyer. Match it to the sales it pays for once it is recorded.",
+      sub: "Money from a scrap buyer. Match it to the sales it pays for.",
       submit: "Save receipt",
       init: { date: today(), mode: "Bank transfer" },
       header: [
@@ -1281,7 +1281,7 @@ const cashReceipts: ScreenModule = {
         agg: { k: "left", l: "unmatched" },
         newForm: acc ? form : undefined,
         newLabel: "Record receipt",
-        noDataLine: "No receipts recorded. A scrap buyer's payment is recorded here, then matched to the sales it pays for.",
+        noDataLine: "No receipts yet. A payment is recorded here, then matched to its sales.",
       },
       rows: rows.map((r) => {
         const live = r.status === "active";

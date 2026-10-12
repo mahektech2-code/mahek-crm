@@ -109,7 +109,7 @@ export function LrDesk({
           </div>
         ) : (
           <Empty>
-            No LR is waiting. When the dispatch team collects them from the transporters, they upload them here{canWrite ? " — or upload them yourself with Upload LRs, above" : ""}.
+            No LR is waiting. The dispatch team uploads them as they collect them.
           </Empty>
         )}
       </Card>
@@ -141,13 +141,13 @@ export function LrDesk({
           ) : (
             <div>
               <div className="text-md font-semibold text-ink">Bills waiting for their LR</div>
-              <div className="text-xs text-muted">Pick an LR on the left to attach it to the bills it carries.</div>
+              <div className="text-xs text-muted">Pick an LR on the left, then the bills it carries.</div>
             </div>
           )}
         </div>
 
         <div className="flex items-center gap-3 border-b border-divider bg-canvas px-4 py-1.5 text-xs text-muted">
-          <span>{plural(waiting.length, "bill")} at the transporter, waiting for the LR</span>
+          <span>{plural(waiting.length, "bill")} waiting</span>
           {onTheWay.length ? (
             <label className="ml-auto flex cursor-pointer items-center gap-1.5">
               <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} className="accent-brand" />

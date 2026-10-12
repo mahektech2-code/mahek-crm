@@ -271,9 +271,9 @@ const sfgBatches: ScreenModule = {
       rows: rows.map((x): ListRow => {
         const rate = rmRate.get(x.l.rmLotNo) ?? null;
         const actions: ActionSpec[] = [
-          { id: "more", l: "ADD More SFG", primary: true, loadsForm: true },
+          { id: "more", l: "Add another", primary: true, loadsForm: true },
           { id: "edit", l: "Edit", loadsForm: true },
-          { id: "select", l: "Select SFG", href: `?f=${encodeURIComponent(rows.filter((y) => y.l.sfgNo === x.l.sfgNo).map((y) => y.l.id).join(","))}&fl=${encodeURIComponent(`SFG ${x.l.sfgNo}`)}` },
+          { id: "select", l: "Show the whole SFG", href: `?f=${encodeURIComponent(rows.filter((y) => y.l.sfgNo === x.l.sfgNo).map((y) => y.l.id).join(","))}&fl=${encodeURIComponent(`SFG ${x.l.sfgNo}`)}` },
           {
             id: "delete",
             l: "Delete",
@@ -722,7 +722,7 @@ const fgFill: ScreenModule = {
         });
         const actions: ActionSpec[] = [
           { id: "more", l: "Add to this run", loadsForm: true },
-          { id: "select", l: "Select SFG 2", href: `?f=${encodeURIComponent(rows.filter((y) => y.f.fgNum === x.f.fgNum).map((y) => y.f.id).join(","))}&fl=${encodeURIComponent(`FG ${x.f.fgNum}`)}` },
+          { id: "select", l: "Show the whole fill", href: `?f=${encodeURIComponent(rows.filter((y) => y.f.fgNum === x.f.fgNum).map((y) => y.f.id).join(","))}&fl=${encodeURIComponent(`FG ${x.f.fgNum}`)}` },
           { id: "trace", l: "Trace this lot", href: erpTraceHref(x.f.lotCode) },
           { id: "adjust", l: "Edit cans adjusted", prompt: { title: "Cans adjusted", sub: `${x.fg} · ${x.f.lotCode}`, submit: "Save", fields: [{ k: "adjusted", l: "Cans lost or adjusted", t: "num", req: true, min: 0, max: x.f.cans }], init: { adjusted: String(x.f.canAdjusted) } } },
           { id: "delete", l: "Delete", why: ctx.administrator ? "" : "Only an administrator deletes a posted filling", confirm: `Delete FG filling ${x.f.lotCode}? Its stock entry stays in the log, flagged as deleted.` },
@@ -1014,10 +1014,10 @@ const packBatches: ScreenModule = {
         const st = batchState(x.l.boxes, x.cpb, batch.map((b) => ({ id: b.l.id, cans: b.l.cans })));
         const box = boxFigures(x.l.boxes, x.empty ?? 0, null);
         const actions: ActionSpec[] = [];
-        if (st.remaining > 0) actions.push({ id: "more", l: "Add More", primary: true, loadsForm: true });
+        if (st.remaining > 0) actions.push({ id: "more", l: "Add another", primary: true, loadsForm: true });
         else actions.push({ id: "labels", l: "Print box labels", primary: true, href: erpLabelsHref({ batch: x.l.batchNo }) });
         actions.push({ id: "trace", l: "Trace this batch", href: erpTraceHref(x.l.batchNo) });
-        actions.push({ id: "select", l: "Select Batch", href: `?f=${encodeURIComponent(batch.map((b) => b.l.id).join(","))}&fl=${encodeURIComponent(x.l.batchNo)}` });
+        actions.push({ id: "select", l: "Show the whole batch", href: `?f=${encodeURIComponent(batch.map((b) => b.l.id).join(","))}&fl=${encodeURIComponent(x.l.batchNo)}` });
         actions.push({
           id: "delete",
           l: "Delete",
@@ -1195,7 +1195,6 @@ const sfgStock: ScreenModule = {
       { k: "type", l: "Type", t: "s" },
       { k: "rate", l: "SFG rate", t: "m", pw: "viewCost" },
       { k: "value", l: "Stock value", t: "m", pw: "viewCost" },
-      { k: "entry", l: "Entry id", t: "mono" },
       { k: "batches", l: "Batches", t: "n" },
     ];
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
@@ -1215,7 +1214,6 @@ const sfgStock: ScreenModule = {
             type: l.latestType,
             rate: l.ratePaise,
             value: l.ratePaise == null ? null : Math.round(l.ratePaise * l.stock),
-            entry: l.latestEntryId,
             batches: l.batches,
           },
           hiddenKeys,
@@ -1374,7 +1372,7 @@ function logScreen(key: "sfgLog" | "fgLog" | "packLog"): ScreenModule {
                     from erp_pack_entries e join products p on p.id = e.sku_id join erp_godowns g on g.id = e.godown_id order by e.entry_date desc, e.posted_at desc, e.id desc`;
       const rows = (await db.execute(q)) as unknown as { id: string; date: string; type: string; source: string; item: string; lot: string; qty: number; godown: string; postedAt: Date }[];
       const typeLabel = (t: string) =>
-        t === "transfer" ? "Transfer" : t === "return" ? "Customer return (reused)" : t === "rework" ? "Rework" : table === "sfg" ? "Semi Finished" : table === "fg" ? "Finish Goods" : "FG Packing";
+        t === "transfer" ? "Transfer" : t === "return" ? "Customer return (reused)" : t === "rework" ? "Rework" : table === "sfg" ? "Batch" : table === "fg" ? "Filling" : "Packing";
       const cols: ColSpec[] = [
         { k: "date", l: "Date", t: "d" },
         { k: "type", l: "Entry", t: "s" },
@@ -1382,7 +1380,6 @@ function logScreen(key: "sfgLog" | "fgLog" | "packLog"): ScreenModule {
         { k: "lot", l: table === "pack" ? "Batch" : "Lot", t: "mono" },
         { k: "qty", l: table === "sfg" ? "Litres" : table === "fg" ? "Cans" : "Boxes", t: "n" },
         { k: "godown", l: "Godown", t: "t" },
-        { k: "source", l: "Source", t: "mono" },
         { k: "f", l: "Flags", t: "f" },
       ];
       return {

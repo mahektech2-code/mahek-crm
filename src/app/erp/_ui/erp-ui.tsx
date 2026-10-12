@@ -453,7 +453,9 @@ function FormDrawer({
             .map((f) => resolved(f))
             .map((f, i, shown) => (
               <Fragment key={f.k}>
-              {f.sec && f.sec !== shown[i - 1]?.sec ? (
+              {/* A section named after its own first field ("Purchase rule"
+                  over "Purchase rule") says the word twice: the field alone does. */}
+              {f.sec && f.sec !== shown[i - 1]?.sec && !(f.sec.toLowerCase() === f.l.toLowerCase() && shown[i + 1]?.sec !== f.sec) ? (
                 <div className="col-span-full mt-1 border-b border-divider pb-1 text-xs font-semibold tracking-[0.04em] text-muted uppercase">{f.sec}</div>
               ) : null}
               <Field

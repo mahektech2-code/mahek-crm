@@ -280,9 +280,9 @@ const countTasks: ScreenModule = {
         chips: "kind",
         godownKey: "godown",
         sortDefault: ["due", 1],
-        newForm: runsCounts(ctx) ? { screen: "countTasks", id: "ask", title: "Ask for a count", sub: "Counts open for anybody at the godown. A cycle count picks today's items by ABC class, how overdue, how much they move and how often they were wrong.", submit: "Open counts", header: askFields } : undefined,
+        newForm: runsCounts(ctx) ? { screen: "countTasks", id: "ask", title: "Ask for a count", sub: "A blind count anybody at the godown can do.", submit: "Open counts", header: askFields } : undefined,
         newLabel: "Ask for a count",
-        noDataLine: "Nothing to count. Counts appear here when a purchase is requested, each morning for the cycle count, and whenever somebody asks for one.",
+        noDataLine: "Nothing to count. Counts open with each purchase request and each morning.",
       },
       rows: rows.map((c): ListRow => {
         const sameCounter = !!c.parent && c.parentCounterId === ctx.user.id;
@@ -452,7 +452,7 @@ const stockFlags: ScreenModule = {
         groups: ["status"],
         chips: "status",
         godownKey: "godown",
-        noDataLine: "No red flags. A count that differs from the book beyond its tolerance lands here until it is recounted, investigated and resolved.",
+        noDataLine: "No red flags. A count beyond tolerance waits here until resolved.",
       },
       rows: roots.map((c): ListRow => {
         const latest = latestCount(c, all) ?? c;
@@ -669,7 +669,7 @@ const stockAdjustments: ScreenModule = {
         groups: ["status"],
         chips: "status",
         godownKey: "godown",
-        noDataLine: "No adjustments. Stock changes here only from a confirmed discrepancy, and only once somebody other than the requester approves it.",
+        noDataLine: "No adjustments. Each one needs somebody else's approval.",
       },
       rows: rows.map((a): ListRow => {
         const own = a.requestedById === ctx.user.id && !ctx.administrator;
@@ -810,7 +810,7 @@ const missingRecordsScreen: ScreenModule = {
         godownKey: "godown",
         readOnly: true,
         sortDefault: ["date", -1],
-        noDataLine: "No missing records. Every batch, fill, receipt and transfer has the stock entry it should.",
+        noDataLine: "No missing records. Every document has its stock entry.",
       },
       rows: rows.map(
         (m): ListRow => ({
@@ -944,9 +944,9 @@ const floorChecks: ScreenModule = {
         chips: "result",
         godownKey: "godown",
         sortDefault: ["date", -1],
-        newForm: { screen: "floorChecks", id: "new", title: "Record a stock check", sub: "Count any item at a godown. The figure is compared with the book the moment it is saved; a mismatch lands here and on the dashboard.", submit: "Save check", header },
+        newForm: { screen: "floorChecks", id: "new", title: "Record a stock check", sub: "Count any item. It is compared with the book when saved.", submit: "Save check", header },
         newLabel: "Record a stock check",
-        noDataLine: "No stock checks in the last 90 days. The floor records them from the factory app (Stock check), and anybody here can record one.",
+        noDataLine: "No stock checks in the last 90 days. The floor records them from the factory app.",
       },
       rows: rows.map((c): ListRow => {
         const result = resultOf(c);

@@ -64,7 +64,7 @@ If you resolve an alert whose condition is still true, the next hourly run raise
 | **High filling loss** | A filling lost more than the allowed share of its cans | FG filling |
 | **Repeated write-offs** | Several write-offs to Item Lost Record by one person, or from one godown, in a short time | Item transfers |
 | **Packing batch incomplete** | A packing batch has been short of (or over) its cans for days | Packing batches |
-| **Test unverified** | A purchase test has waited too long for the verifier | Purchase testing |
+| **Test unverified** | A purchase test has waited too long for the verifier | Lot testing |
 | **Negative or thin margin** | A dispatched order line lost money, or made less than the minimum margin | Orders → Billing & dispatch |
 | **Slow fulfilment** | An order line took more than the allowed days from order to dispatch | Orders → Billing & dispatch |
 | **Ready but not billed** | A line has been Ready and fully allocated for hours with no Tally bill number | Orders |
@@ -89,7 +89,7 @@ Every helper follows the same rules: it **reads**, you **check**, and nothing is
 | **Read a supplier bill** | Purchases → Register (for people who can see purchase money) | A photo or PDF of the supplier's bill | Supplier and GSTIN, which register row each line is, quantities and rates, a bill number already used | [Goods receipt, testing and the register](/docs/erp/goods-receipt-and-testing) |
 | **Draft an order from a message** | Orders → WhatsApp inbox | A pasted or spoken message, or WhatsApp replies | The customer, each SKU and its quantity in cans | [Orders](/docs/erp/orders) |
 | **Read LR photo** | Transport | A lorry receipt | The LR number; a transporter mismatch or a repeated LR is flagged | [Transport](/docs/erp/transport) |
-| **Read test photos** | Purchase testing | The density meter, pH and test photos | Density and pH; a density far from the master is flagged. It never sets the verification. | [Goods receipt, testing and the register](/docs/erp/goods-receipt-and-testing) |
+| **Read test photos** | Lot testing | The density meter, pH and test photos | Density and pH; a density far from the master is flagged. It never sets the verification. | [Goods receipt, testing and the register](/docs/erp/goods-receipt-and-testing) |
 | **Suggest type and summary** | Complaints & credit notes | The complaint's description | The type (only from the existing list) and a one-line summary | [Complaints and credit notes](/docs/erp/complaints-and-credit-notes) |
 | **Suggested levels** | Raw-material and Finished-goods levels | — (arithmetic on recent use, no AI model) | The suggested minimum and maximum | [Minimum levels and reordering](/docs/erp/stock-levels) |
 | **Ask the ERP** | The search box at the top of every ERP screen | Your question | The answer and the links under it | Below |

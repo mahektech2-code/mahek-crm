@@ -245,7 +245,7 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
             {!billedWaiting.length ? (
               <div className="mt-1 text-meta text-muted">Nothing is billed and waiting. Bill the lines on Orders → Under process &amp; ready, then verify here.</div>
             ) : gated.length ? (
-              <div className="mt-1 text-meta text-warn-ink">{gated.map((l) => `${l.skuName}: ${l.gate}`).join("; ")}. Do Verified waits for every box.</div>
+              <div className="mt-1 text-meta text-warn-ink">{gated.map((l) => `${l.skuName}: ${l.gate}`).join("; ")}. Dispatch verification waits for every box.</div>
             ) : (
               <div className="mt-1 text-meta text-success">Every box is scanned and checked.</div>
             )}
@@ -253,7 +253,7 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
               <div className="mt-3 flex items-center gap-2">
                 <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="h-8.5 rounded-control border border-line px-2 text-sm" />
                 <Button size="sm" variant="primary" disabled={pending || !billedWaiting.length || gated.length > 0} onClick={() => act(() => erpDispatchVerify(board.orderNo, date))}>
-                  Do Verified
+                  Mark dispatch-verified
                 </Button>
               </div>
             ) : (

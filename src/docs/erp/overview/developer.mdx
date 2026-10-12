@@ -52,6 +52,20 @@ The ERP is about a hundred screens and tabs. Anything two of them draw or decide
 | Money, dates and timestamps | `inr`, `inrRate`, `nf`, `fd`, `rupeesField` (`src/lib/erp/ui.ts`); `stamp`, `phoneDisplay` (`src/lib/format.ts`); `APP_TIMEZONE` | Every screen — never `toLocaleString` with a typed zone |
 | Colours, radii, type sizes | Tokens in `src/app/globals.css`: `brand`, `brand-hover`, `brand-deep`, `whatsapp`; `rounded-control`, `rounded-card`; `text-2xs` (11px), `text-xs`, `text-meta` (13px), `text-sm`, `text-md` (15px) | Never a hex value or `text-[13px]` |
 
+## A screen says a thing once
+
+The generic list (`_ui/list-screen.tsx`) and record drawer (`_ui/record-drawer.tsx`) leave out what would only repeat:
+
+| Repeat | What happens | Where |
+|---|---|---|
+| A flag reading the same as the row's status | Not drawn | `flagsBesideStatus` in `_ui/badge.tsx` |
+| The grouped-by column, while grouped | Dropped from the rows; the group header says it | `lineCols` in `list-screen.tsx` |
+| Search, group and columns on a list with no rows | Toolbar not drawn | `list-screen.tsx` |
+| A record field with a column's label | Takes the column's place in the drawer | `record-drawer.tsx` |
+| Columns a panel already shows | Listed in the panel's `covers`, left out of the drawer | `ListRow.panel.covers` in `lib/erp/ui.ts` |
+
+A `noDataLine` is drawn as a heading (its first sentence) and a muted explanation (the rest), so write the first sentence to stand on its own.
+
 ## A request, end to end
 
 <Flow caption="GET /erp/stock?view=fgStock" chart={`

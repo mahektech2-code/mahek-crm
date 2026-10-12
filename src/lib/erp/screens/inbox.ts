@@ -45,7 +45,7 @@ export const inboxScreen: ScreenModule = {
               screen: "orderInbox",
               id: "new",
               title: "Draft an order from a message",
-              sub: "Paste the customer's message, or speak it with the microphone. The draft is checked by you before it becomes an order.",
+              sub: "Paste or speak the customer's message. You check the draft before it becomes an order.",
               submit: "Read it",
               init: { mode: "Paste a message" },
               header: [

@@ -22,7 +22,7 @@ import { CallLink, Empty, useAct } from "./common";
  */
 type Load = { active: number; road: number };
 
-const COLS = "grid-cols-[minmax(180px,1.4fr)_minmax(150px,1.2fr)_minmax(170px,1.2fr)_110px_120px]";
+const COLS = "grid-cols-[minmax(0,1.4fr)_minmax(0,1.2fr)_minmax(0,1.2fr)_96px_96px]";
 
 export function Transporters({ rows, tree, labels, load, canWrite }: { rows: Transporter[]; tree: PlaceOption[]; labels: string[]; load: Record<string, Load>; canWrite: boolean }) {
   const byId = useMemo(() => lookup(tree), [tree]);
@@ -35,7 +35,7 @@ export function Transporters({ rows, tree, labels, load, canWrite }: { rows: Tra
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <span className="text-meta text-muted">
-          {rows.length} transporter{rows.length === 1 ? "" : "s"} · {rows.reduce((n, t) => n + t.godowns.length, 0)} godowns
+          {rows.length ? `${rows.length} transporter${rows.length === 1 ? "" : "s"} · ${rows.reduce((n, t) => n + t.godowns.length, 0)} godowns` : null}
         </span>
         {canWrite ? (
           <Button variant="primary" size="sm" onClick={() => setEdit("new")}>

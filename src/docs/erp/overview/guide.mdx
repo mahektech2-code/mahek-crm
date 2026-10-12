@@ -14,7 +14,7 @@ flowchart TD
   B --> C["Purchase order<br/>raised, approved, sent to the vendor"]
   C --> D["Goods arrive at the gate<br/>Goods receipt (GRN) against the PO"]
   D --> E{"Does the item<br/>need testing?"}
-  E -- "Yes, a chemical" --> F["Purchase testing<br/>evidence, then the verifier decides"]
+  E -- "Yes, a chemical" --> F["Lot testing<br/>evidence, then the verifier decides"]
   E -- "No" --> G["Purchases register<br/>a lot with a rate"]
   F --> G
   G --> H["Raw-material stock<br/>lot by lot, godown by godown"]
@@ -44,7 +44,7 @@ Read it top to bottom and you have the whole ERP:
 
 The dashboard is the first screen you see. It answers one question: **what needs attention now?**
 
-<Wireframe url="/erp" nav={["Dashboard", "Alerts", "#Masters", "Raw materials", "Purchase parties", "#Purchase", "Purchase requirements", "Purchase orders", "Purchases", "Purchase testing", "#Production", "SFG batches", "FG filling", "#Stock", "Stock", "Boxes & labels"]} active="Dashboard" caption="The dashboard for somebody who works purchase and stock">
+<Wireframe url="/erp" nav={["Dashboard", "Alerts", "#Masters", "Raw materials", "Purchase parties", "#Purchase", "Purchase requirements", "Purchase orders", "Purchases", "Lot testing", "#Production", "SFG batches", "FG filling", "#Stock", "Stock", "Boxes & labels"]} active="Dashboard" caption="The dashboard for somebody who works purchase and stock">
   <WfBar>
     <WfTitle sub="Good morning · Monday, 6 Oct 2026 · stock and godown figures for Godown A. Every figure opens the records behind it.">Dashboard</WfTitle>
     <Hotspot n={1} />
@@ -126,7 +126,7 @@ Every ERP screen has the same parts, so once you know one you know them all.
 |---|---|---|
 | **Dashboard, Alerts** | Dashboard, Alerts | Everyone (Alerts only if given) |
 | **Masters** | Raw materials, Purchase parties, Products, Sales parties, My customers, Godowns, Price lists, Reference lists | The office, the store, the owner — see [Masters](/docs/erp/masters) |
-| **Purchase** | Purchase requirements (with Quotations), Purchase orders, Purchases (Goods receipt, Register, Drum labels), Purchase testing | Production departments, the store, the buyer, the PO approver, the tester |
+| **Purchase** | Purchase requirements (with Quotations), Purchase orders, Purchases (Goods receipt, Register, Drum labels), Lot testing | Production departments, the store, the buyer, the PO approver, the tester |
 | **Production** | SFG batches, FG filling, Packing batches, Recipes | Mixing & Blending, Refilling, Packing, the Production Head |
 | **Stock** | Stock, Boxes & labels, Item transfers, Raw-material levels, Finished-goods levels | The store and the godowns |
 | **Orders** | Orders (seven tabs), Dispatch desk | The order desk and the godown |
