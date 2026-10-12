@@ -1,11 +1,12 @@
 import "server-only";
+import { cache } from "react";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { and, isNull, eq, or, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { erpInward, erpPurchases, erpTests } from "@/db/schema";
 import type { ErpContext } from "./access";
 import { fgReorderRows, rmReorderRows } from "./screens/movement";
-import { detailRows, orderLines } from "./screens/sales";
+import { detailRows, isPendingLine, isWorkingLine, orderLines } from "./screens/sales";
 
 /* ---------------------------------------------------------------------------
  * The sidebar's badges: work waiting on a screen (untested inward lines,
@@ -60,8 +61,8 @@ export async function incompletePackIds(): Promise<string[]> {
 export async function salesCounts() {
   const lines = await orderLines();
   const detailed = new Set(lines.filter((l) => l.inDetails).map((l) => l.o.orderNo));
-  const pending = lines.filter((l) => l.o.status !== "Cancel" && l.sku.name !== "Empty Drum" && !detailed.has(l.o.orderNo));
-  const working = lines.filter((l) => (l.o.status === "Ready" || l.o.status === "Under Process") && l.o.entryStatus !== "Done");
+  const pending = lines.filter((l) => isPendingLine(l, detailed));
+  const working = lines.filter(isWorkingLine);
   const toAllocate = lines.filter((l) => l.o.status === "Ready" && l.o.entryStatus !== "Done" && l.allocation === "Add More Quantity");
   const pendingParty = lines.filter((l) => l.o.partyStatus === "Pending" && !l.inDetails);
   return { lines, pending, working, toAllocate, pendingParty };
@@ -79,23 +80,31 @@ export async function unverifiedIds(): Promise<string[]> {
  * verification ride on the same pass.
  */
 export async function logisticsCounts() {
-  const [lr, req, exp] = await Promise.all([
+  const [lrs, calls, msgs, req, exp] = await Promise.all([
+    db.execute(sql`select id from erp_lrs where status = 'unassigned'`) as unknown as Promise<{ id: string }[]>,
     db.execute(sql`
-      select id from erp_lrs where status = 'unassigned'
-      union all
       select id from erp_transports
        where material_stage <> 'Close - Received to Party' and coalesce(lr_no, '') <> ''
          and reminder_date <= (now() at time zone ${APP_TIMEZONE})::date
-      union all
-      select id from erp_transport_messages where status in ('to_send', 'failed')
     `) as unknown as Promise<{ id: string }[]>,
+    db.execute(sql`select id from erp_transport_messages where status in ('to_send', 'failed')`) as unknown as Promise<{ id: string }[]>,
     db.execute(sql`select id from complaints where status = 'open'`) as unknown as Promise<{ id: string }[]>,
     db.execute(sql`select id from erp_expenses where status = 'Pending'`) as unknown as Promise<{ id: string }[]>,
   ]);
-  return { pendingLr: lr.map((r) => r.id), requested: req.map((r) => r.id), pendingExpenses: exp.map((r) => r.id) };
+  /* One figure per Logistics tab — LRs to attach, calls due on the road,
+     messages to send — so each tab's badge is its own work and the sidebar
+     badge is their sum. */
+  return { pendingLr: lrs.map((r) => r.id), trackLr: calls.map((r) => r.id), lrMessages: msgs.map((r) => r.id), requested: req.map((r) => r.id), pendingExpenses: exp.map((r) => r.id) };
 }
 
-export async function erpNavCounts(ctx: ErpContext): Promise<Record<string, number>> {
+/**
+ * The work waiting on each list, by module key: the sidebar badge of a screen
+ * is the sum over its tabs, and each tab draws its own. Asked once per request
+ * — the layout and the page share the answer.
+ */
+export const erpNavCounts = cache(navCounts);
+
+async function navCounts(ctx: ErpContext): Promise<Record<string, number>> {
   const out: Record<string, number> = {};
   const jobs: Promise<void>[] = [];
   if (ctx.screens.has("requisitions") || ctx.screens.has("purchaseOrders"))
@@ -124,7 +133,11 @@ export async function erpNavCounts(ctx: ErpContext): Promise<Record<string, numb
   if (["pendingLr", "requests", "expenses"].some((k) => ctx.screens.has(k)))
     jobs.push(
       logisticsCounts().then((c) => {
-        if (ctx.screens.has("pendingLr")) out.pendingLr = c.pendingLr.length;
+        if (ctx.screens.has("pendingLr")) {
+          out.pendingLr = c.pendingLr.length;
+          out.trackLr = c.trackLr.length;
+          out.lrMessages = c.lrMessages.length;
+        }
         if (ctx.screens.has("requests")) out.requests = c.requested.length;
         if (ctx.screens.has("expenses")) out.expenses = c.pendingExpenses.length;
       }),
@@ -144,7 +157,7 @@ export async function erpNavCounts(ctx: ErpContext): Promise<Record<string, numb
   if (["countTasks", "stockFlags", "stockAdjustments"].some((k) => ctx.screens.has(k)))
     jobs.push(
       (db.execute(sql`
-        select (select count(*) from erp_stock_counts where status = 'open' and due_date <= (now() at time zone 'Asia/Kolkata')::date)::int as due,
+        select (select count(*) from erp_stock_counts where status = 'open' and due_date <= (now() at time zone ${APP_TIMEZONE})::date)::int as due,
                (select count(*) from erp_stock_counts where recount_of_id is null and status in ('flagged', 'investigating'))::int as flags,
                (select count(*) from erp_stock_adjustments where status = 'pending')::int as adj
       `) as unknown as Promise<{ due: number; flags: number; adj: number }[]>).then((r) => {

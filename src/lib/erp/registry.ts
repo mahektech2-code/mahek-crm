@@ -154,7 +154,7 @@ export const ERP_GROUPS: ErpGroup[] = [
         v("allUnits", "Every box"),
       ]),
       s("transfers", "transfers", "Item transfers", "Stock moved between godowns, including write-offs to Item Lost Record.", true),
-      s("rmLevels", "rm-levels", "Raw-material levels", "Minimum and maximum per godown. Raise a requisition from any item below its minimum.", true, [
+      s("rmLevels", "rm-levels", "Raw-material levels", "Minimum and maximum per godown. Raise a purchase requirement from any item below its minimum.", true, [
         v("reorderRm", "Below minimum"),
         v("rmLevels", "All levels"),
       ]),

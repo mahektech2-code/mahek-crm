@@ -151,7 +151,7 @@ export function MultiSelect({
         aria-expanded={open}
         onClick={() => (open ? close() : place())}
         className={cx(
-          "flex h-8.5 items-center gap-1.5 rounded-[4px] border bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand",
+          "flex h-8.5 items-center gap-1.5 rounded-control border bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand",
           open ? "border-brand" : "border-line",
           className,
         )}
@@ -179,7 +179,7 @@ export function MultiSelect({
               aria-label={label}
               aria-multiselectable="true"
               style={{ top: at.top, left: at.left, width: at.width }}
-              className="animate-fade-in fixed z-[95] flex max-h-[320px] flex-col overflow-hidden rounded-[6px] border border-line bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
+              className="animate-fade-in fixed z-[95] flex max-h-[320px] flex-col overflow-hidden rounded-card border border-line bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
             >
               {options.length > SEARCH_THRESHOLD ? (
                 <input
@@ -211,7 +211,7 @@ export function MultiSelect({
                       type="checkbox"
                       checked={selected.includes(o.value)}
                       onChange={() => toggle(o.value)}
-                      className="h-[15px] w-[15px] flex-none accent-[#6835FB]"
+                      className="h-[15px] w-[15px] flex-none accent-brand"
                     />
                     <span className="truncate">{o.label}</span>
                   </label>

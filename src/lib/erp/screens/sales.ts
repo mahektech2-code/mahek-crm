@@ -45,7 +45,7 @@ import { erpLink } from "../registry";
 import { issuedCreditNotes } from "./complaints";
 import { godownIdByName, godownOptions, has, inTx, refuse, today, type Col } from "./common";
 import { markDispatched, scanGateFor, scannedOnAllocation } from "../dispatch";
-import { erpLabelsHref, erpTraceHref } from "../trace-links";
+import { erpDispatchHref, erpLabelsHref, erpTraceHref, orderTraceCode } from "../trace-links";
 import { loadCustomers, partyStatus, type CustomerRow } from "./masters";
 
 /* ---------------------------------------------------------------------------
@@ -384,10 +384,24 @@ async function allocateForm(ctx: ErpContext, id: string): Promise<FormSpec | nul
 
 type Scope = "orders" | "pendingOrders" | "readyOrders" | "labels";
 
+/**
+ * The two lists' own rules, said ONCE: the Pending and Ready tabs, their
+ * sidebar badges and the dashboard all read these, so a badge cannot count a
+ * different set from the list it opens.
+ */
+export function isPendingLine(l: OrderLine, detailedOrders: Set<number>): boolean {
+  return l.o.status !== "Cancel" && l.sku.name !== "Empty Drum" && !detailedOrders.has(l.o.orderNo);
+}
+
+/** Being worked on: Ready or Under Process, and not yet done. Also the Labels tab's rows. */
+export function isWorkingLine(l: OrderLine): boolean {
+  return (l.o.status === "Ready" || l.o.status === "Under Process") && l.o.entryStatus !== "Done";
+}
+
 function inScope(scope: Scope, l: OrderLine, detailedOrders: Set<number>): boolean {
   if (scope === "orders") return true;
-  if (scope === "pendingOrders") return l.o.status !== "Cancel" && l.sku.name !== "Empty Drum" && !detailedOrders.has(l.o.orderNo);
-  return (l.o.status === "Ready" || l.o.status === "Under Process") && l.o.entryStatus !== "Done";
+  if (scope === "pendingOrders") return isPendingLine(l, detailedOrders);
+  return isWorkingLine(l);
 }
 
 function orderList(scope: Scope): ScreenModule {
@@ -460,7 +474,6 @@ function orderList(scope: Scope): ScreenModule {
           agg: { k: "labels", l: "labels" },
           godownKey: "godown",
           readOnly: labels,
-          download: labels,
           sortDefault: labels ? ["sku", 1] : undefined,
           bulk: bulk.length ? bulk : undefined,
           newForm: labels ? undefined : await orderForm(ctx),
@@ -485,10 +498,10 @@ function orderList(scope: Scope): ScreenModule {
                 { id: "edit", l: "Edit", loadsForm: true },
                 { id: "more", l: "ADD More", loadsForm: true },
                 { id: "select", l: "Select Order Number", href: erpLink(scope, { f: (byNo.get(l.o.orderNo) ?? []).join(","), fl: `Order ${l.o.orderNo}` }) },
-                { id: "customer", l: "View customer", href: `/erp/customers?open=${l.billing.id}` },
-                ...(l.o.status === "Ready" && !l.dispatched ? [{ id: "scan", l: "Scan boxes at dispatch", href: `/erp/dispatch?order=${l.o.orderNo}` } as ActionSpec] : []),
+                { id: "customer", l: "View customer", href: erpLink("customers", { open: l.billing.id }) },
+                ...(l.o.status === "Ready" && !l.dispatched ? [{ id: "scan", l: "Scan boxes at dispatch", href: erpDispatchHref(l.o.orderNo) } as ActionSpec] : []),
                 ...(l.o.status !== "Cancel" ? [{ id: "labels", l: "Print dispatch labels", href: erpLabelsHref({ order: l.o.orderNo }) } as ActionSpec] : []),
-                { id: "trace", l: "Trace this order", href: erpTraceHref(`ORDER-${l.o.orderNo}`) },
+                { id: "trace", l: "Trace this order", href: erpTraceHref(orderTraceCode(l.o.orderNo)) },
                 {
                   id: "delete",
                   l: "Delete",
@@ -1100,7 +1113,7 @@ const orderDetails: ScreenModule = {
         godownKey: "godown",
         bulk: [
           { id: "verify", l: "Do Verified", prompt: { title: "Dispatch date", sub: "Marks every selected line Verified and Dispatched.", submit: "Verify", fields: [{ k: "date", l: "Dispatch date", t: "date", req: true }], init: { date: today() } } },
-          { id: "extra", l: "Extra Expenses", prompt: { title: "Enter Extra Expenses", submit: "Save", fields: [{ k: "amount", l: "Extra expenses (₹)", t: "num", req: true, min: 0 }] } },
+          { id: "extra", l: "Extra expenses", prompt: EXTRA_EXPENSE_PROMPT },
         ],
         noDataLine: "Nothing in order details yet. A Ready, Done, fully allocated line with a bill no. and a rate is added from the order lists.",
       },
@@ -1125,19 +1138,19 @@ const orderDetails: ScreenModule = {
               why: d.verification === "Verified" ? "Already verified" : !l.allocations ? "No lot is allocated to this line" : l.allocation !== "Done" ? `Allocation: ${l.allocation}` : gate ? `Boxes to scan: ${gate}` : "",
               prompt: { title: "Dispatch date", sub: `Order ${l.o.orderNo} · ${l.sku.name}`, submit: "Verify", fields: [{ k: "date", l: "Dispatch date", t: "date", req: true }], init: { date: today() } },
             },
-            ...(ctx.administrator && d.verification !== "Not Verify" ? [{ id: "notVerify", l: "Not Verify", confirm: "Mark this line Not Verify?" } as ActionSpec] : []),
+            ...(ctx.administrator && d.verification !== "Not Verify" ? [{ id: "notVerify", l: "Mark not verified", confirm: "Mark this line not verified?" } as ActionSpec] : []),
             {
               id: "extra",
-              l: "Extra Expenses",
+              l: "Extra expenses",
               why: d.extraExpensesPaise != null ? "Already entered" : "",
-              prompt: { title: "Enter Extra Expenses", submit: "Save", fields: [{ k: "amount", l: "Extra expenses (₹)", t: "num", req: true, min: 0 }] },
+              prompt: EXTRA_EXPENSE_PROMPT,
             },
             { id: "gst", l: "Change GST", why: d.verification === "Verified" ? "The line has been dispatch-verified" : "", prompt: { title: "GST", submit: "Save", fields: [{ k: "gst", l: "GST", t: "select", req: true, opts: ["18%", "0%"] }], init: { gst: d.gstBp ? "18%" : "0%" } } },
             { id: "select", l: "Select Order Number", href: erpLink("orderDetails", { f: (byNo.get(l.o.orderNo) ?? []).join(","), fl: `Order ${l.o.orderNo}` }) },
             { id: "view", l: "View order", href: erpLink("orders", { open: l.o.id }) },
-            { id: "scan", l: gate ? "Scan its boxes" : "Dispatch desk", primary: !!gate, href: `/erp/dispatch?order=${l.o.orderNo}` },
+            { id: "scan", l: gate ? "Scan its boxes" : "Dispatch desk", primary: !!gate, href: erpDispatchHref(l.o.orderNo) },
             { id: "stickers", l: "Print dispatch labels", href: erpLabelsHref({ order: l.o.orderNo }) },
-            { id: "trace", l: "Trace this order", href: erpTraceHref(`ORDER-${l.o.orderNo}`) },
+            { id: "trace", l: "Trace this order", href: erpTraceHref(orderTraceCode(l.o.orderNo)) },
           ];
           const credit = l.billing.creditDays ?? null;
           return {
@@ -1205,17 +1218,17 @@ const orderDetails: ScreenModule = {
   },
   bulk: {
     verify: (ctx, ids, values) => verify(ctx, ids, values),
-    extra: (ctx, ids, values) => extra(ctx, ids, values),
+    extra: (ctx, ids, values) => setExtraExpenses(ctx, ids, values),
   },
   actions: {
     verify: (ctx, id, values) => verify(ctx, [id], values),
-    extra: (ctx, id, values) => extra(ctx, [id], values),
+    extra: (ctx, id, values) => setExtraExpenses(ctx, [id], values),
     async notVerify(ctx, id) {
-      if (!ctx.administrator) return err("Only an administrator marks a line Not Verify.", "not_permitted");
+      if (!ctx.administrator) return err("Only an administrator marks a line not verified.", "not_permitted");
       await db.update(erpOrderDetails).set({ verification: "Not Verify", updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpOrderDetails.orderId, id));
       await erpAudit(ctx, "erp.detail.notVerify", "erp_order_detail", id);
       await syncBookOrders(await orderNosOf([id]));
-      return okVoid("Marked Not Verify");
+      return okVoid("Marked not verified");
     },
     async gst(ctx, id, values) {
       const gst = values.gst === "0%" ? 0 : values.gst === "18%" ? 1800 : null;
@@ -1285,7 +1298,19 @@ async function verify(ctx: ErpContext, ids: string[], values: Record<string, str
   return okVoid(go.length < ids.length ? `${plural(go.length)} verified · ${ids.length - go.length} not ready to verify${unscanned.length ? ` (${unscanned.length} still to scan)` : ""}` : `${plural(go.length)} verified and dispatched`);
 }
 
-async function extra(ctx: ErpContext, ids: string[], values: Record<string, string>): Promise<Result<unknown>> {
+/** Asked wherever a line's extra expenses are entered: Orders → Billing & dispatch and Logistics → Paid freight. */
+export const EXTRA_EXPENSE_PROMPT: NonNullable<ActionSpec["prompt"]> = {
+  title: "Enter extra expenses",
+  submit: "Save",
+  fields: [{ k: "amount", l: "Extra expenses (₹)", t: "num", req: true, min: 0 }],
+};
+
+/**
+ * ONE writer for a line's extra expenses, whichever screen it is entered on.
+ * The bill's transport record carries the same figure (copied when it opened),
+ * so it is written there too — Orders used to skip that half.
+ */
+export async function setExtraExpenses(ctx: ErpContext, ids: string[], values: Record<string, string>): Promise<Result<unknown>> {
   const amount = paise(values.amount);
   if (amount == null || amount < 0) return fieldErr("amount", "Extra expenses are required");
   const res = await db
@@ -1294,6 +1319,7 @@ async function extra(ctx: ErpContext, ids: string[], values: Record<string, stri
     .where(and(inArray(erpOrderDetails.orderId, ids), sql`${erpOrderDetails.extraExpensesPaise} is null`))
     .returning({ id: erpOrderDetails.orderId });
   if (!res.length) return err("Extra expenses are already entered on these lines.", "rule_violation");
+  await db.execute(sql`update erp_transports t set extra_expense_paise = ${amount} where t.id in ${res.map((r) => r.id)} and t.extra_expense_paise is null`);
   await erpAudit(ctx, "erp.detail.extra", "erp_order_detail", res.map((r) => r.id).join(","), null, { amount });
   return okVoid(`Extra expenses on ${plural(res.length)}`);
 }

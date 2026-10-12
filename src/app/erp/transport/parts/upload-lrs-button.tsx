@@ -47,22 +47,22 @@ export function UploadLrsButton({
         Upload LRs
       </Button>
       <Modal open={open} onClose={close} title="Upload LRs" width={900}>
-        <p className="mb-3 text-[13px] text-muted">
+        <p className="mb-3 text-meta text-muted">
           {canRead
             ? "Photograph each lorry receipt collected from the transporters. Its number, date, transporter and the rest are read off the photo — check them before uploading. Logistics attaches them to the bills and the customer is told."
             : "Photograph each lorry receipt collected from the transporters and type its number. Logistics attaches them to the bills and the customer is told."}
         </p>
         <LrUpload today={today} transporters={transporters} canRead={canRead} />
-        <h3 className="mt-6 mb-2 text-[13px] font-semibold text-ink">Uploaded lately</h3>
-        <div className="max-h-[260px] overflow-y-auto rounded-[4px] border border-line">
+        <h3 className="mt-6 mb-2 text-meta font-semibold text-ink">Uploaded lately</h3>
+        <div className="max-h-[260px] overflow-y-auto rounded-control border border-line">
           {recent.length ? (
             recent.map((l) => (
               <div key={l.id} className="flex items-center gap-3 border-b border-divider px-3 py-2 text-sm last:border-0">
                 <LrThumb fileId={l.fileId} size={32} />
                 <span className={l.lrNo ? "w-[150px] truncate font-mono font-medium" : "w-[150px] truncate text-muted"}>{lrUploadName(l.lrNo)}</span>
                 <span className="min-w-0 flex-1 truncate text-body">{[l.transporter, l.destination].filter(Boolean).join(" · ") || "—"}</span>
-                <span className="w-[70px] text-[13px] text-muted">{l.lrDate ? shortDay(l.lrDate) : "—"}</span>
-                <span className="w-[120px] truncate text-[12px] text-muted">by {l.uploadedBy ?? "—"}</span>
+                <span className="w-[70px] text-meta text-muted">{l.lrDate ? shortDay(l.lrDate) : "—"}</span>
+                <span className="w-[120px] truncate text-xs text-muted">by {l.uploadedBy ?? "—"}</span>
                 {l.status === "assigned" ? <Badge tone="success">Attached to {l.bills} bill{l.bills === 1 ? "" : "s"}</Badge> : <Badge tone="warn">Waiting for logistics</Badge>}
               </div>
             ))

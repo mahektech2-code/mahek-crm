@@ -51,9 +51,9 @@ export function Pager({
             key={n}
             onClick={() => onPerPage(n)}
             className={cx(
-              "h-7 cursor-pointer rounded-[4px] border px-2.5 text-[13px]",
+              "h-7 cursor-pointer rounded-control border px-2.5 text-[13px]",
               perPage === n
-                ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
+                ? "border-brand bg-brand-soft font-medium text-brand-hover"
                 : "border-line bg-surface text-body hover:bg-canvas",
             )}
           >
@@ -105,7 +105,7 @@ function PageButton({
       disabled={!enabled}
       title={enabled ? undefined : disabledTitle}
       className={cx(
-        "h-7 rounded-[4px] border border-line bg-surface px-2.5 text-[13px]",
+        "h-7 rounded-control border border-line bg-surface px-2.5 text-[13px]",
         enabled ? "cursor-pointer text-body hover:bg-canvas" : "cursor-not-allowed text-line-strong",
       )}
     >

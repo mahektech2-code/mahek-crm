@@ -1,4 +1,5 @@
 import "server-only";
+import { APP_TIMEZONE } from "@/lib/business-date";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { erpStockCounts } from "@/db/schema";
@@ -455,7 +456,7 @@ export async function planCycleCounts(byId: string | null = null): Promise<Cycle
       ) m group by 1, 2`),
     q<{ rm: string; godown: string; last: string | null; wrong: number; open: number }>(sql`
       select raw_material_id as rm, godown_id as godown,
-             max((counted_at at time zone 'Asia/Kolkata')::date)::text as last,
+             max((counted_at at time zone ${APP_TIMEZONE})::date)::text as last,
              count(*) filter (where recount_of_id is null and created_at >= now() - interval '90 days'
                               and (status in ('flagged', 'recount', 'investigating') or resolution in ('adjusted', 'missing_entry')))::int as wrong,
              count(*) filter (where status = 'open')::int as open
@@ -515,7 +516,7 @@ export async function openGodownCounts(godownId: string, kind: "full" | "event",
 /** When the last comprehensive count finished, and whether the next is due. */
 export async function fullCountDue(): Promise<{ last: string | null; due: boolean; everyDays: number }> {
   const every = (await getConfig())["erp.stockCheck.fullCountDays"];
-  const [r] = await q<{ last: string | null }>(sql`select max((created_at at time zone 'Asia/Kolkata')::date)::text as last from erp_stock_counts where kind = 'full'`);
+  const [r] = await q<{ last: string | null }>(sql`select max((created_at at time zone ${APP_TIMEZONE})::date)::text as last from erp_stock_counts where kind = 'full'`);
   const last = r?.last ?? null;
   if (every <= 0) return { last, due: false, everyDays: every };
   const due = !last || (Date.parse(`${today()}T00:00:00Z`) - Date.parse(`${last}T00:00:00Z`)) / 86_400_000 >= every;

@@ -5,7 +5,7 @@ Transport is four list modules in `screens/logistics.ts`: `transportList` built 
 | Layer | File | What lives there |
 |---|---|---|
 | Registry | `src/lib/erp/registry.ts` | `transport` screen with views `pendingLr`, `trackLr`, `transport`, `paidFreight` |
-| Screens | `src/lib/erp/screens/logistics.ts` | `MATERIAL_STAGES`, `onTheRoad`, `transportList`, `paidFreight`, `setExtra` (also `myCustomers` and `videos`, documented elsewhere) |
+| Screens | `src/lib/erp/screens/logistics.ts` | `MATERIAL_STAGES`, `onTheRoad`, `transportList`, `paidFreight` (also `myCustomers` and `videos`, documented elsewhere) |
 | Record opened | `src/lib/erp/screens/sales.ts` | `verify` inserts `erp_transports` with `onConflictDoNothing` |
 | LR photo reading | `src/lib/erp/ai-photos.ts` | `readLr`, `recordLrReading`, `lrReviewForm`, `applyLr`, `rejectPhotoReading` |
 | Gate | `src/lib/erp/ai.ts` | `featureState("photos", true)`, `pendingFor("photos")` |
@@ -46,9 +46,11 @@ The `update` action still writes `track_status` (`Track` / `Don't Track`) from `
 
 ## Paid freight
 
-<Code file="src/lib/erp/screens/logistics.ts" symbol="setExtra" />
+<Code file="src/lib/erp/screens/sales.ts" symbol="setExtraExpenses" />
 
-`paidFreight.load` reads `detailRows()` from `screens/sales.ts` and keeps lines whose billing party's `freightTerm` is `Paid` and whose `extra_expenses_paise` is null.
+`paidFreight.load` reads `detailRows()` from `screens/sales.ts` and keeps lines whose billing party's `freightTerm` is `Paid` and whose `extra_expenses_paise` is null. Its columns go through `visibleCols`, so Payment type is hidden without the cost power exactly as it is on Orders → Billing & dispatch.
+
+Extra expenses are written by ONE function, `setExtraExpenses`, whichever screen they are entered on: it writes the order-details line and the bill's transport record together, and both screens ask with the same `EXTRA_EXPENSE_PROMPT`. Orders used to have its own copy that skipped the transport record.
 
 ## Reading an LR
 

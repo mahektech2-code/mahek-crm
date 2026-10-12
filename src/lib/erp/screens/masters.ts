@@ -1,4 +1,5 @@
 import "server-only";
+import { has, type Col } from "./common";
 import { and, asc, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -22,7 +23,6 @@ import {
 import { err, fieldErr, okVoid } from "@/lib/result";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import type { ErpContext } from "../access";
-import type { ErpPower } from "../powers";
 import {
   BOX_TYPES,
   DELIVERY_TYPES,
@@ -60,10 +60,6 @@ import { OWNERSHIP_LABEL, ownershipByLabel, type DrumOwnership } from "../engine
  * Masters (spec §4): raw materials, suppliers, products, customers, godowns,
  * price lists, employees, the ERP powers and the reference lists.
  * ------------------------------------------------------------------------- */
-
-type Col = ColSpec & { pw?: ErpPower };
-
-const has = (ctx: ErpContext) => (p: string) => ctx.powers.has(p as ErpPower);
 
 export function phoneContacts(phone: string | null | undefined, email?: string | null) {
   const out: { l: string; href: string }[] = [];

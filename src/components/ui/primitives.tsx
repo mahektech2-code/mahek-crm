@@ -12,7 +12,7 @@ type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "dark";
 type ButtonSize = "sm" | "md";
 
 const BUTTON_BASE =
-  "inline-flex items-center justify-center gap-2 rounded-[4px] font-medium " +
+  "inline-flex items-center justify-center gap-2 rounded-control font-medium " +
   "whitespace-nowrap transition-colors duration-100 disabled:cursor-not-allowed";
 
 const BUTTON_VARIANTS: Record<ButtonVariant, string> = {
@@ -71,7 +71,7 @@ export type Tone =
 
 const BADGE_TONES: Record<Tone, string> = {
   neutral: "bg-divider text-body",
-  brand: "bg-brand-soft text-[#5223E0]",
+  brand: "bg-brand-soft text-brand-hover",
   success: "bg-success-soft text-success",
   warn: "bg-warn-soft text-warn-ink",
   danger: "bg-danger-soft text-danger",
@@ -140,7 +140,7 @@ export function Card({
     <div
       {...rest}
       className={cx(
-        "rounded-[6px] border border-line bg-surface",
+        "rounded-card border border-line bg-surface",
         className,
       )}
     >
@@ -492,7 +492,7 @@ export function Callout({
   children,
   className,
 }: {
-  tone?: "warn" | "danger" | "brand";
+  tone?: "warn" | "danger" | "brand" | "success";
   children: React.ReactNode;
   className?: string;
 }) {
@@ -500,11 +500,12 @@ export function Callout({
     warn: "border-warn-line bg-warn-soft border-l-[3px] border-l-warn",
     danger: "border-danger-soft bg-danger-soft border-l-[3px] border-l-danger",
     brand: "border-brand-softer bg-brand-soft border-l-[3px] border-l-brand",
+    success: "border-success-soft bg-success-soft border-l-[3px] border-l-success",
   };
   return (
     <div
       className={cx(
-        "mb-4 flex items-center gap-3 rounded-[4px] border px-4 py-2.5",
+        "mb-4 flex items-center gap-3 rounded-control border px-4 py-2.5",
         tones[tone],
         className,
       )}
@@ -546,7 +547,7 @@ export function Field({
 }
 
 const CONTROL =
-  "w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink " +
+  "w-full rounded-control border border-line bg-surface px-2.5 text-sm text-ink " +
   "outline-none focus:border-brand";
 
 export function Input({
@@ -571,7 +572,7 @@ export function Select({
     <select
       {...props}
       className={cx(
-        "rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand",
+        "rounded-control border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand",
         "h-8.5 max-w-full",
         className,
       )}
@@ -611,7 +612,7 @@ export function Checkbox({
       <input
         {...props}
         type="checkbox"
-        className="h-[15px] w-[15px] accent-[#6835FB]"
+        className="h-[15px] w-[15px] accent-brand"
       />
       {label}
     </label>
@@ -630,7 +631,7 @@ export function Radio({
       <input
         {...props}
         type="radio"
-        className="h-[15px] w-[15px] accent-[#6835FB]"
+        className="h-[15px] w-[15px] accent-brand"
       />
       {label}
     </label>
@@ -646,7 +647,7 @@ export function MoneyInput({
   return (
     <span
       className={cx(
-        "flex h-8.5 items-center rounded-[4px] border bg-surface px-2.5 focus-within:border-brand",
+        "flex h-8.5 items-center rounded-control border bg-surface px-2.5 focus-within:border-brand",
         invalid ? "border-danger" : "border-line",
         className,
       )}

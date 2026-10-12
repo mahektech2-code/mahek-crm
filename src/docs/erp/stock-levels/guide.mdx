@@ -31,7 +31,7 @@ The numbers on this page that come from settings — how far back the suggestion
   />
   <WfPanel title="Toluene" side>
     <WfText muted>Godown A · Chemical · buy 480 to reach the maximum</WfText>
-    <WfBar><WfButton primary>Raise requisition</WfButton><Hotspot n={5} /></WfBar>
+    <WfBar><WfButton primary>Raise requirement</WfButton><Hotspot n={5} /></WfBar>
   </WfPanel>
 </Wireframe>
 
@@ -40,7 +40,7 @@ The numbers on this page that come from settings — how far back the suggestion
   <span key="2"><b>Groups.</b> Rows are grouped by godown and by material type, and the list follows your working godown when you pick one.</span>,
   <span key="3"><b>Re-order %.</b> How far the stock is from the middle of its minimum and maximum. Zero is exactly in the middle; a negative figure is below it. The most short rows sit at the top.</span>,
   <span key="4"><b>Below level.</b> The red flag on any followed row that needs buying.</span>,
-  <span key="5"><b>Raise requisition.</b> Opens a new purchase requirement with the godown, the item and the quantity to buy already filled in.</span>,
+  <span key="5"><b>Raise requirement.</b> Opens a new purchase requirement with the godown, the item and the quantity to buy already filled in.</span>,
 ]} />
 
 ## The tabs
@@ -102,7 +102,7 @@ From any row's menu on **All levels** you can also:
 <Step title="Open the row on Below minimum">
 Or any row on **All levels** that has a **Required** figure.
 </Step>
-<Step title="Press Raise requisition">
+<Step title="Press Raise requirement">
 A new purchase requirement opens with the **godown**, **material type**, **item** and **quantity** filled in. The quantity is what you need to reach the maximum. The priority is set to **For Stock**, and the department is the team that buys that kind of material (or your own, if you only raise for one team).
 </Step>
 <Step title="Check it and save">
@@ -111,7 +111,7 @@ Change the quantity if you want to buy more or less. From here it is an ordinary
 </Steps>
 
 <Callout kind="note">
-Finished goods have no **Raise requisition** button. A short SKU is made, not bought — it goes to production, not to purchase.
+Finished goods have no **Raise requirement** button. A short SKU is made, not bought — it goes to production, not to purchase.
 </Callout>
 
 ## Suggested levels

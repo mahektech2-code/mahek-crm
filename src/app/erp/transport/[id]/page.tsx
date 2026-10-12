@@ -1,14 +1,16 @@
 import Link from "next/link";
+import { stamp } from "@/lib/format";
+import { erpLink } from "@/lib/erp/registry";
 import { notFound, redirect } from "next/navigation";
 import { erpContext } from "@/lib/erp/access";
 import { getConfig } from "@/lib/config/store";
 import { PHASE_LABEL, shortDay, STAGE_SHORT, stageStep, STAGES, trackingLink } from "@/lib/erp/engines/logistics";
 import { billLines, consignments, consignmentsOnLr, eventsFor, messages } from "@/lib/erp/logistics";
 import { today as businessToday } from "@/lib/erp/screens/common";
-import { erpTraceHref } from "@/lib/erp/trace-links";
+import { erpTraceHref, orderTraceCode } from "@/lib/erp/trace-links";
 import { CardGrid } from "@/components/ui/card-grid";
 import { Badge, Card } from "@/components/ui/primitives";
-import { Page } from "../../_ui/page-head";
+import { Page, PageLinks } from "../../_ui/page-head";
 import { CallLink, LrThumb, StageStrip } from "../parts/common";
 import { Messages } from "../parts/messages";
 import { OnRoad } from "../parts/on-road";
@@ -48,7 +50,7 @@ export default async function ConsignmentPage({ params }: { params: Promise<{ id
 
   const fact = (l: string, v: React.ReactNode) => (
     <div>
-      <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">{l}</div>
+      <div className="text-2xs font-medium tracking-[0.04em] text-muted uppercase">{l}</div>
       <div className="mt-0.5 text-sm text-ink">{v ?? "—"}</div>
     </div>
   );
@@ -58,10 +60,10 @@ export default async function ConsignmentPage({ params }: { params: Promise<{ id
       title={`${c.billNo ?? `Order ${c.orderNo}`} · ${c.deliveryParty}`}
       sub={`${PHASE_LABEL[c.phase]} · ${STAGE_SHORT[STAGES[stageStep(c.stage)]]}`}
       actions={
-        <div className="flex gap-3 text-[13px]">
-          <Link href="/erp/transport">← Logistics</Link>
-          <Link href={erpTraceHref(`ORDER-${c.orderNo}`)}>Trace</Link>
-        </div>
+        <PageLinks>
+          <Link href={erpLink("transport")}>← Logistics</Link>
+          <Link href={erpTraceHref(orderTraceCode(c.orderNo))}>Trace</Link>
+        </PageLinks>
       }
     >
       <div className="grid grid-cols-[minmax(0,1fr)_minmax(300px,380px)] items-start gap-4">
@@ -91,18 +93,18 @@ export default async function ConsignmentPage({ params }: { params: Promise<{ id
             <Card className="px-4 py-3 text-sm">
               {c.phase === "toTransport" ? (
                 <>
-                  On its way to the transporter. <Link href="/erp/transport?view=toTransport">Plan or mark it reached on To transporter →</Link>
+                  On its way to the transporter. <Link href={erpLink("toTransport")}>Plan or mark it reached on To transporter →</Link>
                 </>
               ) : (
                 <>
-                  At the transporter, waiting for its LR. <Link href="/erp/transport?view=pendingLr">Attach it on the LR desk →</Link>
+                  At the transporter, waiting for its LR. <Link href={erpLink("pendingLr")}>Attach it on the LR desk →</Link>
                 </>
               )}
             </Card>
           )}
 
           <Card className="overflow-hidden">
-            <div className="border-b border-divider px-4 py-3 text-[15px] font-semibold text-ink">On this bill</div>
+            <div className="border-b border-divider px-4 py-3 text-md font-semibold text-ink">On this bill</div>
             {lines.map((l) => (
               <div key={l.id} className="flex items-center gap-3 border-b border-divider px-4 py-2 text-sm last:border-0">
                 <span className="min-w-0 flex-1 truncate">{l.sku}</span>
@@ -113,7 +115,7 @@ export default async function ConsignmentPage({ params }: { params: Promise<{ id
           </Card>
 
           <div>
-            <h2 className="mb-2 text-[15px] font-semibold text-ink">What the customer was told</h2>
+            <h2 className="mb-2 text-md font-semibold text-ink">What the customer was told</h2>
             <Messages rows={msgs} canWrite={!ctx.viewingAs} wati={cfg["erp.logistics.watiTemplate"].trim() || null} />
           </div>
         </div>
@@ -123,11 +125,11 @@ export default async function ConsignmentPage({ params }: { params: Promise<{ id
             <Card className="flex gap-3 p-4">
               <LrThumb fileId={c.lrFileId} size={84} />
               <div className="min-w-0">
-                <div className="font-mono text-[15px] font-semibold text-ink">LR {c.lrNo}</div>
-                <div className="text-[12px] text-muted">{c.lrDate ? shortDay(c.lrDate) : ""}</div>
-                {siblings.length > 1 ? <div className="mt-1 text-[12px] text-body">Carries {siblings.length} bills: {siblings.map((s) => s.billNo ?? s.orderNo).join(", ")}</div> : null}
+                <div className="font-mono text-md font-semibold text-ink">LR {c.lrNo}</div>
+                <div className="text-xs text-muted">{c.lrDate ? shortDay(c.lrDate) : ""}</div>
+                {siblings.length > 1 ? <div className="mt-1 text-xs text-body">Carries {siblings.length} bills: {siblings.map((s) => s.billNo ?? s.orderNo).join(", ")}</div> : null}
                 {online ? (
-                  <a href={online} target="_blank" rel="noreferrer" className="mt-1 block text-[12px]">
+                  <a href={online} target="_blank" rel="noreferrer" className="mt-1 block text-xs">
                     Track on {c.transporter}&apos;s site ↗
                   </a>
                 ) : null}
@@ -136,16 +138,16 @@ export default async function ConsignmentPage({ params }: { params: Promise<{ id
           ) : null}
           {c.trackToken ? <TrackLinkCopy token={c.trackToken} /> : null}
           <Card className="overflow-hidden">
-            <div className="border-b border-divider px-4 py-3 text-[15px] font-semibold text-ink">Timeline</div>
+            <div className="border-b border-divider px-4 py-3 text-md font-semibold text-ink">Timeline</div>
             {events.length ? (
               <ol className="relative px-4 py-3">
                 {events.map((e) => (
                   <li key={e.id} className="relative border-l border-line pb-4 pl-4 last:pb-0">
                     <span className={`absolute top-1 -left-[5px] h-2.5 w-2.5 rounded-full ${e.kind === "issue" ? "bg-danger" : e.kind === "delivered" ? "bg-success" : "bg-brand"}`} />
                     <div className="text-sm font-medium text-ink">{KIND[e.kind] ?? e.kind}</div>
-                    {e.note ? <div className="text-[13px] text-body">{e.note}</div> : null}
-                    <div className="text-[11px] text-muted">
-                      {new Date(e.at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}
+                    {e.note ? <div className="text-meta text-body">{e.note}</div> : null}
+                    <div className="text-2xs text-muted">
+                      {stamp(e.at)}
                       {e.by ? ` · ${e.by}` : ""}
                       {!e.shared ? " · not shown to the customer" : ""}
                     </div>

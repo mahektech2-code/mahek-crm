@@ -29,7 +29,7 @@ import { lockLot, rmLots } from "../stock";
 import { checkableItems, floorCheckRows, recordFloorCheck, STAGE_LABEL, type CheckStage, type FloorCheckRow } from "../floor-checks";
 import type { ActionSpec, ColSpec, FieldSpec, ListRow } from "../ui";
 import { nf } from "../ui";
-import { godownOptions, inTx, materials, refuse, type Tx } from "./common";
+import { godownOptions, inTx, isErpManager, materials, refuse, type Tx } from "./common";
 import { requirementLabel } from "../engines/purchase-flow";
 
 /* ---------------------------------------------------------------------------
@@ -49,7 +49,7 @@ const r3 = (x: number) => Math.round(x * 1000) / 1000;
 const signed = (x: number) => (x > 0 ? `+${nf(x)}` : nf(x));
 
 /** Runs the day: opens counts, cancels them. Somebody with `stockControl`, or a manager. */
-const runsCounts = (ctx: ErpContext) => ctx.administrator || ctx.level === "manager" || ctx.powers.has("stockControl");
+const runsCounts = (ctx: ErpContext) => isErpManager(ctx) || ctx.powers.has("stockControl");
 const controls = (ctx: ErpContext) => ctx.powers.has("stockControl");
 
 type CountRow = {

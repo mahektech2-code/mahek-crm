@@ -1,4 +1,5 @@
 import "server-only";
+import { isErpManager } from "./common";
 import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { erpRawMaterials, erpRecipes, productFormulations, users } from "@/db/schema";
@@ -60,7 +61,7 @@ export async function recipeLinesByProduct(): Promise<Record<string, Record<stri
   return out;
 }
 
-const mayWrite = (ctx: { administrator: boolean; level: string | null }) => ctx.administrator || ctx.level === "manager";
+const mayWrite = isErpManager;
 
 export const recipesScreen: ScreenModule = {
   key: "recipes",

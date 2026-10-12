@@ -1,37 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
-import { Badge, cx } from "@/components/ui/primitives";
-import { useToast } from "@/components/ui/toast";
+import { erpBillRoadHref } from "@/lib/erp/trace-links";
+import { useState } from "react";
+import { Modal } from "@/components/ui/modal";
+import { phoneDisplay } from "@/lib/format";
+import { Icon } from "../../_ui/icons";
+import { Badge, Button, cx, Textarea } from "@/components/ui/primitives";
 import { dueWord, STAGES, STAGE_SHORT, stageStep, type Stage } from "@/lib/erp/engines/logistics";
 import type { Consignment } from "@/lib/erp/logistics";
-import type { Result } from "@/lib/result";
 
 /* ---------------------------------------------------------------------------
  * What every tab of the Logistics desk draws the same way: the stage strip,
- * the due pill, the LR thumbnail, the call link, and the one way a button
- * runs a write — toast the answer, refresh the page.
+ * the due pill, the LR thumbnail and the call link. A button's write goes
+ * through the ERP's one `useAct` (re-exported here).
  * ------------------------------------------------------------------------- */
 
-export function useAct() {
-  const router = useRouter();
-  const { push } = useToast();
-  const [pending, start] = useTransition();
-  const run = <T,>(fn: () => Promise<Result<T>>, after?: (r: Result<T>) => void) =>
-    new Promise<Result<T>>((resolve) =>
-      start(async () => {
-        const r = await fn();
-        if (r.ok) push(r.message ?? "Saved");
-        else push(r.fieldErrors?.[0]?.message ?? r.error, "error");
-        after?.(r);
-        router.refresh();
-        resolve(r);
-      }),
-    );
-  return { run, pending };
-}
+export { useAct } from "../../_ui/use-act";
 
 /** The six steps of a consignment, the current one filled. */
 export function StageStrip({ stage, compact = false }: { stage: string; compact?: boolean }) {
@@ -49,7 +34,7 @@ export function StageStrip({ stage, compact = false }: { stage: string; compact?
           />
         </span>
       ))}
-      {!compact ? <span className="ml-2 text-[12px] font-medium whitespace-nowrap text-body">{STAGE_SHORT[STAGES[at] as Stage]}</span> : null}
+      {!compact ? <span className="ml-2 text-xs font-medium whitespace-nowrap text-body">{STAGE_SHORT[STAGES[at] as Stage]}</span> : null}
     </div>
   );
 }
@@ -66,13 +51,11 @@ export function DuePill({ day, today, prefix }: { day: string | null; today: str
 }
 
 export function CallLink({ phone, name }: { phone: string | null; name: string | null }) {
-  if (!phone) return <span className="text-[12px] text-muted">{name ? "No number — add it under Transporters" : "No transporter"}</span>;
+  if (!phone) return <span className="text-xs text-muted">{name ? "No number — add it under Transporters" : "No transporter"}</span>;
   return (
-    <a href={`tel:${phone.replace(/[^\d+]/g, "")}`} className="inline-flex items-center gap-1 text-[13px] font-medium">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z" />
-      </svg>
-      {phone}
+    <a href={`tel:${phone.replace(/[^\d+]/g, "")}`} className="inline-flex items-center gap-1 text-meta font-medium">
+      <Icon n="phone" s={13} />
+      {phoneDisplay(phone)}
     </a>
   );
 }
@@ -82,15 +65,15 @@ export function LrThumb({ fileId, size = 56 }: { fileId: string | null; size?: n
   const [broken, setBroken] = useState(false);
   if (!fileId)
     return (
-      <span style={{ width: size, height: size }} className="flex flex-none items-center justify-center rounded-[4px] border border-dashed border-line text-[10px] text-muted">
+      <span style={{ width: size, height: size }} className="flex flex-none items-center justify-center rounded-control border border-dashed border-line text-2xs text-muted">
         No photo
       </span>
     );
   const href = `/api/attachments/${fileId}`;
   return (
-    <a href={href} target="_blank" rel="noreferrer" style={{ width: size, height: size }} className="flex flex-none items-center justify-center overflow-hidden rounded-[4px] border border-line bg-canvas">
+    <a href={href} target="_blank" rel="noreferrer" style={{ width: size, height: size }} className="flex flex-none items-center justify-center overflow-hidden rounded-control border border-line bg-canvas">
       {broken ? (
-        <span className="text-[11px] font-medium">PDF</span>
+        <span className="text-2xs font-medium">PDF</span>
       ) : (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={href} alt="LR" className="h-full w-full object-cover" onError={() => setBroken(true)} />
@@ -101,7 +84,7 @@ export function LrThumb({ fileId, size = 56 }: { fileId: string | null; size?: n
 
 export function BillRef({ c }: { c: Pick<Consignment, "id" | "orderNo" | "billNo"> }) {
   return (
-    <Link href={`/erp/transport/${c.id}`} className="font-mono text-[13px]">
+    <Link href={erpBillRoadHref(c.id)} className="font-mono text-meta">
       {c.billNo ?? `Order ${c.orderNo}`}
     </Link>
   );
@@ -156,11 +139,11 @@ export function useTicks() {
 
 export function NotifyToggle({ value, onChange, disabled }: { value: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
-    <label className={cx("flex items-start gap-2 rounded-[4px] border border-line bg-canvas px-3 py-2 text-sm", disabled ? "opacity-60" : "cursor-pointer")}>
-      <input type="checkbox" checked={value && !disabled} disabled={disabled} onChange={(e) => onChange(e.target.checked)} className="mt-0.5 h-[15px] w-[15px] accent-[#6835FB]" />
+    <label className={cx("flex items-start gap-2 rounded-control border border-line bg-canvas px-3 py-2 text-sm", disabled ? "opacity-60" : "cursor-pointer")}>
+      <input type="checkbox" checked={value && !disabled} disabled={disabled} onChange={(e) => onChange(e.target.checked)} className="mt-0.5 h-[15px] w-[15px] accent-brand" />
       <span>
         <span className="font-medium text-ink">Tell the customer on WhatsApp</span>
-        <span className="block text-[12px] text-muted">{disabled ? "Customer messages are switched off in ERP settings." : "Sent through Wati where it can be; otherwise it waits under Customer messages to send by hand."}</span>
+        <span className="block text-xs text-muted">{disabled ? "Customer messages are switched off in ERP settings." : "Sent through Wati where it can be; otherwise it waits under Customer messages to send by hand."}</span>
       </span>
     </label>
   );
@@ -170,4 +153,53 @@ export function NotifyToggle({ value, onChange, disabled }: { value: boolean; on
 export function lrLabel(no: string | null | undefined): string {
   if (!no) return "No LR";
   return /^LR\b|^LR[-\s\d]/i.test(no) ? no : `LR ${no}`;
+}
+
+/**
+ * "Are you sure — and why?": the one dialog for a Logistics step that needs a
+ * reason (reopening a delivered bill, voiding an LR). The reason must be a few
+ * characters, because it is what somebody reads on the record later.
+ */
+export function ReasonDialog({
+  open,
+  title,
+  body,
+  placeholder = "Why?",
+  keepLabel,
+  confirmLabel,
+  tone = "primary",
+  pending,
+  onClose,
+  onConfirm,
+}: {
+  open: boolean;
+  title: string;
+  body: string;
+  placeholder?: string;
+  keepLabel: string;
+  confirmLabel: string;
+  tone?: "primary" | "danger";
+  pending: boolean;
+  onClose: () => void;
+  onConfirm: (reason: string) => void;
+}) {
+  const [reason, setReason] = useState("");
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={title}
+      footer={
+        <>
+          <Button onClick={onClose}>{keepLabel}</Button>
+          <Button variant={tone} disabled={pending || reason.trim().length < 3} onClick={() => onConfirm(reason)}>
+            {confirmLabel}
+          </Button>
+        </>
+      }
+    >
+      <p className="mb-2 text-sm text-body">{body}</p>
+      <Textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} placeholder={placeholder} />
+    </Modal>
+  );
 }

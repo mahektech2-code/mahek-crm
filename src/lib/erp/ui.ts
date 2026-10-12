@@ -278,7 +278,6 @@ export type ListSpec = {
   newLabel?: string;
   /** Header buttons that act on the screen (see ToolSpec). */
   tools?: ToolSpec[];
-  download?: boolean;
   readOnly?: boolean;
   noDataLine?: string;
 };
@@ -420,6 +419,11 @@ export function fdLong(v: CellValue | undefined): string {
   const s = fd(v);
   if (!s || v == null) return s;
   return `${s} ${String(v).slice(0, 4)}`;
+}
+
+/** Paise → a rupees string for pre-filling a form. */
+export function rupeesField(p: number | null | undefined): string {
+  return p == null ? "" : String(p / 100);
 }
 
 /** Paise → "₹18,42,000", with a true minus. */

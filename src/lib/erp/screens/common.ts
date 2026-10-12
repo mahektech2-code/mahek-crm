@@ -14,6 +14,9 @@ export type Col = ColSpec & { pw?: ErpPower };
 
 export const has = (ctx: ErpContext) => (p: string) => ctx.powers.has(p as ErpPower);
 
+/** An ERP manager or administrator — who runs alerts, recipes, verifies expenses and edits help videos. */
+export const isErpManager = (ctx: Pick<ErpContext, "administrator" | "level">): boolean => ctx.administrator || ctx.level === "manager";
+
 export type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 /**

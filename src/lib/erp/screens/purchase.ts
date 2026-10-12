@@ -16,7 +16,7 @@ import {
   users,
 } from "@/db/schema";
 import { err, fieldErr, okVoid, type Result } from "@/lib/result";
-import type { ErpContext } from "../access";
+import { powerRefusal, type ErpContext } from "../access";
 import { refValues } from "../refs";
 import { erpLabelsHref } from "../trace-links";
 import {
@@ -1596,7 +1596,7 @@ const register: ScreenModule = {
       return (await import("../ai-bills")).rejectBill(ctx, id);
     },
     async rate(ctx, id, values) {
-      if (!ctx.powers.has("viewPurchaseMoney")) return err("Purchase money is not on your account.", "not_permitted");
+      if (!ctx.powers.has("viewPurchaseMoney")) return err(powerRefusal("viewPurchaseMoney"), "not_permitted");
       const rate = paise(values.rate);
       if (rate == null || rate <= 0) return fieldErr("rate", "Rate is required");
       let posted = false;
@@ -1610,7 +1610,7 @@ const register: ScreenModule = {
       return okVoid(posted ? `Posted · ${nf(p.availableLitres)} of lot ${p.lotNo} now in stock` : "Rate saved");
     },
     async billReceived(ctx, id, values) {
-      if (!ctx.powers.has("viewPurchaseMoney")) return err("Purchase money is not on your account.", "not_permitted");
+      if (!ctx.powers.has("viewPurchaseMoney")) return err(powerRefusal("viewPurchaseMoney"), "not_permitted");
       const billNo = text(values.billNo);
       if (!billNo) return fieldErr("billNo", "Bill number is required");
       /* A bill in hand is the Invoice Received step, not a second flag beside it. */
@@ -1622,7 +1622,7 @@ const register: ScreenModule = {
       return okVoid(`Bill ${billNo} recorded`);
     },
     async billNotReceived(ctx, id) {
-      if (!ctx.powers.has("viewPurchaseMoney")) return err("Purchase money is not on your account.", "not_permitted");
+      if (!ctx.powers.has("viewPurchaseMoney")) return err(powerRefusal("viewPurchaseMoney"), "not_permitted");
       const [p] = await db.select({ status: erpPurchases.status }).from(erpPurchases).where(eq(erpPurchases.id, id));
       if (!p) return err("That purchase no longer exists.", "not_found");
       if (p.status === "Purchase Matched" || p.status === "Purchase Verified") return err("A purchase matched to its bill has its bill.", "rule_violation");
@@ -1634,7 +1634,7 @@ const register: ScreenModule = {
       return okVoid("Marked bill not received");
     },
     async status(ctx, id, values) {
-      if (!ctx.powers.has("viewPurchaseMoney")) return err("Purchase money is not on your account.", "not_permitted");
+      if (!ctx.powers.has("viewPurchaseMoney")) return err(powerRefusal("viewPurchaseMoney"), "not_permitted");
       const status = text(values.status);
       const allowed = settableStatuses(ctx.powers.has("verifyPurchase"));
       if (!status || !allowed.includes(status)) return fieldErr("status", status === "Purchase Verified" ? "Only the verifier sets Purchase Verified" : "Pick a status");
@@ -1655,7 +1655,7 @@ const register: ScreenModule = {
   },
   bulk: {
     async billReceivedMany(ctx, ids) {
-      if (!ctx.powers.has("viewPurchaseMoney")) return err("Purchase money is not on your account.", "not_permitted");
+      if (!ctx.powers.has("viewPurchaseMoney")) return err(powerRefusal("viewPurchaseMoney"), "not_permitted");
       await db
         .update(erpPurchases)
         .set({ billReceived: "Received", status: sql`case when ${erpPurchases.status} = 'Pending' then 'Invoice Received' else ${erpPurchases.status} end`, updatedAt: new Date(), updatedById: ctx.user.id })

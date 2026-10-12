@@ -231,7 +231,7 @@ export function ErpShell({
                 <button
                   onClick={() => setShortcutsOpen(true)}
                   title="Keyboard shortcuts"
-                  className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-[4px] border border-line bg-surface text-[13px] font-medium text-muted hover:bg-canvas hover:text-body"
+                  className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-control border border-line bg-surface text-meta font-medium text-muted hover:bg-canvas hover:text-body"
                 >
                   ?
                 </button>
@@ -276,7 +276,7 @@ export function ErpShell({
             {SHORTCUTS.map((s) => (
               <div key={s.what} className="flex items-center justify-between border-b border-divider py-2.5 last:border-0">
                 <span className="text-sm text-body">{s.what}</span>
-                <kbd className="rounded-[4px] border border-line bg-canvas px-2 py-0.5 font-mono text-xs text-body">{s.key}</kbd>
+                <kbd className="rounded-control border border-line bg-canvas px-2 py-0.5 font-mono text-xs text-body">{s.key}</kbd>
               </div>
             ))}
           </div>
@@ -312,13 +312,13 @@ function PreviewAs({ preview }: { preview: { targets: PreviewTargets; current: E
   };
   return (
     <div className="flex-none border-t border-divider px-3 pt-2.5 pb-2">
-      <div className="mb-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">Preview access as</div>
+      <div className="mb-1.5 text-2xs font-medium tracking-[0.04em] text-muted uppercase">Preview access as</div>
       <select
         value={value}
         onChange={(e) => pick(e.target.value)}
         aria-label="Preview access as"
         className={cx(
-          "h-8.5 w-full cursor-pointer rounded-[4px] border bg-surface px-2 text-[13px]",
+          "h-8.5 w-full cursor-pointer rounded-control border bg-surface px-2 text-meta",
           preview.current ? "border-brand text-brand-hover" : "border-line text-body",
         )}
       >
@@ -354,7 +354,7 @@ function PreviewBanner({ current }: { current: ErpViewingAs }) {
   const router = useRouter();
   const { push } = useToast();
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-brand bg-brand-soft px-6 py-2 text-[13px] text-ink">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-brand bg-brand-soft px-6 py-2 text-meta text-ink">
       <Icon n="lock" s={14} />
       <span>
         Previewing the ERP as <span className="font-medium">{current.label}</span>
@@ -371,7 +371,7 @@ function PreviewBanner({ current }: { current: ErpViewingAs }) {
             router.refresh();
           })
         }
-        className="cursor-pointer rounded-[4px] border border-brand bg-surface px-2.5 py-1 text-[13px] font-medium text-brand-hover hover:bg-canvas"
+        className="cursor-pointer rounded-control border border-brand bg-surface px-2.5 py-1 text-meta font-medium text-brand-hover hover:bg-canvas"
       >
         Back to my ERP
       </button>
@@ -501,15 +501,15 @@ function WorkingAt({
     return (
       <span
         title="Ask an ERP administrator to assign you to a godown"
-        className="flex h-7.5 items-center rounded-[4px] border border-dashed border-warn-line px-2 text-[13px] whitespace-nowrap text-warn-ink"
+        className="flex h-7.5 items-center rounded-control border border-dashed border-warn-line px-2 text-meta whitespace-nowrap text-warn-ink"
       >
         No godown assigned
       </span>
     );
   }
   return (
-    <div className="flex h-7.5 items-center gap-1.5 rounded-[4px] border border-dashed border-line-strong pr-1 pl-2">
-      <span className="hidden text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase xl:inline">Working at</span>
+    <div className="flex h-7.5 items-center gap-1.5 rounded-control border border-dashed border-line-strong pr-1 pl-2">
+      <span className="hidden text-2xs font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase xl:inline">Working at</span>
       <GodownPicker
         look="chip"
         value={working?.id ?? ""}
@@ -535,8 +535,8 @@ function WorkingAt({
           title="Find my godown from where I am standing"
           aria-label="Find my godown from where I am standing"
           className={cx(
-            "inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-[#5223E0] disabled:cursor-wait",
-            finding && "animate-pulse text-[#5223E0]",
+            "inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-control text-muted hover:bg-canvas hover:text-brand-hover disabled:cursor-wait",
+            finding && "animate-pulse text-brand-hover",
           )}
         >
           <Icon n="locate" s={14} />

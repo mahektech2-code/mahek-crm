@@ -1200,7 +1200,7 @@ const sfgStock: ScreenModule = {
     ];
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
     return {
-      spec: { screen: "sfgStock", cols, hidden, groups: ["godown", "lot"], agg: { k: "stock", l: "litres" }, godownKey: "godown", readOnly: true, download: true, noDataLine: "No SFG in stock. Stock appears as SFG batches are saved." },
+      spec: { screen: "sfgStock", cols, hidden, groups: ["godown", "lot"], agg: { k: "stock", l: "litres" }, godownKey: "godown", readOnly: true, noDataLine: "No SFG in stock. Stock appears as SFG batches are saved." },
       rows: lots.map((l) => ({
         id: `${l.lotCode}|${l.godownId}`,
         v: withoutHidden(

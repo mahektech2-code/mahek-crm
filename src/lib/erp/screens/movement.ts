@@ -77,7 +77,8 @@ async function transferForm(ctx: ErpContext): Promise<FormSpec> {
     submit: "Transfer",
     confirm: "Transfer {item} {qty}",
     init: { date: today(), from: ctx.workingGodown?.name ?? "" },
-    data: { avail },
+    /* Which godowns write stock off, by the flag rather than by the name. */
+    data: { avail, lost: Object.fromEntries(tos.filter((g) => g.reserved).map((g) => [g.name, 1])) },
     header: [
       { k: "date", l: "Transfer date", t: "date", req: true },
       { k: "type", l: "Item type", t: "select", req: true, opts: [...TYPES] },
@@ -364,7 +365,7 @@ function rmLevelList(key: "rmLevels" | "reorderRm"): ScreenModule {
           .map((r): ListRow => {
             const actions: ActionSpec[] = [];
             if (reorder || (r.required ?? 0) > 0)
-              actions.push({ id: "raise", l: "Raise requisition", primary: true, loadsForm: true });
+              actions.push({ id: "raise", l: "Raise requirement", primary: true, loadsForm: true });
             if (!reorder && r.suggestion && (r.suggestion.min !== r.min || r.suggestion.max !== r.max))
               actions.push({ id: "apply", l: "Apply suggestion", confirm: `Set ${r.item} at ${r.godown} to min ${r.suggestion.min}, max ${r.suggestion.max}? ${r.suggestion.basis}` });
             if (!reorder) {

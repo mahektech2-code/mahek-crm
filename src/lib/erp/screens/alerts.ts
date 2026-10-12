@@ -1,4 +1,5 @@
 import "server-only";
+import { isErpManager } from "./common";
 import { eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { erpAlerts } from "@/db/schema";
@@ -18,7 +19,7 @@ import type { ErpContext } from "../access";
  * or automatically once the condition clears).
  * ------------------------------------------------------------------------- */
 
-const canRun = (ctx: ErpContext) => ctx.administrator || ctx.level === "manager";
+const canRun = (ctx: ErpContext) => isErpManager(ctx);
 
 export const alertsScreen: ScreenModule = {
   key: "alerts",

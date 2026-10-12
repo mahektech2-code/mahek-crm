@@ -24,7 +24,7 @@ function TestEvidence({ data }: PanelProps) {
   const e = data as Evidence;
   if (!e.tests.length) return null;
   return (
-    <section className="grid gap-2.5 rounded-[6px] border border-line p-3.5">
+    <section className="grid gap-2.5 rounded-card border border-line p-3.5">
       <SectionLabel>Test evidence</SectionLabel>
       <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2.5">
         {e.tests.map((t) => {
@@ -33,7 +33,7 @@ function TestEvidence({ data }: PanelProps) {
             t === "Smell" ? e.smell : t === "Density" ? (e.density == null ? null : String(e.density)) : t === "PH" && e.phValue != null ? `pH ${e.phValue}` : null;
           const missing = t === "Smell" ? !e.smell : t === "Density" ? e.density == null || !photo : !photo;
           return (
-            <div key={t} className={cx("overflow-hidden rounded-[4px] border", missing ? "border-danger-soft bg-danger-soft/50" : "border-divider bg-surface")}>
+            <div key={t} className={cx("overflow-hidden rounded-control border", missing ? "border-danger-soft bg-danger-soft/50" : "border-divider bg-surface")}>
               {photo ? (
                 <a href={`/api/attachments/${photo}`} target="_blank" rel="noreferrer">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -41,7 +41,7 @@ function TestEvidence({ data }: PanelProps) {
                 </a>
               ) : null}
               <div className="px-2.5 py-2">
-                <div className="text-[13px] font-semibold text-ink">{t}</div>
+                <div className="text-meta font-semibold text-ink">{t}</div>
                 <div className={cx("mt-0.5 text-xs", missing ? "text-danger" : "text-body")}>
                   {missing ? "Missing" : reading ?? "Photographed"}
                 </div>
@@ -51,7 +51,7 @@ function TestEvidence({ data }: PanelProps) {
         })}
       </div>
       {e.video ? (
-        <video src={`/api/attachments/${e.video}`} controls className="w-full rounded-[4px] bg-ink" />
+        <video src={`/api/attachments/${e.video}`} controls className="w-full rounded-control bg-ink" />
       ) : null}
       {e.registerExists ? (
         <span className="text-xs text-body">A purchase register row exists for this lot.</span>

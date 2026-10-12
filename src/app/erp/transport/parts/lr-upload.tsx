@@ -163,7 +163,7 @@ export function LrUpload({ today, transporters, canRead = false, onDone }: { tod
         const e = (f: string) => errors[`l${i + 1}.${f}`];
         return (
           <Card key={r.key} className="flex flex-wrap gap-3 p-3">
-            <label className={cx("relative flex h-[92px] w-[92px] flex-none cursor-pointer flex-col items-center justify-center overflow-hidden rounded-[4px] border text-center text-[11px]", r.fileId ? "border-success" : r.error ? "border-danger" : "border-dashed border-line-strong bg-canvas text-muted")}>
+            <label className={cx("relative flex h-[92px] w-[92px] flex-none cursor-pointer flex-col items-center justify-center overflow-hidden rounded-control border text-center text-2xs", r.fileId ? "border-success" : r.error ? "border-danger" : "border-dashed border-line-strong bg-canvas text-muted")}>
               {r.preview ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={r.preview} alt="" className="absolute inset-0 h-full w-full object-cover" />
@@ -204,15 +204,15 @@ export function LrUpload({ today, transporters, canRead = false, onDone }: { tod
               </Box>
             </CardGrid>
             {r.readNotes.length ? (
-              <ul className="w-full space-y-0.5 text-[12px] text-warn-ink">
+              <ul className="w-full space-y-0.5 text-xs text-warn-ink">
                 {r.readNotes.map((n) => (
                   <li key={n}>{n}</li>
                 ))}
               </ul>
             ) : null}
-            <div className="flex w-full items-center gap-3 text-[12px]">
+            <div className="flex w-full items-center gap-3 text-xs">
               {r.error ? <span className="text-danger">{r.error}</span> : null}
-              <input value={r.note} onChange={(ev) => patch(r.key, { note: ev.target.value })} placeholder="Note for logistics (optional)" className="h-8 flex-1 rounded-[4px] border border-line bg-surface px-2 text-[13px] outline-none focus:border-brand" />
+              <input value={r.note} onChange={(ev) => patch(r.key, { note: ev.target.value })} placeholder="Note for logistics (optional)" className="h-8 flex-1 rounded-control border border-line bg-surface px-2 text-meta outline-none focus:border-brand" />
               {rows.length > 1 ? (
                 <button className="cursor-pointer text-muted hover:text-danger" onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))}>
                   Remove
@@ -230,7 +230,7 @@ export function LrUpload({ today, transporters, canRead = false, onDone }: { tod
           Add several photos
         </Button>
         <input ref={many} type="file" accept="image/*,application/pdf" multiple className="hidden" onChange={(e) => addPhotos(e.target.files)} />
-        <span className="text-[12px] text-muted">Each photo becomes its own LR row. Nothing is required — a photo alone is enough.</span>
+        <span className="text-xs text-muted">Each photo becomes its own LR row. Nothing is required — a photo alone is enough.</span>
         <Button variant="primary" className="ml-auto" disabled={pending || busy || reading || !filled} onClick={submit}>
           {busy ? "Waiting for photos…" : reading ? "Reading photos…" : `Upload ${filled || ""} LR${filled === 1 ? "" : "s"}`}
         </Button>
@@ -239,17 +239,17 @@ export function LrUpload({ today, transporters, canRead = false, onDone }: { tod
   );
 }
 
-const inp = (bad: boolean, width = "w-full", check = false) => cx("h-8.5 rounded-[4px] border bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand", width, bad ? "border-danger" : check ? "border-warn" : "border-line");
+const inp = (bad: boolean, width = "w-full", check = false) => cx("h-8.5 rounded-control border bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand", width, bad ? "border-danger" : check ? "border-warn" : "border-line");
 
 function Box({ label, error, read, check, children }: { label: string; error?: string; read?: boolean; check?: boolean; children: React.ReactNode }) {
   return (
     <label className="block min-w-0">
-      <span className="mb-0.5 flex items-center gap-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
+      <span className="mb-0.5 flex items-center gap-1.5 text-2xs font-medium tracking-[0.04em] text-muted uppercase">
         {label}
         {read ? <span className={cx("normal-case tracking-normal", check ? "text-warn-ink" : "text-brand")} title="Read from the photo — check it against the receipt">{check ? "· check" : "· read"}</span> : null}
       </span>
       {children}
-      {error ? <span className="mt-0.5 block text-[12px] text-danger">{error}</span> : null}
+      {error ? <span className="mt-0.5 block text-xs text-danger">{error}</span> : null}
     </label>
   );
 }

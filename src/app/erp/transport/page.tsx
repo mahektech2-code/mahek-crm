@@ -7,8 +7,8 @@ import { getConfig } from "@/lib/config/store";
 import { refValues } from "@/lib/erp/refs";
 import { consignments, lrUploadKit, messages, placeOptions, transporters, uploadedLrs } from "@/lib/erp/logistics";
 import { today as businessToday } from "@/lib/erp/screens/common";
-import { cx } from "@/components/ui/primitives";
-import { ListScreen, type ListTab } from "../_ui/list-screen";
+import { ListScreen, ListTabs } from "../_ui/list-screen";
+import { screenTabs } from "../_ui/screen-tabs";
 import { Page } from "../_ui/page-head";
 import { LrDesk } from "./parts/lr-desk";
 import { Messages } from "./parts/messages";
@@ -47,7 +47,7 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
   const views = screen.views ?? [];
   const known = new Set(views.map((v) => v.key));
   const view = one("view") && known.has(one("view")!) ? one("view")! : "transport";
-  const at = (k: string) => (k === views[0]?.key ? "/erp/transport" : `/erp/transport?view=${k}`);
+  const { tabs, at } = await screenTabs(ctx, screen, view);
   const canWrite = !ctx.viewingAs;
 
   /* The two registers are ordinary lists, drawn as every other ERP list is. */
@@ -56,7 +56,6 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
     if (!mod) notFound();
     const { spec, rows } = await mod.load(ctx);
     const f = one("f");
-    const tabs: ListTab[] = views.map((v) => ({ key: v.key, label: v.label, href: at(v.key), active: v.key === view }));
     return (
       <ListScreen
         key={`${view}|${f ?? ""}`}
@@ -87,12 +86,6 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
   /* A dashboard tile opens a tab narrowed to the bills it counted. */
   const ids = one("f")?.split(",");
   const rows = ids ? all.filter((c) => ids.includes(c.id)) : all;
-  const counts = {
-    toTransport: rows.filter((c) => c.phase === "toTransport").length,
-    pendingLr: rows.filter((c) => c.phase === "lrPending").length,
-    trackLr: new Set(rows.filter((c) => c.phase === "onRoad").map((c) => c.lrId ?? c.id)).size,
-    lrMessages: outbox.filter((m) => m.status === "to_send" || m.status === "failed").length,
-  } as Record<string, number>;
   const waitingMessages = outbox.filter((m) => m.status === "to_send" || m.status === "failed").length;
   const filter = one("filter");
 
@@ -104,20 +97,9 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
         kit ? <UploadLrsButton key={one("upload") ?? ""} today={today} transporters={kit.transporters} recent={kit.recent} canRead={kit.canRead} initialOpen={one("upload") === "1"} /> : null
       }
     >
-      <nav className="-mt-2 mb-4 flex flex-wrap items-center gap-0 border-b border-line">
-        {views.map((v) => (
-          <Link
-            key={v.key}
-            href={at(v.key)}
-            className={cx("-mb-px border-b-2 px-3.5 py-2.5 text-sm whitespace-nowrap no-underline hover:no-underline", v.key === view ? "border-brand font-medium text-ink" : "border-transparent text-muted hover:text-body")}
-          >
-            {v.label}
-            {counts[v.key] ? <span className={cx("ml-1.5 rounded-full px-1.5 text-[11px]", v.key === "lrMessages" || v.key === "pendingLr" ? "bg-warn-soft text-warn-ink" : "bg-canvas text-muted")}>{counts[v.key]}</span> : null}
-          </Link>
-        ))}
-      </nav>
+      <ListTabs label={screen.label} tabs={tabs} />
       {ids ? (
-        <div className="mb-3 flex items-center gap-2 text-[13px] text-muted">
+        <div className="mb-3 flex items-center gap-2 text-meta text-muted">
           Showing {ids.length} bill{ids.length === 1 ? "" : "s"}: {one("fl") ?? "filtered"} · <Link href={at(view)}>Show everything</Link>
         </div>
       ) : null}
@@ -134,7 +116,6 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
           callEveryDays={cfg["erp.logistics.callEveryDays"]}
           notifyOn={cfg["erp.logistics.notifyCustomers"]}
           canWrite={canWrite}
-          canRead={kit?.canRead ?? false}
         />
       ) : null}
       {view === "trackLr" ? (

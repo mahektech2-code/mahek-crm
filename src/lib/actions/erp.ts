@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { orderTraceCode } from "@/lib/erp/trace-links";
 import { cookies } from "next/headers";
 import { db } from "@/db";
 import { eq, inArray } from "drizzle-orm";
@@ -228,7 +229,7 @@ export async function erpSearch(q: string): Promise<ErpSearchHit[]> {
     const { erpTraceHref } = await import("@/lib/erp/trace-links");
     const hit = term.length >= 3 ? await resolveTrace(term) : null;
     const kinds: Record<string, string> = { unit: "Box", pack: "Packing batch", fg: "Refill lot", sfg: "SFG lot", rm: "Lot", order: "Order", bill: "Bill" };
-    if (hit) out.unshift({ kind: kinds[hit.kind] ?? "Trace", name: hit.kind === "order" ? `Order ${hit.code}` : hit.code, meta: "Trace back and forward", href: erpTraceHref(hit.kind === "order" ? `ORDER-${hit.code}` : hit.code) });
+    if (hit) out.unshift({ kind: kinds[hit.kind] ?? "Trace", name: hit.kind === "order" ? `Order ${hit.code}` : hit.code, meta: "Trace back and forward", href: erpTraceHref(hit.kind === "order" ? orderTraceCode(hit.code) : hit.code) });
   }
   if (ctx.screens.has("inward") && /^\d+$/.test(term)) {
     const rows = (await db.execute(

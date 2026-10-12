@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { erpLink } from "@/lib/erp/registry";
 import { useMemo, useState } from "react";
 import { Modal } from "@/components/ui/modal";
 import { FilterPills } from "@/components/ui/overlays";
@@ -51,7 +52,7 @@ export function OnRoad({ rows, today, callEveryDays, lateAfterDays, notifyOn, ca
             { key: "issue", label: "With a problem", count: counts.issue },
           ]}
         />
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search LR, bill, party, transporter" className="ml-auto h-8.5 w-[260px] rounded-[4px] border border-line bg-surface px-2.5 text-sm outline-none focus:border-brand" />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search LR, bill, party, transporter" className="ml-auto h-8.5 w-[260px] rounded-control border border-line bg-surface px-2.5 text-sm outline-none focus:border-brand" />
       </div>
 
       {!shown.length ? (
@@ -75,18 +76,18 @@ export function OnRoad({ rows, today, callEveryDays, lateAfterDays, notifyOn, ca
               <LrThumb fileId={c.lrFileId} size={60} />
               <div className="min-w-[220px] flex-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-[15px] font-semibold text-ink">{lrLabel(c.lrNo)}</span>
-                  <span className="text-[13px] text-body">· {c.transporter ?? "—"}</span>
+                  <span className="font-mono text-md font-semibold text-ink">{lrLabel(c.lrNo)}</span>
+                  <span className="text-meta text-body">· {c.transporter ?? "—"}</span>
                   {issue ? <Badge tone="danger">{issue.issue}</Badge> : null}
                   {late && !issue ? <Badge tone="warn">Running late</Badge> : null}
                   {waiting ? (
-                    <Link href="/erp/transport?view=lrMessages">
+                    <Link href={erpLink("lrMessages")}>
                       <Badge tone="warn">{plural(waiting, "message")} to send</Badge>
                     </Link>
                   ) : null}
                 </div>
                 <div className="mt-0.5 text-sm font-medium text-ink">{parties.join(", ")}</div>
-                <div className="text-[12px] text-muted">
+                <div className="text-xs text-muted">
                   {bills.map((b, i) => (
                     <span key={b.id}>
                       {i ? ", " : ""}
@@ -97,16 +98,16 @@ export function OnRoad({ rows, today, callEveryDays, lateAfterDays, notifyOn, ca
                   {c.area ? ` · ${c.area}` : ""}
                   {since ? ` · ${daysBetween(since, today)} d on the road` : ""}
                 </div>
-                {issue?.issueNote ? <div className="mt-1 text-[12px] text-danger">{issue.issueNote}</div> : null}
-                {c.lastEventNote ? <div className="mt-1 truncate text-[12px] text-body">Last: {c.lastEventNote}</div> : null}
+                {issue?.issueNote ? <div className="mt-1 text-xs text-danger">{issue.issueNote}</div> : null}
+                {c.lastEventNote ? <div className="mt-1 truncate text-xs text-body">Last: {c.lastEventNote}</div> : null}
               </div>
               <div className="w-[270px] space-y-1.5">
                 <StageStrip stage={c.stage} />
-                <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted">
+                <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
                   <span>Expected</span>
                   {c.expectedDeliveryOn ? <span className={cx("font-medium", late ? "text-danger" : "text-body")}>{shortDay(c.expectedDeliveryOn)}</span> : <span>—</span>}
                 </div>
-                <div className="flex items-center gap-2 text-[12px] text-muted">
+                <div className="flex items-center gap-2 text-xs text-muted">
                   <span>Next call</span>
                   <DuePill day={c.nextCallOn} today={today} />
                 </div>
@@ -114,7 +115,7 @@ export function OnRoad({ rows, today, callEveryDays, lateAfterDays, notifyOn, ca
               <div className="w-[190px] space-y-1.5 text-right">
                 <CallLink phone={c.transporterPhone} name={c.transporter} />
                 {online ? (
-                  <a href={online} target="_blank" rel="noreferrer" className="block text-[12px]">
+                  <a href={online} target="_blank" rel="noreferrer" className="block text-xs">
                     Track on {c.transporter}&apos;s site ↗
                   </a>
                 ) : null}
@@ -163,7 +164,7 @@ function ActionDialog({ dialog, today, callEveryDays, notifyOn, onClose }: { dia
   const [date, setDate] = useState(today);
   const [receivedBy, setReceivedBy] = useState("");
   const [notify, setNotify] = useState(true);
-  const cls = "mt-0.5 block h-8.5 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand";
+  const cls = "mt-0.5 block h-8.5 w-full rounded-control border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand";
 
   const title = dialog.kind === "update" ? `Update ${lrLabel(c.lrNo)}` : dialog.kind === "issue" ? `A problem with ${lrLabel(c.lrNo)}` : `${lrLabel(c.lrNo)} delivered`;
   const save = () => {
@@ -189,7 +190,7 @@ function ActionDialog({ dialog, today, callEveryDays, notifyOn, onClose }: { dia
         </>
       }
     >
-      <div className="space-y-3 text-[12px] text-muted">
+      <div className="space-y-3 text-xs text-muted">
         <div className="text-sm text-body">
           {[...new Set(dialog.group.map((b) => b.deliveryParty))].join(", ")} · {plural(dialog.group.length, "bill")} · {c.transporter ?? "—"}
         </div>
@@ -199,7 +200,7 @@ function ActionDialog({ dialog, today, callEveryDays, notifyOn, onClose }: { dia
               Where are the goods?
               <div className="mt-1 grid grid-cols-3 gap-2">
                 {ROAD_STAGES.map((s) => (
-                  <button key={s} type="button" onClick={() => setStage(s)} className={cx("cursor-pointer rounded-[4px] border px-2 py-2 text-[13px]", stage === s ? "border-brand bg-brand-soft font-medium text-[#5223E0]" : "border-line bg-surface text-body hover:bg-canvas")}>
+                  <button key={s} type="button" onClick={() => setStage(s)} className={cx("cursor-pointer rounded-control border px-2 py-2 text-meta", stage === s ? "border-brand bg-brand-soft font-medium text-brand-hover" : "border-line bg-surface text-body hover:bg-canvas")}>
                     {STAGE_SHORT[s]}
                   </button>
                 ))}
@@ -232,9 +233,9 @@ function ActionDialog({ dialog, today, callEveryDays, notifyOn, onClose }: { dia
         ) : null}
         <label>
           {dialog.kind === "update" ? "What the transporter said" : "Note"}
-          <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} className="mt-0.5 block w-full rounded-[4px] border border-line bg-surface px-2.5 py-2 text-sm text-ink outline-none focus:border-brand" />
+          <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} className="mt-0.5 block w-full rounded-control border border-line bg-surface px-2.5 py-2 text-sm text-ink outline-none focus:border-brand" />
         </label>
-        {dialog.kind === "update" && !moved ? <div className="text-[12px] text-muted">The stage and the date have not moved, so this is logged as a call and the customer is not messaged.</div> : null}
+        {dialog.kind === "update" && !moved ? <div className="text-xs text-muted">The stage and the date have not moved, so this is logged as a call and the customer is not messaged.</div> : null}
         {dialog.kind !== "update" || moved ? <NotifyToggle value={notify} onChange={setNotify} disabled={!notifyOn} /> : null}
       </div>
     </Modal>

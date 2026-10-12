@@ -41,7 +41,7 @@ export function RecordDrawer({ screen, kind, row, onClose }: { screen: ListSpec;
       <DrawerHeader onClose={onClose}>
         <div className="text-xs font-medium tracking-[0.04em] text-muted uppercase">{kind}</div>
         <div className="mt-0.5 text-lg leading-6 font-semibold text-ink">{title}</div>
-        {row.header ? <div className="mt-0.5 text-[13px] text-body">{row.header}</div> : null}
+        {row.header ? <div className="mt-0.5 text-meta text-body">{row.header}</div> : null}
         {row.flags.length ? (
           <div className="mt-2 flex flex-wrap gap-1">
             {row.flags.map((f) => (
@@ -60,7 +60,7 @@ export function RecordDrawer({ screen, kind, row, onClose }: { screen: ListSpec;
                 href={k.href}
                 target="_blank"
                 rel="noopener"
-                className="inline-flex h-8 items-center rounded-[4px] border border-line bg-surface px-2.5 text-[13px] text-[#5223E0] no-underline hover:bg-canvas"
+                className="inline-flex h-8 items-center rounded-control border border-line bg-surface px-2.5 text-meta text-brand-hover no-underline hover:bg-canvas"
               >
                 {k.l}
               </a>
@@ -72,7 +72,7 @@ export function RecordDrawer({ screen, kind, row, onClose }: { screen: ListSpec;
             <div key={`${f.l}:${i}`} className="min-w-0">
               <dt className="flex items-center gap-1.5 text-xs font-medium tracking-[0.04em] text-muted uppercase">
                 {f.l}
-                {f.der ? <span className="rounded-[3px] bg-divider px-1.5 text-[11px] tracking-normal normal-case">Calculated</span> : null}
+                {f.der ? <span className="rounded-[3px] bg-divider px-1.5 text-2xs tracking-normal normal-case">Calculated</span> : null}
               </dt>
               <dd className="mt-0.5">
                 {f.status && f.v !== "—" ? (
@@ -85,23 +85,23 @@ export function RecordDrawer({ screen, kind, row, onClose }: { screen: ListSpec;
           ))}
         </dl>
         {hiddenCount ? (
-          <div className="flex items-center gap-1.5 text-[13px] text-muted">
+          <div className="flex items-center gap-1.5 text-meta text-muted">
             <Icon n="lock" s={14} />
             {hiddenCount} field{hiddenCount > 1 ? "s are" : " is"} not shown on your account.
           </div>
         ) : null}
         {blocked.length ? (
-          <div className="rounded-[4px] bg-canvas px-3 py-2.5">
+          <div className="rounded-control bg-canvas px-3 py-2.5">
             <SectionLabel>Not available yet</SectionLabel>
             {blocked.map((b) => (
-              <div key={b.id} className="py-0.5 text-[13px] text-body">
+              <div key={b.id} className="py-0.5 text-meta text-body">
                 <span className="font-medium text-ink">{b.l}</span> — {b.why}
               </div>
             ))}
           </div>
         ) : null}
         {!acts.length && screen.readOnly ? (
-          <div className="text-[13px] text-muted">Read-only. These entries are written by their source records, never by hand.</div>
+          <div className="text-meta text-muted">Read-only. These entries are written by their source records, never by hand.</div>
         ) : null}
         {row.by ? <div className="text-xs text-muted">{row.by}</div> : null}
       </div>
@@ -116,7 +116,7 @@ export function RecordDrawer({ screen, kind, row, onClose }: { screen: ListSpec;
                 onClick={() => okA && ui.act(screen.screen, a, row.id)}
                 title={a.why || a.l}
                 disabled={!okA}
-                className={cx(a.ai && okA && !a.primary && "border-brand text-[#5223E0]")}
+                className={cx(a.ai && okA && !a.primary && "border-brand text-brand-hover")}
               >
                 {a.ai ? <Icon n="spark" /> : null}
                 {a.l}

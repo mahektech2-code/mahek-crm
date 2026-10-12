@@ -1,5 +1,6 @@
 "use client";
 
+import { stamp } from "@/lib/format";
 import { useState } from "react";
 import { FilterPills } from "@/components/ui/overlays";
 import { Badge, Button, Card, cx } from "@/components/ui/primitives";
@@ -55,7 +56,7 @@ export function Messages({ rows, canWrite, wati }: { rows: OutboxMessage[]; canW
             { key: "skipped", label: "Could not be sent", count: rows.filter((m) => m.status === "skipped").length },
           ]}
         />
-        <span className="ml-auto max-w-[520px] text-right text-[12px] text-muted">{wati ? `Messages go through Wati as ${wati} where the founder has WhatsApp on.` : "No Wati template is named for logistics (ERP settings → Logistics), so every message is sent by hand."}</span>
+        <span className="ml-auto max-w-[520px] text-right text-xs text-muted">{wati ? `Messages go through Wati as ${wati} where the founder has WhatsApp on.` : "No Wati template is named for logistics (ERP settings → Logistics), so every message is sent by hand."}</span>
       </div>
       {!shown.length ? (
         <Card>
@@ -74,19 +75,19 @@ export function Messages({ rows, canWrite, wati }: { rows: OutboxMessage[]; canW
                   <span className="font-semibold text-ink">{m.customer}</span>
                   <Badge tone="neutral">{KIND[m.kind] ?? m.kind}</Badge>
                   <Badge tone={st.tone}>{st.l}</Badge>
-                  {m.lrNo ? <span className="font-mono text-[12px] text-muted">LR {m.lrNo}</span> : null}
+                  {m.lrNo ? <span className="font-mono text-xs text-muted">LR {m.lrNo}</span> : null}
                 </div>
-                <div className="mt-0.5 text-[12px] text-muted">
-                  {m.phone ?? "No number"} · written {new Date(m.createdAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}
+                <div className="mt-0.5 text-xs text-muted">
+                  {m.phone ?? "No number"} · written {stamp(m.createdAt)}
                   {m.createdBy ? ` by ${m.createdBy}` : ""}
-                  {m.sentAt ? ` · sent ${new Date(m.sentAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}${m.sentBy ? ` by ${m.sentBy}` : ""}` : ""}
+                  {m.sentAt ? ` · sent ${stamp(m.sentAt)}${m.sentBy ? ` by ${m.sentBy}` : ""}` : ""}
                 </div>
-                {m.why ? <div className={cx("mt-1 text-[12px]", m.status === "failed" ? "text-danger" : "text-warn-ink")}>{m.why}</div> : null}
+                {m.why ? <div className={cx("mt-1 text-xs", m.status === "failed" ? "text-danger" : "text-warn-ink")}>{m.why}</div> : null}
               </div>
               {open && canWrite ? (
                 <div className="flex flex-wrap items-center gap-2">
                   {link ? (
-                    <a href={link} target="_blank" rel="noreferrer" className="inline-flex h-8 items-center rounded-[4px] bg-[#25D366] px-3 text-[13px] font-medium text-white no-underline hover:no-underline">
+                    <a href={link} target="_blank" rel="noreferrer" className="inline-flex h-8 items-center rounded-control bg-whatsapp px-3 text-meta font-medium text-white no-underline hover:no-underline">
                       Open in WhatsApp
                     </a>
                   ) : null}
@@ -107,11 +108,11 @@ export function Messages({ rows, canWrite, wati }: { rows: OutboxMessage[]; canW
                 </div>
               ) : null}
             </div>
-            <pre className="mt-3 max-h-[220px] overflow-auto rounded-[4px] bg-canvas px-3 py-2 font-sans text-[13px] whitespace-pre-wrap text-body">{m.body}</pre>
+            <pre className="mt-3 max-h-[220px] overflow-auto rounded-control bg-canvas px-3 py-2 font-sans text-meta whitespace-pre-wrap text-body">{m.body}</pre>
           </Card>
         );
       })}
-      {waiting.length > 1 ? <div className="text-[12px] text-muted">{plural(waiting.length, "message")} waiting. Each opens WhatsApp with the text already typed.</div> : null}
+      {waiting.length > 1 ? <div className="text-xs text-muted">{plural(waiting.length, "message")} waiting. Each opens WhatsApp with the text already typed.</div> : null}
     </div>
   );
 }

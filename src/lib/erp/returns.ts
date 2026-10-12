@@ -1,5 +1,6 @@
 import "server-only";
 import { sql } from "drizzle-orm";
+import { orderTraceCode } from "./trace-links";
 import { db } from "@/db";
 import { orderType } from "./engines/sales";
 import { customerReturnLabel, purchaseReturnLabel, returnableQty, returnLitres, reworkLabel } from "./engines/returns";
@@ -184,7 +185,7 @@ export async function returnableLines(ex: Ex = db, where = sql`true`): Promise<R
   }));
 }
 
-export const lineOption = (l: Pick<ReturnableLine, "orderNo" | "customer" | "sku" | "lotCode">) => `ORDER-${l.orderNo} · ${l.customer} · ${l.sku} · lot ${l.lotCode}`;
+export const lineOption = (l: Pick<ReturnableLine, "orderNo" | "customer" | "sku" | "lotCode">) => `${orderTraceCode(l.orderNo)} · ${l.customer} · ${l.sku} · lot ${l.lotCode}`;
 
 /**
  * The quantity a customer return is VALUED on: the rate is per can, or per

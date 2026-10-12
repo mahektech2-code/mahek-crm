@@ -16,7 +16,7 @@ import { requestStatus } from "./screens/complaints";
 import { returnsSummary } from "./returns";
 import { loadCustomers, partyStatus } from "./screens/masters";
 import { fgReorderRows, rmReorderRows } from "./screens/movement";
-import { detailRows, orderLines, ORDER_STATUSES } from "./screens/sales";
+import { detailRows, isWorkingLine, orderLines, ORDER_STATUSES } from "./screens/sales";
 import { fgLots, packLots, rmLots, sfgLots } from "./stock";
 import { controlWork, fullCountDue, type ControlWork } from "./stock-check";
 import { openMismatches } from "./floor-checks";
@@ -319,7 +319,7 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
       sales.push({ l: "Pending-customer orders", v: String(pend.length), sub: "approve, or activate the party", tone: pend.length ? "warn" : undefined, href: tileHref("orders", pend, "Pending party") });
     }
     if (has("labels")) {
-      const labels = ls.filter((l) => (l.o.status === "Ready" || l.o.status === "Under Process") && l.o.entryStatus !== "Done" && inG(l.godown));
+      const labels = ls.filter((l) => isWorkingLine(l) && inG(l.godown));
       sales.push({ l: "Labels to print", v: nf(labels.reduce((a, l) => a + l.labels, 0)), sub: plural(labels.length, "line"), href: tileHref("labels", null, "") });
     }
   }

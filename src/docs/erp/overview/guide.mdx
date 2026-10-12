@@ -15,7 +15,7 @@ flowchart TD
   C --> D["Goods arrive at the gate<br/>Goods receipt (GRN) against the PO"]
   D --> E{"Does the item<br/>need testing?"}
   E -- "Yes, a chemical" --> F["Purchase testing<br/>evidence, then the verifier decides"]
-  E -- "No" --> G["Purchase register<br/>a lot with a rate"]
+  E -- "No" --> G["Purchases register<br/>a lot with a rate"]
   F --> G
   G --> H["Raw-material stock<br/>lot by lot, godown by godown"]
   H --> I["SFG batch<br/>raw-material lots mixed into liquid"]
@@ -92,7 +92,7 @@ The dashboard is the first screen you see. It answers one question: **what needs
 | **Stock** | Any stock tab | Lots and quantity at each stage; stock value only with the cost power |
 | **Production and re-order** | Production screens, Transfers, Levels | Incomplete packing batches, production today and this month, transfers today, write-offs this month, items below their minimum |
 | **Sales** | Orders, Billing & dispatch | Orders by status, allocation short, ready to bill, dispatch today and late, pending-customer orders, dispatched today and this month |
-| **Logistics** | Transport | Pending LRs, consignments by tracking stage, reminder calls due |
+| **Logistics** | Logistics | LRs to attach, consignments on the road, calls due today |
 | **Requests and credit notes** | Complaints & credit notes | Complaints by status, credit notes to issue, average response time |
 | **Petty cash** | Petty cash | What each person holds per godown and mode, expenses waiting to be verified |
 | **Customers** | Sales parties (with the status power), My customers | Customers pending activation; how many of your customers are at their monthly target |

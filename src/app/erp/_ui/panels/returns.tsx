@@ -1,7 +1,7 @@
 "use client";
 
 import { registerPanel, type PanelProps } from "../panels";
-import { Stepper } from "./purchase-flow";
+import { Stepper } from "./parts";
 
 /* ---------------------------------------------------------------------------
  * A material return's flow, in its drawer — vendor side:
@@ -16,9 +16,9 @@ type Flow = { steps: string[]; step: number; stopped: string | null };
 function ReturnFlow({ data }: PanelProps) {
   const d = data as Flow;
   return (
-    <section className="grid gap-2 rounded-[6px] border border-line p-3.5">
+    <section className="grid gap-2 rounded-card border border-line p-3.5">
       <Stepper steps={d.steps} step={d.stopped ? -1 : d.step} label="Where this return is" />
-      {d.stopped ? <div className="text-[13px] text-muted">{d.stopped} — kept on the record, nothing deleted.</div> : null}
+      {d.stopped ? <div className="text-meta text-muted">{d.stopped} — kept on the record, nothing deleted.</div> : null}
     </section>
   );
 }

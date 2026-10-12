@@ -20,7 +20,7 @@ export default async function ErpSettings() {
               godowns={ctx.assignedGodowns.map((g) => ({ id: g.id, name: g.name }))}
               working={ctx.workingGodown ? { id: ctx.workingGodown.id, name: ctx.workingGodown.name } : null}
             />
-            <div className="mt-2 text-[13px] text-muted">
+            <div className="mt-2 text-meta text-muted">
               {ctx.assignedGodowns.length
                 ? `Assigned to ${ctx.assignedGodowns.length} godown${ctx.assignedGodowns.length > 1 ? "s" : ""}${ctx.workingGodown ? ` · current: ${ctx.workingGodown.name}` : ""}`
                 : "You are not assigned to any godown yet. Ask an ERP administrator to add you on the Godowns screen."}

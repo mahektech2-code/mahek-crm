@@ -3,11 +3,12 @@ import { redirect } from "next/navigation";
 import { erpContext } from "@/lib/erp/access";
 import { dispatchBoard, dispatchQueue } from "@/lib/erp/dispatch";
 import { lrUploadKit } from "@/lib/erp/logistics";
-import { erpLabelsHref, erpTraceHref } from "@/lib/erp/trace-links";
+import { erpDispatchHref, erpLabelsHref, erpTraceHref, orderTraceCode } from "@/lib/erp/trace-links";
+import { fd } from "@/lib/erp/ui";
 import { calendarDate } from "@/lib/business-date";
 import { nowMs } from "@/lib/format";
 import { Badge, Card, cx } from "@/components/ui/primitives";
-import { Page } from "../_ui/page-head";
+import { Page, PageLinks, QuickFind } from "../_ui/page-head";
 import { UploadLrsButton } from "../transport/parts/upload-lrs-button";
 import { DispatchDesk } from "./desk";
 
@@ -37,12 +38,9 @@ export default async function ErpDispatch({ searchParams }: { searchParams: Prom
         sub="Choose an order, then scan every box going onto the lorry. Each box is checked against the order's product, pack size and quantity as it is scanned."
         actions={kit ? <UploadLrsButton key={upload} variant="secondary" today={today} transporters={kit.transporters} recent={kit.recent} canRead={kit.canRead} initialOpen={upload === "1"} /> : null}
       >
-        <form action="/erp/dispatch" method="get" className="mb-4 flex max-w-[420px] gap-2">
-          <input name="order" inputMode="numeric" placeholder="Order number" autoFocus className="h-10 flex-1 rounded-[4px] border border-line bg-surface px-3 text-sm outline-none focus:border-brand" />
-          <button className="h-10 rounded-[4px] bg-brand px-4 text-sm font-medium text-white">Open</button>
-        </form>
+        <QuickFind action="/erp/dispatch" name="order" inputMode="numeric" placeholder="Order number" button="Open" className="mb-4 max-w-[420px]" />
         <Card className="overflow-hidden">
-          <div className="grid grid-cols-[90px_1fr_120px_110px_90px_110px] gap-3 border-b border-divider bg-canvas px-4 py-2 text-[12px] font-medium text-muted">
+          <div className="grid grid-cols-[90px_1fr_120px_110px_90px_110px] gap-3 border-b border-divider bg-canvas px-4 py-2 text-xs font-medium text-muted">
             <span>Order</span>
             <span>Delivery party</span>
             <span>Godown</span>
@@ -52,11 +50,11 @@ export default async function ErpDispatch({ searchParams }: { searchParams: Prom
           </div>
           {queue.length ? (
             queue.map((o) => (
-              <Link key={o.orderNo} href={`/erp/dispatch?order=${o.orderNo}`} className="grid grid-cols-[90px_1fr_120px_110px_90px_110px] items-center gap-3 border-b border-divider px-4 py-2.5 text-sm text-ink no-underline last:border-0 hover:bg-canvas hover:no-underline">
+              <Link key={o.orderNo} href={erpDispatchHref(o.orderNo)} className="grid grid-cols-[90px_1fr_120px_110px_90px_110px] items-center gap-3 border-b border-divider px-4 py-2.5 text-sm text-ink no-underline last:border-0 hover:bg-canvas hover:no-underline">
                 <span className="font-mono">{o.orderNo}</span>
                 <span className="truncate">{o.delivery}</span>
                 <span className="truncate text-muted">{o.godown}</span>
-                <span className={cx(o.dispatchOn && o.dispatchOn < today ? "text-danger" : "text-body")}>{o.dispatchOn ?? "—"}</span>
+                <span className={cx(o.dispatchOn && o.dispatchOn < today ? "text-danger" : "text-body")}>{o.dispatchOn ? fd(o.dispatchOn) : "—"}</span>
                 <span>{o.billed ? `${o.billed} of ${o.lines}` : <Badge tone="warn">Not billed</Badge>}</span>
                 <span className="text-right tabular-nums">
                   {o.scanned} / {Math.round(o.target)}
@@ -76,7 +74,7 @@ export default async function ErpDispatch({ searchParams }: { searchParams: Prom
     return (
       <Page title="Dispatch desk">
         <Card className="px-5 py-4 text-sm">
-          There is no order {orderNo}. <Link href="/erp/dispatch">Back to the queue</Link>
+          There is no order {orderNo}. <Link href={erpDispatchHref()}>Back to the queue</Link>
         </Card>
       </Page>
     );
@@ -84,13 +82,13 @@ export default async function ErpDispatch({ searchParams }: { searchParams: Prom
   return (
     <Page
       title={`Dispatch · order ${board.orderNo}`}
-      sub={`${board.delivery}${board.delivery !== board.billing ? ` (billed to ${board.billing})` : ""}${board.area ? ` · ${board.area}` : ""}${board.transporter ? ` · ${board.transporter}` : ""}${board.dispatchOn ? ` · leaves ${board.dispatchOn}` : ""}`}
+      sub={`${board.delivery}${board.delivery !== board.billing ? ` (billed to ${board.billing})` : ""}${board.area ? ` · ${board.area}` : ""}${board.transporter ? ` · ${board.transporter}` : ""}${board.dispatchOn ? ` · leaves ${fd(board.dispatchOn)}` : ""}`}
       actions={
-        <div className="flex gap-3 text-[13px]">
-          <Link href="/erp/dispatch">← Queue</Link>
+        <PageLinks>
+          <Link href={erpDispatchHref()}>← Queue</Link>
           <Link href={erpLabelsHref({ order: board.orderNo })}>Dispatch labels</Link>
-          <Link href={erpTraceHref(`ORDER-${board.orderNo}`)}>Trace</Link>
-        </div>
+          <Link href={erpTraceHref(orderTraceCode(board.orderNo))}>Trace</Link>
+        </PageLinks>
       }
     >
       <DispatchDesk
