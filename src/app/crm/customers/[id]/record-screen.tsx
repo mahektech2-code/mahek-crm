@@ -33,8 +33,8 @@ import { LogComplaintDialog } from "@/components/crm/log-complaint-dialog";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
+import { CallPanel } from "@/components/crm/call-panel-lazy";
 import {
-  CallPanel,
   type CallTarget,
   type ProductOption,
   type QuickNoteOption,
