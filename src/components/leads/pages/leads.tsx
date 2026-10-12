@@ -282,6 +282,7 @@ export async function Body({
          done to the lead, which every action goes on checking for itself. */
       viewer={viewer}
       lostReasons={config["leads.lostReasons"]}
+      holdReasons={config["leads.holdReasons"]}
       desks={{
         verification: verification.total,
         verificationMine: verification.mine,

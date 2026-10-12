@@ -22,7 +22,13 @@ import {
 import { assignDeskLead, bulkAssignDeskLeads } from "@/lib/actions/lead-desk-assignment";
 import { bulkAdvanceLeadStage } from "@/lib/actions/leads";
 import { trashLeads } from "@/lib/actions/lead-trash";
-import { bulkStagePayload, bulkStageReady, pickableLostReasons } from "@/lib/lead-bulk-stage";
+import {
+  EMPTY_BULK_HOLD,
+  bulkStagePayload,
+  bulkStageReady,
+  pickableLostReasons,
+  type BulkHold,
+} from "@/lib/lead-bulk-stage";
 import { healthView } from "@/lib/customer-health";
 import { cx } from "@/components/ui/primitives";
 import { pinnedCell, pinnedHead } from "@/components/ui/pinned";
@@ -53,6 +59,7 @@ import { OwnerOptions, UNASSIGNED, firstChoosable, ownerIdFor, type OwnerPerson 
 import type { LeadRow } from "@/lib/services/sales-service";
 import {
   ALL_LEAD_STAGES,
+  REASON_CODE_NEEDING_REMARKS,
   SALES_TYPES,
   salesTypeLabel,
   stageLabel,
@@ -161,6 +168,7 @@ export function LeadsScreen({
   viewer,
   places,
   lostReasons,
+  holdReasons,
 }: {
   /**
    * Whether this person may delete leads — move them to the trash. A
@@ -279,6 +287,8 @@ export function LeadsScreen({
   viewer: VantageViewer;
   /** `leads.lostReasons`, resolved on the server. Never the literal list. */
   lostReasons: Array<{ code: string; label: string }>;
+  /** `leads.holdReasons`, resolved on the server — the list a park's code is validated against. */
+  holdReasons: Array<{ code: string; label: string }>;
 }) {
   const router = useRouter();
   const search = useSearchParams();
@@ -399,6 +409,9 @@ export function LeadsScreen({
      archive sentence; nothing is pre-selected, for the reason MarkLost gives. */
   const [lostCode, setLostCode] = React.useState("");
   const [lostNote, setLostNote] = React.useState("");
+  /* A park's answers, asked once for the whole selection. */
+  const [holdCode, setHoldCode] = React.useState("");
+  const [hold, setHold] = React.useState<BulkHold>(EMPTY_BULK_HOLD);
   const offeredLost = React.useMemo(() => pickableLostReasons(lostReasons), [lostReasons]);
   /*
    * §4.1 — what the priority dialog currently has picked, and "" IS an answer.
@@ -478,6 +491,8 @@ export function LeadsScreen({
     setReason("");
     setLostCode("");
     setLostNote("");
+    setHoldCode("");
+    setHold(EMPTY_BULK_HOLD);
     setError(null);
   }
 
@@ -491,7 +506,9 @@ export function LeadsScreen({
         bulk === "reassign"
           ? await bulkAssignDeskLeads({ leadIds, ownerId: ownerIdFor(salesmanId) })
           : bulk === "stage"
-            ? await bulkAdvanceLeadStage(bulkStagePayload(leadIds, stage, lostCode, lostNote))
+            ? await bulkAdvanceLeadStage(
+                bulkStagePayload(leadIds, stage, stage === "on_hold" ? holdCode : lostCode, lostNote, hold),
+              )
             : bulk === "archive"
               ? await bulkArchiveLeads({ leadIds, reason })
               : bulk === "trash"
@@ -1157,6 +1174,74 @@ export function LeadsScreen({
           </div>
         ) : null}
 
+        {bulk === "stage" && stage === "on_hold" ? (
+          <div className="mt-3">
+            <div className="mb-1 text-[13px] font-medium text-ink">Why it stopped · required</div>
+            <div className="flex flex-col gap-0.5">
+              {holdReasons.map((r) => (
+                <label
+                  key={r.code}
+                  className="flex cursor-pointer items-center gap-2 rounded-[4px] px-1.5 py-1 text-[13px] text-body hover:bg-canvas"
+                >
+                  <input
+                    type="radio"
+                    name="bulk-hold-reason"
+                    value={r.code}
+                    checked={holdCode === r.code}
+                    onChange={() => setHoldCode(r.code)}
+                  />
+                  {r.label}
+                </label>
+              ))}
+            </div>
+            <label className="mt-3 block">
+              <span className="mb-1 block text-[13px] font-medium text-ink">
+                {holdCode === REASON_CODE_NEEDING_REMARKS
+                  ? "In words · required for Other"
+                  : "Anything to add (optional)"}
+              </span>
+              <textarea
+                value={hold.remarks}
+                onChange={(e) => setHold({ ...hold, remarks: e.target.value })}
+                rows={2}
+                className="w-full rounded-[4px] border border-line bg-surface px-2.5 py-2 text-sm text-ink outline-none focus:border-brand"
+              />
+            </label>
+            <label className="mt-3 block">
+              <span className="mb-1 block text-[13px] font-medium text-ink">Comes back on · required</span>
+              <input
+                type="date"
+                value={hold.resumeDate}
+                onChange={(e) => setHold({ ...hold, resumeDate: e.target.value })}
+                className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
+              />
+            </label>
+            <label className="mt-3 block">
+              <span className="mb-1 block text-[13px] font-medium text-ink">What happens then · required</span>
+              <input
+                type="text"
+                value={hold.actionText}
+                onChange={(e) => setHold({ ...hold, actionText: e.target.value })}
+                className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
+              />
+            </label>
+            <label className="mt-3 block">
+              <span className="mb-1 block text-[13px] font-medium text-ink">On · required</span>
+              <input
+                type="date"
+                value={hold.actionDate}
+                onChange={(e) => setHold({ ...hold, actionDate: e.target.value })}
+                className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
+              />
+            </label>
+            <p className="mt-1.5 text-[12px] text-muted">
+              One answer for every lead selected. Each lead&rsquo;s next action is owed by its own
+              owner; a lead nobody owns is named back to you rather than given to someone else, and
+              a lead already on hold, or one that is Lost or already a sale, is left as it is.
+            </p>
+          </div>
+        ) : null}
+
         {bulk === "archive" ? (
           <label className="block">
             <span className="mb-1 block text-[13px] font-medium text-ink">Why · required</span>
@@ -1218,7 +1303,13 @@ export function LeadsScreen({
               busy ||
               (bulk === "reassign" && !salesmanId) ||
               ((bulk === "archive" || bulk === "trash") && reason.trim().length < 3) ||
-              (bulk === "stage" && !bulkStageReady(stage, lostCode, offeredLost))
+              (bulk === "stage" &&
+                !bulkStageReady(
+                  stage,
+                  stage === "on_hold" ? holdCode : lostCode,
+                  stage === "on_hold" ? holdReasons : offeredLost,
+                  hold,
+                ))
             }
             onClick={() => void submitBulk()}
           >
