@@ -103,12 +103,12 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
     const ids = (l: { id: string; godown: string }[]) => l.filter((x) => inG(x.godown)).map((x) => x.id);
     const acc: Tile[] = [];
     const mis = ids(mism);
-    acc.push({ l: "Stock check mismatches", v: String(mis.length), sub: mis.length ? "the floor counted something the book does not show — review it" : "every stock check matched, or has been reviewed", tone: mis.length ? "danger" : undefined, href: tileHref("floorChecks", mis.length ? mis : null, "Mismatch") });
-    acc.push({ l: "Missing records", v: String(w.missing), sub: "batches, fills, receipts and transfers with no stock entry", tone: w.missing ? "warn" : undefined, href: tileHref("missingRecords", null, "") });
+    acc.push({ l: "Stock check mismatches", v: String(mis.length), sub: mis.length ? "the floor count differs from the book" : "every check matched or was reviewed", tone: mis.length ? "danger" : undefined, href: tileHref("floorChecks", mis.length ? mis : null, "Mismatch") });
+    acc.push({ l: "Missing records", v: String(w.missing), sub: "documents with no stock entry", tone: w.missing ? "warn" : undefined, href: tileHref("missingRecords", null, "") });
     if (w.repeatCauses.length)
       acc.push({ l: "Most frequent cause", v: String(w.repeatCauses[0].n), sub: `${adjustmentReasonLabel(w.repeatCauses[0].reason)} · approved adjustments over 90 days${w.repeatCauses.length > 1 ? `, then ${adjustmentReasonLabel(w.repeatCauses[1].reason).toLowerCase()}` : ""}`, tone: w.repeatCauses[0].n >= 3 ? "warn" : undefined, href: tileHref("stockAdjustments", null, "") });
     if (full.due) acc.push({ l: "Full count due", v: "Due", sub: full.last ? `last full count ${full.last} · every ${full.everyDays} days` : `no full count yet · one is due every ${full.everyDays} days`, tone: "warn", href: tileHref("countTasks", null, "") });
-    push("Inventory accuracy", acc);
+    push("Stock checks", acc);
   }
 
   /* ========================================================== purchase */
@@ -299,15 +299,15 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
     const dueToday = open.filter((l) => l.due === "today").map((l) => l.o.id);
     const late = open.filter((l) => l.due === "late").map((l) => l.o.id);
     const screen = has("readyOrders") ? "readyOrders" : "orders";
-    sales.push({ l: "Allocation short", v: String(short.length), sub: "Ready, lots still to allocate", tone: short.length ? "warn" : undefined, href: tileHref(screen, short, "Allocation short") });
-    sales.push({ l: "Ready to bill", v: String(toBill.length), sub: "Ready and allocated — Bill it once the bill no. and rate are in", href: tileHref(screen, toBill, "Ready to bill") });
+    sales.push({ l: "Allocation short", v: String(short.length), sub: "ready, lots still to allocate", tone: short.length ? "warn" : undefined, href: tileHref(screen, short, "Allocation short") });
+    sales.push({ l: "Ready to bill", v: String(toBill.length), sub: "allocated, waiting for the bill no. and rate", href: tileHref(screen, toBill, "Ready to bill") });
     sales.push({ l: "Dispatch today", v: String(dueToday.length), sub: "planned for today", href: tileHref("orders", dueToday, "Dispatch today") });
     sales.push({ l: "Dispatch late", v: String(late.length), sub: "planned for a day already past", tone: late.length ? "danger" : undefined, href: tileHref("orders", late, "Dispatch late") });
     const missing = ls.filter((l) => l.o.status !== "Cancel" && (!l.o.tallyBillNo || l.o.ratePaise == null)).map((l) => l.o.id);
     sales.push({ l: "Missing bill no / rate", v: String(missing.length), tone: missing.length ? "warn" : undefined, href: tileHref("orders", missing, "Bill or rate missing") });
     if (pw("approveParty")) {
       const pend = ls.filter((l) => l.o.partyStatus === "Pending").map((l) => l.o.id);
-      sales.push({ l: "Pending-customer orders", v: String(pend.length), sub: "approve, or activate the party", tone: pend.length ? "warn" : undefined, href: tileHref("orders", pend, "Pending party") });
+      sales.push({ l: "Orders for a pending party", v: String(pend.length), sub: "approve, or activate the party", tone: pend.length ? "warn" : undefined, href: tileHref("orders", pend, "Pending party") });
     }
     if (has("labels")) {
       const labels = ls.filter((l) => isWorkingLine(l) && inG(l.godown));
@@ -318,7 +318,7 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
     const { rows } = await details();
     const mine = rows.filter((r) => inG(r.l.godown));
     const unverified = mine.filter((r) => !r.d.verification || r.d.verification === "Pending").map((r) => r.l.o.id);
-    sales.push({ l: "Awaiting dispatch verification", v: String(unverified.length), sub: "enter the dispatch date once it has left", tone: unverified.length ? "warn" : undefined, href: tileHref("orderDetails", unverified, "Not verified") });
+    sales.push({ l: "Awaiting dispatch verification", v: String(unverified.length), sub: "enter the date once it has left", tone: unverified.length ? "warn" : undefined, href: tileHref("orderDetails", unverified, "Not verified") });
     const dispatched = mine.filter((r) => r.d.verification === "Verified");
     const todayIds = dispatched.filter((r) => r.d.dispatchDate === day).map((r) => r.l.o.id);
     const monthRows = dispatched.filter((r) => (r.d.dispatchDate ?? "").startsWith(month));
@@ -525,9 +525,9 @@ export async function accuracyFlow(ctx: ErpContext, godownName: string | null): 
       { l: "Blind count", v: ids(w.toCount).length, sub: dueNow ? `${dueNow} due today or overdue · book hidden` : "to count, book hidden", href: tileHref("countTasks", null, ""), tone: ids(w.toCount).length ? "info" : undefined },
       { l: "Red flag", v: ids(w.flags).length, sub: "beyond tolerance", href: tileHref("stockFlags", ids(w.flags), "Red flag"), tone: ids(w.flags).length ? "danger" : undefined },
       { l: "Recount", v: ids(w.recounts).length, sub: "by somebody else", href: tileHref("stockFlags", ids(w.recounts), "Recount out"), tone: ids(w.recounts).length ? "warn" : undefined },
-      { l: "Investigate", v: ids(w.investigating).length, sub: `${w.missing} missing record${w.missing === 1 ? "" : "s"} to check`, href: tileHref("stockFlags", ids(w.investigating), "Investigating"), tone: ids(w.investigating).length ? "warn" : undefined },
+      { l: "Investigate", v: ids(w.investigating).length, sub: "under investigation", href: tileHref("stockFlags", ids(w.investigating), "Investigating"), tone: ids(w.investigating).length ? "warn" : undefined },
       { l: "Approve", v: decide, sub: "adjustments and urgent purchases", href: ids(w.adjustments).length || !ids(w.exceptions).length ? tileHref("stockAdjustments", ids(w.adjustments), "Pending approval") : tileHref("requisitions", ids(w.exceptions), "Urgent purchase"), tone: decide ? "danger" : undefined },
-      { l: "Buying", v: moving.length, sub: "cleared: quotation → PO → GRN", href: tileHref("requisitions", moving, "Cleared to buy"), tone: moving.length ? "brand" : undefined },
+      { l: "Buying", v: moving.length, sub: "cleared to buy", href: tileHref("requisitions", moving, "Cleared to buy"), tone: moving.length ? "brand" : undefined },
     ],
   };
 }

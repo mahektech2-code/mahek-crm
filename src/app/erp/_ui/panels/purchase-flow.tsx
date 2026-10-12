@@ -49,10 +49,13 @@ function PurchaseFlow({ data }: PanelProps) {
         <span className="text-xs text-muted">{f.stage}</span>
       </div>
       <Stepper steps={f.steps} step={f.step} label="Purchase flow" />
-      <div className={cx("rounded-control px-3 py-2 text-meta", f.step < 0 ? "bg-canvas text-muted" : "bg-brand-soft text-brand-hover")}>
-        <span className="font-semibold">Next · </span>
-        {f.next}
-      </div>
+      {/* Once every step is done there is no next one; the stage above says so. */}
+      {f.step < f.steps.length ? (
+        <div className={cx("rounded-control px-3 py-2 text-meta", f.step < 0 ? "bg-canvas text-muted" : "bg-brand-soft text-brand-hover")}>
+          <span className="font-semibold">Next · </span>
+          {f.next}
+        </div>
+      ) : null}
       <dl className="grid grid-cols-2 gap-x-6 gap-y-2">
         {f.facts.map((x) => (
           <div key={x.l} className="min-w-0">

@@ -1,11 +1,11 @@
-The desk is a bespoke route, `src/app/erp/dispatch`, not a generic list. Its rules are one pure function, `scanVerdict` in `engines/trace.ts`; the reading and the transaction that acts on a verdict are `lib/erp/dispatch.ts`; the writes are four server actions in `actions/erp-trace.ts`. Do Verified is not reimplemented here — the desk calls the Billing & dispatch tab's own bulk handler.
+The desk is a bespoke route, `src/app/erp/dispatch`, not a generic list. Its rules are one pure function, `scanVerdict` in `engines/trace.ts`; the reading and the transaction that acts on a verdict are `lib/erp/dispatch.ts`; the writes are four server actions in `actions/erp-trace.ts`. Mark dispatch-verified is not reimplemented here — the desk calls the Billing & dispatch tab's own bulk handler.
 
 ## Map of the code
 
 | Layer | File | What lives there |
 |---|---|---|
 | Route | `src/app/erp/dispatch/page.tsx` | `ctx.screens.has("dispatch")`; no `?order=` → `dispatchQueue()`; with one → `dispatchBoard(orderNo)` |
-| Desk (client) | `src/app/erp/dispatch/desk.tsx` | Scan box, verdict panels, override request and decision, lines, boxes (Take off), Do Verified, scan log; `canVerify` = holds `orderDetails`, `canAllocate` = holds `orders` |
+| Desk (client) | `src/app/erp/dispatch/desk.tsx` | Scan box, verdict panels, override request and decision, lines, boxes (Take off), Mark dispatch-verified, scan log; `canVerify` = holds `orderDetails`, `canAllocate` = holds `orders` |
 | Rules (pure) | `src/lib/erp/engines/trace.ts` | `normaliseCode`, `scanVerdict`, `scanGate`, `packLabel`, `UNIT_STATUS_LABEL`, `manualMove` |
 | Reading and acting | `src/lib/erp/dispatch.ts` | `scanLines`, `unitFor`, `dispatchBoard`, `dispatchQueue`, `scanOntoOrder`, `unscanUnit`, `requestOverride`, `decideOverride`, `scanGateFor`, `markDispatched`, `scannedOnAllocation` |
 | Unit history | `src/lib/erp/units.ts` | `unitEvent` |
@@ -103,7 +103,7 @@ The action re-checks the power before `decideOverride` does: `requireErpWrite("d
 
 - **Module:** <ModuleRef k="erp.dispatch" />.
 - **Power:** `dispatchOverride` to decide an override (and, on Boxes & labels, to reject or return a box).
-- **Cross-screen:** Do Verified needs `orderDetails` (a tab of Orders); hand allocation needs `orders`. The desk hides both buttons without them and the actions refuse them.
+- **Cross-screen:** Mark dispatch-verified needs `orderDetails` (a tab of Orders); hand allocation needs `orders`. The desk hides both buttons without them and the actions refuse them.
 - A preview refuses every write (`requireErpWrite`).
 
 ## Tests that pin this
@@ -111,7 +111,7 @@ The action re-checks the power before `decideOverride` does: `requireErpWrite("d
 | Suite | File | What it pins |
 |---|---|---|
 | `npm run test` | `src/lib/erp/engines/trace.test.ts` | `normaliseCode` with links, `scanVerdict` for every refusal, matched / allocate / swap, override substitution, `scanGate` with and without units, `manualMove` |
-| `npm run test:integration` | `src/lib/erp/erp-traceability.test.ts` — `the dispatch desk` | An order for 3 boxes; Do Verified waits for every box; a matching box counts and the same box, an unknown code and a wrong pack size are stopped; another lot of the same SKU takes its place; an override is asked, decided by somebody else and used once; once all are scanned the boxes become dispatched |
+| `npm run test:integration` | `src/lib/erp/erp-traceability.test.ts` — `the dispatch desk` | An order for 3 boxes; Mark dispatch-verified waits for every box; a matching box counts and the same box, an unknown code and a wrong pack size are stopped; another lot of the same SKU takes its place; an override is asked, decided by somebody else and used once; once all are scanned the boxes become dispatched |
 
 ## Changing it safely
 

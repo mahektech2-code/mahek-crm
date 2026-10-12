@@ -21,7 +21,7 @@ The **Complaints & credit notes** screen is where the factory side sees, raises 
   />
   <WfPanel title="Customer A" side>
     <WfText muted>Packaging damage · raised 9 Oct</WfText>
-    <WfBar><WfButton primary>Accepted</WfButton><WfButton>Rejected</WfButton><WfButton>Suggest type and summary</WfButton><Hotspot n={3} /></WfBar>
+    <WfBar><WfButton primary>Accept</WfButton><WfButton>Reject</WfButton><WfButton>Suggest type and summary</WfButton><Hotspot n={3} /></WfBar>
     <WfCard title="Trace"><WfText muted>Bill → Lots dispatched → Packing → FG filling → SFG batch → Raw material → Purchase test</WfText><Hotspot n={4} /></WfCard>
   </WfPanel>
 </Wireframe>
@@ -72,8 +72,8 @@ If **Credit note required** is **Yes**, pick the **Bill number** (the customer's
 
 If your account can decide customer requests:
 
-- **Accepted** — the request goes ahead. A credit-note request moves to *under review* in Accounts.
-- **Rejected** — asks you to confirm, then closes it. A credit-note request is rejected too.
+- **Accept** — the request goes ahead. A credit-note request moves to *under review* in Accounts.
+- **Reject** — asks you to confirm, then closes it. A credit-note request is rejected too.
 
 Both can be done to several requests at once from the list. Each decision is written to the complaint's history with your name, so the CRM shows who decided it in the ERP.
 
@@ -86,7 +86,7 @@ Both can be done to several requests at once from the list. Each decision is wri
 
 Issuing the credit note takes the amount off the customer's bill in Accounts, exactly as a credit note issued there would, marks the complaint resolved, and the credit note's amount comes off that order line's margin on [Orders](/docs/erp/orders). See [the CRM's Bills page](/docs/crm/bills) and [Outstanding](/docs/crm/outstanding) for what that does to what the customer owes.
 
-**Add More Credit** on any complaint opens a new one for the same customer, type and bill — for a second credit note against the same bill.
+**Add another** on any complaint opens a new one for the same customer, type and bill — for a second credit note against the same bill.
 
 ## The trace beside a complaint
 

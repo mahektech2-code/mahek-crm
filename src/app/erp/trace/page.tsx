@@ -36,7 +36,7 @@ export default async function ErpTrace({ searchParams }: { searchParams: Promise
       <QuickFind action="/erp/trace" name="q" defaultValue={qv} mono button="Trace" className="max-w-[760px]" placeholder="Scan or type: BX-261008-000125, an SFG lot, FG12NA, FP40NA, order 1256, a bill number…">
         {qv ? (
           <Link href="/erp/trace" className="flex h-9 items-center px-2 text-sm">
-            Dashboard
+            Clear
           </Link>
         ) : null}
       </QuickFind>

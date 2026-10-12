@@ -83,7 +83,7 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Alerts",
     icon: "bell",
     screens: [
-      s("alerts", "alerts", "Alerts", "Unusual activity the ERP noticed overnight and through the day. Each alert names the records and the figures behind it.", true),
+      s("alerts", "alerts", "Alerts", "Unusual activity, with the records and figures behind each alert.", true),
     ],
   },
   {
@@ -91,14 +91,14 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Masters",
     icon: "db",
     screens: [
-      s("rawMaterials", "raw-materials", "Raw materials", "Every material the business buys. Chemicals carry a density and the tests each lot must pass.", true),
-      s("suppliers", "suppliers", "Purchase parties", "Suppliers, grouped by state. Call is the quick action.", true),
-      s("products", "products", "Products", "From liquid to boxed SKU: what each finished good is made of and how it is packed.", true),
-      s("customers", "customers", "Sales parties", "Customers. A Pending party needs admin activation before its orders can move.", true),
-      s("myCustomers", "my-customers", "My customers", "Your own customers and what they have raised.", true),
-      s("godowns", "godowns", "Godowns", "Every godown by region, plus the reserved Item Lost Record godown that only write-offs use.", true),
-      s("priceLists", "price-lists", "Price lists", "Rates by list, as published on the Price Desk. Rate excluding GST is calculated.", true),
-      s("refLists", "reference-lists", "Reference lists", "The editable value lists every form picks from.", true),
+      s("rawMaterials", "raw-materials", "Raw materials", "Everything the business buys, with density and required tests for chemicals.", true),
+      s("suppliers", "suppliers", "Purchase parties", "Suppliers, grouped by state.", true),
+      s("products", "products", "Products", "Finished goods: what each is made of and how it is packed.", true),
+      s("customers", "customers", "Sales parties", "Customers. A Pending party must be activated before its orders move.", true),
+      s("myCustomers", "my-customers", "My customers", "Your customers and what they have raised.", true),
+      s("godowns", "godowns", "Godowns", "Godowns by region, including Item Lost Record for write-offs.", true),
+      s("priceLists", "price-lists", "Price lists", "Rates as published on the Price Desk.", true),
+      s("refLists", "reference-lists", "Reference lists", "The value lists every form picks from.", true),
     ],
   },
   {
@@ -106,17 +106,17 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Purchase",
     icon: "cart",
     screens: [
-      s("requisitions", "requisitions", "Purchase requirements", "What a department needs bought. The item's purchase rule decides the method — direct purchase, quotation, or the buyer decides — and each requirement moves on to a vendor, an approved PO and the goods.", true, [
+      s("requisitions", "requisitions", "Requirements", "What each department needs bought, through to vendor, PO and goods.", true, [
         v("requisitions", "Requirements"),
         v("quotations", "Quotations"),
       ]),
-      s("purchaseOrders", "purchase-orders", "Purchase orders", "No purchase without a PO. Raised from requirements whose vendor is chosen, approved, sent to the vendor and received against at the gate.", true),
-      s("register", "register", "Purchases", "Goods received against an approved PO and the lots they become. A line that needs testing goes to the tester as it is saved; the rest are in the register at once at the PO's rate, and the supplier's bill is matched to them.", true, [
+      s("purchaseOrders", "purchase-orders", "Purchase orders", "Raised from requirements, approved, sent and received against.", true),
+      s("register", "register", "Purchases", "Goods received against a PO, and the lots they become.", true, [
         v("inward", "Goods receipt (GRN)"),
         v("register", "Register"),
         v("barcode", "Drum labels"),
       ]),
-      s("testing", "testing", "Purchase testing", "Evidence for the tests each chemical requires. Only the verifier can verify.", true),
+      s("testing", "testing", "Lot testing", "Test evidence for each chemical lot, for the verifier to verify.", true),
     ],
   },
   {
@@ -124,10 +124,10 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Production",
     icon: "beaker",
     screens: [
-      s("sfgBatches", "sfg-batches", "SFG batches", "Liquid made from raw-material lots. One line per lot consumed.", true),
+      s("sfgBatches", "sfg-batches", "SFG batches", "Liquid made from raw-material lots.", true),
       s("fgFill", "fg-fill", "FG filling", "SFG filled into cans or drums.", true),
-      s("packBatches", "pack-batches", "Packing batches", "Loose cans packed into boxes. A batch posts only when the cans used match the boxes.", true),
-      s("recipes", "recipes", "Recipes", "What one batch of each SFG product takes, in litres. A batch can start from it, and one that used noticeably more is flagged.", true),
+      s("packBatches", "pack-batches", "Packing batches", "Loose cans packed into boxes.", true),
+      s("recipes", "recipes", "Recipes", "What one batch of each SFG product takes, in litres.", true),
     ],
   },
   {
@@ -135,13 +135,13 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Stock",
     icon: "flask",
     screens: [
-      s("stock", "stock", "Stock", "What is in each godown, lot by lot, at every stage. Every entry behind it is one switch away.", true, [
+      s("stock", "stock", "Stock on hand", "What is in each godown, lot by lot, at every stage.", true, [
         v("rmStock", "Raw material", { key: "rmLog", label: "Show every entry", back: "Show available stock" }),
         v("sfgStock", "Semi-finished", { key: "sfgLog", label: "Show every entry", back: "Show available stock" }),
         v("fgStock", "Finished goods", { key: "fgLog", label: "Show every entry", back: "Show available stock" }),
         v("packStock", "Packed", { key: "packLog", label: "Show every entry", back: "Show available stock" }),
       ]),
-      s("stockCheck", "stock-check", "Stock accuracy", "Inventory Accuracy Control: a blind count before every purchase and every day, a stock check of anything by anybody on the floor, a red flag held until it is recounted and resolved, and stock that moves only through an approved adjustment.", true, [
+      s("stockCheck", "stock-check", "Stock accuracy", "Blind counts, floor checks, red flags and approved adjustments.", true, [
         v("countTasks", "To count"),
         v("floorChecks", "Stock checks"),
         v("stockFlags", "Red flags"),
@@ -149,16 +149,16 @@ export const ERP_GROUPS: ErpGroup[] = [
         v("missingRecords", "Missing records"),
         v("stockCounts", "Every count"),
       ]),
-      s("units", "boxes", "Boxes & labels", "Every box a packing batch made and every labelled loose can, by its own id: where it is, whether it has gone, and its label. Print labels for one box, a selection or a whole batch.", true, [
+      s("units", "boxes", "Boxes & labels", "Every labelled box and loose can: where it is and its label.", true, [
         v("units", "In stock & at dispatch"),
         v("allUnits", "Every box"),
       ]),
-      s("transfers", "transfers", "Item transfers", "Stock moved between godowns, including write-offs to Item Lost Record.", true),
-      s("rmLevels", "rm-levels", "Raw-material levels", "Minimum and maximum per godown. Raise a purchase requirement from any item below its minimum.", true, [
+      s("transfers", "transfers", "Item transfers", "Stock moved between godowns, including write-offs.", true),
+      s("rmLevels", "rm-levels", "Raw-material levels", "Minimum and maximum per godown, and what is below it.", true, [
         v("reorderRm", "Below minimum"),
         v("rmLevels", "All levels"),
       ]),
-      s("fgLevels", "fg-levels", "Finished-goods levels", "Minimum per SKU. Loose SKUs read FG stock, boxed SKUs read packing stock.", true, [
+      s("fgLevels", "fg-levels", "Finished-goods levels", "Minimum per SKU, and what is below it.", true, [
         v("reorderFg", "Below minimum"),
         v("fgLevels", "All levels"),
       ]),
@@ -166,10 +166,10 @@ export const ERP_GROUPS: ErpGroup[] = [
   },
   {
     id: "sales",
-    label: "Orders",
+    label: "Sales",
     icon: "receipt",
     screens: [
-      s("orders", "orders", "Orders", "From the order being taken to the bill leaving the godown. Each tab is one step of it.", true, [
+      s("orders", "orders", "Orders", "From the order to the bill leaving the godown, one step per tab.", true, [
         v("pendingOrders", "Pending"),
         v("readyOrders", "Under process & ready"),
         v("orderDetails", "Billing & dispatch"),
@@ -178,7 +178,7 @@ export const ERP_GROUPS: ErpGroup[] = [
         v("orders", "All lines"),
         v("orderInbox", "WhatsApp inbox"),
       ]),
-      s("dispatch", "dispatch", "Dispatch desk", "Choose an order, then scan every box onto it before the lorry leaves. A box of the wrong product or pack size is stopped, and goes only on an override somebody else approved.", true),
+      s("dispatch", "dispatch", "Dispatch desk", "Pick an order and scan every box onto it before the lorry leaves.", true),
     ],
   },
   {
@@ -186,7 +186,7 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Traceability",
     icon: "refresh",
     screens: [
-      s("trace", "trace", "Traceability", "Any box id, lot, batch, order or bill: where it came from and where it went. Today's production and dispatch, and what needs attention.", true),
+      s("trace", "trace", "Traceability", "Where any box, lot, batch, order or bill came from and went.", true),
     ],
   },
   {
@@ -196,7 +196,7 @@ export const ERP_GROUPS: ErpGroup[] = [
     screens: [
       /* The key and slug stay `transport` so every grant and bookmark holds;
          the screen is the whole logistics flow now (src/app/erp/transport). */
-      s("transport", "transport", "Logistics", "From the factory gate to the party's door: reaching the transporter, the LR, the road and the delivery — with the customer told at every step.", true, [
+      s("transport", "transport", "Logistics", "From the factory gate to the party's door.", true, [
         v("transport", "Today"),
         v("toTransport", "To transporter"),
         v("pendingLr", "LR desk"),
@@ -214,8 +214,8 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Complaints & credit notes",
     icon: "chat",
     screens: [
-      s("requests", "requests", "Complaints & credit notes", "The customer's complaints and the credit notes they ask for — the same records the CRM keeps, whichever app raised them.", true, [
-        v("requests", "All"),
+      s("requests", "requests", "Complaints & credit notes", "Customer complaints and credit notes, shared with the CRM.", true, [
+        v("requests", "All complaints"),
         v("issueCn", "Credit notes"),
         v("complaints", "Without a credit note"),
       ]),
@@ -226,12 +226,12 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Material returns",
     icon: "swap",
     screens: [
-      s("vendorReturns", "vendor-returns", "Vendor returns", "Material sent back to a supplier after its GRN: the purchase return, its approval, the debit note — which moves no stock — and the goods return outward, which takes the lot out of stock only once the dispatch is confirmed.", true, [
+      s("vendorReturns", "vendor-returns", "Vendor returns", "Material sent back to a supplier, its debit note and the outward.", true, [
         v("vendorReturns", "Purchase returns"),
         v("debitNotes", "Debit notes"),
         v("returnOutwards", "Return outward"),
       ]),
-      s("customerReturns", "customer-returns", "Customer returns", "Material a customer sends back against a dispatched order line. It waits in quarantine, outside saleable stock; the credit note goes to Accounts; QC decides whether it is reused, reworked, sold as chemical scrap or disposed of as waste.", true, [
+      s("customerReturns", "customer-returns", "Customer returns", "Material a customer sends back, held in quarantine until QC decides.", true, [
         v("customerReturns", "Returns"),
         v("returnQc", "Quarantine & QC"),
         v("reworkOrders", "Rework"),
@@ -244,7 +244,7 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Empty drums & scrap",
     icon: "can",
     screens: [
-      s("emptyDrums", "empty-drums", "Empty drums", "Every drum recorded empty off its GRN label and weighed. Mahek's drums become scrap stock; a supplier's drums wait to go back. The GRN, supplier and lot stay linked even when the label is gone.", true, [
+      s("emptyDrums", "empty-drums", "Empty drums", "Every emptied drum, weighed and linked to its GRN.", true, [
         v("emptyDrums", "Mahek stock"),
         v("drumReturnable", "Vendor returnable"),
         v("drumReview", "Needs review"),
@@ -252,11 +252,11 @@ export const ERP_GROUPS: ErpGroup[] = [
         v("drumAdjustments", "Corrections"),
         v("drumRegister", "All drums"),
       ]),
-      s("drumReturns", "drum-returns", "Returnable drum outward", "Supplier-owned empty drums sent back, by quantity. The oldest drums waiting for that supplier are taken first; nothing returnable is ever sold as scrap.", true, [
+      s("drumReturns", "drum-returns", "Returnable drum outward", "Supplier-owned drums sent back, oldest first.", true, [
         v("drumReturns", "Outwards"),
         v("drumPending", "Pending by supplier"),
       ]),
-      s("scrapSales", "scrap-sales", "Scrap sales", "Empty drums, plastic, cardboard and other scrap sold to scrap buyers, with what each still owes. Drums are sold by quantity, oldest first; money is matched from Petty Cash/Bank by the accountant.", true, [
+      s("scrapSales", "scrap-sales", "Scrap sales", "Drums and other scrap sold, and what each buyer still owes.", true, [
         v("scrapSales", "Sales"),
         v("scrapReceivables", "Receivables & ageing"),
         v("scrapStock", "Scrap stock", { key: "scrapEntries", label: "Entries", back: "On hand" }),
@@ -269,7 +269,7 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Petty Cash/Bank",
     icon: "wallet",
     screens: [
-      s("expenses", "expenses", "Petty Cash/Bank", "Funds given to people and what they spent, per godown and mode, with what is left — and money received into cash or bank, matched to what it pays for.", true, [
+      s("expenses", "expenses", "Petty Cash/Bank", "Funds given, what was spent, and money received.", true, [
         v("expenses", "Expenses"),
         v("credits", "Funds given"),
         v("cashReceipts", "Receipts"),
@@ -280,7 +280,7 @@ export const ERP_GROUPS: ErpGroup[] = [
     id: "help",
     label: "Help videos",
     icon: "play",
-    screens: [s("videos", "videos", "Help videos", "Short walkthroughs, newest first. Search by title or tag.", true)],
+    screens: [s("videos", "videos", "Help videos", "Short walkthroughs, newest first.", true)],
   },
   {
     id: "settings",

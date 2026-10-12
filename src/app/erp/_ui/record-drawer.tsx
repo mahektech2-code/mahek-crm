@@ -4,7 +4,8 @@ import type { ListRow, ListSpec } from "@/lib/erp/ui";
 import { cellText } from "@/lib/erp/ui";
 import { Button, cx, SectionLabel } from "@/components/ui/primitives";
 import { Drawer, DrawerHeader } from "@/components/ui/overlays";
-import { FlagBadge, StatusBadge } from "./badge";
+import { FlagBadge, flagsBesideStatus, StatusBadge } from "./badge";
+import { useKit } from "./kit";
 import { Icon } from "./icons";
 import { useErpUi } from "./erp-ui";
 import { renderPanel } from "./panels";
@@ -20,13 +21,21 @@ import "./panels/index";
 
 export function RecordDrawer({ screen, kind, row, onClose }: { screen: ListSpec; kind: string; row: ListRow; onClose: () => void }) {
   const ui = useErpUi();
+  const { flags: words } = useKit();
+  const flags = flagsBesideStatus(row, screen.cols, words);
   const titleCol = screen.cols.find((c) => c.t === "b") ?? screen.cols[0];
   const title = row.title ?? (titleCol ? cellText(titleCol, row.v[titleCol.k]) : "");
+  /* A record field that carries the same label as a column is the column said
+     in full ("QC: Approved by … · passed" beside "QC: Approved"), so it takes
+     the column's place rather than appearing a second time. */
+  const extra = (row.fields ?? []).map((f) => ({ ...f, der: !!f.der, status: false }));
+  const fuller = new Map(extra.map((f) => [f.l.toLowerCase(), f]));
+  const covered = new Set(row.panel?.covers ?? []);
   const fields = [
     ...screen.cols
-      .filter((c) => c.t !== "f" && c.k !== titleCol?.k)
-      .map((c) => ({ l: c.l, v: c.t === "s" ? String(row.v[c.k] ?? "—") : cellText(c, row.v[c.k]), der: false, status: c.t === "s" })),
-    ...(row.fields ?? []).map((f) => ({ ...f, der: !!f.der, status: false })),
+      .filter((c) => c.t !== "f" && c.k !== titleCol?.k && !covered.has(c.k))
+      .map((c) => fuller.get(c.l.toLowerCase()) ?? { l: c.l, v: c.t === "s" ? String(row.v[c.k] ?? "—") : cellText(c, row.v[c.k]), der: false, status: c.t === "s" }),
+    ...extra.filter((f) => !screen.cols.some((c) => c.t !== "f" && c.k !== titleCol?.k && !covered.has(c.k) && c.l.toLowerCase() === f.l.toLowerCase())),
   ];
   const acts = row.actions ?? [];
   const blocked = acts.filter((a) => a.why);
@@ -42,9 +51,9 @@ export function RecordDrawer({ screen, kind, row, onClose }: { screen: ListSpec;
         <div className="text-xs font-medium tracking-[0.04em] text-muted uppercase">{kind}</div>
         <div className="mt-0.5 text-lg leading-6 font-semibold text-ink">{title}</div>
         {row.header ? <div className="mt-0.5 text-meta text-body">{row.header}</div> : null}
-        {row.flags.length ? (
+        {flags.length ? (
           <div className="mt-2 flex flex-wrap gap-1">
-            {row.flags.map((f) => (
+            {flags.map((f) => (
               <FlagBadge key={f} flag={f} />
             ))}
           </div>

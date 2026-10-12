@@ -88,7 +88,7 @@ Which lines each tab shows:
 
 <Code file="src/lib/erp/screens/sales.ts" symbol="verify" collapsed />
 
-The Dispatch desk's **Do Verified** calls this same bulk handler through `erpDispatchVerify` in `actions/erp-trace.ts`, after `requireErpWrite("orderDetails")`, so every rule here — the scan gate included — holds from both doors.
+The Dispatch desk's **Mark dispatch-verified** calls this same bulk handler through `erpDispatchVerify` in `actions/erp-trace.ts`, after `requireErpWrite("orderDetails")`, so every rule here — the scan gate included — holds from both doors.
 
 ## The bill's figures
 
@@ -127,7 +127,7 @@ Accepting a draft is `draftForm(orderForm(ctx), id)`: the ordinary order form wi
   order_id: "One row per billed line; deleting it is Undo billing.",
   gst_bp: "1800 or 0 — decides the billing company.",
   verification: "Verified, Not Verify, Pending or null.",
-  dispatch_date: "Set by Do Verified. Drives the month a line's sale counts in.",
+  dispatch_date: "Set by Mark dispatch-verified. Drives the month a line's sale counts in.",
 }} />
 
 <DbTable name="erp_order_inbox" note={{
@@ -149,7 +149,7 @@ Accepting a draft is `draftForm(orderForm(ctx), id)`: the ordinary order form wi
 | `npm run test` | `src/lib/erp/engines/sales.test.ts` | Order type, whole boxes, label count, allocation state, bill figures, lot costing and margin, `readyStockCheck` spending in order |
 | `npm run test:integration` | `src/lib/erp/erp-sales.test.ts` | Boxes must be whole; rate and discount from the price list; no rate without the power; Ready refused without stock; allocation only once Ready and never past need or lot stock; Bill it in one step; dispatch verification freezes lots; the bill arithmetic; dispatch-on wording; releasing an allocation |
 | `npm run test:integration` | `src/lib/erp/erp-ai-reading.test.ts` — `orders from messages (AI-2)` | The sender's number finds the customer, past purchases break a tie, *peti* become cans; unclear lines are left to choose |
-| `npm run test:integration` | `src/lib/erp/erp-traceability.test.ts` | Do Verified waits for every box |
+| `npm run test:integration` | `src/lib/erp/erp-traceability.test.ts` | Mark dispatch-verified waits for every box |
 
 ## Changing it safely
 

@@ -448,7 +448,7 @@ function orderList(scope: Scope): ScreenModule {
       const shown = lines.filter((l) => inScope(scope, l, detailedOrders));
       const labels = scope === "labels";
       const all: Col[] = labels
-        ? orderCols(["orderId", "orderNo", "date", "billing", "delivery", "sku", "qty", "type", "remark", "transporter", "area", "labels", "status", "weight"], {
+        ? orderCols(["orderNo", "date", "billing", "delivery", "sku", "qty", "type", "remark", "transporter", "area", "labels", "status", "weight"], {
             billing: { t: "t" },
             delivery: { t: "b" },
           })
@@ -501,8 +501,8 @@ function orderList(scope: Scope): ScreenModule {
                   : [{ id: "bill", l: "Bill it", primary: !blockers.length, why: blockers.length ? `Needs ${blockers.join(", ")}` : "" } as ActionSpec]),
                 ...(approver && l.o.partyStatus === "Pending" ? [{ id: "approve", l: "Approved By Admin" } as ActionSpec] : []),
                 { id: "edit", l: "Edit", loadsForm: true },
-                { id: "more", l: "ADD More", loadsForm: true },
-                { id: "select", l: "Select Order Number", href: erpLink(scope, { f: (byNo.get(l.o.orderNo) ?? []).join(","), fl: `Order ${l.o.orderNo}` }) },
+                { id: "more", l: "Add another", loadsForm: true },
+                { id: "select", l: "Show the whole order", href: erpLink(scope, { f: (byNo.get(l.o.orderNo) ?? []).join(","), fl: `Order ${l.o.orderNo}` }) },
                 { id: "customer", l: "View customer", href: erpLink("customers", { open: l.billing.id }) },
                 ...(l.o.status === "Ready" && !l.dispatched ? [{ id: "scan", l: "Scan boxes at dispatch", href: erpDispatchHref(l.o.orderNo) } as ActionSpec] : []),
                 ...(l.o.status !== "Cancel" ? [{ id: "labels", l: "Print dispatch labels", href: erpLabelsHref({ order: l.o.orderNo }) } as ActionSpec] : []),
@@ -546,7 +546,6 @@ function orderList(scope: Scope): ScreenModule {
             title: l.delivery.name,
             header: [l.due ? DUE_WORD[l.due] : "", l.si.replace(/( - )+$/, "") || `${l.sku.name} · ${nf(l.o.qtyCans)} cans`].filter(Boolean).join(" · "),
             fields: [
-              { l: "Order id", v: l.o.id },
               { l: "Dispatch on", v: l.o.dispatchOn ? fd(l.o.dispatchOn) : "Not planned" },
               { l: "Standing instructions", v: l.si || "—", der: true },
               { l: "Area", v: l.delivery.area ?? "—", der: true },
@@ -898,7 +897,6 @@ const batchCodes: ScreenModule = {
     const packRate = new Map(pack.map((l) => [l.batchNo, l.perCanPaise]));
     const all: Col[] = [
       { k: "orderNo", l: "Order no", t: "mono" },
-      { k: "orderId", l: "Order id", t: "mono" },
       { k: "sku", l: "Description of goods", t: "b", w: 240 },
       { k: "from", l: "Lot code from", t: "s" },
       { k: "lot", l: "Lot code", t: "mono" },
@@ -1089,7 +1087,7 @@ const orderDetails: ScreenModule = {
       { k: "monthly", l: "Monthly sale", t: "m", pw: "viewSalesAmounts" },
       { k: "si", l: "Standing instructions", t: "t" },
       { k: "discounted", l: "Discounted amount", t: "m", pw: "viewSalesAmounts" },
-      ...orderCols(["orderId", "area", "transporter"]),
+      ...orderCols(["area", "transporter"]),
       { k: "transport", l: "Transport cost", t: "m" },
       { k: "extra", l: "Extra expenses", t: "m" },
       orderCol("bill"),
@@ -1110,10 +1108,10 @@ const orderDetails: ScreenModule = {
         groupHead: ["date", "billing", "billTotal", "dispatchDate", "bill", "transporter", "area", "godown"],
         godownKey: "godown",
         bulk: [
-          { id: "verify", l: "Do Verified", prompt: { title: "Dispatch date", sub: "Marks every selected line Verified and Dispatched.", submit: "Verify", fields: [{ k: "date", l: "Dispatch date", t: "date", req: true }], init: { date: today() } } },
+          { id: "verify", l: "Mark dispatch-verified", prompt: { title: "Dispatch date", sub: "Marks every selected line Verified and Dispatched.", submit: "Verify", fields: [{ k: "date", l: "Dispatch date", t: "date", req: true }], init: { date: today() } } },
           { id: "extra", l: "Extra expenses", prompt: EXTRA_EXPENSE_PROMPT },
         ],
-        noDataLine: "Nothing in order details yet. A Ready, Done, fully allocated line with a bill no. and a rate is added from the order lists.",
+        noDataLine: "Nothing to bill yet. A ready, fully allocated line arrives here once billed.",
       },
       rows: rows
         .sort((a, b) => (a.l.o.orderDate < b.l.o.orderDate ? 1 : a.l.o.orderDate > b.l.o.orderDate ? -1 : b.d.createdAt.getTime() - a.d.createdAt.getTime()))
@@ -1131,7 +1129,7 @@ const orderDetails: ScreenModule = {
           const actions: ActionSpec[] = [
             {
               id: "verify",
-              l: d.verification === "Verified" ? "Verified" : "Do Verified",
+              l: d.verification === "Verified" ? "Verified" : "Mark dispatch-verified",
               primary: verifiable && !gate,
               why: d.verification === "Verified" ? "Already verified" : !l.allocations ? "No lot is allocated to this line" : l.allocation !== "Done" ? `Allocation: ${l.allocation}` : gate ? `Boxes to scan: ${gate}` : "",
               prompt: { title: "Dispatch date", sub: `Order ${l.o.orderNo} · ${l.sku.name}`, submit: "Verify", fields: [{ k: "date", l: "Dispatch date", t: "date", req: true }], init: { date: today() } },
@@ -1144,7 +1142,7 @@ const orderDetails: ScreenModule = {
               prompt: EXTRA_EXPENSE_PROMPT,
             },
             { id: "gst", l: "Change GST", why: d.verification === "Verified" ? "The line has been dispatch-verified" : "", prompt: { title: "GST", submit: "Save", fields: [{ k: "gst", l: "GST", t: "select", req: true, opts: ["18%", "0%"] }], init: { gst: d.gstBp ? "18%" : "0%" } } },
-            { id: "select", l: "Select Order Number", href: erpLink("orderDetails", { f: (byNo.get(l.o.orderNo) ?? []).join(","), fl: `Order ${l.o.orderNo}` }) },
+            { id: "select", l: "Show the whole order", href: erpLink("orderDetails", { f: (byNo.get(l.o.orderNo) ?? []).join(","), fl: `Order ${l.o.orderNo}` }) },
             { id: "view", l: "View order", href: erpLink("orders", { open: l.o.id }) },
             { id: "scan", l: gate ? "Scan its boxes" : "Dispatch desk", primary: !!gate, href: erpDispatchHref(l.o.orderNo) },
             { id: "stickers", l: "Print dispatch labels", href: erpLabelsHref({ order: l.o.orderNo }) },

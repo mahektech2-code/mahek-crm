@@ -240,7 +240,8 @@ export type ListRow = {
   /** Fields hidden by powers, as a count, so the drawer can say so. */
   hiddenFields?: number;
   /** Free-form panels a screen draws in the drawer (allocation, evidence…). */
-  panel?: { kind: string; data: unknown };
+  /** `covers`: column keys the panel already draws, left out of the drawer's field list. */
+  panel?: { kind: string; data: unknown; covers?: string[] };
 };
 
 export type ListSpec = {

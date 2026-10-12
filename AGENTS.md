@@ -1868,6 +1868,16 @@ sidebar sums), `isPendingLine`/`isWorkingLine`, `ORDER_COL`, `godownField`,
 something a second time; never type an `/erp/…` URL, a hex brand colour, a
 pixel font size or a time zone.
 
+**A SCREEN SAYS A THING ONCE.** The generic list and drawer drop what would
+repeat: a flag whose words are the row's own status (`flagsBesideStatus` in
+`_ui/badge.tsx`), the grouped-by column on grouped rows, the toolbar on a list
+with no rows, and the status strip that only repeated the status tabs. In a
+drawer a record field with a column's label replaces that column, and a panel
+lists the column keys it already draws in `covers`. Write a screen's
+`noDataLine` as a short first sentence (the heading) and an optional second
+(the explanation); keep subtitles to one line; name buttons as verbs ("Accept",
+"Add another", "Show the whole order"), never past tenses or "Do …".
+
 **Every write goes through four server actions** (`lib/actions/erp.ts`): run
 an action, run a bulk action, submit a form, load a form (which writes nothing
 and is the one a preview may open). Each re-checks that

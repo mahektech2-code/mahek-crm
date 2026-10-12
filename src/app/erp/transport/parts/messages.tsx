@@ -56,7 +56,7 @@ export function Messages({ rows, canWrite, wati }: { rows: OutboxMessage[]; canW
             { key: "skipped", label: "Could not be sent", count: rows.filter((m) => m.status === "skipped").length },
           ]}
         />
-        <span className="ml-auto max-w-[520px] text-right text-xs text-muted">{wati ? `Messages go through Wati as ${wati} where the founder has WhatsApp on.` : "No Wati template is named for logistics (ERP settings → Logistics), so every message is sent by hand."}</span>
+        <span className="ml-auto max-w-[520px] text-right text-xs text-muted">{wati ? `Sent through Wati (${wati}) while WhatsApp is on.` : "Sent by hand: no Wati template is set for logistics."}</span>
       </div>
       {!shown.length ? (
         <Card>

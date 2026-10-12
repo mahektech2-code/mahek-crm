@@ -260,11 +260,11 @@ export function ErpShell({
                 /* Alerts are the one queue that is red whatever it counts: an
                    open alert is something the ERP could not explain. */
                 badgeToneFor={(item) => (item.href === "/erp/alerts" ? "danger" : "warn")}
+                showSizes={false}
               />
+              {/* The account is in the header, top right; a second copy of it
+                  here was the same name, the same menu, twice on one screen. */}
               {preview && !collapsed ? <PreviewAs preview={preview} /> : null}
-              <div className="flex flex-none items-center border-t border-divider px-2 py-2">
-                <AccountMenu user={user} hat={hat} variant="sidebar" collapsed={collapsed} />
-              </div>
             </aside>
           }
         >
@@ -313,7 +313,7 @@ function PreviewAs({ preview }: { preview: { targets: PreviewTargets; current: E
   };
   return (
     <div className="flex-none border-t border-divider px-3 pt-2.5 pb-2">
-      <div className="mb-1.5 text-2xs font-medium tracking-[0.04em] text-muted uppercase">Preview access as</div>
+      <div className="mb-1.5 text-2xs font-medium tracking-[0.04em] text-muted uppercase">View the ERP as</div>
       <select
         value={value}
         onChange={(e) => pick(e.target.value)}
@@ -323,7 +323,7 @@ function PreviewAs({ preview }: { preview: { targets: PreviewTargets; current: E
           preview.current ? "border-brand text-brand-hover" : "border-line text-body",
         )}
       >
-        <option value="">Myself — {preview.self.name}</option>
+        <option value="">Myself</option>
         {preview.targets.designations.length ? (
           <optgroup label="Designations">
             {preview.targets.designations.map((d) => (
@@ -509,7 +509,7 @@ function WorkingAt({
     );
   }
   return (
-    <div className="flex h-7.5 items-center gap-1.5 rounded-control border border-dashed border-line-strong pr-1 pl-2">
+    <div className="flex h-7.5 items-center gap-1.5 rounded-control border border-line pr-1 pl-2">
       <span className="hidden text-2xs font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase xl:inline">Working at</span>
       <GodownPicker
         look="chip"

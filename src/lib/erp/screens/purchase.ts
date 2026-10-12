@@ -360,7 +360,7 @@ async function inwardForm(ctx: ErpContext, init?: Record<string, string>, opts: 
     screen: "inward",
     id: "new",
     title: fixedPo ? `Receive goods · ${poLabel(fixedPo.po.poNumber)}` : "Goods receipt (GRN)",
-    sub: "Goods are received against an approved PO — one PR, one line per PO item that arrived. A line that needs testing goes to the tester; the rest are registered at the PO's rate.",
+    sub: "Against an approved PO, one line per item that arrived.",
     submit: "Save receipt",
     lineLabel: "Item",
     init: {
@@ -465,7 +465,6 @@ const inward: ScreenModule = {
         groups: ["pr"],
         groupHead: ["po", "date", "supplier", "godown", "transport"],
         groupSel: true,
-        agg: { k: "qty", l: "total quantity" },
         godownKey: "godown",
         newForm: form,
         newLabel: "Receive goods",
@@ -928,7 +927,7 @@ const testing: ScreenModule = {
         godownKey: "godown",
         newForm: newForm ?? undefined,
         newLabel: "Record a test",
-        noDataLine: "No purchase tests yet. Send a chemical's inward line to testing first.",
+        noDataLine: "No tests yet. Chemical lots arrive here as they are received.",
       },
       rows: rows.map((x) => {
         const reg = withRegister.has(x.t.id);
@@ -941,14 +940,14 @@ const testing: ScreenModule = {
         if (x.t.status !== "Verified")
           actions.push({
             id: "verify",
-            l: "Do Verify",
+            l: "Verify",
             primary: true,
             why: why || (miss.length ? `Evidence missing: ${miss.join(", ")}` : ""),
           });
         if (shown !== "Not Verified" || reg)
           actions.push({
             id: "unverify",
-            l: "Do Not Verified",
+            l: "Mark not verified",
             why,
             confirm: reg
               ? `A purchase register row already exists for this lot. Marking it Not Verified leaves that row in place — remove it from the register separately.`
@@ -960,7 +959,7 @@ const testing: ScreenModule = {
           actions.push({ id: "aiTestReject", l: "Reject photo readings", confirm: "Reject the AI readings? Nothing changes." });
         } else if (x.t.status !== "Verified" && photosOn && (x.t.densityPhotoId || x.t.phPhotoId))
           actions.push({ id: "aiTestRead", l: "Read test photos", ai: true, why: testWhy });
-        actions.push({ id: "addLot", l: "ADD More Lot", loadsForm: true, why: testWhy });
+        actions.push({ id: "addLot", l: "Add another lot", loadsForm: true, why: testWhy });
         return {
           id: x.t.id,
           v: {
@@ -1333,7 +1332,7 @@ async function purchaseForm(ctx: ErpContext, id?: string): Promise<FormSpec | nu
     id: id ? "edit" : "new",
     recordId: id,
     title: id ? "Edit purchase" : "New purchase",
-    sub: id ? `${editing!.item} · lot ${editing!.p.lotNo}` : "A lot entered by hand against an approved PO. Most arrive from goods receipt or a verified test.",
+    sub: id ? `${editing!.item} · lot ${editing!.p.lotNo}` : "A lot entered by hand against an approved PO.",
     submit: id ? "Save purchase" : "Add purchase",
     init,
     data: { partyCode, partyOfPo, itemCode, densityOf, supplierOf: rx.supplierOf, pendingOf: rx.pendingOf },
@@ -1425,7 +1424,7 @@ const register: ScreenModule = {
         newForm: newForm ?? undefined,
         newLabel: "New purchase",
         bulk: money ? [{ id: "billReceivedMany", l: "Mark bill received", confirm: "Mark every selected purchase's bill as received?" }] : undefined,
-        noDataLine: "No purchases yet. Rows arrive from goods received against a PO and from verified tests.",
+        noDataLine: "No purchases yet. Rows arrive as goods are received against a PO.",
       },
       rows: rows.map((r) => {
         const p = r.p;
@@ -1448,13 +1447,13 @@ const register: ScreenModule = {
           if (p.billReceived !== "Received")
             actions.push({
               id: "billReceived",
-              l: "Bill Received",
+              l: "Record the bill",
               prompt: { title: "Bill received", submit: "Save", fields: [{ k: "billNo", l: "Bill number", t: "text", req: true }], init: { billNo: p.billNumber ?? "" } },
             });
           else actions.push({ id: "billNotReceived", l: "Bill Not Received", why: p.status === "Purchase Matched" || p.status === "Purchase Verified" ? "It has been matched to its bill" : "" });
           actions.push({
             id: "status",
-            l: "Change Status",
+            l: "Change status",
             prompt: {
               title: "Purchase status",
               sub: verifier ? "The verifier sets Purchase Verified." : "Purchase Verified is set by the verifier.",
@@ -1463,7 +1462,7 @@ const register: ScreenModule = {
             },
           });
           if (p.status === "Purchase Verified" || p.status === "")
-            actions.push({ id: "reopen", l: "Do Pending", why: reopen ? "" : "Only an admin sets a verified purchase back to Pending" });
+            actions.push({ id: "reopen", l: "Back to pending", why: reopen ? "" : "Only an admin sets a verified purchase back to Pending" });
         }
         if (money && aiBills) {
           if (pendingBills.has(p.id)) {
@@ -1486,7 +1485,7 @@ const register: ScreenModule = {
             });
         }
         actions.push({ id: "edit", l: "Edit", loadsForm: true });
-        actions.push({ id: "addMore", l: "Add More", loadsForm: true });
+        actions.push({ id: "addMore", l: "Add another", loadsForm: true });
         actions.push({ id: "label", l: "Print drum label", href: erpLabelsHref({ purchase: p.id }) });
         const moneyFields = money
           ? [
@@ -1849,7 +1848,6 @@ const rmStock: ScreenModule = {
       { k: "unit", l: "Unit", t: "t" },
       { k: "lot", l: "Lot no", t: "mono" },
       { k: "godown", l: "Godown", t: "t" },
-      { k: "entry", l: "Entry id", t: "mono" },
       { k: "rate", l: "Rate", t: "m", pw: "viewCost" },
       { k: "value", l: "Value", t: "m", pw: "viewCost" },
     ];
@@ -1860,7 +1858,6 @@ const rmStock: ScreenModule = {
         cols,
         hidden,
         groups: ["godown"],
-        agg: { k: "stock", l: "total" },
         godownKey: "godown",
         readOnly: true,
         noDataLine: "Nothing in stock yet. Stock appears as purchases are given a rate.",
@@ -1874,7 +1871,6 @@ const rmStock: ScreenModule = {
             unit: l.unit,
             lot: l.lotNo,
             godown: l.godown,
-            entry: l.latestEntryId,
             rate: l.ratePaise,
             value: l.ratePaise == null ? null : Math.round(l.ratePaise * l.stock),
           },
@@ -1907,7 +1903,6 @@ const rmLog: ScreenModule = {
       { k: "lot", l: "Lot", t: "mono" },
       { k: "qty", l: "Quantity", t: "n" },
       { k: "godown", l: "Godown", t: "t" },
-      { k: "source", l: "Source", t: "mono" },
       { k: "f", l: "Flags", t: "f" },
     ];
     return {
@@ -1918,7 +1913,7 @@ const rmLog: ScreenModule = {
         godownKey: "godown",
         readOnly: true,
         sortDefault: ["date", -1],
-        noDataLine: "Nothing here yet. Entries appear on their own as purchases and transfers are posted.",
+        noDataLine: "No entries yet. They appear as purchases and transfers post.",
       },
       rows: rows.map((r) => ({
         id: r.id,

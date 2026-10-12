@@ -79,7 +79,7 @@ The form is `dutiesForm`, opened by the administrator-only **Who does what** act
   grade: "A+ · A · B+ · B · C (GRADES).",
 }} />
 
-New customers are inserted as `kind = 'lead'`, `status = 'active'`, `lead_source = 'erp'`, `owner_id` = the creator, with the profile's `pending_activation = true`, in one transaction. Activate / Deactivate / Mark Pending each check `customerStatus` in the handler; Deactivate writes `customers.status = 'deactivated'` with `deactivation_reason = 'Deactivated in the ERP'` and `status_decided_at`.
+New customers are inserted as `kind = 'lead'`, `status = 'active'`, `lead_source = 'erp'`, `owner_id` = the creator, with the profile's `pending_activation = true`, in one transaction. Activate / Deactivate / Mark pending each check `customerStatus` in the handler; Deactivate writes `customers.status = 'deactivated'` with `deactivation_reason = 'Deactivated in the ERP'` and `status_decided_at`.
 
 <Code file="src/lib/erp/screens/masters.ts" symbol="saveCustomerDetails" collapsed />
 

@@ -1,8 +1,8 @@
-When a lorry arrives at the gate, three things happen in the ERP: the goods are **received against their purchase order** (a GRN, numbered as a PR), a chemical is **tested** before anybody may use it, and every lot ends up in the **purchase register** with a rate — which is what puts it into stock. The Purchases screen has three tabs for this — Goods receipt (GRN), Register and Drum labels — and Purchase testing is its own screen.
+When a lorry arrives at the gate, three things happen in the ERP: the goods are **received against their purchase order** (a GRN, numbered as a PR), a chemical is **tested** before anybody may use it, and every lot ends up in the **purchase register** with a rate — which is what puts it into stock. The Purchases screen has three tabs for this — Goods receipt (GRN), Register and Drum labels — and Lot testing is its own screen.
 
 ## Receiving goods at the gate
 
-<Wireframe url="/erp/register" nav={["Dashboard", "#Purchase", "Purchase requirements", "Purchase orders", "Purchases", "Purchase testing"]} active="Purchases" caption="Purchases → Goods receipt (GRN)">
+<Wireframe url="/erp/register" nav={["Dashboard", "#Purchase", "Purchase requirements", "Purchase orders", "Purchases", "Lot testing"]} active="Purchases" caption="Purchases → Goods receipt (GRN)">
   <WfBar>
     <WfTitle sub="Goods received against an approved PO and the lots they become.">Purchases</WfTitle>
     <WfSpacer /><WfButton primary>New goods receipt</WfButton><Hotspot n={1} />
@@ -56,8 +56,8 @@ A line may take a little more than was ordered — drums never weigh exactly —
 
 Every chemical lot is tested before it reaches the register. The tester records evidence for the tests the item requires; only the **verifier** decides.
 
-<Wireframe url="/erp/testing" nav={["Dashboard", "#Purchase", "Purchases", "Purchase testing"]} active="Purchase testing" caption="Purchase testing">
-  <WfBar><WfTitle sub="Evidence for the tests each chemical requires. Only the verifier can verify.">Purchase testing</WfTitle></WfBar>
+<Wireframe url="/erp/testing" nav={["Dashboard", "#Purchase", "Purchases", "Lot testing"]} active="Lot testing" caption="Lot testing">
+  <WfBar><WfTitle sub="Evidence for the tests each chemical requires. Only the verifier can verify.">Lot testing</WfTitle></WfBar>
   <WfTable
     highlight={0}
     columns={["Verification", "Date", "PR no", "Item", "Tests required", "Smell", "Density", "Tester", "Godown"]}
@@ -69,7 +69,7 @@ Every chemical lot is tested before it reaches the register. The tester records 
 </Wireframe>
 
 <Hotspots items={[
-  <span key="1"><b>Verification.</b> Pending until the verifier presses <b>Do Verify</b> or <b>Do Not Verified</b>.</span>,
+  <span key="1"><b>Verification.</b> Pending until the verifier presses <b>Verify</b> or <b>Mark not verified</b>.</span>,
 ]} />
 
 <Steps>
@@ -87,11 +87,11 @@ Open the test and press **Record evidence**. The form asks only for the tests th
 | Tharmakol Pass | Thermocol-pass photo |
 </Step>
 <Step title="The verifier decides">
-**Do Verify** is refused while any required evidence is missing ("Evidence missing: …"). Verifying creates the lot's register row, once.
+**Verify** is refused while any required evidence is missing ("Evidence missing: …"). Verifying creates the lot's register row, once.
 </Step>
 </Steps>
 
-**ADD More Lot** copies a test to another lot of the same delivery. If AI photo reading is on, **Read test photos** fills the readings for you to review; nothing is saved until you save the review.
+**Add another lot** copies a test to another lot of the same delivery. If AI photo reading is on, **Read test photos** fills the readings for you to review; nothing is saved until you save the review.
 
 ## The purchase register
 
@@ -104,12 +104,12 @@ Every lot bought, with what it cost. A row arrives on its own — from a receipt
 | Action | Who | What it does |
 |---|---|---|
 | **Enter rate** | Purchase money | Only on a row with no rate. "Posted · … of lot … now in stock" |
-| **Bill Received** | Purchase money | Records the supplier's bill number; the stage becomes Bill received |
+| **Record the bill** | Purchase money | Records the supplier's bill number; the stage becomes Bill received |
 | **Bill Not Received** | Purchase money | Undoes it — refused once the purchase is matched |
-| **Change Status** | Purchase money | Invoice Received or Purchase Matched; the verifier sets only Purchase Verified |
-| **Do Pending** | The reopen power (an admin) | Sets a verified purchase back to Pending |
+| **Change status** | Purchase money | Invoice Received or Purchase Matched; the verifier sets only Purchase Verified |
+| **Back to pending** | The reopen power (an admin) | Sets a verified purchase back to Pending |
 | **Read supplier bill** | Purchase money, AI bills on | Reads a photo or PDF of the bill and matches it to this PR's rows for you to review |
-| **New purchase**, **Edit**, **Add More** | The screen | Enter a lot by hand against an approved PO, correct a row, or add another lot to the PR |
+| **New purchase**, **Edit**, **Add another** | The screen | Enter a lot by hand against an approved PO, correct a row, or add another lot to the PR |
 
 <Callout kind="money">
 A lot is in stock only once it has a rate above zero. A row from a PO already has the PO's rate, so it is in stock the moment it is saved. "Not posted: rate missing" in the Inventory column says why one is not.
@@ -136,5 +136,5 @@ Nobody has set the rate yet. Until an administrator sets it in the Admin Console
 </Faq>
 
 <Faq q="A test was verified by mistake.">
-The verifier can mark it **Do Not Verified**. The register row it created stays — correct or remove that with the office.
+The verifier can mark it **Mark not verified**. The register row it created stays — correct or remove that with the office.
 </Faq>

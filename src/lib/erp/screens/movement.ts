@@ -370,7 +370,7 @@ function rmLevelList(key: "rmLevels" | "reorderRm"): ScreenModule {
               actions.push({ id: "apply", l: "Apply suggestion", confirm: `Set ${r.item} at ${r.godown} to min ${r.suggestion.min}, max ${r.suggestion.max}? ${r.suggestion.basis}` });
             if (!reorder) {
               actions.push({ id: "edit", l: "Edit", loadsForm: true });
-              actions.push({ id: "copy", l: "Add More", loadsForm: true });
+              actions.push({ id: "copy", l: "Add another", loadsForm: true });
               actions.push({ id: "delete", l: "Delete", confirm: `Remove the level for ${r.item} at ${r.godown}?` });
             }
             return {
@@ -587,7 +587,7 @@ function fgLevelList(key: "fgLevels" | "reorderFg"): ScreenModule {
             : [
                 ...(r.suggestion && r.suggestion.min !== r.min ? [{ id: "apply", l: "Apply suggestion", confirm: `Set the minimum for ${r.sku} at ${r.godown} to ${r.suggestion.min}? ${r.suggestion.basis}` }] : []),
                 { id: "edit", l: "Edit", loadsForm: true },
-                { id: "copy", l: "Add More", loadsForm: true },
+                { id: "copy", l: "Add another", loadsForm: true },
                 { id: "delete", l: "Delete", confirm: `Remove the level for ${r.sku} at ${r.godown}?` },
               ],
           by: stampLine(r.by, r.updatedAt).replace(/^Created/, "Updated"),

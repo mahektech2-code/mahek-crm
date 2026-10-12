@@ -7,10 +7,10 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ColSpec, ListRow, ListSpec, Tone } from "@/lib/erp/ui";
 import { cellText, inr, nf } from "@/lib/erp/ui";
 import { Icon as ShellIcon } from "@/components/shell/icons";
-import { Button, Card, cx, EmptyState, MetricStrip, SortableTh, Td, Th, Tr, type Metric } from "@/components/ui/primitives";
+import { Button, Card, cx, EmptyState, SortableTh, Td, Th, Tr } from "@/components/ui/primitives";
 import { SelectionBar, Tabs } from "@/components/ui/overlays";
 import { Pager } from "@/components/ui/pager";
-import { FlagBadge, rowTone, StatusBadge } from "./badge";
+import { FlagBadge, flagsBesideStatus, rowTone, StatusBadge } from "./badge";
 import { GodownPicker, type PickItem } from "./godown-picker";
 import { Icon } from "./icons";
 import { useErpUi } from "./erp-ui";
@@ -127,7 +127,7 @@ export function ListScreen({
   initialNew?: Record<string, string> | null;
 }) {
   const ui = useErpUi();
-  const { flags: FLAG, tones: ST_TONE, place } = useKit();
+  const { flags: FLAG, place } = useKit();
   const router = useRouter();
   const path = usePathname();
   const params = useSearchParams();
@@ -251,8 +251,10 @@ export function ListScreen({
   /* Columns that are facts about the group are drawn once in its header while
      grouped, so the rows carry only what differs from line to line. */
   const headCols = gk && spec.groupHead ? spec.groupHead.map((k) => cols.find((c) => c.k === k)).filter((c): c is ColSpec => !!c) : [];
-  // The group's own key is the header's first word, so its rows need not repeat it.
-  const lineCols = headCols.length ? cols.filter((c) => !headCols.includes(c) && !gk?.includes(c.k)) : cols;
+  /* The group's own key is the header's first word, so while grouped its rows
+     do not repeat it — a godown column reading "Bhiwandi" fourteen times under
+     a header that says Bhiwandi is noise. */
+  const lineCols = gk ? cols.filter((c) => !headCols.includes(c) && !gk.includes(c.k)) : cols;
   /* The longest badge each status and flags column will draw on these rows. */
   const badgeChars: Record<string, number> = {};
   for (const c of lineCols) {
@@ -292,24 +294,14 @@ export function ListScreen({
     setPage(1);
     if (filter) router.replace(home);
   };
+  /* "Nothing here yet. Entries appear as …" reads as a heading and the
+     sentence that explains it, not as one bold paragraph. */
+  const [emptyTitle, emptyBody] = splitFirstSentence(spec.noDataLine ?? "Nothing here yet.");
   const noMatchBits = [q ? `“${q}”` : "", chip, filter ? filter.label.toLowerCase() : "", gf].filter(Boolean).join(" · ");
   const pickChip = (v: string) => {
     setChip(v);
     setPage(1);
   };
-
-  /* The strip counts the statuses, as the CRM's Complaints screen does above
-     its tabs — only where there are few enough to read at a glance. */
-  const metrics: Metric[] | null =
-    chips.length >= 2 && chips.length <= 5
-      ? [
-          { label: "All", value: nf(filtered.length), onClick: () => pickChip("") },
-          ...chips.map((c) => {
-            const t = ST_TONE[c.v];
-            return { label: c.v, value: nf(c.n), tone: t === "danger" ? ("danger" as const) : t === "success" ? ("success" as const) : undefined, onClick: () => pickChip(c.v) };
-          }),
-        ]
-      : null;
 
   const sortBy = (k: string) => {
     const on = view.srt && view.srt.k === k;
@@ -324,10 +316,12 @@ export function ListScreen({
         <>
           {/* One export for every list: it used to sit beside a "Download"
               that did exactly the same thing on the stock and label lists. */}
-          <Button variant="secondary" onClick={exportCsv} title="Download these rows, as filtered, as CSV">
-            <Icon n="dl" />
-            Export
-          </Button>
+          {rows.length ? (
+            <Button variant="secondary" onClick={exportCsv} title="Download these rows, as filtered, as CSV">
+              <Icon n="dl" />
+              Export
+            </Button>
+          ) : null}
           {(spec.tools ?? []).map((t) => (
             <Button
               key={t.id}
@@ -352,7 +346,6 @@ export function ListScreen({
       {tabs && tabs.length > 1 ? <ListTabs label={label} tabs={tabs} toggle={toggle} /> : null}
 
       {above}
-      {metrics ? <MetricStrip metrics={metrics} /> : null}
 
       {/* Not overflow-hidden: the filter bar's menus open over the rows, and on a short list they would be cut off at the card's edge. */}
       <Card>
@@ -365,6 +358,9 @@ export function ListScreen({
           />
         ) : null}
 
+        {/* An empty list has nothing to search, group or choose columns of:
+            the toolbar is drawn once there is something to work on. */}
+        {rows.length > 0 || filter ? (
         <div className="flex flex-wrap items-center gap-2.5 border-b border-divider px-4 py-3">
           <div className="relative w-[300px] max-w-full">
             <ShellIcon name="search" size={16} className="pointer-events-none absolute top-2 left-2.5 text-muted" />
@@ -442,12 +438,14 @@ export function ListScreen({
             </span>
           ) : null}
         </div>
+        ) : null}
 
         {spec.scopedLine ? <div className="border-b border-divider bg-brand-soft/40 px-4 py-2 text-meta text-brand-hover">{spec.scopedLine}</div> : null}
 
         {rows.length === 0 ? (
           <EmptyState
-            title={spec.noDataLine ?? "Nothing here yet"}
+            title={emptyTitle}
+            body={emptyBody}
             action={
               spec.newForm && !spec.readOnly ? (
                 <Button variant="primary" onClick={() => ui.openForm(spec.newForm!)}>
@@ -603,7 +601,7 @@ export function ListScreen({
                             </Td>
                           ) : null}
                           {shownCols.map((c, i) => (
-                            <Cell key={c.k} c={c} r={r} edge={!bulkOn && i === 0 && tone ? EDGE[tone] : undefined} />
+                            <Cell key={c.k} c={c} r={r} cols={cols} edge={!bulkOn && i === 0 && tone ? EDGE[tone] : undefined} />
                           ))}
                         </Tr>,
                       );
@@ -678,19 +676,26 @@ function GroupFact({ c, v }: { c: ColSpec; v: ListRow["v"][string] | undefined }
   );
 }
 
-function Cell({ c, r, edge }: { c: ColSpec; r: ListRow; edge?: string }) {
+/** Splits at the first sentence end: the first sentence, and the rest (or undefined). */
+function splitFirstSentence(line: string): [string, string | undefined] {
+  const m = /^(.+?[.!?])\s+(\S[\s\S]*)$/.exec(line.trim());
+  return m ? [m[1], m[2]] : [line.trim(), undefined];
+}
+
+function Cell({ c, r, edge, cols }: { c: ColSpec; r: ListRow; edge?: string; cols: ColSpec[] }) {
   /* Every cell is held to its column: the table is fixed-width, so a long
      value ends in "…" with the whole of it on hover, and badges that do not
      fit are clipped rather than pushing the row wider. */
   const { flags } = useKit();
   if (c.t === "f") {
-    const words = r.flags.map((f) => flags[f]?.[0] ?? f).join(", ");
+    const shown = flagsBesideStatus(r, cols, flags);
+    const words = shown.map((f) => flags[f]?.[0] ?? f).join(", ");
     return (
       <Td className={cx(edge, "overflow-hidden")} title={words || undefined}>
         {/* Two flags on one row wrap onto a second line rather than the
             second being cut off at the column's edge. */}
         <span className="flex flex-wrap gap-1 overflow-hidden py-0.5">
-          {r.flags.map((f) => (
+          {shown.map((f) => (
             <FlagBadge key={f} flag={f} />
           ))}
         </span>
