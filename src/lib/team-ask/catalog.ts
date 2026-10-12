@@ -54,6 +54,12 @@ export type TableSpec = {
   hide?: RegExp;
   /** Columns shown only to a holder of one of these modules. */
   gatedCols?: { re: RegExp; modules: string[] };
+  /**
+   * Columns that are a company-wide figure even on a row everybody may read
+   * (`places.shops` counts every shop in the book), so only a reader whose
+   * tables are not narrowed may see them.
+   */
+  nationalOnlyCols?: RegExp;
 };
 
 /** Never in any view, for anybody: credentials, identity documents, sync plumbing. */
@@ -61,6 +67,16 @@ export const ALWAYS_HIDDEN =
   /(password|secret|token|_hash$|^raw$|aadhaar|pan_number|account_number|ifsc|uan_no|esic_no|push_token|idempotency_key|^sync_id$|last_seen_sync_id|^device_id$|selfie_id$|photo_id$|_attachment_id$|^context_snapshot$|bill_hash)/i;
 
 const SALARY_COLS = /(salary|conveyance_paise|in_hand_paise|incentive_paise|advance_deduction_paise|^figures$|^utr$|payslip)/i;
+
+/** An employee's private life — on HRMS, never on a sales or CRM screen. */
+export const PERSONAL_COLS =
+  /^(date_of_birth|marriage_anniversary|child\d_birthday|address|permanent_address|emergency_contact|personal_mobile|alternate_mobile|bank_name|photo_path|issues|gender)$/;
+
+/** What a product COSTS, and its price: neither is on a Sales Dashboard screen. */
+export const PRODUCT_MONEY_COLS = /(cost|price)/i;
+
+/** A count over the whole book, on a row every reader may see. */
+export const COMPANY_COUNT_COLS = /^shops$/;
 
 /**
  * The order matters: a custom clause may read a view built above it
@@ -88,6 +104,7 @@ export const TABLES: TableSpec[] = [
       "The HR employee master (mirrored from the HR sheet): name, department, position, office, reports_to (a name), status (active/inactive), joining/leaving dates, phones, personal targets. Link to a user via users.employee_id.",
     modules: [],
     scope: { kind: "custom", where: "id in {E}" },
+    hide: PERSONAL_COLS,
     gatedCols: { re: SALARY_COLS, modules: ["sales.salary"] },
   },
   {
@@ -126,9 +143,10 @@ export const TABLES: TableSpec[] = [
   {
     table: "places",
     about:
-      "The reviewed place tree: kind is state/district/city/area, parent_id links upward, shops is how many accounts sit there. customers.resolved_state_id/_district_id/_city_id/_area_id point here.",
+      "The reviewed place tree: kind is state/district/city/area, parent_id links upward. customers.resolved_state_id/_district_id/_city_id/_area_id point here; count customers to know how many sit in a place.",
     modules: [],
     scope: { kind: "all" },
+    nationalOnlyCols: COMPANY_COUNT_COLS,
   },
   {
     table: "timeline_events",
@@ -371,6 +389,7 @@ export const TABLES: TableSpec[] = [
     about: "Sellable SKUs: name, pack_size, millilitres_per_can, cans_per_box, formulation_id, active.",
     modules: [],
     scope: { kind: "all" },
+    hide: PRODUCT_MONEY_COLS,
   },
   {
     table: "product_formulations",
@@ -402,10 +421,11 @@ export function allowedTables(modules: Set<string>, tables: TableSpec[] = TABLES
 }
 
 /** The columns one person may see on one table. */
-export function visibleColumns(spec: TableSpec, all: string[], modules: Set<string>): string[] {
+export function visibleColumns(spec: TableSpec, all: string[], modules: Set<string>, national = false): string[] {
   return all.filter((c) => {
     if (ALWAYS_HIDDEN.test(c)) return false;
     if (spec.hide?.test(c)) return false;
+    if (!national && spec.nationalOnlyCols?.test(c)) return false;
     if (spec.gatedCols?.re.test(c) && !spec.gatedCols.modules.some((m) => modules.has(m))) return false;
     return true;
   });
@@ -470,7 +490,7 @@ export function buildViews(input: BuildInput): { statements: string[]; views: Bu
   for (const spec of allowedTables(input.modules, input.tables)) {
     const all = input.columns.get(spec.table);
     if (!all?.length) continue;
-    const cols = visibleColumns(spec, all, input.modules);
+    const cols = visibleColumns(spec, all, input.modules, national);
     if (!cols.length) continue;
     const where = whereFor(spec.scope, national, input.own);
     statements.push(

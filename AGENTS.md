@@ -1699,6 +1699,21 @@ date and name last, with a `promptCacheKey` per visibility, so OpenAI reads the
 long prefix from its own cache. All of it is in memory and re-derivable — losing
 it costs a slower answer, never a wrong one.
 
+**AND IT ANSWERS ONLY WITHIN THAT ACCESS, which the views alone could not
+promise.** The views decide what the model can READ; they cannot stop it
+answering "what is the company's revenue?" from a telecaller's own book and
+saying it as the company's figure — wrong, and believable. `team-ask/boundary.ts`
+(pure, tested) is the rule, in every Ask prompt: a narrowed reader's question
+about the company, another employee, another department or a customer not in
+their tables is declined in one sentence, never answered from the partial rows;
+every total is named for what it covers ("in your book"); and profit, margin
+and cost are declined for EVERYBODY, because no view carries a cost. The views
+back it: a product's cost is in no view (its price is in the CRM's, where it
+is quoted, and not the Sales Dashboard's), `places.shops` — a company-wide
+count — is shown only to a reader nothing narrows (`nationalOnlyCols`), and an
+employee's private details (`PERSONAL_COLS`) are in no view. The ERP's prompt
+says the same about its screen tools.
+
 **ONE HEADER BOX FINDS A THING OR ASKS ABOUT IT, in the ERP, the CRM and the
 Sales Dashboard.** `components/shell/smart-search.tsx` searches as it
 is typed and answers with one flat list grouped by what each row is

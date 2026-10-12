@@ -17,6 +17,7 @@ import { TABLES, allowedTables, buildViews, type BuiltView, type TableSpec } fro
 import { CRM_MODULE_LABEL, CRM_TABLES } from "@/lib/team-ask/crm-catalog";
 import { resolveScope, scopedUserIds } from "@/lib/access-control";
 import { guardSql } from "@/lib/team-ask/sql-guard";
+import { accessRules, type AskReach } from "@/lib/team-ask/boundary";
 import { TtlCache, normaliseQuestion, normaliseSql } from "@/lib/team-ask/cache";
 
 /* ---------------------------------------------------------------------------
@@ -166,6 +167,8 @@ function systemPrompt(input: {
   scopeLine: string;
   schema: string;
   missing: string[];
+  /** How far this person's tables reach — what they may be told about. */
+  reach: AskReach;
   /** Who is asking and about what — the Sales Dashboard's manager unless the CRM's prompt is asked for. */
   crm?: boolean;
 }): string {
@@ -192,6 +195,8 @@ function systemPrompt(input: {
     "- Never show SQL, table names or ids to the manager.",
     "- Answer in the language the question was asked in.",
     "- If something is not available because of this person's access (listed below), say which screen access they would need.",
+    "",
+    ...accessRules(input.reach, input.crm ? "crm" : "sales"),
     "",
     input.crm ? "TABLES YOU CAN READ (all already narrowed to this person's book)" : "TABLES YOU CAN READ (all already narrowed to what this manager may see)",
     input.schema,
@@ -307,6 +312,7 @@ async function contextFor(
       scopeLine,
       schema: describe(views, enums),
       missing,
+      reach: scope.national ? "national" : scope.own ? "own" : "team",
     }),
   };
   contexts.set(user.id, ctx, ttlSeconds * 1000);
@@ -623,6 +629,7 @@ async function crmContextFor(user: { id: string; name: string }, ttlSeconds: num
       scopeLine,
       schema: describe(views, enums),
       missing,
+      reach: ids === null ? "national" : ids.length <= 1 ? "own" : "team",
       crm: true,
     }),
   };

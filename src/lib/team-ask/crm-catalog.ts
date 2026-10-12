@@ -1,4 +1,4 @@
-import type { TableSpec } from "./catalog";
+import { COMPANY_COUNT_COLS, type TableSpec } from "./catalog";
 
 /* ---------------------------------------------------------------------------
  * What the CRM's Ask AI may read, and for whom.
@@ -64,6 +64,7 @@ export const CRM_TABLES: TableSpec[] = [
     about: "The reviewed place tree: id, name, kind (state/district/city/area), parent_id. Join customers.resolved_city_id = places.id for a clean city name.",
     modules: [],
     scope: { kind: "all" },
+    nationalOnlyCols: COMPANY_COUNT_COLS,
   },
   {
     table: "timeline_events",
@@ -191,9 +192,12 @@ export const CRM_TABLES: TableSpec[] = [
   // ------------------------------------------------------------ catalogue
   {
     table: "products",
-    about: "The product catalogue (SKUs): name, formulation_id, millilitres_per_can, cans_per_box, active.",
+    about: "The product catalogue (SKUs): name, formulation_id, millilitres_per_can, cans_per_box, selling_price_paise (the list price, where one is set), active.",
     modules: [],
     scope: { kind: "all" },
+    // A COST is never a telecaller's (nor anybody's here): it is what profit
+    // would be computed from. The list price is what they quote, so it stays.
+    hide: /cost/i,
   },
   {
     table: "product_formulations",
