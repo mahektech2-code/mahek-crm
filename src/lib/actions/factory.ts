@@ -10,7 +10,7 @@ import { findAccount, maskNumber, sendOtp, verifyOtp } from "@/lib/services/otp-
 import { accountKey, clearSignInFailures, clientAddress, recordSignInFailure, signInRefusal } from "@/lib/services/sign-in-throttle";
 import { erpId } from "@/lib/erp/server";
 import { eq } from "drizzle-orm";
-import { bootstrap, contextFor, erpCtxFor, factoryAudit, factoryContext, type FactoryCtx } from "@/lib/factory/server";
+import { bootstrap, contextFor, erpCtxFor, factoryAudit, factoryContext, textArray, type FactoryCtx } from "@/lib/factory/server";
 import { saveCheckReason, saveOfficeCount, saveStockCheck, stockKit } from "@/lib/factory/counts";
 import { submitJob } from "@/lib/factory/post";
 import { assignTask, changeTeam, decideReview, reportProblem, requestCorrection } from "@/lib/factory/head";
@@ -40,10 +40,18 @@ export type Me = {
   n: string;
   ini: string;
   head: boolean;
+  /** Their home department. */
   area: FactoryCtx["area"];
+  /**
+   * Every department they work in. More than one draws the department
+   * switcher; absent on an older server, read as `[area]`.
+   */
+  areas?: FactoryCtx["areas"];
   lang: FactoryCtx["lang"];
-  /** A supervisor's one department; absent or null is the whole floor. */
+  /** A supervisor's one department; absent or null is the whole floor. Kept for phones built before `scopes`. */
   scope?: FactoryCtx["scope"];
+  /** A supervisor's departments; null is the whole floor. Absent on an older server, read from `scope`. */
+  scopes?: FactoryCtx["scopes"];
   /** Records empty drums from the phone. Absent on an older server: no drum entry is offered. */
   drums?: boolean;
   /** Loads boxes and uploads LRs. Absent on an older server: neither is offered. */
@@ -59,7 +67,7 @@ const NOT_FOUND = "notFound";
 const INACTIVE = "inactive";
 
 function meOf(fc: FactoryCtx): Me {
-  return { key: fc.user.id, n: fc.user.name, ini: initialsOf(fc.user.name), head: fc.head, area: fc.area, lang: fc.lang, scope: fc.scope, drums: fc.drums, dispatch: fc.dispatch, counts: true };
+  return { key: fc.user.id, n: fc.user.name, ini: initialsOf(fc.user.name), head: fc.head, area: fc.area, areas: fc.areas, lang: fc.lang, scope: fc.scope, scopes: fc.scopes, drums: fc.drums, dispatch: fc.dispatch, counts: true };
 }
 
 async function whoFor(user: User, typed: string): Promise<{ ok: true; who: Who } | Fail> {
@@ -152,7 +160,7 @@ export async function factorySetPin(pin: string): Promise<{ ok: true } | Fail> {
   if (/^(\d)\1{3}$/.test(pin) || pin === "1234") return { ok: false, error: "Too easy to guess. Choose other numbers." };
   const hash = await hashPassword(pin);
   await db.execute(sql`
-    insert into factory_staff (user_id, area, pin_hash) values (${fc.user.id}, ${fc.head ? "head" : fc.area}, ${hash})
+    insert into factory_staff (user_id, area, areas, pin_hash) values (${fc.user.id}, ${fc.head ? "head" : fc.area}, ${textArray([fc.head ? "head" : fc.area])}, ${hash})
     on conflict (user_id) do update set pin_hash = excluded.pin_hash, updated_at = now()`);
   await factoryAudit(fc, "factory.pin", null, "Set a new PIN");
   return { ok: true };

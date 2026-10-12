@@ -24,7 +24,7 @@ import type { CheckUnit, CountInput, CountTask, StockCheckInput, StockKit, Stock
 
 /** The godowns whose office counts this person is offered; null is every godown. */
 async function countGodowns(fc: FactoryCtx): Promise<string[] | null> {
-  if (fc.level === "admin" || (fc.head && !fc.scope)) return null;
+  if (fc.level === "admin" || (fc.head && !fc.scopes)) return null;
   const rows = (await db.execute(sql`select godown_id as id from erp_godown_staff where user_id = ${fc.user.id}`)) as unknown as { id: string }[];
   return [...new Set([fc.godown.id, ...rows.map((r) => r.id)])];
 }

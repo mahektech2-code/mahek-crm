@@ -99,6 +99,8 @@ type ScanCtx = {
   meta: ScanMeta;
   /** The signed-in person's work area; a head can open anybody's task. */
   area?: string;
+  /** Every department they work in, when they work several: a task of any of them is theirs. */
+  areas?: string[];
   task?: Task | null;
   d?: Draft | null;
 };
@@ -121,7 +123,7 @@ export function resolveScan(code: string, c: ScanCtx): ScanResult {
     if (/^TASK-/.test(code) || /^SO-/.test(code) || db.orders[code]) {
       const tk = db.tasks.find((z) => taskCode(z) === code || z.order === code);
       if (!tk) return bad("Work not found", "We cannot find this work.", "Ask your supervisor.");
-      if (c.area !== "head" && tk.proc !== c.area)
+      if (c.area !== "head" && !(c.areas?.length ? c.areas : [c.area]).includes(tk.proc))
         return bad("This work is not yours", "It belongs to the " + tk.proc + " team.", "Give it to the " + tk.proc + " team. Scan only your work.");
       return { ok: true, code, kind: "task", task: tk.id };
     }
@@ -339,3 +341,49 @@ export function savedInstant(savedAt: string | undefined, now: Date): Date {
   }
   return now;
 }
+
+/* ------------------------------------------------------------ departments on the phone */
+
+const PROC_LIST: Proc[] = ["mixing", "filling", "packing", "dispatch"];
+
+/** What the phone needs to know about the signed-in person to place them on the floor. */
+export type DeptMe = { head: boolean; area: string; areas?: string[]; scope?: Proc | null; scopes?: Proc[] | null };
+
+/**
+ * The production departments this person works — or, for a supervisor, runs.
+ * A newer server sends `areas` and `scopes`; an older one sends one `area`
+ * and one `scope`, read here as a list of one, so both draw the same app.
+ */
+export function myDepts(me: DeptMe): Proc[] {
+  if (me.head) {
+    const s = me.scopes !== undefined ? me.scopes : me.scope ? [me.scope] : null;
+    return s && s.length ? PROC_LIST.filter((p) => s.includes(p)) : PROC_LIST.slice();
+  }
+  const a = me.areas?.length ? me.areas : [me.area];
+  return PROC_LIST.filter((p) => a.includes(p));
+}
+
+/**
+ * The department the phone is showing: the one picked, while it is still one
+ * of theirs; null is all of them. With one department there is nothing to
+ * pick, and the answer is that department.
+ */
+export function activeDept(me: DeptMe, picked: string | null | undefined): Proc | null {
+  const d = myDepts(me);
+  if (d.length === 1) return d[0];
+  return picked && (d as string[]).includes(picked) ? (picked as Proc) : null;
+}
+
+/** Does a task belong on the screen under this pick? Null shows every department of theirs. */
+export const inDept = (me: DeptMe, picked: Proc | null, proc: Proc) => (picked ? proc === picked : myDepts(me).includes(proc));
+
+/** Does this person work in this department? Their home one, or any of `areas`. */
+export const worksIn = (e: { area: string; areas?: string[] }, area: string) => e.area === area || !!e.areas?.includes(area);
+
+/** Each department's tint on the phone — a well behind its icon, the same on every screen. [background, ink] */
+export const DEPT_TINT: Record<Proc, [string, string]> = {
+  mixing: ["#EDF2FC", "#2B5CBF"],
+  filling: ["#FDF6E7", "#8A5C05"],
+  packing: ["#E9F5EE", "#1D7A45"],
+  dispatch: ["#F1ECFF", "#3D14A8"],
+};
