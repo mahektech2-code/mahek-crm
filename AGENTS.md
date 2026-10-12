@@ -2262,7 +2262,12 @@ form offers approved lots only and `saveFill` refuses any other
 (`qcRefusal`). Deciding is the `approveSfgQc` power; a reject needs a reason,
 and rejecting an approved lot stops further filling while what was filled
 stays traceable to it. Every lot in the book when this shipped was written
-Approved, or refilling would have stopped on deploy day.
+Approved, or refilling would have stopped on deploy day. The decision asks
+each ACTIVE value of the Testing list (ERP → Settings → Reference lists) as
+Pass / Fail beside the optional note: approving needs every test answered and
+every one Pass, a reject records whatever was run, and the answers are stored
+by test name in `erp_sfg_qc.tests` (`engines/sfg-tests.ts`, pure; the server
+re-reads the list rather than trusting the prompt).
 
 **A BOX ID IS WHAT THE QR CARRIES; THE LOT IS LINKED DATA.** `erp_units`, one
 row per box (`BX-YYMMDD-NNNNNN`, series `unit`), minted by `syncPackEntry`

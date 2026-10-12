@@ -16,6 +16,8 @@ import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 
 import { db } from "@/db";
+import { allPassValues } from "@/lib/erp/engines/sfg-tests";
+import { refValues } from "@/lib/erp/refs";
 import { appAccess, customers, erpProductPacking, erpRawMaterials, erpSfgEntries, erpSfgLines, finishedGoods, productBrands, productFormulations, products, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { calendarDate } from "@/lib/business-date";
@@ -112,7 +114,7 @@ describe("production makes boxes with ids", () => {
     const [sfgLine] = await db.select().from(erpSfgLines);
     const fill = (fg: string, size: string, cans: string) => mod("fgFill").forms!.new(a, { date: TODAY, godown: "Bhiwandi", sfg: SFG, sfgLot: "S1DRUM1", fg, size, cans }, []);
     assert.match(msg(await fill(FG1, "1", "40")), /waiting for QC/);
-    assert.ok((await mod("sfgBatches").actions!.qcApprove(a, sfgLine.id, {})).ok);
+    assert.ok((await mod("sfgBatches").actions!.qcApprove(a, sfgLine.id, allPassValues(await refValues("testingList")))).ok);
     assert.ok((await fill(FG1, "1", "40")).ok); // FG1BH
     assert.ok((await fill(FG1, "1", "8")).ok); // FG2BH
     assert.ok((await fill(FG5, "0.5", "8")).ok); // FG3BH

@@ -2,6 +2,8 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
+import { allPassValues } from "@/lib/erp/engines/sfg-tests";
+import { refValues } from "@/lib/erp/refs";
 import {
   appAccess,
   customers,
@@ -207,7 +209,7 @@ export async function seedFactoryFloor(opts: { pin?: string; date?: string } = {
     }
     must(await screenModule("sfgBatches")!.forms!.new(ctx, { date: today, godown: GODOWN, product: F[k].name, batches: String(batches) }, lines), "mix " + k);
     const [line] = await db.select().from(erpSfgLines).where(eq(erpSfgLines.formulationId, formulations[k])).limit(1);
-    must(await screenModule("sfgBatches")!.actions!.qcApprove(ctx, line.id, { note: "Seeded · passed" }), "qc " + k);
+    must(await screenModule("sfgBatches")!.actions!.qcApprove(ctx, line.id, { ...allPassValues(await refValues("testingList")), note: "Seeded · passed" }), "qc " + k);
     return line.lotCode;
   };
   const ncLot = await mix("nc", 2, 160);
