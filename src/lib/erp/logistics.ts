@@ -1,11 +1,11 @@
 import "server-only";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { customers, erpLrs, erpRefValues, erpTransportEvents, erpTransportMessages, erpTransporterContacts, erpTransporterGodowns, erpTransporters, erpTransports, places } from "@/db/schema";
 import { checkGstin } from "@/lib/engines/lead-scan";
-import type { PlaceKind } from "@/lib/place-parse";
-import { cleanGodowns, mirrorsFrom, type Godown, type GodownInput, type PlaceOption } from "./transporter-godowns";
+import { placeKey, type PlaceKind } from "@/lib/place-parse";
+import { cleanGodowns, mirrorsFrom, type Godown, type GodownInput, type PlaceOption, type ResolvedRung } from "./transporter-godowns";
 import { getConfig } from "@/lib/config/store";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { whatsappNumberFor } from "@/lib/customer-contacts";
@@ -305,7 +305,7 @@ export async function messages(opts: { waitingOnly?: boolean; transportId?: stri
 }
 
 /** A godown as the screens draw it: its town and the people there. */
-export type TransporterGodown = { id: string; label: string | null; placeId: string | null; address: string | null; lat: number | null; lng: number | null; contacts: { id: string; name: string | null; role: string | null; phones: string[] }[] };
+export type TransporterGodown = { id: string; label: string | null; placeId: string | null; gstin: string | null; address: string | null; lat: number | null; lng: number | null; contacts: { id: string; name: string | null; role: string | null; phones: string[] }[] };
 
 /** A transporter, with its godowns in order and the people at each. */
 export type Transporter = typeof erpTransporters.$inferSelect & { godowns: TransporterGodown[] };
@@ -335,7 +335,7 @@ export async function transporters(): Promise<Transporter[]> {
   for (const g of gds)
     byTransporter.set(g.transporterId, [
       ...(byTransporter.get(g.transporterId) ?? []),
-      { id: g.id, label: g.label, placeId: g.placeId, address: g.address, lat: g.lat, lng: g.lng, contacts: byGodown.get(g.id) ?? [] },
+      { id: g.id, label: g.label, placeId: g.placeId, gstin: g.gstin, address: g.address, lat: g.lat, lng: g.lng, contacts: byGodown.get(g.id) ?? [] },
     ]);
   return rows.map((r) => ({ ...r, godowns: byTransporter.get(r.id) ?? [] }));
 }
@@ -838,9 +838,7 @@ export async function saveTransporter(
   if (clash) return fieldErr("name", `${name} is already in the list`);
   let godowns: Godown[] | null = null;
   if (input.godowns) {
-    const wanted = input.godowns.map((g) => g.placeId).filter((p): p is string => !!p);
-    const known = new Set(wanted.length ? (await db.select({ id: places.id }).from(places).where(and(inArray(places.id, wanted), inArray(places.kind, ["state", "district"])))).map((r) => r.id) : []);
-    const c = cleanGodowns(input.godowns, (id) => known.has(id));
+    const c = cleanGodowns(input.godowns, await placeOptions());
     if (!c.ok) return fieldErr(c.field, c.message);
     godowns = c.godowns;
   }
@@ -913,12 +911,39 @@ async function writeGodowns(tx: Tx, transporterId: string, godowns: Godown[]) {
   const usedPeople = new Set<string>();
   for (const [gi, g] of godowns.entries()) {
     const godownId = g.id && ownGodowns.has(g.id) ? (ownGodowns.delete(g.id), g.id) : erpId("etg");
-    await tx.insert(erpTransporterGodowns).values({ id: godownId, transporterId, label: g.label, placeId: g.placeId, address: g.address, lat: g.lat, lng: g.lng, sortOrder: gi });
+    const placeId = await placeFor(tx, g.place);
+    await tx.insert(erpTransporterGodowns).values({ id: godownId, transporterId, label: g.label, placeId, gstin: g.gstin, address: g.address, lat: g.lat, lng: g.lng, sortOrder: gi });
     if (g.contacts.length)
       await tx.insert(erpTransporterContacts).values(
         g.contacts.map((c, ci) => ({ id: c.id && ownPeople.has(c.id) && !usedPeople.has(c.id) ? (usedPeople.add(c.id), c.id) : erpId("etc"), godownId, name: c.name, role: c.role, phones: c.phones, sortOrder: ci })),
       );
   }
+}
+
+/**
+ * The area a godown is filed under, adding the rungs somebody typed because
+ * they were not listed. Each is looked for under its parent first — another
+ * save may have added it a moment ago — and a race between two inserts is
+ * settled by the unique index rather than by a second copy.
+ */
+async function placeFor(tx: Tx, rungs: ResolvedRung[]): Promise<string | null> {
+  let parentId: string | null = null;
+  for (const r of rungs) {
+    if (r.id) {
+      parentId = r.id;
+      continue;
+    }
+    const key = placeKey(r.name);
+    const find = async () =>
+      ((await tx.execute(sql`select id from places where kind = ${r.kind} and key = ${key} and parent_id is not distinct from ${parentId} limit 1`)) as unknown as { id: string }[])[0]?.id;
+    let id = await find();
+    if (!id) {
+      await tx.execute(sql`insert into places (id, kind, name, key, parent_id, shops) values (${`pl_${randomUUID().slice(0, 12)}`}, ${r.kind}, ${r.name}, ${key}, ${parentId}, 0) on conflict do nothing`);
+      id = await find();
+    }
+    parentId = id ?? null;
+  }
+  return parentId;
 }
 
 /* ===================================================== telling the customer */

@@ -18,8 +18,8 @@ import { ConfirmDialog, FilterPills, RowMenu } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { Icon } from "@/components/shell/icons";
 import type { DiscountAuthorityInput } from "@/lib/price-list-views";
+import { CallPanel } from "@/components/crm/call-panel-lazy";
 import {
-  CallPanel,
   type CallTarget,
   type ProductOption,
   type QuickNoteOption,

@@ -2,7 +2,7 @@ import { requireUser } from "@/lib/auth";
 import { canFor } from "@/lib/access-control";
 import { getScope, scopeLabel, managesHere } from "@/lib/scope";
 import { dayActivity, listInteractions, listTeam, today } from "@/lib/queries";
-import { listReminders } from "@/lib/services/worklist-services";
+import { pendingRemindersFor } from "@/lib/services/worklist-services";
 import { nowMs } from "@/lib/format";
 import { HistoryScreen } from "./history-screen";
 
@@ -27,12 +27,14 @@ export default async function HistoryPage() {
   const teamView = scope === "team" && managerHere;
   const day = await today();
 
-  const [rows, team, activity, reminders] = await Promise.all([
+  const [rows, team, activity] = await Promise.all([
     listInteractions(CALL_HISTORY_LIMIT),
     listTeam(),
     dayActivity(teamView ? null : user.id, day),
-    listReminders(),
   ]);
+  /* Only the customers on this page — the whole book's reminders used to be
+     read, with a queue check per future one, to draw a note beside 400 rows. */
+  const commitments = await pendingRemindersFor(rows.map((r) => r.customerId));
 
   return (
     <HistoryScreen
@@ -57,13 +59,7 @@ export default async function HistoryPage() {
         nextStep: r.nextStep,
         detail: r.detail,
       }))}
-      openCommitments={reminders
-        .filter((r) => r.status === "pending")
-        .map((r) => ({
-          customerId: r.customerId,
-          note: r.note,
-          dueDate: r.dueDate,
-        }))}
+      openCommitments={commitments.map((c) => ({ ...c, note: c.note ?? "" }))}
       nowMs={nowMs()}
       today={day}
       activity={{
