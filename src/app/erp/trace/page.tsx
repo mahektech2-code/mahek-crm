@@ -2,6 +2,7 @@ import Link from "next/link";
 import { stamp } from "@/lib/format";
 import { redirect } from "next/navigation";
 import { erpContext } from "@/lib/erp/access";
+import { erpScreen } from "@/lib/erp/registry";
 import { traceCode, traceDashboard, type TraceResult } from "@/lib/erp/traceability";
 import { Badge, Callout, Card, cx, Dot } from "@/components/ui/primitives";
 import { CardGrid } from "@/components/ui/card-grid";
@@ -20,6 +21,9 @@ import { erpDispatchHref, erpTraceHref } from "@/lib/erp/trace-links";
  */
 export const dynamic = "force-dynamic";
 
+/* The title and the line under it are the registry's, as on every list. */
+const SCREEN = erpScreen("trace")!;
+
 export default async function ErpTrace({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const ctx = await erpContext();
   if (!ctx.screens.has("trace")) redirect("/erp");
@@ -28,7 +32,7 @@ export default async function ErpTrace({ searchParams }: { searchParams: Promise
   const [result, dash] = await Promise.all([qv ? traceCode(qv) : Promise.resolve(null), qv ? Promise.resolve(null) : traceDashboard()]);
 
   return (
-    <Page title="Traceability" sub="Any box id, lot, batch, order or bill — where it came from, and where it went.">
+    <Page title={SCREEN.label} sub={SCREEN.sub}>
       <QuickFind action="/erp/trace" name="q" defaultValue={qv} mono button="Trace" className="max-w-[760px]" placeholder="Scan or type: BX-261008-000125, an SFG lot, FG12NA, FP40NA, order 1256, a bill number…">
         {qv ? (
           <Link href="/erp/trace" className="flex h-9 items-center px-2 text-sm">

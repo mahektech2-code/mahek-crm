@@ -11,7 +11,7 @@ import { refValues } from "../refs";
 import { erpAudit, erpId, int, num, paise, stampLine, text, type ScreenModule } from "../server";
 import type { ActionSpec, ColSpec, FieldSpec, FormSpec, ListRow } from "../ui";
 import { fd, inr, nf } from "../ui";
-import { godownIdByName, godownOptions, today } from "./common";
+import { godownField, godownIdByName, godownOptions, today } from "./common";
 import {
   AGE_BUCKETS,
   DRUM_CATEGORY,
@@ -1056,7 +1056,7 @@ const scrapStockScreen: ScreenModule = {
           header: [
             { k: "date", l: "Date", t: "date", req: true },
             { k: "category", l: "Category", t: "select", req: true, opts: cats },
-            { k: "godown", l: "Godown", t: "select", req: true, opts: gOpts.map((g) => g.name) },
+            godownField(gOpts),
             { k: "quantity", l: "Quantity", t: "num", req: true, min: 0.001 },
             { k: "unit", l: "Unit", t: "select", req: true, opts: ["Kg", "Pcs"] },
             { k: "note", l: "Note", t: "area", mic: true },

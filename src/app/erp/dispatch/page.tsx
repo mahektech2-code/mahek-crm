@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { erpContext } from "@/lib/erp/access";
+import { erpScreen } from "@/lib/erp/registry";
 import { dispatchBoard, dispatchQueue } from "@/lib/erp/dispatch";
 import { lrUploadKit } from "@/lib/erp/logistics";
 import { erpDispatchHref, erpLabelsHref, erpTraceHref, orderTraceCode } from "@/lib/erp/trace-links";
@@ -22,6 +23,9 @@ import { DispatchDesk } from "./desk";
  */
 export const dynamic = "force-dynamic";
 
+/* The title and the line under it are the registry's, as on every list. */
+const SCREEN = erpScreen("dispatch")!;
+
 export default async function ErpDispatch({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const ctx = await erpContext();
   if (!ctx.screens.has("dispatch")) redirect("/erp");
@@ -34,8 +38,8 @@ export default async function ErpDispatch({ searchParams }: { searchParams: Prom
     const upload = typeof sp.upload === "string" ? sp.upload : "";
     return (
       <Page
-        title="Dispatch desk"
-        sub="Choose an order, then scan every box going onto the lorry. Each box is checked against the order's product, pack size and quantity as it is scanned."
+        title={SCREEN.label}
+        sub={SCREEN.sub}
         actions={kit ? <UploadLrsButton key={upload} variant="secondary" today={today} transporters={kit.transporters} recent={kit.recent} canRead={kit.canRead} initialOpen={upload === "1"} /> : null}
       >
         <QuickFind action="/erp/dispatch" name="order" inputMode="numeric" placeholder="Order number" button="Open" className="mb-4 max-w-[420px]" />
@@ -72,7 +76,7 @@ export default async function ErpDispatch({ searchParams }: { searchParams: Prom
   const board = await dispatchBoard(orderNo);
   if (!board)
     return (
-      <Page title="Dispatch desk">
+      <Page title={SCREEN.label}>
         <Card className="px-5 py-4 text-sm">
           There is no order {orderNo}. <Link href={erpDispatchHref()}>Back to the queue</Link>
         </Card>

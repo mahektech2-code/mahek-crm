@@ -49,7 +49,7 @@ import {
   sfgRates,
   type Ex,
 } from "../stock";
-import { godownIdByName, godownOptions, has, inTx, pair, refuse, today, type Col, type Tx } from "./common";
+import { type Col, godownField, godownIdByName, godownOptions, has, inTx, pair, refuse, today, type Tx } from "./common";
 import { sfgQcMap, sfgQcOf, setSfgQc } from "../qc";
 import { qcRefusal } from "../engines/trace";
 import { cancelBatchBoxes, ensureBatchBoxes, looseHeadroom, mintLooseUnits, trimLooseUnits } from "../units";
@@ -135,7 +135,7 @@ export async function sfgForm(ctx: ErpContext, fixed?: { sfgNo: number; date: st
     header: [
       { k: "sfgNo", l: "SFG No", t: "derived", calc: "sfg.no" },
       { k: "date", l: "Date", t: "date", req: true, readOnly: !!fixed },
-      { k: "godown", l: "Godown", t: "select", req: true, opts: gds.map((g) => g.name), readOnly: !!fixed },
+      godownField(gds, { readOnly: !!fixed }),
       { k: "product", l: "SFG product", t: "select", req: true, opts: forms.map((f) => f.name), readOnly: !!fixed },
       { k: "batches", l: "Number of batches", t: "num", req: true, min: 0.01, readOnly: !!fixed },
     ],
@@ -645,7 +645,7 @@ async function fillForm(ctx: ErpContext, fixed?: { fgNum: number; date: string; 
     header: [
       { k: "fgNum", l: "FG num", t: "derived", calc: "fg.num" },
       { k: "date", l: "Date", t: "date", req: true, readOnly: !!fixed },
-      { k: "godown", l: "Godown", t: "select", req: true, opts: gds.map((g) => g.name), readOnly: !!fixed },
+      godownField(gds, { readOnly: !!fixed }),
       { k: "sfg", l: "SFG product", t: "select", req: true, optsBy: { by: "godown", map: products }, when: { k: "godown", notEmpty: true } },
       { k: "sfgLot", l: "SFG lot code", t: "select", req: true, optsBy: { by: ["godown", "sfg"], map: lotsOf }, when: { k: "sfg", notEmpty: true }, hint: "Only lots QC has approved are offered." },
       { k: "sfgAvail", l: "SFG available (litres)", t: "derived", calc: "fg.sfgAvail" },
@@ -950,7 +950,7 @@ async function packForm(ctx: ErpContext, fixed?: { serial: number; batchNo: stri
     header: [
       { k: "batchNo", l: "Batch no", t: "derived", calc: "pack.batchNo" },
       { k: "date", l: "Date", t: "date", req: true, readOnly: !!fixed },
-      { k: "godown", l: "Godown", t: "select", req: true, opts: gds.map((g) => g.name), readOnly: !!fixed },
+      godownField(gds, { readOnly: !!fixed }),
       { k: "fg", l: "FG product", t: "select", req: true, optsBy: { by: "godown", map: productsAt }, when: { k: "godown", notEmpty: true }, readOnly: !!fixed },
       { k: "sku", l: "Description of goods (boxed SKU)", t: "select", req: true, optsBy: { by: "fg", map: skusOf }, when: { k: "fg", notEmpty: true }, readOnly: !!fixed },
       { k: "boxes", l: "Boxes in the whole batch", t: "num", req: true, min: 1, readOnly: !!fixed },

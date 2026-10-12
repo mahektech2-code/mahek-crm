@@ -29,7 +29,7 @@ import { lockLot, rmLots } from "../stock";
 import { checkableItems, floorCheckRows, recordFloorCheck, STAGE_LABEL, type CheckStage, type FloorCheckRow } from "../floor-checks";
 import type { ActionSpec, ColSpec, FieldSpec, ListRow } from "../ui";
 import { nf } from "../ui";
-import { godownOptions, inTx, isErpManager, materials, refuse, type Tx } from "./common";
+import { godownField, godownOptions, inTx, isErpManager, materials, refuse, type Tx } from "./common";
 import { requirementLabel } from "../engines/purchase-flow";
 
 /* ---------------------------------------------------------------------------
@@ -930,7 +930,7 @@ const floorChecks: ScreenModule = {
     const header: FieldSpec[] = [
       { k: "kind", l: "Kind of stock", t: "select", req: true, opts: Object.values(STAGE_LABEL), def: STAGE_LABEL.rm },
       { k: "item", l: "Item", t: "select", req: true, optsBy: { by: "kind", map: byStage } },
-      { k: "godown", l: "Godown", t: "select", req: true, opts: gds.map((g) => g.name), def: ctx.workingGodown?.name },
+      godownField(gds, { def: ctx.workingGodown?.name }),
       { k: "qty", l: "Counted", t: "num", req: true, min: 0, hint: "The book is shown only after you save." },
       { k: "bin", l: "Where", t: "text", hint: "Bay, rack or bin." },
       { k: "reason", l: "If it differs, why (optional)", t: "area", mic: true },

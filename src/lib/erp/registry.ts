@@ -178,7 +178,7 @@ export const ERP_GROUPS: ErpGroup[] = [
         v("orders", "All lines"),
         v("orderInbox", "WhatsApp inbox"),
       ]),
-      s("dispatch", "dispatch", "Dispatch desk", "Scan every box onto its order before the lorry leaves. A box of the wrong product or pack size is stopped, and goes only on an override somebody else approved.", true),
+      s("dispatch", "dispatch", "Dispatch desk", "Choose an order, then scan every box onto it before the lorry leaves. A box of the wrong product or pack size is stopped, and goes only on an override somebody else approved.", true),
     ],
   },
   {

@@ -1,4 +1,5 @@
 import { erpContext } from "@/lib/erp/access";
+import { erpScreen } from "@/lib/erp/registry";
 import { hatForHeader } from "@/lib/hat-for-header";
 import { ERP_POWERS, ERP_POWER_LABEL } from "@/lib/erp/powers";
 import { SEAT_LABEL } from "@/lib/erp/departments";
@@ -6,12 +7,15 @@ import { Badge, Card, CardHeader } from "@/components/ui/primitives";
 import { Page } from "../_ui/page-head";
 import { WorkingLocation } from "./working-location";
 
+/* The title and the line under it are the registry's, as on every list. */
+const SCREEN = erpScreen("settings")!;
+
 /** Settings (spec §2.2): the working location, and what the account can do. */
 export default async function ErpSettings() {
   const ctx = await erpContext();
   const hat = await hatForHeader(ctx.user, "erp");
   return (
-    <Page title="Settings" sub="Your working location and profile.">
+    <Page title={SCREEN.label} sub={SCREEN.sub}>
       <div className="grid max-w-[980px] grid-cols-[repeat(auto-fill,minmax(320px,1fr))] items-start gap-4">
         <Card>
           <CardHeader title="Working location" hint="Pre-fills godown on every form and scopes godown lists. Only godowns you are assigned to." />

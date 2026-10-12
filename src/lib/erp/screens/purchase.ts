@@ -51,7 +51,7 @@ import {
 import { lotLandings, rmLots, type LotLanding } from "../stock";
 import { bindErpFiles } from "../attachments";
 import { dutyKit } from "../material-duties-server";
-import { godownIdByName, godownOptions, has, today, type Col, type Tx } from "./common";
+import { type Col, godownField, godownIdByName, godownOptions, has, today, type Tx } from "./common";
 import { RECEIVABLE_PO, poLabel, receivableQuantity } from "../engines/purchase-flow";
 import { OWNERSHIP_LABEL, ownershipByLabel } from "../engines/drums";
 
@@ -393,7 +393,7 @@ async function inwardForm(ctx: ErpContext, init?: Record<string, string>, opts: 
       },
       { k: "supplier", l: "Vendor", t: "derived", calc: "inward.supplier" },
       { k: "date", l: "Date received", t: "date", req: true },
-      { k: "godown", l: "Godown", t: "select", req: true, opts: gds.map((g) => g.name), fillBy: { by: ["po"], map: rx.godownOf }, hint: "The PO's deliver-to godown, unless the goods came somewhere else." },
+      godownField(gds, { fillBy: { by: ["po"], map: rx.godownOf }, hint: "The PO's deliver-to godown, unless the goods came somewhere else." }),
       ...COST_FIELDS,
     ],
     line: [
@@ -864,7 +864,7 @@ async function testForm(ctx: ErpContext, testId?: string): Promise<FormSpec | nu
       { k: "video", l: "Test video", t: "video", when: { k: "line", notEmpty: true } },
       { k: "tester", l: "Tester", t: "select", req: true, opts: testers.map((u) => u.name) },
       { k: "date", l: "Testing date", t: "date", req: true },
-      { k: "godown", l: "Godown", t: "select", req: true, opts: gds.map((g) => g.name) },
+      godownField(gds),
       { k: "remark", l: "Remark", t: "area", mic: true },
     ],
   };
@@ -1324,7 +1324,7 @@ async function purchaseForm(ctx: ErpContext, id?: string): Promise<FormSpec | nu
         ] as FieldSpec[])
       : []),
     { k: "billNumber", l: "Bill number", t: "text" },
-    { k: "godown", l: "Godown", t: "select", req: true, opts: gds.map((g) => g.name) },
+    godownField(gds),
     { k: "notes", l: "Notes", t: "area", mic: true },
     { k: "remark", l: "Remark", t: "area", mic: true },
   ];

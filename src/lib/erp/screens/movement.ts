@@ -22,7 +22,7 @@ import type { ActionSpec, ColSpec, FormSpec, ListRow } from "../ui";
 import { nf } from "../ui";
 import { fgReorderPercent, rmReorderPercent, rmRequired } from "../engines/production";
 import { fgLevelAvailable, fgLots, lockLot, packLots, rmLevelAvailable, rmLots, sfgLots, type Ex } from "../stock";
-import { godownIdByName, godownOptions, inTx, materials, pair, refuse, today, type Tx } from "./common";
+import { godownField, godownIdByName, godownOptions, inTx, materials, pair, refuse, today, type Tx } from "./common";
 import { requisitionForm } from "./purchase-flow";
 import { departmentForCategory, requirementDepartmentsFor } from "../departments";
 import { levelSuggestions } from "../suggest";
@@ -247,7 +247,7 @@ async function rmLevelForm(ctx: ErpContext, id?: string): Promise<FormSpec | nul
     submit: id ? "Save level" : "Add level",
     init,
     header: [
-      { k: "godown", l: "Godown", t: "select", req: true, opts: gds.map((g) => g.name), readOnly: !!id },
+      godownField(gds, { readOnly: !!id }),
       { k: "type", l: "Material type", t: "select", req: true, opts: LEVEL_TYPES, readOnly: !!id },
       { k: "item", l: "Raw item", t: "select", req: true, optsBy: { by: "type", map: byType }, when: { k: "type", notEmpty: true }, readOnly: !!id },
       { k: "min", l: "Minimum quantity", t: "num", req: true, min: 0 },
@@ -465,7 +465,7 @@ async function fgLevelForm(ctx: ErpContext, id?: string): Promise<FormSpec | nul
     submit: id ? "Save level" : "Add level",
     init,
     header: [
-      { k: "godown", l: "Godown", t: "select", req: true, opts: gds.map((g) => g.name), readOnly: !!id },
+      godownField(gds, { readOnly: !!id }),
       { k: "sku", l: "Product (SKU)", t: "select", req: true, opts: skus.map((s) => s.name), readOnly: !!id },
       { k: "min", l: "Minimum quantity", t: "num", req: true, min: 0 },
       { k: "status", l: "Status", t: "select", req: true, opts: ["Follow", "UnFollow"] },

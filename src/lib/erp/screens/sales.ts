@@ -43,7 +43,7 @@ import { fgLevelAvailable, fgLots, lockLot, packLots } from "../stock";
 import { erpOrdersLive, orderNosOf, syncBookOrders } from "../book";
 import { erpLink } from "../registry";
 import { issuedCreditNotes } from "./complaints";
-import { godownIdByName, godownOptions, has, inTx, refuse, today, type Col } from "./common";
+import { type Col, godownField, godownIdByName, godownOptions, has, inTx, refuse, today } from "./common";
 import { markDispatched, scanGateFor, scannedOnAllocation } from "../dispatch";
 import { erpDispatchHref, erpLabelsHref, erpTraceHref, orderTraceCode } from "../trace-links";
 import { loadCustomers, partyStatus, type CustomerRow } from "./masters";
@@ -289,7 +289,7 @@ export async function orderForm(ctx: ErpContext, fixed?: { orderNo: number; date
     header: [
       { k: "orderNo", l: "Order number", t: "derived", calc: "order.no" },
       { k: "date", l: "Date", t: "date", req: true, readOnly: !!fixed },
-      { k: "godown", l: "Godown", t: "select", req: true, opts: gds.map((g) => g.name), readOnly: !!fixed },
+      godownField(gds, { readOnly: !!fixed }),
       { k: "billing", l: "Billing party", t: "select", req: true, opts: names, readOnly: !!fixed },
       { k: "delivery", l: "Delivery party", t: "select", opts: names, hint: "Blank delivers to the billing party.", readOnly: !!fixed },
       { k: "area", l: "Area", t: "derived", calc: "order.area" },
@@ -382,6 +382,41 @@ async function allocateForm(ctx: ErpContext, id: string): Promise<FormSpec | nul
 
 /* ============================================================ list rows */
 
+/**
+ * EVERY ORDER-LINE COLUMN, said once. The Orders tabs and Billing & dispatch
+ * each typed their own list, and one key had drifted into three headings
+ * ("Transporter" / "Transport name", "Qty" / "Order qty", "Labels" / "No of
+ * label"). A tab picks the keys it draws; the heading, kind and power are
+ * the column's own.
+ */
+const ORDER_COL: Record<string, Col> = {
+  orderId: { k: "orderId", l: "Order id", t: "mono" },
+  orderNo: { k: "orderNo", l: "Order no", t: "mono" },
+  date: { k: "date", l: "Order date", t: "d" },
+  status: { k: "status", l: "Status", t: "s" },
+  billing: { k: "billing", l: "Billing party", t: "b" },
+  delivery: { k: "delivery", l: "Delivery party", t: "t" },
+  sku: { k: "sku", l: "Description of goods", t: "t", w: 240 },
+  qty: { k: "qty", l: "Order qty", t: "n" },
+  boxes: { k: "boxes", l: "Boxes", t: "n" },
+  rate: { k: "rate", l: "Rate", t: "m", pw: "viewSalesRate" },
+  discount: { k: "discount", l: "Discount %", t: "n", pw: "viewSalesAmounts" },
+  alloc: { k: "alloc", l: "Allocation", t: "s" },
+  entry: { k: "entry", l: "Entry", t: "s" },
+  bill: { k: "bill", l: "Tally bill no", t: "mono" },
+  transporter: { k: "transporter", l: "Transporter", t: "t" },
+  area: { k: "area", l: "Area", t: "t" },
+  labels: { k: "labels", l: "Labels", t: "n" },
+  type: { k: "type", l: "Type", t: "s" },
+  remark: { k: "remark", l: "Remark", t: "t" },
+  weight: { k: "weight", l: "Weight", t: "n" },
+  godown: { k: "godown", l: "Godown", t: "t" },
+  f: { k: "f", l: "Flags", t: "f" },
+};
+
+const orderCol = (k: keyof typeof ORDER_COL, over: Partial<Col> = {}): Col => ({ ...ORDER_COL[k], ...over });
+const orderCols = (keys: (keyof typeof ORDER_COL)[], over: Partial<Record<string, Partial<Col>>> = {}): Col[] => keys.map((k) => orderCol(k, over[k]));
+
 type Scope = "orders" | "pendingOrders" | "readyOrders" | "labels";
 
 /**
@@ -413,41 +448,11 @@ function orderList(scope: Scope): ScreenModule {
       const shown = lines.filter((l) => inScope(scope, l, detailedOrders));
       const labels = scope === "labels";
       const all: Col[] = labels
-        ? [
-            { k: "orderId", l: "Order id", t: "mono" },
-            { k: "orderNo", l: "Order no", t: "mono" },
-            { k: "date", l: "Date", t: "d" },
-            { k: "billing", l: "Billing party", t: "t" },
-            { k: "delivery", l: "Delivery party", t: "b" },
-            { k: "sku", l: "Description of goods", t: "t", w: 240 },
-            { k: "qty", l: "Order qty", t: "n" },
-            { k: "type", l: "Type", t: "s" },
-            { k: "remark", l: "Remark", t: "t" },
-            { k: "transporter", l: "Transporter", t: "t" },
-            { k: "area", l: "Area", t: "t" },
-            { k: "labels", l: "No of label", t: "n" },
-            { k: "status", l: "Status", t: "s" },
-            { k: "weight", l: "Weight", t: "n" },
-          ]
-        : [
-            { k: "orderNo", l: "Order no", t: "mono" },
-            { k: "date", l: "Date", t: "d" },
-            { k: "status", l: "Status", t: "s" },
-            { k: "billing", l: "Billing party", t: "b" },
-            { k: "delivery", l: "Delivery party", t: "t" },
-            { k: "sku", l: "Description of goods", t: "t", w: 240 },
-            { k: "qty", l: "Order qty", t: "n" },
-            { k: "boxes", l: "Boxes", t: "n" },
-            { k: "rate", l: "Rate", t: "m", pw: "viewSalesRate" },
-            { k: "discount", l: "Discount %", t: "n", pw: "viewSalesAmounts" },
-            { k: "alloc", l: "Can quantity verification", t: "s" },
-            { k: "entry", l: "Entry", t: "s" },
-            { k: "bill", l: "Tally bill no", t: "mono" },
-            { k: "transporter", l: "Transporter", t: "t" },
-            { k: "labels", l: "Labels", t: "n" },
-            { k: "godown", l: "Godown", t: "t" },
-            { k: "f", l: "Flags", t: "f" },
-          ];
+        ? orderCols(["orderId", "orderNo", "date", "billing", "delivery", "sku", "qty", "type", "remark", "transporter", "area", "labels", "status", "weight"], {
+            billing: { t: "t" },
+            delivery: { t: "b" },
+          })
+        : orderCols(["orderNo", "date", "status", "billing", "delivery", "sku", "qty", "boxes", "rate", "discount", "alloc", "entry", "bill", "transporter", "labels", "godown", "f"]);
       const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
       /* A Pending customer's order is approved in the ERP only while the ERP
          is not live; once it is, the Accounts queue decides it. */
@@ -1073,32 +1078,25 @@ const orderDetails: ScreenModule = {
     rows.forEach((r) => byNo.set(r.l.o.orderNo, [...(byNo.get(r.l.o.orderNo) ?? []), r.l.o.id]));
     const gates = await scanGateFor(db, rows.filter((r) => r.d.verification !== "Verified").map((r) => r.l.o.id));
     const all: Col[] = [
-      { k: "date", l: "Order date", t: "d" },
-      { k: "orderNo", l: "Order no", t: "mono" },
-      { k: "billing", l: "Billing party", t: "b" },
-      { k: "sku", l: "Description of goods", t: "t", w: 240 },
-      { k: "qty", l: "Qty", t: "n" },
+      ...orderCols(["date", "orderNo", "billing", "sku", "qty"]),
       { k: "amount", l: "Amount", t: "m", pw: "viewSalesAmounts" },
-      { k: "rate", l: "Rate", t: "m", pw: "viewSalesRate" },
+      orderCol("rate"),
       { k: "billTotal", l: "Bill total", t: "m", pw: "viewSalesAmounts" },
-      { k: "discount", l: "Discount %", t: "n", pw: "viewSalesAmounts" },
+      orderCol("discount"),
       { k: "dispatchDate", l: "Dispatch date", t: "d" },
       { k: "verification", l: "Verification", t: "s" },
       { k: "follow", l: "Transport follow-up", t: "t" },
       { k: "monthly", l: "Monthly sale", t: "m", pw: "viewSalesAmounts" },
       { k: "si", l: "Standing instructions", t: "t" },
       { k: "discounted", l: "Discounted amount", t: "m", pw: "viewSalesAmounts" },
-      { k: "orderId", l: "Order id", t: "mono" },
-      { k: "area", l: "Area", t: "t" },
-      { k: "transporter", l: "Transport name", t: "t" },
+      ...orderCols(["orderId", "area", "transporter"]),
       { k: "transport", l: "Transport cost", t: "m" },
       { k: "extra", l: "Extra expenses", t: "m" },
-      { k: "bill", l: "Tally bill no", t: "mono" },
+      orderCol("bill"),
       { k: "payment", l: "Payment type", t: "t", pw: "viewCost" },
       { k: "margin", l: "Margin", t: "m", pw: "viewCost" },
       { k: "monthId", l: "Month", t: "t" },
-      { k: "godown", l: "Godown", t: "t" },
-      { k: "f", l: "Flags", t: "f" },
+      ...orderCols(["godown", "f"]),
     ];
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
     const amounts = ctx.powers.has("viewSalesAmounts");

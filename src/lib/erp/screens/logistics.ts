@@ -14,7 +14,7 @@ import { fd, inr } from "../ui";
 import { cashBalances, cashKey } from "../engines/cash";
 import { monthId } from "../engines/sales";
 import { refValues } from "../refs";
-import { type Col, godownIdByName, godownOptions, has, isErpManager, today } from "./common";
+import { type Col, godownField, godownIdByName, godownOptions, has, isErpManager, today } from "./common";
 import { customerForm, loadCustomers, phoneContacts, saveCustomerDetails } from "./masters";
 import { detailRows, EXTRA_EXPENSE_PROMPT, setExtraExpenses } from "./sales";
 import { syncBookOrders } from "../book";
@@ -255,7 +255,7 @@ async function cashForm(ctx: ErpContext, kind: "credit" | "expense"): Promise<Fo
   ]);
   const common: FieldSpec[] = [
     { k: "date", l: "Date", t: "date", req: true },
-    { k: "godown", l: "Godown", t: "select", req: true, opts: gds.map((g) => g.name) },
+    godownField(gds),
     { k: "who", l: kind === "credit" ? "Employee" : "Expense by", t: "select", req: true, opts: names },
     { k: "mode", l: kind === "credit" ? "Credit mode" : "Expense mode", t: "select", req: true, opts: MODES },
   ];
