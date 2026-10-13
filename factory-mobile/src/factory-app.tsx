@@ -1,5 +1,5 @@
 import { Component, type CSSProperties, type ReactNode } from "react";
-import { AppState, BackHandler, Image, Pressable, Text, View, type NativeEventSubscription } from "react-native";
+import { AppState, BackHandler, Image, Linking, Pressable, Text, View, type NativeEventSubscription } from "react-native";
 import * as Speech from "expo-speech";
 import * as ImagePicker from "expo-image-picker";
 import { StatusBar } from "expo-status-bar";
@@ -42,7 +42,9 @@ import { Btn, Div, Input, Root, Span } from "./web";
 import { art, ic, qr } from "./art";
 import { avStyle, btn, card, initials, mono, msg, MsgBox, Pill, artWell, type Msg } from "./kit";
 import { CameraScanner, shrinkPhoto } from "./camera";
-import { dropPhoto, forget, keepPhoto, keptPhoto, load, mintKey, readNet, save, watchNet, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet, mintDrumKey, type BoxOk, type LrEntry, type StockEntry, type QcEntry, mintCheckKey } from "./model";
+import { promptDue, snoozeUntil } from "./update";
+import { checkForUpdate, downloadAndInstall, openInBrowser } from "./updater";
+import { dropPhoto, forget, keepPhoto, kvGet, kvSet, keptPhoto, load, mintKey, readNet, save, watchNet, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet, mintDrumKey, type BoxOk, type LrEntry, type StockEntry, type QcEntry, mintCheckKey } from "./model";
 
 /* ---------------------------------------------------------------------------
  * THE FACTORY APP — "Mahek Factory App" from the design, screen for screen.
@@ -69,6 +71,8 @@ type Props = Record<string, never>;
 /** The calendar day n days ago, in the factory's zone — an LR's date. */
 const calendarDay = (n: number) => calendarDate(new Date(Date.now() - n * 86_400_000));
 const DEV = typeof __DEV__ !== "undefined" && __DEV__;
+/** When Update later lets the update popup come back — one per phone, not per person. */
+const UPDATE_SNOOZE = "factory.updateSnoozedUntil";
 
 const PC: Record<Proc, string> = { mixing: "flask", filling: "fill", packing: "box", dispatch: "truck" };
 const ONE: Record<string, string> = { boxes: "box", drums: "drum", cans: "can" };
@@ -144,6 +148,9 @@ export class FactoryApp extends Component<Props, State> {
       qc: null,
       board: null,
       lr: null,
+      update: null,
+      updPop: null,
+      refreshing: false,
       ...(signed ? this.restore(signed.key) : null),
     };
   }
@@ -160,6 +167,7 @@ export class FactoryApp extends Component<Props, State> {
         this.setState({ clock: hhmm(new Date()) });
         void this.flushQueue();
         void this.poll();
+        void this.checkUpdate();
       }
     }));
     this.subs.push(BackHandler.addEventListener("hardwareBackPress", this.onBack) as NativeEventSubscription);
@@ -175,6 +183,11 @@ export class FactoryApp extends Component<Props, State> {
     this.ivs.push(setInterval(() => void this.poll(), 45_000));
     /* Signed in from yesterday: refresh the floor now, and send anything waiting. */
     if (this.state.me) void this.poll().then(() => this.flushQueue());
+    /* A newer APK is asked about on opening, on every return to the app and
+       every half hour; Update later's three hours are checked every minute. */
+    void this.checkUpdate();
+    this.ivs.push(setInterval(() => void this.checkUpdate(), 30 * 60_000));
+    this.ivs.push(setInterval(() => this.maybePrompt(), 60_000));
   }
 
   componentWillUnmount() {
@@ -271,6 +284,100 @@ export class FactoryApp extends Component<Props, State> {
     } catch {
       this.setNet("offline");
     }
+  }
+
+  /* ================================================================ refresh and update */
+
+  /**
+   * Ask the release manifest. Where it names a newer build the popup is
+   * raised — at once when somebody pressed refresh, otherwise only once Update
+   * later's three hours are up. Answers whether a newer build exists.
+   */
+  private async checkUpdate(pressed = false): Promise<boolean> {
+    const v = await checkForUpdate();
+    if (v.kind !== "available") {
+      this.setState({ update: null });
+      return false;
+    }
+    this.setState({ update: { version: v.version, url: v.url } }, () => this.maybePrompt(pressed));
+    return true;
+  }
+
+  /** Raise the popup if a newer build is known and it is due. Never over a job in hand unless somebody pressed refresh. */
+  private maybePrompt(pressed = false) {
+    const st = this.state;
+    if (!st.update || st.updPop) return;
+    const snoozed = Number(kvGet(UPDATE_SNOOZE));
+    if (!promptDue(Date.now(), Number.isFinite(snoozed) && snoozed > 0 ? snoozed : null, pressed)) return;
+    if (!pressed && (st.flow || st.scan || st.result)) return;
+    this.setState({ updPop: { progress: null, failed: false } });
+  }
+
+  private updateLater() {
+    kvSet(UPDATE_SNOOZE, String(snoozeUntil(Date.now())));
+    this.setState({ updPop: null });
+    this.toast("We will remind you in 3 hours.");
+  }
+
+  /** Download the new app here, with progress, then Android's installer opens over the app. */
+  private async updateNow() {
+    const u = this.state.update;
+    if (!u) return;
+    this.setState({ updPop: { progress: 0, failed: false } });
+    const r = await downloadAndInstall(u.url, (f) => this.setState({ updPop: { progress: f, failed: false } }));
+    this.setState({ updPop: r === "installer" ? null : { progress: null, failed: true } });
+  }
+
+  /**
+   * The refresh button: send what is waiting, fetch the latest from the
+   * office, and ask whether a newer app is out — all at once.
+   */
+  private async refreshAll() {
+    const st = this.state;
+    if (st.refreshing) return;
+    if (st.net === "offline") return this.toast("No network. Your work is saved and will send by itself.", "warn");
+    this.setState({ refreshing: true });
+    try {
+      await this.flushQueue();
+      const [r, newer] = await Promise.all([
+        this.state.me ? call("bootstrap").catch(() => null) : Promise.resolve(null),
+        this.checkUpdate(true),
+      ]);
+      if (r && r.ok) this.setState({ db: r.data });
+      else if (r && r.error === "signedOut") return this.setState({ me: null, db: null, signStep: "id" });
+      if (!newer) this.toast(r && r.ok ? "Up to date. The latest work from the office is on your phone." : "Could not refresh now. Try again in a minute.", r && r.ok ? "ok" : "warn");
+    } finally {
+      this.setState({ refreshing: false });
+    }
+  }
+
+  renderUpdate(): ReactNode {
+    const st = this.state, u = st.update, p = st.updPop;
+    if (!u || !p) return null;
+    const busy = p.progress != null;
+    return (
+      <Div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 80, background: "rgba(14,16,22,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}>
+        <Div style={{ width: "100%", maxWidth: "420px", background: "#FFFFFF", borderRadius: "22px", padding: "22px 20px 18px 20px", display: "flex", flexDirection: "column", gap: "12px" }}>
+          <Span style={{ width: "56px", height: "56px", borderRadius: "50%", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center" }}>{ic("sync", 28, "#5223E0")}</Span>
+          <Span style={{ fontSize: "21px", lineHeight: "27px", fontWeight: 700, color: "#1A1E28" }}>{"A new version of the app is ready"}</Span>
+          <Span style={{ fontSize: "15px", lineHeight: "22px", color: "#3D4453" }}>
+            {p.failed
+              ? "The download did not finish. Check the network and try again, or download it in the browser."
+              : busy
+                ? "Downloading " + u.version + "… Keep the app open. Android will ask you to install it."
+                : "Version " + u.version + " is out. Your saved work stays on the phone."}
+          </Span>
+          {busy && (
+            <Div style={{ height: "10px", borderRadius: "5px", background: "#EDEFF3", overflow: "hidden" }}>
+              <Div style={{ height: "10px", width: Math.round((p.progress ?? 0) * 100) + "%", background: "#6835FB", borderRadius: "5px" }} />
+            </Div>
+          )}
+          {!busy && <Btn onClick={() => void this.updateNow()} style={btn("p", 56)}>{ic("sync", 22, "#FFFFFF")}{p.failed ? "Try again" : "Update now"}</Btn>}
+          {!busy && p.failed && <Btn onClick={() => void openInBrowser(u.url).then((ok) => (ok ? this.setState({ updPop: null }) : this.toast("Could not open the browser", "warn")))} style={btn("s", 52)}>{"Download in the browser"}</Btn>}
+          {!busy && <Btn onClick={() => this.updateLater()} style={{ ...btn("s", 52), border: "none", color: "#5223E0" }}>{"Update later"}</Btn>}
+        </Div>
+      </Div>
+    );
   }
 
   /* ================================================================ helpers */
@@ -2210,6 +2317,7 @@ export class FactoryApp extends Component<Props, State> {
           {shell && this.renderNav(head)}
 
           {st.sheet && me && this.renderSheet()}
+          {this.renderUpdate()}
           {st.toast && (
             <Div role="status" style={{ position: "absolute", left: "16px", right: "16px", bottom: st.flow ? "132px" : "92px", zIndex: 60, display: "flex", alignItems: "center", gap: "10px", background: st.toastTone === "warn" ? "#8A5C05" : "#3D14A8", color: "#FFFFFF", borderRadius: "14px", padding: "14px 16px", fontSize: "15px", lineHeight: "20px", boxShadow: "0 8px 24px rgba(26,30,40,0.25)", animation: "fx-up 150ms cubic-bezier(0.2,0,0.2,1)" }}>
               <Span style={{ width: "24px", height: "24px", borderRadius: "50%", background: st.toastTone === "warn" ? "rgba(255,231,168,0.25)" : "rgba(198,255,52,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{st.toastTone === "warn" ? ic("alert", 15, "#FFE7A8") : ic("check", 15, "#C6FF34")}</Span>
@@ -2351,6 +2459,9 @@ export class FactoryApp extends Component<Props, State> {
           <Span style={{ display: "block", fontSize: "17px", fontWeight: 700, lineHeight: "22px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{me.n + (multi || (head && !me.scope) ? "" : !areaWord ? "" : " · " + areaWord)}</Span>
           {multi ? this.deptPill() : <Span style={{ display: "block", fontSize: "13px", color: "#6B7385", lineHeight: "17px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{db.loc + " · " + db.shift}</Span>}
         </Span>
+        <Btn onClick={() => void this.refreshAll()} aria-label="Refresh" style={{ width: "36px", height: "36px", borderRadius: "18px", border: "none", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flex: "none" }}>
+          <Span style={{ display: "flex", animation: st.refreshing ? "fx-spin 1.2s linear infinite" : "none" }}>{ic("sync", 20, "#5223E0")}</Span>
+        </Btn>
         <Btn onClick={() => this.setState({ route: "sync" })} style={{ height: "36px", padding: "0 12px", borderRadius: "18px", border: "none", background: c[0], color: c[1], fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", whiteSpace: "nowrap", flex: "none" }}>
           <Span style={{ width: "8px", height: "8px", borderRadius: "50%", background: c[2], animation: q ? "fx-pulse 1.4s ease-in-out infinite" : "none" }} />
           {q ? q + " · " + T.pending : (T as Record<string, string>)[n]}
