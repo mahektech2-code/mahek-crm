@@ -152,19 +152,35 @@ describe("mixing", () => {
     assert.equal(out.good, 990, "the batch is counted once for the team, not once per person");
   });
 
-  test("not enough in the drum refuses the whole batch, names the step, and the same key can be sent again once fixed", async () => {
+  test("not enough in the drum refuses the whole batch, names the step, and the same key goes through once a second drum makes up the rest", async () => {
     const { fc, data } = await as("anil");
     const t = open(data, "mixing", (x) => data.sfg[x.item!].short === "NANO");
     const mek = Object.keys(data.rm).find((k) => data.rm[k].n === "MEK")!;
+    const tol = Object.keys(data.rm).find((k) => data.rm[k].n === "Toluene")!;
     const k = key();
     const lotsBefore = (await q<{ n: number }>(sql`select count(*)::int as n from erp_sfg_lines`))[0].n;
     const bad = await submitJob(fc, sub(t, mixDraft(data, t, 700, { [mek]: 5000 }), k));
     assert.equal(bad.kind, "failed");
     assert.equal((bad as { step: string }).step, "materials");
     assert.equal((await q<{ n: number }>(sql`select count(*)::int as n from erp_sfg_lines`))[0].n, lotsBefore, "nothing posted");
-    const avail = lotOf(data, "rm", mek).avail;
-    const fixed = await submitJob(fc, sub(t, mixDraft(data, t, 600, { [mek]: avail }), k));
+    /* Less than the sheet from one drum is refused too: Next waits until the material matches. */
+    const sheetTol = data.sfg[t.item!].recipe.find((r) => r[0] === tol)![1] * (t.batches ?? 1);
+    const short = await submitJob(fc, sub(t, mixDraft(data, t, 600, { [tol]: sheetTol - 100 }), k));
+    assert.equal(short.kind, "failed");
+    assert.equal((short as { step: string }).step, "materials");
+    /* The toluene comes from two drums: the sheet less 100 L from one, the last 100 L from another. */
+    const d = mixDraft(data, t, 600, { [tol]: sheetTol - 100 });
+    const at = d.rm!.findIndex((r) => r.item === tol);
+    const other = Object.values(data.lots).find((l) => l.type === "rm" && l.item === tol && l.loc === data.loc && l.code !== d.rm![at].lot && l.avail >= 100)!;
+    assert.ok(other, "the seed holds a second toluene lot");
+    d.rm!.splice(at + 1, 0, { item: tol, per: d.rm![at].per, lot: other.code, qty: 100, extra: true });
+    const fixed = await submitJob(fc, sub(t, d, k));
     assert.equal(fixed.kind, "done", JSON.stringify(fixed));
+    const lines = await q<{ lot: string; use: number }>(sql`
+      select l.rm_lot_no as lot, l.total_use::float8 as use from erp_sfg_lines l
+       where l.lot_code = ${(fixed as { label: { code: string } }).label.code} and l.raw_material_id = ${tol} order by l.created_at`);
+    assert.deepEqual(lines.map((x) => x.use), [sheetTol - 100, 100], "one ERP line per drum, both on the same batch");
+    assert.equal(lines[1].lot, other.code);
     const [r] = await q<{ kind: string }>(sql`select kind from factory_reviews where task_id = ${t.id} and kind = 'tolerance'`);
     assert.ok(r, "far below the batch sheet goes to the Production Head");
   });
