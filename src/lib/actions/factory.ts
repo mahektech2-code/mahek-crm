@@ -15,7 +15,7 @@ import { saveCheckReason, saveOfficeCount, saveStockCheck, stockKit } from "@/li
 import { qcKit, saveQcDecision } from "@/lib/factory/qc";
 import { cancelFromFloor, raiseFromFloor, requirementKit } from "@/lib/factory/purchase";
 import { submitJob } from "@/lib/factory/post";
-import { assignTask, changeTeam, decideReview, reportProblem, requestCorrection, startMixingBatch } from "@/lib/factory/head";
+import { assignTask, changeTeam, decideReview, reportProblem, requestCorrection, startFillFromLot, startMixingBatch } from "@/lib/factory/head";
 import type { QcInput, QcKit, QcSave, ReqInput, ReqKit, ReqSave } from "@/lib/factory/types";
 import type { BoxInfo, BoxScan, CountInput, DrumExisting, StockCheckInput, StockKit, StockSave, DrumLookup, DrumSave, FactoryData, LoadBoard, LrFields, LrBatchSave, LrKit, LrReading, LrSave, Proc, Submission, SubmitResult, Team } from "@/lib/factory/types";
 import { boxInfo, loadBoard, lrKit, readLr, saveLr, saveLrPhotos, scanBox, unloadBox } from "@/lib/factory/dispatch";
@@ -230,6 +230,14 @@ export async function factoryStartBatch(a: { item: string; qty: number }): Promi
   const fc = await factoryContext();
   if (!fc) return { ok: false, error: "Please sign in again." };
   const r = await startMixingBatch(fc, a);
+  if (!r.ok) return { ok: false, error: r.error ?? "That did not work." };
+  return { ok: true, id: r.data.id, data: await bootstrap(fc), msg: r.message ?? "" };
+}
+/** A filling worker starting a filling from the SFG lot he scanned. Answers with the new job's id so the phone opens it. */
+export async function factoryStartFill(a: { lot: string; item: string; qty: number }): Promise<(Done & { ok: true; id: string }) | Fail> {
+  const fc = await factoryContext();
+  if (!fc) return { ok: false, error: "Please sign in again." };
+  const r = await startFillFromLot(fc, a);
   if (!r.ok) return { ok: false, error: r.error ?? "That did not work." };
   return { ok: true, id: r.data.id, data: await bootstrap(fc), msg: r.message ?? "" };
 }

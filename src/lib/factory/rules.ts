@@ -505,3 +505,43 @@ export const DEPT_TINT: Record<Proc, [string, string]> = {
   packing: ["#E9F5EE", "#1D7A45"],
   dispatch: ["#F1ECFF", "#3D14A8"],
 };
+
+/* ------------------------------------------------------------ filling from a scanned lot */
+
+/** The most cans one filling started from a scanned lot may ask for — the same ceiling Give a task has. */
+export const FILL_FROM_LOT_MAX = 5000;
+
+export type FillFromLot =
+  | { ok: true; lot: Lot; skus: string[] }
+  /** `show` false: not this person's work, so the card offers OK only and no refusal. */
+  | { ok: false; show: boolean; title: string; text: string };
+
+/**
+ * May the person who scanned this SFG lot start a filling from it, and which
+ * products may it fill? The server asks the same question again
+ * (`startFillFromLot`) — this is only what the scan card draws. A mixing or
+ * packing worker sees the lot and nothing to press, a supervisor of another
+ * department is told it is not theirs, and anybody who fills is told in words
+ * why a lot they cannot use cannot be used.
+ */
+export function fillFromLot(me: DeptMe, db: Pick<FactoryData, "lots" | "sku" | "loc">, code: string): FillFromLot | null {
+  const lot = db.lots[code];
+  if (!lot || lot.type !== "sfg") return null;
+  if (!myDepts(me).includes("filling"))
+    return { ok: false, show: me.head, title: "Not your work", text: "Filling is for the filling team. Tell your supervisor." };
+  if (lot.loc !== db.loc) return { ok: false, show: true, title: "At another godown", text: "This lot is at " + lot.loc + ", not " + db.loc + "." };
+  if (lot.status === "used" || !(lot.avail > 0)) return { ok: false, show: true, title: "Nothing left", text: lot.code + " is empty. Scan another lot." };
+  if (lot.status !== "ok")
+    return { ok: false, show: true, title: "Cannot fill yet", text: "The quality team has not approved this lot. Ask them, or scan another lot." };
+  const skus = Object.keys(db.sku)
+    .filter((k) => db.sku[k].sfg === lot.item)
+    .sort((a, b) => db.sku[a].l - db.sku[b].l || db.sku[a].n.localeCompare(db.sku[b].n));
+  if (!skus.length) return { ok: false, show: true, title: "No product for this base", text: "No FG product is made from it. Ask the office." };
+  return { ok: true, lot, skus };
+}
+
+/** How many cans the New filling sheet starts at: what the lot fills, at most 40. */
+export function fillStartQty(litres: number, avail: number): number {
+  if (!(litres > 0)) return 1;
+  return Math.max(1, Math.min(40, Math.floor(avail / litres)));
+}
