@@ -20,6 +20,8 @@ import {
   type Justification,
   type StockGate,
 } from "./engines/stock-check";
+import { notifyUsers } from "@/lib/notify";
+import { erpLink } from "./registry";
 import { nextNumber, erpId } from "./server";
 import { rmLots, stockUnit, type Ex } from "./stock";
 
@@ -240,17 +242,17 @@ type GateReq = {
   requiredQty: number;
   unit: string;
   stockCheckRequired: boolean;
-  stockExceptionStatus: string | null;
-  qtyConfirmedAt: Date | null;
+  /** An urgent purchase approved under the old rule: it went on without its count, and stays on. */
+  stockExceptionStatus?: string | null;
 };
 
 const LIVE: CountStatus[] = ["open", "flagged", "recount", "investigating"];
 
 /**
- * Where each requirement stands with its stock check. A requirement reads
+ * Where each requirement stands with its blind count. A requirement reads
  * the counts raised for it, any later count of its shelf, and any count of
- * its shelf still unresolved — an open discrepancy on a shelf blocks every
- * purchase for it, which is the point.
+ * its shelf still unresolved — an open discrepancy on a shelf FLAGS every
+ * requirement for it. Only a count not yet entered holds one.
  */
 export async function gatesFor(reqs: GateReq[]): Promise<Map<string, GateInfo>> {
   const out = new Map<string, GateInfo>();
@@ -291,10 +293,9 @@ export async function gatesFor(reqs: GateReq[]): Promise<Map<string, GateInfo>> 
     const gate = stockGate({
       required: true,
       countStatus: status,
-      exception: (r.stockExceptionStatus as "requested" | "approved" | "rejected" | null) ?? null,
       unexpectedQty: !!justification?.unexpected,
-      qtyConfirmed: !!r.qtyConfirmedAt,
     });
+    if (gate.blocks && r.stockExceptionStatus === "approved") Object.assign(gate, { blocks: false, stage: null, next: null });
     out.set(r.id, {
       gate,
       count: root ? { id: root.id, countNo: Number(root.no), status: root.status, kind: root.kind } : null,
@@ -532,7 +533,6 @@ export type ControlWork = {
   recounts: { id: string; godown: string }[];
   investigating: { id: string; godown: string }[];
   adjustments: { id: string; godown: string }[];
-  exceptions: { id: string; godown: string }[];
   missing: number;
   /** The reasons adjustments were approved for over 90 days, most frequent first. */
   repeatCauses: { reason: string; n: number }[];
@@ -543,13 +543,12 @@ export type ControlWork = {
 /** The control's work waiting now, for the dashboard tiles and the sidebar badge. */
 export async function controlWork(): Promise<ControlWork> {
   const day = today();
-  const [counts, adj, ex, missing, causes, acc] = await Promise.all([
+  const [counts, adj, missing, causes, acc] = await Promise.all([
     q<{ id: string; status: CountStatus; parent: string | null; due: string; godown: string }>(sql`
       select c.id, c.status, c.recount_of_id as parent, c.due_date::text as due, g.name as godown
         from erp_stock_counts c join erp_godowns g on g.id = c.godown_id
        where c.status in ('open', 'flagged', 'recount', 'investigating')`),
     q<{ id: string; godown: string }>(sql`select a.id, g.name as godown from erp_stock_adjustments a join erp_godowns g on g.id = a.godown_id where a.status = 'pending'`),
-    q<{ id: string; godown: string }>(sql`select r.id, g.name as godown from erp_requisitions r join erp_godowns g on g.id = r.godown_id where r.stock_exception_status = 'requested' and r.status = 'Pending'`),
     missingRecords().then((m) => m.length),
     q<{ reason: string; n: number }>(sql`
       select reason_code as reason, count(*)::int as n from erp_stock_adjustments
@@ -565,23 +564,59 @@ export async function controlWork(): Promise<ControlWork> {
     recounts: pick((c) => !c.parent && c.status === "recount"),
     investigating: pick((c) => !c.parent && c.status === "investigating"),
     adjustments: adj,
-    exceptions: ex,
     missing,
     repeatCauses: causes.map((c) => ({ reason: c.reason, n: Number(c.n) })),
     accuracy: { counted: Number(acc[0]?.counted ?? 0), matched: Number(acc[0]?.matched ?? 0) },
   };
 }
 
-/** Requirements the stock check is holding right now. */
-export async function heldRequirements(): Promise<{ id: string; godown: string }[]> {
-  const rows = await q<GateReq & { godown: string; created: string; confirmed: string | null }>(sql`
-    select r.id, r.raw_material_id as "rawMaterialId", r.godown_id as "godownId", r.created_at::text as created,
-           r.required_qty::float8 as "requiredQty", r.unit, r.stock_check_required as "stockCheckRequired",
-           r.stock_exception_status as "stockExceptionStatus", r.qty_confirmed_at::text as confirmed, g.name as godown
-      from erp_requisitions r join erp_godowns g on g.id = r.godown_id
-     where r.stock_check_required and r.status = 'Pending'
-       and not exists (select 1 from erp_po_lines l join erp_purchase_orders o on o.id = l.po_id
-                        where l.requisition_id = r.id and o.status in ('Pending approval', 'Approved', 'Sent', 'Partly received', 'Received', 'Closed'))`);
-  const gates = await gatesFor(rows.map((r) => ({ ...r, createdAt: new Date(r.created), qtyConfirmedAt: r.confirmed ? new Date(r.confirmed) : null })));
-  return rows.filter((r) => gates.get(r.id)?.gate.blocks).map((r) => ({ id: r.id, godown: r.godown }));
+/* ------------------------------------------------------- the alarm */
+
+/**
+ * A RED FLAG IS TOLD, NEVER ONLY LISTED. The count no longer holds the
+ * purchase, so the notification is what makes a leak reach somebody: every
+ * active holder of the stock-control power on the ERP, every ERP
+ * administrator, and whoever raised the requirement the count was opened
+ * for. One bell each, linked to the red flag. It runs after the count is
+ * saved and can never fail it.
+ */
+export async function notifyStockFlag(p: {
+  countId: string;
+  countNo: number;
+  item: string;
+  godown: string;
+  counted: number;
+  book: number;
+  difference: number;
+  unit: string;
+  requirementId: string | null;
+  /** Whoever entered the count — told already, on their own screen. */
+  byId: string;
+  /** A recount that confirmed the difference, rather than the first count. */
+  confirmed?: boolean;
+}): Promise<void> {
+  try {
+    const rows = await q<{ id: string }>(sql`
+      select u.id from users u
+       where u.active and u.id <> ${p.byId}
+         and exists (select 1 from app_access a where a.user_id = u.id and a.app::text = 'erp')
+         and (u.role = 'admin'
+              or exists (select 1 from app_access a where a.user_id = u.id and a.app::text = 'erp' and a.role = 'admin')
+              or exists (select 1 from erp_user_powers w where w.user_id = u.id and w.power = 'stockControl')
+              or u.id = (select r.created_by_id from erp_requisitions r where r.id = ${p.requirementId}))`);
+    if (!rows.length) return;
+    const fmt = (n: number) => String(Math.round(n * 1000) / 1000);
+    const sign = p.difference > 0 ? `+${fmt(p.difference)}` : fmt(p.difference);
+    await notifyUsers(
+      rows.map((r) => ({
+        userId: r.id,
+        kind: "warn",
+        title: `${p.confirmed ? "Stock difference confirmed" : "Stock difference"}: ${p.item} at ${p.godown}`,
+        body: `${countLabel(p.countNo)} counted ${fmt(p.counted)} ${p.unit} against a book of ${fmt(p.book)} (${sign}). Any purchase carries on; recount, investigate or adjust it from Stock accuracy → Red flags.`,
+        href: erpLink("stockFlags", { open: p.countId }),
+      })),
+    );
+  } catch (e) {
+    console.error("stock flag notification", e);
+  }
 }

@@ -1,29 +1,26 @@
-**Stock accuracy** is where the ERP checks that what is on the shelf is what the book says. It is the screen behind **Inventory Accuracy Control**: before anything is bought, somebody counts the item on the shelf without seeing the book; if the count and the book disagree, the purchase waits until the difference is recounted, explained and resolved. Stock is never changed quietly — only through an adjustment somebody else approves.
+**Stock accuracy** is where the ERP checks that what is on the shelf is what the book says. It is the screen behind **Inventory Accuracy Control**: when a purchase requirement is raised, somebody counts the item on the shelf without seeing the book, and the requirement moves on to its purchase method as soon as that count is entered. **Whatever the count finds, the purchase is never stopped.** A count that disagrees with the book raises a **red flag** on the requirement and notifies stock control, and the recount, investigation and any adjustment happen beside the purchase, whenever somebody gets to them. Stock is never changed quietly — only through an adjustment somebody else approves.
 
-<Flow caption="From a purchase requirement to a purchase that can continue" chart={`
+<Flow caption="The blind count comes before the purchase method; a difference flags and notifies, and the purchase carries on" chart={`
 flowchart LR
   R[Purchase requirement] --> C[Blind count]
-  C --> M{Matches the book?}
-  M -- yes --> J[Quantity justified?]
-  M -- no --> F[Red flag]
-  F --> RC[Independent recount]
-  RC -- matches the book --> J
-  RC -- confirms the difference --> I[Investigate: pending and missing records]
-  I --> X[Missing record entered]
-  I --> A[Adjustment requested]
-  A --> AP[Approved by somebody else]
-  X --> J
-  AP --> J
-  J -- yes --> P[Quotation if required, PO, GRN]
-  J -- more than justified --> Q[Confirm the quantity]
-  Q --> P
+  C --> K{Matches the book?}
+  K -- yes --> M[Purchase method]
+  K -- no --> F[Red flag on the requirement]
+  F -- purchase carries on --> M
+  M --> V[Vendor / quotation] --> A[PO approval] --> PO[PO sent] --> G[Receipt / GRN]
+  subgraph S[Side track - never holds the purchase]
+    N[Notify stock control, ERP admins, requirement raiser]
+    X[Recount / investigate / adjust when somebody gets to it] --> D[Resolved]
+  end
+  F -.-> N
+  F -.-> X
 `} />
 
 ## The five tabs
 
 <Wireframe url="/erp/stock-check" nav={["Dashboard", "#Stock", "Stock", "Stock accuracy", "Boxes & labels", "Item transfers"]} active="Stock accuracy" caption="Stock accuracy → To count">
   <WfBar>
-    <WfTitle sub="Inventory Accuracy Control: a blind count before every purchase and every day, a red flag held until it is recounted and resolved, and stock that moves only through an approved adjustment.">Stock accuracy</WfTitle>
+    <WfTitle sub="Inventory Accuracy Control: a blind count before every purchase and every day, a red flag that notifies stock control without stopping anything, and stock that moves only through an approved adjustment.">Stock accuracy</WfTitle>
     <WfSpacer />
     <WfButton primary>Ask for a count</WfButton>
     <Hotspot n={1} />
@@ -47,7 +44,7 @@ flowchart LR
 | Tab | What it lists |
 |---|---|
 | **To count** | Counts waiting for somebody to count them, oldest due first. A recount is marked **Independent recount**. |
-| **Red flags** | Checks whose count differs from the book beyond the item's tolerance, until they are resolved. |
+| **Red flags** | Checks whose count differs from the book beyond the item's tolerance, until they are resolved. Nothing on this tab holds a purchase. |
 | **Adjustments** | Every adjustment ever requested — waiting, approved or rejected — with its reason. |
 | **Missing records** | Batches, fills, receipts and transfers across the ERP that should have a stock entry and do not. |
 | **Every count** | The full history, with who counted, the book at the time and how each was resolved. |
@@ -62,7 +59,7 @@ Go to the shelf. Count every drum, can or box of the item, in litres or pieces a
 Write the figure — zero if the shelf is empty — where on the floor you counted, and any lot numbers you saw. A recount is counted in the same place.
 </Step>
 <Step title="Submit">
-Only now is the book shown: "Counted 480 Ltr · book 500. Red flag: −20 Ltr, beyond the 10 tolerance — a recount by somebody else comes next." A count within tolerance says "Matches the book" and a requirement waiting on it continues.
+Only now is the book shown: "Counted 480 Ltr · book 500. Red flag: −20 Ltr, beyond the 10 tolerance — stock control has been told, and any purchase carries on." A count within tolerance says "Matches the book". Either way, a requirement waiting on the count moves on to its purchase method.
 </Step>
 </Steps>
 
@@ -72,7 +69,9 @@ A recount is always counted by **somebody other than whoever counted first**. It
 
 ## A red flag
 
-Open the row on **Red flags**. Its drawer shows the count against the book, every count of it in order, and the **possible causes** the records suggest — goods at the gate not yet in stock, a lot under test, a batch issue, a write-off — each with a link to the record.
+A red flag sends a notification to everybody with the stock-control power, every ERP administrator, and whoever raised the requirement the count was for. The person who counted is not notified, because they saw the result on their screen. The notification names the item, the godown, the count, the book and the difference, and opens the red flag. If an independent recount confirms the difference, everyone is notified a second time.
+
+Fixing it is never urgent for the purchase — the requirement has already moved on. Open the row on **Red flags**. Its drawer shows the count against the book, every count of it in order, and the **possible causes** the records suggest — goods at the gate not yet in stock, a lot under test, a batch issue, a write-off — each with a link to the record.
 
 <Steps>
 <Step title="Ask for a recount">
@@ -99,17 +98,16 @@ Rejecting sends the check back to **Investigating**.
 
 ## On a purchase requirement
 
-A requirement raised while the stock check is switched on waits at **Stock check** in its flow. Its drawer says where the check stands, what is on the shelf and how much the count justifies buying.
+A requirement raised while the stock check is switched on sits at **Blind count** in its flow until the count is entered, then moves on to **Purchase method** whatever the count found. Its drawer says what the count found, what is on the shelf and how much the shelf needs to reach its maximum level. A difference shows up as a flag on the requirements list and never stops the purchase.
 
-| Stage | What to do |
+| What you see | What it means |
 |---|---|
-| **Count stock** | Press **Count the stock** — it opens the count. |
-| **Stock discrepancy** | Open the count and resolve it; vendor, quotations and the PO wait. |
-| **Exception requested** | Somebody with the stock-control power decides the urgent purchase (not the person who asked). |
-| **Confirm quantity** | The count matched, but more is asked for than the shelf justifies. Confirm the quantity with why, or **Recount the shelf**. |
+| Stage **Blind count** | The count has not been entered yet. Press **Count the stock**. Method, vendor, quotations and the PO wait for this, and only this. |
+| Flag **Stock difference — red flag** | The count differs from the book. Stock control has been notified; the purchase carries on. **Open the red flag** shows it. |
+| Flag **More than the shelf needs** | The count matched, but more is asked for than the shelf needs to reach its maximum level. Nothing to confirm — it is a warning. |
 
-**Request urgent purchase** lets a requirement go ahead before its count is finished, with a reason and an authorised person's approval. The count still has to be finished.
+There is no urgent-purchase request any more: once the count is entered nothing holds the requirement, so there is nothing to bypass.
 
 ## On the dashboard
 
-The **Inventory Accuracy Control** strip at the top of the dashboard shows what is waiting at each step — held requirements, counts to do, red flags, recounts, investigations, approvals, and requirements cleared to buy — and every number opens the records behind it. The **Inventory accuracy** section adds missing records, how often counts are right first time, the most frequent cause of adjustments, and when the next full count is due.
+The **Inventory Accuracy Control** strip at the top of the dashboard shows requirements waiting for their count, counts to do, requirements being bought, and then the side track — red flags, recounts, investigations and adjustments to approve. Every number opens the records behind it. The **Inventory accuracy** section adds missing records, how often counts are right first time, the most frequent cause of adjustments, and when the next full count is due.

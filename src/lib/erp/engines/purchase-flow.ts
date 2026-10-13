@@ -1,12 +1,13 @@
 /* ---------------------------------------------------------------------------
  * THE PURCHASE FLOW, as rules (PURE, client-safe):
  *
- *   Requirement → Stock check → Purchase method → Vendor / Quotation →
+ *   Requirement → Blind count → Purchase method → Vendor / Quotation →
  *   Approval → PO → Receipt
  *
- * THE STOCK CHECK (Inventory Accuracy Control, `stock-check.ts`) holds a
- * requirement that carries `stockCheckRequired` until a blind count matches
- * the book, its difference is resolved, or an urgent exception is approved.
+ * THE BLIND COUNT (Inventory Accuracy Control, `stock-check.ts`) holds a
+ * requirement that carries `stockCheckRequired` only until the count is
+ * ENTERED. A count that differs from the book flags the requirement and
+ * tells stock control; the purchase goes on to its method regardless.
  *
  * The item master's PURCHASE RULE decides the method — direct purchase,
  * quotation, or the buyer decides — and it is copied onto the requirement
@@ -36,7 +37,7 @@ export function methodByLabel(label: string | null | undefined): PurchaseMethod 
 }
 
 /** The steps the flow is drawn as, in order. */
-export const FLOW_STEPS = ["Requirement", "Stock check", "Purchase method", "Vendor / quotation", "Approval", "Purchase order", "Receipt"] as const;
+export const FLOW_STEPS = ["Requirement", "Blind count", "Purchase method", "Vendor / quotation", "Approval", "Purchase order", "Receipt"] as const;
 
 /** A PO that still stands — one that was cancelled or sent back no longer holds its requirements. */
 export const LIVE_PO = ["Pending approval", "Approved", "Sent", "Partly received", "Received", "Closed"];
@@ -56,7 +57,7 @@ export type RequirementState = {
   po: { status: string; ordered: number; received: number } | null;
   /** A requirement from before POs, already ordered or received the old way. */
   legacy: boolean;
-  /** The stock check's verdict on it (`stockGate`); absent or not blocking, it does not hold the flow. */
+  /** The blind count's verdict on it (`stockGate`): it blocks only while the count is not yet entered. */
   gate?: { blocks: boolean; stage: string | null; next: string | null } | null;
 };
 
@@ -88,7 +89,7 @@ export function requirementStage(r: RequirementState): Stage {
     return { stage: `${r.status} (before POs)`, step: 5, next: "Ordered before POs were kept in the ERP. Receive it as it arrives, or cancel it.", readyForPo: false };
   }
   if (r.gate?.blocks) {
-    return { stage: r.gate.stage ?? "Count stock", step: 1, next: r.gate.next ?? "Count the stock before buying.", readyForPo: false };
+    return { stage: r.gate.stage ?? "Blind count", step: 1, next: r.gate.next ?? "Count the stock before choosing how it is bought.", readyForPo: false };
   }
   if (!r.method) {
     return r.rule === "buyer"

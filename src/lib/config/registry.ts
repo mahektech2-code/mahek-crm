@@ -4407,7 +4407,7 @@ export const SETTINGS = [
     category: "erp",
     label: "Count stock before every purchase requirement",
     description:
-      "Every raw-material requirement raised from now waits for a blind physical count of the item at its godown before a vendor, quotation or PO. A count that differs from the book beyond its tolerance holds the purchase until it is recounted, investigated and resolved, or an urgent exception is approved. Requirements already raised are not affected.",
+      "Every raw-material requirement raised from now opens a blind physical count of the item at its godown, and waits only until the count is entered before its purchase method, vendor or PO. Whatever the count finds, the purchase carries on: a count that differs from the book beyond its tolerance flags the requirement and notifies stock control, and is recounted, investigated or adjusted on the side. Requirements already raised are not affected.",
     default: true,
   },
   {
@@ -4438,7 +4438,7 @@ export const SETTINGS = [
     category: "erp",
     label: "Quantity above what the count justifies",
     description:
-      "A requirement asking for more than the count justifies (up to the item's maximum level) by more than this percentage must have its quantity confirmed, with a reason, before it is bought.",
+      "A requirement asking for more than the count justifies (up to the item's maximum level) by more than this percentage is flagged \"More than the shelf needs\" on the requirements list. It is not held.",
     default: 25,
     min: 0,
     max: 1000,

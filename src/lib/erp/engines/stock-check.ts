@@ -1,15 +1,16 @@
 /* ---------------------------------------------------------------------------
  * INVENTORY ACCURACY CONTROL, as rules (PURE, client-safe).
  *
- *   Purchase requirement → BLIND physical count → compare with the reconciled
- *   book → match: continue · difference: red flag → independent recount →
- *   pending transactions reviewed → causes suggested → a person resolves →
- *   an approved adjustment, with its reason → the purchase continues.
+ *   Purchase requirement → BLIND count → matches the book: on to the
+ *   purchase method · differs: a RED FLAG on the requirement, stock control
+ *   is told, and the purchase STILL goes on to the purchase method. The
+ *   recount, the investigation and any adjustment run on a side track,
+ *   whenever somebody gets to them.
  *
- * Nothing here reads or writes: the service hands in figures and gets
- * verdicts back, so the screen, the dashboard and the gate on the purchase
- * flow read one answer. Never silently adjust stock — no function here
- * produces a stock movement; the most it does is say one is needed.
+ * The one thing a requirement waits for is the count being ENTERED. What
+ * the count found never holds the purchase. Nothing here reads or writes,
+ * and no function here produces a stock movement; the most it does is say
+ * one is needed.
  * ------------------------------------------------------------------------- */
 
 export type CountKind = "reorder" | "cycle" | "recount" | "event" | "full";
@@ -335,39 +336,32 @@ export function causeCandidates(difference: number, tolerance: number, facts: Ca
   return out.sort((a, b) => rank(a) - rank(b) || Math.abs(Math.abs(a.qty ?? 0) - gap) - Math.abs(Math.abs(b.qty ?? 0) - gap));
 }
 
-/* ------------------------------------------- the gate on the purchase */
+/* -------------------------------------- the count on the requirement */
 
-export type GateState = "not_required" | "to_count" | "flagged" | "clear" | "excepted" | "exception_requested" | "confirm_qty";
-
-export type StockGate = { state: GateState; blocks: boolean; stage: string | null; next: string | null };
+export type GateState = "not_required" | "to_count" | "flagged" | "over_justified" | "clear";
 
 /**
- * Where a requirement stands with its stock check, and whether that holds the
- * purchase. The count must match, or its difference be resolved — or an
- * authorised person must have approved buying anyway (the urgent exception).
- * A quantity the count does not justify is confirmed before it is bought.
+ * Where a requirement stands with its blind count. It WAITS only while the
+ * count has not been entered (`blocks`); once it has, whatever it found, the
+ * purchase goes on and a difference is a FLAG on the row (`flag`, a key of
+ * the list's flag map), never a hold.
  */
+export type StockGate = { state: GateState; blocks: boolean; flag: string | null; stage: string | null; next: string | null };
+
 export function stockGate(p: {
   required: boolean;
   /** The status of the newest count raised for it; null when none exists. */
   countStatus: CountStatus | null;
-  exception: "requested" | "approved" | "rejected" | null;
+  /** More is asked for than the counted shelf needs to reach its maximum. */
   unexpectedQty: boolean;
-  qtyConfirmed: boolean;
 }): StockGate {
-  if (!p.required) return { state: "not_required", blocks: false, stage: null, next: null };
-  if (p.exception === "approved") return { state: "excepted", blocks: false, stage: null, next: null };
-  const clear = p.countStatus === "matched" || p.countStatus === "resolved";
-  if (!clear) {
-    if (p.exception === "requested")
-      return { state: "exception_requested", blocks: true, stage: "Exception requested", next: "An authorised person approves the urgent purchase, or the stock is counted." };
-    if (p.countStatus === "flagged" || p.countStatus === "recount" || p.countStatus === "investigating")
-      return { state: "flagged", blocks: true, stage: "Stock discrepancy", next: "The count differs from the book. Recount, find the cause and resolve it before buying." };
-    return { state: "to_count", blocks: true, stage: "Count stock", next: "Count what is on the shelf. The book quantity is not shown until the count is in." };
-  }
-  if (p.unexpectedQty && !p.qtyConfirmed)
-    return { state: "confirm_qty", blocks: true, stage: "Confirm quantity", next: "The quantity asked for is more than the count justifies. Confirm it, with why." };
-  return { state: "clear", blocks: false, stage: null, next: null };
+  const none = { blocks: false, stage: null, next: null };
+  if (!p.required) return { state: "not_required", flag: null, ...none };
+  if (p.countStatus === "flagged" || p.countStatus === "recount" || p.countStatus === "investigating")
+    return { state: "flagged", flag: "stockFlag", ...none };
+  if (p.countStatus === "matched" || p.countStatus === "resolved")
+    return p.unexpectedQty ? { state: "over_justified", flag: "stockOverJustified", ...none } : { state: "clear", flag: null, ...none };
+  return { state: "to_count", blocks: true, flag: null, stage: "Blind count", next: "Count what is on the shelf. The book quantity is not shown until the count is in; whatever it finds, the purchase goes on." };
 }
 
 /**
@@ -383,7 +377,7 @@ export function gateCountStatus(roots: { status: CountStatus; createdAt: Date }[
 }
 
 /** The steps of the control, as drawn on the dashboard and in a count's drawer. */
-export const CONTROL_STEPS = ["Count", "Compare", "Recount", "Investigate", "Resolve", "Purchase continues"] as const;
+export const CONTROL_STEPS = ["Count", "Compare", "Recount", "Investigate", "Resolve"] as const;
 
 /** Which of CONTROL_STEPS a ROOT count has reached (−1: cancelled). */
 export function controlStep(status: CountStatus, adjustmentPending = false): number {

@@ -7,7 +7,7 @@ import type { StockCountPanel } from "@/lib/erp/screens/stock-check";
 
 /* ---------------------------------------------------------------------------
  * One stock count, in its drawer: where the check has got to
- * (Count → Compare → Recount → Investigate → Resolve → Purchase continues),
+ * (Count → Compare → Recount → Investigate → Resolve),
  * the count against the book, every count of it in order, and the causes the
  * records suggest. While the count is OPEN nothing here shows the book — the
  * counter may be the one reading it.

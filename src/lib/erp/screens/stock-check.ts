@@ -2,7 +2,7 @@ import "server-only";
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { erpRequisitions, erpRmEntries, erpStockAdjustments, erpStockCounts, erpTransfers } from "@/db/schema";
+import { erpRmEntries, erpStockAdjustments, erpStockCounts, erpTransfers } from "@/db/schema";
 import { calendarDate } from "@/lib/business-date";
 import { err, fieldErr, okVoid, type Result } from "@/lib/result";
 import type { ErpContext } from "../access";
@@ -24,7 +24,7 @@ import {
 } from "../engines/stock-check";
 import { erpLink } from "../registry";
 import { erpAudit, erpId, num, stampLine, text, type ScreenModule } from "../server";
-import { countLabel, judgeOnShelf, missingRecords, openCount, openGodownCounts, planCycleCounts, shelfFacts, type ShelfFacts } from "../stock-check";
+import { countLabel, judgeOnShelf, missingRecords, notifyStockFlag, openCount, openGodownCounts, planCycleCounts, shelfFacts, type ShelfFacts } from "../stock-check";
 import { lockLot, rmLots } from "../stock";
 import { checkableItems, floorCheckRows, recordFloorCheck, STAGE_LABEL, type CheckStage, type FloorCheckRow } from "../floor-checks";
 import type { ActionSpec, ColSpec, FieldSpec, ListRow } from "../ui";
@@ -357,6 +357,9 @@ export async function submitCount(ctx: ErpContext, id: string, v: Record<string,
   const qty = num(v.qty);
   if (qty == null || qty < 0) return fieldErr("qty", "Enter what you counted — zero if the shelf is empty");
   let message = "";
+  /* The red flag to tell stock control about, once the count is safely saved. */
+  type Alarm = { countId: string; countNo: number; rm: string; godownId: string; counted: number; book: number; difference: number; unit: string; req: string | null; confirmed: boolean };
+  let alarm: Alarm | null = null;
   const res = await inTx(async (tx) => {
     const [c] = (await tx.execute(sql`select * from erp_stock_counts where id = ${id} for update`)) as unknown as {
       id: string; status: string; count_no: number; raw_material_id: string; godown_id: string; recount_of_id: string | null; requisition_id: string | null;
@@ -398,20 +401,28 @@ export async function submitCount(ctx: ErpContext, id: string, v: Record<string,
           .update(erpStockCounts)
           .set({ status: "resolved", resolution: "book_confirmed", resolutionNote: `The recount ${countLabel(c.count_no)} matched the book; the first count was wrong.`, resolvedById: ctx.user.id, resolvedAt: new Date() })
           .where(eq(erpStockCounts.id, parent.id));
-        message = `${said}. The recount matches the book — ${countLabel(parent.count_no)} is resolved and the purchase can continue.`;
+        message = `${said}. The recount matches the book — ${countLabel(parent.count_no)} is resolved.`;
       } else if (outcome === "discrepancy_confirmed") {
         await tx.update(erpStockCounts).set({ status: "investigating" }).where(eq(erpStockCounts.id, parent.id));
+        const [root] = (await tx.execute(sql`select requisition_id from erp_stock_counts where id = ${parent.id}`)) as unknown as { requisition_id: string | null }[];
+        alarm = { countId: parent.id, countNo: parent.count_no, rm: c.raw_material_id, godownId: c.godown_id, counted: qty, book: j.reconciled, difference: j.difference, unit: facts.unit, req: root?.requisition_id ?? null, confirmed: true };
         message = `${said}. The recount confirms a difference of ${signed(j.difference)} — ${countLabel(parent.count_no)} is now being investigated.`;
       } else {
         await tx.update(erpStockCounts).set({ status: "flagged" }).where(eq(erpStockCounts.id, parent.id));
         message = `${said}. The recount agrees with neither the book nor the first count — ${countLabel(parent.count_no)} needs another recount.`;
       }
     } else {
-      message = status === "matched" ? `${said}. Matches the book.` : `${said}. Red flag: ${signed(j.difference)} ${facts.unit}, beyond the ${nf(j.tolerance)} tolerance — a recount by somebody else comes next.`;
+      message = status === "matched" ? `${said}. Matches the book.` : `${said}. Red flag: ${signed(j.difference)} ${facts.unit}, beyond the ${nf(j.tolerance)} tolerance — stock control has been told, and any purchase carries on.`;
+      if (status === "flagged") alarm = { countId: c.id, countNo: c.count_no, rm: c.raw_material_id, godownId: c.godown_id, counted: qty, book: j.reconciled, difference: j.difference, unit: facts.unit, req: c.requisition_id, confirmed: false };
     }
     return okVoid(message);
   });
   if (res.ok) await erpAudit(ctx, "erp.stockCount.submit", "erp_stock_count", id, null, { counted: qty });
+  const a = alarm as Alarm | null;
+  if (res.ok && a) {
+    const [names] = (await db.execute(sql`select (select name from erp_raw_materials where id = ${a.rm}) as item, (select name from erp_godowns where id = ${a.godownId}) as godown`)) as unknown as { item: string | null; godown: string | null }[];
+    await notifyStockFlag({ countId: a.countId, countNo: Number(a.countNo), item: names?.item ?? "An item", godown: names?.godown ?? "a godown", counted: a.counted, book: a.book, difference: a.difference, unit: a.unit, requirementId: a.req, byId: ctx.user.id, confirmed: a.confirmed });
+  }
   return res;
 }
 
@@ -1046,11 +1057,4 @@ export async function openRequirementCounts(tx: Tx, reqs: { id: string; rawMater
     if (!r.rawMaterialId) continue;
     await openCount(tx, { kind: "reorder", rawMaterialId: r.rawMaterialId, godownId: r.godownId, requisitionId: r.id, reason: `Before purchase — ${r.label}`, byId });
   }
-}
-
-/** Marks a requirement's quantity confirmed, with the reason a person gave. */
-export async function confirmRequirementQty(ctx: ErpContext, id: string, note: string): Promise<Result<unknown>> {
-  await db.update(erpRequisitions).set({ qtyConfirmNote: note, qtyConfirmedById: ctx.user.id, qtyConfirmedAt: new Date() }).where(eq(erpRequisitions.id, id));
-  await erpAudit(ctx, "erp.requisition.qtyConfirm", "erp_requisition", id, null, { note });
-  return okVoid("Quantity confirmed — the purchase continues");
 }

@@ -2161,26 +2161,38 @@ group (its cans stay, not grouped), or a can's own Edit form.
 
 ## Inventory Accuracy Control
 
-**NO PURCHASE ON A BOOK NOBODY HAS COUNTED.** A raw-material requirement raised
-while `erp.stockCheck.onRequirement` is on opens a BLIND count of its item at
-its godown in the same transaction (`openRequirementCounts`), and the flow is
-Requirement → **Stock check** → Purchase method → Vendor / quotation → Approval
-→ PO → Receipt. The setting is COPIED onto the row (`stock_check_required`),
+**NO PURCHASE METHOD BEFORE THE SHELF IS COUNTED.** A raw-material requirement
+raised while `erp.stockCheck.onRequirement` is on opens a BLIND count of its
+item at its godown in the same transaction (`openRequirementCounts`), and the
+flow is Requirement → **Blind count** → Purchase method → Vendor / quotation →
+Approval → PO → Receipt. The setting is COPIED onto the row (`stock_check_required`),
 like the purchase rule, so nothing raised before it was held up. The rules are
 pure in `engines/stock-check.ts`; `stock-check.ts` hands them the ledgers'
 figures; `screens/stock-check.ts` is the Stock accuracy screen (To count · Red
 flags · Adjustments · Missing records · Every count).
 
-**THE GATE IS ON THE STAGE, so every reader sees it.** `requirementViews`
-computes `ReqView.stock` (`gatesFor`) and `stageOf` hands it to
-`requirementStage` — the list, "ready for PO", the dashboard tiles and the
-badge all hold without a change of their own — and every buying handler asks
-`heldByStock` again, because a server action is a URL. A requirement reads the
-counts raised for it, any later count of its shelf, and any count of its shelf
-still UNRESOLVED: an open discrepancy blocks every purchase for that shelf, and
-`approvalRefusal` refuses a PO whose shelf has one even if the PO came first.
-Only an urgent exception approved by `stockControl` (not its requester) lets a
-held requirement through; the count still has to be finished.
+**THE COUNT HOLDS ONLY UNTIL IT IS ENTERED, AND THAT IS A REVERSAL (Oct
+2026).** It used to hold the purchase until the count MATCHED or its difference
+was resolved, PO approval was refused over an open discrepancy, and an "urgent
+purchase" approval and a "confirm quantity" step were the ways round. Work
+stopped behind stock paperwork, so Mahek's rule now is: count first, then the
+purchase carries on whatever the count found. `stockGate` blocks in one state,
+`to_count` (no count entered — none, open or cancelled), which `stageOf` hands
+to `requirementStage` as the **Blind count** stage; every buying handler asks
+`heldByStock` again, because a server action is a URL. `flagged` and
+`over_justified` block nothing and carry a FLAG the requirements list draws
+(`stockFlag`, `stockOverJustified`). A requirement reads the counts raised for
+it, any later count of its shelf, and any count of its shelf still UNRESOLVED,
+so an open discrepancy flags every requirement for that shelf. PO approval does
+not read the stock check. The `stock_exception_*` and `qty_confirm_*` columns
+are no longer written; an exception approved under the old rule still unblocks
+its requirement (`gatesFor`).
+
+**A RED FLAG IS TOLD.** With nothing held, the bell is what makes a leak reach
+somebody: `notifyStockFlag`, after `submitCount` commits, tells every active
+`stockControl` holder on the ERP, every ERP administrator and whoever raised
+the requirement — not the counter, who saw it — on a new red flag and again
+when a recount confirms it. It cannot fail the count.
 
 **THE COUNT IS BLIND.** Nothing on To count, its prompt or its drawer shows the
 book; Every count blanks it on an open row. The book is read and SNAPSHOTTED
@@ -2212,10 +2224,10 @@ stock); a surplus is an `erp_rm_entries` row with `source_type = 'adjustment'`
 on the newest lot. Lots are locked under BOTH spellings the ERP uses (`rm`,
 `Purchase`) and read again under the locks.
 
-**EVEN A MATCHING COUNT MUST JUSTIFY THE QUANTITY.** `reorderJustification`:
+**A QUANTITY THE SHELF DOES NOT NEED IS FLAGGED.** `reorderJustification`:
 up to the maximum level is justified; more than that by
-`erp.stockCheck.unexpectedQtyPercent` holds the requirement at "Confirm
-quantity" until a person confirms it in words or recounts.
+`erp.stockCheck.unexpectedQtyPercent` flags the requirement "More than the
+shelf needs". Nothing is confirmed and nothing waits.
 
 **CYCLE COUNTS ARE OPENED HOURLY, ONCE A DAY'S WORTH.** `erp-cycle-counts`
 (`planCycleCounts`) ranks shelves by ABC (value moved over 90 days, 80/95),
