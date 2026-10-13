@@ -1547,7 +1547,7 @@ export class FactoryApp extends Component<Props, State> {
     const top = (n: number, l: string) => (
       <Div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "10px" }}>
         <Div style={{ flex: 1, minWidth: 0 }}>
-          <Div style={{ fontSize: "22px", lineHeight: "28px", fontWeight: 700 }}>{it.name}</Div>
+          <Div style={{ fontSize: "21px", lineHeight: "27px", fontWeight: 700 }}>{it.name}</Div>
           {dots(n, l)}
         </Div>
         <Btn onClick={() => this.setReq({ ask: null })} aria-label="Close" style={round}>{ic("x", 20, "#5223E0")}</Btn>
@@ -1563,17 +1563,14 @@ export class FactoryApp extends Component<Props, State> {
       };
       return <Btn key={k} onClick={press} aria-label={k === "⌫" ? "Delete" : k} style={{ height: "48px", borderRadius: "10px", border: "none", background: "#F1F2F5", fontSize: "21px", fontWeight: 600, color: k === "." && cu !== "L" ? "#C2C8D2" : "#1A1E28", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>{k}</Btn>;
     };
-    const purpleBtn = (on: boolean, l: string, run: () => void) => <Btn onClick={() => on && run()} style={{ ...btn("p", 54), ...(on ? {} : { background: "#C9BDF7", cursor: "not-allowed" }) }}>{l}</Btn>;
+    const purpleBtn = (on: boolean, l: string, run: () => void) => <Btn onClick={() => on && run()} style={btn(on ? "p" : "off", 58)}>{l}</Btn>;
     let body: ReactNode;
     if (a.step === "count") {
       const has = a.counted !== "";
       body = (
         <>
           {top(1, "Count, then how much you need")}
-          <Div style={{ display: "flex", gap: "10px", padding: "12px 14px", borderRadius: "14px", background: "#F1ECFF", color: "#3D14A8", fontSize: "14px", lineHeight: "20px" }}>
-            <Span style={{ flex: "none", marginTop: "1px" }}>{ic("search", 20, "#5223E0")}</Span>
-            <Span><Span style={{ fontWeight: 700 }}>Go and check the godown first.</Span>{" How much " + it.name + " is at " + godown + " right now? Count every " + (cu === "L" ? "drum" : "piece") + ", open ones too."}</Span>
-          </Div>
+          <MsgBox m={msg("Go and check the godown first. How much " + it.name + " is at " + godown + " right now? Count every " + (cu === "L" ? "drum" : "piece") + ", open ones too.", "info")} />
           <Div>
             <Div style={{ fontSize: "15px", fontWeight: 700, marginBottom: "6px" }}>Available now</Div>
             <Div style={{ height: "58px", borderRadius: "12px", border: "2px solid " + (has ? "#6835FB" : "#DDE1E8"), background: "#FFFFFF", display: "flex", alignItems: "center", padding: "0 16px", gap: "8px" }}>
@@ -1582,7 +1579,7 @@ export class FactoryApp extends Component<Props, State> {
             </Div>
           </Div>
           <Div style={{ display: "flex" }}>
-            <Btn onClick={() => this.setReq({ ask: { ...a, counted: "0" } })} style={{ height: "36px", padding: "0 14px", borderRadius: "18px", border: "1.5px solid #DDE1E8", background: "#FFFFFF", color: "#3D4453", fontSize: "14px", fontWeight: 700, cursor: "pointer" }}>None in the godown · 0</Btn>
+            <Btn onClick={() => this.setReq({ ask: { ...a, counted: "0" } })} style={{ padding: "10px 14px", borderRadius: "18px", border: "1.5px solid #DDE1E8", background: "#FFFFFF", color: "#3D4453", fontSize: "15px", fontWeight: 600, cursor: "pointer" }}>None in the godown · 0</Btn>
           </Div>
           <Div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: "6px" }}>{["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", "⌫"].map(pad)}</Div>
           {purpleBtn(has, "Next", () => this.setReq({ ask: { ...a, step: "need" } }))}
@@ -1617,7 +1614,7 @@ export class FactoryApp extends Component<Props, State> {
           <Div style={{ display: "flex", gap: "8px" }}>
             {q.quick.map((v) => {
               const on = n === v;
-              return <Btn key={v} onClick={() => setNeed(v)} style={{ flex: 1, height: "38px", borderRadius: "19px", border: "none", background: on ? "#6835FB" : "#F1ECFF", color: on ? "#FFFFFF" : "#5223E0", fontSize: "14px", fontWeight: 700, cursor: "pointer" }}>{nf(v) + " " + bu}</Btn>;
+              return <Btn key={v} onClick={() => setNeed(v)} style={{ flex: 1, padding: "10px 4px", borderRadius: "18px", border: "none", background: on ? "#6835FB" : "#F1ECFF", color: on ? "#FFFFFF" : "#5223E0", fontSize: "15px", fontWeight: 600, cursor: "pointer" }}>{nf(v) + " " + bu}</Btn>;
             })}
           </Div>
           <Div style={{ fontSize: "13px", color: "#6B7385" }}>{q.hint}</Div>
@@ -1626,9 +1623,9 @@ export class FactoryApp extends Component<Props, State> {
       );
     }
     return (
-      <Div onClick={() => this.setReq({ ask: null })} style={{ position: "absolute", inset: 0, background: "rgba(14,16,22,0.45)", zIndex: 40, display: "flex", alignItems: "flex-end" }}>
-        <Div onClick={(e) => e.stopPropagation()} role="dialog" aria-label={it.name} style={{ width: "100%", maxHeight: "94%", overflowY: "auto", background: "#FFFFFF", borderRadius: "24px 24px 0 0", padding: "10px 16px 18px 16px", display: "flex", flexDirection: "column", gap: "14px", animation: "fx-up 200ms cubic-bezier(0.2,0,0.2,1)" }}>
-          <Div style={{ width: "40px", height: "5px", borderRadius: "3px", background: "#DDE1E8", alignSelf: "center", flex: "none" }} />
+      <Div onClick={() => this.setReq({ ask: null })} style={{ position: "absolute", inset: 0, background: "rgba(14,16,22,0.5)", zIndex: 40, display: "flex", alignItems: "flex-end" }}>
+        <Div onClick={(e) => e.stopPropagation()} role="dialog" aria-label={it.name} style={{ width: "100%", maxHeight: "94%", overflowY: "auto", background: "#FFFFFF", borderRadius: "26px 26px 0 0", padding: "10px 20px 18px 20px", display: "flex", flexDirection: "column", gap: "14px", animation: "fx-up 200ms cubic-bezier(0.2,0,0.2,1)" }}>
+          <Div style={{ width: "44px", height: "5px", borderRadius: "3px", background: "#DDE1E8", alignSelf: "center", flex: "none" }} />
           {body}
         </Div>
       </Div>
@@ -1678,12 +1675,12 @@ export class FactoryApp extends Component<Props, State> {
     const unitW = (u: string) => (u === "Litre" ? "L" : u === "Kg" ? "kg" : "pcs");
     const qtyW = (n: number, u: string) => nf(n) + " " + unitW(u);
     const PRI: Record<string, { bg: string; fg: string; l: string }> = { Urgent: { bg: "#FCECEC", fg: "#B3261E", l: "Urgent" }, Medium: { bg: "#EDEFF3", fg: "#3D4453", l: "Medium" }, "For Stock": { bg: "#EDEFF3", fg: "#3D4453", l: "For stock" } };
-    const tag = (l: string, bg: string, fg: string) => <Span key={l} style={{ display: "inline-flex", alignItems: "center", height: "24px", padding: "0 9px", borderRadius: "12px", fontSize: "12px", fontWeight: 700, background: bg, color: fg, whiteSpace: "nowrap" }}>{l}</Span>;
+    const tag = (l: string, bg: string, fg: string) => <Pill key={l} l={l} bg={bg} fg={fg} />;
     const stageTone = (l: ReqLine) =>
       l.step < 0 ? { bg: "#EDEFF3", fg: "#6B7385" } : l.step >= kit.steps.length ? { bg: "#E9F5EE", fg: "#1D7A45" } : l.step <= 1 ? { bg: "#FDF6E7", fg: "#8A5C05" } : l.step >= 4 ? { bg: "#E8F1FD", fg: "#1A5BB5" } : { bg: "#F1ECFF", fg: "#3D14A8" };
     const countWords = (l: ReqLine) =>
       l.countState === "matched" ? { t: "✓ Count matches", bg: "#E9F5EE", fg: "#1D7A45" } : l.countState === "flagged" ? { t: "Count doesn't match — stock control told", bg: "#FDF6E7", fg: "#8A5C05" } : l.countState === "waiting" ? { t: "Stock check — count first", bg: "#FDF6E7", fg: "#8A5C05" } : null;
-    const cardS: CSSProperties = { background: "#FFFFFF", border: "1px solid #DDE1E8", borderRadius: "16px" };
+    const cardS = card;
 
     /* ---- the list */
     if (view === "list") {
@@ -1692,7 +1689,7 @@ export class FactoryApp extends Component<Props, State> {
       const n = (t: ReqEntry["tab"]) => kit.reqs.filter((r) => r.state === t).length;
       const tab = (t: ReqEntry["tab"], l: string) => {
         const on = s.tab === t;
-        return <Btn key={t} onClick={() => this.setReq({ tab: t })} aria-pressed={on} style={{ height: "38px", padding: "0 14px", borderRadius: "19px", border: "none", background: on ? "#6835FB" : "#F1ECFF", color: on ? "#FFFFFF" : "#5223E0", fontSize: "14px", fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: "6px" }}>{l}<Span style={{ padding: "0 6px", borderRadius: "10px", lineHeight: "20px", fontSize: "12px", background: on ? "rgba(255,255,255,0.25)" : "#FFFFFF" }}>{n(t)}</Span></Btn>;
+        return <Btn key={t} onClick={() => this.setReq({ tab: t })} aria-pressed={on} style={{ padding: "10px 14px", borderRadius: "18px", border: "none", background: on ? "#6835FB" : "#F1ECFF", color: on ? "#FFFFFF" : "#5223E0", fontSize: "15px", fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: "6px" }}>{l}<Span style={{ padding: "0 6px", borderRadius: "10px", lineHeight: "20px", fontSize: "12px", background: on ? "rgba(255,255,255,0.25)" : "#FFFFFF" }}>{n(t)}</Span></Btn>;
       };
       const bar = (lines: ReqLine[]) => {
         const live = lines.filter((l) => l.step >= 0);
@@ -1705,10 +1702,10 @@ export class FactoryApp extends Component<Props, State> {
       };
       return wrap(
         <>
-          <Btn onClick={() => this.startReq()} style={{ ...btn("p", 54), flex: "none" }}>{ic("plus", 22, "#FFFFFF")}Raise a requirement</Btn>
-          <Div style={{ height: "48px", minHeight: "48px", boxSizing: "border-box", border: "1px solid #DDE1E8", borderRadius: "12px", padding: "0 14px", background: "#FFFFFF", display: "flex", alignItems: "center", gap: "10px" }}>
+          <Btn onClick={() => this.startReq()} style={{ ...btn("p", 58), flex: "none" }}>{ic("plus", 22, "#FFFFFF")}Raise a requirement</Btn>
+          <Div style={{ height: "48px", minHeight: "48px", boxSizing: "border-box", border: "1.5px solid #DDE1E8", borderRadius: "12px", padding: "0 12px", background: "#FFFFFF", display: "flex", alignItems: "center", gap: "10px" }}>
             {ic("search", 18, "#9BA3B2")}
-            <Input value={s.find} onChange={(e) => this.setReq({ find: String(e.target.value).slice(0, 60) })} placeholder="Search by REQ number or item" aria-label="Search requirements" style={{ flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent", fontSize: "16px", color: "#1A1E28" }} />
+            <Input value={s.find} onChange={(e) => this.setReq({ find: String(e.target.value).slice(0, 60) })} placeholder="Search by REQ number or item" aria-label="Search requirements" style={{ flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent", fontSize: "17px", color: "#1A1E28" }} />
           </Div>
           <Div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>{tab("open", "Open")}{tab("received", "Received")}{tab("cancelled", "Cancelled")}</Div>
           {s.err && errBox(s.err)}
@@ -1775,7 +1772,7 @@ export class FactoryApp extends Component<Props, State> {
             {fact("Progress", r.state === "cancelled" ? "Cancelled" : done + " of " + live.length + " received", !r.remarks)}
             {!!r.remarks && <Div style={{ padding: "11px 0", fontSize: "15px", lineHeight: "21px", color: "#3D4453" }}><Span style={{ color: "#6B7385" }}>Note · </Span>{r.remarks}</Div>}
           </Div>
-          <Div style={{ fontSize: "12px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "#6B7385", marginTop: "4px" }}>{"Items · " + r.lines.length}</Div>
+          {this.sectionLabel("Items · " + r.lines.length)}
           {r.lines.map((l) => {
             const t = stageTone(l), cw = countWords(l);
             const open = s.expand === l.id;
@@ -1830,7 +1827,7 @@ export class FactoryApp extends Component<Props, State> {
                   </Div>
                 )}
                 {l.cancel && (l.cancel.ok ? (
-                  <Btn onClick={() => this.cancelReqLine(l)} style={{ height: "46px", borderRadius: "14px", border: "1.5px solid #F6CFCF", background: "#FFFFFF", color: "#B3261E", fontSize: "16px", fontWeight: 700, cursor: "pointer" }}>{"Cancel " + l.item + "…"}</Btn>
+                  <Btn onClick={() => this.cancelReqLine(l)} style={{ ...btn("s", 52), color: "#B3261E", border: "1.5px solid #F6CFCF" }}>{"Cancel " + l.item + "…"}</Btn>
                 ) : <Div style={{ fontSize: "13px", color: "#6B7385", textAlign: "center" }}>{l.cancel.why}</Div>)}
               </Div>
             );
@@ -1862,15 +1859,13 @@ export class FactoryApp extends Component<Props, State> {
             ))}
           </Div>
           {!!off.length && (
-            <Div style={{ padding: "12px 14px", borderRadius: "14px", background: "#FDF6E7", color: "#5C3D03", fontSize: "14px", lineHeight: "20px" }}>
-              {and(off) + (off.length > 1 ? " don’t" : " doesn’t") + " match the book. Stock control has been told — buying carries on" + (fine.length ? ", and " + and(fine) + (fine.length > 1 ? " match." : " matches.") : ".")}
-            </Div>
+            <MsgBox m={msg(and(off) + (off.length > 1 ? " don’t" : " doesn’t") + " match the book. Stock control has been told — buying carries on" + (fine.length ? ", and " + and(fine) + (fine.length > 1 ? " match." : " matches.") : "."), "warn")} />
           )}
           <Div style={{ ...cardS, padding: "14px 16px" }}>
             <Div style={{ fontSize: "15px", fontWeight: 700, marginBottom: "6px" }}>What happens next</Div>
             {sv.next.map((x) => <Div key={x} style={{ fontSize: "14px", lineHeight: "21px", color: "#3D4453" }}>{x}</Div>)}
           </Div>
-          <Btn onClick={() => this.reqBack()} style={btn("p", 54)}>Done</Btn>
+          <Btn onClick={() => this.reqBack()} style={btn("p", 58)}>Done</Btn>
         </Div>,
         undefined,
         undefined,
@@ -1886,7 +1881,7 @@ export class FactoryApp extends Component<Props, State> {
     if (view === "send") {
       const days: [string, number][] = [["Tomorrow", 1], ["In 2 days", 2], ["In a week", 7]];
       const preset = days.some(([, d]) => this.reqDay(d) === s.requiredBy);
-      const seg = (on: boolean, danger?: boolean): CSSProperties => ({ flex: 1, minWidth: 0, height: "52px", borderRadius: "12px", border: "2px solid " + (on ? (danger ? "#B3261E" : "#6835FB") : "#DDE1E8"), background: on ? (danger ? "#FCECEC" : "#F7F4FF") : "#FFFFFF", color: on ? (danger ? "#B3261E" : "#3D14A8") : "#3D4453", fontSize: "15px", fontWeight: 700, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", lineHeight: "18px" });
+      const seg = (on: boolean, danger?: boolean): CSSProperties => ({ flex: 1, minWidth: 0, height: "52px", borderRadius: "12px", border: "2px solid " + (on ? (danger ? "#B3261E" : "#6835FB") : "#DDE1E8"), background: on ? (danger ? "#FCECEC" : "#F7F4FF") : "#FFFFFF", color: on ? (danger ? "#B3261E" : "#3D14A8") : "#3D4453", fontSize: "16px", fontWeight: 700, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", lineHeight: "19px" });
       const small = { fontSize: "11px", fontWeight: 600, color: "#6B7385" } as CSSProperties;
       const lbl = (t: string) => <Div style={{ fontSize: "14px", color: "#6B7385", marginBottom: "6px" }}>{t}</Div>;
       const where = /godown/i.test(kit.godown) ? kit.godown : kit.godown + " godown";
@@ -1925,12 +1920,12 @@ export class FactoryApp extends Component<Props, State> {
             <Div style={{ ...cardS, borderRadius: "14px", padding: "12px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}><Span style={{ fontSize: "16px", fontWeight: 700 }}>{where}</Span><Span style={{ fontSize: "14px", color: "#6B7385" }}>where you work</Span></Div>
           </Div>
           <Div>{lbl("Note for the office (optional)")}
-            <Input multiline value={s.remarks} onChange={(e) => this.setReq({ remarks: String(e.target.value).slice(0, 1000) })} placeholder="What it is for, or anything the buyer should know" aria-label="Note for the office" style={{ width: "100%", minHeight: "84px", boxSizing: "border-box", border: "1px solid #DDE1E8", borderRadius: "14px", padding: "12px 14px", fontSize: "15px", lineHeight: "21px", color: "#1A1E28", background: "#FFFFFF" }} />
+            <Input multiline value={s.remarks} onChange={(e) => this.setReq({ remarks: String(e.target.value).slice(0, 1000) })} placeholder="What it is for, or anything the buyer should know" aria-label="Note for the office" style={{ width: "100%", minHeight: "84px", boxSizing: "border-box", border: "1.5px solid #DDE1E8", borderRadius: "12px", padding: "12px", fontSize: "17px", lineHeight: "23px", color: "#1A1E28", background: "#FFFFFF" }} />
           </Div>
-          <Div style={{ padding: "12px 14px", borderRadius: "14px", background: "#F1ECFF", color: "#3D14A8", fontSize: "14px", lineHeight: "20px" }}>Your counts are sent as this requirement’s stock check. If one doesn’t match the book, stock control is told — buying carries on.</Div>
+          <MsgBox m={msg("Your counts are sent as this requirement’s stock check. If one doesn’t match the book, stock control is told — buying carries on.", "info")} />
           {s.err && errBox(s.err)}
         </>,
-        <Btn onClick={() => void this.sendReq()} style={{ ...btn("p", 54), ...(s.saving ? { background: "#C9BDF7", cursor: "not-allowed" } : {}) }}>{s.saving ? "Sending…" : "Raise requirement"}</Btn>,
+        <Btn onClick={() => void this.sendReq()} style={btn(s.saving ? "off" : "p", 58)}>{s.saving ? "Sending…" : "Raise requirement"}</Btn>,
       );
     }
 
@@ -1964,7 +1959,7 @@ export class FactoryApp extends Component<Props, State> {
         </Div>
       );
     };
-    const sec = (l: string) => <Div style={{ fontSize: "12px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "#6B7385", marginTop: "6px" }}>{l}</Div>;
+    const sec = (l: string) => this.sectionLabel(l);
     const onList = items.filter((i) => chosen.has(i.id));
     const recent = items.filter((i) => !chosen.has(i.id) && i.recent);
     const rest = items.filter((i) => !chosen.has(i.id) && !i.recent);
@@ -1975,12 +1970,12 @@ export class FactoryApp extends Component<Props, State> {
         <Div style={{ display: "flex", gap: "8px", flexWrap: "wrap", justifyContent: "flex-end" }}>
           {kit.depts.map((d) => {
             const on = d.key === dept?.key;
-            return <Btn key={d.key} onClick={() => !on && (n ? this.toast("Send or remove the items first — a requirement is for one department", "warn") : this.setReq({ dept: d.key }))} aria-pressed={on} style={{ height: "38px", padding: "0 14px", borderRadius: "19px", border: "none", background: on ? "#6835FB" : "#F1ECFF", color: on ? "#FFFFFF" : "#5223E0", fontSize: "14px", fontWeight: 700, cursor: "pointer" }}>{d.label}</Btn>;
+            return <Btn key={d.key} onClick={() => !on && (n ? this.toast("Send or remove the items first — a requirement is for one department", "warn") : this.setReq({ dept: d.key }))} aria-pressed={on} style={{ padding: "10px 14px", borderRadius: "18px", border: "none", background: on ? "#6835FB" : "#F1ECFF", color: on ? "#FFFFFF" : "#5223E0", fontSize: "15px", fontWeight: 600, cursor: "pointer" }}>{d.label}</Btn>;
           })}
         </Div>
-        <Div style={{ height: "48px", minHeight: "48px", boxSizing: "border-box", border: "1px solid #DDE1E8", borderRadius: "12px", padding: "0 14px", background: "#FFFFFF", display: "flex", alignItems: "center", gap: "10px" }}>
+        <Div style={{ height: "48px", minHeight: "48px", boxSizing: "border-box", border: "1.5px solid #DDE1E8", borderRadius: "12px", padding: "0 12px", background: "#FFFFFF", display: "flex", alignItems: "center", gap: "10px" }}>
           {ic("search", 18, "#9BA3B2")}
-          <Input value={s.q} onChange={(e) => this.setReq({ q: String(e.target.value).slice(0, 60) })} placeholder={"Search " + what} aria-label={"Search " + what} style={{ flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent", fontSize: "16px", color: "#1A1E28" }} />
+          <Input value={s.q} onChange={(e) => this.setReq({ q: String(e.target.value).slice(0, 60) })} placeholder={"Search " + what} aria-label={"Search " + what} style={{ flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent", fontSize: "17px", color: "#1A1E28" }} />
         </Div>
         {!!onList.length && sec("On this requirement · " + onList.length)}
         {onList.map(row)}
@@ -1990,7 +1985,7 @@ export class FactoryApp extends Component<Props, State> {
         {rest.map(row)}
         {!items.length && <Div style={{ ...cardS, padding: "20px", fontSize: "15px", lineHeight: "21px", color: "#6B7385", textAlign: "center" }}>{q ? "Nothing matches “" + s.q + "”." : "No " + what + " for " + (dept?.label ?? "this department") + ". The office adds them in ERP → Masters → Raw materials."}</Div>}
       </>,
-      <Btn onClick={() => n && this.setReq({ view: "send", err: null })} style={{ ...btn("p", 54), ...(n ? {} : { background: "#C9BDF7", cursor: "not-allowed" }) }}>{n ? "Next · " + n + " item" + (n > 1 ? "s" : "") : "Next · add an item first"}</Btn>,
+      <Btn onClick={() => n && this.setReq({ view: "send", err: null })} style={btn(n ? "p" : "off", 58)}>{n ? "Next · " + n + " item" + (n > 1 ? "s" : "") : "Next · add an item first"}</Btn>,
       asking ? this.renderReqAsk(asking, kit.godown) : null,
     );
   }
