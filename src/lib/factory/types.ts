@@ -474,7 +474,7 @@ export type ReqLine = {
   /** What the requester counted, and what came of it — never the book. */
   counted: number | null;
   countUnit: "L" | "pcs";
-  countState: "matched" | "recount" | "waiting" | null;
+  countState: "matched" | "flagged" | "waiting" | null;
   /** May the in-charge cancel it here; else why not. */
   cancel: { ok: true } | { ok: false; why: string } | null;
 };

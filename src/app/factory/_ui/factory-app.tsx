@@ -917,6 +917,13 @@ export class FactoryApp extends Component<Props, State> {
     this.setState({ route: "more", req: null });
   }
 
+  /** Keeps a field in view once the phone's keyboard has opened and the page has shrunk under it. */
+  revealField(el: HTMLElement) {
+    const go = () => el.scrollIntoView({ block: "center", behavior: "smooth" });
+    window.setTimeout(go, 300);
+    window.visualViewport?.addEventListener("resize", go, { once: true });
+  }
+
   /** The new-requirement steps take the whole screen, as the design draws them: no header bar, no tabs. */
   reqFullScreen(): boolean {
     const s = this.state.req;
@@ -999,7 +1006,7 @@ export class FactoryApp extends Component<Props, State> {
             <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
               <button onClick={() => setNeed(Math.max(0, n - q.step))} aria-label="Less" style={sq}>−</button>
               <label style={{ flex: 1, minWidth: 0, height: "60px", borderRadius: "14px", border: "2px solid #6835FB", background: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px", padding: "0 10px" }}>
-                <input value={a.need} onChange={(e) => this.setReq({ ask: { ...a, need: String(e.target.value).replace(it.buyUnit === "Pcs" ? /[^\d]/g : /[^\d.]/g, "").slice(0, 8) } })} inputMode={it.buyUnit === "Pcs" ? "numeric" : "decimal"} placeholder="0" aria-label={"How much " + it.name + " to buy"} style={{ width: "100%", minWidth: 0, border: "none", outline: "none", background: "transparent", fontSize: "28px", fontWeight: 700, color: "#1A1E28", textAlign: "center" }} />
+                <input onFocus={(e) => this.revealField(e.currentTarget)} value={a.need} onChange={(e) => this.setReq({ ask: { ...a, need: String(e.target.value).replace(it.buyUnit === "Pcs" ? /[^\d]/g : /[^\d.]/g, "").slice(0, 8) } })} inputMode={it.buyUnit === "Pcs" ? "numeric" : "decimal"} placeholder="0" aria-label={"How much " + it.name + " to buy"} style={{ width: "100%", minWidth: 0, border: "none", outline: "none", background: "transparent", fontSize: "28px", fontWeight: 700, color: "#1A1E28", textAlign: "center" }} />
                 <span style={{ fontSize: "17px", fontWeight: 600, color: "#6B7385", flex: "none" }}>{bu}</span>
               </label>
               <button onClick={() => setNeed(n + q.step)} aria-label="More" style={sq}>＋</button>
@@ -1073,7 +1080,7 @@ export class FactoryApp extends Component<Props, State> {
     const stageTone = (l: ReqLine) =>
       l.step < 0 ? { bg: "#EDEFF3", fg: "#6B7385" } : l.step >= kit.steps.length ? { bg: "#E9F5EE", fg: "#1D7A45" } : l.step <= 1 ? { bg: "#FDF6E7", fg: "#8A5C05" } : l.step >= 4 ? { bg: "#E8F1FD", fg: "#1A5BB5" } : { bg: "#F1ECFF", fg: "#3D14A8" };
     const countWords = (l: ReqLine) =>
-      l.countState === "matched" ? { t: "✓ Count matches", bg: "#E9F5EE", fg: "#1D7A45" } : l.countState === "recount" ? { t: "Count doesn't match — recount", bg: "#FDF6E7", fg: "#8A5C05" } : l.countState === "waiting" ? { t: "Stock check — count first", bg: "#FDF6E7", fg: "#8A5C05" } : null;
+      l.countState === "matched" ? { t: "✓ Count matches", bg: "#E9F5EE", fg: "#1D7A45" } : l.countState === "flagged" ? { t: "Count doesn't match — stock control told", bg: "#FDF6E7", fg: "#8A5C05" } : l.countState === "waiting" ? { t: "Stock check — count first", bg: "#FDF6E7", fg: "#8A5C05" } : null;
     const cardS: CSSProperties = { background: "#FFFFFF", border: "1px solid #DDE1E8", borderRadius: "16px" };
 
     /* ---- the list */
@@ -1179,7 +1186,7 @@ export class FactoryApp extends Component<Props, State> {
     /* ---- the answer */
     if (view === "sent" && s.saved) {
       const sv = s.saved;
-      const off = sv.lines.filter((l) => l.verdict !== "matched").map((l) => l.item);
+      const off = sv.lines.filter((l) => l.verdict === "flagged").map((l) => l.item);
       const fine = sv.lines.filter((l) => l.verdict === "matched").map((l) => l.item);
       const and = (xs: string[]) => (xs.length < 2 ? xs.join("") : xs.slice(0, -1).join(", ") + " and " + xs[xs.length - 1]);
       return wrap(
@@ -1200,7 +1207,7 @@ export class FactoryApp extends Component<Props, State> {
           </div>
           {!!off.length && (
             <div style={{ padding: "12px 14px", borderRadius: "14px", background: "#FDF6E7", color: "#5C3D03", fontSize: "14px", lineHeight: "20px" }}>
-              {and(off) + (off.length > 1 ? " will be recounted by somebody else before they are bought." : " will be recounted by somebody else before it is bought.") + (fine.length ? " " + and(fine) + (fine.length > 1 ? " go" : " goes") + " ahead now." : "")}
+              {and(off) + (off.length > 1 ? " don’t" : " doesn’t") + " match the book. Stock control has been told — buying carries on" + (fine.length ? ", and " + and(fine) + (fine.length > 1 ? " match." : " matches.") : ".")}
             </div>
           )}
           <div style={{ ...cardS, padding: "14px 16px" }}>
@@ -1262,9 +1269,9 @@ export class FactoryApp extends Component<Props, State> {
             <div style={{ ...cardS, borderRadius: "14px", padding: "12px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}><span style={{ fontSize: "16px", fontWeight: 700 }}>{where}</span><span style={{ fontSize: "14px", color: "#6B7385" }}>where you work</span></div>
           </div>
           <div>{lbl("Note for the office (optional)")}
-            <textarea value={s.remarks} onChange={(e) => this.setReq({ remarks: String(e.target.value).slice(0, 1000) })} placeholder="What it is for, or anything the buyer should know" aria-label="Note for the office" rows={3} style={{ width: "100%", boxSizing: "border-box", border: "1px solid #DDE1E8", borderRadius: "14px", padding: "12px 14px", fontSize: "15px", lineHeight: "21px", color: "#1A1E28", background: "#FFFFFF", resize: "none", fontFamily: "inherit" }} />
+            <textarea onFocus={(e) => this.revealField(e.currentTarget)} value={s.remarks} onChange={(e) => this.setReq({ remarks: String(e.target.value).slice(0, 1000) })} placeholder="What it is for, or anything the buyer should know" aria-label="Note for the office" rows={3} style={{ width: "100%", boxSizing: "border-box", border: "1px solid #DDE1E8", borderRadius: "14px", padding: "12px 14px", fontSize: "15px", lineHeight: "21px", color: "#1A1E28", background: "#FFFFFF", resize: "none", fontFamily: "inherit" }} />
           </div>
-          <div style={{ padding: "12px 14px", borderRadius: "14px", background: "#F1ECFF", color: "#3D14A8", fontSize: "14px", lineHeight: "20px" }}>Your counts are sent as this requirement’s stock check. If one doesn’t match the book, somebody else recounts it before anything is bought.</div>
+          <div style={{ padding: "12px 14px", borderRadius: "14px", background: "#F1ECFF", color: "#3D14A8", fontSize: "14px", lineHeight: "20px" }}>Your counts are sent as this requirement’s stock check. If one doesn’t match the book, stock control is told — buying carries on.</div>
           {s.err && errBox(s.err)}
         </>,
         <button onClick={() => void this.sendReq()} style={{ ...btn("p", 54), ...(s.saving ? { background: "#C9BDF7", cursor: "not-allowed" } : {}) }}>{s.saving ? "Sending…" : "Raise requirement"}</button>,
@@ -1317,7 +1324,7 @@ export class FactoryApp extends Component<Props, State> {
         </div>
         <label style={{ height: "48px", minHeight: "48px", boxSizing: "border-box", border: "1px solid #DDE1E8", borderRadius: "12px", padding: "0 14px", background: "#FFFFFF", display: "flex", alignItems: "center", gap: "10px" }}>
           {ic("search", 18, "#9BA3B2")}
-          <input value={s.q} onChange={(e) => this.setReq({ q: String(e.target.value).slice(0, 60) })} placeholder={"Search " + what} aria-label={"Search " + what} style={{ flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent", fontSize: "16px", color: "#1A1E28" }} />
+          <input onFocus={(e) => this.revealField(e.currentTarget)} value={s.q} onChange={(e) => this.setReq({ q: String(e.target.value).slice(0, 60) })} placeholder={"Search " + what} aria-label={"Search " + what} style={{ flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent", fontSize: "16px", color: "#1A1E28" }} />
         </label>
         {!!onList.length && sec("On this requirement · " + onList.length)}
         {onList.map(row)}

@@ -44,6 +44,10 @@ sequenceDiagram
 
 <Code file="src/lib/erp/engines/purchase-flow.ts" symbol="purchaseUnit" />
 
+## From the factory phone
+
+`lib/factory/purchase.ts` is the floor's side: `requirementKit`, `raiseFromFloor` and `cancelFromFloor`, behind the `reqKit`, `reqRaise` and `reqCancel` ops on `/api/factory/rpc`. The phone raises through `raiseRequirementWith`, the function the ERP form uses, with a map of counts by raw material. Inside the same transaction, each count is written onto the item's blind count by `writeCounted`, the same judgement `submitCount` uses. Red flags are passed to `notifyStockFlag` once the requirement has saved. `factory_requirement_sends` holds the key the phone mints, so a resend gets the first answer back instead of a second requirement. `FactoryCtx.reqDepts` decides who sees the screen: crew seat `owner`, or a manager over the department.
+
 ## The stage
 
 <Code file="src/lib/erp/engines/purchase-flow.ts" symbol="requirementStage" collapsed />

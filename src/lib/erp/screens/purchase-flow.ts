@@ -51,7 +51,7 @@ import { fgLevelAvailable, rmLevelAvailable, rmLots } from "../stock";
 import { bindErpFiles } from "../attachments";
 import { dutyKit, type DutyKit } from "../material-duties-server";
 import { godownIdByName, godownOptions, has, inTx, materials, refuse, today, type Col, type Tx } from "./common";
-import { countLabel, gatesFor, openCount, type GateInfo } from "../stock-check";
+import { countLabel, gatesFor, notifyStockFlag, openCount, type GateInfo } from "../stock-check";
 import { openRequirementCounts, writeCounted } from "./stock-check";
 
 /* ---------------------------------------------------------------------------
@@ -1002,6 +1002,8 @@ export async function raiseRequirementWith(
   /* Copied onto each row, like the purchase rule: changing the setting never re-routes a requirement in flight. */
   const stockCheck = (await getConfig())["erp.stockCheck.onRequirement"];
   const raisedItems: RaisedItem[] = [];
+  /* Red flags found by the raiser's counts, told to stock control once the requirement is saved. */
+  const alarms: Parameters<typeof notifyStockFlag>[0][] = [];
   const reqNo = await db.transaction(async (tx) => {
     const n = await nextNumber(tx, "requirement");
     const raised: { id: string; rawMaterialId: string; godownId: string; label: string }[] = [];
@@ -1048,12 +1050,16 @@ export async function raiseRequirementWith(
         else {
           const w = await writeCounted(tx, ctx.user.id, row, counted, { note: `Counted with ${r.label}` });
           count = { id: c.id, countNo: c.countNo, verdict: w.status === "matched" ? "matched" : "flagged" };
+          if (w.status === "flagged")
+            alarms.push({ countId: c.id, countNo: c.countNo, item: m.name, godown: w.facts.godown, counted, book: w.j.reconciled, difference: w.j.difference, unit: w.facts.unit, requirementId: r.id, byId: ctx.user.id });
         }
       }
       raisedItems.push({ id: r.id, rawMaterialId: m.id, item: m.name, qty, unit: purchaseUnit(m.unit, m.materialType), rule: m.purchaseMethod as PurchaseMethod, count });
     }
     return n;
   });
+  /* A RED FLAG IS TOLD, as a count on Stock accuracy tells it; it never fails the requirement. */
+  for (const a of alarms) await notifyStockFlag(a);
   await erpAudit(ctx, "erp.requisition.create", "erp_requisition", requirementLabel(reqNo), null, {
     reqNo,
     items: items.map(({ m, qty }) => ({ item: m.name, qty, rule: m.purchaseMethod })),

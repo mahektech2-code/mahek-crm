@@ -18,8 +18,8 @@
  *   - `overflow: auto` scrolls;
  *   - the four keyframe animations the design uses.
  * ------------------------------------------------------------------------- */
-import { Children, cloneElement, createContext, Fragment, isValidElement, useContext, useEffect, useRef, type CSSProperties, type ReactElement, type ReactNode } from "react";
-import { Animated, Easing, Pressable, ScrollView, Text, TextInput, View, type TextStyle, type ViewStyle } from "react-native";
+import { Children, cloneElement, createContext, Fragment, isValidElement, useCallback, useContext, useEffect, useRef, type CSSProperties, type ReactElement, type ReactNode } from "react";
+import { Animated, Easing, Keyboard, Pressable, ScrollView, Text, TextInput, View, type TextStyle, type ViewStyle } from "react-native";
 
 type Css = CSSProperties & Record<string, unknown>;
 
@@ -353,9 +353,9 @@ function render(kind: "div" | "span" | "button", { style, children, onClick, "ar
       if (view[k] != null) { (inner as Record<string, unknown>)[k] = view[k]; delete view[k]; }
     }
     el = (
-      <ScrollView style={view} contentContainerStyle={r.scroll === "x" ? { ...inner, flexDirection: "row" } : inner} horizontal={r.scroll === "x"} showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+      <ScrollBox style={view} inner={r.scroll === "x" ? { ...inner, flexDirection: "row" } : inner} horizontal={r.scroll === "x"}>
         {body}
-      </ScrollView>
+      </ScrollBox>
     );
   } else if (button) {
     el = (
@@ -370,6 +370,38 @@ function render(kind: "div" | "span" | "button", { style, children, onClick, "ar
     <TextCtx.Provider value={ctx}>
       <DirCtx.Provider value={dir}>{el}</DirCtx.Provider>
     </TextCtx.Provider>
+  );
+}
+
+/* ------------------------------------------------- the keyboard and the field
+ * The window shrinks when the keyboard opens (`softwareKeyboardLayoutMode:
+ * resize`), but a ScrollView does not move to the field being typed in — a
+ * note at the foot of a form sat behind the keyboard. Every scrolling box
+ * offers `reveal` to the fields inside it, and a field that gains focus asks
+ * for itself to be scrolled into view once the keyboard is up.
+ */
+type Reveal = (field: TextInput | null) => void;
+const ScrollCtx = createContext<Reveal | null>(null);
+
+function ScrollBox({ style, inner, horizontal, children }: { style: ViewStyle; inner: ViewStyle; horizontal: boolean; children: ReactNode }) {
+  const ref = useRef<ScrollView>(null);
+  const reveal = useCallback<Reveal>((field) => {
+    const sv = ref.current;
+    if (!sv || !field || horizontal) return;
+    const node = (sv as unknown as { getInnerViewRef?: () => unknown }).getInnerViewRef?.();
+    if (!node) return;
+    try {
+      field.measureLayout(node as never, (_x: number, y: number) => sv.scrollTo({ y: Math.max(0, y - 96), animated: true }), () => undefined);
+    } catch {
+      /* A field that cannot be measured stays where it is. */
+    }
+  }, [horizontal]);
+  return (
+    <ScrollCtx.Provider value={reveal}>
+      <ScrollView ref={ref} style={style} contentContainerStyle={inner} horizontal={horizontal} showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+        {children}
+      </ScrollView>
+    </ScrollCtx.Provider>
   );
 }
 
@@ -416,12 +448,26 @@ type InputProps = {
 
 export function Input({ value, onChange, onKeyDown, inputMode, type, maxLength, autoFocus, placeholder, style, "aria-label": label, autoComplete, multiline }: InputProps) {
   const inh = useContext(TextCtx);
+  const reveal = useContext(ScrollCtx);
+  const field = useRef<TextInput>(null);
+  /* Scrolled into view now, and again once the keyboard has finished opening and the window has shrunk. */
+  const onFocus = useCallback(() => {
+    if (!reveal) return;
+    reveal(field.current);
+    const sub = Keyboard.addListener("keyboardDidShow", () => {
+      sub.remove();
+      reveal(field.current);
+    });
+    setTimeout(() => sub.remove(), 1500);
+  }, [reveal]);
   const r = parse(style as Css | undefined, inh);
   shrinkDefault(r.view, useContext(DirCtx));
   const s: TextStyle = { ...inh, ...r.view, ...r.text } as TextStyle;
   if (s.height != null && s.lineHeight == null) s.paddingVertical = 0;
   return (
     <TextInput
+      ref={field}
+      onFocus={onFocus}
       value={value}
       onChangeText={(v) => onChange({ target: { value: v } })}
       onSubmitEditing={() => onKeyDown?.({ key: "Enter" })}

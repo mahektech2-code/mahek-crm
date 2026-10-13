@@ -25,7 +25,9 @@ import type { ReqCard, ReqDept, ReqInput, ReqItem, ReqKit, ReqLine, ReqSave } fr
  * a stock figure — not in the item list, not after the save. What the
  * in-charge counted becomes that item's stock check (`writeCounted`, the same
  * judgement Stock accuracy uses), and the answer is only "matches" or "does
- * not": a recount that knew the book would not be a count.
+ * not": a recount that knew the book would not be a count. A count that does
+ * not match holds nothing — stock control is told and the purchase carries
+ * on, the ERP's rule since the count stopped being a gate.
  *
  * It needs the network on purpose, like Stock check: a requirement queued for
  * hours is a count judged against a book that has moved.
@@ -122,7 +124,7 @@ async function cards(fc: FactoryCtx, views: ReqView[], minQ: number): Promise<Re
       const st = stageOf(v, minQ);
       const c = countOf.get(v.r.id);
       const own = c && c.by === fc.user.id && c.qty != null;
-      const countState: ReqLine["countState"] = !c ? null : c.status === "open" ? "waiting" : ["matched", "resolved"].includes(c.status) ? "matched" : "recount";
+      const countState: ReqLine["countState"] = !c ? null : c.status === "open" ? "waiting" : ["matched", "resolved"].includes(c.status) ? "matched" : "flagged";
       const cancellable = st.step >= 0 && st.step < FLOW_STEPS.length && !v.po;
       return {
         id: v.r.id,
@@ -211,12 +213,15 @@ export async function raiseFromFloor(fc: FactoryCtx, input: ReqInput): Promise<R
     return fail("Not sent", res.fieldErrors?.[0]?.message ?? res.error ?? "The requirement was not raised.", "Change it, then send again.", at ? Number(at[1]) : undefined);
   }
   const { reqNo, items } = res.data;
-  const unitOf = new Map((await materials()).map((m) => [m.id, countUnitOf(m.unit)]));
+  const mats = await materials();
+  const unitOf = new Map(mats.map((m) => [m.id, countUnitOf(m.unit)]));
+  const supplierName = new Map(((await db.execute(sql`select id, name from erp_suppliers`)) as unknown as { id: string; name: string }[]).map((x) => [x.id, x.name]));
+  const vendorOf = new Map(mats.map((m) => [m.id, m.preferredSupplierId ? (supplierName.get(m.preferredSupplierId) ?? null) : null]));
   const out: ReqSave = {
     ok: true,
     no: requirementLabel(reqNo),
     lines: items.map((x) => ({ item: x.item, qty: x.qty, unit: x.unit, counted: counts.get(x.rawMaterialId) ?? 0, countUnit: unitOf.get(x.rawMaterialId) ?? "L", verdict: x.count?.verdict ?? "skipped" })),
-    next: nextWords(items),
+    next: nextWords(items.map((x) => ({ item: x.item, rule: x.rule, vendor: x.rule === "direct" ? (vendorOf.get(x.rawMaterialId) ?? null) : null }))),
   };
   await db.execute(sql`update factory_requirement_sends set status = 'done', result = ${JSON.stringify(out)}::jsonb where key = ${key}`);
   await factoryAudit(fc, "factory.requirement.raise", null, `${requirementLabel(reqNo)} · ${items.length} item${items.length > 1 ? "s" : ""}`, {
@@ -227,12 +232,11 @@ export async function raiseFromFloor(fc: FactoryCtx, input: ReqInput): Promise<R
 }
 
 /** What happens to each item next, in the floor's words. */
-function nextWords(items: { item: string; rule: PurchaseMethod; count: { verdict: string } | null }[]): string[] {
+function nextWords(items: { item: string; rule: PurchaseMethod; vendor: string | null }[]): string[] {
   const out: string[] = [];
   for (const x of items) {
-    const recount = x.count?.verdict === "flagged" ? "is recounted by somebody else, then " : x.count?.verdict === "skipped" ? "waits for the recount already open, then " : "";
-    const how = x.rule === "quotation" ? "the office collects quotations" : x.rule === "buyer" ? "the buyer decides how to buy it" : "a PO goes to the vendor";
-    out.push(`${x.item}: ${recount}${how}.`);
+    const how = x.rule === "quotation" ? "the office collects quotations" : x.rule === "buyer" ? "the buyer decides how to buy it" : `a PO goes to ${x.vendor ?? "the vendor"}`;
+    out.push(`${x.item}: ${how}.`);
   }
   out.push("You see each item move here as the office works on it.");
   return out;

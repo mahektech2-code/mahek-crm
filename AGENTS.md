@@ -8685,6 +8685,31 @@ still holding that the ERP refuses offers Fix it AND Send to supervisor, so
 there is always a way to finish. "Put it in the ERP" on the review posts it
 under the WORKER's name; the head's decision is the line in the history.
 
+**THE IN-CHARGE RAISES PURCHASE REQUIREMENTS FROM THE PHONE, AND COUNTS EVERY
+ITEM FIRST.** More → Purchase requirement is offered to whoever holds a
+department's `owner` crew seat, a manager over that department, and the
+Production Head. It covers the three departments that buy anything
+(`FactoryCtx.reqDepts`): Mixing & Blending, Refilling and Packing. It is the
+ERP's own requirement, raised through `raiseRequirementWith`, so the
+department's categories, the material duties, the purchase rule and the stock
+check all still apply. Each item is COUNTED before it is added. The phone is
+never sent a stock figure: not in the item list, and not after the save. The
+count is written onto the item's blind count by `writeCounted` in the same
+transaction, so it is the requirement's stock check. The answer is only
+"matches" or "doesn't match". A count that doesn't match goes to stock control
+through `notifyStockFlag`, and buying carries on. It needs the network,
+because a count judged hours later is judged against a book that has moved.
+The phone's key in `factory_requirement_sends` answers a resend from the first
+save. An item can be cancelled from the phone until it is on a PO. The steps
+take the whole screen, as the design draws them. The screens are in the APK,
+so they reach the floor with a Factory release.
+
+**A FIELD STAYS IN VIEW WHEN THE KEYBOARD OPENS.** On the native app, every
+scrolling box offers `reveal` (`ScrollBox` in `web.tsx`), and an `Input` that
+gains focus scrolls itself into view, again once `keyboardDidShow` fires.
+Don't build a scrolling form that bypasses `Div`'s `overflowY: auto`, or its
+fields lose this.
+
 **A MIXING WORKER STARTS HIS OWN BATCH.** Work used to reach the floor only
 through a supervisor's Give a task, so a mixing worker with a recipe in the
 ERP and nobody to type it in had an empty Home and no way to start. "Start a

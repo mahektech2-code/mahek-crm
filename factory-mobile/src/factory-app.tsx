@@ -1682,7 +1682,7 @@ export class FactoryApp extends Component<Props, State> {
     const stageTone = (l: ReqLine) =>
       l.step < 0 ? { bg: "#EDEFF3", fg: "#6B7385" } : l.step >= kit.steps.length ? { bg: "#E9F5EE", fg: "#1D7A45" } : l.step <= 1 ? { bg: "#FDF6E7", fg: "#8A5C05" } : l.step >= 4 ? { bg: "#E8F1FD", fg: "#1A5BB5" } : { bg: "#F1ECFF", fg: "#3D14A8" };
     const countWords = (l: ReqLine) =>
-      l.countState === "matched" ? { t: "✓ Count matches", bg: "#E9F5EE", fg: "#1D7A45" } : l.countState === "recount" ? { t: "Count doesn't match — recount", bg: "#FDF6E7", fg: "#8A5C05" } : l.countState === "waiting" ? { t: "Stock check — count first", bg: "#FDF6E7", fg: "#8A5C05" } : null;
+      l.countState === "matched" ? { t: "✓ Count matches", bg: "#E9F5EE", fg: "#1D7A45" } : l.countState === "flagged" ? { t: "Count doesn't match — stock control told", bg: "#FDF6E7", fg: "#8A5C05" } : l.countState === "waiting" ? { t: "Stock check — count first", bg: "#FDF6E7", fg: "#8A5C05" } : null;
     const cardS: CSSProperties = { background: "#FFFFFF", border: "1px solid #DDE1E8", borderRadius: "16px" };
 
     /* ---- the list */
@@ -1788,7 +1788,7 @@ export class FactoryApp extends Component<Props, State> {
     /* ---- the answer */
     if (view === "sent" && s.saved) {
       const sv = s.saved;
-      const off = sv.lines.filter((l) => l.verdict !== "matched").map((l) => l.item);
+      const off = sv.lines.filter((l) => l.verdict === "flagged").map((l) => l.item);
       const fine = sv.lines.filter((l) => l.verdict === "matched").map((l) => l.item);
       const and = (xs: string[]) => (xs.length < 2 ? xs.join("") : xs.slice(0, -1).join(", ") + " and " + xs[xs.length - 1]);
       return wrap(
@@ -1809,7 +1809,7 @@ export class FactoryApp extends Component<Props, State> {
           </Div>
           {!!off.length && (
             <Div style={{ padding: "12px 14px", borderRadius: "14px", background: "#FDF6E7", color: "#5C3D03", fontSize: "14px", lineHeight: "20px" }}>
-              {and(off) + (off.length > 1 ? " will be recounted by somebody else before they are bought." : " will be recounted by somebody else before it is bought.") + (fine.length ? " " + and(fine) + (fine.length > 1 ? " go" : " goes") + " ahead now." : "")}
+              {and(off) + (off.length > 1 ? " don’t" : " doesn’t") + " match the book. Stock control has been told — buying carries on" + (fine.length ? ", and " + and(fine) + (fine.length > 1 ? " match." : " matches.") : ".")}
             </Div>
           )}
           <Div style={{ ...cardS, padding: "14px 16px" }}>
@@ -1873,7 +1873,7 @@ export class FactoryApp extends Component<Props, State> {
           <Div>{lbl("Note for the office (optional)")}
             <Input multiline value={s.remarks} onChange={(e) => this.setReq({ remarks: String(e.target.value).slice(0, 1000) })} placeholder="What it is for, or anything the buyer should know" aria-label="Note for the office" style={{ width: "100%", minHeight: "84px", boxSizing: "border-box", border: "1px solid #DDE1E8", borderRadius: "14px", padding: "12px 14px", fontSize: "15px", lineHeight: "21px", color: "#1A1E28", background: "#FFFFFF" }} />
           </Div>
-          <Div style={{ padding: "12px 14px", borderRadius: "14px", background: "#F1ECFF", color: "#3D14A8", fontSize: "14px", lineHeight: "20px" }}>Your counts are sent as this requirement’s stock check. If one doesn’t match the book, somebody else recounts it before anything is bought.</Div>
+          <Div style={{ padding: "12px 14px", borderRadius: "14px", background: "#F1ECFF", color: "#3D14A8", fontSize: "14px", lineHeight: "20px" }}>Your counts are sent as this requirement’s stock check. If one doesn’t match the book, stock control is told — buying carries on.</Div>
           {s.err && errBox(s.err)}
         </>,
         <Btn onClick={() => void this.sendReq()} style={{ ...btn("p", 54), ...(s.saving ? { background: "#C9BDF7", cursor: "not-allowed" } : {}) }}>{s.saving ? "Sending…" : "Raise requirement"}</Btn>,
