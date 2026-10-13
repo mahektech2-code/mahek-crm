@@ -130,7 +130,8 @@ The launcher, every app switcher and the "straight into it" redirect read one fu
 
 | Concern | How | Where |
 |---|---|---|
-| Identifier | Work number, email, or the HRMS personal mobile (asked last, only via the explicit employee link, and only if it names exactly one account) | `findAccount` in `src/lib/services/otp-service.ts` |
+| Identifier (password) | Work number, email, or the HRMS personal mobile (asked last, only via the explicit employee link, and only if it names exactly one account) | `findAccount` in `src/lib/services/otp-service.ts` |
+| Identifier (one-time code) | The HRMS personal mobile **only** — the number the code is sent to. A work number or an email is refused, so the number typed is always the number messaged | `findAccountForCode` in `src/lib/services/otp-service.ts` |
 | Password | scrypt hash on `users.password_hash`; throttled per account and per address | `src/lib/auth.ts`, `auth.password.*` settings |
 | One-time code | Sent through **MiniMoth** (WhatsApp, then SMS) when its key is held; otherwise a Wati authentication template if one is named | `otpAvailability` — see [Integrations](/docs/platform/integrations/developer) |
 | Session | A row in `sessions`, id in the `mahekone_session` cookie, 30 days ("remember me") or browser-session | `createSession`, `getCurrentUser` in `src/lib/auth.ts` |

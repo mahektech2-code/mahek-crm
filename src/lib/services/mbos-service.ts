@@ -33,7 +33,7 @@ import { policyForDate, resolveSubject } from "./expense-policy-service";
 import { policySetForUser } from "./expense-policy-set-service";
 import { describeRule } from "../expense-rule-forms";
 import { verifyPassword } from "../password";
-import { findAccount, verifyOtp } from "./otp-service";
+import { findAccount, findAccountForCode, verifyOtp } from "./otp-service";
 import { bearerFrom, verifyToken, signingKeyPresent } from "../mbos/token";
 import { today } from "../recompute";
 import { addDays, addMonths, asDate, APP_TIMEZONE, monthKey, type BusinessDate } from "../business-date";
@@ -162,7 +162,9 @@ export async function runLoginChecks(input: {
     return { ok: false, step: "bad_password", error: NO_MATCH };
   }
 
-  const user = await findAccount(identifier);
+  // A code is asked for by the personal mobile alone, so it is verified against
+  // the account that number names — the one `/api/mbos/auth/otp` sent it for.
+  const user = input.otp && !input.password ? await findAccountForCode(identifier) : await findAccount(identifier);
 
   /* NOT FOUND AND NOT ALLOWED READ THE SAME, as they already do on the code
    * endpoint: a sign-in screen that answers "no account uses this number" for
@@ -173,8 +175,8 @@ export async function runLoginChecks(input: {
   }
 
   /* 2 — does the password verify? */
-  // A code proves the same thing a password does — it went to the work number
-  // on this account — so it takes the password's place in the same order of
+  // A code proves the same thing a password does — it went to the HRMS
+  // personal mobile on this account — so it takes the password's place in the same order of
   // checks, and every check after it still applies.
   if (input.otp && !input.password) {
     const verified = await verifyOtp(user.id, "login", input.otp);

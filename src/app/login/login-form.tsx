@@ -200,17 +200,21 @@ function CodeForm() {
       >
         <label className="block">
           <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">
-            Work email or number
+            Personal mobile, as HR has it
           </span>
           <span className="relative block">
             <Icon name="person" size={16} className="pointer-events-none absolute top-3 left-3 text-muted" />
+            {/* Codes are asked for by the HRMS personal mobile and nothing else
+                — `findAccountForCode` — so this box asks for that number alone,
+                unlike the password form beside it. */}
             <input
               name="identifier"
-              autoComplete="username"
+              autoComplete="tel"
+              inputMode="tel"
               autoFocus
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
-              placeholder="9820011001 or priya@mahek.in"
+              placeholder="98765 43210"
               className={cx(FIELD, error ? "border-danger" : "border-line")}
             />
           </span>

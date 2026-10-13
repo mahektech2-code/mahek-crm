@@ -56,13 +56,14 @@ export function CodeResetForm() {
         </div>
       ) : null}
       <label className="mt-3 block">
-        <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">Mobile number or email</span>
+        <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">Personal mobile, as HR has it</span>
         <input
           name="identifier"
           value={identifier}
           onChange={(e) => setIdentifier(e.target.value)}
-          autoComplete="username"
-          placeholder="9820011001"
+          autoComplete="tel"
+          inputMode="tel"
+          placeholder="98765 43210"
           className={cx(FIELD, "border-line")}
         />
       </label>
