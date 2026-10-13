@@ -239,13 +239,34 @@ export class FactoryApp extends Component<Props, State> {
     });
   }
 
+  /* WHO THEY ARE comes back on every refresh, not only at sign-in. A manager
+     changing somebody from in charge to helper, adding a department or taking
+     one away used to reach this phone only on the next sign-in: the server
+     already refused what the old role could no longer do, while the screen
+     went on drawing it. The language stays the one chosen on this phone. */
+  private refreshed(cur: State, fresh: Me | undefined, data: FactoryData): Pick<State, "db"> | Pick<State, "db" | "me" | "route" | "sheet"> {
+    const was = cur.me;
+    if (!fresh || !was || fresh.key !== was.key) return { db: data };
+    const me: Me = { ...fresh, lang: was.lang };
+    const r = cur.route;
+    /* A screen the new role does not have is left for the role's own start. */
+    const headOnly = r === "today" || r === "review" || r === "teams" || r === "machines";
+    const lost =
+      (headOnly && !me.head) ||
+      (r === "home" && me.head) ||
+      (r === "drum" && me.drums === false) ||
+      (r === "lr" && !me.dispatch) ||
+      (r === "qc" && me.qc === false);
+    return lost ? { db: data, me, route: me.head ? "today" : "home", sheet: null } : { db: data, me, route: r, sheet: cur.sheet };
+  }
+
   private async poll() {
     const st = this.state;
     if (!st.me || st.net === "offline" || st.sending || st.busy) return;
     if (st.queue.some((x) => x.status === "pending")) return void this.flushQueue();
     try {
       const r = await call("bootstrap");
-      if (r.ok) this.setState({ db: r.data });
+      if (r.ok) this.setState((cur) => this.refreshed(cur, r.me, r.data));
       else if (r.error === "signedOut") this.setState({ me: null, db: null, signStep: "id" });
     } catch {
       this.setNet("offline");
