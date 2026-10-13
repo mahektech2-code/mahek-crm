@@ -11,7 +11,7 @@ import { getConfig } from "@/lib/config/store";
 import type { ErpContext } from "@/lib/erp/access";
 import { erpId } from "@/lib/erp/server";
 import { fgLots, packLots, rmLevelAvailable, rmLots, sfgLots } from "@/lib/erp/stock";
-import { dayLine, hhmm } from "./time";
+import { clock12, clockText, dayLine, hhmm } from "./time";
 import type { Area, BoxSku, Emp, FactoryData, FgSku, Lot, Order, Proc, ReviewItem, SfgProduct, Task, Team } from "./types";
 import { PROCS } from "./types";
 import { cleanDepts, isProc, supervises } from "./departments";
@@ -636,8 +636,8 @@ export async function bootstrap(fc: FactoryCtx): Promise<FactoryData> {
     orders,
     lots,
     tasks,
-    review: review.map((r) => ({ id: r.id, kind: r.kind, task: r.taskId, title: r.title, text: r.body, meta: r.meta, acts: ACTS[r.kind] ?? ACTS.issue })),
-    audit: audit.map((a) => ({ task: a.task, at: hhmm(new Date(String(a.at))), who: a.who, t: a.detail ?? "" })),
+    review: review.map((r) => ({ id: r.id, kind: r.kind, task: r.taskId, title: r.title, text: clockText(r.body), meta: clockText(r.meta), acts: ACTS[r.kind] ?? ACTS.issue })),
+    audit: audit.map((a) => ({ task: a.task, at: clock12(hhmm(new Date(String(a.at)))), who: a.who, t: clockText(a.detail ?? "") })),
     down: Object.fromEntries(down.map((d) => [d.reason, n(d.min)])),
     dup: n(dup[0]?.c),
     corr: n(corr[0]?.c),

@@ -8874,6 +8874,14 @@ arrives with an APK and older builds never show it. A failed download offers
 the browser. The web page has the refresh button and no popup, because it picks
 up a new build by itself.
 
+**THE FLOOR READS A 12-HOUR CLOCK; THE APP KEEPS A 24-HOUR ONE.** Every time
+a person reads — the header clock, a job's due time, "saved at", the history,
+review notes — says "3 PM" or "9:05 AM" (`clock12`, and `clockText` for a time
+inside a sentence, both in `lib/factory/time.ts`). What is stored and compared
+stays "HH:MM" on the 24-hour clock (`hhmm`, `nowHM`), because "is this job
+late" is a string comparison and "3 PM" < "10 AM" is not. Convert only where it
+is drawn, never before it is stored.
+
 **A SCREEN CHANGE NEEDS A RELEASE; A RULE CHANGE DOES NOT.** The screens are
 in the APK now, so they reach the floor only through the Factory APK
 workflow (DEPLOY.md); what the server accepts and posts still changes with
