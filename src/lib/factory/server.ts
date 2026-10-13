@@ -13,7 +13,7 @@ import { erpId } from "@/lib/erp/server";
 import { fgLots, packLots, rmLevelAvailable, rmLots, sfgLots } from "@/lib/erp/stock";
 import { clock12, clockText, dayLine, hhmm } from "./time";
 import type { Area, BoxSku, Emp, FactoryData, FgSku, Lot, Order, Proc, ReviewItem, SfgProduct, Task, Team } from "./types";
-import { PROCS } from "./types";
+import { PROCS, REQ_DEPTS, type ReqDept } from "./types";
 import { cleanDepts, isProc, supervises } from "./departments";
 
 /* ---------------------------------------------------------------------------
@@ -73,6 +73,13 @@ export type FactoryCtx = {
    * on ERP → SFG batches.
    */
   qc: boolean;
+  /**
+   * The departments this person raises PURCHASE REQUIREMENTS for: the ones
+   * they are IN CHARGE of (their standing crew seat is `owner`), or supervise
+   * as a manager — every one of the three for the Production Head. Only the
+   * three that buy anything: Dispatch and Quality ask for nothing.
+   */
+  reqDepts: ReqDept[];
 };
 
 export class FactoryNotPermitted extends Error {}
@@ -109,9 +116,12 @@ export async function contextFor(user: User): Promise<FactoryCtx | null> {
   const head = level !== "associate" || areas.includes("head");
   const scopes = head ? supervises(areas, "manager") : null;
   const procs = areas.filter(isProc);
+  const owns = (await q<{ proc: string }>(sql`select proc from factory_team_defaults where user_id = ${user.id} and role = 'owner'`)).map((r) => r.proc);
+  const reqDepts = REQ_DEPTS.filter((d) => (head ? !scopes || scopes.includes(d) : owns.includes(d) && areas.includes(d)));
   const drumDepts = (await getConfig())["erp.drums.factoryDepartments"].split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
   return {
     qc: areas.includes("qc") || (await holdsSfgQcPower(user)),
+    reqDepts,
     drums: head || areas.some((a) => drumDepts.includes(a)),
     dispatch: (head && (!scopes || scopes.includes("dispatch"))) || areas.includes("dispatch"),
     user,

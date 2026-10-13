@@ -2242,10 +2242,17 @@ inward lines two days old with no register row, transfers whose destination
 has no entry, and packing batches whose cans do not match their boxes. Each
 opens its record; nothing is created.
 
-**ANYBODY ON THE FLOOR CHECKS ANY STOCK, ANY TIME.** Stock check on the
-factory app (every department — `Me.counts`) lists every raw material,
-semi-finished product, filled-can SKU and packed SKU at the person's godown,
-with the office's open counts on top. The list never carries a quantity; the
+**EACH DEPARTMENT CHECKS ITS OWN STOCK, ANY TIME.** Stock check on the
+factory app (`Me.counts`) lists, at the person's godown, what their
+departments keep (`lib/factory/stock-reach.ts`, pure): Mixing & Blending the
+raw chemicals and SFG; Filling the empty cans and drums, filled cans and
+packed boxes; Packing the empty boxes and stationery; Dispatch filled cans and
+packed boxes; Quality chemicals and SFG. A raw material is placed by its
+item-master type, and a type no department names is the whole floor's.
+Several departments reach the union; the Production Head over the whole floor
+and an administrator reach everything. The office's open counts are offered
+the same way (a count named to one person stays theirs), and the save refuses
+anything else. Before this every department checked everything. The list never carries a quantity; the
 book is read when the figure arrives (`lib/erp/floor-checks.ts`, judged by the
 same `judgeCount` and tolerance as a formal count) and stored beside it in
 `erp_floor_checks`. A mismatch is said on the phone with the book and the
@@ -8684,6 +8691,31 @@ the phone was offline) and the worker cannot go back to Tuesday to fix it; and
 still holding that the ERP refuses offers Fix it AND Send to supervisor, so
 there is always a way to finish. "Put it in the ERP" on the review posts it
 under the WORKER's name; the head's decision is the line in the history.
+
+**THE IN-CHARGE RAISES PURCHASE REQUIREMENTS FROM THE PHONE, AND COUNTS EVERY
+ITEM FIRST.** More → Purchase requirement is offered to whoever holds a
+department's `owner` crew seat, a manager over that department, and the
+Production Head. It covers the three departments that buy anything
+(`FactoryCtx.reqDepts`): Mixing & Blending, Refilling and Packing. It is the
+ERP's own requirement, raised through `raiseRequirementWith`, so the
+department's categories, the material duties, the purchase rule and the stock
+check all still apply. Each item is COUNTED before it is added. The phone is
+never sent a stock figure: not in the item list, and not after the save. The
+count is written onto the item's blind count by `writeCounted` in the same
+transaction, so it is the requirement's stock check. The answer is only
+"matches" or "doesn't match". A count that doesn't match goes to stock control
+through `notifyStockFlag`, and buying carries on. It needs the network,
+because a count judged hours later is judged against a book that has moved.
+The phone's key in `factory_requirement_sends` answers a resend from the first
+save. An item can be cancelled from the phone until it is on a PO. The steps
+take the whole screen, as the design draws them. The screens are in the APK,
+so they reach the floor with a Factory release.
+
+**A FIELD STAYS IN VIEW WHEN THE KEYBOARD OPENS.** On the native app, every
+scrolling box offers `reveal` (`ScrollBox` in `web.tsx`), and an `Input` that
+gains focus scrolls itself into view, again once `keyboardDidShow` fires.
+Don't build a scrolling form that bypasses `Div`'s `overflowY: auto`, or its
+fields lose this.
 
 **A MIXING WORKER STARTS HIS OWN BATCH.** Work used to reach the floor only
 through a supervisor's Give a task, so a mixing worker with a recipe in the

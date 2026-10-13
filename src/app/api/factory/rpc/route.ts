@@ -48,6 +48,9 @@ const OPS = {
   qcKit: A.factoryQcKit,
   qcDecide: A.factoryQcDecide,
   startBatch: A.factoryStartBatch,
+  reqKit: A.factoryReqKit,
+  reqRaise: A.factoryReqRaise,
+  reqCancel: A.factoryReqCancel,
 } as const;
 
 export type FactoryOp = keyof typeof OPS;

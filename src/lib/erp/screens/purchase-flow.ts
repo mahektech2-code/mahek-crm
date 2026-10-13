@@ -51,8 +51,8 @@ import { fgLevelAvailable, rmLevelAvailable, rmLots } from "../stock";
 import { bindErpFiles } from "../attachments";
 import { dutyKit, type DutyKit } from "../material-duties-server";
 import { godownIdByName, godownOptions, has, inTx, materials, refuse, today, type Col, type Tx } from "./common";
-import { countLabel, gatesFor, type GateInfo } from "../stock-check";
-import { openRequirementCounts } from "./stock-check";
+import { countLabel, gatesFor, notifyStockFlag, openCount, type GateInfo } from "../stock-check";
+import { openRequirementCounts, writeCounted } from "./stock-check";
 
 /* ---------------------------------------------------------------------------
  * THE PURCHASE FLOW'S FIRST FOUR STEPS (docs: AGENTS.md, "The purchase flow"):
@@ -585,6 +585,11 @@ function flowPanel(v: ReqView, st: Stage, money: boolean, minQuotations: number)
   };
 }
 
+/** Cancels one requirement item with a reason — the ERP's own Cancel, for the factory floor. */
+export async function cancelRequirementItem(ctx: ErpContext, id: string, reason: string): Promise<Result<unknown>> {
+  return requisitions.actions!.cancel(ctx, id, { reason });
+}
+
 const requisitions: ScreenModule = {
   key: "requisitions",
   async load(ctx) {
@@ -905,14 +910,50 @@ function requirementHeader(h: Record<string, string>): Result<{ date: string; re
  * requirement could carry several.
  */
 async function raiseRequirement(ctx: ErpContext, h: Record<string, string>, rawLines: Record<string, string>[]): Promise<Result<unknown>> {
+  const res = await raiseRequirementWith(ctx, h, rawLines);
+  return res.ok ? okVoid(res.message) : res;
+}
+
+/** One item of a requirement just raised, and what the count raised with it found. */
+export type RaisedItem = {
+  id: string;
+  rawMaterialId: string;
+  item: string;
+  qty: number;
+  unit: string;
+  rule: PurchaseMethod;
+  /** The count the raiser made with it: matched, a red flag, or not recorded (a recount of that shelf was already open). Null: none was sent. */
+  count: { id: string; countNo: number; verdict: "matched" | "flagged" | "skipped" } | null;
+};
+
+/**
+ * Raises a requirement, and — where `counts` names an item's raw material —
+ * records the raiser's count of it at the godown as that item's stock check,
+ * in the same transaction. The count is the ordinary blind count the
+ * requirement waits on (`openRequirementCounts`), written and judged by
+ * `writeCounted`, the same function Stock accuracy submits through. It is
+ * recorded whether or not `erp.stockCheck.onRequirement` holds the purchase:
+ * a figure somebody counted is evidence either way.
+ *
+ * A line may name its item by label (`item`, the ERP form) or by raw material
+ * id (`rawMaterialId`, the factory phone).
+ */
+export async function raiseRequirementWith(
+  ctx: ErpContext,
+  h: Record<string, string>,
+  rawLines: Record<string, string>[],
+  counts?: Map<string, number>,
+): Promise<Result<{ reqNo: number; items: RaisedItem[] }>> {
   const godownId = await godownIdByName(text(h.godown));
   if (!godownId) return fieldErr("godown", "Godown is required");
   const head = requirementHeader(h);
   if (!head.ok) return head;
   const { date, requiredBy, department, priority, remarks } = head.data;
 
-  const single = !rawLines.some((l) => text(l.item) || text(l.required)) && (text(h.item) || text(h.type));
-  const lines = single ? [{ item: text(h.item) ?? "", required: h.required ?? "", type: text(h.type) ?? "" }] : rawLines.filter((l) => text(l.item) || text(l.required));
+  const single = !rawLines.some((l) => text(l.item) || text(l.rawMaterialId) || text(l.required)) && (text(h.item) || text(h.type));
+  const lines: Record<string, string>[] = single
+    ? [{ item: text(h.item) ?? "", required: h.required ?? "", type: text(h.type) ?? "" }]
+    : rawLines.filter((l) => text(l.item) || text(l.rawMaterialId) || text(l.required));
   if (!lines.length) return err("Add at least one item to the requirement.", "validation");
   const cap = 500;
   if (lines.length > cap) return err(`A requirement carries at most ${cap} items — split this one in two.`, "validation");
@@ -924,7 +965,22 @@ async function raiseRequirement(ctx: ErpContext, h: Record<string, string>, rawL
   const at = (i: number, k: string) => (single ? (k === "required" ? "required" : k) : `l${i}.${k}`);
   const seen = new Map<string, number>();
   const items: { m: typeof mats[number]; qty: number }[] = [];
+  const byId = new Map(mats.map((m) => [m.id, m]));
   for (const [i, l] of lines.entries()) {
+    const idPick = text(l.rawMaterialId);
+    if (idPick) {
+      const m = byId.get(idPick);
+      if (!m) return fieldErr(at(i, "item"), "That item is no longer active");
+      if (!duties.allows(m.id, "request")) return fieldErr(at(i, "item"), `${duties.refusal(m, "request") ?? "You may not request this item"}.`);
+      const refused = requirementRefusal(ctx.department, department, m.materialType);
+      if (refused) return fieldErr(at(i, "item"), refused.message);
+      const qty = num(l.required);
+      if (qty == null || qty <= 0) return fieldErr(at(i, "required"), qty != null && qty < 0 ? "Minus Quantity Not Allowed" : "Quantity is required");
+      if (seen.has(m.id)) return fieldErr(at(i, "item"), `Already on line ${seen.get(m.id)! + 1} — change that line's quantity instead`);
+      seen.set(m.id, i);
+      items.push({ m, qty });
+      continue;
+    }
     const pick = text(l.item);
     if (!pick) return fieldErr(at(i, "item"), "Item is required");
     /* Finished goods are made, not bought: only the item master's categories may be asked for. */
@@ -945,6 +1001,9 @@ async function raiseRequirement(ctx: ErpContext, h: Record<string, string>, rawL
 
   /* Copied onto each row, like the purchase rule: changing the setting never re-routes a requirement in flight. */
   const stockCheck = (await getConfig())["erp.stockCheck.onRequirement"];
+  const raisedItems: RaisedItem[] = [];
+  /* Red flags found by the raiser's counts, told to stock control once the requirement is saved. */
+  const alarms: Parameters<typeof notifyStockFlag>[0][] = [];
   const reqNo = await db.transaction(async (tx) => {
     const n = await nextNumber(tx, "requirement");
     const raised: { id: string; rawMaterialId: string; godownId: string; label: string }[] = [];
@@ -977,8 +1036,30 @@ async function raiseRequirement(ctx: ErpContext, h: Record<string, string>, rawL
     }
     /* INVENTORY ACCURACY CONTROL: the blind count each item waits on, opened in the same act. */
     if (stockCheck) await openRequirementCounts(tx, raised, ctx.user.id);
+    for (const [i, r] of raised.entries()) {
+      const { m, qty } = items[i];
+      const counted = counts?.get(m.id);
+      let count: RaisedItem["count"] = null;
+      if (counted != null) {
+        const c = await openCount(tx, { kind: "reorder", rawMaterialId: m.id, godownId, requisitionId: r.id, reason: `Before purchase — ${r.label}`, byId: ctx.user.id });
+        const [row] = (await tx.execute(sql`select id, raw_material_id, godown_id, recount_of_id from erp_stock_counts where id = ${c.id} for update`)) as unknown as {
+          id: string; raw_material_id: string; godown_id: string; recount_of_id: string | null;
+        }[];
+        /* A recount already open on the shelf is somebody else's to make: it is left for them. */
+        if (row.recount_of_id) count = { id: c.id, countNo: c.countNo, verdict: "skipped" };
+        else {
+          const w = await writeCounted(tx, ctx.user.id, row, counted, { note: `Counted with ${r.label}` });
+          count = { id: c.id, countNo: c.countNo, verdict: w.status === "matched" ? "matched" : "flagged" };
+          if (w.status === "flagged")
+            alarms.push({ countId: c.id, countNo: c.countNo, item: m.name, godown: w.facts.godown, counted, book: w.j.reconciled, difference: w.j.difference, unit: w.facts.unit, requirementId: r.id, byId: ctx.user.id });
+        }
+      }
+      raisedItems.push({ id: r.id, rawMaterialId: m.id, item: m.name, qty, unit: purchaseUnit(m.unit, m.materialType), rule: m.purchaseMethod as PurchaseMethod, count });
+    }
     return n;
   });
+  /* A RED FLAG IS TOLD, as a count on Stock accuracy tells it; it never fails the requirement. */
+  for (const a of alarms) await notifyStockFlag(a);
   await erpAudit(ctx, "erp.requisition.create", "erp_requisition", requirementLabel(reqNo), null, {
     reqNo,
     items: items.map(({ m, qty }) => ({ item: m.name, qty, rule: m.purchaseMethod })),
@@ -995,7 +1076,10 @@ async function raiseRequirement(ctx: ErpContext, h: Record<string, string>, rawL
           : m.preferredSupplierId
             ? "direct purchase from the item's default vendor — raise the PO next"
             : "direct purchase — select the vendor next";
-    return okVoid(`${requirementLabel(reqNo)} raised · ${m.name} · ${nf(qty)} ${purchaseUnit(m.unit, m.materialType)} · ${stockCheck ? "count the stock first, then " : ""}${next}`);
+    return ok(
+      { reqNo, items: raisedItems },
+      `${requirementLabel(reqNo)} raised · ${m.name} · ${nf(qty)} ${purchaseUnit(m.unit, m.materialType)} · ${stockCheck ? "count the stock first, then " : ""}${next}`,
+    );
   }
   const count = (r: string) => items.filter((x) => x.m.purchaseMethod === r).length;
   const split = [
@@ -1003,7 +1087,7 @@ async function raiseRequirement(ctx: ErpContext, h: Record<string, string>, rawL
     count("quotation") ? `${count("quotation")} for quotations` : "",
     count("buyer") ? `${count("buyer")} for the buyer` : "",
   ].filter(Boolean);
-  return okVoid(`${requirementLabel(reqNo)} raised · ${items.length} items · ${split.join(" · ")}${stockCheck ? " · each waits on a stock count" : ""}`);
+  return ok({ reqNo, items: raisedItems }, `${requirementLabel(reqNo)} raised · ${items.length} items · ${split.join(" · ")}${stockCheck ? " · each waits on a stock count" : ""}`);
 }
 
 /* ============================================================ quotations */

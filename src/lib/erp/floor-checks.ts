@@ -57,10 +57,15 @@ function sumBy<T>(rows: T[], f: (r: T) => Omit<Agg, "qty"> & { qty: number }): M
   return out;
 }
 
-/** Every item the floor may check, per stage, with the ones on the book at `godownId` first. */
-export async function checkableItems(godownId: string): Promise<CheckableItem[]> {
+/**
+ * Every item the floor may check, per stage, with the ones on the book at
+ * `godownId` first. `keep` narrows it — the factory app passes the person's
+ * department reach (`lib/factory/stock-reach.ts`); a raw material is judged
+ * by its item-master type.
+ */
+export async function checkableItems(godownId: string, keep?: (stage: CheckStage, materialType: string | null) => boolean): Promise<CheckableItem[]> {
   const [mats, rl, sl, fl, pl, done] = await Promise.all([
-    db.execute(sql`select id, name, unit from erp_raw_materials where active order by name`) as unknown as Promise<{ id: string; name: string; unit: string }[]>,
+    db.execute(sql`select id, name, unit, material_type as "materialType" from erp_raw_materials where active order by name`) as unknown as Promise<{ id: string; name: string; unit: string; materialType: string | null }[]>,
     rmLots(),
     sfgLots(),
     fgLots(),
@@ -82,13 +87,13 @@ export async function checkableItems(godownId: string): Promise<CheckableItem[]>
   const distinct = (m: Map<string, Agg>) => [...new Map([...m.values()].map((a) => [a.id, { id: a.id, name: a.name, unit: a.unit }])).values()];
 
   const rm = sumBy(rl, (l) => ({ id: l.rawMaterialId, name: l.item, unit: stockUnit(l.unit), qty: l.stock, godownId: l.godownId }));
-  push("rm", (mats as { id: string; name: string; unit: string }[]).map((m) => ({ id: m.id, name: m.name, unit: stockUnit(m.unit) })), rm);
+  push("rm", mats.filter((m) => !keep || keep("rm", m.materialType)).map((m) => ({ id: m.id, name: m.name, unit: stockUnit(m.unit) })), rm);
   const sfg = sumBy(sl, (l) => ({ id: l.formulationId, name: l.product, unit: "Ltr", qty: l.stock, godownId: l.godownId }));
-  push("sfg", distinct(sfg), sfg);
+  if (!keep || keep("sfg", null)) push("sfg", distinct(sfg), sfg);
   const fg = sumBy(fl, (l) => ({ id: l.finishedGoodId, name: l.product, unit: "Cans", qty: l.stock, godownId: l.godownId }));
-  push("fg", distinct(fg), fg);
+  if (!keep || keep("fg", null)) push("fg", distinct(fg), fg);
   const pack = sumBy(pl, (l) => ({ id: l.skuId, name: l.sku, unit: "Boxes", qty: l.stock, godownId: l.godownId }));
-  push("pack", distinct(pack), pack);
+  if (!keep || keep("pack", null)) push("pack", distinct(pack), pack);
   return out;
 }
 

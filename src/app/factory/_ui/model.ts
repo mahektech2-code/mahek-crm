@@ -4,7 +4,7 @@
  * ------------------------------------------------------------------------- */
 import type { Lang } from "@/lib/factory/i18n";
 import type { ScanMeta, ScanPurpose, ScanResult } from "@/lib/factory/rules";
-import type { Draft, FactoryData, Proc, SubmitResult, Task, CheckItem, CheckStage, CountTask, StockSave, QcLot } from "@/lib/factory/types";
+import type { Draft, FactoryData, Proc, SubmitResult, Task, CheckItem, CheckStage, CountTask, StockSave, QcLot, ReqDept, ReqKit, ReqSave } from "@/lib/factory/types";
 import type { Me, Who } from "@/lib/actions/factory";
 import type { DrumLotView, DrumSaved } from "@/lib/factory/types";
 
@@ -33,6 +33,8 @@ export type QItem = {
 export type KpSheet = {
   type: "kp";
   l: string;
+  /** A line under the title — what to do before answering. */
+  sub?: string;
   unit: string;
   v: string;
   max?: number | null;
@@ -100,6 +102,8 @@ export type State = {
   stock: StockEntry | null;
   /** Quality check: the SFG lots waiting for QC and the one being decided. */
   qc: QcEntry | null;
+  /** Purchase requirement: the department's items and requirements, and the one being raised. */
+  req: ReqEntry | null;
   /** A newer build is live; the page reloads itself once nothing is in hand. */
   newBuild: boolean;
 };
@@ -237,6 +241,8 @@ export type StockEntry = {
   godown: string;
   office: CountTask[];
   items: CheckItem[];
+  /** The kinds this person's departments may check — the chips. */
+  stages: CheckStage[];
   stage: CheckStage;
   search: string;
   /** What is being counted now. */
@@ -258,6 +264,41 @@ export type StockEntry = {
  * decided and each test's Pass / Fail. Online only, on purpose: the answers
  * are read against the Testing list as it stands when they arrive.
  */
+/**
+ * A PURCHASE REQUIREMENT being raised, and the department's list. Every item
+ * is counted before it is added (`lines[].counted`) — the phone is never sent
+ * the book. Online only: the count is judged the moment it arrives.
+ */
+export type ReqEntry = {
+  loading: boolean;
+  err: { title: string; text: string; fix: string } | null;
+  kit: Extract<ReqKit, { ok: true }> | null;
+  view: "list" | "pick" | "send" | "sent" | "detail";
+  tab: "open" | "received" | "cancelled";
+  dept: ReqDept | null;
+  q: string;
+  lines: { itemId: string; counted: number; need: number }[];
+  requiredBy: string;
+  priority: "Urgent" | "Medium" | "For Stock";
+  remarks: string;
+  /** Minted when a requirement is started; a resend of the same one answers from the first save. */
+  key: string;
+  saving: boolean;
+  saved: Extract<ReqSave, { ok: true }> | null;
+  /** The requirement number open in the detail view. */
+  open: string | null;
+  /** The item being added: counted first, then how much to buy. Typed values are text until saved. */
+  ask: { itemId: string; step: "count" | "need"; counted: string; need: string } | null;
+  /** The item opened to every step in the detail view. */
+  expand: string | null;
+  /** Search over the list: a requirement number or an item. */
+  find: string;
+};
+
+export function mintReqKey(): string {
+  return "REQ-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+}
+
 export type QcEntry = {
   loading: boolean;
   err: { title: string; text: string; fix: string } | null;

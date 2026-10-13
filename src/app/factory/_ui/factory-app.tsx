@@ -33,14 +33,14 @@ import {
   type ScanPurpose,
   type ScanResult,
 } from "@/lib/factory/rules";
-import { CHECK_ITEMS, DOWN, MIX_BATCH_MAX, OFFLINE_HOURS, REJ, STEPS, SUBMISSION_VERSION, type CheckStage, type CheckUnit, type QcLot, type Draft, type FactoryData, type Lot, type Proc, type SubmitResult, type Task, type Team } from "@/lib/factory/types";
+import { CHECK_ITEMS, DOWN, MIX_BATCH_MAX, OFFLINE_HOURS, REJ, STEPS, SUBMISSION_VERSION, type CheckStage, type CheckUnit, type QcLot, type Draft, type FactoryData, type Lot, type Proc, type ReqDept, type ReqItem, type ReqLine, type SubmitResult, type Task, type Team } from "@/lib/factory/types";
 import { clock12, hhmm } from "@/lib/factory/time";
 import type { Me } from "@/lib/actions/factory";
 import { call, NotReceived, PAGE_BUILD, watchBuild } from "./api";
 import { art, ic, qr } from "./art";
 import { avStyle, btn, card, initials, mono, msg, MsgBox, Pill, artWell, type Msg } from "./kit";
 import { CameraScanner, shrinkPhoto } from "./camera";
-import { dropPhoto, forget, keepPhoto, keptPhoto, load, mintKey, readNet, save, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet, mintDrumKey, type StockEntry, type QcEntry, mintCheckKey, type RecipeSheet } from "./model";
+import { dropPhoto, forget, keepPhoto, keptPhoto, load, mintKey, readNet, save, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet, mintDrumKey, type StockEntry, type QcEntry, mintCheckKey, type RecipeSheet, type ReqEntry, mintReqKey } from "./model";
 
 /* ---------------------------------------------------------------------------
  * THE FACTORY APP — "Mahek Factory App" from the design, screen for screen.
@@ -57,6 +57,9 @@ import { dropPhoto, forget, keepPhoto, keptPhoto, load, mintKey, readNet, save, 
 
 type Props = { initialMe: Me | null; initialData: FactoryData | null; dev: boolean };
 
+
+/* Purchase requirement: each buying department, as the More row names it. */
+const REQ_WORD: Record<ReqDept, string> = { mixing: "Mixing", filling: "Refilling", packing: "Packing" };
 
 /* Stock check: how a unit and a kind of stock are said on the floor. */
 const UNIT_WORD: Record<CheckUnit, string> = { Ltr: "litres", Pcs: "pieces", Cans: "cans", Boxes: "boxes" };
@@ -124,6 +127,7 @@ export class FactoryApp extends Component<Props, State> {
       drum: null,
       stock: null,
       qc: null,
+      req: null,
       newBuild: false,
     };
   }
@@ -245,7 +249,8 @@ export class FactoryApp extends Component<Props, State> {
       (r === "home" && me.head) ||
       (r === "drum" && me.drums === false) ||
       (r === "lr" && !me.dispatch) ||
-      (r === "qc" && me.qc === false);
+      (r === "qc" && me.qc === false) ||
+      (r === "req" && !me.reqs?.length);
     return lost ? { db: data, me, route: me.head ? "today" : "home", sheet: null } : { db: data, me, route: r, sheet: cur.sheet };
   }
 
@@ -775,6 +780,614 @@ export class FactoryApp extends Component<Props, State> {
     this.setState({ route: "more", qc: null });
   }
 
+  /* ============================================================ purchase requirement
+   * The in-charge asks the office to buy what the department needs. Every item
+   * is COUNTED before it is added — the phone is never sent the book — and the
+   * count goes to the ERP as that item's stock check (lib/factory/purchase.ts).
+   */
+
+  openReq() {
+    const blank: ReqEntry = { loading: true, err: null, kit: null, view: "list", tab: "open", dept: null, q: "", lines: [], requiredBy: "", priority: "Medium", remarks: "", key: "", saving: false, saved: null, open: null, ask: null, expand: null, find: "" };
+    this.setState({ sheet: null, route: "req", req: blank }, () => void this.loadReq());
+  }
+
+  /** Merges onto the LATEST requirement state, like `setQc`. */
+  setReq(p: Partial<ReqEntry>) {
+    this.setState((st) => (st.req ? { req: { ...st.req, ...p } } : null));
+  }
+
+  async loadReq() {
+    if (!this.state.req) return;
+    this.setReq({ loading: true, err: null });
+    try {
+      const r = await call("reqKit");
+      if (r.ok) this.setState((st) => (st.req ? { req: { ...st.req, loading: false, kit: r, dept: st.req.dept ?? r.depts[0]?.key ?? null } } : null));
+      else this.setReq({ loading: false, err: { title: r.title, text: r.text, fix: r.fix } });
+    } catch (e) {
+      this.setReq({ loading: false, err: { title: "No network", text: "The requirements could not be loaded.", fix: "Check the Wi-Fi and tap Try again. A requirement needs the network — your counts are checked the moment they arrive." } });
+      if (!(e instanceof NotReceived)) throw e;
+    }
+  }
+
+  /** A date `days` after the kit's today, as YYYY-MM-DD. */
+  reqDay(days: number): string {
+    const d = new Date((this.state.req?.kit?.today ?? "") + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() + days);
+    const two = (n: number) => (n < 10 ? "0" : "") + n;
+    return d.getUTCFullYear() + "-" + two(d.getUTCMonth() + 1) + "-" + two(d.getUTCDate());
+  }
+
+  /** "Thu 16 Oct" for a YYYY-MM-DD; `short` drops the month: "Thu 16". */
+  reqDayWords(iso: string | null, short?: boolean): string {
+    if (!iso) return "";
+    const d = new Date(iso + "T00:00:00Z");
+    const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"], MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    return DOW[d.getUTCDay()] + " " + d.getUTCDate() + (short ? "" : " " + MON[d.getUTCMonth()]);
+  }
+
+  startReq() {
+    const s = this.state.req;
+    if (!s?.kit) return;
+    this.setReq({ view: "pick", lines: [], q: "", requiredBy: this.reqDay(2), priority: "Medium", remarks: "", key: mintReqKey(), saved: null, err: null, ask: null, dept: s.dept ?? s.kit.depts[0]?.key ?? null });
+  }
+
+  /** Tap Add (or an item already added): count first, then how much to buy. */
+  askReqItem(it: ReqItem) {
+    const have = this.state.req?.lines.find((l) => l.itemId === it.id);
+    this.setReq({ ask: { itemId: it.id, step: "count", counted: have ? String(have.counted) : "", need: have ? String(have.need) : "" } });
+  }
+
+  /** The quick amounts and the − / + step for how an item is bought. */
+  reqQuick(it: ReqItem): { step: number; quick: number[]; hint: string } {
+    if (it.buyUnit === "Pcs") return { step: 100, quick: [100, 250, 500, 1000], hint: "Shortcuts follow how this item is bought." };
+    return { step: 200, quick: [200, 400, 600, 1000], hint: "Drum = 200 " + (it.buyUnit === "Kg" ? "kg" : "L") + ". Shortcuts follow how this item is bought." };
+  }
+
+  addReqLine() {
+    const s = this.state.req, a = s?.ask;
+    if (!s || !a) return;
+    const counted = Number(a.counted), need = Number(a.need);
+    if (a.counted === "" || !Number.isFinite(counted) || counted < 0) return this.setReq({ ask: { ...a, step: "count" } });
+    if (!Number.isFinite(need) || need <= 0) return this.toast("Enter how much to buy", "warn");
+    const line = { itemId: a.itemId, counted, need };
+    const lines = s.lines.some((l) => l.itemId === a.itemId) ? s.lines.map((l) => (l.itemId === a.itemId ? line : l)) : s.lines.concat([line]);
+    this.setReq({ lines, ask: null, err: null });
+  }
+
+  pickReqDay() {
+    const days = Array.from({ length: 28 }, (_, i) => this.reqDay(i));
+    this.setState({
+      sheet: {
+        type: "tiles", title: "Needed by", sub: "Pick the day the department needs it in hand.",
+        groups: [{ cols: 4, items: days.map((d) => ({ l: this.reqDayWords(d, true), sub: this.reqDayWords(d).split(" ").pop(), v: d })) }],
+        pick: (v) => { this.setState({ sheet: null }); this.setReq({ requiredBy: v }); },
+      },
+    });
+  }
+
+  async sendReq() {
+    const s = this.state.req;
+    if (!s?.dept || s.saving || !s.lines.length) return;
+    this.setReq({ saving: true, err: null });
+    try {
+      const r = await call("reqRaise", { key: s.key, dept: s.dept, requiredBy: s.requiredBy, priority: s.priority, remarks: s.remarks.trim() || null, lines: s.lines });
+      if (r.ok) {
+        this.setReq({ saving: false, saved: r, view: "sent" });
+        return;
+      }
+      this.setReq({ saving: false, err: { title: r.title, text: r.text, fix: r.fix } });
+    } catch (e) {
+      this.setReq({ saving: false, err: { title: "No network", text: "The requirement is not sent yet. It is still on this screen.", fix: "Check the Wi-Fi and press Raise requirement again — it will not be raised twice." } });
+      if (!(e instanceof NotReceived)) throw e;
+    }
+  }
+
+  cancelReqLine(l: ReqLine) {
+    this.setState({
+      sheet: {
+        type: "reason", title: "Cancel " + l.item + "?", sub: "The office stops buying it. Say why.", danger: true, okL: "Cancel item",
+        reasons: ["Not needed any more", "Asked for by mistake", "Wrong quantity — raising a new one", "Found stock in another godown"],
+        done: (reason) => void this.doCancelReq(l.id, reason),
+      },
+    });
+  }
+
+  async doCancelReq(id: string, reason: string) {
+    this.setState({ sheet: null });
+    try {
+      const r = await call("reqCancel", id, reason);
+      if (!r.ok) return this.toast(r.error, "warn");
+      this.toast(r.msg);
+      void this.loadReq();
+    } catch (e) {
+      this.toast("No network — nothing was cancelled", "warn");
+      if (!(e instanceof NotReceived)) throw e;
+    }
+  }
+
+  reqBack() {
+    const s = this.state.req;
+    if (!s) return this.setState({ route: "more" });
+    if (s.ask) return this.setReq({ ask: s.ask.step === "need" ? { ...s.ask, step: "count" } : null });
+    if (s.view === "send") return this.setReq({ view: "pick", err: null });
+    if (s.view === "pick" && s.lines.length)
+      return this.setState({ sheet: { type: "reason", title: "Leave this requirement?", sub: "The items you added and counted are not sent.", reasons: ["Yes, leave it"], okL: "Leave", danger: true, done: () => this.setState({ sheet: null, req: { ...s, view: "list", lines: [] } }) } });
+    if (s.view === "pick" || s.view === "detail") return this.setReq({ view: "list", open: null, err: null });
+    if (s.view === "sent") return this.setReq({ view: "list", saved: null }), void this.loadReq();
+    this.setState({ route: "more", req: null });
+  }
+
+  /** Keeps a field in view once the phone's keyboard has opened and the page has shrunk under it. */
+  revealField(el: HTMLElement) {
+    const go = () => el.scrollIntoView({ block: "center", behavior: "smooth" });
+    window.setTimeout(go, 300);
+    window.visualViewport?.addEventListener("resize", go, { once: true });
+  }
+
+  /** The new-requirement steps take the whole screen, as the design draws them: no header bar, no tabs. */
+  reqFullScreen(): boolean {
+    const s = this.state.req;
+    return this.state.route === "req" && !!s && (s.view === "pick" || s.view === "send" || s.view === "sent" || s.view === "detail");
+  }
+
+  /** The sheet that adds one item: count it (blind), then how much to buy. */
+  renderReqAsk(it: ReqItem, godown: string): ReactNode {
+    const s = this.state.req!, a = s.ask!;
+    const round = { width: "40px", height: "40px", borderRadius: "50%", border: "none", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flex: "none" } as CSSProperties;
+    const cu = it.countUnit, bu = it.buyUnit === "Litre" ? "L" : it.buyUnit === "Kg" ? "kg" : "pcs";
+    const dots = (n: number, l: string) => (
+      <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "8px" }}>
+        <span style={{ width: "24px", height: "6px", borderRadius: "3px", background: "#6835FB" }} />
+        <span style={{ width: "24px", height: "6px", borderRadius: "3px", background: n > 1 ? "#6835FB" : "#DDE1E8" }} />
+        <span style={{ fontSize: "13px", fontWeight: 600, color: "#6B7385", marginLeft: "2px" }}>{l}</span>
+      </div>
+    );
+    const top = (n: number, l: string) => (
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "10px" }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: "21px", lineHeight: "27px", fontWeight: 700 }}>{it.name}</div>
+          {dots(n, l)}
+        </div>
+        <button onClick={() => this.setReq({ ask: null })} aria-label="Close" style={round}>{ic("x", 20, "#5223E0")}</button>
+      </div>
+    );
+    const pad = (k: string) => {
+      const press = () => {
+        let v = a.counted;
+        if (k === "⌫") v = v.slice(0, -1);
+        else if (k === ".") v = cu === "L" && !v.includes(".") ? (v || "0") + "." : v;
+        else v = (v === "0" ? "" : v) + k;
+        this.setReq({ ask: { ...a, counted: v.slice(0, 8) } });
+      };
+      return <button key={k} onClick={press} aria-label={k === "⌫" ? "Delete" : k} style={{ height: "48px", borderRadius: "10px", border: "none", background: "#F1F2F5", fontSize: "21px", fontWeight: 600, color: k === "." && cu !== "L" ? "#C2C8D2" : "#1A1E28", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>{k}</button>;
+    };
+    const purpleBtn = (on: boolean, l: string, run: () => void) => <button onClick={() => on && run()} style={btn(on ? "p" : "off", 58)}>{l}</button>;
+    let body: ReactNode;
+    if (a.step === "count") {
+      const has = a.counted !== "";
+      body = (
+        <>
+          {top(1, "Count, then how much you need")}
+          <MsgBox m={msg("Go and check the godown first. How much " + it.name + " is at " + godown + " right now? Count every " + (cu === "L" ? "drum" : "piece") + ", open ones too.", "info")} />
+          <div>
+            <div style={{ fontSize: "15px", fontWeight: 700, marginBottom: "6px" }}>Available now</div>
+            <div style={{ height: "58px", borderRadius: "12px", border: "2px solid " + (has ? "#6835FB" : "#DDE1E8"), background: "#FFFFFF", display: "flex", alignItems: "center", padding: "0 16px", gap: "8px" }}>
+              <span style={{ flex: 1, fontSize: has ? "26px" : "19px", fontWeight: has ? 700 : 500, color: has ? "#1A1E28" : "#9BA3B2" }}>{has ? a.counted : "Type what you counted"}</span>
+              <span style={{ fontSize: "17px", fontWeight: 600, color: "#3D4453" }}>{cu}</span>
+            </div>
+          </div>
+          <div style={{ display: "flex" }}>
+            <button onClick={() => this.setReq({ ask: { ...a, counted: "0" } })} style={{ padding: "10px 14px", borderRadius: "18px", border: "1.5px solid #DDE1E8", background: "#FFFFFF", color: "#3D4453", fontSize: "15px", fontWeight: 600, cursor: "pointer" }}>None in the godown · 0</button>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: "6px" }}>{["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", "⌫"].map(pad)}</div>
+          {purpleBtn(has, "Next", () => this.setReq({ ask: { ...a, step: "need" } }))}
+        </>
+      );
+    } else {
+      const q = this.reqQuick(it);
+      const n = Number(a.need) || 0;
+      const setNeed = (v: number) => this.setReq({ ask: { ...a, need: v > 0 ? String(Math.round(v * 1000) / 1000) : "" } });
+      const sq: CSSProperties = { width: "60px", height: "60px", flex: "none", borderRadius: "14px", border: "none", background: "#F1ECFF", color: "#5223E0", fontSize: "30px", fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" };
+      body = (
+        <>
+          {top(2, "How much you need")}
+          <div style={{ ...card, borderRadius: "12px", padding: "12px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: "15px", color: "#6B7385" }}>You counted</span>
+            <span style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <span style={{ fontSize: "18px", fontWeight: 700 }}>{nf(Number(a.counted)) + " " + cu}</span>
+              <button onClick={() => this.setReq({ ask: { ...a, step: "count" } })} style={{ background: "none", border: "none", padding: 0, color: "#5223E0", fontSize: "14px", fontWeight: 700, cursor: "pointer" }}>Change</button>
+            </span>
+          </div>
+          <div>
+            <div style={{ fontSize: "15px", fontWeight: 700, marginBottom: "6px" }}>How much to buy?</div>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <button onClick={() => setNeed(Math.max(0, n - q.step))} aria-label="Less" style={sq}>−</button>
+              <label style={{ flex: 1, minWidth: 0, height: "60px", borderRadius: "14px", border: "2px solid #6835FB", background: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px", padding: "0 10px" }}>
+                <input onFocus={(e) => this.revealField(e.currentTarget)} value={a.need} onChange={(e) => this.setReq({ ask: { ...a, need: String(e.target.value).replace(it.buyUnit === "Pcs" ? /[^\d]/g : /[^\d.]/g, "").slice(0, 8) } })} inputMode={it.buyUnit === "Pcs" ? "numeric" : "decimal"} placeholder="0" aria-label={"How much " + it.name + " to buy"} style={{ width: "100%", minWidth: 0, border: "none", outline: "none", background: "transparent", fontSize: "28px", fontWeight: 700, color: "#1A1E28", textAlign: "center" }} />
+                <span style={{ fontSize: "17px", fontWeight: 600, color: "#6B7385", flex: "none" }}>{bu}</span>
+              </label>
+              <button onClick={() => setNeed(n + q.step)} aria-label="More" style={sq}>＋</button>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: "8px" }}>
+            {q.quick.map((v) => {
+              const on = n === v;
+              return <button key={v} onClick={() => setNeed(v)} style={{ flex: 1, padding: "10px 4px", borderRadius: "18px", border: "none", background: on ? "#6835FB" : "#F1ECFF", color: on ? "#FFFFFF" : "#5223E0", fontSize: "15px", fontWeight: 600, cursor: "pointer" }}>{nf(v) + " " + bu}</button>;
+            })}
+          </div>
+          <div style={{ fontSize: "13px", color: "#6B7385" }}>{q.hint}</div>
+          {purpleBtn(n > 0, "Add to requirement", () => this.addReqLine())}
+        </>
+      );
+    }
+    return (
+      <div onClick={() => this.setReq({ ask: null })} style={{ position: "absolute", inset: 0, background: "rgba(14,16,22,0.5)", zIndex: 40, display: "flex", alignItems: "flex-end" }}>
+        <div onClick={(e) => e.stopPropagation()} role="dialog" className="fx-scroll" aria-label={it.name} style={{ width: "100%", maxHeight: "94%", overflowY: "auto", background: "#FFFFFF", borderRadius: "26px 26px 0 0", padding: "10px 20px 18px 20px", display: "flex", flexDirection: "column", gap: "14px", animation: "fx-up 200ms cubic-bezier(0.2,0,0.2,1)" }}>
+          <div style={{ width: "44px", height: "5px", borderRadius: "3px", background: "#DDE1E8", alignSelf: "center", flex: "none" }} />
+          {body}
+        </div>
+      </div>
+    );
+  }
+
+  renderReq(): ReactNode {
+    const st = this.state, T = this.T(), s = st.req;
+    const round = { width: "44px", height: "44px", borderRadius: "50%", border: "none", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flex: "none" } as CSSProperties;
+    const errBox = (e: { title: string; text: string; fix: string }) => (
+      <div style={{ padding: "14px", borderRadius: "14px", background: "#FCECEC" }}>
+        <div style={{ fontSize: "17px", fontWeight: 700, color: "#B3261E" }}>{e.title}</div>
+        <div style={{ fontSize: "15px", lineHeight: "22px", color: "#1A1E28", marginTop: "6px" }}>{e.text}</div>
+        <div style={{ fontSize: "15px", lineHeight: "22px", color: "#1A1E28", marginTop: "6px" }}><span style={{ fontWeight: 700 }}>What to do: </span>{e.fix}</div>
+      </div>
+    );
+    const kit = s?.kit ?? null;
+    const deptLabel = (k: string | null) => kit?.depts.find((d) => d.key === k)?.label ?? "";
+    const view = s?.view ?? "list";
+    const titles: Record<ReqEntry["view"], [string, string]> = {
+      list: ["Purchase requirements", (kit?.depts.map((d) => d.label).join(" · ") ?? "") + (kit ? " · " + kit.godown : "")],
+      pick: ["New requirement", "Step 1 of 2 · What do you need?"],
+      send: ["New requirement", "Step 2 of 2 · Check and send"],
+      sent: ["", ""],
+      detail: [s?.open ?? "", deptLabel(kit?.reqs.find((x) => x.no === s?.open)?.dept ?? null)],
+    };
+    const head = (
+      <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+        <button onClick={() => this.reqBack()} aria-label={view === "pick" ? "Close" : T.back} style={round}>{ic(view === "pick" ? "x" : "back", 22, "#5223E0")}</button>
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <span style={{ display: "block", fontSize: "20px", fontWeight: 700, ...(view === "detail" ? mono : {}) }}>{titles[view][0]}</span>
+          {!!titles[view][1] && <span style={{ display: "block", fontSize: "13px", color: "#6B7385" }}>{titles[view][1]}</span>}
+        </span>
+        {view === "list" && <button onClick={() => void this.loadReq()} aria-label="Refresh" style={round}>{ic("sync", 22, "#5223E0")}</button>}
+      </div>
+    );
+    const wrap = (kids: ReactNode, foot?: ReactNode, overlay?: ReactNode, noHead?: boolean) => (
+      <>
+        <div className="fx-scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "14px 16px 16px 16px", display: "flex", flexDirection: "column", gap: "10px" }}>{!noHead && head}{kids}</div>
+        {foot && <div style={{ flex: "none", background: "#FFFFFF", borderTop: "1px solid #EDEFF3", padding: "12px 16px 16px 16px" }}>{foot}</div>}
+        {overlay}
+      </>
+    );
+    if (!s) return wrap(null);
+    if (!kit) return wrap(<>{s.loading && <div style={{ fontSize: "15px", color: "#6B7385" }}>Loading…</div>}{s.err && errBox(s.err)}{s.err && <button onClick={() => void this.loadReq()} style={btn("s", 52)}>Try again</button>}</>);
+
+    const unitW = (u: string) => (u === "Litre" ? "L" : u === "Kg" ? "kg" : "pcs");
+    const qtyW = (n: number, u: string) => nf(n) + " " + unitW(u);
+    const PRI: Record<string, { bg: string; fg: string; l: string }> = { Urgent: { bg: "#FCECEC", fg: "#B3261E", l: "Urgent" }, Medium: { bg: "#EDEFF3", fg: "#3D4453", l: "Medium" }, "For Stock": { bg: "#EDEFF3", fg: "#3D4453", l: "For stock" } };
+    const tag = (l: string, bg: string, fg: string) => <Pill key={l} l={l} bg={bg} fg={fg} />;
+    const stageTone = (l: ReqLine) =>
+      l.step < 0 ? { bg: "#EDEFF3", fg: "#6B7385" } : l.step >= kit.steps.length ? { bg: "#E9F5EE", fg: "#1D7A45" } : l.step <= 1 ? { bg: "#FDF6E7", fg: "#8A5C05" } : l.step >= 4 ? { bg: "#E8F1FD", fg: "#1A5BB5" } : { bg: "#F1ECFF", fg: "#3D14A8" };
+    const countWords = (l: ReqLine) =>
+      l.countState === "matched" ? { t: "✓ Count matches", bg: "#E9F5EE", fg: "#1D7A45" } : l.countState === "flagged" ? { t: "Count doesn't match — stock control told", bg: "#FDF6E7", fg: "#8A5C05" } : l.countState === "waiting" ? { t: "Stock check — count first", bg: "#FDF6E7", fg: "#8A5C05" } : null;
+    const cardS = card;
+
+    /* ---- the list */
+    if (view === "list") {
+      const f = s.find.trim().toLowerCase();
+      const mine = kit.reqs.filter((r) => r.state === s.tab && (!f || r.no.toLowerCase().includes(f) || r.lines.some((l) => l.item.toLowerCase().includes(f))));
+      const n = (t: ReqEntry["tab"]) => kit.reqs.filter((r) => r.state === t).length;
+      const tab = (t: ReqEntry["tab"], l: string) => {
+        const on = s.tab === t;
+        return <button key={t} onClick={() => this.setReq({ tab: t })} aria-pressed={on} style={{ padding: "10px 14px", borderRadius: "18px", border: "none", background: on ? "#6835FB" : "#F1ECFF", color: on ? "#FFFFFF" : "#5223E0", fontSize: "15px", fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: "6px" }}>{l}<span style={{ padding: "0 6px", borderRadius: "10px", lineHeight: "20px", fontSize: "12px", background: on ? "rgba(255,255,255,0.25)" : "#FFFFFF" }}>{n(t)}</span></button>;
+      };
+      const bar = (lines: ReqLine[]) => {
+        const live = lines.filter((l) => l.step >= 0);
+        const min = live.length ? Math.min(...live.map((l) => l.step)) : -1;
+        return (
+          <div style={{ display: "flex", gap: "4px", marginTop: "12px" }}>
+            {kit.steps.map((x, i) => <span key={x} style={{ flex: 1, height: "5px", borderRadius: "3px", background: min < 0 ? "#EDEFF3" : i < min ? "#6835FB" : i === min ? "#F0B43C" : "#EDEFF3" }} />)}
+          </div>
+        );
+      };
+      return wrap(
+        <>
+          <button onClick={() => this.startReq()} style={btn("p", 58)}>{ic("plus", 22, "#FFFFFF")}Raise a requirement</button>
+          <label style={{ height: "48px", minHeight: "48px", boxSizing: "border-box", border: "1.5px solid #DDE1E8", borderRadius: "12px", padding: "0 12px", background: "#FFFFFF", display: "flex", alignItems: "center", gap: "10px" }}>
+            {ic("search", 18, "#9BA3B2")}
+            <input onFocus={(e) => this.revealField(e.currentTarget)} value={s.find} onChange={(e) => this.setReq({ find: String(e.target.value).slice(0, 60) })} placeholder="Search by REQ number or item" aria-label="Search requirements" style={{ flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent", fontSize: "17px", color: "#1A1E28" }} />
+          </label>
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>{tab("open", "Open")}{tab("received", "Received")}{tab("cancelled", "Cancelled")}</div>
+          {s.err && errBox(s.err)}
+          {mine.length ? mine.map((r) => {
+            const pr = PRI[r.priority];
+            const shown = r.lines.slice(0, 3);
+            const done = r.lines.filter((l) => l.step >= kit.steps.length).length;
+            const live = r.lines.filter((l) => l.step >= 0).length;
+            return (
+              <button key={r.no} onClick={() => this.setReq({ view: "detail", open: r.no, expand: null })} style={{ ...cardS, padding: "14px", textAlign: "left", cursor: "pointer", display: "block", width: "100%" }}>
+                <span style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px" }}>
+                  <span style={{ ...mono, fontSize: "15px", fontWeight: 600, color: "#1A1E28" }}>{r.no}</span>
+                  <span style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                    {kit.depts.length > 1 && tag(deptLabel(r.dept), "#F1ECFF", "#3D14A8")}
+                    {tag(pr.l, pr.bg, pr.fg)}
+                  </span>
+                </span>
+                <span style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "10px" }}>
+                  {shown.map((l) => {
+                    const t = stageTone(l);
+                    return (
+                      <span key={l.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px" }}>
+                        <span style={{ fontSize: "15px", fontWeight: 700, color: "#1A1E28", flex: 1, minWidth: 0 }}>{l.item}<span style={{ fontWeight: 500, color: "#6B7385" }}>{" · " + qtyW(l.qty, l.unit)}</span></span>
+                        {tag(l.stage, t.bg, t.fg)}
+                      </span>
+                    );
+                  })}
+                  {r.lines.length > 3 && <span style={{ fontSize: "13px", fontWeight: 700, color: "#5223E0" }}>{"+ " + (r.lines.length - 3) + " more"}</span>}
+                </span>
+                {r.state === "open" && bar(r.lines)}
+                <span style={{ display: "flex", justifyContent: "space-between", gap: "8px", marginTop: "10px", fontSize: "13px", color: "#6B7385" }}>
+                  <span>{(r.requiredBy ? "Needed by " + this.reqDayWords(r.requiredBy) : "Raised " + this.reqDayWords(r.date))}</span>
+                  <span style={{ fontWeight: 700, color: done === live && live ? "#1D7A45" : "#3D4453" }}>{r.state === "cancelled" ? "Cancelled" : done + " of " + live + " received"}</span>
+                </span>
+              </button>
+            );
+          }) : !s.loading && <div style={{ ...cardS, padding: "20px", fontSize: "15px", lineHeight: "21px", color: "#6B7385", textAlign: "center" }}>{f ? "Nothing matches “" + s.find + "”." : s.tab === "open" ? "Nothing asked for yet. Tap Raise a requirement when the department needs something." : "None in the last 60 days."}</div>}
+          {s.loading && <div style={{ fontSize: "15px", color: "#6B7385" }}>Loading…</div>}
+        </>,
+      );
+    }
+
+    /* ---- one requirement, item by item */
+    if (view === "detail") {
+      const r = kit.reqs.find((x) => x.no === s.open);
+      if (!r) return wrap(<div style={{ ...cardS, padding: "20px", color: "#6B7385" }}>That requirement is no longer on the list.</div>);
+      const pr = PRI[r.priority];
+      const where = /godown/i.test(r.godown) ? r.godown : r.godown + " godown";
+      const fact = (l: string, v: ReactNode, last?: boolean) => (
+        <div key={l} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", padding: "11px 0", borderBottom: last ? "none" : "1px solid #EDEFF3" }}>
+          <span style={{ fontSize: "15px", color: "#6B7385" }}>{l}</span>
+          <span style={{ fontSize: "15px", fontWeight: 700, textAlign: "right" }}>{v}</span>
+        </div>
+      );
+      const live = r.lines.filter((l) => l.step >= 0);
+      const done = live.filter((l) => l.step >= kit.steps.length).length;
+      return wrap(
+        <>
+          <div style={{ ...cardS, padding: "2px 16px" }}>
+            {fact("Needed by", r.requiredBy ? this.reqDayWords(r.requiredBy) : "—")}
+            {fact("How urgent", tag(pr.l, pr.bg, pr.fg))}
+            {fact("Raised", this.reqDayWords(r.date) + (r.by ? " · " + r.by : ""))}
+            {fact("Deliver to", where)}
+            {fact("Progress", r.state === "cancelled" ? "Cancelled" : done + " of " + live.length + " received", !r.remarks)}
+            {!!r.remarks && <div style={{ padding: "11px 0", fontSize: "15px", lineHeight: "21px", color: "#3D4453" }}><span style={{ color: "#6B7385" }}>Note · </span>{r.remarks}</div>}
+          </div>
+          {this.sectionLabel("Items · " + r.lines.length)}
+          {r.lines.map((l) => {
+            const t = stageTone(l), cw = countWords(l);
+            const open = s.expand === l.id;
+            const cur = Math.min(Math.max(l.step, 0), kit.steps.length);
+            const facts: [string, string][] = [];
+            if (l.po) facts.push(["Purchase order", l.po + (l.vendor ? " · " + l.vendor : "")]);
+            else if (l.vendor) facts.push(["Vendor", l.vendor]);
+            if (l.quotes && !l.po) facts.push(["Quotations", l.quotes + " in"]);
+            if (l.received != null) facts.push(["Received", qtyW(l.received, l.unit) + " of " + qtyW(l.qty, l.unit)]);
+            return (
+              <div key={l.id} style={{ ...cardS, padding: "14px", display: "flex", flexDirection: "column", gap: "10px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "8px" }}>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: "block", fontSize: "17px", fontWeight: 700 }}>{l.item}</span>
+                    <span style={{ display: "block", fontSize: "14px", color: "#6B7385", marginTop: "2px" }}>{"Need " + qtyW(l.qty, l.unit) + (l.counted != null ? " · you counted " + nf(l.counted) + " " + l.countUnit : "")}</span>
+                  </span>
+                  {tag(l.stage, t.bg, t.fg)}
+                </div>
+                {l.step >= 0 && (
+                  <div style={{ display: "flex", gap: "4px" }}>
+                    {kit.steps.map((x, i) => <span key={x} style={{ flex: 1, height: "6px", borderRadius: "3px", background: i < cur ? "#1D7A45" : i === cur ? "#F0B43C" : "#EDEFF3" }} />)}
+                  </div>
+                )}
+                <div style={{ fontSize: "14px", lineHeight: "20px", color: "#3D4453" }}>{l.next}</div>
+                {cw && <div style={{ display: "flex" }}>{tag(cw.t, cw.bg, cw.fg)}</div>}
+                {!!facts.length && (
+                  <div style={{ borderTop: "1px solid #EDEFF3" }}>
+                    {facts.map(([a, b], i) => (
+                      <div key={a} style={{ display: "flex", justifyContent: "space-between", gap: "12px", padding: "9px 0", borderBottom: i < facts.length - 1 ? "1px solid #EDEFF3" : "none", fontSize: "14px" }}>
+                        <span style={{ color: "#6B7385" }}>{a}</span><span style={{ fontWeight: 700, textAlign: "right" }}>{b}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {l.step >= 0 && (
+                  <button onClick={() => this.setReq({ expand: open ? null : l.id })} style={{ background: "none", border: "none", padding: 0, color: "#5223E0", fontSize: "14px", fontWeight: 700, cursor: "pointer", textAlign: "left" }}>{open ? "Hide the steps" : "Show every step"}</button>
+                )}
+                {open && (
+                  <div style={{ display: "flex", flexDirection: "column" }}>
+                    {kit.steps.map((x, i) => {
+                      const isDone = i < l.step || l.step >= kit.steps.length, now = i === l.step;
+                      return (
+                        <div key={x} style={{ display: "flex", gap: "12px", alignItems: "stretch" }}>
+                          <div style={{ width: "22px", display: "flex", flexDirection: "column", alignItems: "center" }}>
+                            <span style={{ width: "14px", height: "14px", borderRadius: "50%", marginTop: "3px", flex: "none", background: isDone ? "#1D7A45" : now ? "#FFFFFF" : "#DDE1E8", border: now ? "3px solid #F0B43C" : "none", boxSizing: "border-box" }} />
+                            {i < kit.steps.length - 1 && <span style={{ flex: 1, width: "2px", minHeight: "8px", margin: "2px 0", background: isDone ? "#1D7A45" : "#DDE1E8" }} />}
+                          </div>
+                          <span style={{ paddingBottom: "10px", fontSize: "15px", lineHeight: "20px", fontWeight: isDone || now ? 700 : 500, color: isDone || now ? "#1A1E28" : "#9BA3B2" }}>{x}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {l.cancel && (l.cancel.ok ? (
+                  <button onClick={() => this.cancelReqLine(l)} style={{ ...btn("s", 52), color: "#B3261E", border: "1.5px solid #F6CFCF" }}>{"Cancel " + l.item + "…"}</button>
+                ) : <div style={{ fontSize: "13px", color: "#6B7385", textAlign: "center" }}>{l.cancel.why}</div>)}
+              </div>
+            );
+          })}
+        </>,
+      );
+    }
+
+    /* ---- the answer */
+    if (view === "sent" && s.saved) {
+      const sv = s.saved;
+      const off = sv.lines.filter((l) => l.verdict === "flagged").map((l) => l.item);
+      const fine = sv.lines.filter((l) => l.verdict === "matched").map((l) => l.item);
+      const and = (xs: string[]) => (xs.length < 2 ? xs.join("") : xs.slice(0, -1).join(", ") + " and " + xs[xs.length - 1]);
+      return wrap(
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", gap: "14px", padding: "8px" }}>
+          <span style={{ width: "80px", height: "80px", borderRadius: "50%", background: "#E9F5EE", display: "flex", alignItems: "center", justifyContent: "center", alignSelf: "center" }}>{ic("check", 42, "#1D7A45")}</span>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: "26px", lineHeight: "32px", fontWeight: 700 }}>Requirement raised</div>
+            <div style={{ ...mono, fontSize: "17px", color: "#3D4453", marginTop: "4px" }}>{sv.no + " · " + PRI[s.priority].l + " · by " + this.reqDayWords(s.requiredBy)}</div>
+          </div>
+          <div style={{ ...cardS, padding: "6px 16px" }}>
+            <div style={{ fontSize: "12px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "#6B7385", padding: "8px 0 4px 0" }}>Your counts</div>
+            {sv.lines.map((l, i) => (
+              <div key={l.item} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", padding: "10px 0", borderBottom: i < sv.lines.length - 1 ? "1px solid #EDEFF3" : "none" }}>
+                <span style={{ fontSize: "15px", fontWeight: 700 }}>{l.item + " · " + nf(l.counted) + " " + l.countUnit}</span>
+                {l.verdict === "matched" ? tag("✓ Matches the book", "#E9F5EE", "#1D7A45") : l.verdict === "flagged" ? tag("Doesn’t match", "#FDF6E7", "#8A5C05") : tag("Recount already open", "#EDEFF3", "#3D4453")}
+              </div>
+            ))}
+          </div>
+          {!!off.length && (
+            <MsgBox m={msg(and(off) + (off.length > 1 ? " don’t" : " doesn’t") + " match the book. Stock control has been told — buying carries on" + (fine.length ? ", and " + and(fine) + (fine.length > 1 ? " match." : " matches.") : "."), "warn")} />
+          )}
+          <div style={{ ...cardS, padding: "14px 16px" }}>
+            <div style={{ fontSize: "15px", fontWeight: 700, marginBottom: "6px" }}>What happens next</div>
+            {sv.next.map((x) => <div key={x} style={{ fontSize: "14px", lineHeight: "21px", color: "#3D4453" }}>{x}</div>)}
+          </div>
+          <button onClick={() => this.reqBack()} style={btn("p", 58)}>Done</button>
+        </div>,
+        undefined,
+        undefined,
+        true,
+      );
+    }
+
+    const dept = kit.depts.find((d) => d.key === s.dept) ?? kit.depts[0];
+    const itemOf = (id: string) => dept?.items.find((i) => i.id === id);
+    const what = s.dept === "filling" ? "cans and drums" : s.dept === "packing" ? "boxes and stationery" : "chemicals";
+
+    /* ---- step 2: when, how urgent, and send */
+    if (view === "send") {
+      const days: [string, number][] = [["Tomorrow", 1], ["In 2 days", 2], ["In a week", 7]];
+      const preset = days.some(([, d]) => this.reqDay(d) === s.requiredBy);
+      const seg = (on: boolean, danger?: boolean): CSSProperties => ({ flex: 1, minWidth: 0, height: "52px", borderRadius: "12px", border: "2px solid " + (on ? (danger ? "#B3261E" : "#6835FB") : "#DDE1E8"), background: on ? (danger ? "#FCECEC" : "#F7F4FF") : "#FFFFFF", color: on ? (danger ? "#B3261E" : "#3D14A8") : "#3D4453", fontSize: "16px", fontWeight: 700, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", lineHeight: "19px" });
+      const small = { fontSize: "11px", fontWeight: 600, color: "#6B7385" } as CSSProperties;
+      const lbl = (t: string) => <div style={{ fontSize: "14px", color: "#6B7385", marginBottom: "6px" }}>{t}</div>;
+      const where = /godown/i.test(kit.godown) ? kit.godown : kit.godown + " godown";
+      return wrap(
+        <>
+          <div style={{ ...cardS, padding: "2px 14px" }}>
+            <div style={{ display: "flex", padding: "10px 0", borderBottom: "1px solid #EDEFF3", fontSize: "12px", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "#6B7385" }}>
+              <span style={{ flex: 1 }}>Item</span><span style={{ width: "80px", textAlign: "right" }}>Counted</span><span style={{ width: "70px", textAlign: "right" }}>Need</span>
+            </div>
+            {s.lines.map((l, i) => {
+              const it = itemOf(l.itemId);
+              return (
+                <div key={l.itemId} style={{ display: "flex", padding: "11px 0", borderBottom: i < s.lines.length - 1 ? "1px solid #EDEFF3" : "none", fontSize: "15px" }}>
+                  <span style={{ flex: 1, fontWeight: 700 }}>{it?.name ?? ""}</span>
+                  <span style={{ width: "80px", textAlign: "right", color: "#3D4453" }}>{nf(l.counted) + " " + (it?.countUnit ?? "")}</span>
+                  <span style={{ width: "70px", textAlign: "right", fontWeight: 700 }}>{qtyW(l.need, it?.buyUnit ?? "")}</span>
+                </div>
+              );
+            })}
+          </div>
+          <div>{lbl("Needed by")}
+            <div style={{ display: "flex", gap: "6px" }}>
+              {days.map(([l, d]) => {
+                const v = this.reqDay(d);
+                return <button key={l} onClick={() => this.setReq({ requiredBy: v })} style={seg(s.requiredBy === v)}>{l}<span style={small}>{this.reqDayWords(v, true)}</span></button>;
+              })}
+              <button onClick={() => this.pickReqDay()} style={seg(!preset)}>{preset ? "📅" : this.reqDayWords(s.requiredBy, true)}<span style={small}>{preset ? "Pick" : "Picked"}</span></button>
+            </div>
+          </div>
+          <div>{lbl("How urgent?")}
+            <div style={{ display: "flex", gap: "6px" }}>
+              {(["Urgent", "Medium", "For Stock"] as const).map((p) => <button key={p} onClick={() => this.setReq({ priority: p })} style={seg(s.priority === p, p === "Urgent")}>{PRI[p].l}</button>)}
+            </div>
+          </div>
+          <div>{lbl("Deliver to")}
+            <div style={{ ...cardS, borderRadius: "14px", padding: "12px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}><span style={{ fontSize: "16px", fontWeight: 700 }}>{where}</span><span style={{ fontSize: "14px", color: "#6B7385" }}>where you work</span></div>
+          </div>
+          <div>{lbl("Note for the office (optional)")}
+            <textarea onFocus={(e) => this.revealField(e.currentTarget)} value={s.remarks} onChange={(e) => this.setReq({ remarks: String(e.target.value).slice(0, 1000) })} placeholder="What it is for, or anything the buyer should know" aria-label="Note for the office" rows={3} style={{ width: "100%", boxSizing: "border-box", border: "1.5px solid #DDE1E8", borderRadius: "12px", padding: "12px", fontSize: "17px", lineHeight: "23px", color: "#1A1E28", background: "#FFFFFF", resize: "none", fontFamily: "inherit" }} />
+          </div>
+          <MsgBox m={msg("Your counts are sent as this requirement’s stock check. If one doesn’t match the book, stock control is told — buying carries on.", "info")} />
+          {s.err && errBox(s.err)}
+        </>,
+        <button onClick={() => void this.sendReq()} style={btn(s.saving ? "off" : "p", 58)}>{s.saving ? "Sending…" : "Raise requirement"}</button>,
+      );
+    }
+
+    /* ---- step 1: pick and count */
+    const q = s.q.trim().toLowerCase();
+    const items = (dept?.items ?? []).filter((i) => !q || i.name.toLowerCase().includes(q));
+    const chosen = new Set(s.lines.map((l) => l.itemId));
+    const row = (it: ReqItem) => {
+      const l = s.lines.find((x) => x.itemId === it.id);
+      return (
+        <div key={it.id} style={{ ...cardS, padding: "12px 14px", display: "flex", alignItems: "center", gap: "12px", border: l ? "2px solid #6835FB" : cardS.border }}>
+          <button onClick={() => this.askReqItem(it)} style={{ flex: 1, minWidth: 0, textAlign: "left", background: "none", border: "none", padding: 0, cursor: "pointer" }}>
+            <span style={{ display: "block", fontSize: "16px", fontWeight: 700, color: "#1A1E28" }}>{it.name}</span>
+            {l ? (
+              <span style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "6px" }}>
+                {tag("✓ Counted " + nf(l.counted) + " " + it.countUnit, "#E9F5EE", "#1D7A45")}
+                {tag("Need " + qtyW(l.need, it.buyUnit), "#F1ECFF", "#3D14A8")}
+              </span>
+            ) : (
+              <span style={{ display: "block", fontSize: "13px", color: "#6B7385", marginTop: "2px" }}>
+                {(it.countUnit === "L" ? "Litres" : "Pieces") + " · " + it.how.charAt(0).toLowerCase() + it.how.slice(1)}
+                {it.openReq && <span style={{ color: "#3D14A8", fontWeight: 700 }}>{" · already on " + it.openReq}</span>}
+              </span>
+            )}
+          </button>
+          {l ? (
+            <button onClick={() => this.setReq({ lines: s.lines.filter((x) => x.itemId !== it.id) })} style={{ background: "none", border: "none", color: "#B3261E", fontSize: "14px", fontWeight: 700, cursor: "pointer", flex: "none" }}>Remove</button>
+          ) : (
+            <button onClick={() => this.askReqItem(it)} style={{ height: "40px", padding: "0 16px", borderRadius: "12px", border: "1.5px solid #DDE1E8", background: "#FFFFFF", color: "#5223E0", fontSize: "15px", fontWeight: 700, cursor: "pointer", flex: "none", display: "flex", alignItems: "center", gap: "4px" }}>{ic("plus", 16, "#5223E0")}Add</button>
+          )}
+        </div>
+      );
+    };
+    const sec = (l: string) => this.sectionLabel(l);
+    const onList = items.filter((i) => chosen.has(i.id));
+    const recent = items.filter((i) => !chosen.has(i.id) && i.recent);
+    const rest = items.filter((i) => !chosen.has(i.id) && !i.recent);
+    const asking = s.ask ? itemOf(s.ask.itemId) : null;
+    const n = s.lines.length;
+    return wrap(
+      <>
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", justifyContent: "flex-end" }}>
+          {kit.depts.map((d) => {
+            const on = d.key === dept?.key;
+            return <button key={d.key} onClick={() => !on && (n ? this.toast("Send or remove the items first — a requirement is for one department", "warn") : this.setReq({ dept: d.key }))} aria-pressed={on} style={{ padding: "10px 14px", borderRadius: "18px", border: "none", background: on ? "#6835FB" : "#F1ECFF", color: on ? "#FFFFFF" : "#5223E0", fontSize: "15px", fontWeight: 600, cursor: "pointer" }}>{d.label}</button>;
+          })}
+        </div>
+        <label style={{ height: "48px", minHeight: "48px", boxSizing: "border-box", border: "1.5px solid #DDE1E8", borderRadius: "12px", padding: "0 12px", background: "#FFFFFF", display: "flex", alignItems: "center", gap: "10px" }}>
+          {ic("search", 18, "#9BA3B2")}
+          <input onFocus={(e) => this.revealField(e.currentTarget)} value={s.q} onChange={(e) => this.setReq({ q: String(e.target.value).slice(0, 60) })} placeholder={"Search " + what} aria-label={"Search " + what} style={{ flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent", fontSize: "17px", color: "#1A1E28" }} />
+        </label>
+        {!!onList.length && sec("On this requirement · " + onList.length)}
+        {onList.map(row)}
+        {!!recent.length && sec("Asked for recently")}
+        {recent.map(row)}
+        {!!rest.length && sec("All " + what)}
+        {rest.map(row)}
+        {!items.length && <div style={{ ...cardS, padding: "20px", fontSize: "15px", lineHeight: "21px", color: "#6B7385", textAlign: "center" }}>{q ? "Nothing matches “" + s.q + "”." : "No " + what + " for " + (dept?.label ?? "this department") + ". The office adds them in ERP → Masters → Raw materials."}</div>}
+      </>,
+      <button onClick={() => n && this.setReq({ view: "send", err: null })} style={btn(n ? "p" : "off", 58)}>{n ? "Next · " + n + " item" + (n > 1 ? "s" : "") : "Next · add an item first"}</button>,
+      asking ? this.renderReqAsk(asking, kit.godown) : null,
+    );
+  }
+
   renderQc(): ReactNode {
     const st = this.state, T = this.T(), s = st.qc;
     const fact = (l: string, v: string, tone?: string) => (
@@ -910,7 +1523,7 @@ export class FactoryApp extends Component<Props, State> {
   /* ================================================================ stock check */
 
   openStock() {
-    const blank: StockEntry = { loading: true, err: null, godown: "", office: [], items: [], stage: "rm", search: "", pick: null, qty: null, bin: "", key: "", saving: false, saved: null, reason: "", reasonSaving: false, reasonSaved: false };
+    const blank: StockEntry = { loading: true, err: null, godown: "", office: [], items: [], stages: ["rm", "sfg", "fg", "pack"], stage: "rm", search: "", pick: null, qty: null, bin: "", key: "", saving: false, saved: null, reason: "", reasonSaving: false, reasonSaved: false };
     this.setState({ sheet: null, route: "stock", stock: blank }, () => void this.loadStock());
   }
 
@@ -924,7 +1537,11 @@ export class FactoryApp extends Component<Props, State> {
     this.setStock({ loading: true, err: null });
     try {
       const r = await call("stockKit");
-      if (r.ok) this.setStock({ loading: false, godown: r.godown, office: r.office, items: r.items });
+      if (r.ok) {
+        const stages = r.stages ?? (["rm", "sfg", "fg", "pack"] as CheckStage[]);
+        const cur = this.state.stock?.stage ?? "rm";
+        this.setStock({ loading: false, godown: r.godown, office: r.office, items: r.items, stages, stage: stages.includes(cur) ? cur : (stages[0] ?? cur) });
+      }
       else this.setStock({ loading: false, err: { title: r.title, text: r.text, fix: r.fix } });
     } catch (e) {
       this.setStock({ loading: false, err: { title: "No network", text: "The stock list could not be loaded.", fix: "Check the Wi-Fi and tap Try again. A stock check needs the network — your count is compared with the book the moment it arrives." } });
@@ -1145,16 +1762,16 @@ export class FactoryApp extends Component<Props, State> {
             ))}
           </>
         )}
-        <span style={{ fontSize: "18px", fontWeight: 700 }}>Check any stock</span>
+        <span style={{ fontSize: "18px", fontWeight: 700 }}>Check your stock</span>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
-          {(["rm", "sfg", "fg", "pack"] as CheckStage[]).map((k) => (
+          {s.stages.length > 1 && s.stages.map((k) => (
             <button key={k} onClick={() => this.setStock({ stage: k })} style={{ padding: "10px 14px", borderRadius: "18px", border: "none", background: s.stage === k ? "#6835FB" : "#F1ECFF", color: s.stage === k ? "#FFFFFF" : "#5223E0", fontSize: "15px", fontWeight: 600, cursor: "pointer" }}>{STAGE_WORD[k]}</button>
           ))}
         </div>
         <input value={s.search} onChange={(e) => this.setStock({ search: String(e.target.value).slice(0, 60) })} placeholder="Search by name" aria-label="Search" style={inputStyle} />
         {hereN > 0 && <span style={{ fontSize: "14px", color: "#6B7385" }}>{doneN + " of " + hereN + " on the book here checked today"}</span>}
         {s.loading && !s.items.length && <div style={{ ...card, padding: "28px 20px", textAlign: "center", fontSize: "16px", color: "#6B7385" }}>Loading the stock…</div>}
-        {!s.loading && !shown.length && <div style={{ ...card, padding: "28px 20px", textAlign: "center", fontSize: "16px", color: "#6B7385" }}>{q ? "Nothing by that name." : "Nothing of this kind yet."}</div>}
+        {!s.loading && !shown.length && <div style={{ ...card, padding: "28px 20px", textAlign: "center", fontSize: "16px", color: "#6B7385" }}>{q ? "Nothing by that name." : s.stages.length ? "Nothing of this kind yet." : "Your department has no stock to check here."}</div>}
         {shown.slice(0, 200).map((i) => {
           const c = i.checkedToday;
           return (
@@ -1703,7 +2320,7 @@ export class FactoryApp extends Component<Props, State> {
           </div>
 
           {signing && this.renderSignin()}
-          {shell && this.renderBar(head)}
+          {shell && !this.reqFullScreen() && this.renderBar(head)}
           {shell && !head && R === "home" && this.renderHome()}
           {isScan && this.renderScan()}
           {isFlow && this.renderFlow()}
@@ -1715,11 +2332,12 @@ export class FactoryApp extends Component<Props, State> {
           {shell && R === "drum" && this.renderDrum()}
           {shell && R === "stock" && this.renderStock()}
           {shell && R === "qc" && this.renderQc()}
+          {shell && R === "req" && this.renderReq()}
           {shell && head && R === "today" && this.renderToday()}
           {shell && head && R === "review" && this.renderReview()}
           {shell && head && R === "teams" && this.renderTeams()}
           {shell && head && R === "machines" && this.renderMachines()}
-          {shell && this.renderNav(head)}
+          {shell && !this.reqFullScreen() && this.renderNav(head)}
 
           {st.sheet && me && this.renderSheet()}
           {st.toast && (
@@ -1881,7 +2499,7 @@ export class FactoryApp extends Component<Props, State> {
     const navH: [string, string, string][] = [["today", "list", T.today], ["review", "alert", T.review], ["scan", "qr", T.scan], ["teams", "people", T.teams], ["more", "chart", T.more]];
     const pendN = st.queue.filter((q) => q.status === "pending").length;
     /* A page reached from More or Settings keeps its tab lit. */
-    const tabOf: Record<string, string> = { help: "settings", stock: "more", qc: "more", drum: "more", machines: head ? "more" : "machines", sync: head ? "more" : "sync" };
+    const tabOf: Record<string, string> = { help: "settings", stock: "more", qc: "more", req: "more", drum: "more", machines: head ? "more" : "machines", sync: head ? "more" : "sync" };
     return (
       <div style={{ flex: "none", height: "78px", background: "#FFFFFF", borderTop: "1px solid #EDEFF3", display: "flex", alignItems: "center", justifyContent: "space-around", padding: "0 6px 8px 6px" }}>
         {(head ? navH : navW).map(([k, icn, l]) => {
@@ -2837,10 +3455,13 @@ export class FactoryApp extends Component<Props, State> {
     const tools: ReactNode[] = [];
     if (me.counts) tools.push(this.menuRow("Stock check", "Count any stock and check it against the book", "chart", () => this.openStock()));
     if (me.qc) tools.push(this.menuRow("Quality check", "Test base liquid lots and approve or reject them", "flask", () => this.openQc()));
+    const buy = me.reqs?.length ? this.menuRow("Purchase requirement", "Ask the office to buy what " + (me.reqs.length > 1 ? "your departments need" : REQ_WORD[me.reqs[0]] + " needs") + ", and track it", "cart", () => this.openReq()) : null;
     if (me.drums) tools.push(this.menuRow("Empty drum entry", "Scan and weigh a drum once it is empty", "box", () => this.openDrum()));
     return (
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px 16px 24px 16px", display: "flex", flexDirection: "column", gap: "10px" }}>
         {this.pageHead(T.more, "Work besides your tasks")}
+        {buy && this.sectionLabel("Purchase")}
+        {buy}
         {this.sectionLabel("Work")}
         {tools.length ? tools : <div style={{ ...card, padding: "20px", fontSize: "15px", lineHeight: "21px", color: "#6B7385", textAlign: "center" }}>Nothing else to do here. Your tasks are on Home.</div>}
         {me.head && this.menuRow(T.machines, "Machines and stoppages on the floor", "wrench", () => this.setState({ route: "machines" }))}
@@ -3181,10 +3802,11 @@ export class FactoryApp extends Component<Props, State> {
       const n = v === "" ? null : Number(v);
       const err = n != null && sh.max != null && n > sh.max ? sh.maxL || "Maximum " + nf(sh.max) : "";
       title = sh.l;
+      sub = sh.sub ?? "";
       body = (
         <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
           <label style={{ display: "flex", alignItems: "center", gap: "10px", height: "80px", padding: "0 18px", borderRadius: "18px", border: "2px solid " + (err ? "#B3261E" : "#6835FB"), background: "#F7F4FF", cursor: "text" }}>
-            <input value={v} onChange={(e) => this.setState({ sheet: { ...sh, v: sh.decimals ? String(e.target.value).replace(/[^\d.]/g, "").replace(/(\..*)\./g, "$1").slice(0, 7) : String(e.target.value).replace(/[^\d]/g, "").slice(0, 6) } })} inputMode={sh.decimals ? "decimal" : "numeric"} autoFocus placeholder="0" aria-label={sh.l} style={{ flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent", fontSize: "40px", fontWeight: 700, color: "#1A1E28", textAlign: "right" }} />
+            <input key={sh.l} value={v} onChange={(e) => this.setState({ sheet: { ...sh, v: sh.decimals ? String(e.target.value).replace(/[^\d.]/g, "").replace(/(\..*)\./g, "$1").slice(0, 7) : String(e.target.value).replace(/[^\d]/g, "").slice(0, 6) } })} inputMode={sh.decimals ? "decimal" : "numeric"} autoFocus placeholder="0" aria-label={sh.l} style={{ flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent", fontSize: "40px", fontWeight: 700, color: "#1A1E28", textAlign: "right" }} />
             <span style={{ fontSize: "18px", color: "#6B7385", flex: "none" }}>{sh.unit}</span>
           </label>
           {err && <div style={{ fontSize: "15px", lineHeight: "21px", fontWeight: 700, color: "#B3261E", textAlign: "center" }}>{err}</div>}

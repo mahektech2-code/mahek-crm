@@ -15003,6 +15003,20 @@ export const factorySubmissions = pgTable(
 );
 
 /**
+ * A purchase requirement sent from the factory phone, by the key the phone
+ * minted when it was started. The ERP has no idempotency of its own: a resend
+ * after a dropped answer is answered from `result` rather than raising the
+ * same requirement twice. `processing` holds the key while the first send runs.
+ */
+export const factoryRequirementSends = pgTable("factory_requirement_sends", {
+  key: text("key").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id),
+  status: text("status").notNull().default("processing"),
+  result: jsonb("result"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
  * What the app could not accept on its own: output outside the limit, a lot
  * picked by photo, a correction asked for, a job saved with nobody helping, a
  * problem reported before starting. Closed with a decision AND a reason, and
