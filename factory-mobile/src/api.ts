@@ -14,7 +14,7 @@
  * ------------------------------------------------------------------------- */
 import Constants from "expo-constants";
 import { Platform } from "react-native";
-import type { QcInput, QcKit, QcSave } from "@/lib/factory/types";
+import type { QcInput, QcKit, QcSave, ReqInput, ReqKit, ReqSave } from "@/lib/factory/types";
 import type { BoxInfo, BoxScan, CountInput, DrumLookup, StockCheckInput, StockKit, StockSave, DrumSave, FactoryData, LoadBoard, LrBatchSave, LrFields, LrKit, LrReading, LrSave, Proc, Submission, SubmitResult, Team } from "@/lib/factory/types";
 import type { Me, Who } from "./types";
 import { kvGet, kvSet } from "./model";
@@ -60,6 +60,9 @@ type Ops = {
   qcKit: () => QcKit;
   qcDecide: (input: QcInput) => QcSave;
   startBatch: (a: { item: string; qty: number }) => ({ ok: true; id: string; data: FactoryData; msg: string }) | Fail;
+  reqKit: () => ReqKit;
+  reqRaise: (input: ReqInput) => ReqSave;
+  reqCancel: (id: string, reason: string) => { ok: true; msg: string } | { ok: false; error: string };
 };
 
 export class NotReceived extends Error {}

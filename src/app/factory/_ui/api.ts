@@ -34,6 +34,9 @@ type Ops = {
   qcKit: typeof Actions.factoryQcKit;
   qcDecide: typeof Actions.factoryQcDecide;
   startBatch: typeof Actions.factoryStartBatch;
+  reqKit: typeof Actions.factoryReqKit;
+  reqRaise: typeof Actions.factoryReqRaise;
+  reqCancel: typeof Actions.factoryReqCancel;
 };
 
 export class NotReceived extends Error {}

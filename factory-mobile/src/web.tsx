@@ -410,9 +410,11 @@ type InputProps = {
   style?: CSSProperties;
   "aria-label"?: string;
   autoComplete?: string;
+  /** Several lines — the web's textarea. */
+  multiline?: boolean;
 };
 
-export function Input({ value, onChange, onKeyDown, inputMode, type, maxLength, autoFocus, placeholder, style, "aria-label": label, autoComplete }: InputProps) {
+export function Input({ value, onChange, onKeyDown, inputMode, type, maxLength, autoFocus, placeholder, style, "aria-label": label, autoComplete, multiline }: InputProps) {
   const inh = useContext(TextCtx);
   const r = parse(style as Css | undefined, inh);
   shrinkDefault(r.view, useContext(DirCtx));
@@ -432,6 +434,8 @@ export function Input({ value, onChange, onKeyDown, inputMode, type, maxLength, 
       accessibilityLabel={label}
       textContentType={autoComplete === "one-time-code" ? "oneTimeCode" : undefined}
       autoComplete={autoComplete === "one-time-code" ? "sms-otp" : autoComplete === "tel" ? "tel" : "off"}
+      multiline={multiline}
+      textAlignVertical={multiline ? "top" : undefined}
       style={s}
     />
   );

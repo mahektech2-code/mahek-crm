@@ -428,3 +428,96 @@ export type QcInput = { lot: string; verdict: "Approved" | "Rejected"; results: 
 export type QcSave =
   | { ok: true; msg: string; lot: QcLot }
   | { ok: false; title: string; text: string; fix: string; test?: string };
+
+/* ---------------------------------------------------------------- purchase requirements
+ *
+ * The in-charge of Mixing, Refilling or Packing asks the office to buy what
+ * the department needs, from the phone. Each item is COUNTED before it is
+ * asked for: the phone never shows the book, and the figure goes to the ERP
+ * as the requirement's blind stock check (`lib/factory/purchase.ts`).
+ */
+
+/** The three floor departments that buy anything. */
+export const REQ_DEPTS = ["mixing", "filling", "packing"] as const;
+export type ReqDept = (typeof REQ_DEPTS)[number];
+
+export type ReqItem = {
+  id: string;
+  name: string;
+  /** The item master's category: Chemical, Can, Drum, Box, Stationary. */
+  cat: string;
+  /** What a count is made in — litres or pieces. */
+  countUnit: "L" | "pcs";
+  /** What it is bought in. */
+  buyUnit: string;
+  /** How it is bought, in words: "Quotations needed first", "Direct from Shree Chem". */
+  how: string;
+  /** Asked for by this department in the last 90 days — drawn first. */
+  recent: boolean;
+  /** An open requirement already asking for it here, e.g. "REQ-141". */
+  openReq: string | null;
+};
+
+export type ReqLine = {
+  id: string;
+  item: string;
+  qty: number;
+  unit: string;
+  /** The ERP's stage, in its words: "Count stock", "Collect quotations", "PO approved", "Received". */
+  stage: string;
+  /** Index into `steps`; −1 cancelled; steps.length done. */
+  step: number;
+  /** What happens next, in a sentence. */
+  next: string;
+  /** What the requester counted, and what came of it — never the book. */
+  counted: number | null;
+  countUnit: "L" | "pcs";
+  countState: "matched" | "recount" | "waiting" | null;
+  /** May the in-charge cancel it here; else why not. */
+  cancel: { ok: true } | { ok: false; why: string } | null;
+};
+
+export type ReqCard = {
+  no: string;
+  dept: ReqDept;
+  priority: "Urgent" | "Medium" | "For Stock";
+  date: string;
+  requiredBy: string | null;
+  godown: string;
+  by: string | null;
+  remarks: string | null;
+  state: "open" | "received" | "cancelled";
+  lines: ReqLine[];
+};
+
+export type ReqKit =
+  | {
+      ok: true;
+      godown: string;
+      today: string;
+      /** The steps every item goes through, in order. */
+      steps: string[];
+      depts: { key: ReqDept; label: string; items: ReqItem[] }[];
+      reqs: ReqCard[];
+    }
+  | { ok: false; title: string; text: string; fix: string };
+
+export type ReqInput = {
+  /** Minted on the phone when the requirement is started; a resend answers from the first save. */
+  key: string;
+  dept: ReqDept;
+  requiredBy: string;
+  priority: "Urgent" | "Medium" | "For Stock";
+  remarks?: string | null;
+  lines: { itemId: string; counted: number; need: number }[];
+};
+
+export type ReqSave =
+  | {
+      ok: true;
+      no: string;
+      lines: { item: string; qty: number; unit: string; counted: number; countUnit: "L" | "pcs"; verdict: "matched" | "flagged" | "skipped" }[];
+      next: string[];
+      replay?: boolean;
+    }
+  | { ok: false; title: string; text: string; fix: string; line?: number };

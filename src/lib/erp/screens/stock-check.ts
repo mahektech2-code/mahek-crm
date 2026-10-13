@@ -353,6 +353,42 @@ const countTasks: ScreenModule = {
  * check it belongs to: the book confirmed, the difference confirmed, or two
  * counts that agree with nothing and a third needed.
  */
+/**
+ * Writes a counted figure onto an open count, judged against the book read
+ * NOW, inside the caller's transaction. The one write both a count submitted
+ * on Stock accuracy and the in-charge's count raised with a requirement on the
+ * factory floor make, so the two cannot be judged two ways.
+ */
+export async function writeCounted(
+  tx: Tx,
+  userId: string,
+  c: { id: string; raw_material_id: string; godown_id: string },
+  qty: number,
+  v: Record<string, string | undefined> = {},
+): Promise<{ facts: ShelfFacts; j: ReturnType<typeof judgeOnShelf>; status: CountStatus }> {
+  const facts = await shelfFacts(c.raw_material_id, c.godown_id, tx);
+  const j = judgeOnShelf(facts, qty);
+  const status: CountStatus = j.verdict;
+  await tx
+    .update(erpStockCounts)
+    .set({
+      countedQty: qty,
+      countedAt: new Date(),
+      countedById: userId,
+      bin: text(v.bin),
+      lotNote: text(v.lot),
+      countNote: text(v.note),
+      bookQty: facts.book,
+      pendingIn: facts.pendingIn,
+      pendingOut: facts.pendingOut,
+      difference: j.difference,
+      tolerance: j.tolerance,
+      status,
+    })
+    .where(eq(erpStockCounts.id, c.id));
+  return { facts, j, status };
+}
+
 export async function submitCount(ctx: ErpContext, id: string, v: Record<string, string>): Promise<Result<unknown>> {
   const qty = num(v.qty);
   if (qty == null || qty < 0) return fieldErr("qty", "Enter what you counted — zero if the shelf is empty");
@@ -368,26 +404,7 @@ export async function submitCount(ctx: ErpContext, id: string, v: Record<string,
       [parent] = (await tx.execute(sql`select id, counted_by_id, difference::float8 as difference, count_no from erp_stock_counts where id = ${c.recount_of_id} for update`)) as unknown as Parent[];
       if (parent?.counted_by_id === ctx.user.id) return refuse(err("A recount is done by somebody other than whoever counted first.", "not_permitted"));
     }
-    const facts = await shelfFacts(c.raw_material_id, c.godown_id, tx);
-    const j = judgeOnShelf(facts, qty);
-    const status: CountStatus = j.verdict;
-    await tx
-      .update(erpStockCounts)
-      .set({
-        countedQty: qty,
-        countedAt: new Date(),
-        countedById: ctx.user.id,
-        bin: text(v.bin),
-        lotNote: text(v.lot),
-        countNote: text(v.note),
-        bookQty: facts.book,
-        pendingIn: facts.pendingIn,
-        pendingOut: facts.pendingOut,
-        difference: j.difference,
-        tolerance: j.tolerance,
-        status,
-      })
-      .where(eq(erpStockCounts.id, id));
+    const { facts, j } = await writeCounted(tx, ctx.user.id, c, qty, v);
     const said = `Counted ${nf(qty)} ${facts.unit} · book ${nf(j.reconciled)}${facts.pendingIn ? ` (incl. ${nf(facts.pendingIn)} not yet posted)` : ""}`;
     if (parent) {
       /* The first count, carried to today's book: the book may have moved between the two. */
@@ -407,7 +424,7 @@ export async function submitCount(ctx: ErpContext, id: string, v: Record<string,
         message = `${said}. The recount agrees with neither the book nor the first count — ${countLabel(parent.count_no)} needs another recount.`;
       }
     } else {
-      message = status === "matched" ? `${said}. Matches the book.` : `${said}. Red flag: ${signed(j.difference)} ${facts.unit}, beyond the ${nf(j.tolerance)} tolerance — a recount by somebody else comes next.`;
+      message = j.verdict === "matched" ? `${said}. Matches the book.` : `${said}. Red flag: ${signed(j.difference)} ${facts.unit}, beyond the ${nf(j.tolerance)} tolerance — a recount by somebody else comes next.`;
     }
     return okVoid(message);
   });
