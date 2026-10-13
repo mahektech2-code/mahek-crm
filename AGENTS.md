@@ -8862,8 +8862,9 @@ phone. `lib/factory/qc.ts` reads the answers with the same `readQcTests`
 run and needs a reason), writes the same `erp_sfg_qc` row and the same
 `erp.sfg.qcApprove`/`qcReject` audit lines, so the fill gate cannot tell the
 doors apart. `FactoryCtx.qc` decides who sees it: somebody placed in the
-Quality department, or a holder of the ERP's `approveSfgQc` power (an ERP
-administrator included). It needs the network, like Stock check: the list is
+Mixing & Blending department, and nobody else — not Quality, not the
+Production Head, not an ERP power holder (Mahek's rule, Oct 2026; the ERP's
+`approveSfgQc` power still decides on ERP → SFG batches). It needs the network, like Stock check: the list is
 read again at the save.
 
 **THE SCAN PAGE HAS TWO MODES, SCAN AND TYPE.** "Type the code" swaps the
