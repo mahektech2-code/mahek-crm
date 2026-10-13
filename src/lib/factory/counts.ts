@@ -7,10 +7,14 @@ import { COUNT_KIND_LABEL, type CountKind } from "@/lib/erp/engines/stock-check"
 import { submitCount } from "@/lib/erp/screens/stock-check";
 import { countLabel } from "@/lib/erp/stock-check";
 import { erpCtxFor, factoryAudit, type FactoryCtx } from "./server";
+import { reachStages, reaches, stockReach, type StockReach } from "./stock-reach";
 import type { CheckUnit, CountInput, CountTask, StockCheckInput, StockKit, StockSave } from "./types";
 
 /* ---------------------------------------------------------------------------
- * Stock checks and office counts from the floor. Every department may check.
+ * Stock checks and office counts from the floor. Each department checks its
+ * own stock only (`stock-reach.ts`): mixing the chemicals and SFG, filling the
+ * empty cans and drums, FG and packed boxes, packing the empty boxes and
+ * stationery. The list, the office's counts and the save all ask it.
  *
  * A CHECK is at the godown the factory app has the person standing in, of any
  * item they choose (`lib/erp/floor-checks.ts`). An OFFICE COUNT is one the
@@ -22,6 +26,12 @@ import type { CheckUnit, CountInput, CountTask, StockCheckInput, StockKit, Stock
  * Neither is ever sent the book before the figure.
  * ------------------------------------------------------------------------- */
 
+/** What this person may check: their departments, or everything for the whole floor. */
+export function reachOf(fc: FactoryCtx): StockReach {
+  const whole = fc.level === "admin" || (fc.head && !fc.scopes);
+  return stockReach(whole, fc.head && fc.scopes ? fc.scopes : fc.areas);
+}
+
 /** The godowns whose office counts this person is offered; null is every godown. */
 async function countGodowns(fc: FactoryCtx): Promise<string[] | null> {
   if (fc.level === "admin" || (fc.head && !fc.scopes)) return null;
@@ -31,12 +41,12 @@ async function countGodowns(fc: FactoryCtx): Promise<string[] | null> {
 
 const godownClause = (ids: string[] | null) => (ids == null ? sql`true` : sql`c.godown_id in (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`);
 
-type Row = { id: string; no: number; kind: CountKind; item: string; godown: string; unit: CheckUnit; due: string; reason: string; parent: string | null; parentCounterId: string | null; req: string | null };
+type Row = { id: string; no: number; kind: CountKind; item: string; materialType: string | null; assignedTo: string | null; godown: string; unit: CheckUnit; due: string; reason: string; parent: string | null; parentCounterId: string | null; req: string | null };
 
 async function officeCounts(fc: FactoryCtx): Promise<CountTask[]> {
   const ids = await countGodowns(fc);
   const rows = (await db.execute(sql`
-    select c.id, c.count_no as no, c.kind, m.name as item, g.name as godown, c.unit, c.due_date::text as due, c.reason,
+    select c.id, c.count_no as no, c.kind, m.name as item, m.material_type as "materialType", c.assigned_to_id as "assignedTo", g.name as godown, c.unit, c.due_date::text as due, c.reason,
            c.recount_of_id as parent, p.counted_by_id as "parentCounterId", c.requisition_id as req
       from erp_stock_counts c
       join erp_raw_materials m on m.id = c.raw_material_id
@@ -47,7 +57,8 @@ async function officeCounts(fc: FactoryCtx): Promise<CountTask[]> {
        and ${godownClause(ids)}
      order by c.due_date, c.count_no`)) as unknown as Row[];
   const day = calendarDate(new Date());
-  return rows.map((c) => ({
+  const reach = reachOf(fc);
+  return rows.filter((c) => c.assignedTo === fc.user.id || reaches(reach, "rm", c.materialType)).map((c) => ({
     id: c.id,
     no: countLabel(Number(c.no)),
     item: c.item,
@@ -65,19 +76,31 @@ async function officeCounts(fc: FactoryCtx): Promise<CountTask[]> {
 
 /** What the Stock check screen draws: the office's counts, and every item at this godown. */
 export async function stockKit(fc: FactoryCtx): Promise<StockKit> {
-  const [office, items] = await Promise.all([officeCounts(fc), checkableItems(fc.godown.id)]);
-  return { ok: true, godown: fc.godown.name, office, items };
+  const reach = reachOf(fc);
+  const [office, items] = await Promise.all([officeCounts(fc), checkableItems(fc.godown.id, (stage, type) => reaches(reach, stage, type))]);
+  return { ok: true, godown: fc.godown.name, office, items, stages: reachStages(reach) };
 }
 
 const clip = (v: unknown, n: number) => (typeof v === "string" ? v.trim().slice(0, n) : "");
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 const STAGES: CheckStage[] = ["rm", "sfg", "fg", "pack"];
 
+const NOT_YOUR_STOCK = { ok: false, kind: "item", title: "Not your department's stock", text: "Your department checks its own stock only.", fix: "Pick an item from your list, or ask your supervisor." } as const;
+
+async function mayCheck(fc: FactoryCtx, stage: CheckStage, itemId: string): Promise<boolean> {
+  const reach = reachOf(fc);
+  if (stage !== "rm") return reaches(reach, stage);
+  if (reach.all) return true;
+  const [m] = (await db.execute(sql`select material_type as t from erp_raw_materials where id = ${itemId}`)) as unknown as { t: string | null }[];
+  return reaches(reach, "rm", m?.t ?? null);
+}
+
 /** A check the person chose. The book is read only now, and the answer says whether it matched. */
 export async function saveStockCheck(fc: FactoryCtx, input: StockCheckInput): Promise<StockSave> {
   const qty = num(input?.qty);
   if (qty == null || qty < 0) return { ok: false, kind: "qty", title: "Enter what you counted", text: "The count is a number — zero if there is none.", fix: "Type the number, then save." };
   if (!STAGES.includes(input?.stage)) return { ok: false, kind: "item", title: "Pick the item again", text: "The phone did not say what kind of stock this is.", fix: "Go back and pick the item." };
+  if (!(await mayCheck(fc, input.stage, clip(input.itemId, 80)))) return NOT_YOUR_STOCK;
   const r = await recordFloorCheck(fc.user.id, { stage: input.stage, itemId: clip(input.itemId, 80), godownId: fc.godown.id, qty, bin: clip(input.bin, 120), key: clip(input.key, 80) || null, source: "factory" });
   if (!r.ok) return { ok: false, kind: r.field === "qty" ? "qty" : "item", title: "Not saved", text: r.error, fix: "Go back and pick the item again." };
   const c = r.check;
@@ -105,12 +128,12 @@ export async function saveOfficeCount(fc: FactoryCtx, input: CountInput): Promis
   if (!id) return { ok: false, kind: "notOpen", title: "Pick the count again", text: "The phone did not say which count this is.", fix: "Go back to the list and open the count again." };
   if (qty == null || qty < 0) return { ok: false, kind: "qty", title: "Enter what you counted", text: "The count is a number — zero if the shelf is empty.", fix: "Type the number, then save." };
 
-  type C = { id: string; no: number; status: string; godownId: string; assignedTo: string | null; countedBy: string | null; counted: number | null; book: number | null; difference: number | null; unit: CheckUnit; item: string };
+  type C = { id: string; no: number; status: string; godownId: string; assignedTo: string | null; countedBy: string | null; counted: number | null; book: number | null; difference: number | null; unit: CheckUnit; item: string; materialType: string | null };
   const read = async () =>
     ((await db.execute(sql`
       select c.id, c.count_no as no, c.status, c.godown_id as "godownId", c.assigned_to_id as "assignedTo", c.counted_by_id as "countedBy",
              c.counted_qty::float8 as counted, (c.book_qty + coalesce(c.pending_in, 0) - coalesce(c.pending_out, 0))::float8 as book,
-             c.difference::float8 as difference, c.unit, m.name as item
+             c.difference::float8 as difference, c.unit, m.name as item, m.material_type as "materialType"
         from erp_stock_counts c join erp_raw_materials m on m.id = c.raw_material_id
        where c.id = ${id}`)) as unknown as C[])[0];
   const c = await read();
@@ -128,6 +151,9 @@ export async function saveOfficeCount(fc: FactoryCtx, input: CountInput): Promis
   const ids = await countGodowns(fc);
   if ((ids && !ids.includes(c.godownId)) || (c.assignedTo && c.assignedTo !== fc.user.id))
     return { ok: false, kind: "notAllowed", title: "Not your godown", text: "This count is for somebody at another godown.", fix: "Ask the Production Head." };
+  /* A count the office named this person for is theirs; any other is their department's stock or not theirs. */
+  if (c.assignedTo !== fc.user.id && !reaches(reachOf(fc), "rm", c.materialType))
+    return { ok: false, kind: "notAllowed", title: "Not your department's stock", text: "Your department counts its own stock only.", fix: "Leave it for the department that keeps it." };
 
   const r = await submitCount(erpCtxFor(fc), id, { qty: String(qty), bin: clip(input.bin, 120), lot: clip(input.lot, 200), note: "" });
   if (!r.ok) {

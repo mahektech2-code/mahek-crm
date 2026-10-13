@@ -1518,7 +1518,7 @@ export class FactoryApp extends Component<Props, State> {
   /* ================================================================ stock check */
 
   openStock() {
-    const blank: StockEntry = { loading: true, err: null, godown: "", office: [], items: [], stage: "rm", search: "", pick: null, qty: null, bin: "", key: "", saving: false, saved: null, reason: "", reasonSaving: false, reasonSaved: false };
+    const blank: StockEntry = { loading: true, err: null, godown: "", office: [], items: [], stages: ["rm", "sfg", "fg", "pack"], stage: "rm", search: "", pick: null, qty: null, bin: "", key: "", saving: false, saved: null, reason: "", reasonSaving: false, reasonSaved: false };
     this.setState({ sheet: null, route: "stock", stock: blank }, () => void this.loadStock());
   }
 
@@ -1532,7 +1532,11 @@ export class FactoryApp extends Component<Props, State> {
     this.setStock({ loading: true, err: null });
     try {
       const r = await call("stockKit");
-      if (r.ok) this.setStock({ loading: false, godown: r.godown, office: r.office, items: r.items });
+      if (r.ok) {
+        const stages = r.stages ?? (["rm", "sfg", "fg", "pack"] as CheckStage[]);
+        const cur = this.state.stock?.stage ?? "rm";
+        this.setStock({ loading: false, godown: r.godown, office: r.office, items: r.items, stages, stage: stages.includes(cur) ? cur : (stages[0] ?? cur) });
+      }
       else this.setStock({ loading: false, err: { title: r.title, text: r.text, fix: r.fix } });
     } catch (e) {
       this.setStock({ loading: false, err: { title: "No network", text: "The stock list could not be loaded.", fix: "Check the Wi-Fi and tap Try again. A stock check needs the network — your count is compared with the book the moment it arrives." } });
@@ -1753,16 +1757,16 @@ export class FactoryApp extends Component<Props, State> {
             ))}
           </>
         )}
-        <Span style={{ fontSize: "18px", fontWeight: 700 }}>Check any stock</Span>
+        <Span style={{ fontSize: "18px", fontWeight: 700 }}>Check your stock</Span>
         <Div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
-          {(["rm", "sfg", "fg", "pack"] as CheckStage[]).map((k) => (
+          {s.stages.length > 1 && s.stages.map((k) => (
             <Btn key={k} onClick={() => this.setStock({ stage: k })} style={{ padding: "10px 14px", borderRadius: "18px", border: "none", background: s.stage === k ? "#6835FB" : "#F1ECFF", color: s.stage === k ? "#FFFFFF" : "#5223E0", fontSize: "15px", fontWeight: 600, cursor: "pointer" }}>{STAGE_WORD[k]}</Btn>
           ))}
         </Div>
         <Input value={s.search} onChange={(e) => this.setStock({ search: String(e.target.value).slice(0, 60) })} placeholder="Search by name" aria-label="Search" style={inputStyle} />
         {hereN > 0 && <Span style={{ fontSize: "14px", color: "#6B7385" }}>{doneN + " of " + hereN + " on the book here checked today"}</Span>}
         {s.loading && !s.items.length && <Div style={{ ...card, padding: "28px 20px", textAlign: "center", fontSize: "16px", color: "#6B7385" }}>Loading the stock…</Div>}
-        {!s.loading && !shown.length && <Div style={{ ...card, padding: "28px 20px", textAlign: "center", fontSize: "16px", color: "#6B7385" }}>{q ? "Nothing by that name." : "Nothing of this kind yet."}</Div>}
+        {!s.loading && !shown.length && <Div style={{ ...card, padding: "28px 20px", textAlign: "center", fontSize: "16px", color: "#6B7385" }}>{q ? "Nothing by that name." : s.stages.length ? "Nothing of this kind yet." : "Your department has no stock to check here."}</Div>}
         {shown.slice(0, 200).map((i) => {
           const c = i.checkedToday;
           return (
