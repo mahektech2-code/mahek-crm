@@ -35,6 +35,7 @@ type Ops = {
   qcDecide: typeof Actions.factoryQcDecide;
   startBatch: typeof Actions.factoryStartBatch;
   startFill: typeof Actions.factoryStartFill;
+  startPack: typeof Actions.factoryStartPack;
   reqKit: typeof Actions.factoryReqKit;
   reqRaise: typeof Actions.factoryReqRaise;
   reqCancel: typeof Actions.factoryReqCancel;

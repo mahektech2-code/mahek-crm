@@ -53,7 +53,8 @@ export type FgSku = {
   pm: string;
   col: string;
 };
-export type BoxSku = { sku: string; cpb: number; batch: number; type: string };
+/** `empty`: empty boxes one box takes (the ERP's empty_boxes_required); absent from an older server, read as 1. */
+export type BoxSku = { sku: string; cpb: number; batch: number; type: string; empty?: number };
 export type OrderLine = { sku: string; label: string; qty: number; unit: string; alloc: [string, number][] };
 export type Order = { cust: string; city: string; vehicle: string; trans: string; blocked?: string; lines: OrderLine[] };
 
@@ -68,7 +69,7 @@ export type Lot = {
   status: LotStatus;
   damaged?: boolean;
   order?: string;
-  /** SFG only: the day its newest batch entry was made, "YYYY-MM-DD". */
+  /** SFG and FG lots: the day its newest entry was made (mixed, or filled), "YYYY-MM-DD". */
   made?: string;
 };
 
@@ -120,6 +121,8 @@ export type FactoryData = {
   box: Record<string, BoxSku>;
   orders: Record<string, Order>;
   lots: Record<string, Lot>;
+  /** Empty boxes at this godown, by box SKU — null where the ERP does not count that box type. Absent from an older server. */
+  emptyBoxes?: Record<string, number | null>;
   tasks: Task[];
   review: ReviewItem[];
   audit: AuditRow[];
@@ -145,7 +148,7 @@ export type Draft = {
   sku?: string;
   sfg?: string | null;
   sfgManual?: boolean;
-  /** The SFG lot scanned on Home to start this filling — it is already its base liquid. Phone-only. */
+  /** The lot scanned on Home to start this job — the SFG tank of a filling, the first pallet of a packing. Phone-only. */
   fromLot?: string;
   pm?: string | null;
   pmManual?: boolean;

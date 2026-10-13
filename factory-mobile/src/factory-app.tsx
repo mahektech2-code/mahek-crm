@@ -34,6 +34,11 @@ import {
   shortDay,
   skuPackLine,
   emptyPackHere,
+  packFromLot,
+  packNeeds,
+  packStartQty,
+  emptyBoxShort,
+  PACK_FROM_LOT_MAX,
   stepCheck,
   taskCode,
   taskName,
@@ -54,7 +59,7 @@ import { avStyle, btn, card, initials, mono, msg, MsgBox, Pill, artWell, type Ms
 import { CameraScanner, shrinkPhoto } from "./camera";
 import { promptDue, snoozeUntil } from "./update";
 import { checkForUpdate, downloadAndInstall, openInBrowser } from "./updater";
-import { dropPhoto, forget, keepPhoto, kvGet, kvSet, keptPhoto, load, mintKey, readNet, save, watchNet, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet, mintDrumKey, type BoxOk, type LrEntry, type StockEntry, type QcEntry, mintCheckKey, type RecipeSheet, type FillSheet, type ReqEntry, mintReqKey } from "./model";
+import { dropPhoto, forget, keepPhoto, kvGet, kvSet, keptPhoto, load, mintKey, readNet, save, watchNet, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet, mintDrumKey, type BoxOk, type LrEntry, type StockEntry, type QcEntry, mintCheckKey, type RecipeSheet, type FillSheet, type PackSheet, type ReqEntry, mintReqKey } from "./model";
 
 /* ---------------------------------------------------------------------------
  * THE FACTORY APP — "Mahek Factory App" from the design, screen for screen.
@@ -3163,6 +3168,7 @@ export class FactoryApp extends Component<Props, State> {
         {this.deptChips()}
         {!open.length && <Div style={{ background: "#FFFFFF", border: "1px solid #DDE1E8", borderRadius: "16px", padding: "28px 20px", textAlign: "center", fontSize: "16px", color: "#6B7385" }}>You have no work right now. New work will show here.</Div>}
         {!open.length && !me.head && myDepts(me).includes("filling") && <MsgBox m={msg("Scan a base-liquid tank to start a filling from it.", "info")} />}
+        {!open.length && !me.head && myDepts(me).includes("packing") && <MsgBox m={msg("Scan a pallet of filled cans to start packing from it.", "info")} />}
         {open.map((t) => {
           const over = t.due < now && t.status === "ready";
           const blocked = t.status === "blocked";
@@ -3340,6 +3346,7 @@ export class FactoryApp extends Component<Props, State> {
     const st = this.state, T = this.T(), sc = st.scan!, P = sc.purpose;
     let artEl: ReactNode = null, name = "", code = r.code, facts: { l: string; v: string }[] = [], acceptL = T.yes;
     let fill: ReturnType<typeof fillFromLot> = null;
+    let pack: ReturnType<typeof packFromLot> = null;
     if (r.kind === "emp") {
       const who = st.pinFor;
       artEl = <Span style={avStyle(who ? who.key.length : 0, 80)}>{who?.ini}</Span>;
@@ -3363,7 +3370,13 @@ export class FactoryApp extends Component<Props, State> {
         facts.push({ l: "QC", v: x.status === "hold" ? "Pending" : x.status === "used" ? "Used up" : "Approved" }, { l: "Made", v: shortDay(x.made) });
         fill = fillFromLot(st.me!, this.db(), r.lot);
       }
+      if (P === "home" && x.type === "fg") {
+        facts.push({ l: "Filled", v: shortDay(x.made) }, { l: "Boxed as", v: skuPackLine(this.db(), x.item) || "—" });
+        pack = packFromLot(st.me!, this.db(), r.lot);
+      }
     }
+    /* What the card offers after a Home scan: a filling from an SFG tank, a packing from a pallet of filled cans. */
+    const go = fill ? { r: fill, l: "Fill from this lot →", open: () => this.openFill(r.code) } : pack ? { r: pack, l: "Pack from this lot →", open: () => this.openPack(r.code) } : null;
     return (
       <Div>
         <Div style={{ display: "flex", gap: "14px", alignItems: "center" }}>
@@ -3383,13 +3396,13 @@ export class FactoryApp extends Component<Props, State> {
           ))}
         </Div>
         {r.manual && <Div style={{ marginTop: "12px", padding: "10px 12px", borderRadius: "12px", background: "#FDF6E7", color: "#8A5C05", fontSize: "14px", lineHeight: "20px", fontWeight: 600 }}>{T.manualWarn}</Div>}
-        {fill && !fill.ok && fill.show && (
-          <Div style={{ marginTop: "12px", padding: "10px 12px", borderRadius: "12px", background: "#FDF6E7", color: "#8A5C05", fontSize: "14px", lineHeight: "20px" }}><Span style={{ fontWeight: 700 }}>{fill.title}.</Span> {fill.text}</Div>
+        {go && !go.r.ok && go.r.show && (
+          <Div style={{ marginTop: "12px", padding: "10px 12px", borderRadius: "12px", background: "#FDF6E7", color: "#8A5C05", fontSize: "14px", lineHeight: "20px" }}><Span style={{ fontWeight: 700 }}>{go.r.title}.</Span> {go.r.text}</Div>
         )}
-        {fill && (fill.ok || fill.show) ? (
+        {go && (go.r.ok || go.r.show) ? (
           <Div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
-            <Btn onClick={() => this.acceptScan()} style={{ ...btn(fill.ok ? "s" : "p", 58), flex: 1 }}>{T.ok}</Btn>
-            <Btn onClick={() => fill.ok && this.openFill(r.code)} style={{ ...btn(fill.ok ? "p" : "off", 58), flex: 2 }}>Fill from this lot →</Btn>
+            <Btn onClick={() => this.acceptScan()} style={{ ...btn(go.r.ok ? "s" : "p", 58), flex: 1 }}>{T.ok}</Btn>
+            <Btn onClick={() => go.r.ok && go.open()} style={{ ...btn(go.r.ok ? "p" : "off", 58), flex: 2 }}>{go.l}</Btn>
           </Div>
         ) : (
           <Div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
@@ -3528,7 +3541,7 @@ export class FactoryApp extends Component<Props, State> {
             )}
           </Div>
         )}
-        {t.proc === "filling" && d?.fromLot && <MsgBox m={msg("Started by you from " + d.fromLot + ".", "ok")} />}
+        {(t.proc === "filling" || t.proc === "packing") && d?.fromLot && <MsgBox m={msg("Started by you from " + d.fromLot + ".", "ok")} />}
         <Div style={{ fontSize: "19px", fontWeight: 700, textAlign: "center", marginTop: "4px" }}>{T.isRight}</Div>
       </Div>
     );
@@ -3681,8 +3694,15 @@ export class FactoryApp extends Component<Props, State> {
     }
     if (key === "fglot") {
       const b = db.box[d.box!], k = db.sku[b.sku];
-      sub = "Scan each pallet of filled " + k.size + " cans you pack from. You can add more than one.";
-      (d.fg ?? []).forEach((g, i) => lots.push({ art: art("can", k.col, k.tag, 52), name: "Pallet " + (i + 1), need: k.n + " " + k.size, lot: g.lot, manual: g.manual, scan: () => this.setD((z) => { z.fg!.splice(i, 1); }), done: true }));
+      const kept = !!d.fromLot && (d.fg ?? []).some((g) => g.lot === d.fromLot);
+      sub = kept ? "You scanned this pallet to start the job. Add another pallet if it runs short." : "Scan each pallet of filled " + k.size + " cans you pack from. You can add more than one.";
+      (d.fg ?? []).forEach((g, i) =>
+        lots.push(
+          g.lot === d.fromLot
+            ? { art: art("can", k.col, k.tag, 52), name: "Pallet " + (i + 1), need: k.n + " " + k.size, lot: g.lot, manual: g.manual, scan: () => { this.setD((z) => { z.fg!.splice(i, 1); }); this.openScan("fg"); }, done: true, swapL: "Scan a different pallet" }
+            : { art: art("can", k.col, k.tag, 52), name: "Pallet " + (i + 1), need: k.n + " " + k.size, lot: g.lot, manual: g.manual, scan: () => this.setD((z) => { z.fg!.splice(i, 1); }), done: true },
+        ),
+      );
       lots.push({ art: art("can", "#C2C8D2", "+", 52), name: (d.fg ?? []).length ? "Add another pallet" : "First pallet", need: "Filled " + k.size + " cans", lot: null, scan: () => this.openScan("fg"), scanL: T.scanLabel });
       const have = (d.fg ?? []).reduce((a, g) => a + (db.lots[g.lot]?.avail ?? 0), 0);
       if ((d.fg ?? []).length) info.push(infoCard("Cans scanned", nf(have)), infoCard("Enough for", nf(Math.floor(have / b.cpb)) + " boxes"));
@@ -3931,7 +3951,12 @@ export class FactoryApp extends Component<Props, State> {
       label = r.label;
       const fl = st.flow;
       const again = fl && fl.task.proc === "filling" && fl.d.fromLot ? fl.d.fromLot : null;
-      const more: Act[] = again && fillFromLot(st.me!, this.db(), again)?.ok ? [{ l: "Fill more from " + again, run: () => this.setState({ result: null, flow: null }, () => this.openFill(again)), style: btn("s", 56), icon: null }] : [];
+      const again2 = fl && fl.task.proc === "packing" && fl.d.fromLot ? fl.d.fromLot : null;
+      const more: Act[] = again && fillFromLot(st.me!, this.db(), again)?.ok
+        ? [{ l: "Fill more from " + again, run: () => this.setState({ result: null, flow: null }, () => this.openFill(again)), style: btn("s", 56), icon: null }]
+        : again2 && packFromLot(st.me!, this.db(), again2)?.ok
+          ? [{ l: "Pack more from " + again2, run: () => this.setState({ result: null, flow: null }, () => this.openPack(again2)), style: btn("s", 56), icon: null }]
+          : [];
       acts = ([] as Act[]).concat([home], more, [{ l: T.listen, run: () => this.speak(T.completed + ". " + r.msg), style: { ...btn("s", 48), border: "none", color: "#5223E0" }, icon: ic("speaker", 20) }]);
     }
     if (r.kind === "held") {
@@ -4569,6 +4594,7 @@ export class FactoryApp extends Component<Props, State> {
     if (sh.type === "job") body = this.jobSheet(sh.id, (t, s, b, a) => { title = t; sub = s; acts = a; return b; });
     if (sh.type === "assign") body = this.assignSheet((t, s, b, a) => { title = t; sub = s; acts = a; return b; });
     if (sh.type === "fill") body = this.fillSheet(sh, (t, s, b, a) => { title = t; sub = s; acts = a; return b; });
+    if (sh.type === "pack") body = this.packSheet(sh, (t, s, b, a) => { title = t; sub = s; acts = a; return b; });
     if (sh.type === "start") body = this.startSheet((t, s, b, a) => { title = t; sub = s; acts = a; return b; });
     if (sh.type === "recipe") body = this.recipeSheet(sh, (t, s, b, a) => { title = t; sub = s; acts = a; return b; });
 
@@ -4839,6 +4865,85 @@ export class FactoryApp extends Component<Props, State> {
     return out("New filling", "From " + sh.lot + " · " + lotName(db, lot) + " · " + nf(lot?.avail) + " L left", body, [
       { l: T.back, run: () => this.setState({ sheet: null }), style: { ...btn("s", 58), flex: 1 } },
       { l: st.busy ? T.sending : "Start filling", run: () => void start(), style: { ...btn(k && !over && !st.busy ? "p" : "off", 58), flex: 2 } },
+    ]);
+  }
+
+  /** From the scan card: the ERP's New packing batch questions — which box of this product, and how many. */
+  openPack(lot: string) {
+    const db = this.db(), me = this.state.me!;
+    const f = packFromLot(me, db, lot);
+    if (!f || !f.ok) return;
+    const box = f.boxes[0];
+    this.setState({ scan: null, sheet: { type: "pack", lot, box, qty: packStartQty(db.box[box].cpb, f.lot.avail) } });
+  }
+
+  packSheet(sh: PackSheet, out: (title: string, sub: string, body: ReactNode, acts: { l: string; run: () => void; style: CSSProperties }[]) => ReactNode): ReactNode {
+    const st = this.state, T = this.T(), db = this.db();
+    const f = packFromLot(st.me!, db, sh.lot);
+    const lot = db.lots[sh.lot];
+    const boxes = f && f.ok ? f.boxes : [];
+    const b = sh.box ? db.box[sh.box] : null;
+    const k = b ? db.sku[b.sku] : null;
+    const set = (p: Partial<PackSheet>) => this.setState({ sheet: { ...sh, ...p } });
+    const tile = (on: boolean): CSSProperties => ({ padding: "10px 6px", borderRadius: "14px", border: on ? "3px solid #6835FB" : "1px solid #DDE1E8", background: on ? "#F7F4FF" : "#FFFFFF", cursor: "pointer", textAlign: "center" });
+    const sq: CSSProperties = { width: "58px", height: "58px", borderRadius: "14px", border: "none", background: "#F1ECFF", color: "#5223E0", fontSize: "30px", fontWeight: 700, cursor: "pointer", flex: "none" };
+    const need = b ? packNeeds(db, sh.box!, sh.qty) : null;
+    const have = lot?.avail ?? 0;
+    const short = b && need ? emptyBoxShort(need.emptyNeed, need.emptyHave, need.newBatches, b.batch, b.type, db.loc) : null;
+    const msgs: Msg[] = [];
+    if (b && need) {
+      msgs.push(msg(nf(sh.qty) + " × " + b.cpb + " = " + nf(need.cans) + " cans of the " + nf(have) + " in this lot." + (need.emptyHave != null ? " Empty " + b.type + " here: " + nf(need.emptyHave) + "." : ""), "info"));
+      if (need.cans > have) msgs.push(msg(nf(sh.qty) + " boxes need " + nf(need.cans) + " cans; " + sh.lot + " has " + nf(have) + ". You can start. In the job, scan another pallet for the other " + nf(need.cans - have) + ".", "warn"));
+      if (need.open && need.intoOpen > 0) msgs.push(msg("Batch " + need.open.code + " is open with " + nf(need.open.have) + " of " + nf(need.open.of) + " boxes. These go in it first.", "warn"));
+      if (short) msgs.push(msg(short + " Get more empty boxes, or pack fewer.", "warn"));
+    }
+    const can = !!b && !short && !st.busy;
+    const start = async () => {
+      if (!can) return;
+      this.setState({ busy: true });
+      try {
+        const r = await call("startPack", { lot: sh.lot, item: sh.box!, qty: sh.qty });
+        if (!r.ok) return this.toast(r.error);
+        this.setState({ db: r.data, sheet: null }, () => this.startTask(r.id, { fg: [{ lot: sh.lot }], fromLot: sh.lot }));
+      } catch {
+        this.toast("No network. Try again when it is back.");
+      } finally {
+        this.setState({ busy: false });
+      }
+    };
+    const body = (
+      <>
+        <Div>
+          <Div style={{ fontSize: "14px", fontWeight: 700, color: "#3D4453", marginBottom: "8px" }}>Which box?</Div>
+          <Div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: "8px" }}>
+            {boxes.map((key) => {
+              const x = db.box[key], s = db.sku[x.sku];
+              return (
+                <Btn key={key} onClick={() => set({ box: key, qty: packStartQty(x.cpb, have) })} style={tile(sh.box === key)}>
+                  <Span style={{ display: "flex", justifyContent: "center" }}>{art("box", s?.col, x.cpb + "×" + (s?.tag ?? ""), 44)}</Span>
+                  <Span style={{ display: "block", fontSize: "13px", fontWeight: 700, lineHeight: "17px", marginTop: "4px" }}>{x.cpb + " cans / box"}</Span>
+                  <Span style={{ display: "block", fontSize: "11px", color: "#6B7385", marginTop: "2px" }}>{"Batch of " + x.batch + " boxes"}</Span>
+                </Btn>
+              );
+            })}
+          </Div>
+        </Div>
+        {b && (
+          <Div>
+            <Div style={{ fontSize: "14px", fontWeight: 700, color: "#3D4453", marginBottom: "8px" }}>How many boxes?</Div>
+            <Div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <Btn onClick={() => set({ qty: Math.max(1, sh.qty - 1) })} style={sq}>−</Btn>
+              <Btn onClick={() => this.openKp({ l: "How many boxes?", unit: "boxes", v: sh.qty, max: PACK_FROM_LOT_MAX, maxL: "At most " + nf(PACK_FROM_LOT_MAX) + " boxes.", set: (v) => this.setState({ sheet: { ...sh, qty: v } }) })} style={{ flex: 1, height: "58px", borderRadius: "14px", border: "2px solid #6835FB", background: "#FFFFFF", fontSize: "26px", fontWeight: 800, cursor: "pointer" }}>{nf(sh.qty)}</Btn>
+              <Btn onClick={() => set({ qty: Math.min(PACK_FROM_LOT_MAX, sh.qty + 1) })} style={sq}>+</Btn>
+            </Div>
+          </Div>
+        )}
+        {msgs.map((m, i) => <MsgBox key={i} m={m} />)}
+      </>
+    );
+    return out("New packing batch", "From " + sh.lot + " · " + (k ? k.n + " " + k.size : lotName(db, lot)) + " · " + nf(have) + " cans", body, [
+      { l: T.back, run: () => this.setState({ sheet: null }), style: { ...btn("s", 58), flex: 1 } },
+      { l: st.busy ? T.sending : "Start packing", run: () => void start(), style: { ...btn(can ? "p" : "off", 58), flex: 2 } },
     ]);
   }
 

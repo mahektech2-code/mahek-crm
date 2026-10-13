@@ -8727,7 +8727,7 @@ the batch sheet use); `startMixingBatch` in `head.ts` checks the recipe again (a
 active formulation with a line above 0 L), makes the same `factory_tasks` row
 Give a task makes — the standing mixing crew, with HIM in charge — and the job
 opens straight into its batch sheet. It posts through the ERP's SFG form like
-any other job. Packing still comes from a supervisor. The op is
+any other job. A packing worker starts his own packing from a scanned pallet, below. The op is
 `startBatch`, and the native APK needs a release to show the button.
 
 **A FILLING WORKER STARTS A FILLING FROM THE TANK HE SCANS.** Scanning (or
@@ -8743,6 +8743,24 @@ with that tank already scanned (`Draft.fromLot`, phone-only). It posts
 through the ERP's FG fill form like any other filling. Saved offers "Fill
 more from" the same lot. A mixing or packing worker sees the card with OK
 only. The op is `startFill`.
+
+**A PACKING WORKER STARTS A PACKING FROM THE PALLET HE SCANS.** Scanning (or
+typing) an FG lot on Home shows when the cans were filled and how the product
+is boxed, and "Pack from this lot" opens New packing batch — the ERP's own
+questions: the FG product is the lot's, then which boxed SKU (`packFromLot` in
+`rules.ts`, which also words the refusals: not his work, another godown,
+nothing left, sold loose, fewer cans than one box), then how many boxes.
+`packNeeds` says what that takes: the cans, the open batch of that box filled
+first, and the empty boxes — a NEW batch takes all of its boxes on its first
+line, exactly as the ERP's packing form does, so `packBatchPlan` counts whole
+new batches and `emptyBoxShort` greys out Start where the godown is short
+(`FactoryData.emptyBoxes`, null where the ERP does not count that box type).
+More boxes than the lot holds is allowed: the job scans another pallet.
+`startPackFromLot` in `head.ts` checks it all again and makes the same
+`factory_tasks` row Give a task makes, with him in charge; the job opens with
+the pallet already scanned (`Draft.fromLot`, phone-only) and posts through the
+ERP's packing form like any other packing. Saved offers "Pack more from" the
+same lot. The op is `startPack`.
 
 **A MIXING WORKER MAY USE HIS OWN RECIPE, AND THE HEAD IS TOLD.** The job's
 first step draws the batch sheet with "Use my own recipe" under it: the editor

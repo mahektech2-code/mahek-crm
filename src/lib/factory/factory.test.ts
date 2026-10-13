@@ -18,8 +18,8 @@ import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { seedFactoryFloor, type SeededFloor } from "./demo-seed";
 import { bootstrap, contextFor, type FactoryCtx } from "./server";
 import { submitJob } from "./post";
-import { assignTask, decideReview, requestCorrection, startFillFromLot, startMixingBatch } from "./head";
-import { boxCode, fillFromLot, mixDeviation, recipeLines, recipeProblem, recipeRm, resolveScan, startsOwnBatch, taskCode, typedCode } from "./rules";
+import { assignTask, decideReview, requestCorrection, startFillFromLot, startMixingBatch, startPackFromLot } from "./head";
+import { boxCode, emptyBoxShort, fillFromLot, mixDeviation, packBatchPlan, packFromLot, packNeeds, recipeLines, recipeProblem, recipeRm, resolveScan, startsOwnBatch, taskCode, typedCode } from "./rules";
 import { boxInfo, loadBoard, lrKit, saveLr, scanBox, unloadBox } from "./dispatch";
 import { cancelFromFloor, raiseFromFloor, requirementKit } from "./purchase";
 import { shelfFacts } from "@/lib/erp/stock-check";
@@ -332,6 +332,58 @@ describe("filling and packing", () => {
        where l.sku_id = ${t.item} group by l.batch_no having sum(l.cans) < max(l.boxes) * max(p.cans_per_box)`);
     assert.equal(open2.length, 1);
     assert.equal(open2[0].cans, (boxes - b.batch) * b.cpb, "the remainder waits in an open batch");
+  });
+
+  test("a new packing batch: the open batch is filled first, and only a new batch takes empty boxes", () => {
+    assert.deepEqual(packBatchPlan(6, 20, { have: 14, of: 20 }, 1), { intoOpen: 6, newBatches: 0, emptyNeed: 0 });
+    assert.deepEqual(packBatchPlan(8, 20, { have: 14, of: 20 }, 1), { intoOpen: 6, newBatches: 1, emptyNeed: 20 });
+    assert.deepEqual(packBatchPlan(45, 20, null, 1), { intoOpen: 0, newBatches: 3, emptyNeed: 60 });
+    assert.equal(emptyBoxShort(20, null, 1, 20, "Carton", "Here"), null, "a box type the ERP does not count is not refused");
+    assert.equal(emptyBoxShort(20, 20, 1, 20, "Carton", "Here"), null);
+    assert.match(emptyBoxShort(20, 5, 1, 20, "Carton", "Here") ?? "", /takes 20 empty Carton; 5 are at Here/);
+  });
+
+  test("a packing worker starts a packing from the FG lot he scanned, and it posts from that lot", async () => {
+    const { fc, data } = await as("ganesh");
+    const me = { head: false, area: "packing" };
+    const lot = Object.values(data.lots).find((l) => l.type === "fg" && l.status === "ok" && l.loc === data.loc && Object.values(data.box).some((b) => b.sku === l.item && l.avail >= b.cpb))!;
+    assert.ok(lot, "the seed holds a boxed FG lot here");
+    const can = packFromLot(me, data, lot.code);
+    assert.ok(can && can.ok, JSON.stringify(can));
+    assert.ok(can.boxes.every((b) => data.box[b].sku === lot.item), "only boxes of this product are offered");
+    const item = can.boxes.find((b) => data.box[b].cpb <= lot.avail)!;
+
+    const mix = packFromLot({ head: false, area: "mixing" }, data, lot.code);
+    assert.ok(mix && !mix.ok && !mix.show, "a mixing worker sees the lot and nothing to press");
+    const empty = packFromLot(me, { ...data, lots: { ...data.lots, [lot.code]: { ...lot, status: "used", avail: 0 } } }, lot.code);
+    assert.ok(empty && !empty.ok && empty.title === "Nothing left");
+    const loose = packFromLot(me, { ...data, box: {} }, lot.code);
+    assert.ok(loose && !loose.ok && loose.title === "Not packed in boxes");
+    const few = packFromLot(me, { ...data, lots: { ...data.lots, [lot.code]: { ...lot, avail: 1 } } }, lot.code);
+    if (Math.min(...can.boxes.map((b) => data.box[b].cpb)) > 1) assert.ok(few && !few.ok && few.title === "Not enough for one box");
+    const need = packNeeds(data, item, 2);
+    assert.equal(need.cans, 2 * data.box[item].cpb);
+
+    const anil = (await as("anil")).fc;
+    assert.equal((await startPackFromLot(anil, { lot: lot.code, item, qty: 1 })).ok, false, "mixing staff cannot start a packing");
+    setTestUser(floor.users.ganesh);
+    const other = Object.keys(data.box).find((b) => data.box[b].sku !== lot.item);
+    if (other) assert.equal((await startPackFromLot(fc, { lot: lot.code, item: other, qty: 1 })).ok, false, "a box of another product is refused");
+    assert.equal((await startPackFromLot(fc, { lot: lot.code, item, qty: 0 })).ok, false);
+
+    const qty = Math.min(2, Math.floor(lot.avail / data.box[item].cpb));
+    const made = await startPackFromLot(fc, { lot: lot.code, item, qty });
+    assert.ok(made.ok, JSON.stringify(made));
+    const { data: now } = await as("ganesh");
+    const t = now.tasks.find((x) => x.id === (made.ok ? made.data.id : ""))!;
+    assert.deepEqual([t.proc, t.item, t.target], ["packing", item, qty]);
+    assert.equal(t.team.owner, floor.users.ganesh.id, "he is in charge");
+
+    const d: Draft = { team: { ...t.team, op: t.team.op ?? floor.users.ganesh.id }, down: false, downR: null, downMin: null, box: item, fg: [{ lot: lot.code }], fromLot: lot.code, boxes: qty };
+    const r = await submitJob(fc, sub(t, d));
+    assert.equal(r.kind, "done", JSON.stringify(r));
+    const [drawn] = await q<{ cans: number }>(sql`select coalesce(sum(cans), 0)::int as cans from erp_pack_lines where fg_lot_code = ${lot.code} and remarks = ${"Factory app · " + t.id}`);
+    assert.equal(drawn.cans, qty * data.box[item].cpb, "the cans came out of the scanned lot");
   });
 });
 

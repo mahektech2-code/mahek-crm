@@ -283,15 +283,16 @@ export async function masters(): Promise<Masters> {
     };
   }
 
-  const boxed = await q<{ id: string; fg: string; ml: number; cpb: number; boxType: string | null }>(sql`
-    select p.id, p.finished_good_id as fg, p.millilitres_per_can as ml, p.cans_per_box as cpb, pk.box_type as "boxType"
+  const boxed = await q<{ id: string; fg: string; ml: number; cpb: number; boxType: string | null; empty: number }>(sql`
+    select p.id, p.finished_good_id as fg, p.millilitres_per_can as ml, p.cans_per_box as cpb, pk.box_type as "boxType",
+           pk.empty_boxes_required::float8 as empty
       from products p join erp_product_packing pk on pk.product_id = p.id
      where p.active and pk.empty_boxes_required > 0 and p.finished_good_id is not null`);
   const box: Record<string, BoxSku> = {};
   for (const b of boxed) {
     const key = b.fg + ":" + n(b.ml) / 1000;
     if (!sku[key]) continue;
-    box[b.id] = { sku: key, cpb: n(b.cpb), batch: packBatch, type: b.boxType ?? "Carton" };
+    box[b.id] = { sku: key, cpb: n(b.cpb), batch: packBatch, type: b.boxType ?? "Carton", empty: n(b.empty) || 1 };
   }
   return { rm, sfg, sku, pm, box, fgSfg };
 }
@@ -352,7 +353,7 @@ export async function lotsFor(godown: { id: string; name: string }, m: Masters):
     const item = sizeOf.get(l.lotCode);
     if (!item) continue;
     if (lots[l.lotCode]?.loc === godown.name) continue;
-    lots[l.lotCode] = { code: l.lotCode, type: "fg", item, avail: Math.max(0, l.stock), loc: l.godown, status: l.stock <= 0 ? "used" : "ok" };
+    lots[l.lotCode] = { code: l.lotCode, type: "fg", item, avail: Math.max(0, l.stock), loc: l.godown, status: l.stock <= 0 ? "used" : "ok", made: l.latestDate };
   }
   for (const l of packs) {
     if (!m.box[l.skuId]) continue;
@@ -364,6 +365,31 @@ export async function lotsFor(godown: { id: string; name: string }, m: Masters):
     lots[b.batchNo] = { code: b.batchNo, type: "pb", item: b.skuId, avail: Math.floor(b.cans / Math.max(1, b.cpb)), loc: godown.name, status: "incomplete" };
   }
   return lots;
+}
+
+/**
+ * Empty boxes at this godown, by box SKU — the figure the ERP's New packing
+ * batch refuses on (the box type's raw-material stock here, after what earlier
+ * batches took). Null where the ERP does not count it: no box type on the SKU,
+ * or a box type the raw-material master does not name.
+ */
+export async function emptyBoxesAt(godownId: string): Promise<Record<string, number | null>> {
+  const [skus, known, rms] = await Promise.all([
+    q<{ id: string; boxType: string | null }>(sql`
+      select p.id, pk.box_type as "boxType" from products p join erp_product_packing pk on pk.product_id = p.id
+       where p.active and pk.empty_boxes_required > 0`),
+    q<{ name: string }>(sql`select lower(name) as name from erp_raw_materials`),
+    rmLots(),
+  ]);
+  const names = new Set(known.map((r) => r.name));
+  const stock = new Map<string, number>();
+  for (const l of rms) if (l.godownId === godownId) stock.set(l.item.toLowerCase(), (stock.get(l.item.toLowerCase()) ?? 0) + l.stock);
+  const out: Record<string, number | null> = {};
+  for (const s of skus) {
+    const t = s.boxType?.toLowerCase();
+    out[s.id] = t && (stock.has(t) || names.has(t)) ? Math.max(0, stock.get(t) ?? 0) : null;
+  }
+  return out;
 }
 
 export type OpenBatch = { batchNo: string; serial: number; skuId: string; boxes: number; cpb: number; cans: number };
@@ -580,7 +606,7 @@ export async function tasksFor(godownId: string, open: OpenBatch[]): Promise<Tas
 export async function bootstrap(fc: FactoryCtx): Promise<FactoryData> {
   const cfg = await getConfig();
   const m = await masters();
-  const [lots, { emp, hours }, teams, open] = await Promise.all([lotsFor(fc.godown, m), people(fc.godown.id), teamDefaults(), openPackBatches(fc.godown.id)]);
+  const [lots, { emp, hours }, teams, open, emptyBoxes] = await Promise.all([lotsFor(fc.godown, m), people(fc.godown.id), teamDefaults(), openPackBatches(fc.godown.id), emptyBoxesAt(fc.godown.id)]);
   const orders = await ordersFor(fc.godown, m, lots);
   await ensureDispatchTasks(fc, orders, teams);
   /* A department supervisor's floor is their departments. */
@@ -646,6 +672,7 @@ export async function bootstrap(fc: FactoryCtx): Promise<FactoryData> {
     box: m.box,
     orders,
     lots,
+    emptyBoxes,
     tasks,
     review: review.map((r) => ({ id: r.id, kind: r.kind, task: r.taskId, title: r.title, text: clockText(r.body), meta: clockText(r.meta), acts: ACTS[r.kind] ?? ACTS.issue })),
     audit: audit.map((a) => ({ task: a.task, at: clock12(hhmm(new Date(String(a.at)))), who: a.who, t: clockText(a.detail ?? "") })),

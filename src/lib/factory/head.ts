@@ -5,12 +5,13 @@ import { users } from "@/db/schema";
 import { erpId } from "@/lib/erp/server";
 import { screenModule } from "@/lib/erp/screens";
 import { calendarDate } from "@/lib/business-date";
-import { sfgLots } from "@/lib/erp/stock";
+import { fgLots, sfgLots } from "@/lib/erp/stock";
+import { getConfig } from "@/lib/config/store";
 import { err, okVoid, ok, type Result } from "@/lib/result";
 import type { Proc, Team } from "./types";
 import { MIX_BATCH_MAX, PROCS } from "./types";
-import { FILL_FROM_LOT_MAX } from "./rules";
-import { contextFor, erpCtxFor, factoryAudit, nextTaskId, nowHM, teamDefaults, worksOn, writeTeam, type FactoryCtx } from "./server";
+import { emptyBoxShort, FILL_FROM_LOT_MAX, PACK_FROM_LOT_MAX, packBatchPlan } from "./rules";
+import { contextFor, emptyBoxesAt, erpCtxFor, factoryAudit, nextTaskId, nowHM, openPackBatches, teamDefaults, worksOn, writeTeam, type FactoryCtx } from "./server";
 import { submitJob } from "./post";
 
 /* ---------------------------------------------------------------------------
@@ -107,14 +108,7 @@ export async function startMixingBatch(fc: FactoryCtx, a: { item: string; qty: n
     select 1 from erp_recipes r join product_formulations f on f.id = r.formulation_id
      where r.formulation_id = ${a.item} and f.active and r.qty_per_batch > 0 limit 1`);
   if (!r) return err("This base has no approved batch sheet.", "validation");
-  const base = (await teamDefaults()).mixing;
-  const me = fc.user.id;
-  const team: Team = {
-    owner: me,
-    op: base.op === me ? null : base.op,
-    helpers: base.helpers.filter((h) => h !== me && h !== base.owner).concat(base.owner && base.owner !== me ? [base.owner] : []),
-    ver: base.ver === me ? null : base.ver,
-  };
+  const team = meInCharge(fc, (await teamDefaults()).mixing);
   const id = await insertTask(fc, { proc: "mixing", item: a.item, qty, due: nowHM() > "18:00" ? nowHM() : "18:00", sfgLot: null }, team);
   await factoryAudit(fc, "factory.task.start", id, "Mixing batch started by " + fc.user.name);
   return ok({ id }, id + " started");
@@ -144,16 +138,64 @@ export async function startFillFromLot(fc: FactoryCtx, a: { lot: string; item: s
   if (!fg) return err("Pick a product to fill.", "validation");
   if (fg.fid !== lot.formulationId) return err("That product is not made from this base.", "validation");
 
-  const base = (await teamDefaults()).filling;
+  const team = meInCharge(fc, (await teamDefaults()).filling);
+  const id = await insertTask(fc, { proc: "filling", item: a.item, qty, due: nowHM() > "18:00" ? nowHM() : "18:00", sfgLot: a.lot }, team);
+  await factoryAudit(fc, "factory.task.start", id, "Filling started by " + fc.user.name + " from " + a.lot);
+  return ok({ id }, id + " started");
+}
+
+/** A department's standing crew with the person starting the job in charge — whoever was in charge becomes a helper. */
+function meInCharge(fc: FactoryCtx, base: Team): Team {
   const me = fc.user.id;
-  const team: Team = {
+  return {
     owner: me,
     op: base.op === me ? null : base.op,
     helpers: base.helpers.filter((h) => h !== me && h !== base.owner).concat(base.owner && base.owner !== me ? [base.owner] : []),
     ver: base.ver === me ? null : base.ver,
   };
-  const id = await insertTask(fc, { proc: "filling", item: a.item, qty, due: nowHM() > "18:00" ? nowHM() : "18:00", sfgLot: a.lot }, team);
-  await factoryAudit(fc, "factory.task.start", id, "Filling started by " + fc.user.name + " from " + a.lot);
+}
+
+/**
+ * A packing worker starting a packing himself, from the FG lot (a pallet of
+ * filled cans) he just scanned — the ERP's New packing batch, asked on the
+ * phone. The same task Give a task makes, posted through the ERP's packing
+ * form like any other, with him in charge. The lot is the job's first pallet
+ * on the phone; the server holds it to nothing, because a packing draws from
+ * every pallet the job scans.
+ */
+export async function startPackFromLot(fc: FactoryCtx, a: { lot: string; item: string; qty: number }): Promise<Result<{ id: string }>> {
+  if (!worksOn(fc, "packing")) return err("Packing is for the packing team. Tell your supervisor.", "not_permitted");
+  const qty = Math.floor(Number(a.qty));
+  if (!(qty > 0) || qty > PACK_FROM_LOT_MAX) return err(`Enter how many boxes, 1 to ${PACK_FROM_LOT_MAX}.`, "validation");
+  const all = await fgLots();
+  const lot = all.find((l) => l.lotCode === a.lot && l.godownId === fc.godown.id);
+  if (!lot) {
+    const elsewhere = all.find((l) => l.lotCode === a.lot);
+    return err(elsewhere ? "This lot is at " + elsewhere.godown + ", not " + fc.godown.name + "." : "That lot is not here.", "validation");
+  }
+  if (!(lot.stock > 0)) return err(a.lot + " is empty. Scan another lot.", "rule_violation");
+  const [box] = await q<{ fg: string; ml: number; cpb: number; boxType: string | null; empty: number }>(sql`
+    select p.finished_good_id as fg, p.millilitres_per_can::float8 as ml, p.cans_per_box as cpb, pk.box_type as "boxType",
+           pk.empty_boxes_required::float8 as empty
+      from products p join erp_product_packing pk on pk.product_id = p.id
+     where p.id = ${a.item} and p.active and pk.empty_boxes_required > 0`);
+  if (!box) return err("Pick a box to pack.", "validation");
+  const [fill] = await q<{ size: number }>(sql`select can_size::float8 as size from erp_fg_fills where lot_code = ${a.lot} order by created_at limit 1`);
+  if (box.fg !== lot.finishedGoodId || (fill && Math.abs(n(fill.size) * 1000 - n(box.ml)) > 1e-6)) return err("That box is not for this product.", "validation");
+  const cpb = n(box.cpb);
+  if (lot.stock < cpb) return err(a.lot + " has " + lot.stock + " cans; a box takes " + cpb + ". Scan another pallet.", "rule_violation");
+
+  /* The empty boxes have to be there for every NEW batch this opens — the
+     ERP's packing form refuses the first line of a batch otherwise. */
+  const batch = Number((await getConfig())["erp.factory.packBatchBoxes"] ?? 50);
+  const open = (await openPackBatches(fc.godown.id)).find((b) => b.skuId === a.item);
+  const plan = packBatchPlan(qty, batch, open ? { have: Math.floor(open.cans / Math.max(1, open.cpb)), of: open.boxes } : null, n(box.empty) || 1);
+  const short = emptyBoxShort(plan.emptyNeed, (await emptyBoxesAt(fc.godown.id))[a.item] ?? null, plan.newBatches, batch, box.boxType ?? "boxes", fc.godown.name);
+  if (short) return err(short, "rule_violation");
+
+  const team = meInCharge(fc, (await teamDefaults()).packing);
+  const id = await insertTask(fc, { proc: "packing", item: a.item, qty, due: nowHM() > "18:00" ? nowHM() : "18:00", sfgLot: null }, team);
+  await factoryAudit(fc, "factory.task.start", id, "Packing started by " + fc.user.name + " from " + a.lot);
   return ok({ id }, id + " started");
 }
 
