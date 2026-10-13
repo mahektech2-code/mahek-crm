@@ -351,12 +351,26 @@ describe("filling and packing", () => {
   test("a packing worker starts a packing from the FG lot he scanned, and it posts from that lot", async () => {
     const { fc, data } = await as("ganesh");
     const me = { head: false, area: "packing" };
-    const lot = Object.values(data.lots).find((l) => l.type === "fg" && l.status === "ok" && l.loc === data.loc && Object.values(data.box).some((b) => b.sku === l.item && l.avail >= b.cpb))!;
-    assert.ok(lot, "the seed holds a boxed FG lot here");
+    /* A lot AND a box of its product that it fills and the godown has the empty
+       boxes for — chosen together, because which lot comes first in the seed
+       is not fixed. */
+    const pick = Object.values(data.lots)
+      .filter((l) => l.type === "fg" && l.status === "ok" && l.loc === data.loc)
+      .flatMap((l) =>
+        Object.keys(data.box)
+          .filter((b) => {
+            if (data.box[b].sku !== l.item || data.box[b].cpb > l.avail) return false;
+            const n = packNeeds(data, b, Math.min(2, Math.floor(l.avail / data.box[b].cpb)));
+            return !emptyBoxShort(n.emptyNeed, n.emptyHave, n.newBatches, data.box[b].batch, data.box[b].type, data.loc);
+          })
+          .map((b) => ({ lot: l, item: b })),
+      )[0];
+    assert.ok(pick, "the seed holds a boxed FG lot here, with the empty boxes to pack it");
+    const { lot, item } = pick;
     const can = packFromLot(me, data, lot.code);
     assert.ok(can && can.ok, JSON.stringify(can));
     assert.ok(can.boxes.every((b) => data.box[b].sku === lot.item), "only boxes of this product are offered");
-    const item = can.boxes.find((b) => data.box[b].cpb <= lot.avail)!;
+    assert.ok(can.boxes.includes(item));
 
     const mix = packFromLot({ head: false, area: "mixing" }, data, lot.code);
     assert.ok(mix && !mix.ok && !mix.show, "a mixing worker sees the lot and nothing to press");
