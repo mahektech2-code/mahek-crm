@@ -19,7 +19,7 @@ import { seedFactoryFloor, type SeededFloor } from "./demo-seed";
 import { bootstrap, contextFor, type FactoryCtx } from "./server";
 import { submitJob } from "./post";
 import { assignTask, decideReview, requestCorrection, startMixingBatch } from "./head";
-import { boxCode, resolveScan, startsOwnBatch } from "./rules";
+import { boxCode, resolveScan, startsOwnBatch, taskCode, typedCode } from "./rules";
 import { boxInfo, loadBoard, lrKit, saveLr, scanBox, unloadBox } from "./dispatch";
 import { setAccess } from "@/lib/actions/access";
 import type { Draft, FactoryData, Submission, Task } from "./types";
@@ -104,6 +104,19 @@ describe("who sees what", () => {
     assert.match((r as { title: string }).title, /not base liquid/);
     const unknown = resolveScan("NOT-A-LOT", { db: data, purpose: "sfg", meta: {}, task: t, d });
     assert.equal((unknown as { title: string }).title, "We do not know this QR");
+  });
+
+  test("a code typed off a label is matched however it was spaced or cased, then judged like a scan", async () => {
+    const { data } = await as("kamalkant");
+    const t = open(data, "filling");
+    const lot = lotOf(data, "rm", Object.keys(data.rm)[0]);
+    const sloppy = " " + lot.code.toLowerCase().split("").join(" ") + " ";
+    assert.equal(typedCode(sloppy, data), lot.code, "the label's own spelling comes back");
+    assert.equal(typedCode(taskCode(t).toLowerCase(), data), taskCode(t), "a task sheet's code too");
+    assert.equal(typedCode("not a lot", data), "NOTALOT", "an unknown code comes back cleaned, for the scan's check to refuse");
+    const d: Draft = { team: t.team, down: null, downR: null, downMin: null, sku: t.item };
+    const r = resolveScan(typedCode(sloppy, data), { db: data, purpose: "sfg", meta: {}, task: t, d });
+    assert.equal(r.ok, false, "typing is a way to read a label, never a way past the check");
   });
 });
 

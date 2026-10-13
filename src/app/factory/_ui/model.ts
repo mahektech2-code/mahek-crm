@@ -10,7 +10,7 @@ import type { DrumLotView, DrumSaved } from "@/lib/factory/types";
 
 export type Net = "online" | "weak" | "offline";
 export type Flow = { task: Task; step: number; d: Draft; key: string };
-export type Scan = { purpose: ScanPurpose; meta: ScanMeta; res: (ScanResult & { manual?: boolean }) | null; torch: boolean };
+export type Scan = { purpose: ScanPurpose; meta: ScanMeta; res: (ScanResult & { manual?: boolean }) | null; torch: boolean; typed?: string | null };
 export type Res =
   | { kind: "sending"; key: string }
   | { kind: "pending"; key: string; task: string; proc: Proc }

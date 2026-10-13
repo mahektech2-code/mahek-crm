@@ -22,6 +22,7 @@ import {
   stepCheck,
   taskCode,
   taskName,
+  typedCode,
   taskTarget,
   type ScanMeta,
   type ScanPurpose,
@@ -575,6 +576,15 @@ export class FactoryApp extends Component<Props, State> {
       lots.filter((x) => x.type === "pb" && !o?.lines.some((ln) => ln.alloc.some((a) => a[0] === x.code))).slice(0, 3).forEach((x) => add(x.code, x.status === "incomplete" ? "Next batch" : "Not on order", 0));
     }
     return out;
+  }
+
+  /** A code typed off the label: read like a scan, judged like one. */
+  submitTyped() {
+    const sc = this.state.scan;
+    const raw = (sc?.typed ?? "").trim();
+    if (!sc || !raw) return;
+    const code = sc.purpose === "lr" ? raw : typedCode(raw, this.state.db);
+    this.setState({ scan: { ...sc, typed: null } }, () => void this.doScan(code));
   }
 
   async doScan(code: string, manual?: boolean) {
@@ -2436,7 +2446,7 @@ export class FactoryApp extends Component<Props, State> {
     const corner = (pos: CSSProperties, b: string, rad: string): ReactNode => <Span style={{ position: "absolute", width: "44px", height: "44px", ...pos, [b.split("|")[0]]: "5px solid #C6FF34", [b.split("|")[1]]: "5px solid #C6FF34", borderRadius: rad } as CSSProperties} />;
     return (
       <Div style={{ flex: 1, minHeight: 0, background: "#0E1016", color: "#FFFFFF", display: "flex", flexDirection: "column", position: "relative" }}>
-        {!r && <CameraScanner torch={sc.torch} paused={!!r || !!st.sheet} onCode={(c) => void this.doScan(c)} onState={(s) => this.setState({ cam: s })} />}
+        {!r && <CameraScanner torch={sc.torch} paused={!!r || !!st.sheet || sc.typed != null} onCode={(c) => void this.doScan(c)} onState={(s) => this.setState({ cam: s })} />}
         <Div style={{ flex: "none", display: "flex", alignItems: "center", gap: "10px", padding: "8px 12px", position: "relative" }}>
           <Btn onClick={() => this.setState({ scan: null })} aria-label="Close" style={{ width: "48px", height: "48px", borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("x", 24, "#FFFFFF")}</Btn>
           <Span style={{ flex: 1, fontSize: "17px", fontWeight: 700, textAlign: "center" }}>{title}</Span>
@@ -2451,9 +2461,9 @@ export class FactoryApp extends Component<Props, State> {
             <Span style={{ position: "absolute", left: "14px", right: "14px", height: "3px", borderRadius: "2px", background: "#C6FF34", boxShadow: "0 0 14px #C6FF34", animation: "fx-scan 2.4s ease-in-out infinite" }} />
           </Div>
           <Div style={{ fontSize: "20px", lineHeight: "26px", fontWeight: 700, marginTop: "22px", textAlign: "center" }}>{hint}</Div>
-          <Div style={{ fontSize: "15px", color: "#C2C8D2", marginTop: "4px", textAlign: "center" }}>{st.cam === "denied" ? "The camera is off. Allow the camera for this app, or pick from photos." : T.scanHint}</Div>
+          <Div style={{ fontSize: "15px", color: "#C2C8D2", marginTop: "4px", textAlign: "center" }}>{st.cam === "denied" ? "The camera is off. Allow the camera for this app, or type the code." : T.scanHint}</Div>
         </Div>
-        {(labels.length > 0 || hasManual) && (
+        {(
           <Div style={{ flex: "none", background: "#1A1E28", borderRadius: "22px 22px 0 0", padding: "14px 16px 18px 16px", position: "relative" }}>
             {labels.length > 0 && (
               <>
@@ -2468,7 +2478,19 @@ export class FactoryApp extends Component<Props, State> {
                 </Div>
               </>
             )}
-            {hasManual && <Btn onClick={() => this.manualPick()} style={{ width: "100%", height: "54px", marginTop: labels.length ? "12px" : 0, border: "1.5px solid rgba(255,255,255,0.28)", background: "transparent", borderRadius: "14px", color: "#FFFFFF", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", cursor: "pointer" }}>{ic("camera", 22, "#FFFFFF")}{T.noLabel}</Btn>}
+            {sc.typed == null ? (
+              <Btn onClick={() => this.setState({ scan: { ...sc, typed: "" } })} style={{ width: "100%", height: "54px", marginTop: labels.length ? "12px" : 0, border: "1.5px solid rgba(255,255,255,0.28)", background: "transparent", borderRadius: "14px", color: "#FFFFFF", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", cursor: "pointer" }}>{ic("keys", 22, "#FFFFFF")}{P === "lr" ? T.typeLr : T.typeCode}</Btn>
+            ) : (
+              <Div style={{ marginTop: labels.length ? "12px" : 0 }}>
+                <Div style={{ fontSize: "13px", fontWeight: 600, color: "#C2C8D2" }}>{P === "lr" ? T.typeLr : T.typeHint}</Div>
+                <Div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
+                  <Input value={sc.typed} onChange={(e) => this.setState({ scan: { ...sc, typed: String(e.target.value).toUpperCase().slice(0, 60) } })} onKeyDown={(e) => e.key === "Enter" && this.submitTyped()} autoFocus autoComplete="off" aria-label={T.typeCode} style={{ flex: 1, minWidth: 0, height: "54px", borderRadius: "14px", border: "1.5px solid rgba(255,255,255,0.28)", background: "rgba(255,255,255,0.06)", color: "#FFFFFF", padding: "0 14px", ...mono, fontSize: "18px", fontWeight: 600, outline: "none" }} />
+                  <Btn onClick={() => this.submitTyped()} style={{ height: "54px", flex: "none", padding: "0 18px", border: "none", borderRadius: "14px", background: sc.typed.trim() ? "#C6FF34" : "rgba(255,255,255,0.12)", color: sc.typed.trim() ? "#0E1016" : "#9BA3B2", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{T.checkCode}</Btn>
+                  <Btn onClick={() => this.setState({ scan: { ...sc, typed: null } })} aria-label="Close" style={{ width: "54px", height: "54px", flex: "none", border: "none", borderRadius: "14px", background: "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("x", 22, "#FFFFFF")}</Btn>
+                </Div>
+              </Div>
+            )}
+            {hasManual && sc.typed == null && <Btn onClick={() => this.manualPick()} style={{ width: "100%", height: "54px", marginTop: "10px", border: "1.5px solid rgba(255,255,255,0.28)", background: "transparent", borderRadius: "14px", color: "#FFFFFF", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", cursor: "pointer" }}>{ic("camera", 22, "#FFFFFF")}{T.noLabel}</Btn>}
           </Div>
         )}
         {r && (
