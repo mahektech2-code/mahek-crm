@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { erpMarkLabelsPrinted } from "@/lib/actions/erp-trace";
 import { Button } from "@/components/ui/primitives";
 import { printRuns } from "@/lib/erp/engines/labels";
-import { dots, qrGrid, rasterFromRgba, tsplJob, type PrinterSetup, type Raster } from "@/lib/erp/engines/tspl";
+import { dots, qrGrid, rasterFromRgba, tsplCalibrate, tsplJob, type PrinterSetup, type Raster } from "@/lib/erp/engines/tspl";
 import { LABEL_CSS } from "./label-css";
 
 /*
@@ -218,6 +218,23 @@ export function LabelPrinter({ ids, count, what, mm, setup, fileName }: { ids: s
       }
     });
 
+  /* The printer feeds a few blank labels to measure the roll; nothing is printed, so nothing is marked printed. */
+  const calibrate = () =>
+    start(async () => {
+      const usb = usbOf();
+      if (!usb) return;
+      setNote(null);
+      try {
+        const device = await choosePrinter(usb, mm, false);
+        await sendUsb(device, tsplCalibrate(mm, mm, setup));
+        remember(mm, device);
+        setNote({ tone: "ok", text: "The printer is measuring the roll — it feeds a few blank labels and stops. Then print again." });
+      } catch (e) {
+        const text = usbProblem(e);
+        if (text) setNote({ tone: "bad", text });
+      }
+    });
+
   const save = () =>
     start(async () => {
       setNote(null);
@@ -243,6 +260,15 @@ export function LabelPrinter({ ids, count, what, mm, setup, fileName }: { ids: s
       {note ? <span className={`text-xs ${note.tone === "bad" ? "text-danger" : "text-ink-muted"}`}>{note.text}</span> : null}
       {direct ? (
         <>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={pending}
+            onClick={calibrate}
+            title="When the print lands at a different height on each label: the printer feeds a few blank labels to measure this roll, and prints nothing"
+          >
+            Calibrate to this roll
+          </Button>
           <Button variant="ghost" size="sm" disabled={pending} onClick={() => send(true)} title="Pick which USB printer these labels go to">
             Change printer
           </Button>

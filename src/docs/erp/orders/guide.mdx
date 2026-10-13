@@ -175,7 +175,12 @@ The label sheet offers three ways to paper, and all three print exactly what the
 
 If **Send to printer** answers that the computer is keeping the printer for its own driver, that computer's Windows printer driver holds the USB port: use **Print…** there.
 
-Three settings under Admin Console → Settings → ERP → *Label printer* describe the printers: **dots per millimetre** (8 for a 203 dpi printer, 12 for 300 dpi), the **gap between labels** on the roll, and **which way up** the label leaves the printer. The printer must be loaded with stock the size of the label: 50 × 50 mm for box labels, 80 × 80 mm for the other three.
+Four settings under Admin Console → Settings → ERP → *Label printer* describe the printers: **dots per millimetre** (8 for a 203 dpi printer, 12 for 300 dpi), the **gap between labels** on the roll, **which way up** the label leaves the printer, and **move the print up or down**. The printer must be loaded with stock the size of the label: 50 × 50 mm for box labels, 80 × 80 mm for the other three.
+
+If the print runs onto the next label:
+
+- **It lands at a different height on each label** — the printer has not learnt the roll. Press **Calibrate to this roll** beside Send to printer (or hold the printer's feed button until it feeds a few labels and stops). The printer feeds a few blank labels and prints nothing. Do it again whenever a different roll goes in.
+- **It is the same distance off on every label, after calibrating** — set **move the print up or down** to that distance in millimetres; if it moves the wrong way, use the same figure with a minus sign.
 
 ## The WhatsApp inbox
 

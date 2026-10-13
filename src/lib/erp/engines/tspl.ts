@@ -109,6 +109,19 @@ export function tsplJob(labels: LabelJob[], setup: PrinterSetup): Uint8Array {
 }
 
 /**
+ * Teach the printer this roll. A gap printer finds the top of every label by
+ * its sensor seeing the gap; on a roll the sensor was never set for it sees
+ * none, or sees them late, and each label lands at a different height — which
+ * no shift can correct, because the error is not the same twice. `GAPDETECT`
+ * feeds a few labels past the sensor, measures the label and the gap, and the
+ * printer keeps the threshold. It is told the stock first, because it measures
+ * against what it is told to expect.
+ */
+export function tsplCalibrate(widthMm: number, heightMm: number, setup: PrinterSetup): Uint8Array {
+  return ascii([`SIZE ${mm(widthMm)},${mm(heightMm)}`, `GAP ${mm(setup.gapMm)},0 mm`, "GAPDETECT", "HOME", ""].join("\r\n"));
+}
+
+/**
  * Where the modules of a QR code fall when it is drawn into a square of
  * `boxDots`: every module the same whole number of dots, the code centred in
  * its square. A QR scaled like a photograph has modules of nine dots beside

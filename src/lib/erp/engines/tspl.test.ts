@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { dots, packBitmap, qrGrid, rasterFromRgba, tsplJob, type Raster } from "./tspl";
+import { dots, packBitmap, qrGrid, rasterFromRgba, tsplCalibrate, tsplJob, type Raster } from "./tspl";
 
 const text = (b: Uint8Array) => Buffer.from(b).toString("latin1");
 
@@ -93,6 +93,12 @@ describe("TSPL", () => {
     assert.ok(!text(tsplJob([{ widthMm: 80, heightMm: 80, raster: r, copies: 1 }], { dotsPerMm: 8, gapMm: 3, direction: 1 })).includes("SHIFT"));
     assert.ok(!text(tsplJob([{ widthMm: 80, heightMm: 80, raster: r, copies: 1 }], { dotsPerMm: 8, gapMm: 3, direction: 1, shiftMm: 0 })).includes("SHIFT"));
     assert.ok(text(tsplJob([{ widthMm: 80, heightMm: 80, raster: r, copies: 1 }], { dotsPerMm: 8, gapMm: 3, direction: 1, shiftMm: -2.5 })).includes("\r\nSHIFT -20\r\n"));
+  });
+
+  it("calibrating says the stock, then measures the roll, and prints nothing", () => {
+    const t = text(tsplCalibrate(80, 80, { dotsPerMm: 8, gapMm: 3, direction: 1 }));
+    assert.equal(t, "SIZE 80 mm,80 mm\r\nGAP 3 mm,0 mm\r\nGAPDETECT\r\nHOME\r\n");
+    assert.ok(!t.includes("PRINT"));
   });
 
   it("a QR module is a whole number of dots, and the code is centred in its square", () => {
