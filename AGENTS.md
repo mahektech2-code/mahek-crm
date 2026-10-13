@@ -8810,6 +8810,14 @@ Quality department, or a holder of the ERP's `approveSfgQc` power (an ERP
 administrator included). It needs the network, like Stock check: the list is
 read again at the save.
 
+**THE SCAN PAGE HAS TWO MODES, SCAN AND TYPE.** "Type the code" swaps the
+whole screen: the camera stops, the frame and torch go, and a large box takes
+focus so the keyboard opens; "Scan instead" (or the phone's Back) returns to
+the camera. A phone with no camera, or one not allowed, opens straight in Type
+mode — once, so "Scan instead" is not bounced back (`camState`, `camAsked`).
+The typed text survives a refused code, so "Try again" is a fix, not a retype.
+A typed code is judged exactly as a scan (`submitTyped` → `doScan`).
+
 **IN A COLUMN NOTHING SHRINKS (`web.tsx`).** The web never squeezes a box below
 its content in a column (`min-height: auto`); native has no such floor, so the
 old blanket `flexShrink: 1` crushed buttons, inputs and cards whenever a screen

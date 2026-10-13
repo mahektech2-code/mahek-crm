@@ -583,7 +583,8 @@ export class FactoryApp extends Component<Props, State> {
     const raw = (sc?.typed ?? "").trim();
     if (!sc || !raw) return;
     const code = sc.purpose === "lr" ? raw : typedCode(raw, this.state.db);
-    this.setState({ scan: { ...sc, typed: null } }, () => void this.doScan(code));
+    /* The text stays: a code the server refuses comes back to the box to fix, not to an empty one. */
+    void this.doScan(code);
   }
 
   async doScan(code: string, manual?: boolean) {
@@ -1936,8 +1937,59 @@ export class FactoryApp extends Component<Props, State> {
 
   /* ---------------------------------------------------------------- scan */
 
+  /** The camera's answer. No camera, or none allowed, opens straight in Type mode — once; "Scan instead" is not bounced back. */
+  camState(s: "live" | "none" | "denied") {
+    this.setState((st) => {
+      const sc = st.scan;
+      const toType = !!sc && (s === "none" || s === "denied") && sc.typed == null && !sc.camAsked;
+      return { cam: s, scan: toType ? { ...sc!, typed: "" } : sc };
+    });
+  }
+
+  /** Back to the camera from Type mode. The typed text is dropped; the camera is not offered Type mode again on its own. A browser asks for the camera again when it mounts. */
+  scanInstead() {
+    const sc = this.state.scan;
+    if (!sc) return;
+    this.setState({ scan: { ...sc, typed: null, camAsked: true } });
+  }
+
+  /** Type mode: the camera is off, the box takes the whole screen and the keyboard opens on it. */
+  renderTyping(labels: { code: string; what: string; good: boolean }[]): ReactNode {
+    const st = this.state, T = this.T(), sc = st.scan!, P = sc.purpose, m = sc.meta, db = st.db;
+    const rmName = m.item && db?.rm[m.item] ? db.rm[m.item].n : "";
+    const what = { badge: "your company badge", home: "a task sheet, order, lot or box label", rm: "the " + rmName + " drum", sfg: "the base-liquid tank", pm: "the empty-can stack", fg: "the filled-can pallet", load: "the box label going on the lorry", drum: "the GRN label on the empty drum", lr: "the LR receipt" }[P];
+    const typed = sc.typed ?? "", ready = !!typed.trim();
+    const noCam = st.cam === "none" || st.cam === "denied";
+    const lr = P === "lr";
+    return (
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: "10px", padding: "14px 16px 18px 16px" }}>
+        {noCam && <div style={{ padding: "10px 12px", borderRadius: "12px", background: "rgba(255,231,168,0.12)", color: "#FFE7A8", fontSize: "14px", lineHeight: "20px" }}>{st.cam === "denied" ? T.camOffType : T.noCamType}</div>}
+        <div style={{ fontSize: "22px", lineHeight: "28px", fontWeight: 700 }}>{lr ? T.typeLr : T.typeTitle}</div>
+        {!!what && <div style={{ fontSize: "15px", color: "#C2C8D2" }}>{T.lookingFor + ": " + what}</div>}
+        <input value={typed} onChange={(e) => this.setState({ scan: { ...sc, typed: String(e.target.value).toUpperCase().slice(0, 60) } })} onKeyDown={(e) => e.key === "Enter" && this.submitTyped()} autoFocus autoComplete="off" aria-label={lr ? T.typeLr : T.typeCode} style={{ width: "100%", height: "64px", minHeight: "64px", boxSizing: "border-box", marginTop: "6px", borderRadius: "16px", border: "2px solid #C6FF34", background: "rgba(255,255,255,0.06)", color: "#FFFFFF", padding: "0 16px", ...mono, fontSize: "24px", fontWeight: 600, letterSpacing: "1px", outline: "none" }} />
+        <div style={{ fontSize: "13px", lineHeight: "18px", color: "#9BA3B2" }}>{lr ? T.typeLrEg : T.typeEg}</div>
+        <button onClick={() => this.submitTyped()} style={{ width: "100%", height: "56px", marginTop: "6px", border: "none", borderRadius: "14px", background: ready ? "#C6FF34" : "rgba(255,255,255,0.12)", color: ready ? "#0E1016" : "#9BA3B2", fontSize: "17px", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", cursor: ready ? "pointer" : "default" }}>{ic("enterKey", 20, ready ? "#0E1016" : "#9BA3B2")}{lr ? T.checkLr : T.checkCode}</button>
+        <button onClick={() => this.scanInstead()} style={{ width: "100%", height: "54px", border: "1.5px solid rgba(255,255,255,0.28)", background: "transparent", borderRadius: "14px", color: "#FFFFFF", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", cursor: "pointer" }}>{ic(st.cam === "denied" ? "camOn" : "scanFrame", 22, "#FFFFFF")}{st.cam === "denied" ? T.camOn : T.scanInstead}</button>
+        {labels.length > 0 && (
+          <>
+            <div style={{ fontSize: "12px", fontWeight: 600, color: "#9BA3B2", marginTop: "6px" }}>{T.testLabels}</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+              {labels.map((b) => (
+                <button key={b.code} onClick={() => void this.doScan(b.code)} style={{ padding: "8px 12px", borderRadius: "12px", border: "1px solid " + (b.good ? "rgba(198,255,52,0.45)" : "rgba(255,255,255,0.2)"), background: "rgba(255,255,255,0.06)", color: "#FFFFFF", textAlign: "left", cursor: "pointer" }}>
+                  <span style={{ display: "block", ...mono, fontSize: "13px", fontWeight: 600 }}>{b.code}</span>
+                  <span style={{ display: "block", fontSize: "11px", opacity: 0.75, marginTop: "1px" }}>{b.what}</span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
   renderScan(): ReactNode {
     const st = this.state, T = this.T(), sc = st.scan!, f = st.flow, m = sc.meta, P = sc.purpose, r = sc.res;
+    const typing = sc.typed != null;
     const db = st.db;
     const rmName = m.item && db?.rm[m.item] ? db.rm[m.item].n : "";
     const title = { badge: T.scanBadge, home: T.scanQR, rm: rmName, sfg: "Base liquid", pm: "Empty cans", fg: "Filled cans", load: f ? (f.task.order ?? "") : "", drum: "Empty drum", lr: "LR number" }[P] || T.scanQR;
@@ -1948,12 +2000,14 @@ export class FactoryApp extends Component<Props, State> {
     const corner = (pos: CSSProperties, b: string, rad: string): ReactNode => <span style={{ position: "absolute", width: "44px", height: "44px", ...pos, [b.split("|")[0]]: "5px solid #C6FF34", [b.split("|")[1]]: "5px solid #C6FF34", borderRadius: rad } as CSSProperties} />;
     return (
       <div style={{ flex: 1, minHeight: 0, background: "#0E1016", color: "#FFFFFF", display: "flex", flexDirection: "column", position: "relative" }}>
-        {!r && <CameraScanner torch={sc.torch} paused={!!r || !!st.sheet || sc.typed != null} onCode={(c) => void this.doScan(c)} onState={(s) => this.setState({ cam: s })} />}
+        {!r && !typing && <CameraScanner torch={sc.torch} paused={!!r || !!st.sheet} onCode={(c) => void this.doScan(c)} onState={(s) => this.camState(s)} />}
         <div style={{ flex: "none", display: "flex", alignItems: "center", gap: "10px", padding: "8px 12px", position: "relative" }}>
           <button onClick={() => this.setState({ scan: null })} aria-label="Close" style={{ width: "48px", height: "48px", borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("x", 24, "#FFFFFF")}</button>
           <span style={{ flex: 1, fontSize: "17px", fontWeight: 700, textAlign: "center" }}>{title}</span>
-          <button onClick={() => this.setState({ scan: { ...sc, torch: !sc.torch } })} aria-label="Torch" style={{ width: "48px", height: "48px", borderRadius: "50%", border: "none", background: sc.torch ? "#C6FF34" : "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("torch", 22, "#FFFFFF")}</button>
+          {typing ? <span style={{ width: "48px", height: "48px", flex: "none" }} /> : <button onClick={() => this.setState({ scan: { ...sc, torch: !sc.torch } })} aria-label="Torch" style={{ width: "48px", height: "48px", borderRadius: "50%", border: "none", background: sc.torch ? "#C6FF34" : "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("torch", 23, "#FFFFFF")}</button>}
         </div>
+        {typing ? this.renderTyping(labels) : (
+          <>
         <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "0 24px", position: "relative" }}>
           <div style={{ position: "relative", width: "240px", height: "240px", borderRadius: "24px", background: sc.torch ? "rgba(198,255,52,0.10)" : "rgba(255,255,255,0.03)" }}>
             {corner({ left: 0, top: 0 }, "borderLeft|borderTop", "20px 0 0 0")}
@@ -1965,7 +2019,6 @@ export class FactoryApp extends Component<Props, State> {
           <div style={{ fontSize: "20px", lineHeight: "26px", fontWeight: 700, marginTop: "22px", textAlign: "center" }}>{hint}</div>
           <div style={{ fontSize: "15px", color: "#C2C8D2", marginTop: "4px", textAlign: "center" }}>{st.cam === "denied" ? "The camera is off. Allow the camera for this app, or type the code." : T.scanHint}</div>
         </div>
-        {(
           <div style={{ flex: "none", background: "#1A1E28", borderRadius: "22px 22px 0 0", padding: "14px 16px 18px 16px", position: "relative" }}>
             {labels.length > 0 && (
               <>
@@ -1980,20 +2033,10 @@ export class FactoryApp extends Component<Props, State> {
                 </div>
               </>
             )}
-            {sc.typed == null ? (
-              <button onClick={() => this.setState({ scan: { ...sc, typed: "" } })} style={{ width: "100%", height: "54px", marginTop: labels.length ? "12px" : 0, border: "1.5px solid rgba(255,255,255,0.28)", background: "transparent", borderRadius: "14px", color: "#FFFFFF", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", cursor: "pointer" }}>{ic("keys", 22, "#FFFFFF")}{P === "lr" ? T.typeLr : T.typeCode}</button>
-            ) : (
-              <div style={{ marginTop: labels.length ? "12px" : 0 }}>
-                <div style={{ fontSize: "13px", fontWeight: 600, color: "#C2C8D2" }}>{P === "lr" ? T.typeLr : T.typeHint}</div>
-                <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
-                  <input value={sc.typed} onChange={(e) => this.setState({ scan: { ...sc, typed: String(e.target.value).toUpperCase().slice(0, 60) } })} onKeyDown={(e) => e.key === "Enter" && this.submitTyped()} autoFocus autoComplete="off" aria-label={T.typeCode} style={{ flex: 1, minWidth: 0, height: "54px", borderRadius: "14px", border: "1.5px solid rgba(255,255,255,0.28)", background: "rgba(255,255,255,0.06)", color: "#FFFFFF", padding: "0 14px", ...mono, fontSize: "18px", fontWeight: 600, outline: "none" }} />
-                  <button onClick={() => this.submitTyped()} style={{ height: "54px", flex: "none", padding: "0 18px", border: "none", borderRadius: "14px", background: sc.typed.trim() ? "#C6FF34" : "rgba(255,255,255,0.12)", color: sc.typed.trim() ? "#0E1016" : "#9BA3B2", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{T.checkCode}</button>
-                  <button onClick={() => this.setState({ scan: { ...sc, typed: null } })} aria-label="Close" style={{ width: "54px", height: "54px", flex: "none", border: "none", borderRadius: "14px", background: "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("x", 22, "#FFFFFF")}</button>
-                </div>
-              </div>
-            )}
-            {hasManual && sc.typed == null && <button onClick={() => this.manualPick()} style={{ width: "100%", height: "54px", marginTop: "10px", border: "1.5px solid rgba(255,255,255,0.28)", background: "transparent", borderRadius: "14px", color: "#FFFFFF", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", cursor: "pointer" }}>{ic("camera", 22, "#FFFFFF")}{T.noLabel}</button>}
+            <button onClick={() => this.setState({ scan: { ...sc, typed: "" } })} style={{ width: "100%", height: "54px", marginTop: labels.length ? "12px" : 0, border: "1.5px solid rgba(255,255,255,0.28)", background: "transparent", borderRadius: "14px", color: "#FFFFFF", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", cursor: "pointer" }}>{ic("typeField", 23, "#FFFFFF")}{P === "lr" ? T.typeLr : T.typeCode}</button>
+            {hasManual && <button onClick={() => this.manualPick()} style={{ width: "100%", height: "54px", marginTop: "10px", border: "1.5px solid rgba(255,255,255,0.28)", background: "transparent", borderRadius: "14px", color: "#FFFFFF", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", cursor: "pointer" }}>{ic("picture", 22, "#FFFFFF")}{T.noLabel}</button>}
           </div>
+          </>
         )}
         {r && (
           <div style={{ position: "absolute", inset: 0, background: "rgba(14,16,22,0.55)", display: "flex", alignItems: "flex-end", zIndex: 5 }}>
@@ -2001,7 +2044,7 @@ export class FactoryApp extends Component<Props, State> {
               {r.ok ? this.renderScanOk(r as Extract<ScanResult, { ok: true }> & { manual?: boolean }) : (
                 <div>
                   <div style={{ display: "flex", gap: "12px", alignItems: "flex-start" }}>
-                    <span style={{ width: "52px", height: "52px", flex: "none", borderRadius: "50%", background: "#FCECEC", color: "#B3261E", display: "flex", alignItems: "center", justifyContent: "center" }}>{ic("x", 28, "#B3261E")}</span>
+                    <span style={{ width: "52px", height: "52px", flex: "none", borderRadius: "50%", background: "#FCECEC", color: "#B3261E", display: "flex", alignItems: "center", justifyContent: "center" }}>{ic("alertRound", 30, "#B3261E")}</span>
                     <span style={{ flex: 1 }}>
                       <span style={{ display: "block", fontSize: "20px", lineHeight: "25px", fontWeight: 700, color: "#B3261E" }}>{r.title}</span>
                       <span style={{ display: "block", ...mono, fontSize: "13px", color: "#6B7385", marginTop: "2px" }}>{r.code}</span>
@@ -2011,7 +2054,7 @@ export class FactoryApp extends Component<Props, State> {
                   <div style={{ marginTop: "12px", padding: "12px 14px", borderRadius: "12px", background: "#F7F8FA", fontSize: "15px", lineHeight: "22px", color: "#1A1E28" }}><span style={{ fontWeight: 700 }}>What to do: </span>{r.fix}</div>
                   <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
                     <button onClick={() => this.speak(r.title + ". " + r.fix)} aria-label={T.listen} style={{ ...btn("s", 58), width: "64px", flex: "none" }}>{ic("speaker", 20)}</button>
-                    <button onClick={() => this.setState({ scan: { ...sc, res: null } })} style={{ ...btn("p", 58), flex: 2 }}>{T.scanAgain}</button>
+                    <button onClick={() => this.setState({ scan: { ...sc, res: null } })} style={{ ...btn("p", 58), flex: 2 }}>{typing ? T.retry : T.scanAgain}</button>
                   </div>
                 </div>
               )}
