@@ -19,7 +19,7 @@ import { seedFactoryFloor, type SeededFloor } from "./demo-seed";
 import { bootstrap, contextFor, type FactoryCtx } from "./server";
 import { submitJob } from "./post";
 import { assignTask, decideReview, requestCorrection, startFillFromLot, startMixingBatch } from "./head";
-import { boxCode, fillFromLot, mixDeviation, recipeLines, recipeProblem, recipeRm, resolveScan, startsOwnBatch, taskCode, typedCode } from "./rules";
+import { boxCode, fillFromLot, stepCheck, mixDeviation, recipeLines, recipeProblem, recipeRm, resolveScan, startsOwnBatch, taskCode, typedCode } from "./rules";
 import { boxInfo, loadBoard, lrKit, saveLr, scanBox, unloadBox } from "./dispatch";
 import { cancelFromFloor, raiseFromFloor, requirementKit } from "./purchase";
 import { shelfFacts } from "@/lib/erp/stock-check";
@@ -343,7 +343,8 @@ describe("filling and packing", () => {
 describe("dispatch", () => {
   test("loading is checked against the allocation, and checking it never marks the order dispatched", async () => {
     const { fc, data } = await as("imran");
-    const t = open(data, "dispatch", (x) => !data.orders[x.order!]?.blocked);
+    const given = (x: Task) => { const o = data.orders[x.order!]; return !!o && !o.blocked && o.lines.every((ln) => ln.alloc.reduce((a, z) => a + z[1], 0) >= ln.qty); };
+    const t = open(data, "dispatch", given);
     const o = data.orders[t.order!];
     const loads = Object.fromEntries(o.lines.flatMap((ln) => ln.alloc.map((a) => [a[0], a[1]])));
     const short = { ...loads, [Object.keys(loads)[0]]: 1 };
@@ -408,6 +409,36 @@ describe("dispatch", () => {
     assert.equal((stranger as { title: string }).title, "Not your work", "mixing does not load lorries");
     const elsewhere = await scanBox(fc, "SO-999999", id);
     assert.equal((elsewhere as { title: string }).title, "This order is not here");
+  });
+
+  test("a Ready order with no lots given is not held: scanning on the lorry gives it its lot", async () => {
+    const { fc, data } = await as("imran");
+    const t = data.tasks.find((x) => x.proc === "dispatch" && x.order && data.orders[x.order] && !data.orders[x.order].blocked)!;
+    const no = Number(t.order!.replace("SO-", ""));
+    const [bc] = await q<{ from: string; lot: string; godown: string; sku: string; cpb: number; fg: string | null; orderId: string }>(sql`
+      select b.lot_from as "from", b.lot_code as lot, b.godown_id as godown, o.sku_id as sku, coalesce(p.cans_per_box, 1) as cpb, b.finished_good_id as fg, o.id as "orderId"
+        from erp_batch_codes b join erp_orders o on o.id = b.order_id join products p on p.id = o.sku_id
+       where o.order_no = ${no} limit 1`);
+    /* The office stopped giving lots: Ready is all an order carries now. */
+    await db.execute(sql`delete from erp_batch_codes where order_id in (select id from erp_orders where order_no = ${no})`);
+    const before = (await as("imran")).data;
+    const o = before.orders[t.order!];
+    assert.equal(o.blocked, undefined, "a Ready order is loadable without lots given");
+    assert.equal(stepCheck(before, t, {} as Draft, "order"), "");
+    assert.match(stepCheck(before, t, {} as Draft, "load"), /still|found/, "the load step asks for the scan");
+
+    const [had] = await q<{ id: string }>(sql`select id from erp_units where lot_from = ${bc.from} and lot_code = ${bc.lot} and status = 'available' order by id limit 1`);
+    const id = had?.id ?? (bc.from === "pack" ? "BX" : "LU") + "-991230-" + String(Date.now() % 1e6).padStart(6, "0");
+    if (!had)
+      await db.execute(sql`
+        insert into erp_units (id, kind, sku_id, lot_from, lot_code, finished_good_id, seq, cans, godown_id, status)
+        values (${id}, ${bc.from === "pack" ? "box" : "loose"}, ${bc.sku}, ${bc.from}, ${bc.lot}, ${bc.fg}, 1, ${bc.from === "pack" ? bc.cpb : 1}, ${bc.godown}, 'available')`);
+    const r = await scanBox(fc, t.order!, id);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.ok(r.ok && r.data, "an allocating scan sends the phone the order again");
+    const after = r.ok ? r.data! : before;
+    assert.ok(after.orders[t.order!].lines.some((ln) => ln.alloc.some((a) => a[0] === bc.lot)), "the scanned box's lot is given to the order");
+    await unloadBox(fc, t.order!, id);
   });
 
   test("an LR uploaded from the phone lands in the register the LR desk reads, and only dispatch may upload one", async () => {

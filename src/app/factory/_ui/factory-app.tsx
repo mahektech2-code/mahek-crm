@@ -35,6 +35,8 @@ import {
   taskName,
   typedCode,
   taskTarget,
+  boxCode,
+  lotGiven,
   type ScanMeta,
   type ScanPurpose,
   type ScanResult,
@@ -675,8 +677,46 @@ export class FactoryApp extends Component<Props, State> {
       }
       return;
     }
+    if (sc.purpose === "load" && st.flow?.task.order) {
+      const order = st.flow.task.order, box = boxCode(code);
+      if (box || !lotGiven(this.db(), order, code)) return void this.scanOntoOrder(order, box ?? code, !!box, manual);
+    }
     const r = resolveScan(code, { db: this.db(), purpose: sc.purpose, meta: sc.meta, area: st.me?.head ? "head" : st.me?.area, areas: st.me && !st.me.head ? myDepts(st.me) : undefined, task: st.flow?.task, d: st.flow?.d });
     this.setState({ scan: { ...sc, res: { ...r, manual: !!manual } } });
+  }
+
+  /**
+   * A box label, or a lot label the order was not given: the ERP's dispatch
+   * desk judges it and, where it is the right stock, allocates it to the
+   * order there and then — the office does not give lots first any more. A
+   * box is counted at once; a lot is then loaded like any lot the order carries.
+   */
+  async scanOntoOrder(order: string, code: string, box: boolean, manual?: boolean) {
+    const sc = this.state.scan;
+    if (!sc) return;
+    const fail = (title: string, text: string, fix: string) => this.setState({ scan: { ...sc, res: { ok: false, code, title, text, fix } } });
+    try {
+      const r = await call("scanBox", order, code);
+      if (!r.ok) return fail(r.title, r.text, r.fix);
+      const db = r.data ?? this.db();
+      if (r.data) this.setState({ db: r.data });
+      if (box) {
+        /* The server's count of boxes per lot is what the order has loaded. */
+        const given = new Set((db.orders[order]?.lines ?? []).flatMap((ln) => ln.alloc.map((a) => a[0])));
+        this.setD((z) => {
+          z.loads = { ...(z.loads ?? {}) };
+          for (const lot of Object.keys(r.board.perLot)) if (given.has(lot)) z.loads[lot] = r.board.perLot[lot];
+        });
+        this.setState({ scan: { ...sc, res: null } });
+        return this.toast(r.message);
+      }
+      const st = this.state;
+      const res = resolveScan(code, { db, purpose: "load", meta: sc.meta, area: st.me?.head ? "head" : st.me?.area, areas: st.me && !st.me.head ? myDepts(st.me) : undefined, task: st.flow?.task, d: st.flow?.d });
+      this.setState({ scan: { ...sc, res: { ...res, manual: !!manual } } });
+    } catch (e) {
+      if (!(e instanceof NotReceived)) throw e;
+      fail("No network", "This label is not counted yet.", "Check the Wi-Fi, then scan the same label again. It will not be counted twice.");
+    }
   }
 
   acceptScan() {
@@ -3112,7 +3152,7 @@ export class FactoryApp extends Component<Props, State> {
         info.push(infoCard("Customer", ord.cust), infoCard("Town", ord.city), infoCard("Truck", ord.vehicle), infoCard("Transporter", ord.trans));
         ord.lines.forEach((ln) => {
           const b = db.box[ln.sku], k = db.sku[b ? b.sku : ln.sku];
-          lines.push({ art: b ? art("box", k?.col, b.cpb + "×" + k?.tag, 56) : art(k?.kind ?? "can", k?.col, k?.tag, 56), title: ln.label, qty: nf(ln.qty) + " " + ln.unit, lots: ln.alloc.length ? ln.alloc.map((a) => a[0] + " × " + a[1]).join("   ") : "No lots given yet" });
+          lines.push({ art: b ? art("box", k?.col, b.cpb + "×" + k?.tag, 56) : art(k?.kind ?? "can", k?.col, k?.tag, 56), title: ln.label, qty: nf(ln.qty) + " " + ln.unit, lots: ln.alloc.length ? ln.alloc.map((a) => a[0] + " × " + a[1]).join("   ") : "Lot found by scanning on the lorry" });
         });
         if (ord.blocked) msgs.push(msg(ord.blocked, "warn"));
       }
@@ -3121,10 +3161,10 @@ export class FactoryApp extends Component<Props, State> {
     if (key === "load") {
       const ord = db.orders[t.order!];
       let need = 0, got = 0;
-      ord?.lines.forEach((ln) =>
+      ord?.lines.forEach((ln) => {
+        need += ln.qty;
         ln.alloc.forEach((a) => {
           const v = d.loads?.[a[0]];
-          need += a[1];
           got += v || 0;
           const b = db.box[ln.sku], k = db.sku[b ? b.sku : ln.sku];
           lots.push({
@@ -3133,8 +3173,19 @@ export class FactoryApp extends Component<Props, State> {
             err: v != null && v !== a[1] ? (v > a[1] ? "Too many — the order takes " + a[1] : "Short by " + (a[1] - v) + ". Load " + a[1] + " or tell the dispatch head.") : "",
             qtyOpen: () => this.openKp({ l: "How many did you load from " + a[0] + "?", unit: ln.unit, v, max: a[1], maxL: "This order takes " + a[1] + " from this lot", quick: [{ l: "All " + a[1], v: a[1] }], set: (q) => this.setD((z) => { z.loads = { ...(z.loads ?? {}), [a[0]]: q }; }) }),
           });
-        }),
-      );
+        });
+        /* No lot given yet is not a wait: the label the loader scans is what
+           gives the order its lot (the ERP's dispatch desk allocates it). */
+        const left = ln.qty - ln.alloc.reduce((a, z) => a + z[1], 0);
+        if (left > 0) {
+          const b = db.box[ln.sku], k = db.sku[b ? b.sku : ln.sku];
+          lots.push({
+            art: b ? art("box", k?.col, b.cpb + "×" + k?.tag, 52) : art(k?.kind ?? "can", k?.col, k?.tag, 52), name: ln.label.split(" · ")[0],
+            need: nf(left) + " " + ln.unit + " still to find. Scan the " + (b ? "box label" : "lot label") + " of what goes on the lorry.",
+            lot: null, scan: () => this.openScan("load"), scanL: b ? "Scan a box" : "Scan the lot label",
+          });
+        }
+      });
       bar = { l: "Loaded", v: got + " / " + need, fill: { height: "12px", width: Math.round((got / Math.max(1, need)) * 100) + "%", background: got === need ? "#1D7A45" : "#6835FB", borderRadius: "6px" } };
     }
     if (key === "checklist") {

@@ -23,6 +23,11 @@ export type ScanResult =
   | { ok: true; code: string; kind: "task"; task: string }
   | { ok: true; code: string; kind: "info" | "lot"; lot: string };
 
+/** Whether the office (or an earlier scan) has already given this lot to the order. */
+export function lotGiven(db: FactoryData, order: string, code: string): boolean {
+  return (db.orders[order]?.lines ?? []).some((ln) => ln.alloc.some((a) => a[0] === code));
+}
+
 /**
  * A box label (BX-yymmdd-nnnnnn, or LU- for a loose unit), read the way the
  * ERP reads one — a QR may carry the whole tracking URL — or null. Only the
@@ -250,6 +255,10 @@ export function stepCheck(db: FactoryData, t: Task, d: Draft, key: string): stri
   if (key === "load") {
     const o = db.orders[t.order!];
     if (!o) return "This order is not ready yet. Wait for the office.";
+    for (const ln of o.lines) {
+      const given = ln.alloc.reduce((a, z) => a + z[1], 0);
+      if (given < ln.qty) return "Scan " + ln.label.split(" · ")[0] + " — " + nf(given) + " of " + nf(ln.qty) + " " + ln.unit + " found";
+    }
     for (const ln of o.lines)
       for (const a of ln.alloc) {
         const v = d.loads?.[a[0]];

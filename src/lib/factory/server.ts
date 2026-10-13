@@ -418,8 +418,10 @@ export async function ordersFor(godown: { id: string; name: string }, m: Masters
       if (!x) lots[a.lot] = { code: a.lot, type: a.lotFrom === "pack" ? "pb" : "fg", item: a.lotFrom === "pack" ? r.skuId : skuKey, avail: n(a.qty), loc: godown.name, status: "ok", order: key };
       else x.order = key;
     }
+    /* Ready means the stock is on the shelf, and the scan on the lorry is what
+       allocates it — the office no longer gives lots first, so a line with
+       none is work for the loader, not a reason to wait. */
     if (r.status !== "Ready") o.blocked = "This order is not ready yet. Wait for the office.";
-    else if (!mine.length || mine.reduce((a, b) => a + n(b.qty), 0) < qty) o.blocked = "The office has not given lots for this order yet. Wait for the office.";
   }
   return out;
 }
