@@ -5,7 +5,7 @@ import { erpId } from "@/lib/erp/server";
 import { screenModule } from "@/lib/erp/screens";
 import { calendarDate } from "@/lib/business-date";
 import { firstBlockedStep, mixDeviation, mixMade, nf, normalizeDraft, recipeLines, recipeProblem, savedInstant } from "./rules";
-import { hhmm } from "./time";
+import { clock12, hhmm } from "./time";
 import type { Draft, FactoryData, Proc, Submission, SubmitResult, Task } from "./types";
 import { OFFLINE_HOURS } from "./types";
 import {
@@ -141,7 +141,7 @@ const workDay = (sub: Submission) => calendarDate(savedInstant(sub.savedAt, new 
 async function hold(fc: FactoryCtx, sub: Submission, why: { title: string; text?: string }): Promise<SubmitResult> {
   const [t] = await q<{ proc: Proc }>(sql`select proc from factory_tasks where id = ${sub.taskId}`);
   const at = savedInstant(sub.savedAt, new Date());
-  const when = calendarDate(at) + " " + hhmm(at);
+  const when = calendarDate(at) + " " + clock12(hhmm(at));
   const [open] = await q<{ id: string }>(sql`
     select id from factory_reviews where kind = 'unposted' and status = 'open' and change->>'key' = ${sub.key} limit 1`);
   if (!open)
@@ -277,7 +277,7 @@ async function postMixing(fc: FactoryCtx, sub: Submission, live: FactoryData, t:
     progress.push({ step: 0, doc: "sfg", ref: lot });
     await saveProgress(sub.key, progress);
   }
-  const at = nowHM();
+  const at = clock12(nowHM());
   return {
     kind: "done", key: sub.key, task: t.id, proc: "mixing",
     rows: [["New batch", lot], ["Made", nf(made) + " L"], ["Drums used", String(lines.length)], ["Saved at", at]],
@@ -319,7 +319,7 @@ async function postFilling(fc: FactoryCtx, sub: Submission, live: FactoryData, t
     progress.push({ step: 0, doc: "fg", ref: lot });
     await saveProgress(sub.key, progress);
   }
-  const at = nowHM();
+  const at = clock12(nowHM());
   return {
     kind: "done", key: sub.key, task: t.id, proc: "filling",
     rows: [["New lot", lot], ["Good " + unit, nf(good)], ["Damaged", nf(rej)], ["Base liquid used", nf(filled * k.l) + " L"]],
@@ -438,7 +438,7 @@ async function postPacking(fc: FactoryCtx, sub: Submission, live: FactoryData, t
   const openNow = batches.filter((x) => n(x.cans) < n(x.boxes) * n(x.cpb));
   const rem = openNow.reduce((a, x) => a + Math.floor(n(x.cans) / Math.max(1, n(x.cpb))), 0);
   const full = complete.length;
-  const at = nowHM();
+  const at = clock12(nowHM());
   const first = complete[0];
   return {
     kind: "done", key: sub.key, task: t.id, proc: "packing",
@@ -462,7 +462,7 @@ async function postDispatch(fc: FactoryCtx, sub: Submission, live: FactoryData, 
     await db.execute(sql`
       update attachments set parent_type = 'factory_task', parent_id = ${t.id}, updated_at = now()
        where id = ${d.photoId} and parent_id is null and uploaded_by_id = ${fc.user.id}`);
-  const at = nowHM();
+  const at = clock12(nowHM());
   return {
     kind: "done", key: sub.key, task: t.id, proc: "dispatch",
     rows: [["Order", t.order!], ["Customer", ord?.cust ?? "—"], ["Next", "Office sends it"], ["Checked at", at]],
@@ -542,6 +542,6 @@ async function finish(fc: FactoryCtx, sub: Submission, live: FactoryData, t: Tas
     : t.proc === "filling" ? `Saved filling ${r.label?.code} · ${nf((d.filled ?? 0) - (d.rej ?? 0))} good, ${nf(d.rej)} rejected`
     : t.proc === "packing" ? `Saved packing · ${nf(d.boxes)} boxes · ${r.rows[1][1]} full batch${r.rows[1][1] === "1" ? "" : "es"}`
     : `Loading checked for ${t.order} · photo ${d.photo ?? "—"}`;
-  await factoryAudit(fc, "factory." + t.proc + ".save", t.id, what + (sub.queued ? ` · saved on phone ${hhmm(savedInstant(sub.savedAt, new Date()))}, sent from its queue` : ""), { key: sub.key, team: d.team });
+  await factoryAudit(fc, "factory." + t.proc + ".save", t.id, what + (sub.queued ? ` · saved on phone ${clock12(hhmm(savedInstant(sub.savedAt, new Date())))}, sent from its queue` : ""), { key: sub.key, team: d.team });
   if (d.down && d.downR) await factoryAudit(fc, "factory.downtime", t.id, `Machine stopped ${d.downMin} min · ${d.downR}`);
 }

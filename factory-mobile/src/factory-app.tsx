@@ -38,7 +38,7 @@ import {
   type ScanResult,
 } from "@/lib/factory/rules";
 import { CHECK_ITEMS, DOWN, MIX_BATCH_MAX, OFFLINE_HOURS, REJ, STEPS, SUBMISSION_VERSION, LR_BATCH_MAX, type CheckStage, type CheckUnit, type QcLot, type Draft, type FactoryData, type LoadBoard, type LrFields, type Lot, type Proc, type ReqDept, type ReqItem, type ReqLine, type SubmitResult, type Task, type Team } from "@/lib/factory/types";
-import { hhmm } from "@/lib/factory/time";
+import { clock12, hhmm } from "@/lib/factory/time";
 import { calendarDate } from "@/lib/business-date";
 import type { Me } from "./types";
 import { APP_BUILD, call, dropSession, NotReceived, uploadPhoto } from "./api";
@@ -2352,7 +2352,7 @@ export class FactoryApp extends Component<Props, State> {
                   <Span style={{ fontSize: "17px", fontWeight: 700, flex: 1 }}>{t.item}</Span>
                   <Span style={{ ...mono, fontSize: "13px", color: "#6B7385" }}>{t.no}</Span>
                 </Div>
-                <Span style={{ fontSize: "14px", color: "#3D4453" }}>{t.godown + " · " + (t.overdue ? "overdue since " : "due ") + t.due}</Span>
+                <Span style={{ fontSize: "14px", color: "#3D4453" }}>{t.godown + " · " + (t.overdue ? "overdue since " : "due ") + clock12(t.due)}</Span>
                 <Div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
                   <Pill l={t.kind} bg="#EDEFF3" fg="#3D4453" />
                   {t.recount && <Pill l="Recount" bg="#FDF6E7" fg="#8A5C05" />}
@@ -3169,7 +3169,7 @@ export class FactoryApp extends Component<Props, State> {
                   <Span style={{ display: "inline-flex", alignItems: "center", gap: "5px", height: "24px", padding: "0 9px", borderRadius: "12px", background: "#F1ECFF", color: "#3D14A8", fontSize: "12px", fontWeight: 700 }}>{ic(PC[t.proc], 15)}{(T as Record<string, string>)[t.proc] + " · " + t.id}</Span>
                   <Span style={{ display: "block", fontSize: "18px", lineHeight: "23px", fontWeight: 700, marginTop: "6px" }}>{taskName(db, t)}</Span>
                   <Span style={{ display: "block", fontSize: "15px", color: "#3D4453", marginTop: "2px" }}>{taskTarget(db, t)}</Span>
-                  <Span style={{ display: "block", fontSize: "14px", fontWeight: over ? 700 : 500, color: over ? "#B3261E" : "#6B7385", marginTop: "2px" }}>{(over ? "Late · due at " : "Do by ") + t.due}</Span>
+                  <Span style={{ display: "block", fontSize: "14px", fontWeight: over ? 700 : 500, color: over ? "#B3261E" : "#6B7385", marginTop: "2px" }}>{(over ? "Late · due at " : "Do by ") + clock12(t.due)}</Span>
                 </Span>
               </Div>
               {(blocked || pend) && <Div style={{ marginTop: "12px", padding: "10px 12px", borderRadius: "12px", fontSize: "14px", lineHeight: "20px", background: blocked ? "#F7F8FA" : "#FDF6E7", color: blocked ? "#3D4453" : "#8A5C05" }}>{blocked ? db.orders[t.order!]?.blocked : held ? "With your supervisor. You do not need to do it again." : "Saved on this phone. It will send when the network comes back."}</Div>}
@@ -3186,7 +3186,7 @@ export class FactoryApp extends Component<Props, State> {
                   <Span style={{ width: "32px", height: "32px", borderRadius: "50%", background: "#E9F5EE", color: "#1D7A45", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{ic("check", 18, "#1D7A45")}</Span>
                   <Span style={{ flex: 1, minWidth: 0 }}>
                     <Span style={{ display: "block", fontSize: "15px", fontWeight: 600 }}>{taskName(db, t)}</Span>
-                    <Span style={{ display: "block", fontSize: "13px", color: "#6B7385" }}>{t.id + " · " + nf(t.out?.good) + " " + (t.out?.unit ?? "") + (t.out?.rej ? " good · " + t.out.rej + " rejected" : "") + " · " + (t.out?.at ?? "")}</Span>
+                    <Span style={{ display: "block", fontSize: "13px", color: "#6B7385" }}>{t.id + " · " + nf(t.out?.good) + " " + (t.out?.unit ?? "") + (t.out?.rej ? " good · " + t.out.rej + " rejected" : "") + " · " + clock12(t.out?.at ?? "")}</Span>
                   </Span>
                 </Div>
               ))}
@@ -3457,19 +3457,19 @@ export class FactoryApp extends Component<Props, State> {
       const nb = d?.batches ?? t.batches ?? 1;
       own = !!d?.ownRecipe;
       mixLines = recipeLines(db, t, d);
-      chips = [nb + " × " + nf(own ? batchLitres(mixLines) : sf.batch) + " L", "Due " + t.due];
+      chips = [nb + " × " + nf(own ? batchLitres(mixLines) : sf.batch) + " L", "Due " + clock12(t.due)];
       rowsTitle = (own ? "Your recipe" : "Batch sheet") + " · for " + nb + " batch" + (nb > 1 ? "es" : "");
       rows = mixLines.map((r) => ({ l: db.rm[r.item]?.n ?? r.item, v: nf(r.per * nb) + " L", c: db.rm[r.item]?.col ?? "#3D4453" }));
     }
     if (t.proc === "filling") {
       const k = db.sku[t.item!];
-      chips = [nf(t.target) + " " + (k.kind === "drum" ? "drums" : "cans"), k.size, "Due " + t.due];
+      chips = [nf(t.target) + " " + (k.kind === "drum" ? "drums" : "cans"), k.size, "Due " + clock12(t.due)];
       rowsTitle = "What you need";
       rows = [{ l: "Base liquid", v: nf((t.target ?? 0) * k.l) + " L", c: db.sfg[k.sfg]?.col ?? "#2B5CBF" }, { l: db.pm[k.pm] ?? "Empty cans", v: nf(t.target), c: "#9BA3B2" }];
     }
     if (t.proc === "packing") {
       const b = db.box[t.item!], k = db.sku[b.sku];
-      chips = [nf(t.target) + " boxes", b.cpb + " × " + k.size, "Due " + t.due];
+      chips = [nf(t.target) + " boxes", b.cpb + " × " + k.size, "Due " + clock12(t.due)];
       rowsTitle = "What you need";
       rows = [{ l: "Filled cans", v: nf((t.target ?? 0) * b.cpb), c: k.col }, { l: "Box type", v: b.type, c: "#A88A55" }, { l: "One batch is", v: b.batch + " boxes", c: "#6835FB" }];
     }
@@ -4000,7 +4000,7 @@ export class FactoryApp extends Component<Props, State> {
               <Span style={artWell(56, 14)}>{this.taskArt(t, 48)}</Span>
               <Span style={{ flex: 1, minWidth: 0 }}>
                 <Span style={{ display: "block", fontSize: "16px", fontWeight: 700 }}>{taskName(db, t)}</Span>
-                <Span style={{ display: "block", fontSize: "13px", color: "#6B7385" }}>{t.id + " · saved on phone " + x.at + ageL + (x.doneAt ? " · sent " + x.doneAt : "") + " · " + x.key}</Span>
+                <Span style={{ display: "block", fontSize: "13px", color: "#6B7385" }}>{t.id + " · saved on phone " + clock12(x.at) + ageL + (x.doneAt ? " · sent " + clock12(x.doneAt) : "") + " · " + x.key}</Span>
               </Span>
               <Pill l={badge[2]} bg={badge[0]} fg={badge[1]} />
             </Btn>
@@ -4235,7 +4235,7 @@ export class FactoryApp extends Component<Props, State> {
                 <Span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
                   <Span style={{ display: "flex", marginBottom: "4px" }}><Pill l={js[0]} bg={js[1]} fg={js[2]} /></Span>
                   <Span style={{ display: "block", fontSize: "15px", lineHeight: "20px", fontWeight: 700 }}>{taskName(db, t)}</Span>
-                  <Span style={{ display: "block", fontSize: "13px", color: "#6B7385", marginTop: "1px" }}>{(T as Record<string, string>)[t.proc] + " · " + t.id + " · " + (t.status === "done" ? nf(t.out?.good) + " " + t.out?.unit + " at " + t.out?.at : taskTarget(db, t).split(" · ")[0] + " · due " + t.due)}</Span>
+                  <Span style={{ display: "block", fontSize: "13px", color: "#6B7385", marginTop: "1px" }}>{(T as Record<string, string>)[t.proc] + " · " + t.id + " · " + (t.status === "done" ? nf(t.out?.good) + " " + t.out?.unit + " at " + clock12(t.out?.at) : taskTarget(db, t).split(" · ")[0] + " · due " + clock12(t.due))}</Span>
                   <Span style={{ display: "block", fontSize: "13px", color: "#3D4453", marginTop: "1px" }}>{[tm.owner, tm.op, ...tm.helpers].filter(Boolean).map((k) => this.name(k).split(" ")[0]).join(" · ") + (tm.helpers.length ? "" : " · no helper")}</Span>
                 </Span>
               </Btn>
@@ -4576,7 +4576,7 @@ export class FactoryApp extends Component<Props, State> {
             onDone: (sel) => void this.headCall(call("changeTeam", t.id, role, sel), () => this.setState({ sheet: { type: "job", id: t.id } })),
           },
         });
-    const rows: { l: string; v: string; run?: () => void }[] = [{ l: "Target", v: taskTarget(db, t) }, { l: "Due", v: t.due }];
+    const rows: { l: string; v: string; run?: () => void }[] = [{ l: "Target", v: taskTarget(db, t) }, { l: "Due", v: clock12(t.due) }];
     if (done) rows.push({ l: "Output", v: nf(t.out?.good) + " " + t.out?.unit + (t.out?.rej ? " · " + t.out.rej + " rejected" : "") }, { l: "Lot", v: t.out?.lot || "—" });
     rows.push({ l: "Responsible", v: this.name(tm.owner), run: pick("owner") }, { l: t.proc === "dispatch" ? "Lead loader" : "Operator", v: this.name(tm.op), run: pick("op") }, { l: "Helpers", v: tm.helpers.length ? tm.helpers.map((k) => this.name(k)).join(", ") : "None", run: pick("helpers", true) });
     const audit = db.audit.filter((a) => a.task === t.id);
@@ -4612,7 +4612,7 @@ export class FactoryApp extends Component<Props, State> {
           {!audit.length && <Div style={{ fontSize: "14px", color: "#6B7385", padding: "8px 0" }}>Nothing yet.</Div>}
           {audit.map((a, i) => (
             <Div key={i} style={{ display: "flex", gap: "10px", padding: "8px 0", borderTop: "1px solid #F3F4F7", fontSize: "14px", lineHeight: "20px" }}>
-              <Span style={{ color: "#6B7385", width: "44px", flex: "none" }}>{a.at}</Span>
+              <Span style={{ color: "#6B7385", width: "64px", flex: "none" }}>{clock12(a.at)}</Span>
               <Span style={{ flex: 1 }}><Span style={{ fontWeight: 700 }}>{a.who}</Span> · {a.t}</Span>
             </Div>
           ))}
@@ -4821,7 +4821,7 @@ export class FactoryApp extends Component<Props, State> {
         {g("Work", 3, PR.map(([k, icn]) => ({ k, l: (T as Record<string, string>)[k], art: ic(icn, 26), on: a.proc === k, pick: () => this.setState({ asg: this.defaultAsg(k) }), extra: { display: "flex", flexDirection: "column", alignItems: "center", gap: "6px" } })))}
         {g("Product", 2, items.map((it) => ({ k: it.v, l: it.l, art: it.art, on: a.item === it.v, pick: () => set({ item: it.v }) })))}
         {!items.length && <MsgBox m={msg("Nothing is set up for this work in the ERP yet.", "warn")} />}
-        {g("Due by", 4, ["12:00", "14:00", "16:00", "18:00"].map((d) => ({ k: d, l: d, on: a.due === d, pick: () => set({ due: d }), extra: { height: "48px" } })))}
+        {g("Due by", 4, ["12:00", "14:00", "16:00", "18:00"].map((d) => ({ k: d, l: clock12(d), on: a.due === d, pick: () => set({ due: d }), extra: { height: "48px" } })))}
         <Div style={{ background: "#F7F8FA", borderRadius: "16px", padding: "2px 14px" }}>
           <Btn onClick={() => this.openKp({ l: "How many " + unit + "?", unit, v: a.qty, max: a.proc === "mixing" ? MIX_BATCH_MAX : 5000, set: (v) => this.setState({ sheet: { type: "assign" }, asg: { ...this.state.asg!, qty: v } }) })} style={{ display: "flex", alignItems: "center", gap: "10px", width: "100%", padding: "12px 0", border: "none", background: "transparent", cursor: "pointer" }}>
             <Span style={{ flex: 1, fontSize: "14px", color: "#6B7385", textAlign: "left" }}>How many</Span>
