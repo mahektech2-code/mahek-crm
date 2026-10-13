@@ -114,7 +114,7 @@ export const SMELLS = ["Good", "Moderate", "Bad"] as const;
 /** Every known test's evidence, in the order the forms ask for it. */
 export const EVIDENCE_FIELDS: EvidenceField[] = [
   { test: "PH", k: "ph", l: "pH photo", t: "photo" },
-  { test: "PH", k: "phValue", l: "PH Value", t: "num", hint: "Read from the pH photo when AI is on — confirm it." },
+  { test: "PH", k: "phValue", l: "pH value", t: "num", hint: "Read from the pH photo when AI is on — confirm it." },
   { test: "Smell", k: "smell", l: "Smell", t: "select", opts: [...SMELLS] },
   { test: "Color", k: "color", l: "Colour photo", t: "photo" },
   { test: "Oil Paint", k: "oil", l: "Oil-paint photo", t: "photo" },
@@ -137,12 +137,30 @@ export function evidenceFieldsFor(tests: string[]): EvidenceField[] {
   });
 }
 
-/** The SFG QC prompt's evidence fields: none required, none labelled optional. */
+/** A photo's name on its tile: "Oil-paint photo" is "Oil paint". */
+const tileName = (l: string) => l.replace(/ photo$/i, "").replace(/-/g, " ");
+
+/**
+ * The SFG QC prompt's evidence fields: none required, none labelled optional.
+ * The readings share a row, then every photograph — and the video — as a tile.
+ */
 export function qcEvidenceFields(tests: string[]) {
-  return [
-    ...evidenceFieldsFor(tests).map((f) => ({ ...f, untagged: true as const })),
-    { k: "video", l: "Test video", t: "video" as const, untagged: true as const },
-  ];
+  const fields = evidenceFieldsFor(tests);
+  const readings = fields
+    .filter((f) => f.t !== "photo")
+    .map((f) => ({
+      ...f,
+      hint: undefined,
+      l: f.k === "phValue" ? "pH" : f.l.replace(/ value$/i, ""),
+      ...(f.min != null && f.max != null ? { hint: `${f.min} – ${f.max}` } : {}),
+      sec: "Readings",
+      inline: true as const,
+      untagged: true as const,
+    }));
+  const photos = fields
+    .filter((f) => f.t === "photo")
+    .map((f) => ({ ...f, l: tileName(f.l), sec: "Photos", tile: true as const, untagged: true as const }));
+  return [...readings, ...photos, { k: "video", l: "Test video", t: "video" as const, sec: "Photos", tile: true as const, untagged: true as const }];
 }
 
 export type QcEvidence = {

@@ -231,9 +231,9 @@ const sfgBatches: ScreenModule = {
        same evidence a purchase test records — a photograph per test, the
        smell, the readings, a video — and none of it required
        (`engines/sfg-tests.ts`). A reject still needs its reason. */
-    const testsSub = qcTests.length ? " Record what was checked for each test from the Testing list." : "";
+    const testsSub = qcTests.length ? " Add what was checked for each test on the Testing list." : "";
     const evidenceFields = () => qcEvidenceFields(qcTests) as FieldSpec[];
-    const approveFields = (): FieldSpec[] => [...evidenceFields(), { k: "note", l: "QC note (readings, remarks)", t: "area", mic: true, untagged: true }];
+    const approveFields = (): FieldSpec[] => [...evidenceFields(), { k: "note", l: "QC note", t: "area", mic: true, untagged: true }];
     const rejectFields = (why: string): FieldSpec[] => [...evidenceFields(), { k: "note", l: why, t: "area", req: true, mic: true }];
     const all: Col[] = [
       { k: "sfgNo", l: "SFG no", t: "mono" },
