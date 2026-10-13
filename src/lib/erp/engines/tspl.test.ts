@@ -88,6 +88,13 @@ describe("TSPL", () => {
     assert.ok(t.includes("SIZE 50 mm,50 mm") && t.includes("SIZE 80 mm,80 mm"));
   });
 
+  it("a shift moves the print along the roll in dots, and none sends no SHIFT", () => {
+    const r = raster(8, 8, []);
+    assert.ok(!text(tsplJob([{ widthMm: 80, heightMm: 80, raster: r, copies: 1 }], { dotsPerMm: 8, gapMm: 3, direction: 1 })).includes("SHIFT"));
+    assert.ok(!text(tsplJob([{ widthMm: 80, heightMm: 80, raster: r, copies: 1 }], { dotsPerMm: 8, gapMm: 3, direction: 1, shiftMm: 0 })).includes("SHIFT"));
+    assert.ok(text(tsplJob([{ widthMm: 80, heightMm: 80, raster: r, copies: 1 }], { dotsPerMm: 8, gapMm: 3, direction: 1, shiftMm: -2.5 })).includes("\r\nSHIFT -20\r\n"));
+  });
+
   it("a QR module is a whole number of dots, and the code is centred in its square", () => {
     /* A 24 mm code of 21 modules on a 203 dpi printer: 192 dots, nine a module. */
     assert.deepEqual(qrGrid(21, 192), { cell: 9, offset: 1 });

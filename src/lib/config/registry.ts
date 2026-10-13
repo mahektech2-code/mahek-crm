@@ -4650,6 +4650,17 @@ export const SETTINGS = [
     max: 10,
   },
   {
+    key: "erp.labels.shiftMm",
+    type: "decimal",
+    category: "erp",
+    label: "Label printer · move the print up or down",
+    description:
+      "Millimetres to move everything printed on a label, along the roll, for labels sent straight to the printer. Use it when every label comes out the same distance too high or too low — the print running onto the label before or after — once the printer has been calibrated to the roll (hold the feed button until it feeds a few labels and stops). If the print moves the wrong way, use the same figure with a minus sign. 0 sends nothing. It has no effect on the browser's own print dialog.",
+    default: 0,
+    min: -20,
+    max: 20,
+  },
+  {
     key: "erp.labels.direction",
     type: "integer",
     category: "erp",
@@ -6321,6 +6332,7 @@ export type Config = {
   "erp.dispatch.requireScan": boolean;
   "erp.labels.dotsPerMm": number;
   "erp.labels.gapMm": number;
+  "erp.labels.shiftMm": number;
   "erp.labels.direction": number;
   "erp.logistics.notifyCustomers": boolean;
   "erp.logistics.watiTemplate": string;

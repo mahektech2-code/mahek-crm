@@ -24,6 +24,8 @@ export type PrinterSetup = {
   gapMm: number;
   /** Which edge leaves the printer first: 0 or 1. */
   direction: 0 | 1;
+  /** Millimetres to move the print along the roll, for a printer that lands every label the same distance off. 0 or absent sends nothing. */
+  shiftMm?: number;
 };
 
 /** A label as dots: one byte per dot, row by row, 1 where the printer burns. */
@@ -85,6 +87,7 @@ export function tsplJob(labels: LabelJob[], setup: PrinterSetup): Uint8Array {
             `DIRECTION ${setup.direction},0`,
             "REFERENCE 0,0",
             "OFFSET 0 mm",
+            ...(setup.shiftMm ? [`SHIFT ${dots(setup.shiftMm, setup.dotsPerMm)}`] : []),
             "SET PEEL OFF",
             "SET CUTTER OFF",
             "SET TEAR ON",

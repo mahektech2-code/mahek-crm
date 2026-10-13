@@ -55,6 +55,7 @@ export default async function ErpLabels({ searchParams }: { searchParams: Promis
   const setup: PrinterSetup = {
     dotsPerMm: config["erp.labels.dotsPerMm"],
     gapMm: config["erp.labels.gapMm"],
+    shiftMm: config["erp.labels.shiftMm"],
     direction: config["erp.labels.direction"] === 0 ? 0 : 1,
   };
   const mm = LABEL_MM[kind];

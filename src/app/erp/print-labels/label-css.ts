@@ -56,7 +56,7 @@ export const LABEL_CSS = `
 .lb-sfg .title { height: 24mm; }
 .lb-sfg .band { display: flex; flex-direction: column; gap: 1.2mm; border-top: 0.5mm solid #000; border-bottom: 0.5mm solid #000; padding: 2.2mm 0; }
 .lb-sfg .lot { font-weight: 800; line-height: 0.8; letter-spacing: 0.4px; white-space: nowrap; }
-.lb-sfg .grid { display: grid; grid-template-columns: 28mm minmax(0, 1fr); column-gap: 4mm; row-gap: 3mm; }
+.lb-sfg .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 4mm; row-gap: 3mm; }
 .lb-sfg .foot { display: flex; flex-direction: row; justify-content: space-between; align-items: baseline; gap: 3mm; font-size: 7pt; line-height: 1; white-space: nowrap; }
 .lb-sfg .foot .cut { min-width: 0; }
 
