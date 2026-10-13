@@ -9,6 +9,7 @@ import { sfgLots } from "@/lib/erp/stock";
 import { err, okVoid, ok, type Result } from "@/lib/result";
 import type { Proc, Team } from "./types";
 import { MIX_BATCH_MAX, PROCS } from "./types";
+import { FILL_FROM_LOT_MAX } from "./rules";
 import { contextFor, erpCtxFor, factoryAudit, nextTaskId, nowHM, teamDefaults, worksOn, writeTeam, type FactoryCtx } from "./server";
 import { submitJob } from "./post";
 
@@ -116,6 +117,43 @@ export async function startMixingBatch(fc: FactoryCtx, a: { item: string; qty: n
   };
   const id = await insertTask(fc, { proc: "mixing", item: a.item, qty, due: nowHM() > "18:00" ? nowHM() : "18:00", sfgLot: null }, team);
   await factoryAudit(fc, "factory.task.start", id, "Mixing batch started by " + fc.user.name);
+  return ok({ id }, id + " started");
+}
+
+/**
+ * A filling worker starting a filling himself, from the SFG lot he just
+ * scanned. The same task Give a task makes — same table, same posting through
+ * the ERP's fill form — with the scanned lot as its base tank and him in
+ * charge. Everything the scan card checked is checked again here, against
+ * the ledger rather than the phone's copy of it.
+ */
+export async function startFillFromLot(fc: FactoryCtx, a: { lot: string; item: string; qty: number }): Promise<Result<{ id: string }>> {
+  if (!worksOn(fc, "filling")) return err("Filling is for the filling team. Tell your supervisor.", "not_permitted");
+  const qty = Math.floor(Number(a.qty));
+  if (!(qty > 0) || qty > FILL_FROM_LOT_MAX) return err(`Enter how many cans, 1 to ${FILL_FROM_LOT_MAX}.`, "validation");
+  const all = await sfgLots();
+  const lot = all.find((l) => l.lotCode === a.lot && l.godownId === fc.godown.id);
+  if (!lot) {
+    const elsewhere = all.find((l) => l.lotCode === a.lot);
+    return err(elsewhere ? "This lot is at " + elsewhere.godown + ", not " + fc.godown.name + "." : "That lot is not here.", "validation");
+  }
+  if (!(lot.stock > 0)) return err(a.lot + " is empty. Scan another lot.", "rule_violation");
+  const [qc] = await q<{ status: string }>(sql`select status from erp_sfg_qc where lot_code = ${a.lot}`);
+  if (qc?.status !== "Approved") return err("The quality team has not approved this lot. Ask them, or scan another lot.", "rule_violation");
+  const [fg] = await q<{ fid: string }>(sql`select formulation_id as fid from finished_goods where id = ${a.item.split(":")[0]} and active`);
+  if (!fg) return err("Pick a product to fill.", "validation");
+  if (fg.fid !== lot.formulationId) return err("That product is not made from this base.", "validation");
+
+  const base = (await teamDefaults()).filling;
+  const me = fc.user.id;
+  const team: Team = {
+    owner: me,
+    op: base.op === me ? null : base.op,
+    helpers: base.helpers.filter((h) => h !== me && h !== base.owner).concat(base.owner && base.owner !== me ? [base.owner] : []),
+    ver: base.ver === me ? null : base.ver,
+  };
+  const id = await insertTask(fc, { proc: "filling", item: a.item, qty, due: nowHM() > "18:00" ? nowHM() : "18:00", sfgLot: a.lot }, team);
+  await factoryAudit(fc, "factory.task.start", id, "Filling started by " + fc.user.name + " from " + a.lot);
   return ok({ id }, id + " started");
 }
 

@@ -68,6 +68,8 @@ export type Lot = {
   status: LotStatus;
   damaged?: boolean;
   order?: string;
+  /** SFG only: the day its newest batch entry was made, "YYYY-MM-DD". */
+  made?: string;
 };
 
 export type Team = { owner: string | null; op: string | null; helpers: string[]; ver: string | null };
@@ -143,6 +145,8 @@ export type Draft = {
   sku?: string;
   sfg?: string | null;
   sfgManual?: boolean;
+  /** The SFG lot scanned on Home to start this filling — it is already its base liquid. Phone-only. */
+  fromLot?: string;
   pm?: string | null;
   pmManual?: boolean;
   filled?: number | null;
