@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { canOpen } from "@/lib/access";
-import { findAccount, otpAvailability, sendOtp } from "@/lib/services/otp-service";
+import { findAccountForCode, otpAvailability, sendOtp } from "@/lib/services/otp-service";
 
 /* ---------------------------------------------------------------------------
  * The handset's "sign in with a WhatsApp code", step one.
@@ -30,7 +30,8 @@ export async function POST(request: Request) {
   const mobile = typeof body.mobile === "string" ? body.mobile.trim() : "";
   if (!mobile) return NextResponse.json({ ok: false, error: "Enter your mobile number." }, { status: 400 });
 
-  const user = await findAccount(mobile);
+  // The personal mobile in HRMS and nothing else — see `findAccountForCode`.
+  const user = await findAccountForCode(mobile);
   /*
    * ONLY TO SOMEBODY THE HANDSET WOULD LET IN.
    *
@@ -47,7 +48,7 @@ export async function POST(request: Request) {
    */
   if (!user || !user.active || !(await canOpen(user.id, "field"))) {
     return NextResponse.json(
-      { ok: false, error: `No open MahekOne account uses ${mobile}. Check the number, or ask your manager.` },
+      { ok: false, error: `No open MahekOne account has ${mobile} as its personal mobile in HRMS. OTPs work only with that number — or sign in with your password.` },
       { status: 404 },
     );
   }

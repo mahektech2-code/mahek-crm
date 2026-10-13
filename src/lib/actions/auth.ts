@@ -25,6 +25,7 @@ import {
 import { mailConfigured, sendMail } from "@/lib/mailer";
 import {
   findAccount,
+  findAccountForCode,
   otpAvailability,
   resetPasswordWithOtp,
   sendOtp,
@@ -303,7 +304,10 @@ export async function resetPassword(
 
 /* ------------------------------------------------ WhatsApp one-time codes */
 
-const WRONG_ACCOUNT = "That did not match an account. Check the spelling, or ask your manager to reset it.";
+/* Codes are asked for by the personal mobile in HRMS and nothing else — see
+   `findAccountForCode`. The refusal says so, because somebody typing their
+   work number has no other way to find out which number the screen wants. */
+const WRONG_CODE_NUMBER = "No account has that personal mobile in HRMS. OTPs work only with the personal number HR holds for you — or sign in with your password.";
 
 /** Whether the login and reset screens should offer a WhatsApp code at all. */
 export async function codesOffered(): Promise<boolean> {
@@ -317,8 +321,8 @@ export async function requestSignInCode(
   identifier: string,
   purpose: "login" | "password_reset" = "login",
 ): Promise<ActionResult<{ sentTo: string; expiresInMinutes: number }>> {
-  const user = identifier.trim() ? await findAccount(identifier) : null;
-  if (!user || !user.active) return fail(WRONG_ACCOUNT);
+  const user = identifier.trim() ? await findAccountForCode(identifier) : null;
+  if (!user || !user.active) return fail(WRONG_CODE_NUMBER);
   const sent = await sendOtp(user.id, purpose, { surface: "web", requestedWith: identifier });
   if (!sent.ok) return fail(sent.error);
   await audit(user, purpose === "login" ? "sign-in-code-sent" : "reset-code-sent", "user", user.id);
@@ -326,7 +330,7 @@ export async function requestSignInCode(
 }
 
 const codeSignIn = z.object({
-  identifier: z.string().trim().min(1, "Enter your mobile number or email address."),
+  identifier: z.string().trim().min(1, "Enter your personal mobile number."),
   code: z.string().trim().min(4, "Enter the OTP."),
   remember: z.boolean().default(true),
 });
@@ -342,8 +346,8 @@ export async function signInWithCode(
     remember: formData.get("remember") === "on",
   });
   if (!parsed.success) return fail(parsed.error.issues[0].message);
-  const user = await findAccount(parsed.data.identifier);
-  if (!user || !user.active) return fail(WRONG_ACCOUNT);
+  const user = await findAccountForCode(parsed.data.identifier);
+  if (!user || !user.active) return fail(WRONG_CODE_NUMBER);
   const verified = await verifyOtp(user.id, "login", parsed.data.code);
   if (!verified.ok) return fail(verified.error);
   return completeSignIn(user, parsed.data.remember, "sign-in-code");
@@ -351,7 +355,7 @@ export async function signInWithCode(
 
 const codeReset = z
   .object({
-    identifier: z.string().trim().min(1, "Enter your mobile number or email address."),
+    identifier: z.string().trim().min(1, "Enter your personal mobile number."),
     code: z.string().trim().min(4, "Enter the OTP."),
     password: z.string().min(8, "Passwords must be at least 8 characters."),
     confirm: z.string(),
@@ -374,8 +378,8 @@ export async function resetPasswordWithCode(
     confirm: formData.get("confirm"),
   });
   if (!parsed.success) return fail(parsed.error.issues[0].message);
-  const user = await findAccount(parsed.data.identifier);
-  if (!user || !user.active) return fail(WRONG_ACCOUNT);
+  const user = await findAccountForCode(parsed.data.identifier);
+  if (!user || !user.active) return fail(WRONG_CODE_NUMBER);
   const done = await resetPasswordWithOtp(user.id, parsed.data.code, parsed.data.password);
   if (!done.ok) return fail(done.error);
   await audit(user, "reset-password-code", "user", user.id);
