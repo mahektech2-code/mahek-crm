@@ -61,6 +61,7 @@ type Ops = {
   qcDecide: (input: QcInput) => QcSave;
   startBatch: (a: { item: string; qty: number }) => ({ ok: true; id: string; data: FactoryData; msg: string }) | Fail;
   startFill: (a: { lot: string; item: string; qty: number }) => ({ ok: true; id: string; data: FactoryData; msg: string }) | Fail;
+  startPack: (a: { lot: string; item: string; qty: number }) => ({ ok: true; id: string; data: FactoryData; msg: string }) | Fail;
   reqKit: () => ReqKit;
   reqRaise: (input: ReqInput) => ReqSave;
   reqCancel: (id: string, reason: string) => { ok: true; msg: string } | { ok: false; error: string };

@@ -54,7 +54,9 @@ export type ReasonSheet = { type: "reason"; title: string; sub?: string; reasons
 export type RecipeSheet = { type: "recipe"; lines: { item: string; per: number | null }[]; adding?: boolean; q?: string };
 /** New filling from a scanned SFG lot: which product of that base, and how many. */
 export type FillSheet = { type: "fill"; lot: string; sku: string | null; qty: number };
-export type Sheet = FillSheet | KpSheet | PeopleSheet | TilesSheet | ReasonSheet | { type: "job"; id: string } | { type: "assign" } | { type: "start" } | { type: "dept" } | RecipeSheet;
+/** The ERP's New packing batch from a scanned FG lot: which box, how many. */
+export type PackSheet = { type: "pack"; lot: string; box: string | null; qty: number };
+export type Sheet = FillSheet | PackSheet | KpSheet | PeopleSheet | TilesSheet | ReasonSheet | { type: "job"; id: string } | { type: "assign" } | { type: "start" } | { type: "dept" } | RecipeSheet;
 
 export type SignStep = "lang" | "id" | "pin" | "otp" | "newpin";
 

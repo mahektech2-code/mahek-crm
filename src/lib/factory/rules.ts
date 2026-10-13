@@ -571,3 +571,84 @@ export function emptyPackHere(db: Pick<FactoryData, "lots" | "loc">, pm: string)
   const here = Object.values(db.lots).find((l) => l.type === "pm" && l.item === pm && l.loc === db.loc);
   return here ? here.avail : 0;
 }
+
+/* ------------------------------------------------------------ packing from a scanned lot */
+
+/** The most boxes one packing started from a scanned lot may ask for — the same ceiling Give a task has. */
+export const PACK_FROM_LOT_MAX = 5000;
+
+export type PackFromLot =
+  | { ok: true; lot: Lot; boxes: string[] }
+  /** `show` false: not this person's work, so the card offers OK only and no refusal. */
+  | { ok: false; show: boolean; title: string; text: string };
+
+/**
+ * May the person who scanned this FG lot start a packing from it, and into
+ * which boxes? The ERP's New packing batch question — the FG product is the
+ * lot's, the box is one of that product's boxed SKUs — asked on the scan card.
+ * The server asks it again (`startPackFromLot`).
+ */
+export function packFromLot(me: DeptMe, db: Pick<FactoryData, "lots" | "sku" | "box" | "loc">, code: string): PackFromLot | null {
+  const lot = db.lots[code];
+  if (!lot || lot.type !== "fg") return null;
+  if (!myDepts(me).includes("packing"))
+    return { ok: false, show: me.head, title: "Not your work", text: "Packing is for the packing team. Tell your supervisor." };
+  if (lot.loc !== db.loc) return { ok: false, show: true, title: "At another godown", text: "This lot is at " + lot.loc + ", not " + db.loc + "." };
+  if (lot.status === "used" || !(lot.avail > 0)) return { ok: false, show: true, title: "Nothing left", text: lot.code + " is empty. Scan another lot." };
+  const boxes = Object.keys(db.box)
+    .filter((b) => db.box[b].sku === lot.item)
+    .sort((a, b) => db.box[b].cpb - db.box[a].cpb || a.localeCompare(b));
+  const k = db.sku[lot.item];
+  const name = k ? k.n + " " + k.size : "This product";
+  if (!boxes.length)
+    return { ok: false, show: true, title: "Not packed in boxes", text: name + (k?.kind === "drum" ? " goes out in drums." : " goes out loose.") + " There is nothing to pack." };
+  const least = Math.min(...boxes.map((b) => db.box[b].cpb));
+  if (lot.avail < least)
+    return { ok: false, show: true, title: "Not enough for one box", text: lot.code + " has " + nf(lot.avail) + " cans; a box takes " + least + ". Scan another pallet." };
+  return { ok: true, lot, boxes };
+}
+
+/** How many boxes the New packing batch sheet starts at: what the lot fills, at least 1. */
+export function packStartQty(cpb: number, avail: number): number {
+  return Math.max(1, Math.floor(avail / Math.max(1, cpb)));
+}
+
+/**
+ * Where a count of boxes goes in the ERP: into the open batch of this box
+ * first, as far as it has room, then into new batches of `batch` boxes. A new
+ * batch takes ALL its empty boxes on its first line, whatever is packed into
+ * it today (the ERP's New packing batch does exactly that), and an open batch
+ * has already taken its own — the same arithmetic the posting's plan follows.
+ */
+export function packBatchPlan(boxes: number, batch: number, open: { have: number; of: number } | null, emptyPerBox: number) {
+  const intoOpen = open ? Math.max(0, Math.min(boxes, open.of - open.have)) : 0;
+  const newBatches = Math.ceil(Math.max(0, boxes - intoOpen) / Math.max(1, batch));
+  return { intoOpen, newBatches, emptyNeed: newBatches * batch * emptyPerBox };
+}
+
+export type PackNeeds = {
+  cans: number;
+  /** The open batch of this box at this godown, and how many boxes it holds of how many. */
+  open: { code: string; have: number; of: number } | null;
+  intoOpen: number;
+  newBatches: number;
+  emptyNeed: number;
+  /** Empty boxes of this box's type at the godown; null where the ERP does not count them. */
+  emptyHave: number | null;
+};
+
+/** What packing `boxes` of box SKU `key` needs, as the sheet says it. */
+export function packNeeds(db: Pick<FactoryData, "lots" | "box" | "loc" | "emptyBoxes">, key: string, boxes: number): PackNeeds {
+  const b = db.box[key];
+  const pb = Object.values(db.lots).find((l) => l.type === "pb" && l.status === "incomplete" && l.item === key && l.loc === db.loc);
+  const open = pb ? { code: pb.code, have: pb.avail, of: b.batch } : null;
+  const plan = packBatchPlan(boxes, b.batch, open, b.empty ?? 1);
+  const have = db.emptyBoxes?.[key];
+  return { cans: boxes * b.cpb, open, ...plan, emptyHave: have == null ? null : have };
+}
+
+/** Why the empty boxes will not do, or null. The same sentence on the sheet and from the server. */
+export function emptyBoxShort(need: number, have: number | null, newBatches: number, batch: number, type: string, where: string): string | null {
+  if (have == null || need <= have + 1e-9) return null;
+  return (newBatches > 1 ? newBatches + " new batches of " : "A new batch of ") + batch + " boxes takes " + nf(need) + " empty " + type + "; " + nf(Math.max(0, have)) + " are at " + where + ".";
+}
