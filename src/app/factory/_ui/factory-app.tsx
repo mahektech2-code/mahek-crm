@@ -23,7 +23,7 @@ import {
   type ScanPurpose,
   type ScanResult,
 } from "@/lib/factory/rules";
-import { CHECK_ITEMS, DOWN, OFFLINE_HOURS, REJ, STEPS, SUBMISSION_VERSION, type CheckStage, type CheckUnit, type QcLot, type Draft, type FactoryData, type Lot, type Proc, type SubmitResult, type Task, type Team } from "@/lib/factory/types";
+import { CHECK_ITEMS, DOWN, MIX_BATCH_MAX, OFFLINE_HOURS, REJ, STEPS, SUBMISSION_VERSION, type CheckStage, type CheckUnit, type QcLot, type Draft, type FactoryData, type Lot, type Proc, type SubmitResult, type Task, type Team } from "@/lib/factory/types";
 import { hhmm } from "@/lib/factory/time";
 import type { Me } from "@/lib/actions/factory";
 import { call, NotReceived, PAGE_BUILD, watchBuild } from "./api";
@@ -2250,7 +2250,7 @@ export class FactoryApp extends Component<Props, State> {
       const { exp, dev, over } = mixDeviation(db, t, d);
       const inp = (d.rm ?? []).reduce((a, r) => a + (r.qty || 0), 0);
       fields.push(
-        { l: "Number of batches", v: d.batches ?? null, unit: (d.batches ?? 1) > 1 ? "batches" : "batch", open: () => this.openKp({ l: "Number of batches", unit: "", v: d.batches, max: 6, set: (v) => this.setD((z) => { z.batches = v; }) }), step: true, minus: () => this.setD((z) => { z.batches = Math.max(1, (z.batches ?? 1) - 1); }), plus: () => this.setD((z) => { z.batches = Math.min(6, (z.batches ?? 1) + 1); }) },
+        { l: "Number of batches", v: d.batches ?? null, unit: (d.batches ?? 1) > 1 ? "batches" : "batch", open: () => this.openKp({ l: "Number of batches", unit: "", v: d.batches, max: MIX_BATCH_MAX, set: (v) => this.setD((z) => { z.batches = v; }) }), step: true, minus: () => this.setD((z) => { z.batches = Math.max(1, (z.batches ?? 1) - 1); }), plus: () => this.setD((z) => { z.batches = Math.min(MIX_BATCH_MAX, (z.batches ?? 1) + 1); }) },
         { l: "Litres made", v: d.out ?? null, unit: "L", open: () => this.openKp({ l: "How many litres of " + sf.short + " base were made?", unit: "L", v: d.out, max: Math.min(Math.round(exp * 1.2), Math.max(inp, 1)), maxL: inp && exp * 1.2 > inp ? "More than you poured (" + nf(inp) + " L). Check the tank again." : "Too much. Check the tank again.", quick: [{ l: nf(exp) + " L", v: exp }], set: (v) => this.setD((z) => { z.out = v; }) }), sub: "Read the tank gauge after mixing." },
       );
       info.push(infoCard("Expected", nf(exp) + " L"), infoCard("Materials poured", nf(inp) + " L"), infoCard("Difference", d.out ? (dev >= 0 ? "+" : "") + dev.toFixed(1) + "%" : "—", over), infoCard("Allowed", "±" + sf.tol + "%"));
@@ -3276,7 +3276,7 @@ export class FactoryApp extends Component<Props, State> {
         </div>
         {!bases.length && <MsgBox m={msg("No base has a recipe in the ERP yet. Ask the office to add one in ERP → Recipes.", "warn")} />}
         <div style={{ background: "#F7F8FA", borderRadius: "16px", padding: "2px 14px" }}>
-          <button onClick={() => this.openKp({ l: "How many batches?", unit: "batches", v: a.qty, max: 6, set: (v) => this.setState({ sheet: { type: "start" }, asg: { ...a, qty: v } }) })} style={{ display: "flex", alignItems: "center", gap: "10px", width: "100%", padding: "12px 0", border: "none", background: "transparent", cursor: "pointer" }}>
+          <button onClick={() => this.openKp({ l: "How many batches?", unit: "batches", v: a.qty, max: MIX_BATCH_MAX, set: (v) => this.setState({ sheet: { type: "start" }, asg: { ...a, qty: v } }) })} style={{ display: "flex", alignItems: "center", gap: "10px", width: "100%", padding: "12px 0", border: "none", background: "transparent", cursor: "pointer" }}>
             <span style={{ flex: 1, fontSize: "14px", color: "#6B7385", textAlign: "left" }}>How many</span>
             <span style={{ fontSize: "16px", fontWeight: 700, textAlign: "right" }}>{nf(a.qty) + " batches"}</span>
             <span style={{ color: "#9BA3B2", display: "flex" }}>{ic("chev", 24)}</span>
@@ -3324,7 +3324,7 @@ export class FactoryApp extends Component<Props, State> {
         {!items.length && <MsgBox m={msg("Nothing is set up for this work in the ERP yet.", "warn")} />}
         {g("Due by", 4, ["12:00", "14:00", "16:00", "18:00"].map((d) => ({ k: d, l: d, on: a.due === d, pick: () => set({ due: d }), extra: { height: "48px" } })))}
         <div style={{ background: "#F7F8FA", borderRadius: "16px", padding: "2px 14px" }}>
-          <button onClick={() => this.openKp({ l: "How many " + unit + "?", unit, v: a.qty, max: a.proc === "mixing" ? 6 : 5000, set: (v) => this.setState({ sheet: { type: "assign" }, asg: { ...this.state.asg!, qty: v } }) })} style={{ display: "flex", alignItems: "center", gap: "10px", width: "100%", padding: "12px 0", border: "none", background: "transparent", cursor: "pointer" }}>
+          <button onClick={() => this.openKp({ l: "How many " + unit + "?", unit, v: a.qty, max: a.proc === "mixing" ? MIX_BATCH_MAX : 5000, set: (v) => this.setState({ sheet: { type: "assign" }, asg: { ...this.state.asg!, qty: v } }) })} style={{ display: "flex", alignItems: "center", gap: "10px", width: "100%", padding: "12px 0", border: "none", background: "transparent", cursor: "pointer" }}>
             <span style={{ flex: 1, fontSize: "14px", color: "#6B7385", textAlign: "left" }}>How many</span>
             <span style={{ fontSize: "16px", fontWeight: 700, textAlign: "right" }}>{nf(a.qty) + " " + unit}</span>
             <span style={{ color: "#9BA3B2", display: "flex" }}>{ic("chev", 24)}</span>

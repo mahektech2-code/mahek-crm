@@ -312,6 +312,9 @@ export type LrKit = { ok: true; transporters: string[]; canRead: boolean; recent
 /** Up to `LR_BATCH_MAX` photos stored in one press — each its own photo-only LR on the desk. */
 export const LR_BATCH_MAX = 20;
 
+/** The most batches one mixing job can hold — Give a task, Start a mixing batch and the batch sheet alike. */
+export const MIX_BATCH_MAX = 10;
+
 export type LrBatchSave =
   | { ok: true; ids: string[]; stored: number; already: number; refused: number; reading: boolean; msg: string; recent: LrRecent[] }
   | { ok: false; title: string; text: string; fix: string };

@@ -330,7 +330,8 @@ describe("the Production Head", () => {
     const nc = Object.keys(data.sfg).find((k) => data.sfg[k].short === "NC")!;
     const pu = Object.keys(data.sfg).find((k) => data.sfg[k].short === "PU")!;
     assert.equal((await startMixingBatch(anil, { item: pu, qty: 1 })).ok, false, "a base with no recipe cannot be started");
-    assert.equal((await startMixingBatch(anil, { item: nc, qty: 7 })).ok, false, "six batches at most");
+    assert.equal((await startMixingBatch(anil, { item: nc, qty: 11 })).ok, false, "ten batches at most");
+    assert.equal((await startMixingBatch(anil, { item: nc, qty: 10 })).ok, true, "ten batches is allowed");
     const made = await startMixingBatch(anil, { item: nc, qty: 2 });
     assert.ok(made.ok, JSON.stringify(made));
     const id = made.ok ? made.data.id : "";
