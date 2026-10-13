@@ -10,7 +10,7 @@ import type { DrumLotView, DrumSaved } from "@/lib/factory/types";
 
 export type Net = "online" | "weak" | "offline";
 export type Flow = { task: Task; step: number; d: Draft; key: string };
-export type Scan = { purpose: ScanPurpose; meta: ScanMeta; res: (ScanResult & { manual?: boolean }) | null; torch: boolean; typed?: string | null };
+export type Scan = { purpose: ScanPurpose; meta: ScanMeta; res: (ScanResult & { manual?: boolean }) | null; torch: boolean; typed?: string | null; camAsked?: boolean };
 export type Res =
   | { kind: "sending"; key: string }
   | { kind: "pending"; key: string; task: string; proc: Proc }
@@ -90,6 +90,8 @@ export type State = {
   queue: QItem[];
   sending: boolean;
   busy: boolean;
+  /** The refresh button is working. */
+  refreshing: boolean;
   clock: string;
   cam: "wait" | "live" | "none" | "denied";
   /** Empty drum entry: the lot scanned, the weight typed, and what the server answered. */

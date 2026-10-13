@@ -8822,6 +8822,14 @@ Quality department, or a holder of the ERP's `approveSfgQc` power (an ERP
 administrator included). It needs the network, like Stock check: the list is
 read again at the save.
 
+**THE SCAN PAGE HAS TWO MODES, SCAN AND TYPE.** "Type the code" swaps the
+whole screen: the camera stops, the frame and torch go, and a large box takes
+focus so the keyboard opens; "Scan instead" (or the phone's Back) returns to
+the camera. A phone with no camera, or one not allowed, opens straight in Type
+mode — once, so "Scan instead" is not bounced back (`camState`, `camAsked`).
+The typed text survives a refused code, so "Try again" is a fix, not a retype.
+A typed code is judged exactly as a scan (`submitTyped` → `doScan`).
+
 **IN A COLUMN NOTHING SHRINKS (`web.tsx`).** The web never squeezes a box below
 its content in a column (`min-height: auto`); native has no such floor, so the
 old blanket `flexShrink: 1` crushed buttons, inputs and cards whenever a screen
@@ -8836,6 +8844,23 @@ that is not the sender's own fresh upload is refused. Reading them is
 secondary: `readStoredLrs` runs after the answer (`after()`), only where
 `erp.ai.photos` is on, fills only blank fields, and leaves an unsure number, or
 one already on the desk, as a note for the desk instead of writing it.
+
+**THE PHONE ASKS TO UPDATE ITSELF, AND REFRESH IS ONE BUTTON.** The round
+button in the header sends what is waiting, pulls the latest from the office
+and asks whether a newer APK is out, all in one press. The newer build is read
+off `/downloads/factory.json`, the manifest the release workflow already writes
+beside the APK, compared by versionCode (`factory-mobile/src/update.ts`, pure
+and tested). It is asked on opening, on every return to the app and every half
+hour. Where one exists, a popup offers Update now or Update later. Later is a
+three-hour snooze (`SNOOZE_MS`, one per phone in `kv`), never a dismissal, and
+a refresh pressed by hand asks at once. The popup waits while a job, a scan or
+a result is open. Update now downloads the APK INSIDE the app with progress
+(`updater.ts`) and hands it to Android's installer, which opens over the app;
+that confirmation cannot be skipped, because only a device owner installs
+silently. It needs `REQUEST_INSTALL_PACKAGES` and `expo-intent-launcher`, so it
+arrives with an APK and older builds never show it. A failed download offers
+the browser. The web page has the refresh button and no popup, because it picks
+up a new build by itself.
 
 **A SCREEN CHANGE NEEDS A RELEASE; A RULE CHANGE DOES NOT.** The screens are
 in the APK now, so they reach the floor only through the Factory APK

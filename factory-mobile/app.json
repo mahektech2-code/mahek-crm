@@ -2,7 +2,8 @@
   "expo": {
     "name": "Mahek Factory",
     "slug": "mahek-factory",
-    "version": "2.1.0",
+    "owner": "dasabhinaba34",
+    "version": "2.1.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -16,18 +17,63 @@
       },
       "predictiveBackGestureEnabled": false,
       "softwareKeyboardLayoutMode": "resize",
-      "permissions": ["android.permission.CAMERA"],
-      "blockedPermissions": ["android.permission.RECORD_AUDIO"]
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.REQUEST_INSTALL_PACKAGES"
+      ],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
-    "ios": { "bundleIdentifier": "in.mahek.factory", "supportsTablet": false },
+    "ios": {
+      "bundleIdentifier": "in.mahek.factory",
+      "supportsTablet": false
+    },
     "plugins": [
-      ["expo-splash-screen", { "backgroundColor": "#FFFFFF", "image": "./assets/splash-icon.png", "imageWidth": 120 }],
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#FFFFFF",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 120
+        }
+      ],
       "expo-sqlite",
-      ["expo-camera", { "cameraPermission": "The Factory app scans the QR on task sheets, drums and pallets, and photographs the loaded truck.", "recordAudioAndroid": false }],
-      ["expo-image-picker", { "cameraPermission": "The Factory app photographs the loaded truck as proof.", "photosPermission": false, "microphonePermission": false }],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "The Factory app scans the QR on task sheets, drums and pallets, and photographs the loaded truck.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "The Factory app photographs the loaded truck as proof.",
+          "photosPermission": false,
+          "microphonePermission": false
+        }
+      ],
       "./plugins/withReleaseSigning.js",
       "./plugins/withNoForceDark.js"
     ],
-    "extra": { "site": "https://one.mahekindia.com" }
+    "extra": {
+      "site": "https://one.mahekindia.com",
+      "eas": {
+        "projectId": "a7860d49-7cab-413d-ab8b-8f85ca01ee0a"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "enabled": true,
+      "fallbackToCacheTimeout": 0,
+      "checkAutomatically": "ON_LOAD",
+      "url": "https://u.expo.dev/a7860d49-7cab-413d-ab8b-8f85ca01ee0a",
+      "requestHeaders": {
+        "expo-channel-name": "production"
+      }
+    }
   }
 }

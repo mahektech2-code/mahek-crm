@@ -463,6 +463,30 @@ installs over the earlier Trusted Web Activity build (same package, same key)
 as an update. Floor staff install it from
 `https://one.mahekindia.com/download/factory`.
 
+### Over the air, from 2.1.1
+
+Every Factory APK from 2.1.1 carries expo-updates (EAS project
+`@dasabhinaba34/mahek-factory`, channel `production`). It checks on launch,
+downloads in the background and applies on the NEXT launch. 2.1.0 and older
+have no updates at all and need the APK.
+
+The runtime is the APP VERSION (`runtimeVersion.policy: appVersion`), which the
+workflow stamps from its `version` input. An update reaches exactly the APKs
+built with the version it was published under, so a JS-only fix for 2.1.1
+phones is published with `version` still `2.1.1` in `app.json`:
+
+```bash
+cd factory-mobile
+EXPO_PUBLIC_SITE=https://one.mahekindia.com npx eas-cli@latest update \
+  --branch production --platform android --environment production \
+  --message "what changed" --non-interactive
+```
+
+Forgetting `EXPO_PUBLIC_SITE` falls back to `extra.site`, which is production
+too, but say it anyway. ANY native change (a new Expo module, a plugin, a
+permission) needs a new version and a new APK: an update cannot carry native
+code, and published under the old version it would load on a binary without it.
+
 ## Push notifications
 
 **Until this is done, no handset can receive a push.** Every notification the

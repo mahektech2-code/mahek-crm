@@ -1,5 +1,5 @@
 import { Component, type CSSProperties, type ReactNode } from "react";
-import { AppState, BackHandler, Image, Pressable, Text, View, type NativeEventSubscription } from "react-native";
+import { AppState, BackHandler, Image, Linking, Pressable, Text, View, type NativeEventSubscription } from "react-native";
 import * as Speech from "expo-speech";
 import * as ImagePicker from "expo-image-picker";
 import { StatusBar } from "expo-status-bar";
@@ -46,7 +46,9 @@ import { Btn, Div, Input, Root, Span } from "./web";
 import { art, ic, qr } from "./art";
 import { avStyle, btn, card, initials, mono, msg, MsgBox, Pill, artWell, type Msg } from "./kit";
 import { CameraScanner, shrinkPhoto } from "./camera";
-import { dropPhoto, forget, keepPhoto, keptPhoto, load, mintKey, readNet, save, watchNet, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet, mintDrumKey, type BoxOk, type LrEntry, type StockEntry, type QcEntry, mintCheckKey, type RecipeSheet } from "./model";
+import { promptDue, snoozeUntil } from "./update";
+import { checkForUpdate, downloadAndInstall, openInBrowser } from "./updater";
+import { dropPhoto, forget, keepPhoto, kvGet, kvSet, keptPhoto, load, mintKey, readNet, save, watchNet, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet, mintDrumKey, type BoxOk, type LrEntry, type StockEntry, type QcEntry, mintCheckKey, type RecipeSheet } from "./model";
 
 /* ---------------------------------------------------------------------------
  * THE FACTORY APP — "Mahek Factory App" from the design, screen for screen.
@@ -73,6 +75,8 @@ type Props = Record<string, never>;
 /** The calendar day n days ago, in the factory's zone — an LR's date. */
 const calendarDay = (n: number) => calendarDate(new Date(Date.now() - n * 86_400_000));
 const DEV = typeof __DEV__ !== "undefined" && __DEV__;
+/** When Update later lets the update popup come back — one per phone, not per person. */
+const UPDATE_SNOOZE = "factory.updateSnoozedUntil";
 
 const PC: Record<Proc, string> = { mixing: "flask", filling: "fill", packing: "box", dispatch: "truck" };
 const ONE: Record<string, string> = { boxes: "box", drums: "drum", cans: "can" };
@@ -148,6 +152,9 @@ export class FactoryApp extends Component<Props, State> {
       qc: null,
       board: null,
       lr: null,
+      update: null,
+      updPop: null,
+      refreshing: false,
       ...(signed ? this.restore(signed.key) : null),
     };
   }
@@ -164,6 +171,7 @@ export class FactoryApp extends Component<Props, State> {
         this.setState({ clock: hhmm(new Date()) });
         void this.flushQueue();
         void this.poll();
+        void this.checkUpdate();
       }
     }));
     this.subs.push(BackHandler.addEventListener("hardwareBackPress", this.onBack) as NativeEventSubscription);
@@ -179,6 +187,11 @@ export class FactoryApp extends Component<Props, State> {
     this.ivs.push(setInterval(() => void this.poll(), 45_000));
     /* Signed in from yesterday: refresh the floor now, and send anything waiting. */
     if (this.state.me) void this.poll().then(() => this.flushQueue());
+    /* A newer APK is asked about on opening, on every return to the app and
+       every half hour; Update later's three hours are checked every minute. */
+    void this.checkUpdate();
+    this.ivs.push(setInterval(() => void this.checkUpdate(), 30 * 60_000));
+    this.ivs.push(setInterval(() => this.maybePrompt(), 60_000));
   }
 
   componentWillUnmount() {
@@ -195,6 +208,11 @@ export class FactoryApp extends Component<Props, State> {
   private onBack = () => {
     const st = this.state;
     if (st.sheet) return this.setState({ sheet: null }), true;
+    if (st.scan && st.scan.typed != null) {
+      /* In Type mode Back steps back one: off a result to the box, off the box to the camera. */
+      if (st.scan.res) return this.setState({ scan: { ...st.scan, res: null } }), true;
+      return this.scanInstead(), true;
+    }
     if (st.scan) return this.setState({ scan: null }), true;
     if (st.result && st.result.kind !== "sending") return this.setState({ result: null, flow: null }), true;
     if (st.flow) {
@@ -238,17 +256,132 @@ export class FactoryApp extends Component<Props, State> {
     });
   }
 
+  /* WHO THEY ARE comes back on every refresh, not only at sign-in. A manager
+     changing somebody from in charge to helper, adding a department or taking
+     one away used to reach this phone only on the next sign-in: the server
+     already refused what the old role could no longer do, while the screen
+     went on drawing it. The language stays the one chosen on this phone. */
+  private refreshed(cur: State, fresh: Me | undefined, data: FactoryData): Pick<State, "db"> | Pick<State, "db" | "me" | "route" | "sheet"> {
+    const was = cur.me;
+    if (!fresh || !was || fresh.key !== was.key) return { db: data };
+    const me: Me = { ...fresh, lang: was.lang };
+    const r = cur.route;
+    /* A screen the new role does not have is left for the role's own start. */
+    const headOnly = r === "today" || r === "review" || r === "teams" || r === "machines";
+    const lost =
+      (headOnly && !me.head) ||
+      (r === "home" && me.head) ||
+      (r === "drum" && me.drums === false) ||
+      (r === "lr" && !me.dispatch) ||
+      (r === "qc" && me.qc === false);
+    return lost ? { db: data, me, route: me.head ? "today" : "home", sheet: null } : { db: data, me, route: r, sheet: cur.sheet };
+  }
+
   private async poll() {
     const st = this.state;
     if (!st.me || st.net === "offline" || st.sending || st.busy) return;
     if (st.queue.some((x) => x.status === "pending")) return void this.flushQueue();
     try {
       const r = await call("bootstrap");
-      if (r.ok) this.setState({ db: r.data });
+      if (r.ok) this.setState((cur) => this.refreshed(cur, r.me, r.data));
       else if (r.error === "signedOut") this.setState({ me: null, db: null, signStep: "id" });
     } catch {
       this.setNet("offline");
     }
+  }
+
+  /* ================================================================ refresh and update */
+
+  /**
+   * Ask the release manifest. Where it names a newer build the popup is
+   * raised — at once when somebody pressed refresh, otherwise only once Update
+   * later's three hours are up. Answers whether a newer build exists.
+   */
+  private async checkUpdate(pressed = false): Promise<boolean> {
+    const v = await checkForUpdate();
+    if (v.kind !== "available") {
+      this.setState({ update: null });
+      return false;
+    }
+    this.setState({ update: { version: v.version, url: v.url } }, () => this.maybePrompt(pressed));
+    return true;
+  }
+
+  /** Raise the popup if a newer build is known and it is due. Never over a job in hand unless somebody pressed refresh. */
+  private maybePrompt(pressed = false) {
+    const st = this.state;
+    if (!st.update || st.updPop) return;
+    const snoozed = Number(kvGet(UPDATE_SNOOZE));
+    if (!promptDue(Date.now(), Number.isFinite(snoozed) && snoozed > 0 ? snoozed : null, pressed)) return;
+    if (!pressed && (st.flow || st.scan || st.result)) return;
+    this.setState({ updPop: { progress: null, failed: false } });
+  }
+
+  private updateLater() {
+    kvSet(UPDATE_SNOOZE, String(snoozeUntil(Date.now())));
+    this.setState({ updPop: null });
+    this.toast("We will remind you in 3 hours.");
+  }
+
+  /** Download the new app here, with progress, then Android's installer opens over the app. */
+  private async updateNow() {
+    const u = this.state.update;
+    if (!u) return;
+    this.setState({ updPop: { progress: 0, failed: false } });
+    const r = await downloadAndInstall(u.url, (f) => this.setState({ updPop: { progress: f, failed: false } }));
+    this.setState({ updPop: r === "installer" ? null : { progress: null, failed: true } });
+  }
+
+  /**
+   * The refresh button: send what is waiting, fetch the latest from the
+   * office, and ask whether a newer app is out — all at once.
+   */
+  private async refreshAll() {
+    const st = this.state;
+    if (st.refreshing) return;
+    if (st.net === "offline") return this.toast("No network. Your work is saved and will send by itself.", "warn");
+    this.setState({ refreshing: true });
+    try {
+      await this.flushQueue();
+      const [r, newer] = await Promise.all([
+        this.state.me ? call("bootstrap").catch(() => null) : Promise.resolve(null),
+        this.checkUpdate(true),
+      ]);
+      if (r && r.ok) this.setState({ db: r.data });
+      else if (r && r.error === "signedOut") return this.setState({ me: null, db: null, signStep: "id" });
+      if (!newer) this.toast(r && r.ok ? "Up to date. The latest work from the office is on your phone." : "Could not refresh now. Try again in a minute.", r && r.ok ? "ok" : "warn");
+    } finally {
+      this.setState({ refreshing: false });
+    }
+  }
+
+  renderUpdate(): ReactNode {
+    const st = this.state, u = st.update, p = st.updPop;
+    if (!u || !p) return null;
+    const busy = p.progress != null;
+    return (
+      <Div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 80, background: "rgba(14,16,22,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}>
+        <Div style={{ width: "100%", maxWidth: "420px", background: "#FFFFFF", borderRadius: "22px", padding: "22px 20px 18px 20px", display: "flex", flexDirection: "column", gap: "12px" }}>
+          <Span style={{ width: "56px", height: "56px", borderRadius: "50%", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center" }}>{ic("sync", 28, "#5223E0")}</Span>
+          <Span style={{ fontSize: "21px", lineHeight: "27px", fontWeight: 700, color: "#1A1E28" }}>{"A new version of the app is ready"}</Span>
+          <Span style={{ fontSize: "15px", lineHeight: "22px", color: "#3D4453" }}>
+            {p.failed
+              ? "The download did not finish. Check the network and try again, or download it in the browser."
+              : busy
+                ? "Downloading " + u.version + "… Keep the app open. Android will ask you to install it."
+                : "Version " + u.version + " is out. Your saved work stays on the phone."}
+          </Span>
+          {busy && (
+            <Div style={{ height: "10px", borderRadius: "5px", background: "#EDEFF3", overflow: "hidden" }}>
+              <Div style={{ height: "10px", width: Math.round((p.progress ?? 0) * 100) + "%", background: "#6835FB", borderRadius: "5px" }} />
+            </Div>
+          )}
+          {!busy && <Btn onClick={() => void this.updateNow()} style={btn("p", 56)}>{ic("sync", 22, "#FFFFFF")}{p.failed ? "Try again" : "Update now"}</Btn>}
+          {!busy && p.failed && <Btn onClick={() => void openInBrowser(u.url).then((ok) => (ok ? this.setState({ updPop: null }) : this.toast("Could not open the browser", "warn")))} style={btn("s", 52)}>{"Download in the browser"}</Btn>}
+          {!busy && <Btn onClick={() => this.updateLater()} style={{ ...btn("s", 52), border: "none", color: "#5223E0" }}>{"Update later"}</Btn>}
+        </Div>
+      </Div>
+    );
   }
 
   /* ================================================================ helpers */
@@ -593,7 +726,8 @@ export class FactoryApp extends Component<Props, State> {
     const raw = (sc?.typed ?? "").trim();
     if (!sc || !raw) return;
     const code = sc.purpose === "lr" ? raw : typedCode(raw, this.state.db);
-    this.setState({ scan: { ...sc, typed: null } }, () => void this.doScan(code));
+    /* The text stays: a code the server refuses comes back to the box to fix, not to an empty one. */
+    void this.doScan(code);
   }
 
   async doScan(code: string, manual?: boolean) {
@@ -2187,6 +2321,7 @@ export class FactoryApp extends Component<Props, State> {
           {shell && this.renderNav(head)}
 
           {st.sheet && me && this.renderSheet()}
+          {this.renderUpdate()}
           {st.toast && (
             <Div role="status" style={{ position: "absolute", left: "16px", right: "16px", bottom: st.flow ? "132px" : "92px", zIndex: 60, display: "flex", alignItems: "center", gap: "10px", background: st.toastTone === "warn" ? "#8A5C05" : "#3D14A8", color: "#FFFFFF", borderRadius: "14px", padding: "14px 16px", fontSize: "15px", lineHeight: "20px", boxShadow: "0 8px 24px rgba(26,30,40,0.25)", animation: "fx-up 150ms cubic-bezier(0.2,0,0.2,1)" }}>
               <Span style={{ width: "24px", height: "24px", borderRadius: "50%", background: st.toastTone === "warn" ? "rgba(255,231,168,0.25)" : "rgba(198,255,52,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{st.toastTone === "warn" ? ic("alert", 15, "#FFE7A8") : ic("check", 15, "#C6FF34")}</Span>
@@ -2328,6 +2463,9 @@ export class FactoryApp extends Component<Props, State> {
           <Span style={{ display: "block", fontSize: "17px", fontWeight: 700, lineHeight: "22px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{me.n + (multi || (head && !me.scope) ? "" : !areaWord ? "" : " · " + areaWord)}</Span>
           {multi ? this.deptPill() : <Span style={{ display: "block", fontSize: "13px", color: "#6B7385", lineHeight: "17px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{db.loc + " · " + db.shift}</Span>}
         </Span>
+        <Btn onClick={() => void this.refreshAll()} aria-label="Refresh" style={{ width: "36px", height: "36px", borderRadius: "18px", border: "none", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flex: "none" }}>
+          <Span style={{ display: "flex", animation: st.refreshing ? "fx-spin 1.2s linear infinite" : "none" }}>{ic("sync", 20, "#5223E0")}</Span>
+        </Btn>
         <Btn onClick={() => this.setState({ route: "sync" })} style={{ height: "36px", padding: "0 12px", borderRadius: "18px", border: "none", background: c[0], color: c[1], fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", whiteSpace: "nowrap", flex: "none" }}>
           <Span style={{ width: "8px", height: "8px", borderRadius: "50%", background: c[2], animation: q ? "fx-pulse 1.4s ease-in-out infinite" : "none" }} />
           {q ? q + " · " + T.pending : (T as Record<string, string>)[n]}
@@ -2449,8 +2587,60 @@ export class FactoryApp extends Component<Props, State> {
 
   /* ---------------------------------------------------------------- scan */
 
+  /** The camera's answer. No camera, or none allowed, opens straight in Type mode — once; "Scan instead" is not bounced back. */
+  camState(s: "live" | "none" | "denied") {
+    this.setState((st) => {
+      const sc = st.scan;
+      const toType = !!sc && (s === "none" || s === "denied") && sc.typed == null && !sc.camAsked;
+      return { cam: s, scan: toType ? { ...sc!, typed: "" } : sc };
+    });
+  }
+
+  /** Back to the camera from Type mode. The typed text is dropped; the camera is not offered Type mode again on its own. */
+  scanInstead(openSettings?: boolean) {
+    const sc = this.state.scan;
+    if (!sc) return;
+    if (openSettings && this.state.cam === "denied") void Linking.openSettings().catch(() => undefined);
+    this.setState({ scan: { ...sc, typed: null, camAsked: true } });
+  }
+
+  /** Type mode: the camera is off, the box takes the whole screen and the keyboard opens on it. */
+  renderTyping(labels: { code: string; what: string; good: boolean }[]): ReactNode {
+    const st = this.state, T = this.T(), sc = st.scan!, P = sc.purpose, m = sc.meta, db = st.db;
+    const rmName = m.item && db?.rm[m.item] ? db.rm[m.item].n : "";
+    const what = { badge: "your company badge", home: "a task sheet, order, lot or box label", rm: "the " + rmName + " drum", sfg: "the base-liquid tank", pm: "the empty-can stack", fg: "the filled-can pallet", load: "the box label going on the lorry", drum: "the GRN label on the empty drum", lr: "the LR receipt" }[P];
+    const typed = sc.typed ?? "", ready = !!typed.trim();
+    const noCam = st.cam === "none" || st.cam === "denied";
+    const lr = P === "lr";
+    return (
+      <Div style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: "10px", padding: "14px 16px 18px 16px" }}>
+        {noCam && <Div style={{ padding: "10px 12px", borderRadius: "12px", background: "rgba(255,231,168,0.12)", color: "#FFE7A8", fontSize: "14px", lineHeight: "20px" }}>{st.cam === "denied" ? T.camOffType : T.noCamType}</Div>}
+        <Div style={{ fontSize: "22px", lineHeight: "28px", fontWeight: 700 }}>{lr ? T.typeLr : T.typeTitle}</Div>
+        {!!what && <Div style={{ fontSize: "15px", color: "#C2C8D2" }}>{T.lookingFor + ": " + what}</Div>}
+        <Input value={typed} onChange={(e) => this.setState({ scan: { ...sc, typed: String(e.target.value).toUpperCase().slice(0, 60) } })} onKeyDown={(e) => e.key === "Enter" && this.submitTyped()} autoFocus autoComplete="off" aria-label={lr ? T.typeLr : T.typeCode} style={{ width: "100%", height: "64px", minHeight: "64px", boxSizing: "border-box", marginTop: "6px", borderRadius: "16px", border: "2px solid #C6FF34", background: "rgba(255,255,255,0.06)", color: "#FFFFFF", padding: "0 16px", ...mono, fontSize: "24px", fontWeight: 600, letterSpacing: "1px", outline: "none" }} />
+        <Div style={{ fontSize: "13px", lineHeight: "18px", color: "#9BA3B2" }}>{lr ? T.typeLrEg : T.typeEg}</Div>
+        <Btn onClick={() => this.submitTyped()} style={{ width: "100%", height: "56px", marginTop: "6px", border: "none", borderRadius: "14px", background: ready ? "#C6FF34" : "rgba(255,255,255,0.12)", color: ready ? "#0E1016" : "#9BA3B2", fontSize: "17px", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", cursor: ready ? "pointer" : "default" }}>{ic("enterKey", 20, ready ? "#0E1016" : "#9BA3B2")}{lr ? T.checkLr : T.checkCode}</Btn>
+        <Btn onClick={() => this.scanInstead(true)} style={{ width: "100%", height: "54px", border: "1.5px solid rgba(255,255,255,0.28)", background: "transparent", borderRadius: "14px", color: "#FFFFFF", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", cursor: "pointer" }}>{ic(st.cam === "denied" ? "camOn" : "scanFrame", 22, "#FFFFFF")}{st.cam === "denied" ? T.camOn : T.scanInstead}</Btn>
+        {labels.length > 0 && (
+          <>
+            <Div style={{ fontSize: "12px", fontWeight: 600, color: "#9BA3B2", marginTop: "6px" }}>{T.testLabels}</Div>
+            <Div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+              {labels.map((b) => (
+                <Btn key={b.code} onClick={() => void this.doScan(b.code)} style={{ padding: "8px 12px", borderRadius: "12px", border: "1px solid " + (b.good ? "rgba(198,255,52,0.45)" : "rgba(255,255,255,0.2)"), background: "rgba(255,255,255,0.06)", color: "#FFFFFF", textAlign: "left", cursor: "pointer" }}>
+                  <Span style={{ display: "block", ...mono, fontSize: "13px", fontWeight: 600 }}>{b.code}</Span>
+                  <Span style={{ display: "block", fontSize: "11px", opacity: 0.75, marginTop: "1px" }}>{b.what}</Span>
+                </Btn>
+              ))}
+            </Div>
+          </>
+        )}
+      </Div>
+    );
+  }
+
   renderScan(): ReactNode {
     const st = this.state, T = this.T(), sc = st.scan!, f = st.flow, m = sc.meta, P = sc.purpose, r = sc.res;
+    const typing = sc.typed != null;
     const db = st.db;
     const rmName = m.item && db?.rm[m.item] ? db.rm[m.item].n : "";
     const title = { badge: T.scanBadge, home: T.scanQR, rm: rmName, sfg: "Base liquid", pm: "Empty cans", fg: "Filled cans", load: f ? (f.task.order ?? "") : "", drum: "Empty drum", lr: "LR number" }[P] || T.scanQR;
@@ -2461,12 +2651,14 @@ export class FactoryApp extends Component<Props, State> {
     const corner = (pos: CSSProperties, b: string, rad: string): ReactNode => <Span style={{ position: "absolute", width: "44px", height: "44px", ...pos, [b.split("|")[0]]: "5px solid #C6FF34", [b.split("|")[1]]: "5px solid #C6FF34", borderRadius: rad } as CSSProperties} />;
     return (
       <Div style={{ flex: 1, minHeight: 0, background: "#0E1016", color: "#FFFFFF", display: "flex", flexDirection: "column", position: "relative" }}>
-        {!r && <CameraScanner torch={sc.torch} paused={!!r || !!st.sheet || sc.typed != null} onCode={(c) => void this.doScan(c)} onState={(s) => this.setState({ cam: s })} />}
+        {!r && !typing && <CameraScanner torch={sc.torch} paused={!!r || !!st.sheet} onCode={(c) => void this.doScan(c)} onState={(s) => this.camState(s)} />}
         <Div style={{ flex: "none", display: "flex", alignItems: "center", gap: "10px", padding: "8px 12px", position: "relative" }}>
           <Btn onClick={() => this.setState({ scan: null })} aria-label="Close" style={{ width: "48px", height: "48px", borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("x", 24, "#FFFFFF")}</Btn>
           <Span style={{ flex: 1, fontSize: "17px", fontWeight: 700, textAlign: "center" }}>{title}</Span>
-          <Btn onClick={() => this.setState({ scan: { ...sc, torch: !sc.torch } })} aria-label="Torch" style={{ width: "48px", height: "48px", borderRadius: "50%", border: "none", background: sc.torch ? "#C6FF34" : "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("torch", 22, "#FFFFFF")}</Btn>
+          {typing ? <Span style={{ width: "48px", height: "48px", flex: "none" }} /> : <Btn onClick={() => this.setState({ scan: { ...sc, torch: !sc.torch } })} aria-label="Torch" style={{ width: "48px", height: "48px", borderRadius: "50%", border: "none", background: sc.torch ? "#C6FF34" : "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("torch", 23, "#FFFFFF")}</Btn>}
         </Div>
+        {typing ? this.renderTyping(labels) : (
+          <>
         <Div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "0 24px", position: "relative" }}>
           <Div style={{ position: "relative", width: "240px", height: "240px", borderRadius: "24px", background: sc.torch ? "rgba(198,255,52,0.10)" : "rgba(255,255,255,0.03)" }}>
             {corner({ left: 0, top: 0 }, "borderLeft|borderTop", "20px 0 0 0")}
@@ -2478,7 +2670,6 @@ export class FactoryApp extends Component<Props, State> {
           <Div style={{ fontSize: "20px", lineHeight: "26px", fontWeight: 700, marginTop: "22px", textAlign: "center" }}>{hint}</Div>
           <Div style={{ fontSize: "15px", color: "#C2C8D2", marginTop: "4px", textAlign: "center" }}>{st.cam === "denied" ? "The camera is off. Allow the camera for this app, or type the code." : T.scanHint}</Div>
         </Div>
-        {(
           <Div style={{ flex: "none", background: "#1A1E28", borderRadius: "22px 22px 0 0", padding: "14px 16px 18px 16px", position: "relative" }}>
             {labels.length > 0 && (
               <>
@@ -2493,20 +2684,10 @@ export class FactoryApp extends Component<Props, State> {
                 </Div>
               </>
             )}
-            {sc.typed == null ? (
-              <Btn onClick={() => this.setState({ scan: { ...sc, typed: "" } })} style={{ width: "100%", height: "54px", marginTop: labels.length ? "12px" : 0, border: "1.5px solid rgba(255,255,255,0.28)", background: "transparent", borderRadius: "14px", color: "#FFFFFF", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", cursor: "pointer" }}>{ic("keys", 22, "#FFFFFF")}{P === "lr" ? T.typeLr : T.typeCode}</Btn>
-            ) : (
-              <Div style={{ marginTop: labels.length ? "12px" : 0 }}>
-                <Div style={{ fontSize: "13px", fontWeight: 600, color: "#C2C8D2" }}>{P === "lr" ? T.typeLr : T.typeHint}</Div>
-                <Div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
-                  <Input value={sc.typed} onChange={(e) => this.setState({ scan: { ...sc, typed: String(e.target.value).toUpperCase().slice(0, 60) } })} onKeyDown={(e) => e.key === "Enter" && this.submitTyped()} autoFocus autoComplete="off" aria-label={T.typeCode} style={{ flex: 1, minWidth: 0, height: "54px", borderRadius: "14px", border: "1.5px solid rgba(255,255,255,0.28)", background: "rgba(255,255,255,0.06)", color: "#FFFFFF", padding: "0 14px", ...mono, fontSize: "18px", fontWeight: 600, outline: "none" }} />
-                  <Btn onClick={() => this.submitTyped()} style={{ height: "54px", flex: "none", padding: "0 18px", border: "none", borderRadius: "14px", background: sc.typed.trim() ? "#C6FF34" : "rgba(255,255,255,0.12)", color: sc.typed.trim() ? "#0E1016" : "#9BA3B2", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{T.checkCode}</Btn>
-                  <Btn onClick={() => this.setState({ scan: { ...sc, typed: null } })} aria-label="Close" style={{ width: "54px", height: "54px", flex: "none", border: "none", borderRadius: "14px", background: "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("x", 22, "#FFFFFF")}</Btn>
-                </Div>
-              </Div>
-            )}
-            {hasManual && sc.typed == null && <Btn onClick={() => this.manualPick()} style={{ width: "100%", height: "54px", marginTop: "10px", border: "1.5px solid rgba(255,255,255,0.28)", background: "transparent", borderRadius: "14px", color: "#FFFFFF", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", cursor: "pointer" }}>{ic("camera", 22, "#FFFFFF")}{T.noLabel}</Btn>}
+            <Btn onClick={() => this.setState({ scan: { ...sc, typed: "" } })} style={{ width: "100%", height: "54px", marginTop: labels.length ? "12px" : 0, border: "1.5px solid rgba(255,255,255,0.28)", background: "transparent", borderRadius: "14px", color: "#FFFFFF", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", cursor: "pointer" }}>{ic("typeField", 23, "#FFFFFF")}{P === "lr" ? T.typeLr : T.typeCode}</Btn>
+            {hasManual && <Btn onClick={() => this.manualPick()} style={{ width: "100%", height: "54px", marginTop: "10px", border: "1.5px solid rgba(255,255,255,0.28)", background: "transparent", borderRadius: "14px", color: "#FFFFFF", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", cursor: "pointer" }}>{ic("picture", 22, "#FFFFFF")}{T.noLabel}</Btn>}
           </Div>
+          </>
         )}
         {r && (
           <Div style={{ position: "absolute", inset: 0, background: "rgba(14,16,22,0.55)", display: "flex", alignItems: "flex-end", zIndex: 5 }}>
@@ -2514,7 +2695,7 @@ export class FactoryApp extends Component<Props, State> {
               {r.ok && r.kind === "box" ? this.renderBoxOk(r) : r.ok ? this.renderScanOk(r as Extract<ScanResult, { ok: true }> & { manual?: boolean }) : (
                 <Div>
                   <Div style={{ display: "flex", gap: "12px", alignItems: "flex-start" }}>
-                    <Span style={{ width: "52px", height: "52px", flex: "none", borderRadius: "50%", background: "#FCECEC", color: "#B3261E", display: "flex", alignItems: "center", justifyContent: "center" }}>{ic("x", 28, "#B3261E")}</Span>
+                    <Span style={{ width: "52px", height: "52px", flex: "none", borderRadius: "50%", background: "#FCECEC", color: "#B3261E", display: "flex", alignItems: "center", justifyContent: "center" }}>{ic("alertRound", 30, "#B3261E")}</Span>
                     <Span style={{ flex: 1 }}>
                       <Span style={{ display: "block", fontSize: "20px", lineHeight: "25px", fontWeight: 700, color: "#B3261E" }}>{r.title}</Span>
                       <Span style={{ display: "block", ...mono, fontSize: "13px", color: "#6B7385", marginTop: "2px" }}>{r.code}</Span>
@@ -2524,7 +2705,7 @@ export class FactoryApp extends Component<Props, State> {
                   <Div style={{ marginTop: "12px", padding: "12px 14px", borderRadius: "12px", background: "#F7F8FA", fontSize: "15px", lineHeight: "22px", color: "#1A1E28" }}><Span style={{ fontWeight: 700 }}>What to do: </Span>{r.fix}</Div>
                   <Div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
                     <Btn onClick={() => this.speak(r.title + ". " + r.fix)} aria-label={T.listen} style={{ ...btn("s", 58), width: "64px", flex: "none" }}>{ic("speaker", 20)}</Btn>
-                    <Btn onClick={() => this.setState({ scan: { ...sc, res: null } })} style={{ ...btn("p", 58), flex: 2 }}>{T.scanAgain}</Btn>
+                    <Btn onClick={() => this.setState({ scan: { ...sc, res: null } })} style={{ ...btn("p", 58), flex: 2 }}>{typing ? T.retry : T.scanAgain}</Btn>
                   </Div>
                 </Div>
               )}

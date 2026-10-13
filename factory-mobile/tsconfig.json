@@ -13,5 +13,8 @@
     "App.tsx",
     "src/**/*.ts",
     "src/**/*.tsx"
+  ],
+  "exclude": [
+    "src/**/*.test.ts"
   ]
 }

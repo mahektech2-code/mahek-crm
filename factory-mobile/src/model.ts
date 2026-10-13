@@ -24,7 +24,7 @@ export type Net = "online" | "weak" | "offline";
 export type Flow = { task: Task; step: number; d: Draft; key: string };
 /** A box label the server judged: loaded onto the order, or looked up from the home scan. */
 export type BoxOk = { ok: true; code: string; kind: "box"; name: string; text: string; facts: { l: string; v: string }[] };
-export type Scan = { purpose: ScanPurpose; meta: ScanMeta; res: ((ScanResult | BoxOk) & { manual?: boolean }) | null; torch: boolean; typed?: string | null };
+export type Scan = { purpose: ScanPurpose; meta: ScanMeta; res: ((ScanResult | BoxOk) & { manual?: boolean }) | null; torch: boolean; typed?: string | null; camAsked?: boolean };
 export type Res =
   | { kind: "sending"; key: string }
   | { kind: "pending"; key: string; task: string; proc: Proc }
@@ -115,6 +115,12 @@ export type State = {
   board: LoadBoard | null;
   /** Upload LR: the photo, what was read off it, and what the server answered. */
   lr: LrEntry | null;
+  /** A newer APK the release manifest names, once checked; null is up to date or not known. */
+  update: { version: string; url: string } | null;
+  /** The Update now / Update later popup: the download's progress (0–1) once Update now is pressed, and whether it failed. */
+  updPop: { progress: number | null; failed: boolean } | null;
+  /** The refresh button is working. */
+  refreshing: boolean;
 };
 
 export type LrEntry = {
