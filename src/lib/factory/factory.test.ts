@@ -272,12 +272,17 @@ describe("filling and packing", () => {
   test("a filling worker starts a filling from the SFG lot he scanned, and it posts from that lot", async () => {
     const { fc, data } = await as("kamalkant");
     const me = { head: false, area: "filling" };
-    const lot = Object.values(data.lots).find((l) => l.type === "sfg" && l.status === "ok" && l.loc === data.loc && l.avail >= 20)!;
-    assert.ok(lot, "the seed holds an approved SFG lot here");
+    /* A lot AND a product of its base that two cans of fit, with the empty cans
+       here — chosen together, because which lot comes first in the seed is not
+       fixed, and not every base has a small product. */
+    const pick = Object.values(data.lots)
+      .filter((l) => l.type === "sfg" && l.status === "ok" && l.loc === data.loc)
+      .flatMap((l) => Object.keys(data.sku).filter((k) => data.sku[k].sfg === l.item && data.sku[k].l * 2 <= l.avail && (!data.sku[k].pm || lotOf(data, "pm", data.sku[k].pm, 2))).map((k) => ({ lot: l, item: k })))[0];
+    assert.ok(pick, "the seed holds an approved SFG lot here, and a product of its base that fits it");
+    const { lot, item } = pick;
     const can = fillFromLot(me, data, lot.code);
     assert.ok(can && can.ok, JSON.stringify(can));
-    const item = can.skus.find((k) => data.sku[k].l <= 5)!;
-    assert.ok(item, "a product of this base fits the lot");
+    assert.ok(can.skus.includes(item), "a product of this base fits the lot");
     assert.ok(can.skus.every((k) => data.sku[k].sfg === lot.item), "only products of this base are offered");
 
     const mix = fillFromLot({ head: false, area: "mixing" }, data, lot.code);
