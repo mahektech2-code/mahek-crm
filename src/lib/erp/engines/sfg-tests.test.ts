@@ -47,13 +47,15 @@ test("the SFG QC prompt asks Lot testing's evidence, none of it required or tagg
   const fields = qcEvidenceFields(["PH", "Smell", "Density", "Viscosity"]);
   assert.deepEqual(
     fields.map((f) => f.k),
-    ["ph", "phValue", "smell", "density", "densityPhoto", "photo:Viscosity", "video"],
-    "a test the list does not know is asked for as a photograph",
+    ["phValue", "smell", "density", "ph", "densityPhoto", "photo:Viscosity", "video"],
+    "readings first, then a tile for every photograph; a test the list does not know is asked for as a photograph",
   );
+  assert.deepEqual(fields.filter((f) => "tile" in f).map((f) => f.l), ["pH", "Density", "Viscosity", "Test video"]);
+  assert.deepEqual(fields.filter((f) => "inline" in f).map((f) => f.l), ["pH", "Smell", "Density"]);
   assert.ok(fields.every((f) => f.untagged && !("req" in f)));
   assert.deepEqual(
     EVIDENCE_FIELDS.filter((f) => f.test === "PH").map((f) => f.l),
-    ["pH photo", "PH Value"],
+    ["pH photo", "pH value"],
     "one list for both kinds of test",
   );
 });

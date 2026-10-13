@@ -34,6 +34,9 @@ const PATHS: Record<string, string> = {
   dl: "M12 3v12M7 10l5 5 5-5M4 21h16",
   plus: "M12 5v14M5 12h14",
   lock: "M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4",
+  camera: "M4 8a1 1 0 0 1 1-1h3l1.5-2h5L16 7h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1zM12 16.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7",
+  video: "M3 7a1 1 0 0 1 1-1h11a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1zM16 10.5l5-3v9l-5-3",
+  x: "M6 6l12 12M18 6L6 18",
 };
 
 export function Icon({ n, s = 16 }: { n: string; s?: number }) {

@@ -11,7 +11,8 @@ import { resolveField, whenHolds } from "@/lib/erp/ui";
 import { runCalc } from "@/lib/erp/calc";
 import "@/lib/erp/calcs";
 import type { Result } from "@/lib/result";
-import { Field } from "./field";
+import { Field, PhotoTile } from "./field";
+import { CardGrid } from "@/components/ui/card-grid";
 import { LineTable } from "./line-table";
 import { ErpVoice } from "./voice";
 import { ERP_KIT, KitContext, useKit, type ScreenKit } from "./kit";
@@ -305,7 +306,7 @@ function PromptDialog({ state, onClose }: { state: PromptState; onClose: () => v
     <Modal
       open
       onClose={onClose}
-      width={480}
+      width={spec.fields.some((f) => f.tile) ? 600 : 480}
       title={
         <>
           {spec.title}
@@ -324,24 +325,58 @@ function PromptDialog({ state, onClose }: { state: PromptState; onClose: () => v
       }
     >
       <div className="grid gap-3.5">
-        {spec.fields
-          .filter((f) => whenHolds(f.when, v))
-          .map((f) => (
-            <Field
-              key={f.k}
-              f={f}
-              value={v[f.k] ?? ""}
-              error={errs[f.k]}
-              options={optsFor(f, v)}
-              onChange={(x) => {
-                setV((s) => ({ ...s, [f.k]: x }));
-                setErrs((s) => ({ ...s, [f.k]: "" }));
-              }}
-            />
-          ))}
+        {promptRuns(spec.fields.filter((f) => whenHolds(f.when, v))).map((run) => {
+          const field = (f: FieldSpec) => {
+            const onChange = (x: string) => {
+              setV((s) => ({ ...s, [f.k]: x }));
+              setErrs((s) => ({ ...s, [f.k]: "" }));
+            };
+            return f.tile ? (
+              <PhotoTile key={f.k} f={f} value={v[f.k] ?? ""} error={errs[f.k]} onChange={onChange} />
+            ) : (
+              <Field key={f.k} f={f} value={v[f.k] ?? ""} error={errs[f.k]} options={optsFor(f, v)} onChange={onChange} />
+            );
+          };
+          return (
+            <section key={run.fields[0].k} className="grid gap-2">
+              {run.heading ? <h3 className="text-xs font-semibold tracking-[0.04em] text-muted uppercase">{run.heading}</h3> : null}
+              {run.kind === "one" ? (
+                field(run.fields[0])
+              ) : run.kind === "tiles" ? (
+                /* auto-fill, not a CardGrid's auto-fit: two tiles stay tile-sized rather than stretching across the dialog. */
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(112px,1fr))] gap-2.5">{run.fields.map(field)}</div>
+              ) : (
+                <CardGrid min={130} gap="gap-x-3 gap-y-2.5">
+                  {run.fields.map(field)}
+                </CardGrid>
+              )}
+            </section>
+          );
+        })}
       </div>
     </Modal>
   );
+}
+
+/**
+ * A prompt's fields in runs: tiles beside each other in one grid, inline
+ * fields sharing a row, everything else one to a row. A run starts where the
+ * kind or the section changes, and carries the section's heading the first
+ * time it is reached.
+ */
+type PromptRun = { heading?: string; kind: "tiles" | "inline" | "one"; fields: FieldSpec[] };
+function promptRuns(fields: FieldSpec[]): PromptRun[] {
+  const runs: PromptRun[] = [];
+  let lastSec: string | undefined;
+  for (const f of fields) {
+    const kind: PromptRun["kind"] = f.tile ? "tiles" : f.inline ? "inline" : "one";
+    const prev = runs.at(-1);
+    const newSec = f.sec !== lastSec;
+    if (prev && !newSec && kind !== "one" && prev.kind === kind) prev.fields.push(f);
+    else runs.push({ heading: newSec && f.sec?.toLowerCase() !== f.l.toLowerCase() ? f.sec : undefined, kind, fields: [f] });
+    lastSec = f.sec;
+  }
+  return runs;
 }
 
 /* ---------------------------------------------------------------- form */
