@@ -12,8 +12,10 @@ import { erpId } from "@/lib/erp/server";
 import { eq } from "drizzle-orm";
 import { bootstrap, contextFor, erpCtxFor, factoryAudit, factoryContext, textArray, type FactoryCtx } from "@/lib/factory/server";
 import { saveCheckReason, saveOfficeCount, saveStockCheck, stockKit } from "@/lib/factory/counts";
+import { qcKit, saveQcDecision } from "@/lib/factory/qc";
 import { submitJob } from "@/lib/factory/post";
 import { assignTask, changeTeam, decideReview, reportProblem, requestCorrection } from "@/lib/factory/head";
+import type { QcInput, QcKit, QcSave } from "@/lib/factory/types";
 import type { BoxInfo, BoxScan, CountInput, DrumExisting, StockCheckInput, StockKit, StockSave, DrumLookup, DrumSave, FactoryData, LoadBoard, LrFields, LrBatchSave, LrKit, LrReading, LrSave, Proc, Submission, SubmitResult, Team } from "@/lib/factory/types";
 import { boxInfo, loadBoard, lrKit, readLr, saveLr, saveLrPhotos, scanBox, unloadBox } from "@/lib/factory/dispatch";
 import { readStoredLrs } from "@/lib/erp/lr-upload-read";
@@ -58,6 +60,8 @@ export type Me = {
   dispatch?: boolean;
   /** Checks stock — every department. Absent on an older server: no Stock check screen is offered. */
   counts?: boolean;
+  /** Decides SFG lots' QC with the Testing list. Absent on an older server: no Quality check screen is offered. */
+  qc?: boolean;
 };
 export type Who = { key: string; n: string; ini: string; ph: string; hasPin: boolean };
 type Fail = { ok: false; error: string };
@@ -67,7 +71,7 @@ const NOT_FOUND = "notFound";
 const INACTIVE = "inactive";
 
 function meOf(fc: FactoryCtx): Me {
-  return { key: fc.user.id, n: fc.user.name, ini: initialsOf(fc.user.name), head: fc.head, area: fc.area, areas: fc.areas, lang: fc.lang, scope: fc.scope, scopes: fc.scopes, drums: fc.drums, dispatch: fc.dispatch, counts: true };
+  return { key: fc.user.id, n: fc.user.name, ini: initialsOf(fc.user.name), head: fc.head, area: fc.area, areas: fc.areas, lang: fc.lang, scope: fc.scope, scopes: fc.scopes, drums: fc.drums, dispatch: fc.dispatch, counts: true, qc: fc.qc };
 }
 
 async function whoFor(user: User, typed: string): Promise<{ ok: true; who: Who } | Fail> {
@@ -399,4 +403,20 @@ export async function factoryCheckReason(kind: "check" | "count", id: string, re
   const fc = await factoryContext();
   if (!fc) return { ok: false };
   return saveCheckReason(fc, kind === "count" ? "count" : "check", String(id ?? ""), String(reason ?? ""));
+}
+
+/* ------------------------------------------------------------ SFG quality check */
+
+/** The lots waiting for QC and the Testing list's tests. */
+export async function factoryQcKit(): Promise<QcKit> {
+  const fc = await factoryContext();
+  if (!fc) return { ok: false, title: "Please sign in again", text: "The lots could not be shown.", fix: "Sign in, then open Quality check again." };
+  return qcKit(fc);
+}
+
+/** Approve or reject one SFG lot, with each test's Pass / Fail. */
+export async function factoryQcDecide(input: QcInput): Promise<QcSave> {
+  const fc = await factoryContext();
+  if (!fc) return { ok: false, title: "Please sign in again", text: "The decision was not saved.", fix: "Sign in, then decide it again." };
+  return saveQcDecision(fc, input);
 }

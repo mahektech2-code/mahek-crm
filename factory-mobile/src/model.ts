@@ -16,7 +16,7 @@ import { Platform } from "react-native";
 import type { ReactNode } from "react";
 import type { Lang } from "@/lib/factory/i18n";
 import type { ScanMeta, ScanPurpose, ScanResult } from "@/lib/factory/rules";
-import type { Draft, FactoryData, Proc, SubmitResult, Task, CheckItem, CheckStage, CountTask, StockSave } from "@/lib/factory/types";
+import type { Draft, FactoryData, Proc, SubmitResult, Task, CheckItem, CheckStage, CountTask, StockSave, QcLot } from "@/lib/factory/types";
 import type { Me, Who } from "./types";
 import type { DrumLotView, DrumSaved, LoadBoard, LrFields, LrRecent } from "@/lib/factory/types";
 
@@ -105,6 +105,8 @@ export type State = {
   drum: DrumEntry | null;
   /** Stock check: the office's counts, every item here, the one being counted, and what the server answered. */
   stock: StockEntry | null;
+  /** Quality check: the SFG lots waiting for QC and the one being decided. */
+  qc: QcEntry | null;
   /** The order being loaded: its boxes as the ERP holds them. */
   board: LoadBoard | null;
   /** Upload LR: the photo, what was read off it, and what the server answered. */
@@ -296,6 +298,24 @@ export type StockEntry = {
   reason: string;
   reasonSaving: boolean;
   reasonSaved: boolean;
+};
+
+/**
+ * Quality check on the phone: the SFG lots waiting for QC, the one being
+ * decided and each test's Pass / Fail. Online only, on purpose: the answers
+ * are read against the Testing list as it stands when they arrive.
+ */
+export type QcEntry = {
+  loading: boolean;
+  err: { title: string; text: string; fix: string } | null;
+  tests: string[];
+  waiting: QcLot[];
+  decided: QcLot[];
+  pick: QcLot | null;
+  results: Record<string, "Pass" | "Fail">;
+  note: string;
+  saving: boolean;
+  saved: { msg: string; lot: QcLot } | null;
 };
 
 export function mintCheckKey(): string {

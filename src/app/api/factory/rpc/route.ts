@@ -45,6 +45,8 @@ const OPS = {
   stockCheck: A.factoryStockCheck,
   countSave: A.factoryCountSave,
   checkReason: A.factoryCheckReason,
+  qcKit: A.factoryQcKit,
+  qcDecide: A.factoryQcDecide,
 } as const;
 
 export type FactoryOp = keyof typeof OPS;

@@ -22,14 +22,14 @@ import {
   type ScanPurpose,
   type ScanResult,
 } from "@/lib/factory/rules";
-import { CHECK_ITEMS, DOWN, OFFLINE_HOURS, REJ, STEPS, SUBMISSION_VERSION, type CheckStage, type CheckUnit, type Draft, type FactoryData, type Lot, type Proc, type SubmitResult, type Task, type Team } from "@/lib/factory/types";
+import { CHECK_ITEMS, DOWN, OFFLINE_HOURS, REJ, STEPS, SUBMISSION_VERSION, type CheckStage, type CheckUnit, type QcLot, type Draft, type FactoryData, type Lot, type Proc, type SubmitResult, type Task, type Team } from "@/lib/factory/types";
 import { hhmm } from "@/lib/factory/time";
 import type { Me } from "@/lib/actions/factory";
 import { call, NotReceived, PAGE_BUILD, watchBuild } from "./api";
 import { art, ic, qr } from "./art";
 import { avStyle, btn, card, initials, mono, msg, MsgBox, Pill, artWell, type Msg } from "./kit";
 import { CameraScanner, shrinkPhoto } from "./camera";
-import { dropPhoto, forget, keepPhoto, keptPhoto, load, mintKey, readNet, save, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet, mintDrumKey, type StockEntry, mintCheckKey } from "./model";
+import { dropPhoto, forget, keepPhoto, keptPhoto, load, mintKey, readNet, save, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet, mintDrumKey, type StockEntry, type QcEntry, mintCheckKey } from "./model";
 
 /* ---------------------------------------------------------------------------
  * THE FACTORY APP — "Mahek Factory App" from the design, screen for screen.
@@ -111,6 +111,7 @@ export class FactoryApp extends Component<Props, State> {
       cam: "wait",
       drum: null,
       stock: null,
+      qc: null,
       newBuild: false,
     };
   }
@@ -656,6 +657,198 @@ export class FactoryApp extends Component<Props, State> {
       return;
     }
     this.setState({ flow: f, scan: null });
+  }
+
+  /* ================================================================ quality check */
+
+  openQc() {
+    const blank: QcEntry = { loading: true, err: null, tests: [], waiting: [], decided: [], pick: null, results: {}, note: "", saving: false, saved: null };
+    this.setState({ sheet: null, route: "qc", qc: blank }, () => void this.loadQc());
+  }
+
+  /** Merges onto the LATEST quality-check state, like `setStock`. */
+  setQc(p: Partial<QcEntry>) {
+    this.setState((st) => (st.qc ? { qc: { ...st.qc, ...p } } : null));
+  }
+
+  async loadQc() {
+    if (!this.state.qc) return;
+    this.setQc({ loading: true, err: null });
+    try {
+      const r = await call("qcKit");
+      if (r.ok) this.setQc({ loading: false, tests: r.tests, waiting: r.waiting, decided: r.decided });
+      else this.setQc({ loading: false, err: { title: r.title, text: r.text, fix: r.fix } });
+    } catch (e) {
+      this.setQc({ loading: false, err: { title: "No network", text: "The lots could not be loaded.", fix: "Check the Wi-Fi and tap Try again. A quality decision needs the network — it is checked against the Testing list the moment it arrives." } });
+      if (!(e instanceof NotReceived)) throw e;
+    }
+  }
+
+  /** A lot already decided opens with the answers it was decided on, so changing one test is one tap. */
+  pickQc(lot: QcLot) {
+    this.setQc({ pick: lot, results: { ...lot.tests }, note: lot.status === "Rejected" ? (lot.note ?? "") : "", saving: false, saved: null, err: null });
+  }
+
+  async saveQc(verdict: "Approved" | "Rejected") {
+    const s = this.state.qc;
+    if (!s?.pick || s.saving) return;
+    this.setQc({ saving: true, err: null });
+    try {
+      const r = await call("qcDecide", { lot: s.pick.lot, verdict, results: s.results, note: s.note.trim() || null });
+      if (r.ok) {
+        this.setQc({ saving: false, saved: { msg: r.msg, lot: r.lot } });
+        this.toast(r.msg);
+        return;
+      }
+      this.setQc({ saving: false, err: { title: r.title, text: r.text, fix: r.fix } });
+    } catch (e) {
+      this.setQc({ saving: false, err: { title: "No network", text: "The decision is not saved yet.", fix: "Check the Wi-Fi and press the button again." } });
+      if (!(e instanceof NotReceived)) throw e;
+    }
+  }
+
+  /** Back from a lot to the list — reloading it, so a lot just decided moves down. */
+  qcBack() {
+    const s = this.state.qc;
+    if (s?.pick) {
+      const reload = !!s.saved;
+      this.setQc({ pick: null, saved: null, err: null });
+      if (reload) void this.loadQc();
+      return;
+    }
+    this.setState({ route: "more", qc: null });
+  }
+
+  renderQc(): ReactNode {
+    const st = this.state, T = this.T(), s = st.qc;
+    const fact = (l: string, v: string, tone?: string) => (
+      <div key={l} style={{ display: "flex", justifyContent: "space-between", gap: "12px", padding: "10px 0", borderBottom: "1px solid #EDEFF3" }}>
+        <span style={{ fontSize: "15px", color: "#6B7385" }}>{l}</span>
+        <span style={{ fontSize: "15px", fontWeight: 700, color: tone ?? "#1A1E28", textAlign: "right", flex: 1 }}>{v}</span>
+      </div>
+    );
+    const errBox = (e: { title: string; text: string; fix: string }) => (
+      <div style={{ padding: "14px", borderRadius: "14px", background: "#FCECEC" }}>
+        <div style={{ fontSize: "17px", fontWeight: 700, color: "#B3261E" }}>{e.title}</div>
+        <div style={{ fontSize: "15px", lineHeight: "22px", color: "#1A1E28", marginTop: "6px" }}>{e.text}</div>
+        <div style={{ fontSize: "15px", lineHeight: "22px", color: "#1A1E28", marginTop: "6px" }}><span style={{ fontWeight: 700 }}>What to do: </span>{e.fix}</div>
+      </div>
+    );
+    const round = { width: "44px", height: "44px", borderRadius: "50%", border: "none", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" } as CSSProperties;
+    const head = (
+      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+        <button onClick={() => this.qcBack()} aria-label={T.back} style={round}>{ic("back", 22, "#5223E0")}</button>
+        <span style={{ flex: 1 }}>
+          <span style={{ display: "block", fontSize: "20px", fontWeight: 700 }}>Quality check</span>
+          <span style={{ display: "block", fontSize: "13px", color: "#6B7385" }}>Base liquid lots, tested before filling</span>
+        </span>
+        {!s?.pick && <button onClick={() => void this.loadQc()} aria-label="Refresh" style={round}>{ic("sync", 22, "#5223E0")}</button>}
+      </div>
+    );
+    const wrap = (kids: ReactNode) => <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: "14px" }}>{head}{kids}</div>;
+    if (!s) return wrap(null);
+    const tone = (v: QcLot["status"]) => (v === "Approved" ? { bg: "#E9F5EE", fg: "#1D7A45" } : v === "Rejected" ? { bg: "#FCECEC", fg: "#B3261E" } : { bg: "#FDF6E7", fg: "#8A5C05" });
+    const word = (v: QcLot["status"]) => (v === "Pending" ? "Waiting for QC" : v);
+    const p = s.pick;
+
+    /* ---- the answer */
+    if (p && s.saved) {
+      const sv = s.saved.lot, ok = sv.status === "Approved";
+      return wrap(
+        <>
+          <div style={{ ...card, padding: "16px", border: "2px solid " + (ok ? "#BFE3CC" : "#F6CFCF") }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <span style={{ width: "52px", height: "52px", flex: "none", borderRadius: "50%", background: ok ? "#E9F5EE" : "#FCECEC", display: "flex", alignItems: "center", justifyContent: "center" }}>{ic(ok ? "check" : "alert", 28, ok ? "#1D7A45" : "#B3261E")}</span>
+              <span style={{ flex: 1 }}>
+                <span style={{ display: "block", fontSize: "22px", fontWeight: 700, color: ok ? "#1D7A45" : "#B3261E" }}>{ok ? "Approved" : "Rejected"}</span>
+                <span style={{ display: "block", fontSize: "15px", color: "#6B7385" }}>{sv.lot + " · " + sv.product}</span>
+              </span>
+            </div>
+            {Object.entries(sv.tests).map(([t, r]) => fact(t, r, r === "Pass" ? "#1D7A45" : "#B3261E"))}
+            {!!sv.note && fact("Note", sv.note)}
+            <div style={{ marginTop: "10px", fontSize: "14px", lineHeight: "20px", color: "#3D4453" }}>{ok ? "The filling team can use it now." : "It cannot be filled. The mixing team will see why."}</div>
+          </div>
+          <button onClick={() => this.qcBack()} style={btn("p", 58)}>Check the next lot</button>
+        </>,
+      );
+    }
+
+    /* ---- deciding one lot */
+    if (p) {
+      const tt = tone(p.status);
+      const answered = s.tests.filter((t) => s.results[t]).length;
+      const allPass = s.tests.every((t) => s.results[t] === "Pass");
+      const anyFail = s.tests.some((t) => s.results[t] === "Fail");
+      const canApprove = allPass && !s.saving && p.status !== "Approved";
+      const canReject = !!s.note.trim() && !s.saving && p.status !== "Rejected";
+      const inputStyle: CSSProperties = { width: "100%", height: "48px", minHeight: "48px", boxSizing: "border-box", border: "1.5px solid #DDE1E8", borderRadius: "12px", padding: "0 12px", fontSize: "17px", color: "#1A1E28", background: "#FFFFFF" };
+      const choice = (t: string, r: "Pass" | "Fail") => {
+        const on = s.results[t] === r, good = r === "Pass";
+        return (
+          <button key={r} onClick={() => this.setQc({ results: { ...s.results, [t]: r }, err: null })} aria-label={t + " " + r} style={{ flex: 1, height: "48px", borderRadius: "12px", border: "2px solid " + (on ? (good ? "#1D7A45" : "#B3261E") : "#DDE1E8"), background: on ? (good ? "#E9F5EE" : "#FCECEC") : "#FFFFFF", color: on ? (good ? "#1D7A45" : "#B3261E") : "#3D4453", fontSize: "16px", fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>{r}</button>
+        );
+      };
+      return wrap(
+        <>
+          <div style={{ ...card, padding: "16px" }}>
+            <span style={{ display: "block", fontSize: "21px", lineHeight: "26px", fontWeight: 700 }}>{p.product}</span>
+            <span style={{ display: "block", ...mono, fontSize: "14px", fontWeight: 600, color: "#3D4453", marginTop: "2px" }}>{p.lot}</span>
+            {fact("Made", p.made)}
+            {fact("In stock", nf(p.litres) + " L · " + p.godown)}
+            {fact("Now", word(p.status), tt.fg)}
+            {p.status !== "Pending" && !!p.by && fact("Decided by", p.by)}
+          </div>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+            <span style={{ fontSize: "18px", fontWeight: 700 }}>Tests</span>
+            <span style={{ fontSize: "14px", color: "#6B7385" }}>{answered + " of " + s.tests.length + " answered"}</span>
+          </div>
+          {s.tests.length ? s.tests.map((t) => (
+            <div key={t} style={{ ...card, padding: "12px 14px", display: "flex", flexDirection: "column", gap: "8px" }}>
+              <span style={{ fontSize: "16px", fontWeight: 700 }}>{t}</span>
+              <div style={{ display: "flex", gap: "8px" }}>{choice(t, "Pass")}{choice(t, "Fail")}</div>
+            </div>
+          )) : <div style={{ ...card, padding: "16px", fontSize: "15px", lineHeight: "21px", color: "#6B7385" }}>No tests are on the Testing list. The office sets them in ERP → Settings → Reference lists.</div>}
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+            <span style={{ fontSize: "15px", color: "#6B7385" }}>{anyFail ? "Why it failed (needed to reject)" : "Note (optional — needed to reject)"}</span>
+            <input value={s.note} onChange={(e) => this.setQc({ note: String(e.target.value).slice(0, 500), err: null })} maxLength={500} placeholder={anyFail ? "What was wrong with it" : "Anything the next person should know"} aria-label="Note" style={inputStyle} />
+          </div>
+          {s.err && errBox(s.err)}
+          {anyFail && <div style={{ fontSize: "14px", lineHeight: "20px", color: "#B3261E" }}>A lot that fails a test is rejected, not approved.</div>}
+          <button onClick={() => void this.saveQc("Approved")} style={btn(canApprove ? "p" : "off", 60)}>{s.saving ? "Saving…" : p.status === "Approved" ? "Already approved" : allPass ? "Approve — it may be filled" : "Approve (every test must pass)"}</button>
+          <button onClick={() => void this.saveQc("Rejected")} style={btn(canReject ? "s" : "off", 54)}>{p.status === "Rejected" ? "Already rejected" : "Reject"}</button>
+        </>,
+      );
+    }
+
+    /* ---- the list */
+    const row = (l: QcLot) => {
+      const tt = tone(l.status);
+      return (
+        <button key={l.lot} onClick={() => this.pickQc(l)} style={{ ...card, padding: "14px 16px", display: "flex", flexDirection: "column", alignItems: "stretch", gap: "6px", textAlign: "left", cursor: "pointer" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <span style={{ fontSize: "17px", fontWeight: 700, flex: 1 }}>{l.product}</span>
+            <span style={{ ...mono, fontSize: "13px", color: "#6B7385" }}>{l.lot}</span>
+          </div>
+          <span style={{ fontSize: "14px", color: "#3D4453" }}>{"Made " + l.made + " · " + nf(l.litres) + " L · " + l.godown}</span>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}><Pill l={word(l.status)} bg={tt.bg} fg={tt.fg} /></div>
+        </button>
+      );
+    };
+    return wrap(
+      <>
+        {s.err && errBox(s.err)}
+        {s.err && <button onClick={() => void this.loadQc()} style={btn("s", 54)}>Try again</button>}
+        {s.loading && !s.waiting.length && !s.err && <div style={{ fontSize: "15px", color: "#6B7385" }}>Loading…</div>}
+        {!s.loading && !s.err && (
+          <>
+            <span style={{ fontSize: "18px", fontWeight: 700 }}>{"Waiting for QC" + (s.waiting.length ? " · " + s.waiting.length : "")}</span>
+            {s.waiting.length ? s.waiting.map(row) : <div style={{ ...card, padding: "20px", fontSize: "15px", lineHeight: "21px", color: "#6B7385", textAlign: "center" }}>Nothing is waiting. Every base liquid in stock has been checked.</div>}
+            {s.decided.length > 0 && <span style={{ fontSize: "18px", fontWeight: 700 }}>Decided this week</span>}
+            {s.decided.map(row)}
+          </>
+        )}
+      </>,
+    );
   }
 
   /* ================================================================ stock check */
@@ -1448,6 +1641,7 @@ export class FactoryApp extends Component<Props, State> {
           {shell && R === "settings" && this.renderSettings()}
           {shell && R === "drum" && this.renderDrum()}
           {shell && R === "stock" && this.renderStock()}
+          {shell && R === "qc" && this.renderQc()}
           {shell && head && R === "today" && this.renderToday()}
           {shell && head && R === "review" && this.renderReview()}
           {shell && head && R === "teams" && this.renderTeams()}
@@ -1611,7 +1805,7 @@ export class FactoryApp extends Component<Props, State> {
     const navH: [string, string, string][] = [["today", "list", T.today], ["review", "alert", T.review], ["scan", "qr", T.scan], ["teams", "people", T.teams], ["more", "chart", T.more]];
     const pendN = st.queue.filter((q) => q.status === "pending").length;
     /* A page reached from More or Settings keeps its tab lit. */
-    const tabOf: Record<string, string> = { help: "settings", stock: "more", drum: "more", machines: head ? "more" : "machines", sync: head ? "more" : "sync" };
+    const tabOf: Record<string, string> = { help: "settings", stock: "more", qc: "more", drum: "more", machines: head ? "more" : "machines", sync: head ? "more" : "sync" };
     return (
       <div style={{ flex: "none", height: "78px", background: "#FFFFFF", borderTop: "1px solid #EDEFF3", display: "flex", alignItems: "center", justifyContent: "space-around", padding: "0 6px 8px 6px" }}>
         {(head ? navH : navW).map(([k, icn, l]) => {
@@ -2473,6 +2667,7 @@ export class FactoryApp extends Component<Props, State> {
     const pendN = st.queue.filter((q) => q.status === "pending").length;
     const tools: ReactNode[] = [];
     if (me.counts) tools.push(this.menuRow("Stock check", "Count any stock and check it against the book", "chart", () => this.openStock()));
+    if (me.qc) tools.push(this.menuRow("Quality check", "Test base liquid lots and approve or reject them", "flask", () => this.openQc()));
     if (me.drums) tools.push(this.menuRow("Empty drum entry", "Scan and weigh a drum once it is empty", "box", () => this.openDrum()));
     return (
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px 16px 24px 16px", display: "flex", flexDirection: "column", gap: "10px" }}>

@@ -532,3 +532,47 @@ describe("stock check, from every department", () => {
     assert.ok(resent.ok && resent.replay, "a resend of a saved count is not an error");
   });
 });
+
+describe("quality check of SFG lots, with the Testing list", () => {
+  test("Quality decides a lot test by test; approving needs every test passed, rejecting needs a reason", async () => {
+    const { qcKit, saveQcDecision } = await import("./qc");
+    const { refValues } = await import("@/lib/erp/refs");
+    const tests = await refValues("testingList");
+    assert.ok(tests.length >= 2, "the seeded Testing list has tests to ask");
+    const pass = Object.fromEntries(tests.map((t) => [t, "Pass"]));
+
+    const { fc: worker } = await as("anil");
+    assert.equal(worker.qc, false, "a mixing worker does not decide QC");
+    assert.equal((await qcKit(worker)).ok, false);
+    assert.equal((await saveQcDecision(worker, { lot: "x", verdict: "Approved", results: pass, note: null })).ok, false);
+
+    const { fc } = await as("pooja");
+    assert.equal(fc.qc, true, "somebody placed in Quality decides QC");
+    const kit = await qcKit(fc);
+    assert.ok(kit.ok);
+    assert.deepEqual(kit.tests, tests, "the phone is asked the Testing list's active tests");
+    const lot = kit.decided[0];
+    assert.ok(lot && lot.status === "Approved", "the seeded lot was approved this week");
+
+    const noReason = await saveQcDecision(fc, { lot: lot.lot, verdict: "Rejected", results: { [tests[0]]: "Fail" }, note: null });
+    assert.ok(!noReason.ok && /why/i.test(noReason.title), "a reject needs a reason");
+    const rej = await saveQcDecision(fc, { lot: lot.lot, verdict: "Rejected", results: { [tests[0]]: "Fail" }, note: "Smells off" });
+    assert.ok(rej.ok, JSON.stringify(rej));
+    const [stored] = await q<{ status: string; tests: Record<string, string>; note: string }>(sql`select status, tests, note from erp_sfg_qc where lot_code = ${lot.lot}`);
+    assert.deepEqual(stored, { status: "Rejected", tests: { [tests[0]]: "Fail" }, note: "Smells off" });
+    const { data } = await as("sujit");
+    assert.equal(data.lots[lot.lot]?.status, "hold", "a rejected lot is held from filling");
+
+    const { fc: qc } = await as("pooja");
+    const missing = await saveQcDecision(qc, { lot: lot.lot, verdict: "Approved", results: { [tests[0]]: "Pass" }, note: null });
+    assert.ok(!missing.ok && missing.test === tests[1], "every test must be answered to approve");
+    const failed = await saveQcDecision(qc, { lot: lot.lot, verdict: "Approved", results: { ...pass, [tests[1]]: "Fail" }, note: null });
+    assert.ok(!failed.ok && failed.test === tests[1], "a failed test cannot be approved");
+    const ok = await saveQcDecision(qc, { lot: lot.lot, verdict: "Approved", results: { ...pass, Invented: "Pass" }, note: null });
+    assert.ok(ok.ok, JSON.stringify(ok));
+    const [back] = await q<{ status: string; tests: Record<string, string> }>(sql`select status, tests from erp_sfg_qc where lot_code = ${lot.lot}`);
+    assert.deepEqual(back, { status: "Approved", tests: pass }, "only the list's tests are stored");
+    const audit = await q<{ action: string }>(sql`select action from audit_log where entity_id = ${lot.lot} and action like 'erp.sfg.qc%' order by at`);
+    assert.deepEqual(audit.slice(-2).map((a) => a.action), ["erp.sfg.qcReject", "erp.sfg.qcApprove"], "the ERP's history reads the same");
+  });
+});

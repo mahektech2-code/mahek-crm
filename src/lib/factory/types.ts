@@ -394,3 +394,32 @@ export type StockSave =
       replay?: boolean;
     }
   | { ok: false; kind: "qty" | "notOpen" | "notAllowed" | "signedOut" | "item"; title: string; text: string; fix: string };
+
+/* ---------------------------------------------------------------- SFG quality check
+ *
+ * Deciding an SFG lot's QC from the phone — the same decision as ERP → SFG
+ * batches → Approve / Reject, with the same Testing-list checks
+ * (lib/factory/qc.ts does the work). The phone draws the tests the server
+ * sends; the server reads the answers against the list again.
+ */
+export type QcVerdict = "Pending" | "Approved" | "Rejected";
+export type QcLot = {
+  lot: string;
+  product: string;
+  /** The day the lot was made, "YYYY-MM-DD". */
+  made: string;
+  litres: number;
+  godown: string;
+  status: QcVerdict;
+  /** The checks recorded with the last decision, by test name. */
+  tests: Record<string, "Pass" | "Fail">;
+  note: string | null;
+  by: string | null;
+};
+export type QcKit =
+  | { ok: true; tests: string[]; waiting: QcLot[]; decided: QcLot[] }
+  | { ok: false; title: string; text: string; fix: string };
+export type QcInput = { lot: string; verdict: "Approved" | "Rejected"; results: Record<string, string>; note: string | null };
+export type QcSave =
+  | { ok: true; msg: string; lot: QcLot }
+  | { ok: false; title: string; text: string; fix: string; test?: string };
