@@ -68,6 +68,18 @@ export type FieldSpec = {
   /** A section heading, drawn where it first changes down the form. */
   sec?: string;
   req?: boolean;
+  /**
+   * Draw no "Optional" tag beside a field that is not required — for a form
+   * where nothing is, so saying it on every field says nothing.
+   */
+  untagged?: boolean;
+  /**
+   * A photo or video drawn as a square tile with its name inside, beside the
+   * other tiles next to it — for a dialog that asks for several pictures at once.
+   */
+  tile?: boolean;
+  /** A short field that shares a row with the inline fields beside it. */
+  inline?: boolean;
   /** Required only while this holds — "weight with drum" is needed for a kg item, not a litre one. */
   reqWhen?: When;
   /** Fixed options. */

@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { erpId } from "@/lib/erp/server";
 import { screenModule } from "@/lib/erp/screens";
 import { calendarDate } from "@/lib/business-date";
-import { firstBlockedStep, mixDeviation, nf, normalizeDraft, savedInstant } from "./rules";
+import { firstBlockedStep, mixDeviation, mixMade, nf, normalizeDraft, savedInstant } from "./rules";
 import { hhmm } from "./time";
 import type { Draft, FactoryData, Proc, Submission, SubmitResult, Task } from "./types";
 import { OFFLINE_HOURS } from "./types";
@@ -237,7 +237,7 @@ async function postMixing(fc: FactoryCtx, sub: Submission, live: FactoryData, t:
   const sf = live.sfg[t.item!];
   const lines = d.rm ?? [];
   const poured = lines.reduce((a, r) => a + (r.qty ?? 0), 0);
-  const made = d.out ?? 0;
+  const made = mixMade(d);
   if (made > poured + 1e-9)
     return failed(sub.key, "More litres than you poured", "You poured " + nf(poured) + " L but entered " + nf(made) + " L made. Nothing was saved.", "Tap Fix it and read the tank gauge again.", "output");
 
@@ -469,7 +469,7 @@ async function finish(fc: FactoryCtx, sub: Submission, live: FactoryData, t: Tas
   const at = hhmm(savedInstant(sub.savedAt, new Date()));
   const names = (ids: (string | null)[]) => ids.filter((x): x is string => !!x).map((k) => live.emp[k]?.n ?? "?").join(", ");
   let outRow: NonNullable<Task["out"]>;
-  if (t.proc === "mixing") outRow = { good: d.out ?? 0, unit: "L", lot: r.label?.code, at };
+  if (t.proc === "mixing") outRow = { good: mixMade(d), unit: "L", lot: r.label?.code, at };
   else if (t.proc === "filling") {
     const k = live.sku[d.sku!];
     outRow = { good: (d.filled ?? 0) - (d.rej ?? 0), rej: d.rej ?? 0, unit: k.kind === "drum" ? "drums" : "cans", lot: r.label?.code, at };
@@ -519,7 +519,7 @@ async function finish(fc: FactoryCtx, sub: Submission, live: FactoryData, t: Tas
   if (!d.team.helpers.length) await review("attribution", "No helper recorded", t.id + " was saved without a helper.", "Today " + at + " · " + who);
 
   const what =
-    t.proc === "mixing" ? `Saved mixing batch ${r.label?.code} · ${nf(d.out)} L`
+    t.proc === "mixing" ? `Saved mixing batch ${r.label?.code} · ${nf(mixMade(d))} L`
     : t.proc === "filling" ? `Saved filling ${r.label?.code} · ${nf((d.filled ?? 0) - (d.rej ?? 0))} good, ${nf(d.rej)} rejected`
     : t.proc === "packing" ? `Saved packing · ${nf(d.boxes)} boxes · ${r.rows[1][1]} full batch${r.rows[1][1] === "1" ? "" : "es"}`
     : `Loading checked for ${t.order} · photo ${d.photo ?? "—"}`;

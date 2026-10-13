@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { allPassValues, qcTestFields, readQcTests, testKey, testResultsLine } from "./sfg-tests";
+import { allPassValues, EVIDENCE_FIELDS, evidenceFileIds, hasEvidence, qcEvidenceFields, qcTestFields, readQcEvidence, readQcTests, testKey, testResultsLine } from "./sfg-tests";
 
 const TESTS = ["PH", "Smell", "Density"];
 
@@ -41,4 +41,36 @@ test("the recorded checks read back in one line", () => {
   assert.equal(testResultsLine({ PH: "Pass", Smell: "Fail" }), "PH: Pass · Smell: Fail");
   assert.equal(testResultsLine({}), null);
   assert.equal(testResultsLine(null), null);
+});
+
+test("the SFG QC prompt asks Lot testing's evidence, none of it required or tagged", () => {
+  const fields = qcEvidenceFields(["PH", "Smell", "Density", "Viscosity"]);
+  assert.deepEqual(
+    fields.map((f) => f.k),
+    ["phValue", "smell", "density", "ph", "densityPhoto", "photo:Viscosity", "video"],
+    "readings first, then a tile for every photograph; a test the list does not know is asked for as a photograph",
+  );
+  assert.deepEqual(fields.filter((f) => "tile" in f).map((f) => f.l), ["pH", "Density", "Viscosity", "Test video"]);
+  assert.deepEqual(fields.filter((f) => "inline" in f).map((f) => f.l), ["pH", "Smell", "Density"]);
+  assert.ok(fields.every((f) => f.untagged && !("req" in f)));
+  assert.deepEqual(
+    EVIDENCE_FIELDS.filter((f) => f.test === "PH").map((f) => f.l),
+    ["pH photo", "pH value"],
+    "one list for both kinds of test",
+  );
+});
+
+test("evidence: blank is fine everywhere, and what is given must make sense", () => {
+  const tests = ["PH", "Smell", "Density", "Color"];
+  assert.deepEqual(readQcEvidence(tests, {}), { ok: true, evidence: { photos: {} } });
+  const read = readQcEvidence(tests, { ph: "f1", phValue: "6.5", smell: "Good", density: "0.9", color: "f2", video: "v1", oil: "ignored" });
+  assert.deepEqual(read, { ok: true, evidence: { photos: { PH: "f1", Color: "f2" }, phValue: 6.5, smell: "Good", density: 0.9, video: "v1" } });
+  assert.deepEqual(readQcEvidence(tests, { smell: "Lovely" }), { ok: false, field: "smell", message: "Choose Good, Moderate, Bad for smell" });
+  assert.equal(readQcEvidence(tests, { density: "3" }).ok, false);
+  assert.equal(readQcEvidence(tests, { phValue: "x" }).ok, false);
+  if (read.ok) {
+    assert.deepEqual(evidenceFileIds(read.evidence).sort(), ["f1", "f2", "v1"]);
+    assert.equal(hasEvidence(read.evidence), true);
+  }
+  assert.equal(hasEvidence({ photos: {} }), false);
 });

@@ -261,6 +261,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
+      - id: node
+        uses: ./.github/actions/node-image
       - name: Build the production image
         uses: docker/build-push-action@v7
         with:
@@ -268,6 +270,8 @@ jobs:
           push: false
           load: true
           tags: mahekone:ci
+          build-args: |
+            NODE_IMAGE=${{ steps.node.outputs.image }}
       # Building proves it compiles. This proves the runtime stage can find
       # what it needs to start at all.
       - name: It has a server to run
@@ -303,6 +307,8 @@ jobs:
       - run: npm ci
 
       - uses: docker/setup-buildx-action@v4
+      - id: node
+        uses: ./.github/actions/node-image
       - name: Build the image this stack will run
         uses: docker/build-push-action@v7
         with:
@@ -310,6 +316,8 @@ jobs:
           push: false
           load: true
           tags: mahekone:ci
+          build-args: |
+            NODE_IMAGE=${{ steps.node.outputs.image }}
 
       - name: Lay it out the way the droplet is
         run: |

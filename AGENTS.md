@@ -2274,12 +2274,17 @@ form offers approved lots only and `saveFill` refuses any other
 (`qcRefusal`). Deciding is the `approveSfgQc` power; a reject needs a reason,
 and rejecting an approved lot stops further filling while what was filled
 stays traceable to it. Every lot in the book when this shipped was written
-Approved, or refilling would have stopped on deploy day. The decision asks
-each ACTIVE value of the Testing list (ERP → Settings → Reference lists) as
-Pass / Fail beside the optional note: approving needs every test answered and
-every one Pass, a reject records whatever was run, and the answers are stored
-by test name in `erp_sfg_qc.tests` (`engines/sfg-tests.ts`, pure; the server
-re-reads the list rather than trusting the prompt).
+Approved, or refilling would have stopped on deploy day. In the ERP the
+decision asks, for each ACTIVE value of the Testing list (ERP → Settings →
+Reference lists), the same EVIDENCE Purchase → Lot testing records — a
+photograph per test, the smell, the pH and density readings, a video — from
+one list (`EVIDENCE_FIELDS` in `engines/sfg-tests.ts`, which Lot testing reads
+too). NONE of it is required and no field says "Optional" (`untagged`); what is
+given must make sense (a smell from the list, a density in range). It is
+stored in `erp_sfg_qc.evidence` (`0265`), its files filed under `erp_sfg_qc`
+and read by whoever holds SFG batches, and drawn in the batch's drawer. A
+reject still needs its reason. The factory phone still asks Pass / Fail per
+test (`erp_sfg_qc.tests`, every one Pass to approve) until its APK changes.
 
 **A BOX ID IS WHAT THE QR CARRIES; THE LOT IS LINKED DATA.** `erp_units`, one
 row per box (`BX-YYMMDD-NNNNNN`, series `unit`), minted by `syncPackEntry`
@@ -8710,6 +8715,20 @@ has been: numbers as text, a bare "HH:MM", fields an old page never had. A page
 that sees a newer build in an answer reloads itself, but only once nothing is
 in hand and nothing is waiting to send.
 
+**A MIXING MATERIAL MAY COME FROM SEVERAL DRUMS, AND NEXT WAITS FOR THE
+SHEET.** A drum that holds less than the sheet asks is poured empty and "Add
+another drum" opens a row for a second lot of the same material (`extra` on its
+`RmLine`; only those rows come off again); emptying a drum with the sheet still
+short opens that row by itself. `rmTotals`, `rmPlan`, `addRmDrum` and
+`removeRmDrum` in `lib/factory/rules.ts` are the rule, shared by both apps, and
+`stepCheck` holds the materials step until each material's drums add up to
+exactly `per × batches`. Each drum is its own ERP line on the one SFG batch,
+which the ERP already reads per lot and sums per material for the recipe check.
+There is no "How much was made" step any more: the batch made what was poured
+(`mixMade`), and the machine-stopped question moved onto the materials page. A
+draft from an older page that carries `out` is still read with it. The Saved
+screen has no Print QR label button.
+
 **SIGNING IN IS A NUMBER AND FOUR DIGITS.** The mobile number, then a PIN
 (hashed like a password, throttled like one). A forgotten PIN is the SMS code
 the web sign-in already sends, then a new PIN. A badge QR only says WHO — the
@@ -8802,6 +8821,14 @@ doors apart. `FactoryCtx.qc` decides who sees it: somebody placed in the
 Quality department, or a holder of the ERP's `approveSfgQc` power (an ERP
 administrator included). It needs the network, like Stock check: the list is
 read again at the save.
+
+**THE SCAN PAGE HAS TWO MODES, SCAN AND TYPE.** "Type the code" swaps the
+whole screen: the camera stops, the frame and torch go, and a large box takes
+focus so the keyboard opens; "Scan instead" (or the phone's Back) returns to
+the camera. A phone with no camera, or one not allowed, opens straight in Type
+mode — once, so "Scan instead" is not bounced back (`camState`, `camAsked`).
+The typed text survives a refused code, so "Try again" is a fix, not a retype.
+A typed code is judged exactly as a scan (`submitTyped` → `doScan`).
 
 **IN A COLUMN NOTHING SHRINKS (`web.tsx`).** The web never squeezes a box below
 its content in a column (`min-height: auto`); native has no such floor, so the

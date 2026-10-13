@@ -134,6 +134,9 @@ jobs:
           username: ${{ secrets.DOCR_USERNAME }}
           password: ${{ secrets.DOCR_TOKEN }}
 
+      - id: node
+        uses: ./.github/actions/node-image
+
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
@@ -147,6 +150,7 @@ jobs:
           # itself instead of hitting a stale Server Action.
           build-args: |
             GIT_SHA=${{ github.sha }}
+            NODE_IMAGE=${{ steps.node.outputs.image }}
           # GITHUB'S CACHE, NOT THE REGISTRY'S.
           #
           # This was `type=registry,mode=max`, which stores every layer of

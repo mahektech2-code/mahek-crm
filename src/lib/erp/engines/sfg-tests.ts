@@ -1,6 +1,11 @@
 /* ---------------------------------------------------------------------------
  * The checks an SFG lot's QC decision records, from the Testing list.
  *
+ * Two shapes. The factory phone asks Pass / Fail per test (below, first).
+ * The ERP's approve and reject prompts ask for EVIDENCE instead — the same
+ * photographs and readings Purchase → Lot testing records — and none of it
+ * is required (further down).
+ *
  * The Testing list (ERP → Settings → Reference lists) is the company's own
  * list of tests, and its ACTIVE values are what QC is asked about: one Pass /
  * Fail answer per test, beside the note. Adding a test to the list puts it on
@@ -78,4 +83,132 @@ export function testResultsLine(results: TestResults | null | undefined): string
 /** Every test answered Pass — what a seeded or scripted approval sends. */
 export function allPassValues(tests: string[]): Record<string, string> {
   return Object.fromEntries(tests.map((t) => [testKey(t), "Pass"]));
+}
+
+/* ---------------------------------------------------------------------------
+ * EVIDENCE — what a QC decision in the ERP records, the same as a purchase
+ * test (Purchase → Lot testing): a photograph per test, the smell, the pH and
+ * density readings, and a video. One list, read by both, so a test's evidence
+ * cannot be asked for two different ways.
+ *
+ * On a purchase test the evidence a test needs is REQUIRED — the verifier
+ * cannot pass what they cannot see. On an SFG lot's QC decision NOTHING is:
+ * the approver records what was checked and the decision stands on their
+ * word, so the prompt asks for none of it and says nothing about which is
+ * optional either (`untagged`).
+ * ------------------------------------------------------------------------- */
+
+export type EvidenceField = {
+  test: string;
+  k: string;
+  l: string;
+  t: "photo" | "num" | "select";
+  opts?: string[];
+  min?: number;
+  max?: number;
+  hint?: string;
+};
+
+export const SMELLS = ["Good", "Moderate", "Bad"] as const;
+
+/** Every known test's evidence, in the order the forms ask for it. */
+export const EVIDENCE_FIELDS: EvidenceField[] = [
+  { test: "PH", k: "ph", l: "pH photo", t: "photo" },
+  { test: "PH", k: "phValue", l: "pH value", t: "num", hint: "Read from the pH photo when AI is on — confirm it." },
+  { test: "Smell", k: "smell", l: "Smell", t: "select", opts: [...SMELLS] },
+  { test: "Color", k: "color", l: "Colour photo", t: "photo" },
+  { test: "Oil Paint", k: "oil", l: "Oil-paint photo", t: "photo" },
+  { test: "Fast Paints", k: "fast", l: "Fast-paint photo", t: "photo" },
+  { test: "Nc Paints", k: "nc", l: "NC-paint photo", t: "photo" },
+  { test: "Primer", k: "primer", l: "Primer photo", t: "photo" },
+  { test: "Density", k: "density", l: "Density value", t: "num", min: 0.5, max: 1.5 },
+  { test: "Density", k: "densityPhoto", l: "Density photo", t: "photo" },
+  { test: "Tharmakol Pass", k: "thermocol", l: "Thermocol-pass photo", t: "photo" },
+];
+
+/** A test the Testing list names and this list does not: a photograph of it. */
+const otherPhoto = (test: string): EvidenceField => ({ test, k: `photo:${test}`, l: `${test} photo`, t: "photo" });
+
+/** The evidence fields for the tests asked about, in the Testing list's order. */
+export function evidenceFieldsFor(tests: string[]): EvidenceField[] {
+  return tests.flatMap((test) => {
+    const known = EVIDENCE_FIELDS.filter((f) => f.test === test);
+    return known.length ? known : [otherPhoto(test)];
+  });
+}
+
+/** A photo's name on its tile: "Oil-paint photo" is "Oil paint". */
+const tileName = (l: string) => l.replace(/ photo$/i, "").replace(/-/g, " ");
+
+/**
+ * The SFG QC prompt's evidence fields: none required, none labelled optional.
+ * The readings share a row, then every photograph — and the video — as a tile.
+ */
+export function qcEvidenceFields(tests: string[]) {
+  const fields = evidenceFieldsFor(tests);
+  const readings = fields
+    .filter((f) => f.t !== "photo")
+    .map((f) => ({
+      ...f,
+      hint: undefined,
+      l: f.k === "phValue" ? "pH" : f.l.replace(/ value$/i, ""),
+      ...(f.min != null && f.max != null ? { hint: `${f.min} – ${f.max}` } : {}),
+      sec: "Readings",
+      inline: true as const,
+      untagged: true as const,
+    }));
+  const photos = fields
+    .filter((f) => f.t === "photo")
+    .map((f) => ({ ...f, l: tileName(f.l), sec: "Photos", tile: true as const, untagged: true as const }));
+  return [...readings, ...photos, { k: "video", l: "Test video", t: "video" as const, sec: "Photos", tile: true as const, untagged: true as const }];
+}
+
+export type QcEvidence = {
+  smell?: string;
+  phValue?: number;
+  density?: number;
+  /** test name → attachment id. */
+  photos: Record<string, string>;
+  video?: string;
+};
+
+export type QcEvidenceReading = { ok: true; evidence: QcEvidence } | { ok: false; field: string; message: string };
+
+/**
+ * What a prompt sent, read against the tests asked about. Blank is fine
+ * everywhere; what IS given has to make sense — a smell from the list, a
+ * number that is a number, a density in its range. A value for a test not on
+ * the list is ignored.
+ */
+export function readQcEvidence(tests: string[], values: Record<string, string | undefined>): QcEvidenceReading {
+  const evidence: QcEvidence = { photos: {} };
+  for (const f of evidenceFieldsFor(tests)) {
+    const raw = (values[f.k] ?? "").trim();
+    if (!raw) continue;
+    if (f.t === "photo") evidence.photos[f.test] = raw;
+    else if (f.t === "select") {
+      if (!f.opts?.includes(raw)) return { ok: false, field: f.k, message: `Choose ${f.opts?.join(", ")} for ${f.l.toLowerCase()}` };
+      evidence.smell = raw;
+    } else {
+      const n = Number(raw);
+      if (!Number.isFinite(n)) return { ok: false, field: f.k, message: `${f.l} must be a number` };
+      if ((f.min != null && n < f.min) || (f.max != null && n > f.max)) return { ok: false, field: f.k, message: `${f.l} must be between ${f.min} and ${f.max}` };
+      if (f.k === "phValue") evidence.phValue = n;
+      else evidence.density = n;
+    }
+  }
+  const video = (values.video ?? "").trim();
+  if (video) evidence.video = video;
+  return { ok: true, evidence };
+}
+
+/** Every file an evidence record names, to bind to the decision. */
+export function evidenceFileIds(e: QcEvidence | null | undefined): string[] {
+  if (!e) return [];
+  return [...Object.values(e.photos ?? {}), ...(e.video ? [e.video] : [])];
+}
+
+/** Anything recorded at all — an empty record draws nothing. */
+export function hasEvidence(e: QcEvidence | null | undefined): boolean {
+  return !!e && (e.smell != null || e.phValue != null || e.density != null || evidenceFileIds(e).length > 0);
 }

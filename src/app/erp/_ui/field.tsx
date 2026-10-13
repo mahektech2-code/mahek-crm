@@ -41,7 +41,7 @@ export function Field({
   onUseSuggestion?: (v: string) => void;
 }) {
   const opts = options ?? f.opts ?? [];
-  const tag = f.conf ? (f.conf === "high" ? "AI · read" : f.conf === "check" ? "AI · check this" : "AI · not found") : f.t === "derived" ? "Calculated" : f.t === "suggest" ? "AI suggestion" : !f.req ? "Optional" : "";
+  const tag = f.conf ? (f.conf === "high" ? "AI · read" : f.conf === "check" ? "AI · check this" : "AI · not found") : f.t === "derived" ? "Calculated" : f.t === "suggest" ? "AI suggestion" : !f.req && !f.untagged ? "Optional" : "";
   const tagTone =
     f.conf === "check" || f.conf === "not found"
       ? "bg-warn-soft text-warn-ink"
@@ -365,19 +365,8 @@ function ScanField({ value, opts, error, onChange }: { value: string; opts: stri
  * is the attachment's id, bound to its record when the record saves — the
  * house rule for attachments, so a save is never blocked by a slow upload.
  */
-function PhotoPicker({
-  kind,
-  upload,
-  value,
-  error,
-  onChange,
-}: {
-  kind: "photo" | "video";
-  upload?: FieldSpec["upload"];
-  value: string;
-  error: boolean;
-  onChange: (v: string) => void;
-}) {
+/** Sends one picked file to the upload route and hands back the attachment id. */
+function useUpload(kind: "photo" | "video", upload: FieldSpec["upload"], onChange: (v: string) => void) {
   const [busy, setBusy] = useState(false);
   const [name, setName] = useState("");
   const [upErr, setUpErr] = useState("");
@@ -402,6 +391,23 @@ function PhotoPicker({
       setBusy(false);
     }
   };
+  return { busy, name, setName, upErr, pick };
+}
+
+function PhotoPicker({
+  kind,
+  upload,
+  value,
+  error,
+  onChange,
+}: {
+  kind: "photo" | "video";
+  upload?: FieldSpec["upload"];
+  value: string;
+  error: boolean;
+  onChange: (v: string) => void;
+}) {
+  const { busy, name, setName, upErr, pick } = useUpload(kind, upload, onChange);
   const done = !!value;
   return (
     <span className="block">
@@ -475,5 +481,67 @@ function CsvPicker({ value, error, onChange }: { value: string; error: boolean; 
         className="absolute inset-0 cursor-pointer opacity-0"
       />
     </span>
+  );
+}
+
+/**
+ * A photo or video as a square tile: its name and a camera inside while
+ * empty, the picture itself once taken, with × to take it off. Several sit
+ * side by side, so a dialog asking for eight pictures reads as one glance.
+ */
+export function PhotoTile({ f, value, error, onChange }: { f: FieldSpec; value: string; error?: string; onChange: (v: string) => void }) {
+  const kind = f.t === "video" ? "video" : "photo";
+  const { busy, name, setName, upErr, pick } = useUpload(kind, f.upload, onChange);
+  const [noPreview, setNoPreview] = useState(false);
+  const done = !!value;
+  const message = error || upErr;
+  return (
+    <div className="min-w-0" role="group" aria-label={f.l}>
+      <div
+        className={cx(
+          "relative flex aspect-[4/3] w-full flex-col items-center justify-center gap-1.5 overflow-hidden rounded-card border text-center",
+          done ? "border-success bg-success-soft text-success" : cx("border-dashed bg-surface text-muted hover:border-brand hover:bg-brand-soft hover:text-brand-hover", message ? "border-danger" : "border-line-strong"),
+        )}
+      >
+        {done && kind === "photo" && !noPreview ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={`/api/attachments/${value}`} alt="" className="absolute inset-0 h-full w-full object-cover" onError={() => setNoPreview(true)} />
+        ) : (
+          <>
+            <Icon n={done ? "file" : kind === "video" ? "video" : "camera"} s={22} />
+            <span className="px-2 text-meta font-medium text-body">{busy ? "Uploading…" : done ? (kind === "video" ? "Video added" : "Attached") : f.l}</span>
+          </>
+        )}
+        {done && kind === "photo" && !noPreview ? (
+          <span className="absolute inset-x-0 bottom-0 truncate bg-ink/60 px-2 py-1 text-left text-meta font-medium text-white">{f.l}</span>
+        ) : null}
+        <input
+          type="file"
+          aria-label={done ? `Replace ${f.l}` : f.l}
+          accept={kind === "video" ? "video/*" : "image/*,application/pdf"}
+          capture={kind === "photo" ? "environment" : undefined}
+          onChange={(e) => {
+            setNoPreview(false);
+            pick(e.target.files?.[0]);
+          }}
+          className="absolute inset-0 cursor-pointer opacity-0"
+        />
+        {done ? (
+          <button
+            type="button"
+            aria-label={`Remove ${f.l}`}
+            title={name ? `Remove ${name}` : "Remove"}
+            onClick={() => {
+              onChange("");
+              setName("");
+            }}
+            className="absolute top-1.5 right-1.5 z-1 flex h-6 w-6 cursor-pointer items-center justify-center rounded-full bg-ink/60 text-white hover:bg-ink/80"
+          >
+            <Icon n="x" s={12} />
+          </button>
+        ) : null}
+      </div>
+      {message ? <span className="mt-1 block text-meta text-danger">{message}</span> : null}
+    </div>
   );
 }
