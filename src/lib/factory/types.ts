@@ -375,7 +375,8 @@ export type CheckItem = {
 };
 
 export type StockKit =
-  | { ok: true; godown: string; office: CountTask[]; items: CheckItem[] }
+  /** `stages` are the kinds this person's departments may check; absent from an older server, read as all four. */
+  | { ok: true; godown: string; office: CountTask[]; items: CheckItem[]; stages?: CheckStage[] }
   | { ok: false; title: string; text: string; fix: string };
 
 export type StockCheckInput = { stage: CheckStage; itemId: string; qty: number | null; bin?: string | null; key: string };

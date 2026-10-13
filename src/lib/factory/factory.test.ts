@@ -548,12 +548,13 @@ describe("staffed from Admin Console → Access, with department-level permissio
   });
 });
 
-describe("stock check, from every department", () => {
-  test("any item of any kind is listed blind, checked, judged against the book, and a mismatch takes a reason", async () => {
-    const { stockKit, saveStockCheck, saveOfficeCount, saveCheckReason } = await import("./counts");
-    const { fc } = await as("anil");
+describe("stock check, each department its own stock", () => {
+  test("any item of any kind is listed blind to the whole floor, checked, judged against the book, and a mismatch takes a reason", async () => {
+    const { stockKit, saveStockCheck, saveCheckReason } = await import("./counts");
+    const { fc } = await as("vijay");
     const kit = await stockKit(fc);
     assert.ok(kit.ok);
+    assert.deepEqual(kit.stages, ["rm", "sfg", "fg", "pack"]);
     for (const stage of ["rm", "sfg", "fg", "pack"] as const) assert.ok(kit.items.some((i) => i.stage === stage && i.here), `${stage} is listed`);
     assert.ok(kit.items.every((i) => !("book" in i)), "the list never carries the book");
 
@@ -572,15 +573,51 @@ describe("stock check, from every department", () => {
     assert.ok(p0.ok && p0.unit === "Boxes");
     const p1 = await saveStockCheck(fc, { stage: "pack", itemId: packItem.id, qty: p0.book!, key: "CHK-" + randomUUID().slice(0, 8) });
     assert.ok(p1.ok && p1.matched, "counting what the book holds matches");
+  });
 
-    const rmItem = kit.items.find((i) => i.stage === "rm" && i.here)!;
+  test("mixing checks chemicals and SFG, filling cans, drums, FG and boxes packed, packing empty boxes and stationery — and nothing else", async () => {
+    const { stockKit, saveStockCheck, saveOfficeCount } = await import("./counts");
+    const types = new Map((await q<{ id: string; t: string }>(sql`select id, material_type as t from erp_raw_materials`)).map((r) => [r.id, r.t]));
+    const kitOf = async (who: string) => {
+      const { fc } = await as(who);
+      const kit = await stockKit(fc);
+      assert.ok(kit.ok);
+      return { fc, kit, rmTypes: new Set(kit.items.filter((i) => i.stage === "rm").map((i) => types.get(i.id))) };
+    };
+
+    const mixing = await kitOf("anil");
+    assert.deepEqual(mixing.kit.stages, ["rm", "sfg"]);
+    assert.deepEqual([...mixing.rmTypes], ["Chemical"]);
+    assert.ok(mixing.kit.items.some((i) => i.stage === "sfg"));
+    assert.ok(!mixing.kit.items.some((i) => i.stage === "fg" || i.stage === "pack"));
+
+    const filling = await kitOf("kamalkant");
+    assert.deepEqual(filling.kit.stages, ["rm", "fg", "pack"]);
+    assert.ok([...filling.rmTypes].every((t) => t === "Can" || t === "Drum") && filling.rmTypes.size > 0, [...filling.rmTypes].join());
+
+    const packing = await kitOf("sunita");
+    assert.deepEqual(packing.kit.stages, ["rm"]);
+    assert.ok([...packing.rmTypes].every((t) => t === "Box" || t === "Stationary") && packing.rmTypes.size > 0, [...packing.rmTypes].join());
+
+    /* The server refuses what the list hides, because a URL is not a list. */
+    const fgItem = filling.kit.items.find((i) => i.stage === "fg")!;
+    const refused = await saveStockCheck(mixing.fc, { stage: "fg", itemId: fgItem.id, qty: 1, key: "CHK-" + randomUUID().slice(0, 8) });
+    assert.ok(!refused.ok && refused.title === "Not your department's stock");
+    const chemical = mixing.kit.items.find((i) => i.stage === "rm" && i.here)!;
+    assert.equal((await saveStockCheck(packing.fc, { stage: "rm", itemId: chemical.id, qty: 1, key: "CHK-" + randomUUID().slice(0, 8) })).ok, false);
+
+    /* The office's count of a chemical is mixing's, not packing's. */
     const { openCount } = await import("@/lib/erp/stock-check");
-    const opened = await db.transaction((tx) => openCount(tx, { kind: "event", rawMaterialId: rmItem.id, godownId: fc.godown.id, reason: "A spill", byId: fc.user.id }));
-    const kit2 = await stockKit(fc);
-    assert.ok(kit2.ok && kit2.office.some((t) => t.id === opened.id), "the office's count is offered");
-    const c = await saveOfficeCount(fc, { id: opened.id, qty: 0 });
+    const opened = await db.transaction((tx) => openCount(tx, { kind: "event", rawMaterialId: chemical.id, godownId: mixing.fc.godown.id, reason: "A spill", byId: mixing.fc.user.id }));
+    const pk = await stockKit(packing.fc);
+    assert.ok(pk.ok && !pk.office.some((t) => t.id === opened.id), "packing is not offered a chemical's count");
+    const notTheirs = await saveOfficeCount(packing.fc, { id: opened.id, qty: 0 });
+    assert.ok(!notTheirs.ok && notTheirs.kind === "notAllowed");
+    const mk = await stockKit(mixing.fc);
+    assert.ok(mk.ok && mk.office.some((t) => t.id === opened.id), "mixing is offered it");
+    const c = await saveOfficeCount(mixing.fc, { id: opened.id, qty: 0 });
     assert.ok(c.ok && c.kind === "count" && c.no, JSON.stringify(c));
-    const resent = await saveOfficeCount(fc, { id: opened.id, qty: 0 });
+    const resent = await saveOfficeCount(mixing.fc, { id: opened.id, qty: 0 });
     assert.ok(resent.ok && resent.replay, "a resend of a saved count is not an error");
   });
 });

@@ -2230,10 +2230,17 @@ inward lines two days old with no register row, transfers whose destination
 has no entry, and packing batches whose cans do not match their boxes. Each
 opens its record; nothing is created.
 
-**ANYBODY ON THE FLOOR CHECKS ANY STOCK, ANY TIME.** Stock check on the
-factory app (every department — `Me.counts`) lists every raw material,
-semi-finished product, filled-can SKU and packed SKU at the person's godown,
-with the office's open counts on top. The list never carries a quantity; the
+**EACH DEPARTMENT CHECKS ITS OWN STOCK, ANY TIME.** Stock check on the
+factory app (`Me.counts`) lists, at the person's godown, what their
+departments keep (`lib/factory/stock-reach.ts`, pure): Mixing & Blending the
+raw chemicals and SFG; Filling the empty cans and drums, filled cans and
+packed boxes; Packing the empty boxes and stationery; Dispatch filled cans and
+packed boxes; Quality chemicals and SFG. A raw material is placed by its
+item-master type, and a type no department names is the whole floor's.
+Several departments reach the union; the Production Head over the whole floor
+and an administrator reach everything. The office's open counts are offered
+the same way (a count named to one person stays theirs), and the save refuses
+anything else. Before this every department checked everything. The list never carries a quantity; the
 book is read when the figure arrives (`lib/erp/floor-checks.ts`, judged by the
 same `judgeCount` and tolerance as a formal count) and stored beside it in
 `erp_floor_checks`. A mismatch is said on the phone with the book and the

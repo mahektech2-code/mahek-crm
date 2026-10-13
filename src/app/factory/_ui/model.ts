@@ -233,6 +233,8 @@ export type StockEntry = {
   godown: string;
   office: CountTask[];
   items: CheckItem[];
+  /** The kinds this person's departments may check — the chips. */
+  stages: CheckStage[];
   stage: CheckStage;
   search: string;
   /** What is being counted now. */
