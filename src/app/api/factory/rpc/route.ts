@@ -49,6 +49,7 @@ const OPS = {
   qcDecide: A.factoryQcDecide,
   startBatch: A.factoryStartBatch,
   startFill: A.factoryStartFill,
+  startPack: A.factoryStartPack,
   reqKit: A.factoryReqKit,
   reqRaise: A.factoryReqRaise,
   reqCancel: A.factoryReqCancel,
