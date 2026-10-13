@@ -31,6 +31,8 @@ type Ops = {
   stockCheck: typeof Actions.factoryStockCheck;
   countSave: typeof Actions.factoryCountSave;
   checkReason: typeof Actions.factoryCheckReason;
+  qcKit: typeof Actions.factoryQcKit;
+  qcDecide: typeof Actions.factoryQcDecide;
 };
 
 export class NotReceived extends Error {}

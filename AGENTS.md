@@ -8753,8 +8753,21 @@ what a laptop opens; the queue, the 48 hours, the idempotency key and the old
 mixing the day's tools with the phone's settings. A worker's bar is Home ·
 More · Scan · Sending · Settings; the Production Head's is Today · Review ·
 Scan · Teams · More, with Machines and Sending inside More. More holds the work
-(Stock check, Empty drum entry, Upload LR); Settings holds who they are, the
+(Stock check, Quality check, Empty drum entry, Upload LR); Settings holds who they are, the
 language, the PIN, Help and Sign out, and tapping the name opens it.
+
+**QUALITY CHECKS SFG LOTS FROM THE PHONE, WITH THE TESTING LIST.** More →
+Quality check lists the SFG lots waiting for QC (Pending, with litres left)
+and those decided in the last week, and asks each ACTIVE Testing-list value
+as Pass / Fail beside an optional note — the ERP's SFG batches decision on a
+phone. `lib/factory/qc.ts` reads the answers with the same `readQcTests`
+(approving needs every test answered and passed; rejecting records what was
+run and needs a reason), writes the same `erp_sfg_qc` row and the same
+`erp.sfg.qcApprove`/`qcReject` audit lines, so the fill gate cannot tell the
+doors apart. `FactoryCtx.qc` decides who sees it: somebody placed in the
+Quality department, or a holder of the ERP's `approveSfgQc` power (an ERP
+administrator included). It needs the network, like Stock check: the list is
+read again at the save.
 
 **IN A COLUMN NOTHING SHRINKS (`web.tsx`).** The web never squeezes a box below
 its content in a column (`min-height: auto`); native has no such floor, so the
