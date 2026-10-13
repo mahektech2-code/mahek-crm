@@ -18,6 +18,7 @@ import {
   mixDeviation,
   nf,
   resolveScan,
+  startsOwnBatch,
   stepCheck,
   taskCode,
   taskName,
@@ -2363,6 +2364,16 @@ export class FactoryApp extends Component<Props, State> {
             <Span style={{ display: "block", fontSize: "15px", color: "#DDD2FF", marginTop: "4px" }}>{T.scanAny}</Span>
           </Span>
         </Btn>
+        {startsOwnBatch(me) && (
+          <Btn onClick={() => this.setState({ sheet: { type: "start" }, asg: this.defaultAsg("mixing") })} style={{ background: "#FFFFFF", border: "2px solid #6835FB", borderRadius: "20px", padding: "14px 18px", color: "#3D14A8", display: "flex", alignItems: "center", gap: "14px", textAlign: "left", cursor: "pointer", minHeight: "76px" }}>
+            <Span style={{ width: "48px", height: "48px", flex: "none", borderRadius: "14px", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center" }}>{ic("flask", 28, "#6835FB")}</Span>
+            <Span style={{ flex: 1 }}>
+              <Span style={{ display: "block", fontSize: "19px", lineHeight: "24px", fontWeight: 700 }}>Start a mixing batch</Span>
+              <Span style={{ display: "block", fontSize: "14px", color: "#6B7385", marginTop: "2px" }}>Pick the base. The recipe opens with it.</Span>
+            </Span>
+            {ic("chev", 24)}
+          </Btn>
+        )}
         <Div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginTop: "4px" }}>
           <Span style={{ fontSize: "20px", fontWeight: 700 }}>{T.myTasks}</Span>
           <Span style={{ fontSize: "14px", color: "#6B7385" }}>{open.length + " / " + mine.length}</Span>
@@ -3665,6 +3676,7 @@ export class FactoryApp extends Component<Props, State> {
 
     if (sh.type === "job") body = this.jobSheet(sh.id, (t, s, b, a) => { title = t; sub = s; acts = a; return b; });
     if (sh.type === "assign") body = this.assignSheet((t, s, b, a) => { title = t; sub = s; acts = a; return b; });
+    if (sh.type === "start") body = this.startSheet((t, s, b, a) => { title = t; sub = s; acts = a; return b; });
 
     return (
       <Div onClick={close} style={{ position: "absolute", inset: 0, background: "rgba(14,16,22,0.5)", zIndex: 40, display: "flex", alignItems: "flex-end" }}>
@@ -3744,6 +3756,60 @@ export class FactoryApp extends Component<Props, State> {
       </>
     );
     return out(taskName(db, t), (T as Record<string, string>)[t.proc] + " · " + t.id + " · " + js[0], body, done ? [{ l: "Close", run: close, style: { ...btn("s", 56), flex: 1 } }, { l: "Ask for correction", run: askCorrection, style: { ...btn("p", 56), flex: 2, fontSize: "16px" } }] : [{ l: "Close", run: close, style: btn("s", 56) }]);
+  }
+
+  /**
+   * A mixing worker starting a batch himself: the base and how many batches,
+   * nothing else. The server checks the recipe again and puts him in charge;
+   * the job then opens straight into its batch sheet.
+   */
+  startSheet(out: (title: string, sub: string, body: ReactNode, acts: { l: string; run: () => void; style: CSSProperties }[]) => ReactNode): ReactNode {
+    const st = this.state, T = this.T(), db = this.db();
+    const a = st.asg && st.asg.proc === "mixing" ? st.asg : this.defaultAsg("mixing");
+    const bases = Object.keys(db.sfg).filter((k) => db.sfg[k].recipe.length);
+    const tile = (on: boolean): CSSProperties => ({ padding: "10px 6px", borderRadius: "14px", border: on ? "3px solid #6835FB" : "1px solid #DDE1E8", background: on ? "#F7F4FF" : "#FFFFFF", cursor: "pointer", textAlign: "center" });
+    const sf = db.sfg[a.item];
+    const start = async () => {
+      if (st.busy || !sf) return;
+      this.setState({ busy: true });
+      try {
+        const r = await call("startBatch", { item: a.item, qty: a.qty });
+        if (!r.ok) return this.toast(r.error);
+        this.setState({ db: r.data, sheet: null }, () => this.startTask(r.id));
+      } catch {
+        this.toast("No network. Try again when it is back.");
+      } finally {
+        this.setState({ busy: false });
+      }
+    };
+    const body = (
+      <>
+        <Div>
+          <Div style={{ fontSize: "14px", fontWeight: 700, color: "#3D4453", marginBottom: "8px" }}>Base</Div>
+          <Div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: "8px" }}>
+            {bases.map((k) => (
+              <Btn key={k} onClick={() => this.setState({ asg: { ...a, item: k } })} style={tile(a.item === k)}>
+                <Span style={{ display: "flex", justifyContent: "center" }}>{art("tank", db.sfg[k].col, db.sfg[k].short, 48)}</Span>
+                <Span style={{ display: "block", fontSize: "15px", fontWeight: 700, lineHeight: "20px" }}>{db.sfg[k].short + " base"}</Span>
+              </Btn>
+            ))}
+          </Div>
+        </Div>
+        {!bases.length && <MsgBox m={msg("No base has a recipe in the ERP yet. Ask the office to add one in ERP → Recipes.", "warn")} />}
+        <Div style={{ background: "#F7F8FA", borderRadius: "16px", padding: "2px 14px" }}>
+          <Btn onClick={() => this.openKp({ l: "How many batches?", unit: "batches", v: a.qty, max: 6, set: (v) => this.setState({ sheet: { type: "start" }, asg: { ...a, qty: v } }) })} style={{ display: "flex", alignItems: "center", gap: "10px", width: "100%", padding: "12px 0", border: "none", background: "transparent", cursor: "pointer" }}>
+            <Span style={{ flex: 1, fontSize: "14px", color: "#6B7385", textAlign: "left" }}>How many</Span>
+            <Span style={{ fontSize: "16px", fontWeight: 700, textAlign: "right" }}>{nf(a.qty) + " batches"}</Span>
+            <Span style={{ color: "#9BA3B2", display: "flex" }}>{ic("chev", 24)}</Span>
+          </Btn>
+        </Div>
+        {sf && <MsgBox m={msg(nf(a.qty) + " × " + nf(sf.batch) + " L of " + sf.n + ", from its approved batch sheet. The formula cannot be changed here.", "info")} />}
+      </>
+    );
+    return out("Start a mixing batch", "You will be in charge of it. Change the team on the job.", body, [
+      { l: T.back, run: () => this.setState({ sheet: null }), style: { ...btn("s", 58), flex: 1 } },
+      { l: st.busy ? T.sending : "Start batch", run: () => void start(), style: { ...btn(sf && !st.busy ? "p" : "off", 58), flex: 2 } },
+    ]);
   }
 
   assignSheet(out: (title: string, sub: string, body: ReactNode, acts: { l: string; run: () => void; style: CSSProperties }[]) => ReactNode): ReactNode {

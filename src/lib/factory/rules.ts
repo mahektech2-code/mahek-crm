@@ -374,6 +374,15 @@ export function activeDept(me: DeptMe, picked: string | null | undefined): Proc 
   return picked && (d as string[]).includes(picked) ? (picked as Proc) : null;
 }
 
+/**
+ * May this person start a mixing batch on their own, with nobody giving it?
+ * A mixing worker can: the recipe is the approved batch sheet, so what he may
+ * make is already decided, and waiting for a supervisor to type it in left
+ * the floor idle. A supervisor gives tasks instead, so the button is theirs
+ * only where it is not already on their Today screen.
+ */
+export const startsOwnBatch = (me: DeptMe) => !me.head && myDepts(me).includes("mixing");
+
 /** Does a task belong on the screen under this pick? Null shows every department of theirs. */
 export const inDept = (me: DeptMe, picked: Proc | null, proc: Proc) => (picked ? proc === picked : myDepts(me).includes(proc));
 

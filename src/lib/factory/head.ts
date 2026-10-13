@@ -9,7 +9,7 @@ import { sfgLots } from "@/lib/erp/stock";
 import { err, okVoid, ok, type Result } from "@/lib/result";
 import type { Proc, Team } from "./types";
 import { PROCS } from "./types";
-import { contextFor, erpCtxFor, factoryAudit, nextTaskId, nowHM, teamDefaults, writeTeam, type FactoryCtx } from "./server";
+import { contextFor, erpCtxFor, factoryAudit, nextTaskId, nowHM, teamDefaults, worksOn, writeTeam, type FactoryCtx } from "./server";
 import { submitJob } from "./post";
 
 /* ---------------------------------------------------------------------------
@@ -73,18 +73,50 @@ export async function assignTask(fc: FactoryCtx, a: { proc: Proc; item: string; 
   }
 
   const teams = await teamDefaults();
-  const id = await db.transaction(async (tx) => {
+  const id = await insertTask(fc, { proc: a.proc, item: a.item, qty, due: a.due, sfgLot }, teams[a.proc]);
+  const procWord = { mixing: "Mixing", filling: "Filling", packing: "Packing" }[a.proc as "mixing"];
+  await factoryAudit(fc, "factory.task.assign", id, "Task given to " + procWord + " team");
+  return ok({ id }, id + " sent");
+}
+
+async function insertTask(fc: FactoryCtx, a: { proc: Proc; item: string; qty: number; due: string; sfgLot: string | null }, team: Team): Promise<string> {
+  return db.transaction(async (tx) => {
     const tid = await nextTaskId(tx);
     await tx.execute(sql`
       insert into factory_tasks (id, proc, godown_id, work_date, due, status, item, batches, target, sfg_lot, created_by_id)
       values (${tid}, ${a.proc}, ${fc.godown.id}, ${calendarDate(new Date())}::date, ${a.due}, 'ready', ${a.item},
-              ${a.proc === "mixing" ? qty : null}, ${a.proc === "mixing" ? null : qty}, ${sfgLot}, ${fc.user.id})`);
-    await writeTeam(tx, tid, teams[a.proc], fc.user.id);
+              ${a.proc === "mixing" ? a.qty : null}, ${a.proc === "mixing" ? null : a.qty}, ${a.sfgLot}, ${fc.user.id})`);
+    await writeTeam(tx, tid, team, fc.user.id);
     return tid;
   });
-  const procWord = { mixing: "Mixing", filling: "Filling", packing: "Packing" }[a.proc as "mixing"];
-  await factoryAudit(fc, "factory.task.assign", id, "Task given to " + procWord + " team");
-  return ok({ id }, id + " sent");
+}
+
+/**
+ * A mixing worker starting a batch himself, with nobody giving it. It is the
+ * same task a supervisor would give — same recipe check, same table, same
+ * posting through the ERP's SFG form — so nothing downstream can tell the two
+ * apart except the history line. He is put in charge of it; the rest of the
+ * mixing crew is the standing one, and he changes it on the job as usual.
+ */
+export async function startMixingBatch(fc: FactoryCtx, a: { item: string; qty: number }): Promise<Result<{ id: string }>> {
+  if (!worksOn(fc, "mixing")) return err("Starting a batch is for the mixing team.", "not_permitted");
+  const qty = Math.floor(Number(a.qty));
+  if (!(qty > 0) || qty > 6) return err("Enter how many batches, 1 to 6.", "validation");
+  const [r] = await q(sql`
+    select 1 from erp_recipes r join product_formulations f on f.id = r.formulation_id
+     where r.formulation_id = ${a.item} and f.active and r.qty_per_batch > 0 limit 1`);
+  if (!r) return err("This base has no approved batch sheet.", "validation");
+  const base = (await teamDefaults()).mixing;
+  const me = fc.user.id;
+  const team: Team = {
+    owner: me,
+    op: base.op === me ? null : base.op,
+    helpers: base.helpers.filter((h) => h !== me && h !== base.owner).concat(base.owner && base.owner !== me ? [base.owner] : []),
+    ver: base.ver === me ? null : base.ver,
+  };
+  const id = await insertTask(fc, { proc: "mixing", item: a.item, qty, due: nowHM() > "18:00" ? nowHM() : "18:00", sfgLot: null }, team);
+  await factoryAudit(fc, "factory.task.start", id, "Mixing batch started by " + fc.user.name);
+  return ok({ id }, id + " started");
 }
 
 /* ------------------------------------------------------------ the team */

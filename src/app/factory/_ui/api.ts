@@ -33,6 +33,7 @@ type Ops = {
   checkReason: typeof Actions.factoryCheckReason;
   qcKit: typeof Actions.factoryQcKit;
   qcDecide: typeof Actions.factoryQcDecide;
+  startBatch: typeof Actions.factoryStartBatch;
 };
 
 export class NotReceived extends Error {}

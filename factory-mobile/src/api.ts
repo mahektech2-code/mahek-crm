@@ -59,6 +59,7 @@ type Ops = {
   checkReason: (kind: "check" | "count", id: string, reason: string) => { ok: boolean };
   qcKit: () => QcKit;
   qcDecide: (input: QcInput) => QcSave;
+  startBatch: (a: { item: string; qty: number }) => ({ ok: true; id: string; data: FactoryData; msg: string }) | Fail;
 };
 
 export class NotReceived extends Error {}

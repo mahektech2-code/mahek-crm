@@ -14,7 +14,7 @@ import { bootstrap, contextFor, erpCtxFor, factoryAudit, factoryContext, textArr
 import { saveCheckReason, saveOfficeCount, saveStockCheck, stockKit } from "@/lib/factory/counts";
 import { qcKit, saveQcDecision } from "@/lib/factory/qc";
 import { submitJob } from "@/lib/factory/post";
-import { assignTask, changeTeam, decideReview, reportProblem, requestCorrection } from "@/lib/factory/head";
+import { assignTask, changeTeam, decideReview, reportProblem, requestCorrection, startMixingBatch } from "@/lib/factory/head";
 import type { QcInput, QcKit, QcSave } from "@/lib/factory/types";
 import type { BoxInfo, BoxScan, CountInput, DrumExisting, StockCheckInput, StockKit, StockSave, DrumLookup, DrumSave, FactoryData, LoadBoard, LrFields, LrBatchSave, LrKit, LrReading, LrSave, Proc, Submission, SubmitResult, Team } from "@/lib/factory/types";
 import { boxInfo, loadBoard, lrKit, readLr, saveLr, saveLrPhotos, scanBox, unloadBox } from "@/lib/factory/dispatch";
@@ -221,6 +221,14 @@ async function headDo(fn: (fc: FactoryCtx) => Promise<{ ok: boolean; error?: str
 
 export async function factoryAssign(a: { proc: Proc; item: string; qty: number; due: string }): Promise<Done> {
   return headDo((fc) => assignTask(fc, a));
+}
+/** A mixing worker starting a batch himself. Answers with the new job's id so the phone opens it. */
+export async function factoryStartBatch(a: { item: string; qty: number }): Promise<(Done & { ok: true; id: string }) | Fail> {
+  const fc = await factoryContext();
+  if (!fc) return { ok: false, error: "Please sign in again." };
+  const r = await startMixingBatch(fc, a);
+  if (!r.ok) return { ok: false, error: r.error ?? "That did not work." };
+  return { ok: true, id: r.data.id, data: await bootstrap(fc), msg: r.message ?? "" };
 }
 export async function factoryChangeTeam(taskId: string, role: keyof Team, sel: string[]): Promise<Done> {
   return headDo((fc) => changeTeam(fc, taskId, role, sel));
