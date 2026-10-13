@@ -24,7 +24,7 @@ export type Net = "online" | "weak" | "offline";
 export type Flow = { task: Task; step: number; d: Draft; key: string };
 /** A box label the server judged: loaded onto the order, or looked up from the home scan. */
 export type BoxOk = { ok: true; code: string; kind: "box"; name: string; text: string; facts: { l: string; v: string }[] };
-export type Scan = { purpose: ScanPurpose; meta: ScanMeta; res: ((ScanResult | BoxOk) & { manual?: boolean }) | null; torch: boolean };
+export type Scan = { purpose: ScanPurpose; meta: ScanMeta; res: ((ScanResult | BoxOk) & { manual?: boolean }) | null; torch: boolean; typed?: string | null };
 export type Res =
   | { kind: "sending"; key: string }
   | { kind: "pending"; key: string; task: string; proc: Proc }

@@ -91,6 +91,22 @@ export function taskTarget(db: FactoryData, t: Task): string {
 /** The code printed on a task sheet's QR. */
 export const taskCode = (t: Task) => (t.proc === "dispatch" ? t.order! : "TASK-" + t.id.replace(/^T-/, ""));
 
+/**
+ * A code somebody TYPED off a label instead of scanning it. Spaces and capital
+ * letters are not theirs to get right, so it is matched against every code the
+ * phone knows — lots, task sheets, orders, badges — ignoring both, and answered
+ * in the label's own spelling. A code the phone does not know comes back
+ * cleaned (no spaces, capitals) for the scan's own check to judge: typing is a
+ * way to READ a label, never a way past the check a scan meets.
+ */
+export function typedCode(typed: string, db: FactoryData | null): string {
+  const fold = (v: string) => v.replace(/\s+/g, "").toUpperCase();
+  const want = fold(typed);
+  if (!db) return want;
+  const known = [...Object.keys(db.lots), ...Object.keys(db.orders), ...db.tasks.map(taskCode), ...Object.values(db.emp).map((e) => e.badge ?? "")];
+  return known.find((k) => k && fold(k) === want) ?? want;
+}
+
 /* ------------------------------------------------------------- scanning */
 
 type ScanCtx = {

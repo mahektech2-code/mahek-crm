@@ -8681,6 +8681,15 @@ opens straight into its batch sheet. It posts through the ERP's SFG form like
 any other job. Filling and packing still come from a supervisor. The op is
 `startBatch`, and the native APK needs a release to show the button.
 
+**EVERY SCAN CAN BE TYPED.** The scan screen — one screen for every purpose,
+badge, task sheet, drum, base, cans, pallet, loading, empty drum and LR — has
+"Type the code" under the camera. What is typed goes through `doScan` exactly
+as a scan does, so it meets the same check and is not flagged to the
+supervisor the way "pick from photos" is: it names one label, it does not
+choose from a list. `typedCode` in `rules.ts` matches it against every code the
+phone holds ignoring spaces and case, and answers in the label's own spelling;
+the camera pauses while somebody types.
+
 **AN OLD PAGE STILL SENDS.** A station phone keeps its page for days. So the
 phone never calls a server action — their ids change on every deploy — but
 `/api/factory/rpc` by op NAME, and an op is added and never renamed or
