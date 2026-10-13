@@ -10,7 +10,7 @@
  * The sentences are the design's. A worker reads "Wrong material — this is
  * Xylene", not an error code.
  * ------------------------------------------------------------------------- */
-import type { Draft, FactoryData, Lot, Proc, Task } from "./types";
+import type { Draft, FactoryData, Lot, Proc, RmLine, Task } from "./types";
 import { CHECK_ITEMS, STEPS } from "./types";
 
 export const nf = (n: number | null | undefined) => Number(n || 0).toLocaleString("en-IN");
@@ -206,13 +206,20 @@ export function stepCheck(db: FactoryData, t: Task, d: Draft, key: string): stri
   if (key === "materials") {
     for (const r of d.rm ?? []) {
       const nm = db.rm[r.item]?.n ?? r.item;
-      if (!r.lot) return "Scan " + nm;
+      if (!r.lot) return r.extra ? "Scan the next " + nm + " drum, or remove it" : "Scan " + nm;
       if (!r.qty) return "Enter how much " + nm + " you used";
       const x = L(r.lot);
       if (!x) return "Scan " + nm + " again";
       if (r.qty > x.avail) return nm + ": only " + nf(x.avail) + " L in that lot";
     }
-    return "";
+    /* What was poured of each material has to match the sheet, across all of
+       its drums — a drum that runs short is topped up from another lot. */
+    for (const m of rmTotals(d)) {
+      const nm = db.rm[m.item]?.n ?? m.item;
+      if (m.poured < m.need) return nm + ": " + nf(r3(m.need - m.poured)) + " L more needed — add another drum";
+      if (m.poured > m.need) return nm + ": " + nf(r3(m.poured - m.need)) + " L more than the sheet — type less";
+    }
+    return downCheck(d);
   }
   if (key === "output") {
     if (!d.out) return "Enter how many litres were made";
@@ -276,6 +283,54 @@ export function mixDeviation(db: FactoryData, t: Task, d: Draft): { exp: number;
   return { exp, dev, over: !!d.out && Math.abs(dev) > sf.tol };
 }
 
+/* ---------------------------------------------------- mixing, drum by drum */
+
+const r3 = (n: number) => Math.round(n * 1000) / 1000;
+
+/** What the sheet asks of each material and what has been poured of it, across every drum of it. A material the sheet asks none of is not held to anything. */
+export function rmTotals(d: Draft): { item: string; need: number; poured: number }[] {
+  const out = new Map<string, { item: string; need: number; poured: number }>();
+  for (const r of d.rm ?? []) {
+    const m = out.get(r.item) ?? { item: r.item, need: r3(r.per * (d.batches ?? 1)), poured: 0 };
+    m.poured = r3(m.poured + (r.qty ?? 0));
+    out.set(r.item, m);
+  }
+  return [...out.values()].filter((m) => m.need > 0);
+}
+
+/** The litres a mixing batch made: what the worker read off the tank where an older page asked, otherwise everything poured — the materials match the sheet, so the batch is the sheet. */
+export function mixMade(d: Draft): number {
+  return d.out ?? r3((d.rm ?? []).reduce((a, r) => a + (r.qty ?? 0), 0));
+}
+
+/** One drum's place in its material: the sheet's figure, what the OTHER drums of it already give, what is still owed with them counted, and whether it is the material's last drum (where "Add another drum" goes). */
+export function rmPlan(d: Draft, i: number): { need: number; others: number; rest: number; poured: number; last: boolean } {
+  const rm = d.rm ?? [], r = rm[i];
+  const need = r3(r.per * (d.batches ?? 1));
+  let others = 0, last = true;
+  rm.forEach((z, j) => {
+    if (z.item !== r.item || j === i) return;
+    others += z.qty ?? 0;
+    if (j > i) last = false;
+  });
+  others = r3(others);
+  const poured = r3(others + (r.qty ?? 0));
+  return { need, others, rest: Math.max(0, r3(need - others)), poured, last };
+}
+
+/** The lines with one more drum of line i's material, placed after its last drum. */
+export function addRmDrum(rm: RmLine[], i: number): RmLine[] {
+  const r = rm[i];
+  let at = i;
+  rm.forEach((z, j) => { if (z.item === r.item) at = j; });
+  return [...rm.slice(0, at + 1), { item: r.item, per: r.per, lot: null, qty: null, extra: true }, ...rm.slice(at + 1)];
+}
+
+/** The lines without drum i — only a drum the worker added can be taken off; the sheet's own lines stay. */
+export function removeRmDrum(rm: RmLine[], i: number): RmLine[] {
+  return rm[i]?.extra ? rm.filter((_, j) => j !== i) : rm;
+}
+
 /** Packing: what the boxes add up to with the open batch carried in. */
 export function packSplit(db: FactoryData, t: Task, boxes: number) {
   const b = db.box[t.item!];
@@ -328,7 +383,7 @@ export function normalizeDraft(raw: unknown, v = 1): Draft {
   if (Array.isArray(r.rm))
     d.rm = r.rm.map((x) => {
       const o = (x ?? {}) as Record<string, unknown>;
-      return { item: String(o.item ?? ""), per: num(o.per) ?? 0, lot: str(o.lot), qty: num(o.qty), manual: !!o.manual };
+      return { item: String(o.item ?? ""), per: num(o.per) ?? 0, lot: str(o.lot), qty: num(o.qty), manual: !!o.manual, ...(o.extra ? { extra: true } : {}) };
     });
   if (r.out !== undefined) d.out = num(r.out);
   if (r.sku !== undefined) d.sku = String(r.sku);

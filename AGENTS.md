@@ -8703,6 +8703,20 @@ has been: numbers as text, a bare "HH:MM", fields an old page never had. A page
 that sees a newer build in an answer reloads itself, but only once nothing is
 in hand and nothing is waiting to send.
 
+**A MIXING MATERIAL MAY COME FROM SEVERAL DRUMS, AND NEXT WAITS FOR THE
+SHEET.** A drum that holds less than the sheet asks is poured empty and "Add
+another drum" opens a row for a second lot of the same material (`extra` on its
+`RmLine`; only those rows come off again); emptying a drum with the sheet still
+short opens that row by itself. `rmTotals`, `rmPlan`, `addRmDrum` and
+`removeRmDrum` in `lib/factory/rules.ts` are the rule, shared by both apps, and
+`stepCheck` holds the materials step until each material's drums add up to
+exactly `per × batches`. Each drum is its own ERP line on the one SFG batch,
+which the ERP already reads per lot and sums per material for the recipe check.
+There is no "How much was made" step any more: the batch made what was poured
+(`mixMade`), and the machine-stopped question moved onto the materials page. A
+draft from an older page that carries `out` is still read with it. The Saved
+screen has no Print QR label button.
+
 **SIGNING IN IS A NUMBER AND FOUR DIGITS.** The mobile number, then a PIN
 (hashed like a password, throttled like one). A forgotten PIN is the SMS code
 the web sign-in already sends, then a new PIN. A badge QR only says WHO — the

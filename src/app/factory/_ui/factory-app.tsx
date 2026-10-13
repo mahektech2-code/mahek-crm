@@ -8,10 +8,15 @@ import {
   inDept,
   DEPT_TINT,
   activeDept,
+  downCheck,
+  addRmDrum,
+  removeRmDrum,
+  rmPlan,
   jobStatus,
   lotName,
   lotUnit,
   mixDeviation,
+  mixMade,
   nf,
   resolveScan,
   startsOwnBatch,
@@ -640,15 +645,7 @@ export class FactoryApp extends Component<Props, State> {
     const db = this.db();
     if (P === "rm") {
       d.rm = (d.rm ?? []).map((q, i) => (i === m.idx ? { ...q, lot: r.lot, manual: !!r.manual } : q));
-      this.setState({ flow: f, scan: null }, () => {
-        const q = d.rm![m.idx!];
-        const need = q.per * (d.batches ?? 1);
-        this.openKp({
-          l: "How much " + db.rm[q.item].n + " did you pour?", unit: "L", v: q.qty, max: x.avail, maxL: "Only " + nf(x.avail) + " L in this lot",
-          quick: [{ l: "As on sheet · " + nf(need) + " L", v: need }],
-          set: (v) => this.setD((dd) => { dd.rm = dd.rm!.map((z, i) => (i === m.idx ? { ...z, qty: v } : z)); }),
-        });
-      });
+      this.setState({ flow: f, scan: null }, () => this.rmKp(m.idx!));
       return;
     }
     if (P === "sfg") { d.sfg = r.lot; d.sfgManual = !!r.manual; }
@@ -1271,11 +1268,33 @@ export class FactoryApp extends Component<Props, State> {
     );
   }
 
+  /** How much of drum i was poured. The quick answer is what is still owed of
+      this material, or all of the drum where the drum holds less — and taking
+      a drum to empty with the sheet still short opens the next drum's row. */
+  rmKp(i: number) {
+    const db = this.db(), d = this.state.flow!.d, q = d.rm![i];
+    const x = q.lot ? db.lots[q.lot] : undefined;
+    const nm = db.rm[q.item]?.n ?? q.item;
+    const p = rmPlan(d, i);
+    const quick = x && x.avail < p.rest
+      ? [{ l: "All of this drum · " + nf(x.avail) + " L", v: x.avail }]
+      : p.rest > 0 ? [{ l: (p.others ? "The rest · " : "As on sheet · ") + nf(p.rest) + " L", v: p.rest }] : [];
+    this.openKp({
+      l: "How much " + nm + " did you pour?", unit: "L", v: q.qty, max: x ? x.avail : null, maxL: x ? "Only " + nf(x.avail) + " L in this lot" : "",
+      quick,
+      set: (v) => this.setD((z) => {
+        z.rm = z.rm!.map((r, j) => (j === i ? { ...r, qty: v } : r));
+        const after = rmPlan(z, i);
+        if (x && v >= x.avail && after.poured < after.need && after.last) z.rm = addRmDrum(z.rm, i);
+      }),
+    });
+  }
+
   manualPick() {
     const st = this.state, sc = st.scan!, P = sc.purpose, db = this.db(), f = st.flow!;
     const lots = Object.values(db.lots);
     let pool: Lot[] = [];
-    if (P === "rm") pool = lots.filter((x) => x.type === "rm" && x.item === sc.meta.item);
+    if (P === "rm") pool = lots.filter((x) => x.type === "rm" && x.item === sc.meta.item && !(f.d.rm ?? []).some((r, i) => i !== sc.meta.idx && r.lot === x.code));
     if (P === "sfg") pool = lots.filter((x) => x.type === "sfg" && x.item === db.sku[f.d.sku!].sfg);
     if (P === "pm") pool = lots.filter((x) => x.type === "pm" && x.item === db.sku[f.d.sku!].pm);
     if (P === "fg") pool = lots.filter((x) => x.type === "fg" && x.item === db.box[f.d.box!].sku);
@@ -1326,7 +1345,7 @@ export class FactoryApp extends Component<Props, State> {
   }
 
   downCheckMsg(d: Draft) {
-    return stepCheck(this.db(), this.state.flow!.task, d, "output");
+    return downCheck(d);
   }
 
   reviewVM(f: Flow) {
@@ -1336,7 +1355,7 @@ export class FactoryApp extends Component<Props, State> {
     if (t.proc === "mixing") {
       (d.rm ?? []).forEach((r) => R(db.rm[r.item].n + " · " + r.lot, nf(r.qty) + " L"));
       R("Batches", String(d.batches));
-      R("Made", nf(d.out) + " L");
+      R("Made", nf(mixMade(d)) + " L");
       if (mixDeviation(db, t, d).over) rv.warns.push(msg("This is more or less than normal. Your supervisor will check it.", "warn"));
       if ((d.rm ?? []).some((r) => r.manual)) rv.warns.push(msg("You picked a drum from photos. Your supervisor will check it.", "warn"));
     }
@@ -1609,11 +1628,6 @@ export class FactoryApp extends Component<Props, State> {
     this.toast("Photo kept on this phone. It will send with the job.");
   }
 
-  printLabel(label: { code: string; name: string; meta: string }) {
-    const u = "/factory/label?" + new URLSearchParams({ code: label.code, name: label.name, meta: label.meta, loc: this.state.db?.loc ?? "" });
-    const w = window.open(u, "_blank");
-    this.toast(w ? "Label sent to the printer · " + label.code : "Open the label from a phone that can print");
-  }
 
   /* ================================================================ render */
 
@@ -2254,18 +2268,26 @@ export class FactoryApp extends Component<Props, State> {
     const infoCard = (l: string, v: string, warn?: boolean) => ({ l, v, style: { background: warn ? "#FDF6E7" : "#FFFFFF", border: "1px solid #DDE1E8", borderRadius: "14px", padding: "10px 12px" } });
 
     if (key === "materials") {
-      sub = "Scan each drum. Then type how much you poured.";
+      sub = "Scan each drum. Then type how much you poured. If a drum runs out, add another drum for the rest.";
       (d.rm ?? []).forEach((r, i) => {
         const x = r.lot ? db.lots[r.lot] : undefined;
-        const need = r.per * (d.batches ?? 1);
+        const p = rmPlan(d, i);
         const nm = db.rm[r.item]?.n ?? r.item;
-        const err = x && (r.qty ?? 0) > x.avail ? "Only " + nf(x.avail) + " L left in this drum. Scan another drum or type less." : "";
+        const err = x && (r.qty ?? 0) > x.avail ? "Only " + nf(x.avail) + " L left in this drum. Pour it all, then add another drum for the rest." : "";
+        const short = p.last && p.poured < p.need ? p.need - p.poured : 0;
+        const over = p.last && p.poured > p.need ? p.poured - p.need : 0;
         lots.push({
-          art: art("rm", db.rm[r.item]?.col, db.rm[r.item]?.code, 52), name: nm, need: "Sheet: " + nf(need) + " L", lot: r.lot, manual: r.manual,
+          art: art("rm", db.rm[r.item]?.col, db.rm[r.item]?.code, 52), name: nm + (r.extra ? " · next drum" : ""),
+          need: r.extra ? "Still needed: " + nf(p.rest) + " L of " + nf(p.need) + " L" : "Sheet: " + nf(p.need) + " L",
+          lot: r.lot, manual: r.manual,
           scan: () => this.openScan("rm", { item: r.item, idx: i }), qtyL: T.used, qtyV: r.qty ? nf(r.qty) + " L" : "Tap to enter", qtyDone: !!r.qty, done: !!(x && r.qty && !err), err,
-          qtyOpen: () => this.openKp({ l: "How much " + nm + " did you pour?", unit: "L", v: r.qty, max: x ? x.avail : null, maxL: x ? "Only " + nf(x.avail) + " L in this lot" : "", quick: [{ l: "As on sheet · " + nf(need) + " L", v: need }], set: (v) => this.setD((z) => { z.rm![i].qty = v; }) }),
+          qtyOpen: () => this.rmKp(i),
+          note: x && !r.qty && x.avail < p.rest ? "This drum has only " + nf(x.avail) + " L. Pour it all — then add another drum for the other " + nf(p.rest - x.avail) + " L." : short && r.qty ? nf(p.poured) + " of " + nf(p.need) + " L poured — " + nf(Math.round(short * 1000) / 1000) + " L still needed." : over ? nf(Math.round(over * 1000) / 1000) + " L more than the sheet. Type less." : "",
+          add: p.last && r.lot && p.poured < p.need ? () => this.setD((z) => { z.rm = addRmDrum(z.rm!, i); }) : undefined,
+          remove: r.extra ? () => this.setD((z) => { z.rm = removeRmDrum(z.rm!, i); }) : undefined,
         });
       });
+      down = true;
     }
     if (key === "output") {
       const sf = db.sfg[t.item!];
@@ -2474,6 +2496,13 @@ export class FactoryApp extends Component<Props, State> {
           </div>
         )}
         {o.err && <div style={{ marginTop: "10px", fontSize: "15px", lineHeight: "21px", fontWeight: 700, color: "#B3261E" }}>{o.err}</div>}
+        {o.note && !o.err && <div style={{ marginTop: "10px", fontSize: "14px", lineHeight: "20px", fontWeight: 600, color: "#8A5C05", background: "#FDF6E7", borderRadius: "12px", padding: "8px 12px" }}>{o.note}</div>}
+        {(o.add || o.remove) && (
+          <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
+            {o.add && <button onClick={o.add} style={{ flex: 1, height: "52px", borderRadius: "14px", border: "2px solid #6835FB", background: "#F7F4FF", color: "#5223E0", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", cursor: "pointer" }}>{ic("plus", 20)}Add another drum</button>}
+            {o.remove && <button onClick={o.remove} style={{ flex: o.add ? "none" : 1, height: "52px", padding: "0 16px", borderRadius: "14px", border: "1.5px solid #C2C8D2", background: "#FFFFFF", color: "#B3261E", fontSize: "15px", fontWeight: 700, cursor: "pointer" }}>Remove this drum</button>}
+          </div>
+        )}
       </div>
     );
   }
@@ -2546,7 +2575,7 @@ export class FactoryApp extends Component<Props, State> {
       text = r.msg + (r.replay ? " (It was already saved — nothing was sent twice.)" : "");
       rows = r.rows.map((q) => ({ l: q[0], v: q[1] }));
       label = r.label;
-      acts = (r.label ? [{ l: T.printLabel, run: () => this.printLabel(r.label!), style: btn("s", 56), icon: ic("print", 22) } as Act] : []).concat([home, { l: T.listen, run: () => this.speak(T.completed + ". " + r.msg), style: { ...btn("s", 48), border: "none", color: "#5223E0" }, icon: ic("speaker", 20) }]);
+      acts = ([] as Act[]).concat([home, { l: T.listen, run: () => this.speak(T.completed + ". " + r.msg), style: { ...btn("s", 48), border: "none", color: "#5223E0" }, icon: ic("speaker", 20) }]);
     }
     if (r.kind === "held") {
       text = r.text;
@@ -3387,6 +3416,12 @@ type LotRow = {
   qtyOpen?: () => void;
   done?: boolean;
   err?: string;
+  /** A line under the row — how much of the sheet this material still owes. */
+  note?: string;
+  /** Another drum of this material, for what this one could not give. */
+  add?: () => void;
+  /** Take off a drum the worker added. */
+  remove?: () => void;
 };
 
 type QField = {

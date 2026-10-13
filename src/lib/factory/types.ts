@@ -128,7 +128,8 @@ export type FactoryData = {
 
 /* ------------------------------------------------------------ the draft */
 
-export type RmLine = { item: string; per: number; lot: string | null; qty: number | null; manual?: boolean };
+/** One drum poured into a mixing batch. A material the sheet asks for more of than one drum holds is several lines of the same item, each its own lot — `extra` marks the ones the worker added, which are the only ones that can be taken off again. */
+export type RmLine = { item: string; per: number; lot: string | null; qty: number | null; manual?: boolean; extra?: boolean };
 export type Draft = {
   team: Team;
   down: boolean | null;
@@ -210,7 +211,8 @@ export const CHECK_ITEMS: [string, string][] = [
 ];
 
 export const STEPS: Record<Proc, string[]> = {
-  mixing: ["identify", "team", "materials", "output", "review"],
+  /* No "How much was made" step: the materials already match the sheet drum by drum, so what was made is what was poured. "output" stays a step key only so a draft from an older page still reads. */
+  mixing: ["identify", "team", "materials", "review"],
   filling: ["identify", "team", "sfg", "pack", "count", "review"],
   packing: ["identify", "team", "fglot", "boxes", "review"],
   dispatch: ["order", "load", "checklist", "team", "review"],
