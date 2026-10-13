@@ -18,8 +18,8 @@ import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { seedFactoryFloor, type SeededFloor } from "./demo-seed";
 import { bootstrap, contextFor, type FactoryCtx } from "./server";
 import { submitJob } from "./post";
-import { assignTask, decideReview, requestCorrection } from "./head";
-import { boxCode, resolveScan } from "./rules";
+import { assignTask, decideReview, requestCorrection, startMixingBatch } from "./head";
+import { boxCode, resolveScan, startsOwnBatch } from "./rules";
 import { boxInfo, loadBoard, lrKit, saveLr, scanBox, unloadBox } from "./dispatch";
 import { setAccess } from "@/lib/actions/access";
 import type { Draft, FactoryData, Submission, Task } from "./types";
@@ -323,6 +323,28 @@ describe("the Production Head", () => {
     assert.ok(made.ok, JSON.stringify(made));
     const members = await q<{ n: number }>(sql`select count(*)::int as n from factory_task_members where task_id = ${made.ok ? made.data.id : ""}`);
     assert.equal(members[0].n, 3);
+  });
+
+  test("a mixing worker starts his own batch, in charge of it; nobody outside mixing can", async () => {
+    const { fc: anil, data } = await as("anil");
+    const nc = Object.keys(data.sfg).find((k) => data.sfg[k].short === "NC")!;
+    const pu = Object.keys(data.sfg).find((k) => data.sfg[k].short === "PU")!;
+    assert.equal((await startMixingBatch(anil, { item: pu, qty: 1 })).ok, false, "a base with no recipe cannot be started");
+    assert.equal((await startMixingBatch(anil, { item: nc, qty: 7 })).ok, false, "six batches at most");
+    const made = await startMixingBatch(anil, { item: nc, qty: 2 });
+    assert.ok(made.ok, JSON.stringify(made));
+    const id = made.ok ? made.data.id : "";
+    const [t] = await q<{ proc: string; batches: number; status: string; createdBy: string }>(sql`select proc, batches, status, created_by_id as "createdBy" from factory_tasks where id = ${id}`);
+    assert.deepEqual([t.proc, t.batches, t.status, t.createdBy], ["mixing", 2, "ready", floor.users.anil.id]);
+    const team = await q<{ userId: string; role: string }>(sql`select user_id as "userId", role from factory_task_members where task_id = ${id} order by role, user_id`);
+    assert.deepEqual(team.find((m) => m.role === "owner")?.userId, floor.users.anil.id, "the one who starts it is in charge");
+    assert.equal(team.filter((m) => m.userId === floor.users.anil.id).length, 1, "and is on the team once");
+    assert.ok(team.some((m) => m.userId === floor.users.rakesh.id), "the usual person in charge stays on the team");
+    assert.ok(startsOwnBatch({ head: false, area: "filling", areas: ["filling", "mixing"] }), "a worker with mixing among his departments");
+    assert.equal(startsOwnBatch({ head: true, area: "head" }), false, "a supervisor gives tasks instead");
+    assert.equal(startsOwnBatch({ head: false, area: "packing" }), false);
+    const { fc: sunita } = await as("sunita");
+    assert.equal((await startMixingBatch(sunita, { item: nc, qty: 1 })).ok, false, "packing cannot start a mixing batch");
   });
 
   test("a correction changes nothing until somebody else approves it, and then goes through the ERP", async () => {

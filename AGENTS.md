@@ -8668,6 +8668,18 @@ still holding that the ERP refuses offers Fix it AND Send to supervisor, so
 there is always a way to finish. "Put it in the ERP" on the review posts it
 under the WORKER's name; the head's decision is the line in the history.
 
+**A MIXING WORKER STARTS HIS OWN BATCH.** Work used to reach the floor only
+through a supervisor's Give a task, so a mixing worker with a recipe in the
+ERP and nobody to type it in had an empty Home and no way to start. "Start a
+mixing batch" on his Home (`startsOwnBatch` in `rules.ts`: a non-supervisor
+with mixing among his departments) picks a base that HAS a recipe and how
+many batches; `startMixingBatch` in `head.ts` checks the recipe again (an
+active formulation with a line above 0 L), makes the same `factory_tasks` row
+Give a task makes — the standing mixing crew, with HIM in charge — and the job
+opens straight into its batch sheet. It posts through the ERP's SFG form like
+any other job. Filling and packing still come from a supervisor. The op is
+`startBatch`, and the native APK needs a release to show the button.
+
 **AN OLD PAGE STILL SENDS.** A station phone keeps its page for days. So the
 phone never calls a server action — their ids change on every deploy — but
 `/api/factory/rpc` by op NAME, and an op is added and never renamed or
