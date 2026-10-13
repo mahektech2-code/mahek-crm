@@ -8,7 +8,7 @@ import { calendarDate } from "@/lib/business-date";
 import { sfgLots } from "@/lib/erp/stock";
 import { err, okVoid, ok, type Result } from "@/lib/result";
 import type { Proc, Team } from "./types";
-import { PROCS } from "./types";
+import { MIX_BATCH_MAX, PROCS } from "./types";
 import { contextFor, erpCtxFor, factoryAudit, nextTaskId, nowHM, teamDefaults, worksOn, writeTeam, type FactoryCtx } from "./server";
 import { submitJob } from "./post";
 
@@ -45,7 +45,7 @@ export async function assignTask(fc: FactoryCtx, a: { proc: Proc; item: string; 
   if (outOfScope(fc, a.proc)) return err(notYours(fc), "not_permitted");
   if (!HHMM.test(a.due)) return err("Choose when it is due.", "validation");
   const qty = Math.floor(Number(a.qty));
-  if (!(qty > 0) || (a.proc === "mixing" ? qty > 6 : qty > 5000)) return err("Enter how many, more than 0.", "validation");
+  if (!(qty > 0) || (a.proc === "mixing" ? qty > MIX_BATCH_MAX : qty > 5000)) return err("Enter how many, more than 0.", "validation");
 
   /* The item has to be something the ERP can make here — the formula is the
      approved batch sheet and is never edited from a phone. */
@@ -101,7 +101,7 @@ async function insertTask(fc: FactoryCtx, a: { proc: Proc; item: string; qty: nu
 export async function startMixingBatch(fc: FactoryCtx, a: { item: string; qty: number }): Promise<Result<{ id: string }>> {
   if (!worksOn(fc, "mixing")) return err("Starting a batch is for the mixing team.", "not_permitted");
   const qty = Math.floor(Number(a.qty));
-  if (!(qty > 0) || qty > 6) return err("Enter how many batches, 1 to 6.", "validation");
+  if (!(qty > 0) || qty > MIX_BATCH_MAX) return err(`Enter how many batches, 1 to ${MIX_BATCH_MAX}.`, "validation");
   const [r] = await q(sql`
     select 1 from erp_recipes r join product_formulations f on f.id = r.formulation_id
      where r.formulation_id = ${a.item} and f.active and r.qty_per_batch > 0 limit 1`);

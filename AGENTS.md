@@ -8673,7 +8673,8 @@ through a supervisor's Give a task, so a mixing worker with a recipe in the
 ERP and nobody to type it in had an empty Home and no way to start. "Start a
 mixing batch" on his Home (`startsOwnBatch` in `rules.ts`: a non-supervisor
 with mixing among his departments) picks a base that HAS a recipe and how
-many batches; `startMixingBatch` in `head.ts` checks the recipe again (an
+many batches (up to `MIX_BATCH_MAX`, 10 — the same ceiling Give a task and
+the batch sheet use); `startMixingBatch` in `head.ts` checks the recipe again (an
 active formulation with a line above 0 L), makes the same `factory_tasks` row
 Give a task makes — the standing mixing crew, with HIM in charge — and the job
 opens straight into its batch sheet. It posts through the ERP's SFG form like
