@@ -1396,7 +1396,7 @@ export class FactoryApp extends Component<Props, State> {
    */
 
   openReq() {
-    const blank: ReqEntry = { loading: true, err: null, kit: null, view: "list", tab: "open", dept: null, q: "", lines: [], requiredBy: "", priority: "Medium", remarks: "", key: "", saving: false, saved: null, open: null, ask: null };
+    const blank: ReqEntry = { loading: true, err: null, kit: null, view: "list", tab: "open", dept: null, q: "", lines: [], requiredBy: "", priority: "Medium", remarks: "", key: "", saving: false, saved: null, open: null, ask: null, expand: null, find: "" };
     this.setState({ sheet: null, route: "req", req: blank }, () => void this.loadReq());
   }
 
@@ -1529,7 +1529,7 @@ export class FactoryApp extends Component<Props, State> {
   /** The new-requirement steps take the whole screen, as the design draws them: no header bar, no tabs. */
   reqFullScreen(): boolean {
     const s = this.state.req;
-    return this.state.route === "req" && !!s && (s.view === "pick" || s.view === "send" || s.view === "sent");
+    return this.state.route === "req" && !!s && (s.view === "pick" || s.view === "send" || s.view === "sent" || s.view === "detail");
   }
 
   /** The sheet that adds one item: count it (blind), then how much to buy. */
@@ -1653,7 +1653,7 @@ export class FactoryApp extends Component<Props, State> {
       pick: ["New requirement", "Step 1 of 2 · What do you need?"],
       send: ["New requirement", "Step 2 of 2 · Check and send"],
       sent: ["", ""],
-      detail: [s?.open ?? "", ""],
+      detail: [s?.open ?? "", deptLabel(kit?.reqs.find((x) => x.no === s?.open)?.dept ?? null)],
     };
     const head = (
       <Div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
@@ -1687,7 +1687,8 @@ export class FactoryApp extends Component<Props, State> {
 
     /* ---- the list */
     if (view === "list") {
-      const mine = kit.reqs.filter((r) => r.state === s.tab);
+      const f = s.find.trim().toLowerCase();
+      const mine = kit.reqs.filter((r) => r.state === s.tab && (!f || r.no.toLowerCase().includes(f) || r.lines.some((l) => l.item.toLowerCase().includes(f))));
       const n = (t: ReqEntry["tab"]) => kit.reqs.filter((r) => r.state === t).length;
       const tab = (t: ReqEntry["tab"], l: string) => {
         const on = s.tab === t;
@@ -1697,38 +1698,54 @@ export class FactoryApp extends Component<Props, State> {
         const live = lines.filter((l) => l.step >= 0);
         const min = live.length ? Math.min(...live.map((l) => l.step)) : -1;
         return (
-          <Div style={{ display: "flex", gap: "4px", marginTop: "10px" }}>
+          <Div style={{ display: "flex", gap: "4px", marginTop: "12px" }}>
             {kit.steps.map((x, i) => <Span key={x} style={{ flex: 1, height: "5px", borderRadius: "3px", background: min < 0 ? "#EDEFF3" : i < min ? "#6835FB" : i === min ? "#F0B43C" : "#EDEFF3" }} />)}
           </Div>
         );
       };
       return wrap(
         <>
-          <Btn onClick={() => this.startReq()} style={btn("p", 54)}>{ic("plus", 22, "#FFFFFF")}Raise a requirement</Btn>
+          <Btn onClick={() => this.startReq()} style={{ ...btn("p", 54), flex: "none" }}>{ic("plus", 22, "#FFFFFF")}Raise a requirement</Btn>
+          <Div style={{ height: "48px", minHeight: "48px", boxSizing: "border-box", border: "1px solid #DDE1E8", borderRadius: "12px", padding: "0 14px", background: "#FFFFFF", display: "flex", alignItems: "center", gap: "10px" }}>
+            {ic("search", 18, "#9BA3B2")}
+            <Input value={s.find} onChange={(e) => this.setReq({ find: String(e.target.value).slice(0, 60) })} placeholder="Search by REQ number or item" aria-label="Search requirements" style={{ flex: 1, minWidth: 0, border: "none", outline: "none", background: "transparent", fontSize: "16px", color: "#1A1E28" }} />
+          </Div>
           <Div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>{tab("open", "Open")}{tab("received", "Received")}{tab("cancelled", "Cancelled")}</Div>
           {s.err && errBox(s.err)}
           {mine.length ? mine.map((r) => {
             const pr = PRI[r.priority];
-            const flags = r.lines.map(countWords).filter((x) => x && x.t !== "✓ Count matches");
-            const stages = [...new Set(r.lines.map((l) => l.stage))].slice(0, 2);
+            const shown = r.lines.slice(0, 3);
+            const done = r.lines.filter((l) => l.step >= kit.steps.length).length;
+            const live = r.lines.filter((l) => l.step >= 0).length;
             return (
-              <Btn key={r.no} onClick={() => this.setReq({ view: "detail", open: r.no })} style={{ ...cardS, padding: "14px", textAlign: "left", cursor: "pointer", display: "block", width: "100%" }}>
-                <Span style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <Span style={{ ...mono, fontSize: "14px", fontWeight: 600, color: "#3D4453" }}>{r.no}</Span>
-                  {tag(pr.l, pr.bg, pr.fg)}
+              <Btn key={r.no} onClick={() => this.setReq({ view: "detail", open: r.no, expand: null })} style={{ ...cardS, padding: "14px", textAlign: "left", cursor: "pointer", display: "block", width: "100%" }}>
+                <Span style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px" }}>
+                  <Span style={{ ...mono, fontSize: "15px", fontWeight: 600, color: "#1A1E28" }}>{r.no}</Span>
+                  <Span style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                    {kit.depts.length > 1 && tag(deptLabel(r.dept), "#F1ECFF", "#3D14A8")}
+                    {tag(pr.l, pr.bg, pr.fg)}
+                  </Span>
                 </Span>
-                <Span style={{ display: "block", fontSize: "16px", lineHeight: "21px", fontWeight: 700, marginTop: "6px", color: "#1A1E28" }}>{r.lines.map((l) => l.item + " " + qtyW(l.qty, l.unit)).join(" · ")}</Span>
-                <Span style={{ display: "block", fontSize: "13px", color: "#6B7385", marginTop: "4px" }}>{(r.requiredBy ? "Needed by " + this.reqDayWords(r.requiredBy) + " · " : "") + "raised " + this.reqDayWords(r.date) + (kit.depts.length > 1 ? " · " + deptLabel(r.dept) : "")}</Span>
-                {r.state === "open" && bar(r.lines)}
-                <Span style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "8px" }}>
-                  {flags.length ? tag(flags[0]!.t, flags[0]!.bg, flags[0]!.fg) : stages.map((x) => {
-                    const t = stageTone(r.lines.find((l) => l.stage === x)!);
-                    return tag(x, t.bg, t.fg);
+                <Span style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "10px" }}>
+                  {shown.map((l) => {
+                    const t = stageTone(l);
+                    return (
+                      <Span key={l.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px" }}>
+                        <Span style={{ fontSize: "15px", fontWeight: 700, color: "#1A1E28", flex: 1, minWidth: 0 }}>{l.item}<Span style={{ fontWeight: 500, color: "#6B7385" }}>{" · " + qtyW(l.qty, l.unit)}</Span></Span>
+                        {tag(l.stage, t.bg, t.fg)}
+                      </Span>
+                    );
                   })}
+                  {r.lines.length > 3 && <Span style={{ fontSize: "13px", fontWeight: 700, color: "#5223E0" }}>{"+ " + (r.lines.length - 3) + " more"}</Span>}
+                </Span>
+                {r.state === "open" && bar(r.lines)}
+                <Span style={{ display: "flex", justifyContent: "space-between", gap: "8px", marginTop: "10px", fontSize: "13px", color: "#6B7385" }}>
+                  <Span>{(r.requiredBy ? "Needed by " + this.reqDayWords(r.requiredBy) : "Raised " + this.reqDayWords(r.date))}</Span>
+                  <Span style={{ fontWeight: 700, color: done === live && live ? "#1D7A45" : "#3D4453" }}>{r.state === "cancelled" ? "Cancelled" : done + " of " + live + " received"}</Span>
                 </Span>
               </Btn>
             );
-          }) : !s.loading && <Div style={{ ...cardS, padding: "20px", fontSize: "15px", lineHeight: "21px", color: "#6B7385", textAlign: "center" }}>{s.tab === "open" ? "Nothing asked for yet. Tap Raise a requirement when the department needs something." : "None in the last 60 days."}</Div>}
+          }) : !s.loading && <Div style={{ ...cardS, padding: "20px", fontSize: "15px", lineHeight: "21px", color: "#6B7385", textAlign: "center" }}>{f ? "Nothing matches “" + s.find + "”." : s.tab === "open" ? "Nothing asked for yet. Tap Raise a requirement when the department needs something." : "None in the last 60 days."}</Div>}
           {s.loading && <Div style={{ fontSize: "15px", color: "#6B7385" }}>Loading…</Div>}
         </>,
       );
@@ -1739,40 +1756,77 @@ export class FactoryApp extends Component<Props, State> {
       const r = kit.reqs.find((x) => x.no === s.open);
       if (!r) return wrap(<Div style={{ ...cardS, padding: "20px", color: "#6B7385" }}>That requirement is no longer on the list.</Div>);
       const pr = PRI[r.priority];
+      const where = /godown/i.test(r.godown) ? r.godown : r.godown + " godown";
+      const fact = (l: string, v: ReactNode, last?: boolean) => (
+        <Div key={l} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", padding: "11px 0", borderBottom: last ? "none" : "1px solid #EDEFF3" }}>
+          <Span style={{ fontSize: "15px", color: "#6B7385" }}>{l}</Span>
+          <Span style={{ fontSize: "15px", fontWeight: 700, textAlign: "right" }}>{v}</Span>
+        </Div>
+      );
+      const live = r.lines.filter((l) => l.step >= 0);
+      const done = live.filter((l) => l.step >= kit.steps.length).length;
       return wrap(
         <>
-          <Div style={{ fontSize: "14px", color: "#6B7385", marginTop: "-4px" }}>{pr.l + (r.requiredBy ? " · needed by " + this.reqDayWords(r.requiredBy) : "") + " · " + deptLabel(r.dept)}</Div>
-          {!!r.remarks && <Div style={{ ...cardS, padding: "12px 14px", fontSize: "15px", lineHeight: "21px", color: "#3D4453" }}>{"“" + r.remarks + "”"}</Div>}
-          {r.lines.map((l, idx) => {
+          <Div style={{ ...cardS, padding: "2px 16px" }}>
+            {fact("Needed by", r.requiredBy ? this.reqDayWords(r.requiredBy) : "—")}
+            {fact("How urgent", tag(pr.l, pr.bg, pr.fg))}
+            {fact("Raised", this.reqDayWords(r.date) + (r.by ? " · " + r.by : ""))}
+            {fact("Deliver to", where)}
+            {fact("Progress", r.state === "cancelled" ? "Cancelled" : done + " of " + live.length + " received", !r.remarks)}
+            {!!r.remarks && <Div style={{ padding: "11px 0", fontSize: "15px", lineHeight: "21px", color: "#3D4453" }}><Span style={{ color: "#6B7385" }}>Note · </Span>{r.remarks}</Div>}
+          </Div>
+          <Div style={{ fontSize: "12px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "#6B7385", marginTop: "4px" }}>{"Items · " + r.lines.length}</Div>
+          {r.lines.map((l) => {
             const t = stageTone(l), cw = countWords(l);
-            const first = idx === 0 && l.step >= 0;
+            const open = s.expand === l.id;
+            const cur = Math.min(Math.max(l.step, 0), kit.steps.length);
+            const facts: [string, string][] = [];
+            if (l.po) facts.push(["Purchase order", l.po + (l.vendor ? " · " + l.vendor : "")]);
+            else if (l.vendor) facts.push(["Vendor", l.vendor]);
+            if (l.quotes && !l.po) facts.push(["Quotations", l.quotes + " in"]);
+            if (l.received != null) facts.push(["Received", qtyW(l.received, l.unit) + " of " + qtyW(l.qty, l.unit)]);
             return (
               <Div key={l.id} style={{ ...cardS, padding: "14px", display: "flex", flexDirection: "column", gap: "10px" }}>
-                <Div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px" }}>
-                  <Span style={{ fontSize: "17px", fontWeight: 700 }}>{l.item + " · " + qtyW(l.qty, l.unit)}</Span>
+                <Div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "8px" }}>
+                  <Span style={{ flex: 1, minWidth: 0 }}>
+                    <Span style={{ display: "block", fontSize: "17px", fontWeight: 700 }}>{l.item}</Span>
+                    <Span style={{ display: "block", fontSize: "14px", color: "#6B7385", marginTop: "2px" }}>{"Need " + qtyW(l.qty, l.unit) + (l.counted != null ? " · you counted " + nf(l.counted) + " " + l.countUnit : "")}</Span>
+                  </Span>
                   {tag(l.stage, t.bg, t.fg)}
                 </Div>
-                {first && (
-                  <Div style={{ display: "flex", flexDirection: "column" }}>
-                    {kit.steps.map((x, i) => {
-                      const done = i < l.step || l.step >= kit.steps.length, now = i === l.step;
-                      return (
-                        <Div key={x} style={{ display: "flex", gap: "12px", alignItems: "stretch" }}>
-                          <Div style={{ width: "22px", display: "flex", flexDirection: "column", alignItems: "center" }}>
-                            <Span style={{ width: "14px", height: "14px", borderRadius: "50%", marginTop: "3px", flex: "none", background: done ? "#1D7A45" : now ? "#FFFFFF" : "#DDE1E8", border: now ? "3px solid #F0B43C" : "none", boxSizing: "border-box" }} />
-                            {i < kit.steps.length - 1 && <Span style={{ flex: 1, width: "2px", minHeight: "8px", margin: "2px 0", background: done ? "#1D7A45" : "#DDE1E8" }} />}
-                          </Div>
-                          <Span style={{ paddingBottom: "10px", fontSize: "15px", lineHeight: "20px", fontWeight: done || now ? 700 : 500, color: done || now ? "#1A1E28" : "#9BA3B2" }}>{x}</Span>
-                        </Div>
-                      );
-                    })}
+                {l.step >= 0 && (
+                  <Div style={{ display: "flex", gap: "4px" }}>
+                    {kit.steps.map((x, i) => <Span key={x} style={{ flex: 1, height: "6px", borderRadius: "3px", background: i < cur ? "#1D7A45" : i === cur ? "#F0B43C" : "#EDEFF3" }} />)}
                   </Div>
                 )}
                 <Div style={{ fontSize: "14px", lineHeight: "20px", color: "#3D4453" }}>{l.next}</Div>
-                {(l.counted != null || cw) && (
-                  <Div style={{ display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" }}>
-                    {l.counted != null && tag("You counted " + nf(l.counted) + " " + l.countUnit, "#F1ECFF", "#3D14A8")}
-                    {cw && tag(cw.t, cw.bg, cw.fg)}
+                {cw && <Div style={{ display: "flex" }}>{tag(cw.t, cw.bg, cw.fg)}</Div>}
+                {!!facts.length && (
+                  <Div style={{ borderTop: "1px solid #EDEFF3" }}>
+                    {facts.map(([a, b], i) => (
+                      <Div key={a} style={{ display: "flex", justifyContent: "space-between", gap: "12px", padding: "9px 0", borderBottom: i < facts.length - 1 ? "1px solid #EDEFF3" : "none", fontSize: "14px" }}>
+                        <Span style={{ color: "#6B7385" }}>{a}</Span><Span style={{ fontWeight: 700, textAlign: "right" }}>{b}</Span>
+                      </Div>
+                    ))}
+                  </Div>
+                )}
+                {l.step >= 0 && (
+                  <Btn onClick={() => this.setReq({ expand: open ? null : l.id })} style={{ background: "none", border: "none", padding: 0, color: "#5223E0", fontSize: "14px", fontWeight: 700, cursor: "pointer", textAlign: "left" }}>{open ? "Hide the steps" : "Show every step"}</Btn>
+                )}
+                {open && (
+                  <Div style={{ display: "flex", flexDirection: "column" }}>
+                    {kit.steps.map((x, i) => {
+                      const isDone = i < l.step || l.step >= kit.steps.length, now = i === l.step;
+                      return (
+                        <Div key={x} style={{ display: "flex", gap: "12px", alignItems: "stretch" }}>
+                          <Div style={{ width: "22px", display: "flex", flexDirection: "column", alignItems: "center" }}>
+                            <Span style={{ width: "14px", height: "14px", borderRadius: "50%", marginTop: "3px", flex: "none", background: isDone ? "#1D7A45" : now ? "#FFFFFF" : "#DDE1E8", border: now ? "3px solid #F0B43C" : "none", boxSizing: "border-box" }} />
+                            {i < kit.steps.length - 1 && <Span style={{ flex: 1, width: "2px", minHeight: "8px", margin: "2px 0", background: isDone ? "#1D7A45" : "#DDE1E8" }} />}
+                          </Div>
+                          <Span style={{ paddingBottom: "10px", fontSize: "15px", lineHeight: "20px", fontWeight: isDone || now ? 700 : 500, color: isDone || now ? "#1A1E28" : "#9BA3B2" }}>{x}</Span>
+                        </Div>
+                      );
+                    })}
                   </Div>
                 )}
                 {l.cancel && (l.cancel.ok ? (

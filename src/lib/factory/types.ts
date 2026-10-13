@@ -477,6 +477,13 @@ export type ReqLine = {
   countState: "matched" | "flagged" | "waiting" | null;
   /** May the in-charge cancel it here; else why not. */
   cancel: { ok: true } | { ok: false; why: string } | null;
+  /** The PO it is on, e.g. "PO-311", and who it is bought from — once there is one. */
+  po: string | null;
+  vendor: string | null;
+  /** Received so far against the PO, in the requirement's unit. */
+  received: number | null;
+  /** Quotations collected, for an item bought on quotations. */
+  quotes: number;
 };
 
 export type ReqCard = {

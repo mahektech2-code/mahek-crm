@@ -287,6 +287,10 @@ export type ReqEntry = {
   open: string | null;
   /** The item being added: counted first, then how much to buy. Typed values are text until saved. */
   ask: { itemId: string; step: "count" | "need"; counted: string; need: string } | null;
+  /** The item opened to every step in the detail view. */
+  expand: string | null;
+  /** Search over the list: a requirement number or an item. */
+  find: string;
 };
 
 export function mintReqKey(): string {
