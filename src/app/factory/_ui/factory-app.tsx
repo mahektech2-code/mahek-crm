@@ -12,6 +12,10 @@ import {
   addRmDrum,
   removeRmDrum,
   rmPlan,
+  batchLitres,
+  recipeLines,
+  recipeProblem,
+  recipeRm,
   jobStatus,
   lotName,
   lotUnit,
@@ -36,7 +40,7 @@ import { call, NotReceived, PAGE_BUILD, watchBuild } from "./api";
 import { art, ic, qr } from "./art";
 import { avStyle, btn, card, initials, mono, msg, MsgBox, Pill, artWell, type Msg } from "./kit";
 import { CameraScanner, shrinkPhoto } from "./camera";
-import { dropPhoto, forget, keepPhoto, keptPhoto, load, mintKey, readNet, save, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet, mintDrumKey, type StockEntry, type QcEntry, mintCheckKey } from "./model";
+import { dropPhoto, forget, keepPhoto, keptPhoto, load, mintKey, readNet, save, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet, mintDrumKey, type StockEntry, type QcEntry, mintCheckKey, type RecipeSheet } from "./model";
 
 /* ---------------------------------------------------------------------------
  * THE FACTORY APP — "Mahek Factory App" from the design, screen for screen.
@@ -2208,7 +2212,7 @@ export class FactoryApp extends Component<Props, State> {
           </div>
         </div>
         <div className="fx-scroll" style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "14px 16px 20px 16px", display: "flex", flexDirection: "column", gap: "12px" }}>
-          {key === "identify" && this.stepIdentify(t)}
+          {key === "identify" && this.stepIdentify(t, d)}
           {key === "team" && this.stepTeam(t, d)}
           {key === "review" && this.stepReview(f)}
           {key !== "identify" && key !== "team" && key !== "review" && this.stepForm(key, t, d)}
@@ -2229,15 +2233,19 @@ export class FactoryApp extends Component<Props, State> {
     );
   }
 
-  stepIdentify(t: Task): ReactNode {
+  stepIdentify(t: Task, d?: Draft): ReactNode {
     const T = this.T(), db = this.db();
     let chips: string[] = [], rows: { l: string; v: string; c: string }[] = [], rowsTitle = "";
+    let own = false, mixLines: { item: string; per: number }[] = [];
+    const recipeBtn: CSSProperties = { flex: 1, height: "46px", borderRadius: "12px", border: "1.5px solid #D9CCFF", background: "#FFFFFF", color: "#3D14A8", fontSize: "15px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "6px", cursor: "pointer" };
     if (t.proc === "mixing") {
       const sf = db.sfg[t.item!];
-      const nb = t.batches ?? 1;
-      chips = [nb + " × " + nf(sf.batch) + " L", "Due " + t.due];
-      rowsTitle = "Batch sheet · for " + nb + " batch" + (nb > 1 ? "es" : "");
-      rows = sf.recipe.map((r) => ({ l: db.rm[r[0]]?.n ?? r[0], v: nf(r[1] * nb) + " L", c: db.rm[r[0]]?.col ?? "#3D4453" }));
+      const nb = d?.batches ?? t.batches ?? 1;
+      own = !!d?.ownRecipe;
+      mixLines = recipeLines(db, t, d);
+      chips = [nb + " × " + nf(own ? batchLitres(mixLines) : sf.batch) + " L", "Due " + t.due];
+      rowsTitle = (own ? "Your recipe" : "Batch sheet") + " · for " + nb + " batch" + (nb > 1 ? "es" : "");
+      rows = mixLines.map((r) => ({ l: db.rm[r.item]?.n ?? r.item, v: nf(r.per * nb) + " L", c: db.rm[r.item]?.col ?? "#3D4453" }));
     }
     if (t.proc === "filling") {
       const k = db.sku[t.item!];
@@ -2259,11 +2267,15 @@ export class FactoryApp extends Component<Props, State> {
           <div style={{ ...mono, fontSize: "14px", color: "#6B7385", marginTop: "4px" }}>{t.id + " · " + (db.sfg[t.item!]?.short ?? db.sku[t.item!]?.tag ?? (db.box[t.item!] ? db.box[t.item!].cpb + "×" + db.sku[db.box[t.item!].sku]?.tag : ""))}</div>
           <div style={{ display: "flex", gap: "8px", marginTop: "14px", flexWrap: "wrap", justifyContent: "center" }}>
             {chips.map((c) => <span key={c} style={{ background: "#F1ECFF", color: "#3D14A8", borderRadius: "16px", padding: "6px 14px", fontSize: "15px", fontWeight: 700 }}>{c}</span>)}
+            {own && <span style={{ background: "#FDF6E7", color: "#8A5C05", borderRadius: "16px", padding: "6px 14px", fontSize: "15px", fontWeight: 700 }}>Own recipe</span>}
           </div>
         </div>
         {rows.length > 0 && (
           <div style={{ ...card, padding: "4px 16px" }}>
-            <div style={{ fontSize: "13px", fontWeight: 600, color: "#6B7385", padding: "10px 0 4px 0" }}>{rowsTitle}</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", padding: "10px 0 4px 0" }}>
+              <span style={{ fontSize: "13px", fontWeight: 600, color: "#6B7385" }}>{rowsTitle}</span>
+              {own && <span style={{ fontSize: "12px", fontWeight: 700, color: "#8A5C05", background: "#FDF6E7", borderRadius: "8px", padding: "2px 8px" }}>changed</span>}
+            </div>
             {rows.map((r) => (
               <div key={r.l} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 0", borderTop: "1px solid #F3F4F7" }}>
                 <span style={{ width: "12px", height: "12px", borderRadius: "3px", flex: "none", background: r.c }} />
@@ -2271,6 +2283,12 @@ export class FactoryApp extends Component<Props, State> {
                 <span style={{ fontSize: "17px", fontWeight: 700 }}>{r.v}</span>
               </div>
             ))}
+            {t.proc === "mixing" && d && (
+              <div style={{ display: "flex", gap: "8px", padding: "4px 0 14px 0" }}>
+                <button onClick={() => this.openRecipe(mixLines)} style={recipeBtn}>{ic("pen", 18, "#3D14A8")}{own ? "Change" : "Use my own recipe"}</button>
+                {own && <button onClick={() => this.useBatchSheet(t)} style={recipeBtn}>{ic("sync", 18, "#3D14A8")}Batch sheet</button>}
+              </div>
+            )}
           </div>
         )}
         <div style={{ fontSize: "19px", fontWeight: 700, textAlign: "center", marginTop: "4px" }}>{T.isRight}</div>
@@ -2367,7 +2385,7 @@ export class FactoryApp extends Component<Props, State> {
         const over = p.last && p.poured > p.need ? p.poured - p.need : 0;
         lots.push({
           art: art("rm", db.rm[r.item]?.col, db.rm[r.item]?.code, 52), name: nm + (r.extra ? " · next drum" : ""),
-          need: r.extra ? "Still needed: " + nf(p.rest) + " L of " + nf(p.need) + " L" : "Sheet: " + nf(p.need) + " L",
+          need: r.extra ? "Still needed: " + nf(p.rest) + " L of " + nf(p.need) + " L" : (d.ownRecipe ? "Your recipe: " : "Sheet: ") + nf(p.need) + " L",
           lot: r.lot, manual: r.manual,
           scan: () => this.openScan("rm", { item: r.item, idx: i }), qtyL: T.used, qtyV: r.qty ? nf(r.qty) + " L" : "Tap to enter", qtyDone: !!r.qty, done: !!(x && r.qty && !err), err,
           qtyOpen: () => this.rmKp(i),
@@ -3178,7 +3196,7 @@ export class FactoryApp extends Component<Props, State> {
         </div>
       );
       acts = [
-        { l: T.back, run: close, style: { ...btn("s", 58), flex: 1 } },
+        { l: T.back, run: sh.back ?? close, style: { ...btn("s", 58), flex: 1 } },
         { l: T.ok, run: () => { if (err) return; if (n == null || (n <= 0 && !sh.allowZero)) return this.toast("Enter a number more than 0"); this.setState({ sheet: null }); sh.set(n); }, style: { ...btn(err || n == null ? "off" : "p", 58), flex: 2 } },
       ];
     }
@@ -3296,6 +3314,7 @@ export class FactoryApp extends Component<Props, State> {
     if (sh.type === "job") body = this.jobSheet(sh.id, (t, s, b, a) => { title = t; sub = s; acts = a; return b; });
     if (sh.type === "assign") body = this.assignSheet((t, s, b, a) => { title = t; sub = s; acts = a; return b; });
     if (sh.type === "start") body = this.startSheet((t, s, b, a) => { title = t; sub = s; acts = a; return b; });
+    if (sh.type === "recipe") body = this.recipeSheet(sh, (t, s, b, a) => { title = t; sub = s; acts = a; return b; });
 
     return (
       <div onClick={close} style={{ position: "absolute", inset: 0, background: "rgba(14,16,22,0.5)", zIndex: 40, display: "flex", alignItems: "flex-end" }}>
@@ -3382,6 +3401,120 @@ export class FactoryApp extends Component<Props, State> {
    * nothing else. The server checks the recipe again and puts him in charge;
    * the job then opens straight into its batch sheet.
    */
+  /** The recipe editor, opened with what this job's first step shows — the batch sheet, or the worker's own recipe. */
+  openRecipe(lines: { item: string; per: number }[]) {
+    this.setState({ sheet: { type: "recipe", lines: lines.map((l) => ({ item: l.item, per: l.per })), adding: false, q: "" } });
+  }
+
+  /** Back to the ERP's batch sheet: the drums are asked for again from it. */
+  useBatchSheet(t: Task) {
+    this.setD((z) => {
+      z.rm = recipeRm(recipeLines(this.db(), t, null));
+      delete z.ownRecipe;
+    });
+    this.toast("Back to the batch sheet");
+  }
+
+  recipeSheet(sh: RecipeSheet, out: (title: string, sub: string, body: ReactNode, acts: { l: string; run: () => void; style: CSSProperties }[]) => ReactNode): ReactNode {
+    const T = this.T(), db = this.db(), f = this.state.flow;
+    const close = () => this.setState({ sheet: null });
+    if (!f || f.task.proc !== "mixing") return out("Your recipe", "", <MsgBox m={msg("Open the mixing job again.", "warn")} />, [{ l: T.back, run: close, style: { ...btn("s", 56), flex: 1 } }]);
+    const t = f.task, d = f.d;
+    const put = (p: Partial<RecipeSheet>) => this.setState({ sheet: { ...sh, ...p } });
+    const nb = d.batches ?? t.batches ?? 1;
+    if (sh.adding) {
+      const q = (sh.q ?? "").trim().toLowerCase();
+      const used = new Set(sh.lines.map((l) => l.item));
+      const here: Record<string, number> = {};
+      for (const x of Object.values(db.lots)) if (x.type === "rm" && x.loc === db.loc && x.status === "ok" && x.avail > 0) here[x.item] = (here[x.item] ?? 0) + x.avail;
+      const all = Object.keys(db.rm)
+        .filter((k) => !q || db.rm[k].n.toLowerCase().includes(q) || db.rm[k].code.toLowerCase().includes(q))
+        .sort((a, b) => db.rm[a].n.localeCompare(db.rm[b].n));
+      const tile = (k: string) => {
+        const inIt = used.has(k);
+        return (
+          <button key={k} onClick={() => (inIt ? undefined : put({ adding: false, q: "", lines: [...sh.lines, { item: k, per: null }] }))} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "10px", borderRadius: "14px", border: "1px solid #DDE1E8", background: "#FFFFFF", cursor: inIt ? "default" : "pointer", textAlign: "left", opacity: inIt ? 0.45 : 1, minWidth: 0 }}>
+            <span style={{ flex: "none", display: "flex" }}>{art("rm", db.rm[k].col, db.rm[k].code, 40)}</span>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: "block", fontSize: "15px", fontWeight: 700, lineHeight: "19px" }}>{db.rm[k].n}</span>
+              <span style={{ display: "block", fontSize: "12px", color: "#6B7385", marginTop: "2px" }}>{inIt ? "In your recipe" : here[k] ? nf(here[k]) + " L here" : "None here"}</span>
+            </span>
+          </button>
+        );
+      };
+      const group = (title: string, keys: string[]) =>
+        keys.length > 0 && (
+          <div>
+            <div style={{ fontSize: "13px", fontWeight: 700, color: "#6B7385", marginBottom: "8px" }}>{title}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: "8px" }}>{keys.map(tile)}</div>
+          </div>
+        );
+      const inStock = all.filter((k) => here[k]), rest = all.filter((k) => !here[k]);
+      const body = (
+        <>
+          <input value={sh.q ?? ""} onChange={(e) => put({ q: String(e.target.value) })} autoFocus placeholder="Search materials" aria-label="Search materials" style={{ height: "52px", borderRadius: "14px", border: "2px solid #6835FB", background: "#F7F4FF", padding: "0 14px", fontSize: "17px", outline: "none", color: "#1A1E28" }} />
+          {group("In stock here", inStock)}
+          {group(inStock.length ? "Not at this godown" : "All materials", rest)}
+          {!all.length && <MsgBox m={msg("No material matches \u201c" + (sh.q ?? "") + "\u201d.", "info")} />}
+        </>
+      );
+      return out("Add a material", "Every raw material in the ERP. One already in your recipe is greyed out.", body, [{ l: T.back, run: () => put({ adding: false, q: "" }), style: { ...btn("s", 56), flex: 1 } }]);
+    }
+    const lines = sh.lines;
+    const sheetLines = recipeLines(db, t, null);
+    const onSheet = new Set(sheetLines.map((l) => l.item));
+    const problem = recipeProblem(lines, db.rm);
+    const total = batchLitres(lines), sheetTotal = batchLitres(sheetLines);
+    const same = lines.length === sheetLines.length && lines.every((l, i) => l.item === sheetLines[i].item && l.per === sheetLines[i].per);
+    const use = () => {
+      if (problem) return this.toast(problem, "warn");
+      const done = lines as { item: string; per: number }[];
+      this.setState({ sheet: null });
+      this.setD((z) => {
+        z.rm = recipeRm(done);
+        if (same) delete z.ownRecipe;
+        else z.ownRecipe = true;
+      });
+      this.toast(same ? "Back to the batch sheet" : "Your recipe is set for this batch");
+    };
+    const body = (
+      <>
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          {lines.map((l, i) => {
+            const m = db.rm[l.item];
+            const nm = m?.n ?? l.item;
+            return (
+              <div key={l.item} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "10px 0", borderTop: i ? "1px solid #F3F4F7" : "none" }}>
+                <span style={{ width: "12px", height: "12px", borderRadius: "3px", flex: "none", background: m?.col ?? "#3D4453" }} />
+                <span style={{ flex: 1, minWidth: 0, fontSize: "16px", fontWeight: 600 }}>
+                  {nm}
+                  {!onSheet.has(l.item) && <span style={{ marginLeft: "6px", fontSize: "11px", fontWeight: 700, color: "#8A5C05", background: "#FDF6E7", borderRadius: "8px", padding: "2px 6px" }}>added</span>}
+                </span>
+                <button
+                  onClick={() => this.openKp({ l: "Litres of " + nm + " for 1 batch", unit: "L", v: l.per, decimals: true, back: () => this.setState({ sheet: sh }), set: (v) => this.setState({ sheet: { ...sh, lines: lines.map((x, j) => (j === i ? { ...x, per: v } : x)) } }) })}
+                  style={{ flex: "none", minWidth: "84px", height: "40px", padding: "0 12px", borderRadius: "10px", border: "1.5px solid " + (l.per ? "#D9CCFF" : "#F6CFCF"), background: l.per ? "#F1ECFF" : "#FFFFFF", color: l.per ? "#1A1E28" : "#B3261E", fontSize: l.per ? "16px" : "14px", fontWeight: l.per ? 800 : 700, textAlign: "right", cursor: "pointer" }}
+                >
+                  {l.per ? nf(l.per) + " L" : "Enter L"}
+                </button>
+                <button onClick={() => put({ lines: lines.filter((_, j) => j !== i) })} aria-label={"Take " + nm + " off"} style={{ flex: "none", width: "36px", height: "36px", borderRadius: "50%", border: "none", background: "#F7F8FA", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("x", 18, "#6B7385")}</button>
+              </div>
+            );
+          })}
+        </div>
+        <button onClick={() => put({ adding: true, q: "" })} style={{ height: "50px", borderRadius: "14px", border: "1.5px dashed #B9A5FF", background: "#FFFFFF", color: "#3D14A8", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "6px", cursor: "pointer" }}>{ic("plus", 20, "#3D14A8")}Add a material</button>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#F7F8FA", borderRadius: "14px", padding: "12px 14px" }}>
+          <span style={{ fontSize: "15px", color: "#3D4453" }}>One batch makes</span>
+          <span style={{ fontSize: "16px", fontWeight: 700 }}>{nf(total) + " L"}<span style={{ fontWeight: 500, color: "#6B7385" }}>{"  (sheet " + nf(sheetTotal) + " L)"}</span></span>
+        </div>
+        {problem && <MsgBox m={msg(problem, "warn")} />}
+      </>
+    );
+    return out("Your recipe", "Litres for 1 batch" + (nb > 1 ? " — you are making " + nb + " batches" : "") + ". Your supervisor will see that you changed the recipe.", body, [
+      { l: "Cancel", run: close, style: { ...btn("s", 58), flex: 1 } },
+      { l: "Use this recipe", run: use, style: { ...btn(problem ? "off" : "p", 58), flex: 2 } },
+    ]);
+  }
+
   startSheet(out: (title: string, sub: string, body: ReactNode, acts: { l: string; run: () => void; style: CSSProperties }[]) => ReactNode): ReactNode {
     const st = this.state, T = this.T(), db = this.db();
     const a = st.asg && st.asg.proc === "mixing" ? st.asg : this.defaultAsg("mixing");
@@ -3422,7 +3555,7 @@ export class FactoryApp extends Component<Props, State> {
             <span style={{ color: "#9BA3B2", display: "flex" }}>{ic("chev", 24)}</span>
           </button>
         </div>
-        {sf && <MsgBox m={msg(nf(a.qty) + " × " + nf(sf.batch) + " L of " + sf.n + ", from its approved batch sheet. The formula cannot be changed here.", "info")} />}
+        {sf && <MsgBox m={msg(nf(a.qty) + " × " + nf(sf.batch) + " L of " + sf.n + ", from its batch sheet. You can change the recipe on the job\u2019s first step.", "info")} />}
       </>
     );
     return out("Start a mixing batch", "You will be in charge of it. Change the team on the job.", body, [

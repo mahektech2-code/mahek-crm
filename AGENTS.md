@@ -8698,6 +8698,18 @@ opens straight into its batch sheet. It posts through the ERP's SFG form like
 any other job. Filling and packing still come from a supervisor. The op is
 `startBatch`, and the native APK needs a release to show the button.
 
+**A MIXING WORKER MAY USE HIS OWN RECIPE, AND THE HEAD IS TOLD.** The job's
+first step draws the batch sheet with "Use my own recipe" under it: the editor
+opens with the sheet filled in, any active raw material can be added (those in
+stock at his godown first), litres per batch changed and a material taken off;
+"Batch sheet" puts the ERP's recipe back. `Draft.ownRecipe` marks it and `rm`
+then carries his `per`; `recipeLines` is what the first step and the review
+read, `recipeProblem` is the one sentence the screen and `postMixing` both
+refuse with, and `mixDeviation` holds the yield to his recipe's litres. It is
+not a gate: the batch posts through the ERP's SFG form as always, and a
+`manual` review item "Own recipe used" puts his recipe beside the batch sheet
+for the Production Head.
+
 **EVERY SCAN CAN BE TYPED.** The scan screen — one screen for every purpose,
 badge, task sheet, drum, base, cans, pallet, loading, empty drum and LR — has
 "Type the code" under the camera. What is typed goes through `doScan` exactly
