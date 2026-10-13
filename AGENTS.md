@@ -2262,12 +2262,17 @@ form offers approved lots only and `saveFill` refuses any other
 (`qcRefusal`). Deciding is the `approveSfgQc` power; a reject needs a reason,
 and rejecting an approved lot stops further filling while what was filled
 stays traceable to it. Every lot in the book when this shipped was written
-Approved, or refilling would have stopped on deploy day. The decision asks
-each ACTIVE value of the Testing list (ERP → Settings → Reference lists) as
-Pass / Fail beside the optional note: approving needs every test answered and
-every one Pass, a reject records whatever was run, and the answers are stored
-by test name in `erp_sfg_qc.tests` (`engines/sfg-tests.ts`, pure; the server
-re-reads the list rather than trusting the prompt).
+Approved, or refilling would have stopped on deploy day. In the ERP the
+decision asks, for each ACTIVE value of the Testing list (ERP → Settings →
+Reference lists), the same EVIDENCE Purchase → Lot testing records — a
+photograph per test, the smell, the pH and density readings, a video — from
+one list (`EVIDENCE_FIELDS` in `engines/sfg-tests.ts`, which Lot testing reads
+too). NONE of it is required and no field says "Optional" (`untagged`); what is
+given must make sense (a smell from the list, a density in range). It is
+stored in `erp_sfg_qc.evidence` (`0265`), its files filed under `erp_sfg_qc`
+and read by whoever holds SFG batches, and drawn in the batch's drawer. A
+reject still needs its reason. The factory phone still asks Pass / Fail per
+test (`erp_sfg_qc.tests`, every one Pass to approve) until its APK changes.
 
 **A BOX ID IS WHAT THE QR CARRIES; THE LOT IS LINKED DATA.** `erp_units`, one
 row per box (`BX-YYMMDD-NNNNNN`, series `unit`), minted by `syncPackEntry`

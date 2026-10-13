@@ -12,7 +12,6 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { allPassValues, testKey } from "@/lib/erp/engines/sfg-tests";
 import { refValues } from "@/lib/erp/refs";
 import {
   appAccess,
@@ -180,23 +179,21 @@ describe("filling", () => {
     const bulk = await mod("sfgBatches").bulk!.qcReject(await as(admin), all.map((l) => l.id), { note: "Hazy" });
     assert.ok(bulk.ok, JSON.stringify(bulk));
     assert.equal((await mod("sfgBatches").bulk!.qcReject(await as(admin), all.map((l) => l.id), { note: "Hazy" })).ok, false, "already rejected");
-    /* The Testing list's active values are asked: a test left unanswered or
-       answered Fail refuses the approval, naming the test; all Pass approves
-       and the answers are stored with the verdict. */
+    /* The Testing list's active values are asked for the same evidence a
+       purchase test records, and nothing is required: an empty approval goes
+       through. What IS given has to make sense, and is stored with the verdict. */
     const tests = await refValues("testingList");
     assert.ok(tests.length > 0, "the seeded Testing list has values");
-    const pass = allPassValues(tests);
-    const missing = { ...pass };
-    delete missing[testKey(tests[0])];
-    assert.equal(fieldMsg(await mod("sfgBatches").actions!.qcApprove(await as(admin), line.id, missing)), `Record the ${tests[0]} result before approving`);
-    assert.match(fieldMsg(await mod("sfgBatches").actions!.qcApprove(await as(admin), line.id, { ...pass, [testKey(tests[0])]: "Fail" })), /failed — a lot that fails a test is rejected/);
-    const ok = await mod("sfgBatches").actions!.qcApprove(await as(admin), line.id, { ...pass, note: "Viscosity 18 s, clear" });
+    if (tests.includes("Density"))
+      assert.equal(fieldMsg(await mod("sfgBatches").actions!.qcApprove(await as(admin), line.id, { density: "9" })), "Density value must be between 0.5 and 1.5");
+    const ok = await mod("sfgBatches").actions!.qcApprove(await as(admin), line.id, { ...(tests.includes("Smell") ? { smell: "Good" } : {}), note: "Viscosity 18 s, clear" });
     assert.ok(ok.ok, JSON.stringify(ok));
-    const [stored] = (await db.execute(sql`select tests from erp_sfg_qc where lot_code = ${line.lotCode}`)) as unknown as { tests: Record<string, string> }[];
-    assert.deepEqual(Object.keys(stored.tests).sort(), [...tests].sort());
-    assert.ok(Object.values(stored.tests).every((r) => r === "Pass"));
+    const [stored] = (await db.execute(sql`select evidence from erp_sfg_qc where lot_code = ${line.lotCode}`)) as unknown as { evidence: { smell?: string; photos: Record<string, string> } }[];
+    if (tests.includes("Smell")) assert.equal(stored.evidence.smell, "Good");
+    assert.deepEqual(stored.evidence.photos, {});
     const prompt = (await mod("sfgBatches").load(await as(admin))).spec.bulk!.find((b) => b.id === "qcApprove")!.prompt!;
-    assert.deepEqual(prompt.fields.filter((f) => f.k.startsWith("test:")).map((f) => f.l), tests, "the prompt asks each active test");
+    assert.ok(prompt.fields.every((f) => !f.req && f.untagged), "nothing is required and nothing says optional");
+    assert.ok(prompt.fields.some((f) => f.t === "photo"), "the prompt takes photographs, as Lot testing does");
     const after = await mod("fgFill").load(await as(admin));
     assert.deepEqual(Object.values(after.spec.newForm!.header.find((f) => f.k === "sfgLot")!.optsBy!.map).flat(), ["1ASTOL1"]);
   });

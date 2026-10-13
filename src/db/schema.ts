@@ -648,6 +648,8 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
   "erp_raw_material",
   /** A can group's photographs, up to three (0263). */
   "erp_material_group",
+  /** An SFG lot's QC evidence photographs and video, keyed by lot code (0265). */
+  "erp_sfg_qc",
   /* HRMS parents: read under the HRMS screen the record lives on (see
      lib/hrms/attachments.ts), never under a customer's scope. */
   "hrms_attendance",
@@ -12393,6 +12395,13 @@ export const erpSfgQc = pgTable(
      * checks were asked, and for a reject that stopped at the first failure.
      */
     tests: jsonb("tests").$type<Record<string, "Pass" | "Fail">>().notNull().default(sql`'{}'::jsonb`),
+    /**
+     * The evidence the ERP's approve and reject prompts record, the same as a
+     * purchase test's: a photograph per test, the smell, the pH and density
+     * readings and a video (`QcEvidence` in `lib/erp/engines/sfg-tests.ts`).
+     * None of it is required. Empty for a decision made before it was asked.
+     */
+    evidence: jsonb("evidence").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
     decidedById: text("decided_by_id").references(() => users.id),
     decidedAt: timestamp("decided_at", { withTimezone: true }),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

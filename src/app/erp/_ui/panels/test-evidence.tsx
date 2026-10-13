@@ -7,6 +7,9 @@ import { registerPanel, type PanelProps } from "../panels";
  * A purchase test's evidence, in the drawer the verifier decides from: one
  * tile per required test, the photograph or the reading, and what is missing
  * said in words — a verifier cannot pass what they cannot see.
+ *
+ * An SFG lot's QC decision draws the same tiles (`optional`): there nothing
+ * was required, so it lists only what was recorded and calls nothing missing.
  * ------------------------------------------------------------------------- */
 
 type Evidence = {
@@ -18,6 +21,10 @@ type Evidence = {
   photos: Record<string, string | null>;
   video: string | null;
   registerExists: boolean;
+  /** The heading; "Test evidence" when absent. */
+  title?: string;
+  /** Nothing was required, so nothing is drawn as missing. */
+  optional?: boolean;
 };
 
 function TestEvidence({ data }: PanelProps) {
@@ -25,13 +32,13 @@ function TestEvidence({ data }: PanelProps) {
   if (!e.tests.length) return null;
   return (
     <section className="grid gap-2.5 rounded-card border border-line p-3.5">
-      <SectionLabel>Test evidence</SectionLabel>
+      <SectionLabel>{e.title ?? "Test evidence"}</SectionLabel>
       <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2.5">
         {e.tests.map((t) => {
           const photo = e.photos[t] ?? null;
           const reading =
             t === "Smell" ? e.smell : t === "Density" ? (e.density == null ? null : String(e.density)) : t === "PH" && e.phValue != null ? `pH ${e.phValue}` : null;
-          const missing = t === "Smell" ? !e.smell : t === "Density" ? e.density == null || !photo : !photo;
+          const missing = e.optional ? false : t === "Smell" ? !e.smell : t === "Density" ? e.density == null || !photo : !photo;
           return (
             <div key={t} className={cx("overflow-hidden rounded-control border", missing ? "border-danger-soft bg-danger-soft/50" : "border-divider bg-surface")}>
               {photo ? (
