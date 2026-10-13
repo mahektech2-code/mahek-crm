@@ -426,6 +426,7 @@ export function normalizeDraft(raw: unknown, v = 1): Draft {
   if (r.out !== undefined) d.out = num(r.out);
   if (r.sku !== undefined) d.sku = String(r.sku);
   if (r.sfg !== undefined) { d.sfg = str(r.sfg); d.sfgManual = !!r.sfgManual; }
+  if (r.fromLot) d.fromLot = String(r.fromLot);
   if (r.pm !== undefined) { d.pm = str(r.pm); d.pmManual = !!r.pmManual; }
   if (r.filled !== undefined) d.filled = num(r.filled);
   if (r.rej !== undefined) d.rej = num(r.rej) ?? 0;
@@ -544,4 +545,29 @@ export function fillFromLot(me: DeptMe, db: Pick<FactoryData, "lots" | "sku" | "
 export function fillStartQty(litres: number, avail: number): number {
   if (!(litres > 0)) return 1;
   return Math.max(1, Math.min(40, Math.floor(avail / litres)));
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "2026-10-12" → "12 Oct". Read off the string, so no time zone can move the day. */
+export function shortDay(ymd: string | undefined): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(ymd ?? "");
+  return m ? Number(m[3]) + " " + MONTHS[Number(m[2]) - 1] : "—";
+}
+
+/** How a fill product leaves the line, for the line under its tile: "6 / box", "Drum", "No can" or "Loose". */
+export function skuPackLine(db: Pick<FactoryData, "sku" | "box">, key: string): string {
+  const k = db.sku[key];
+  if (!k) return "";
+  const boxes = Object.values(db.box).filter((b) => b.sku === key).map((b) => b.cpb);
+  if (boxes.length) return Math.max(...boxes) + " / box";
+  if (k.kind === "drum") return "Drum";
+  if (!k.pm) return "No can";
+  return "Loose";
+}
+
+/** Empty cans (or drums) of this product's packing at the person's godown — the same figure the fill checks. */
+export function emptyPackHere(db: Pick<FactoryData, "lots" | "loc">, pm: string): number | null {
+  if (!pm) return null;
+  const here = Object.values(db.lots).find((l) => l.type === "pm" && l.item === pm && l.loc === db.loc);
+  return here ? here.avail : 0;
 }

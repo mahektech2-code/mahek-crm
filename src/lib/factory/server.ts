@@ -344,6 +344,7 @@ export async function lotsFor(godown: { id: string; name: string }, m: Masters):
       /* Not filled until quality approves it — the ERP refuses the fill, so the
          phone says "do not use this yet" at the scan instead of at the end. */
       status: l.stock <= 0 ? "used" : verdict === "Approved" ? "ok" : "hold",
+      made: l.latestDate,
     };
   }
   for (const l of fgs) {

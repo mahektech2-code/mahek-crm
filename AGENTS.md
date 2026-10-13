@@ -8727,8 +8727,22 @@ the batch sheet use); `startMixingBatch` in `head.ts` checks the recipe again (a
 active formulation with a line above 0 L), makes the same `factory_tasks` row
 Give a task makes — the standing mixing crew, with HIM in charge — and the job
 opens straight into its batch sheet. It posts through the ERP's SFG form like
-any other job. Filling and packing still come from a supervisor. The op is
+any other job. Packing still comes from a supervisor. The op is
 `startBatch`, and the native APK needs a release to show the button.
+
+**A FILLING WORKER STARTS A FILLING FROM THE TANK HE SCANS.** Scanning (or
+typing) an SFG lot on Home used to show the card and close it with a toast.
+The card now carries QC and the day it was made, and "Fill from this lot"
+opens New filling: the products made from that base (`fillFromLot` in
+`rules.ts`, which also words the five refusals the card shows) and how many
+cans. `startFillFromLot` in `head.ts` checks it all again against the ledger
+(filling is his work, the lot is here, has stock, is QC approved, and the
+product is of that base), makes the same `factory_tasks` row Give a task
+makes with him in charge and the lot as its `sfg_lot`, and the job opens
+with that tank already scanned (`Draft.fromLot`, phone-only). It posts
+through the ERP's FG fill form like any other filling. Saved offers "Fill
+more from" the same lot. A mixing or packing worker sees the card with OK
+only. The op is `startFill`.
 
 **A MIXING WORKER MAY USE HIS OWN RECIPE, AND THE HEAD IS TOLD.** The job's
 first step draws the batch sheet with "Use my own recipe" under it: the editor

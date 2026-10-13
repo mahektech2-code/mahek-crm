@@ -18,8 +18,8 @@ import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { seedFactoryFloor, type SeededFloor } from "./demo-seed";
 import { bootstrap, contextFor, type FactoryCtx } from "./server";
 import { submitJob } from "./post";
-import { assignTask, decideReview, requestCorrection, startMixingBatch } from "./head";
-import { boxCode, mixDeviation, recipeLines, recipeProblem, recipeRm, resolveScan, startsOwnBatch, taskCode, typedCode } from "./rules";
+import { assignTask, decideReview, requestCorrection, startFillFromLot, startMixingBatch } from "./head";
+import { boxCode, fillFromLot, mixDeviation, recipeLines, recipeProblem, recipeRm, resolveScan, startsOwnBatch, taskCode, typedCode } from "./rules";
 import { boxInfo, loadBoard, lrKit, saveLr, scanBox, unloadBox } from "./dispatch";
 import { cancelFromFloor, raiseFromFloor, requirementKit } from "./purchase";
 import { shelfFacts } from "@/lib/erp/stock-check";
@@ -267,6 +267,49 @@ describe("filling and packing", () => {
     assert.deepEqual([fill.cans, fill.adj], [100, 3]);
     const [down] = await q<{ minutes: number }>(sql`select minutes from factory_downtime where task_id = ${t.id}`);
     assert.equal(down.minutes, 20);
+  });
+
+  test("a filling worker starts a filling from the SFG lot he scanned, and it posts from that lot", async () => {
+    const { fc, data } = await as("kamalkant");
+    const me = { head: false, area: "filling" };
+    const lot = Object.values(data.lots).find((l) => l.type === "sfg" && l.status === "ok" && l.loc === data.loc && l.avail >= 20)!;
+    assert.ok(lot, "the seed holds an approved SFG lot here");
+    const can = fillFromLot(me, data, lot.code);
+    assert.ok(can && can.ok, JSON.stringify(can));
+    const item = can.skus.find((k) => data.sku[k].l <= 5)!;
+    assert.ok(item, "a product of this base fits the lot");
+    assert.ok(can.skus.every((k) => data.sku[k].sfg === lot.item), "only products of this base are offered");
+
+    const mix = fillFromLot({ head: false, area: "mixing" }, data, lot.code);
+    assert.ok(mix && !mix.ok && !mix.show, "a mixing worker sees the lot and nothing to press");
+    const held = fillFromLot(me, { ...data, lots: { ...data.lots, [lot.code]: { ...lot, status: "hold" } } }, lot.code);
+    assert.ok(held && !held.ok && held.title === "Cannot fill yet");
+    const empty = fillFromLot(me, { ...data, lots: { ...data.lots, [lot.code]: { ...lot, status: "used", avail: 0 } } }, lot.code);
+    assert.ok(empty && !empty.ok && empty.title === "Nothing left");
+
+    const anil = (await as("anil")).fc;
+    assert.equal((await startFillFromLot(anil, { lot: lot.code, item, qty: 2 })).ok, false, "mixing staff cannot start a filling");
+    setTestUser(floor.users.kamalkant);
+    const other = Object.keys(data.sku).find((k) => data.sku[k].sfg !== lot.item);
+    if (other) assert.equal((await startFillFromLot(fc, { lot: lot.code, item: other, qty: 1 })).ok, false, "a product of another base is refused");
+    assert.equal((await startFillFromLot(fc, { lot: lot.code, item, qty: 0 })).ok, false);
+
+    const made = await startFillFromLot(fc, { lot: lot.code, item, qty: 2 });
+    assert.ok(made.ok, JSON.stringify(made));
+    const { data: now } = await as("kamalkant");
+    const t = now.tasks.find((x) => x.id === (made.ok ? made.data.id : ""))!;
+    assert.equal(t.proc, "filling");
+    assert.equal(t.sfg, lot.code, "the scanned lot is the job's base tank");
+    assert.equal(t.target, 2);
+    assert.equal(t.team.owner, floor.users.kamalkant.id, "he is in charge");
+
+    const k = now.sku[item];
+    const pm = k.pm ? lotOf(now, "pm", k.pm, 2) : undefined;
+    const d: Draft = { team: { ...t.team, op: t.team.op ?? floor.users.kamalkant.id }, down: false, downR: null, downMin: null, sku: item, sfg: lot.code, fromLot: lot.code, pm: pm?.code ?? null, filled: 2, rej: 0, rejR: null };
+    const r = await submitJob(fc, sub(t, d));
+    assert.equal(r.kind, "done", JSON.stringify(r));
+    const [fill] = await q<{ sfg: string; cans: number }>(sql`select sfg_lot_code as sfg, cans from erp_fg_fills where lot_code = ${(r as { label: { code: string } }).label.code}`);
+    assert.deepEqual([fill.sfg, fill.cans], [lot.code, 2]);
   });
 
   test("packing finishes full batches into stock and keeps the remainder out of it", async () => {

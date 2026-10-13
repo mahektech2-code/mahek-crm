@@ -24,6 +24,12 @@ import {
   nf,
   resolveScan,
   startsOwnBatch,
+  fillFromLot,
+  fillStartQty,
+  FILL_FROM_LOT_MAX,
+  shortDay,
+  skuPackLine,
+  emptyPackHere,
   stepCheck,
   taskCode,
   taskName,
@@ -40,7 +46,7 @@ import { call, NotReceived, PAGE_BUILD, watchBuild } from "./api";
 import { art, ic, qr } from "./art";
 import { avStyle, btn, card, initials, mono, msg, MsgBox, Pill, artWell, type Msg } from "./kit";
 import { CameraScanner, shrinkPhoto } from "./camera";
-import { dropPhoto, forget, keepPhoto, keptPhoto, load, mintKey, readNet, save, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet, mintDrumKey, type StockEntry, type QcEntry, mintCheckKey, type RecipeSheet, type ReqEntry, mintReqKey } from "./model";
+import { dropPhoto, forget, keepPhoto, keptPhoto, load, mintKey, readNet, save, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet, mintDrumKey, type StockEntry, type QcEntry, mintCheckKey, type RecipeSheet, type FillSheet, type ReqEntry, mintReqKey } from "./model";
 
 /* ---------------------------------------------------------------------------
  * THE FACTORY APP — "Mahek Factory App" from the design, screen for screen.
@@ -1979,7 +1985,7 @@ export class FactoryApp extends Component<Props, State> {
 
   /* ================================================================ a job */
 
-  startTask(id: string) {
+  startTask(id: string, preset?: Partial<Draft>) {
     const st = this.state;
     const t = this.task(id);
     if (!t) return;
@@ -1993,6 +1999,7 @@ export class FactoryApp extends Component<Props, State> {
     if (t.proc === "filling") Object.assign(d, { sku: t.item, sfg: null, pm: null, filled: null, rej: 0, rejR: null });
     if (t.proc === "packing") Object.assign(d, { box: t.item, fg: [], boxes: null });
     if (t.proc === "dispatch") Object.assign(d, { loads: {}, checks: {}, photo: null, photoId: null });
+    if (preset) Object.assign(d, preset);
     this.setState({ flow: { task: t, step: 0, d, key: mintKey(t.id) }, started: { ...st.started, [id]: 1 } });
   }
 
@@ -2561,6 +2568,7 @@ export class FactoryApp extends Component<Props, State> {
         </div>
         {this.deptChips()}
         {!open.length && <div style={{ background: "#FFFFFF", border: "1px solid #DDE1E8", borderRadius: "16px", padding: "28px 20px", textAlign: "center", fontSize: "16px", color: "#6B7385" }}>You have no work right now. New work will show here.</div>}
+        {!open.length && !me.head && myDepts(me).includes("filling") && <MsgBox m={msg("Scan a base-liquid tank to start a filling from it.", "info")} />}
         {open.map((t) => {
           const over = t.due < now && t.status === "ready";
           const blocked = t.status === "blocked";
@@ -2736,6 +2744,7 @@ export class FactoryApp extends Component<Props, State> {
   renderScanOk(r: Extract<ScanResult, { ok: true }> & { manual?: boolean }): ReactNode {
     const st = this.state, T = this.T(), sc = st.scan!, P = sc.purpose;
     let artEl: ReactNode = null, name = "", code = r.code, facts: { l: string; v: string }[] = [], acceptL = T.yes;
+    let fill: ReturnType<typeof fillFromLot> = null;
     if (r.kind === "emp") {
       const who = st.pinFor;
       artEl = <span style={avStyle(who ? who.key.length : 0, 80)}>{who?.ini}</span>;
@@ -2755,6 +2764,10 @@ export class FactoryApp extends Component<Props, State> {
       name = lotName(this.db(), x);
       facts = [{ l: "Available", v: nf(x.avail) + " " + lotUnit(this.db(), x) }, { l: "Where", v: x.loc.replace(" Plant", "") }];
       acceptL = P === "home" ? T.ok : T.yes;
+      if (P === "home" && x.type === "sfg") {
+        facts.push({ l: "QC", v: x.status === "hold" ? "Pending" : x.status === "used" ? "Used up" : "Approved" }, { l: "Made", v: shortDay(x.made) });
+        fill = fillFromLot(st.me!, this.db(), r.lot);
+      }
     }
     return (
       <div>
@@ -2770,15 +2783,25 @@ export class FactoryApp extends Component<Props, State> {
           {facts.map((f) => (
             <div key={f.l} style={{ background: "#F7F8FA", borderRadius: "12px", padding: "10px 12px" }}>
               <div style={{ fontSize: "12px", color: "#6B7385" }}>{f.l}</div>
-              <div style={{ fontSize: "18px", fontWeight: 700, marginTop: "2px" }}>{f.v}</div>
+              <div style={{ fontSize: "18px", fontWeight: 700, marginTop: "2px", color: f.l === "QC" ? (f.v === "Approved" ? "#1D7A45" : "#B3261E") : undefined }}>{f.v}</div>
             </div>
           ))}
         </div>
         {r.manual && <div style={{ marginTop: "12px", padding: "10px 12px", borderRadius: "12px", background: "#FDF6E7", color: "#8A5C05", fontSize: "14px", lineHeight: "20px", fontWeight: 600 }}>{T.manualWarn}</div>}
-        <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
-          <button onClick={() => this.setState({ scan: { ...sc, res: null } })} style={{ ...btn("s", 58), flex: 1 }}>{T.wrong}</button>
-          <button onClick={() => this.acceptScan()} style={{ ...btn("p", 58), flex: 2 }}>{acceptL}</button>
-        </div>
+        {fill && !fill.ok && fill.show && (
+          <div style={{ marginTop: "12px", padding: "10px 12px", borderRadius: "12px", background: "#FDF6E7", color: "#8A5C05", fontSize: "14px", lineHeight: "20px" }}><b>{fill.title}.</b> {fill.text}</div>
+        )}
+        {fill && (fill.ok || fill.show) ? (
+          <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
+            <button onClick={() => this.acceptScan()} style={{ ...btn(fill.ok ? "s" : "p", 58), flex: 1 }}>{T.ok}</button>
+            <button onClick={() => fill.ok && this.openFill(r.code)} style={{ ...btn(fill.ok ? "p" : "off", 58), flex: 2 }}>Fill from this lot →</button>
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
+            <button onClick={() => this.setState({ scan: { ...sc, res: null } })} style={{ ...btn("s", 58), flex: 1 }}>{T.wrong}</button>
+            <button onClick={() => this.acceptScan()} style={{ ...btn("p", 58), flex: 2 }}>{acceptL}</button>
+          </div>
+        )}
       </div>
     );
   }
@@ -2909,6 +2932,7 @@ export class FactoryApp extends Component<Props, State> {
             )}
           </div>
         )}
+        {t.proc === "filling" && d?.fromLot && <MsgBox m={msg("Started by you from " + d.fromLot + ".", "ok")} />}
         <div style={{ fontSize: "19px", fontWeight: 700, textAlign: "center", marginTop: "4px" }}>{T.isRight}</div>
       </div>
     );
@@ -3029,8 +3053,9 @@ export class FactoryApp extends Component<Props, State> {
     }
     if (key === "sfg") {
       const k = db.sku[d.sku!];
-      sub = t.sfg ? "Scan the tank you fill from. It should be " + t.sfg + "." : "Scan the " + (db.sfg[k.sfg]?.short ?? "") + " base tank you fill from.";
-      lots.push({ art: art("tank", db.sfg[k.sfg]?.col, db.sfg[k.sfg]?.short, 52), name: db.sfg[k.sfg]?.n ?? "", need: "Needed: about " + nf((t.target ?? 0) * k.l) + " L", lot: d.sfg ?? null, manual: d.sfgManual, scan: () => this.openScan("sfg"), done: !!d.sfg });
+      const kept = !!d.fromLot && d.sfg === d.fromLot;
+      sub = kept ? "You scanned this tank to start the job." : t.sfg ? "Scan the tank you fill from. It should be " + t.sfg + "." : "Scan the " + (db.sfg[k.sfg]?.short ?? "") + " base tank you fill from.";
+      lots.push({ art: art("tank", db.sfg[k.sfg]?.col, db.sfg[k.sfg]?.short, 52), name: db.sfg[k.sfg]?.n ?? "", need: "Needed: about " + nf((t.target ?? 0) * k.l) + " L", lot: d.sfg ?? null, manual: d.sfgManual, scan: () => this.openScan("sfg"), done: !!d.sfg, ...(kept ? { swapL: "Scan a different tank" } : {}) });
     }
     if (key === "pack") {
       const base = db.sku[t.item!].sfg;
@@ -3210,8 +3235,9 @@ export class FactoryApp extends Component<Props, State> {
               <span style={{ ...mono, fontSize: "14px", fontWeight: 600 }}>{o.lot}</span>
               {o.manual && <span style={{ fontSize: "11px", fontWeight: 700, color: "#8A5C05", background: "#FDF6E7", borderRadius: "8px", padding: "2px 6px" }}>By photo</span>}
               <span style={{ flex: 1, fontSize: "13px", color: "#6B7385", textAlign: "right" }}>{x ? nf(x.avail) + " " + lotUnit(db, x) + " left" : ""}</span>
-              <button onClick={o.scan} style={{ height: "36px", border: "none", background: "transparent", color: "#5223E0", fontSize: "14px", fontWeight: 700, cursor: "pointer", padding: "0 8px" }}>{T.change}</button>
+              {o.swapL ? <span style={{ fontSize: "12px", fontWeight: 700, color: "#1D7A45", background: "#E9F5EE", borderRadius: "9px", padding: "2px 8px" }}>{"✓ Scanned"}</span> : <button onClick={o.scan} style={{ height: "36px", border: "none", background: "transparent", color: "#5223E0", fontSize: "14px", fontWeight: 700, cursor: "pointer", padding: "0 8px" }}>{T.change}</button>}
             </div>
+            {o.swapL && <button onClick={o.scan} style={{ ...btn("s", 48), width: "100%", marginTop: "10px" }}>{o.swapL}</button>}
             {o.qtyOpen && (
               <button onClick={o.qtyOpen} style={{ width: "100%", marginTop: "10px", minHeight: "68px", borderRadius: "14px", border: "2px solid " + (o.err ? "#B3261E" : o.qtyDone ? "#C2C8D2" : "#6835FB"), background: o.qtyDone ? "#FFFFFF" : "#F7F4FF", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 16px", cursor: "pointer" }}>
                 <span style={{ display: "block", fontSize: "13px", color: "#6B7385" }}>{o.qtyL}</span>
@@ -3300,7 +3326,10 @@ export class FactoryApp extends Component<Props, State> {
       text = r.msg + (r.replay ? " (It was already saved — nothing was sent twice.)" : "");
       rows = r.rows.map((q) => ({ l: q[0], v: q[1] }));
       label = r.label;
-      acts = ([] as Act[]).concat([home, { l: T.listen, run: () => this.speak(T.completed + ". " + r.msg), style: { ...btn("s", 48), border: "none", color: "#5223E0" }, icon: ic("speaker", 20) }]);
+      const fl = st.flow;
+      const again = fl && fl.task.proc === "filling" && fl.d.fromLot ? fl.d.fromLot : null;
+      const more: Act[] = again && fillFromLot(st.me!, this.db(), again)?.ok ? [{ l: "Fill more from " + again, run: () => this.setState({ result: null, flow: null }, () => this.openFill(again)), style: btn("s", 56), icon: null }] : [];
+      acts = ([] as Act[]).concat([home], more, [{ l: T.listen, run: () => this.speak(T.completed + ". " + r.msg), style: { ...btn("s", 48), border: "none", color: "#5223E0" }, icon: ic("speaker", 20) }]);
     }
     if (r.kind === "held") {
       text = r.text;
@@ -3935,6 +3964,7 @@ export class FactoryApp extends Component<Props, State> {
 
     if (sh.type === "job") body = this.jobSheet(sh.id, (t, s, b, a) => { title = t; sub = s; acts = a; return b; });
     if (sh.type === "assign") body = this.assignSheet((t, s, b, a) => { title = t; sub = s; acts = a; return b; });
+    if (sh.type === "fill") body = this.fillSheet(sh, (t, s, b, a) => { title = t; sub = s; acts = a; return b; });
     if (sh.type === "start") body = this.startSheet((t, s, b, a) => { title = t; sub = s; acts = a; return b; });
     if (sh.type === "recipe") body = this.recipeSheet(sh, (t, s, b, a) => { title = t; sub = s; acts = a; return b; });
 
@@ -4137,6 +4167,77 @@ export class FactoryApp extends Component<Props, State> {
     ]);
   }
 
+  /** From the scan card: the ERP's New FG filling questions — which product of this base, and how many. */
+  openFill(lot: string) {
+    const db = this.db(), me = this.state.me!;
+    const f = fillFromLot(me, db, lot);
+    if (!f || !f.ok) return;
+    const sku = f.skus.length === 1 ? f.skus[0] : null;
+    this.setState({ scan: null, sheet: { type: "fill", lot, sku, qty: sku ? fillStartQty(db.sku[sku].l, f.lot.avail) : 1 } });
+  }
+
+  fillSheet(sh: FillSheet, out: (title: string, sub: string, body: ReactNode, acts: { l: string; run: () => void; style: CSSProperties }[]) => ReactNode): ReactNode {
+    const st = this.state, T = this.T(), db = this.db();
+    const f = fillFromLot(st.me!, db, sh.lot);
+    const lot = db.lots[sh.lot];
+    const skus = f && f.ok ? f.skus : [];
+    const k = sh.sku ? db.sku[sh.sku] : null;
+    const unit = k?.kind === "drum" ? "drums" : "cans";
+    const most = k ? Math.max(1, Math.min(FILL_FROM_LOT_MAX, Math.floor((lot?.avail ?? 0) / k.l))) : FILL_FROM_LOT_MAX;
+    const set = (p: Partial<FillSheet>) => this.setState({ sheet: { ...sh, ...p } });
+    const tile = (on: boolean): CSSProperties => ({ padding: "10px 6px", borderRadius: "14px", border: on ? "3px solid #6835FB" : "1px solid #DDE1E8", background: on ? "#F7F4FF" : "#FFFFFF", cursor: "pointer", textAlign: "center" });
+    const sq: CSSProperties = { width: "58px", height: "58px", borderRadius: "14px", border: "none", background: "#F1ECFF", color: "#5223E0", fontSize: "30px", fontWeight: 700, cursor: "pointer", flex: "none" };
+    const empty = k ? emptyPackHere(db, k.pm) : null;
+    const over = !!k && sh.qty * k.l > (lot?.avail ?? 0);
+    const start = async () => {
+      if (st.busy || !k || over) return;
+      this.setState({ busy: true });
+      try {
+        const r = await call("startFill", { lot: sh.lot, item: sh.sku!, qty: sh.qty });
+        if (!r.ok) return this.toast(r.error);
+        this.setState({ db: r.data, sheet: null }, () => this.startTask(r.id, { sfg: sh.lot, sfgManual: false, fromLot: sh.lot }));
+      } catch {
+        this.toast("No network. Try again when it is back.");
+      } finally {
+        this.setState({ busy: false });
+      }
+    };
+    const body = (
+      <>
+        <div>
+          <div style={{ fontSize: "14px", fontWeight: 700, color: "#3D4453", marginBottom: "8px" }}>What are you filling?</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: "8px" }}>
+            {skus.map((key) => {
+              const s = db.sku[key];
+              return (
+                <button key={key} onClick={() => set({ sku: key, qty: fillStartQty(s.l, lot?.avail ?? 0) })} style={tile(sh.sku === key)}>
+                  <span style={{ display: "flex", justifyContent: "center" }}>{art(s.kind, s.pm ? s.col : "#9BA3B2", s.tag, 44)}</span>
+                  <span style={{ display: "block", fontSize: "13px", fontWeight: 700, lineHeight: "17px", marginTop: "4px" }}>{s.n + " " + s.size}</span>
+                  <span style={{ display: "block", fontSize: "11px", color: "#6B7385", marginTop: "2px" }}>{skuPackLine(db, key)}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        {k && (
+          <div>
+            <div style={{ fontSize: "14px", fontWeight: 700, color: "#3D4453", marginBottom: "8px" }}>{"How many " + unit + "?"}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <button onClick={() => set({ qty: Math.max(1, sh.qty - 1) })} style={sq}>−</button>
+              <button onClick={() => this.openKp({ l: "How many " + unit + "?", unit, v: sh.qty, max: most, maxL: "This lot fills " + nf(most) + " " + unit + " at most.", set: (v) => this.setState({ sheet: { ...sh, qty: v } }) })} style={{ flex: 1, height: "58px", borderRadius: "14px", border: "2px solid #6835FB", background: "#FFFFFF", fontSize: "26px", fontWeight: 800, cursor: "pointer" }}>{nf(sh.qty)}</button>
+              <button onClick={() => set({ qty: Math.min(most, sh.qty + 1) })} style={sq}>+</button>
+            </div>
+          </div>
+        )}
+        {k && <MsgBox m={msg(nf(sh.qty) + " × " + k.size + " = " + nf(sh.qty * k.l) + " L of the " + nf(lot?.avail) + " L in this lot." + (empty != null ? " Empty " + k.size + " " + unit + " here: " + nf(empty) + "." : ""), over ? "warn" : "info")} />}
+      </>
+    );
+    return out("New filling", "From " + sh.lot + " · " + lotName(db, lot) + " · " + nf(lot?.avail) + " L left", body, [
+      { l: T.back, run: () => this.setState({ sheet: null }), style: { ...btn("s", 58), flex: 1 } },
+      { l: st.busy ? T.sending : "Start filling", run: () => void start(), style: { ...btn(k && !over && !st.busy ? "p" : "off", 58), flex: 2 } },
+    ]);
+  }
+
   startSheet(out: (title: string, sub: string, body: ReactNode, acts: { l: string; run: () => void; style: CSSProperties }[]) => ReactNode): ReactNode {
     const st = this.state, T = this.T(), db = this.db();
     const a = st.asg && st.asg.proc === "mixing" ? st.asg : this.defaultAsg("mixing");
@@ -4254,6 +4355,8 @@ type LotRow = {
   manual?: boolean;
   scan: () => void;
   scanL?: string;
+  /** A tank already scanned to start the job: drawn as done, with a full-width button to scan another instead. */
+  swapL?: string;
   qtyL?: string;
   qtyV?: string;
   qtyDone?: boolean;

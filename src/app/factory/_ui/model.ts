@@ -52,7 +52,9 @@ export type TilesSheet = { type: "tiles"; title: string; sub?: string; groups: {
 export type ReasonSheet = { type: "reason"; title: string; sub?: string; reasons: string[]; okL?: string; sel?: string; danger?: boolean; done: (r: string) => void };
 /** The mixing recipe editor: the lines as the worker is editing them, and the material picker over it. */
 export type RecipeSheet = { type: "recipe"; lines: { item: string; per: number | null }[]; adding?: boolean; q?: string };
-export type Sheet = KpSheet | PeopleSheet | TilesSheet | ReasonSheet | { type: "job"; id: string } | { type: "assign" } | { type: "start" } | { type: "dept" } | RecipeSheet;
+/** New filling from a scanned SFG lot: which product of that base, and how many. */
+export type FillSheet = { type: "fill"; lot: string; sku: string | null; qty: number };
+export type Sheet = FillSheet | KpSheet | PeopleSheet | TilesSheet | ReasonSheet | { type: "job"; id: string } | { type: "assign" } | { type: "start" } | { type: "dept" } | RecipeSheet;
 
 export type SignStep = "lang" | "id" | "pin" | "otp" | "newpin";
 
