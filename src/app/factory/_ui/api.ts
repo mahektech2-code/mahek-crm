@@ -39,6 +39,7 @@ type Ops = {
   reqKit: typeof Actions.factoryReqKit;
   reqRaise: typeof Actions.factoryReqRaise;
   reqCancel: typeof Actions.factoryReqCancel;
+  scanBox: typeof Actions.factoryScanBox;
 };
 
 export class NotReceived extends Error {}

@@ -8844,6 +8844,13 @@ The pick is a VIEW, remembered per person on the phone, and never a
 permission: scanning a task of another of their departments still opens it,
 and the server never reads the pick.
 
+**Loading never waits for the office to give lots.** A Ready order opens on
+the phone, and the box or lot label the loader scans is judged by the ERP's
+dispatch desk (`scanOntoOrder`), which allocates it there and then, as at the
+office desk. The load step owes "still to find" until every line's lots cover
+it (`stepCheck`), and the phone sends any label the order was not given to the
+server rather than refusing it (`lotGiven`).
+
 **Loading is CHECKED, never dispatched.** The dispatch team scans the
 allocated lots, loads exactly what the order takes, ticks the checklist and
 photographs the truck; the ERP's verification, transport row and order book
