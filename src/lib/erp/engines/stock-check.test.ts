@@ -129,20 +129,22 @@ test("causes: a record that accounts for the gap is likely; a shortage nothing e
   assert.deepEqual(causeCandidates(3, 5, []), [], "within tolerance there is nothing to explain");
 });
 
-test("the gate holds the purchase until the count matches, is resolved, or an exception is approved", () => {
-  const g = (x: Partial<Parameters<typeof stockGate>[0]>) => stockGate({ required: true, countStatus: null, exception: null, unexpectedQty: false, qtyConfirmed: false, ...x });
-  assert.equal(stockGate({ required: false, countStatus: null, exception: null, unexpectedQty: true, qtyConfirmed: false }).blocks, false);
+test("a requirement waits only for its count to be entered; what the count finds is a flag, never a hold", () => {
+  const g = (x: Partial<Parameters<typeof stockGate>[0]>) => stockGate({ required: true, countStatus: null, unexpectedQty: false, ...x });
+  assert.equal(stockGate({ required: false, countStatus: null, unexpectedQty: true }).blocks, false);
   assert.equal(g({}).state, "to_count");
+  assert.equal(g({}).blocks, true, "no count yet: it is counted first");
   assert.equal(g({ countStatus: "open" }).blocks, true);
-  assert.equal(g({ countStatus: "flagged" }).state, "flagged");
-  assert.equal(g({ countStatus: "investigating" }).blocks, true);
+  assert.equal(g({ countStatus: "cancelled" }).blocks, true, "a cancelled count is no count");
+  for (const status of ["flagged", "recount", "investigating"] as const) {
+    assert.equal(g({ countStatus: status }).blocks, false, `${status} does not hold the purchase`);
+    assert.equal(g({ countStatus: status }).flag, "stockFlag");
+  }
   assert.equal(g({ countStatus: "matched" }).blocks, false);
-  assert.equal(g({ countStatus: "resolved" }).blocks, false);
-  assert.equal(g({ countStatus: "flagged", exception: "requested" }).state, "exception_requested");
-  assert.equal(g({ countStatus: "flagged", exception: "approved" }).blocks, false);
-  assert.equal(g({ countStatus: "flagged", exception: "rejected" }).state, "flagged");
-  assert.equal(g({ countStatus: "matched", unexpectedQty: true }).state, "confirm_qty");
-  assert.equal(g({ countStatus: "matched", unexpectedQty: true, qtyConfirmed: true }).blocks, false);
+  assert.equal(g({ countStatus: "matched" }).flag, null);
+  assert.equal(g({ countStatus: "resolved" }).flag, null);
+  assert.equal(g({ countStatus: "matched", unexpectedQty: true }).flag, "stockOverJustified");
+  assert.equal(g({ countStatus: "matched", unexpectedQty: true }).blocks, false);
 });
 
 test("the gate reads the newest live root count", () => {

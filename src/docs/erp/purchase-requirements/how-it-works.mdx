@@ -1,8 +1,8 @@
-The purchase flow is **Requirement → Stock check → Purchase method → Vendor or quotation → Approval → Purchase order → Receipt**, and no purchase is completed without a PO. The stock check — a blind physical count that has to agree with the book before anything is bought — has its own page: [Stock accuracy](/docs/erp/stock-accuracy/how-it-works). This page covers the requirement, the method and the vendor: who may ask for what, how the method is decided, and how a vendor is chosen. [Purchase orders](/docs/erp/purchase-orders/how-it-works) and [Goods receipt](/docs/erp/goods-receipt-and-testing/how-it-works) cover the rest.
+The purchase flow is **Requirement → Blind count → Purchase method → Vendor or quotation → Approval → Purchase order → Receipt**, and no purchase is completed without a PO. The blind count — a physical count of the shelf, entered before the purchase method is chosen — never stops the purchase over what it finds: a difference from the book flags the requirement and notifies stock control, and the purchase carries on. It has its own page: [Stock accuracy](/docs/erp/stock-accuracy/how-it-works). This page covers the requirement, the method and the vendor: who may ask for what, how the method is decided, and how a vendor is chosen. [Purchase orders](/docs/erp/purchase-orders/how-it-works) and [Goods receipt](/docs/erp/goods-receipt-and-testing/how-it-works) cover the rest.
 
 <Flow caption="Where a requirement goes" chart={`
 flowchart TD
-  R["Requirement raised<br/>the item's purchase rule is copied on"] --> M{"Purchase rule"}
+  R["Requirement raised<br/>the item's purchase rule is copied on"] --> C["Blind count entered<br/>a difference flags and notifies"] --> M{"Purchase rule"}
   M -- "Buyer decision" --> B["Buyer decides<br/>direct or quotation"]
   M -- "Direct purchase" --> V{"Default vendor?"}
   M -- "Quotation" --> Q["Collect quotations"]

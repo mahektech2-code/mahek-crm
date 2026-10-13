@@ -106,7 +106,7 @@ export const ERP_POWER_LABEL: Record<ErpPower, { label: string; source: string }
   },
   stockControl: {
     label: "Resolve stock discrepancies and approve adjustments",
-    source: "Inventory Accuracy Control: resolves a red-flagged count, approves or rejects a stock adjustment, and approves an urgent purchase while a discrepancy is open. Nobody approves an adjustment or exception they asked for, unless they are an ERP administrator (new in MahekOne).",
+    source: "Inventory Accuracy Control: is notified of every red-flagged count, resolves it, and approves or rejects a stock adjustment. A red flag never holds a purchase. Nobody approves an adjustment they asked for, unless they are an ERP administrator (new in MahekOne).",
   },
   scrapSale: {
     label: "Sell scrap and return vendor drums",

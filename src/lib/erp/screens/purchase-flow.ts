@@ -52,7 +52,7 @@ import { bindErpFiles } from "../attachments";
 import { dutyKit, type DutyKit } from "../material-duties-server";
 import { godownIdByName, godownOptions, has, inTx, materials, refuse, today, type Col, type Tx } from "./common";
 import { countLabel, gatesFor, type GateInfo } from "../stock-check";
-import { confirmRequirementQty, openRequirementCounts } from "./stock-check";
+import { openRequirementCounts } from "./stock-check";
 
 /* ---------------------------------------------------------------------------
  * THE PURCHASE FLOW'S FIRST FOUR STEPS (docs: AGENTS.md, "The purchase flow"):
@@ -93,7 +93,7 @@ export type ReqView = {
   po: { id: string; number: number; status: string; lineId: string; ordered: number; received: number } | null;
   legacy: boolean;
   by: string | null;
-  /** Inventory Accuracy Control: the stock check this requirement waits on, where it carries one. */
+  /** Inventory Accuracy Control: the blind count this requirement waits to have entered, and what it found. */
   stock: GateInfo | null;
 };
 
@@ -188,14 +188,14 @@ export async function requirementViews(where?: { ids?: string[] }): Promise<ReqV
 }
 
 /**
- * THE STOCK CHECK HOLDS THE FLOW: no method, vendor, quotation or PO for a
- * requirement while its count is waiting, red-flagged or unresolved — the
- * same answer the list draws, asked again by every handler, because a
- * server action is a URL.
+ * THE BLIND COUNT COMES FIRST: no method, vendor, quotation or PO for a
+ * requirement while its count has not been ENTERED — the same answer the
+ * list draws, asked again by every handler, because a server action is a
+ * URL. What the count found never holds it: a difference is a flag.
  */
 export function heldByStock(v: ReqView): Result<unknown> | null {
   if (v.po || v.legacy || !v.stock?.gate.blocks) return null;
-  return err(`Held by the stock check — ${v.stock.gate.next ?? "count the stock first"}`, "rule_violation");
+  return err(`Waiting for the blind count — ${v.stock.gate.next ?? "count the stock first"}`, "rule_violation");
 }
 
 export function stageOf(v: ReqView, minQuotations: number): Stage {
@@ -500,12 +500,10 @@ function quoteOptionLabel(q: Quote & { fig: { landedPaise: number }; lowest: boo
 /* ------------------------------------------------- the stock check, per row */
 
 const GATE_WORDS: Record<string, string> = {
-  to_count: "Waiting for a blind count",
-  flagged: "Red flag — a discrepancy is open",
-  exception_requested: "Urgent purchase requested",
-  confirm_qty: "Counted — the quantity needs confirming",
+  to_count: "Waiting for the blind count",
+  flagged: "Red flag — the count differs from the book; stock control is told",
+  over_justified: "Counted — more is asked for than the shelf needs",
   clear: "Counted and matched",
-  excepted: "Urgent purchase approved",
 };
 
 function countHref(g: GateInfo): string | null {
@@ -518,67 +516,26 @@ function stockFacts(v: ReqView): { l: string; v: string; href?: string }[] {
   const g = v.stock;
   if (!g) return [];
   const out: { l: string; v: string; href?: string }[] = [
-    { l: "Stock check", v: `${GATE_WORDS[g.gate.state] ?? g.gate.state}${g.count ? ` · ${countLabel(g.count.countNo)}` : ""}`, href: countHref(g) ?? undefined },
+    { l: "Blind count", v: `${GATE_WORDS[g.gate.state] ?? g.gate.state}${g.count ? ` · ${countLabel(g.count.countNo)}` : ""}`, href: countHref(g) ?? undefined },
   ];
   if (g.onShelf != null) out.push({ l: "On the shelf", v: `${nf(g.onShelf)} ${g.unit}` });
-  if (g.justification) out.push({ l: "Quantity justified", v: g.justification.sentence });
+  if (g.justification) out.push({ l: "Quantity the shelf needs", v: g.justification.sentence });
+  /* Written under the rules before the count stopped holding the purchase; kept as the record they are. */
   if (v.r.qtyConfirmNote) out.push({ l: "Quantity confirmed because", v: v.r.qtyConfirmNote });
   if (v.r.stockExceptionReason) out.push({ l: "Urgent purchase", v: `${v.r.stockExceptionStatus === "approved" ? "Approved" : v.r.stockExceptionStatus === "rejected" ? "Rejected" : "Requested"} — ${v.r.stockExceptionReason}${v.r.stockExceptionNote ? ` · ${v.r.stockExceptionNote}` : ""}` });
   return out;
 }
 
-function stockActions(ctx: ErpContext, v: ReqView): ActionSpec[] {
+/** The count's own way in from the requirement: count it while it waits, open the red flag once it is in. */
+function stockActions(v: ReqView): ActionSpec[] {
   const g = v.stock as GateInfo;
-  const out: ActionSpec[] = [];
   const href = countHref(g);
-  const state = g.gate.state;
-  if (state === "to_count" || state === "flagged" || state === "exception_requested") {
-    if (href && g.count?.status !== "cancelled") out.push({ id: "openCount", l: g.count?.status === "open" ? "Count the stock" : `Open ${countLabel(g.count!.countNo)}`, primary: true, href });
-    else out.push({ id: "newCount", l: "Open a count", primary: true, confirm: `Open a blind count of ${v.item} at ${v.godown}?` });
-    if (v.r.stockExceptionStatus !== "requested" && v.r.stockExceptionStatus !== "approved")
-      out.push({
-        id: "askException",
-        l: "Request urgent purchase",
-        prompt: {
-          title: "Urgent purchase before the stock check is finished",
-          sub: `${v.item} at ${v.godown}. An authorised person decides; the count still has to be finished and any discrepancy resolved.`,
-          submit: "Request",
-          fields: [{ k: "reason", l: "Why it cannot wait", t: "area", req: true, mic: true }],
-        },
-      });
+  if (g.gate.state === "to_count") {
+    if (href && g.count?.status === "open") return [{ id: "openCount", l: "Count the stock", primary: true, href }];
+    return [{ id: "newCount", l: "Open a count", primary: true, confirm: `Open a blind count of ${v.item} at ${v.godown}?` }];
   }
-  if (state === "exception_requested") {
-    const own = v.r.stockExceptionRequestedById === ctx.user.id && !ctx.administrator;
-    out.push({
-      id: "decideException",
-      l: "Decide urgent purchase",
-      why: !ctx.powers.has("stockControl") ? "Deciding an urgent purchase needs the stock-control power" : own ? "Somebody other than the requester decides it" : "",
-      prompt: {
-        title: "Urgent purchase",
-        sub: v.r.stockExceptionReason ?? "",
-        submit: "Save decision",
-        fields: [
-          { k: "decision", l: "Decision", t: "select", req: true, opts: ["Approve", "Reject"] },
-          { k: "note", l: "Note", t: "area", reqWhen: { k: "decision", eq: "Reject" } },
-        ],
-      },
-    });
-  }
-  if (state === "confirm_qty") {
-    out.push({
-      id: "confirmQty",
-      l: "Confirm quantity",
-      primary: true,
-      prompt: {
-        title: "Confirm the quantity",
-        sub: `${nf(v.r.requiredQty)} ${v.r.unit} asked for. ${g.justification?.sentence ?? ""} Say why more is needed, or ask for a recount if the count looks wrong.`,
-        submit: "Confirm",
-        fields: [{ k: "note", l: "Why this quantity", t: "area", req: true, mic: true }],
-      },
-    });
-    out.push({ id: "recountShelf", l: "Recount the shelf", prompt: { title: "Recount the shelf", sub: "Opens a fresh blind count; the requirement waits on it.", submit: "Open the count", fields: [{ k: "reason", l: "Why", t: "area", req: true }] } });
-  }
-  return out;
+  if (g.gate.state === "flagged" && href) return [{ id: "openCount", l: `Open the red flag (${countLabel(g.count!.countNo)})`, href }];
+  return [];
 }
 
 function flowPanel(v: ReqView, st: Stage, money: boolean, minQuotations: number) {
@@ -670,7 +627,7 @@ const requisitions: ScreenModule = {
         const mayRaisePo = !r.rawMaterialId || kit.allows(r.rawMaterialId, "raisePo");
         const open = st.step >= 0 && !v.po && !v.legacy;
         const held = open && !!v.stock?.gate.blocks;
-        if (open && v.stock) actions.push(...stockActions(ctx, v));
+        if (open && v.stock) actions.push(...stockActions(v));
         if (st.stage === "Buyer decision")
           actions.push({
             id: "decide",
@@ -740,10 +697,11 @@ const requisitions: ScreenModule = {
           });
         else if (v.po && st.step >= 0 && st.step < FLOW_STEPS.length)
           actions.push({ id: "cancel", l: "Cancel requirement", why: `It is on ${poLabel(v.po.number)} — cancel or send back the PO first` });
-        /* Held by the stock check: every buying step says why it waits, and the server refuses it too. */
-        if (held) for (const a of actions) if (["decide", "vendor", "addQuote", "selectQuote"].includes(a.id) && !a.why) a.why = `Held by the stock check — ${v.stock?.gate.stage ?? "count the stock first"}`;
+        /* Waiting for its blind count: every buying step says why, and the server refuses it too. */
+        if (held) for (const a of actions) if (["decide", "vendor", "addQuote", "selectQuote"].includes(a.id) && !a.why) a.why = "Waiting for the blind count — enter it first";
         const flags: string[] = [];
-        if (held) flags.push("stockHeld");
+        if (held) flags.push("stockToCount");
+        if (open && v.stock?.gate.flag) flags.push(v.stock.gate.flag);
         if (r.requiredBy && r.requiredBy < day && st.step >= 0 && st.step < FLOW_STEPS.length) flags.push("requiredOverdue");
         if (v.legacy) flags.push("noPo");
         return {
@@ -821,53 +779,6 @@ const requisitions: ScreenModule = {
       await db.transaction((tx) => openRequirementCounts(tx, [{ id, rawMaterialId: v.r.rawMaterialId!, godownId: v.r.godownId, label }], ctx.user.id));
       await erpAudit(ctx, "erp.requisition.newCount", "erp_requisition", id, null, null);
       return okVoid("A blind count is open — it is on Stock accuracy → To count");
-    },
-    async recountShelf(ctx, id, values) {
-      const reason = text(values.reason);
-      if (!reason) return fieldErr("reason", "Say why");
-      const [v] = await requirementViews({ ids: [id] });
-      if (!v?.r.rawMaterialId) return err("That requirement no longer exists.", "not_found");
-      if (v.stock?.gate.state !== "confirm_qty") return err("Only a requirement whose quantity needs confirming is recounted from here.", "conflict");
-      await db.transaction((tx) => openRequirementCounts(tx, [{ id, rawMaterialId: v.r.rawMaterialId!, godownId: v.r.godownId, label: `${v.r.reqNo ? requirementLabel(v.r.reqNo) : "requirement"}: ${reason}` }], ctx.user.id));
-      await erpAudit(ctx, "erp.requisition.recountShelf", "erp_requisition", id, null, { reason });
-      return okVoid("A fresh blind count is open — the requirement waits on it");
-    },
-    async askException(ctx, id, values) {
-      const reason = text(values.reason);
-      if (!reason || reason.length < 10) return fieldErr("reason", "Say why it cannot wait, in at least ten characters");
-      const [v] = await requirementViews({ ids: [id] });
-      if (!v?.stock || !v.stock.gate.blocks || v.po) return err("This requirement is not held by the stock check.", "conflict");
-      if (v.r.stockExceptionStatus === "requested" || v.r.stockExceptionStatus === "approved") return err("An urgent purchase is already requested.", "conflict");
-      await db
-        .update(erpRequisitions)
-        .set({ stockExceptionStatus: "requested", stockExceptionReason: reason, stockExceptionRequestedById: ctx.user.id, stockExceptionDecidedById: null, stockExceptionDecidedAt: null, stockExceptionNote: null, updatedAt: new Date(), updatedById: ctx.user.id })
-        .where(eq(erpRequisitions.id, id));
-      await erpAudit(ctx, "erp.requisition.exceptionRequest", "erp_requisition", id, null, { reason });
-      return okVoid("Urgent purchase requested — an authorised person decides it");
-    },
-    async decideException(ctx, id, values) {
-      if (!ctx.powers.has("stockControl")) return err("Deciding an urgent purchase needs the stock-control power.", "not_permitted");
-      const decision = text(values.decision);
-      if (decision !== "Approve" && decision !== "Reject") return fieldErr("decision", "Approve or reject");
-      const note = text(values.note);
-      if (decision === "Reject" && !note) return fieldErr("note", "Say why");
-      const [v] = await requirementViews({ ids: [id] });
-      if (!v || v.r.stockExceptionStatus !== "requested") return err("There is no urgent purchase waiting on this requirement.", "conflict");
-      if (v.r.stockExceptionRequestedById === ctx.user.id && !ctx.administrator) return err("Somebody other than the requester decides an urgent purchase.", "not_permitted");
-      const status = decision === "Approve" ? "approved" : "rejected";
-      await db
-        .update(erpRequisitions)
-        .set({ stockExceptionStatus: status, stockExceptionDecidedById: ctx.user.id, stockExceptionDecidedAt: new Date(), stockExceptionNote: note, updatedAt: new Date(), updatedById: ctx.user.id })
-        .where(eq(erpRequisitions.id, id));
-      await erpAudit(ctx, status === "approved" ? "erp.requisition.exceptionApprove" : "erp.requisition.exceptionReject", "erp_requisition", id, null, { note });
-      return okVoid(status === "approved" ? "Urgent purchase approved — the purchase continues; the count must still be finished" : "Urgent purchase rejected");
-    },
-    async confirmQty(ctx, id, values) {
-      const note = text(values.note);
-      if (!note || note.length < 10) return fieldErr("note", "Say why this quantity is needed, in at least ten characters");
-      const [v] = await requirementViews({ ids: [id] });
-      if (v?.stock?.gate.state !== "confirm_qty") return err("This requirement's quantity does not need confirming.", "conflict");
-      return confirmRequirementQty(ctx, id, note);
     },
     async decide(ctx, id, values) {
       if (!ctx.powers.has("purchaseBuyer")) return err("Only the buyer decides how a requirement is bought.", "not_permitted");
@@ -1677,9 +1588,6 @@ async function approvalRefusal(ctx: ErpContext, poId: string): Promise<Result<un
   const [[p], kit] = await Promise.all([purchaseOrderViews({ ids: [poId] }), dutyKit(ctx)]);
   if (!p) return err("That PO no longer exists.", "not_found");
   const approver = ctx.powers.has("approvePurchaseOrder");
-  /* A discrepancy found on a shelf after its PO was raised still stops the approval — the count, not the paperwork, says what is needed. */
-  const held = (await requirementViews({ ids: p.lines.map((l) => l.requisitionId) })).find((v) => v.stock?.gate.state === "flagged" || v.stock?.gate.state === "exception_requested");
-  if (held) return err(`${held.item} has an unresolved stock discrepancy at ${held.godown}${held.stock?.count ? ` (${countLabel(held.stock.count.countNo)})` : ""}. Resolve it, or have an urgent purchase approved, before approving this PO.`, "rule_violation");
   const line = p.lines.find((l) => !kit.allows(l.rawMaterialId, "approve", approver));
   if (!line) return null;
   return err(`${kit.refusal({ id: line.rawMaterialId, name: line.item }, "approve") ?? "Only the PO approver decides a purchase order"}.`, "not_permitted");
