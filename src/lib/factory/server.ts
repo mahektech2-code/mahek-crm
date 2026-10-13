@@ -67,10 +67,9 @@ export type FactoryCtx = {
   /** Loads lorries and uploads LRs: the dispatch department, or a supervisor over it. */
   dispatch: boolean;
   /**
-   * Decides SFG lots' QC from the phone: somebody placed in the Quality
-   * department, or whoever holds the ERP's `approveSfgQc` power (an ERP
-   * administrator holds it without a row) — the same people who may decide it
-   * on ERP → SFG batches.
+   * Decides SFG lots' QC from the phone: somebody placed in the Mixing &
+   * Blending department, and nobody else — Mahek's rule. The ERP's
+   * `approveSfgQc` power still decides it on ERP → SFG batches.
    */
   qc: boolean;
   /**
@@ -120,7 +119,7 @@ export async function contextFor(user: User): Promise<FactoryCtx | null> {
   const reqDepts = REQ_DEPTS.filter((d) => (head ? !scopes || scopes.includes(d) : owns.includes(d) && areas.includes(d)));
   const drumDepts = (await getConfig())["erp.drums.factoryDepartments"].split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
   return {
-    qc: areas.includes("qc") || (await holdsSfgQcPower(user)),
+    qc: areas.includes("mixing"),
     reqDepts,
     drums: head || areas.some((a) => drumDepts.includes(a)),
     dispatch: (head && (!scopes || scopes.includes("dispatch"))) || areas.includes("dispatch"),
@@ -135,14 +134,6 @@ export async function contextFor(user: User): Promise<FactoryCtx | null> {
     godown,
     lang: staff?.lang ?? "en",
   };
-}
-
-/** The ERP's SFG QC power: granted by name, or held by an ERP administrator. */
-async function holdsSfgQcPower(user: User): Promise<boolean> {
-  const level = await levelInApp(user, "erp");
-  if (level === "admin" || user.role === "admin") return true;
-  const rows = await q<{ x: number }>(sql`select 1 as x from erp_user_powers where user_id = ${user.id} and power = 'approveSfgQc' limit 1`);
-  return rows.length > 0;
 }
 
 /** May this person do (worker) or run (supervisor) a job of this department? */

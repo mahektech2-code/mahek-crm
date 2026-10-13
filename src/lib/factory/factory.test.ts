@@ -803,20 +803,22 @@ describe("stock check, each department its own stock", () => {
 });
 
 describe("quality check of SFG lots, with the Testing list", () => {
-  test("Quality decides a lot test by test; approving needs every test passed, rejecting needs a reason", async () => {
+  test("Mixing & Blending decides a lot test by test; approving needs every test passed, rejecting needs a reason", async () => {
     const { qcKit, saveQcDecision } = await import("./qc");
     const { refValues } = await import("@/lib/erp/refs");
     const tests = await refValues("testingList");
     assert.ok(tests.length >= 2, "the seeded Testing list has tests to ask");
     const pass = Object.fromEntries(tests.map((t) => [t, "Pass"]));
 
-    const { fc: worker } = await as("anil");
-    assert.equal(worker.qc, false, "a mixing worker does not decide QC");
-    assert.equal((await qcKit(worker)).ok, false);
-    assert.equal((await saveQcDecision(worker, { lot: "x", verdict: "Approved", results: pass, note: null })).ok, false);
+    for (const name of ["pooja", "sujit", "vijay"]) {
+      const { fc: other } = await as(name);
+      assert.equal(other.qc, false, name + " is not in Mixing & Blending and does not decide QC");
+      assert.equal((await qcKit(other)).ok, false);
+      assert.equal((await saveQcDecision(other, { lot: "x", verdict: "Approved", results: pass, note: null })).ok, false);
+    }
 
-    const { fc } = await as("pooja");
-    assert.equal(fc.qc, true, "somebody placed in Quality decides QC");
+    const { fc } = await as("anil");
+    assert.equal(fc.qc, true, "somebody placed in Mixing & Blending decides QC");
     const kit = await qcKit(fc);
     assert.ok(kit.ok);
     assert.deepEqual(kit.tests, tests, "the phone is asked the Testing list's active tests");
@@ -832,7 +834,7 @@ describe("quality check of SFG lots, with the Testing list", () => {
     const { data } = await as("sujit");
     assert.equal(data.lots[lot.lot]?.status, "hold", "a rejected lot is held from filling");
 
-    const { fc: qc } = await as("pooja");
+    const { fc: qc } = await as("rakesh");
     const missing = await saveQcDecision(qc, { lot: lot.lot, verdict: "Approved", results: { [tests[0]]: "Pass" }, note: null });
     assert.ok(!missing.ok && missing.test === tests[1], "every test must be answered to approve");
     const failed = await saveQcDecision(qc, { lot: lot.lot, verdict: "Approved", results: { ...pass, [tests[1]]: "Fail" }, note: null });

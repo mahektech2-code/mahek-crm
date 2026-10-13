@@ -22,11 +22,10 @@ import type { QcInput, QcKit, QcLot, QcSave } from "./types";
  * and needs a reason. The list is read again here at the save, so a phone
  * holding an older list cannot approve past a test added since.
  *
- * Who may decide is `FactoryCtx.qc`: the Quality department, or a holder of
- * the ERP's `approveSfgQc` power.
+ * Who may decide is `FactoryCtx.qc`: the Mixing & Blending department.
  * ------------------------------------------------------------------------- */
 
-const NOT_YOURS = { title: "Not yours to decide", text: "Only the quality team decides whether a base liquid may be filled.", fix: "Ask the quality team, or the office to place you in Quality." };
+const NOT_YOURS = { title: "Not yours to decide", text: "Only Mixing & Blending decides whether a base liquid may be filled.", fix: "Ask Mixing & Blending, or the office to place you in it." };
 
 /** How far back a decided lot stays on the list, so a wrong answer can be changed. */
 const DECIDED_DAYS = 7;
