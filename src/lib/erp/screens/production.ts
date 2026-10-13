@@ -52,7 +52,8 @@ import {
 import { type Col, godownField, godownIdByName, godownOptions, has, inTx, pair, refuse, today, type Tx } from "./common";
 import { sfgQcMap, sfgQcOf, setSfgQc } from "../qc";
 import { qcRefusal } from "../engines/trace";
-import { qcTestFields, readQcTests, testResultsLine, type TestResults } from "../engines/sfg-tests";
+import { hasEvidence, evidenceFileIds, qcEvidenceFields, readQcEvidence, testResultsLine, type QcEvidence } from "../engines/sfg-tests";
+import { bindErpFiles } from "../attachments";
 import { refValues } from "../refs";
 import { cancelBatchBoxes, ensureBatchBoxes, looseHeadroom, mintLooseUnits, trimLooseUnits } from "../units";
 import { erpLabelsHref, erpTraceHref } from "../trace-links";
@@ -226,11 +227,14 @@ const sfgBatches: ScreenModule = {
     );
     const [qc, qcTests] = await Promise.all([sfgQcMap(), refValues("testingList")]);
     const qcApprover = ctx.powers.has("approveSfgQc");
-    /* The Testing list's active values are what QC is asked about: Pass or
-       Fail for each, every one Pass to approve (`engines/sfg-tests.ts`). */
-    const testsSub = qcTests.length ? " Record each test from the Testing list — every one must pass to approve." : "";
-    const approveFields = (): FieldSpec[] => [...qcTestFields(qcTests, true), { k: "note", l: "QC note (readings, remarks)", t: "area", mic: true }];
-    const rejectFields = (why: string): FieldSpec[] => [...qcTestFields(qcTests, false), { k: "note", l: why, t: "area", req: true, mic: true }];
+    /* The Testing list's active values are what QC is asked about, with the
+       same evidence a purchase test records — a photograph per test, the
+       smell, the readings, a video — and none of it required
+       (`engines/sfg-tests.ts`). A reject still needs its reason. */
+    const testsSub = qcTests.length ? " Record what was checked for each test from the Testing list." : "";
+    const evidenceFields = () => qcEvidenceFields(qcTests) as FieldSpec[];
+    const approveFields = (): FieldSpec[] => [...evidenceFields(), { k: "note", l: "QC note (readings, remarks)", t: "area", mic: true, untagged: true }];
+    const rejectFields = (why: string): FieldSpec[] => [...evidenceFields(), { k: "note", l: why, t: "area", req: true, mic: true }];
     const all: Col[] = [
       { k: "sfgNo", l: "SFG no", t: "mono" },
       { k: "date", l: "Date", t: "d" },
@@ -332,6 +336,27 @@ const sfgBatches: ScreenModule = {
               : []),
           ],
           actions,
+          ...(verdict && hasEvidence(verdict.evidence)
+            ? {
+                panel: {
+                  kind: "testEvidence",
+                  data: {
+                    title: "QC evidence",
+                    optional: true,
+                    status: verdict.status,
+                    tests: Object.keys(verdict.evidence.photos ?? {})
+                      .concat(verdict.evidence.smell ? ["Smell"] : [], verdict.evidence.density != null ? ["Density"] : [], verdict.evidence.phValue != null ? ["PH"] : [])
+                      .filter((t, i, a) => a.indexOf(t) === i),
+                    smell: verdict.evidence.smell ?? null,
+                    density: verdict.evidence.density ?? null,
+                    phValue: verdict.evidence.phValue ?? null,
+                    photos: verdict.evidence.photos ?? {},
+                    video: verdict.evidence.video ?? null,
+                    registerExists: false,
+                  },
+                },
+              }
+            : {}),
           by: stampLine(x.by, x.l.createdAt),
         };
       }),
@@ -400,30 +425,30 @@ const sfgBatches: ScreenModule = {
   },
   bulk: {
     async qcApprove(ctx, ids, values) {
-      const tests = await qcTestsFrom(values, true);
-      if (!tests.ok) return tests;
-      return decideQcMany(ctx, ids, "Approved", text(values.note), tests.data);
+      const ev = await qcEvidenceFrom(values);
+      if (!ev.ok) return ev;
+      return decideQcMany(ctx, ids, "Approved", text(values.note), ev.data);
     },
     async qcReject(ctx, ids, values) {
-      const tests = await qcTestsFrom(values, false);
-      if (!tests.ok) return tests;
+      const ev = await qcEvidenceFrom(values);
+      if (!ev.ok) return ev;
       const note = text(values.note);
       if (!note) return fieldErr("note", "Say why the lots failed QC");
-      return decideQcMany(ctx, ids, "Rejected", note, tests.data);
+      return decideQcMany(ctx, ids, "Rejected", note, ev.data);
     },
   },
   actions: {
     async qcApprove(ctx, id, values) {
-      const tests = await qcTestsFrom(values, true);
-      if (!tests.ok) return tests;
-      return decideQc(ctx, id, "Approved", text(values.note), tests.data);
+      const ev = await qcEvidenceFrom(values);
+      if (!ev.ok) return ev;
+      return decideQc(ctx, id, "Approved", text(values.note), ev.data);
     },
     async qcReject(ctx, id, values) {
-      const tests = await qcTestsFrom(values, false);
-      if (!tests.ok) return tests;
+      const ev = await qcEvidenceFrom(values);
+      if (!ev.ok) return ev;
       const note = text(values.note);
       if (!note) return fieldErr("note", "Say why the lot failed QC");
-      return decideQc(ctx, id, "Rejected", note, tests.data);
+      return decideQc(ctx, id, "Rejected", note, ev.data);
     },
     async post(ctx, id) {
       const [l] = await db.select().from(erpSfgLines).where(eq(erpSfgLines.id, id));
@@ -449,24 +474,27 @@ const sfgBatches: ScreenModule = {
  * filled exactly where it is — still traceable to the lot that failed.
  */
 /**
- * The Testing list's checks as the prompt answered them, read against the
- * list as it stands NOW — the server's copy of the rule the prompt drew, so a
- * post that skips a test or approves over a Fail is refused here too.
+ * The evidence the prompt sent, read against the Testing list as it stands
+ * NOW. Nothing is required; what was given has to make sense, and a value for
+ * a test not on the list is dropped.
  */
-async function qcTestsFrom(values: Record<string, string>, approving: boolean): Promise<Result<TestResults>> {
-  const read = readQcTests(await refValues("testingList"), values, approving);
+async function qcEvidenceFrom(values: Record<string, string>): Promise<Result<QcEvidence>> {
+  const read = readQcEvidence(await refValues("testingList"), values);
   if (!read.ok) return fieldErr(read.field, read.message);
-  return { ok: true, data: read.results };
+  return { ok: true, data: read.evidence };
 }
 
-async function decideQc(ctx: ErpContext, lineId: string, status: "Approved" | "Rejected", note: string | null, tests: TestResults = {}): Promise<Result<unknown>> {
+async function decideQc(ctx: ErpContext, lineId: string, status: "Approved" | "Rejected", note: string | null, evidence: QcEvidence = { photos: {} }): Promise<Result<unknown>> {
   if (!ctx.powers.has("approveSfgQc")) return err("Only the SFG QC approver decides QC.", "not_permitted");
   const [l] = await db.select({ lot: erpSfgLines.lotCode }).from(erpSfgLines).where(eq(erpSfgLines.id, lineId));
   if (!l) return err("That batch line no longer exists.", "not_found");
   const before = await sfgQcOf(l.lot);
   if (before === status) return err(`SFG lot ${l.lot} is already ${status}.`, "rule_violation");
-  await db.transaction((tx) => setSfgQc(tx, l.lot, status, note, ctx.user.id, tests));
-  await erpAudit(ctx, status === "Approved" ? "erp.sfg.qcApprove" : "erp.sfg.qcReject", "erp_sfg_qc", l.lot, { status: before }, { status, note, tests });
+  await db.transaction(async (tx) => {
+    await setSfgQc(tx, l.lot, status, note, ctx.user.id, {}, evidence);
+    await bindErpFiles(tx as unknown as typeof db, evidenceFileIds(evidence), "erp_sfg_qc", l.lot, ctx.user.id);
+  });
+  await erpAudit(ctx, status === "Approved" ? "erp.sfg.qcApprove" : "erp.sfg.qcReject", "erp_sfg_qc", l.lot, { status: before }, { status, note, evidence });
   return okVoid(status === "Approved" ? `SFG lot ${l.lot} approved · it can be filled now` : `SFG lot ${l.lot} rejected · it cannot be filled`);
 }
 
@@ -475,7 +503,7 @@ async function decideQc(ctx: ErpContext, lineId: string, status: "Approved" | "R
  * batch of three lines is one lot, decided once — and a lot already at the
  * verdict is skipped and counted rather than refusing the rest.
  */
-async function decideQcMany(ctx: ErpContext, lineIds: string[], status: "Approved" | "Rejected", note: string | null, tests: TestResults = {}): Promise<Result<unknown>> {
+async function decideQcMany(ctx: ErpContext, lineIds: string[], status: "Approved" | "Rejected", note: string | null, evidence: QcEvidence = { photos: {} }): Promise<Result<unknown>> {
   if (!ctx.powers.has("approveSfgQc")) return err("Only the SFG QC approver decides QC.", "not_permitted");
   const lines = await db.select({ lot: erpSfgLines.lotCode }).from(erpSfgLines).where(inArray(erpSfgLines.id, lineIds));
   const lots = Array.from(new Set(lines.map((l) => l.lot).filter((l): l is string => !!l)));
@@ -485,10 +513,13 @@ async function decideQcMany(ctx: ErpContext, lineIds: string[], status: "Approve
   const already = lots.length - todo.length;
   if (!todo.length) return err(`${lots.length === 1 ? `SFG lot ${lots[0]} is` : `All ${lots.length} lots are`} already ${status}.`, "rule_violation");
   await db.transaction(async (tx) => {
-    for (const lot of todo) await setSfgQc(tx, lot, status, note, ctx.user.id, tests);
+    for (const lot of todo) await setSfgQc(tx, lot, status, note, ctx.user.id, {}, evidence);
+    /* One set of files for every lot decided: filed under the first, and read
+       by any of them, because a file is opened under the screen, not the lot. */
+    await bindErpFiles(tx as unknown as typeof db, evidenceFileIds(evidence), "erp_sfg_qc", todo[0], ctx.user.id);
   });
   for (const lot of todo)
-    await erpAudit(ctx, status === "Approved" ? "erp.sfg.qcApprove" : "erp.sfg.qcReject", "erp_sfg_qc", lot, { status: qc.get(lot)?.status ?? "Pending" }, { status, note, tests, bulk: true });
+    await erpAudit(ctx, status === "Approved" ? "erp.sfg.qcApprove" : "erp.sfg.qcReject", "erp_sfg_qc", lot, { status: qc.get(lot)?.status ?? "Pending" }, { status, note, evidence, bulk: true });
   const verb = status === "Approved" ? "approved" : "rejected";
   const named = todo.length <= 4 ? ` (${todo.join(", ")})` : "";
   const skipped = already ? ` · ${already} already ${verb}` : "";

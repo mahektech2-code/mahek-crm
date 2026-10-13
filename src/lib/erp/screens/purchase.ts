@@ -1,4 +1,5 @@
 import "server-only";
+import { EVIDENCE_FIELDS } from "../engines/sfg-tests";
 import { getConfig } from "@/lib/config/store";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
@@ -753,19 +754,12 @@ const inward: ScreenModule = {
 
 /* ============================================================== testing */
 
-const TEST_FIELDS: { test: string; field: FieldSpec }[] = [
-  { test: "PH", field: { k: "ph", l: "pH photo", t: "photo", req: true } },
-  { test: "PH", field: { k: "phValue", l: "PH Value", t: "num", hint: "Read from the pH photo when AI is on — confirm it." } },
-  { test: "Smell", field: { k: "smell", l: "Smell", t: "select", req: true, opts: ["Good", "Moderate", "Bad"] } },
-  { test: "Color", field: { k: "color", l: "Colour photo", t: "photo", req: true } },
-  { test: "Oil Paint", field: { k: "oil", l: "Oil-paint photo", t: "photo", req: true } },
-  { test: "Fast Paints", field: { k: "fast", l: "Fast-paint photo", t: "photo", req: true } },
-  { test: "Nc Paints", field: { k: "nc", l: "NC-paint photo", t: "photo", req: true } },
-  { test: "Primer", field: { k: "primer", l: "Primer photo", t: "photo", req: true } },
-  { test: "Density", field: { k: "density", l: "Density value", t: "num", req: true, min: 0.5, max: 1.5 } },
-  { test: "Density", field: { k: "densityPhoto", l: "Density photo", t: "photo", req: true } },
-  { test: "Tharmakol Pass", field: { k: "thermocol", l: "Thermocol-pass photo", t: "photo", req: true } },
-];
+/* One list of evidence for both kinds of test (`engines/sfg-tests.ts`); a
+   purchase test needs every piece its item's tests name, bar the pH reading. */
+const TEST_FIELDS: { test: string; field: FieldSpec }[] = EVIDENCE_FIELDS.map(({ test, ...field }) => ({
+  test,
+  field: { ...field, req: field.k !== "phValue" },
+}));
 
 const PHOTO_COL: Record<string, keyof typeof erpTests.$inferInsert> = {
   ph: "phPhotoId",

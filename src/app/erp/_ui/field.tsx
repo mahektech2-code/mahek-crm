@@ -41,7 +41,7 @@ export function Field({
   onUseSuggestion?: (v: string) => void;
 }) {
   const opts = options ?? f.opts ?? [];
-  const tag = f.conf ? (f.conf === "high" ? "AI · read" : f.conf === "check" ? "AI · check this" : "AI · not found") : f.t === "derived" ? "Calculated" : f.t === "suggest" ? "AI suggestion" : !f.req ? "Optional" : "";
+  const tag = f.conf ? (f.conf === "high" ? "AI · read" : f.conf === "check" ? "AI · check this" : "AI · not found") : f.t === "derived" ? "Calculated" : f.t === "suggest" ? "AI suggestion" : !f.req && !f.untagged ? "Optional" : "";
   const tagTone =
     f.conf === "check" || f.conf === "not found"
       ? "bg-warn-soft text-warn-ink"
