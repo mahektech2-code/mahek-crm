@@ -111,6 +111,12 @@ export type State = {
   board: LoadBoard | null;
   /** Upload LR: the photo, what was read off it, and what the server answered. */
   lr: LrEntry | null;
+  /** A newer APK the release manifest names, once checked; null is up to date or not known. */
+  update: { version: string; url: string } | null;
+  /** The Update now / Update later popup: the download's progress (0–1) once Update now is pressed, and whether it failed. */
+  updPop: { progress: number | null; failed: boolean } | null;
+  /** The refresh button is working. */
+  refreshing: boolean;
 };
 
 export type LrEntry = {

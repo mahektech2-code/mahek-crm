@@ -16,7 +16,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "softwareKeyboardLayoutMode": "resize",
-      "permissions": ["android.permission.CAMERA"],
+      "permissions": ["android.permission.CAMERA", "android.permission.REQUEST_INSTALL_PACKAGES"],
       "blockedPermissions": ["android.permission.RECORD_AUDIO"]
     },
     "ios": { "bundleIdentifier": "in.mahek.factory", "supportsTablet": false },

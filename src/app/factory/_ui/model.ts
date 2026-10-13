@@ -86,6 +86,8 @@ export type State = {
   queue: QItem[];
   sending: boolean;
   busy: boolean;
+  /** The refresh button is working. */
+  refreshing: boolean;
   clock: string;
   cam: "wait" | "live" | "none" | "denied";
   /** Empty drum entry: the lot scanned, the weight typed, and what the server answered. */

@@ -109,6 +109,7 @@ export class FactoryApp extends Component<Props, State> {
       queue: [],
       sending: false,
       busy: false,
+      refreshing: false,
       clock: "",
       cam: "wait",
       drum: null,
@@ -228,6 +229,27 @@ export class FactoryApp extends Component<Props, State> {
       else if (r.error === "signedOut") this.setState({ me: null, db: null, signStep: "id" });
     } catch {
       this.setNet("offline");
+    }
+  }
+
+  /**
+   * The refresh button: send what is waiting and fetch the latest from the
+   * office. The phone app also asks whether a newer APK is out; a page picks
+   * up a new build by itself (`watchBuild`), so there is nothing to ask here.
+   */
+  private async refreshAll() {
+    const st = this.state;
+    if (st.refreshing) return;
+    if (st.net === "offline") return this.toast("No network. Your work is saved and will send by itself.", "warn");
+    this.setState({ refreshing: true });
+    try {
+      await this.flushQueue();
+      const r = this.state.me ? await call("bootstrap").catch(() => null) : null;
+      if (r && r.ok) this.setState({ db: r.data });
+      else if (r && r.error === "signedOut") return this.setState({ me: null, db: null, signStep: "id" });
+      this.toast(r && r.ok ? "Up to date. The latest work from the office is on your phone." : "Could not refresh now. Try again in a minute.", r && r.ok ? "ok" : "warn");
+    } finally {
+      this.setState({ refreshing: false });
     }
   }
 
@@ -1801,6 +1823,9 @@ export class FactoryApp extends Component<Props, State> {
           <span style={{ display: "block", fontSize: "17px", fontWeight: 700, lineHeight: "22px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{me.n + (multi || (head && !me.scope) ? "" : !areaWord ? "" : " · " + areaWord)}</span>
           {multi ? this.deptPill() : <span style={{ display: "block", fontSize: "13px", color: "#6B7385", lineHeight: "17px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{db.loc + " · " + db.shift}</span>}
         </span>
+        <button onClick={() => void this.refreshAll()} aria-label="Refresh" style={{ width: "36px", height: "36px", borderRadius: "18px", border: "none", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flex: "none" }}>
+          <span style={{ display: "flex", animation: st.refreshing ? "fx-spin 1.2s linear infinite" : "none" }}>{ic("sync", 20, "#5223E0")}</span>
+        </button>
         <button onClick={() => this.setState({ route: "sync" })} style={{ height: "36px", padding: "0 12px", borderRadius: "18px", border: "none", background: c[0], color: c[1], fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", whiteSpace: "nowrap", flex: "none" }}>
           <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: c[2], animation: q ? "fx-pulse 1.4s ease-in-out infinite" : "none" }} />
           {q ? q + " · " + T.pending : (T as Record<string, string>)[n]}
