@@ -35,6 +35,7 @@ function photoFields(): FieldSpec[] {
     k: `photo${i + 1}`,
     l: `Group photo ${i + 1}`,
     t: "photo" as const,
+    upload: "material-photo" as const,
     wide: true,
     sec: i === 0 ? "Group photos" : undefined,
     ...(i === 0 ? { hint: `Up to ${MAX_GROUP_PHOTOS}: the cans of this group side by side is the most useful one.` } : {}),

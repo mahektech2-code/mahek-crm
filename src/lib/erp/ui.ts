@@ -98,6 +98,12 @@ export type FieldSpec = {
   wide?: boolean;
   /** How sure an AI reading is of this value: high, check, or not found. */
   conf?: "high" | "check" | "not found";
+  /**
+   * A photo field's upload allowance, named rather than numbered: the upload
+   * route maps it to a ceiling, so a browser cannot ask for a bigger one.
+   * Absent is `attachments.maxSizeMb`.
+   */
+  upload?: "material-photo";
 };
 
 export type FormSpec = {

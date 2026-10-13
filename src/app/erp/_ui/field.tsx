@@ -202,7 +202,7 @@ function Control({
   if (f.t === "time")
     return <input type="time" value={value} onChange={(e) => onChange(e.target.value)} className={control(error)} />;
   if (f.t === "photo" || f.t === "video") {
-    return <PhotoPicker kind={f.t} value={value} error={error} onChange={onChange} />;
+    return <PhotoPicker kind={f.t} upload={f.upload} value={value} error={error} onChange={onChange} />;
   }
   return (
     <input
@@ -367,11 +367,13 @@ function ScanField({ value, opts, error, onChange }: { value: string; opts: stri
  */
 function PhotoPicker({
   kind,
+  upload,
   value,
   error,
   onChange,
 }: {
   kind: "photo" | "video";
+  upload?: FieldSpec["upload"];
   value: string;
   error: boolean;
   onChange: (v: string) => void;
@@ -388,6 +390,7 @@ function PhotoPicker({
       const body = new FormData();
       body.set("file", file);
       body.set("kind", kind);
+      if (upload) body.set("upload", upload);
       const res = await fetch(uploadUrl, { method: "POST", body });
       const j = (await res.json()) as { id?: string; error?: string };
       if (!res.ok || !j.id) throw new Error(j.error || "Upload failed");

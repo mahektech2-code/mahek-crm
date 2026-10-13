@@ -433,7 +433,7 @@ async function canPhotosForm(id: string): Promise<FormSpec | null> {
   const header: FieldSpec[] = [];
   for (let i = 0; i < MAX_CAN_PHOTOS; i++) {
     init[`photo${i + 1}`] = held[i] ?? "";
-    header.push({ k: `photo${i + 1}`, l: `Photo ${i + 1}`, t: "photo", wide: true, ...(i === 0 ? { hint: "Front, back, the lid — whatever tells this can apart." } : {}) });
+    header.push({ k: `photo${i + 1}`, l: `Photo ${i + 1}`, t: "photo", upload: "material-photo", wide: true, ...(i === 0 ? { hint: "Front, back, the lid — whatever tells this can apart." } : {}) });
   }
   return {
     screen: "rawMaterials",
