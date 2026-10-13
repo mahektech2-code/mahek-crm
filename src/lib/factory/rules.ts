@@ -278,9 +278,46 @@ export function firstBlockedStep(db: FactoryData, t: Task, d: Draft): { step: st
 /** Litres a batch was expected to make, and how far the actual is from it, in percent. */
 export function mixDeviation(db: FactoryData, t: Task, d: Draft): { exp: number; dev: number; over: boolean } {
   const sf = db.sfg[t.item!];
-  const exp = (d.batches ?? 1) * sf.batch;
+  const exp = (d.batches ?? 1) * (d.ownRecipe ? batchLitres(recipeLines(db, t, d)) : sf.batch);
   const dev = d.out ? ((d.out - exp) / exp) * 100 : 0;
   return { exp, dev, over: !!d.out && Math.abs(dev) > sf.tol };
+}
+
+/* ------------------------------------------------- mixing, the worker's recipe */
+
+export type RecipeLine = { item: string; per: number | null };
+
+/** What one batch of this job takes: the batch sheet, or the worker's own recipe once he has replaced it — one line per material, in order. */
+export function recipeLines(db: FactoryData, t: Task, d: Draft | null | undefined): { item: string; per: number }[] {
+  if (d?.ownRecipe) {
+    const seen = new Set<string>();
+    return (d.rm ?? []).filter((r) => (seen.has(r.item) ? false : (seen.add(r.item), true))).map((r) => ({ item: r.item, per: r.per }));
+  }
+  return (db.sfg[t.item!]?.recipe ?? []).map((r) => ({ item: r[0], per: r[1] }));
+}
+
+/** The litres one batch makes on a recipe: what goes in. */
+export function batchLitres(lines: { per: number | null }[]): number {
+  return r3(lines.reduce((a, l) => a + (l.per ?? 0), 0));
+}
+
+/** Why a recipe the worker wrote cannot be used yet, or null. The same sentence on the phone and on the server. */
+export function recipeProblem(lines: RecipeLine[], rm: Record<string, { n: string }>): string | null {
+  if (!lines.length) return "Add at least one material.";
+  const seen = new Set<string>();
+  for (const l of lines) {
+    const m = rm[l.item];
+    if (!m) return "A material in this recipe is not in the ERP any more. Take it off.";
+    if (seen.has(l.item)) return m.n + " is in the recipe twice.";
+    seen.add(l.item);
+    if (!(l.per != null && l.per > 0)) return m.n + " needs litres before you can use this recipe.";
+  }
+  return null;
+}
+
+/** The drum lines a recipe starts with: one per material, nothing scanned yet. */
+export function recipeRm(lines: { item: string; per: number }[]): RmLine[] {
+  return lines.map((l) => ({ item: l.item, per: l.per, lot: null, qty: null }));
 }
 
 /* ---------------------------------------------------- mixing, drum by drum */
@@ -385,6 +422,7 @@ export function normalizeDraft(raw: unknown, v = 1): Draft {
       const o = (x ?? {}) as Record<string, unknown>;
       return { item: String(o.item ?? ""), per: num(o.per) ?? 0, lot: str(o.lot), qty: num(o.qty), manual: !!o.manual, ...(o.extra ? { extra: true } : {}) };
     });
+  if (r.ownRecipe) d.ownRecipe = true;
   if (r.out !== undefined) d.out = num(r.out);
   if (r.sku !== undefined) d.sku = String(r.sku);
   if (r.sfg !== undefined) { d.sfg = str(r.sfg); d.sfgManual = !!r.sfgManual; }

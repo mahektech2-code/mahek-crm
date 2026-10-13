@@ -1,5 +1,5 @@
 import { Component, type CSSProperties, type ReactNode } from "react";
-import { AppState, BackHandler, Image, Pressable, Text, View, type NativeEventSubscription } from "react-native";
+import { AppState, BackHandler, Image, Linking, Pressable, Text, View, type NativeEventSubscription } from "react-native";
 import * as Speech from "expo-speech";
 import * as ImagePicker from "expo-image-picker";
 import { StatusBar } from "expo-status-bar";
@@ -15,6 +15,10 @@ import {
   addRmDrum,
   removeRmDrum,
   rmPlan,
+  batchLitres,
+  recipeLines,
+  recipeProblem,
+  recipeRm,
   boxCode,
   jobStatus,
   lotName,
@@ -42,7 +46,9 @@ import { Btn, Div, Input, Root, Span } from "./web";
 import { art, ic, qr } from "./art";
 import { avStyle, btn, card, initials, mono, msg, MsgBox, Pill, artWell, type Msg } from "./kit";
 import { CameraScanner, shrinkPhoto } from "./camera";
-import { dropPhoto, forget, keepPhoto, keptPhoto, load, mintKey, readNet, save, watchNet, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet, mintDrumKey, type BoxOk, type LrEntry, type StockEntry, type QcEntry, mintCheckKey, type ReqEntry, mintReqKey } from "./model";
+import { promptDue, snoozeUntil } from "./update";
+import { checkForUpdate, downloadAndInstall, openInBrowser } from "./updater";
+import { dropPhoto, forget, keepPhoto, kvGet, kvSet, keptPhoto, load, mintKey, readNet, save, watchNet, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet, mintDrumKey, type BoxOk, type LrEntry, type StockEntry, type QcEntry, mintCheckKey, type RecipeSheet, type ReqEntry, mintReqKey } from "./model";
 
 /* ---------------------------------------------------------------------------
  * THE FACTORY APP — "Mahek Factory App" from the design, screen for screen.
@@ -69,6 +75,8 @@ type Props = Record<string, never>;
 /** The calendar day n days ago, in the factory's zone — an LR's date. */
 const calendarDay = (n: number) => calendarDate(new Date(Date.now() - n * 86_400_000));
 const DEV = typeof __DEV__ !== "undefined" && __DEV__;
+/** When Update later lets the update popup come back — one per phone, not per person. */
+const UPDATE_SNOOZE = "factory.updateSnoozedUntil";
 
 const PC: Record<Proc, string> = { mixing: "flask", filling: "fill", packing: "box", dispatch: "truck" };
 const ONE: Record<string, string> = { boxes: "box", drums: "drum", cans: "can" };
@@ -148,6 +156,9 @@ export class FactoryApp extends Component<Props, State> {
       req: null,
       board: null,
       lr: null,
+      update: null,
+      updPop: null,
+      refreshing: false,
       ...(signed ? this.restore(signed.key) : null),
     };
   }
@@ -164,6 +175,7 @@ export class FactoryApp extends Component<Props, State> {
         this.setState({ clock: hhmm(new Date()) });
         void this.flushQueue();
         void this.poll();
+        void this.checkUpdate();
       }
     }));
     this.subs.push(BackHandler.addEventListener("hardwareBackPress", this.onBack) as NativeEventSubscription);
@@ -179,6 +191,11 @@ export class FactoryApp extends Component<Props, State> {
     this.ivs.push(setInterval(() => void this.poll(), 45_000));
     /* Signed in from yesterday: refresh the floor now, and send anything waiting. */
     if (this.state.me) void this.poll().then(() => this.flushQueue());
+    /* A newer APK is asked about on opening, on every return to the app and
+       every half hour; Update later's three hours are checked every minute. */
+    void this.checkUpdate();
+    this.ivs.push(setInterval(() => void this.checkUpdate(), 30 * 60_000));
+    this.ivs.push(setInterval(() => this.maybePrompt(), 60_000));
   }
 
   componentWillUnmount() {
@@ -277,6 +294,100 @@ export class FactoryApp extends Component<Props, State> {
     } catch {
       this.setNet("offline");
     }
+  }
+
+  /* ================================================================ refresh and update */
+
+  /**
+   * Ask the release manifest. Where it names a newer build the popup is
+   * raised — at once when somebody pressed refresh, otherwise only once Update
+   * later's three hours are up. Answers whether a newer build exists.
+   */
+  private async checkUpdate(pressed = false): Promise<boolean> {
+    const v = await checkForUpdate();
+    if (v.kind !== "available") {
+      this.setState({ update: null });
+      return false;
+    }
+    this.setState({ update: { version: v.version, url: v.url } }, () => this.maybePrompt(pressed));
+    return true;
+  }
+
+  /** Raise the popup if a newer build is known and it is due. Never over a job in hand unless somebody pressed refresh. */
+  private maybePrompt(pressed = false) {
+    const st = this.state;
+    if (!st.update || st.updPop) return;
+    const snoozed = Number(kvGet(UPDATE_SNOOZE));
+    if (!promptDue(Date.now(), Number.isFinite(snoozed) && snoozed > 0 ? snoozed : null, pressed)) return;
+    if (!pressed && (st.flow || st.scan || st.result)) return;
+    this.setState({ updPop: { progress: null, failed: false } });
+  }
+
+  private updateLater() {
+    kvSet(UPDATE_SNOOZE, String(snoozeUntil(Date.now())));
+    this.setState({ updPop: null });
+    this.toast("We will remind you in 3 hours.");
+  }
+
+  /** Download the new app here, with progress, then Android's installer opens over the app. */
+  private async updateNow() {
+    const u = this.state.update;
+    if (!u) return;
+    this.setState({ updPop: { progress: 0, failed: false } });
+    const r = await downloadAndInstall(u.url, (f) => this.setState({ updPop: { progress: f, failed: false } }));
+    this.setState({ updPop: r === "installer" ? null : { progress: null, failed: true } });
+  }
+
+  /**
+   * The refresh button: send what is waiting, fetch the latest from the
+   * office, and ask whether a newer app is out — all at once.
+   */
+  private async refreshAll() {
+    const st = this.state;
+    if (st.refreshing) return;
+    if (st.net === "offline") return this.toast("No network. Your work is saved and will send by itself.", "warn");
+    this.setState({ refreshing: true });
+    try {
+      await this.flushQueue();
+      const [r, newer] = await Promise.all([
+        this.state.me ? call("bootstrap").catch(() => null) : Promise.resolve(null),
+        this.checkUpdate(true),
+      ]);
+      if (r && r.ok) this.setState({ db: r.data });
+      else if (r && r.error === "signedOut") return this.setState({ me: null, db: null, signStep: "id" });
+      if (!newer) this.toast(r && r.ok ? "Up to date. The latest work from the office is on your phone." : "Could not refresh now. Try again in a minute.", r && r.ok ? "ok" : "warn");
+    } finally {
+      this.setState({ refreshing: false });
+    }
+  }
+
+  renderUpdate(): ReactNode {
+    const st = this.state, u = st.update, p = st.updPop;
+    if (!u || !p) return null;
+    const busy = p.progress != null;
+    return (
+      <Div style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 80, background: "rgba(14,16,22,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}>
+        <Div style={{ width: "100%", maxWidth: "420px", background: "#FFFFFF", borderRadius: "22px", padding: "22px 20px 18px 20px", display: "flex", flexDirection: "column", gap: "12px" }}>
+          <Span style={{ width: "56px", height: "56px", borderRadius: "50%", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center" }}>{ic("sync", 28, "#5223E0")}</Span>
+          <Span style={{ fontSize: "21px", lineHeight: "27px", fontWeight: 700, color: "#1A1E28" }}>{"A new version of the app is ready"}</Span>
+          <Span style={{ fontSize: "15px", lineHeight: "22px", color: "#3D4453" }}>
+            {p.failed
+              ? "The download did not finish. Check the network and try again, or download it in the browser."
+              : busy
+                ? "Downloading " + u.version + "… Keep the app open. Android will ask you to install it."
+                : "Version " + u.version + " is out. Your saved work stays on the phone."}
+          </Span>
+          {busy && (
+            <Div style={{ height: "10px", borderRadius: "5px", background: "#EDEFF3", overflow: "hidden" }}>
+              <Div style={{ height: "10px", width: Math.round((p.progress ?? 0) * 100) + "%", background: "#6835FB", borderRadius: "5px" }} />
+            </Div>
+          )}
+          {!busy && <Btn onClick={() => void this.updateNow()} style={btn("p", 56)}>{ic("sync", 22, "#FFFFFF")}{p.failed ? "Try again" : "Update now"}</Btn>}
+          {!busy && p.failed && <Btn onClick={() => void openInBrowser(u.url).then((ok) => (ok ? this.setState({ updPop: null }) : this.toast("Could not open the browser", "warn")))} style={btn("s", 52)}>{"Download in the browser"}</Btn>}
+          {!busy && <Btn onClick={() => this.updateLater()} style={{ ...btn("s", 52), border: "none", color: "#5223E0" }}>{"Update later"}</Btn>}
+        </Div>
+      </Div>
+    );
   }
 
   /* ================================================================ helpers */
@@ -2769,6 +2880,7 @@ export class FactoryApp extends Component<Props, State> {
           {shell && !this.reqFullScreen() && this.renderNav(head)}
 
           {st.sheet && me && this.renderSheet()}
+          {this.renderUpdate()}
           {st.toast && (
             <Div role="status" style={{ position: "absolute", left: "16px", right: "16px", bottom: st.flow ? "132px" : "92px", zIndex: 60, display: "flex", alignItems: "center", gap: "10px", background: st.toastTone === "warn" ? "#8A5C05" : "#3D14A8", color: "#FFFFFF", borderRadius: "14px", padding: "14px 16px", fontSize: "15px", lineHeight: "20px", boxShadow: "0 8px 24px rgba(26,30,40,0.25)", animation: "fx-up 150ms cubic-bezier(0.2,0,0.2,1)" }}>
               <Span style={{ width: "24px", height: "24px", borderRadius: "50%", background: st.toastTone === "warn" ? "rgba(255,231,168,0.25)" : "rgba(198,255,52,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{st.toastTone === "warn" ? ic("alert", 15, "#FFE7A8") : ic("check", 15, "#C6FF34")}</Span>
@@ -2910,6 +3022,9 @@ export class FactoryApp extends Component<Props, State> {
           <Span style={{ display: "block", fontSize: "17px", fontWeight: 700, lineHeight: "22px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{me.n + (multi || (head && !me.scope) ? "" : !areaWord ? "" : " · " + areaWord)}</Span>
           {multi ? this.deptPill() : <Span style={{ display: "block", fontSize: "13px", color: "#6B7385", lineHeight: "17px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{db.loc + " · " + db.shift}</Span>}
         </Span>
+        <Btn onClick={() => void this.refreshAll()} aria-label="Refresh" style={{ width: "36px", height: "36px", borderRadius: "18px", border: "none", background: "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flex: "none" }}>
+          <Span style={{ display: "flex", animation: st.refreshing ? "fx-spin 1.2s linear infinite" : "none" }}>{ic("sync", 20, "#5223E0")}</Span>
+        </Btn>
         <Btn onClick={() => this.setState({ route: "sync" })} style={{ height: "36px", padding: "0 12px", borderRadius: "18px", border: "none", background: c[0], color: c[1], fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", whiteSpace: "nowrap", flex: "none" }}>
           <Span style={{ width: "8px", height: "8px", borderRadius: "50%", background: c[2], animation: q ? "fx-pulse 1.4s ease-in-out infinite" : "none" }} />
           {q ? q + " · " + T.pending : (T as Record<string, string>)[n]}
@@ -3258,7 +3373,7 @@ export class FactoryApp extends Component<Props, State> {
           </Div>
         </Div>
         <Div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "14px 16px 20px 16px", display: "flex", flexDirection: "column", gap: "12px" }}>
-          {key === "identify" && this.stepIdentify(t)}
+          {key === "identify" && this.stepIdentify(t, d)}
           {key === "team" && this.stepTeam(t, d)}
           {key === "review" && this.stepReview(f)}
           {key !== "identify" && key !== "team" && key !== "review" && this.stepForm(key, t, d)}
@@ -3279,15 +3394,19 @@ export class FactoryApp extends Component<Props, State> {
     );
   }
 
-  stepIdentify(t: Task): ReactNode {
+  stepIdentify(t: Task, d?: Draft): ReactNode {
     const T = this.T(), db = this.db();
     let chips: string[] = [], rows: { l: string; v: string; c: string }[] = [], rowsTitle = "";
+    let own = false, mixLines: { item: string; per: number }[] = [];
+    const recipeBtn: CSSProperties = { flex: 1, height: "46px", borderRadius: "12px", border: "1.5px solid #D9CCFF", background: "#FFFFFF", color: "#3D14A8", fontSize: "15px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "6px", cursor: "pointer" };
     if (t.proc === "mixing") {
       const sf = db.sfg[t.item!];
-      const nb = t.batches ?? 1;
-      chips = [nb + " × " + nf(sf.batch) + " L", "Due " + t.due];
-      rowsTitle = "Batch sheet · for " + nb + " batch" + (nb > 1 ? "es" : "");
-      rows = sf.recipe.map((r) => ({ l: db.rm[r[0]]?.n ?? r[0], v: nf(r[1] * nb) + " L", c: db.rm[r[0]]?.col ?? "#3D4453" }));
+      const nb = d?.batches ?? t.batches ?? 1;
+      own = !!d?.ownRecipe;
+      mixLines = recipeLines(db, t, d);
+      chips = [nb + " × " + nf(own ? batchLitres(mixLines) : sf.batch) + " L", "Due " + t.due];
+      rowsTitle = (own ? "Your recipe" : "Batch sheet") + " · for " + nb + " batch" + (nb > 1 ? "es" : "");
+      rows = mixLines.map((r) => ({ l: db.rm[r.item]?.n ?? r.item, v: nf(r.per * nb) + " L", c: db.rm[r.item]?.col ?? "#3D4453" }));
     }
     if (t.proc === "filling") {
       const k = db.sku[t.item!];
@@ -3309,11 +3428,15 @@ export class FactoryApp extends Component<Props, State> {
           <Div style={{ ...mono, fontSize: "14px", color: "#6B7385", marginTop: "4px" }}>{t.id + " · " + (db.sfg[t.item!]?.short ?? db.sku[t.item!]?.tag ?? (db.box[t.item!] ? db.box[t.item!].cpb + "×" + db.sku[db.box[t.item!].sku]?.tag : ""))}</Div>
           <Div style={{ display: "flex", gap: "8px", marginTop: "14px", flexWrap: "wrap", justifyContent: "center" }}>
             {chips.map((c) => <Span key={c} style={{ background: "#F1ECFF", color: "#3D14A8", borderRadius: "16px", padding: "6px 14px", fontSize: "15px", fontWeight: 700 }}>{c}</Span>)}
+            {own && <Span style={{ background: "#FDF6E7", color: "#8A5C05", borderRadius: "16px", padding: "6px 14px", fontSize: "15px", fontWeight: 700 }}>Own recipe</Span>}
           </Div>
         </Div>
         {rows.length > 0 && (
           <Div style={{ ...card, padding: "4px 16px" }}>
-            <Div style={{ fontSize: "13px", fontWeight: 600, color: "#6B7385", padding: "10px 0 4px 0" }}>{rowsTitle}</Div>
+            <Div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", padding: "10px 0 4px 0" }}>
+              <Span style={{ fontSize: "13px", fontWeight: 600, color: "#6B7385" }}>{rowsTitle}</Span>
+              {own && <Span style={{ fontSize: "12px", fontWeight: 700, color: "#8A5C05", background: "#FDF6E7", borderRadius: "8px", padding: "2px 8px" }}>changed</Span>}
+            </Div>
             {rows.map((r) => (
               <Div key={r.l} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 0", borderTop: "1px solid #F3F4F7" }}>
                 <Span style={{ width: "12px", height: "12px", borderRadius: "3px", flex: "none", background: r.c }} />
@@ -3321,6 +3444,12 @@ export class FactoryApp extends Component<Props, State> {
                 <Span style={{ fontSize: "17px", fontWeight: 700 }}>{r.v}</Span>
               </Div>
             ))}
+            {t.proc === "mixing" && d && (
+              <Div style={{ display: "flex", gap: "8px", padding: "4px 0 14px 0" }}>
+                <Btn onClick={() => this.openRecipe(mixLines)} style={recipeBtn}>{ic("pen", 18, "#3D14A8")}{own ? "Change" : "Use my own recipe"}</Btn>
+                {own && <Btn onClick={() => this.useBatchSheet(t)} style={recipeBtn}>{ic("sync", 18, "#3D14A8")}Batch sheet</Btn>}
+              </Div>
+            )}
           </Div>
         )}
         <Div style={{ fontSize: "19px", fontWeight: 700, textAlign: "center", marginTop: "4px" }}>{T.isRight}</Div>
@@ -3418,7 +3547,7 @@ export class FactoryApp extends Component<Props, State> {
         const over = p.last && p.poured > p.need ? p.poured - p.need : 0;
         lots.push({
           art: art("rm", db.rm[r.item]?.col, db.rm[r.item]?.code, 52), name: nm + (r.extra ? " · next drum" : ""),
-          need: r.extra ? "Still needed: " + nf(p.rest) + " L of " + nf(p.need) + " L" : "Sheet: " + nf(p.need) + " L",
+          need: r.extra ? "Still needed: " + nf(p.rest) + " L of " + nf(p.need) + " L" : (d.ownRecipe ? "Your recipe: " : "Sheet: ") + nf(p.need) + " L",
           lot: r.lot, manual: r.manual,
           scan: () => this.openScan("rm", { item: r.item, idx: i }), qtyL: T.used, qtyV: r.qty ? nf(r.qty) + " L" : "Tap to enter", qtyDone: !!r.qty, done: !!(x && r.qty && !err), err,
           qtyOpen: () => this.rmKp(i),
@@ -4240,7 +4369,7 @@ export class FactoryApp extends Component<Props, State> {
         </Div>
       );
       acts = [
-        { l: T.back, run: close, style: { ...btn("s", 58), flex: 1 } },
+        { l: T.back, run: sh.back ?? close, style: { ...btn("s", 58), flex: 1 } },
         { l: T.ok, run: () => { if (err) return; if (n == null || (n <= 0 && !sh.allowZero)) return this.toast("Enter a number more than 0"); this.setState({ sheet: null }); sh.set(n); }, style: { ...btn(err || n == null ? "off" : "p", 58), flex: 2 } },
       ];
     }
@@ -4358,6 +4487,7 @@ export class FactoryApp extends Component<Props, State> {
     if (sh.type === "job") body = this.jobSheet(sh.id, (t, s, b, a) => { title = t; sub = s; acts = a; return b; });
     if (sh.type === "assign") body = this.assignSheet((t, s, b, a) => { title = t; sub = s; acts = a; return b; });
     if (sh.type === "start") body = this.startSheet((t, s, b, a) => { title = t; sub = s; acts = a; return b; });
+    if (sh.type === "recipe") body = this.recipeSheet(sh, (t, s, b, a) => { title = t; sub = s; acts = a; return b; });
 
     return (
       <Div onClick={close} style={{ position: "absolute", inset: 0, background: "rgba(14,16,22,0.5)", zIndex: 40, display: "flex", alignItems: "flex-end" }}>
@@ -4444,6 +4574,120 @@ export class FactoryApp extends Component<Props, State> {
    * nothing else. The server checks the recipe again and puts him in charge;
    * the job then opens straight into its batch sheet.
    */
+  /** The recipe editor, opened with what this job's first step shows — the batch sheet, or the worker's own recipe. */
+  openRecipe(lines: { item: string; per: number }[]) {
+    this.setState({ sheet: { type: "recipe", lines: lines.map((l) => ({ item: l.item, per: l.per })), adding: false, q: "" } });
+  }
+
+  /** Back to the ERP's batch sheet: the drums are asked for again from it. */
+  useBatchSheet(t: Task) {
+    this.setD((z) => {
+      z.rm = recipeRm(recipeLines(this.db(), t, null));
+      delete z.ownRecipe;
+    });
+    this.toast("Back to the batch sheet");
+  }
+
+  recipeSheet(sh: RecipeSheet, out: (title: string, sub: string, body: ReactNode, acts: { l: string; run: () => void; style: CSSProperties }[]) => ReactNode): ReactNode {
+    const T = this.T(), db = this.db(), f = this.state.flow;
+    const close = () => this.setState({ sheet: null });
+    if (!f || f.task.proc !== "mixing") return out("Your recipe", "", <MsgBox m={msg("Open the mixing job again.", "warn")} />, [{ l: T.back, run: close, style: { ...btn("s", 56), flex: 1 } }]);
+    const t = f.task, d = f.d;
+    const put = (p: Partial<RecipeSheet>) => this.setState({ sheet: { ...sh, ...p } });
+    const nb = d.batches ?? t.batches ?? 1;
+    if (sh.adding) {
+      const q = (sh.q ?? "").trim().toLowerCase();
+      const used = new Set(sh.lines.map((l) => l.item));
+      const here: Record<string, number> = {};
+      for (const x of Object.values(db.lots)) if (x.type === "rm" && x.loc === db.loc && x.status === "ok" && x.avail > 0) here[x.item] = (here[x.item] ?? 0) + x.avail;
+      const all = Object.keys(db.rm)
+        .filter((k) => !q || db.rm[k].n.toLowerCase().includes(q) || db.rm[k].code.toLowerCase().includes(q))
+        .sort((a, b) => db.rm[a].n.localeCompare(db.rm[b].n));
+      const tile = (k: string) => {
+        const inIt = used.has(k);
+        return (
+          <Btn key={k} onClick={() => (inIt ? undefined : put({ adding: false, q: "", lines: [...sh.lines, { item: k, per: null }] }))} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "10px", borderRadius: "14px", border: "1px solid #DDE1E8", background: "#FFFFFF", cursor: inIt ? "default" : "pointer", textAlign: "left", opacity: inIt ? 0.45 : 1, minWidth: 0 }}>
+            <Span style={{ flex: "none", display: "flex" }}>{art("rm", db.rm[k].col, db.rm[k].code, 40)}</Span>
+            <Span style={{ flex: 1, minWidth: 0 }}>
+              <Span style={{ display: "block", fontSize: "15px", fontWeight: 700, lineHeight: "19px" }}>{db.rm[k].n}</Span>
+              <Span style={{ display: "block", fontSize: "12px", color: "#6B7385", marginTop: "2px" }}>{inIt ? "In your recipe" : here[k] ? nf(here[k]) + " L here" : "None here"}</Span>
+            </Span>
+          </Btn>
+        );
+      };
+      const group = (title: string, keys: string[]) =>
+        keys.length > 0 && (
+          <Div>
+            <Div style={{ fontSize: "13px", fontWeight: 700, color: "#6B7385", marginBottom: "8px" }}>{title}</Div>
+            <Div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: "8px" }}>{keys.map(tile)}</Div>
+          </Div>
+        );
+      const inStock = all.filter((k) => here[k]), rest = all.filter((k) => !here[k]);
+      const body = (
+        <>
+          <Input value={sh.q ?? ""} onChange={(e) => put({ q: String(e.target.value) })} autoFocus placeholder="Search materials" aria-label="Search materials" style={{ height: "52px", borderRadius: "14px", border: "2px solid #6835FB", background: "#F7F4FF", padding: "0 14px", fontSize: "17px", outline: "none", color: "#1A1E28" }} />
+          {group("In stock here", inStock)}
+          {group(inStock.length ? "Not at this godown" : "All materials", rest)}
+          {!all.length && <MsgBox m={msg("No material matches \u201c" + (sh.q ?? "") + "\u201d.", "info")} />}
+        </>
+      );
+      return out("Add a material", "Every raw material in the ERP. One already in your recipe is greyed out.", body, [{ l: T.back, run: () => put({ adding: false, q: "" }), style: { ...btn("s", 56), flex: 1 } }]);
+    }
+    const lines = sh.lines;
+    const sheetLines = recipeLines(db, t, null);
+    const onSheet = new Set(sheetLines.map((l) => l.item));
+    const problem = recipeProblem(lines, db.rm);
+    const total = batchLitres(lines), sheetTotal = batchLitres(sheetLines);
+    const same = lines.length === sheetLines.length && lines.every((l, i) => l.item === sheetLines[i].item && l.per === sheetLines[i].per);
+    const use = () => {
+      if (problem) return this.toast(problem, "warn");
+      const done = lines as { item: string; per: number }[];
+      this.setState({ sheet: null });
+      this.setD((z) => {
+        z.rm = recipeRm(done);
+        if (same) delete z.ownRecipe;
+        else z.ownRecipe = true;
+      });
+      this.toast(same ? "Back to the batch sheet" : "Your recipe is set for this batch");
+    };
+    const body = (
+      <>
+        <Div style={{ display: "flex", flexDirection: "column" }}>
+          {lines.map((l, i) => {
+            const m = db.rm[l.item];
+            const nm = m?.n ?? l.item;
+            return (
+              <Div key={l.item} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "10px 0", borderTop: i ? "1px solid #F3F4F7" : "none" }}>
+                <Span style={{ width: "12px", height: "12px", borderRadius: "3px", flex: "none", background: m?.col ?? "#3D4453" }} />
+                <Span style={{ flex: 1, minWidth: 0, fontSize: "16px", fontWeight: 600 }}>
+                  {nm}
+                  {!onSheet.has(l.item) && <Span style={{ marginLeft: "6px", fontSize: "11px", fontWeight: 700, color: "#8A5C05", background: "#FDF6E7", borderRadius: "8px", padding: "2px 6px" }}>added</Span>}
+                </Span>
+                <Btn
+                  onClick={() => this.openKp({ l: "Litres of " + nm + " for 1 batch", unit: "L", v: l.per, decimals: true, back: () => this.setState({ sheet: sh }), set: (v) => this.setState({ sheet: { ...sh, lines: lines.map((x, j) => (j === i ? { ...x, per: v } : x)) } }) })}
+                  style={{ flex: "none", minWidth: "84px", height: "40px", padding: "0 12px", borderRadius: "10px", border: "1.5px solid " + (l.per ? "#D9CCFF" : "#F6CFCF"), background: l.per ? "#F1ECFF" : "#FFFFFF", color: l.per ? "#1A1E28" : "#B3261E", fontSize: l.per ? "16px" : "14px", fontWeight: l.per ? 800 : 700, textAlign: "right", cursor: "pointer" }}
+                >
+                  {l.per ? nf(l.per) + " L" : "Enter L"}
+                </Btn>
+                <Btn onClick={() => put({ lines: lines.filter((_, j) => j !== i) })} aria-label={"Take " + nm + " off"} style={{ flex: "none", width: "36px", height: "36px", borderRadius: "50%", border: "none", background: "#F7F8FA", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("x", 18, "#6B7385")}</Btn>
+              </Div>
+            );
+          })}
+        </Div>
+        <Btn onClick={() => put({ adding: true, q: "" })} style={{ height: "50px", borderRadius: "14px", border: "1.5px dashed #B9A5FF", background: "#FFFFFF", color: "#3D14A8", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "6px", cursor: "pointer" }}>{ic("plus", 20, "#3D14A8")}Add a material</Btn>
+        <Div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#F7F8FA", borderRadius: "14px", padding: "12px 14px" }}>
+          <Span style={{ fontSize: "15px", color: "#3D4453" }}>One batch makes</Span>
+          <Span style={{ fontSize: "16px", fontWeight: 700 }}>{nf(total) + " L"}<Span style={{ fontWeight: 500, color: "#6B7385" }}>{"  (sheet " + nf(sheetTotal) + " L)"}</Span></Span>
+        </Div>
+        {problem && <MsgBox m={msg(problem, "warn")} />}
+      </>
+    );
+    return out("Your recipe", "Litres for 1 batch" + (nb > 1 ? " — you are making " + nb + " batches" : "") + ". Your supervisor will see that you changed the recipe.", body, [
+      { l: "Cancel", run: close, style: { ...btn("s", 58), flex: 1 } },
+      { l: "Use this recipe", run: use, style: { ...btn(problem ? "off" : "p", 58), flex: 2 } },
+    ]);
+  }
+
   startSheet(out: (title: string, sub: string, body: ReactNode, acts: { l: string; run: () => void; style: CSSProperties }[]) => ReactNode): ReactNode {
     const st = this.state, T = this.T(), db = this.db();
     const a = st.asg && st.asg.proc === "mixing" ? st.asg : this.defaultAsg("mixing");
@@ -4484,7 +4728,7 @@ export class FactoryApp extends Component<Props, State> {
             <Span style={{ color: "#9BA3B2", display: "flex" }}>{ic("chev", 24)}</Span>
           </Btn>
         </Div>
-        {sf && <MsgBox m={msg(nf(a.qty) + " × " + nf(sf.batch) + " L of " + sf.n + ", from its approved batch sheet. The formula cannot be changed here.", "info")} />}
+        {sf && <MsgBox m={msg(nf(a.qty) + " × " + nf(sf.batch) + " L of " + sf.n + ", from its batch sheet. You can change the recipe on the job\u2019s first step.", "info")} />}
       </>
     );
     return out("Start a mixing batch", "You will be in charge of it. Change the team on the job.", body, [

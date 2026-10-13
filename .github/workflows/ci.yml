@@ -109,6 +109,11 @@ jobs:
           npm ci
           npm run typecheck
 
+      - name: Factory app tests
+        run: |
+          cd factory-mobile
+          npm test
+
   engine-tests:
     runs-on: ubuntu-latest
     env:

@@ -19,7 +19,7 @@ import { seedFactoryFloor, type SeededFloor } from "./demo-seed";
 import { bootstrap, contextFor, type FactoryCtx } from "./server";
 import { submitJob } from "./post";
 import { assignTask, decideReview, requestCorrection, startMixingBatch } from "./head";
-import { boxCode, resolveScan, startsOwnBatch, taskCode, typedCode } from "./rules";
+import { boxCode, mixDeviation, recipeLines, recipeProblem, recipeRm, resolveScan, startsOwnBatch, taskCode, typedCode } from "./rules";
 import { boxInfo, loadBoard, lrKit, saveLr, scanBox, unloadBox } from "./dispatch";
 import { setAccess } from "@/lib/actions/access";
 import type { Draft, FactoryData, Submission, Task } from "./types";
@@ -183,6 +183,70 @@ describe("mixing", () => {
     assert.equal(lines[1].lot, other.code);
     const [r] = await q<{ kind: string }>(sql`select kind from factory_reviews where task_id = ${t.id} and kind = 'tolerance'`);
     assert.ok(r, "far below the batch sheet goes to the Production Head");
+  });
+
+  test("a worker's own recipe posts what he poured, and the Production Head is told how it differs from the batch sheet", async () => {
+    const { fc, data } = await as("anil");
+    const nc = Object.keys(data.sfg).find((k) => data.sfg[k].short === "NC")!;
+    const made = await startMixingBatch(fc, { item: nc, qty: 1 });
+    assert.ok(made.ok, JSON.stringify(made));
+    const { data: now } = await as("anil");
+    const t = now.tasks.find((x) => x.id === (made.ok ? made.data.id : ""))!;
+    const sheet = recipeLines(now, t, null);
+    assert.ok(sheet.length >= 2, "the seed's NC batch sheet has two materials or more");
+    const dropped = sheet[sheet.length - 1].item;
+    const added = Object.keys(now.rm).find((k) => !sheet.some((l) => l.item === k) && lotOf(now, "rm", k, 20))!;
+    assert.ok(added, "the seed holds a material the NC sheet does not ask for");
+    const mine = [...sheet.slice(0, -1).map((l, i) => ({ item: l.item, per: i === 0 ? l.per + 10 : l.per })), { item: added, per: 20 }];
+
+    assert.equal(recipeProblem(mine, now.rm), null);
+    assert.match(recipeProblem([], now.rm)!, /at least one/);
+    assert.match(recipeProblem([{ item: added, per: null }], now.rm)!, /needs litres/);
+    assert.match(recipeProblem([{ item: added, per: 5 }, { item: added, per: 5 }], now.rm)!, /twice/);
+    assert.match(recipeProblem([{ item: "gone", per: 5 }], now.rm)!, /not in the ERP/);
+
+    const d: Draft = {
+      team: { ...JSON.parse(JSON.stringify(t.team)), op: t.team.op ?? floor.users.rakesh.id }, down: false, downR: null, downMin: null, batches: 1, ownRecipe: true,
+      rm: recipeRm(mine).map((r) => ({ ...r, lot: lotOf(now, "rm", r.item, r.per).code, qty: r.per })),
+    };
+    assert.deepEqual(recipeLines(now, t, d), mine, "the job's first step reads his recipe back");
+    assert.equal(mixDeviation(now, t, d).exp, mine.reduce((a, l) => a + l.per, 0), "the yield is held to what his recipe makes");
+
+    const r = await submitJob(fc, sub(t, d));
+    assert.equal(r.kind, "done", JSON.stringify(r));
+    const used = (await q<{ rm: string }>(sql`select raw_material_id as rm from erp_sfg_lines where lot_code = ${(r as { label: { code: string } }).label.code}`)).map((x) => x.rm);
+    assert.ok(used.includes(added), "the added material is in the ERP batch");
+    assert.ok(!used.includes(dropped), "the material he took off is not");
+    const [rv] = await q<{ kind: string; body: string }>(sql`select kind, body from factory_reviews where task_id = ${t.id} and title = 'Own recipe used'`);
+    assert.ok(rv, "the Production Head is told");
+    assert.equal(rv.kind, "manual");
+    assert.match(rv.body, new RegExp(now.rm[added].n));
+    assert.match(rv.body, /batch sheet asks for/);
+    const [out] = await q<{ own: boolean }>(sql`select (out->>'ownRecipe')::boolean as own from factory_tasks where id = ${t.id}`);
+    assert.equal(out.own, true);
+  });
+
+  test("an unfinished own recipe is refused at the first step and nothing posts", async () => {
+    const { fc, data } = await as("anil");
+    const nc = Object.keys(data.sfg).find((k) => data.sfg[k].short === "NC")!;
+    const made = await startMixingBatch(fc, { item: nc, qty: 1 });
+    assert.ok(made.ok);
+    const { data: now } = await as("anil");
+    const t = now.tasks.find((x) => x.id === (made.ok ? made.data.id : ""))!;
+    const sheet = recipeLines(now, t, null);
+    const extra = Object.keys(now.rm).find((k) => !sheet.some((l) => l.item === k) && lotOf(now, "rm", k, 1))!;
+    const d: Draft = {
+      team: { ...JSON.parse(JSON.stringify(t.team)), op: t.team.op ?? floor.users.rakesh.id }, down: false, downR: null, downMin: null, batches: 1, ownRecipe: true,
+      rm: [
+        ...recipeRm(sheet).map((x) => ({ ...x, lot: lotOf(now, "rm", x.item, x.per).code, qty: x.per })),
+        { item: extra, per: 0, lot: lotOf(now, "rm", extra, 1).code, qty: 1 },
+      ],
+    };
+    const before = (await q<{ n: number }>(sql`select count(*)::int as n from erp_sfg_lines`))[0].n;
+    const r = await submitJob(fc, sub(t, d));
+    assert.equal(r.kind, "failed", JSON.stringify(r));
+    assert.equal((r as { step: string }).step, "identify", JSON.stringify(r));
+    assert.equal((await q<{ n: number }>(sql`select count(*)::int as n from erp_sfg_lines`))[0].n, before, "nothing posted");
   });
 });
 

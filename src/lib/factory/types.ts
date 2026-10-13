@@ -137,6 +137,8 @@ export type Draft = {
   downMin: number | null;
   batches?: number;
   rm?: RmLine[];
+  /** The worker replaced the batch sheet with his own recipe on the first step; `rm`'s `per` is then his, and the Production Head is told. */
+  ownRecipe?: boolean;
   out?: number | null;
   sku?: string;
   sfg?: string | null;

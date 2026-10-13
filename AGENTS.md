@@ -2161,26 +2161,38 @@ group (its cans stay, not grouped), or a can's own Edit form.
 
 ## Inventory Accuracy Control
 
-**NO PURCHASE ON A BOOK NOBODY HAS COUNTED.** A raw-material requirement raised
-while `erp.stockCheck.onRequirement` is on opens a BLIND count of its item at
-its godown in the same transaction (`openRequirementCounts`), and the flow is
-Requirement → **Stock check** → Purchase method → Vendor / quotation → Approval
-→ PO → Receipt. The setting is COPIED onto the row (`stock_check_required`),
+**NO PURCHASE METHOD BEFORE THE SHELF IS COUNTED.** A raw-material requirement
+raised while `erp.stockCheck.onRequirement` is on opens a BLIND count of its
+item at its godown in the same transaction (`openRequirementCounts`), and the
+flow is Requirement → **Blind count** → Purchase method → Vendor / quotation →
+Approval → PO → Receipt. The setting is COPIED onto the row (`stock_check_required`),
 like the purchase rule, so nothing raised before it was held up. The rules are
 pure in `engines/stock-check.ts`; `stock-check.ts` hands them the ledgers'
 figures; `screens/stock-check.ts` is the Stock accuracy screen (To count · Red
 flags · Adjustments · Missing records · Every count).
 
-**THE GATE IS ON THE STAGE, so every reader sees it.** `requirementViews`
-computes `ReqView.stock` (`gatesFor`) and `stageOf` hands it to
-`requirementStage` — the list, "ready for PO", the dashboard tiles and the
-badge all hold without a change of their own — and every buying handler asks
-`heldByStock` again, because a server action is a URL. A requirement reads the
-counts raised for it, any later count of its shelf, and any count of its shelf
-still UNRESOLVED: an open discrepancy blocks every purchase for that shelf, and
-`approvalRefusal` refuses a PO whose shelf has one even if the PO came first.
-Only an urgent exception approved by `stockControl` (not its requester) lets a
-held requirement through; the count still has to be finished.
+**THE COUNT HOLDS ONLY UNTIL IT IS ENTERED, AND THAT IS A REVERSAL (Oct
+2026).** It used to hold the purchase until the count MATCHED or its difference
+was resolved, PO approval was refused over an open discrepancy, and an "urgent
+purchase" approval and a "confirm quantity" step were the ways round. Work
+stopped behind stock paperwork, so Mahek's rule now is: count first, then the
+purchase carries on whatever the count found. `stockGate` blocks in one state,
+`to_count` (no count entered — none, open or cancelled), which `stageOf` hands
+to `requirementStage` as the **Blind count** stage; every buying handler asks
+`heldByStock` again, because a server action is a URL. `flagged` and
+`over_justified` block nothing and carry a FLAG the requirements list draws
+(`stockFlag`, `stockOverJustified`). A requirement reads the counts raised for
+it, any later count of its shelf, and any count of its shelf still UNRESOLVED,
+so an open discrepancy flags every requirement for that shelf. PO approval does
+not read the stock check. The `stock_exception_*` and `qty_confirm_*` columns
+are no longer written; an exception approved under the old rule still unblocks
+its requirement (`gatesFor`).
+
+**A RED FLAG IS TOLD.** With nothing held, the bell is what makes a leak reach
+somebody: `notifyStockFlag`, after `submitCount` commits, tells every active
+`stockControl` holder on the ERP, every ERP administrator and whoever raised
+the requirement — not the counter, who saw it — on a new red flag and again
+when a recount confirms it. It cannot fail the count.
 
 **THE COUNT IS BLIND.** Nothing on To count, its prompt or its drawer shows the
 book; Every count blanks it on an open row. The book is read and SNAPSHOTTED
@@ -2212,10 +2224,10 @@ stock); a surplus is an `erp_rm_entries` row with `source_type = 'adjustment'`
 on the newest lot. Lots are locked under BOTH spellings the ERP uses (`rm`,
 `Purchase`) and read again under the locks.
 
-**EVEN A MATCHING COUNT MUST JUSTIFY THE QUANTITY.** `reorderJustification`:
+**A QUANTITY THE SHELF DOES NOT NEED IS FLAGGED.** `reorderJustification`:
 up to the maximum level is justified; more than that by
-`erp.stockCheck.unexpectedQtyPercent` holds the requirement at "Confirm
-quantity" until a person confirms it in words or recounts.
+`erp.stockCheck.unexpectedQtyPercent` flags the requirement "More than the
+shelf needs". Nothing is confirmed and nothing waits.
 
 **CYCLE COUNTS ARE OPENED HOURLY, ONCE A DAY'S WORTH.** `erp-cycle-counts`
 (`planCycleCounts`) ranks shelves by ABC (value moved over 90 days, 80/95),
@@ -8686,6 +8698,18 @@ opens straight into its batch sheet. It posts through the ERP's SFG form like
 any other job. Filling and packing still come from a supervisor. The op is
 `startBatch`, and the native APK needs a release to show the button.
 
+**A MIXING WORKER MAY USE HIS OWN RECIPE, AND THE HEAD IS TOLD.** The job's
+first step draws the batch sheet with "Use my own recipe" under it: the editor
+opens with the sheet filled in, any active raw material can be added (those in
+stock at his godown first), litres per batch changed and a material taken off;
+"Batch sheet" puts the ERP's recipe back. `Draft.ownRecipe` marks it and `rm`
+then carries his `per`; `recipeLines` is what the first step and the review
+read, `recipeProblem` is the one sentence the screen and `postMixing` both
+refuse with, and `mixDeviation` holds the yield to his recipe's litres. It is
+not a gate: the batch posts through the ERP's SFG form as always, and a
+`manual` review item "Own recipe used" puts his recipe beside the batch sheet
+for the Production Head.
+
 **EVERY SCAN CAN BE TYPED.** The scan screen — one screen for every purpose,
 badge, task sheet, drum, base, cans, pallet, loading, empty drum and LR — has
 "Type the code" under the camera. What is typed goes through `doScan` exactly
@@ -8832,6 +8856,23 @@ that is not the sender's own fresh upload is refused. Reading them is
 secondary: `readStoredLrs` runs after the answer (`after()`), only where
 `erp.ai.photos` is on, fills only blank fields, and leaves an unsure number, or
 one already on the desk, as a note for the desk instead of writing it.
+
+**THE PHONE ASKS TO UPDATE ITSELF, AND REFRESH IS ONE BUTTON.** The round
+button in the header sends what is waiting, pulls the latest from the office
+and asks whether a newer APK is out, all in one press. The newer build is read
+off `/downloads/factory.json`, the manifest the release workflow already writes
+beside the APK, compared by versionCode (`factory-mobile/src/update.ts`, pure
+and tested). It is asked on opening, on every return to the app and every half
+hour. Where one exists, a popup offers Update now or Update later. Later is a
+three-hour snooze (`SNOOZE_MS`, one per phone in `kv`), never a dismissal, and
+a refresh pressed by hand asks at once. The popup waits while a job, a scan or
+a result is open. Update now downloads the APK INSIDE the app with progress
+(`updater.ts`) and hands it to Android's installer, which opens over the app;
+that confirmation cannot be skipped, because only a device owner installs
+silently. It needs `REQUEST_INSTALL_PACKAGES` and `expo-intent-launcher`, so it
+arrives with an APK and older builds never show it. A failed download offers
+the browser. The web page has the refresh button and no popup, because it picks
+up a new build by itself.
 
 **A SCREEN CHANGE NEEDS A RELEASE; A RULE CHANGE DOES NOT.** The screens are
 in the APK now, so they reach the floor only through the Factory APK

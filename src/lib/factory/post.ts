@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { erpId } from "@/lib/erp/server";
 import { screenModule } from "@/lib/erp/screens";
 import { calendarDate } from "@/lib/business-date";
-import { firstBlockedStep, mixDeviation, mixMade, nf, normalizeDraft, savedInstant } from "./rules";
+import { firstBlockedStep, mixDeviation, mixMade, nf, normalizeDraft, recipeLines, recipeProblem, savedInstant } from "./rules";
 import { hhmm } from "./time";
 import type { Draft, FactoryData, Proc, Submission, SubmitResult, Task } from "./types";
 import { OFFLINE_HOURS } from "./types";
@@ -238,6 +238,16 @@ async function postMixing(fc: FactoryCtx, sub: Submission, live: FactoryData, t:
   const lines = d.rm ?? [];
   const poured = lines.reduce((a, r) => a + (r.qty ?? 0), 0);
   const made = mixMade(d);
+  /* A recipe the worker wrote is checked again here: the phone's list of
+     materials can be a day old, and a name the ERP no longer has cannot be
+     posted. */
+  const lost = lines.find((r) => !live.rm[r.item]);
+  if (lost)
+    return failed(sub.key, "A material is not in the ERP", "One of the materials in this batch is not in the ERP any more. Nothing was saved.", "Tap Fix it and take it off the recipe.", "materials");
+  if (d.ownRecipe) {
+    const bad = recipeProblem(recipeLines(live, t, d), live.rm);
+    if (bad) return failed(sub.key, "The recipe is not finished", bad + " Nothing was saved.", "Tap Fix it and finish the recipe on the first step.", "identify");
+  }
   if (made > poured + 1e-9)
     return failed(sub.key, "More litres than you poured", "You poured " + nf(poured) + " L but entered " + nf(made) + " L made. Nothing was saved.", "Tap Fix it and read the tank gauge again.", "output");
 
@@ -478,6 +488,7 @@ async function finish(fc: FactoryCtx, sub: Submission, live: FactoryData, t: Tas
   const extra: Record<string, unknown> = { key: sub.key, savedAt: sub.savedAt, rejR: d.rejR ?? null };
   if (t.proc === "dispatch") Object.assign(extra, { loads: d.loads, checks: d.checks, photoId: d.photoId ?? null, order: orderNoOf(t.order!) });
   if (t.proc === "filling" && d.sku !== t.item) extra.sizeChangedFrom = t.item;
+  if (t.proc === "mixing" && d.ownRecipe) extra.ownRecipe = true;
 
   await db.transaction(async (tx) => {
     await tx.execute(sql`
@@ -502,6 +513,14 @@ async function finish(fc: FactoryCtx, sub: Submission, live: FactoryData, t: Tas
       await review("tolerance", "Mixing output outside the limit",
         `${r.label?.code} made ${nf(d.out)} L against ${nf(exp)} L expected (${dev >= 0 ? "+" : ""}${dev.toFixed(1)}%). The limit is ±${sf.tol}%.`,
         "Today " + at + " · " + names([d.team.owner, d.team.op, ...d.team.helpers]));
+    }
+    if (d.ownRecipe) {
+      const sf = live.sfg[t.item!];
+      const nb = d.batches ?? 1;
+      const said = (ls: { item: string; per: number }[]) => ls.map((l) => (live.rm[l.item]?.n ?? l.item) + " " + nf(l.per * nb) + " L").join(", ");
+      await review("manual", "Own recipe used",
+        `${r.label?.code} was mixed with the worker's own recipe for ${nb} batch${nb > 1 ? "es" : ""}: ${said(recipeLines(live, t, d))}. The batch sheet asks for ${said((sf?.recipe ?? []).map(([item, per]) => ({ item, per })))}.`,
+        "Mixing · today " + at + " · " + who);
     }
     const manual = (d.rm ?? []).filter((x) => x.manual);
     if (manual.length)

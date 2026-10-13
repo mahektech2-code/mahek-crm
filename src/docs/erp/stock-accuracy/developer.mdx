@@ -1,18 +1,18 @@
-Inventory Accuracy Control is one pure engine, one service that hands it figures from the ledgers, one screen module with five tabs, and a gate threaded through the purchase flow. Nothing in it moves stock except an approved adjustment, which posts through the same ledgers every other movement uses.
+Inventory Accuracy Control is one pure engine, one service that hands it figures from the ledgers, one screen module with five tabs, and a gate threaded through the purchase flow that holds a requirement only until its count is entered — a difference is a flag and a notification, never a hold. Nothing in it moves stock except an approved adjustment, which posts through the same ledgers every other movement uses.
 
 ## Map of the code
 
 | Layer | File | What lives there |
 |---|---|---|
 | Rules (pure) | `src/lib/erp/engines/stock-check.ts` | `toleranceFor`, `judgeCount`, `recountOutcome`, `abcClasses`, `cycleDaysFor`, `pickCycleCounts`, `reorderJustification`, `causeCandidates`, `stockGate`, `gateCountStatus`, `controlStep`, the labels |
-| Service | `src/lib/erp/stock-check.ts` | `shelfFacts`, `judgeOnShelf`, `openCount`, `gatesFor`, `missingRecords`, `planCycleCounts`, `openGodownCounts`, `fullCountDue`, `controlWork`, `heldRequirements` |
-| Screen | `src/lib/erp/screens/stock-check.ts` | `countTasks`, `stockFlags`, `stockAdjustments`, `missingRecords`, `stockCounts`; `submitCount`, `explainCount`, `decideAdjustment`, `postAdjustment`; `openRequirementCounts`, `confirmRequirementQty` |
+| Service | `src/lib/erp/stock-check.ts` | `shelfFacts`, `judgeOnShelf`, `openCount`, `gatesFor`, `missingRecords`, `planCycleCounts`, `openGodownCounts`, `fullCountDue`, `controlWork`, `notifyStockFlag` |
+| Screen | `src/lib/erp/screens/stock-check.ts` | `countTasks`, `stockFlags`, `stockAdjustments`, `missingRecords`, `stockCounts`; `submitCount`, `explainCount`, `decideAdjustment`, `postAdjustment`; `openRequirementCounts` |
 | Drawer | `src/app/erp/_ui/panels/stock-check.tsx` | the `stockCount` panel |
-| Purchase gate | `src/lib/erp/engines/purchase-flow.ts`, `src/lib/erp/screens/purchase-flow.ts` | `FLOW_STEPS` gains "Stock check"; `requirementStage` reads `gate`; `ReqView.stock`; `heldByStock`; `stockActions`, `stockFacts`; `approvalRefusal` |
+| Purchase gate | `src/lib/erp/engines/purchase-flow.ts`, `src/lib/erp/screens/purchase-flow.ts` | `FLOW_STEPS` gains "Blind count"; `requirementStage` reads `gate`; `ReqView.stock`; `heldByStock`; `stockActions`, `stockFacts`; the row flags `stockToCount`, `stockFlag`, `stockOverJustified` |
 | Dashboard | `src/lib/erp/dashboard.ts`, `src/app/erp/page.tsx` | the "Inventory accuracy" section; `accuracyFlow` and the flow strip |
 | Badges | `src/lib/erp/counts.ts` | `countTasks`, `stockFlags`, `stockAdjustments` |
 | Job | `src/lib/jobs.ts` | `erp-cycle-counts`, hourly and by hand |
-| Power | `src/lib/erp/powers.ts` | `stockControl` |
+| Power | `src/lib/erp/powers.ts` | `stockControl` — who is notified of a red flag, and who resolves it |
 | AI | `src/lib/erp/ai.ts` | feature `stockCheck` — switch and monthly cap |
 
 <ModuleRef k="erp.stockCheck" />
@@ -31,7 +31,9 @@ Inventory Accuracy Control is one pure engine, one service that hands it figures
 
 <Code file="src/lib/erp/stock-check.ts" symbol="gatesFor" collapsed />
 
-`requirementViews` computes `ReqView.stock` for every row and `stageOf` hands `gate` to `requirementStage`, so every reader of the stage — the list, the PO form's "ready for PO", the dashboard tiles and the badge — sees the hold with no change of its own. Each buying handler asks `heldByStock` again.
+`gate.blocks` is true in exactly one state, `to_count`: no count entered yet (none, open, or cancelled). `flagged` and `over_justified` carry a `flag` key the requirements list draws, and block nothing. A requirement approved as an urgent purchase under the old rule is unblocked in `gatesFor`.
+
+`requirementViews` computes `ReqView.stock` for every row and `stageOf` hands `gate` to `requirementStage`, so every reader of the stage — the list, the PO form's "ready for PO", the dashboard tiles and the badge — sees the **Blind count** stage with no change of its own. Each buying handler asks `heldByStock` again. PO approval does not read the stock check at all.
 
 <Code file="src/lib/erp/screens/purchase-flow.ts" symbol="heldByStock" />
 
@@ -56,7 +58,16 @@ sequenceDiagram
     A->>DB: root resolved, investigating, or flagged again
   end
   A->>DB: commit · erpAudit erp.stockCount.submit
+  opt a new red flag, or a recount confirming one
+    A->>S: notifyStockFlag - bell to stock control, ERP admins, the requirement raiser
+  end
 `} />
+
+## The notification
+
+<Code file="src/lib/erp/stock-check.ts" symbol="notifyStockFlag" collapsed />
+
+It runs after the count's transaction has committed and swallows its own failure, so a bell that cannot be written never costs the count.
 
 ## Posting an adjustment
 
@@ -89,8 +100,8 @@ Every lot of the item at the godown is locked under both lock spellings the ERP 
   posted: "What approving wrote: the transfer ids, or the entry id.",
 }} />
 
-`erp_requisitions` gains `stock_check_required` (copied on raise), the urgent-purchase columns `stock_exception_*`, and the quantity confirmation `qty_confirm_*`. `erp_raw_materials.count_tolerance_percent` overrides the tolerance per item. `erp_rm_entries.source_type` may now be `adjustment`.
+`erp_requisitions` gains `stock_check_required` (copied on raise). The urgent-purchase columns `stock_exception_*` and the quantity confirmation `qty_confirm_*` are no longer written; they are kept, and shown in the drawer, as the record of decisions made under the old rule. `erp_raw_materials.count_tolerance_percent` overrides the tolerance per item. `erp_rm_entries.source_type` may now be `adjustment`.
 
 ## Tests
 
-`src/lib/erp/engines/stock-check.test.ts` pins the verdict, the recount, ABC, the cycle picks, the quantity justification, the causes and the gate; `purchase-flow.test.ts` pins that a blocking gate holds a requirement at "Stock check" and never pulls back one already on a PO.
+`src/lib/erp/engines/stock-check.test.ts` pins the verdict, the recount, ABC, the cycle picks, the quantity justification, the causes and the gate; `purchase-flow.test.ts` pins that a requirement waiting for its count sits at "Blind count", just before "Purchase method", and never pulls back one already on a PO. `erp-stock-check.test.ts` drives it end to end: the count holds the buying steps until it is entered, a red flag leaves the requirement ready for its PO, and the notification reaches stock control and the administrator and nobody else.

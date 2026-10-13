@@ -15,7 +15,7 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, appSettings, erpPurchases, erpRawMaterials, erpRequisitions, erpRmEntries, erpRmLevels, erpStockAdjustments, erpStockCounts, erpSuppliers, erpUserPowers, users } from "@/db/schema";
+import { appAccess, appSettings, notifications, erpPurchases, erpRawMaterials, erpRequisitions, erpRmEntries, erpRmLevels, erpStockAdjustments, erpStockCounts, erpSuppliers, erpUserPowers, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig } from "@/lib/config/store";
 import { erpContext } from "@/lib/erp/access";
@@ -77,7 +77,7 @@ before(async () => {
   await db.execute(
     sql`truncate users, erp_raw_materials, erp_suppliers, erp_inward, erp_tests, erp_purchases, erp_rm_entries, erp_requisitions, erp_quotations,
         erp_purchase_orders, erp_po_lines, erp_user_powers, erp_godown_staff, erp_user_settings, erp_stock_counts, erp_stock_adjustments,
-        erp_transfers, erp_rm_levels, erp_sfg_lines, erp_sfg_entries, audit_log restart identity cascade`,
+        erp_transfers, erp_rm_levels, erp_sfg_lines, erp_sfg_entries, notifications, audit_log restart identity cascade`,
   );
   await setting("erp.stockCheck.onRequirement", true, "boolean");
   await setting("erp.stockCheck.tolerancePercent", 2, "decimal");
@@ -106,15 +106,15 @@ after(async () => {
   await db.$client.end();
 });
 
-describe("a requirement waits for a blind count", () => {
-  test("raising it opens the count and holds every buying step", async () => {
+describe("a requirement waits for its blind count to be entered, and no longer", () => {
+  test("raising it opens the count, and the buying steps wait for it", async () => {
     const r = await raise(store1, "Toluene", "300");
     assert.ok(r.ok, r.ok ? "" : r.error);
     assert.match(r.message ?? "", /count the stock first/);
     const req = await reqOf("rm_tol");
     assert.equal(req.stockCheckRequired, true);
     const st = await stage(req.id);
-    assert.equal(st.stage, "Count stock");
+    assert.equal(st.stage, "Blind count");
     assert.equal(st.readyForPo, false);
     const count = await rootCount("rm_tol");
     assert.equal(count.status, "open");
@@ -122,7 +122,7 @@ describe("a requirement waits for a blind count", () => {
     assert.equal(count.requisitionId, req.id);
     /* The server refuses what the list draws disabled. */
     const vendor = await mod("requisitions").actions!.vendor(await as(admin), req.id, { vendor: "Asian Solvents" });
-    assert.ok(!vendor.ok && /stock check/.test(vendor.error));
+    assert.ok(!vendor.ok && /blind count/.test(vendor.error));
   });
 
   test("the To count tab never shows the book", async () => {
@@ -136,7 +136,7 @@ describe("a requirement waits for a blind count", () => {
     assert.equal(panel.reconciled, null);
   });
 
-  test("a count within tolerance lets the purchase continue, and the quantity is justified", async () => {
+  test("a count within tolerance: the purchase goes on, with no flag", async () => {
     const count = await rootCount("rm_tol");
     const res = await mod("countTasks").actions!.count(await as(store1), count.id, { qty: "495", bin: "Bay 3" });
     assert.ok(res.ok, res.ok ? "" : res.error);
@@ -145,30 +145,29 @@ describe("a requirement waits for a blind count", () => {
     const req = await reqOf("rm_tol");
     const [v] = await requirementViews({ ids: [req.id] });
     assert.equal(v.stock?.gate.blocks, false);
+    assert.equal(v.stock?.gate.flag, null);
     assert.equal(v.stock?.justification?.justified, 305);
     assert.equal(stageOf(v, 2).readyForPo, true, "direct, default vendor, counted — ready for the PO");
   });
 
-  test("asking for far more than the count justifies needs the quantity confirmed", async () => {
+  test("asking for far more than the count justifies is flagged, not held", async () => {
     const r = await raise(store1, "Toluene", "900");
     assert.ok(r.ok);
     /* The open count for the shelf is new: the earlier match was before this requirement. */
     const req = await reqOf("rm_tol");
-    assert.equal((await stage(req.id)).stage, "Count stock");
+    assert.equal((await stage(req.id)).stage, "Blind count");
     const count = await rootCount("rm_tol");
     assert.ok((await mod("countTasks").actions!.count(await as(store2), count.id, { qty: "500" })).ok);
-    assert.equal((await stage(req.id)).stage, "Confirm quantity");
-    const short = await mod("requisitions").actions!.confirmQty(await as(store1), req.id, { note: "big" });
-    assert.ok(!short.ok);
-    assert.ok((await mod("requisitions").actions!.confirmQty(await as(store1), req.id, { note: "Festive season order book needs a full drum run" })).ok);
-    assert.equal((await stage(req.id)).readyForPo, true);
+    const [v] = await requirementViews({ ids: [req.id] });
+    assert.equal(v.stock?.gate.flag, "stockOverJustified");
+    assert.equal(stageOf(v, 2).readyForPo, true, "nothing to confirm — it goes on");
   });
 });
 
 describe("a red flag is recounted, investigated and adjusted — never silently", () => {
   let reqId = "";
   let rootId = "";
-  test("a short count is a red flag that holds the requirement", async () => {
+  test("a short count is a red flag that notifies stock control, and the purchase goes on", async () => {
     assert.ok((await raise(store1, "Xylene", "100")).ok);
     reqId = (await reqOf("rm_xyl")).id;
     rootId = (await rootCount("rm_xyl")).id;
@@ -176,7 +175,17 @@ describe("a red flag is recounted, investigated and adjusted — never silently"
     assert.ok(res.ok);
     assert.match(res.message ?? "", /Red flag: -60/);
     assert.equal((await rootCount("rm_xyl")).status, "flagged");
-    assert.equal((await stage(reqId)).stage, "Stock discrepancy");
+    const st = await stage(reqId);
+    assert.equal(st.readyForPo, true, "a red flag never holds the requirement");
+    const [v] = await requirementViews({ ids: [reqId] });
+    assert.equal(v.stock?.gate.flag, "stockFlag");
+    const told = await db.select().from(notifications).where(eq(notifications.userId, controller.id));
+    assert.equal(told.length, 1, "the stock-control holder is told");
+    assert.match(told[0].title, /Stock difference: Xylene at Bhiwandi/);
+    assert.match(told[0].body, /440.*500.*-60/);
+    assert.equal((await db.select().from(notifications).where(eq(notifications.userId, admin.id))).length, 1, "an ERP administrator is told");
+    assert.equal((await db.select().from(notifications).where(eq(notifications.userId, store1.id))).length, 0, "not the counter, who saw it on the screen");
+    assert.equal((await db.select().from(notifications).where(eq(notifications.userId, store2.id))).length, 0, "nobody else");
   });
 
   test("the recount is somebody else's", async () => {
@@ -189,6 +198,8 @@ describe("a red flag is recounted, investigated and adjusted — never silently"
     assert.ok(other.ok);
     assert.match(other.message ?? "", /confirms a difference/);
     assert.equal((await rootCount("rm_xyl")).status, "investigating");
+    const told = await db.select().from(notifications).where(eq(notifications.userId, controller.id));
+    assert.ok(told.some((n) => /confirmed/.test(n.title)), "a confirmed difference is told again");
   });
 
   test("the drawer lists causes from the records, and a shortage nothing explains is physical", async () => {
@@ -245,18 +256,14 @@ describe("a red flag is recounted, investigated and adjusted — never silently"
   });
 });
 
-describe("the urgent-purchase exception", () => {
-  test("is requested by one person and decided by another with the power", async () => {
+describe("an urgent purchase approved under the old rule", () => {
+  test("goes on without its count", async () => {
     await db.update(erpStockCounts).set({ status: "cancelled" }).where(sql`raw_material_id = 'rm_tol' and status = 'open'`);
     assert.ok((await raise(store1, "Toluene", "100")).ok);
     const req = await reqOf("rm_tol");
-    assert.equal((await stage(req.id)).stage, "Count stock");
-    assert.ok((await mod("requisitions").actions!.askException(await as(store1), req.id, { reason: "Line stops tomorrow without it" })).ok);
-    assert.equal((await stage(req.id)).stage, "Exception requested");
-    const noPower = await mod("requisitions").actions!.decideException(await as(store2), req.id, { decision: "Approve" });
-    assert.ok(!noPower.ok);
-    assert.ok((await mod("requisitions").actions!.decideException(await as(controller), req.id, { decision: "Approve" })).ok);
-    assert.notEqual((await stage(req.id)).stage, "Count stock");
+    assert.equal((await stage(req.id)).stage, "Blind count");
+    await db.update(erpRequisitions).set({ stockExceptionStatus: "approved", stockExceptionReason: "Line stops tomorrow without it" }).where(eq(erpRequisitions.id, req.id));
+    assert.notEqual((await stage(req.id)).stage, "Blind count");
   });
 });
 
