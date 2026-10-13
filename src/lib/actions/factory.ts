@@ -13,9 +13,10 @@ import { eq } from "drizzle-orm";
 import { bootstrap, contextFor, erpCtxFor, factoryAudit, factoryContext, textArray, type FactoryCtx } from "@/lib/factory/server";
 import { saveCheckReason, saveOfficeCount, saveStockCheck, stockKit } from "@/lib/factory/counts";
 import { qcKit, saveQcDecision } from "@/lib/factory/qc";
+import { cancelFromFloor, raiseFromFloor, requirementKit } from "@/lib/factory/purchase";
 import { submitJob } from "@/lib/factory/post";
 import { assignTask, changeTeam, decideReview, reportProblem, requestCorrection, startMixingBatch } from "@/lib/factory/head";
-import type { QcInput, QcKit, QcSave } from "@/lib/factory/types";
+import type { QcInput, QcKit, QcSave, ReqInput, ReqKit, ReqSave } from "@/lib/factory/types";
 import type { BoxInfo, BoxScan, CountInput, DrumExisting, StockCheckInput, StockKit, StockSave, DrumLookup, DrumSave, FactoryData, LoadBoard, LrFields, LrBatchSave, LrKit, LrReading, LrSave, Proc, Submission, SubmitResult, Team } from "@/lib/factory/types";
 import { boxInfo, loadBoard, lrKit, readLr, saveLr, saveLrPhotos, scanBox, unloadBox } from "@/lib/factory/dispatch";
 import { readStoredLrs } from "@/lib/erp/lr-upload-read";
@@ -62,6 +63,8 @@ export type Me = {
   counts?: boolean;
   /** Decides SFG lots' QC with the Testing list. Absent on an older server: no Quality check screen is offered. */
   qc?: boolean;
+  /** The departments they raise purchase requirements for — in charge, a supervisor over it, or the Production Head. Absent or empty: none is offered. */
+  reqs?: FactoryCtx["reqDepts"];
 };
 export type Who = { key: string; n: string; ini: string; ph: string; hasPin: boolean };
 type Fail = { ok: false; error: string };
@@ -71,7 +74,7 @@ const NOT_FOUND = "notFound";
 const INACTIVE = "inactive";
 
 function meOf(fc: FactoryCtx): Me {
-  return { key: fc.user.id, n: fc.user.name, ini: initialsOf(fc.user.name), head: fc.head, area: fc.area, areas: fc.areas, lang: fc.lang, scope: fc.scope, scopes: fc.scopes, drums: fc.drums, dispatch: fc.dispatch, counts: true, qc: fc.qc };
+  return { key: fc.user.id, n: fc.user.name, ini: initialsOf(fc.user.name), head: fc.head, area: fc.area, areas: fc.areas, lang: fc.lang, scope: fc.scope, scopes: fc.scopes, drums: fc.drums, dispatch: fc.dispatch, counts: true, qc: fc.qc, reqs: fc.reqDepts };
 }
 
 async function whoFor(user: User, typed: string): Promise<{ ok: true; who: Who } | Fail> {
@@ -427,4 +430,27 @@ export async function factoryQcDecide(input: QcInput): Promise<QcSave> {
   const fc = await factoryContext();
   if (!fc) return { ok: false, title: "Please sign in again", text: "The decision was not saved.", fix: "Sign in, then decide it again." };
   return saveQcDecision(fc, input);
+}
+
+/* ------------------------------------------------------------ purchase requirements */
+
+/** The department's items (never their stock) and its requirements. */
+export async function factoryReqKit(): Promise<ReqKit> {
+  const fc = await factoryContext();
+  if (!fc) return { ok: false, title: "Please sign in again", text: "The requirements could not be shown.", fix: "Sign in, then open Purchase requirement again." };
+  return requirementKit(fc);
+}
+
+/** Raise one requirement with every item counted. Safe to send twice — the key answers a resend. */
+export async function factoryReqRaise(input: ReqInput): Promise<ReqSave> {
+  const fc = await factoryContext();
+  if (!fc) return { ok: false, title: "Please sign in again", text: "The requirement was not sent.", fix: "Sign in, then send it again." };
+  return raiseFromFloor(fc, input);
+}
+
+/** Cancel one item before it is on a PO. */
+export async function factoryReqCancel(id: string, reason: string): Promise<{ ok: true; msg: string } | { ok: false; error: string }> {
+  const fc = await factoryContext();
+  if (!fc) return { ok: false, error: "Please sign in again." };
+  return cancelFromFloor(fc, String(id ?? ""), String(reason ?? ""));
 }
