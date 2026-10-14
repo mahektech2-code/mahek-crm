@@ -83,7 +83,7 @@ function LeadRow({ row, base, day }: { row: DeskRow; base: string; day: string }
         <span className="flex flex-wrap items-center gap-2">
           <span className="truncate text-sm font-medium text-ink">{row.name}</span>
           <PSalesTypeBadge salesType={row.salesType} />
-          <PStageBadge stage={row.stage} />
+          <PStageBadge stage={row.stage} days={row.stageDays} />
           <PPriorityBadge priority={row.priority} />
           {row.isRecent ? <PBadge tone="success">Recently</PBadge> : null}
           {row.queues.map((q) => (

@@ -14,6 +14,7 @@ import { gateForNext, gateTo, mustDecideSuspect, checklistFor, qualificationAnsw
 import { isParked } from "@/lib/engines/lead-ladder";
 import { isReopenTransition, reopenTarget } from "@/lib/engines/lead-reopen";
 import { isRecentLead } from "@/lib/lead-recent";
+import { stageAgeDays } from "@/lib/sales-lead-pipeline/stage-age";
 import { stampDate } from "@/lib/format";
 import {
   COMMUNICATION_ACTIONS,
@@ -277,6 +278,8 @@ function toRow(r: PageRow, extra: RowExtra | undefined, recentDays: number): Pip
     contact: clean(extra?.contact),
     salesType: salesTypeOf(r.salesType),
     stage: lost ? null : (r.stage as Stage),
+    /* `stageDays` is selected by `leadsPage` from `lead_stage_since`, null where none is recorded. */
+    stageDays: lost ? undefined : (r.stageDays ?? undefined),
     lost,
     priority: priorityOf(r.priority),
     owner: r.salesmanName ?? "",
@@ -1142,6 +1145,8 @@ export async function pipelineLead(
     isRecent: extra ? isRecentLead(extra.ageDays, config["mbos.leads.recentDays"]) : false,
     salesType: salesTypeOf(record.salesType),
     stage,
+    /* `leadRecord`'s own `stuckDays` — coalesced to 0 in SQL, so it is only trusted where a stage date exists. */
+    stageDays: stageAgeDays(record.stageSince, record.stuckDays),
     priority: priorityOf(record.priority),
     owner: record.salesmanName ?? "",
     ownerId: record.salesmanId,
