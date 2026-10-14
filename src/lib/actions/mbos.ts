@@ -1638,7 +1638,11 @@ async function handleVisit(principal: MbosPrincipal, item: SyncItem): Promise<Ha
              Everything else is a real move along the ladder. */
           ...(stays
             ? {}
-            : { leadStage: suspectDecisionRung(p.suspectDecision, customer) }),
+            : {
+                leadStage: suspectDecisionRung(p.suspectDecision, customer),
+                /* A real move, so the stage date moves with it — the console ages every list by it. */
+                leadStageSince: day,
+              }),
           ...(p.suspectReason?.trim()
             ? p.suspectDecision === "lost"
               ? { leadLostReason: p.suspectReason.trim() }
@@ -3748,7 +3752,7 @@ async function openNegotiation(
   if (!salesType) {
     await db
       .update(customers)
-      .set({ leadStage: "negotiation", updatedAt: new Date() })
+      .set({ leadStage: "negotiation", leadStageSince: await today(), updatedAt: new Date() })
       .where(and(eq(customers.id, customerId), eq(customers.leadStage, "qualified")));
     return { opened: row.leadStage === "qualified", missing: null };
   }
@@ -4619,7 +4623,11 @@ async function handleLeadUpdate(
      `applyLeadStageMove` below, after the gate has been asked, and only if it
      said yes. Writing it here as well would move the rung whatever the gate
      answered, which is §28 defeated by an assignment. */
-  if (p.stage != null && !onTheFunnel) changed.leadStage = p.stage;
+  if (p.stage != null && !onTheFunnel) {
+    changed.leadStage = p.stage;
+    /* Dated only where the rung actually changed: a re-send of the stage it is already on is not a move. */
+    if (p.stage !== existing.leadStage) changed.leadStageSince = await today();
+  }
   if (p.nextFollowUpDate != null) changed.leadNextFollowUpDate = p.nextFollowUpDate;
   if (p.notes != null) changed.leadNotes = p.notes;
   if (p.estimatedPotentialPaise != null) {
@@ -6092,6 +6100,9 @@ async function afterValidationVerdict(
         .update(customers)
         .set({
           leadStage: verdict === "on_hold" ? "on_hold" : "lost",
+          /* Re-dated only if the rung really changes: the gate may have refused because it was already closed. */
+          leadStageSince: sql`case when ${customers.leadStage}::text is distinct from ${verdict === "on_hold" ? "on_hold" : "lost"}
+                              then ${await today()}::date else ${customers.leadStageSince} end`,
           ...(verdict === "on_hold"
             ? { leadHoldReason: reason }
             : { leadLostReason: reason }),

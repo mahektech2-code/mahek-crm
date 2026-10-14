@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Icon } from "@/components/shell/icons";
 import { cx } from "@/components/ui/primitives";
 import { STAGE_LABEL, COMMS_ACTIONS, personName } from "@/lib/sales-lead-pipeline/reference";
+import { stageAgeLong } from "@/lib/sales-lead-pipeline/stage-age";
 import type { Lead } from "@/lib/sales-lead-pipeline/types";
 import { useLeadPipeline } from "../provider";
 import { PBadge, PCard, PEmpty, PPriorityBadge, PSalesTypeBadge, PSectionLabel, PStageBadge, fmtDay, managerAction, pbtn } from "./ui";
@@ -117,6 +118,8 @@ export function ProtoNextAction({ lead, today, canWork, onEdit }: { lead: Lead; 
   const days = target === null ? null : Math.round((target - new Date(today.toDateString()).getTime()) / 86_400_000);
   const overdue = days !== null && days < 0;
   const eyebrow = cx("text-[10.5px] font-semibold tracking-[0.06em] uppercase", overdue ? "text-warn-ink" : "text-[#5223e0]");
+  /* Null where no stage date is recorded: the cell is then left out rather than drawn as "0d". */
+  const inStage = stageAgeLong(lead.stageDays, STAGE_LABEL[lead.stage] ?? lead.stage);
   return (
     <div className={cx("mb-4 flex items-stretch overflow-hidden rounded-lg border", overdue ? "border-warn-line bg-warn-soft" : "border-brand-softer bg-brand-soft")}>
       <div className={cx("w-[5px] flex-none", overdue ? "bg-warn" : "bg-brand")} />
@@ -136,6 +139,12 @@ export function ProtoNextAction({ lead, today, canWork, onEdit }: { lead: Lead; 
           <div className={eyebrow}>Responsible</div>
           <div className="mt-0.5 text-[14.5px] font-[650] text-ink">{personName(lead.nextActionResp)}</div>
         </div>
+        {inStage ? (
+          <div>
+            <div className={eyebrow}>In stage</div>
+            <div className="mt-0.5 text-[14.5px] font-[650] text-ink">{inStage}</div>
+          </div>
+        ) : null}
         <div className="max-w-[260px]">
           <div className={eyebrow}>Expected outcome</div>
           <div className="mt-0.5 text-[14.5px] font-medium text-ink">{lead.expectedOutcome || "—"}</div>

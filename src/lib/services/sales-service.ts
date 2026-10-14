@@ -1782,6 +1782,12 @@ export type LeadRow = {
   quietDays: number;
   /** Days since the lead was raised. */
   ageDays: number;
+  /**
+   * Days on the CURRENT rung, `business day - lead_stage_since`, clamped at 0.
+   * NULL where no stage date is recorded: it is deliberately not coalesced to 0,
+   * which a screen would read as "arrived today".
+   */
+  stageDays?: number | null;
   notes: string | null;
   hasGps: boolean;
   createdAt: Date;
@@ -2035,7 +2041,9 @@ export async function leadsList(day: string): Promise<LeadRow[]> {
   return withHealthBand(day, await db.execute<LeadRow>(sql`
     ${LEAD_ROW_SELECT},
            ${QUIET_DAYS_SQL(day)}::int as "quietDays",
-           (${day}::date - (c.created_at ${IST_DAY})::date)::int as "ageDays"
+           (${day}::date - (c.created_at ${IST_DAY})::date)::int as "ageDays",
+           (case when c.lead_stage_since is null then null
+                else greatest(${day}::date - c.lead_stage_since, 0) end)::int as "stageDays"
       from customers c
       left join users u on u.id = c.owner_id
       left join users lm on lm.id = c.lead_manager_id
@@ -2498,7 +2506,9 @@ export async function leadsPage(
   const rows = await db.execute<LeadRow>(sql`
     ${LEAD_ROW_SELECT},
            ${QUIET_DAYS_SQL(day)}::int as "quietDays",
-           (${day}::date - (c.created_at ${IST_DAY})::date)::int as "ageDays"
+           (${day}::date - (c.created_at ${IST_DAY})::date)::int as "ageDays",
+           (case when c.lead_stage_since is null then null
+                else greatest(${day}::date - c.lead_stage_since, 0) end)::int as "stageDays"
       from customers c
       left join users u on u.id = c.owner_id
       left join users lm on lm.id = c.lead_manager_id
