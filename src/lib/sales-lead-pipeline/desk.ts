@@ -52,6 +52,17 @@ export function suspectCount(rows: DeskRow[]): number {
   return rows.filter(isSuspect).length;
 }
 
+/**
+ * Whether the desk's row cap cut off any LIVE lead. The book is loaded live
+ * leads first, so if the last loaded row is already lost then every live lead
+ * is in; if it is live, more may follow past the cap.
+ */
+export function capCutOffLiveLeads(rows: { stage: string | null }[], hitCap: boolean): boolean {
+  if (!hitCap || rows.length === 0) return false;
+  const last = rows[rows.length - 1];
+  return last.stage !== "lost";
+}
+
 export function parseDeskView(raw: string | null | undefined): DeskView {
   return DESK_VIEWS.includes(raw as DeskView) ? (raw as DeskView) : "all";
 }

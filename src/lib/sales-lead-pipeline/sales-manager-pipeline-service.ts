@@ -1,5 +1,6 @@
 import "server-only";
 import { notConverted } from "@/lib/lead-action-window";
+import { capCutOffLiveLeads } from "@/lib/sales-lead-pipeline/desk";
 
 import { sql } from "drizzle-orm";
 
@@ -1289,15 +1290,22 @@ export async function pipelineLead(
 /** Pages of 200, five of them. A Sales Manager's seat is a few hundred leads; past this the desk says so rather than loading on. */
 const DESK_PAGES = 5;
 
-async function everyPage(day: string, view: LeadView): Promise<{ rows: PageRow[]; truncated: boolean }> {
+async function everyPage(
+  day: string,
+  view: LeadView,
+  options: { deskOrder?: boolean } = {},
+): Promise<{ rows: PageRow[]; truncated: boolean }> {
   const rows: PageRow[] = [];
-  let truncated = false;
+  let hitCap = false;
   for (let page = 1; page <= DESK_PAGES; page += 1) {
-    const got = await leadsPage(day, { view, page, perPage: 200 });
+    const got = await leadsPage(day, { view, page, perPage: 200, deskOrder: options.deskOrder });
     rows.push(...got.rows);
     if (page >= got.pageCount) break;
-    if (page === DESK_PAGES) truncated = true;
+    if (page === DESK_PAGES) hitCap = true;
   }
+  /* With the desk's own order (live first) a cap that cut only lost leads has
+     cut nothing the desk would have drawn, so it is not reported as a tail. */
+  const truncated = options.deskOrder ? capCutOffLiveLeads(rows, hitCap) : hitCap;
   return { rows, truncated };
 }
 
@@ -1305,7 +1313,7 @@ export async function pipelineDesk(day: string): Promise<DeskData> {
   const user = await requireUser();
 
   const [book, overdue, verify, samples, open, slipped, nurture] = await Promise.all([
-    everyPage(day, "all"),
+    everyPage(day, "all", { deskOrder: true }),
     everyPage(day, "overdue"),
     verificationQueue(day, { limit: 500 }),
     sampleDesk(day, { limit: 500 }),

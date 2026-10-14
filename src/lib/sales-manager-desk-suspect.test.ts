@@ -5,6 +5,7 @@ import {
   DESK_VIEWS,
   groupBySalesman,
   parseDeskView,
+  capCutOffLiveLeads,
   queueCounts,
   suspectCount,
 } from "./sales-lead-pipeline/desk";
@@ -49,5 +50,12 @@ describe("Sales Manager desk — Suspect view", () => {
 
   test("existing queue counts are untouched", () => {
     assert.deepEqual(queueCounts(rows), { all: 5, verify: 1, review: 0, sample: 0, order: 0, overdue: 1, nurture: 0 });
+  });
+
+  test("the cap warning is claimed only when a live lead may have been cut off", () => {
+    assert.equal(capCutOffLiveLeads([{ stage: "suspect" }], false), false, "cap not reached");
+    assert.equal(capCutOffLiveLeads([], true), false);
+    assert.equal(capCutOffLiveLeads([{ stage: "suspect" }, { stage: "lost" }], true), false, "only lost leads were cut");
+    assert.equal(capCutOffLiveLeads([{ stage: "lost" }, { stage: "prospect" }], true), true, "a live lead is last, so more may follow");
   });
 });

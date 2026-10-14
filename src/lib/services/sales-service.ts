@@ -2117,6 +2117,21 @@ const LEADS_ORDER_SQL: SQL = sql`order by ${OWED_DATE_SQL} asc nulls last,
  * Every other view keeps the default. A tiebreaker closes each, or a paged list
  * shows one row on two pages.
  */
+/**
+ * THE ORDER THE SALES MANAGER DESK LOADS ITS BOOK IN — live leads first, and the
+ * newest of them first.
+ *
+ * The desk loads at most `DESK_PAGES` x 200 rows and regroups them in the
+ * browser, so this order decides which rows SURVIVE the cap, never how they are
+ * drawn. The default order sorts a lead nobody owes anything on to the very end
+ * (no owed date, newest activity), and lost leads sit among the rest: a seat
+ * holding 1,413 leads of which 25 were live lost its five newest to the cap. A
+ * lost lead is history the desk does not list, so it goes last and cannot push
+ * live work out; `id desc` closes the order so a page boundary cannot put one
+ * lead on two pages.
+ */
+const DESK_ORDER_SQL: SQL = sql`order by (c.lead_stage = 'lost') asc, c.created_at desc, c.id desc`;
+
 function leadsOrderFor(view: LeadView | undefined): SQL {
   switch (view) {
     case "parked":
@@ -2442,6 +2457,8 @@ export async function leadsPage(
     view?: LeadView;
     page?: number;
     perPage?: number;
+    /** The Sales Manager desk's capped load: live leads first, newest first. Changes WHICH rows a cap keeps, never which rows match. */
+    deskOrder?: boolean;
   } = {},
 ): Promise<LeadsPage> {
   const scope = await managerScope();
@@ -2539,7 +2556,9 @@ export async function leadsPage(
       */
      ${archived
        ? sql`order by c.lead_archived_at desc nulls last, c.id desc`
-       : leadsOrderFor(options.view)}
+       : options.deskOrder
+         ? DESK_ORDER_SQL
+         : leadsOrderFor(options.view)}
      limit ${perPage} offset ${(page - 1) * perPage}
   `) as unknown as LeadRow[];
 

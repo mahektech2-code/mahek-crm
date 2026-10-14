@@ -41,7 +41,7 @@ import { editLeadBasics } from "@/lib/actions/sales-manager-edit";
 import { CRM_SALES_MANAGER_WORKSPACE } from "@/proxy";
 import { setTestWorkspace } from "@/lib/services/crm-sales-manager-scope";
 import { QUAL_NEXT } from "@/lib/services/lead-qualification-flow-service";
-import { NO_SALESMAN, disabledReasons, groupBySalesman } from "@/lib/sales-lead-pipeline/desk";
+import { NO_SALESMAN, disabledReasons, groupBySalesman, suspectCount } from "@/lib/sales-lead-pipeline/desk";
 import {
   pipelineDashboard,
   pipelineDesk,
@@ -520,6 +520,44 @@ describe("D — the desk reads the same book, by salesman", () => {
     const desk = await pipelineDesk(DAY);
     assert.equal(desk.lostHidden, 1);
     assert.ok(!desk.rows.some((r) => r.name === "Gone"));
+  });
+
+  test("a book larger than the desk's cap keeps its newest LIVE leads — lost history cannot push them out", async () => {
+    /* Production shape: 1,413 leads in one seat, 25 of them live. Under the
+       default order a fresh lead (no owed date, newest activity) sorted past the
+       1,000th row and was never loaded — on every tile and every list at once. */
+    const lostRows = Array.from({ length: 1100 }, (_, i) => ({
+      id: id("cus"),
+      name: `Old lost ${i}`,
+      phone: String(8000000000 + i),
+      city: "Nashik",
+      kind: "lead" as const,
+      leadStage: "lost" as const,
+      leadSalesType: "direct" as const,
+      leadSource: "manual" as const,
+      leadStageSince: "2026-01-01",
+      leadLastActivityDate: "2026-01-02",
+      createdAt: new Date("2026-01-01T06:00:00Z"),
+      salesManagerId: smA.id,
+    }));
+    await db.insert(customers).values(lostRows);
+    const fresh = [];
+    for (let i = 0; i < 3; i += 1) {
+      fresh.push(await makeLead({ name: `Fresh ${i}`, salesManagerId: smA.id, ownerId: null, leadLastActivityDate: DAY }));
+    }
+
+    const desk = await pipelineDesk(DAY);
+    const names = new Set(desk.rows.map((r) => r.name));
+    for (const f of fresh) assert.ok(names.has(f.name), `${f.name} is on the desk despite the cap`);
+    assert.ok(names.has("Mine A") && names.has("Mine A no owner"), "the existing live leads are still there");
+    assert.ok(desk.rows.length <= 1000, "the cap itself is unchanged");
+    assert.equal(desk.truncated, false, "only lost leads were cut, so no tail of live work is claimed");
+
+    const suspects = suspectCount(desk.rows);
+    assert.equal(suspects, desk.rows.filter((r) => r.stage === "suspect" || r.stage === "new").length);
+    assert.ok(suspects >= 5, "the Suspect tab counts the fresh leads");
+    const listed = groupBySalesman(desk.rows, { view: "suspect", q: "", salesmanId: "" }).flatMap((g) => g.rows.map((r) => r.name));
+    for (const f of fresh) assert.ok(listed.includes(f.name), `${f.name} is in the Suspect list`);
   });
 
   test("overdue and qualification-review queues are read off the lead's own facts", async () => {
