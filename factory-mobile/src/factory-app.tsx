@@ -21,6 +21,11 @@ import {
   recipeRm,
   boxCode,
   lotGiven,
+  isLorryTask,
+  isOrderLoad,
+  lorryLeft,
+  lorryName,
+  stepsOf,
   jobStatus,
   lotName,
   lotUnit,
@@ -49,7 +54,7 @@ import {
   type ScanPurpose,
   type ScanResult,
 } from "@/lib/factory/rules";
-import { CHECK_ITEMS, DOWN, MIX_BATCH_MAX, OFFLINE_HOURS, REJ, STEPS, SUBMISSION_VERSION, LR_BATCH_MAX, type CheckStage, type CheckUnit, type QcLot, type Draft, type FactoryData, type LoadBoard, type LrFields, type Lot, type Proc, type ReqDept, type ReqItem, type ReqLine, type SubmitResult, type Task, type Team } from "@/lib/factory/types";
+import { CHECK_ITEMS, DOWN, MIX_BATCH_MAX, OFFLINE_HOURS, REJ, SUBMISSION_VERSION, LR_BATCH_MAX, type CheckStage, type CheckUnit, type QcLot, type Draft, type FactoryData, type LorryBoard, type LoadBoard, type LrFields, type Lot, type Proc, type ReqDept, type ReqItem, type ReqLine, type SubmitResult, type Task, type Team } from "@/lib/factory/types";
 import { clock12, hhmm } from "@/lib/factory/time";
 import { calendarDate } from "@/lib/business-date";
 import type { Me } from "./types";
@@ -60,7 +65,7 @@ import { avStyle, btn, card, initials, mono, msg, MsgBox, Pill, artWell, type Ms
 import { CameraScanner, shrinkPhoto } from "./camera";
 import { promptDue, snoozeUntil } from "./update";
 import { checkForUpdate, downloadAndInstall, openInBrowser } from "./updater";
-import { dropPhoto, forget, keepPhoto, kvGet, kvSet, keptPhoto, load, mintKey, readNet, save, watchNet, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet, mintDrumKey, type BoxOk, type LrEntry, type StockEntry, type QcEntry, mintCheckKey, type RecipeSheet, type FillSheet, type PackSheet, type ReqEntry, mintReqKey } from "./model";
+import { dropPhoto, forget, keepPhoto, kvGet, kvSet, keptPhoto, load, mintKey, readNet, save, watchNet, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type LorryUi, LORRY0, type TilesSheet, mintDrumKey, type BoxOk, type LrEntry, type StockEntry, type QcEntry, mintCheckKey, type RecipeSheet, type FillSheet, type PackSheet, type ReqEntry, mintReqKey } from "./model";
 
 /* ---------------------------------------------------------------------------
  * THE FACTORY APP — "Mahek Factory App" from the design, screen for screen.
@@ -111,6 +116,9 @@ const HELP: [string, string, string, string, string[]][] = [
   ["dispatch", "Wrong lot warning", "0:35", "truck", ["Scan every pallet before loading.", "A red screen means stop.", "Load only the lots on the order."]],
   ["sync", "Waiting to send", "0:30", "clock", ["No network? Keep working.", "Your jobs wait on the phone.", "They send by themselves later."]],
 ];
+
+/** A lorry opened before its first scan: the job is made on the server by that scan. */
+const NEW_LORRY = "new-lorry:";
 
 export class FactoryApp extends Component<Props, State> {
   private ivs: ReturnType<typeof setInterval>[] = [];
@@ -171,6 +179,7 @@ export class FactoryApp extends Component<Props, State> {
       update: null,
       updPop: null,
       refreshing: false,
+      lorry: LORRY0,
       ...(signed ? this.restore(signed.key) : null),
     };
   }
@@ -506,7 +515,8 @@ export class FactoryApp extends Component<Props, State> {
     const db = this.state.db;
     if (!db) return [];
     const waiting = new Set(this.state.queue.filter((x) => x.status === "pending").map((x) => x.flow.task.id));
-    return db.tasks.map((t) => (waiting.has(t.id) && t.status !== "done" ? { ...t, status: "pending" } : t));
+    /* One-order loading jobs are an older page's; this page loads by lorry. */
+    return db.tasks.filter((t) => !isOrderLoad(t)).map((t) => (waiting.has(t.id) && t.status !== "done" ? { ...t, status: "pending" } : t));
   }
   task(id: string) {
     return this.tasks().find((t) => t.id === id);
@@ -751,6 +761,9 @@ export class FactoryApp extends Component<Props, State> {
   async doScan(code: string, manual?: boolean) {
     const st = this.state, sc = st.scan;
     if (!sc || sc.res) return;
+    if (st.lorry.res || st.lorry.pick || st.lorry.ask) return;
+    if (sc.purpose === "load" && st.flow && isLorryTask(st.flow.task)) return void this.lorryScanCode(code);
+    if (sc.purpose === "home" && st.me?.dispatch && boxCode(code)) return void this.lorryFindCode(boxCode(code)!);
     if (sc.purpose === "lr") {
       const lr = st.lr;
       const no = code.trim().toUpperCase().slice(0, 40);
@@ -1362,6 +1375,370 @@ export class FactoryApp extends Component<Props, State> {
         <Div style={{ fontSize: "14px", lineHeight: "20px", color: "#6B7385", textAlign: "center" }}>Logistics attaches the LR to its bills and tells the customer.</Div>
         {recent}
       </>,
+    );
+  }
+
+  /* ================================================================ loading a lorry
+   * The transport is chosen once, on Home, and never asked again. Tapping it
+   * opens its loading straight away; the job is made on the server at the
+   * first scan, so only looking starts nothing. Every scan goes to the server,
+   * which picks the order the box goes onto and has the ERP Dispatch desk judge
+   * it there (lib/factory/lorry.ts). The loader never sees an order.
+   */
+
+  setLorry(p: Partial<LorryUi>) {
+    this.setState((st) => ({ lorry: { ...st.lorry, ...p } }));
+  }
+
+  /** A board from the server: drawn, and the lorry's counts put back into the floor data the steps check. */
+  applyLorry(key: string, board: LorryBoard | null, data?: FactoryData | null) {
+    this.setState((st) => {
+      const base = data ?? st.db;
+      if (!base) return null;
+      const lorries = { ...(base.lorries ?? {}) };
+      if (board?.lorry) lorries[key] = board.lorry;
+      else if (board) delete lorries[key];
+      return { db: { ...base, lorries }, lorry: { ...st.lorry, board: board ?? st.lorry.board } };
+    });
+  }
+
+  /** Opening a transport: its running job, or one the first scan makes. `thenScan` is a box already in hand. */
+  openLorry(key: string, thenScan?: string) {
+    const st = this.state, db = this.db(), me = st.me!;
+    const l = db.lorries?.[key];
+    if (!l) return this.toast("Nothing left for this transport. Pull down to refresh.", "warn");
+    if (l.sent) return this.toast("Loaded and sent. The office verifies it now.");
+    const running = l.task ? this.task(l.task) : undefined;
+    this.setState({ lorry: { ...LORRY0 } });
+    if (running) this.startTask(running.id);
+    else {
+      const crew = db.teams.dispatch ?? { owner: null, op: null, helpers: [], ver: null };
+      const team: Team = { owner: me.key, op: crew.op && crew.op !== me.key ? crew.op : null, helpers: crew.helpers.filter((h) => h !== me.key), ver: crew.ver };
+      const t: Task = { id: NEW_LORRY + key, proc: "dispatch", item: key, due: hhmm(new Date()), status: "ready", team };
+      this.setState({ flow: { task: t, step: 0, d: { team, down: null, downR: null, downMin: null, lorry: key }, key: mintKey("LORRY") } });
+    }
+    void this.refreshLorry(key);
+    if (thenScan) this.setState({ scan: { purpose: "load", meta: {}, res: null, torch: false }, cam: "wait" }, () => void this.lorryScanCode(thenScan));
+  }
+
+  async refreshLorry(key?: string) {
+    const k = key ?? this.state.flow?.task.item;
+    if (!k) return;
+    try {
+      this.applyLorry(k, await call("lorryBoard", k));
+    } catch (e) {
+      if (!(e instanceof NotReceived)) throw e;
+    }
+  }
+
+  /** The first scan made the lorry's job on the server: the screen carries on as that job. */
+  adoptLorryJob(id: string, data: FactoryData | null) {
+    const f = this.state.flow;
+    if (!f || !f.task.id.startsWith(NEW_LORRY)) return;
+    const real = (data ?? this.db()).tasks.find((x) => x.id === id);
+    const task: Task = real ? { ...real, team: f.d.team } : { ...f.task, id };
+    const flow: Flow = { ...f, task, key: mintKey(id) };
+    this.setState((st) => ({ flow, drafts: { ...st.drafts, [id]: flow }, started: { ...st.started, [id]: 1 } }));
+  }
+
+  /** A box or lot label on the lorry: the server picks the order and the desk judges it. */
+  async lorryScanCode(code: string) {
+    const st = this.state, f = st.flow;
+    if (!f || !isLorryTask(f.task) || st.lorry.busy) return;
+    const key = f.task.item!;
+    this.setLorry({ busy: true });
+    try {
+      const r = await call("lorryScan", key, code, f.task.id.startsWith(NEW_LORRY) ? null : f.task.id);
+      this.applyLorry(key, r.board, r.ok ? r.data : null);
+      if (r.task) this.adoptLorryJob(r.task, r.ok ? r.data : null);
+      this.setLorry({ busy: false, res: r.ok ? { tone: r.tone, code: r.code, title: r.title, text: r.message } : { tone: "bad", code: r.code, title: r.title, text: r.text, fix: r.fix, override: r.override } });
+    } catch (e) {
+      this.setLorry({ busy: false });
+      if (!(e instanceof NotReceived)) throw e;
+      this.setLorry({ res: { tone: "bad", code, title: "No network", text: "This label is not counted yet.", fix: "Check the Wi-Fi, then scan the same label again. It will not be counted twice." } });
+    }
+  }
+
+  /** A box scanned on Home: one lorry needs it — open that lorry with the box on; several — ask which. */
+  async lorryFindCode(code: string) {
+    const sc = this.state.scan;
+    if (!sc) return;
+    const fail = (title: string, text: string, fix: string) => this.setState({ scan: { ...sc, res: { ok: false, code, title, text, fix } } });
+    try {
+      const r = await call("lorryFind", code);
+      if (!r.ok) return fail(r.title, r.text, r.fix);
+      if (r.lorries.length === 1) {
+        this.setState({ scan: null });
+        return this.openLorry(r.lorries[0].key, code);
+      }
+      this.setLorry({ pick: { code, name: r.name, lorries: r.lorries } });
+    } catch (e) {
+      if (!(e instanceof NotReceived)) throw e;
+      fail("No network", "We could not check this box.", "Check the Wi-Fi, then scan it again.");
+    }
+  }
+
+  async lorryUnloadBox(id: string) {
+    const f = this.state.flow;
+    if (!f || !isLorryTask(f.task)) return;
+    try {
+      const r = await call("lorryUnload", f.task.item!, id);
+      this.applyLorry(f.task.item!, r.board);
+      this.toast(r.ok ? r.message : r.text, r.ok ? "ok" : "warn");
+    } catch (e) {
+      if (!(e instanceof NotReceived)) throw e;
+      this.toast("No network. Nothing was changed.", "warn");
+    }
+  }
+
+  async lorryAsk() {
+    const f = this.state.flow, a = this.state.lorry.ask;
+    if (!f || !a || a.busy) return;
+    if (!a.sku) return this.setLorry({ ask: { ...a, err: "Choose which item this box goes in place of." } });
+    if (a.reason.trim().length < 10) return this.setLorry({ ask: { ...a, err: "Say why, in a sentence: who agreed, and what the customer was told." } });
+    this.setLorry({ ask: { ...a, busy: true, err: "" } });
+    try {
+      const r = await call("lorryOverride", f.task.item!, a.code, a.sku, a.reason);
+      if (!r.ok) return this.setLorry({ ask: { ...a, busy: false, err: r.error } });
+      this.applyLorry(f.task.item!, r.board);
+      this.setLorry({ ask: null, res: null });
+      this.toast(r.message);
+    } catch (e) {
+      if (!(e instanceof NotReceived)) throw e;
+      this.setLorry({ ask: { ...a, busy: false, err: "No network. Try again." } });
+    }
+  }
+
+  /** Approve at once; Decline asks for the note first, and the second press sends it. */
+  async lorryDecide(id: string, approve: boolean) {
+    const f = this.state.flow, dec = this.state.lorry.decline;
+    if (!f) return;
+    const note = approve ? null : dec?.id === id ? dec.note : "";
+    if (!approve && !note?.trim()) return this.setLorry({ decline: { id, note: note ?? "" } });
+    try {
+      const r = await call("lorryDecide", f.task.item!, id, approve, note);
+      if (!r.ok) return this.toast(r.error, "warn");
+      this.applyLorry(f.task.item!, r.board);
+      this.setLorry({ decline: null });
+      this.toast(r.message);
+    } catch (e) {
+      if (!(e instanceof NotReceived)) throw e;
+      this.toast("No network. Nothing was changed.", "warn");
+    }
+  }
+
+  /** Home: the transports with goods to load. The only place a transport is chosen. */
+  renderLorries(): ReactNode {
+    const db = this.db(), me = this.state.me!;
+    if (!me.dispatch || !db.lorries || !inDept(me, this.dept(), "dispatch")) return null;
+    const list = Object.values(db.lorries).sort((a, b) => Number(!!a.sent) - Number(!!b.sent) || b.late - a.late || (a.due ?? "9999").localeCompare(b.due ?? "9999") || lorryName(a.name).localeCompare(lorryName(b.name)));
+    return (
+      <Div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+        <Div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginTop: "4px" }}>
+          <Span style={{ fontSize: "20px", fontWeight: 700 }}>Transports to load</Span>
+          <Span style={{ fontSize: "14px", color: "#6B7385" }}>{String(list.filter((l) => !l.sent).length)}</Span>
+        </Div>
+        {!list.length && <Div style={{ background: "#FFFFFF", border: "1px solid #DDE1E8", borderRadius: "16px", padding: "22px 20px", textAlign: "center", fontSize: "16px", color: "#6B7385" }}>Nothing to load right now. Ready orders show here.</Div>}
+        {list.map((l) => {
+          const who = l.loader ? (l.loader === me.key ? "you are loading" : this.name(l.loader) + " is loading") : "";
+          const sub = l.sent ? "Loaded · waiting for the office" : [l.items.length + " item" + (l.items.length > 1 ? "s" : ""), nf(lorryLeft(l)) + " to load", l.late ? l.late + " late" : "", l.name ? "" : "ask the office", who].filter(Boolean).join(" · ");
+          return (
+            <Btn key={l.key} onClick={() => this.openLorry(l.key)} style={{ display: "flex", alignItems: "center", gap: "12px", width: "100%", padding: "14px", background: "#FFFFFF", border: "1px solid " + (l.late && !l.sent ? "#F6CFCF" : "#DDE1E8"), borderRadius: "18px", textAlign: "left", cursor: "pointer", opacity: l.sent ? 0.7 : 1 }}>
+              <Span style={{ width: "52px", height: "52px", flex: "none", borderRadius: "14px", background: l.sent ? "#E9F5EE" : "#F1ECFF", display: "flex", alignItems: "center", justifyContent: "center" }}>{ic(l.sent ? "check" : "truck", 28, l.sent ? "#1D7A45" : "#6835FB")}</Span>
+              <Span style={{ flex: 1, minWidth: 0 }}>
+                <Span style={{ display: "block", fontSize: "18px", lineHeight: "23px", fontWeight: 700, color: l.name ? "#1A1E28" : "#8A5C05" }}>{lorryName(l.name)}</Span>
+                <Span style={{ display: "block", fontSize: "14px", lineHeight: "19px", color: l.late && !l.sent ? "#B3261E" : "#6B7385", marginTop: "2px" }}>{sub}</Span>
+              </Span>
+              <Span style={{ fontSize: "17px", fontWeight: 700, whiteSpace: "nowrap" }}>{nf(l.loaded) + "/" + nf(l.target)}</Span>
+              {ic("chev", 22)}
+            </Btn>
+          );
+        })}
+      </Div>
+    );
+  }
+
+  /** The Load step of a lorry: one scan button, progress, and the items — every order's goods added up. */
+  stepLorry(t: Task): ReactNode {
+    const st = this.state, db = this.db(), l = db.lorries?.[t.item!], b = st.lorry.board;
+    if (!l) return <MsgBox m={msg("Nothing left to load for this transport. The office may have sent it already.", "info")} />;
+    const pct = Math.round((Math.min(l.loaded, l.target) / Math.max(1, l.target)) * 100);
+    const pending = (b?.overrides ?? []).filter((o) => o.status === "Pending").length;
+    return (
+      <Div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+        <Btn onClick={() => this.openScan("load")} style={{ ...btn("p", 60), display: "flex", alignItems: "center", justifyContent: "center", gap: "10px" }}>{ic("qr", 26, "#FFFFFF")}Scan a box or lot label</Btn>
+        <Div>
+          <Div style={{ display: "flex", justifyContent: "space-between", gap: "8px" }}>
+            <Span style={{ fontSize: "16px", fontWeight: 700 }}>{nf(l.loaded) + " of " + nf(l.target) + " loaded"}</Span>
+            <Span style={{ fontSize: "14px", color: "#6B7385" }}>{l.items.length + " item" + (l.items.length > 1 ? "s" : "")}</Span>
+          </Div>
+          <Div style={{ height: "12px", borderRadius: "6px", background: "#EDEFF3", marginTop: "8px", overflow: "hidden" }}>
+            <Div style={{ height: "12px", width: pct + "%", borderRadius: "6px", background: l.loaded >= l.target ? "#1D7A45" : "#6835FB" }} />
+          </Div>
+        </Div>
+        <Div style={{ ...card, padding: "4px 14px" }}>
+          {l.items.map((i, n) => {
+            const done = i.loaded >= i.target;
+            const sub = [done ? "All on" : i.byLot ? "No box labels: scan the lot label" : i.late ? "Late" : i.orders > 1 ? i.orders + " orders" : "", i.notBilled && !done ? "not billed yet" : ""].filter(Boolean).join(" · ");
+            return (
+              <Div key={i.sku} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "12px 0", borderTop: n ? "1px solid #F3F4F7" : "none" }}>
+                <Span style={{ width: "28px", height: "28px", flex: "none", borderRadius: "50%", background: done ? "#E9F5EE" : "#F7F8FA", display: "flex", alignItems: "center", justifyContent: "center" }}>{done ? ic("check", 16, "#1D7A45") : null}</Span>
+                <Span style={{ flex: 1, minWidth: 0 }}>
+                  <Span style={{ display: "block", fontSize: "16px", lineHeight: "21px", fontWeight: 700 }}>{i.label}</Span>
+                  {!!sub && <Span style={{ display: "block", fontSize: "13px", lineHeight: "18px", marginTop: "2px", color: done ? "#1D7A45" : i.late ? "#B3261E" : "#6B7385" }}>{sub}</Span>}
+                </Span>
+                <Span style={{ fontSize: "16px", fontWeight: 700, whiteSpace: "nowrap", color: done ? "#1D7A45" : "#1A1E28" }}>{nf(Math.min(i.loaded, i.target)) + " / " + nf(i.target) + " " + i.unit}</Span>
+              </Div>
+            );
+          })}
+        </Div>
+        <Btn onClick={() => this.setLorry({ on: true })} style={{ display: "flex", alignItems: "center", gap: "10px", width: "100%", minHeight: "56px", padding: "12px 14px", background: "#FFFFFF", border: "1px solid #DDE1E8", borderRadius: "16px", textAlign: "left", cursor: "pointer" }}>
+          <Span style={{ flex: 1, fontSize: "16px", fontWeight: 700 }}>{"On the lorry (" + (b?.boxes.length ?? 0) + ")"}</Span>
+          {pending > 0 && <Span style={{ fontSize: "13px", fontWeight: 700, color: "#8A5C05" }}>{pending + " override" + (pending > 1 ? "s" : "") + " waiting"}</Span>}
+          {ic("chev", 22)}
+        </Btn>
+        {!!l.loader && l.loader !== st.me!.key && <MsgBox m={msg(this.name(l.loader) + " is loading this lorry too. Your scans add to the same job.", "info")} />}
+      </Div>
+    );
+  }
+
+  /** The boxes on the lorry, with Take off, and the overrides — opened from the Load step, not a step of its own. */
+  renderLorryOn(): ReactNode {
+    const st = this.state, f = st.flow!, b = st.lorry.board, dec = st.lorry.decline;
+    const close = () => this.setLorry({ on: false, decline: null });
+    return (
+      <Div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", background: "#F7F8FA" }}>
+        <Div style={{ flex: "none", background: "#FFFFFF", borderBottom: "1px solid #EDEFF3", padding: "6px 12px 12px 12px", display: "flex", alignItems: "center", gap: "8px" }}>
+          <Btn onClick={close} aria-label="Back" style={{ width: "48px", height: "48px", borderRadius: "50%", border: "none", background: "#F7F8FA", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flex: "none" }}>{ic("back", 24)}</Btn>
+          <Span style={{ flex: 1, minWidth: 0 }}>
+            <Span style={{ display: "block", fontSize: "13px", color: "#6B7385" }}>{"Loading · " + taskName(this.db(), f.task)}</Span>
+            <Span style={{ display: "block", fontSize: "20px", lineHeight: "26px", fontWeight: 700 }}>On the lorry</Span>
+          </Span>
+        </Div>
+        <Div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "14px 16px 20px 16px", display: "flex", flexDirection: "column", gap: "12px" }}>
+          <Div style={{ ...card, padding: "4px 14px" }}>
+            <Div style={{ fontSize: "15px", fontWeight: 700, padding: "12px 0 6px 0" }}>{"Boxes (" + (b?.boxes.length ?? 0) + ")"}</Div>
+            {!b?.boxes.length && <Div style={{ fontSize: "15px", color: "#6B7385", padding: "6px 0 14px 0" }}>Nothing scanned on yet.</Div>}
+            {(b?.boxes ?? []).map((x) => (
+              <Div key={x.id} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 0", borderTop: "1px solid #F3F4F7" }}>
+                <Span style={{ flex: 1, minWidth: 0 }}>
+                  <Span style={{ display: "block", ...mono, fontSize: "14px", fontWeight: 600 }}>{x.id}</Span>
+                  <Span style={{ display: "block", fontSize: "13px", color: "#6B7385" }}>{x.sku + " · lot " + x.lot}</Span>
+                </Span>
+                <Btn onClick={() => void this.lorryUnloadBox(x.id)} style={{ height: "40px", padding: "0 14px", borderRadius: "20px", border: "none", background: "#FCECEC", color: "#B3261E", fontSize: "14px", fontWeight: 700, cursor: "pointer", flex: "none" }}>Take off</Btn>
+              </Div>
+            ))}
+          </Div>
+          <Div style={{ ...card, padding: "4px 14px" }}>
+            <Div style={{ fontSize: "15px", fontWeight: 700, padding: "12px 0 6px 0" }}>Overrides</Div>
+            {!b?.overrides.length && <Div style={{ fontSize: "15px", color: "#6B7385", padding: "6px 0 14px 0" }}>None asked for.</Div>}
+            {(b?.overrides ?? []).map((o) => {
+              const can = !!b?.canDecide && o.status === "Pending" && !o.mine;
+              const tone = o.status === "Approved" || o.status === "Used" ? "#1D7A45" : o.status === "Declined" ? "#B3261E" : "#8A5C05";
+              return (
+                <Div key={o.id} style={{ padding: "10px 0", borderTop: "1px solid #F3F4F7" }}>
+                  <Div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <Span style={{ flex: 1, minWidth: 0, ...mono, fontSize: "14px", fontWeight: 600 }}>{o.unit}</Span>
+                    <Span style={{ fontSize: "13px", fontWeight: 700, color: tone }}>{o.status === "Pending" ? "Waiting" : o.status}</Span>
+                  </Div>
+                  <Div style={{ fontSize: "14px", lineHeight: "20px", color: "#3D4453", marginTop: "2px" }}>{o.scanned + " in place of " + o.ordered}</Div>
+                  <Div style={{ fontSize: "13px", lineHeight: "18px", color: "#6B7385", marginTop: "2px" }}>{"“" + o.reason + "” — " + (o.by ?? "—")}</Div>
+                  {o.status === "Approved" && <Div style={{ fontSize: "13px", lineHeight: "18px", color: "#1D7A45", marginTop: "2px" }}>{"Approved" + (o.decidedBy ? " by " + o.decidedBy : "") + ". Scan the box again to put it on."}</Div>}
+                  {o.status === "Declined" && <Div style={{ fontSize: "13px", lineHeight: "18px", color: "#B3261E", marginTop: "2px" }}>{"Declined" + (o.decidedBy ? " by " + o.decidedBy : "") + (o.note ? ": " + o.note : "")}</Div>}
+                  {o.status === "Pending" && o.mine && <Div style={{ fontSize: "13px", lineHeight: "18px", color: "#6B7385", marginTop: "2px" }}>You asked for this one; somebody else decides it.</Div>}
+                  {can && dec?.id === o.id && <Input multiline value={dec.note} onChange={(e) => this.setLorry({ decline: { id: o.id, note: String(e.target.value).slice(0, 300) } })} placeholder="Why it is declined" aria-label="Why it is declined" style={{ width: "100%", minHeight: "64px", boxSizing: "border-box", marginTop: "8px", border: "1.5px solid #DDE1E8", borderRadius: "12px", padding: "10px 12px", fontSize: "16px", lineHeight: "22px", color: "#1A1E28", background: "#FFFFFF" }} />}
+                  {can && (
+                    <Div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
+                      <Btn onClick={() => void this.lorryDecide(o.id, false)} style={{ ...btn("s", 46), flex: 1 }}>Decline</Btn>
+                      <Btn onClick={() => void this.lorryDecide(o.id, true)} style={{ ...btn("p", 46), flex: 1 }}>Approve</Btn>
+                    </Div>
+                  )}
+                </Div>
+              );
+            })}
+          </Div>
+        </Div>
+        <Div style={{ flex: "none", background: "#FFFFFF", borderTop: "1px solid #EDEFF3", padding: "10px 16px 16px 16px" }}>
+          <Btn onClick={close} style={btn("s", 56)}>Back to loading</Btn>
+        </Div>
+      </Div>
+    );
+  }
+
+  /** The answer to a scan on the lorry, shown big over the camera. */
+  renderLorryRes(): ReactNode {
+    const T = this.T(), r = this.state.lorry.res!;
+    const col = r.tone === "ok" ? "#1D7A45" : r.tone === "warn" ? "#B77B08" : "#B3261E";
+    const ov = r.override ?? [];
+    return (
+      <Div style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, background: "rgba(14,16,22,0.55)", display: "flex", flexDirection: "column", justifyContent: "flex-end", zIndex: 6 }}>
+        <Div style={{ width: "100%", background: "#FFFFFF", color: "#1A1E28", borderRadius: "26px 26px 0 0", overflow: "hidden" }}>
+          <Div style={{ background: col, color: "#FFFFFF", padding: "14px 18px", fontSize: "20px", lineHeight: "26px", fontWeight: 800 }}>{(r.tone === "ok" ? "✓ " : r.tone === "warn" ? "↺ " : "✕ ") + r.title}</Div>
+          <Div style={{ padding: "14px 18px 20px 18px" }}>
+            <Div style={{ ...mono, fontSize: "13px", color: "#6B7385" }}>{r.code}</Div>
+            <Div style={{ fontSize: "17px", lineHeight: "24px", marginTop: "6px" }}>{r.text}</Div>
+            {!!r.fix && <Div style={{ marginTop: "12px", padding: "12px 14px", borderRadius: "12px", background: "#F7F8FA", fontSize: "15px", lineHeight: "22px" }}><Span style={{ fontWeight: 700 }}>What to do: </Span>{r.fix}</Div>}
+            <Div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
+              {ov.length > 0 && <Btn onClick={() => this.setLorry({ ask: { code: r.code, items: ov, sku: ov.length === 1 ? ov[0].sku : null, reason: "", busy: false, err: "" } })} style={{ ...btn("s", 58), flex: 1 }}>Ask for an override</Btn>}
+              <Btn onClick={() => this.setLorry({ res: null })} style={{ ...btn("p", 58), flex: 1 }}>{r.tone === "bad" ? T.scanAgain : "Scan next"}</Btn>
+            </Div>
+          </Div>
+        </Div>
+      </Div>
+    );
+  }
+
+  /** Asking for an override: which item still short on this lorry the box goes in place of, and why. */
+  renderLorryAsk(): ReactNode {
+    const a = this.state.lorry.ask!;
+    return (
+      <Div style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, background: "rgba(14,16,22,0.55)", display: "flex", flexDirection: "column", justifyContent: "flex-end", zIndex: 7 }}>
+        <Div style={{ width: "100%", maxHeight: "92%", overflowY: "auto", background: "#FFFFFF", color: "#1A1E28", borderRadius: "26px 26px 0 0", padding: "18px 18px 20px 18px", display: "flex", flexDirection: "column", gap: "10px" }}>
+          <Div style={{ fontSize: "20px", lineHeight: "26px", fontWeight: 800 }}>Ask for an override</Div>
+          <Div style={{ ...mono, fontSize: "13px", color: "#6B7385" }}>{a.code}</Div>
+          <Div style={{ fontSize: "15px", fontWeight: 700 }}>In place of which item?</Div>
+          {a.items.map((i) => (
+            <Btn key={i.sku} onClick={() => this.setLorry({ ask: { ...a, sku: i.sku, err: "" } })} style={{ display: "flex", alignItems: "center", width: "100%", minHeight: "52px", padding: "10px 12px", borderRadius: "14px", border: a.sku === i.sku ? "2px solid #6835FB" : "1px solid #DDE1E8", background: a.sku === i.sku ? "#F1ECFF" : "#FFFFFF", textAlign: "left", cursor: "pointer", fontSize: "16px", fontWeight: 600 }}>{i.label}</Btn>
+          ))}
+          <Div style={{ fontSize: "15px", fontWeight: 700, marginTop: "4px" }}>Why must this box go?</Div>
+          <Input multiline value={a.reason} onChange={(e) => this.setLorry({ ask: { ...a, reason: String(e.target.value).slice(0, 500), err: "" } })} placeholder="Who agreed, and what the customer was told" aria-label="Why must this box go" style={{ width: "100%", minHeight: "84px", boxSizing: "border-box", border: "1.5px solid #DDE1E8", borderRadius: "12px", padding: "12px", fontSize: "17px", lineHeight: "23px", color: "#1A1E28", background: "#FFFFFF" }} />
+          {!!a.err && <Div style={{ fontSize: "14px", lineHeight: "20px", color: "#B3261E", fontWeight: 600 }}>{a.err}</Div>}
+          <Div style={{ display: "flex", gap: "10px", marginTop: "6px" }}>
+            <Btn onClick={() => this.setLorry({ ask: null })} style={{ ...btn("s", 58), flex: 1 }}>Cancel</Btn>
+            <Btn onClick={() => void this.lorryAsk()} style={{ ...btn(a.busy ? "off" : "p", 58), flex: 2 }}>{a.busy ? "Asking…" : "Request override"}</Btn>
+          </Div>
+        </Div>
+      </Div>
+    );
+  }
+
+  /** A box scanned on Home that more than one lorry needs: the one time a transport is asked about again. */
+  renderLorryPick(): ReactNode {
+    const p = this.state.lorry.pick!;
+    const go = (key: string) => {
+      this.setLorry({ pick: null });
+      this.setState({ scan: null });
+      this.openLorry(key, p.code);
+    };
+    return (
+      <Div style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, background: "rgba(14,16,22,0.55)", display: "flex", flexDirection: "column", justifyContent: "flex-end", zIndex: 6 }}>
+        <Div style={{ width: "100%", background: "#FFFFFF", color: "#1A1E28", borderRadius: "26px 26px 0 0", padding: "18px 18px 20px 18px", display: "flex", flexDirection: "column", gap: "10px" }}>
+          <Span style={{ display: "flex" }}><Pill l="Found" bg="#E9F5EE" fg="#1D7A45" /></Span>
+          <Div style={{ fontSize: "20px", lineHeight: "25px", fontWeight: 700 }}>{p.name}</Div>
+          <Div style={{ ...mono, fontSize: "13px", color: "#6B7385" }}>{p.code}</Div>
+          <Div style={{ fontSize: "15px", fontWeight: 700, marginTop: "4px" }}>Load onto</Div>
+          {p.lorries.map((l) => (
+            <Btn key={l.key} onClick={() => go(l.key)} style={{ display: "flex", alignItems: "center", gap: "10px", width: "100%", minHeight: "56px", padding: "10px 12px", borderRadius: "14px", border: "1px solid #DDE1E8", background: "#FFFFFF", textAlign: "left", cursor: "pointer" }}>
+              <Span style={{ flex: 1, minWidth: 0 }}>
+                <Span style={{ display: "block", fontSize: "16px", fontWeight: 700 }}>{lorryName(l.name)}</Span>
+                <Span style={{ display: "block", fontSize: "13px", color: "#6B7385" }}>{"needs " + nf(l.need) + " more of this"}</Span>
+              </Span>
+              <Span style={{ fontSize: "14px", fontWeight: 700, color: "#5223E0" }}>Load →</Span>
+            </Btn>
+          ))}
+          <Btn onClick={() => this.setLorry({ pick: null })} style={{ ...btn("s", 56), marginTop: "6px" }}>OK</Btn>
+        </Div>
+      </Div>
     );
   }
 
@@ -2623,14 +3000,15 @@ export class FactoryApp extends Component<Props, State> {
     if (!t) return;
     if (t.status === "blocked") return this.toast(this.db().orders[t.order!]?.blocked ?? "This order is not ready yet. Wait for the office.");
     const keep = st.drafts[id];
-    if (keep) return this.setState({ flow: { ...keep, task: { ...keep.task, ...t } } }, () => { if (STEPS[t.proc][keep.step] === "load") void this.refreshBoard(); });
+    if (keep) return this.setState({ flow: { ...keep, task: { ...keep.task, ...t } } }, () => { if (stepsOf(t)[keep.step] === "load") void (isLorryTask(t) ? this.refreshLorry(t.item) : this.refreshBoard()); });
     const db = this.db();
     const team = JSON.parse(JSON.stringify(t.team)) as Team;
     const d: Draft = { team, down: null, downR: null, downMin: null };
     if (t.proc === "mixing") Object.assign(d, { batches: t.batches ?? 1, rm: (db.sfg[t.item!]?.recipe ?? []).map((r) => ({ item: r[0], per: r[1], lot: null, qty: null })), out: null });
     if (t.proc === "filling") Object.assign(d, { sku: t.item, sfg: null, pm: null, filled: null, rej: 0, rejR: null });
     if (t.proc === "packing") Object.assign(d, { box: t.item, fg: [], boxes: null });
-    if (t.proc === "dispatch") Object.assign(d, { loads: {}, checks: {}, photo: null, photoId: null });
+    if (isLorryTask(t)) d.lorry = t.item;
+    else if (t.proc === "dispatch") Object.assign(d, { loads: {}, checks: {}, photo: null, photoId: null });
     if (preset) Object.assign(d, preset);
     this.setState({ flow: { task: t, step: 0, d, key: mintKey(t.id) }, started: { ...st.started, [id]: 1 } });
   }
@@ -2683,7 +3061,12 @@ export class FactoryApp extends Component<Props, State> {
       if (rem) rv.warns.push(msg(rem + " boxes wait for the next batch.", "warn"));
       if ((d.fg ?? []).some((g) => g.manual)) rv.warns.push(msg("You picked a pallet from photos. Your supervisor will check it.", "warn"));
     }
-    if (t.proc === "dispatch") {
+    if (isLorryTask(t)) {
+      const l = db.lorries?.[t.item!];
+      R("Transporter", lorryName(l?.name));
+      R("Loaded", l ? nf(l.loaded) + " of " + nf(l.target) : "All of it");
+      (l?.items ?? []).forEach((i) => R(i.label, nf(Math.min(i.loaded, i.target)) + " / " + nf(i.target) + " " + i.unit));
+    } else if (t.proc === "dispatch") {
       const ord = db.orders[t.order!];
       R("Order", t.order + " · " + (ord?.cust ?? ""));
       Object.keys(d.loads ?? {}).forEach((k) => R("Loaded · " + k, String(d.loads![k])));
@@ -3159,7 +3542,8 @@ export class FactoryApp extends Component<Props, State> {
     /* Every department of theirs, or the one picked at the top. */
     const d = this.dept();
     const mine = this.tasks().filter((t) => inDept(me, d, t.proc));
-    const open = mine.filter((t) => t.status !== "done");
+    /* A lorry's loading is on the Transports list, not here. */
+    const open = mine.filter((t) => t.status !== "done" && !isLorryTask(t));
     const done = mine.filter((t) => t.status === "done");
     const q = st.queue.filter((x) => x.status === "pending").length;
     return (
@@ -3186,6 +3570,7 @@ export class FactoryApp extends Component<Props, State> {
             {ic("chev", 24)}
           </Btn>
         )}
+        {this.renderLorries()}
         <Div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginTop: "4px" }}>
           <Span style={{ fontSize: "20px", fontWeight: 700 }}>{T.myTasks}</Span>
           <Span style={{ fontSize: "14px", color: "#6B7385" }}>{open.length + " / " + mine.length}</Span>
@@ -3294,15 +3679,15 @@ export class FactoryApp extends Component<Props, State> {
     const typing = sc.typed != null;
     const db = st.db;
     const rmName = m.item && db?.rm[m.item] ? db.rm[m.item].n : "";
-    const title = { badge: T.scanBadge, home: T.scanQR, rm: rmName, sfg: "Base liquid", pm: "Empty cans", fg: "Filled cans", load: f ? (f.task.order ?? "") : "", drum: "Empty drum", lr: "LR number" }[P] || T.scanQR;
+    const title = { badge: T.scanBadge, home: T.scanQR, rm: rmName, sfg: "Base liquid", pm: "Empty cans", fg: "Filled cans", load: f ? (f.task.order ?? taskName(this.db(), f.task)) : "", drum: "Empty drum", lr: "LR number" }[P] || T.scanQR;
     const hint = { badge: "Show your company badge", home: "Scan a task sheet, order, lot or box label", rm: "Scan the " + rmName + " drum", sfg: "Scan the base-liquid tank", pm: "Scan the empty-can stack", fg: "Scan the filled-can pallet", load: "Scan each box label as it goes on the lorry", drum: "Scan the GRN label on the empty drum", lr: "Scan the barcode printed on the LR" }[P];
-    const hasManual = ["rm", "sfg", "pm", "fg", "load"].indexOf(P) > -1;
+    const hasManual = ["rm", "sfg", "pm", "fg", "load"].indexOf(P) > -1 && !(P === "load" && f && isLorryTask(f.task));
     const noCam = st.cam === "none" || st.cam === "denied";
     const labels = noCam && (DEV || st.cam === "none") ? this.scanLabels() : [];
     const corner = (pos: CSSProperties, b: string, rad: string): ReactNode => <Span style={{ position: "absolute", width: "44px", height: "44px", ...pos, [b.split("|")[0]]: "5px solid #C6FF34", [b.split("|")[1]]: "5px solid #C6FF34", borderRadius: rad } as CSSProperties} />;
     return (
       <Div style={{ flex: 1, minHeight: 0, background: "#0E1016", color: "#FFFFFF", display: "flex", flexDirection: "column", position: "relative" }}>
-        {!r && !typing && <CameraScanner torch={sc.torch} paused={!!r || !!st.sheet} onCode={(c) => void this.doScan(c)} onState={(s) => this.camState(s)} />}
+        {!r && !typing && <CameraScanner torch={sc.torch} paused={!!r || !!st.sheet || !!st.lorry.res || !!st.lorry.pick || !!st.lorry.ask} onCode={(c) => void this.doScan(c)} onState={(s) => this.camState(s)} />}
         <Div style={{ flex: "none", display: "flex", alignItems: "center", gap: "10px", padding: "8px 12px", position: "relative" }}>
           <Btn onClick={() => this.setState({ scan: null })} aria-label="Close" style={{ width: "48px", height: "48px", borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("x", 24, "#FFFFFF")}</Btn>
           <Span style={{ flex: 1, fontSize: "17px", fontWeight: 700, textAlign: "center" }}>{title}</Span>
@@ -3363,6 +3748,9 @@ export class FactoryApp extends Component<Props, State> {
             </Div>
           </Div>
         )}
+              {st.lorry.res && this.renderLorryRes()}
+        {st.lorry.ask && this.renderLorryAsk()}
+        {st.lorry.pick && this.renderLorryPick()}
       </Div>
     );
   }
@@ -3443,22 +3831,25 @@ export class FactoryApp extends Component<Props, State> {
 
   renderFlow(): ReactNode {
     const st = this.state, T = this.T(), f = st.flow!, t = f.task, d = f.d, db = this.db();
-    const steps = STEPS[t.proc];
+    if (st.lorry.on && isLorryTask(t)) return this.renderLorryOn();
+    const steps = stepsOf(t);
     const key = steps[f.step];
     const li = this.li();
     const block = stepCheck(db, t, d, key);
     const back = () => {
       if (f.step === 0) {
+        if (t.id.startsWith(NEW_LORRY)) return this.setState({ flow: null });
         this.setState({ flow: null, drafts: { ...st.drafts, [t.id]: f } });
         this.toast("Saved on this phone. Tap Continue to come back.");
       } else this.setState({ flow: { ...f, step: f.step - 1 } });
     };
     const next = () => {
       if (block) return this.toast(block, "warn");
+      if (key === "load" && t.id.startsWith(NEW_LORRY)) return this.toast("Scan a box or lot label first.", "warn");
       if (key === "review") return void this.submit();
       const flow = { ...f, step: f.step + 1 };
       this.setState({ flow, drafts: { ...st.drafts, [t.id]: flow } });
-      if (steps[f.step + 1] === "load") void this.refreshBoard();
+      if (steps[f.step + 1] === "load") void (isLorryTask(t) ? this.refreshLorry(t.item) : this.refreshBoard());
     };
     const say: Record<string, string> = {
       identify: taskName(db, t) + ". " + taskTarget(db, t),
@@ -3473,7 +3864,7 @@ export class FactoryApp extends Component<Props, State> {
           <Div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <Btn onClick={back} aria-label={T.back} style={{ width: "48px", height: "48px", borderRadius: "50%", border: "none", background: "#F7F8FA", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flex: "none" }}>{ic("back", 24)}</Btn>
             <Span style={{ flex: 1, minWidth: 0 }}>
-              <Span style={{ display: "block", fontSize: "13px", color: "#6B7385" }}>{(T as Record<string, string>)[t.proc] + " · " + t.id}</Span>
+              <Span style={{ display: "block", fontSize: "13px", color: "#6B7385" }}>{(T as Record<string, string>)[t.proc] + " · " + (t.id.startsWith(NEW_LORRY) ? "Loading" : t.id)}</Span>
               <Span style={{ display: "block", fontSize: "16px", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{taskName(db, t)}</Span>
             </Span>
             <Btn onClick={listen} style={{ height: "44px", padding: "0 14px", borderRadius: "22px", border: "1px solid #DDD2FF", background: "#F1ECFF", color: "#5223E0", fontSize: "15px", fontWeight: 700, display: "flex", gap: "6px", alignItems: "center", cursor: "pointer", flex: "none" }}>{ic("speaker", 20)}{T.listen}</Btn>
@@ -3490,7 +3881,7 @@ export class FactoryApp extends Component<Props, State> {
           {key === "identify" && this.stepIdentify(t, d)}
           {key === "team" && this.stepTeam(t, d)}
           {key === "review" && this.stepReview(f)}
-          {key !== "identify" && key !== "team" && key !== "review" && this.stepForm(key, t, d)}
+          {key !== "identify" && key !== "team" && key !== "review" && (key === "load" && isLorryTask(t) ? this.stepLorry(t) : this.stepForm(key, t, d))}
         </Div>
         <Div style={{ flex: "none", background: "#FFFFFF", borderTop: "1px solid #EDEFF3", padding: "10px 16px 16px 16px" }}>
           {block && <Div style={{ fontSize: "14px", lineHeight: "20px", color: "#8A5C05", fontWeight: 600, marginBottom: "8px", textAlign: "center" }}>{block}</Div>}
@@ -4014,7 +4405,7 @@ export class FactoryApp extends Component<Props, State> {
       const f = st.flow;
       acts = [
         r.step && f
-          ? { l: T.fixIt, run: () => this.setState({ result: null, flow: { ...f, step: Math.max(0, STEPS[f.task.proc].indexOf(r.step!)) } }), style: btn("p", 60), icon: null }
+          ? { l: T.fixIt, run: () => this.setState({ result: null, flow: { ...f, step: Math.max(0, stepsOf(f.task).indexOf(r.step!)) } }), style: btn("p", 60), icon: null }
           : f
             ? { l: T.retry, run: () => void this.submit(), style: btn("p", 60), icon: ic("sync", 22, "#FFFFFF") }
             : home,
@@ -4277,7 +4668,7 @@ export class FactoryApp extends Component<Props, State> {
       K("Mixing", "flask", mixAct, mixPlan, "litres of base", pct(mixAct, mixPlan) + "% of plan"),
       K("Filling", "fill", fgood, sum(cans, (t) => t.target ?? 0), "good cans", "+ " + nf(sum(dn(drums), (t) => t.out?.good ?? 0)) + " / " + nf(sum(drums, (t) => t.target ?? 0)) + " drums · " + rej + " rejected"),
       K("Packing", "box", sum(dn(pk), (t) => t.out?.good ?? 0), sum(pk, (t) => t.target ?? 0), "boxes", "Only full batches count as stock"),
-      K("Dispatch", "truck", dn(ds).length, ds.length, "orders checked", ds.filter((t) => t.status === "blocked").length + " waiting for ERP"),
+      K("Dispatch", "truck", dn(ds).length, ds.length, "lorries loaded", Object.values(db.lorries ?? {}).filter((l) => !l.sent).length + " transports to load"),
     ];
     const status = (t: Task) => jobStatus(t, now, !!st.started[t.id]);
     const flags: [string, number, string, string, string][] = [["Late", tasks.filter((t) => status(t)[3] === "late").length, "late", "#FCECEC", "#B3261E"], ["To check", db.review.length, "review", "#FDF6E7", "#8A5C05"], ["Waiting to send", st.queue.filter((x) => x.status === "pending").length, "progress", "#F1ECFF", "#3D14A8"]];
@@ -4312,6 +4703,7 @@ export class FactoryApp extends Component<Props, State> {
               </Btn>
             ))}
           </Div>
+          {this.renderLorries()}
           <Div style={{ display: "flex", gap: "8px", overflowX: "auto", paddingBottom: "2px" }}>
             {filters.map(([k, l]) => <Btn key={k} onClick={() => this.setState({ hf: k })} style={{ height: "38px", padding: "0 14px", borderRadius: "19px", border: st.hf === k ? "none" : "1px solid #DDE1E8", background: st.hf === k ? "#1A1E28" : "#FFFFFF", color: st.hf === k ? "#FFFFFF" : "#3D4453", fontSize: "14px", fontWeight: 600, whiteSpace: "nowrap", cursor: "pointer", flex: "none" }}>{l}</Btn>)}
           </Div>

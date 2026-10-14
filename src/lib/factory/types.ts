@@ -121,6 +121,8 @@ export type FactoryData = {
   box: Record<string, BoxSku>;
   orders: Record<string, Order>;
   lots: Record<string, Lot>;
+  /** The transporters with goods to load at this godown, by lorry key. Absent from an older server. */
+  lorries?: Record<string, Lorry>;
   /** Empty boxes at this godown, by box SKU — null where the ERP does not count that box type. Absent from an older server. */
   emptyBoxes?: Record<string, number | null>;
   tasks: Task[];
@@ -161,6 +163,8 @@ export type Draft = {
   loads?: Record<string, number | null>;
   /** Lots on the lorry that were picked from photos rather than scanned. */
   loadsManual?: Record<string, boolean>;
+  /** The lorry this loading job is for — the job's own key, carried so a draft read on its own still says what it is. */
+  lorry?: string;
   checks?: Record<string, boolean>;
   photo?: string | null;
   photoId?: string | null;
@@ -227,6 +231,9 @@ export const STEPS: Record<Proc, string[]> = {
   dispatch: ["order", "load", "checklist", "team", "review"],
 };
 
+/** A lorry's loading job: scan every box, who loaded, check and send — the transport was chosen on Home. */
+export const LORRY_STEPS = ["load", "team", "review"];
+
 /* ---------------------------------------------------------------- empty drums
  * EMPTY DRUM ENTRY: the phone scans a drum's GRN/lot label once the drum is
  * empty and sends its weight. The server decides everything — whose drum it
@@ -290,6 +297,65 @@ export type LoadedBox = { id: string; lot: string; sku: string; at: string | nul
 
 /** The order's boxes as the ERP holds them: every one scanned onto it, and how many per lot. */
 export type LoadBoard = { order: string; boxes: LoadedBox[]; perLot: Record<string, number> };
+
+/* ---------------------------------------------------------------- loading a lorry
+ * LOADING IS BY TRANSPORTER, ITEM BY ITEM. A transporter's lorry takes the
+ * goods of every Ready order typed with that transporter; the loader scans
+ * what goes on and the server picks the order each box goes onto — one
+ * whose allocated lot the box is from, then the soonest due — before the
+ * ERP's Dispatch desk judges it there (lib/factory/lorry.ts). The loader
+ * never picks an order and never sees one.
+ * ------------------------------------------------------------------------- */
+
+/** One item on a lorry: one SKU, added up over every order going with that transporter. */
+export type LorryItem = {
+  sku: string;
+  label: string;
+  /** "boxes" or "cans" — what is counted. */
+  unit: string;
+  target: number;
+  loaded: number;
+  /** How many orders want it. */
+  orders: number;
+  late: boolean;
+  notBilled: boolean;
+  /** Stock with no box ids: the lot label is scanned instead of each box. */
+  byLot: boolean;
+};
+
+export type Lorry = {
+  /** "L:" + the transporter's name folded (spacing and capitals ignored); "L:" alone is no transporter named. */
+  key: string;
+  /** As typed on the order; null when nobody typed one. */
+  name: string | null;
+  items: LorryItem[];
+  target: number;
+  loaded: number;
+  /** Orders it covers — a count; the loader is never shown an order. */
+  orders: number;
+  /** Items late against their dispatch day. */
+  late: number;
+  /** The earliest dispatch day among its lines, YYYY-MM-DD. */
+  due: string | null;
+  /** The loading job already running for it, and who is in charge of it. */
+  task: string | null;
+  loader: string | null;
+  /** Everything is on and the loading was sent today: waiting on the office to verify, nothing for a loader to do. */
+  sent?: boolean;
+};
+
+export type LorryBox = { id: string; sku: string; lot: string };
+export type LorryOverride = { id: string; unit: string; ordered: string; scanned: string; reason: string; status: string; by: string | null; mine: boolean; decidedBy: string | null; note: string | null };
+export type LorryBoard = { lorry: Lorry | null; boxes: LorryBox[]; overrides: LorryOverride[]; canDecide: boolean };
+
+export type LorryScan =
+  | { ok: true; code: string; tone: "ok" | "warn"; title: string; message: string; board: LorryBoard; task: string; data: FactoryData | null }
+  | { ok: false; code: string; title: string; text: string; fix: string; board: LorryBoard | null; task: string | null; override: { sku: string; label: string }[] | null };
+
+/** A box scanned on Home: which lorries still need its item. */
+export type LorryFind =
+  | { ok: true; code: string; name: string; lorries: { key: string; name: string | null; need: number }[] }
+  | { ok: false; title: string; text: string; fix: string };
 
 export type BoxScan =
   | { ok: true; code: string; message: string; board: LoadBoard; data: FactoryData | null }

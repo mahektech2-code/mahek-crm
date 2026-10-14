@@ -14,7 +14,7 @@
  * ------------------------------------------------------------------------- */
 import Constants from "expo-constants";
 import { Platform } from "react-native";
-import type { QcInput, QcKit, QcSave, ReqInput, ReqKit, ReqSave } from "@/lib/factory/types";
+import type { LorryBoard, LorryFind, LorryScan, QcInput, QcKit, QcSave, ReqInput, ReqKit, ReqSave } from "@/lib/factory/types";
 import type { BoxInfo, BoxScan, CountInput, DrumLookup, StockCheckInput, StockKit, StockSave, DrumSave, FactoryData, LoadBoard, LrBatchSave, LrFields, LrKit, LrReading, LrSave, Proc, Submission, SubmitResult, Team } from "@/lib/factory/types";
 import type { Me, Who } from "./types";
 import { kvGet, kvSet } from "./model";
@@ -49,6 +49,12 @@ type Ops = {
   scanBox: (order: string, code: string) => BoxScan;
   unloadBox: (order: string, unitId: string) => BoxScan;
   boxInfo: (code: string) => BoxInfo;
+  lorryBoard: (key: string) => LorryBoard | null;
+  lorryScan: (key: string, code: string, taskId: string | null) => LorryScan;
+  lorryUnload: (key: string, unitId: string) => LorryScan;
+  lorryOverride: (key: string, code: string, sku: string, reason: string) => { ok: true; message: string; board: LorryBoard } | { ok: false; error: string };
+  lorryDecide: (key: string, id: string, approve: boolean, note: string | null) => { ok: true; message: string; board: LorryBoard } | { ok: false; error: string };
+  lorryFind: (code: string) => LorryFind;
   lrKit: () => LrKit;
   readLr: (fileId: string) => LrReading;
   saveLr: (input: LrFields & { fileId: string | null; readingId: string | null; note?: string | null }) => LrSave;

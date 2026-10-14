@@ -4,7 +4,8 @@ import { db } from "@/db";
 import { erpId } from "@/lib/erp/server";
 import { screenModule } from "@/lib/erp/screens";
 import { calendarDate } from "@/lib/business-date";
-import { firstBlockedStep, mixDeviation, mixMade, nf, normalizeDraft, recipeLines, recipeProblem, savedInstant } from "./rules";
+import { firstBlockedStep, isLorryTask, lorryName, mixDeviation, mixMade, nf, normalizeDraft, recipeLines, recipeProblem, savedInstant } from "./rules";
+import { closeOrderLoads, lorriesFor, lorryOrderNos } from "./lorry";
 import { clock12, hhmm } from "./time";
 import type { Draft, FactoryData, Proc, Submission, SubmitResult, Task } from "./types";
 import { OFFLINE_HOURS } from "./types";
@@ -102,9 +103,10 @@ async function liveData(fc: FactoryCtx): Promise<FactoryData> {
   const open = await openPackBatches(fc.godown.id);
   const tasks = await tasksFor(fc.godown.id, open);
   const { emp } = await people(fc.godown.id);
+  const lorries = await lorriesFor(fc.godown.id);
   return {
     loc: fc.godown.name, locId: fc.godown.id, shift: "", dateLine: "", at: new Date().toISOString(), emp, teams: {} as FactoryData["teams"], hours: {},
-    rm: m.rm, sfg: m.sfg, sku: m.sku, pm: m.pm, box: m.box, orders, lots, tasks, review: [], audit: [], down: {}, dup: 0, corr: 0,
+    rm: m.rm, sfg: m.sfg, sku: m.sku, pm: m.pm, box: m.box, orders, lots, lorries, tasks, review: [], audit: [], down: {}, dup: 0, corr: 0,
   };
 }
 
@@ -457,6 +459,17 @@ async function postPacking(fc: FactoryCtx, sub: Submission, live: FactoryData, t
  * right numbers, with a photograph to prove it.
  */
 async function postDispatch(fc: FactoryCtx, sub: Submission, live: FactoryData, t: Task, d: Draft): Promise<SubmitResult> {
+  if (isLorryTask(t)) {
+    /* Every scan is already at the desk; sending says the lorry is loaded and closes the older one-order jobs for its orders. */
+    const l = live.lorries?.[t.item!];
+    await closeOrderLoads(fc.godown.id, await lorryOrderNos(fc, t.item!));
+    return {
+      kind: "done", key: sub.key, task: t.id, proc: "dispatch",
+      rows: [["Transporter", lorryName(l?.name)], ["Loaded", l ? nf(l.loaded) + " of " + nf(l.target) + " · " + l.items.length + " item" + (l.items.length > 1 ? "s" : "") : "All of it"], ["Orders it covers", l ? String(l.orders) : "—"], ["Next", "Office verifies and sends"]],
+      label: null,
+      msg: "Loading is checked. The office will now verify and send it.",
+    };
+  }
   const ord = live.orders[t.order!];
   if (d.photoId)
     await db.execute(sql`
@@ -484,9 +497,11 @@ async function finish(fc: FactoryCtx, sub: Submission, live: FactoryData, t: Tas
     const k = live.sku[d.sku!];
     outRow = { good: (d.filled ?? 0) - (d.rej ?? 0), rej: d.rej ?? 0, unit: k.kind === "drum" ? "drums" : "cans", lot: r.label?.code, at };
   } else if (t.proc === "packing") outRow = { good: d.boxes ?? 0, unit: "boxes", lot: r.label?.code ?? "—", at };
+  else if (isLorryTask(t)) outRow = { good: live.lorries?.[t.item!]?.loaded ?? 0, unit: "loaded", at };
   else outRow = { good: 1, unit: "order", at };
   const extra: Record<string, unknown> = { key: sub.key, savedAt: sub.savedAt, rejR: d.rejR ?? null };
-  if (t.proc === "dispatch") Object.assign(extra, { loads: d.loads, checks: d.checks, photoId: d.photoId ?? null, order: orderNoOf(t.order!) });
+  if (isLorryTask(t)) Object.assign(extra, { lorry: t.item, orders: live.lorries?.[t.item!]?.orders ?? 0 });
+  else if (t.proc === "dispatch") Object.assign(extra, { loads: d.loads, checks: d.checks, photoId: d.photoId ?? null, order: orderNoOf(t.order!) });
   if (t.proc === "filling" && d.sku !== t.item) extra.sizeChangedFrom = t.item;
   if (t.proc === "mixing" && d.ownRecipe) extra.ownRecipe = true;
 
@@ -541,6 +556,7 @@ async function finish(fc: FactoryCtx, sub: Submission, live: FactoryData, t: Tas
     t.proc === "mixing" ? `Saved mixing batch ${r.label?.code} · ${nf(mixMade(d))} L`
     : t.proc === "filling" ? `Saved filling ${r.label?.code} · ${nf((d.filled ?? 0) - (d.rej ?? 0))} good, ${nf(d.rej)} rejected`
     : t.proc === "packing" ? `Saved packing · ${nf(d.boxes)} boxes · ${r.rows[1][1]} full batch${r.rows[1][1] === "1" ? "" : "es"}`
+    : isLorryTask(t) ? `Lorry loaded · ${lorryName(live.lorries?.[t.item!]?.name)} · ${nf(live.lorries?.[t.item!]?.loaded)} on`
     : `Loading checked for ${t.order} · photo ${d.photo ?? "—"}`;
   await factoryAudit(fc, "factory." + t.proc + ".save", t.id, what + (sub.queued ? ` · saved on phone ${clock12(hhmm(savedInstant(sub.savedAt, new Date())))}, sent from its queue` : ""), { key: sub.key, team: d.team });
   if (d.down && d.downR) await factoryAudit(fc, "factory.downtime", t.id, `Machine stopped ${d.downMin} min · ${d.downR}`);

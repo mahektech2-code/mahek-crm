@@ -1,4 +1,5 @@
 import "server-only";
+import { lorriesFor } from "./lorry";
 import { cache } from "react";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
@@ -602,6 +603,7 @@ export async function bootstrap(fc: FactoryCtx): Promise<FactoryData> {
   const [lots, { emp, hours }, teams, open, emptyBoxes] = await Promise.all([lotsFor(fc.godown, m), people(fc.godown.id), teamDefaults(), openPackBatches(fc.godown.id), emptyBoxesAt(fc.godown.id)]);
   const orders = await ordersFor(fc.godown, m, lots);
   await ensureDispatchTasks(fc, orders, teams);
+  const lorries = fc.dispatch ? await lorriesFor(fc.godown.id) : {};
   /* A department supervisor's floor is their departments. */
   const tasks = (await tasksFor(fc.godown.id, open)).filter((t) => !fc.head || !fc.scopes || fc.scopes.includes(t.proc));
   for (const t of tasks) {
@@ -665,6 +667,7 @@ export async function bootstrap(fc: FactoryCtx): Promise<FactoryData> {
     box: m.box,
     orders,
     lots,
+    lorries,
     emptyBoxes,
     tasks,
     review: review.map((r) => ({ id: r.id, kind: r.kind, task: r.taskId, title: r.title, text: clockText(r.body), meta: clockText(r.meta), acts: ACTS[r.kind] ?? ACTS.issue })),

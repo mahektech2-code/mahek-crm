@@ -4,6 +4,7 @@
  * ------------------------------------------------------------------------- */
 import type { Lang } from "@/lib/factory/i18n";
 import type { ScanMeta, ScanPurpose, ScanResult } from "@/lib/factory/rules";
+import type { LorryBoard } from "@/lib/factory/types";
 import type { Draft, FactoryData, Proc, SubmitResult, Task, CheckItem, CheckStage, CountTask, StockSave, QcLot, ReqDept, ReqKit, ReqSave } from "@/lib/factory/types";
 import type { Me, Who } from "@/lib/actions/factory";
 import type { DrumLotView, DrumSaved } from "@/lib/factory/types";
@@ -60,6 +61,21 @@ export type Sheet = FillSheet | PackSheet | KpSheet | PeopleSheet | TilesSheet |
 
 export type SignStep = "lang" | "id" | "pin" | "otp" | "newpin";
 
+/** One lorry being loaded: the desk's board, the last scan's answer over the camera, and the override being asked. */
+export type LorryUi = {
+  board: LorryBoard | null;
+  res: { tone: "ok" | "warn" | "bad"; code: string; title: string; text: string; fix?: string; override?: { sku: string; label: string }[] | null } | null;
+  ask: { code: string; items: { sku: string; label: string }[]; sku: string | null; reason: string; busy: boolean; err: string } | null;
+  /** The boxes-on-the-lorry and overrides screen is open. */
+  on: boolean;
+  /** Declining an override: its note. */
+  decline: { id: string; note: string } | null;
+  /** A box scanned on Home that more than one lorry needs. */
+  pick: { code: string; name: string; lorries: { key: string; name: string | null; need: number }[] } | null;
+  busy: boolean;
+};
+export const LORRY0: LorryUi = { board: null, res: null, ask: null, on: false, decline: null, pick: null, busy: false };
+
 export type State = {
   lang: Lang;
   me: Me | null;
@@ -110,6 +126,8 @@ export type State = {
   req: ReqEntry | null;
   /** A newer build is live; the page reloads itself once nothing is in hand. */
   newBuild: boolean;
+  /** Loading a lorry. */
+  lorry: LorryUi;
 };
 
 /* ------------------------------------------------------------ the phone's memory */

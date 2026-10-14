@@ -243,6 +243,40 @@ async function lotsWithUnitsFor(ex: Ex, orderIds: string[]): Promise<Set<string>
   return new Set(rows.map((r) => r.id));
 }
 
+/** A box, as the desk reads it — for the factory's loading, which picks the order before the desk judges the box. */
+export async function unitInfo(code: string): Promise<ScanUnit | null> {
+  return unitFor(db, normaliseCode(code), false);
+}
+
+/** A lot label, as the desk reads it. */
+export async function lotInfo(code: string): Promise<ScanLot | null> {
+  return lotFor(db, normaliseCode(code));
+}
+
+export type LoadingLine = ScanLine & { transporter: string | null; dispatchOn: string | null; billed: boolean; unitsExist: boolean; allocated: number };
+
+/**
+ * EVERY LINE WAITING TO GO ON A LORRY AT ONE GODOWN: Ready, not yet
+ * dispatch-verified, whatever its day — the desk's own queue, read line by
+ * line with the transporter typed on it, so the factory can load a whole
+ * transporter's goods item by item. The counts are `scanLines`', the desk's.
+ */
+export async function loadingLines(ex: Ex, godownId: string): Promise<LoadingLine[]> {
+  const meta = await q<{ id: string; no: number; transporter: string | null; dispatchOn: string | null; billed: boolean }>(ex, sql`
+    select o.id, o.order_no as no, o.transporter, o.dispatch_on::text as "dispatchOn", d.order_id is not null as billed
+      from erp_orders o left join erp_order_details d on d.order_id = o.id
+     where o.godown_id = ${godownId} and o.status = 'Ready' and coalesce(d.verification, '') <> 'Verified'`);
+  if (!meta.length) return [];
+  const byId = new Map(meta.map((m) => [m.id, m]));
+  const nos = [...new Set(meta.map((m) => Number(m.no)))];
+  const all = (await Promise.all(nos.map((no) => scanLines(ex, no)))).flat().filter((l) => byId.has(l.id) && !l.cancelled && !l.dispatched);
+  const withUnits = await lotsWithUnitsFor(ex, all.map((l) => l.id));
+  return all.map((l) => {
+    const m = byId.get(l.id)!;
+    return { ...l, transporter: m.transporter, dispatchOn: m.dispatchOn, billed: !!m.billed, unitsExist: withUnits.has(l.id), allocated: l.alloc.reduce((a, x) => a + x.qty, 0) };
+  });
+}
+
 /** Orders waiting at the desk: a line Ready or billed and not yet dispatch-verified. */
 export async function dispatchQueue(): Promise<{ orderNo: number; delivery: string; dispatchOn: string | null; lines: number; target: number; scanned: number; billed: number; godown: string }[]> {
   const rows = await q<Row>(db, sql`
@@ -422,7 +456,7 @@ export async function unscanUnit(ctx: ErpContext, unitId: string): Promise<Resul
 /* ============================================================ overrides */
 
 /** Asking for a mismatched box to go anyway. Only a mismatch can be asked about; a duplicate or a box on hold cannot. */
-export async function requestOverride(ctx: ErpContext, orderNo: number, raw: string, reason: string): Promise<Result<unknown>> {
+export async function requestOverride(ctx: ErpContext, orderNo: number, raw: string, reason: string, lineId?: string): Promise<Result<unknown>> {
   const code = normaliseCode(raw);
   if (reason.trim().length < 10) return fieldErr("reason", "Say why, in a sentence: who agreed to the change and what the customer was told");
   const unit = await unitFor(db, code, false);
@@ -430,7 +464,9 @@ export async function requestOverride(ctx: ErpContext, orderNo: number, raw: str
   const v = scanVerdict(unit, lines);
   if (v.ok) return err("That box matches the order; scan it.", "rule_violation");
   if (v.result !== "mismatch" || !v.mismatch || !unit) return err(v.message, "rule_violation");
-  const line = lines.find((l) => l.id === v.mismatch!.lineId)!;
+  /* The factory's loader says which line the box stands in for; otherwise the verdict's nearest line. */
+  const named = lineId ? lines.find((l) => l.id === lineId && !l.cancelled && !l.dispatched && l.scanned < l.target) : undefined;
+  const line = named ?? lines.find((l) => l.id === v.mismatch!.lineId)!;
   const id = erpId("dov");
   try {
     await db.execute(sql`
