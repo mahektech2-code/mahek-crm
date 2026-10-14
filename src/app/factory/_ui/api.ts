@@ -40,6 +40,12 @@ type Ops = {
   reqRaise: typeof Actions.factoryReqRaise;
   reqCancel: typeof Actions.factoryReqCancel;
   scanBox: typeof Actions.factoryScanBox;
+  lorryBoard: typeof Actions.factoryLorryBoard;
+  lorryScan: typeof Actions.factoryLorryScan;
+  lorryUnload: typeof Actions.factoryLorryUnload;
+  lorryOverride: typeof Actions.factoryLorryOverride;
+  lorryDecide: typeof Actions.factoryLorryDecide;
+  lorryFind: typeof Actions.factoryLorryFind;
 };
 
 export class NotReceived extends Error {}

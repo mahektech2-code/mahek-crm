@@ -8856,6 +8856,28 @@ allocated lots, loads exactly what the order takes, ticks the checklist and
 photographs the truck; the ERP's verification, transport row and order book
 stay with the office (PRD §7.4.6).
 
+**LOADING IS BY TRANSPORTER, ITEM BY ITEM, and that is a reversal (Oct
+2026).** The two paragraphs above are how an older page loads, one order at a
+time. Today's page shows "Transports to load" on Home: every Ready line at the
+godown that is not yet dispatch-verified, whatever its day, grouped by the
+transporter typed on the line (`lorryKeyOf` ignores spacing and capitals; no
+name is its own row). Tapping one opens its loading straight away. The step bar
+is Load → Team → Check and send (`stepsOf`), with no order step, checklist or
+truck photo. The loader never picks or sees an order. `lib/factory/lorry.ts`
+picks the order each scanned box goes onto: an approved override's line first,
+then a line whose allocated lot the box is from, then the soonest due. It then
+calls the desk's own `scanOntoOrder` there. A lot label (stock with no box ids,
+and loose cans) fills orders soonest due first until the lot runs out. A
+mismatch is asked about against an item still short on the lorry
+(`requestOverride` takes that line). The job (`factory_tasks`, item = the
+lorry key, no `order_no`) is made by the first scan that loads something, so
+opening a transport starts nothing. A box scanned on Home opens the one lorry
+that needs it, and asks only when several do. Team stays locked until every
+piece is on. Sending closes the older one-order jobs for the lorry's orders,
+and the lorry shows "Loaded · waiting for the office" until the office
+verifies. `ensureDispatchTasks` still makes one-order jobs for APKs older than
+this; today's page does not list them (`isOrderLoad`).
+
 **THE ANDROID APP IS NATIVE, AND IT IS THE WEB APP'S SCREENS.** `factory-mobile/`
 is an Expo app — the APK on `/download/factory` — and it was first a Trusted
 Web Activity around `/factory`. Floor staff asked for an app rather than a

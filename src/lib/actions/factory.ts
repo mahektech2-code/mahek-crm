@@ -16,7 +16,8 @@ import { qcKit, saveQcDecision } from "@/lib/factory/qc";
 import { cancelFromFloor, raiseFromFloor, requirementKit } from "@/lib/factory/purchase";
 import { submitJob } from "@/lib/factory/post";
 import { assignTask, changeTeam, decideReview, reportProblem, requestCorrection, startFillFromLot, startMixingBatch, startPackFromLot } from "@/lib/factory/head";
-import type { QcInput, QcKit, QcSave, ReqInput, ReqKit, ReqSave } from "@/lib/factory/types";
+import type { LorryBoard, LorryFind, LorryScan, QcInput, QcKit, QcSave, ReqInput, ReqKit, ReqSave } from "@/lib/factory/types";
+import { lorryBoard, lorryDecide, lorryFind, lorryOverride, lorryScan, lorryUnload } from "@/lib/factory/lorry";
 import type { BoxInfo, BoxScan, CountInput, DrumExisting, StockCheckInput, StockKit, StockSave, DrumLookup, DrumSave, FactoryData, LoadBoard, LrFields, LrBatchSave, LrKit, LrReading, LrSave, Proc, Submission, SubmitResult, Team } from "@/lib/factory/types";
 import { boxInfo, loadBoard, lrKit, readLr, saveLr, saveLrPhotos, scanBox, unloadBox } from "@/lib/factory/dispatch";
 import { readStoredLrs } from "@/lib/erp/lr-upload-read";
@@ -361,6 +362,36 @@ export async function factoryUnloadBox(order: string, unitId: string): Promise<B
   const fc = await factoryContext();
   if (!fc) return { ok: false, code: String(unitId ?? ""), ...SIGNED_OUT, board: null };
   return unloadBox(fc, order, unitId);
+}
+/* A lorry: loaded item by item, the order each box goes onto chosen by lib/factory/lorry.ts. */
+export async function factoryLorryBoard(key: string): Promise<LorryBoard | null> {
+  const fc = await factoryContext();
+  return fc ? lorryBoard(fc, key) : null;
+}
+export async function factoryLorryScan(key: string, code: string, taskId: string | null): Promise<LorryScan> {
+  const fc = await factoryContext();
+  if (!fc) return { ok: false, code: String(code ?? ""), ...SIGNED_OUT, board: null, task: null, override: null };
+  return lorryScan(fc, key, code, taskId);
+}
+export async function factoryLorryUnload(key: string, unitId: string): Promise<LorryScan> {
+  const fc = await factoryContext();
+  if (!fc) return { ok: false, code: String(unitId ?? ""), ...SIGNED_OUT, board: null, task: null, override: null };
+  return lorryUnload(fc, key, unitId);
+}
+export async function factoryLorryOverride(key: string, code: string, sku: string, reason: string): Promise<{ ok: true; message: string; board: LorryBoard } | { ok: false; error: string }> {
+  const fc = await factoryContext();
+  if (!fc) return { ok: false, error: SIGNED_OUT.title };
+  return lorryOverride(fc, key, code, sku, reason);
+}
+export async function factoryLorryDecide(key: string, id: string, approve: boolean, note: string | null): Promise<{ ok: true; message: string; board: LorryBoard } | { ok: false; error: string }> {
+  const fc = await factoryContext();
+  if (!fc) return { ok: false, error: SIGNED_OUT.title };
+  return lorryDecide(fc, key, id, approve, note);
+}
+export async function factoryLorryFind(code: string): Promise<LorryFind> {
+  const fc = await factoryContext();
+  if (!fc) return { ok: false, ...SIGNED_OUT };
+  return lorryFind(fc, code);
 }
 export async function factoryBoxInfo(code: string): Promise<BoxInfo> {
   const fc = await factoryContext();

@@ -11,7 +11,7 @@
  * Xylene", not an error code.
  * ------------------------------------------------------------------------- */
 import type { Draft, FactoryData, Lot, Proc, RmLine, Task } from "./types";
-import { CHECK_ITEMS, STEPS } from "./types";
+import { CHECK_ITEMS, LORRY_STEPS, STEPS } from "./types";
 
 export const nf = (n: number | null | undefined) => Number(n || 0).toLocaleString("en-IN");
 
@@ -64,7 +64,36 @@ export function lotUnit(db: FactoryData, x: Lot): string {
   return "boxes";
 }
 
+/* ------------------------------------------------------------- loading a lorry */
+
+/**
+ * A transporter's name as one lorry: spacing and capitals are nobody's to get
+ * right, so "VRL" typed twice is one lorry however it was spaced. No name at
+ * all is a lorry of its own ("L:"), until the office names one.
+ */
+export function lorryKeyOf(name: string | null | undefined): string {
+  return "L:" + String(name ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/** A loading job for a whole lorry (item = its lorry key) — as against an older page's one-order job. */
+export const isLorryTask = (t: Task) => t.proc === "dispatch" && !t.order && !!t.item && t.item.startsWith("L:");
+
+/** A one-order loading job made for an older page. Today's page loads by lorry and does not list these. */
+export const isOrderLoad = (t: Task) => t.proc === "dispatch" && !!t.order;
+
+/** The steps of a job — a lorry's are its own. */
+export function stepsOf(t: Task): string[] {
+  return isLorryTask(t) ? LORRY_STEPS : STEPS[t.proc as Proc];
+}
+
+/** "VRL Logistics", or the words for a lorry nobody named. */
+export const lorryName = (name: string | null | undefined) => (name && name.trim() ? name.trim() : "No transporter named");
+
+/** What is still to go on a lorry, in its own units. */
+export const lorryLeft = (l: { target: number; loaded: number }) => Math.max(0, l.target - l.loaded);
+
 export function taskName(db: FactoryData, t: Task): string {
+  if (isLorryTask(t)) return lorryName(db.lorries?.[t.item!]?.name ?? null);
   if (t.proc === "mixing") return db.sfg[t.item!]?.n ?? t.item!;
   if (t.proc === "filling") {
     const k = db.sku[t.item!];
@@ -89,12 +118,16 @@ export function taskTarget(db: FactoryData, t: Task): string {
     return nf(t.target) + " " + (k?.kind === "drum" ? "drums" : "cans");
   }
   if (t.proc === "packing") return nf(t.target) + " boxes" + (t.carry ? " · " + t.carry + " already in an open batch" : "");
+  if (isLorryTask(t)) {
+    const l = db.lorries?.[t.item!];
+    return l ? l.items.length + " item" + (l.items.length > 1 ? "s" : "") + " · " + nf(l.loaded) + " of " + nf(l.target) + " loaded" : "Nothing left to load";
+  }
   const o = db.orders[t.order!];
   return t.order + (o ? " · " + o.city + " · " + o.lines.length + " item" + (o.lines.length > 1 ? "s" : "") : "");
 }
 
 /** The code printed on a task sheet's QR. */
-export const taskCode = (t: Task) => (t.proc === "dispatch" ? t.order! : "TASK-" + t.id.replace(/^T-/, ""));
+export const taskCode = (t: Task) => (isOrderLoad(t) ? t.order! : "TASK-" + t.id.replace(/^T-/, ""));
 
 /**
  * A code somebody TYPED off a label instead of scanning it. Spaces and capital
@@ -252,6 +285,12 @@ export function stepCheck(db: FactoryData, t: Task, d: Draft, key: string): stri
     return downCheck(d);
   }
   if (key === "order") return db.orders[t.order!]?.blocked ?? "";
+  if (key === "load" && isLorryTask(t)) {
+    /* Nothing left on the lorry is not a wait: the office has verified the rest. */
+    const l = db.lorries?.[t.item!];
+    const left = l ? l.items.reduce((a, i) => a + lorryLeft(i), 0) : 0;
+    return left ? nf(left) + " still to load" : "";
+  }
   if (key === "load") {
     const o = db.orders[t.order!];
     if (!o) return "This order is not ready yet. Wait for the office.";
@@ -276,7 +315,7 @@ export function stepCheck(db: FactoryData, t: Task, d: Draft, key: string): stri
 
 /** The first step that is not complete, or null — what the server asks before it posts anything. */
 export function firstBlockedStep(db: FactoryData, t: Task, d: Draft): { step: string; msg: string } | null {
-  for (const s of STEPS[t.proc as Proc]) {
+  for (const s of stepsOf(t)) {
     if (s === "review") continue;
     const msg = stepCheck(db, t, d, s);
     if (msg) return { step: s, msg };
@@ -448,6 +487,7 @@ export function normalizeDraft(raw: unknown, v = 1): Draft {
   if (r.checks && typeof r.checks === "object") d.checks = Object.fromEntries(Object.entries(r.checks as Record<string, unknown>).map(([k, x]) => [k, !!x]));
   if (r.photo !== undefined) d.photo = str(r.photo);
   if (r.photoId !== undefined) d.photoId = str(r.photoId);
+  if (typeof r.lorry === "string") d.lorry = r.lorry;
   return d;
 }
 

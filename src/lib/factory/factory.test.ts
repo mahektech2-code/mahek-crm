@@ -19,8 +19,9 @@ import { seedFactoryFloor, type SeededFloor } from "./demo-seed";
 import { bootstrap, contextFor, type FactoryCtx } from "./server";
 import { submitJob } from "./post";
 import { assignTask, decideReview, requestCorrection, startFillFromLot, startMixingBatch, startPackFromLot } from "./head";
-import { boxCode, emptyBoxShort, fillFromLot, mixDeviation, packBatchPlan, packFromLot, packNeeds, recipeLines, recipeProblem, recipeRm, resolveScan, startsOwnBatch, stepCheck, taskCode, typedCode } from "./rules";
+import { isLorryTask, lorryKeyOf, stepsOf, boxCode, emptyBoxShort, fillFromLot, mixDeviation, packBatchPlan, packFromLot, packNeeds, recipeLines, recipeProblem, recipeRm, resolveScan, startsOwnBatch, stepCheck, taskCode, typedCode } from "./rules";
 import { boxInfo, loadBoard, lrKit, saveLr, scanBox, unloadBox } from "./dispatch";
+import { lorryBoard, lorryDecide, lorryFind, lorryOverride, lorryScan, lorryUnload, lorryWords } from "./lorry";
 import { cancelFromFloor, raiseFromFloor, requirementKit } from "./purchase";
 import { shelfFacts } from "@/lib/erp/stock-check";
 import { setAccess } from "@/lib/actions/access";
@@ -505,6 +506,93 @@ describe("dispatch", () => {
     const after = r.ok ? r.data! : before;
     assert.ok(after.orders[t.order!].lines.some((ln) => ln.alloc.some((a) => a[0] === bc.lot)), "the scanned box's lot is given to the order");
     await unloadBox(fc, t.order!, id);
+  });
+
+  test("a lorry is loaded item by item: the server picks the order, the desk judges each box, and it is sent once everything is on", async () => {
+    assert.equal(lorryKeyOf("  VRL   Logistics "), lorryKeyOf("vrl logistics"), "spacing and capitals are one lorry");
+    assert.equal(lorryKeyOf(null), "L:");
+    assert.equal(lorryWords("BX-1 is already scanned onto this order."), "BX-1 is already scanned onto this lorry.", "a loader is never shown an order");
+    assert.equal(lorryWords("BX-1 is at Vasai; order 1042 leaves from Bhiwandi."), "BX-1 is at Vasai; this lorry leaves from Bhiwandi.");
+    const { fc } = await as("imran");
+    /* One Ready line on a lorry of its own, needing exactly one piece of a lot it is given. */
+    const [ln] = await q<{ id: string; no: number; sku: string; boxed: boolean; cpb: number; from: string; lot: string; godown: string; fg: string | null }>(sql`
+      select o.id, o.order_no as no, o.sku_id as sku, coalesce(pk.empty_boxes_required, 0) > 0 as boxed, coalesce(p.cans_per_box, 1) as cpb,
+             b.lot_from as "from", b.lot_code as lot, b.godown_id as godown, b.finished_good_id as fg
+        from erp_orders o join erp_batch_codes b on b.order_id = o.id join products p on p.id = o.sku_id
+        left join erp_product_packing pk on pk.product_id = p.id
+       where o.status = 'Ready' and o.godown_id = ${fc.godown.id} limit 1`);
+    assert.ok(ln, "the seed has a Ready line with a lot given");
+    await db.execute(sql`update erp_orders set transporter = case when id = ${ln.id} then ' Test  Lorry ' else 'Other Transport' end where godown_id = ${fc.godown.id}`);
+    await db.execute(sql`update erp_orders set qty_cans = ${ln.boxed ? ln.cpb : 1} where id = ${ln.id}`);
+    await db.execute(sql`delete from erp_units where order_id = ${ln.id}`);
+    await db.execute(sql`delete from erp_batch_codes where order_id = ${ln.id} and id <> (select id from erp_batch_codes where order_id = ${ln.id} order by created_at limit 1)`);
+    await db.execute(sql`update erp_batch_codes set quantity = 1 where order_id = ${ln.id}`);
+    const key = lorryKeyOf("test lorry");
+    const id = (ln.from === "pack" ? "BX" : "LU") + "-991229-" + String(Date.now() % 1e6).padStart(6, "0");
+    await db.execute(sql`
+      insert into erp_units (id, kind, sku_id, lot_from, lot_code, finished_good_id, seq, cans, godown_id, status)
+      values (${id}, ${ln.from === "pack" ? "box" : "loose"}, ${ln.sku}, ${ln.from}, ${ln.lot}, ${ln.fg},
+              (select coalesce(max(seq), 0) + 1 from erp_units where lot_from = ${ln.from} and lot_code = ${ln.lot}), ${ln.from === "pack" ? ln.cpb : 1}, ${ln.godown}, 'available')`);
+
+    const before = (await as("imran")).data;
+    const l = before.lorries?.[key];
+    assert.ok(l, "the lorry is on Home: " + JSON.stringify(Object.keys(before.lorries ?? {})));
+    assert.equal(l.name, "Test  Lorry");
+    assert.deepEqual([l.items.length, l.target, l.loaded, l.orders, l.task], [1, 1, 0, 1, null], "looking starts nothing");
+
+    const find = await lorryFind(fc, id);
+    assert.ok(find.ok && find.lorries.some((x) => x.key === key), JSON.stringify(find));
+    assert.equal((await lorryScan((await as("anil")).fc, key, id, null)).ok, false, "mixing does not load lorries");
+
+    /* A box of other stock: refused, and it can be asked about against the item still short. */
+    const [other] = await q<{ id: string }>(sql`select id from products where id <> ${ln.sku} limit 1`);
+    const wrong = "BX-991228-" + String(Date.now() % 1e6).padStart(6, "0");
+    await db.execute(sql`
+      insert into erp_units (id, kind, sku_id, lot_from, lot_code, seq, cans, godown_id, status)
+      values (${wrong}, 'box', ${other.id}, 'pack', 'TESTLOT-X', 1, 1, ${ln.godown}, 'available')`);
+    const bad = await lorryScan(fc, key, wrong, null);
+    assert.equal(bad.ok, false);
+    assert.ok(!bad.ok && bad.override?.some((x) => x.sku === ln.sku), JSON.stringify(bad));
+    assert.equal(bad.task, null, "a wrong first scan makes no job");
+    const ask = await lorryOverride(fc, key, wrong, ln.sku, "Customer agreed on the phone with Deepa");
+    assert.equal(ask.ok, true, JSON.stringify(ask));
+    const [ov] = await q<{ order: string; status: string }>(sql`select order_id as "order", status from erp_dispatch_overrides where unit_id = ${wrong}`);
+    assert.deepEqual([ov.order, ov.status], [ln.id, "Pending"], "the override names the short line");
+    const own = await lorryDecide(fc, key, (await lorryBoard(fc, key))!.overrides[0].id, true, null);
+    assert.equal(own.ok, false, "nobody decides their own override");
+
+    const first = await lorryScan(fc, key, id, null);
+    assert.equal(first.ok, true, JSON.stringify(first));
+    assert.ok(first.ok && /^T-/.test(first.task), "the first scan that loads something makes the job");
+    const [u] = await q<{ status: string; order: string }>(sql`select status, order_id as "order" from erp_units where id = ${id}`);
+    assert.deepEqual([u.status, u.order], ["scanned", ln.id], "the desk holds the box, on the line the server chose");
+    const again = await lorryScan(fc, key, id, first.ok ? first.task : null);
+    assert.equal(again.ok, false);
+    assert.equal((again as { title: string }).title, "Already on the lorry");
+
+    const off = await lorryUnload(fc, key, id);
+    assert.equal(off.ok, true, JSON.stringify(off));
+    assert.equal(off.board?.boxes.length, 0);
+    const on = await lorryScan(fc, key, id, first.ok ? first.task : null);
+    assert.ok(on.ok && first.ok && on.task === first.task, "one job per lorry");
+
+    const now = (await as("imran")).data;
+    const job = now.tasks.find((t) => first.ok && t.id === first.task)!;
+    assert.ok(isLorryTask(job));
+    assert.deepEqual(stepsOf(job), ["load", "team", "review"]);
+    assert.equal(now.lorries?.[key]?.loaded, 1);
+    assert.equal(now.lorries?.[key]?.loader, fc.user.id);
+    assert.equal(stepCheck(now, job, {} as Draft, "load"), "");
+    const team = { ...job.team, op: job.team.op ?? fc.user.id };
+    const sent = await submitJob(fc, sub(job, { team, down: null, downR: null, downMin: null, lorry: key }));
+    assert.equal(sent.kind, "done", JSON.stringify(sent));
+    const [legacy] = await q<{ status: string }>(sql`select status from factory_tasks where proc = 'dispatch' and order_no = ${String(ln.no)} limit 1`);
+    assert.ok(!legacy || legacy.status === "done", "the older one-order job is closed with it");
+    const done = (await as("imran")).data;
+    assert.equal(done.lorries?.[key]?.sent, true, "loaded and sent: waiting on the office");
+    const [v] = await q<{ verification: string }>(sql`select verification from erp_order_details where order_id = ${ln.id}`);
+    assert.equal(v.verification, "Pending", "the office still verifies it");
+    await lorryUnload(fc, key, id);
   });
 
   test("an LR uploaded from the phone lands in the register the LR desk reads, and only dispatch may upload one", async () => {
