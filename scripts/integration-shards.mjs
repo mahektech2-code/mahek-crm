@@ -114,6 +114,7 @@ export const WEIGHTS = {
   "src/lib/qualification-flow.test.ts": 21,
   "src/lib/self-raised-approver.test.ts": 14,
   "src/lib/telecaller-verifier-routing.test.ts": 22,
+  "src/lib/field-verifier-routing.test.ts": 25,
   "src/lib/convert-legacy-stage.test.ts": 8,
   "src/lib/lead-owner-visibility.test.ts": 9,
   "src/lib/sales-manager-desk-queues.test.ts": 10,

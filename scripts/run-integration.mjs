@@ -246,6 +246,9 @@ const files = [
   // Who verifies a Prospect on each of the three workflows, kept apart: a Telecaller's lead,
   // a Sales Manager's own, and everything a salesman or a seat already routes.
   "src/lib/telecaller-verifier-routing.test.ts",
+  // The third verifier: a lead a Salesman raised or holds goes to the person
+  // `leads.fieldVerifierEmail` names, by the seat the Sales Manager already has.
+  "src/lib/field-verifier-routing.test.ts",
   // A lead still at the legacy `new` / `contacted` stage converts to Prospect once the desk
   // gives it a sales type: it is relabelled as the Suspect it is, not refused as off-ladder.
   "src/lib/convert-legacy-stage.test.ts",

@@ -13,6 +13,7 @@ import { notifyUser } from "@/lib/notify";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
 import { MBOS_EVENT, writeTimelineEvent } from "@/lib/timeline";
 import { leadRow } from "@/lib/services/lead-service";
+import { realignNotice, realignVerifierSeats } from "@/lib/services/lead-verifier";
 import {
   DESK_MODULE,
   assignableOwner,
@@ -68,7 +69,13 @@ const schema = z.object({
 type Actor = Awaited<ReturnType<typeof requireCapability>>;
 
 type AssignResult =
-  | { ok: true; changed: boolean; leadName: string }
+  | {
+      ok: true;
+      changed: boolean;
+      leadName: string;
+      /** Moved, but its verification seat could not follow — said, never swallowed. */
+      notice?: string;
+    }
   | { ok: false; error: string; code: "not_found" | "rule_violation"; leadName?: string };
 
 /**
@@ -121,7 +128,9 @@ async function assignOne(
     ? (await db.select({ name: users.name }).from(users).where(eq(users.id, lead.ownerId)).limit(1))[0]
     : undefined;
 
-  await db.transaction(async (tx) => {
+  let realigned: Awaited<ReturnType<typeof realignVerifierSeats>>;
+  try {
+    realigned = await db.transaction(async (tx) => {
     await tx
       .update(customers)
       .set({
@@ -130,6 +139,17 @@ async function assignOne(
         updatedAt: new Date(),
       })
       .where(eq(customers.id, lead.id));
+    /* A lead given to or taken off a Salesman has a different verifier now, so
+       the Sales Manager seat, the verification next action and the open call
+       follow it IN THIS COMMIT: if they cannot, the owner does not move either.
+       A verifier that is merely unusable does not roll this back — it comes back
+       in the result and is said below. The owner is never written by it. */
+    const aligned = await realignVerifierSeats(
+      [lead.id],
+      ctx.user.id,
+      { app: ctx.authorisedIn, role: ctx.authorisedBy },
+      { tx },
+    );
     await writeTimelineEvent(tx, {
       customerId: lead.id,
       eventType: MBOS_EVENT.ownerChange,
@@ -161,7 +181,22 @@ async function assignOne(
         nextActionFollowed: followsOwner,
       },
     });
-  });
+    return aligned;
+    });
+  } catch (e) {
+    /* Nothing was written: the transaction rolled back as one. Said, so the lead
+       is not left looking moved. (A scope refusal threw earlier, outside this
+       block, and is still the caller's.) */
+    return {
+      ok: false,
+      code: "rule_violation",
+      error: `Not moved — nothing was changed, because its verification seat could not be updated (${
+        e instanceof Error ? e.message : "database error"
+      }). Try again.`,
+      leadName: lead.name,
+    };
+  }
+  const notice = realignNotice(realigned) ?? undefined;
 
   /* The new owner is told, and the old one — a lead that leaves a book silently
      reads as a bug in the list. Never able to fail the assignment. */
@@ -192,7 +227,7 @@ async function assignOne(
     }).catch(() => {});
   }
 
-  return { ok: true, changed: true, leadName: lead.name };
+  return { ok: true, changed: true, leadName: lead.name, notice };
 }
 
 function refresh(customerId?: string) {
@@ -253,12 +288,14 @@ export async function assignDeskLead(
     }
 
     refresh(p.customerId);
-    return ok(
-      { ownerName: target?.name ?? "Unassigned" },
-      target
-        ? `Assigned to ${target.name}.${placeSentence(target.name, target.place, target.noArea)}`
-        : "Unassigned — it is on nobody's desk until somebody is given it.",
-    );
+    const said = target
+      ? `Assigned to ${target.name}.${placeSentence(target.name, target.place, target.noArea)}`
+      : "Unassigned — it is on nobody's desk until somebody is given it.";
+    /* Moved, but never reported as complete when its verification seat could not
+       follow. */
+    return done.notice
+      ? ok({ ownerName: target?.name ?? "Unassigned" }, `${said} ${done.notice}`, [done.notice])
+      : ok({ ownerName: target?.name ?? "Unassigned" }, said);
   } catch (e) {
     return fromThrown(e);
   }
@@ -277,7 +314,14 @@ const bulkSchema = z.object({
  */
 export async function bulkAssignDeskLeads(
   input: z.input<typeof bulkSchema>,
-): Promise<Result<{ done: number; failed: Array<{ id: string; name: string; why: string }> }>> {
+): Promise<
+  Result<{
+    done: number;
+    failed: Array<{ id: string; name: string; why: string }>;
+    /** Moved, but the verification seat could not follow — named, never swallowed. */
+    attention?: Array<{ id: string; name: string; why: string }>;
+  }>
+> {
   try {
     const parsed = bulkSchema.safeParse(input);
     if (!parsed.success) return err(parsed.error.issues[0]?.message ?? "Nothing selected.", "validation");
@@ -293,12 +337,16 @@ export async function bulkAssignDeskLeads(
     const ids = Array.from(new Set(parsed.data.leadIds)).slice(0, LEAD_BULK_CAP);
     let done = 0;
     const failed: Array<{ id: string; name: string; why: string }> = [];
+    const attention: Array<{ id: string; name: string; why: string }> = [];
     for (const id of ids) {
       try {
         const r = await assignOne(gate.ctx, id, target);
         if (!r.ok) failed.push({ id, name: r.leadName ?? "A lead", why: r.error });
         else if (!r.changed) failed.push({ id, name: r.leadName, why: target ? "already theirs" : "already unassigned" });
-        else done += 1;
+        else {
+          done += 1;
+          if (r.notice) attention.push({ id, name: r.leadName, why: r.notice });
+        }
       } catch {
         /* Out of scope: refused without being named — a lead the caller may not
            see is not described back to them. */
@@ -310,14 +358,20 @@ export async function bulkAssignDeskLeads(
     const head = target
       ? `${done} ${done === 1 ? "lead" : "leads"} now ${target.name}'s.${placeSentence(target.name, target.place, target.noArea)}`
       : `${done} ${done === 1 ? "lead" : "leads"} now unassigned.`;
+    const attn = attention.length
+      ? ` ${attention.length} moved but still need${attention.length === 1 ? "s" : ""} attention: ${attention
+          .slice(0, 3)
+          .map((a) => `${a.name} — ${a.why}`)
+          .join("; ")}`
+      : "";
     return ok(
-      { done, failed },
+      { done, failed, ...(attention.length ? { attention } : {}) },
       failed.length
         ? `${head} ${failed.length} did not move: ${failed
             .slice(0, 3)
             .map((f) => `${f.name} — ${f.why}`)
-            .join("; ")}`
-        : head,
+            .join("; ")}${attn}`
+        : `${head}${attn}`,
     );
   } catch (e) {
     return fromThrown(e);

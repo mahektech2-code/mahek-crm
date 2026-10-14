@@ -8,7 +8,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import { auditLog, calls, customers, users } from "@/db/schema";
 import { canAny, hatsFor, requireCapability } from "@/lib/access-control";
-import { approverFor, holdsLeadSeat, telecallerRouteFor } from "@/lib/services/lead-verifier";
+import { approverFor, fieldRouteFor, holdsLeadSeat, telecallerRouteFor } from "@/lib/services/lead-verifier";
 import { NO_ANSWER_REASONS } from "@/lib/call-outcomes";
 import { addDays, nextWorkingDay, type BusinessDate } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
@@ -785,13 +785,26 @@ async function preparePromotion(
    * becoming a Prospect nobody can verify.
    */
   let managerId: string | null = null;
+  /* A LEAD A SALESMAN RAISED OR NOW HOLDS is verified by the person Mahek
+     designates for exactly that (`leads.fieldVerifierEmail`), and this answers
+     FIRST: current Salesman assignment overrides who raised the lead, and the
+     field verifier's own lead goes to the desk verifier instead. Configured but
+     unusable it REFUSES in words rather than routing the lead somewhere else.
+     Blank, it is off and everything below is exactly what it was. An unknown
+     creator is only a fallback — it applies after every seat below has had its
+     say, so an org-chart or decided seat is never undone by it. */
+  const fieldRoute = await fieldRouteFor({ id: p.customerId, ownerId: lead.ownerId }, ctx.user.id);
+  if (fieldRoute.kind === "refuse") return err(fieldRoute.message, "rule_violation");
+  if (fieldRoute.kind === "verifier") managerId = fieldRoute.id;
   /* THE LEAD'S OWN SALES MANAGER COMES FIRST. Verification follows `sales_manager_id`,
      so where the seat is filled and its holder can verify (the capability, or the
      seat itself) the call is owed to them, not to some other `lead.verify` holder
      the region happens to default to. */
   /* A LEAD THE SALES MANAGER RAISED HERSELF IS VERIFIED BY THE PERSON MAHEK
      DESIGNATES, not by her: the verification is the check on her own work. */
-  const selfRaisedApprover = await approverFor({ ownerId: lead.ownerId, salesManagerId: lead.salesManagerId });
+  const selfRaisedApprover = managerId
+    ? null
+    : await approverFor({ ownerId: lead.ownerId, salesManagerId: lead.salesManagerId });
   if (selfRaisedApprover) managerId = selfRaisedApprover.id;
   /* A LEAD A TELECALLER WORKS is verified by the person Mahek designates for
      exactly that (`leads.telecallerVerifierEmail`), with nothing to choose. STRICT:
@@ -842,6 +855,10 @@ async function preparePromotion(
       managerId = seatHolder.id;
     }
   }
+  /* NOTHING ABOVE ANSWERED and nobody can say who raised the lead: the desk
+     verifier, rather than a regional guess. Only for an unknown creator — a known
+     one keeps the regional default it always had. */
+  if (!managerId && fieldRoute.kind === "fallback") managerId = fieldRoute.id;
   if (!managerId) {
     const candidates = await leadManagerCandidatesFor(p.customerId);
     managerId = candidates[0]?.id ?? null;

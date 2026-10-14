@@ -15,7 +15,8 @@ import { assignedUserId } from "@/lib/access-control";
 import type { AppId } from "@/lib/apps";
 import { CRM_EVENT, writeTimelineEvents } from "@/lib/timeline";
 import { getConfig } from "@/lib/config/store";
-import { err, okVoid, type Result } from "@/lib/result";
+import { err, ok, okVoid, type Result } from "@/lib/result";
+import { realignNotice, realignVerifierSeats } from "@/lib/services/lead-verifier";
 import { notifyUsers } from "@/lib/notify";
 import type { AccountManagerChange } from "@/lib/actions/account-manager";
 
@@ -257,6 +258,9 @@ export async function applyAccountManagerChange(
     const gained = new Map<string, number>();
     const lost = new Map<string, number>();
     let touched = 0;
+    /* Leads whose OWNER moved: their verifier may have moved with it. */
+    const leadOwnerMoved: string[] = [];
+    let realigned: { blocked: { id: string; name: string; message: string }[] } = { blocked: [] };
 
     await db.transaction(async (tx) => {
       for (const row of rows) {
@@ -283,8 +287,10 @@ export async function applyAccountManagerChange(
             // A lead answers to its owner; a customer to its sales AM. Both
             // are written on a customer so the fallback in `ASSIGNED_TO_SQL`
             // can never resolve back to a stale owner.
-            if (row.kind === "lead") values.ownerId = to;
-            else values.salesAmId = to;
+            if (row.kind === "lead") {
+              values.ownerId = to;
+              leadOwnerMoved.push(row.id);
+            } else values.salesAmId = to;
             // The mirror moves with the id, or the screens keep showing the
             // sheet's name and the reassignment looks like it failed.
             values.salesPersonName = toName;
@@ -450,6 +456,19 @@ export async function applyAccountManagerChange(
       if (history.length) await tx.insert(customerAmChanges).values(history);
       if (audits.length) await tx.insert(auditLog).values(audits);
 
+      /* The verification seat follows an owner change IN THIS COMMIT: a database
+         failure rolls the whole reassignment back with it, nothing is left half
+         moved. An unusable verifier does not — it is returned and said below.
+         The owner is never written by it. */
+      if (leadOwnerMoved.length) {
+        realigned = await realignVerifierSeats(
+          leadOwnerMoved,
+          actor.userId,
+          actor.authorisedBy ? { app: actor.authorisedIn, role: actor.authorisedBy } : null,
+          { tx },
+        );
+      }
+
       /*
        * §R — an ownership change is a fact about the ACCOUNT, and the timeline
        * is the one place somebody reads an account's story before ringing it.
@@ -537,5 +556,9 @@ export async function applyAccountManagerChange(
       /* no request context — nothing cached, nothing to invalidate */
     }
 
-    return okVoid(`Account manager updated on ${plural(touched)}`);
+    /* An update whose verification seats could not follow must never read as
+       complete. */
+    const unmoved = realignNotice(realigned);
+    const done = `Account manager updated on ${plural(touched)}`;
+    return unmoved ? ok(undefined, `${done}. ${unmoved}`, [unmoved]) : okVoid(done);
 }
