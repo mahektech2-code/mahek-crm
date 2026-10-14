@@ -22,7 +22,7 @@ import { sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
-  appAccess, customers, monthlyTargets, orders, users } from "@/db/schema";
+  appAccess, bills, customers, monthlyTargets, orders, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { seedMonthlyTargets } from "@/lib/recompute";
@@ -80,7 +80,7 @@ beforeEach(async () => {
   await db.execute(sql`
     truncate table
       monthly_targets, sales_target_revisions, sales_target_categories,
-      sales_targets, orders, calls, customers, users, app_settings
+      sales_targets, bills, orders, calls, customers, users, app_settings
     restart identity cascade
   `);
   invalidateConfig();
@@ -184,18 +184,21 @@ test("saving a real target clears a carried-forward mark", async () => {
 /* ============================ what the month has ACHIEVED against that target */
 
 /**
- * The other half of the screen, and it was wrong in three ways at once — all
- * of them invisible, because a figure that is merely too big looks like a good
- * month. The achievement subquery spelled three of `PURCHASE_STATUSES`' five
- * out as a literal, read `total_amount` (GST in) against a target typed
- * without it, and extracted the month in whatever zone the session was in.
+ * The other half of the screen. A customer's month is what was BILLED to it in
+ * the month, by `bill_date` — never the orders by `ordered_at`. The order sheet
+ * dates an order the day it was agreed and the bill is the day it was invoiced,
+ * so an order agreed on the 30th and billed on the 2nd counted toward the wrong
+ * month: Geeta Paints' October read ₹1.7 lakh against ₹5.8 lakh billed. The
+ * value is still the sale net of GST, read off the bill's order.
  */
 
 const PERIOD = "2026-08";
 
+/** An order and, unless `billDate` is null, the bill raised on it. */
 async function makeOrderFor(
   customerId: string,
   over: Partial<typeof orders.$inferInsert> = {},
+  billDate: string | null = `${PERIOD}-15`,
 ) {
   const [row] = await db
     .insert(orders)
@@ -210,11 +213,21 @@ async function makeOrderFor(
       ...over,
     })
     .returning();
+  if (billDate) {
+    await db.insert(bills).values({
+      id: id("bil"),
+      customerId,
+      orderId: row.id,
+      billNo: `MMI/T/${randomUUID().slice(0, 8)}`,
+      billDate,
+      amount: row.totalAmount,
+    });
+  }
   return row;
 }
 
-async function achievedFor(customerId: string) {
-  const rows = await listTargets(PERIOD);
+async function achievedFor(customerId: string, period = PERIOD) {
+  const rows = await listTargets(period);
   const row = rows.find((r) => r.customerId === customerId);
   assert.ok(row, "the customer did not reach the targets list at all");
   return row.achieved;
@@ -226,13 +239,28 @@ test("achievement is the sale net of GST, not the figure the customer was billed
   assert.equal(await achievedFor(c.id), 100_000_00);
 });
 
+test("AN ORDER DATED LAST MONTH AND BILLED THIS MONTH COUNTS TO THIS MONTH", async () => {
+  // Geeta Paints exactly: agreed on the 31st, invoiced on the 2nd.
+  const c = await makeCustomer();
+  await makeOrderFor(c.id, { orderedAt: new Date("2026-07-31T10:00:00+05:30") }, `${PERIOD}-02`);
+  assert.equal(await achievedFor(c.id), 100_000_00);
+  assert.equal(await achievedFor(c.id, "2026-07"), 0, "it was counted to the month it was agreed in");
+});
+
+test("an order nobody has billed yet is not achievement", async () => {
+  const c = await makeCustomer();
+  await makeOrderFor(c.id, {}, null);
+  assert.equal(await achievedFor(c.id), 0);
+});
+
+test("a bill on the last day of the month stays in it", async () => {
+  const c = await makeCustomer();
+  await makeOrderFor(c.id, {}, `${PERIOD}-31`);
+  assert.equal(await achievedFor(c.id), 100_000_00);
+  assert.equal(await achievedFor(c.id, "2026-09"), 0);
+});
+
 test("AN ORDER THAT REACHED THE CUSTOMER STILL COUNTS", async () => {
-  /*
-   * The worst of the three. The literal held `captured`, `confirmed` and
-   * `dispatched`, so recording that an order was in transit or delivered took
-   * it back out of its customer's month — achievement going DOWN as the order
-   * went further, and a gap reopening on a shop that had already bought.
-   */
   for (const status of ["in_transit", "delivered"] as const) {
     const c = await makeCustomer();
     await makeOrderFor(c.id, { status });
@@ -240,8 +268,7 @@ test("AN ORDER THAT REACHED THE CUSTOMER STILL COUNTS", async () => {
   }
 });
 
-test("and a declined order still counts for nothing", async () => {
-  // The widening must not have reached the other list.
+test("and a bill on a declined order still counts for nothing", async () => {
   const c = await makeCustomer();
   await makeOrderFor(c.id, { status: "declined" });
   assert.equal(await achievedFor(c.id), 0);
@@ -253,40 +280,16 @@ test("an order with no net stated counts at what was typed, never at zero", asyn
   assert.equal(await achievedFor(c.id), 50_000_00);
 });
 
-test("a 1am order on the FIRST belongs to that month, on a GMT database", async () => {
-  /*
-   * The zone rule, in its fourth spelling. `extract(month from ordered_at)`
-   * reads the session's zone, so this order fell into July on any database not
-   * set to Asia/Kolkata — and local Postgres is, which is why nothing here ever
-   * saw it. The session is forced to GMT for the length of the read.
-   */
+test("a bill with no order behind it counts at the bill's amount", async () => {
   const c = await makeCustomer();
-  await makeOrderFor(c.id, {
-    orderedAt: new Date(`${PERIOD}-01T01:00:00+05:30`),
+  await db.insert(bills).values({
+    id: id("bil"),
+    customerId: c.id,
+    billNo: `MMI/T/${randomUUID().slice(0, 8)}`,
+    billDate: `${PERIOD}-10`,
+    amount: 30_000_00,
   });
-
-  await db.execute(sql`set time zone 'GMT'`);
-  try {
-    assert.equal(await achievedFor(c.id), 100_000_00);
-  } finally {
-    await db.execute(sql`set time zone 'Asia/Kolkata'`);
-  }
-});
-
-test("and an order on the LAST night of the month does not spill into the next", async () => {
-  const c = await makeCustomer();
-  await makeOrderFor(c.id, {
-    orderedAt: new Date(`${PERIOD}-31T23:30:00+05:30`),
-  });
-
-  await db.execute(sql`set time zone 'GMT'`);
-  try {
-    assert.equal(await achievedFor(c.id), 100_000_00);
-    const next = await listTargets("2026-09");
-    assert.equal(next.find((r) => r.customerId === c.id)?.achieved, 0);
-  } finally {
-    await db.execute(sql`set time zone 'Asia/Kolkata'`);
-  }
+  assert.equal(await achievedFor(c.id), 30_000_00);
 });
 
 /* ================================== the same month, read for the handset */
@@ -304,7 +307,8 @@ test("the handset reads the Targets screen's own figure for a shop", async () =>
   const c = await makeCustomer();
   await setTarget(c.id, 150_000_00, PERIOD);
   await makeOrderFor(c.id, { status: "confirmed", netAmountPaise: 40_000_00 });
-  await makeOrderFor(c.id, { status: "pending_approval", netAmountPaise: 20_000_00 });
+  // Not billed: accounts have not accepted it, so nothing has been invoiced.
+  await makeOrderFor(c.id, { status: "pending_approval", netAmountPaise: 20_000_00 }, null);
 
   const office = (await listTargets(PERIOD)).find((r) => r.customerId === c.id);
   const phone = (await customerTargetsCreditedTo(manager.id, PERIOD)).find(

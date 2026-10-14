@@ -1,8 +1,8 @@
 import "server-only";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { orderCountsSql, orderValueSql } from "../order-status";
-import { bills, calls, customerContacts, customers, orders } from "@/db/schema";
+import { billedInMonthSql } from "../order-status";
+import { bills, calls, customerContacts, customers } from "@/db/schema";
 import { upcomingBirthdays, type UpcomingBirthday } from "../customer-contacts";
 import { assertCustomerInScope } from "../access-control";
 import { getConfig } from "../config/store";
@@ -16,7 +16,6 @@ import {
   daysBetween,
   daysInMonth,
   isWorkingDay,
-  monthWindowSql,
   startOfMonth,
   type BusinessDate,
 } from "../business-date";
@@ -213,31 +212,21 @@ export async function customerInformation(
 
   /*
    * The same month, the same unit and the same statuses the Monthly Targets
-   * screen reads — see `orderValueSql` and `monthWindowSql`. A customer's
+   * screen reads — bills by bill date, see `billedInMonthSql`. A customer's
    * record and the target list quoting two different figures for one shop is
    * how somebody stops believing both.
    */
-  const window = monthWindowSql(day.slice(0, 7));
   const [achievedRow] = await db
-    .select({
-      total: sql<number>`coalesce(sum(${orderValueSql("orders")}), 0)::bigint`,
-    })
-    .from(orders)
-    .where(
-      and(
-        eq(orders.customerId, customerId),
-        orderCountsSql("orders"),
-        sql`${orders.orderedAt} >= ${sql.raw(window.start)}`,
-        sql`${orders.orderedAt} < ${sql.raw(window.end)}`,
-      ),
-    );
+    .select({ total: billedInMonthSql("customers.id", day.slice(0, 7)) })
+    .from(customers)
+    .where(eq(customers.id, customerId));
+  const achieved = Number(achievedRow?.total ?? 0);
 
   const [targetRow] = await db.execute<{ amount: number }>(sql`
     select coalesce(target_amount, 0)::bigint as amount from monthly_targets
      where customer_id = ${customerId} and year = ${year} and month = ${month}
   `);
 
-  const achieved = Number(achievedRow?.total ?? 0);
   const target = Number(targetRow?.amount ?? 0);
   const gap = Math.max(0, target - achieved);
 

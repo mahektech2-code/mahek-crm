@@ -146,6 +146,53 @@ export function orderCountsSql(alias: string) {
    * cannot be reached from outside; it is written out rather than parameterised
    * because this returns a raw fragment for use inside correlated subqueries.
    */
+  return sql.raw(orderCountsText(alias));
+}
+
+/** `orderCountsSql` as text, for a fragment that is itself built as text. */
+function orderCountsText(alias: string) {
   const list = PURCHASE_STATUSES.map((s) => `'${s}'`).join(", ");
-  return sql.raw(`${alias}.status in (${list})`);
+  return `${alias}.status in (${list})`;
+}
+
+/**
+ * WHAT A CUSTOMER'S MONTHLY TARGET IS MEASURED AGAINST: the sales bills raised
+ * on the account inside the window, by `bill_date`, and nothing else.
+ *
+ * It was the orders, by `ordered_at`, and the two months disagree exactly
+ * where it matters. The order sheet dates an order the day it was agreed; the
+ * bill is the day it was invoiced, and an order agreed on the 30th is billed
+ * on the 2nd. Geeta Paints' October read ₹1.7 lakh against ₹5.8 lakh billed,
+ * because two September-dated orders were invoiced in October. Mahek counts a
+ * customer's month by its bills, so every screen that sets "achieved" beside
+ * a customer target reads this — Monthly Targets in the CRM and Accounts, the
+ * customer record, the Call Log's target gap, the telecaller's EOD, the
+ * default target's trailing months and the handset's customer targets.
+ *
+ * The VALUE stays net of GST, the unit a target is typed in: a bill is the
+ * order, so it is worth its order's `net_amount_paise`, then the order's own
+ * total, then the bill's amount where no order stands behind it. A bill whose
+ * order was declined or cancelled does not count — `orderCountsSql` is the
+ * one statement of that. `bill_date` is a DATE, so the window is two dates
+ * and no zone is involved.
+ *
+ * `customerId`, `from` and `to` are SQL text — a qualified column and two
+ * date expressions — so the queue can pass a window built from the target
+ * row's own year and month.
+ */
+export function billedValueSql(customerId: string, from: string, to: string) {
+  return sql.raw(`coalesce((
+    select sum(coalesce(bo.net_amount_paise, bo.total_amount, bb.amount))
+      from bills bb left join orders bo on bo.id = bb.order_id
+     where bb.customer_id = ${customerId}
+       and bb.bill_date >= ${from} and bb.bill_date < ${to}
+       and (bo.id is null or ${orderCountsText("bo")})
+  ), 0)`);
+}
+
+/** `billedValueSql` for one month key, "2026-10". */
+export function billedInMonthSql(customerId: string, key: string) {
+  const [y, m] = key.split("-").map(Number);
+  const next = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+  return billedValueSql(customerId, `'${key}-01'::date`, `'${next}-01'::date`);
 }

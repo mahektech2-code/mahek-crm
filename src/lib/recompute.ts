@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { orderCountsSql, orderValueSql } from "./order-status";
+import { billedInMonthSql, orderCountsSql } from "./order-status";
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -41,7 +41,6 @@ import {
   calendarDate,
   monthKey,
   addMonths,
-  monthWindowSql,
   type BusinessDate,
 } from "./business-date";
 import { CANCELLED_STATUS } from "./taken-order-parse";
@@ -1110,18 +1109,13 @@ export async function seedMonthlyTargets(forMonth?: string): Promise<number> {
        * 18% above the month it was derived from, and nothing on the screen
        * says the number came from a different question.
        */
-      const window = monthWindowSql(key);
+      // By BILL DATE, the figure a target is measured against — a default
+      // derived from order dates would be proposed from a different month
+      // to the one the screen then scores it on. See `billedInMonthSql`.
       const [row] = await db
-        .select({ total: sql<number>`coalesce(sum(${orderValueSql("orders")}),0)::bigint` })
-        .from(orders)
-        .where(
-          and(
-            eq(orders.customerId, c.id),
-            sql`${orders.orderedAt} >= ${sql.raw(window.start)}`,
-            sql`${orders.orderedAt} < ${sql.raw(window.end)}`,
-            orderCountsSql("orders"),
-          ),
-        );
+        .select({ total: billedInMonthSql("customers.id", key) })
+        .from(customers)
+        .where(eq(customers.id, c.id));
       trailing.push(Number(row?.total ?? 0));
     }
 

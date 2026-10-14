@@ -1848,24 +1848,31 @@ describe("who may see a customer's target", () => {
     const behind = await makeCustomer(telecaller.id, { name: "Behind Paints" });
     const waiting = await makeCustomer(telecaller.id, { name: "Waiting Paints" });
 
-    // Met: ordered more than its target this month.
-    await db.insert(orders).values({
-      id: id("ord"),
-      customerId: met.id,
-      userId: telecaller.id,
-      orderedAt: new Date(`${TODAY}T09:00:00+05:30`),
-      totalAmount: 1_20_000_00,
-      status: "confirmed",
-    });
+    // A target is measured against what was BILLED in the month, so each
+    // order here carries the bill raised on it, dated with it.
+    const billed = async (customerId: string, day: string, amount: number) => {
+      const orderId = id("ord");
+      await db.insert(orders).values({
+        id: orderId,
+        customerId,
+        userId: telecaller.id,
+        orderedAt: new Date(`${day}T09:00:00+05:30`),
+        totalAmount: amount,
+        status: "confirmed",
+      });
+      await db.insert(bills).values({
+        id: id("bil"),
+        customerId,
+        orderId,
+        billNo: `MMI/${randomUUID().slice(0, 8)}`,
+        billDate: day,
+        amount,
+      });
+    };
+    // Met: billed more than its target this month.
+    await billed(met.id, TODAY, 1_20_000_00);
     // Waiting: bought last month, nothing allocated this one.
-    await db.insert(orders).values({
-      id: id("ord"),
-      customerId: waiting.id,
-      userId: telecaller.id,
-      orderedAt: new Date(`${addMonths(month, -1)}-15T09:00:00+05:30`),
-      totalAmount: 90_000_00,
-      status: "confirmed",
-    });
+    await billed(waiting.id, `${addMonths(month, -1)}-15`, 90_000_00);
 
     setTestUser(manager);
     assert.ok((await setTarget(met.id, 1_00_000_00, month)).ok);
@@ -1919,24 +1926,26 @@ describe("who may see a customer's target", () => {
     const both = await makeCustomer(telecaller.id, { name: "Both Paints" });
     const billsOnly = await makeCustomer(telecaller.id, { name: "Count Paints" });
 
-    // Both: the rupees are met by an order, the count is not.
+    // Both: the rupees are met by a billed order, the count is not.
+    const bigOrder = id("ord");
     await db.insert(orders).values({
-      id: id("ord"),
+      id: bigOrder,
       customerId: both.id,
       userId: telecaller.id,
       orderedAt: new Date(`${TODAY}T09:00:00+05:30`),
       totalAmount: 2_00_000_00,
       status: "confirmed",
     });
-    const bill = (customerId: string, billDate: string) =>
+    const bill = (customerId: string, billDate: string, orderId?: string) =>
       db.insert(bills).values({
         id: id("bil"),
         customerId,
+        orderId,
         billNo: `MMI/${randomUUID().slice(0, 8)}`,
         billDate,
         amount: 10_000_00,
       });
-    await bill(both.id, `${month}-01`);
+    await bill(both.id, `${month}-01`, bigOrder);
     await bill(both.id, `${month}-01`);
     await bill(billsOnly.id, `${month}-01`);
     // Last month's bills are context in the dialog, never this month's count.

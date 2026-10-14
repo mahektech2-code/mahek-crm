@@ -25,11 +25,10 @@ import {
   type EodInput,
 } from "../engines/eod";
 import { today } from "../recompute";
+import { billedInMonthSql } from "../order-status";
 import {
-  endOfMonth,
   monthKey,
   rangeBoundaryWindow,
-  startOfMonth,
   type BusinessDate,
   type DateRange,
 } from "../business-date";
@@ -79,27 +78,6 @@ export async function eodMetricsForRange(
   const day = range.to;
   const period = monthKey(range.to);
   const [year, month] = period.split("-").map(Number);
-  /*
-   * THE MONTH AS A WINDOW, not as two `extract()` calls.
-   *
-   * `target_achieved` asked `extract(year from o.ordered_at) = $y and
-   * extract(month …) = $m`, which is wrong twice over. It cannot use
-   * `orders_ordered_idx`, so every call sequentially scanned the whole orders
-   * table — and the team dashboard calls this once per person, so a team of
-   * twelve scanned it twenty-four times for one page.
-   *
-   * It was also the bare-cast hazard in a different spelling: `extract` off a
-   * `timestamptz` is evaluated in the SESSION's zone, so an order taken at
-   * 00:30 IST on the 1st counts against the previous month on a database
-   * running in GMT and against this one on a database running in
-   * Asia/Kolkata. The half-open window carries `+05:30` like every other day
-   * window in this file, so it answers the same on both.
-   */
-  const mw = await windowFor({
-    from: startOfMonth(range.to),
-    to: endOfMonth(period),
-  });
-
   const [row] = await db.execute<Record<string, string>>(sql`
     select
       -- Order Received is NOT a call. Counting it here would inflate calls
@@ -178,12 +156,10 @@ export async function eodMetricsForRange(
       (select coalesce(sum(t.target_amount),0) from monthly_targets t
         join customers cu on cu.id = t.customer_id
         where cu.owner_id = ${userId} and t.year = ${year} and t.month = ${month}) as target_amount,
-      (select coalesce(sum(o.total_amount),0) from orders o
-        join customers cu on cu.id = o.customer_id
-        where cu.owner_id = ${userId}
-          and o.status in ('captured','confirmed','dispatched')
-          and o.ordered_at >= ${mw.start}::timestamptz
-          and o.ordered_at <  ${mw.end}::timestamptz) as target_achieved
+      -- Measured against the SAME customers the target above sums, by bill
+      -- date, net of GST — billedInMonthSql, what Monthly Targets reads.
+      (select coalesce(sum(${billedInMonthSql("cu.id", period)}),0) from customers cu
+        where cu.owner_id = ${userId}) as target_achieved
   `);
 
   const n = (k: string) => Number(row?.[k] ?? 0);
