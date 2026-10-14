@@ -21,10 +21,9 @@ import {
 } from "../engines/queue";
 import { nextStep, type NextStep } from "../engines/next-step";
 import { today } from "../recompute";
-import { orderCountsSql, orderValueSql } from "../order-status";
+import { billedValueSql } from "../order-status";
 import { getPaymentFollowUpPlan, paymentCadencesFor, type PaymentCadence } from "./payment-service";
 import {
-  APP_TIMEZONE,
   businessDate,
   dayBoundaryWindow,
   type BusinessDate,
@@ -285,9 +284,10 @@ async function queueInputs(
          order by o.ordered_at desc limit 1
       )`,
       /*
-       * The gap this customer's month still has to make up — the SAME three
-       * rules the Monthly Targets screen reads, so the reason a telecaller is
-       * given and the figure their manager is looking at cannot differ.
+       * The gap this customer's month still has to make up — the SAME
+       * achieved figure the Monthly Targets screen reads, bills by bill date
+       * (`billedValueSql`), so the reason a telecaller is given and the figure
+       * their manager is looking at cannot differ.
        *
        * It used to spell out three of `PURCHASE_STATUSES`' five, so a delivered
        * order stopped counting and the gap grew back; it read `total_amount`,
@@ -297,14 +297,11 @@ async function queueInputs(
        * than passed in.
        */
       targetGap: sql<number>`coalesce((
-        select greatest(0, t.target_amount - coalesce((
-          select sum(${orderValueSql("o")}) from ${orders} o
-           where o.customer_id = customers.id
-             and ${orderCountsSql("o")}
-             and o.ordered_at >= make_timestamptz(t.year, t.month, 1, 0, 0, 0, ${APP_TIMEZONE})
-             and o.ordered_at <  make_timestamptz(t.year, t.month, 1, 0, 0, 0, ${APP_TIMEZONE})
-                                 + interval '1 month'
-        ), 0))
+        select greatest(0, t.target_amount - ${billedValueSql(
+          "customers.id",
+          "make_date(t.year, t.month, 1)",
+          "(make_date(t.year, t.month, 1) + interval '1 month')::date",
+        )})
         from ${monthlyTargets} t
         where t.customer_id = customers.id
           and t.year = ${Number(monthKey(day).slice(0, 4))}
