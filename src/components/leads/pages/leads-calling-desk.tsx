@@ -40,7 +40,7 @@ export async function Body({
 }) {
   const query = await searchParams;
   const raw = Array.isArray(query.view) ? query.view[0] : query.view;
-  const view: DeskView = isDeskView(raw) ? raw : "queue";
+  const view: DeskView = isDeskView(raw) ? raw : "all";
 
   const [day, user] = await Promise.all([today(), requireUser()]);
   const desk = await callingDesk(day, view);
@@ -62,6 +62,7 @@ export async function Body({
       base={leadHref(workspace, "leads/calling-desk")}
       intakeHref={leadHref(workspace, "leads/intake")}
       canAssign={await canLead(user, "lead.verify")}
+      nurtureHref={leadHref(workspace, "leads/actions/nurture")}
     />
   );
 }
