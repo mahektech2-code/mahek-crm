@@ -3778,6 +3778,15 @@ export const SETTINGS = [
     default: "",
   },
   {
+    key: "leads.fieldVerifierEmail",
+    type: "text",
+    category: "mbos-leads",
+    label: "Who verifies a lead a Salesman raised or holds",
+    description:
+      "The work email of the person who verifies the Prospect on a lead a Salesman raised on the handset, and on ANY lead a Salesman currently holds, whoever raised it — a Telecaller's or a Sales Manager's lead that has been given to a Salesman is theirs. They are seated as that lead's Sales Manager, so the seat-based permission and the Sales Manager workspace already reach it; nothing about their level changes. A lead they raised themselves is never theirs to verify: it stays with the desk verifier. Blank switches the rule off and routing is exactly as before. A name that matches no active account refuses conversion of such a lead in words rather than routing it elsewhere.",
+    default: "",
+  },
+  {
     key: "leads.figuresFreshDays",
     type: "integer",
     category: "mbos-leads",
@@ -6583,6 +6592,7 @@ export type Config = {
   "leads.verificationDueDays": number;
   "leads.selfRaisedVerifierEmail": string;
   "leads.telecallerVerifierEmail": string;
+  "leads.fieldVerifierEmail": string;
   "leads.figuresFreshDays": number;
   "leads.sources": { code: string; label: string }[];
   "leads.distributorDiscountApprovalPercent": number;

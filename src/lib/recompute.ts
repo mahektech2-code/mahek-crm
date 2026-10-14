@@ -1360,10 +1360,17 @@ export async function recomputeSalesPeople(): Promise<number> {
 export async function recomputeSalesManagers(): Promise<number> {
   const managerNameOf = await managerNameByEmployeeName();
 
+  /* THE FIELD VERIFIER'S LEADS: a lead a Salesman raised or holds is seated under
+     the person set to verify those (`leads.fieldVerifierEmail`), not under
+     whoever the org chart names — rule 3 and rule 4. Off, and nothing about this
+     pass changes. See `services/lead-verifier`. */
+  const { fieldRoutingOn } = await import("./services/lead-verifier");
+  const fieldOn = await fieldRoutingOn();
+
   // Nothing on the org chart yet is not the same as nobody having a sales
   // manager. A pass with an empty map would blank every undecided customer's
   // seat rather than leave it as it was.
-  if (!managerNameOf.size) return 0;
+  if (!managerNameOf.size && !fieldOn) return 0;
 
   const [rows, activeUsers] = await Promise.all([
     db
@@ -1386,19 +1393,39 @@ export async function recomputeSalesManagers(): Promise<number> {
   const userNameById = new Map(activeUsers.map((u) => [u.id, u.name]));
   const userIdByName = new Map(activeUsers.map((u) => [u.name.trim().toLowerCase(), u.id]));
 
+  /* Which leads are the field verifier's — two queries for the whole book, never
+     one per lead. */
+  const fieldSeats = fieldOn
+    ? await (await import("./services/lead-verifier")).fieldSeatFor(
+        rows.filter((r) => r.kind === "lead").map((r) => ({ id: r.id, ownerId: r.ownerId })),
+      )
+    : { approverId: null as string | null, seated: new Set<string>() };
+
   let changed = 0;
   for (const c of rows) {
-    const assignedName =
-      c.kind === "lead"
-        ? (c.ownerId ? (userNameById.get(c.ownerId) ?? null) : null)
-        : (c.salesPersonName ?? (c.salesAmId ? (userNameById.get(c.salesAmId) ?? null) : null));
+    let nextId: string | null;
+    let nextName: string | null;
 
-    const managerName = assignedName
-      ? (managerNameOf.get(assignedName.trim().toLowerCase()) ?? null)
-      : null;
+    if (fieldSeats.approverId && fieldSeats.seated.has(c.id)) {
+      nextId = fieldSeats.approverId;
+      nextName = null;
+    } else {
+      /* An empty org chart must not blank a seat — see the guard above, which
+         is only lifted for the field verifier's own leads. */
+      if (!managerNameOf.size) continue;
 
-    const nextId = managerName ? (userIdByName.get(managerName.trim().toLowerCase()) ?? null) : null;
-    const nextName = managerName && !nextId ? managerName : null;
+      const assignedName =
+        c.kind === "lead"
+          ? (c.ownerId ? (userNameById.get(c.ownerId) ?? null) : null)
+          : (c.salesPersonName ?? (c.salesAmId ? (userNameById.get(c.salesAmId) ?? null) : null));
+
+      const managerName = assignedName
+        ? (managerNameOf.get(assignedName.trim().toLowerCase()) ?? null)
+        : null;
+
+      nextId = managerName ? (userIdByName.get(managerName.trim().toLowerCase()) ?? null) : null;
+      nextName = managerName && !nextId ? managerName : null;
+    }
 
     if (nextId === c.salesManagerId && nextName === c.salesManagerPersonName) continue;
 
@@ -1428,6 +1455,16 @@ export async function recomputeSalesManagers(): Promise<number> {
 export async function salesManagerForOwner(
   ownerUserId: string,
 ): Promise<{ id: string | null; personName: string | null } | null> {
+  /* A lead a Salesman holds is born under the field verifier, the same answer the
+     nightly pass writes for it — see `recomputeSalesManagers`. */
+  const { fieldApprover, fieldRoutingOn, salesmenAmong } = await import("./services/lead-verifier");
+  if (await fieldRoutingOn()) {
+    const field = await fieldApprover();
+    if (field && field.id !== ownerUserId && (await salesmenAmong([ownerUserId])).has(ownerUserId)) {
+      return { id: field.id, personName: null };
+    }
+  }
+
   const managerNameOf = await managerNameByEmployeeName();
   if (!managerNameOf.size) return null;
 

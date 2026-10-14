@@ -117,6 +117,7 @@ import {
   type TaskLinkTarget,
 } from "@/lib/task-form";
 import { linkContexts } from "@/lib/services/task-link-service";
+import { realignNotice, realignVerifierSeats } from "@/lib/services/lead-verifier";
 import { taskCampaign } from "@/lib/services/task-campaign-service";
 import {
   draftTask,
@@ -2404,21 +2405,35 @@ export async function reassignLead(input: {
 
     /* The owner IS the assignment — `ASSIGNED_TO_SQL` resolves a lead through
      * `owner_id`, so one write puts it on the salesman's handset and in the
-     * office's scoped lists at the same time. */
-    await db
-      .update(customers)
-      .set({ ownerId: input.salesmanId, updatedAt: new Date() })
-      .where(eq(customers.id, input.leadId));
+     * office's scoped lists at the same time.
+     *
+     * ONE COMMIT with the verification seat that follows it. Given to a Salesman,
+     * a lead is the field verifier's; taken off one, it goes back. The Sales
+     * Manager seat, the verification call and its task move IN THIS TRANSACTION,
+     * so a failure leaves the owner where it was rather than the lead half moved.
+     * A verifier that is merely unusable does not roll anything back: it comes
+     * back in `realigned` and is said in the answer. The owner is never written
+     * by the realignment — who follows the lead up is not the verifier's. */
+    const realigned = await db.transaction(async (tx) => {
+      await tx
+        .update(customers)
+        .set({ ownerId: input.salesmanId, updatedAt: new Date() })
+        .where(eq(customers.id, input.leadId));
 
-    await db.insert(auditLog).values({
-      id: gen("aud"),
-      actorId: user.id,
-      action: "mbos.lead.reassign",
-      entityType: "mbos_lead",
-      entityId: input.leadId,
-      beforeState: { assignedToUserId: lead.ownerId ?? null } as never,
-      afterState: { assignedToUserId: input.salesmanId } as never,
+      const out = await realignVerifierSeats([input.leadId], user.id, null, { tx });
+
+      await tx.insert(auditLog).values({
+        id: gen("aud"),
+        actorId: user.id,
+        action: "mbos.lead.reassign",
+        entityType: "mbos_lead",
+        entityId: input.leadId,
+        beforeState: { assignedToUserId: lead.ownerId ?? null } as never,
+        afterState: { assignedToUserId: input.salesmanId } as never,
+      });
+      return out;
     });
+    const notice = realignNotice(realigned);
 
     await notifyNewOwner(salesman, {
       id: input.leadId,
@@ -2436,9 +2451,10 @@ export async function reassignLead(input: {
     }
 
     refresh();
-    return okVoid(
-      `${leadLabel(lead)} reassigned to ${salesman.name}.${placeSentence(salesman.name, salesman.place, salesman.noArea)}`,
-    );
+    const done = `${leadLabel(lead)} reassigned to ${salesman.name}.${placeSentence(salesman.name, salesman.place, salesman.noArea)}`;
+    /* Moved, but never reported as complete when its verification seat could not
+       follow: the message and the warning both say so. */
+    return notice ? ok(undefined, `${done} ${notice}`, [notice]) : okVoid(done);
   } catch (e) {
     return fromThrown(e);
   }
@@ -2744,6 +2760,13 @@ export type BulkOutcome = {
    * leads again by hand, which is the work the batch was supposed to save.
    */
   failed: Array<{ id: string; name: string; why: string }>;
+  /**
+   * Moved, but not finished: the lead is where it was asked to go and its
+   * verification seat could not follow because the verifier cannot be used.
+   * Counted in `done` and named here, so a batch is never reported as complete
+   * when part of it was left for somebody to fix.
+   */
+  attention?: Array<{ id: string; name: string; why: string }>;
 };
 
 type ScopedLead = Awaited<ReturnType<typeof leadsInScope>>[number];
@@ -2777,13 +2800,19 @@ async function bulkLeads(
 }
 
 function bulkMessage(outcome: BulkOutcome, verb: string): string {
-  if (!outcome.failed.length) return `${plural(outcome.done, "lead")} ${verb}.`;
+  const attention = outcome.attention?.length
+    ? ` ${plural(outcome.attention.length, "lead")} moved but still need${outcome.attention.length === 1 ? "s" : ""} attention: ${outcome.attention
+        .slice(0, 3)
+        .map((a) => `${a.name} — ${a.why}`)
+        .join("; ")}${outcome.attention.length > 3 ? ` and ${outcome.attention.length - 3} more` : ""}`
+    : "";
+  if (!outcome.failed.length) return `${plural(outcome.done, "lead")} ${verb}.${attention}`;
   const named = outcome.failed
     .slice(0, 3)
     .map((f) => `${f.name} — ${f.why}`)
     .join("; ");
   const more = outcome.failed.length > 3 ? ` and ${outcome.failed.length - 3} more` : "";
-  return `${plural(outcome.done, "lead")} ${verb}. ${plural(outcome.failed.length, "was", "were")} not: ${named}${more}`;
+  return `${plural(outcome.done, "lead")} ${verb}. ${plural(outcome.failed.length, "was", "were")} not: ${named}${more}${attention}`;
 }
 
 /**
@@ -2858,34 +2887,59 @@ export async function bulkReassignLeads(input: {
       return true;
     });
 
-    if (moving.length) {
-      await db
-        .update(customers)
-        .set({ ownerId: input.salesmanId, updatedAt: new Date() })
-        .where(inArray(customers.id, moving.map((l) => l.id)));
+    /* ONE LEAD, ONE COMMIT. Each lead's owner, the verification seat that
+       follows it and its audit row are written in one transaction of its own, so
+       a lead is either moved with its seat or not moved at all, and one lead
+       that fails cannot stop — or silently half-do — the ones after it. What did
+       not move is NAMED in `failed`; what moved but whose verifier cannot be
+       used is named in `attention`, so a batch never reads as complete when it
+       was not. The owner is the move; the realignment never writes it. */
+    const moved: typeof moving = [];
+    const attention: Array<{ id: string; name: string; why: string }> = [];
+    for (const l of moving) {
+      try {
+        const realigned = await db.transaction(async (tx) => {
+          await tx
+            .update(customers)
+            .set({ ownerId: input.salesmanId, updatedAt: new Date() })
+            .where(eq(customers.id, l.id));
+          const out = await realignVerifierSeats([l.id], user.id, null, { tx });
+          await tx.insert(auditLog).values({
+            id: gen("aud"),
+            actorId: user.id,
+            action: "mbos.lead.reassign",
+            entityType: "mbos_lead",
+            entityId: l.id,
+            beforeState: { assignedToUserId: l.ownerId ?? null } as never,
+            afterState: { assignedToUserId: input.salesmanId } as never,
+          });
+          return out;
+        });
+        moved.push(l);
+        const notice = realignNotice(realigned);
+        if (notice) attention.push({ id: l.id, name: leadLabel(l), why: notice });
+      } catch (e) {
+        failed.push({
+          id: l.id,
+          name: leadLabel(l),
+          why: `not moved, nothing changed — its verification seat could not be updated (${
+            e instanceof Error ? e.message : "database error"
+          })`,
+        });
+      }
+    }
 
-      await db.insert(auditLog).values(
-        moving.map((l) => ({
-          id: gen("aud"),
-          actorId: user.id,
-          action: "mbos.lead.reassign",
-          entityType: "mbos_lead",
-          entityId: l.id,
-          beforeState: { assignedToUserId: l.ownerId ?? null } as never,
-          afterState: { assignedToUserId: input.salesmanId } as never,
-        })),
-      );
-
+    if (moved.length) {
       await notifyNewOwner(salesman, {
         id: null,
-        title: `${plural(moving.length, "lead")} ${moving.length === 1 ? "is" : "are"} now yours`,
+        title: `${plural(moved.length, "lead")} ${moved.length === 1 ? "is" : "are"} now yours`,
         body: `${user.name} assigned them to you.`,
         handsetHref: "/leads",
       });
 
       /* One message per person who lost work, not one per lead. */
       const lost = new Map<string, number>();
-      for (const l of moving) {
+      for (const l of moved) {
         if (l.ownerId) lost.set(l.ownerId, (lost.get(l.ownerId) ?? 0) + 1);
       }
       for (const [ownerId, n] of lost) {
@@ -2899,11 +2953,11 @@ export async function bulkReassignLeads(input: {
     }
 
     refresh();
-    const outcome = { done: moving.length, failed };
+    const outcome: BulkOutcome = { done: moved.length, failed, ...(attention.length ? { attention } : {}) };
     return ok(
       outcome,
       `${bulkMessage(outcome, `moved to ${salesman.name}`)}${
-        moving.length ? placeSentence(salesman.name, salesman.place, salesman.noArea) : ""
+        moved.length ? placeSentence(salesman.name, salesman.place, salesman.noArea) : ""
       }`,
     );
   } catch (e) {

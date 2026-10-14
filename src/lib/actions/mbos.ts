@@ -5465,6 +5465,41 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
    * unable to fail it: a lead is never lost to its own timeline entry, and the
    * natural key makes a retry write nothing rather than a second row.
    */
+  /* The level this handset held on the day, beside the creation event, so a
+     Salesman's lead and a manager's can be told apart for good whatever either
+     holds later. Best effort like the event: a lead is never lost to its own
+     history, and a lead with no level recorded is read as "creator unknown" and
+     never guessed from today's role. Written once — the `lead_created` natural key
+     decides whether this is the first time. */
+  try {
+    const [had] = await db
+      .select({ id: auditLog.id })
+      .from(auditLog)
+      .where(
+        and(
+          eq(auditLog.entityType, "customer"),
+          eq(auditLog.entityId, item.entityId),
+          eq(auditLog.action, "lead.captured"),
+        ),
+      )
+      .limit(1);
+    if (!had) {
+      await db.insert(auditLog).values({
+        id: gen("aud"),
+        actorId: principal.user.id,
+        action: "lead.captured",
+        entityType: "customer",
+        entityId: item.entityId,
+        actorRole: principal.role,
+        actorApp: "field",
+        beforeState: null,
+        afterState: { channel: "handset", stage: plantedStage },
+      });
+    }
+  } catch {
+    /* a lead is never lost to its own history */
+  }
+
   await writeTimeline(db, {
     customerId: item.entityId,
     eventType: MBOS_EVENT.leadCreated,
