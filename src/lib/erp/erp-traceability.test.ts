@@ -66,7 +66,7 @@ before(async () => {
   await db.execute(sql`
     truncate users, customers, erp_customer_profiles, erp_orders, erp_batch_codes, erp_order_details, erp_fg_entries, erp_sfg_lines, erp_sfg_entries,
              erp_pack_entries, erp_pack_lines, erp_fg_fills, erp_transfers, erp_user_powers, erp_godown_staff, erp_user_settings, erp_transports,
-             erp_units, erp_unit_events, erp_dispatch_scans, erp_dispatch_overrides, erp_sfg_qc, audit_log restart identity cascade`);
+             erp_units, erp_unit_events, erp_dispatch_scans, erp_dispatch_overrides, erp_sfg_qc, erp_raw_materials, audit_log restart identity cascade`);
   await db.execute(sql`update erp_series set last = 0`);
   admin = await makeUser("Kavita Admin", "admin");
   clerk = await makeUser("Gupta Dispatch", "associate");
@@ -96,7 +96,11 @@ before(async () => {
   ]);
   await db.insert(customers).values({ id: "cus_abc", name: "ABC Paints", city: "Pune", phone: "9876500101", kind: "customer", area: "Pune" });
 
-  /* An SFG lot of 100 L, made from a drum the test does not buy. */
+  /* An SFG lot of 100 L, made from a drum the test does not buy. The raw-material
+     master is truncated above: an earlier file in the same database can leave a
+     row with this serial number or code under another id, and `onConflictDoNothing`
+     would then skip this insert and fail the foreign key a line later. Which file
+     ran before this one depends on how the shards are balanced. */
   await db.insert(erpRawMaterials).values({ id: "rm_tol", serialNo: 1, name: "Toluene", code: "TOL", unit: "Litre", materialType: "Chemical", testingList: [] }).onConflictDoNothing();
   const lineIdSfg = id("sfg");
   await db.insert(erpSfgLines).values({ id: lineIdSfg, sfgNo: 1, batchDate: TODAY, godownId: "erpg_bhiwandi", formulationId: fId, batches: 1, rawMaterialId: "rm_tol", rmLotNo: "DRUM1", qtyPerBatch: 100, totalUse: 100, lotCode: "S1DRUM1" });
