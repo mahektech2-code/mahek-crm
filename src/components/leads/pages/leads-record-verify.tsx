@@ -65,7 +65,7 @@ export async function Body({
   const failureReasons = config["leads.verificationFailureReasons"];
   /* A calling-desk request this verification would settle, if there is one. */
   const request = await prospectRequestFor(id);
-  const canVerify = await canVerifyLeadById(user, id);
+  const canVerify = await canVerifyLeadById(user, id, { designated: true });
 
   /*
    * A finding with nothing recorded against it is still LISTED. "He did not

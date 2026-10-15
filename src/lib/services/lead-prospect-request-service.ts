@@ -78,7 +78,7 @@ export async function settleProspectRequest(
   outcome: "verified" | "follow_up" | "not_qualified",
 ): Promise<Result<{ promoted: boolean }>> {
   try {
-    const ctx = await requireLeadVerifier(customerId);
+    const ctx = await requireLeadVerifier(customerId, { designated: true });
     const lead = await leadRow(customerId);
     if (!lead) return err("That lead is not on MahekOne.", "not_found");
     await assertCustomerInScope({

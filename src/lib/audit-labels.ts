@@ -600,6 +600,7 @@ const DESCRIBE: Record<string, Describer> = {
   "lead.prospectRequest.return": (c) => ({ says: ["sent back the request to make", c.subject(), "a prospect"], changes: false }),
   "lead.qualificationReview": (c) => ({ says: ["reviewed the qualification of", c.subject()], changes: false }),
   "lead.manager.assign": (c) => ({ says: ["made", c.user(c.a.leadManagerId), "the manager of the lead", c.subject()], changes: false }),
+  "lead.verifier.blocked": (c) => ({ says: ["held the verification of", c.subject(), "- nobody could be named to verify it"], changes: false }),
   "lead.verifier.align": (c) => ({ says: ["moved the verification of", c.subject(), "to", c.user(c.a.leadManagerId, "its designated verifier")], changes: false }),
   "lead.firstOrder.confirm": (c) => ({ says: ["confirmed the first order of", c.customer(c.a.customerId), ...(num(c.a.valuePaise) ? ["worth", strong(rupees(c.a.valuePaise)!)] : [])], changes: false }),
   "lead.duplicate.dismissed": (c) => ({ says: ["said two leads that looked alike are different shops"], note: str(c.a.reason), changes: false }),

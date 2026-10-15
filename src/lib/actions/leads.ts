@@ -1430,7 +1430,7 @@ export async function recordLeadValidationCall(
     if (!parsed.success) return zodErr(parsed.error);
     const c = parsed.data;
 
-    const ctx = await requireLeadVerifier(customerId);
+    const ctx = await requireLeadVerifier(customerId, { designated: true });
     const found = await reachableLead(customerId);
     if (!found.ok) return found.refusal;
     const lead = found.lead;

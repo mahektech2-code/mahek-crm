@@ -103,7 +103,13 @@ export function VerificationQueueScreen({
         <Banner
           tone="danger"
           title={`${plural(unowned.length, "prospect")} with no lead manager`}
-          body="No territory covers these, so they are in nobody's queue. A lead nobody owns is the one most likely to sit for a month, which is why it is said in words rather than left off the list."
+          body={
+            unowned.some((r) => r.heldReason)
+              ? `${plural(unowned.filter((r) => r.heldReason).length, "of them")} held because nobody can be named to verify: ${
+                  unowned.find((r) => r.heldReason)?.heldReason?.replace(/^Verification is blocked:\s*/, "") ?? ""
+                } Each row says why. The call is re-opened by itself the next time the chart, the accounts or the setting is fixed and the lead is next touched or the nightly pass runs.`
+              : "No territory covers these, so they are in nobody's queue. A lead nobody owns is the one most likely to sit for a month, which is why it is said in words rather than left off the list."
+          }
         />
       ) : null}
 
@@ -182,7 +188,11 @@ export function VerificationQueueScreen({
                   {r.leadManagerName ?? (
                     <span
                       className="text-danger"
-                      title="No territory covers this lead, so nobody's queue holds it."
+                      title={
+                        r.heldReason
+                          ? r.heldReason.replace(/^Verification is blocked:\s*/, "")
+                          : "No territory covers this lead, so nobody's queue holds it."
+                      }
                     >
                       Nobody
                     </span>

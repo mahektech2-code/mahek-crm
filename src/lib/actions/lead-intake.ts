@@ -9,7 +9,7 @@ import { db } from "@/db";
 import { auditLog, customerDistributors, customers, notifications, products, users } from "@/db/schema";
 import { canFor, requireCapability } from "@/lib/access-control";
 import { canOpenModule } from "@/lib/access";
-import { approverFor } from "@/lib/services/lead-verifier";
+import { approverFor, deskVerifierForCreator, orgModeOn, seatForNewLead } from "@/lib/services/lead-verifier";
 import { LEAD_PRIORITIES } from "@/lib/lead-priority";
 import { sourcesFor } from "@/lib/lead-source-scope";
 import { isSalesManagerSeat } from "@/lib/services/lead-source-access";
@@ -535,9 +535,21 @@ export async function captureLead(
        coordinating seat is what lets them see and act on it. Only where she is
        its owner or nobody is — a lead she raises FOR a Salesman is the Salesman's
        and follows the ordinary rule. Nobody designated, nothing seated. */
+    /* Org-chart mode: a Sales Manager's own lead is the DESK verifier's, one rule
+       with the Telecaller's - the self-raised setting does not get a say. */
     const selfRaisedApprover = seatsCreator
-      ? await approverFor({ ownerId: v.ownerId ?? null, salesManagerId: ctx.user.id })
+      ? (await orgModeOn())
+        ? await deskVerifierForCreator(ctx.user.id)
+        : await approverFor({ ownerId: v.ownerId ?? null, salesManagerId: ctx.user.id })
       : null;
+
+    /* ORG-CHART MODE: the lead is on the right Sales Manager's screen from the
+       moment it exists, instead of after the nightly pass. Not written as a
+       DECISION - the chart still owns the seat - and null where the chart cannot
+       say, which leaves it exactly where it was and reported. */
+    const chartSeat = seatsCreator
+      ? null
+      : await seatForNewLead({ ownerId: v.ownerId ?? null, creatorId: ctx.user.id });
 
     await db.transaction(async (tx) => {
       await tx.insert(customers).values({
@@ -560,6 +572,7 @@ export async function captureLead(
         ownerId: v.ownerId ?? null,
 
         ...(seatsCreator ? { salesManagerId: ctx.user.id, salesManagerDecidedAt: new Date() } : {}),
+        ...(chartSeat ? { salesManagerId: chartSeat } : {}),
         ...(selfRaisedApprover ? { leadManagerId: selfRaisedApprover.id } : {}),
 
         leadSalesType: v.salesType ?? null,

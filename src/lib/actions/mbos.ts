@@ -55,7 +55,7 @@ import {
 import { MBOS_EVENT, writeTimelineEvent, type TimelineWriter } from "../timeline";
 import { APP_TIMEZONE, calendarDate } from "../business-date";
 import { qualifyLead } from "../services/lead-qualification-service";
-import { qualificationCollectorRefusal } from "../services/lead-verifier";
+import { orgDesignatedGate, qualificationCollectorRefusal } from "../services/lead-verifier";
 import { QUALIFICATION_ANSWER_KEYS, qualificationAnswerFault } from "../engines/lead-gates";
 import {
   openQualificationAfterVerification,
@@ -5853,6 +5853,22 @@ async function handleLeadValidation(
   const found = await scopedCustomer(principal, p.customerId);
   if (!found.ok) return { kind: "rejected", value: found.value };
   const customer = found.customer;
+
+  /* WHEN A SALESMAN'S LEADS ARE VERIFIED THROUGH THE ORG CHART, only the manager
+     the chart designates records the verdict - on a phone as at a desk. Holding
+     `lead.verify` above is necessary and no longer enough; where the chart names
+     nobody, nobody does. Off, this is a no-op. */
+  {
+    const [lead] = await db
+      .select({ ownerId: customers.ownerId })
+      .from(customers)
+      .where(eq(customers.id, customer.id))
+      .limit(1);
+    const gate = await orgDesignatedGate(customer.id, lead?.ownerId ?? null, principal.user.id);
+    if (!gate.ok) {
+      return { kind: "rejected", value: reject("not_permitted", gate.message) };
+    }
+  }
 
   /* §F: a rejection has to say why. The same rule as a lost lead and for the
      same reason — a Prospect turned down with no reason teaches the salesman

@@ -148,6 +148,13 @@ export type VerificationRow = {
    * verification that succeeds is what promotes it.
    */
   requested: boolean;
+  /**
+   * WHY NOBODY HOLDS IT, where verification is held because nobody can be named
+   * (the org chart, an account or the desk verifier cannot be used). Null for a
+   * lead that is simply waiting. It is the sentence the realignment wrote, with
+   * what has to be fixed in it.
+   */
+  heldReason: string | null;
   /** A follow-up call already recorded — verified false is not a closed lead. */
   attempts: number;
   lastAttemptAt: Date | null;
@@ -207,6 +214,9 @@ export async function verificationQueue(
                    then (c.prospect_requested_at at time zone ${APP_TIMEZONE})::date
                    else c.lead_stage_since end), 0)::int as "waitingDays",
              (c.prospect_request_state is not null) as requested,
+             (case when c.lead_manager_id is null
+                    and c.lead_next_action_outcome like 'Verification is blocked:%'
+                   then c.lead_next_action_outcome end) as "heldReason",
              (c.lead_manager_id = ${me}) as mine,
              c.lead_monthly_volume_litres as "monthlyLitres",
              c.lead_competitor as competitor,

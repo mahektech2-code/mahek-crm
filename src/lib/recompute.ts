@@ -1358,8 +1358,9 @@ export async function recomputeSalesManagers(): Promise<number> {
      the person set to verify those (`leads.fieldVerifierEmail`), not under
      whoever the org chart names — rule 3 and rule 4. Off, and nothing about this
      pass changes. See `services/lead-verifier`. */
-  const { fieldRoutingOn } = await import("./services/lead-verifier");
+  const { fieldRoutingOn, orgModeOn } = await import("./services/lead-verifier");
   const fieldOn = await fieldRoutingOn();
+  const orgOn = await orgModeOn();
 
   // Nothing on the org chart yet is not the same as nobody having a sales
   // manager. A pass with an empty map would blank every undecided customer's
@@ -1376,6 +1377,7 @@ export async function recomputeSalesManagers(): Promise<number> {
         ownerId: customers.ownerId,
         salesManagerId: customers.salesManagerId,
         salesManagerPersonName: customers.salesManagerPersonName,
+        leadManagerId: customers.leadManagerId,
       })
       .from(customers)
       .where(isNull(customers.salesManagerDecidedAt)),
@@ -1393,15 +1395,43 @@ export async function recomputeSalesManagers(): Promise<number> {
     ? await (await import("./services/lead-verifier")).fieldSeatFor(
         rows.filter((r) => r.kind === "lead").map((r) => ({ id: r.id, ownerId: r.ownerId })),
       )
-    : { approverId: null as string | null, seated: new Set<string>() };
+    : {
+        approvers: new Map<string, string>(),
+        unresolved: new Map<string, string>(),
+      };
 
+  /* Customers (not leads): the chart manager of their sales account, by id. */
+  const customerChartSeats = orgOn
+    ? await (await import("./services/lead-verifier")).chartManagersOfUsers(
+        rows.filter((r) => r.kind !== "lead" && r.salesAmId).map((r) => r.salesAmId as string),
+      )
+    : new Map<string, string>();
+
+  const touched: string[] = [];
   let changed = 0;
   for (const c of rows) {
     let nextId: string | null;
     let nextName: string | null;
 
-    if (fieldSeats.approverId && fieldSeats.seated.has(c.id)) {
-      nextId = fieldSeats.approverId;
+    const approver = fieldSeats.approvers.get(c.id);
+    if (approver) {
+      nextId = approver;
+      nextName = null;
+    } else if (fieldSeats.unresolved.has(c.id)) {
+      /* The org chart cannot name a verifier for this Salesman's lead. The seat
+         is LEFT as it is: a name-matched manager would be exactly the quiet
+         substitution the rule exists to stop. */
+      continue;
+    } else if (orgOn) {
+      /* ORG-CHART MODE: no display name is an identity. A lead nobody holds and
+         nobody is known to have raised is left exactly as it is. A customer is
+         seated from its sales ACCOUNT, by employee id; a sheet's salesperson
+         NAME with no account behind it cannot be mapped, so its seat is left
+         alone rather than guessed. */
+      if (c.kind === "lead" || !c.salesAmId) continue;
+      const chartMgr = customerChartSeats.get(c.salesAmId);
+      if (!chartMgr) continue;
+      nextId = chartMgr;
       nextName = null;
     } else {
       /* An empty org chart must not blank a seat — see the guard above, which
@@ -1428,6 +1458,30 @@ export async function recomputeSalesManagers(): Promise<number> {
       .set({ salesManagerId: nextId, salesManagerPersonName: nextName })
       .where(eq(customers.id, c.id));
     changed++;
+    touched.push(c.id);
+  }
+
+  /* THE COORDINATING SEAT AND THE OPEN CALL FOLLOW THE CHART TOO. The org chart
+     is edited in HRMS, which is not an owner change, so nothing else would move a
+     lead whose chart was just fixed - or just broken - until somebody touched it.
+     Only leads whose coordinating seat disagrees with the chart's answer are
+     handed over, and a failure here never fails the pass. */
+  if (orgOn) {
+    try {
+      const { realignVerifierSeats } = await import("./services/lead-verifier");
+      /* EVERY unverified lead, because what decides the coordinating seat and the
+         open call is the route the gate asks - which moves when the chart, an
+         account or a setting changes, with no ownership change to announce it.
+         That is what re-opens a held call the night something is fixed, and what
+         closes one the night something breaks. The scheduled pass never clears a
+         Sales Manager's sight of a lead; only an explicit move does. */
+      const ids = [...new Set([...touched, ...rows.filter((r) => r.kind === "lead").map((r) => r.id)])];
+      for (let i = 0; i < ids.length; i += 100) {
+        await realignVerifierSeats(ids.slice(i, i + 100), null, null, { tx: db, scheduled: true });
+      }
+    } catch {
+      /* the seat pass above already stands; the next pass tries again */
+    }
   }
   return changed;
 }
@@ -1451,14 +1505,27 @@ export async function salesManagerForOwner(
 ): Promise<{ id: string | null; personName: string | null } | null> {
   /* A lead a Salesman holds is born under the field verifier, the same answer the
      nightly pass writes for it — see `recomputeSalesManagers`. */
-  const { fieldApprover, fieldRoutingOn, salesmenAmong } = await import("./services/lead-verifier");
-  if (await fieldRoutingOn()) {
+  const { fieldApprover, fieldRoutingOn, fieldSeatFor, orgModeOn, salesmenAmong } = await import(
+    "./services/lead-verifier"
+  );
+  if (await orgModeOn()) {
+    /* Through the org chart, by employee id: the manager the chart names for a
+       Salesman who holds the lead, otherwise the nearest manager above whoever
+       does. Not resolvable means NO seat is written - null, and the lead is born
+       unseated and reported - never a name-matched guess. */
+    const key = `__new__${ownerUserId}`;
+    const s = await fieldSeatFor([{ id: key, ownerId: ownerUserId }]);
+    const approved = s.approvers.get(key);
+    return approved ? { id: approved, personName: null } : null;
+  } else if (await fieldRoutingOn()) {
     const field = await fieldApprover();
     if (field && field.id !== ownerUserId && (await salesmenAmong([ownerUserId])).has(ownerUserId)) {
       return { id: field.id, personName: null };
     }
   }
 
+  /* Switch off only: the name-based answer this has always given. In org-chart
+     mode every owner was answered above, by id. */
   const managerNameOf = await managerNameByEmployeeName();
   if (!managerNameOf.size) return null;
 

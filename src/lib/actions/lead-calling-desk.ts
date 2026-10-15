@@ -8,7 +8,13 @@ import { z } from "zod";
 import { db } from "@/db";
 import { auditLog, calls, customers, users } from "@/db/schema";
 import { canAny, hatsFor, requireCapability } from "@/lib/access-control";
-import { approverFor, fieldRouteFor, holdsLeadSeat, telecallerRouteFor } from "@/lib/services/lead-verifier";
+import {
+  approverFor,
+  fieldRouteFor,
+  holdsLeadSeat,
+  orgDesignatedGate,
+  telecallerRouteFor,
+} from "@/lib/services/lead-verifier";
 import { NO_ANSWER_REASONS } from "@/lib/call-outcomes";
 import { addDays, nextWorkingDay, type BusinessDate } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
@@ -1543,6 +1549,11 @@ export async function returnProspectRequest(
     const found = await reachable(p.customerId);
     if (!found.ok) return found.refusal;
     const lead = found.lead;
+    /* Sending a request back is the verifier's decision, so where the org chart
+       designates one it is theirs alone - like the verdict itself. A no-op when
+       the switch is off. */
+    const designated = await orgDesignatedGate(p.customerId, lead.ownerId ?? null, ctx.user.id);
+    if (!designated.ok) return err(designated.message, "not_permitted");
     const req = await requestOf(p.customerId);
     if (req.state !== "awaiting" && req.state !== "followup") {
       return err("There is no pending Prospect request on this lead to send back.", "rule_violation");
