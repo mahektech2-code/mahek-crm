@@ -146,7 +146,7 @@ export function conversionColumns(
 export async function recordConversion(
   tx: Writer,
   lead: ConvertibleLead,
-  actorId: string,
+  actorId: string | null,
   salesAmId: string | null,
   how: string,
 ): Promise<void> {
