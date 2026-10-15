@@ -46,6 +46,11 @@ const gen = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
  * has to be somebody who can open the lead and make the call.
  */
 export async function lineManagerFor(userId: string): Promise<string | null> {
+  /* In org-chart mode a person is found by the employee link on their account and
+     their manager by `employee_reporting` - never by display name. */
+  const { orgModeOn, chartManagerOfUser } = await import("./lead-verifier");
+  if (await orgModeOn()) return chartManagerOfUser(userId);
+
   const [person] = await db
     .select({ name: users.name })
     .from(users)

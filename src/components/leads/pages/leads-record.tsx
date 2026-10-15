@@ -310,7 +310,7 @@ export async function Body({
       holdReasons={config["leads.holdReasons"]}
       discountThresholdPercent={config["leads.distributorDiscountApprovalPercent"]}
       creditLimitThresholdPaise={config["leads.distributorCreditLimitApprovalPaise"]}
-      canVerify={await canVerifyLeadById(user, id)}
+      canVerify={await canVerifyLeadById(user, id, { designated: true })}
       canWork={await canLead(user, "lead.work")}
       canTrash={await canFor(user, "lead.trash")}
       /* §22 — naming who RUNS the relationship, which moves no revenue and no

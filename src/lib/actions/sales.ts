@@ -117,7 +117,7 @@ import {
   type TaskLinkTarget,
 } from "@/lib/task-form";
 import { linkContexts } from "@/lib/services/task-link-service";
-import { realignNotice, realignVerifierSeats } from "@/lib/services/lead-verifier";
+import { orgModeOn, realignNotice, realignVerifierSeats } from "@/lib/services/lead-verifier";
 import { taskCampaign } from "@/lib/services/task-campaign-service";
 import {
   draftTask,
@@ -2414,10 +2414,24 @@ export async function reassignLead(input: {
      * A verifier that is merely unusable does not roll anything back: it comes
      * back in `realigned` and is said in the answer. The owner is never written
      * by the realignment — who follows the lead up is not the verifier's. */
+    /* A next action owed by the OLD owner follows the lead to the new one in
+       org-chart mode - the rule `assignDeskLead` keeps, so the doors cannot
+       answer differently; one owed by anybody else stays. Switch OFF this door
+       leaves the next action exactly where it always did. Read from the row as it
+       was: in one UPDATE every expression sees the old values. */
+    const followOwner = (await orgModeOn())
+      ? {
+          leadNextActionOwnerId: sql`case when ${customers.leadNextActionOwnerId} = ${customers.ownerId} then ${input.salesmanId} else ${customers.leadNextActionOwnerId} end`,
+        }
+      : {};
     const realigned = await db.transaction(async (tx) => {
       await tx
         .update(customers)
-        .set({ ownerId: input.salesmanId, updatedAt: new Date() })
+        .set({
+          ownerId: input.salesmanId,
+          ...followOwner,
+          updatedAt: new Date(),
+        })
         .where(eq(customers.id, input.leadId));
 
       const out = await realignVerifierSeats([input.leadId], user.id, null, { tx });
@@ -2894,6 +2908,12 @@ export async function bulkReassignLeads(input: {
        not move is NAMED in `failed`; what moved but whose verifier cannot be
        used is named in `attention`, so a batch never reads as complete when it
        was not. The owner is the move; the realignment never writes it. */
+    /* As in `reassignLead`: org-chart mode only. */
+    const followOwner = (await orgModeOn())
+      ? {
+          leadNextActionOwnerId: sql`case when ${customers.leadNextActionOwnerId} = ${customers.ownerId} then ${input.salesmanId} else ${customers.leadNextActionOwnerId} end`,
+        }
+      : {};
     const moved: typeof moving = [];
     const attention: Array<{ id: string; name: string; why: string }> = [];
     for (const l of moving) {
@@ -2901,7 +2921,11 @@ export async function bulkReassignLeads(input: {
         const realigned = await db.transaction(async (tx) => {
           await tx
             .update(customers)
-            .set({ ownerId: input.salesmanId, updatedAt: new Date() })
+            .set({
+              ownerId: input.salesmanId,
+              ...followOwner,
+              updatedAt: new Date(),
+            })
             .where(eq(customers.id, l.id));
           const out = await realignVerifierSeats([l.id], user.id, null, { tx });
           await tx.insert(auditLog).values({

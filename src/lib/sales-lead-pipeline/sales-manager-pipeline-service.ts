@@ -1060,7 +1060,7 @@ export async function pipelineLead(
     distributor ? leadApprovalChain(id) : Promise.resolve([] as ApprovalStep[]),
     distributor ? distributorProfileFor(id) : Promise.resolve(null),
     canFor(user, "lead.work"),
-    canVerifyLeadById(user, id),
+    canVerifyLeadById(user, id, { designated: true }),
     canFor(user, "sample.approve"),
     canFor(user, "order.capture"),
     canFor(user, "distributor.terms"),
