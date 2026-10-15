@@ -143,6 +143,8 @@ const LABELS: Record<SecretName, string> = {
   "olamaps.apiKey4": "The fourth Ola Maps key",
   "olamaps.apiKey5": "The fifth Ola Maps key",
   "enquiries.ingestSecret": "The website enquiry ingest secret",
+  "website.cmsReadSecret": "The website content read secret",
+  "website.cmsPublishSecret": "The website publish secret",
 };
 
 /**
@@ -175,4 +177,8 @@ const USED_FROM: Record<SecretName, string> = {
     "Nothing changes today. It is the last of the pool, spent only once Ola refuses all four keys before it for quota.",
   "enquiries.ingestSecret":
     "The website's next enquiry submission is accepted or refused based on this value — it must match what the website itself is configured with.",
+  "website.cmsReadSecret":
+    "The public site's next read of published content or an uploaded image is accepted or refused based on this value — it must match CMS_READ_SECRET on the website.",
+  "website.cmsPublishSecret":
+    "The next publish tells the live site to refresh with this value, and preview links are signed with it — it must match CMS_PUBLISH_SECRET on the website.",
 };

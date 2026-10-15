@@ -6,7 +6,7 @@ import { FeedbackButton } from "@/components/shell/feedback-button";
 import { ToastProvider } from "@/components/ui/toast";
 import { initialsOf } from "@/lib/format";
 import { hatForHeader } from "@/lib/hat-for-header";
-import { PrototypeNotice } from "./prototype-notice";
+import { ConnectionNotice } from "./connection-notice";
 import { WebsiteShell } from "./website-shell";
 
 /**
@@ -15,8 +15,7 @@ import { WebsiteShell } from "./website-shell";
  * Like every other MahekOne app: the grant is a row in `app_access`, checked
  * here as well as on the launcher, because a bookmarked `/website` must not
  * open for somebody who was never given the app. Content behind these 12
- * screens is mock data for now — see `mock-data.ts` — so this PR wires up the
- * app, its access and its navigation only.
+ * screens is the website's own content — see `lib/website-cms/` — edited here and read by mahekindia.com.
  */
 export default async function WebsiteLayout({
   children,
@@ -41,7 +40,7 @@ export default async function WebsiteLayout({
         apps={webApps(apps)}
         feedback={<FeedbackButton />}
       >
-        <PrototypeNotice />
+        <ConnectionNotice />
         {children}
       </WebsiteShell>
     </ToastProvider>

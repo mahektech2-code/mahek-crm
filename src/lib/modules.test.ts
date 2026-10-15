@@ -82,8 +82,8 @@ describe("what a module grant means", () => {
     assert.deepEqual(marked, ["sales.lead-pipeline"], "the one Sales Dashboard module this bypass must not reach");
     assert.deepEqual(
       APP_MODULES.filter((m) => m.explicitOnly).map((m) => m.key).sort(),
-      ["sales.lead-pipeline"],
-      "the Sales Dashboard's pipeline, and nothing else — the CRM's seat is scoped by the seat itself",
+      ["sales.lead-pipeline", "website.publish"],
+      "the Sales Dashboard's pipeline and the Website's right to publish live — and nothing else; the CRM's seat is scoped by the seat itself",
     );
     for (const m of APP_MODULES.filter((x) => x.explicitOnly)) {
       assert.equal(m.offByDefault, true, `${m.key} must be offByDefault too, or a first tick of the app sweeps it in`);

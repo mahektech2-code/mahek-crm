@@ -91,6 +91,49 @@ export default async function IntegrationsPage() {
       </Section>
 
       <Section
+        id="website-cms"
+        title="Website content (CMS)"
+        hint="Connects the Website app to mahekindia.com: the site reads published content from here, and a publish tells the site to refresh. Server to server only — neither value reaches a browser. Nothing changes on the live site until the site is also switched on (CMS_ENABLED on its server)."
+      >
+        <Card>
+          <div className="divide-y divide-divider">
+            {secrets
+              .filter((s) => s.name === "website.cmsReadSecret")
+              .map((s) => (
+                <SecretCredentialRow
+                  key={s.name}
+                  row={row(s)}
+                  canWrite={canWrite}
+                  meta={{
+                    label: "Website content read secret",
+                    env: "WEBSITE_CMS_READ_SECRET",
+                    what: "Checked on every read of published content and uploaded images by the public site. Anything arriving without it is refused.",
+                    where: "Make one up — a long random string — and give the same value to whoever runs the website as CMS_READ_SECRET.",
+                    removalConsequence: "The public site can no longer read content or uploaded images from here and falls back to the content built into it.",
+                  }}
+                />
+              ))}
+            {secrets
+              .filter((s) => s.name === "website.cmsPublishSecret")
+              .map((s) => (
+                <SecretCredentialRow
+                  key={s.name}
+                  row={row(s)}
+                  canWrite={canWrite}
+                  meta={{
+                    label: "Website publish secret",
+                    env: "WEBSITE_CMS_PUBLISH_SECRET",
+                    what: "Sent with every request that tells the public site to refresh after a publish, and used to sign preview links.",
+                    where: "Make up a second long random string and give the same value to whoever runs the website as CMS_PUBLISH_SECRET.",
+                    removalConsequence: "Publishing still saves here, but the live site is not told to refresh and previews stop working.",
+                  }}
+                />
+              ))}
+          </div>
+        </Card>
+      </Section>
+
+      <Section
         id="sign-in-codes"
         title="Sign-in codes"
         hint="The key MiniMoth sends one-time sign-in codes with — for the MahekOne web sign-in, the MBOS handset, and password resets. Setting it is what switches codes on."

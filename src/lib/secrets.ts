@@ -104,6 +104,10 @@ export const SECRET_NAMES = {
   "olamaps.apiKey5": "OLAMAPS_API_KEY_5",
   /** What the website's own backend proves it holds when it forwards a submitted enquiry to `/api/public/enquiries`. Server-to-server only — never reaches a browser on either side. */
   "enquiries.ingestSecret": "ENQUIRY_INGEST_SECRET",
+  /** What the public website presents when it READS published content and uploaded images from `/api/public/website/*`. Server-to-server only. */
+  "website.cmsReadSecret": "WEBSITE_CMS_READ_SECRET",
+  /** What MahekOne presents when it tells the public website to refresh, and the key that signs preview links. Server-to-server only. */
+  "website.cmsPublishSecret": "WEBSITE_CMS_PUBLISH_SECRET",
 } as const;
 
 export type SecretName = keyof typeof SECRET_NAMES;
