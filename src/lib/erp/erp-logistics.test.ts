@@ -356,18 +356,6 @@ describe("petty cash", () => {
   });
 });
 
-describe("my customers", () => {
-  test("a salesman sees only the parties tagged to him, and cannot edit anyone else's", async () => {
-    const c = await as(clerk);
-    const { rows } = await mod("myCustomers").load(c);
-    assert.deepEqual(rows.map((r) => r.v.name), ["Shree Paints"]);
-    await db.insert(customers).values({ id: "cus_other", name: "Other Paints", city: "Pune", phone: "9876500009", kind: "customer" });
-    assert.equal(msg(await mod("myCustomers").forms!.edit(c, { name: "Mine now" }, [], "cus_other")), "That customer is not tagged to you.");
-    const [other] = await db.select().from(customers).where(eq(customers.id, "cus_other"));
-    assert.equal(other.name, "Other Paints");
-  });
-});
-
 describe("transporters", () => {
   test("a godown is a state, district, city and area with its own GST number; an unlisted rung is added once; a new consignment name joins the list", async () => {
     const ctx = await as(admin);

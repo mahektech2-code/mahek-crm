@@ -1,28 +1,24 @@
 import "server-only";
-import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { complaints, customers, employees, erpCredits, erpExpenses, erpGodowns, erpTransports, erpVideos, users } from "@/db/schema";
-import { categoryLabel } from "@/lib/complaint-labels";
-import { complaintRows, requestStatus } from "./complaints";
-import { calendarDate } from "@/lib/business-date";
+import { customers, employees, erpCredits, erpExpenses, erpGodowns, erpTransports, erpVideos, users } from "@/db/schema";
 import { err, fieldErr, okVoid, type Result } from "@/lib/result";
 import type { ErpContext } from "../access";
 import { bindErpFiles } from "../attachments";
 import { erpAudit, erpId, multi, paise, rupeesField, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
 import type { ActionSpec, BulkSpec, CellValue, ColSpec, FieldSpec, FormSpec, ListRow } from "../ui";
-import { fd, inr } from "../ui";
+import { inr } from "../ui";
 import { cashBalances, cashKey } from "../engines/cash";
 import { monthId } from "../engines/sales";
 import { refValues } from "../refs";
 import { type Col, godownField, godownIdByName, godownOptions, has, isErpManager, today } from "./common";
-import { customerForm, loadCustomers, phoneContacts, saveCustomerDetails } from "./masters";
 import { detailRows, EXTRA_EXPENSE_PROMPT, setExtraExpenses } from "./sales";
 import { syncBookOrders } from "../book";
 import { CLOSED, STAGES } from "../engines/logistics";
 
 /* ---------------------------------------------------------------------------
  * Logistics, customer requests and credit notes, order follow-up, petty cash,
- * my customers and help videos (spec §12–§13).
+ * and help videos (spec §12–§13).
  * ------------------------------------------------------------------------- */
 
 /**
@@ -436,68 +432,6 @@ async function setExpenseStatus(ctx: ErpContext, ids: string[], status: "Verify"
   return okVoid(`${ids.length} expense${ids.length === 1 ? "" : "s"} ${status === "Verify" ? "verified" : "back to Pending"}`);
 }
 
-/* ========================================================= my customers */
-
-const myCustomers: ScreenModule = {
-  key: "myCustomers",
-  async load(ctx) {
-    const mine = await loadCustomers(or(eq(customers.salesAmId, ctx.user.id), sql`lower(${customers.salesPersonName}) = lower(${ctx.user.name})`));
-    const ids = mine.map((c) => c.id);
-    /* Their complaints are the CRM's complaints: one record, whichever app raised it. */
-    const reqs = ids.length ? await complaintRows(inArray(complaints.customerId, ids)) : [];
-    const reqBy = new Map<string, number>();
-    reqs.forEach((r) => reqBy.set(r.c.customerId, (reqBy.get(r.c.customerId) ?? 0) + (requestStatus(r.c) === "Requested" ? 1 : 0)));
-    const cols: ColSpec[] = [
-      { k: "name", l: "Sales party", t: "b" },
-      { k: "grade", l: "Grade", t: "s" },
-      { k: "area", l: "Area", t: "t" },
-      { k: "city", l: "Location", t: "t" },
-      { k: "transporter", l: "Transport", t: "t" },
-      { k: "payment", l: "Payment type", t: "s" },
-      { k: "mobile", l: "Mobile", t: "ph" },
-      { k: "credit", l: "Credit days", t: "n" },
-      { k: "target", l: "Monthly target", t: "m" },
-      { k: "open", l: "Open requests", t: "n" },
-    ];
-    return {
-      spec: { screen: "myCustomers", cols, hidden: [], readOnly: false, noDataLine: "No customers are tagged to you as their sales person." },
-      rows: mine.map((c) => ({
-        id: c.id,
-        v: {
-          name: c.name,
-          grade: c.p?.grade ?? null,
-          area: c.area,
-          city: c.city,
-          transporter: c.p?.transporter ?? null,
-          payment: c.freightTerm,
-          mobile: c.phone,
-          credit: c.creditDays,
-          target: c.monthlyTargetPaise,
-          open: reqBy.get(c.id) ?? 0,
-        },
-        flags: [],
-        title: c.name,
-        header: `${c.city ?? ""}${c.area ? ` · ${c.area}` : ""}`,
-        contacts: phoneContacts(c.phone, c.email),
-        fields: reqs
-          .filter((r) => r.c.customerId === c.id)
-          .slice(0, 6)
-          .map((r) => ({ l: `Complaint · ${fd(calendarDate(r.c.createdAt))}`, v: `${categoryLabel(r.c.category)} — ${requestStatus(r.c)}${r.c.cnAmount ? ` · CN ${inr(r.c.cnAmount)}` : ""}` })),
-        actions: [{ id: "edit", l: "Edit", primary: true, loadsForm: true }],
-      })),
-    };
-  },
-  formLoaders: { edit: (_ctx, id) => customerForm(id, true) },
-  forms: {
-    async edit(ctx, h, _l, id) {
-      if (!id) return err("No customer named.", "not_found");
-      const [c] = await loadCustomers(and(eq(customers.id, id), or(eq(customers.salesAmId, ctx.user.id), sql`lower(${customers.salesPersonName}) = lower(${ctx.user.name})`)));
-      if (!c) return err("That customer is not tagged to you.", "not_permitted");
-      return saveCustomerDetails(ctx, id, h, true);
-    },
-  },
-};
-
 /* ================================================================ videos */
 
 function youtubeId(url: string): string | null {
@@ -593,6 +527,5 @@ export const LOGISTICS_SCREENS: ScreenModule[] = [
   paidFreight,
   credits,
   expenses,
-  myCustomers,
   videos,
 ];

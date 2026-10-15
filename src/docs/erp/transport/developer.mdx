@@ -5,7 +5,7 @@ Transport is four list modules in `screens/logistics.ts`: `transportList` built 
 | Layer | File | What lives there |
 |---|---|---|
 | Registry | `src/lib/erp/registry.ts` | `transport` screen with views `pendingLr`, `trackLr`, `transport`, `paidFreight` |
-| Screens | `src/lib/erp/screens/logistics.ts` | `MATERIAL_STAGES`, `onTheRoad`, `transportList`, `paidFreight` (also `myCustomers` and `videos`, documented elsewhere) |
+| Screens | `src/lib/erp/screens/logistics.ts` | `MATERIAL_STAGES`, `onTheRoad`, `transportList`, `paidFreight` (also `videos`, documented elsewhere) |
 | Record opened | `src/lib/erp/screens/sales.ts` | `verify` inserts `erp_transports` with `onConflictDoNothing` |
 | LR photo reading | `src/lib/erp/ai-photos.ts` | `readLr`, `recordLrReading`, `lrReviewForm`, `applyLr`, `rejectPhotoReading` |
 | Gate | `src/lib/erp/ai.ts` | `featureState("photos", true)`, `pendingFor("photos")` |

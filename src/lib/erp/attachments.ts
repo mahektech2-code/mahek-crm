@@ -39,7 +39,7 @@ const SCREENS: Record<ErpParent | "complaint", string[]> = {
   erp_material_group: ["rawMaterials"],
   /* An SFG lot's QC evidence: whoever may open SFG batches sees it. */
   erp_sfg_qc: ["sfgBatches"],
-  complaint: ["requests", "myCustomers"],
+  complaint: ["requests"],
 };
 
 export async function canReadErpAttachment(userId: string, parentType: string, parentId: string): Promise<boolean> {

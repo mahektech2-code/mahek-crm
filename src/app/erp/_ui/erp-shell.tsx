@@ -52,7 +52,6 @@ const SCREEN_ICON: Record<string, string> = {
   products: "can",
   customers: "person",
   godowns: "home",
-  priceLists: "rupee",
   employees: "people",
   powers: "lock",
   refLists: "clipboard",
@@ -98,7 +97,6 @@ const SCREEN_ICON: Record<string, string> = {
   pivot: "chart",
   credits: "wallet",
   expenses: "rupee",
-  myCustomers: "people",
   videos: "play",
   settings: "settings",
 };

@@ -14,9 +14,6 @@ import {
   erpRefValues,
   erpSuppliers,
   finishedGoods,
-  priceListRates,
-  priceLists,
-  priceListDiscountTerms,
   products,
   productFormulations,
   users,
@@ -889,7 +886,7 @@ export function partyStatus(r: { status: string; p: { pendingActivation: boolean
   return "Active";
 }
 
-async function customerEditForm(id: string, mine = false): Promise<FormSpec | null> {
+async function customerEditForm(id: string): Promise<FormSpec | null> {
   const [r] = await loadCustomers(eq(customers.id, id));
   if (!r) return null;
   const [areas, states, transporters, counters, segments] = await Promise.all([
@@ -900,7 +897,7 @@ async function customerEditForm(id: string, mine = false): Promise<FormSpec | nu
     refValues("segment"),
   ]);
   return {
-    screen: mine ? "myCustomers" : "customers",
+    screen: "customers",
     id: "edit",
     recordId: id,
     title: `Edit ${r.name}`,
@@ -920,15 +917,11 @@ async function customerEditForm(id: string, mine = false): Promise<FormSpec | nu
       email: r.email ?? "",
       counter: (r.p?.counterTypes ?? []).join("|"),
       credit: r.creditDays == null ? "" : String(r.creditDays),
-      ...(mine
-        ? {}
-        : {
-            segment: r.p?.segment ?? "",
-            instr: r.p?.standingInstructions ?? "",
-            gstin: r.gstin ?? "",
-            company: r.companyName ?? "",
-            allocate: r.p?.allocateEmail ?? "",
-          }),
+      segment: r.p?.segment ?? "",
+      instr: r.p?.standingInstructions ?? "",
+      gstin: r.gstin ?? "",
+      company: r.companyName ?? "",
+      allocate: r.p?.allocateEmail ?? "",
     },
     header: [
       { k: "grade", l: "Grade", t: "select", opts: GRADES },
@@ -944,21 +937,17 @@ async function customerEditForm(id: string, mine = false): Promise<FormSpec | nu
       { k: "email", l: "Party email", t: "text" },
       { k: "counter", l: "Counter type", t: "multi", opts: counters },
       { k: "credit", l: "Credit days", t: "num", min: 0 },
-      ...(mine
-        ? []
-        : ([
-            { k: "segment", l: "Segment", t: "select", opts: segments },
-            { k: "instr", l: "Standing instructions", t: "area", mic: true },
-            { k: "gstin", l: "GST number", t: "text" },
-            { k: "company", l: "Company name", t: "text" },
-            { k: "allocate", l: "Allocate (email)", t: "text" },
-          ] as FieldSpec[])),
+      { k: "segment", l: "Segment", t: "select", opts: segments },
+      { k: "instr", l: "Standing instructions", t: "area", mic: true },
+      { k: "gstin", l: "GST number", t: "text" },
+      { k: "company", l: "Company name", t: "text" },
+      { k: "allocate", l: "Allocate (email)", t: "text" },
     ],
   };
 }
 
-export async function customerForm(id: string, mine = false) {
-  return customerEditForm(id, mine);
+export async function customerForm(id: string) {
+  return customerEditForm(id);
 }
 
 async function customerNewForm(ctx: ErpContext): Promise<FormSpec> {
@@ -1128,7 +1117,7 @@ const customersScreen: ScreenModule = {
     },
     async edit(ctx, h, _l, id) {
       if (!id) return err("No customer named.", "not_found");
-      return saveCustomerDetails(ctx, id, h, false);
+      return saveCustomerDetails(ctx, id, h);
     },
   },
   actions: {
@@ -1185,7 +1174,7 @@ const customersScreen: ScreenModule = {
   },
 };
 
-export async function saveCustomerDetails(ctx: ErpContext, id: string, h: Record<string, string>, mine: boolean) {
+export async function saveCustomerDetails(ctx: ErpContext, id: string, h: Record<string, string>) {
   const [before] = await loadCustomers(eq(customers.id, id));
   if (!before) return err("That customer no longer exists.", "not_found");
   const grade = text(h.grade);
@@ -1203,7 +1192,8 @@ export async function saveCustomerDetails(ctx: ErpContext, id: string, h: Record
     creditDays: int(h.credit),
     freightTerm: text(h.pay),
     deliveryType: text(h.delivery),
-    ...(mine ? {} : { gstin: text(h.gstin), companyName: text(h.company) }),
+    gstin: text(h.gstin),
+    companyName: text(h.company),
     updatedAt: new Date(),
     updatedById: ctx.user.id,
   };
@@ -1213,9 +1203,9 @@ export async function saveCustomerDetails(ctx: ErpContext, id: string, h: Record
     transporter: text(h.transporter),
     weightType: text(h.weight),
     counterTypes: multi(h.counter),
-    ...(mine
-      ? {}
-      : { segment: text(h.segment), standingInstructions: text(h.instr), allocateEmail: text(h.allocate) }),
+    segment: text(h.segment),
+    standingInstructions: text(h.instr),
+    allocateEmail: text(h.allocate),
     updatedAt: new Date(),
     updatedById: ctx.user.id,
   };
@@ -1226,7 +1216,7 @@ export async function saveCustomerDetails(ctx: ErpContext, id: string, h: Record
       .values({ customerId: id, ...profileValues })
       .onConflictDoUpdate({ target: erpCustomerProfiles.customerId, set: profileValues });
   });
-  await erpAudit(ctx, mine ? "erp.myCustomer.edit" : "erp.customer.edit", "customer", id, before, { ...custValues, ...profileValues });
+  await erpAudit(ctx, "erp.customer.edit", "customer", id, before, { ...custValues, ...profileValues });
   return okVoid(`${before.name} updated`);
 }
 
@@ -1289,7 +1279,9 @@ async function erpUsers(): Promise<{ id: string; name: string }[]> {
 const godowns: ScreenModule = {
   key: "godowns",
   async load(ctx) {
-    const rows = await db.select().from(erpGodowns).orderBy(asc(erpGodowns.name));
+    /* Item Lost Record is where write-offs land, not a place anybody works:
+       it stays in the table for transfers and stock counts, and off this list. */
+    const rows = await db.select().from(erpGodowns).where(eq(erpGodowns.reserved, false)).orderBy(asc(erpGodowns.name));
     const staff = await db
       .select({ godownId: erpGodownStaff.godownId, name: users.name })
       .from(erpGodownStaff)
@@ -1441,71 +1433,6 @@ async function saveGodown(ctx: ErpContext, h: Record<string, string>, id?: strin
   return okVoid(`${name} registered`);
 }
 
-/* ========================================================= price lists */
-
-const priceListsScreen: ScreenModule = {
-  key: "priceLists",
-  async load(ctx) {
-    const rows = await db
-      .select({
-        id: priceListRates.id,
-        list: priceLists.name,
-        status: priceLists.status,
-        product: products.name,
-        raw: priceListRates.rawProductText,
-        incl: priceListRates.rateInclGstPaise,
-        excl: priceListRates.rateExGstPaise,
-        listId: priceLists.id,
-      })
-      .from(priceListRates)
-      .innerJoin(priceLists, eq(priceLists.id, priceListRates.priceListId))
-      .leftJoin(products, eq(products.id, priceListRates.productId))
-      .where(eq(priceLists.status, "published"))
-      .orderBy(asc(priceLists.name));
-    const disc = await db
-      .select({ listId: priceListDiscountTerms.priceListId, bp: priceListDiscountTerms.percentBp })
-      .from(priceListDiscountTerms);
-    const discBy = new Map<string, number>();
-    disc.forEach((d) => {
-      if (d.bp != null && !discBy.has(d.listId)) discBy.set(d.listId, d.bp / 100);
-    });
-    const all: Col[] = [
-      { k: "list", l: "Price list", t: "t" },
-      { k: "product", l: "Product", t: "b" },
-      { k: "rateIncl", l: "Rate incl. GST", t: "m", pw: "viewSalesRate" },
-      { k: "rateExcl", l: "Rate excl. GST", t: "m", pw: "viewSalesRate" },
-      { k: "discount", l: "Discount %", t: "n" },
-    ];
-    const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
-    return {
-      spec: {
-        screen: "priceLists",
-        cols,
-        hidden,
-        groups: ["list"],
-        readOnly: true,
-        noDataLine: "No published price list yet. Lists are published on the Price Desk.",
-      },
-      rows: rows.map((r) => ({
-        id: r.id,
-        v: withoutHidden(
-          {
-            list: r.list,
-            product: r.product ?? r.raw ?? "Unmatched product",
-            rateIncl: r.incl ?? (r.excl != null ? Math.round(r.excl * 1.18) : null),
-            rateExcl: r.excl ?? (r.incl != null ? Math.round(r.incl / 1.18) : null),
-            discount: discBy.get(r.listId) ?? null,
-          },
-          hiddenKeys,
-        ),
-        flags: [],
-        title: r.product ?? r.raw ?? "Rate",
-        header: "Price lists are written and published on the Price Desk. The ERP reads the published rates.",
-      })),
-    };
-  },
-};
-
 /* ====================================================== reference lists */
 
 const refListsScreen: ScreenModule = {
@@ -1613,7 +1540,6 @@ export const MASTER_SCREENS: ScreenModule[] = [
   productsScreen,
   customersScreen,
   godowns,
-  priceListsScreen,
   refListsScreen,
 ];
 
