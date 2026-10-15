@@ -1,0 +1,120 @@
+Travel, expenses and leave are all **owned** records: written locally, queued, and handled at the office by `handleTravelLeg`, `handleExpenseDay`, `handleExpense` and `handleLeave`. Holidays, the travel modes, the expense policy, leave balances and salary come **down** only. The policy engine is shared, so the handset prices a leg with the same rules the office pays from.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Screens | `mbos-app/app/travel.tsx` | The day's legs and what each is worth — read-only |
+| Screens | `mbos-app/app/expenses.tsx` | Claims, the cap line, allowances, the claim form |
+| Screens | `mbos-app/app/leave.tsx`, `holidays.tsx`, `salary.tsx`, `policy.tsx` | Leave requests, the calendar, the HR salary, the policy as sentences |
+| Camera | `mbos-app/src/components/ui/odometer-camera.tsx` | The meter reading and its photograph as one act |
+| Leg rules (pure) | `mbos-app/src/lib/travel-leg.ts` | `checkOdometer`, `visitLegPlan`, `legPricedBySession`, `promptsForExpenses` |
+| Travel data | `mbos-app/src/data/travel.ts` | `openDay`, `startSession`, `endSession`, `departForVisit`, `arriveForVisit`, `abandonLeg`, `addLateClosingReading`, `priceDay` |
+| Claims | `mbos-app/src/data/requests.ts` | `claimExpense`, `applyForLeave`, `withdrawLeave`, `requestTour` |
+| Engines (pure) | `mbos-app/src/engines/claim-preview.ts`, `leave.ts` | `previewClaim` (the cap line), `leaveDays`, `overlaps` |
+| Handlers | `src/lib/actions/mbos.ts` | `handleTravelLeg`, `handleExpenseDay`, `handleExpense`, `handleLeave`, and their schemas |
+| Pull | `src/lib/services/mbos-service.ts` | `salaryFor`, travel modes, policy, holidays per salesman |
+
+## A visit leg, end to end
+
+<Flow caption="Start visit → arrive → sync" chart={`
+sequenceDiagram
+  autonumber
+  participant V as visit.tsx
+  participant T as data/travel.ts
+  participant L as lib/travel-leg.ts
+  participant DB as SQLite
+  participant Q as outbox
+  participant H as handleTravelLeg
+  V->>T: departForVisit(customer)
+  T->>T: openSessionLeg — today's punch-in mode and meter
+  T->>L: visitLegPlan(session)
+  alt not punched in
+    L-->>V: record false — no leg
+  else punched in
+    T->>DB: addLeg origin visit, claimExcluded per plan
+    T->>Q: expense_day (first) then travel_leg
+  end
+  V->>T: arriveForVisit — ended_at, to_lat, to_lng
+  T->>Q: travel_leg update
+  Q->>H: push (day before leg)
+  H->>H: mode active? customer in scope?
+  H->>H: origin visit with a metered mode needs both readings and photos
+  H->>H: checkOdometer again (end below start, above maxLegKilometres)
+`} />
+
+## Leg rules
+
+<Code file="mbos-app/src/lib/travel-leg.ts" symbol="visitLegPlan" collapsed />
+
+<Code file="mbos-app/src/lib/travel-leg.ts" symbol="checkOdometer" collapsed />
+
+<Code file="mbos-app/src/lib/travel-leg.ts" symbol="promptsForExpenses" />
+
+<Code file="src/lib/actions/mbos.ts" symbol="travelLegSchema" collapsed />
+
+<Code file="src/lib/actions/mbos.ts" symbol="handleTravelLeg" collapsed />
+
+<DbTable name="mbos_travel_legs" only={["id", "user_id", "expense_day_id", "mode_key", "origin", "started_at", "ended_at", "customer_id", "visit_id", "odometer_start_km", "odometer_end_km", "odometer_photo_id", "odometer_end_photo_id", "gps_metres", "manual_metres", "chosen_metres", "chosen_source", "claim_excluded", "claim_excluded_reason", "ticket_amount_paise"]} note={{
+  origin: "session (punch-in to punch-out), visit (Start visit to arrival), day_log (typed afterwards). Decides how strict the server is.",
+  ended_at: "Null while travelling. A partial unique index allows one open leg per person.",
+  claim_excluded: "True where the day's meter or Expenses already pays for it.",
+}} />
+
+<DbTable name="mbos_travel_modes" only={["key", "label", "reimbursement_kind", "requires_odometer", "requires_ticket", "scope", "active"]} />
+
+## Expenses
+
+<Code file="mbos-app/src/data/requests.ts" symbol="claimExpense" collapsed />
+
+The claim names its **day** and is queued behind the `expense_day` item, so it never arrives naming a day the office does not have. `category` is the four-value legacy enum the server accepts; `kind` is the precise one the policy prices on — sending a kind as a category would reject every auto fare.
+
+<Code file="src/lib/actions/mbos.ts" symbol="handleExpense" collapsed />
+
+<DbTable name="mbos_expenses" only={["id", "user_id", "expense_date", "category", "kind", "amount_paise", "bill_photo_id", "expense_day_id", "eligible_paise", "excess_paise", "policy_id", "exception_reason", "vendor_name", "bill_number", "bill_hash", "source_type"]} note={{
+  eligible_paise: "What the policy allows. The claim keeps its full amount; the excess is a flag, not a cut.",
+  source_type: "manual for a salesman's claim; allowances are written by the office.",
+}} />
+
+<DbTable name="mbos_expense_days" only={["user_id", "day", "opening_odometer_km", "closing_odometer_km", "policy_id", "locked_at"]} />
+
+## Leave and holidays
+
+<Code file="mbos-app/src/engines/leave.ts" symbol="leaveDays" collapsed />
+
+<Code file="mbos-app/src/data/requests.ts" symbol="applyForLeave" collapsed />
+
+<DbTable name="mbos_leave_requests" only={["user_id", "leave_type", "from_date", "to_date", "half_day", "days", "reason", "cancelled_at"]} />
+
+<DbTable name="mbos_holidays" only={["on_date", "name", "scope", "level", "place_ids", "audience_label"]} />
+
+## Tests that pin it
+
+| Test | Pins |
+|---|---|
+| `mbos-app/src/lib/travel-leg.test.ts` | Odometer verdicts, visit leg plans, the expenses prompt |
+| `mbos-app/src/engines/claim-preview.test.ts` | The cap line |
+| `mbos-app/src/engines/punch-out.test.ts` | The punch-out meter and prompt |
+| `mbos-app/src/data/reachable.test.ts` | `listTours`, `withdrawLeave` and the rest have a caller |
+| `src/lib/mbos-wire.test.ts` | Expense, leg and leave payloads against the handset |
+
+## Changing it safely
+
+<Steps>
+<Step title="Pricing changes go in the policy, not a screen">
+The handset's figures come from the synced policy and the shared engine. A number typed into `travel.tsx` would disagree with what is paid.
+</Step>
+<Step title="Keep the day first">
+Anything that names an `expenseDayId` must be queued with a dependency on the day item.
+</Step>
+<Step title="A meter rule is checked twice">
+Change `checkOdometer` on the handset **and** the server check in `handleTravelLeg`; the server is what protects against an old build.
+</Step>
+</Steps>
+
+## Known gaps
+
+| Gap | Where |
+|---|---|
+| Bill-photo threshold not checked on the phone; the office refuses after the fact | `mbos-app/app/expenses.tsx`, `handleExpense` |
+| `mbos.leave.noticeDays` and `mbos.leave.allowLossOfPay` are declared and read by nothing | `src/lib/config/registry.ts` |

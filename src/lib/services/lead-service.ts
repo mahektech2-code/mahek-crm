@@ -672,9 +672,13 @@ export async function leadRecord(customerId: string): Promise<LeadRecord | null>
 
 export type LeadMoveKind = "passed" | "overridden" | "reverted";
 
+/** Rungs a lead has finished at. None of them can be paused. */
+const ENDED_STAGES: readonly LeadStage[] = ["lost", "won", "customer", "active_distributor"];
+
 export type LeadMoveRefusalCode =
   | "not_on_funnel"
   | "same_stage"
+  | "cannot_park"
   | "off_ladder"
   | "gate_shut"
   | "override_not_offered"
@@ -804,6 +808,28 @@ export async function evaluateLeadStageMove(input: {
    * screen: the same split the resume date and the next action already live
    * under, two blocks down in that file.
    */
+  /*
+   * §— A LEAD THAT HAS ENDED CANNOT BE PAUSED. Asked BEFORE the park shortcut
+   * below, which answers "passed" for any lead and any stage: parking a Lost
+   * lead would walk it out of Lost by a side door that is not a reopen, and
+   * parking a Won or Customer lead does not record a pause - it overwrites the
+   * record of a sale. The record's own Park control was withheld on these four
+   * stages for exactly that reason ("the server would cheerfully accept"), which
+   * left the server itself unguarded for every other door - the All Leads bulk
+   * action among them. A pause belongs to a lead that is still being worked.
+   */
+  if (isParked(to) && ENDED_STAGES.includes(from)) {
+    return {
+      ok: false,
+      code: "cannot_park",
+      message:
+        from === "lost"
+          ? "A Lost lead is reopened, not put on hold. Reopen it first if it is being worked again."
+          : `${stageLabel(from)} is a sale on the record, so it cannot be put on hold. On hold is a pause for a lead that is still being worked.`,
+      missing: [],
+    };
+  }
+
   if (isParked(to)) {
     return { ok: true, kind: "passed", overriddenConditions: [] };
   }
@@ -834,6 +860,35 @@ export async function evaluateLeadStageMove(input: {
    */
   if (direction === "off_ladder" && isParked(from)) {
     direction = await resumeDirection(lead.id, to, salesType);
+  }
+
+  /*
+   * §— `new` AND `contacted` ARE THE OLD SPELLING OF SUSPECT, and a lead still
+   * spelled that way can be moved to the Suspect it already is.
+   *
+   * A lead raised before the funnel, or imported, sits at `new` or `contacted`.
+   * Give it a sales type and it is judged against the funnel ladder, which
+   * starts at `suspect` — so `directionOf` answered `off_ladder` and the move to
+   * Suspect was refused with "Suspect is not a rung on this lead's ladder.
+   * Change the sales type first", about a lead whose sales type was already set.
+   * `setLeadSalesType` leaves the stage alone on the stated understanding that
+   * the lead then moves to the foot of its new ladder; this is the move that
+   * understanding promised. The calling desk's convert-to-Prospect already
+   * treats the three as one thing (`funnelStageFor`).
+   *
+   * Narrow on purpose: only `new`/`contacted`, only to `suspect`, only onto a
+   * ladder that has it. Nothing is established at those rungs that the move
+   * could throw away and it is not a step forward, so no gate is asked — the
+   * transition row is written like any other move. `lost`, `on_hold`, `won` and
+   * the legacy `qualified` all stay off the ladder, as does every other target.
+   */
+  if (
+    direction === "off_ladder" &&
+    to === "suspect" &&
+    (from === "new" || from === "contacted") &&
+    ladderFor(salesType).includes("suspect")
+  ) {
+    return { ok: true, kind: "passed", overriddenConditions: [] };
   }
 
   /* Walking a lead back DOWN undoes work somebody recorded, which is why the

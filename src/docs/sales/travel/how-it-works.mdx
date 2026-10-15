@@ -1,0 +1,119 @@
+A salesman is paid back for the ground he covers, so every journey he makes is recorded as a **leg** with up to three measurements of its distance. The Travel ledger shows all three side by side, because the one question a mileage claim must be able to answer is *does the meter agree with the phone?* — and a ledger printing only the figure that was paid on could never answer it.
+
+This tab explains how a leg comes into being, how its distance is chosen, how it is priced, and what protects the money.
+
+## Three kinds of leg
+
+Every leg carries an **origin**, which records whether the phone was present at both ends of the journey. That one fact decides how strict the office can be.
+
+| Origin | When it is written | Meter photographs | Why |
+|---|---|---|---|
+| **Visit journey** | Opened when the salesman presses *Start visit* and picks how he is travelling; closed when he says *I have arrived*. | Required at departure and arrival on a mode that uses the meter. | The app was there at both ends, so it can insist. |
+| **Punch-in session** | Opened at the morning punch-in on an own-vehicle day, closed at the punch-out. | Required at both ends. | This pair measures the **whole day's** riding. |
+| **Day log** | Typed on the handset's Travel screen once the journey is over. | Optional, always. | Refusing a journey for want of a photograph nobody can now take would mean refusing to record a journey that happened. |
+
+<Callout kind="why">
+**"Start visit" means "I am setting off."** Starting the dwell clock at the tap would count the ride as time in the shop — the one number the dwell check exists to be honest about. So the visit stays locked behind an *I have arrived* step while the journey leg is open.
+</Callout>
+
+### One open journey, one open session
+
+A leg being travelled has a start and no end yet. That is a real row, not a screen state — Android often closes the app on the road, and a "travelling" flag held in memory would be gone by the time he arrived.
+
+<Rule title="At most one open journey and one open session per person">
+He cannot be travelling to two shops at once, and he cannot be punched in on two vehicles at once. A punch-in session and a visit journey **can** be open together — every visit journey of an own-vehicle day opens and closes inside the session. If two journeys could be open, the arrival photograph would have a choice of which departure to close.
+</Rule>
+
+## Readings at the meter
+
+<Rule title="The meter is photographed at both ends">
+One photograph cannot show two readings. The departure is the one that would otherwise be missing — by the time anybody asks, the meter has moved. Both the typed number and the picture are required: two photographs cannot be subtracted, and a number with no picture cannot be checked by anybody who was not standing there.
+</Rule>
+
+<Rule title="A reading is checked while he is still at the meter">
+The handset refuses an arrival reading **lower** than the departure ("the meter cannot go back" — usually a digit dropped from the front) and a trip longer than <Setting k="mbos.travel.maxLegKilometres" /> km (a typo, not a long day). On a punch-out the same ceiling applies to the whole day. An hour later nobody can look again, so this is the only moment the check can be made.
+</Rule>
+
+<Rule title="A missing or impossible reading unpays the leg — it never refuses it">
+If a visit journey or a session arrives at the office without its meter reading and photograph, or with an arrival below the departure, the leg is **accepted and left out of the claim**, with the reason written on it ("Not claimed: this journey carried no meter reading and photograph at the start…"). The journey happened and the visit it led to happened; only the kilometres are unevidenced.
+</Rule>
+
+<Callout kind="why">
+These used to be refusals, and a refused leg took the visit behind it down too — a salesman on an older build could check in at a shop and never check out. Every handset in the field runs some build behind the office and an installed app cannot be recalled, so "the payload the old app sends is now invalid" is the ordinary case. Money is protected just as well by leaving the leg unpaid with the reason on the record.
+</Callout>
+
+<Rule title="A journey called off is closed at its own reading">
+Abandoning a trip closes it with the arrival reading equal to the departure, so it measures nothing and carries the reason. Deleting it instead would leave the next departure following on from a gap — the pattern an audit stops at.
+</Rule>
+
+## Which distance is paid on
+
+Each leg can have up to three distances:
+
+- **Odometer** — end reading minus start reading. A pair that runs backwards gives no distance at all; it is never turned positive.
+- **GPS track** — measured along the phone's positions between the leg's start and end, with how much of the leg the track covered. A position is taken every <Setting k="mbos.location.trackEverySeconds" /> seconds while he is checked in, and readings worse than <Setting k="mbos.location.gpsAccuracyThresholdM" /> m are ignored. Where the track covers less than <Setting k="expenses.gpsMinCoveragePct" />% of the leg, the figure is a **labelled estimate** from the two ends, stretched by a road factor of <Setting k="expenses.gpsRoadFactorBps" /> basis points — never a straight line passed off as a track.
+- **By hand** — what he typed.
+
+The expense policy names the order to try them in. The shipped order is **odometer, then GPS, then typed**, and the first one present is the one paid on.
+
+<Callout kind="why">
+A track sampled at intervals cuts every corner and structurally **under-reads**. Paying on it would short-pay the salesman who covered the most ground, permanently and invisibly. The odometer is what the vehicle actually did, and it can be photographed.
+</Callout>
+
+## How a leg is priced
+
+The price of a leg comes from the **expense policy** in force on the day — see [Expenses](/docs/sales/expenses/how-it-works) for policies, versions and who they apply to. For a leg the policy answers one of three ways, depending on the mode:
+
+| The policy says | What the leg is worth |
+|---|---|
+| **Per kilometre** for this mode (own bike, own car) | The paid-on distance times the rate, up to the day's kilometre cap if the policy sets one. |
+| **Actuals** for this mode (bus, train, auto) | The ticket amount, up to the policy's limit per journey. Above a proof threshold the ticket photograph is required, or the claim is flagged. |
+| **Zero-rated** (a customer's vehicle, walking) | Recorded, worth nothing. |
+
+A mode the policy does not mention at all is **unpriced** and flagged, rather than silently paid at nothing.
+
+<Flow caption="From a leg arriving to its eligible figure" chart={`
+flowchart TD
+  A["Leg arrives from the handset"] --> B{"Mode exists<br/>and is active?"}
+  B -- "No" --> R["Refused, naming the modes<br/>that do exist"]
+  B -- "Yes" --> C{"Visit or session leg<br/>on a meter mode?"}
+  C -- "Yes, readings missing<br/>or backwards" --> X["Stored, left out of the claim<br/>with the reason"]
+  C -- "Readings fine,<br/>or a day-log leg" --> D["Stored on the day"]
+  X --> D
+  D --> E["Distances worked out:<br/>odometer · GPS track · typed"]
+  E --> F["Policy in force that day<br/>prices every leg and allowance"]
+  F --> G["Eligible figure written<br/>flags raised for a second look"]
+`} />
+
+### Own-vehicle days and bus days
+
+On a day he punches in on his own bike or car, the morning and evening meter readings **are** the day's distance. The visit journeys inside it are still recorded — the ledger shows where he went — but they arrive marked as not claimed, "counted in the meter readings", so the same kilometres are not paid twice. On a day he travels by public transport, a visit journey is recorded the same way and the fares are claimed as expenses.
+
+## What raises a flag
+
+The ledger itself does not decide anything. What it surfaces:
+
+- **Disagreeing** — the odometer and the GPS track differ by more than 25%. That threshold decides only which legs a manager is invited to look at, so it is fixed in the screen rather than a setting. The policy's own variance threshold separately raises a *GPS and odometer disagree* flag on the day.
+- **No distance at all** — no meter pair, no usable track, nothing typed.
+- **No photograph** — a leg that names an odometer distance with no picture of the meter. A typed-up leg with no photograph is deliberately **not** counted here.
+
+Flags raised by the policy go to [Flagged expenses](/docs/sales/expenses). A disagreement is a question, not an accusation: a phone in a bag reads short, and a meter read at the wrong moment reads long.
+
+## Correcting a reading
+
+A manager can correct a meter reading on the salesman's **day check** (his record on [Salesmen](/docs/sales/salesmen)). The same two checks the handset makes are made again — no backwards meter, no leg past the ceiling — and the day is re-priced. Once the day's claim has been decided, the reading stops moving: correcting it would move figures beneath somebody's signature. The way past that is reopening the day on Expenses, which asks for a reason and tells the salesman.
+
+## Who sees the photographs
+
+A meter or ticket photograph opens for the salesman who took it, and for anybody who holds the Travel ledger or Expenses module **and** has him inside their team. Holding the field app is not enough — a salesman cannot open a colleague's mileage evidence by guessing at an id.
+
+## Settings that change this
+
+<SettingsTable keys={["mbos.travel.maxLegKilometres", "mbos.location.trackEverySeconds", "mbos.location.gpsAccuracyThresholdM", "expenses.gpsMinCoveragePct", "expenses.gpsRoadFactorBps", "expenses.odometerPhotoRandomPct"]} />
+
+## Where the code and the intent disagree today
+
+- **The ledger is not narrowed to a manager's team.** Every other people screen reads the manager's scope; the Travel ledger lists every salesman's legs to anybody who holds the module.
+- **The server does not re-check the trip ceiling.** The design says the handset's two meter checks are made again when the leg arrives. The backwards-meter check is (as "not claimed"); the ceiling of <Setting k="mbos.travel.maxLegKilometres" /> km is only re-checked when the office corrects a reading.
+- **Two sentences still describe "submitting" a day.** The empty ledger says the distance "is worked out when the day is submitted", and *Not yet* says "this day has not been submitted". Days are no longer submitted — allowances are worked out as records arrive.
+- **The ledger shows a "Photo" pill for the departure photograph only.** The arrival photograph is stored and opens on the day check, but the ledger does not mark it.

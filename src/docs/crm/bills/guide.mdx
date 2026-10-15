@@ -1,0 +1,99 @@
+Sales Bills is the ledger: **every bill raised to customers in your book**, one financial year at a time, with what was billed, what has been paid against it, what is left and how late it is. Open a bill number to see what was ordered on it.
+
+If you want *who owes us*, one line per customer, use [Outstanding](/docs/crm/outstanding). Sales Bills answers *what did we bill*.
+
+## The screen at a glance
+
+<Wireframe url="/crm/bills" nav={["Dashboard", "#Collections", "Payment Follow-up", "WhatsApp", "Outstanding", "Sales Bills"]} active="Sales Bills" caption="Sales Bills for the current financial year">
+  <WfBar>
+    <WfTitle sub="Your book · Every bill with its aging bucket and payment status. Open a bill number to see what was ordered.">Sales bills</WfTitle>
+    <WfSpacer /><WfButton>Export</WfButton>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfBar>
+    <WfCard title="Bills"><WfText>1,240</WfText></WfCard>
+    <WfCard title="Outstanding"><WfText>₹14,20,000</WfText></WfCard>
+    <WfCard title="Overdue bills"><WfText>96</WfText></WfCard>
+    <WfCard title="Oldest band"><WfText>₹2,10,000</WfText></WfCard>
+    <WfCard title="Collected"><WfText>₹1,02,00,000</WfText></WfCard>
+    <Hotspot n={2} />
+  </WfBar>
+  <WfCard title="Aging of outstanding balance">
+    <WfBlock h={18} label="One band per aging bucket, oldest on the right (click a band to filter)" />
+    <Hotspot n={3} />
+  </WfCard>
+  <WfBar><WfInput placeholder="Payment status ▾" /><WfInput placeholder="Aging bucket ▾" /><WfInput placeholder="FY 26-27 ▾" /><Hotspot n={4} /></WfBar>
+  <WfTable columns={["Bill no", "Date", "Due", "Customer", "Amount", "Paid", "Balance", "Overdue", "Bucket", "Status", "Action"]} rows={[
+    [<span key="a"><b>MMI/26-27/1119</b> <Hotspot n={5} /></span>, "2 Aug", "1 Sep", "Customer A", "₹40,000", "₹19,000", "₹21,000", "", "Within terms", <WfPill key="b" tone="warn">Partly paid</WfPill>, <span key="c">⋯ <Hotspot n={6} /></span>],
+    ["MMI/26-27/0861", "9 Jun", "9 Jul", "Customer B", "₹59,000", "₹0", "₹59,000", "62", "Oldest band", <WfPill key="d" tone="danger">Unpaid</WfPill>, "⋯"],
+  ]} />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Export.</b> Downloads the whole filtered year, not just the page. A manager action.</span>,
+  <span key="2"><b>The year's figures.</b> How many bills, what is still open, how many are overdue, how much sits in the oldest aging band, and what has been received.</span>,
+  <span key="3"><b>Aging strip.</b> The open balance by how late it is. Click a band to list only those bills.</span>,
+  <span key="4"><b>Filters.</b> Payment status, aging band and financial year. The address keeps them, so a link opens the same view.</span>,
+  <span key="5"><b>Bill number.</b> Click it to see what was ordered on that bill.</span>,
+  <span key="6"><b>Row menu.</b> Record a payment, open the customer, or send a WhatsApp reminder.</span>,
+]} />
+
+## Reading a bill
+
+| Column | Means |
+|---|---|
+| **Bill no** | The bill's number — usually the Tally number, like MMI/26-27/1119 |
+| **Date** | The bill date |
+| **Due** | The bill's own due date, or the bill date plus the customer's credit period |
+| **Amount** | What was billed |
+| **Paid** | What accounts have **confirmed** against it |
+| **Balance** | Amount minus paid |
+| **Overdue** | Days past the due date, while there is a balance |
+| **Bucket** | Which aging band the balance sits in |
+| **Status** | Unpaid, Partly paid or Paid |
+
+<Callout kind="money" title="Paid means confirmed">
+A payment the customer says they made, or one that is still waiting for accounts, is not in the **Paid** column. A bill stays at its full balance until accounts confirm the money.
+</Callout>
+
+## Financial years
+
+The ledger shows one financial year at a time — April to March — and opens on the current one. Bill numbers carry the year too: MMI/**26-27**/1119 is a bill from April 2026 to March 2027. Pick an earlier year from the year filter; the list of years goes back to the first bill on record.
+
+The figures across the top and the aging strip always describe **the whole year you picked**, whatever page you are on.
+
+## Looking at one customer's bills
+
+From a customer's record, **See all bills** opens this screen filtered to that customer. The title names them; clear it to go back to everybody.
+
+## Recording a payment against a bill
+
+<Steps>
+<Step title="Open the row menu and choose Record a payment">
+Only offered while the bill has a balance.
+</Step>
+<Step title="Fill in what came">
+Amount received (up to the balance), how it came, the reference, the date received — and for a cheque, the date written on it.
+</Step>
+<Step title="Save">
+If you hold the accounts desk's right to confirm money, it is confirmed and the balance drops. Otherwise it is **reported** and waits for accounts; the balance stays until they confirm it.
+</Step>
+</Steps>
+
+## Questions people ask
+
+<Faq q="Why is every bill from last year missing?">
+The ledger opens on the current financial year. Pick last year from the year filter. To see everything still owed regardless of year, use Outstanding.
+</Faq>
+<Faq q="A bill number has the order number added on the end.">
+When two orders share a Tally number, the second is numbered with its order number added — MMI/26-27/1119/4521 — so every bill number is unique.
+</Faq>
+<Faq q="The customer paid but the bill still says Unpaid.">
+The money has not been confirmed by accounts yet.
+</Faq>
+<Faq q="Why can I not export?">
+Exporting the ledger is a manager action in the CRM.
+</Faq>
+<Faq q="What is on a bill?">
+Click the bill number. A sales bill **is** the order — the lines are the order's lines.
+</Faq>

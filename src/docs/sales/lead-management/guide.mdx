@@ -1,0 +1,57 @@
+The **Lead Management** group in the Sales Dashboard is the same set of lead screens the CRM has — the same list, the same lead record, the same ladder and gates, the same buttons. There is one lead book, worked by the field team on foot and by the telecallers on the phone. What changes on the Sales Dashboard is **whose leads you see**: your team's, rather than your own.
+
+Everything about how to use each screen is documented once, on the CRM pages linked below. This page tells you where to find each screen here, and what is different.
+
+## Where each screen is
+
+<Wireframe url="/sales/leads" nav={["#Lead Management", "All Leads", "Intake", "Sales Manager", "Distributor appointments"]} active="All Leads" caption="Lead Management in the Sales Dashboard sidebar">
+  <WfBar><WfTitle sub="Every lead in your team's patch">All Leads</WfTitle><Hotspot n={1} /></WfBar>
+  <WfTabs items={["List", "Board", "Dashboard"]} active="List" />
+  <WfCard title="Other desks"><WfBar><WfPill>Funnel & conversion</WfPill><WfPill>Qualification</WfPill><WfPill>Samples & trials</WfPill><WfPill>Commercial</WfPill><WfPill>Next actions & nurture</WfPill><WfPill>Handovers</WfPill><Hotspot n={2} /></WfBar></WfCard>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>The four in the sidebar.</b> All Leads, Intake, Sales Manager and Distributor appointments.</span>,
+  <span key="2"><b>Other desks.</b> The rest of the lead screens are reached from All Leads, under <i>Other desks</i>, for whoever has been given them. If you were given one of them but not All Leads, it appears in the sidebar instead.</span>,
+]} />
+
+| Sales Dashboard screen | Where it is | How to use it |
+|---|---|---|
+| **All Leads** — List, Board, Dashboard, and the lead record | Sidebar | [Leads](/docs/crm/leads) |
+| **Sales Manager** — dashboard, pipeline, list, record | Sidebar (its own page, see below) | [Lead oversight](/docs/crm/lead-oversight) — the CRM's Sales Manager desk is the same flow |
+| **Intake** — Capture a lead, Bulk intake, Duplicates | Sidebar | [Lead intake and qualification](/docs/crm/lead-intake-and-qualification) |
+| **Qualification** — Suspect decisions, Verification queue, Validation calls, Checklists | Other desks | [Lead intake and qualification](/docs/crm/lead-intake-and-qualification) |
+| **Samples & trials** — All samples, Desk, Review chases, Trial feedback | Other desks | [Samples](/docs/crm/samples) |
+| **Commercial** — Negotiation, Commitments, First orders | Other desks | [Lead commercial](/docs/crm/lead-commercial) |
+| **Distributor appointments** — Appointments, Prospective distributors | Sidebar | [Lead commercial](/docs/crm/lead-commercial) |
+| **Next actions & nurture** — Due, Overdue, Nothing scheduled, On hold, Nurture, Communication | Other desks | [Lead actions](/docs/crm/lead-actions) |
+| **Handovers** | Other desks | [Lead actions](/docs/crm/lead-actions) |
+| **Funnel & conversion** — Funnel, Sources, Reasons | Other desks | [Lead oversight](/docs/crm/lead-oversight) |
+| **Oversight** — Overrides, Audit, Thresholds | Admin Console | [Lead oversight](/docs/crm/lead-oversight) |
+
+## What is different here
+
+<Cards cols={2}>
+<Card title="You see your team's leads" tone="brand">A manager with regions allocated sees the leads held by salesmen whose books lie in those regions. A manager with no regions sees everybody's. A lead **nobody owns** is visible to every manager, so it can be assigned.</Card>
+<Card title="Telecaller-only screens are not here">The Telecaller calling desk and the Lost leads record live only in the CRM — callers work in the CRM.</Card>
+<Card title="Every screen is its own permission">Each of the eleven entries above is ticked separately on the Access screen. Being given All Leads does not give you Samples, and the reverse.</Card>
+<Card title="What you can do is the same">Moving a lead, logging a visit, requesting a sample — the same rules and the same gates apply wherever you press the button.</Card>
+</Cards>
+
+## The Sales Manager page
+
+**Sales Manager** opens a full-width page of its own at `/sales-lead-pipeline`: a dashboard, the pipeline, the list of leads and the lead record, each linking to the next. It works the same lead book as All Leads, through the same team narrowing.
+
+It is granted **one person at a time**. Holding the whole Sales Dashboard — even as an administrator — does not include it; somebody has to tick the *Sales Manager* box for you on the Access screen.
+
+## Common questions
+
+<Faq q="A lead my telecaller can see is missing for me.">
+Your view is narrowed to your team's patch. If the lead is owned by somebody outside your regions, it is theirs to see, not yours.
+</Faq>
+<Faq q="Why are some desks not in my sidebar?">
+Seven of the lead screens left the main navigation. If you hold All Leads you reach them from its <i>Other desks</i> list; if you do not, they appear in the sidebar on their own.
+</Faq>
+<Faq q="I am an admin and Sales Manager is missing.">
+It is the one Sales Dashboard screen that must be ticked by name. Ask for it on the Access screen.
+</Faq>

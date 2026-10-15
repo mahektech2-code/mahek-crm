@@ -29,6 +29,12 @@ export const ERP_POWERS = [
   "employeeAdmin",
   "approveSfgQc",
   "dispatchOverride",
+  "stockControl",
+  "scrapSale",
+  "scrapAccounts",
+  "scrapApprove",
+  "returnApprove",
+  "returnQc",
 ] as const;
 
 export type ErpPower = (typeof ERP_POWERS)[number];
@@ -97,6 +103,30 @@ export const ERP_POWER_LABEL: Record<ErpPower, { label: string; source: string }
   dispatchOverride: {
     label: "Approve dispatch overrides; reject or return boxes",
     source: "Lets a box whose product or pack size does not match the order go anyway, with a reason, and marks boxes rejected or returned. Nobody approves their own override request unless they are an ERP administrator.",
+  },
+  stockControl: {
+    label: "Resolve stock discrepancies and approve adjustments",
+    source: "Inventory Accuracy Control: is notified of every red-flagged count, resolves it, and approves or rejects a stock adjustment. A red flag never holds a purchase. Nobody approves an adjustment they asked for, unless they are an ERP administrator (new in MahekOne).",
+  },
+  scrapSale: {
+    label: "Sell scrap and return vendor drums",
+    source: "Records scrap sales (empty Mahek-owned drums are taken oldest first) and returnable drum outwards to suppliers, records non-drum scrap, and classifies an empty drum whose ownership is unknown — the Production Head (new in MahekOne).",
+  },
+  scrapAccounts: {
+    label: "Match Petty Cash/Bank receipts to scrap sales",
+    source: "Records money received from scrap buyers and matches it, in part or in full, to their scrap sales — the accountant. Production cannot mark a sale paid (new in MahekOne).",
+  },
+  scrapApprove: {
+    label: "Approve drum corrections and adjustments",
+    source: "Approves opening drum stock, drum write-offs, ownership changes, out-of-limit weights and the cancellation of a drum entry, a scrap sale or a return. Nobody approves a correction they asked for, unless they are an ERP administrator (new in MahekOne).",
+  },
+  returnApprove: {
+    label: "Approve material returns",
+    source: "Approves a purchase return (which issues its debit note) and a customer return's credit note, confirms or reverses a goods return outward, and cancels a return. Nobody approves a return they raised, unless they are an ERP administrator; above the owner-approval limit the owner approves it too (new in MahekOne).",
+  },
+  returnQc: {
+    label: "Decide returned material (QC)",
+    source: "Decides what happens to a customer return in quarantine — reuse, rework, chemical scrap or waste — completes a rework and records a waste disposal (new in MahekOne).",
   },
 };
 

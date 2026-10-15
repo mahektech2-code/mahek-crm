@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { NotificationBell } from "@/components/shell/notification-bell";
 import { requireUser } from "@/lib/auth";
 import { listUserApps, listUserModules } from "@/lib/access";
 import { getApp, webApps } from "@/lib/apps";
@@ -53,6 +54,7 @@ export default async function EnquiriesLayout({
               {user.name} · {hat.label}
             </span>
             <FeedbackButton compact />
+            <NotificationBell />
             <SignOutButton />
           </>
         }

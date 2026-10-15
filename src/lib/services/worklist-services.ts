@@ -51,7 +51,7 @@ import {
 } from "../business-date";
 import { err, ok, okVoid, type Result } from "../result";
 import { shortDateWithYear } from "../format";
-import { nextStepForCustomer } from "./queue-service";
+import { nextStepsForCustomers } from "./queue-service";
 import {
   customerFilterClause,
   customerFiltersOnly,
@@ -60,7 +60,7 @@ import {
   type CustomerListFilters,
 } from "../queries";
 import { creditedToSql, CREDITED_TO_SEAT_SQL, type CreditSeat } from "../sales-attribution";
-import { orderCountsSql, orderValueSql } from "../order-status";
+import { billedInMonthSql, orderValueSql } from "../order-status";
 import { placeNameSql } from "./place-filter-service";
 
 /**
@@ -141,7 +141,42 @@ export type ReminderRow = {
   lastCall: { on: string; answered: boolean; byName: string | null } | null;
 };
 
-export async function listReminders(view?: ReminderView): Promise<ReminderRow[]> {
+/**
+ * The pending callbacks on a set of customers — the open promises the Call
+ * History draws beside each call. Same scope as `listReminders`, without the
+ * next-step check that screen needs and this one does not.
+ */
+export async function pendingRemindersFor(
+  customerIds: string[],
+): Promise<Array<{ customerId: string; note: string | null; dueDate: string }>> {
+  if (!customerIds.length) return [];
+  const ctx = await resolveScope();
+  const ids = scopedUserIds(ctx.scope);
+  return db
+    .select({ customerId: reminders.customerId, note: reminders.note, dueDate: reminders.dueDate })
+    .from(reminders)
+    .where(
+      and(
+        eq(reminders.status, "pending"),
+        inArray(reminders.customerId, [...new Set(customerIds)]),
+        ids ? inArray(reminders.assignedUserId, ids) : undefined,
+      ),
+    )
+    .orderBy(asc(reminders.dueDate));
+}
+
+export async function listReminders(
+  view?: ReminderView,
+  opts: {
+    /**
+     * Leave out reminders CLOSED more than this many days ago. Every pending
+     * one is always read. The Reminders screen passes it so a book's years of
+     * ticked promises are not serialised into every visit; the customer's own
+     * timeline keeps the whole history.
+     */
+    closedWithinDays?: number;
+  } = {},
+): Promise<ReminderRow[]> {
   const ctx = await resolveScope();
   const ids = scopedUserIds(ctx.scope);
   const config = await getConfig();
@@ -163,7 +198,15 @@ export async function listReminders(view?: ReminderView): Promise<ReminderRow[]>
     .innerJoin(customers, eq(customers.id, reminders.customerId))
     .innerJoin(users, eq(users.id, reminders.assignedUserId))
     // A trashed lead's callbacks wait with it, and come back if it does.
-    .where(and(isNull(customers.deletedAt), ids ? inArray(reminders.assignedUserId, ids) : undefined))
+    .where(
+      and(
+        isNull(customers.deletedAt),
+        ids ? inArray(reminders.assignedUserId, ids) : undefined,
+        opts.closedWithinDays != null
+          ? sql`(${reminders.status} = 'pending' or ${reminders.closedAt} >= now() - make_interval(days => ${opts.closedWithinDays}::int))`
+          : undefined,
+      ),
+    )
     .orderBy(asc(reminders.dueDate));
 
   // Only a FUTURE pending reminder can be the thing standing between a
@@ -174,15 +217,14 @@ export async function listReminders(view?: ReminderView): Promise<ReminderRow[]>
   const candidates = rows.filter(
     ({ reminder: r }) => r.status === "pending" && r.dueDate > day,
   );
+  /* ONE pass for every candidate's customer. It was `nextStepForCustomer`
+     once per reminder — a full queue read each — which on a real book was
+     thousands of reads and most of this screen's ten seconds. */
+  const steps = await nextStepsForCustomers(candidates.map(({ reminder: r }) => r.customerId));
   const conflicts = new Set(
-    (
-      await Promise.all(
-        candidates.map(async ({ reminder: r }) => {
-          const step = await nextStepForCustomer(r.customerId);
-          return step?.promise?.reminderId === r.id ? r.id : null;
-        }),
-      )
-    ).filter((id): id is string => id !== null),
+    candidates
+      .filter(({ reminder: r }) => steps.get(r.customerId)?.promise?.reminderId === r.id)
+      .map(({ reminder: r }) => r.id),
   );
 
   const dateOpts = {
@@ -1573,33 +1615,31 @@ function monthWindow(key: string) {
 
 /**
  * What this customer has bought in the month — the one definition, read by the
- * Targets tab, its totals row, the paged list and the shortfall report.
+ * Targets tab, its totals row, the paged list, the shortfall report and the
+ * handset's customer targets.
  *
- * TWO THINGS IT NO LONGER SPELLS OUT FOR ITSELF, and both were wrong.
- *
- * `orderCountsSql` answers "did we sell anything". This wrote three statuses
- * out as a literal beside a list that holds five, so an order stopped counting
- * towards its customer's month the moment somebody recorded that it was
- * `in_transit` or `delivered` — achievement going DOWN as an order progressed,
- * silently, and only on the orders that had got furthest. `lib/order-status.ts`
- * says in as many words that the half which drifts is the SQL.
- *
- * And the VALUE is the sale net of GST, because that is the unit the target
- * beside it is typed in — the same correction the person-level target took, on
- * the screen next to it. `total_amount` is the sheet's Final Amount, tax in;
- * `net_amount_paise` is the sale under it, and null means nobody stated one, so
- * a CRM order counts at its own typed value rather than falling out of the
- * month.
+ * BY BILL DATE, NOT ORDER DATE. It summed the month's orders by `ordered_at`,
+ * so an order agreed on the 30th and invoiced on the 2nd counted toward the
+ * month before the one it was billed in. `billedInMonthSql` holds the rule
+ * and the reasoning; this is only its name on this screen, so the bill COUNT
+ * below and the value beside it now read the same bills.
  */
 function targetAchievedSql(key: string) {
-  const w = monthWindow(key);
-  return sql<number>`coalesce((
-    select sum(${orderValueSql("o")}) from ${orders} o
-     where o.customer_id = customers.id
-       and ${orderCountsSql("o")}
-       and o.ordered_at >= ${w.start}
-       and o.ordered_at < ${w.end}
-  ), 0)`;
+  return sql<number>`${billedInMonthSql("customers.id", key)}`;
+}
+
+/**
+ * One account's achieved figure for a month, for the screens that show a
+ * single customer — the record's target card and the Information tab. The
+ * same `targetAchievedSql` the list reads, asked about one row, so the record
+ * and the Monthly Targets list cannot quote one shop two numbers.
+ */
+export async function customerAchievedFor(customerId: string, key: string): Promise<number> {
+  const [row] = await db
+    .select({ achieved: targetAchievedSql(key) })
+    .from(customers)
+    .where(eq(customers.id, customerId));
+  return Number(row?.achieved ?? 0);
 }
 
 /**

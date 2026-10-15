@@ -288,6 +288,8 @@ export type Lead = {
   /** Null is a lead raised before a ladder was chosen — drawn on the legacy ladder, never guessed. */
   salesType: SalesType | null;
   stage: Stage;
+  /** Days on the current rung (`lead_stage_since`), clamped at 0. Undefined where no stage date is recorded — never a fabricated 0. */
+  stageDays?: number;
   priority: Priority;
   /** The salesman who owns it, by name; empty where nobody does. */
   owner: string;
@@ -399,6 +401,8 @@ export type PipelineRow = {
   salesType: SalesType | null;
   /** Null for a lost lead: its rung is a per-lead read the list does not pay for, and a Lost badge replaces it. */
   stage: Stage | null;
+  /** Days on the current rung (`lead_stage_since`), clamped at 0. Undefined where no stage date is recorded — never a fabricated 0. */
+  stageDays?: number;
   lost: boolean;
   priority: Priority;
   owner: string;

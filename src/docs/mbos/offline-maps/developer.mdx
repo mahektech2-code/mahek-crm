@@ -1,0 +1,98 @@
+Offline maps are **MapLibre React Native offline packs** — the native pack store does the downloading, storing and serving. The app's own code is three layers: pure arithmetic in `engines/tiles.ts`, wiring to the book and the pack store in `data/offline-maps.ts`, and the `maps.tsx` screen. Nothing here touches the MahekOne server except the synced settings and the Ola key on the pull.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Screen | `mbos-app/app/maps.tsx` | Areas with their size, saved packs, progress, pause/resume, remove, refresh |
+| Map component | `mbos-app/src/components/ui/shop-map.tsx` | The four states; coverage decided from the pins before drawing |
+| Data | `mbos-app/src/data/offline-maps.ts` | `MAP_STYLE`, `mapKey`, `mapSettings`, `listAreas`, `saveArea`, `watchMap`, `removeMap`, `refreshMap`, `resumeUnfinished`, `downloadBlockedBecause` |
+| Engine (pure) | `mbos-app/src/engines/tiles.ts` | `clusterAreas`, `tileCount`, `estimateBytes`, `coverageOf`, `bestPackFor`, bounds helpers |
+| Key on the wire | `src/lib/services/mbos-service.ts` | `maps.olaKey` added to the synced config when a key is live |
+| Config check | `src/lib/config/registry.ts` | Refuses a tile ceiling below what the megabyte ceiling allows |
+
+<Callout kind="warn">
+MapLibre React Native's `LngLatBounds` is `[west, south, east, north]` — GeoJSON order — not the `ne`/`sw` pair the web's MapLibre GL takes. `Bounds` in `engines/tiles.ts` follows the native order. Getting it wrong opens the map on the wrong hemisphere rather than failing.
+</Callout>
+
+## Saving an area
+
+<Flow caption="List → save → replace" chart={`
+sequenceDiagram
+  autonumber
+  participant UI as maps.tsx
+  participant D as data/offline-maps.ts
+  participant T as engines/tiles.ts
+  participant OM as OfflineManager (native)
+  participant Ola as api.olamaps.io
+  UI->>D: listAreas()
+  D->>T: clusterAreas(pinned shops, separationKm)
+  D->>T: padBounds, tileCount, estimateBytes
+  D->>OM: getPacks()
+  D->>T: bestPackFor(area shops, saved packs) — geometry, not ids
+  D-->>UI: areas with bytes, tooBig, saved, coverage
+  UI->>D: downloadBlockedBecause(settings) — off, no key, not Wi-Fi
+  UI->>D: saveArea(area)
+  D->>D: ensureReady — mapKey() transform, setTileCountLimit
+  D->>OM: createPack(MAP_STYLE key-less, bounds, zooms, metadata)
+  OM->>Ola: style, tiles, glyphs, sprites — api_key added per request
+  OM-->>D: progress ... complete
+  D->>OM: deletePack(superseded) only if it lies inside the new bounds
+`} />
+
+## The key
+
+<Code file="mbos-app/src/data/offline-maps.ts" symbol="MAP_STYLE" />
+
+<Code file="mbos-app/src/data/offline-maps.ts" symbol="mapKey" />
+
+`TransformRequestManager` appends `api_key` to requests matching Ola's host **after** the offline database has been consulted, so a pack is stored and found under the key-less URL. A rotated key replaces the transform in place (stable id). Every map screen and the download call `mapKey()` — one function, so the screens and the download cannot disagree about whether there is a key.
+
+## The arithmetic
+
+<Code file="mbos-app/src/engines/tiles.ts" symbol="clusterAreas" collapsed />
+
+<Code file="mbos-app/src/engines/tiles.ts" symbol="tileCount" />
+
+<Code file="mbos-app/src/engines/tiles.ts" symbol="coverageOf" />
+
+<Code file="mbos-app/src/engines/tiles.ts" symbol="bestPackFor" />
+
+## Saving and replacing
+
+<Code file="mbos-app/src/data/offline-maps.ts" symbol="saveArea" collapsed />
+
+<Code file="mbos-app/src/data/offline-maps.ts" symbol="downloadBlockedBecause" />
+
+The pack's metadata carries only what the screen needs to name it (label, saved time, shop count, zooms) — never shop ids, which would be a second, staler answer to "which area is this".
+
+## Tests that pin it
+
+| Test | Pins |
+|---|---|
+| `mbos-app/src/engines/tiles.test.ts` | Clustering at the seam, tile counts per zoom, coverage states, best-pack choice |
+| `mbos-app/src/data/reachable.test.ts` | Every export in `offline-maps.ts` has a caller |
+
+## Changing it safely
+
+<Steps>
+<Step title="Never put the key in a URL the pack store sees">
+Add it only through the transform. A key in `MAP_STYLE` orphans every saved pack on the next rotation.
+</Step>
+<Step title="Raise the tile ceiling with the megabyte ceiling">
+The configuration check enforces it, but the native limit is set once per app process — a handset applies a new tile ceiling only after the app restarts.
+</Step>
+<Step title="Keep coverage in shops">
+If you add a new map surface, decide its state with `coverageOf` over its pins before drawing, and handle `partial` explicitly.
+</Step>
+<Step title="Ship native changes as an APK">
+MapLibre is a native module. A change to the pack store or the map component needs a new build; see [Handset release](/docs/platform/handset-release).
+</Step>
+</Steps>
+
+## Known gaps
+
+| Gap | Where |
+|---|---|
+| The tile ceiling is applied once per process (`limitSet`), so a changed `mbos.maps.tileCountLimit` waits for an app restart | `ensureReady` in `mbos-app/src/data/offline-maps.ts` |
+| Size is an estimate from a flat bytes-per-tile figure; dense markets are under-estimated | `estimateBytes` |

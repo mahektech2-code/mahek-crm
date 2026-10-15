@@ -1,0 +1,122 @@
+The Travel ledger is the record of every journey your team made in a month. Each row is one **leg** — a ride from one place to another — with the three ways its distance can be known side by side: what the **odometer** said, what the phone's **GPS track** saw, and anything the salesman **typed by hand**. Beside those is the distance the money was actually paid on, and what that leg is worth.
+
+You open it to answer two questions: *what did the field do this month and what did it cost*, and *is there a leg here I should look at twice*.
+
+<Callout kind="live">
+Distances and limits quoted on this page are the settings your deployment is using right now. If somebody changes one in App preferences, this page changes with it.
+</Callout>
+
+## The screen at a glance
+
+<Wireframe url="/sales/travel" nav={["Today", "Live map", "#Field work", "Journeys & visits", "Tasks", "Travel ledger", "#People", "Attendance", "Expenses"]} active="Travel ledger" caption="The Travel ledger for one month">
+  <WfBar>
+    <WfTitle sub="Every leg the field recorded, with the odometer, the day's GPS track and anything entered by hand beside each other.">Travel ledger</WfTitle>
+    <WfSpacer />
+    <WfButton>‹ Sep</WfButton><WfButton primary>Oct 2026</WfButton><WfButton>Nov ›</WfButton>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfCard tone="warn">
+    <WfBar><WfText>3 legs where the odometer and the track disagree by more than 25%</WfText><Hotspot n={2} /></WfBar>
+  </WfCard>
+  <WfBar>
+    <WfCard title="Legs"><WfText>412</WfText></WfCard>
+    <WfCard title="Distance paid on"><WfText>6,140.2 km</WfText></WfCard>
+    <WfCard title="Travel reimbursed"><WfText>₹18,420</WfText></WfCard>
+    <WfCard title="Distances disagreeing"><WfText>3</WfText></WfCard>
+    <Hotspot n={3} />
+  </WfBar>
+  <WfBar>
+    <WfPill>Disagreeing 3</WfPill><WfPill>No photograph 5</WfPill><WfPill tone="brand">Everything 412</WfPill>
+    <Hotspot n={4} />
+  </WfBar>
+  <WfTable
+    columns={["Day", "Salesman", "Mode", "From → to", "Odometer", "GPS track", "By hand", "Paid on", "Eligible"]}
+    rows={[
+      ["8 Oct", "Salesman A", "Own bike", "Home → Customer A", <span key="a">18.0 km <WfPill tone="success">Photo</WfPill> <Hotspot n={5} /></span>, <span key="b">15.2 km<br/><WfText muted>along the track, 92% covered</WfText> <Hotspot n={6} /></span>, "—", <span key="c"><b>18.0 km</b><br/><WfText muted>from the odometer</WfText> <Hotspot n={7} /></span>, "₹54"],
+      ["8 Oct", "Salesman A", "Bus", "Customer A → Customer B", "—", <span key="d">Not measured</span>, "—", <span key="e">—<br/><WfText muted>nothing measured this leg</WfText></span>, "₹40"],
+      ["9 Oct", "Salesman B", "Own car", "Customer C → Customer D", <span key="f">60.0 km <WfPill tone="warn">Added later</WfPill></span>, <span key="g">6.1 km</span>, "—", "60.0 km", <span key="h">Not yet <Hotspot n={8} /></span>],
+    ]}
+  />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Month.</b> The ledger shows one calendar month. Move back and forth with the arrows.</span>,
+  <span key="2"><b>Banners.</b> Legs where the odometer and the GPS track disagree by more than a quarter, and legs with no distance at all. Both are invitations to look, not accusations.</span>,
+  <span key="3"><b>The month's figures.</b> Always taken over the whole month — sorting or picking a chip never changes them.</span>,
+  <span key="4"><b>Chips.</b> Narrow the table to the disagreeing legs, or to legs that claim a meter reading with no photograph of the meter. <i>Everything</i> is the default.</span>,
+  <span key="5"><b>Odometer.</b> The distance between the two meter readings. <i>Photo</i> means the meter was photographed; <i>Added later</i> means a reading was supplied after the fact — hover to read why.</span>,
+  <span key="6"><b>GPS track.</b> The distance along the phone's track, and how much of the leg the track covered. "Estimated from the two ends" is a guess, not a measurement.</span>,
+  <span key="7"><b>Paid on.</b> The distance the money went on, and which of the three it came from.</span>,
+  <span key="8"><b>Eligible.</b> What the expense policy allows for this leg. <i>Not yet</i> means nothing has been worked out for it.</span>,
+]} />
+
+## Reading a leg
+
+| Column | What it tells you |
+|---|---|
+| **Day** | The expense day the leg belongs to. |
+| **Salesman** | Who travelled. The name opens his record on [Salesmen](/docs/sales/salesmen). |
+| **Mode** | How he travelled — own bike, own car, bus, train, auto and so on. The list of modes is kept by an administrator. |
+| **From → to** | Where the leg started and ended, as the handset named them. |
+| **Purpose** and **Customer** | Why he went, and which shop, where the leg was tied to a visit. |
+| **Odometer** | End reading minus start reading. Only legs on a mode that uses the meter have one. |
+| **GPS track** | The phone's own measurement. The track takes a position every few seconds while he is checked in, so it cuts corners and reads **short**. It is the cross-check, not the measurement. |
+| **By hand** | A distance he typed, usually for a leg recorded after the journey. |
+| **Paid on** | The one distance the policy chose — normally the odometer first, then the track, then the typed figure. |
+| **Eligible** | What the leg is worth under the expense policy in force that day. A bus or train leg is worth its ticket, up to the policy's limit. |
+
+<Callout kind="note">
+A leg with **no photograph** is not automatically suspicious. A leg typed up on the phone's Travel screen after the journey can never have one — the meter has already moved. The *No photograph* chip only counts legs that claim an odometer distance with no picture of the meter behind it.
+</Callout>
+
+## Looking into a leg
+
+<Steps>
+<Step title="Start from the banner">
+The amber banner counts legs where the odometer and the GPS track disagree by more than 25%. Press the **Disagreeing** chip to list just those.
+</Step>
+<Step title="Read the GPS coverage first">
+"Along the track, 30% covered" means the phone saw little of the journey — a phone in a bag, a dead battery, no signal. A low GPS figure with low coverage tells you about the phone, not the salesman.
+</Step>
+<Step title="Check whether the reading was added later">
+An amber **Added later** pill on the odometer means nobody looked at the meter at the time. Hover it for the reason he gave.
+</Step>
+<Step title="Open the day">
+Press the salesman's name to open his record on [Salesmen](/docs/sales/salesmen), and pick the day. Its **day check** lists every photograph of the day in order — check-in selfies and meter photographs — drawn large enough to read four digits. There you accept or decline each one, and correct a meter reading that was typed wrong. Disagreements also appear on [Flagged expenses](/docs/sales/expenses), with the numbers behind them.
+</Step>
+</Steps>
+
+## How a journey is recorded on the handset
+
+You will see three kinds of leg. They differ only in when the phone was present:
+
+<Cards cols={3}>
+<Card title="A visit journey" tone="brand">Opened when he presses **Start visit** and says how he is travelling, closed when he says he has arrived. On a mode that uses the meter, the phone photographs the meter at **both ends**.</Card>
+<Card title="A punch-in session">On an own-vehicle day, the meter is read at the morning punch-in and the evening punch-out, and that pair measures the whole day. The visit journeys inside it are recorded but not paid separately.</Card>
+<Card title="A typed-up leg">Entered on the handset's Travel screen once the journey is over. The photograph is optional, because nobody can go back and photograph a meter that has moved.</Card>
+</Cards>
+
+At the meter, the phone refuses a reading lower than the one he set off on ("the meter cannot go back") and a trip longer than <Setting k="mbos.travel.maxLegKilometres" /> km — both are nearly always a digit typed wrong.
+
+A journey he calls off is closed **at its own starting reading**, so it measures nothing. It stays on the ledger with a distance of zero rather than disappearing.
+
+## Common questions
+
+<Faq q="A leg shows 'Not yet' under Eligible.">
+Nothing has been worked out for that leg yet — usually because no expense policy covers the date, or the day's records are still arriving. Allowances are worked out automatically as each record reaches the office.
+</Faq>
+<Faq q="A leg has no distance at all.">
+There was no odometer pair, no usable GPS track and nothing typed. It is recorded and worth nothing, which is almost never what was meant. Ask the salesman; a meter reading typed wrong can be corrected on his day check.
+</Faq>
+<Faq q="Why is the GPS figure lower than the odometer almost every time?">
+The track joins positions with straight lines, so every bend in the road is cut. That is why the odometer is paid on first and the track is only a cross-check.
+</Faq>
+<Faq q="A visit journey shows a distance but nothing eligible.">
+Either it was on an own-vehicle day (the punch-in and punch-out readings pay for the whole day instead), or it was on a bus or train day (fares are claimed in Expenses), or the meter reading or its photograph was missing. The reason is recorded on the leg ("Not claimed: …").
+</Faq>
+<Faq q="Can I see the meter photographs here?">
+The ledger shows a <b>Photo</b> pill where one exists. The photographs themselves open on the salesman's day check, under his record on the Salesmen screen.
+</Faq>
+<Faq q="I can see every salesman, not only my team.">
+Yes — today the Travel ledger is not narrowed to a manager's own team. Use the month and the salesman link to find the person you want.
+</Faq>

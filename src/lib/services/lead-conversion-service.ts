@@ -123,6 +123,13 @@ export function conversionColumns(
      * the billing is a decision, not something to guess at on a first order.
      */
     leadStage: "won",
+    /*
+     * ...and DATED, because the stage changed. `customerSince` above is the
+     * same day: the order's own date, which is when the account began and what
+     * the conversion is reported against. Left unset, the lead would go on
+     * reading as however long it had stood on its previous rung.
+     */
+    leadStageSince: orderedOn,
     leadConvertedAt: new Date(),
   };
 }

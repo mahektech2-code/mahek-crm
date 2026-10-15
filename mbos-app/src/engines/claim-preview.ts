@@ -318,6 +318,10 @@ export function previewClaim(args: {
 export const CLAIM_KINDS: { key: ExpenseKind; category: string; label: string }[] = [
   { key: 'food', category: 'food', label: 'Food' },
   { key: 'lodging', category: 'lodging', label: 'Hotel' },
+  /* A fare between towns — bus, train. Logged like any other bill now that
+     there is no day to close: the trip itself only earns kilometres on his own
+     bike or car, so a fare nobody logs is a fare nobody pays. */
+  { key: 'travel', category: 'travel', label: 'Bus or train' },
   { key: 'local_transport', category: 'travel', label: 'Local transport' },
   { key: 'other', category: 'other', label: 'Other' },
 ];

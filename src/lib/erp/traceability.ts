@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
 import { boxLots, looksLikeUnitId, normaliseCode, packLabel, UNIT_STATUS_LABEL, type UnitStatus } from "./engines/trace";
 import { erpLink } from "./registry";
-import { erpLabelsHref, erpTraceHref } from "./trace-links";
+import { erpDispatchHref, erpLabelsHref, erpTraceHref, orderTraceCode } from "./trace-links";
 
 /* ---------------------------------------------------------------------------
  * TRACE: from any code a person has in hand — a box id off a label, a lot,
@@ -81,6 +81,21 @@ export async function resolveTrace(raw: string): Promise<{ kind: TraceKind; code
 export async function traceCode(raw: string): Promise<TraceResult | null> {
   const r = await resolveTrace(raw);
   if (!r) return null;
+  const res = await traceByKind(r);
+  if (res) {
+    const returns = await returnsFor(res);
+    if (returns.length) res.forward.push({ stage: "Material returns", rows: returns });
+  }
+  return res;
+}
+
+/** Every purchase return of a raw-material lot, and every customer return of an FG or packing lot or order — so a batch is traced through its returns too. */
+async function returnsFor(res: TraceResult): Promise<{ text: string; sub?: string; href?: string; tone?: "ok" | "warn" | "bad" }[]> {
+  const { returnRowsForTrace } = await import("./returns");
+  return returnRowsForTrace(res.kind, res.code);
+}
+
+async function traceByKind(r: { kind: TraceKind; code: string; ids?: string[] }): Promise<TraceResult | null> {
   switch (r.kind) {
     case "unit":
       return traceUnit(r.code);
@@ -256,7 +271,7 @@ async function destinations(lotFrom: "pack" | "fg", lots: string[]): Promise<Des
       unit: lotFrom === "pack" ? "boxes" : "cans",
       dispatched: r.verification === "Verified" ? (r.dispatched ? String(r.dispatched).slice(0, 10) : "yes") : null,
       lots: [],
-      href: erpTraceHref(`ORDER-${n(r.orderNo)}`),
+      href: erpTraceHref(orderTraceCode(n(r.orderNo))),
     };
     d.qty += n(r.qty);
     if (!d.lots.includes(s(r.lot))) d.lots.push(s(r.lot));
@@ -320,7 +335,7 @@ async function traceUnit(id: string): Promise<TraceResult> {
   }
   const sfg = back.back.filter((b) => b.stage === "SFG batch").map((b) => b.title).join(", ");
   const customers: Destination[] = u.order_id
-    ? [{ customer: s(u.customer), customerId: "", orderNo: n(u.orderNo), bill: u.bill == null ? null : s(u.bill), sku: s(u.sku), qty: 1, unit: u.kind === "box" ? "box" : "unit", dispatched: status === "dispatched" ? (u.dispatchDate ? String(u.dispatchDate).slice(0, 10) : "yes") : null, lots: lots.map((l) => l.lot), href: erpTraceHref(`ORDER-${n(u.orderNo)}`) }]
+    ? [{ customer: s(u.customer), customerId: "", orderNo: n(u.orderNo), bill: u.bill == null ? null : s(u.bill), sku: s(u.sku), qty: 1, unit: u.kind === "box" ? "box" : "unit", dispatched: status === "dispatched" ? (u.dispatchDate ? String(u.dispatchDate).slice(0, 10) : "yes") : null, lots: lots.map((l) => l.lot), href: erpTraceHref(orderTraceCode(n(u.orderNo))) }]
     : [];
   return {
     kind: "unit",
@@ -333,7 +348,7 @@ async function traceUnit(id: string): Promise<TraceResult> {
       { l: u.kind === "box" ? "Packing batch" : "FG lot", v: `${s(u.lot_code)} · ${u.kind === "box" ? "box" : "unit"} ${n(u.seq)}`, href: erpTraceHref(s(u.lot_code)) },
       { l: "Refill lot", v: lots.map((l) => (lots.length > 1 ? `${l.lot} (${l.cans} cans)` : l.lot)).join(", ") || "—" },
       ...(sfg ? [{ l: "SFG", v: sfg }] : []),
-      ...(u.order_id ? [{ l: status === "dispatched" ? "Dispatched to" : "Scanned onto", v: `${s(u.customer)} · order ${n(u.orderNo)}${u.bill ? ` · bill ${s(u.bill)}` : ""}`, href: erpTraceHref(`ORDER-${n(u.orderNo)}`) }] : []),
+      ...(u.order_id ? [{ l: status === "dispatched" ? "Dispatched to" : "Scanned onto", v: `${s(u.customer)} · order ${n(u.orderNo)}${u.bill ? ` · bill ${s(u.bill)}` : ""}`, href: erpTraceHref(orderTraceCode(n(u.orderNo))) }] : []),
       ...(u.scannedBy ? [{ l: "Scanned by", v: s(u.scannedBy) }] : []),
       { l: "Label", v: u.label_printed_at ? `Printed ${n(u.label_prints)}×` : "Not printed" },
     ],
@@ -422,7 +437,7 @@ async function traceSfg(lot: string): Promise<TraceResult> {
 
 async function traceRm(lot: string): Promise<TraceResult> {
   const back = await backward({ rm: [lot] });
-  const sfgLines = await q(sql`select distinct lot_code as lot, sfg_no as no, batch_date::text as date from erp_sfg_lines where rm_lot_no = ${lot} order by batch_date`);
+  const sfgLines = await q(sql`select distinct lot_code as lot, sfg_no as no, batch_date::text as date from erp_sfg_lines where rm_lot_no = ${lot} order by 3, 1`);
   const sfgLots = uniq(sfgLines.map((l) => s(l.lot)));
   const fills = sfgLots.length ? await q(sql`select distinct lot_code as lot from erp_fg_fills where sfg_lot_code in ${sfgLots}`) : [];
   const fwd = await forwardFromFg(uniq(fills.map((f) => s(f.lot))));
@@ -469,8 +484,8 @@ async function traceOrders(where: ReturnType<typeof sql>, kind: "order" | "bill"
     sub: first ? `${s(first.customer)}${first.bill ? ` · bill ${s(first.bill)}` : ""} · order ${n(first.orderNo)}` : "",
     facts: [],
     links: [
-      { l: "Dispatch desk", v: "Open", href: `/erp/dispatch?order=${first ? n(first.orderNo) : code}` },
-      { l: "Dispatch stickers", v: "Print", href: erpLabelsHref({ order: first ? n(first.orderNo) : code }) },
+      { l: "Dispatch desk", v: "Open", href: erpDispatchHref(first ? n(first.orderNo) : code) },
+      { l: "Dispatch labels", v: "Print", href: erpLabelsHref({ order: first ? n(first.orderNo) : code }) },
     ],
     back: back.back,
     forward,
@@ -521,7 +536,7 @@ export async function traceDashboard(): Promise<TraceDashboard> {
     { l: "Refilled", v: `${n(f.refilled)} cans`, href: erpLink("fgFill") },
     { l: "Packed", v: `${n(f.packed)} boxes`, sub: `${n(f.minted)} box ids minted`, href: erpLink("packBatches") },
     { l: "Labels printed", v: String(n(f.printed)), href: erpLink("units") },
-    { l: "Scanned at dispatch", v: String(n(f.scanned)), href: "/erp/dispatch" },
+    { l: "Scanned at dispatch", v: String(n(f.scanned)), href: erpDispatchHref() },
     { l: "Boxes dispatched", v: String(n(f.dispatched)), href: erpLink("allUnits") },
     { l: "Packing batches open", v: String(n(f.packOpen)), sub: "cans still to draw", href: erpLink("packBatches") },
   ];
@@ -529,7 +544,7 @@ export async function traceDashboard(): Promise<TraceDashboard> {
     { l: "Pack-size / product mismatches today", n: n(f.mismatches), tone: "bad", href: "/erp/trace#scans", sub: "Scans stopped at the desk" },
     { l: "Duplicate scans today", n: n(f.duplicates), tone: "bad", href: "/erp/trace#scans", sub: "A box already scanned or already gone" },
     { l: "Other refused scans today", n: n(f.blocked), tone: "warn", href: "/erp/trace#scans", sub: "Unknown code, wrong godown, box on hold" },
-    { l: "Overrides waiting for approval", n: n(f.overrides), tone: "warn", href: "/erp/dispatch", sub: "A mismatched box somebody asked to send" },
+    { l: "Overrides waiting for approval", n: n(f.overrides), tone: "warn", href: erpDispatchHref(), sub: "A mismatched box somebody asked to send" },
     { l: "Boxes scanned, not yet dispatched", n: n(f.awaitingDispatch), tone: "warn", href: erpLink("units"), sub: "On an order, waiting for Do Verified" },
     { l: "Boxes on hold", n: n(f.held), tone: "warn", href: erpLink("units"), sub: "Cannot be scanned until released" },
     { l: "Boxes in stock without a printed label", n: n(f.unlabelled), tone: "warn", href: erpLink("units"), sub: "Print before they go to the shelf" },

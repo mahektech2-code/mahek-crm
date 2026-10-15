@@ -1,4 +1,5 @@
 import "server-only";
+import { isErpManager } from "./common";
 import { eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { erpAlerts } from "@/db/schema";
@@ -18,7 +19,7 @@ import type { ErpContext } from "../access";
  * or automatically once the condition clears).
  * ------------------------------------------------------------------------- */
 
-const canRun = (ctx: ErpContext) => ctx.administrator || ctx.level === "manager";
+const canRun = (ctx: ErpContext) => isErpManager(ctx);
 
 export const alertsScreen: ScreenModule = {
   key: "alerts",
@@ -38,9 +39,9 @@ export const alertsScreen: ScreenModule = {
         hidden: [],
         groups: ["status"],
         chips: "kind",
-        newForm: canRun(ctx) ? { screen: "alerts", id: "run", title: "Run the checks now", sub: "The checks also run every hour. Anything that has cleared is resolved; anything new is raised once.", submit: "Run checks", header: [] } : undefined,
+        newForm: canRun(ctx) ? { screen: "alerts", id: "run", title: "Run the checks now", sub: "The checks also run every hour.", submit: "Run checks", header: [] } : undefined,
         newLabel: "Run checks now",
-        noDataLine: "Nothing unusual. Alerts appear here when a check finds something, and clear on their own when it is put right.",
+        noDataLine: "Nothing unusual. Alerts clear on their own once put right.",
       },
       rows: rows.map((a): ListRow => {
         const screen = erpScreen(a.screen);

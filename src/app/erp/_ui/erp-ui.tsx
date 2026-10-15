@@ -1,8 +1,9 @@
 "use client";
 
+import { resultError } from "./use-act";
 import { Fragment, createContext, useCallback, useContext, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button, cx } from "@/components/ui/primitives";
+import { Button, Callout, cx } from "@/components/ui/primitives";
 import { ConfirmDialog, Drawer, DrawerHeader, Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import type { ActionSpec, BulkSpec, FieldSpec, FormSpec, PromptSpec, ToolResult, ToolSpec } from "@/lib/erp/ui";
@@ -10,7 +11,8 @@ import { resolveField, whenHolds } from "@/lib/erp/ui";
 import { runCalc } from "@/lib/erp/calc";
 import "@/lib/erp/calcs";
 import type { Result } from "@/lib/result";
-import { Field } from "./field";
+import { Field, PhotoTile } from "./field";
+import { CardGrid } from "@/components/ui/card-grid";
 import { LineTable } from "./line-table";
 import { ErpVoice } from "./voice";
 import { ERP_KIT, KitContext, useKit, type ScreenKit } from "./kit";
@@ -92,7 +94,7 @@ export function ErpUiProvider({
         const navigate = (res.data as ToolResult | undefined)?.navigate;
         if (navigate) router.push(navigate);
       } else {
-        toast(res.error, "error");
+        toast(resultError(res), "error");
       }
     },
     [router, toast],
@@ -304,11 +306,11 @@ function PromptDialog({ state, onClose }: { state: PromptState; onClose: () => v
     <Modal
       open
       onClose={onClose}
-      width={480}
+      width={spec.fields.some((f) => f.tile) ? 600 : 480}
       title={
         <>
           {spec.title}
-          {spec.sub ? <span className="mt-0.5 block text-[13px] font-normal text-muted">{spec.sub}</span> : null}
+          {spec.sub ? <span className="mt-0.5 block text-meta font-normal text-muted">{spec.sub}</span> : null}
         </>
       }
       footer={
@@ -323,24 +325,58 @@ function PromptDialog({ state, onClose }: { state: PromptState; onClose: () => v
       }
     >
       <div className="grid gap-3.5">
-        {spec.fields
-          .filter((f) => whenHolds(f.when, v))
-          .map((f) => (
-            <Field
-              key={f.k}
-              f={f}
-              value={v[f.k] ?? ""}
-              error={errs[f.k]}
-              options={optsFor(f, v)}
-              onChange={(x) => {
-                setV((s) => ({ ...s, [f.k]: x }));
-                setErrs((s) => ({ ...s, [f.k]: "" }));
-              }}
-            />
-          ))}
+        {promptRuns(spec.fields.filter((f) => whenHolds(f.when, v))).map((run) => {
+          const field = (f: FieldSpec) => {
+            const onChange = (x: string) => {
+              setV((s) => ({ ...s, [f.k]: x }));
+              setErrs((s) => ({ ...s, [f.k]: "" }));
+            };
+            return f.tile ? (
+              <PhotoTile key={f.k} f={f} value={v[f.k] ?? ""} error={errs[f.k]} onChange={onChange} />
+            ) : (
+              <Field key={f.k} f={f} value={v[f.k] ?? ""} error={errs[f.k]} options={optsFor(f, v)} onChange={onChange} />
+            );
+          };
+          return (
+            <section key={run.fields[0].k} className="grid gap-2">
+              {run.heading ? <h3 className="text-xs font-semibold tracking-[0.04em] text-muted uppercase">{run.heading}</h3> : null}
+              {run.kind === "one" ? (
+                field(run.fields[0])
+              ) : run.kind === "tiles" ? (
+                /* auto-fill, not a CardGrid's auto-fit: two tiles stay tile-sized rather than stretching across the dialog. */
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(112px,1fr))] gap-2.5">{run.fields.map(field)}</div>
+              ) : (
+                <CardGrid min={130} gap="gap-x-3 gap-y-2.5">
+                  {run.fields.map(field)}
+                </CardGrid>
+              )}
+            </section>
+          );
+        })}
       </div>
     </Modal>
   );
+}
+
+/**
+ * A prompt's fields in runs: tiles beside each other in one grid, inline
+ * fields sharing a row, everything else one to a row. A run starts where the
+ * kind or the section changes, and carries the section's heading the first
+ * time it is reached.
+ */
+type PromptRun = { heading?: string; kind: "tiles" | "inline" | "one"; fields: FieldSpec[] };
+function promptRuns(fields: FieldSpec[]): PromptRun[] {
+  const runs: PromptRun[] = [];
+  let lastSec: string | undefined;
+  for (const f of fields) {
+    const kind: PromptRun["kind"] = f.tile ? "tiles" : f.inline ? "inline" : "one";
+    const prev = runs.at(-1);
+    const newSec = f.sec !== lastSec;
+    if (prev && !newSec && kind !== "one" && prev.kind === kind) prev.fields.push(f);
+    else runs.push({ heading: newSec && f.sec?.toLowerCase() !== f.l.toLowerCase() ? f.sec : undefined, kind, fields: [f] });
+    lastSec = f.sec;
+  }
+  return runs;
 }
 
 /* ---------------------------------------------------------------- form */
@@ -442,9 +478,9 @@ function FormDrawer({
     <Drawer open onClose={onClose} width={table ? 1040 : 680} label={spec.title}>
       <DrawerHeader onClose={onClose}>
         <div className="text-lg leading-6 font-semibold text-ink">{spec.title}</div>
-        {spec.sub ? <div className="mt-0.5 text-[13px] text-muted">{spec.sub}</div> : null}
+        {spec.sub ? <div className="mt-0.5 text-meta text-muted">{spec.sub}</div> : null}
       </DrawerHeader>
-      <div className="grid min-h-0 flex-1 auto-rows-max content-start gap-3.5 overflow-y-auto px-5 py-4">
+      <div className="grid min-h-0 flex-1 auto-rows-max grid-cols-[minmax(0,1fr)] content-start gap-3.5 overflow-y-auto px-5 py-4">
         {spec.evidence ? <Evidence e={spec.evidence} /> : null}
         <Block title={spec.line ? (table ? "Details" : "Header") : ""}>
           {spec.header
@@ -452,8 +488,10 @@ function FormDrawer({
             .map((f) => resolved(f))
             .map((f, i, shown) => (
               <Fragment key={f.k}>
-              {f.sec && f.sec !== shown[i - 1]?.sec ? (
-                <div className="col-span-full mt-1 border-b border-divider pb-1 text-[12px] font-semibold tracking-[0.04em] text-muted uppercase">{f.sec}</div>
+              {/* A section named after its own first field ("Purchase rule"
+                  over "Purchase rule") says the word twice: the field alone does. */}
+              {f.sec && f.sec !== shown[i - 1]?.sec && !(f.sec.toLowerCase() === f.l.toLowerCase() && shown[i + 1]?.sec !== f.sec) ? (
+                <div className="col-span-full mt-1 border-b border-divider pb-1 text-xs font-semibold tracking-[0.04em] text-muted uppercase">{f.sec}</div>
               ) : null}
               <Field
                 f={f}
@@ -535,7 +573,7 @@ function FormDrawer({
           : null}
         {spec.line && !table ? (
           <div className="flex flex-wrap items-center gap-3">
-            <Button variant="secondary" onClick={() => setLines((s) => [...s, blankLine()])} className="border-dashed text-[#5223E0]">
+            <Button variant="secondary" onClick={() => setLines((s) => [...s, blankLine()])} className="border-dashed text-brand-hover">
               + Add more {(spec.lineLabel ?? "line").toLowerCase()}
             </Button>
             <span className="text-xs text-muted">
@@ -551,7 +589,7 @@ function FormDrawer({
         ) : null}
         {summary ? <FormSummary text={summary} /> : null}
         {topError ? (
-          <div className="rounded-[4px] border border-danger-soft border-l-[3px] border-l-danger bg-danger-soft px-4 py-2.5 text-sm font-medium text-danger">
+          <div className="rounded-control border border-danger-soft border-l-[3px] border-l-danger bg-danger-soft px-4 py-2.5 text-sm font-medium text-danger">
             {topError}
           </div>
         ) : null}
@@ -574,29 +612,29 @@ function Evidence({ e }: { e: NonNullable<FormSpec["evidence"]> }) {
     danger: "bg-danger-soft text-danger",
     warn: "bg-warn-soft text-warn-ink",
     success: "bg-success-soft text-success",
-    info: "bg-brand-soft text-[#5223E0]",
-    brand: "bg-brand-soft text-[#5223E0]",
+    info: "bg-brand-soft text-brand-hover",
+    brand: "bg-brand-soft text-brand-hover",
     neutral: "bg-canvas text-body",
     muted: "bg-canvas text-muted",
   };
   return (
-    <section className="grid gap-2.5 rounded-[6px] border border-brand-softer border-l-[3px] border-l-brand bg-brand-soft/40 p-3">
-      <span className="text-xs font-medium tracking-[0.04em] text-[#5223E0] uppercase">Read by AI · check it against the source</span>
+    <section className="grid gap-2.5 rounded-card border border-brand-softer border-l-[3px] border-l-brand bg-brand-soft/40 p-3">
+      <span className="text-xs font-medium tracking-[0.04em] text-brand-hover uppercase">Read by AI · check it against the source</span>
       {e.images?.length ? (
         <div className="flex gap-2 overflow-x-auto">
           {e.images.map((id) => (
             <a key={id} href={`/api/attachments/${id}`} target="_blank" rel="noreferrer" className="flex-none">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={`/api/attachments/${id}`} alt="Source" className="h-40 max-w-[260px] rounded-[4px] border border-divider bg-surface object-contain" />
+              <img src={`/api/attachments/${id}`} alt="Source" className="h-40 max-w-[260px] rounded-control border border-divider bg-surface object-contain" />
             </a>
           ))}
         </div>
       ) : null}
       {e.text ? (
-        <blockquote className="m-0 rounded-[4px] border border-divider bg-surface px-2.5 py-2 text-[13px] whitespace-pre-wrap text-body">{e.text}</blockquote>
+        <blockquote className="m-0 rounded-control border border-divider bg-surface px-2.5 py-2 text-meta whitespace-pre-wrap text-body">{e.text}</blockquote>
       ) : null}
       {e.flags?.map((f, i) => (
-        <span key={i} className={cx("rounded-[4px] px-2.5 py-1.5 text-[13px]", tone[f.tone] ?? tone.neutral)}>
+        <span key={i} className={cx("rounded-control px-2.5 py-1.5 text-meta", tone[f.tone] ?? tone.neutral)}>
           {f.text}
         </span>
       ))}
@@ -606,29 +644,24 @@ function Evidence({ e }: { e: NonNullable<FormSpec["evidence"]> }) {
 }
 
 /** A summary line under a form: "ok:…" draws success, "warn:…" draws a warning. */
+/** A form's live summary line ("ok:" / "warn:" from its calc), drawn as the ordinary Callout. */
 function FormSummary({ text }: { text: string }) {
   const warn = text.startsWith("warn:");
-  const body = text.replace(/^(ok|warn):/, "");
   return (
-    <div
-      className={cx(
-        "rounded-[4px] border border-l-[3px] px-4 py-2.5 text-sm font-medium",
-        warn ? "border-warn-line border-l-warn bg-warn-soft text-warn-ink" : "border-success-soft border-l-success bg-success-soft text-success",
-      )}
-    >
-      {body}
-    </div>
+    <Callout tone={warn ? "warn" : "success"} className={cx("mb-0 text-sm font-medium", warn ? "text-warn-ink" : "text-success")}>
+      {text.replace(/^(ok|warn):/, "")}
+    </Callout>
   );
 }
 
 function Block({ title, onRemove, children }: { title: string; onRemove?: () => void; children: React.ReactNode }) {
   return (
-    <div className="min-w-0 rounded-[6px] border border-line">
+    <div className="min-w-0 rounded-card border border-line">
       {title ? (
         <div className="flex items-center justify-between rounded-t-[6px] border-b border-divider bg-canvas px-3 py-2">
-          <span className="text-[13px] font-semibold text-ink">{title}</span>
+          <span className="text-meta font-semibold text-ink">{title}</span>
           {onRemove ? (
-            <button onClick={onRemove} className="h-6 cursor-pointer px-2 text-[13px] text-danger hover:underline">
+            <button onClick={onRemove} className="h-6 cursor-pointer px-2 text-meta text-danger hover:underline">
               Remove line
             </button>
           ) : null}
@@ -647,8 +680,8 @@ function ResultDialog({ d, onClose, onNext }: { d: NonNullable<ToolResult["dialo
     danger: "bg-danger-soft text-danger",
     warn: "bg-warn-soft text-warn-ink",
     success: "bg-success-soft text-success",
-    info: "bg-brand-soft text-[#5223E0]",
-    brand: "bg-brand-soft text-[#5223E0]",
+    info: "bg-brand-soft text-brand-hover",
+    brand: "bg-brand-soft text-brand-hover",
   };
   return (
     <Modal
@@ -658,7 +691,7 @@ function ResultDialog({ d, onClose, onNext }: { d: NonNullable<ToolResult["dialo
       title={
         <>
           {d.title}
-          {d.sub ? <span className="mt-0.5 block text-[13px] font-normal text-muted">{d.sub}</span> : null}
+          {d.sub ? <span className="mt-0.5 block text-meta font-normal text-muted">{d.sub}</span> : null}
         </>
       }
       footer={
@@ -697,11 +730,11 @@ function ResultDialog({ d, onClose, onNext }: { d: NonNullable<ToolResult["dialo
         </>
       }
     >
-      {d.text ? <pre className="m-0 max-h-[50vh] overflow-y-auto rounded-[6px] bg-canvas p-3 text-[13px] leading-5 whitespace-pre-wrap text-ink">{d.text}</pre> : null}
+      {d.text ? <pre className="m-0 max-h-[50vh] overflow-y-auto rounded-card bg-canvas p-3 text-meta leading-5 whitespace-pre-wrap text-ink">{d.text}</pre> : null}
       {d.lines?.length ? (
-        <div className="max-h-[50vh] overflow-y-auto rounded-[6px] border border-line">
+        <div className="max-h-[50vh] overflow-y-auto rounded-card border border-line">
           {d.lines.map((l, i) => (
-            <div key={i} className={cx("border-b border-divider px-3 py-2 text-[13px] last:border-0", l.tone ? tone[l.tone] : "text-body")}>
+            <div key={i} className={cx("border-b border-divider px-3 py-2 text-meta last:border-0", l.tone ? tone[l.tone] : "text-body")}>
               {l.text}
             </div>
           ))}

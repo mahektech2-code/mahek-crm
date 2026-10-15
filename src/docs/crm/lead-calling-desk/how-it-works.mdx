@@ -1,0 +1,106 @@
+The Calling desk is where **leads nobody will visit** — website, WhatsApp, portal and marketplace enquiries — are qualified by telephone. It sits on top of the lead ladder rather than beside it: the ladders, the gates and the sales manager's verification all work exactly as described on [All Leads](/docs/crm/leads/how-it-works). What the desk adds is one rule about **how many calls a lead gets** and one rule about **when it is ready to become a Prospect**.
+
+<Callout kind="live">
+Settings quoted here are read live from your CRM.
+</Callout>
+
+## The three-call rule
+
+A lead on the desk gets **at most three qualification calls** — Call 1, Call 2, Call 3. There is no fourth. The calls exist to collect the answers a Prospect needs; the moment those are in, calling stops, whichever call it was.
+
+<Flow caption="What one call does to a lead" chart={`
+flowchart TD
+  C["A qualification call is saved"] --> O{"Outcome"}
+  O -- "Not interested" --> L1["Lost<br/>(Customer not interested)"]
+  O -- "Wrong or invalid number" --> L2["Lost<br/>(Wrong lead)"]
+  O -- "Spoke / call back / no answer" --> R{"Competitor, product and<br/>monthly litres all on record?"}
+  R -- "Yes" --> RF["Ready for Prospect<br/>(no further call offered)"]
+  R -- "No" --> N{"Was that Call 3?"}
+  N -- "No" --> NX["Next call owed"]
+  N -- "Yes" --> CP{"Competitor captured?"}
+  CP -- "Yes" --> EX["Three calls used<br/>(still a Suspect — finish on the record or close)"]
+  CP -- "No, and they never answered" --> L3["Lost<br/>(No response after 3 attempts)"]
+  CP -- "No, but they did speak" --> L4["Lost<br/>(Required information not obtained)"]
+`} />
+
+<Rule title="Every outcome uses a call">
+Spoke, asked to call back, no answer, wrong number and not interested all count against the three. A **message** sent to the lead (brochure, price list, WhatsApp follow-up) uses no call.
+</Rule>
+
+<Rule title="Only the competitor is compulsory">
+Of the eleven answers the desk can collect, only **which brand they use now** closes the lead if it is still missing after Call 3. **Product** and **monthly requirement** are needed for a Prospect but are never a reason to close: a blank there is "not yet captured", and the lead stays a Suspect marked *Three calls used*.
+</Rule>
+
+<Callout kind="why">
+"Never once answered" and "answered but would not say" are different losses, and the desk records them as different reasons so they can be counted later. A competitor is the one answer without which a Prospect is not worth a sales manager's call; a missing product or litre figure is something somebody can still fill in on the record.
+</Callout>
+
+## No question is asked twice
+
+What is still owed is whatever is still **empty**. An answer captured on Call 1 is a filled field on the record, so it is not offered on Call 2 — not because a rule hides it, but because there is nothing left to ask. Each answer has a **suggested** call (competitor, product, litres, customer type and application on Call 1; decision maker and GST on Call 2; buyer, credit days, address and email on Call 3). On Call 3 every answer a Prospect still needs is asked regardless.
+
+Nothing about "ready" or "which call is next" is stored. *Ready for Prospect* is simply the answer to "are those answers on the record", and *which call* is a count of the qualification calls already made. A stored flag would be a second copy free to drift the day somebody types a competitor in somewhere else.
+
+## Becoming a Prospect
+
+When a lead is ready, the telecaller presses **Convert to Prospect**, chooses a coded reason from <Setting k="leads.prospectReasons" />, and fills anything the Prospect gate still needs (sales type, kind of business, contact person). What happens next depends on one switch:
+
+<Setting k="leads.callingDeskDirectPromotion" />
+
+| Switch | What Convert to Prospect does |
+|---|---|
+| **On** | The lead becomes a **Prospect** at once, through the same gate as any other move, and the sales manager is given a verification next action due <Setting k="leads.verificationDueDays" /> days out. Message: *Prospect created. Waiting for Sales Manager verification.* |
+| **Off** | The lead stays a **Suspect** and is put forward as a **request** (*Awaiting verification*). The sales manager's verification call is what promotes it — due on the next working day. Message: *Prospect requested.* |
+
+<Callout kind="why">
+Both paths read the same readiness test and the same Prospect gate, so a lead accepted by one can never be refused by the other for something it was never asked. The switch decides only **who is trusted to press the button that promotes**. Turning it off sends everything back through the same verification queue with no second code path kept alive.
+</Callout>
+
+### The request states
+
+A request is not a rung: the lead stays a Suspect until the sales manager acts. It is held beside the stage as one of three states.
+
+| State on the desk | Meaning | What the desk can do |
+|---|---|---|
+| **Awaiting verification** | With the sales manager | Nothing — no call is offered, and the lead cannot be closed |
+| **Manager follow-up** | The manager is holding it while they follow up | Nothing until they decide |
+| **Returned by Manager** | Sent back with a note | Read the note; resubmit or mark Lost |
+
+When the sales manager records a **verified** verification, the request settles: the lead moves to Prospect through the ordinary gated move under the manager's own permission, and the manager takes the lead-manager seat. *Not qualified* closes the lead as lost through the verification's own closure.
+
+### Who verifies
+
+The verifier is found in this order, and the telecaller chooses nobody:
+
+1. If a **sales manager raised the lead herself**, the person named in the *self-raised verifier* setting (`leads.selfRaisedVerifierEmail`) — nobody verifies their own work.
+2. If a calling-desk worker owns the lead, the person named in the *telecaller verifier* setting (`leads.telecallerVerifierEmail`) — strictly: a name that matches nobody who can verify refuses the conversion with a message rather than routing it elsewhere.
+3. The lead's sales manager seat, if filled.
+4. The lead manager seat, if filled.
+5. Otherwise the first eligible candidate from the org chart. If there is none, the conversion is refused and says so.
+
+## The work queue
+
+*Today's work queue* holds three kinds of lead, in this order: **Ready for Prospect**, **Returned**, then **Due** (a call or message due today or earlier, soonest first; a brand-new lead nobody scheduled counts as *Call 1 due today*). Leads with the sales manager, or with a next step on a later day, are not on it.
+
+The figures across the top filter the same list without navigating, and every filter is in the address bar.
+
+## Closing and reopening
+
+- **Mark Lost** takes one of the desk's six reasons (*No response after 3 attempts*, *Required information not obtained*, *Customer not interested*, *Requirement not genuine*, *Wrong lead — should not have been raised*, *Other*). Each is filed under a code from <Setting k="leads.lostReasons" />. A lead cannot be closed while the sales manager has it.
+- **Reverse Lead** reopens a lost lead with a coded reason from <Setting k="leads.reopenReasons" />. It returns to the rung it was lost from; if that was Suspect, **the three calls start again**. Earlier calls stay on the record. A lead closed because verification failed can only be reversed by the sales manager.
+- **Next action** can only be changed while the lead is a Suspect.
+
+## Who can use the desk, and whose leads they see
+
+<Rule title="The desk is granted per person">
+The Calling desk is its own module, off by default even on a whole-CRM grant. Every write the desk makes checks the module itself — not only the screen — because the underlying lead permission is held by every associate and the route guard alone would be a courtesy, not a door.
+</Rule>
+
+The desk narrows the way every other CRM list does: a telecaller sees **their own book**, a manager **their reports'** books. It deliberately does not use the territory narrowing the All Leads list uses, which answers "everybody" for anyone without a territory.
+
+**Leads with no owner** are on nobody's desk. Somebody whose view is wider than one book sees a banner counting them and can assign each to a person who holds the desk; people who cannot open the desk are listed greyed out with the reason. Assigning notifies whoever can hand leads out.
+
+## Where the code and the intent disagree today
+
+- **"Five answers" versus three.** The setting description for direct promotion and the engine's header both say "the five required answers"; the code's readiness test (`prospectProgress`) needs three — competitor, product, monthly litres (`engines/lead-calling-desk.ts` `DESK_FIELDS`).
+- **Two verification due dates.** Direct promotion dates the sales manager's verification <Setting k="leads.verificationDueDays" /> days out; a request is dated the next working day (`actions/lead-calling-desk.ts` `convertLeadToProspect` vs `requestProspect`).

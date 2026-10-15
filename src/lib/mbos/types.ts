@@ -449,6 +449,14 @@ export type PullDelta = {
    */
   customerTargets?: unknown[];
   /**
+   * His expenses and allowances over the window an expense may still be
+   * logged in, with the office's current state and amount on each. Sent
+   * WHOLE, like `customerTargets`, because a decision on an approval and an
+   * allowance re-worked from the trail move nothing a cursor could follow.
+   * Optional for the same reason: absent changes nothing on the phone.
+   */
+  expenseBook?: { from: string; rows: unknown[] };
+  /**
    * A task the office raised or reassigned, coming down on every pass and not
    * only at sign-in — the same reasoning `journeyStops` already carries: a
    * task a manager assigns this afternoon has to reach the handset without

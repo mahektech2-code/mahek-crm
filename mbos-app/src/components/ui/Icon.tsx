@@ -76,6 +76,14 @@ const ICONS = {
     { p: 'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z' },
     { p: 'M14 3v5h5' },
   ],
+  /* An arrow into a tray — a file coming onto this phone. */
+  download: [
+    { p: 'M12 4v11M8 11l4 4 4-4' },
+    { p: 'M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3' },
+  ],
+  image: [{ r: [4, 4, 16, 16, 2] }, { c: [9, 9.5, 1.5] }, { p: 'm20 15-4.5-4.5L6 20' }],
+  /* A box with an arrow leaving it — hand this to another app. */
+  external: [{ p: 'M14 4h6v6M20 4l-9 9' }, { p: 'M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5' }],
   clip: [{ p: 'M20 11.5 12 19.5a4.5 4.5 0 0 1-6.4-6.4l7.6-7.6a3 3 0 0 1 4.3 4.3l-7.6 7.6a1.5 1.5 0 0 1-2.2-2.2l6.9-6.9' }],
   close: [{ p: 'M6 6l12 12M18 6 6 18' }],
   dots: [{ c: [5, 12, 1.4] }, { c: [12, 12, 1.4] }, { c: [19, 12, 1.4] }],

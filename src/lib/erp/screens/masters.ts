@@ -1,4 +1,5 @@
 import "server-only";
+import { has, type Col } from "./common";
 import { and, asc, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -6,6 +7,7 @@ import {
   customers,
   erpCustomerProfiles,
   erpGodownStaff,
+  erpMaterialGroups,
   erpGodowns,
   erpProductPacking,
   erpRawMaterials,
@@ -22,7 +24,6 @@ import {
 import { err, fieldErr, okVoid } from "@/lib/result";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import type { ErpContext } from "../access";
-import type { ErpPower } from "../powers";
 import {
   BOX_TYPES,
   DELIVERY_TYPES,
@@ -54,15 +55,14 @@ import { rmTotalsByItem } from "../stock";
 import { PURCHASE_METHODS, methodByLabel, methodLabel, type PurchaseMethod } from "../engines/purchase-flow";
 import { DUTY_LABEL, MATERIAL_DUTIES, dutyApplies, type DutyHolders, type MaterialDuty } from "../material-duties";
 import { dutiesOf, dutyCandidates, dutyFieldsFor, replaceMaterialDuties } from "../material-duties-server";
+import { OWNERSHIP_LABEL, ownershipByLabel, type DrumOwnership } from "../engines/drums";
+import { MAX_CAN_PHOTOS } from "../engines/can-groups";
+import { photoUrl, photosOf, setPhotos } from "../can-photos";
 
 /* ---------------------------------------------------------------------------
  * Masters (spec §4): raw materials, suppliers, products, customers, godowns,
  * price lists, employees, the ERP powers and the reference lists.
  * ------------------------------------------------------------------------- */
-
-type Col = ColSpec & { pw?: ErpPower };
-
-const has = (ctx: ErpContext) => (p: string) => ctx.powers.has(p as ErpPower);
 
 export function phoneContacts(phone: string | null | undefined, email?: string | null) {
   const out: { l: string; href: string }[] = [];
@@ -81,6 +81,7 @@ async function rawMaterialForm(ctx: ErpContext, id?: string): Promise<FormSpec> 
   const types = await refValues("materialType");
   const tests = await refValues("testingList");
   const sups = await db.select({ id: erpSuppliers.id, name: erpSuppliers.name, active: erpSuppliers.active }).from(erpSuppliers).orderBy(asc(erpSuppliers.name));
+  const groups = await db.select({ id: erpMaterialGroups.id, name: erpMaterialGroups.name }).from(erpMaterialGroups).where(eq(erpMaterialGroups.materialType, "Can")).orderBy(asc(erpMaterialGroups.name));
   let init: Record<string, string> | undefined;
   if (id) {
     const [r] = await db.select().from(erpRawMaterials).where(eq(erpRawMaterials.id, id));
@@ -95,6 +96,7 @@ async function rawMaterialForm(ctx: ErpContext, id?: string): Promise<FormSpec> 
         price: rupeesField(r.pricePaise),
         purchaseMethod: methodLabel(r.purchaseMethod),
         preferredSupplier: sups.find((x) => x.id === r.preferredSupplierId)?.name ?? "",
+        group: groups.find((g) => g.id === r.groupId)?.name ?? "",
         remark: r.remark ?? "",
       };
     }
@@ -115,6 +117,14 @@ async function rawMaterialForm(ctx: ErpContext, id?: string): Promise<FormSpec> 
       { k: "materialType", l: "Material type", t: "select", req: true, opts: types },
       { k: "density", l: "Density (kg to litre)", t: "num", req: true, when: { k: "materialType", eq: "Chemical" }, min: 0.1, max: 3 },
       { k: "testingList", l: "Testing list", t: "multi", req: true, opts: tests, when: { k: "materialType", eq: "Chemical" } },
+      {
+        k: "group",
+        l: "Can group",
+        t: "select",
+        opts: groups.map((g) => g.name),
+        when: { k: "materialType", eq: "Can" },
+        hint: "The look-alike cans this one belongs to. Blank: not in a group. New groups are made on the Can groups tab.",
+      },
       ...(money ? [{ k: "price", l: "Price (₹)", t: "num" as const, min: 0, hint: "Used as the packing rate for cans and drums." }] : []),
       {
         k: "purchaseMethod",
@@ -123,7 +133,7 @@ async function rawMaterialForm(ctx: ErpContext, id?: string): Promise<FormSpec> 
         req: true,
         sec: "Purchase rule",
         opts: PURCHASE_METHODS.map((m) => m.label),
-        hint: "Direct purchase: pick the vendor, raise the PO (boxes, cans, stationery, routine chemicals). Quotation: collect and compare quotations first (price-sensitive chemicals). Buyer decision: the buyer chooses per requirement.",
+        hint: "Direct: pick the vendor and raise the PO. Quotation: compare quotations first. Buyer decides: chosen per requirement.",
       },
       {
         k: "preferredSupplier",
@@ -144,12 +154,21 @@ const rawMaterials: ScreenModule = {
     const rows = await db.select().from(erpRawMaterials).orderBy(asc(erpRawMaterials.serialNo));
     const totals = await rmTotalsByItem();
     const supName = new Map((await db.select({ id: erpSuppliers.id, name: erpSuppliers.name }).from(erpSuppliers)).map((x) => [x.id, x.name]));
+    const groupRows = await db.select({ id: erpMaterialGroups.id, name: erpMaterialGroups.name }).from(erpMaterialGroups);
+    const groupName = new Map(groupRows.map((g) => [g.id, g.name]));
+    const cans = rows.filter((r) => r.materialType === "Can");
+    const [canPhotos, groupPhotos] = await Promise.all([
+      photosOf("erp_raw_material", cans.map((r) => r.id)),
+      photosOf("erp_material_group", groupRows.map((g) => g.id)),
+    ]);
     const all: Col[] = [
       { k: "sn", l: "S.no", t: "n" },
       { k: "item", l: "Item", t: "b" },
       { k: "code", l: "Code", t: "t" },
       { k: "unit", l: "Unit", t: "t" },
       { k: "type", l: "Material type", t: "s" },
+      { k: "group", l: "Can group", t: "t" },
+      { k: "photos", l: "Photos", t: "n" },
       { k: "density", l: "Density", t: "n" },
       { k: "tests", l: "Testing list", t: "t" },
       { k: "rule", l: "Purchase rule", t: "s" },
@@ -179,6 +198,8 @@ const rawMaterials: ScreenModule = {
             code: r.code,
             unit: r.unit,
             type: r.materialType,
+            group: r.materialType === "Can" ? (r.groupId ? (groupName.get(r.groupId) ?? null) : "Not grouped") : null,
+            photos: r.materialType === "Can" ? (canPhotos.get(r.id)?.length ?? 0) : null,
             density: r.density,
             tests: r.testingList.join(", ") || "—",
             rule: methodLabel(r.purchaseMethod),
@@ -191,6 +212,7 @@ const rawMaterials: ScreenModule = {
         );
         const actions: ActionSpec[] = [
           { id: "edit", l: "Edit", primary: true, loadsForm: true },
+          ...(r.materialType === "Can" ? [{ id: "photos", l: "Photos", loadsForm: true }] : []),
           ...(ctx.administrator ? [{ id: "duties", l: "Who does what", loadsForm: true }] : []),
           r.active
             ? { id: "retire", l: "Retire", confirm: `Retire ${r.name}? It stays on every record that already names it, and is no longer offered on new ones.` }
@@ -203,6 +225,20 @@ const rawMaterials: ScreenModule = {
           title: r.name,
           fields: duties.get(r.id),
           actions,
+          ...(r.materialType === "Can"
+            ? {
+                panel: {
+                  kind: "canPhotos",
+                  data: {
+                    photos: (canPhotos.get(r.id) ?? []).map(photoUrl),
+                    max: MAX_CAN_PHOTOS,
+                    group: r.groupId
+                      ? { name: groupName.get(r.groupId) ?? "", photos: (groupPhotos.get(r.groupId) ?? []).map(photoUrl) }
+                      : null,
+                  },
+                },
+              }
+            : {}),
           by: stampLine(null, r.createdAt),
         };
       }),
@@ -211,6 +247,7 @@ const rawMaterials: ScreenModule = {
   formLoaders: {
     edit: (ctx, id) => rawMaterialForm(ctx, id),
     duties: (ctx, id) => dutiesForm(ctx, id),
+    photos: (_ctx, id) => canPhotosForm(id),
   },
   forms: {
     async new(ctx, h) {
@@ -221,6 +258,9 @@ const rawMaterials: ScreenModule = {
     },
     async edit(ctx, h, _l, id) {
       return saveRawMaterial(ctx, h, id);
+    },
+    async photos(ctx, h, _l, id) {
+      return saveCanPhotos(ctx, h, id);
     },
   },
   actions: {
@@ -325,6 +365,21 @@ async function saveRawMaterial(ctx: ErpContext, h: Record<string, string>, id?: 
   const [vendor] = vendorName ? await db.select({ id: erpSuppliers.id }).from(erpSuppliers).where(eq(erpSuppliers.name, vendorName)) : [];
   if (vendorName && !vendor) return fieldErr("preferredSupplier", "Pick a vendor from the list");
 
+  /* A can's group: blank takes it out of one; a save that does not name the field keeps it. */
+  const groupTyped = materialType === "Can" ? h.group : "";
+  let groupId: string | null | undefined;
+  if (groupTyped !== undefined) {
+    const gName = text(groupTyped);
+    if (gName) {
+      const [g] = await db
+        .select({ id: erpMaterialGroups.id })
+        .from(erpMaterialGroups)
+        .where(and(eq(erpMaterialGroups.materialType, "Can"), sql`lower(${erpMaterialGroups.name}) = lower(${gName})`));
+      if (!g) return fieldErr("group", "Pick a group from the list");
+      groupId = g.id;
+    } else groupId = null;
+  }
+
   const dup = await db
     .select({ id: erpRawMaterials.id })
     .from(erpRawMaterials)
@@ -341,6 +396,7 @@ async function saveRawMaterial(ctx: ErpContext, h: Record<string, string>, id?: 
     purchaseMethod,
     ...(keepVendor ? {} : { preferredSupplierId: vendor?.id ?? null }),
     remark: text(h.remark),
+    ...(groupId === undefined ? {} : { groupId }),
     updatedAt: new Date(),
     updatedById: ctx.user.id,
     ...(ctx.powers.has("viewPurchaseMoney") ? { pricePaise: paise(h.price) } : {}),
@@ -366,6 +422,43 @@ async function saveRawMaterial(ctx: ErpContext, h: Record<string, string>, id?: 
   return okVoid(`${name} added`);
 }
 
+/* ------------------------------------------------------------ can photos */
+
+/** Up to three photos of one can: the ones it carries, and empty places for the rest. */
+async function canPhotosForm(id: string): Promise<FormSpec | null> {
+  const [r] = await db.select({ name: erpRawMaterials.name, type: erpRawMaterials.materialType }).from(erpRawMaterials).where(eq(erpRawMaterials.id, id));
+  if (!r || r.type !== "Can") return null;
+  const held = (await photosOf("erp_raw_material", [id])).get(id) ?? [];
+  const init: Record<string, string> = {};
+  const header: FieldSpec[] = [];
+  for (let i = 0; i < MAX_CAN_PHOTOS; i++) {
+    init[`photo${i + 1}`] = held[i] ?? "";
+    header.push({ k: `photo${i + 1}`, l: `Photo ${i + 1}`, t: "photo", upload: "material-photo", wide: true, ...(i === 0 ? { hint: "Front, back, the lid — whatever tells this can apart." } : {}) });
+  }
+  return {
+    screen: "rawMaterials",
+    id: "photos",
+    recordId: id,
+    title: `Photos · ${r.name}`,
+    sub: `Up to ${MAX_CAN_PHOTOS} photos. Removing one here takes it off the can.`,
+    submit: "Save photos",
+    init,
+    header,
+  };
+}
+
+async function saveCanPhotos(ctx: ErpContext, h: Record<string, string>, id?: string) {
+  if (!id) return err("No can named.", "not_found");
+  const [r] = await db.select({ name: erpRawMaterials.name, type: erpRawMaterials.materialType }).from(erpRawMaterials).where(eq(erpRawMaterials.id, id));
+  if (!r) return err("That raw material no longer exists.", "not_found");
+  if (r.type !== "Can") return err("Photos are kept for cans only.");
+  const keep = [...new Set(Object.keys(h).filter((k) => /^photo\d+$/.test(k)).sort().map((k) => text(h[k])).filter((x): x is string => !!x))];
+  if (keep.length > MAX_CAN_PHOTOS) return err(`A can takes up to ${MAX_CAN_PHOTOS} photos.`);
+  await db.transaction(async (tx) => setPhotos(tx as unknown as typeof db, "erp_raw_material", id, keep, ctx.actor.id));
+  await erpAudit(ctx, "erp.rawMaterial.photos", "erp_raw_material", id, null, { photos: keep });
+  return okVoid(keep.length ? `${r.name} · ${keep.length} photo${keep.length === 1 ? "" : "s"} saved` : `${r.name} · photos removed`);
+}
+
 /* =========================================================== suppliers */
 
 async function supplierForm(id?: string): Promise<FormSpec> {
@@ -387,6 +480,7 @@ async function supplierForm(id?: string): Promise<FormSpec> {
         grade: r.grade ?? "",
         email: r.email ?? "",
         gstin: r.gstin ?? "",
+        drumOwnership: r.drumOwnership ? OWNERSHIP_LABEL[r.drumOwnership as DrumOwnership] : DRUM_UNKNOWN,
       };
     }
   }
@@ -411,9 +505,19 @@ async function supplierForm(id?: string): Promise<FormSpec> {
       { k: "grade", l: "Grade", t: "text" },
       { k: "email", l: "Party email", t: "text" },
       { k: "gstin", l: "GSTIN", t: "text" },
+      {
+        k: "drumOwnership",
+        l: "Their drums are",
+        t: "select",
+        opts: [DRUM_UNKNOWN, OWNERSHIP_LABEL.mahek, OWNERSHIP_LABEL.returnable],
+        def: DRUM_UNKNOWN,
+        hint: "Copied onto each GRN line as it is received. Returnable drums go back to this supplier once empty; an unknown answer sends each emptied drum to the Production Head.",
+      },
     ],
   };
 }
+
+const DRUM_UNKNOWN = "Not recorded";
 
 const suppliers: ScreenModule = {
   key: "suppliers",
@@ -453,6 +557,7 @@ const suppliers: ScreenModule = {
           { l: "WhatsApp", v: r.whatsapp || "—" },
           { l: "Location", v: r.location || "—" },
           { l: "GSTIN", v: r.gstin || "—" },
+          { l: "Their drums are", v: r.drumOwnership ? OWNERSHIP_LABEL[r.drumOwnership as DrumOwnership] : DRUM_UNKNOWN },
           { l: "Purchases", v: `${purchases.get(r.id) ?? 0} purchases`, der: true },
         ],
         contacts: phoneContacts(r.mobile, r.email),
@@ -514,6 +619,7 @@ async function saveSupplier(ctx: ErpContext, h: Record<string, string>, id?: str
     grade: text(h.grade),
     email: text(h.email),
     gstin: text(h.gstin),
+    drumOwnership: ownershipByLabel(h.drumOwnership),
     updatedAt: new Date(),
     updatedById: ctx.user.id,
   };
@@ -631,7 +737,7 @@ const productsScreen: ScreenModule = {
         hidden,
         groups: ["sfg"],
         chips: "kind",
-        noDataLine: "No products yet. The catalogue is maintained in the Admin Console → Catalogue.",
+        noDataLine: "No products yet. The catalogue is kept in Admin Console → Catalogue.",
       },
       rows: rows.map((r) => {
         const cpb = r.cpb ?? 1;
@@ -798,7 +904,7 @@ async function customerEditForm(id: string, mine = false): Promise<FormSpec | nu
     id: "edit",
     recordId: id,
     title: `Edit ${r.name}`,
-    sub: "Changes here are the ERP's. The name, the tagged sales person and the price list are set where the account is managed.",
+    sub: "Name, sales person and price list are set where the account is managed.",
     submit: "Save changes",
     init: {
       grade: r.p?.grade ?? "",
@@ -938,11 +1044,11 @@ const customersScreen: ScreenModule = {
         const st = partyStatus(r);
         const actions: ActionSpec[] = [];
         if (st !== "Active")
-          actions.push({ id: "activate", l: "Activate", primary: true, why, confirm: "Are You Sure! This Party Is Verified By Admin" });
+          actions.push({ id: "activate", l: "Activate", primary: true, why, confirm: "Activate this party? Its orders can then move." });
         if (st !== "Deactive")
           actions.push({ id: "deactivate", l: "Deactivate", why, confirm: `Deactivate ${r.name}? New orders will not be accepted.` });
         if (st === "Active")
-          actions.push({ id: "pend", l: "Mark Pending", why, confirm: "Are You Sure!" });
+          actions.push({ id: "pend", l: "Mark pending", why, confirm: "Mark this party pending? Its orders wait until it is activated again." });
         actions.push({ id: "edit", l: "Edit details", loadsForm: true });
         return {
           id: r.id,
@@ -1378,7 +1484,7 @@ const priceListsScreen: ScreenModule = {
         hidden,
         groups: ["list"],
         readOnly: true,
-        noDataLine: "No published price list yet. Lists are written and published on the Price Desk.",
+        noDataLine: "No published price list yet. Lists are published on the Price Desk.",
       },
       rows: rows.map((r) => ({
         id: r.id,

@@ -1,0 +1,129 @@
+The Live map is a server page that reads the team's last positions (and, on the day view, every track and activity mark), derives the banners once, and hands everything to a client `LivePanel` that keeps itself current over a server-sent-events stream (`/api/sales/live/stream`, falling back to `/api/sales/live/delta`). The map is MapLibre over Ola Maps tiles in `street-map.tsx`. Road snapping is a separate, per-person request to `/api/sales/live/snap-trail`. Positions arrive from handsets at `POST /api/mbos/positions`.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Module guard | `src/app/sales/live/layout.tsx` | `requireModule(user.id, "sales.live")` |
+| Page (server) | `src/app/sales/live/page.tsx` | `?day`, `?view=now|today`; reads positions, tracks, activity, config, the live Ola key; builds the alert chips |
+| Alerts | `src/app/sales/live/live-alerts.tsx` | One chip per kind, explanation on click |
+| Live state | `src/app/sales/live/live-panel.tsx`, `use-live-feed.ts` | Holds the frame, merges deltas with `lib/engines/live-feed.ts` |
+| Team rail + map frame | `src/app/sales/live/map-canvas.tsx` | Team list, search, row notes from `handsetNotes` |
+| Map | `src/app/sales/live/street-map.tsx` | MapLibre, trail and activity layers, key states, fit-not-fill |
+| Ola style + auth | `src/app/sales/ola-maps.tsx` | Style URLs, `olaMapsTransformRequest`, Map/Satellite switcher |
+| One salesman's day | `src/app/sales/live/[id]/` | The page Today and the rail open in a new tab |
+| Reads | `src/lib/services/sales-service.ts` | `lastKnownPositions`, `tracksForDay`, `trackForDay`, `activityPointsForDay`, `liveDeltaFor` |
+| Handset health words | `src/lib/handset-health.ts` | `handsetNotes`, `trailIsDead`, `trailHasStopped`, `trackerStalled`, `trailHasGaps` |
+| Trail engines (pure) | `src/lib/engines/trail-gaps.ts`, `trail-trips.ts`, `snap-plan.ts`, `trail-gap-route.ts`, `live-feed.ts` | Accuracy filter, gaps, trips, snap planning, believable gap routes, delta merging |
+| Road snap | `src/lib/services/road-snap-service.ts`, `ola-directions-service.ts`, `snap-cache.ts` | Snap-to-Road batches, directions for gaps, held runs |
+| Keys | `src/lib/services/ola-key-service.ts` | The key pool, quota state, `liveOlaKey` |
+| Ingest | `src/app/api/mbos/positions/route.ts` | Positions batch + device state, session-checked |
+
+## A request, end to end
+
+<Flow caption="Opening /sales/live?view=today and selecting a salesman" chart={`
+sequenceDiagram
+  autonumber
+  participant P as live/page.tsx
+  participant S as sales-service.ts
+  participant B as Browser (LivePanel + StreetMap)
+  participant ST as /api/sales/live/stream
+  participant SN as /api/sales/live/snap-trail
+  P->>S: lastKnownPositions(day), tracksForDay(day), activityPointsForDay(day)
+  S->>S: managerScope() on every read
+  P->>P: dropInaccurateFixes, banners via handset-health
+  P->>B: rows, tracks, activity, thresholds, olaMapsKey
+  B->>ST: EventSource ?day&view&since
+  ST-->>B: deltas every livePushSeconds (Last-Event-ID resumes)
+  B->>SN: ?salesmanId&day (selected person only)
+  SN->>S: trackForDay(salesmanId, day) — empty if outside scope
+  SN->>SN: trips, snap plan, road paths, believable gap routes
+  SN-->>B: road segments, or null to keep the raw line`} />
+
+## Positions in
+
+The handset posts batches of fixes plus a sibling `device` state object. The id of a fix is derived from the reading itself, so a redelivered batch deduplicates on both ends.
+
+<Code file="src/app/api/mbos/positions/route.ts" symbol="fixId" />
+
+<DbTable name="mbos_positions" note={{
+  id: "at|lat|lng — derived from the reading, never random. mbos_positions_fix_key is the half that does not depend on which app build sent it.",
+  at: "When the phone took the fix, not when it arrived.",
+  accuracy_m: "The phone's own accuracy estimate. Above gpsAccuracyThresholdM it is dropped from trails.",
+}} />
+
+<DbTable name="mbos_devices" only={["last_seen_at", "app_version", "location_permission", "background_location_granted", "location_services_enabled", "battery_percent", "device_state_at", "tracker_stalled_at", "queued_positions", "location_service_running", "location_service_last_fix_at", "location_service_last_upload_at", "location_service_refused_at"]} note={{
+  last_seen_at: "Moves on every positions batch, not only at sign-in.",
+  location_permission: "The OS's own four answers. Null means never reported.",
+  background_location_granted: "Kept and still written: old builds send only this. Its false renders as 'restricted'.",
+  device_state_at: "Required with any battery reading by a check constraint — a reading with no age reads as now.",
+  tracker_stalled_at: "Set by the handset's own watchdog.",
+}} />
+
+## Reads
+
+<Code file="src/lib/services/sales-service.ts" symbol="LastKnown" collapsed />
+
+`trackForDay` applies scope to the **subject**: a salesman outside the manager's patch gets an empty day, which is what makes the snap endpoint safe without a check of its own.
+
+<Code file="src/lib/services/sales-service.ts" symbol="trackForDay" collapsed />
+
+<Code file="src/lib/engines/trail-gaps.ts" symbol="dropInaccurateFixes" />
+
+## Handset health
+
+`handsetNotes` turns a row's facts into at most a few sentences, each with a tone and a hover explaining the fix. It is pure and client-safe because the rail is a client component.
+
+<Code file="src/lib/handset-health.ts" symbol="trailIsDead" />
+
+<Code file="src/lib/handset-health.ts" symbol="trackerStalled" />
+
+<Code file="src/lib/handset-health.ts" symbol="handsetNotes" collapsed />
+
+## Keys and the map
+
+<Code file="src/lib/services/ola-key-service.ts" symbol="liveOlaKey" />
+
+<Code file="src/app/sales/ola-maps.tsx" symbol="olaMapsTransformRequest" />
+
+`street-map.tsx` draws one of four frames: no key / all keys spent, failed (the **style** never loaded within the timeout — a single bad layer in Ola's style does not fail it), nothing to place (drawn over a mounted host so the map can build when the first fix arrives), or the map. Map ↔ satellite is a `setStyle` swap; overlays are redrawn on `style.load`.
+
+## Access
+
+- **Module:** <ModuleRef k="sales.live" /> on the page, and `canOpenModule(user.id, "sales.live")` in each of `delta`, `stream` and `snap-trail`.
+- **Scope:** `managerScope()` in every read; `liveDeltaFor` takes the scope resolved in the request, never inside a stream tick.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/handset-health.test.ts` | Every note, its threshold, the four permission answers, ages |
+| `npm run test` | `src/lib/engines/trail-gaps.test.ts`, `trail-trips.test.ts` | Gaps, accuracy filtering, trips |
+| `npm run test` | `src/lib/engines/snap-plan.test.ts`, `trail-gap-route.test.ts` | Which runs are snapped, which gap routes are believable |
+| `npm run test` | `src/lib/engines/live-feed.test.ts`, `live-speed.test.ts` | Delta merging, speeds |
+| `npm run test` | `src/lib/trail-drawers.test.ts` | Trail drawing helpers |
+
+## Changing it safely
+
+<Steps>
+<Step title="Put rules in the engines">
+Anything about what a trail means belongs in `lib/engines/trail-*.ts` and runs identically in the page, the stream and the browser.
+</Step>
+<Step title="A new handset fact goes in three places">
+The handset's device report, a nullable column on `mbos_devices` (omitted, never nulled, by older builds), and a sentence in `handsetNotes` with a test.
+</Step>
+<Step title="Keep snapping optional">
+Every road-snap failure path must return null so the raw line stays. Never write snapped geometry back into `mbos_positions`.
+</Step>
+<Step title="Never widen managerScope for this screen">
+It guards selfies and odometer photos as well.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| `mbos.location.trackEverySeconds` is not honoured by Android's location request; the handset's JS throttle enforces it | handset `engines/cadence.ts`; expo-location `timeInterval` |
+| AGENTS.md says keys live under Platform → Maps; the empty states point at Admin Console → Integrations | `street-map.tsx`, `shop-map.tsx` |
+| AGENTS.md describes one snap per person per day; the client re-asks every two minutes while selected, governed by `mbos.location.snapRefreshSeconds` on the server | `street-map.tsx` `SNAP_REFRESH_MS`; `snap-trail/route.ts` |

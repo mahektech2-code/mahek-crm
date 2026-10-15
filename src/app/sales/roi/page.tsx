@@ -172,7 +172,7 @@ export default async function Page({
       {people.length === 0 ? (
         <Empty
           title="Nothing to compare yet"
-          body="This reads approved expense days and counting orders. A month with no submitted days, or none yet approved, has nothing to divide."
+          body="This reads allowances, approved expenses and counting orders. A month with none of them yet has nothing to divide."
         />
       ) : (
         <Table

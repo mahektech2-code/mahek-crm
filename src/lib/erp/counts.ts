@@ -1,10 +1,12 @@
 import "server-only";
+import { cache } from "react";
+import { APP_TIMEZONE } from "@/lib/business-date";
 import { and, isNull, eq, or, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { erpInward, erpPurchases, erpTests } from "@/db/schema";
 import type { ErpContext } from "./access";
 import { fgReorderRows, rmReorderRows } from "./screens/movement";
-import { detailRows, orderLines } from "./screens/sales";
+import { detailRows, isPendingLine, isWorkingLine, orderLines } from "./screens/sales";
 
 /* ---------------------------------------------------------------------------
  * The sidebar's badges: work waiting on a screen (untested inward lines,
@@ -59,8 +61,8 @@ export async function incompletePackIds(): Promise<string[]> {
 export async function salesCounts() {
   const lines = await orderLines();
   const detailed = new Set(lines.filter((l) => l.inDetails).map((l) => l.o.orderNo));
-  const pending = lines.filter((l) => l.o.status !== "Cancel" && l.sku.name !== "Empty Drum" && !detailed.has(l.o.orderNo));
-  const working = lines.filter((l) => (l.o.status === "Ready" || l.o.status === "Under Process") && l.o.entryStatus !== "Done");
+  const pending = lines.filter((l) => isPendingLine(l, detailed));
+  const working = lines.filter(isWorkingLine);
   const toAllocate = lines.filter((l) => l.o.status === "Ready" && l.o.entryStatus !== "Done" && l.allocation === "Add More Quantity");
   const pendingParty = lines.filter((l) => l.o.partyStatus === "Pending" && !l.inDetails);
   return { lines, pending, working, toAllocate, pendingParty };
@@ -71,17 +73,38 @@ export async function unverifiedIds(): Promise<string[]> {
   return (await detailRows()).rows.filter((r) => !r.d.verification || r.d.verification === "Pending").map((r) => r.l.o.id);
 }
 
-/** Bills without an LR, requests awaiting a decision, expenses awaiting verification. */
+/**
+ * The Logistics badge is the work waiting on the desk right now: LRs uploaded
+ * and not attached, calls to a transporter owed today, and customer messages
+ * to send by hand. Requests awaiting a decision and expenses awaiting
+ * verification ride on the same pass.
+ */
 export async function logisticsCounts() {
-  const [lr, req, exp] = await Promise.all([
-    db.execute(sql`select id from erp_transports where lr_no is null or lr_no = ''`) as unknown as Promise<{ id: string }[]>,
+  const [lrs, calls, msgs, req, exp] = await Promise.all([
+    db.execute(sql`select id from erp_lrs where status = 'unassigned'`) as unknown as Promise<{ id: string }[]>,
+    db.execute(sql`
+      select id from erp_transports
+       where material_stage <> 'Close - Received to Party' and coalesce(lr_no, '') <> ''
+         and reminder_date <= (now() at time zone ${APP_TIMEZONE})::date
+    `) as unknown as Promise<{ id: string }[]>,
+    db.execute(sql`select id from erp_transport_messages where status in ('to_send', 'failed')`) as unknown as Promise<{ id: string }[]>,
     db.execute(sql`select id from complaints where status = 'open'`) as unknown as Promise<{ id: string }[]>,
     db.execute(sql`select id from erp_expenses where status = 'Pending'`) as unknown as Promise<{ id: string }[]>,
   ]);
-  return { pendingLr: lr.map((r) => r.id), requested: req.map((r) => r.id), pendingExpenses: exp.map((r) => r.id) };
+  /* One figure per Logistics tab — LRs to attach, calls due on the road,
+     messages to send — so each tab's badge is its own work and the sidebar
+     badge is their sum. */
+  return { pendingLr: lrs.map((r) => r.id), trackLr: calls.map((r) => r.id), lrMessages: msgs.map((r) => r.id), requested: req.map((r) => r.id), pendingExpenses: exp.map((r) => r.id) };
 }
 
-export async function erpNavCounts(ctx: ErpContext): Promise<Record<string, number>> {
+/**
+ * The work waiting on each list, by module key: the sidebar badge of a screen
+ * is the sum over its tabs, and each tab draws its own. Asked once per request
+ * — the layout and the page share the answer.
+ */
+export const erpNavCounts = cache(navCounts);
+
+async function navCounts(ctx: ErpContext): Promise<Record<string, number>> {
   const out: Record<string, number> = {};
   const jobs: Promise<void>[] = [];
   if (ctx.screens.has("requisitions") || ctx.screens.has("purchaseOrders"))
@@ -110,7 +133,11 @@ export async function erpNavCounts(ctx: ErpContext): Promise<Record<string, numb
   if (["pendingLr", "requests", "expenses"].some((k) => ctx.screens.has(k)))
     jobs.push(
       logisticsCounts().then((c) => {
-        if (ctx.screens.has("pendingLr")) out.pendingLr = c.pendingLr.length;
+        if (ctx.screens.has("pendingLr")) {
+          out.pendingLr = c.pendingLr.length;
+          out.trackLr = c.trackLr.length;
+          out.lrMessages = c.lrMessages.length;
+        }
         if (ctx.screens.has("requests")) out.requests = c.requested.length;
         if (ctx.screens.has("expenses")) out.expenses = c.pendingExpenses.length;
       }),
@@ -125,6 +152,47 @@ export async function erpNavCounts(ctx: ErpContext): Promise<Record<string, numb
       (db.execute(sql`select count(distinct l.lot_code)::int as n from erp_sfg_lines l left join erp_sfg_qc q on q.lot_code = l.lot_code where coalesce(q.status, 'Pending') = 'Pending'`) as unknown as Promise<{ n: number }[]>).then(
         (r) => void (out.sfgBatches = Number(r[0]?.n ?? 0)),
       ),
+    );
+  /* Inventory accuracy: counts due, red flags still open, and — for whoever approves them — adjustments waiting. */
+  if (["countTasks", "stockFlags", "stockAdjustments"].some((k) => ctx.screens.has(k)))
+    jobs.push(
+      (db.execute(sql`
+        select (select count(*) from erp_stock_counts where status = 'open' and due_date <= (now() at time zone ${APP_TIMEZONE})::date)::int as due,
+               (select count(*) from erp_stock_counts where recount_of_id is null and status in ('flagged', 'investigating'))::int as flags,
+               (select count(*) from erp_stock_adjustments where status = 'pending')::int as adj
+      `) as unknown as Promise<{ due: number; flags: number; adj: number }[]>).then((r) => {
+        out.countTasks = Number(r[0]?.due ?? 0);
+        out.stockFlags = Number(r[0]?.flags ?? 0);
+        if (ctx.powers.has("stockControl")) out.stockAdjustments = Number(r[0]?.adj ?? 0);
+      }),
+    );
+  /* Empty drums: drums whose owner nobody has recorded, corrections waiting for an approver, and receipts not yet matched. */
+  if (["drumReview", "drumAdjustments", "cashReceipts"].some((k) => ctx.screens.has(k)))
+    jobs.push(
+      (db.execute(sql`
+        select (select count(*) from erp_empty_drums where status = 'review')::int as review,
+               (select count(*) from erp_drum_adjustments where status = 'pending')::int as adj,
+               (select count(*) from erp_cash_receipts r where r.status = 'active'
+                   and r.amount_paise > coalesce((select sum(a.amount_paise) from erp_scrap_allocations a where a.receipt_id = r.id and a.voided_at is null), 0))::int as unmatched
+      `) as unknown as Promise<{ review: number; adj: number; unmatched: number }[]>).then((r) => {
+        if (ctx.screens.has("drumReview")) out.drumReview = Number(r[0]?.review ?? 0);
+        if (ctx.screens.has("drumAdjustments") && ctx.powers.has("scrapApprove")) out.drumAdjustments = Number(r[0]?.adj ?? 0);
+        if (ctx.screens.has("cashReceipts") && ctx.powers.has("scrapAccounts")) out.cashReceipts = Number(r[0]?.unmatched ?? 0);
+      }),
+    );
+  /* Material returns: returns waiting for an approver, outwards prepared and not confirmed, and material waiting in quarantine for QC. */
+  if (["vendorReturns", "returnOutwards", "returnQc"].some((k) => ctx.screens.has(k)))
+    jobs.push(
+      (db.execute(sql`
+        select (select count(*) from erp_purchase_returns where status = 'pending')::int as approve,
+               (select count(*) from erp_return_outwards where status = 'draft')::int as outward,
+               (select count(*) from erp_customer_returns r where r.status = 'open' and r.received_qty is not null and r.received_qty > coalesce((
+                  select sum(d.quantity) from erp_return_dispositions d where d.customer_return_id = r.id and d.status = 'active'), 0))::int as qc
+      `) as unknown as Promise<{ approve: number; outward: number; qc: number }[]>).then((r) => {
+        if (ctx.screens.has("vendorReturns") && (ctx.administrator || ctx.powers.has("returnApprove"))) out.vendorReturns = Number(r[0]?.approve ?? 0);
+        if (ctx.screens.has("returnOutwards")) out.returnOutwards = Number(r[0]?.outward ?? 0);
+        if (ctx.screens.has("returnQc") && (ctx.administrator || ctx.powers.has("returnQc"))) out.returnQc = Number(r[0]?.qc ?? 0);
+      }),
     );
   await Promise.all(jobs);
   return out;

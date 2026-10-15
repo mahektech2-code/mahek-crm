@@ -4,6 +4,7 @@
  * no test framework to install.
  */
 import { execFileSync } from "node:child_process";
+import { filesForShard, shardFromArgv } from "./integration-shards.mjs";
 
 process.env.NODE_ENV = "test";
 
@@ -52,10 +53,25 @@ const files = [
   "src/lib/erp/erp-foundation.test.ts",
   "src/lib/erp/erp-designations.test.ts",
   "src/lib/erp/erp-purchase.test.ts",
+  // Inventory Accuracy Control: a requirement waits for a blind count; a red
+  // flag is recounted by somebody else; stock moves only through an approved
+  // adjustment; missing records and the daily cycle count.
+  "src/lib/erp/erp-stock-check.test.ts",
+  // Empty drums, scrap sale and vendor-returnable drums: the PRD's acceptance
+  // tests — FIFO allocation, strict separation, receivables matched from
+  // Petty Cash/Bank, corrections approved by somebody else.
+  "src/lib/erp/erp-scrap.test.ts",
+  "src/lib/erp/erp-returns.test.ts",
   "src/lib/erp/erp-material-duties.test.ts",
+  // Can photos and look-alike can groups: grouping by name never moves a can
+  // somebody placed, photos are capped and taken off without deleting.
+  "src/lib/erp/erp-can-groups.test.ts",
   // Purchase and production, department by department.
   "src/lib/erp/erp-departments.test.ts",
   "src/lib/erp/erp-production.test.ts",
+  // The factory floor app: one key posts once, stock refuses at the step,
+  // full packing batches only, loading checked but never dispatched.
+  "src/lib/factory/factory.test.ts",
   // SFG QC → refill → box ids → the dispatch desk's scan, override and
   // Do Verified → tracing a box, a lot and an order both ways.
   "src/lib/erp/erp-traceability.test.ts",
@@ -92,11 +108,15 @@ const files = [
   // A call's own reminder is folded onto the call in the All view.
   "src/lib/timeline-fold.test.ts",
   "src/lib/feedback.test.ts",
+  // The bell, one app at a time: the SQL and the browser agree on the app.
+  "src/lib/notification-apps.db.test.ts",
   // A field document tagged to named salesmen: who gets it, who loses it, and
   // the file past a megabyte that the old server-action upload refused.
   "src/lib/document-tagging.test.ts",
   "src/lib/activity-location.test.ts",
   "src/lib/salesman-day.test.ts",
+  // Activity history: MBOS visits are the record, the old app's sheet its past.
+  "src/lib/activity-history.test.ts",
   // The server's end-of-day punch-out reminder: found, claimed, sent once.
   "src/lib/punch-out-reminders.test.ts",
   "src/lib/positions-endpoint.test.ts",
@@ -122,6 +142,7 @@ const files = [
   "src/lib/change-password.test.ts",
   "src/lib/otp.test.ts",
   "src/lib/either-identifier.test.ts",
+  "src/lib/access-candidates.test.ts",
   "src/lib/storage-fallback.test.ts",
   "src/lib/relationship-handover.test.ts",
   "src/lib/seat-mirrors.test.ts",
@@ -148,6 +169,8 @@ const files = [
   // the atomic link, assignment and who sees an unowned lead, and the
   // migration that keeps the desk from reaching every existing CRM user.
   "src/lib/lead-from-enquiry.test.ts",
+  // Change owner: everybody listed, Unassigned a real choice, the desk rule unchanged.
+  "src/lib/lead-owner-choices.test.ts",
   // The telecaller's calling desk itself: three calls, Ready for Prospect, and
   // that asking for a Prospect is not being one.
   "src/lib/lead-calling-desk.test.ts",
@@ -193,6 +216,11 @@ const files = [
   // by the server, a mixed batch reported by name, and a bulk loss reversed by
   // the existing reopen with its history intact.
   "src/lib/lead-bulk-lost.test.ts",
+  // All Leads -> Change stage -> On hold: the answers a park demands, per-lead owners, ended leads refused.
+  "src/lib/lead-bulk-hold.test.ts",
+  // A lead still at the old new/contacted stage moves to Suspect once it has a
+  // funnel sales type; every other off-ladder move is still refused.
+  "src/lib/lead-move-to-suspect.test.ts",
   // The Telecaller-owned Qualification workflow, Prospect to Sample/Trial.
   "src/lib/telecaller-qualification.test.ts",
   // Intake: what they want, in words or from the catalogue — and never the Calling Desk Product answer.
@@ -220,6 +248,9 @@ const files = [
   // Who verifies a Prospect on each of the three workflows, kept apart: a Telecaller's lead,
   // a Sales Manager's own, and everything a salesman or a seat already routes.
   "src/lib/telecaller-verifier-routing.test.ts",
+  // The third verifier: a lead a Salesman raised or holds goes to the person
+  // `leads.fieldVerifierEmail` names, by the seat the Sales Manager already has.
+  "src/lib/field-verifier-routing.test.ts",
   // A lead still at the legacy `new` / `contacted` stage converts to Prospect once the desk
   // gives it a sales type: it is relabelled as the Suspect it is, not refused as off-ladder.
   "src/lib/convert-legacy-stage.test.ts",
@@ -252,8 +283,27 @@ const files = [
   "src/lib/whatsapp-read-write.test.ts",
 ];
 
+/*
+ * `--shard i/N` runs one balanced slice of the list above — see
+ * integration-shards.mjs. Each shard is its own CI job with its own database,
+ * and within it the files still run one after the other. Without the flag
+ * every file runs, exactly as before.
+ */
+let shard = null;
+try {
+  shard = shardFromArgv(process.argv.slice(2));
+} catch (e) {
+  console.error(`${e.message}
+Usage: run-integration.mjs [--shard i/N]`);
+  process.exit(2);
+}
+const selected = shard ? filesForShard(files, shard) : files;
+if (shard) {
+  console.log(`Shard ${shard.index}/${shard.count}: ${selected.length} of ${files.length} suites.`);
+}
+
 let failed = 0;
-for (const file of files) {
+for (const file of selected) {
   try {
     execFileSync("npx", ["tsx", "--conditions=react-server", "--test", file], {
       stdio: "inherit",
@@ -266,6 +316,6 @@ for (const file of files) {
 }
 
 if (failed) {
-  console.error(`${failed} of ${files.length} integration suites failed.`);
+  console.error(`${failed} of ${selected.length} integration suites failed.`);
   process.exit(1);
 }

@@ -1,0 +1,88 @@
+**Material returns** handles goods going back to a vendor and goods coming back from a customer. The money and the material are kept as separate documents: a **debit note** or **credit note** changes the account and never the stock, and stock moves only when material physically leaves or is decided on by QC.
+
+<Flow caption="Vendor side — goods back to the supplier" chart={`
+flowchart LR
+  L[Original GRN lot] --> PR[Purchase return]
+  PR --> A{Approval}
+  A -- above the limit --> OW[Owner approval]
+  OW --> DN
+  A -- within the limit --> DN[Debit note · no stock change]
+  DN --> GO[Goods return outward]
+  GO --> C[Confirm dispatch · stock reduced]
+`} />
+
+<Flow caption="Customer side — goods back from the party" chart={`
+flowchart LR
+  B[Sales invoice and order line] --> CR[Customer return]
+  CR --> IN[Return inward]
+  IN --> Q[Quarantine · not saleable]
+  Q --> CN[Credit note · no stock change]
+  Q --> QC{QC decision}
+  QC -- reusable --> FG[Back into the same FG lot]
+  QC -- rework --> RW[Rework through the SFG process]
+  QC -- unusable, sellable --> SC[Chemical scrap]
+  QC -- unusable --> WD[Waste disposal]
+`} />
+
+## Returning material to a vendor
+
+<Steps>
+<Step title="Raise the purchase return">
+**Vendor returns → Purchase returns → Raise purchase return.** Pick the GRN lot the material came on. The vendor, GRN, purchase invoice, material, batch, original quantity and what is still returnable fill themselves in. Enter the quantity to return, the reason and your remarks, and attach a photo.
+</Step>
+<Step title="Approval issues the debit note">
+Somebody other than the person who raised it presses **Approve**. If the return is worth more than the owner-approval limit, the owner approves it next. The last approval issues the **debit note**. It reduces what is owed to the vendor and moves no stock.
+</Step>
+<Step title="Prepare the goods return outward">
+Choose the godown the goods leave from. Add the transporter, vehicle, LR, packing and a document if you have them. Stock is still unchanged at this point.
+</Step>
+<Step title="Confirm the dispatch">
+**Confirm dispatch** takes the quantity out of that lot's stock. It is refused if the godown no longer holds enough. Stock never goes negative.
+</Step>
+</Steps>
+
+<Wireframe url="/erp/vendor-returns" nav={["Dashboard", "#Material returns", "Vendor returns", "Customer returns"]} active="Vendor returns" caption="Vendor returns → Purchase returns">
+  <WfBar>
+    <WfTitle sub="Against the original GRN lot.">Vendor returns</WfTitle>
+    <WfSpacer />
+    <WfButton primary>Raise purchase return</WfButton>
+  </WfBar>
+  <WfTabs items={["Purchase returns", "Debit notes", "Return outward"]} active="Purchase returns" />
+  <WfTable
+    highlight={0}
+    columns={["Return", "Stage", "Vendor", "Material", "Batch", "Quantity"]}
+    rows={[
+      ["PRN-4", <span key="a">Awaiting approval <Hotspot n={1} /></span>, "Supplier A", "Material A", "SUPA-TOL-31", "200 Kg"],
+      ["PRN-3", "Debit note issued · to dispatch", "Supplier B", "Material B", "SUPB-XYL-12", "50 Litre"],
+    ]}
+  />
+</Wireframe>
+
+<Hotspots items={[
+  "The stage says what the return is waiting for: approval, the owner, the outward, or confirmation of the dispatch.",
+]} />
+
+## Receiving material back from a customer
+
+<Steps>
+<Step title="Record the return">
+**Customer returns → Returns → Record customer return.** Pick the dispatched order line and lot the goods went out on. The customer, invoice, outward, product and batch fill themselves in. Enter whole cans, or whole boxes on a boxed line, along with the reason, the customer's remarks and the transport details.
+</Step>
+<Step title="Receive it into quarantine">
+When the goods arrive, press **Receive into quarantine** and choose the godown holding them. They now sit in **Customer Return / Quarantine**. That is not saleable stock, and dispatch cannot pick it.
+</Step>
+<Step title="Approve the credit note">
+After approval (and the owner's approval above the limit), the credit note goes to Accounts. Accounts issue it against the bill. It moves no stock.
+</Step>
+<Step title="QC decides">
+On **Quarantine & QC**, record what happens to the material. You can split a quantity across more than one decision:
+- **Reusable as is** puts it back into the same FG item and lot.
+- **Rework** opens a rework order. When it is completed, the recovered litres become a new SFG lot (`RW…`), and SFG QC approves that lot before it can be filled.
+- **Chemical scrap** records it, in kg, as sellable scrap.
+- **Waste disposal** sends it to the waste list. Record the date, method, responsible person, agency, cost and certificate there.
+</Step>
+</Steps>
+
+<Callout kind="warn">
+Nothing is deleted. A mistaken approval, dispatch or QC decision is cancelled or reversed with a reason, and the original stays on the record.
+</Callout>

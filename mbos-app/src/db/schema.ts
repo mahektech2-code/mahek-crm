@@ -2112,6 +2112,36 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE tasks ADD COLUMN context TEXT;`,
   ],
 
+  /*
+   * AN EXPENSE IS LOGGED, NOT SENT, and an allowance is the office's.
+   *
+   * There is no closing a day any more: every expense he logs goes straight
+   * to his manager, and the meal and kilometre allowances are worked out at
+   * the office from his punches and trips. Those allowance lines come DOWN on
+   * the `expenseBook` channel into this same table, flagged by `allowance`,
+   * so the screen can list them apart from what he logged and never offer to
+   * "fix and resend" something he never sent. `decisionNote` is what his
+   * manager said on any decision — a part approval carries a reason as much as
+   * a refusal does, and `rejectionReason` only ever held one of them.
+   */
+  [
+    `ALTER TABLE expenses ADD COLUMN allowance INTEGER NOT NULL DEFAULT 0;`,
+    `ALTER TABLE expenses ADD COLUMN decisionNote TEXT;`,
+  ],
+
+  /*
+   * A LIBRARY OF HUNDREDS IS SEARCHED, NOT SCROLLED.
+   *
+   * `description` is what the office wrote about a document, and the search
+   * reads it; `publishedAt` is when it went out, which is what "New" means.
+   * `kind` has been a column since v1 and was never filled — the pull now sends
+   * the file's media type in it, which is what tells the viewer to draw pages.
+   */
+  [
+    `ALTER TABLE documents ADD COLUMN description TEXT;`,
+    `ALTER TABLE documents ADD COLUMN publishedAt INTEGER;`,
+  ],
+
 ];
 
 /**

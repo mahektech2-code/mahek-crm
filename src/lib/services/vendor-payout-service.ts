@@ -214,6 +214,21 @@ export async function syncPurchasePayouts(): Promise<{ created: number; updated:
     ),
   );
 
+  // A debit note the ERP issued against a purchase return is what the vendor
+  // owes back, so it comes off that PR's payout while the payout is unpaid.
+  // Cancelling the debit note gives it back on the next sync.
+  const debits = new Map(
+    (
+      await db.execute<{ key: string; total: string }>(sql`
+        select supplier_id || '|' || pr_number as key, sum(total_paise) as total
+          from erp_debit_notes where status = 'issued' group by 1`)
+    ).map((r) => [r.key, Number(r.total)]),
+  );
+  for (const g of groups) {
+    const debit = debits.get(g.key) ?? 0;
+    if (debit > 0) g.amountPaise = Math.max(0, g.amountPaise - debit);
+  }
+
   const existing = await db
     .select()
     .from(vendorPayouts)

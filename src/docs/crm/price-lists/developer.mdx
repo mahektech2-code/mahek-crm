@@ -1,0 +1,136 @@
+Price lists are one feature mounted in four apps — the CRM, the Sales Dashboard, Accounts and the Founder Dashboard — through shared components in `src/components/pricing/` and one service, `price-list-service.ts`. The CRM mount is **read-only for everybody**: `priceListDoorCanManage(user, "crm")` answers no before it asks any capability. Which list applies to a shop is the pure `resolvePriceList`; the money arithmetic is `price-math.ts`; every write is in `lib/actions/price-lists.ts` behind `requirePriceDesk()` — the capability **and** the desk module it was worn at.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route guard | `src/app/crm/price-lists/layout.tsx` | `requireModule(user.id, "crm.price-lists")` |
+| CRM pages | `src/app/crm/price-lists/page.tsx`, `[id]/page.tsx`, `[id]/print/page.tsx`, `coverage/`, `variance/`, `requests/`, `documents/`, `documents/[id]/` | Thin servers handing data to the shared screens with `app="crm"`, `basePath="/crm/price-lists"` |
+| Shared screens | `src/components/pricing/*` | `price-lists-screen.tsx`, `price-list-detail.tsx`, `coverage-panel.tsx`, `variance-panel.tsx`, `requests-panel.tsx`, `documents-panel.tsx`, `customer-prices-panel.tsx`, `resolution-chain.tsx`, `print-sheet.tsx`, `editor/`, `modals/` |
+| Door | `src/lib/price-list-door.ts` | `priceListDoorCanManage` — `false` on the CRM, always |
+| Resolution (pure) | `src/lib/engines/price-resolution.ts` | `SCOPE_SPECIFICITY`, `placeKey`, `resolvePriceList` |
+| Arithmetic (pure) | `src/lib/engines/price-math.ts` | `inclFromEx`, `exFromIncl`, `roundToRupee`, `deriveRate`, `pickSlab`, `discountAuthority`, `priceLine`, `rateChange` |
+| Reads | `src/lib/services/price-list-service.ts` | `listPriceLists`, `priceListDetail`, `resolveForCustomer`, `customerPricing`, `ratesForCustomer`, `coverageReport`, `varianceReport`, `listRequests`, `pricingCounts` |
+| Writes | `src/lib/actions/price-lists.ts` | `requirePriceDesk`; create / update / publish / withdraw / version / derive; rates and scopes; documents; `requestSpecialPrice`, `decidePriceRequest`, `withdrawPriceRequest`, `assignCustomerList` |
+| Document reading | `src/lib/price-list-parse.ts`, `price-list-extract.ts`, `price-list-match.ts`, `services/price-list-parse-service.ts` | PDF/photo → rows → SKUs |
+| Order form | `src/lib/services/interaction-service.ts` | `ratesForCustomer` for the billing customer, `discountAuthority` on every line |
+
+## Resolving a shop's list
+
+<Flow caption="customerPricing / resolveForCustomer" chart={`
+sequenceDiagram
+  autonumber
+  participant S as price-list-service
+  participant DB as Postgres
+  participant E as resolvePriceList (pure)
+  S->>DB: customerGeo(customerId) — salesman, beat, area, city, district,<br/>state (resolved place and folded raw text), type, freight term
+  S->>DB: published lists in force today, their scope rows
+  S->>E: (geo, scopes, lists, today)
+  loop SCOPE_SPECIFICITY, narrowest first
+    E->>E: rows of this kind matching the shop, in dates, freight term agreeing
+    E->>E: none → push a "No list is set for …" step
+  end
+  E->>E: tie-break: exact freight, priority, newest effective_from
+  E-->>S: winner + the chain of reasons
+`} />
+
+<Code file="src/lib/engines/price-resolution.ts" symbol="SCOPE_SPECIFICITY" />
+
+<Code file="src/lib/engines/price-resolution.ts" symbol="resolvePriceList" collapsed />
+
+<Code file="src/lib/engines/price-resolution.ts" symbol="placeKey" />
+
+## Money
+
+<Code file="src/lib/engines/price-math.ts" symbol="inclFromEx" />
+
+<Code file="src/lib/engines/price-math.ts" symbol="exFromIncl" />
+
+<Code file="src/lib/engines/price-math.ts" symbol="priceLine" />
+
+<Code file="src/lib/engines/price-math.ts" symbol="discountAuthority" />
+
+The level passed to `discountAuthority` is the person's level **in the CRM** (`levelInApp(user, "crm")`), not the widest held anywhere.
+
+## Who may write
+
+<Code file="src/lib/price-list-door.ts" symbol="priceListDoorCanManage" />
+
+<Code file="src/lib/actions/price-lists.ts" symbol="requirePriceDesk" />
+
+| Action | Guard |
+|---|---|
+| Every list, rate, scope, document and assignment write | `requirePriceDesk()` |
+| `requestSpecialPrice` | `pricelist.read` + `assertCustomerInScope` |
+| `decidePriceRequest` | `requirePriceDesk()` |
+| `withdrawPriceRequest` | The requester, while pending |
+
+<CapabilityGrid names={["pricelist.read", "pricelist.manage"]} />
+
+## The tables
+
+<DbTable name="price_lists" only={["name", "ref_no", "version", "supersedes_id", "effective_from", "effective_to", "validity_days", "gst_bp", "freight_term", "parent_list_id", "derivation", "status", "published_at", "withdrawn_at", "withdraw_reason"]} note={{
+  version: "A published list is never edited; a new version supersedes it.",
+  gst_bp: "Basis points; pricing.gstBp where a document states none.",
+  derivation: "per_litre_paise, percent_bp or per_can_paise against parent_list_id.",
+  status: "draft, published, superseded or withdrawn (text).",
+}} />
+
+<DbTable name="price_list_rates" only={["price_list_id", "product_id", "rate_ex_gst_paise", "rate_incl_gst_paise", "min_cans", "max_cans", "offered", "match_status"]} note={{
+  rate_ex_gst_paise: "Stored ex-GST, what the sheet bills.",
+  min_cans: "Slab lower bound; one row per list, product and slab (price_list_rates_slab_key).",
+}} />
+
+<DbTable name="price_list_scopes" note={{
+  scope_kind: "customer, salesman, beat, area, city, district, state, customer_type, everybody.",
+  parent_key: "What it was picked under (a city under its state). Empty matches the place anywhere.",
+  freight_term_match: "any, to_pay or paid.",
+}} />
+
+<DbTable name="price_requests" note={{
+  requested_rate_ex_gst_paise: "Typed inclusive by the telecaller, stored ex-GST.",
+  current_list_id: "The list the shop was on when asked.",
+  resulting_list_id: "The shop's own agreed-prices list, on approval.",
+}} />
+
+## Access
+
+- **Module:** <ModuleRef k="crm.price-lists" />. Reading is every CRM user's; no CRM screen draws a write control.
+- **The desk modules** that writes check are `accounts.price-lists` and `founder.price-lists`.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/engines/price-lists.test.ts` | Narrowest-wins, tie-breaks, freight terms, places by parent, GST both ways, slabs, discount authority |
+| `npm run test` | `src/lib/price-desk-grant.test.ts` | Which hats carry `pricelist.manage`; the CRM door is never a desk |
+| `npm run test` | `src/lib/price-list-parse.test.ts` | Reading Mahek's PDF layout into rows |
+| `npm run test:integration` | `src/lib/price-lists.integration.test.ts` | Publishing, superseding, special price requests, order-line pricing |
+
+## Changing it safely
+
+<Steps>
+<Step title="Resolution rules go in the engine">
+`resolvePriceList` is compiled by the handset too. A rule in a service would make the salesman and the office disagree about one shop.
+</Step>
+<Step title="Never edit a published list's prices">
+Add a version. An order taken in August must stay explainable in December.
+</Step>
+<Step title="Every write behind requirePriceDesk">
+Not just `pricelist.manage` — the desk module it was worn at as well.
+</Step>
+<Step title="Keep the CRM door closed">
+`priceListDoorCanManage` returns `false` for `"crm"` before asking anything. Do not let a second hat draw an editor on a telecaller's screen.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| Resolution checks status and start/end dates but not `validity_days`; an expired list still prices shops | `engines/price-resolution.ts` `resolvePriceList` |
+| Publishing a new version supersedes the old one immediately, even when the new one starts later | `actions/price-lists.ts` `publishPriceList` |
+| A customer-named list wins whole resolution; products not on it get no rate | `engines/price-resolution.ts` |
+| Above-ceiling discounts are refused; there is no manager-authorise flow despite the message | `engines/price-math.ts` `discountAuthority` |
+| Variance resolves past months against today's lists and is not scoped to the reader's book | `price-list-service.ts` `varianceReport` |
+| Slabbed rates are not used on the order form or in variance | `price-list-service.ts` `ratesForCustomer`, `varianceReport` |

@@ -87,6 +87,10 @@ export async function applyPull(pull: PullPayload): Promise<number> {
        request it decides. Insert-only: see `fillOwnHistory`. */
     await c('ownHistory', () => fillOwnHistory(pull as FullPull));
     await c('approvals', () => applyApprovals(pull.approvals));
+    /* AFTER the history fill and the approvals: it is the office's current
+       word on every expense and allowance in the window, so it lands last and
+       corrects anything the two above wrote from an older reading. */
+    await c('expenseBook', () => applyExpenseBook(pull.expenseBook));
     /* AFTER the approvals: an order's own row is the office's word on it, and
        a manager approval nobody can decide must not read it back to pending. */
     await c('myOrders', () => applyMyOrders(pull.myOrders));
@@ -1393,8 +1397,27 @@ async function applyApprovals(rows: unknown[] | undefined): Promise<number> {
       const status = a.state === 'approved' ? 'approved' : a.state === 'rejected' ? 'rejected' : 'pending_approval';
       await run('UPDATE orders SET status = ?, approvalId = ? WHERE id = ?', [status, a.id, a.subjectId]);
     } else if (a.subjectType === 'expense') {
-      const state = a.state === 'approved' ? 'Approved' : a.state === 'rejected' ? 'Rejected' : 'Pending';
-      await run('UPDATE expenses SET state = ?, approvedAmountPaise = ? WHERE id = ?', [state, a.approvedAmountPaise ?? null, a.subjectId]);
+      /* A PART approval is a yes for less, so it is Approved with the amount
+         beside it. It used to fall through to Pending, so a claim his manager
+         had already allowed ₹800 of sat on his phone as still waiting. And the
+         manager's words travel with every decision: a refusal printed "your
+         manager did not give a reason" over a reason sitting in this row. */
+      const state =
+        a.state === 'approved' || a.state === 'partially_approved'
+          ? 'Approved'
+          : a.state === 'rejected'
+            ? 'Rejected'
+            : 'Pending';
+      await run(
+        'UPDATE expenses SET state = ?, approvedAmountPaise = ?, rejectionReason = ?, decisionNote = ? WHERE id = ?',
+        [
+          state,
+          a.state === 'partially_approved' ? a.approvedAmountPaise ?? null : null,
+          a.state === 'rejected' ? a.decisionNote ?? null : null,
+          a.decisionNote ?? null,
+          a.subjectId,
+        ],
+      );
     } else if (a.subjectType === 'leave') {
       const state = a.state === 'approved' ? 'Approved' : a.state === 'rejected' ? 'Rejected' : 'Pending';
       await run('UPDATE leave_requests SET state = ? WHERE id = ?', [state, a.subjectId]);
@@ -1607,6 +1630,95 @@ async function applyDeletionChunk(entity: string, ids: string[]): Promise<number
 }
 
 /* ------------------------------------------------------- his own history */
+
+/**
+ * HIS EXPENSES AND ALLOWANCES, as the office now holds them.
+ *
+ * The office sends the whole window every pull (`expenseBookFor`), because
+ * what changes here is as often a decision on an approval, or an allowance
+ * re-worked from a trip the trail has only now measured, as the row itself.
+ *
+ * Every row is upserted — never over one he has changed and not yet sent
+ * (`noPending`), the rule every owned table follows. Then any ALLOWANCE in the
+ * window the office no longer names is dropped: a trip re-moded to walking
+ * pays nothing, and the office keeps no ₹0 line, so a missing allowance is the
+ * office saying it is gone. An expense he LOGGED is never dropped here — it is
+ * his, and one the office has lost is something he must still be able to see.
+ *
+ * Absent is an older server, and changes nothing.
+ */
+const EXPENSE_BOOK_LIMIT = 400;
+
+async function applyExpenseBook(book: { from: string; rows: unknown[] } | undefined): Promise<number> {
+  if (!book || !Array.isArray(book.rows) || typeof book.from !== 'string') return 0;
+  const device = await deviceId();
+  const seen: string[] = [];
+  const n = await eachRow('expenses', book.rows, async (raw) => {
+    const e = raw as {
+      id: string; userId: string; spentOn: string; category: string; kind?: string | null;
+      amountPaise: number; remarks?: string | null; billPhotoId?: string | null;
+      expenseDayId?: string | null; allowance?: number | boolean; state: string;
+      approvedAmountPaise?: number | null; decisionNote?: string | null;
+      clientCreatedAt?: number | null; serverCreatedAt?: number | null;
+    };
+    seen.push(e.id);
+    const allowance = e.allowance === true || e.allowance === 1 ? 1 : 0;
+    const state = allowance
+      ? 'Approved'
+      : e.state === 'approved' || e.state === 'partially_approved'
+        ? 'Approved'
+        : e.state === 'rejected'
+          ? 'Rejected'
+          : 'Pending';
+    await run(
+      `INSERT INTO expenses (id, userId, spentOn, category, kind, amountPaise, remarks, billPhotoId,
+                             expenseDayId, allowance, state, approvedAmountPaise, rejectionReason,
+                             decisionNote, clientCreatedAt, serverCreatedAt, deviceId, syncState)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced')
+       ON CONFLICT(id) DO UPDATE SET
+         spentOn = excluded.spentOn, category = excluded.category, kind = excluded.kind,
+         amountPaise = excluded.amountPaise, remarks = excluded.remarks,
+         billPhotoId = COALESCE(expenses.billPhotoId, excluded.billPhotoId),
+         allowance = excluded.allowance, state = excluded.state,
+         approvedAmountPaise = excluded.approvedAmountPaise,
+         rejectionReason = excluded.rejectionReason, decisionNote = excluded.decisionNote,
+         serverCreatedAt = excluded.serverCreatedAt, syncState = 'synced'
+       WHERE ${noPending('expenses')}`,
+      [
+        e.id,
+        e.userId,
+        e.spentOn,
+        e.category,
+        e.kind ?? e.category,
+        e.amountPaise,
+        e.remarks ?? null,
+        e.billPhotoId ?? null,
+        e.expenseDayId ?? null,
+        allowance,
+        state,
+        e.state === 'partially_approved' ? e.approvedAmountPaise ?? null : null,
+        e.state === 'rejected' ? e.decisionNote ?? null : null,
+        e.decisionNote ?? null,
+        e.clientCreatedAt ?? e.serverCreatedAt ?? 0,
+        e.serverCreatedAt ?? null,
+        device,
+      ],
+    );
+  });
+
+  /* A FULL page may have left allowances out for room rather than because
+     they are gone, so nothing is dropped from one — the next pull, with fewer
+     rows, says it properly. */
+  if (book.rows.length < EXPENSE_BOOK_LIMIT) {
+    await run(
+      `DELETE FROM expenses
+        WHERE allowance = 1 AND spentOn >= ?
+          ${seen.length ? `AND id NOT IN (${seen.map(() => '?').join(',')})` : ''}`,
+      [book.from, ...seen],
+    );
+  }
+  return n;
+}
 
 /**
  * What the bootstrap adds beyond `PullPayload`: his own requests, for a phone

@@ -1,0 +1,259 @@
+The Call Log answers one question every morning: **of everybody in this book, who should be rung today, and in what order?** It is not a contact schedule. It chases **orders** — each customer is called from their own buying pattern, and everything else (reminders, leads, check-ins, money) is fitted around that.
+
+This tab explains every rule that decides the list, why it is that rule, and the setting that changes it. Every value quoted is the one your CRM is using right now; amber means a manager has changed it from the shipped default.
+
+## How a customer gets onto the list
+
+<Flow caption="From the whole book to today's list" chart={`
+flowchart TD
+  A["Every customer in the telecaller's book<br/>(not closed)"] --> B{"Any reason<br/>to call today?"}
+  B -- "No" --> X["Not listed<br/>(their day has not come)"]
+  B -- "Yes" --> U{"Unreachable?"}
+  U -- "Yes" --> L
+  U -- "No" --> W["Remove what a window silences:<br/>quiet after an order · held by a promise ·<br/>on the lead funnel · told us 'no' recently"]
+  W --> S{"Held back as a whole?<br/>do not contact · skipped · called today ·<br/>open order on the sheet · retry waiting · WhatsApp cooldown"}
+  S -- "Yes" --> H["Held-back strip,<br/>with the reason"]
+  W -- "nothing left" --> H
+  S -- "No" --> R["Rank by the strongest reason,<br/>then by what the call is worth"]
+  R --> L["Today's Call Log<br/>(capped, settled for the day)"]
+`} />
+
+Three things are deliberate about this shape:
+
+1. **Nobody vanishes silently.** A customer the rules keep off the list goes into the held-back strip with a sentence saying why. A telecaller must always be able to find out why somebody they expected is missing.
+2. **Windows silence a kind of call, not the customer.** A customer who ordered yesterday still appears if a reminder or a check-in is due — only the order chasing is removed.
+3. **The list is settled once a day.** It is built on the first read of the morning and then kept, so the order does not reshuffle under somebody halfway down it.
+
+## The reasons, and how they are ranked
+
+Every customer on the list has at least one **reason**. The strongest reason decides where they sit. The ranking is a configurable weight per reason:
+
+<SettingMap k="queue.tierWeights" keyHeading="Reason" valueHeading="Weight now" labels={{
+  paymentOverdue: "Payment overdue",
+  reminderOverdue: "Reminder overdue",
+  reminderDueToday: "Reminder due today",
+  orderOverdueFullCycle: "Order overdue by a full cycle",
+  orderDue: "Order due",
+  routineCall: "Stock check",
+  prospect: "Never ordered (lead)",
+  checkInOverdue: "Check-in overdue",
+  orderLongOverdue: "Stopped ordering",
+  checkInDue: "Check-in due",
+  unreachable: "Unreachable",
+  noAnswerRetry: "No answer — try again",
+  orderStatus: "Order in progress",
+}} />
+
+<Callout kind="why">
+**Money and promises first, then orders that should already have happened, then routine work.** A callback the customer asked for is a promise; not making it is worse than any order missed. "Stopped ordering" deliberately sits *below* every order that is merely due: the "why did you stop" conversation is worth having, but at one time there were more lapsed customers than active ones, and ranked higher they pushed the people about to reorder off the bottom of the list.
+</Callout>
+
+### Within the same reason: what the call is worth
+
+Two customers both "due to order" are not equal. Within a reason, the list is ordered by **what the call is worth**:
+
+- A **payment** call is worth the amount owed.
+- An **order** call is worth the customer's **typical order** — the median of their own approved orders over the last <Setting k="queue.orderValueLookbackDays" /> days. Never a figure from the catalogue: the product master has no prices.
+- A **prediction** (order due, stock check, overdue, stopped) is discounted by **how sure we are of the customer's pattern**. Somebody who orders every 29, 30, 31 days is a safer bet than somebody who orders after 15, 45, 22 and 60.
+
+<Callout kind="note">
+A customer whose confidence has never been measured is **not** discounted. Missing information must never demote anybody.
+</Callout>
+
+After value, ties are broken by: outstanding balance, gap to target, longest since anybody spoke to them.
+
+## Calling from the customer's own buying cycle
+
+Every customer with enough history has a **buying cycle** — the typical number of days between their orders — and a **confidence** in it. The Call Log uses the cycle to decide every order-related reason.
+
+<Rule title="The stock check: before the order is due">
+For a customer with a measured cycle, the Call Log rings partway through the cycle to ask what is left on the shelf. The day is <Setting k="queue.routineCallPercent" />% of the cycle, moved by up to <Setting k="queue.routineConfidenceSwing" /> points by confidence: a very regular customer is called **later**, closer to the day they really order; an erratic one **earlier**, because the honest answer to a guess is a wider net.
+
+Customers whose cycle is <Setting k="queue.routineMinCycleDays" /> days or shorter get **no stock check** — somebody buying every week already knows their shelf. Their order is chased on its due date like everyone else's.
+</Rule>
+
+| A 30-day customer | Confidence unknown or 50% | Very regular (100%) | Erratic (0%) |
+|---|---|---|---|
+| Stock check from day | 21 | 24 | 18 |
+
+*Worked with the shipped settings (70%, swing 10).*
+
+<Rule title="Due, overdue, and stopped">
+- **Order due** — the day their cycle says they should order, and until they have missed a whole cycle.
+- **Order overdue by a full cycle** — at least one whole cycle missed.
+- **Stopped ordering** — they have gone <Setting k="inactive.cycleMultiplier" />× their own cycle without an order. The same multiple marks the customer *Inactive* on their record, so the Call Log and the customer list cannot disagree about who has lapsed.
+</Rule>
+
+One customer with a 30-day cycle, across one cycle, with the shipped settings:
+
+| Days since their last order | What the Call Log does |
+|---|---|
+| 1 – 15 | <Pill>Quiet</Pill> no order chased — they have just bought |
+| 16 – 20 | Nothing — no reason to ring yet |
+| 21 – 29 | <Pill tone="brand">Stock check</Pill> ask what is left on the shelf |
+| 30 | <Pill tone="brand">Order due today</Pill> |
+| 31 – 59 | <Pill tone="danger">Order overdue</Pill> |
+| 60 onwards | <Pill>Stopped ordering</Pill> ask why they stopped |
+
+<Rule title="Customers without a measured cycle">
+A customer needs enough orders before a cycle means anything. Until then they get a steady **check-in**: due after <Setting k="queue.checkInIntervalDays" /> days without contact, overdue at one and a half times that. A guessed cycle never earns a stock-check or due date — chasing on a guess rings a quarterly buyer every month.
+</Rule>
+
+<Rule title="Leads">
+A lead who has never ordered is called every <Setting k="queue.prospectIntervalDays" /> days, counted from the last contact (or from when they were added, if nobody has spoken to them yet). Two kinds of lead are **not** prospected: a shop we deliver to through a distributor (a *third-party customer*), and a lead the field team is working on the lead funnel.
+</Rule>
+
+## What holds a customer back
+
+Some rules remove **one kind of call** and leave the rest. Others hold the **whole customer** back for the day.
+
+### Windows: silence the order question, not the customer
+
+<Rule title="Quiet after an order">
+No order is chased within <Setting k="queue.quietDaysAfterOrder" /> days of the last one — **or the customer's own cycle, if that is shorter and measured**. Somebody who ordered days ago is serving themselves.
+
+The cap matters: a flat 15 days used to run past the due date of anybody ordering every week, so the customers ordering most often were chased last, and late. Now every customer follows one rule: quiet until their order is due, chased from the day it is.
+</Rule>
+
+<Rule title="What the customer said last time">
+After an answered call, the order question rests for a time that depends on the answer:
+
+<SettingMap k="queue.outcomeCooldownDays" keyHeading="Last answer" valueHeading="Days of quiet" unit="days" labels={{ no_order: "No order", not_interested: "Not interested", casual_talk: "Casual talk" }} />
+
+Without this, a customer past their call day returns to the top of the list every day until they order — which punishes the telecaller for working it. Only the **ask** is silenced; a reminder, a debt or a check-in still comes through.
+</Rule>
+
+<Rule title="Held by a promised callback">
+When a telecaller promises a callback and presses **Hold other calls until…**, order and check-in calls for that customer stop until the promised day. Money, reminders and "unreachable" are never held.
+</Rule>
+
+<Rule title="On the lead funnel">
+A lead the sales team is climbing the lead ladder with is not cold-called by the office and not chased for a reorder — otherwise two people chase one customer, neither knowing about the other. The lead still appears in the held-back strip with the reason.
+</Rule>
+
+### Held back for the whole day
+
+These are checked in this order, and the first one that applies is the sentence shown:
+
+| Order | Held back because | A due reminder overrides it? |
+|---|---|---|
+| 1 | **Marked do not contact** | No — a standing instruction |
+| 2 | **Skipped today**, with the reason given | No |
+| 3 | **Already called today** by anybody (setting: <Setting k="queue.excludeCalledToday" />) | No — the contact has happened |
+| 4 | **Active in the order system** — an open line on the Taken Order tab (setting: <Setting k="queue.excludeActiveInOrderSystem" />) | No — they have already ordered |
+| 5 | **Waiting before the next no-answer retry** | No |
+| 6 | **WhatsApp confirmed sent** within <Setting k="queue.whatsappCooldownDays" /> days | **Yes** |
+
+<Callout kind="why" title="Why a reminder beats the WhatsApp cooldown">
+The cooldown used to be the one rule that did not bend. A marketing message sent on Tuesday silently cancelled a call promised for Wednesday — a broken promise caused by something we chose to do. A reminder now overrides the quiet window, the "told us no" window and the WhatsApp cooldown. It does **not** override do-not-contact, a call already made today, or an open order: the first is an instruction and the others mean the contact has already happened.
+</Callout>
+
+<Callout kind="rule" title="Copied is not sent">
+Only a WhatsApp message a person **confirmed** as sent starts the cooldown. A message copied and never confirmed is a customer who may or may not have heard from us, and it is shown as exactly that.
+</Callout>
+
+## When nobody answers
+
+<Flow caption="The no-answer ladder" chart={`
+stateDiagram-v2
+  direction LR
+  [*] --> Waiting1: 1st no answer
+  Waiting1 --> Retry: after the same-day wait
+  Retry --> Waiting2: no answer again
+  Waiting2 --> Retry: after the next rung of the ladder
+  Retry --> Unreachable: limit reached
+  Unreachable --> [*]: somebody decides
+  Retry --> [*]: they answer
+`} />
+
+- The second attempt comes after <Setting k="queue.noAnswerRetryHours" /> hour(s), the same day.
+- Later attempts wait <Setting k="queue.noAnswerRetryDays" /> days — one rung per attempt, the last rung repeating.
+- After <Setting k="queue.noAnswerMaxAttempts" /> unanswered calls in a row the customer becomes **Unreachable**: one row, one reason, and a question for a person rather than a sixth ring.
+- Any answered call resets the count.
+
+## The list is settled once a day
+
+The first time a telecaller's Call Log is read on a working day, the list is **stored**. Every later read that day keeps that order and those reasons. During the day:
+
+- A customer who no longer needs a call (they ordered, somebody rang them) leaves the list and appears in the held-back strip as *Dealt with since the list was settled*.
+- A reminder falling due **is added at the top** — a promise outranks a settled list.
+- The list never grows by any other route, so somebody halfway down it is never pushed back up by a reshuffle.
+
+The Call Log shows at most <Setting k="queue.maxSizePerUser" /> customers (0 means no limit). The progress count still counts everybody who qualified.
+
+## What saving a call does
+
+Saving a call is **one transaction**: the call, any order, reminder or complaint it produced, and the customer's rolled-up figures are written together or not at all. Half-saved calls are how telecaller data goes wrong.
+
+<Flow caption="Saving a call" chart={`
+sequenceDiagram
+  autonumber
+  actor T as Telecaller
+  participant P as Call panel
+  participant S as Server
+  participant DB as Database
+  T->>P: Save log
+  P->>S: the call, outcome, order lines, next actions
+  S->>S: check the customer is in scope, validate the outcome's fields
+  S->>DB: ONE transaction — order (waiting for accounts), reminders,<br/>complaint, the call, timeline, customer's last contact / last order
+  S->>S: rebuild buying cycle, inactivity, outstanding (after an order or promise)
+  S->>S: work out when this customer comes back
+  S->>DB: store that answer on the call
+  S-->>P: saved + "Comes back to your Call Log on …"
+  P-->>T: the next-step window
+`} />
+
+<Rule title="What the telecaller is told is kept, and never rewritten">
+The sentence shown after saving — *Comes back to your Call Log on Mon 1 Sep* — is stored on the call. It is a record of what the telecaller was told on that day, not a forecast that is kept up to date. If the customer orders the next morning, the customer's real next call changes; the old sentence does not, and the difference is the record of what changed. The Call History screen shows these stored answers.
+</Rule>
+
+<Rule title="An order is the customer saying yes, not the business">
+An order taken on a call waits for **accounts to approve it**. "Did the customer order" is true at once, and stops the Call Log chasing them; "did we sell anything" is only true after approval, and is what targets, EOD value and the buying cycle count.
+</Rule>
+
+## Who sees whose list
+
+- A **telecaller** sees only their own book. They cannot widen it.
+- A **manager** sees their team (their direct reports and themselves) by default, and can switch to their own book. An **admin** sees everyone.
+- *Whose book* a customer is in is one definition used by every list in the CRM: a lead belongs to its owner; a customer to its sales account manager. A team list says whose call each row is, and says **Unassigned** in words — a call nobody owns is the one a manager most needs to see.
+
+## Every setting that shapes the Call Log
+
+<SettingsTable keys={[
+  "queue.maxSizePerUser",
+  "queue.quietDaysAfterOrder",
+  "queue.outcomeCooldownDays",
+  "queue.whatsappCooldownDays",
+  "queue.routineCallPercent",
+  "queue.routineConfidenceSwing",
+  "queue.routineMinCycleDays",
+  "queue.orderValueLookbackDays",
+  "queue.checkInIntervalDays",
+  "queue.prospectIntervalDays",
+  "queue.noAnswerRetryHours",
+  "queue.noAnswerRetryDays",
+  "queue.noAnswerMaxAttempts",
+  "queue.excludeCalledToday",
+  "queue.excludeActiveInOrderSystem",
+  "queue.includePaymentDue",
+  "queue.showOrderStatus",
+  "inactive.cycleMultiplier",
+  "buyingCycle.defaultDays",
+  "buyingCycle.minIntervals",
+  "buyingCycle.lookbackOrders",
+]} />
+
+## Where the code and the intent disagree today
+
+These were found while writing this page. They are listed so nobody is surprised by them; each is a candidate for a fix.
+
+<Callout kind="warn" title="Settings on the screen that change nothing">
+**Lead call percentage**, **lead minimum / maximum days** and **Quiet days after "no order"** (`queue.leadPercent`, `queue.leadMinDays`, `queue.leadMaxDays`, `queue.noOrderCooldownDays`) are shown on the Settings screen but no longer read by the Call Log. The "no order" quiet now comes from **How long each answer buys** above. **Hour the queue is snapshotted** (`queue.snapshotHour`) only changes a sentence — the list is settled on the first read of the day, whatever the hour.
+</Callout>
+
+- **Unreachable customers skip the hold-back checks.** A customer who has reached the no-answer limit is listed even if marked do-not-contact or already called today.
+- **A pending no-answer retry hides a due reminder** for the length of the wait.
+- **Only calls *we* made start the "told us no" quiet.** An inbound "No order" buys none.
+- **The retry ladder counts calendar days**, though the setting's description says working days.
+- **Re-prioritise** re-reads the settled list; it does not rebuild it. Only an administrator's rebuild does.
+- **The morning warm-up job** builds lists without payment calls, so on days it runs before anybody opens the Call Log, payment reasons are missing from the settled list even when payments are switched on.

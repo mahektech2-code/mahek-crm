@@ -3,6 +3,7 @@ import Link from "next/link";
 
 import { cx } from "@/components/ui/primitives";
 import { STAGE_LABEL } from "@/lib/sales-lead-pipeline/reference";
+import { stageAgeShort } from "@/lib/sales-lead-pipeline/stage-age";
 import type { Priority, SalesType, Stage } from "@/lib/sales-lead-pipeline/types";
 
 /* ---------------------------------------------------------------------------
@@ -122,9 +123,16 @@ export function stageTone(stage: Stage | string): PTone {
   return "neutral";
 }
 
-export function PStageBadge({ stage }: { stage: Stage | null }) {
+/** `days` is the stage age, drawn inside the badge as `Suspect · 4d`; omitted where no stage date is recorded. */
+export function PStageBadge({ stage, days }: { stage: Stage | null; days?: number | null }) {
   if (!stage) return null;
-  return <PBadge tone={stageTone(stage)}>{STAGE_LABEL[stage] ?? stage}</PBadge>;
+  const age = stageAgeShort(days);
+  return (
+    <PBadge tone={stageTone(stage)}>
+      {STAGE_LABEL[stage] ?? stage}
+      {age ? ` · ${age}` : ""}
+    </PBadge>
+  );
 }
 
 export function PPriorityBadge({ priority }: { priority: Priority }) {

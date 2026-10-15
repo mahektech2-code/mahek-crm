@@ -84,6 +84,7 @@ import { ADMIN } from "@/lib/admin-routes";
 const APPS = grantableApps();
 
 import { conflictsFor } from "@/lib/role-conflicts";
+import { cleanDepts, CREW_ROLES, crewLabel, DEPT_LABEL, FACTORY_DEPTS, isProc, placeProblem, placeSentence, placeWords, procsOf, type CrewRole, type FactoryDept, type FactoryPlace } from "@/lib/factory/departments";
 
 /*
  * THE SAME THREE IN EVERY APP.
@@ -832,6 +833,11 @@ function AccessDialog({
      Unticking Hire takes it with it, like the powers above. */
   const hireRoleBefore = basis?.hireRole ?? null;
   const [hireRole, setHireRole] = React.useState<string | null>(hireRoleBefore);
+  /* THE FACTORY FLOOR — which department, and their seat in its crew. With
+     the Factory level it is their department-level permission. Unticking
+     Factory takes it with it. */
+  const placeBefore = basis?.factoryPlace ?? null;
+  const [factoryPlace, setFactoryPlace] = React.useState<FactoryPlace | null>(placeBefore);
   /* THE ERP DESIGNATION — the name on their ERP access, and the link an edit
      to it follows. Picking one sets the screens, level and powers below;
      changing any of those afterwards leaves the name and marks them
@@ -871,6 +877,7 @@ function AccessDialog({
     setPowers(existing?.erpPowers ?? []);
     setHrmsPowers(existing?.hrmsPowers ?? []);
     setHireRole(existing?.hireRole ?? null);
+    setFactoryPlace(existing?.factoryPlace ?? null);
     setDesignationId(existing?.erpDesignation?.id ?? null);
     setFieldError({});
     setStep("access");
@@ -901,6 +908,7 @@ function AccessDialog({
       erpPowers: draft.erp ? powers : [],
       hrmsPowers: draft.hrms ? hrmsPowers : [],
       hireRole: draft.hire ? hireRole : null,
+      factoryPlace: draft.factory ? factoryPlace : null,
       erpDesignationId: draft.erp ? designationId : null,
       /* No level on the account. It is DERIVED from the per-app levels by the
          action, and the select that used to sit here could make a platform
@@ -946,7 +954,9 @@ function AccessDialog({
   const standingAfter = designationNow ? standingOf(designationNow, draft.erp ?? [], levelOf("erp"), powers) : null;
   const hireRoleAfter = draft.hire ? hireRole : null;
   const hireRoleChanged = hireRoleAfter !== hireRoleBefore;
-  const changes = { ...moduleChanges, any: moduleChanges.any || powersChanged || hrmsPowersChanged || designationChanged || hireRoleChanged };
+  const placeAfter = draft.factory ? factoryPlace : null;
+  const placeChanged = JSON.stringify(placeAfter) !== JSON.stringify(placeBefore);
+  const changes = { ...moduleChanges, any: moduleChanges.any || powersChanged || hrmsPowersChanged || designationChanged || hireRoleChanged || placeChanged };
 
   return (
     <Modal
@@ -1021,6 +1031,8 @@ function AccessDialog({
           onHrmsPowers={setHrmsPowers}
           hireRole={hireRole}
           onHireRole={setHireRole}
+          factoryPlace={factoryPlace}
+          onFactoryPlace={setFactoryPlace}
           designations={designations}
           designationId={designationId}
           onDesignation={setDesignationId}
@@ -1037,6 +1049,7 @@ function AccessDialog({
           powerChange={powersChanged ? { before: powersBefore, after: powersAfter } : null}
           hrmsPowerChange={hrmsPowersChanged ? { before: hrmsPowersBefore, after: hrmsPowersAfter } : null}
           hireRoleChange={hireRoleChanged && draft.hire ? { before: hireRoleBefore, after: hireRoleAfter, level: levelOf("hire") } : null}
+          placeChange={placeChanged && draft.factory ? { before: placeBefore, after: placeAfter, level: levelOf("factory") } : null}
           designationChange={
             designationChanged || (designationNow && standingAfter && !standingAfter.matches)
               ? { before: designationName(designationBefore), after: designationName(designationAfter), standing: standingAfter }
@@ -1249,7 +1262,7 @@ function WhoStep({ onPick }: { onPick: (c: Candidate) => void }) {
       <div className="flex items-center gap-2">
         <Input
           autoFocus
-          placeholder="Search the employee master and the accounts"
+          placeholder="Search the HRMS directory"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -1266,8 +1279,8 @@ function WhoStep({ onPick }: { onPick: (c: Candidate) => void }) {
         </Button>
       </div>
       <p className="mt-1.5 text-[13px] leading-[19px] text-muted">
-        Everybody HRMS knows about, and every account that exists. Only somebody active in
-        HRMS can be given access — a leaver is listed with the reason rather than hidden.
+        Everybody in the HRMS People directory, once each. Only somebody active in HRMS can be
+        given access — a leaver is listed with the reason rather than hidden.
       </p>
 
       {loadError ? (
@@ -1310,11 +1323,6 @@ function WhoStep({ onPick }: { onPick: (c: Candidate) => void }) {
                       no account
                     </span>
                   )}
-                  {c.employeeStatus === null ? (
-                    <span className="flex-none text-[11px] whitespace-nowrap text-muted">
-                      not in HRMS
-                    </span>
-                  ) : null}
                   <span className="w-[3.5rem] flex-none text-right text-[11px] whitespace-nowrap text-muted">
                     {c.apps.length
                       ? `${c.apps.length} app${c.apps.length === 1 ? "" : "s"}`
@@ -1367,6 +1375,8 @@ function AccessStep({
   onHrmsPowers,
   hireRole,
   onHireRole,
+  factoryPlace,
+  onFactoryPlace,
   designations,
   designationId,
   onDesignation,
@@ -1394,6 +1404,9 @@ function AccessStep({
   /** Their job inside Hire; null lets the level decide. */
   hireRole: string | null;
   onHireRole: (role: string | null) => void;
+  /** Where they work on the factory floor; null until a department is picked. */
+  factoryPlace: FactoryPlace | null;
+  onFactoryPlace: (p: FactoryPlace | null) => void;
   designations: ErpDesignationDef[];
   designationId: string | null;
   onDesignation: (id: string | null) => void;
@@ -1415,6 +1428,12 @@ function AccessStep({
   const pickHireRole = (role: string | null) => {
     onHireRole(role);
     if (role) onRoleDraft({ ...roleDraft, hire: LEVEL_FOR_ROLE[role as HireRole] as RoleId });
+  };
+  /* THE WHOLE FLOOR IS THE PRODUCTION HEAD, who is a manager: picking it
+     raises the Factory level with it, as a designation sets the ERP's. */
+  const pickPlace = (p: FactoryPlace | null) => {
+    onFactoryPlace(p);
+    if (p?.depts.includes("head") && (roleDraft.factory ?? "associate") === "associate") onRoleDraft({ ...roleDraft, factory: "manager" });
   };
   const current = designationId ? (designations.find((d) => d.id === designationId) ?? null) : null;
   const erpStanding = current && draft.erp ? standingOf(current, draft.erp, roleDraft.erp ?? "associate", powers) : null;
@@ -1542,6 +1561,7 @@ function AccessStep({
                 : undefined
             }
             hireRole={app.id === "hire" ? { value: hireRole, onPick: pickHireRole, level: roleDraft.hire ?? "associate", error: fieldError.hireRole } : undefined}
+            factory={app.id === "factory" ? { value: factoryPlace, onPick: pickPlace, level: roleDraft.factory ?? "associate", error: fieldError.factoryPlace } : undefined}
             powers={
               app.id === "erp"
                 ? { held: powers, onChange: onPowers, error: fieldError.erpPowers, list: ERP_POWERS, labels: ERP_POWER_LABEL, adminLine: "An ERP administrator holds every power." }
@@ -1578,6 +1598,7 @@ function AppBlock({
   powers,
   designation,
   hireRole,
+  factory,
 }: {
   app: AppId;
   name: string;
@@ -1601,6 +1622,8 @@ function AppBlock({
   };
   /** Hire's role picker — their job inside Hire — drawn under Hire once it is ticked. */
   hireRole?: { value: string | null; onPick: (role: string | null) => void; level: string; error?: string };
+  /** The factory floor: department, crew seat, badge — drawn under Factory once it is ticked. */
+  factory?: { value: FactoryPlace | null; onPick: (p: FactoryPlace | null) => void; level: string; error?: string };
   /** The ERP's designation picker, drawn first under the app once it is ticked. */
   designation?: {
     list: ErpDesignationDef[];
@@ -1795,6 +1818,8 @@ function AppBlock({
           </span>
         </div>
       ) : null}
+
+      {on && factory ? <FactoryPlaceRow {...factory} /> : null}
 
       {/* WHAT THE LEVEL CARRIES, under the line that chooses it. Short lines,
           in the order the matrix lists them, so "Approve and decline orders"
@@ -2020,6 +2045,7 @@ function ReviewStep({
   powerChange,
   hrmsPowerChange,
   hireRoleChange,
+  placeChange,
   designationChange,
 }: {
   name: string;
@@ -2036,6 +2062,8 @@ function ReviewStep({
   hrmsPowerChange: { before: string[]; after: string[] } | null;
   /** Their Hire role before and after, where it changes. */
   hireRoleChange: { before: string | null; after: string | null; level: string } | null;
+  /** Their factory floor place before and after, where it changes. */
+  placeChange: { before: FactoryPlace | null; after: FactoryPlace | null; level: string } | null;
   /** The ERP designation, where it changes or where the result is customised from it. */
   designationChange: {
     before: string | null;
@@ -2212,6 +2240,17 @@ function ReviewStep({
             tag: "Role",
             what: "Hire",
             detail: `${hireRoleChange.after ? HIRE_ROLE_LABEL[hireRoleChange.after as HireRole] : `the level decides — ${HIRE_ROLE_LABEL[defaultRoleFor(hireRoleChange.level)]}`}${hireRoleChange.before ? ` (was ${HIRE_ROLE_LABEL[hireRoleChange.before as HireRole] ?? hireRoleChange.before})` : ""}. ${HIRE_ROLE_SENTENCE[(hireRoleChange.after as HireRole | null) ?? defaultRoleFor(hireRoleChange.level)]}`,
+          },
+        ]
+      : []),
+    ...(placeChange
+      ? [
+          {
+            key: "factory-place",
+            tone: "success" as const,
+            tag: "Floor",
+            what: "Factory",
+            detail: `${placeWords(placeChange.after)}${placeChange.before ? ` (was ${placeWords(placeChange.before)})` : ""}. ${placeSentence(placeChange.after, placeChange.level)}`,
           },
         ]
       : []),
@@ -2508,5 +2547,112 @@ function EmployeeLinkDialog({
         )}
       </div>
     </Modal>
+  );
+}
+
+/* ------------------------------------------------------------ the factory floor */
+
+/**
+ * WHERE THEY WORK ON THE FLOOR, under the Factory grant: the department, their
+ * seat in its standing crew, their badge, and whether HR has confirmed the
+ * name and role. With the level above it this is their department-level
+ * permission, and the sentence beside it says exactly what that lets them do.
+ */
+function FactoryPlaceRow({ value, onPick, level, error }: { value: FactoryPlace | null; onPick: (p: FactoryPlace | null) => void; level: string; error?: string }) {
+  const p = value;
+  const base: FactoryPlace = p ?? { depts: [], crews: {}, badge: null, hrConfirmed: true };
+  const set = (patch: Partial<FactoryPlace>) => {
+    const next = { ...base, ...patch };
+    /* A seat only exists in a ticked production department. */
+    const crews: FactoryPlace["crews"] = {};
+    for (const d of procsOf(next.depts)) if (next.crews[d]) crews[d] = next.crews[d];
+    next.crews = crews;
+    onPick(next.depts.length || next.badge || p ? next : null);
+  };
+  /* The whole floor already covers every department: ticking it clears the
+     rest, and ticking a department clears the whole floor. */
+  const toggle = (d: FactoryDept) => {
+    const on = base.depts.includes(d);
+    const depts = on ? base.depts.filter((x) => x !== d) : d === "head" ? ["head" as FactoryDept] : cleanDepts([...base.depts.filter((x) => x !== "head"), d]);
+    if (!depts.length && !base.badge) return onPick(null);
+    set({ depts });
+  };
+  const problem = error || placeProblem(p, level);
+  const label = "w-[132px] flex-none pt-[5px] text-[10px] leading-[14px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase";
+  const select = "h-7 cursor-pointer rounded-[4px] border border-line bg-surface px-1.5 text-[13px] text-ink";
+  const head = base.depts.includes("head");
+  const ticked = FACTORY_DEPTS.filter((d) => base.depts.includes(d));
+  return (
+    <div className="flex flex-col gap-1 border-t border-divider bg-surface px-2.5 py-1.5">
+      <div className="flex items-start gap-2">
+        <span className={label}>Departments</span>
+        <span className="flex min-w-0 flex-1 flex-col gap-1">
+          <span className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Factory departments">
+            {FACTORY_DEPTS.map((d) => {
+              const on = base.depts.includes(d);
+              const muted = head && d !== "head";
+              return (
+                <label
+                  key={d}
+                  title={muted ? "The whole floor already covers this department" : undefined}
+                  className={
+                    "flex h-7 cursor-pointer items-center gap-1.5 rounded-[4px] border px-2 text-[13px] " +
+                    (on ? "border-brand bg-brand-soft text-ink" : "border-line bg-surface text-body hover:bg-canvas") +
+                    (muted ? " opacity-60" : "")
+                  }
+                >
+                  <input type="checkbox" checked={on || muted} onChange={() => toggle(d)} className="h-[14px] w-[14px] cursor-pointer accent-[#6835FB]" />
+                  {d === "head" ? "Whole floor" : DEPT_LABEL[d]}
+                </label>
+              );
+            })}
+          </span>
+          {ticked.filter(isProc).length ? (
+            <span className="flex flex-col gap-1">
+              {ticked.filter(isProc).map((d) => (
+                <span key={d} className="flex items-center gap-2 text-[13px] text-body">
+                  <span className="w-[140px] flex-none truncate">{DEPT_LABEL[d]}</span>
+                  <select
+                    value={base.crews[d] ?? ""}
+                    aria-label={`Seat in the ${DEPT_LABEL[d]} crew`}
+                    onChange={(e) => set({ crews: { ...base.crews, [d]: (e.target.value || undefined) as CrewRole | undefined } })}
+                    className={select}
+                  >
+                    <option value="">No standing seat</option>
+                    {CREW_ROLES.map((c) => (
+                      <option key={c} value={c}>
+                        {crewLabel(d, c)}
+                      </option>
+                    ))}
+                  </select>
+                </span>
+              ))}
+            </span>
+          ) : null}
+        </span>
+      </div>
+      {p && p.depts.length ? (
+        <div className="flex items-start gap-2">
+          <span className={label}>Badge · HR</span>
+          <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+            <input
+              value={p.badge ?? ""}
+              onChange={(e) => set({ badge: e.target.value || null })}
+              placeholder="Badge code — blank uses the employee code"
+              aria-label="Badge code"
+              className="h-7 w-[260px] rounded-[4px] border border-line bg-surface px-1.5 text-[13px] text-ink"
+            />
+            <label className="flex cursor-pointer items-center gap-1.5 text-[13px] text-ink">
+              <input type="checkbox" checked={p.hrConfirmed} onChange={(e) => set({ hrConfirmed: e.target.checked })} />
+              Name and role confirmed by HR
+            </label>
+          </span>
+        </div>
+      ) : null}
+      <div className="flex items-start gap-2">
+        <span className={label} />
+        <span className={"text-[12px] " + (problem ? "text-danger" : "text-muted")}>{problem || placeSentence(p, level)}</span>
+      </div>
+    </div>
   );
 }

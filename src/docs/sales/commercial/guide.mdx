@@ -1,0 +1,112 @@
+Three screens show the money side of your team's field work. **Orders** is every order a salesman took on his handset and what became of it. **Payments** is every collection he reported, and — most importantly — who is still holding company cash. **Invoices** is every bill raised against the accounts your team covers, and what is still owed on each.
+
+You read these screens; you do not decide on them. Orders are approved by accounts, and money counts only once accounts find it in the bank. What these screens give you is the knowledge that one of your people is stuck, and why.
+
+<Callout kind="live">
+Limits and windows quoted here are the settings your deployment is using now.
+</Callout>
+
+## Orders
+
+<Wireframe url="/sales/orders" nav={["Today", "#Commercial", "Orders", "Payments", "Invoices"]} active="Orders" caption="Orders taken in the field">
+  <WfBar>
+    <WfTitle sub="Every order taken on a handset — what was ordered, what accounts decided and what the shop said when the goods arrived.">Orders</WfTitle>
+  </WfBar>
+  <WfCard tone="warn">
+    <WfBar><WfText>4 orders waiting, worth ₹3.2L — decided in Accounts → Order approvals</WfText><Hotspot n={1} /></WfBar>
+  </WfCard>
+  <WfBar>
+    <WfCard title="Waiting"><WfText>4</WfText></WfCard>
+    <WfCard title="Value waiting"><WfText>₹3.2L</WfText></WfCard>
+    <WfCard title="Over the limit"><WfText>1</WfText></WfCard>
+    <WfCard title="Taken in the field"><WfText>812 · all time</WfText></WfCard>
+  </WfBar>
+  <WfBar><WfPill tone="brand">Everything 812</WfPill><WfPill>Waiting 4</WfPill><WfPill>Over the limit 1</WfPill><Hotspot n={2} /></WfBar>
+  <WfTable
+    columns={["Order", "Salesman", "Customer", "What was ordered", "Value", "Their limit", "Cans", "Terms", "State"]}
+    rows={[
+      [<span key="a"><b>SO/26-27/0412</b><br/><WfText muted>9 Oct</WfText></span>, "Salesman A", "Customer A", <span key="b">Nano Thinner – 20 Liter (Loose) × 6</span>, "₹48,000", <span key="c">₹2,00,000<br/><WfText muted>₹1,70,000 owing</WfText> <Hotspot n={3} /></span>, "6", "30 days", <span key="d"><WfPill tone="danger">Above limit</WfPill> 2 hours <Hotspot n={4} /></span>],
+      [<span key="e"><b>SO/26-27/0408</b><br/><WfText muted>8 Oct</WfText></span>, "Salesman B", "Customer B", <span key="f">PU Sealer – 4 Liter (4 Can/Box) × 8<br/><WfText muted>Deliver to Customer C</WfText></span>, "₹22,400", "None set", "8", "45 days", <span key="g"><WfPill tone="success">approved</WfPill><br/><WfText muted>Shop confirmed delivery 10 Oct</WfText> <Hotspot n={5} /></span>],
+    ]}
+  />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Waiting.</b> Orders accounts have not decided yet, how much they are worth and how long the oldest has waited. The banner turns red once the oldest has waited a day.</span>,
+  <span key="2"><b>Chips.</b> Everything (the default), only what is waiting, or only what is waiting and over the customer's credit limit.</span>,
+  <span key="3"><b>Their limit.</b> The customer's credit limit and what they already owe — what accounts weigh the order against.</span>,
+  <span key="4"><b>State.</b> <i>Waiting</i>, <i>Above limit</i> or <i>Credit blocked</i> while accounts decide, with how long it has waited. After the decision: approved, declined (with the reason), dispatched and so on.</span>,
+  <span key="5"><b>What the shop said.</b> Whether the shop agreed the order, confirmed the delivery, or reported a problem with it — written on the handset.</span>,
+]} />
+
+### What an order's state means
+
+| You see | It means |
+|---|---|
+| <Pill tone="warn">Waiting</Pill> | Taken, waiting for accounts. |
+| <Pill tone="danger">Above limit</Pill> | Waiting, and it would take the customer past their credit limit. These are the hard ones. |
+| <Pill tone="danger">Credit blocked</Pill> | Waiting on a customer accounts have blocked. |
+| <Pill tone="danger">declined</Pill> | Accounts turned it down. The reason is under the pill; the salesman has been told. |
+| <Pill tone="success">approved / dispatched / in transit / delivered</Pill> | Counting as a sale. |
+| **Shop agreed the order** | The shop confirmed what was written down. |
+| **Shop confirmed delivery** | The shop said the goods arrived. |
+| **Shop reports: …** (red) | The shop said what arrived did not match. Worth a call. |
+
+<Callout kind="note">
+Most orders over a limit never reach this screen. When <Setting k="mbos.credit.blockOnLimitExceeded" /> is on, an order that would take a customer past their limit is turned away when it syncs, and the salesman reads why on his handset's *Not accepted* list.
+</Callout>
+
+## Payments
+
+<Wireframe url="/sales/payments" active="Payments" caption="Payments, opened on cash in hand">
+  <WfCard tone="danger"><WfBar><WfText>₹62,000 is past the deposit window — Salesman A — ₹62,000, oldest 4 days</WfText><Hotspot n={1} /></WfBar></WfCard>
+  <WfBar>
+    <WfCard title="Cash in hand"><WfText>₹84,500</WfText></WfCard>
+    <WfCard title="Past the window"><WfText>2</WfText></WfCard>
+    <WfCard title="Reported"><WfText>17 · not yet found in the bank</WfText></WfCard>
+    <WfCard title="Confirmed"><WfText>356</WfText></WfCard>
+  </WfBar>
+  <WfCard title="Cash in hand, by person"><WfBar><WfText>Salesman A ₹62,000 · oldest 4 days</WfText><WfText>Salesman B ₹22,500 · oldest 1 day</WfText><Hotspot n={2} /></WfBar></WfCard>
+  <WfBar><WfPill tone="brand">Cash in hand 3</WfPill><WfPill>Reported 17</WfPill><WfPill>Confirmed 356</WfPill><WfPill>Everything 380</WfPill></WfBar>
+  <WfTable columns={["Salesman", "Customer", "Amount", "How", "Reference", "On", "Photos", "State"]} rows={[
+    ["Salesman A", "Customer D", "₹40,000", "Cash", "none given", "6 Oct", "—", <span key="a"><WfPill tone="warn">reported</WfPill> held 4 days <Hotspot n={3} /></span>],
+    ["Salesman B", "Customer E", "₹15,000", "Cheque", "000123", "9 Oct", <span key="b">▢ <Hotspot n={4} /></span>, <span key="c"><WfPill tone="success">confirmed</WfPill></span>],
+  ]} />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Past the window.</b> Cash held longer than the deposit window, named by person. Cash is a personal liability until it is banked, so this is a conversation, not a report.</span>,
+  <span key="2"><b>By person.</b> Everybody holding cash, how much, and how old the oldest note is. Red means past the window.</span>,
+  <span key="3"><b>State.</b> <i>reported</i> — he says he collected it; <i>confirmed</i> — accounts found it; <i>rejected</i> or <i>reversed</i> — it never arrived, or arrived and failed. Cash shows how long it has been held, or <i>Deposited</i> once banked.</span>,
+  <span key="4"><b>Photos.</b> The cheque or proof of payment, and the deposit slip. Click to open full size.</span>,
+]} />
+
+The deposit window is <Setting k="mbos.payments.cashDepositSlaHours" /> hours, shown on the screen in days. A salesman marks cash as deposited on his handset, with a photograph of the slip; that is what clears it from **Cash in hand**.
+
+<Callout kind="warn" title="Reported is not received">
+A receipt is what the salesman says he collected. It counts against a bill only when accounts confirm it against the bank. Until then the bill still stands at its full amount on Invoices.
+</Callout>
+
+## Invoices
+
+Every bill raised against accounts your team looks after, with what is left on each **after confirmed money only**. It opens on **Open** bills, biggest balance first, with chips for **Overdue**, **Unspoken for** and **Everything**, a search box for a bill number, customer or salesman, and an ageing strip (*Not due, 1–30 days, 31–60, 61–90, Over 90*). Click a bill to see what was ordered on it.
+
+**Unspoken for** bills are bills nobody has said were paid or unpaid — usually imported from the order sheet. They count as neither paid nor owed and are kept out of the ageing strip. See [Bills](/docs/crm/bills/how-it-works) for the whole rule.
+
+## Common questions
+
+<Faq q="Can I approve an order here?">
+No. Approving is the accounts desk's job, in Accounts → Order approvals. The person chasing a target must not sign off the orders that hit it.
+</Faq>
+<Faq q="An order taken this morning is not here.">
+An order reaches the office on the salesman's next sync. One taken with no signal appears later, not never. If it was turned away — credit limit, blocked customer, a price that has changed — it is on his handset's <i>Not accepted</i> list with the reason, and not here.
+</Faq>
+<Faq q="A cheque bounced. What happens?">
+The salesman reports it on his handset. His manager is notified (or every manager, if nobody is recorded as his manager), and a note is added to the receipt. If the receipt was already confirmed, accounts have to reverse it — the notification says so.
+</Faq>
+<Faq q="Why does a bill still show its full amount after he collected the money?">
+Because the money is only <i>reported</i>. It is subtracted once accounts confirm it.
+</Faq>
+<Faq q="I was notified about a collection.">
+A collection of <Setting k="mbos.payments.managerNotifyThresholdPaise" /> paise or more notifies the salesman's manager when it syncs. It is still reported, not confirmed.
+</Faq>

@@ -1048,7 +1048,15 @@ export async function applyWatiEvent(event: WatiEvent): Promise<string> {
         : eq(waMessages.providerRef, event.providerRef as string),
     )
     .limit(1);
-  if (!message) return `no message ${event.localMessageId ?? event.providerRef}`;
+  if (!message) {
+    /* A logistics message to a customer (ERP → Logistics) carries its own id. */
+    if (event.localMessageId?.startsWith("etmsg_")) {
+      const { applyLogisticsWatiEvent } = await import("@/lib/erp/logistics");
+      const done = await applyLogisticsWatiEvent(event.localMessageId, event.kind, event.kind === "failed" ? event.reason : null);
+      if (done) return done;
+    }
+    return `no message ${event.localMessageId ?? event.providerRef}`;
+  }
 
   const next = advancedStatus(message.status, event.kind);
   if (!next) return `${event.kind} ignored at ${message.status}`;

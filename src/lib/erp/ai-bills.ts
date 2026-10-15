@@ -5,7 +5,7 @@ import { db } from "@/db";
 import { erpAiSuggestions, erpPurchases, erpSuppliers } from "@/db/schema";
 import { getConfig } from "@/lib/config/store";
 import { err, fieldErr, okVoid, type Result } from "@/lib/result";
-import type { ErpContext } from "./access";
+import { powerRefusal, type ErpContext } from "./access";
 import { decideSuggestion, featureState, logSuggestion, outcomeOf, readImages } from "./ai";
 import { bindErpFiles } from "./attachments";
 import { purchaseFigures } from "./engines/purchase";
@@ -174,7 +174,7 @@ export async function billReviewForm(purchaseId: string): Promise<FormSpec | nul
 
 /** Saves the reviewed values through the register's own rules, and logs what the person changed. */
 export async function applyBill(ctx: ErpContext, suggestionId: string, h: Record<string, string>, lines: Record<string, string>[]): Promise<Result<unknown>> {
-  if (!ctx.powers.has("viewPurchaseMoney")) return err("Purchase money is not on your account.", "not_permitted");
+  if (!ctx.powers.has("viewPurchaseMoney")) return err(powerRefusal("viewPurchaseMoney"), "not_permitted");
   const [s] = await db.select().from(erpAiSuggestions).where(eq(erpAiSuggestions.id, suggestionId));
   if (!s || s.outcome !== "pending") return err("That reading has already been decided.", "conflict");
   const p = s.proposed as unknown as Proposal;

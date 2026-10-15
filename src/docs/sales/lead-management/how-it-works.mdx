@@ -1,0 +1,38 @@
+Lead Management is **mounted twice and written once**. The Sales Dashboard and the CRM draw the same screens from the same files, over the same lead book, under the same rules. Only two things belong to the app: **which permission guards a screen** (`sales.leads` here, `crm.leads` in the CRM) and **whose leads the screen shows**. The rules themselves — the three ladders, the gates, the overrides, the nurture tasks — are explained once, on the CRM pages: start with [Leads](/docs/crm/leads/how-it-works).
+
+<Callout kind="why">
+Field salesmen and telecallers work one funnel from one book — one by visiting, one by phone. Telecallers are kept out of the Sales Dashboard by its own layout, so the funnel had to reach them in the CRM. The alternative was a second lead system inside the CRM: the same rules written twice, drifting apart within a release, and two people chasing one shop with neither knowing.
+</Callout>
+
+## Whose leads you see
+
+<Rule title="The Sales Dashboard narrows by territory">
+Every lead read on this mount narrows through the manager's scope:
+
+- A **manager with regions allocated** sees the leads owned by salesmen whose books lie in those regions — plus salesmen nobody has given a book yet.
+- A **manager with no regions** (and a platform administrator) is national.
+- An **associate** given the dashboard sees only his own.
+- A lead **nobody owns** is visible to every manager who can open the screen, because a lead nobody has been given is nobody's to hide.
+</Rule>
+
+The CRM's mount narrows differently — by the CRM grant's own level, and on the CRM's Sales Manager desk by the leads whose sales manager is you. The same person can therefore see different sets on the two mounts; that is intended.
+
+<Rule title="What you can do is not narrowed differently">
+Moving a lead is the `lead.work` capability, held by any associate, so the writes needed no change to reach a second app. A server action checks it the same way whichever screen offered the button.
+</Rule>
+
+## Eleven grants, not one
+
+Each section is its own module on the Access screen: All Leads, Sales Manager, Funnel & conversion, Intake, Qualification, Samples & trials, Commercial, Distributor appointments, Next actions & nurture, Handovers and Oversight. Tabs inside a section (List, Board, Dashboard…) cannot be granted separately — a module is a destination in the navigation, a tab is a place inside one.
+
+<Rule title="The Sales Manager workspace is granted only by name">
+`/sales-lead-pipeline` is a separate module that is **off by default and explicit-only**: an administrator holding the whole Sales Dashboard does not get it, and a whole-app grant with no module rows does not include it. Somebody has to tick it.
+</Rule>
+
+<Callout kind="why">
+It used to ride on All Leads, which made it impossible to give somebody the Sales Manager workspace without All Leads, or the reverse — the Access screen had no box for it. Being explicit-only also closes the door that an admin-level grant with no module rows would otherwise open.
+</Callout>
+
+## Seven desks left the sidebar
+
+Funnel, Qualification, Samples, Commercial, Next actions, Handovers and Oversight are still modules, routes and grants — only the navigation changed. Somebody holding All Leads reaches six of them from its *Other desks* list; somebody who does not hold All Leads sees them in the sidebar instead. Oversight is linked from the Admin Console rather than from the operational list. The CRM hides exactly the same seven, and a test keeps the two in step.

@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { useFocusEffect, router } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
-import { Badge, Card, ListCard, PrimaryButton, SecondaryButton, T } from '../src/components/ui/primitives';
+import { Badge, Card, ListCard, PrimaryButton, T } from '../src/components/ui/primitives';
 import { useBoot } from '../src/state/boot';
 import { hhmm, inrFromPaise, isoDate } from '../src/lib/format';
 import { CountUp, Stagger } from '../src/components/ui/motion';
@@ -72,7 +72,6 @@ export default function TravelScreen() {
 
   useFocusEffect(load);
 
-  const locked = priced?.day?.lockedAt != null;
   const computation = priced?.computation ?? null;
   const legs = priced?.legs ?? [];
 
@@ -81,8 +80,8 @@ export default function TravelScreen() {
       <BackLink label={back.label} onPress={back.go} />
       <T s="h1">Today&apos;s travel</T>
       <T s="small" style={{ color: C.muted, marginTop: 2, marginBottom: 14 }}>
-        Filled in from your punch-in, your punch-out and your visits. You do not work out the money.
-        It comes from the office policy.
+        Filled in from your punch-in, your punch-out and your visits. Trips on your own bike or car
+        earn the kilometre allowance on their own, from the office policy. Nothing to send.
       </T>
 
       {readFailed ? (
@@ -100,7 +99,7 @@ export default function TravelScreen() {
       {computation ? (
         <Card style={{ marginBottom: 12 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
-            <T s="small" style={{ color: C.muted }}>Travel today</T>
+            <T s="small" style={{ color: C.muted }}>Kilometre allowance today</T>
             {/* Counts only when a revisit re-prices the day — a visit's leg
                 landing since he last looked shows as the figure rising. */}
             <CountUp
@@ -188,28 +187,18 @@ export default function TravelScreen() {
         );
       })}
 
-      {locked ? (
-        <Card style={{ marginTop: 6, backgroundColor: C.warnBg }}>
-          <T s="small" style={{ color: C.ink }}>
-            This day is already sent. If something is wrong, ask your manager to open it again.
-          </T>
-        </Card>
-      ) : (
-        <Card style={{ marginTop: 6 }}>
-          <T s="small" style={{ color: C.ink }}>Paid a fare, a toll or parking?</T>
-          <T s="caption" style={{ marginTop: 4 }}>
-            Every cost goes in Expenses, with a photo of the bill. A journey that looks wrong here
-            is your manager&apos;s to correct.
-          </T>
-          <PrimaryButton
-            label="Add a fare or cost"
-            style={{ marginTop: 12 }}
-            onPress={() => router.push({ pathname: '/expenses', params: { add: '1' } })}
-          />
-        </Card>
-      )}
-
-      <SecondaryButton label="Close the day" style={{ marginTop: 14 }} onPress={() => router.push('/eod?from=travel')} />
+      <Card style={{ marginTop: 6 }}>
+        <T s="small" style={{ color: C.ink }}>Paid a fare, a toll or parking?</T>
+        <T s="caption" style={{ marginTop: 4 }}>
+          Log it in Expenses with a photo of the bill. It goes to your manager straight away. A
+          journey that looks wrong here is your manager&apos;s to correct.
+        </T>
+        <PrimaryButton
+          label="Add a fare or cost"
+          style={{ marginTop: 12 }}
+          onPress={() => router.push({ pathname: '/expenses', params: { add: '1', from: 'travel' } })}
+        />
+      </Card>
     </AppFrame>
   );
 }

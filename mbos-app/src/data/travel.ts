@@ -1,6 +1,5 @@
 import { all, getKv, one, run, setKv } from '../db';
 import { insertAndQueue, stamp } from './write';
-import { isoDate } from '../lib/format';
 import {
   computeDay,
   routeDay,
@@ -236,12 +235,13 @@ export async function openDay(args: {
  * when he left, the last punch-out is when he got back, and punching in again
  * after a break clears the return so the day reads as still out.
  *
- * A day the office has locked is left exactly as it was sent.
+ * Every punch re-works the meal allowance at the office: there is no day to
+ * close, so the return time is all the allowance waits for.
  */
 export async function stampDayClock(userId: string, day: string, edge: 'in' | 'out', at: number): Promise<void> {
   const id = await openDay({ userId, day });
   const row = await one<ExpenseDay>('SELECT * FROM expense_days WHERE id = ?', [id]);
-  if (!row || row.lockedAt) return;
+  if (!row) return;
   if (edge === 'in') {
     if (row.departedAt == null) await updateDay(id, { departedAt: at });
     else if (row.returnedAt != null) await updateDay(id, { returnedAt: null });
@@ -250,7 +250,14 @@ export async function stampDayClock(userId: string, day: string, edge: 'in' | 'o
   }
 }
 
-/** Change something about the day. Refused once the office has locked it. */
+/**
+ * Change something about the day.
+ *
+ * NEVER REFUSED FOR BEING "SENT". A day used to lock when he pressed Send day,
+ * and a punch-out or a trip after that was refused on the phone and again at
+ * the office. There is no sending a day now; the office re-works the
+ * allowances from whatever the day says, every time it changes.
+ */
 export async function updateDay(
   dayId: string,
   patch: Partial<{
@@ -268,12 +275,6 @@ export async function updateDay(
 ): Promise<{ ok: boolean; reason?: string }> {
   const row = await one<ExpenseDay>('SELECT * FROM expense_days WHERE id = ?', [dayId]);
   if (!row) return { ok: false, reason: 'That day is not on this phone.' };
-  if (row.lockedAt) {
-    return {
-      ok: false,
-      reason: 'You already sent this day. Ask your manager to open it again. What you sent stays the same.',
-    };
-  }
 
   const cols: string[] = [];
   const args: (string | number | null)[] = [];
@@ -467,7 +468,11 @@ export async function priceDay(
     category: string;
     amountPaise: number;
     billPhotoId: string | null;
-  }>('SELECT id, kind, category, amountPaise, billPhotoId FROM expenses WHERE expenseDayId = ?', [
+    /* What HE logged — the same lines the office prices (`linesForDay`). The
+       allowance lines come down from the office with this day's id on them,
+       and pricing them here would count the meal allowance again as a food
+       bill. */
+  }>('SELECT id, kind, category, amountPaise, billPhotoId FROM expenses WHERE expenseDayId = ? AND allowance = 0', [
     row.id,
   ]);
 
@@ -543,82 +548,6 @@ function minutesSinceMidnight(day: string, at: number | null): number | null {
   const midnight = new Date(`${day}T00:00:00`).getTime();
   return Math.round((at - midnight) / 60_000);
 }
-
-/* -------------------------------------------------------------- sending it */
-
-export async function submitDay(
-  userId: string,
-  day: string,
-  note: string | null,
-): Promise<{ ok: boolean; reason?: string; claimedPaise?: number }> {
-  const priced = await priceDay(userId, day);
-  if (!priced.day) return { ok: false, reason: 'Nothing is saved for that day.' };
-  if (priced.day.lockedAt) return { ok: false, reason: 'You already sent this day.' };
-  /* TODAY waits for the punch-out, because the meals are priced from it and he
-     can still give it. A PAST day cannot be punched out of any more — the only
-     thing that writes the return is the punch — so refusing it there left every
-     claim on a day he forgot to punch out of unsendable for ever. That day goes
-     with no return time: no meals are worked out for it, the office sees the
-     gap, and the bills on it are still paid. */
-  if (priced.day.returnedAt == null && day >= isoDate(new Date())) {
-    return {
-      ok: false,
-      reason: 'First say what time you got back. The meal allowance depends on when you left and came back.',
-    };
-  }
-
-  const claimed = priced.computation?.totalClaimedPaise ?? 0;
-  const base = await stamp('expsubmit');
-  const { enqueue } = await import('../sync/queue');
-  await enqueue({
-    entityType: 'expense_day_submit',
-    entityId: base.id,
-    op: 'create',
-    payload: { day, clientClaimedPaise: claimed, note },
-    dependsOn: [priced.day.id, ...priced.legs.map((l) => l.id)],
-  });
-
-  await run(`UPDATE expense_days SET submittedAt = ?, lockedAt = ? WHERE id = ?`, [
-    Date.now(),
-    Date.now(),
-    priced.day.id,
-  ]);
-
-  return { ok: true, claimedPaise: claimed };
-}
-
-export type UnsentDay = { day: string; claims: number; claimedPaise: number; legs: number };
-
-/**
- * Days with something claimed on them that have not been sent.
- *
- * A claim goes up the moment Send claim is pressed, but the office decides a
- * DAY, and a day reaches it only from Close the day. So a claim on a day he
- * never closed is stored at the office and drawn on no screen anybody decides
- * from — and the phone had told him it was with his manager. This is the list
- * that tells him otherwise, oldest first, so the one longest overdue is the one
- * he sees. A refused claim does not keep a day here: there is nothing on it
- * left to send.
- */
-export async function unsentDays(userId: string): Promise<UnsentDay[]> {
-  return all<UnsentDay>(
-    `SELECT d.day AS day,
-            (SELECT count(*) FROM expenses e
-              WHERE e.expenseDayId = d.id AND e.state <> 'Rejected') AS claims,
-            (SELECT COALESCE(SUM(e.amountPaise), 0) FROM expenses e
-              WHERE e.expenseDayId = d.id AND e.state <> 'Rejected') AS claimedPaise,
-            (SELECT count(*) FROM travel_legs l WHERE l.expenseDayId = d.id) AS legs
-       FROM expense_days d
-      WHERE d.userId = ? AND d.lockedAt IS NULL
-        AND (EXISTS (SELECT 1 FROM expenses e
-                      WHERE e.expenseDayId = d.id AND e.state <> 'Rejected')
-             OR EXISTS (SELECT 1 FROM travel_legs l WHERE l.expenseDayId = d.id))
-      ORDER BY d.day ASC`,
-    [userId],
-  );
-}
-
-
 
 /* ══════════════════════════════════════ a leg walked, rather than logged */
 

@@ -1,0 +1,94 @@
+The handset holds a SQLite `performance` table filled from the `performance` pull channel: at most two rows (this month and last), each a copy of a `sales_performance` cache row with its formulation/category bands folded in as JSON. Any other period is fetched live from `GET /api/mbos/performance?from=…&to=…`. Nothing on the phone writes a score. **Reports** is a separate, local-only count over owned tables.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Screen | `mbos-app/app/performance.tsx` | Period picker, score, revenue beside volume, the warning, mix, the shops behind it |
+| Screen | `mbos-app/app/reports.tsx` | This month and last, counted on the phone |
+| Data | `mbos-app/src/data/performance.ts` | `listPerformance` (synced), `fetchPerformance` (live range), `priceNotVolume`, `untargetedLine`, `shortfalls` |
+| Data | `mbos-app/src/data/reports.ts` | `monthReport` — visits, orders, litres, collections from local rows |
+| Data | `mbos-app/src/data/customer-targets.ts` | His shops' monthly targets (the `customerTargets` channel) |
+| Engines (pure) | `mbos-app/src/engines/periods.ts`, `performance-labels.ts` | Presets, financial years, ratio sentences |
+| Pull | `src/lib/services/mbos-service.ts` | `performanceFor` — the two cached months for a device |
+| Live route | `src/app/api/mbos/performance/route.ts` | Any range, scored the same way, for the token's user only |
+| Score | `src/lib/engines/performance.ts`, `src/lib/services/performance-service.ts` | The six components, mix, alerts, forecast, `recomputeSalesPerformance` |
+
+## Reading a month
+
+<Flow caption="Cached months and a live range" chart={`
+sequenceDiagram
+  autonumber
+  participant Job as hourly / nightly job
+  participant PG as Postgres
+  participant Pull as buildPull / buildBootstrap
+  participant DB as SQLite performance
+  participant UI as performance.tsx
+  participant API as /api/mbos/performance
+  Job->>PG: recomputeSalesPerformance — sales_performance rows, computed_at
+  Pull->>PG: performanceFor(user, since) — limit 2, bands as JSON
+  Pull-->>DB: upsertPerformance
+  UI->>DB: listPerformance() — this month and last, no signal needed
+  opt other period picked
+    UI->>API: fetchPerformance(from, to)
+    API->>PG: same scoring over the ledger, prorated targets
+    API-->>UI: reading (source live)
+  end
+`} />
+
+## The pull channel
+
+<Code file="src/lib/services/mbos-service.ts" symbol="performanceFor" collapsed />
+
+The bands are read through **both** keys — `category_id` and `formulation_id` — with a `left join` on each. An inner join on categories once sent an empty mix for every formulation target, which reads on the phone as nothing having been asked rather than as a hole in the payload. `performance.test.ts` sends a formulation target through `buildBootstrap` to pin it.
+
+The channel is gated on `computed_at > since`, so an hourly rebuild reaches the phone on the next delta.
+
+## The handset
+
+<Code file="mbos-app/src/data/performance.ts" symbol="listPerformance" collapsed />
+
+`hasTarget` is derived from any non-zero component target or a scored mix — not from the row existing (the office writes a row for anybody who sold anything) and not from a column being non-null (the office stores an unasked component as zero).
+
+<Code file="mbos-app/src/data/performance.ts" symbol="priceNotVolume" />
+
+<Code file="mbos-app/src/data/performance.ts" symbol="untargetedLine" />
+
+<Code file="mbos-app/src/data/reports.ts" symbol="monthReport" collapsed />
+
+## The cache
+
+<DbTable name="sales_performance" only={["user_id", "period", "target_id", "revenue_actual_paise", "revenue_achievement_bp", "volume_actual_ml", "volume_achievement_bp", "mix_achievement_bp", "collection_base_paise", "activity_assigned", "total_score_bp", "rating", "untargeted", "unmatched_revenue_paise", "computed_at"]} note={{
+  computed_at: "Printed under the score on the phone. The pull sends rows newer than the cursor.",
+  untargeted: "Components dropped from the score because nothing was asked — drawn as a sentence on the phone.",
+  collection_base_paise: "The overdue book at month start; null on rows from before the column, which is not zero.",
+}} />
+
+## Tests that pin it
+
+| Test | Pins |
+|---|---|
+| `src/lib/performance.test.ts` | A formulation target reaches the handset's bootstrap with its names |
+| `src/lib/mbos-wire.test.ts` | `performance` columns against the handset's table |
+| `mbos-app/src/engines/periods.test.ts` | Presets, financial years, month windows |
+
+## Changing it safely
+
+<Steps>
+<Step title="Change the scoring at the office only">
+Edit `src/lib/engines/performance.ts`. The phone renders what it is sent and the live route uses the same functions.
+</Step>
+<Step title="Add a figure to the phone">
+Add it to `performanceFor`, the handset's `performance` table, `listPerformance`'s SELECT, and the live route's reading. A column the handset cannot hold is dropped by `upsert`, silently.
+</Step>
+<Step title="Keep the warning one rule">
+If the phone's warning should match the office's, make `priceNotVolume` read `performance.volumeDivergencePoints` from the synced config rather than a constant.
+</Step>
+</Steps>
+
+## Known gaps
+
+| Gap | Where |
+|---|---|
+| Phone warning uses 100%/100%; office alert uses the divergence setting | `priceNotVolume` vs `alertsFor` in `src/lib/engines/performance.ts` |
+| The office's per-person forecast is not sent to the phone | `performanceFor` |

@@ -2,7 +2,7 @@ import "server-only";
 import { eq, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { customers } from "@/db/schema";
-import { calendarDate } from "@/lib/business-date";
+import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
 import type { ErpContext } from "./access";
 import { visibleAlerts } from "./alerts";
 import { incompletePackIds } from "./counts";
@@ -13,10 +13,14 @@ import { today } from "./screens/common";
 import { purchaseOrderViews, requirementWork } from "./screens/purchase-flow";
 import { poTotals } from "./engines/purchase-flow";
 import { requestStatus } from "./screens/complaints";
+import { returnsSummary } from "./returns";
 import { loadCustomers, partyStatus } from "./screens/masters";
 import { fgReorderRows, rmReorderRows } from "./screens/movement";
-import { detailRows, orderLines, ORDER_STATUSES } from "./screens/sales";
+import { detailRows, isWorkingLine, orderLines, ORDER_STATUSES } from "./screens/sales";
 import { fgLots, packLots, rmLots, sfgLots } from "./stock";
+import { controlWork, fullCountDue, type ControlWork } from "./stock-check";
+import { openMismatches } from "./floor-checks";
+import { adjustmentReasonLabel } from "./engines/stock-check";
 import type { Tone } from "./ui";
 import { nf } from "./ui";
 
@@ -83,6 +87,30 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
     );
   }
 
+  /* ================================================ inventory accuracy */
+  /*
+   * Before purchase, because it is what holds purchase: a requirement waits
+   * on a blind count, and a red flag stops it until it is resolved.
+   */
+  if (has("stockCheck")) {
+    /* The control's own steps — counts to do, red flags, recounts, what is
+       under investigation, adjustments to approve, counted right first time —
+       are the Inventory Accuracy Control strip at the top of the page
+       (`accuracyFlow`), drawn for exactly the people this section is. Listing
+       them here again put every one of those numbers on the screen twice.
+       This section carries what the strip does not. */
+    const [w, full, mism] = await Promise.all([controlWork(), fullCountDue(), openMismatches()]);
+    const ids = (l: { id: string; godown: string }[]) => l.filter((x) => inG(x.godown)).map((x) => x.id);
+    const acc: Tile[] = [];
+    const mis = ids(mism);
+    acc.push({ l: "Stock check mismatches", v: String(mis.length), sub: mis.length ? "the floor count differs from the book" : "every check matched or was reviewed", tone: mis.length ? "danger" : undefined, href: tileHref("floorChecks", mis.length ? mis : null, "Mismatch") });
+    acc.push({ l: "Missing records", v: String(w.missing), sub: "documents with no stock entry", tone: w.missing ? "warn" : undefined, href: tileHref("missingRecords", null, "") });
+    if (w.repeatCauses.length)
+      acc.push({ l: "Most frequent cause", v: String(w.repeatCauses[0].n), sub: `${adjustmentReasonLabel(w.repeatCauses[0].reason)} · approved adjustments over 90 days${w.repeatCauses.length > 1 ? `, then ${adjustmentReasonLabel(w.repeatCauses[1].reason).toLowerCase()}` : ""}`, tone: w.repeatCauses[0].n >= 3 ? "warn" : undefined, href: tileHref("stockAdjustments", null, "") });
+    if (full.due) acc.push({ l: "Full count due", v: "Due", sub: full.last ? `last full count ${full.last} · every ${full.everyDays} days` : `no full count yet · one is due every ${full.everyDays} days`, tone: "warn", href: tileHref("countTasks", null, "") });
+    push("Stock checks", acc);
+  }
+
   /* ========================================================== purchase */
   const purchase: Tile[] = [];
   /* THE PURCHASE FLOW, one tile per step that is waiting on somebody. */
@@ -93,6 +121,7 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
       const list = ids(stage);
       if (list.length || always) purchase.push({ l, v: String(list.length), sub, tone: list.length ? tone : undefined, href: tileHref("requisitions", list, stage) });
     };
+    tile("Blind count", "Requirements · waiting for a blind count", "the count comes before the purchase method", "info");
     tile("Buyer decision", "Requirements · buyer decision", pw("purchaseBuyer") ? "you decide how these are bought" : "the buyer decides how these are bought", "brand");
     tile("Select vendor", "Requirements · select vendor", "direct purchases with no vendor yet", "warn", true);
     tile("Collect quotations", "Requirements · collect quotations", "not enough quotations in yet", "warn");
@@ -267,18 +296,18 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
     const dueToday = open.filter((l) => l.due === "today").map((l) => l.o.id);
     const late = open.filter((l) => l.due === "late").map((l) => l.o.id);
     const screen = has("readyOrders") ? "readyOrders" : "orders";
-    sales.push({ l: "Allocation short", v: String(short.length), sub: "Ready, lots still to allocate", tone: short.length ? "warn" : undefined, href: tileHref(screen, short, "Allocation short") });
-    sales.push({ l: "Ready to bill", v: String(toBill.length), sub: "Ready and allocated — Bill it once the bill no. and rate are in", href: tileHref(screen, toBill, "Ready to bill") });
+    sales.push({ l: "Allocation short", v: String(short.length), sub: "ready, lots still to allocate", tone: short.length ? "warn" : undefined, href: tileHref(screen, short, "Allocation short") });
+    sales.push({ l: "Ready to bill", v: String(toBill.length), sub: "allocated, waiting for the bill no. and rate", href: tileHref(screen, toBill, "Ready to bill") });
     sales.push({ l: "Dispatch today", v: String(dueToday.length), sub: "planned for today", href: tileHref("orders", dueToday, "Dispatch today") });
     sales.push({ l: "Dispatch late", v: String(late.length), sub: "planned for a day already past", tone: late.length ? "danger" : undefined, href: tileHref("orders", late, "Dispatch late") });
     const missing = ls.filter((l) => l.o.status !== "Cancel" && (!l.o.tallyBillNo || l.o.ratePaise == null)).map((l) => l.o.id);
     sales.push({ l: "Missing bill no / rate", v: String(missing.length), tone: missing.length ? "warn" : undefined, href: tileHref("orders", missing, "Bill or rate missing") });
     if (pw("approveParty")) {
       const pend = ls.filter((l) => l.o.partyStatus === "Pending").map((l) => l.o.id);
-      sales.push({ l: "Pending-customer orders", v: String(pend.length), sub: "approve, or activate the party", tone: pend.length ? "warn" : undefined, href: tileHref("orders", pend, "Pending party") });
+      sales.push({ l: "Orders for a pending party", v: String(pend.length), sub: "approve, or activate the party", tone: pend.length ? "warn" : undefined, href: tileHref("orders", pend, "Pending party") });
     }
     if (has("labels")) {
-      const labels = ls.filter((l) => (l.o.status === "Ready" || l.o.status === "Under Process") && l.o.entryStatus !== "Done" && inG(l.godown));
+      const labels = ls.filter((l) => isWorkingLine(l) && inG(l.godown));
       sales.push({ l: "Labels to print", v: nf(labels.reduce((a, l) => a + l.labels, 0)), sub: plural(labels.length, "line"), href: tileHref("labels", null, "") });
     }
   }
@@ -286,7 +315,7 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
     const { rows } = await details();
     const mine = rows.filter((r) => inG(r.l.godown));
     const unverified = mine.filter((r) => !r.d.verification || r.d.verification === "Pending").map((r) => r.l.o.id);
-    sales.push({ l: "Awaiting dispatch verification", v: String(unverified.length), sub: "enter the dispatch date once it has left", tone: unverified.length ? "warn" : undefined, href: tileHref("orderDetails", unverified, "Not verified") });
+    sales.push({ l: "Awaiting dispatch verification", v: String(unverified.length), sub: "enter the date once it has left", tone: unverified.length ? "warn" : undefined, href: tileHref("orderDetails", unverified, "Not verified") });
     const dispatched = mine.filter((r) => r.d.verification === "Verified");
     const todayIds = dispatched.filter((r) => r.d.dispatchDate === day).map((r) => r.l.o.id);
     const monthRows = dispatched.filter((r) => (r.d.dispatchDate ?? "").startsWith(month));
@@ -312,21 +341,25 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
     const n = rows.filter((r) => r.l.billing.freightTerm === "Paid" && r.d.extraExpensesPaise == null).length;
     logistics.push({ l: "Paid freight without extra expense", v: String(n), href: tileHref("paidFreight", null, "") });
   }
-  if (["pendingLr", "trackLr", "transport"].some(has)) {
-    const rows = await q(sql`select id, lr_no as lr, track_status as track, material_stage as stage, reminder_date::text as reminder from erp_transports`);
-    if (has("pendingLr")) {
-      const n = rows.filter((r) => !r.lr).length;
-      logistics.push({ l: "Pending LR", v: String(n), tone: n ? "warn" : undefined, href: tileHref("pendingLr", null, "") });
-    }
-    if (has("trackLr")) {
-      const by = new Map<string, string[]>();
-      rows.filter((r) => r.lr && r.stage !== "Close - Received to Party").forEach((r) => by.set(String(r.stage), [...(by.get(String(r.stage)) ?? []), String(r.id)]));
-      for (const [stage, ids] of by) logistics.push({ l: `Tracking · ${stage}`, v: String(ids.length), href: tileHref("trackLr", ids, stage) });
-    }
-    if (has("transport")) {
-      const due = rows.filter((r) => r.reminder && String(r.reminder) <= day && r.stage !== "Close - Received to Party").map((r) => String(r.id));
-      logistics.push({ l: "Reminder calls due", v: String(due.length), tone: due.length ? "warn" : undefined, href: tileHref("transport", due, "Reminder due") });
-    }
+  if (has("transport")) {
+    /* The logistics flow's four steps, each opening its tab of the desk. */
+    const { phaseOf, CLOSED } = await import("./engines/logistics");
+    const rows = await q(sql`select id, lr_no as lr, material_stage as stage, reminder_date::text as reminder, transport_due_on::text as due, issue from erp_transports where material_stage <> ${"Close - Received to Party"}`);
+    const phase = (r: Row) => phaseOf({ lrNo: (r.lr as string | null) ?? null, materialStage: String(r.stage) });
+    const toT = rows.filter((r) => phase(r) === "toTransport");
+    const dueT = toT.filter((r) => r.due && String(r.due) <= day).map((r) => String(r.id));
+    logistics.push({ l: "Going to the transporter", v: String(toT.length), sub: dueT.length ? `${dueT.length} due today or late` : undefined, tone: dueT.length ? "warn" : undefined, href: tileHref("toTransport", null, "") });
+    const lrP = rows.filter((r) => phase(r) === "lrPending").map((r) => String(r.id));
+    const [{ n: lrs }] = (await q(sql`select count(*)::int as n from erp_lrs where status = 'unassigned'`)) as { n: number }[];
+    logistics.push({ l: "Waiting for the LR", v: String(lrP.length), sub: Number(lrs) ? `${lrs} LR${Number(lrs) === 1 ? "" : "s"} uploaded to attach` : undefined, tone: Number(lrs) ? "warn" : undefined, href: tileHref("pendingLr", null, "") });
+    const road = rows.filter((r) => phase(r) === "onRoad");
+    logistics.push({ l: "On the road", v: String(road.length), href: tileHref("trackLr", null, "") });
+    const due = road.filter((r) => r.reminder && String(r.reminder) <= day && r.stage !== CLOSED).map((r) => String(r.id));
+    logistics.push({ l: "Transporter calls due", v: String(due.length), tone: due.length ? "warn" : undefined, href: tileHref("trackLr", due, "Call due") });
+    const issues = road.filter((r) => r.issue).map((r) => String(r.id));
+    if (issues.length) logistics.push({ l: "Problems on the road", v: String(issues.length), tone: "danger", href: tileHref("trackLr", issues, "With a problem") });
+    const [{ n: msgs }] = (await q(sql`select count(*)::int as n from erp_transport_messages where status in ('to_send', 'failed')`)) as { n: number }[];
+    if (Number(msgs)) logistics.push({ l: "Customer messages to send", v: String(msgs), tone: "warn", href: tileHref("lrMessages", null, "") });
   }
   push("Logistics", logistics);
 
@@ -353,6 +386,65 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
   }
   push("Requests and credit notes", req);
 
+  /* ================================================= empty drums and scrap */
+  if (has("emptyDrums") || has("drumReturns") || has("scrapSales")) {
+    const scrap: Tile[] = [];
+    const drums = await q(sql`select id, status, godown, supplier, recorded_on as on from (
+      select d.id, d.status, g.name as godown, s.name as supplier, (d.recorded_at at time zone ${APP_TIMEZONE})::date::text as recorded_on
+        from erp_empty_drums d join erp_godowns g on g.id = d.godown_id left join erp_suppliers s on s.id = d.supplier_id) x`);
+    if (has("emptyDrums")) {
+      const avail = drums.filter((d) => d.status === "available" && inG(d.godown)).map((d) => String(d.id));
+      scrap.push({ l: "Mahek-owned empty drums available", v: String(avail.length), sub: godownName ? `at ${godownName}` : "every godown", href: tileHref("emptyDrums", null, "") });
+      const review = drums.filter((d) => d.status === "review").map((d) => String(d.id));
+      if (review.length) scrap.push({ l: "Empty drums to classify", v: String(review.length), sub: "ownership not recorded", tone: "warn", href: tileHref("drumReview", null, "") });
+    }
+    if (has("emptyDrums") || has("drumReturns")) {
+      const ret = drums.filter((d) => d.status === "returnable");
+      const oldest = ret.map((d) => String(d.on)).sort()[0];
+      scrap.push({
+        l: "Vendor-returnable drums pending",
+        v: String(ret.length),
+        sub: oldest ? `oldest waiting since ${oldest.slice(8, 10)}/${oldest.slice(5, 7)} · ${new Set(ret.map((d) => d.supplier)).size} supplier${new Set(ret.map((d) => d.supplier)).size === 1 ? "" : "s"}` : "nothing waiting",
+        tone: oldest && Date.parse(day) - Date.parse(oldest) > 60 * 86_400_000 ? "warn" : undefined,
+        href: tileHref(has("drumReturns") ? "drumPending" : "drumReturnable", null, ""),
+      });
+    }
+    if (has("scrapSales")) {
+      const [m] = await q(sql`
+        select count(*)::int as n, coalesce(sum(amount_paise), 0)::float8 as v,
+               coalesce(sum(case when category = 'Empty Metal Drum' then quantity else 0 end), 0)::float8 as drums
+          from erp_scrap_sales where status = 'confirmed' and to_char(sale_date, 'YYYY-MM') = ${month}`);
+      scrap.push({ l: "Scrap sold this month", v: rupees(Number(m?.v ?? 0)), sub: `${plural(Number(m?.n ?? 0), "sale")} · ${nf(Number(m?.drums ?? 0))} drums`, href: tileHref("scrapSales", null, "") });
+      const [o] = await q(sql`
+        select coalesce(sum(greatest(s.amount_paise - coalesce((select sum(a.amount_paise) from erp_scrap_allocations a where a.sale_id = s.id and a.voided_at is null), 0), 0)), 0)::float8 as v,
+               count(*) filter (where s.amount_paise > coalesce((select sum(a.amount_paise) from erp_scrap_allocations a where a.sale_id = s.id and a.voided_at is null), 0)
+                                  and coalesce(s.due_date, s.sale_date) < ${day}::date)::int as late
+          from erp_scrap_sales s where s.status = 'confirmed'`);
+      const late = Number(o?.late ?? 0);
+      scrap.push({ l: "Scrap receivables outstanding", v: rupees(Number(o?.v ?? 0)), sub: late ? `${plural(late, "sale")} past due` : "nothing past due", tone: late ? "danger" : undefined, href: tileHref("scrapReceivables", null, "") });
+    }
+    push("Empty drums and scrap", scrap);
+  }
+
+  /* ================================================== material returns */
+  if (has("vendorReturns") || has("customerReturns")) {
+    const m = await returnsSummary();
+    const money = ctx.administrator || pw("viewPurchaseMoney") || pw("returnApprove");
+    const t: Tile[] = [];
+    if (has("vendorReturns")) {
+      t.push({ l: "Purchase returns pending", v: String(m.vendor.pending), sub: `${plural(m.vendor.completed, "return")} sent back · ${nf(m.vendor.qty)} returned`, tone: m.vendor.pending ? "warn" : undefined, href: tileHref("vendorReturns", null, "") });
+      if (money) t.push({ l: "Debit notes issued", v: rupees(m.vendor.debitNotePaise), sub: "taken off vendor payouts", href: tileHref("debitNotes", null, "") });
+    }
+    if (has("customerReturns")) {
+      t.push({ l: "Customer returns awaiting QC", v: String(m.customer.pendingQc), sub: `${nf(m.customer.litres)} L on open returns · in quarantine, not saleable`, tone: m.customer.pendingQc ? "warn" : undefined, href: tileHref("returnQc", null, "") });
+      if (money) t.push({ l: "Credit notes issued on returns", v: rupees(m.customer.creditNotePaise), sub: plural(m.customer.total, "customer return"), href: tileHref("customerReturns", null, "") });
+      t.push({ l: "Recovered from returns", v: `${nf(m.customer.recoveredLitres)} L`, sub: `reused or reworked · ${nf(m.customer.reworkedLitres)} L sent to rework`, href: tileHref("reworkOrders", null, "") });
+      t.push({ l: "Chemical scrap from returns", v: `${nf(m.customer.scrapKg)} kg`, sub: money ? `${rupees(m.customer.scrapSalesPaise)} of Chemical Scrap sold` : "sellable from Scrap sales", href: tileHref("customerReturns", null, "") });
+      t.push({ l: "Waste from returns", v: `${nf(m.customer.wasteLitres)} L`, sub: money ? `${rupees(m.customer.wasteCostPaise)} disposal cost` : "disposed of, never saleable", href: tileHref("wasteDisposals", null, "") });
+    }
+    push("Material returns", t);
+  }
+
   /* ======================================================== petty cash */
   if (has("expenses") || has("credits")) {
     const [credits, expenses] = await Promise.all([
@@ -370,7 +462,7 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
       const pend = expenses.filter((e) => e.status === "Pending").map((e) => String(e.id));
       tiles.push({ l: "Expenses pending verification", v: String(pend.length), href: tileHref("expenses", pend, "Pending") });
     }
-    push("Petty cash", tiles);
+    push("Petty Cash/Bank", tiles);
   }
 
   /* ========================================================= customers */
@@ -401,4 +493,38 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
 export async function latestDigest(): Promise<{ day: string; text: string; servedBy: string | null } | null> {
   const rows = await q(sql`select day::text as day, text, served_by as "servedBy" from erp_digests order by day desc limit 1`);
   return rows[0] ? { day: String(rows[0].day), text: String(rows[0].text), servedBy: (rows[0].servedBy as string) ?? null } : null;
+}
+
+
+/* ----------------------------------------------- the control, as a flow */
+
+export type FlowStep = { l: string; v: number; sub: string; href: string; tone?: Tone };
+
+/**
+ * Inventory Accuracy Control drawn as the flow it is, with what is waiting at
+ * each step — the strip at the top of the dashboard. Every number opens the
+ * records behind it. Null for somebody who holds neither end of it.
+ */
+export async function accuracyFlow(ctx: ErpContext, godownName: string | null): Promise<{ steps: FlowStep[]; accuracy: ControlWork["accuracy"] } | null> {
+  if (!ctx.screens.has("stockCheck")) return null;
+  const inG = (g: unknown) => !godownName || g === godownName;
+  const [w, work] = await Promise.all([controlWork(), ctx.screens.has("requisitions") ? requirementWork(ctx) : Promise.resolve({} as Record<string, { id: string; godown: string }[]>)]);
+  const ids = (l: { id: string; godown: string }[]) => l.filter((x) => inG(x.godown)).map((x) => x.id);
+  const stage = (...names: string[]) => ids(names.flatMap((n) => work[n] ?? []));
+  /* The count holds a requirement only until it is entered; a red flag never does. */
+  const held = stage("Blind count");
+  const moving = stage("Buyer decision", "Select vendor", "Collect quotations", "Compare quotations", "Ready for PO");
+  const dueNow = w.toCount.filter((c) => c.due && inG(c.godown)).length;
+  return {
+    accuracy: w.accuracy,
+    steps: [
+      { l: "Requirement", v: held.length, sub: "waiting for the blind count", href: tileHref("requisitions", held, "Waiting for the blind count"), tone: held.length ? "info" : undefined },
+      { l: "Blind count", v: ids(w.toCount).length, sub: dueNow ? `${dueNow} due today or overdue · book hidden` : "to count, book hidden", href: tileHref("countTasks", null, ""), tone: ids(w.toCount).length ? "info" : undefined },
+      { l: "Buying", v: moving.length, sub: "counted — the purchase carries on", href: tileHref("requisitions", moving, "Counted, buying"), tone: moving.length ? "brand" : undefined },
+      { l: "Red flag", v: ids(w.flags).length, sub: "beyond tolerance · stock control told", href: tileHref("stockFlags", ids(w.flags), "Red flag"), tone: ids(w.flags).length ? "danger" : undefined },
+      { l: "Recount", v: ids(w.recounts).length, sub: "by somebody else", href: tileHref("stockFlags", ids(w.recounts), "Recount out"), tone: ids(w.recounts).length ? "warn" : undefined },
+      { l: "Investigate", v: ids(w.investigating).length, sub: "under investigation", href: tileHref("stockFlags", ids(w.investigating), "Investigating"), tone: ids(w.investigating).length ? "warn" : undefined },
+      { l: "Approve", v: ids(w.adjustments).length, sub: "stock adjustments", href: tileHref("stockAdjustments", ids(w.adjustments), "Pending approval"), tone: ids(w.adjustments).length ? "danger" : undefined },
+    ],
+  };
 }

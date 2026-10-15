@@ -13,9 +13,13 @@ import type { DeskQueue, DeskRow } from "./types";
  * server from the real queue readers; this only counts and groups.
  * ------------------------------------------------------------------------- */
 
-export type DeskView = "all" | DeskQueue;
+/**
+ * `suspect` is a view by STAGE, not a queue: a Suspect is a lead at a rung, not
+ * work waiting on the manager, so it is never in `DeskRow.queues`.
+ */
+export type DeskView = "all" | "suspect" | DeskQueue;
 
-export const DESK_VIEWS: DeskView[] = ["all", "verify", "review", "sample", "order", "overdue", "nurture"];
+export const DESK_VIEWS: DeskView[] = ["all", "suspect", "verify", "review", "sample", "order", "overdue", "nurture"];
 
 export const QUEUE_LABEL: Record<DeskQueue, string> = {
   verify: "Verify prospect",
@@ -36,12 +40,37 @@ export const QUEUE_HELP: Record<DeskQueue, string> = {
   nurture: "Leads with a nurture task due today or past its day — what the sequence has asked you to do.",
 };
 
+export const SUSPECT_LABEL = "Suspect";
+export const SUSPECT_HELP = "Leads still at the Suspect stage in your salesmen's books.";
+
+/** The legacy `new` rung is the same first band, folded the way the funnel tiles fold it. */
+export function isSuspect(row: DeskRow): boolean {
+  return row.stage === "suspect" || row.stage === "new";
+}
+
+export function suspectCount(rows: DeskRow[]): number {
+  return rows.filter(isSuspect).length;
+}
+
+/**
+ * Whether the desk's row cap cut off any LIVE lead. The book is loaded live
+ * leads first, so if the last loaded row is already lost then every live lead
+ * is in; if it is live, more may follow past the cap.
+ */
+export function capCutOffLiveLeads(rows: { stage: string | null }[], hitCap: boolean): boolean {
+  if (!hitCap || rows.length === 0) return false;
+  const last = rows[rows.length - 1];
+  return last.stage !== "lost";
+}
+
 export function parseDeskView(raw: string | null | undefined): DeskView {
   return DESK_VIEWS.includes(raw as DeskView) ? (raw as DeskView) : "all";
 }
 
 export function inView(row: DeskRow, view: DeskView): boolean {
-  return view === "all" || row.queues.includes(view);
+  if (view === "all") return true;
+  if (view === "suspect") return isSuspect(row);
+  return row.queues.includes(view);
 }
 
 export function queueCounts(rows: DeskRow[]): Record<DeskQueue, number> & { all: number } {

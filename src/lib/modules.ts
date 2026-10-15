@@ -650,7 +650,7 @@ export const APP_MODULES: AppModule[] = [
     "activity-history",
     "Activity history",
     "Field work",
-    "Field salesman visits and calls from before this app existed, imported from a prior system's own log — including the shop names that still need matching to a real account.",
+    "Every visit the field team logged on MBOS, newest first, and before the cutover date the old field app's (EMP 2.0) log beside it — including the shop names that still need matching to a real account.",
   ),
   sales("orders", "Orders", "Commercial", "Orders taken in the field, and the ones over a credit limit."),
   sales("payments", "Payments", "Commercial", "Money collected, and cash still in somebody's pocket."),
@@ -813,7 +813,7 @@ export const APP_MODULES: AppModule[] = [
   sales("attendance", "Attendance", "People", "Who started the day, when, and from where."),
   sales("leave", "Leave", "People", "Requests waiting on a decision, and the policy behind them."),
   sales("holidays", "Holidays", "People", "The days nobody is expected to work."),
-  sales("expenses", "Expenses", "People", "Each day a salesman sends, worked out against the policy, to approve."),
+  sales("expenses", "Expenses", "People", "Every expense a salesman logs, to approve, and the ledger of what each was claimed, allowed, refused and paid."),
   sales(
     "travel",
     "Travel ledger",
@@ -1004,6 +1004,32 @@ export const APP_MODULES: AppModule[] = [
     group: "Hire",
     href: "/hire",
     note: "What they can do inside Hire is their Hire role — recruiter, interviewer, hiring manager, onboarding, HR head or admin — set below, under Hire.",
+  },
+  /*
+   * DOCUMENTATION is one module. Everybody granted it reads every app's pages
+   * and all three tabs of each — the guide, how it works, and the developer
+   * reference — by decision rather than by omission: a telecaller who wants
+   * to see the rule behind their Call Log is reading the same truth the
+   * developer is, and splitting it would make two versions of one answer.
+   */
+  {
+    key: "docs.app",
+    app: "docs",
+    label: "Documentation",
+    group: "Documentation",
+    href: "/docs",
+  },
+  /*
+   * THE FACTORY app is one module. What somebody can do inside it is their
+   * department and level, set beside the grant in Admin Console → Access.
+   */
+  {
+    key: "factory.app",
+    app: "factory",
+    label: "Factory",
+    group: "Factory",
+    href: "/factory",
+    note: "Associate works their department's jobs; manager supervises their department, or the whole floor as the Production Head. The department is set just below, under Factory.",
   },
   website("products", "Products", "Website", "The catalogue shown on the public site."),
   website("industries", "Industries", "Website", "The industries the public site says Mahek serves."),

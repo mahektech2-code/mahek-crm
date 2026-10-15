@@ -242,6 +242,11 @@ const WIRE: { fn: string; table: string; extra?: string[]; strip?: string[] }[] 
      still throws on the phone and still takes the pull down with it. */
   { fn: "customerTargetsFor", table: "customer_targets", extra: ["lastSyncedAt"] },
   { fn: "salaryFor", table: "salary", extra: ["lastSyncedAt"] },
+  /* Applied by the hand-rolled `applyExpenseBook`, which types its column list
+     out — so an unknown column would not throw there, it would be silently
+     DROPPED. Pinned here all the same, because the names are chosen to be the
+     handset's own and a renamed column is a field that quietly stops arriving. */
+  { fn: "expenseBookFor", table: "expenses" },
   /* Not covered until `scope` was added to it, which is exactly the shape of
      column this test exists for: a field the office knows about and the
      handset has no place for throws on an unknown column and takes the whole
@@ -1106,7 +1111,14 @@ test("no voice setting and no provider key reaches a handset", () => {
  * a future mismatch is sometimes "the office sends this one", and that answer
  * should have to be written down next to the reason.
  */
-const SERVER_ONLY: Record<string, string> = {};
+const SERVER_ONLY: Record<string, string> = {
+  /* Not the office's — the OLD handset's. Send day was removed when expenses
+     stopped waiting for a day to be closed; builds already in the field still
+     carry the button, and refusing what they send would park it in their
+     outbox for ever. The handler accepts it and refreshes the day. Delete
+     this entry, and the case, once no handset older than 1.21 is reporting. */
+  expense_day_submit: "older handsets still send Send day; it is accepted and refreshes the day",
+};
 
 test("every entity the sync dispatcher handles is one a handset can send", () => {
   const actions = readFileSync("src/lib/actions/mbos.ts", "utf8");

@@ -1,4 +1,6 @@
 import "server-only";
+import { erpLink } from "../registry";
+import { APP_TIMEZONE } from "@/lib/business-date";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
@@ -98,7 +100,7 @@ async function billChoices(): Promise<{ bills: Record<string, string[]>; goods: 
       from bills b
       join customers c on c.id = b.customer_id
       left join orders o on o.id = b.order_id
-     where b.bill_date >= (now() at time zone 'Asia/Kolkata')::date - 365
+     where b.bill_date >= (now() at time zone ${APP_TIMEZONE})::date - 365
      order by b.bill_date desc
   `)) as unknown as { party: string; bill: string; date: string; goods: string[] | null }[];
   const out = { bills: {} as Record<string, string[]>, goods: {} as Record<string, string[]>, billDate: {} as Record<string, string> };
@@ -120,7 +122,7 @@ async function requestForm(ctx: ErpContext, init?: Record<string, string>): Prom
     screen: "requests",
     id: "new",
     title: "Raise a customer complaint",
-    sub: "A complaint, or a credit note the customer is asking for. It lands on the customer's record in the CRM as well; the office decides.",
+    sub: "It also appears on the customer's CRM record.",
     submit: "Raise",
     init: { salesman: me?.name ?? "", cn: "No", ...init },
     data: { mobile, billDate: choices.billDate },
@@ -259,8 +261,8 @@ function toRow(ctx: ErpContext, x: Row, files: Map<string, string[]>, canIssue: 
   const decider = ctx.powers.has("decideRequests");
   const why = decider ? "" : "Only an admin or the office decides a request";
   const actions: ActionSpec[] = [];
-  if (word === "Requested") actions.push({ id: "accept", l: "Accepted", primary: true, why });
-  if (word === "Requested" || word === "Accepted") actions.push({ id: "reject", l: "Rejected", why, confirm: `Reject the complaint from ${x.party}?` });
+  if (word === "Requested") actions.push({ id: "accept", l: "Accept", primary: true, why });
+  if (word === "Requested" || word === "Accepted") actions.push({ id: "reject", l: "Reject", why, confirm: `Reject the complaint from ${x.party}?` });
   if (word === "Accepted" && c.requestCn)
     actions.push({
       id: "issue",
@@ -300,8 +302,8 @@ function toRow(ctx: ErpContext, x: Row, files: Map<string, string[]>, canIssue: 
     actions.unshift({ id: "aiComplaint", l: "Review the suggestion", ai: true, primary: true, loadsForm: true });
     actions.push({ id: "aiComplaintReject", l: "Reject the suggestion", confirm: "Reject the suggested type and summary?" });
   } else if (ai?.on && c.description) actions.push({ id: "aiComplaintRead", l: "Suggest type and summary", ai: true });
-  actions.push({ id: "more", l: "Add More Credit", loadsForm: true });
-  actions.push({ id: "customer", l: "View customer", href: `/erp/customers?open=${c.customerId}` });
+  actions.push({ id: "more", l: "Add another", loadsForm: true });
+  actions.push({ id: "customer", l: "View customer", href: erpLink("customers", { open: c.customerId }) });
   for (const f of files.get(c.id) ?? []) actions.push({ id: `file-${f}`, l: "Open attachment", href: `/api/attachments/${f}` });
   const response = c.resolvedAt ? Math.round((c.resolvedAt.getTime() - c.createdAt.getTime()) / 3600000) : null;
   return {
@@ -359,7 +361,7 @@ function complaintList(scope: ComplaintScope): ScreenModule {
         { k: "party", l: "Customer", t: "b" },
         { k: "mobile", l: "Mobile", t: "ph" },
         { k: "type", l: "Complaint type", t: "s" },
-        { k: "cn", l: "CN", t: "s" },
+        { k: "cn", l: "Credit note", t: "s" },
         { k: "bill", l: "Bill no", t: "mono" },
         { k: "goods", l: "Goods", t: "t" },
         { k: "amount", l: "CN amount", t: "m" },
@@ -377,7 +379,7 @@ function complaintList(scope: ComplaintScope): ScreenModule {
           hidden: [],
           groups: scope === "requests" ? ["status"] : scope === "complaints" ? ["type"] : undefined,
           chips: "status",
-          bulk: decider ? [{ id: "accept", l: "Accepted" }, { id: "reject", l: "Rejected", confirm: "Reject every selected complaint?" }] : undefined,
+          bulk: decider ? [{ id: "accept", l: "Accept" }, { id: "reject", l: "Reject", confirm: "Reject every selected complaint?" }] : undefined,
           newForm: await requestForm(ctx),
           newLabel: "Raise complaint",
           noDataLine: scope === "issueCn" ? "No credit notes asked for." : scope === "complaints" ? "No complaints without a credit note." : "No customer complaints yet.",

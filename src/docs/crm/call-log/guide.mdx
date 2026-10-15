@@ -1,0 +1,257 @@
+The Call Log is your day's work. Every morning it lists the customers you should ring, **in the order you should ring them**, and every name carries the reason it is there. You work it top to bottom: call, log what happened, move to the next row.
+
+<Callout kind="live">
+The numbers on this page — how many days, how many attempts — are the settings your CRM is using right now, read live. If a manager changes one on the Settings screen, this page changes with it.
+</Callout>
+
+## The screen at a glance
+
+<Wireframe url="/crm/call-log" nav={["Dashboard", "#Daily calling", "Call Log", "Reminders", "Call History", "Opportunities", "#Collections", "Payment Follow-up", "WhatsApp"]} active="Call Log" caption="The Call Log, for a telecaller working their own book">
+  <WfBar>
+    <WfTitle sub="Your book · Worked top to bottom. The first row is your next call">Call Log</WfTitle>
+    <WfSpacer />
+    <WfButton>Re-prioritise</WfButton>
+    <WfButton primary>Call Customer A</WfButton>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfCard>
+    <WfBar><WfText>12 of 48 worked</WfText><WfSpacer /><WfText muted>25%</WfText><Hotspot n={2} /></WfBar>
+    <div className="mt-1.5 h-1.5 rounded-full bg-canvas"><div className="h-full w-1/4 rounded-full bg-brand" /></div>
+  </WfCard>
+  <WfBar>
+    <WfCard title="Connected today"><WfText>9</WfText></WfCard>
+    <WfCard title="Connect rate"><WfText>75%</WfText></WfCard>
+    <WfCard title="Missed"><WfText>3</WfText></WfCard>
+    <WfCard title="Orders today"><WfText>4</WfText></WfCard>
+    <WfCard title="Booked today"><WfText>₹1.8L</WfText></WfCard>
+    <Hotspot n={3} />
+  </WfBar>
+  <WfBar>
+    <WfPill tone="brand">To work 36</WfPill><WfPill>Reminder due 4</WfPill><WfPill>No answer 6</WfPill><WfPill>Due to reorder 17</WfPill><WfPill>Check-in due 5</WfPill><WfPill>Leads 3</WfPill><WfPill>Inactive 2</WfPill>
+    <Hotspot n={4} />
+    <WfSpacer /><WfText muted>j / k to move · Enter to open the call panel</WfText>
+  </WfBar>
+  <WfCard tone="warn">
+    <WfBar><WfText>7 customers held back today — nothing disappears silently</WfText><Hotspot n={5} /></WfBar>
+  </WfCard>
+  <WfTable
+    highlight={0}
+    columns={["Customer and why", "Outstanding", "", ""]}
+    rows={[
+      [<span key="a"><b>Customer A</b> <WfPill tone="danger">Reminder 1 day overdue – call after stock-take</WfPill> <Hotspot n={6} /></span>, "₹42,300", <WfButton key="b">Call</WfButton>, "⋯"],
+      [<span key="c"><b>Customer B</b> <WfPill tone="danger">Order overdue by 1 full cycle</WfPill></span>, "₹0", <WfButton key="d">Call</WfButton>, <Hotspot key="e" n={7} />],
+      [<span key="f"><b>Customer C</b> <WfPill tone="brand">Stock check – orders every 30 days</WfPill></span>, "₹8,900", <WfButton key="g">Call</WfButton>, "⋯"],
+      [<span key="h"><b>Customer D</b> <WfPill>No answer – attempt 3</WfPill></span>, "₹0", <WfButton key="i">Call</WfButton>, "⋯"],
+    ]}
+  />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Call button.</b> Opens the call panel on the selected customer — always the next one to ring. When nothing is left it reads <i>Queue clear</i>.</span>,
+  <span key="2"><b>Progress.</b> How many of today's customers you have worked. A worked customer leaves the list.</span>,
+  <span key="3"><b>Today's figures.</b> Connected, connect rate, missed calls, orders and order value booked today.</span>,
+  <span key="4"><b>Filters.</b> Narrow the list to one kind of call. The number on each is how many are waiting.</span>,
+  <span key="5"><b>Held back.</b> Customers the rules kept off today's list, each with the reason. Open it whenever somebody you expected is missing.</span>,
+  <span key="6"><b>The reason.</b> Every row says why it is there. A customer with two reasons shows both, the stronger one first.</span>,
+  <span key="7"><b>Row menu (⋯).</b> Open the record, send WhatsApp instead, see their bills, skip for today, or ask for the account to be closed.</span>,
+]} />
+
+## Your day, step by step
+
+<Steps>
+<Step title="Open the Call Log">
+The list is put together the first time anybody opens it each morning and then **stays settled for the day** — the order does not reshuffle under you while you work. The only thing that can jump in during the day is a reminder falling due: a callback you promised is added at the top.
+</Step>
+<Step title="Start at the top row">
+The first row is your next call. Press **Call** (or <Kbd>Enter</Kbd>) to open the call panel. The panel shows who they are, what they buy, what they owe, their last three calls — and the reason you are ringing.
+</Step>
+<Step title="Make the call, then log what happened">
+Choose how the interaction happened, then the outcome, then fill in what the outcome asks for. Details are in [Logging a call](#logging-a-call) below.
+</Step>
+<Step title="Read what happens next, then move on">
+After saving, a small window tells you **when this customer comes back to your Call Log and why**. Press **Next customer** — or use **Save & next ▸** in the panel to save and move in one go.
+</Step>
+<Step title="When the list is empty">
+You will see *Queue cleared for today*. The suggested next work is the [Payment Follow-up](/docs/crm/payments) list.
+</Step>
+</Steps>
+
+## Reading a row: what each reason means
+
+Every customer is on the list for at least one reason. The colour tells you how urgent it is: **red** is overdue, **amber** is due today or needs attention, **purple** is routine sales work, **grey** is lower priority.
+
+| Reason on the row | Short name in the panel | What it means | What to do |
+|---|---|---|---|
+| Payment overdue N days – ₹X | Payment overdue | Collections wants a call now. Only shown when payments are switched on for the Call Log (currently <Setting k="queue.includePaymentDue" />). | Chase the payment. |
+| Reminder N days overdue – *note* | Reminder overdue | A callback somebody promised is late. | Ring them — they are expecting it. |
+| Reminder due today – *note* | Reminder due today | A promised callback is today. | Ring them today. |
+| Order overdue by N full cycles | Order overdue | They have missed at least one whole order cycle. | Ask for the order. |
+| Order overdue by N days / Order due today | Order due | Their order is due by their own buying pattern. | Ask for the order. |
+| Stock check – orders every N days | Stock check | They are partway through their cycle. A good time to ask what is left on the shelf. | Ask about stock, take the order if there is one. |
+| Never ordered – N days since last contact | Never ordered | A lead that has not bought yet. | Try for a first order. |
+| No contact for N days – cycle not established yet | Check-in overdue | A customer whose buying pattern is not known yet, and it has been a while. | Check in. |
+| Gone quiet – N cycles since their last order | Stopped ordering | They used to buy and have stopped. Ranked below orders that are merely due, on purpose. | Ask why they stopped. |
+| Check-in due – N days since last contact | Check-in due | Routine check-in for a customer whose pattern is not known yet. | Check in. |
+| Unreachable – N attempts, no answer | Cannot reach them | Rung several times in a row with no answer. | Decide what happens next — a different number, a visit, or leave them. |
+| No answer – attempt N | No answer – try again | A retry after an earlier unanswered call. | Ring again. |
+| Order in progress – *status* | Order in progress | An order is waiting for accounts or dispatch. | Check on their order if they ask. |
+
+<Callout kind="note">
+The row also shows the contact person, phone, last order date, how long since anybody spoke to them, and the last note anybody wrote. Read the last note before you dial.
+</Callout>
+
+## Logging a call
+
+<Wireframe url="/crm/call-log" caption="The call panel, logging an outbound call that ended in an order">
+  <WfPanel title="Customer A · contact person · phone" side>
+    <WfBar><WfPill tone="danger">Reminder overdue</WfPill><WfPill tone="brand">Stock check</WfPill><Hotspot n={1} /></WfBar>
+    <WfTabs items={["Information", "Call log", "Script"]} active="Call log" />
+    <WfField label="Notes"><WfBlock h={34} label="Speak or type — the microphone works in any language" /></WfField>
+    <WfField label="How did this interaction happen?">
+      <WfBar><WfButton primary>We Called Them</WfButton><WfButton>They Called Us</WfButton><WfButton>Order Received</WfButton><Hotspot n={2} /></WfBar>
+    </WfField>
+    <WfField label="What was the outcome?">
+      <WfBar><WfButton primary>Order Taken</WfButton><WfButton>No Order</WfButton><WfButton>No Answer</WfButton><WfButton>Payment Promised</WfButton><WfButton>Follow-up</WfButton><WfText muted>…</WfText><Hotspot n={3} /></WfBar>
+    </WfField>
+    <WfField label="Products and quantity">
+      <WfInput placeholder="Search product to add…" wide />
+      <WfTable columns={["Product", "Cans"]} rows={[["Nano Thinner – 20 Liter (Loose)", "6"], ["PU Sealer – 4 Liter (4 Can/Box)", "8"]]} />
+      <WfBar><WfText muted>2 products · 14 cans · 152 L</WfText><Hotspot n={4} /></WfBar>
+    </WfField>
+    <WfField label="Next action"><WfBar><WfPill>Confirm dispatch</WfPill><WfPill>Send price list</WfPill><Hotspot n={5} /></WfBar></WfField>
+    <WfBar><WfSpacer /><WfButton>Save log</WfButton><WfButton primary>Save & next ▸</WfButton><Hotspot n={6} /></WfBar>
+  </WfPanel>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Why you are calling.</b> Every reason, strongest first. The <i>Information</i> tab has their buying pattern, target and last three calls; <i>Script</i> has the call script for this situation.</span>,
+  <span key="2"><b>How it happened.</b> You rang them, they rang you, or an order arrived on WhatsApp with no call. Everything after this depends on it.</span>,
+  <span key="3"><b>The outcome.</b> How the call ended. Each outcome asks for its own details — see the table below.</span>,
+  <span key="4"><b>Order lines.</b> Quantities are in cans. The panel works out litres for you. Frequently bought products are offered first.</span>,
+  <span key="5"><b>Next action.</b> Anything you agreed to do. If it has a date, it becomes a reminder you will see on the day.</span>,
+  <span key="6"><b>Save.</b> <i>Save & next</i> saves and opens the next customer on the list.</span>,
+]} />
+
+### What each outcome asks you for
+
+| Outcome | You must fill in | What it does |
+|---|---|---|
+| **Order Taken** | Products and quantities | Creates an order waiting for accounts to approve. |
+| **No Order** | Why there was no order (one choice) | They will not be asked for an order again for a few days — see *Why is somebody missing* below. |
+| **No Answer** | Why (no response, busy, switched off…) | Starts the retry ladder. The panel tells you which attempt this is. |
+| **Payment Promised** | — | Creates a payment-promise reminder, <Setting k="interactions.paymentPromiseDefaultDays" /> days out unless you set another date. |
+| **Follow-up** | What you are waiting for | Creates a reminder, <Setting k="interactions.followUpDefaultDays" /> day out unless you set another date. |
+| **Complaint** | What they are asking for, category, description; photographs optional | Raises a complaint (or adds to an open one of the same kind). |
+| **Not Interested** | Why; whether there is a "later"; a date if there is | "They asked us not to call again" marks the customer **do not contact**. |
+| **Casual Talk** | Purpose | Records the contact. |
+| **Transport Follow-up** | — | Records a delivery chase. |
+
+For a call **they** made, you also choose **who called** (owner, purchase, accounts…) and **why** — answer those before the outcome.
+
+<Callout kind="warn" title="A common mistake">
+Logging an order that came in on WhatsApp as *We Called Them → Order Taken*. Use **Order Received** instead and give the order date — otherwise the record says you rang them on a day you did not.
+</Callout>
+
+## After you save: when they come back
+
+The window that opens after a save tells you, in one fixed sentence, **when this customer comes back to your Call Log**:
+
+> Comes back to your Call Log on **Mon 1 Sep — 13 days away**
+>
+> Ask for the order — they are due to reorder.
+
+The badge beside it tells you what kind of date that is:
+
+<Cards cols={2}>
+<Card title="Promised" tone="brand">A callback the customer asked for. **You owe them this call** on that day.</Card>
+<Card title="Scheduled">The date the rules give today. It moves if they order, pay or ask for a callback before then.</Card>
+<Card title="Needs a decision" tone="warn">Nobody can reach them. There is no next call until somebody decides what to do.</Card>
+<Card title="Nothing scheduled">Marked do not contact, or nothing brings them back within four months.</Card>
+</Cards>
+
+If you have just promised a callback, the window offers **Hold other calls until *date***. Press it to stop the Call Log asking you about orders or check-ins for this customer until the day you promised — money and reminders are never held.
+
+## Customers held back today
+
+<Wireframe url="/crm/call-log" caption="The held-back strip, opened">
+  <WfCard tone="warn" title="7 customers held back today">
+    <WfTable columns={["Customer", "Why they are not on today's list"]} rows={[
+      ["Customer E", "Orders every 21 days · ordered 4 days ago – no order chased for 11 more days"],
+      ["Customer F", "Already called today"],
+      ["Customer G", "WhatsApp sent 1 day ago – 2 days of cooldown left"],
+      ["Customer H", "No order 2 days ago – no order chased for 3 more days"],
+      ["Customer J", "No answer – attempt 2 made, waiting before the next"],
+    ]} />
+  </WfCard>
+</Wireframe>
+
+Nobody disappears from the Call Log without a reason. If you expected somebody and they are not there, open the held-back strip — the sentence beside their name is the rule that kept them off today. The [How it works](/docs/crm/call-log/how-it-works) tab explains each rule.
+
+## When nobody answers
+
+You do not need to remember when to try again. The Call Log brings them back:
+
+<Flow caption="The no-answer ladder. Any answered call puts them back to normal." chart={`
+flowchart TD
+  A["1st call — no answer"] -->|"a short wait, same day"| B["2nd attempt"]
+  B -->|"next day"| C["3rd attempt"]
+  C -->|"a few days later"| D["4th and 5th attempts"]
+  D --> F["Unreachable — needs a decision"]
+`} />
+
+The same-day wait is <Setting k="queue.noAnswerRetryHours" /> hour(s). After <Setting k="queue.noAnswerMaxAttempts" /> unanswered calls in a row the customer is marked **Unreachable** and the row asks you to decide what happens next instead of ringing again.
+
+## Skipping and closing an account
+
+From the row menu (⋯):
+
+- **Skip for today** — takes them off today's list. You must say why; the reason is recorded and shown in the held-back strip. They come back tomorrow if they are still due.
+- **Request deactivation** — asks a manager to close the account (shop shut, duplicate, not a customer). The manager decides on the [Close / Reopen](/docs/crm/status-requests) screen. Until then the row says *Deactivation already requested*.
+- **Send WhatsApp instead** and **See their bills** open those screens for this customer.
+
+## Keyboard shortcuts
+
+| Key | Does |
+|---|---|
+| <Kbd>j</Kbd> | Move down the list |
+| <Kbd>k</Kbd> | Move up the list |
+| <Kbd>Enter</Kbd> | Open the call panel on the selected row |
+
+Inside the panel, **◀ Previous** and **Next ▶** walk the list in the order it is shown.
+
+## For managers: the team view
+
+A manager sees the **whole team's** Call Log by default, with an extra **Assigned to** column saying whose call each row is (or *Unassigned*, which is the one to look at first). Switch to **My book** in the header to see only your own. A telecaller always sees only their own book.
+
+## Why is somebody (not) on my list?
+
+<Faq q="A customer I expected is not on the list and not in the held-back strip either.">
+They have no reason to be called today: not yet at their stock-check day, a lead contacted within the last <Setting k="queue.prospectIntervalDays" /> days, or nothing due. Nothing is wrong — their day has not come.
+</Faq>
+<Faq q="It says 'Already called today'.">
+Somebody — you or a colleague — logged a call with them today. Even a due reminder does not bring them back the same day.
+</Faq>
+<Faq q="They ordered four days ago. Why no stock check?">
+After an order there is a quiet period of up to <Setting k="queue.quietDaysAfterOrder" /> days (shorter for customers who order more often than that). Somebody who just ordered is serving themselves. A reminder you set still comes through.
+</Faq>
+<Faq q="I told them 'no order' two days ago and they are not on the list.">
+A *No Order* answer buys a few days before the Call Log asks them for an order again. Only the order question is held — a reminder, a payment or a check-in still shows.
+</Faq>
+<Faq q="It says 'WhatsApp sent … cooldown left'.">
+A WhatsApp message to them was **confirmed sent** in the last <Setting k="queue.whatsappCooldownDays" /> days. A message you copied but did not confirm does not count. A due reminder overrides this.
+</Faq>
+<Faq q="It says 'Active in the order system'.">
+They have an order still open on the order sheet's Taken Order tab. Calling them for another order would be asking twice.
+</Faq>
+<Faq q="It says 'On the sales team's lead funnel'.">
+The field sales team is working this lead towards an order, so the Call Log does not ask for one as well.
+</Faq>
+<Faq q="Somebody owes a lot of money but is not on my Call Log.">
+Payment chasing lives on the [Payment Follow-up](/docs/crm/payments) screen. It only appears on the Call Log when a manager switches that on (currently <Setting k="queue.includePaymentDue" />).
+</Faq>
+<Faq q="The list is shorter than I expected.">
+The Call Log shows at most <Setting k="queue.maxSizePerUser" /> customers a day. The progress count includes everyone who qualified.
+</Faq>
+<Faq q="It says 'Dealt with since the list was settled'.">
+They were on this morning's list but no longer need a call — for example they ordered, or somebody already rang them.
+</Faq>

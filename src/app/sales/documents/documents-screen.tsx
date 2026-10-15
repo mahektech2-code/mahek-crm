@@ -33,7 +33,9 @@ import {
 import { ConfirmDialog, Drawer, DrawerHeader, Modal } from "@/components/ui/overlays";
 import { cx } from "@/components/ui/primitives";
 import { plural } from "@/components/console/words";
-import { uploadPublishFile } from "../publish-upload";
+import { callAction } from "@/lib/call-action";
+import { uploadPublishFile, type Uploaded, type UploadStage } from "../publish-upload";
+import { megabytes, PUBLISH_MAX_MB } from "@/lib/publish-limits";
 import { AudienceLine, Initials, TagPeopleModal } from "./tag-people";
 
 /**
@@ -63,7 +65,7 @@ import { AudienceLine, Initials, TagPeopleModal } from "./tag-people";
  */
 
 type View = "all" | "published" | "tagged" | "withdrawn";
-type Picked = { id: string; filename: string; sizeBytes: number };
+type Picked = Uploaded;
 
 export function DocumentsScreen({
   rows,
@@ -117,9 +119,9 @@ export function DocumentsScreen({
     setBusy(true);
     setTagError(null);
     setError(null);
-    const result = await setDocumentPeople({ documentId: doc.id, userIds }).catch(() => null);
+    const result = await callAction(setDocumentPeople({ documentId: doc.id, userIds }));
     setBusy(false);
-    const failure = !result ? "That did not reach the server. Try again." : !result.ok ? result.error : null;
+    const failure = result.ok ? null : result.error;
     if (failure) {
       // Under the picker if it is open, on the screen if the drawer asked.
       if (tagging) setTagError(failure);
@@ -134,10 +136,9 @@ export function DocumentsScreen({
   async function setPublished(doc: DocumentRow, published: boolean) {
     setBusy(true);
     setError(null);
-    const result = await setDocumentPublished({ documentId: doc.id, published }).catch(() => null);
+    const result = await callAction(setDocumentPublished({ documentId: doc.id, published }));
     setBusy(false);
     setWithdrawing(null);
-    if (!result) return setError("That did not reach the server. Try again.");
     if (!result.ok) return setError(result.error);
     toast.push(result.message ?? "Saved.");
     router.refresh();
@@ -391,6 +392,11 @@ function hrmsReason(d: DocumentRow): string | null {
   return d.fromHrms ? "Published from HRMS — who it is for is changed on HRMS → Documents." : null;
 }
 
+/** Said once the file is stored, so a smaller file than was chosen is never a surprise. */
+function compressedNote(file: Uploaded): string {
+  return file.compressedFrom ? `Compressed from ${megabytes(file.compressedFrom)} · ` : "";
+}
+
 function sizeLabel(bytes: number | null): string {
   if (!bytes) return "size unknown";
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
@@ -428,6 +434,7 @@ function FilePicker({
   onPicked: (file: Picked) => void;
 }) {
   const [uploading, setUploading] = React.useState(false);
+  const [stage, setStage] = React.useState<UploadStage>("sending");
   const [error, setError] = React.useState<string | null>(null);
   const [key, setKey] = React.useState(0);
 
@@ -436,7 +443,8 @@ function FilePicker({
     setUploading(true);
     setError(null);
     // Never rejects — every failure, the network's included, is a Result.
-    const result = await uploadPublishFile(chosen);
+    setStage("sending");
+    const result = await uploadPublishFile(chosen, setStage);
     setUploading(false);
     if (!result.ok) {
       setError(result.error);
@@ -469,7 +477,9 @@ function FilePicker({
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium text-ink">
             {uploading
-              ? "Storing the file…"
+              ? stage === "compressing"
+                ? "Compressing the photographs in it…"
+                : "Storing the file…"
               : file
                 ? file.filename
                 : current
@@ -478,9 +488,11 @@ function FilePicker({
           </span>
           <span className="block truncate text-[12px] text-muted">
             {uploading
-              ? "This can take a moment for a large PDF."
+              ? stage === "compressing"
+                ? `It is over ${PUBLISH_MAX_MB} MB. Text and drawings are left exactly as they are.`
+                : "This can take a moment for a large PDF."
               : file
-                ? `${sizeLabel(file.sizeBytes)} · stored, and attached when you save`
+                ? `${compressedNote(file)}${sizeLabel(file.sizeBytes)} · stored, and attached when you save`
                 : current
                   ? `Now: ${current}`
                   : "PDF, JPG or PNG"}
@@ -518,14 +530,13 @@ function PublishModal({
   async function publish() {
     setBusy(true);
     setError(null);
-    const result = await publishDocument({
+    const result = await callAction(publishDocument({
       title,
       category,
       attachmentId: file?.id ?? null,
       visibleToUserIds: tagged,
-    }).catch(() => null);
+    }));
     setBusy(false);
-    if (!result) return setError("That did not reach the server. Try again.");
     if (!result.ok) return setError(result.error);
     onDone(result.message ?? "Published.");
   }
@@ -726,14 +737,13 @@ function DetailsDrawer({
   async function save() {
     setSaving(true);
     setError(null);
-    const result = await updateDocument({
+    const result = await callAction(updateDocument({
       documentId: doc.id,
       title,
       category,
       attachmentId: file?.id ?? null,
-    }).catch(() => null);
+    }));
     setSaving(false);
-    if (!result) return setError("That did not reach the server. Try again.");
     if (!result.ok) return setError(result.error);
     setEditing(false);
     onSaved(result.message ?? "Saved.");

@@ -1,9 +1,21 @@
 import "server-only";
 
-import { and, eq, sql } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appModuleAccess, customers, users } from "@/db/schema";
+import {
+  appAccess,
+  appModuleAccess,
+  auditLog,
+  customers,
+  mbosTasks,
+  timelineEvents,
+  users,
+} from "@/db/schema";
+import { chooseVerifierRoute, NO_CREATOR, type CreatorFacts } from "@/lib/engines/lead-verifier-route";
+import { ladderFor } from "@/lib/engines/lead-ladder";
+import { MBOS_EVENT, writeTimelineEvent } from "@/lib/timeline";
 import { canOpenModule } from "@/lib/access";
 import { canAny, canFor, hatsFor, levelInApp, requireCapability, resolveScope } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
@@ -35,6 +47,8 @@ import { getConfig } from "@/lib/config/store";
 export const SALES_MANAGER_MODULE = "crm.sales-manager";
 
 export type LeadSeats = {
+  /** The lead's id, where the caller has it — the field rule reads who raised it. */
+  id?: string;
   ownerId: string | null;
   salesManagerId: string | null;
   leadStage?: string | null;
@@ -239,7 +253,7 @@ async function seatsOf(customerId: string): Promise<LeadSeats | null> {
     .from(customers)
     .where(eq(customers.id, customerId))
     .limit(1);
-  return row ?? null;
+  return row ? { id: customerId, ...row } : null;
 }
 
 type ApprovalRoute = "capability" | "seat" | "designated";
@@ -261,6 +275,10 @@ async function approvalRoute(
     if (designated.id === user.id) return "designated";
     if (seats!.salesManagerId === user.id && user.role !== "admin") return null;
   }
+  /* THE FIELD VERIFIER DOES NOT VERIFY A LEAD SHE RAISED, by the seat or by a
+     capability she may also hold. An administrator keeps the reach they have
+     always had. Costs one cached config read while the rule is off. */
+  if (seats?.id && user.role !== "admin" && (await raisedByFieldVerifier(user.id, seats.id))) return null;
   if (await canFor(user, "lead.verify")) return "capability";
   if (seats && (await holdsLeadSeat(user, seats.salesManagerId))) return "seat";
   return null;
@@ -285,6 +303,12 @@ export async function requireLeadVerifier(customerId: string) {
     return { ...ctx, authorisedBy: level, authorisedIn: "crm" as const };
   }
 
+  if (seats?.id && ctx.user.role !== "admin" && (await raisedByFieldVerifier(ctx.user.id, seats.id))) {
+    const desk = await deskApprover();
+    throw new ApprovalRefused(
+      `You raised this lead yourself, so ${desk?.name ?? "the person set to verify leads a Telecaller converts"} verifies it. You collect the answers.`,
+    );
+  }
   const designated = seats ? await approverFor(seats) : null;
   if (designated && seats?.salesManagerId === ctx.user.id) {
     throw new ApprovalRefused(
@@ -436,4 +460,459 @@ export async function qualificationCollectorRefusalById(
   const seats = await seatsOf(customerId);
   if (!seats) return null;
   return qualificationCollectorRefusal(user, seats);
+}
+
+/* ===========================================================================
+ * THE FIELD VERIFIER — a lead a Salesman raised, or a Salesman now holds.
+ *
+ * Added on top of the two designations above and touching neither: a lead a
+ * Telecaller works is still `leads.telecallerVerifierEmail`'s, and a Sales
+ * Manager's own lead is still `leads.selfRaisedVerifierEmail`'s. What this adds is
+ * the third person, `leads.fieldVerifierEmail`, and the precedence between them
+ * (see `engines/lead-verifier-route.ts`): current Salesman assignment overrides
+ * the creator, the field verifier's own lead is never hers, and an unknown
+ * creator falls back to the desk verifier.
+ *
+ * IT USES THE SEAT THIS PRODUCT ALREADY HAS. Routing a lead to the field
+ * verifier means she is its Sales Manager (`customers.sales_manager_id`), filled
+ * the way the org chart fills it — so the seat-based permission
+ * (`holdsLeadSeat` + the `crm.sales-manager` module), the Sales Manager
+ * workspace, the verification queue, scope and notifications all reach it with
+ * no second rule, and nobody's app level is raised.
+ *
+ * AND IT NEVER TOUCHES FOLLOW-UP OWNERSHIP. `owner_id` is who works the lead.
+ * Nothing in here writes it; the seat, the verification call and the next action
+ * are the verifier's, and the owner stays exactly who it was.
+ *
+ * Blank `leads.fieldVerifierEmail` switches all of it off: routing is exactly as
+ * it was.
+ * ========================================================================= */
+
+export const FIELD_VERIFIER_KEY = "leads.fieldVerifierEmail" as const;
+
+export type Reader = Pick<typeof db, "select">;
+export type Writer = Pick<typeof db, "select" | "insert" | "update">;
+
+type Person = { id: string; name: string; role: string };
+
+async function activeUserByEmail(email: string, exec: Reader = db): Promise<Person | null> {
+  const wanted = email.trim().toLowerCase();
+  if (!wanted) return null;
+  const [row] = await exec
+    .select({ id: users.id, name: users.name, role: users.role })
+    .from(users)
+    .where(and(sql`lower(${users.email}) = ${wanted}`, eq(users.active, true)))
+    .limit(1);
+  return row ?? null;
+}
+
+async function configuredEmail(key: "leads.fieldVerifierEmail" | "leads.telecallerVerifierEmail" | "leads.selfRaisedVerifierEmail") {
+  return (((await getConfig())[key] as string | undefined) ?? "").trim();
+}
+
+/** The field verifier, by work email — null where nothing is set or nobody ACTIVE matches. */
+export async function fieldApprover(exec: Reader = db): Promise<Person | null> {
+  return activeUserByEmail(await configuredEmail(FIELD_VERIFIER_KEY), exec);
+}
+
+/** The desk verifier: the Telecaller verifier, else the self-raised approver. */
+export async function deskApprover(exec: Reader = db): Promise<Person | null> {
+  const telecaller = await activeUserByEmail(await configuredEmail("leads.telecallerVerifierEmail"), exec);
+  if (telecaller) return telecaller;
+  return activeUserByEmail(await configuredEmail("leads.selfRaisedVerifierEmail"), exec);
+}
+
+/** Is the whole rule switched on? Blank means everything is exactly as it was. */
+export async function fieldRoutingOn(): Promise<boolean> {
+  return Boolean(await configuredEmail(FIELD_VERIFIER_KEY));
+}
+
+/* --------------------------------------------------- what was written at raising */
+
+/** Who raised one lead, from the append-only `lead_created` event and the level the handset held. */
+export async function creatorFactsFor(customerId: string, exec: Reader = db): Promise<CreatorFacts> {
+  return (await creatorFactsForMany([customerId], exec)).get(customerId) ?? NO_CREATOR;
+}
+
+/** The same for many leads in two queries — for the nightly pass and a bulk move. */
+export async function creatorFactsForMany(
+  customerIds: string[],
+  exec: Reader = db,
+): Promise<Map<string, CreatorFacts>> {
+  const out = new Map<string, CreatorFacts>();
+  const ids = [...new Set(customerIds)];
+  if (!ids.length) return out;
+
+  const events = await exec
+    .select({
+      customerId: timelineEvents.customerId,
+      actorUserId: timelineEvents.actorUserId,
+      sourceApp: timelineEvents.sourceApp,
+    })
+    .from(timelineEvents)
+    .where(and(inArray(timelineEvents.customerId, ids), eq(timelineEvents.eventType, MBOS_EVENT.leadCreated)))
+    .orderBy(asc(timelineEvents.occurredAt), asc(timelineEvents.createdAt));
+  for (const e of events) {
+    if (!out.has(e.customerId)) {
+      out.set(e.customerId, { actorUserId: e.actorUserId, eventSourceApp: e.sourceApp, capturedAsRole: null });
+    }
+  }
+
+  const handset = [...out.entries()].filter(([, f]) => f.eventSourceApp === "mbos").map(([id]) => id);
+  if (handset.length) {
+    const audits = await exec
+      .select({ entityId: auditLog.entityId, role: auditLog.actorRole })
+      .from(auditLog)
+      .where(
+        and(
+          inArray(auditLog.entityId, handset),
+          eq(auditLog.entityType, "customer"),
+          eq(auditLog.action, "lead.captured"),
+          eq(auditLog.actorApp, "field"),
+        ),
+      )
+      .orderBy(asc(auditLog.at));
+    const seen = new Set<string>();
+    for (const a of audits) {
+      if (!a.entityId || seen.has(a.entityId)) continue;
+      seen.add(a.entityId);
+      const f = out.get(a.entityId);
+      if (f) f.capturedAsRole = a.role ?? null;
+    }
+  }
+  return out;
+}
+
+/**
+ * WHICH OF THESE OWNERS IS A SALESMAN: holds the Salesman App at the associate
+ * level — the people a lead is put on a handset for. A manager who also holds
+ * the field app coordinates and does not walk the beat. Whether the account is
+ * still open is not asked: a Salesman whose account closed left the lead
+ * assigned to a Salesman, and changing its verifier on that would be a change
+ * nobody made.
+ */
+export async function salesmenAmong(userIds: string[], exec: Reader = db): Promise<Set<string>> {
+  const ids = [...new Set(userIds.filter(Boolean))];
+  if (!ids.length) return new Set();
+  const rows = await exec
+    .select({ userId: appAccess.userId })
+    .from(appAccess)
+    .where(and(inArray(appAccess.userId, ids), eq(appAccess.app, "field"), eq(appAccess.role, "associate")));
+  return new Set(rows.map((r) => r.userId));
+}
+
+/* ------------------------------------------------------------ the route itself */
+
+export type FieldRoute =
+  /** Not configured, or nothing to add: every existing step answers exactly as before. */
+  | { kind: "off" }
+  /** A lead the desk steps handle (Telecaller's, Sales Manager's own): nothing new to say. */
+  | { kind: "desk" }
+  /** A named verifier that WINS over every step below it. */
+  | { kind: "verifier"; id: string; name: string; reason: "assigned" | "salesman_created" | "own_lead" }
+  /** The creator is unknown: the desk verifier, but only once no seat has answered. */
+  | { kind: "fallback"; id: string; name: string }
+  /** Configured but unusable — said in words, never quietly routed elsewhere. */
+  | { kind: "refuse"; message: string };
+
+/** Can this person actually verify: the capability, or the seat + module the Sales Manager holds. */
+async function canActAsVerifier(p: Person): Promise<boolean> {
+  if (await canFor({ id: p.id, role: p.role }, "lead.verify")) return true;
+  return canOpenModule(p.id, SALES_MANAGER_MODULE);
+}
+
+/**
+ * HOW THIS LEAD'S VERIFICATION IS ROUTED by the field rule.
+ *
+ * `lead` is `{ id, ownerId }` and the OWNER is read from the argument, so a caller
+ * that is about to write a new owner can ask about the lead as it WILL be.
+ */
+export async function fieldRouteFor(
+  lead: { id: string; ownerId: string | null },
+  converterId?: string,
+  exec: Reader = db,
+): Promise<FieldRoute> {
+  const email = await configuredEmail(FIELD_VERIFIER_KEY);
+  if (!email) return { kind: "off" };
+
+  const field = await activeUserByEmail(email, exec);
+  const creator = await creatorFactsFor(lead.id, exec);
+  const assigned = lead.ownerId ? (await salesmenAmong([lead.ownerId], exec)).has(lead.ownerId) : false;
+  const r = chooseVerifierRoute({ creator, assignedToSalesman: assigned, fieldVerifierId: field?.id ?? null });
+
+  if (r.route === "field") {
+    if (!field) {
+      return {
+        kind: "refuse",
+        message: `Nobody can verify this lead yet: the person set to verify leads a Salesman raised or holds (${email}) has no active account. Ask an administrator to correct that setting - the lead stays where it is until then.`,
+      };
+    }
+    if (converterId && field.id === converterId) {
+      return {
+        kind: "refuse",
+        message:
+          "You are the person who verifies leads a Salesman raised or holds, so you cannot also convert this one. Ask somebody else to convert it.",
+      };
+    }
+    if (!(await canActAsVerifier(field))) {
+      return {
+        kind: "refuse",
+        message: `Nobody can verify this lead yet: ${field.name}, who is set to verify leads a Salesman raised or holds, has neither the verification permission nor the Sales Manager seat. Ask an administrator to fix that - the lead stays where it is until then.`,
+      };
+    }
+    return {
+      kind: "verifier",
+      id: field.id,
+      name: field.name,
+      reason: r.viaAssignment ? "assigned" : "salesman_created",
+    };
+  }
+
+  /* The desk route. Only two cases need an answer from here: the field verifier's
+     own lead (which the self-raised step below would miss once a Salesman holds
+     it), and an unknown creator (the fallback). Anything else is the existing
+     steps' to answer. */
+  if (!r.creatorIsFieldVerifier && !r.fallback) return { kind: "desk" };
+
+  const desk = await deskApprover(exec);
+  if (!desk) {
+    /* Nothing is designated for the desk: with no fallback configured an unknown
+       creator behaves exactly as it did, and the own-lead case has nobody else. */
+    return r.creatorIsFieldVerifier
+      ? {
+          kind: "refuse",
+          message:
+            "You raised this lead yourself, so you cannot verify it, and nobody is set to verify leads a Telecaller converts or a Sales Manager raised. Ask an administrator to set one.",
+        }
+      : { kind: "off" };
+  }
+  if (converterId && desk.id === converterId) {
+    return {
+      kind: "refuse",
+      message: "You are the person who verifies this lead, so you cannot also convert it. Ask another desk worker to convert it.",
+    };
+  }
+  if (!(await canFor({ id: desk.id, role: desk.role }, "lead.verify"))) {
+    return {
+      kind: "refuse",
+      message: `Nobody can verify this lead yet: ${desk.name}, who is set to verify leads whose creator is not known, does not hold the verification permission. Ask an administrator to fix that - the lead stays where it is until then.`,
+    };
+  }
+  return r.creatorIsFieldVerifier
+    ? { kind: "verifier", id: desk.id, name: desk.name, reason: "own_lead" }
+    : { kind: "fallback", id: desk.id, name: desk.name };
+}
+
+/**
+ * THE FIELD VERIFIER'S SEAT, for many leads at once — which of them she is the
+ * Sales Manager of. Used by the nightly org-chart pass and by a bulk move, so the
+ * seat the pass would write and the seat a move writes cannot disagree. Empty
+ * where the rule is off or nobody active is named.
+ */
+export async function fieldSeatFor(
+  leads: Array<{ id: string; ownerId: string | null }>,
+  exec: Reader = db,
+): Promise<{ approverId: string | null; seated: Set<string> }> {
+  const seated = new Set<string>();
+  if (!leads.length || !(await fieldRoutingOn())) return { approverId: null, seated };
+  const field = await fieldApprover(exec);
+  if (!field) return { approverId: null, seated };
+
+  const creators = await creatorFactsForMany(leads.map((l) => l.id), exec);
+  const salesmen = await salesmenAmong(leads.map((l) => l.ownerId ?? ""), exec);
+  for (const l of leads) {
+    const r = chooseVerifierRoute({
+      creator: creators.get(l.id) ?? NO_CREATOR,
+      assignedToSalesman: Boolean(l.ownerId && salesmen.has(l.ownerId)),
+      fieldVerifierId: field.id,
+    });
+    if (r.route === "field") seated.add(l.id);
+  }
+  return { approverId: field.id, seated };
+}
+
+/** The lead's seats and creator, for the permission check: is this the field verifier's own lead? */
+export async function raisedByFieldVerifier(userId: string, customerId: string): Promise<boolean> {
+  if (!(await fieldRoutingOn())) return false;
+  const field = await fieldApprover();
+  if (!field || field.id !== userId) return false;
+  const creator = await creatorFactsFor(customerId);
+  return creator.actorUserId === userId;
+}
+
+/* ---------------------------------------------- the seat follows an owner change */
+
+export type RealignOutcome = {
+  /** Leads whose Sales Manager seat, verification seat, next action or open call moved. */
+  moved: string[];
+  /** The verifier cannot be used, so the seat was LEFT and nobody else was seated. */
+  blocked: { id: string; name: string; message: string }[];
+};
+
+const LADDER_OWES_VERIFICATION = (stage: string | null, salesType: string | null): boolean => {
+  if (!stage) return false;
+  const ladder = ladderFor(salesType as never) as readonly string[];
+  const q = ladder.indexOf("qualification");
+  const at = ladder.indexOf(stage);
+  return q !== -1 && at !== -1 && at < q;
+};
+
+/**
+ * AN UNVERIFIED LEAD'S VERIFIER CAN CHANGE UNDER IT — it is given to a Salesman,
+ * or taken off one — and what follows has to move with it in the SAME COMMIT, or
+ * the verification call sits on the list of somebody who can no longer make it:
+ *
+ *   • the Sales Manager seat (`sales_manager_id`), where nobody DECIDED it —
+ *     the field verifier's while a Salesman holds it, the org chart's otherwise;
+ *   • the coordinating seat (`lead_manager_id`) where a designation put it there,
+ *     the verification next action beside it, and the open validation call.
+ *
+ * Called by every writer of `owner_id` on a lead INSIDE its transaction (`{ tx }`),
+ * so a failure here rolls the owner change back with it. It never opens a nested
+ * transaction and it never writes `owner_id`.
+ *
+ * What it does not do: override a seat a PERSON decided, move a seat that is not
+ * one of the designated verifiers', touch a verified lead, or seat anybody
+ * where there was no seat. A verifier who cannot be used is returned in
+ * `blocked` and nobody else is seated in their place.
+ */
+export async function realignVerifierSeats(
+  customerIds: string[],
+  actorId: string,
+  hat: { app: string | null; role: string } | null,
+  opts: { tx: Writer },
+): Promise<RealignOutcome> {
+  const out: RealignOutcome = { moved: [], blocked: [] };
+  const ids = [...new Set(customerIds)];
+  if (!ids.length || !(await fieldRoutingOn())) return out;
+  const exec = opts.tx;
+
+  const rows = await exec
+    .select({
+      id: customers.id,
+      name: customers.name,
+      ownerId: customers.ownerId,
+      stage: customers.leadStage,
+      salesType: customers.leadSalesType,
+      salesManagerId: customers.salesManagerId,
+      salesManagerDecidedAt: customers.salesManagerDecidedAt,
+      leadManagerId: customers.leadManagerId,
+      leadManagerDecidedAt: customers.leadManagerDecidedAt,
+      nextOwner: customers.leadNextActionOwnerId,
+      requestState: customers.prospectRequestState,
+    })
+    .from(customers)
+    .where(and(inArray(customers.id, ids), eq(customers.kind, "lead"), isNull(customers.leadVerifiedAt)));
+  if (!rows.length) return out;
+
+  const field = await fieldApprover(exec);
+  const desk = await deskApprover(exec);
+  const designees = new Set([field?.id, desk?.id].filter((v): v is string => Boolean(v)));
+  const { seated: fieldSeated, approverId } = await fieldSeatFor(
+    rows.map((r) => ({ id: r.id, ownerId: r.ownerId })),
+    exec,
+  );
+  const { salesManagerForOwner } = await import("../recompute");
+
+  for (const lead of rows) {
+    let changed = false;
+
+    /* 1. THE SALES MANAGER SEAT, where nobody decided it. */
+    if (!lead.salesManagerDecidedAt) {
+      let want: { id: string | null; personName: string | null } | null = null;
+      if (approverId && fieldSeated.has(lead.id)) want = { id: approverId, personName: null };
+      else if (approverId && lead.salesManagerId === approverId) {
+        /* Taken off a Salesman: back to whatever the org chart says, which is
+           what the nightly pass would write. */
+        want = lead.ownerId ? await salesManagerForOwner(lead.ownerId) : { id: null, personName: null };
+        want ??= { id: null, personName: null };
+      }
+      if (want && want.id !== lead.salesManagerId) {
+        await exec
+          .update(customers)
+          .set({ salesManagerId: want.id, salesManagerPersonName: want.personName, updatedAt: new Date() })
+          .where(eq(customers.id, lead.id));
+        changed = true;
+      }
+    }
+
+    /* 2. THE COORDINATING SEAT, the next action and the open call — only where a
+       designation put them there, and only while verification is still owed. */
+    const owed =
+      LADDER_OWES_VERIFICATION(lead.stage, lead.salesType) ||
+      lead.requestState === "awaiting" ||
+      lead.requestState === "followup";
+    if (owed && lead.leadManagerId && !lead.leadManagerDecidedAt && designees.has(lead.leadManagerId)) {
+      const route = await fieldRouteFor({ id: lead.id, ownerId: lead.ownerId }, undefined, exec);
+      let target: string | null = null;
+      if (route.kind === "verifier" || route.kind === "fallback") target = route.id;
+      else if (route.kind === "desk") {
+        const self = await approverFor({ ownerId: lead.ownerId, salesManagerId: lead.salesManagerId });
+        target = self?.id ?? desk?.id ?? null;
+      } else if (route.kind === "refuse") {
+        out.blocked.push({ id: lead.id, name: lead.name, message: route.message });
+      }
+
+      if (target && target !== lead.leadManagerId) {
+        await exec
+          .update(customers)
+          .set({
+            leadManagerId: target,
+            /* The verification call is the seat holder's while verification is
+               owed — that is what a next action owed by them IS here, whether it
+               was asked for as a request or set by a direct conversion. Where it is
+               owed by somebody else (the desk's own follow-up) it stays. */
+            ...(lead.nextOwner === lead.leadManagerId ? { leadNextActionOwnerId: target } : {}),
+            updatedAt: new Date(),
+          })
+          .where(eq(customers.id, lead.id));
+        await exec
+          .update(mbosTasks)
+          .set({ assignedToUserId: target, updatedAt: new Date() })
+          .where(
+            and(
+              eq(mbosTasks.customerId, lead.id),
+              eq(mbosTasks.sourceType, "lead_validation"),
+              eq(mbosTasks.status, "open"),
+              eq(mbosTasks.assignedToUserId, lead.leadManagerId),
+            ),
+          );
+        changed = true;
+        await writeTimelineEvent(exec as never, {
+          customerId: lead.id,
+          eventType: MBOS_EVENT.leadAssigned,
+          sourceApp: "crm",
+          sourceRecordId: `${lead.id}:verifier:${target}`,
+          occurredAt: new Date(),
+          actorUserId: actorId,
+          summary: "The lead's verification moved to its designated verifier",
+        });
+        await exec.insert(auditLog).values({
+          id: `aud_${randomUUID().slice(0, 12)}`,
+          actorId,
+          action: "lead.verifier.align",
+          entityType: "customer",
+          entityId: lead.id,
+          actorRole: (hat?.role as "associate" | "manager" | "admin" | undefined) ?? null,
+          actorApp: (hat?.app as never) ?? null,
+          beforeState: { leadManagerId: lead.leadManagerId },
+          afterState: { leadManagerId: target, via: "reassignment" },
+        });
+      }
+    }
+
+    if (changed) out.moved.push(lead.id);
+  }
+  return out;
+}
+
+/** One sentence for what a realignment left undone, to append to what the caller is about to say. */
+export function realignNotice(out: Pick<RealignOutcome, "blocked">): string | null {
+  if (!out.blocked.length) return null;
+  const parts = out.blocked.slice(0, 3).map((b) => `${b.name} — ${b.message}`);
+  const head =
+    out.blocked.length === 1
+      ? "Its verification seat was not moved:"
+      : `${out.blocked.length} leads' verification seats were not moved:`;
+  return `${head} ${parts.join("; ")}${out.blocked.length > 3 ? ` and ${out.blocked.length - 3} more` : ""}`;
 }

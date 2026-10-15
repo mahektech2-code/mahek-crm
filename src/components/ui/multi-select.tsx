@@ -40,6 +40,7 @@ export function MultiSelect({
   placeholder = "All",
   className,
   title,
+  everythingIsAll = true,
 }: {
   /** Not drawn — read by screen readers and used as the trigger's accessible name. */
   label: string;
@@ -51,6 +52,12 @@ export function MultiSelect({
   placeholder?: string;
   className?: string;
   title?: string;
+  /**
+   * A filter reads every box ticked as no filter at all. A form picking
+   * things (a transporter's godowns) passes false, so ticking both states
+   * says "2 selected" rather than the placeholder.
+   */
+  everythingIsAll?: boolean;
 }) {
   const [at, setAt] = React.useState<{ top: number; left: number; width: number } | null>(
     null,
@@ -120,7 +127,7 @@ export function MultiSelect({
     : options;
 
   const summary =
-    selected.length === 0 || selected.length === options.length
+    selected.length === 0 || (everythingIsAll && selected.length === options.length)
       ? placeholder
       : selected.length === 1
         ? (options.find((o) => o.value === selected[0])?.label ?? placeholder)
@@ -144,7 +151,7 @@ export function MultiSelect({
         aria-expanded={open}
         onClick={() => (open ? close() : place())}
         className={cx(
-          "flex h-8.5 items-center gap-1.5 rounded-[4px] border bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand",
+          "flex h-8.5 items-center gap-1.5 rounded-control border bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand",
           open ? "border-brand" : "border-line",
           className,
         )}
@@ -172,7 +179,7 @@ export function MultiSelect({
               aria-label={label}
               aria-multiselectable="true"
               style={{ top: at.top, left: at.left, width: at.width }}
-              className="animate-fade-in fixed z-[95] flex max-h-[320px] flex-col overflow-hidden rounded-[6px] border border-line bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
+              className="animate-fade-in fixed z-[95] flex max-h-[320px] flex-col overflow-hidden rounded-card border border-line bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
             >
               {options.length > SEARCH_THRESHOLD ? (
                 <input
@@ -194,7 +201,7 @@ export function MultiSelect({
                   </button>
                 </div>
               ) : null}
-              <div className="flex-1 overflow-y-auto py-1">
+              <div className="flex-1 overflow-y-auto overscroll-contain py-1">
                 {matches.map((o) => (
                   <label
                     key={o.value}
@@ -204,7 +211,7 @@ export function MultiSelect({
                       type="checkbox"
                       checked={selected.includes(o.value)}
                       onChange={() => toggle(o.value)}
-                      className="h-[15px] w-[15px] flex-none accent-[#6835FB]"
+                      className="h-[15px] w-[15px] flex-none accent-brand"
                     />
                     <span className="truncate">{o.label}</span>
                   </label>

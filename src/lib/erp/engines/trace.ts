@@ -126,6 +126,8 @@ export type ScanLine = {
   alloc: { id: string; lotCode: string; qty: number; scanned: number }[];
   dispatched: boolean;
   cancelled: boolean;
+  /** The finished good (brand + pack size) the SKU sells, so a loose line can be matched to an FG lot. */
+  finishedGoodId?: string | null;
 };
 
 export type ScanVerdict =
@@ -138,6 +140,8 @@ export type ScanVerdict =
       swapFromId: string | null;
       substituted: boolean;
       message: string;
+      /** A LOT scan only: how many units the scan allocated (allocate) or the line takes from the lot (matched). */
+      qty?: number;
     }
   | {
       ok: false;
@@ -218,6 +222,61 @@ export function scanVerdict(unit: ScanUnit | null, lines: ScanLine[], override: 
     substituted,
     message: `${unit.id} ✓ ${line.skuName} · lot ${unit.lotCode} instead of ${giver.lotCode}${sub}`,
   };
+}
+
+/**
+ * A LOT LABEL SCANNED AT THE DESK. Stock packed before box ids existed has no
+ * box label: the only QR on it is the lot's own — the packing batch (FP…), or
+ * an FG lot (FG…) for loose cans — and refusing it as "no box carries this
+ * code" left the dispatch team with a scanner that read every label and
+ * accepted none, on lorries carrying exactly the lot the order named. So a lot
+ * is judged as a lot: the lot the line was given is a match; a lot of the same
+ * SKU on a line still short of its allocation is allocated, as a box scan
+ * would allocate; anything else says what differs. A lot whose boxes DO carry
+ * their own labels is refused — there the box is what is counted.
+ */
+export type ScanLot = {
+  code: string;
+  stage: "pack" | "fg" | "sfg" | "rm";
+  /** The packed SKU (pack) or the finished good (fg); null for sfg/rm. */
+  skuId: string | null;
+  finishedGoodId: string | null;
+  name: string;
+  godownIds: string[];
+  /** Its boxes carry their own BX-/LU- labels. */
+  hasUnits: boolean;
+};
+
+export function lotScanVerdict(lot: ScanLot | null, lines: ScanLine[], free: number): ScanVerdict {
+  if (!lot) return { ok: false, result: "unknown", message: "No box or label carries this code." };
+  if (lot.stage === "sfg" || lot.stage === "rm")
+    return { ok: false, result: "blocked", message: `${lot.code} is ${lot.stage === "sfg" ? "a base-liquid" : "a raw-material"} lot (${lot.name}), not packed stock. Scan the label on the boxes or cans going on the lorry.` };
+  if (lot.hasUnits) return { ok: false, result: "blocked", message: `${lot.code} is the lot label. Its boxes carry their own labels (BX-…): scan each box instead.` };
+  const open = lines.filter((l) => !l.cancelled && !l.dispatched);
+  if (!open.length) return { ok: false, result: "blocked", message: "Nothing on this order is Ready to dispatch: mark its lines Ready first." };
+  const fits = (l: ScanLine) => (lot.stage === "pack" ? l.boxed && l.skuId === lot.skuId : !l.boxed && l.finishedGoodId != null && l.finishedGoodId === lot.finishedGoodId);
+  const unit = (l: ScanLine, n: number) => `${n} ${l.boxed ? (n === 1 ? "box" : "boxes") : n === 1 ? "can" : "cans"}`;
+
+  const given = open.find((l) => l.alloc.some((a) => a.lotCode === lot.code));
+  if (given) {
+    const n = given.alloc.filter((a) => a.lotCode === lot.code).reduce((a, x) => a + x.qty, 0);
+    return { ok: true, lineId: given.id, allocation: "matched", batchCodeId: null, swapFromId: null, substituted: false, qty: n, message: `Lot ${lot.code} ✓ ${given.skuName} — load ${unit(given, n)} from this lot.` };
+  }
+  const same = open.filter(fits);
+  if (!same.length) {
+    const want = open.map((l) => l.skuName).join(", ");
+    return { ok: false, result: "mismatch", message: `Wrong stock. ${lot.code} is ${lot.name}. This order wants ${want}. Do not load it.` };
+  }
+  const short = same.find((l) => l.alloc.reduce((a, x) => a + x.qty, 0) < l.target - 1e-9);
+  if (!short) {
+    const lots = [...new Set(same.flatMap((l) => l.alloc.map((a) => a.lotCode)))].join(", ");
+    return { ok: false, result: "blocked", message: `${same[0].skuName} on this order is given lot ${lots}, not ${lot.code}. Load from ${lots}, or ask the office to change the lot.` };
+  }
+  if (!lot.godownIds.includes(short.godownId)) return { ok: false, result: "blocked", message: `${lot.code} is not at ${short.godownName}, where order ${short.orderNo} leaves from. Transfer it first.` };
+  const need = short.target - short.alloc.reduce((a, x) => a + x.qty, 0);
+  const n = Math.min(need, Math.floor(free + 1e-9));
+  if (n < 1) return { ok: false, result: "blocked", message: `${lot.code} has nothing free at ${short.godownName}: its stock is set aside for other orders. Load from a lot given to this order.` };
+  return { ok: true, lineId: short.id, allocation: "allocate", batchCodeId: null, swapFromId: null, substituted: false, qty: n, message: `Lot ${lot.code} ✓ ${short.skuName} — ${unit(short, n)} allocated from this lot${n < need ? ` (${unit(short, need - n)} still to find)` : ""}.` };
 }
 
 function statusWord(s: UnitStatus): string {

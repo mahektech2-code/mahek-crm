@@ -68,6 +68,18 @@ export type FieldSpec = {
   /** A section heading, drawn where it first changes down the form. */
   sec?: string;
   req?: boolean;
+  /**
+   * Draw no "Optional" tag beside a field that is not required — for a form
+   * where nothing is, so saying it on every field says nothing.
+   */
+  untagged?: boolean;
+  /**
+   * A photo or video drawn as a square tile with its name inside, beside the
+   * other tiles next to it — for a dialog that asks for several pictures at once.
+   */
+  tile?: boolean;
+  /** A short field that shares a row with the inline fields beside it. */
+  inline?: boolean;
   /** Required only while this holds — "weight with drum" is needed for a kg item, not a litre one. */
   reqWhen?: When;
   /** Fixed options. */
@@ -98,6 +110,12 @@ export type FieldSpec = {
   wide?: boolean;
   /** How sure an AI reading is of this value: high, check, or not found. */
   conf?: "high" | "check" | "not found";
+  /**
+   * A photo field's upload allowance, named rather than numbered: the upload
+   * route maps it to a ceiling, so a browser cannot ask for a bigger one.
+   * Absent is `attachments.maxSizeMb`.
+   */
+  upload?: "material-photo";
 };
 
 export type FormSpec = {
@@ -240,7 +258,8 @@ export type ListRow = {
   /** Fields hidden by powers, as a count, so the drawer can say so. */
   hiddenFields?: number;
   /** Free-form panels a screen draws in the drawer (allocation, evidence…). */
-  panel?: { kind: string; data: unknown };
+  /** `covers`: column keys the panel already draws, left out of the drawer's field list. */
+  panel?: { kind: string; data: unknown; covers?: string[] };
 };
 
 export type ListSpec = {
@@ -259,6 +278,14 @@ export type ListSpec = {
   /** Aggregate on each group. */
   agg?: { k: string; l: string; t?: "avg" };
   groupSel?: boolean;
+  /**
+   * Columns that belong to the GROUP rather than the line — an SFG batch's
+   * date, product and QC are one fact about the batch, however many lots it
+   * drew. While grouped they are drawn once in the group's header and left
+   * out of its rows; ungrouped, the list is flat and carries them on every
+   * line as before.
+   */
+  groupHead?: string[];
   chips?: string;
   sortDefault?: [string, 1 | -1];
   bulk?: BulkSpec[];
@@ -270,7 +297,6 @@ export type ListSpec = {
   newLabel?: string;
   /** Header buttons that act on the screen (see ToolSpec). */
   tools?: ToolSpec[];
-  download?: boolean;
   readOnly?: boolean;
   noDataLine?: string;
 };
@@ -312,12 +338,35 @@ export const ST_TONE: Record<string, Tone> = {
   "Partly received": "warn", "Closed short": "muted", Closed: "muted", Cancelled: "muted",
   "Direct purchase": "neutral", Quotation: "info", "Pending approval": "warn", Approved: "success",
   Sent: "info", Selected: "success", "Not selected": "muted",
+  "To count": "info", Mismatch: "danger", "Mismatch · reviewed": "warn", "Red flag": "danger", "Recount out": "warn", Investigating: "warn", "Stock discrepancy": "danger",
+  "Blind count": "info",
   "In stock": "success", "Scanned for dispatch": "brand", "On hold": "warn", Returned: "info", "Written off": "danger",
+  "Empty – available": "success", "Empty – returnable to vendor": "info", "Needs review": "warn", Sold: "neutral",
+  "Returned to vendor": "muted", Adjusted: "muted", Unpaid: "danger", "Partially Paid": "warn", Paid: "success",
+  "Above limit": "danger", "Within limit": "success", "No declared tare": "muted", "Not matched": "warn",
+  "Part matched": "info", Void: "muted", Recorded: "success", "Mahek owned": "brand", "Vendor returnable": "info",
+  "Not recorded": "warn", "1–7": "warn", "8–15": "warn", "16–30": "danger", "31–60": "danger", "60+": "danger",
+  Current: "success", "0–30 days": "neutral", "31–60 days": "warn", "61–90 days": "danger", "90+ days": "danger",
+  "Awaiting approval": "warn", "Awaiting owner approval": "warn", "Debit note issued · to dispatch": "info",
+  "Outward prepared · not confirmed": "brand", Issued: "success", Draft: "neutral", Confirmed: "success",
+  "Awaiting receipt": "warn", "In quarantine · awaiting QC": "danger", "Partly decided by QC": "warn",
+  "With accounts": "info", "Not raised": "neutral", Refused: "danger", Reversed: "muted", Disposed: "success",
+  Completed: "success", "Reusable as is": "success", Rework: "info", "Chemical scrap": "warn", "Waste disposal": "danger",
+  "To dispose": "warn", "In rework": "info",
 };
 
 /** Named row states (the source's format rules), and how each is labelled. */
 export const FLAG: Record<string, [string, Tone]> = {
   rateMissing: ["Purchase rate empty", "warn"],
+  countOverdue: ["Count overdue", "danger"],
+  recount: ["Independent recount", "brand"],
+  forPurchase: ["Holds a purchase", "warn"],
+  adjustmentPending: ["Adjustment waiting", "warn"],
+  shortage: ["Shortage", "danger"],
+  surplus: ["Surplus", "info"],
+  stockToCount: ["Waiting for the blind count", "info"],
+  stockFlag: ["Stock difference — red flag", "danger"],
+  stockOverJustified: ["More than the shelf needs", "warn"],
   incomplete: ["Packing batch incomplete", "warn"],
   orphan: ["Source deleted", "danger"],
   inactive: ["Inactive", "muted"],
@@ -363,6 +412,15 @@ export const FLAG: Record<string, [string, Tone]> = {
   unitHold: ["Box on hold", "warn"],
   unlabelled: ["Label not printed", "neutral"],
   mismatch: ["Override used", "danger"],
+  drumVariance: ["Tare variance above limit", "danger"],
+  drumReview: ["Ownership to decide", "warn"],
+  drumWeightException: ["Weight outside limits, approved", "warn"],
+  drumOpening: ["Opening stock — no GRN", "neutral"],
+  unmatched: ["Not matched to a sale", "warn"],
+  ownerApproval: ["Owner approval needed", "warn"],
+  quarantine: ["In quarantine", "danger"],
+  noRate: ["No rate — no debit note yet", "warn"],
+  creditRaised: ["Credit note with accounts", "info"],
 };
 
 /* -------------------------------------------------------------- formatting */
@@ -382,6 +440,11 @@ export function fdLong(v: CellValue | undefined): string {
   const s = fd(v);
   if (!s || v == null) return s;
   return `${s} ${String(v).slice(0, 4)}`;
+}
+
+/** Paise → a rupees string for pre-filling a form. */
+export function rupeesField(p: number | null | undefined): string {
+  return p == null ? "" : String(p / 100);
 }
 
 /** Paise → "₹18,42,000", with a true minus. */

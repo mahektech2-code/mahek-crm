@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { appFor } from "@/lib/app-routes";
 
 /* ---------------------------------------------------------------------------
  * WHICH APP THIS REQUEST IS FOR, named once, at the edge of the request.
@@ -30,33 +31,14 @@ import type { NextRequest } from "next/server";
 
 /** The header the app id travels on. Read by `requestAppId()`. */
 export const APP_HEADER = "x-mahek-app";
+/** The native Factory app's session, sent where a browser would send a cookie. */
+export const FACTORY_SESSION_HEADER = "x-factory-session";
+const SESSION_COOKIE_NAME = "mahekone_session";
 
-/**
- * URL prefix → app id. The `field` app is deliberately absent: it is MBOS's
- * handset, it has no browser route, and the API the handset actually calls
- * carries its own principal from a bearer token rather than from a path.
- */
-const APP_ROUTES: ReadonlyArray<readonly [string, string]> = [
-  ["/crm", "crm"],
-  ["/accounts", "accounts"],
-  ["/orders", "accounts"], // the old slug, still redirected
-  ["/sales", "sales"],
-  /* The Sales Manager's lead pipeline. It is the Sales Dashboard's `sales.leads`
-     module drawn on its own route, and it has to resolve as that app: without
-     this line a request here names NO app, and scope falls back to the widest
-     level the account holds anywhere — which is a manager elsewhere and an
-     associate on the Sales Dashboard reading (and writing) as a manager. */
-  ["/sales-lead-pipeline", "sales"],
-  ["/people", "people"],
-  ["/reports", "reports"], // retired — next.config redirects it to /apps
-  ["/hrms", "hrms"],
-  ["/admin", "admin"],
-  ["/founder", "founder"],
-  ["/enquiries", "enquiries"],
-  ["/erp", "erp"],
-  ["/website", "website"],
-  ["/hire", "hire"],
-];
+/* Which app a path belongs to lives in `lib/app-routes.ts`, pure, because the
+   notification bell asks the same question in the browser. */
+export { appFor };
+
 
 /**
  * WHICH WORKSPACE, where one app draws more than one scope.
@@ -77,13 +59,6 @@ export function workspaceFor(pathname: string): string | null {
   return pathname === CRM_SALES_MANAGER_PREFIX || pathname.startsWith(CRM_SALES_MANAGER_PREFIX + "/")
     ? CRM_SALES_MANAGER_WORKSPACE
     : null;
-}
-
-export function appFor(pathname: string): string | null {
-  for (const [prefix, app] of APP_ROUTES) {
-    if (pathname === prefix || pathname.startsWith(prefix + "/")) return app;
-  }
-  return null;
 }
 
 /**
@@ -156,6 +131,20 @@ export function proxy(request: NextRequest) {
   headers.delete(WORKSPACE_HEADER);
   const workspace = workspaceFor(request.nextUrl.pathname);
   if (workspace) headers.set(WORKSPACE_HEADER, workspace);
+
+  /*
+   * THE FACTORY APP ON A PHONE HAS NO COOKIE JAR. The native app holds the
+   * same session id a browser would, and sends it as `x-factory-session` on
+   * its own API only; it becomes the session cookie here, so every action
+   * behind /api/factory resolves the person exactly as it does for the web
+   * page. It is a session id, not a grant — an id that names no live session
+   * is nobody, the same as a stale cookie.
+   */
+  const native = request.nextUrl.pathname.startsWith("/api/factory/") ? request.headers.get(FACTORY_SESSION_HEADER) : null;
+  if (native && /^[0-9a-f-]{36}$/i.test(native)) {
+    const rest = (headers.get("cookie") ?? "").split(/;\s*/).filter((c) => c && !c.startsWith(SESSION_COOKIE_NAME + "="));
+    headers.set("cookie", [SESSION_COOKIE_NAME + "=" + native, ...rest].join("; "));
+  }
 
   return NextResponse.next({ request: { headers } });
 }

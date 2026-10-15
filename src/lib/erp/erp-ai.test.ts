@@ -13,6 +13,8 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
+import { allPassValues } from "@/lib/erp/engines/sfg-tests";
+import { refValues } from "@/lib/erp/refs";
 import {
   appAccess,
   customers,
@@ -114,7 +116,7 @@ before(async () => {
   /* The whole chain, through the real handlers: SFG → fill → three orders dispatched on one bill. */
   await ok(mod("sfgBatches").forms!.new(a, { date: ago(15), godown: "Bhiwandi", product: SFG, batches: "1" }, [{ item: "Toluene", lot: "ASTOL1", qty: "200" }]));
   const [sfgLine] = await db.execute(sql`select id from erp_sfg_lines limit 1`) as unknown as { id: string }[];
-  await ok(mod("sfgBatches").actions!.qcApprove(a, sfgLine.id, {}));
+  await ok(mod("sfgBatches").actions!.qcApprove(a, sfgLine.id, allPassValues(await refValues("testingList"))));
   await ok(mod("fgFill").forms!.new(a, { date: ago(14), godown: "Bhiwandi", sfg: SFG, sfgLot: "1ASTOL1", fg: FG, size: "1", canUse: "Tin can 1L", cans: "150" }, []));
   for (const [i, qty] of [10, 11, 12].entries()) {
     await ok(mod("orders").forms!.new(a, { date: ago(10 - i), godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: SKU, qty: String(qty), rate: "300" }]));
@@ -201,7 +203,7 @@ describe("the dashboard", () => {
     const a = await as(admin);
     const all = (await dashboardSections(a, null)).flatMap((s) => s.tiles);
     const labels = all.map((t) => t.l);
-    for (const l of ["Sales value this month", "Margin this month", "Purchase value this month", "Dispatched this month", "Pending LR"]) assert.ok(labels.includes(l), `admin sees ${l}`);
+    for (const l of ["Sales value this month", "Margin this month", "Purchase value this month", "Dispatched this month", "Waiting for the LR", "On the road"]) assert.ok(labels.includes(l), `admin sees ${l}`);
     assert.ok(!labels.includes("Calls due today"), "order follow-up is the CRM's, not a second prediction here");
     assert.ok(all.every((t) => t.href.startsWith("/erp")));
     const c = await as(clerk);

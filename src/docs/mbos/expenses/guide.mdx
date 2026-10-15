@@ -1,0 +1,116 @@
+This page covers the money and time that are yours: **travel** (how you got around), **expenses** (what you spent), **leave**, **holidays**, your **salary**, and the **policy** that says what you are allowed. Your manager decides your expenses and leave; the office pays.
+
+## Travel: asked twice a day, nowhere else
+
+You are asked about travel only **twice**:
+
+1. **At punch-in** — how you are travelling today (your bike, a car, bus or train, on foot). If it is a vehicle with a meter, you photograph the meter and type the reading.
+2. **At punch-out** — the meter again, if there is one.
+
+Between the two, every visit records its journey **on its own**. You never type a fare at a shop.
+
+<Steps>
+<Step title="Punch in and pick how you travel">
+On a bike or car: read the meter, type the number, take the photo. The camera will not save one without the other.
+</Step>
+<Step title="Work your day">
+Press **Start visit** when you set off for a shop and **I have arrived** when you get there. The phone keeps the time and distance.
+</Step>
+<Step title="Punch out and read the meter">
+The two readings are your kilometres for the day. They are paid per kilometre — nothing to type.
+</Step>
+<Step title="On a bus, auto or train day, claim your fares in Expenses">
+After punch-out the phone reminds you. **Later** is always allowed, but fares are easy to forget.
+</Step>
+</Steps>
+
+<Callout kind="warn" title="A common mistake">
+Typing the meter with a digit missing. If the closing reading is below the opening one, or the distance is impossibly long, the phone refuses it **while you are still at the meter**, so you can read it again.
+</Callout>
+
+If you forgot to read the meter at punch-out, the next morning the phone asks for **last night's closing reading**. It is saved with a note that it was entered late.
+
+### The Travel screen
+
+**More → Travel** shows today's legs and what each is worth. It is a **record**, not a form — the amounts are worked out by the policy on your phone, so you can see them, never type them.
+
+## Expenses
+
+<Wireframe url="MBOS · Expenses" caption="Expenses, with a claim being added">
+<div className="mx-auto max-w-[300px] space-y-3">
+  <WfTitle>Expenses</WfTitle>
+  <WfCard title="This month"><WfText>₹3,240 claimed · ₹2,800 approved</WfText><Hotspot n={1} /></WfCard>
+  <WfField label="What it was"><WfBar><WfPill>Food</WfPill><WfPill>Hotel</WfPill><WfPill>Bus or train</WfPill><WfPill tone="brand">Local transport</WfPill><WfPill>Other</WfPill></WfBar></WfField>
+  <WfInput placeholder="Amount ₹" wide />
+  <WfCard tone="warn"><WfText>₹150 left today for food. This is ₹60 over.</WfText><Hotspot n={2} /></WfCard>
+  <WfBar><WfButton>Photo of the bill</WfButton><Hotspot n={3} /></WfBar>
+  <WfButton primary>Save</WfButton>
+  <WfTable columns={["Claim", "State"]} rows={[["Auto fares · ₹120", <WfPill key="a">Pending</WfPill>], ["Lunch · ₹180", <WfPill key="b" tone="success">Approved</WfPill>]]} />
+  <Hotspot n={4} />
+</div>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Totals.</b> What you claimed this month and what has been approved.</span>,
+  <span key="2"><b>The limit.</b> What is left before you type, and how far over you would go. Going over does not stop the claim — your manager decides.</span>,
+  <span key="3"><b>The bill.</b> Up to <Setting k="mbos.expenses.maxAttachments" /> photos or PDFs. A claim of <Setting k="mbos.expenses.billPhotoThresholdPaise" /> paise or more needs one.</span>,
+  <span key="4"><b>Your claims.</b> Each one with your manager's decision. The meal and kilometre allowances worked out from your day are listed separately.</span>,
+]} />
+
+<Steps>
+<Step title="Pick what it was and type the amount">
+Write who you paid and the bill number if there is one — it stops the same bill being claimed twice.
+</Step>
+<Step title="Photograph the bill">
+A claim with no bill shows *No bill. May not be accepted.*
+</Step>
+<Step title="If it is over the limit, say why">
+The claim still goes. Your manager reads your reason.
+</Step>
+<Step title="Save">
+It goes to your manager straight away. There is no day to close.
+</Step>
+</Steps>
+
+You can claim up to <Setting k="mbos.expenses.backdatedDaysAllowed" /> days back. Older than that, ask your manager to enter it.
+
+**More → Policy** lists exactly what you are allowed — per kilometre, per meal, per night — and the version and date it started. If you are paid less than you expected, read this first.
+
+## Leave
+
+<Steps>
+<Step title="Open Leave and press Apply for leave">
+Pick the type, then one day, half a day (Morning or Afternoon), or a range.
+</Step>
+<Step title="Check the day count">
+Holidays and your weekly off are not counted. If the dates overlap a request you already made, the phone says so.
+</Step>
+<Step title="Send">
+Your manager decides. The answer arrives in your bell and on the Leave screen.
+</Step>
+</Steps>
+
+The top of the screen counts **leave you have taken this year**, by type. It does **not** show a balance — whether a request is paid is the office's decision. You can withdraw a request that has not been decided.
+
+## Holidays
+
+**More → Holidays** is the company calendar with **your** days marked. Holidays for another state or city are listed below in grey, with where they are for, so you know why the team there is off.
+
+## Salary
+
+**More → Salary** shows your salary **as HR holds it today**, once, and each month's days worked and reimbursements **beside** it — never added to it. There is no incentive figure. If a figure is wrong, tell HR; it comes from their records.
+
+## Questions people ask
+
+<Faq q="My fare is not on the Travel screen.">
+Fares are not entered on Travel. Claim them in **Expenses** as *Local transport* (an auto in town) or *Bus or train* (between towns).
+</Faq>
+<Faq q="My expense says Not accepted.">
+Usually a large claim with no bill photo, or a claim older than <Setting k="mbos.expenses.backdatedDaysAllowed" /> days. The message says which.
+</Faq>
+<Faq q="Why can I not see how much leave I have left?">
+The office decides whether each request is paid. The screen shows what you have taken, which you can check.
+</Faq>
+<Faq q="I punched in on the wrong vehicle.">
+Tell your manager. The day's kilometres are priced from the vehicle you picked.
+</Faq>

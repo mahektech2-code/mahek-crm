@@ -6,7 +6,7 @@ import { getConfig } from "@/lib/config/store";
 import type { ErpContext } from "./access";
 import { erpAudit, erpId } from "./server";
 import { allocationTarget, boxQuantity } from "./engines/sales";
-import { normaliseCode, packLabel, scanGate, scanVerdict, type ScanLine, type ScanUnit, type ScanVerdict, type UnitStatus } from "./engines/trace";
+import { looksLikeUnitId, lotScanVerdict, normaliseCode, packLabel, scanGate, scanVerdict, type ScanLine, type ScanLot, type ScanUnit, type ScanVerdict, type UnitStatus } from "./engines/trace";
 import { fgLots, lockLot, packLots, type Ex } from "./stock";
 import { unitEvent } from "./units";
 import { inTx, refuse, type Tx } from "./screens/common";
@@ -47,6 +47,7 @@ type LineRow = {
   godown: string;
   verification: string | null;
   billed: boolean;
+  fgId: string | null;
 };
 
 async function lineRows(ex: Ex, orderNo: number): Promise<LineRow[]> {
@@ -55,7 +56,7 @@ async function lineRows(ex: Ex, orderNo: number): Promise<LineRow[]> {
            coalesce(pk.empty_boxes_required, 0)::int as empty,
            coalesce(p.millilitres_per_can, fg.millilitres)::float8 / 1000 as litres,
            b.id as "productId", b.name as product, o.godown_id as "godownId", g.name as godown,
-           d.verification, d.order_id is not null as billed
+           d.verification, d.order_id is not null as billed, p.finished_good_id as "fgId"
       from erp_orders o
       join products p on p.id = o.sku_id
       left join finished_goods fg on fg.id = p.finished_good_id
@@ -108,6 +109,7 @@ async function scanLines(ex: Ex, orderNo: number): Promise<ScanLine[]> {
       dispatched: r.verification === "Verified",
       /* Only a Ready line is at the desk; one under process, held or cancelled takes no box. */
       cancelled: r.status !== "Ready",
+      finishedGoodId: r.fgId,
     };
   });
 }
@@ -241,6 +243,40 @@ async function lotsWithUnitsFor(ex: Ex, orderIds: string[]): Promise<Set<string>
   return new Set(rows.map((r) => r.id));
 }
 
+/** A box, as the desk reads it — for the factory's loading, which picks the order before the desk judges the box. */
+export async function unitInfo(code: string): Promise<ScanUnit | null> {
+  return unitFor(db, normaliseCode(code), false);
+}
+
+/** A lot label, as the desk reads it. */
+export async function lotInfo(code: string): Promise<ScanLot | null> {
+  return lotFor(db, normaliseCode(code));
+}
+
+export type LoadingLine = ScanLine & { transporter: string | null; dispatchOn: string | null; billed: boolean; unitsExist: boolean; allocated: number };
+
+/**
+ * EVERY LINE WAITING TO GO ON A LORRY AT ONE GODOWN: Ready, not yet
+ * dispatch-verified, whatever its day — the desk's own queue, read line by
+ * line with the transporter typed on it, so the factory can load a whole
+ * transporter's goods item by item. The counts are `scanLines`', the desk's.
+ */
+export async function loadingLines(ex: Ex, godownId: string): Promise<LoadingLine[]> {
+  const meta = await q<{ id: string; no: number; transporter: string | null; dispatchOn: string | null; billed: boolean }>(ex, sql`
+    select o.id, o.order_no as no, o.transporter, o.dispatch_on::text as "dispatchOn", d.order_id is not null as billed
+      from erp_orders o left join erp_order_details d on d.order_id = o.id
+     where o.godown_id = ${godownId} and o.status = 'Ready' and coalesce(d.verification, '') <> 'Verified'`);
+  if (!meta.length) return [];
+  const byId = new Map(meta.map((m) => [m.id, m]));
+  const nos = [...new Set(meta.map((m) => Number(m.no)))];
+  const all = (await Promise.all(nos.map((no) => scanLines(ex, no)))).flat().filter((l) => byId.has(l.id) && !l.cancelled && !l.dispatched);
+  const withUnits = await lotsWithUnitsFor(ex, all.map((l) => l.id));
+  return all.map((l) => {
+    const m = byId.get(l.id)!;
+    return { ...l, transporter: m.transporter, dispatchOn: m.dispatchOn, billed: !!m.billed, unitsExist: withUnits.has(l.id), allocated: l.alloc.reduce((a, x) => a + x.qty, 0) };
+  });
+}
+
 /** Orders waiting at the desk: a line Ready or billed and not yet dispatch-verified. */
 export async function dispatchQueue(): Promise<{ orderNo: number; delivery: string; dispatchOn: string | null; lines: number; target: number; scanned: number; billed: number; godown: string }[]> {
   const rows = await q<Row>(db, sql`
@@ -280,6 +316,61 @@ async function lotFree(tx: Tx, lotFrom: "pack" | "fg", lot: string, godownId: st
   return (await fgLots(tx)).find((x) => x.lotCode === lot && x.godownId === godownId && x.skuId === skuId)?.stock ?? (await fgLots(tx)).find((x) => x.lotCode === lot && x.godownId === godownId)?.stock ?? 0;
 }
 
+/** What lot a scanned code names, when it names no box: a packing batch, an FG, base-liquid or raw-material lot. */
+async function lotFor(ex: Ex, code: string): Promise<ScanLot | null> {
+  const units = async (stage: "pack" | "fg") =>
+    ((await q<{ n: number }>(ex, sql`select count(*)::int as n from erp_units where lot_from = ${stage} and lot_code = ${code} and status <> 'cancelled'`))[0]?.n ?? 0) > 0;
+  const pack = await q<{ sku: string; name: string; godown: string }>(ex, sql`
+    select distinct l.sku_id as sku, p.name, l.godown_id as godown from erp_pack_lines l join products p on p.id = l.sku_id where l.batch_no = ${code}`);
+  if (pack.length) return { code, stage: "pack", skuId: pack[0].sku, finishedGoodId: null, name: pack[0].name, godownIds: [...new Set(pack.map((r) => r.godown))], hasUnits: await units("pack") };
+  const fg = await q<{ fg: string; name: string; godown: string }>(ex, sql`
+    select distinct e.finished_good_id as fg, f.name, e.godown_id as godown from erp_fg_entries e join finished_goods f on f.id = e.finished_good_id where e.lot_code = ${code}`);
+  if (fg.length) return { code, stage: "fg", skuId: null, finishedGoodId: fg[0].fg, name: fg[0].name, godownIds: [...new Set(fg.map((r) => r.godown))], hasUnits: await units("fg") };
+  const sfg = await q<{ name: string }>(ex, sql`select f.name from erp_sfg_entries e join product_formulations f on f.id = e.formulation_id where e.lot_code = ${code} limit 1`);
+  if (sfg.length) return { code, stage: "sfg", skuId: null, finishedGoodId: null, name: sfg[0].name, godownIds: [], hasUnits: false };
+  const rm = await q<{ name: string }>(ex, sql`select m.name from erp_rm_entries e join erp_raw_materials m on m.id = e.raw_material_id where e.lot_no = ${code} limit 1`);
+  if (rm.length) return { code, stage: "rm", skuId: null, finishedGoodId: null, name: rm[0].name, godownIds: [], hasUnits: false };
+  return null;
+}
+
+/**
+ * A LOT LABEL AT THE DESK — `lotScanVerdict` says why it exists. A match
+ * writes nothing but the scan row; an allocation writes the batch code under
+ * the lot's lock, exactly as "Allocate a lot by hand" would.
+ */
+async function scanLotOntoOrder(ctx: ErpContext, orderNo: number, code: string): Promise<Result<ScanAnswer>> {
+  let answer: ScanAnswer | null = null;
+  let logged: { result: string; message: string; order: string | null } | null = null;
+  const res = await inTx(async (tx) => {
+    const lines = await scanLines(tx, orderNo);
+    if (!lines.length) return refuse(err(`There is no order ${orderNo}.`, "not_found"));
+    const lot = await lotFor(tx, code);
+    const first = lotScanVerdict(lot, lines, Number.POSITIVE_INFINITY);
+    let verdict = first;
+    if (first.ok && first.allocation === "allocate" && lot && (lot.stage === "pack" || lot.stage === "fg")) {
+      const line = lines.find((l) => l.id === first.lineId)!;
+      await lockLot(tx, lot.stage, lot.code, line.godownId);
+      verdict = lotScanVerdict(lot, lines, await lotFree(tx, lot.stage, lot.code, line.godownId, line.skuId));
+      if (verdict.ok && verdict.qty) {
+        await tx.execute(sql`
+          insert into erp_batch_codes (id, order_id, lot_from, lot_code, finished_good_id, godown_id, quantity, created_by_id)
+          values (${erpId("bc")}, ${line.id}, ${lot.stage}, ${lot.code}, ${lot.stage === "fg" ? lot.finishedGoodId : null}, ${line.godownId}, ${verdict.qty}, ${ctx.user.id})
+        `);
+      }
+    }
+    answer = { verdict, code };
+    logged = { result: verdict.ok ? "ok" : verdict.result, message: verdict.message, order: verdict.ok ? verdict.lineId : null };
+    return okVoid(verdict.message);
+  });
+  const l = logged as { result: string; message: string; order: string | null } | null;
+  if (l) await logScan(ctx, code, orderNo, l.result, l.message, null, l.order);
+  if (!res.ok) return res;
+  const a = answer as ScanAnswer | null;
+  if (!a) return err("The scan could not be judged.");
+  if (a.verdict.ok && a.verdict.allocation === "allocate") await erpAudit(ctx, "erp.dispatch.scan", "erp_lot", code, null, { orderNo, allocation: "allocate", qty: a.verdict.qty, lot: code });
+  return ok(a);
+}
+
 /**
  * SCAN ONE CODE ONTO ONE ORDER. Judged, then — only if it passes — the box is
  * put on the line and the allocation follows it, in one transaction under
@@ -289,6 +380,7 @@ async function lotFree(tx: Tx, lotFrom: "pack" | "fg", lot: string, godownId: st
 export async function scanOntoOrder(ctx: ErpContext, orderNo: number, raw: string): Promise<Result<ScanAnswer>> {
   const code = normaliseCode(raw);
   if (!code) return fieldErr("code", "Scan or type a box id");
+  if (!looksLikeUnitId(code)) return scanLotOntoOrder(ctx, orderNo, code);
   let answer: ScanAnswer | null = null;
   let logged: { result: string; message: string; unit: string | null; order: string | null } | null = null;
   const res = await inTx(async (tx) => {
@@ -364,7 +456,7 @@ export async function unscanUnit(ctx: ErpContext, unitId: string): Promise<Resul
 /* ============================================================ overrides */
 
 /** Asking for a mismatched box to go anyway. Only a mismatch can be asked about; a duplicate or a box on hold cannot. */
-export async function requestOverride(ctx: ErpContext, orderNo: number, raw: string, reason: string): Promise<Result<unknown>> {
+export async function requestOverride(ctx: ErpContext, orderNo: number, raw: string, reason: string, lineId?: string): Promise<Result<unknown>> {
   const code = normaliseCode(raw);
   if (reason.trim().length < 10) return fieldErr("reason", "Say why, in a sentence: who agreed to the change and what the customer was told");
   const unit = await unitFor(db, code, false);
@@ -372,7 +464,9 @@ export async function requestOverride(ctx: ErpContext, orderNo: number, raw: str
   const v = scanVerdict(unit, lines);
   if (v.ok) return err("That box matches the order; scan it.", "rule_violation");
   if (v.result !== "mismatch" || !v.mismatch || !unit) return err(v.message, "rule_violation");
-  const line = lines.find((l) => l.id === v.mismatch!.lineId)!;
+  /* The factory's loader says which line the box stands in for; otherwise the verdict's nearest line. */
+  const named = lineId ? lines.find((l) => l.id === lineId && !l.cancelled && !l.dispatched && l.scanned < l.target) : undefined;
+  const line = named ?? lines.find((l) => l.id === v.mismatch!.lineId)!;
   const id = erpId("dov");
   try {
     await db.execute(sql`

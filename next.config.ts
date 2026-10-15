@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import createMDX from "@next/mdx";
 import { ADMIN_REDIRECTS } from "./src/lib/admin-redirects";
 import { HRMS_RETIRED_SLUGS, hrmsLink } from "./src/lib/hrms/registry";
 
@@ -80,6 +81,29 @@ const nextConfig: NextConfig = {
    */
   deploymentId: process.env.NEXT_DEPLOYMENT_ID,
 
+  experimental: {
+    /*
+     * How much of a request body survives `src/proxy.ts`. Next buffers a
+     * proxied body so the proxy and the route can both read it, and past this
+     * it keeps the first N bytes and says so only in the server log — the
+     * route is handed a truncated upload and no error. The default is 10 MB,
+     * which is how a 12 MB price list read as "the file did not arrive whole"
+     * three times running. It has to sit ABOVE `PUBLISH_MAX_MB` in
+     * `lib/publish-limits.ts` with room for the multipart framing, so that the
+     * route, not the proxy, is what refuses a file that is too big — and says
+     * the limit in words. `publish-limits.test.ts` holds the two together.
+     */
+    proxyClientMaxBodySize: "32mb",
+  },
+
+  /*
+   * The same sha, inlined into BOTH the server and the browser bundle, for
+   * the factory phone: a station phone keeps a page open for days, and it
+   * compares its own build with the one the server answers in, so it can
+   * reload itself once its queue is empty — never in the middle of a job.
+   */
+  env: { FACTORY_BUILD: process.env.NEXT_DEPLOYMENT_ID ?? "dev" },
+
   /*
    * Set by the app rather than by Caddy, because the Caddyfile is copied to
    * the droplet by hand and a deploy never touches it — a header written
@@ -109,6 +133,11 @@ const nextConfig: NextConfig = {
     ];
   },
 
+  /* Android asks for this exact path to trust the Factory app's APK; the
+     answer is published by the APK's own release (see api/assetlinks). */
+  async rewrites() {
+    return [{ source: "/.well-known/assetlinks.json", destination: "/api/assetlinks" }];
+  },
   async redirects() {
     return [
       /*
@@ -170,7 +199,7 @@ const nextConfig: NextConfig = {
       { source: "/erp/pack-log", destination: "/erp/stock?view=packLog", permanent: true },
       { source: "/erp/reorder-rm", destination: "/erp/rm-levels", permanent: true },
       { source: "/erp/reorder-fg", destination: "/erp/fg-levels", permanent: true },
-      { source: "/erp/pending-lr", destination: "/erp/transport", permanent: true },
+      { source: "/erp/pending-lr", destination: "/erp/transport?view=pendingLr", permanent: true },
       { source: "/erp/track-lr", destination: "/erp/transport?view=trackLr", permanent: true },
       { source: "/erp/paid-freight", destination: "/erp/transport?view=paidFreight", permanent: true },
       { source: "/erp/credits", destination: "/erp/expenses?view=credits", permanent: true },
@@ -256,4 +285,22 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+/*
+ * THE DOCUMENTATION APP'S PAGES ARE MDX, compiled at build time.
+ *
+ * They are imported by `src/docs/content.ts`, never routed as files — so
+ * `pageExtensions` is untouched and the access gate in `src/app/docs/layout.tsx`
+ * stands in front of every one of them. Plugins are named as STRINGS because
+ * Turbopack cannot be handed a JavaScript function; their options have to be
+ * plain data for the same reason. Shiki colours the code fences here, at
+ * build, so no highlighter ships in the runtime image.
+ */
+const withMDX = createMDX({
+  extension: /\.mdx$/,
+  options: {
+    remarkPlugins: ["remark-gfm"],
+    rehypePlugins: ["rehype-slug", ["@shikijs/rehype", { theme: "github-light", addLanguageClass: true, tokenizeTimeLimit: 0 }]],
+  },
+});
+
+export default withMDX(nextConfig);

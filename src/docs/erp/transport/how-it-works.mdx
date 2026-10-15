@@ -1,0 +1,64 @@
+Logistics is the part of a sale after the goods leave the factory and before the party says they arrived. One record per bill is opened by dispatch; the stage and the LR say where it is; every step writes an event; and the customer is told on WhatsApp at the steps that matter to them.
+
+## One record per bill, opened by dispatch
+
+<Rule title="Dispatch opens the record, once">
+When the **first** line of an order number is dispatch-verified, a record is written for that bill (a unique index on the order number makes "once" hold). Straight after, its box count and litres are read off its lines, it gets a random tracking token, and its timeline opens with *Left the factory*.
+</Rule>
+
+## Where a bill is: the phase is derived
+
+| Phase | Stage and LR |
+|---|---|
+| Going to the transporter | *Dispatched*, no LR |
+| Waiting for the LR | *At transport* or later, no LR |
+| On the road | Has an LR, not closed |
+| Delivered | *Close - Received to Party* |
+
+<Rule title="The phase is never stored">
+It is read from the stage and the LR every time, so the desk, the old list and the order book cannot disagree about one bill. A bill moved to *In Transit* with no LR is still *waiting for its LR*: the customer cannot be told anything about a lorry nobody can name.
+</Rule>
+
+## The LR is uploaded by one team and attached by another
+
+<Rule title="Collecting and attaching are two jobs">
+The dispatch team collects the LRs from the transporters and uploads them (Logistics screen or Dispatch desk). Logistics decides which bills each carries. An uploaded LR is *unassigned* until attached; a wrong upload is **voided** with a reason, never deleted. An LR number is unique per transporter.
+</Rule>
+
+<Rule title="A photo is read against the transporter's own style">
+Each LR photo or PDF is read by OpenAI (<Setting k="erp.ai.visionModel" />) as soon as it is uploaded, while <Setting k="erp.ai.photos.enabled" /> is on, an OpenAI key is set and this month's <Setting k="erp.ai.photos.monthlyCap" /> readings are not used up. A receipt carries a phone, a GSTIN, an invoice number and a pin code beside the consignment number, so the model is told every transporter on the desk, what it calls its number (its *consignment label* — GR Number, G.C Number…) and what its last few numbers looked like. The answer is then checked by rules: the transporter is matched to the desk's own spelling, a number not shaped like that transporter's earlier ones is marked to check, and a date in the future or months old is not filled in. Only fields nobody has typed are filled, and Upload is still the only save. Whether each reading was accepted or edited is recorded against the LR it became.
+</Rule>
+
+<Rule title="One LR is one party">
+An LR is one consignment to one consignee, so the bills under it must go to one delivery party. A bill already under another LR, or delivered, cannot be attached.
+</Rule>
+
+The desk *suggests* the bills an LR carries — same transporter, destination naming the bill's area or party, box count matching, already at the transporter — and attaches nothing by itself.
+
+## Telling the customer
+
+<Rule title="Only what is on the record">
+Each message is built from the record: the bills, the LR, the transporter, the boxes, the expected day and the tracking link. A box count nobody entered or a date nobody gave is left out, not guessed. One message per party per step; the billing party is told, and the delivery party too where it is somebody else.
+</Rule>
+
+| Step | Messaged? |
+|---|---|
+| LR attached | Yes — LR, transporter, boxes, expected delivery, tracking link |
+| Stage or expected day moved | Yes |
+| A call that moved nothing | No |
+| A problem reported | Yes, unless unticked |
+| Delivered | Yes — the day and who received it |
+
+It goes through Wati only when <Setting k="erp.logistics.notifyCustomers" /> is on, the founder has WhatsApp switched on, and <Setting k="erp.logistics.watiTemplate" /> names an APPROVED template asking only for values logistics can fill. Otherwise it waits under **Customer messages** with the reason, to send by hand. A customer marked do not contact, on WhatsApp DND, with no mobile, or carrying a staff member's number is recorded as *not sent* and says why.
+
+<Callout kind="why" title="Why not the CRM's message log">
+A confirmed WhatsApp in the CRM's log is contact, and quiets the customer on the Call Log. A note that the goods are on a lorry is not a sales conversation and must not cost one, so logistics keeps its own messages.
+</Callout>
+
+## Calls, lateness and the tracking link
+
+- After an update the next call falls due in <Setting k="erp.logistics.callEveryDays" /> days unless somebody picks another day.
+- A consignment is *running late* the day after its expected delivery, or, with none, after <Setting k="erp.logistics.lateAfterDays" /> days from dispatch.
+- The customer's link `/track/<token>` needs no sign-in. It shows the steps shared with the customer — never call notes, problem notes, prices or staff names.
+
+The hourly ERP checks still raise an **LR missing** alert for a bill that left more than <Setting k="erp.ai.alerts.stuckLrDays" /> days ago with no LR.

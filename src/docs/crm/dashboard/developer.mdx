@@ -1,0 +1,120 @@
+The Dashboard is one server page, `src/app/crm/dashboard/page.tsx`, that paints its header immediately and streams the figures behind a `Suspense` boundary. The figures come from three places: `rangeActivity`/`teamRange` in `lib/queries.ts` (both wrapping `eodMetricsForRange` in `eod-service.ts`), today's work from the queue, payment and worklist services, and two private queries in the page file for the manager's red flags.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route guard | `src/app/crm/dashboard/layout.tsx` | `requireModule(user.id, "crm.dashboard")` |
+| Page (server) | `src/app/crm/dashboard/page.tsx` | `DashboardPage` (header, Start calling, Suspense), `DashboardFigures` (the reads), `TeamView`, `RedFlags`, `PeriodBar`, `Delta`, `PercentDelta`, `dashboardCounts`, `overSixtyDays`, `workingDaysLeft` |
+| Day stages (client) | `src/app/crm/dashboard/day-stages.tsx` | `DayStages` — five derived steps |
+| Skeleton | `src/app/crm/dashboard/loading.tsx`, `components/shell/screen-skeleton.tsx` | Navigation skeleton and `DashboardFiguresSkeleton` |
+| Periods (pure) | `src/lib/business-date.ts` | `DASHBOARD_PERIODS`, `isDashboardPeriod`, `periodRange`, `previousRange`, `startOfWeek` |
+| Activity | `src/lib/queries.ts` | `dayActivity`, `rangeActivity`, `teamRange`, `crmBadgeCounts` |
+| The counts | `src/lib/services/eod-service.ts` | `eodMetricsFor`, `eodMetricsForRange` — shared with the EOD report |
+| Today's work | `queue-service.ts` `queueProgress`; `payment-service.ts` `getFollowUpWorklist`; `worklist-services.ts` `listInactiveWatch`, `targetTotals` | |
+
+## A request, end to end
+
+<Flow caption="GET /crm/dashboard?period=week" chart={`
+sequenceDiagram
+  autonumber
+  participant B as Browser
+  participant P as DashboardPage
+  participant F as DashboardFigures
+  participant Q as queries / services
+  participant DB as Postgres
+  B->>P: request
+  P->>P: getScope(user, "crm"), today(), getConfig()
+  P->>P: periodRange(day, span), previousRange(range)
+  P-->>B: header + Start calling (streams first)
+  P->>F: Suspense
+  F->>Q: Promise.all — rangeActivity x2, queueProgress,<br/>getFollowUpWorklist, listInactiveWatch, targetTotals,<br/>dashboardCounts, crmBadgeCounts, teamRange, overSixtyDays
+  Q->>DB: eodMetricsForRange per person (one window each)
+  Q-->>F: figures
+  F-->>B: DayStages, PeriodBar, cards / TeamView
+`} />
+
+<Callout kind="rule">
+The header and the **Start calling** link render before any figure is awaited. An `await` in the page body blocks the page; the same `await` in a child component behind `Suspense` streams. Keep slow reads inside `DashboardFigures`.
+</Callout>
+
+## The period
+
+<Code file="src/lib/business-date.ts" symbol="periodRange" />
+
+<Code file="src/lib/business-date.ts" symbol="previousRange" />
+
+`?period=` is validated with `isDashboardPeriod`; anything unrecognised reads as today rather than erroring.
+
+## The activity figures
+
+<Code file="src/lib/queries.ts" symbol="rangeActivity" />
+
+<Code file="src/lib/services/eod-service.ts" symbol="eodMetricsForRange" collapsed />
+
+Notes for whoever edits `eodMetricsForRange`:
+
+- Every timestamp window carries the business zone through `windowFor(range)` — half-open `[start, end)` instants. Never `::date` a timestamp.
+- `payments.paid_at` is a **date** and is compared against the range's dates, inclusive.
+- The monthly target uses a month window (`mw`) for the month `range.to` falls in, not `extract(month …)`, which cannot use the index and is evaluated in the session zone.
+- Connect rate is computed from summed counts in `rangeActivity`, never averaged.
+
+<Code file="src/lib/queries.ts" symbol="teamRange" />
+
+## The red flags
+
+<Code file="src/app/crm/dashboard/page.tsx" symbol="dashboardCounts" />
+
+Reminders due today and open complaints are deliberately **not** in this query — they come from `crmBadgeCounts`, memoised for the request by the CRM layout, so the dashboard and the sidebar cannot disagree.
+
+<Code file="src/app/crm/dashboard/page.tsx" symbol="overSixtyDays" />
+
+## The day stages
+
+<Code file="src/app/crm/dashboard/day-stages.tsx" symbol="DayStages" collapsed />
+
+## Configuration
+
+<SettingsTable keys={["dashboard.reminderOverdueFlagDays", "dashboard.complaintUnresolvedFlagDays", "workingDay.workingDays", "workingDay.dayBoundaryHour"]} />
+
+## Access
+
+- **Module:** <ModuleRef k="crm.dashboard" />.
+- **Team view** is `getScope(user, "crm") === "team"` — the CRM grant's level, not the widest level held anywhere.
+- No capability is checked; every read resolves scope itself.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/business-date.test.ts` | `periodRange`, `previousRange`, working-day "yesterday" |
+| `npm run test:integration` | `src/lib/queue-progress.test.ts` | The dashboard's progress equals `getQueue` |
+| `npm run test:integration` | `src/lib/journeys.test.ts` | EOD figures over a day, inbound vs outbound, approved vs captured orders |
+
+## Changing it safely
+
+<Steps>
+<Step title="Add a count to eodMetricsForRange, not to the page">
+A figure the EOD report could also want belongs in the shared function, with its window from `windowFor`. A second spelling in the page is how the dashboard and the EOD report disagree.
+</Step>
+<Step title="Decide whether it follows the period">
+Activity follows the period. Work waiting now does not. Put the new figure on the right side of `PeriodBar`.
+</Step>
+<Step title="Use the order-status list, not literals">
+Read `orderCountsSql` / `PURCHASE_STATUSES` from `lib/order-status.ts` for "did we sell anything".
+</Step>
+<Step title="Make thresholds settings">
+Add flag ages to `registry.ts` under `dashboard.*` with a `Config` type entry.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| Approved orders are filtered by a literal `('captured','confirmed','dispatched')`, missing `in_transit` and `delivered` from `PURCHASE_STATUSES` | `eod-service.ts` `eodMetricsForRange` (`orders_count`, `orders_value`, `target_achieved`) |
+| `payments_confirmed` sums `payments` lines by `recorded_by_id` with no join to `payment_receipts.status` — reported and rejected money is counted as collected | `eod-service.ts` `eodMetricsForRange` |
+| `target_amount` / `target_achieved` join on `cu.owner_id` rather than `ASSIGNED_TO_SQL` or the sales-attribution rule | `eod-service.ts` |
+| `overSixtyDays` is unscoped, uses `current_date` (session zone) and does not exclude `unstated` bills | `dashboard/page.tsx` |
+| `overdue_growth` and `complaints_flagged` filter by `cu.owner_id`; growth includes unstated bills and is a fixed 7-day window | `dashboard/page.tsx` `dashboardCounts` |
+| Team-table red thresholds (`overdueReminders > 3`, `callsMissed > 5`) and "Not reachable - retry after 4 pm" are literals | `dashboard/page.tsx` `TeamView`, `DashboardFigures` |

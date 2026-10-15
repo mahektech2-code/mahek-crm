@@ -52,7 +52,11 @@ export default async function ErpLayout({ children }: { children: React.ReactNod
       id: g.id,
       label: g.label,
       icon: g.icon,
-      single: screens.length === 1 && (g.screens.length === 1 || g.id === "dashboard" || g.id === "settings"),
+      /* One screen in the group and it carries the group's own name: drawn as
+         that row, not as a heading opening onto a list of one. A group whose
+         other screens are simply not held keeps its heading, so the one it
+         shows is not mistaken for all there is. */
+      single: screens.length === 1 && g.screens.filter((x) => x.built).length === 1,
       screens,
     };
   }).filter((g) => g.screens.length > 0);

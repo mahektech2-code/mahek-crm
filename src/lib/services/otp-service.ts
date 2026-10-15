@@ -183,6 +183,34 @@ export async function findAccount(identifier: string) {
 }
 
 /**
+ * The account a ONE-TIME CODE is for, and the only number that finds it is the
+ * HRMS personal mobile — the number the code is sent to. Not the work number
+ * and not the email: Mahek's rule is that codes belong to the personal number
+ * alone. `findAccount` still answers for passwords, where the work number and
+ * the email are how people have always signed in.
+ *
+ * The reason is the case it exists for: an account carrying somebody else's
+ * phone as its work number. Typed by that somebody, the old lookup found the
+ * wrong account and messaged a code to a third phone, so the person typing
+ * waited for a code that was never coming to them. Matched on the personal
+ * mobile only, the number typed IS the number messaged, so that cannot happen.
+ *
+ * Through the employee link only, and it must name exactly one account — two
+ * accounts on one personal mobile name nobody.
+ */
+export async function findAccountForCode(identifier: string) {
+  const digits = identifier.replace(/\D/g, "");
+  if (digits.length < 10) return null;
+  const rows = await db
+    .select({ user: users })
+    .from(users)
+    .innerJoin(employees, eq(employees.id, users.employeeId))
+    .where(sql`${last10Of(employees.personalMobile)} = ${digits.slice(-10)}`)
+    .limit(2);
+  return rows.length === 1 ? rows[0].user : null;
+}
+
+/**
  * Where this account's codes go: the personal mobile of the HRMS employee it
  * is linked to. A refusal, in words, where there is none — the person is at a
  * login screen with nobody to ask.

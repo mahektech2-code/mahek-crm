@@ -42,8 +42,7 @@ import {
 import { invalidateConfig, seedConfig, updateSettings } from "@/lib/config/store";
 import { setTestUser } from "@/lib/auth";
 import { releaseDevice } from "@/lib/actions/sales";
-import { markMissedCheckouts } from "@/lib/mbos-jobs";
-import { mbosAttendanceDays, mbosPositions } from "@/db/schema";
+import { mbosAttendanceDays } from "@/db/schema";
 import { auditLog, notifications as notificationsTable } from "@/db/schema";
 import { ingestSyncBatch, storeMbosMedia } from "@/lib/actions/mbos";
 import {
@@ -2193,121 +2192,5 @@ describe("Starting the day again after checking out", () => {
       null,
       "a second resume the same day did not reopen the row",
     );
-  });
-});
-
-describe("A day nobody checked out of", () => {
-  /*
-   * The nightly pass used to flag these and leave `check_out_at` null for
-   * ever, so every query asking "who is still out" believed a salesman who
-   * forgot the button on Tuesday was still out on Friday.
-   */
-  const YESTERDAY = new Date(Date.now() - 86_400_000)
-    .toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
-
-  async function openDay() {
-    const [row] = await db
-      .insert(mbosAttendanceDays)
-      .values({
-        id: id("att"),
-        userId: salesman.id,
-        day: YESTERDAY,
-        checkInAt: new Date(`${YESTERDAY}T03:30:00Z`), // 9am IST
-      })
-      .returning();
-    return row;
-  }
-
-  test("it closes at the last position he reported", async () => {
-    const day = await openDay();
-    const last = new Date(`${YESTERDAY}T11:00:00Z`); // 4:30pm IST
-    for (const at of [new Date(`${YESTERDAY}T05:00:00Z`), last]) {
-      await db.insert(mbosPositions).values({
-        id: id("pos"),
-        userId: salesman.id,
-        deviceId: "probe-device",
-        lat: 21.1458,
-        lng: 79.0882,
-        accuracyM: 18,
-        at,
-      });
-    }
-
-    const out = await markMissedCheckouts();
-    assert.equal(out.recordsAffected, 1);
-
-    const [after] = await db
-      .select()
-      .from(mbosAttendanceDays)
-      .where(eq(mbosAttendanceDays.id, day.id));
-    assert.equal(after.autoCheckedOut, true, "the day was not flagged");
-    assert.ok(after.checkOutAt, "the day was left open despite a trail to close it at");
-    assert.equal(
-      after.checkOutAt.toISOString(),
-      last.toISOString(),
-      "closed at something other than the last position",
-    );
-  });
-
-  test("with nothing recorded it stays open rather than inventing an hour", async () => {
-    // Attendance is what somebody is paid against. "We do not know when he
-    // stopped" is a real answer; a plausible six o'clock would be believed.
-    const day = await openDay();
-
-    const out = await markMissedCheckouts();
-    assert.equal(out.recordsAffected, 1);
-
-    const [after] = await db
-      .select()
-      .from(mbosAttendanceDays)
-      .where(eq(mbosAttendanceDays.id, day.id));
-    assert.equal(after.checkOutAt, null, "a check-out time was invented");
-    assert.equal(after.autoCheckedOut, true, "it was not flagged for regularisation");
-  });
-
-  test("today is left alone — the day is not over", async () => {
-    const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
-    const [day] = await db
-      .insert(mbosAttendanceDays)
-      .values({
-        id: id("att"),
-        userId: salesman.id,
-        day: today,
-        checkInAt: new Date(Date.now() - 3_600_000),
-      })
-      .returning();
-
-    await markMissedCheckouts();
-
-    const [after] = await db
-      .select()
-      .from(mbosAttendanceDays)
-      .where(eq(mbosAttendanceDays.id, day.id));
-    assert.equal(after.checkOutAt, null, "somebody still working was checked out");
-    assert.equal(after.autoCheckedOut, false);
-  });
-
-  test("running it twice does not move a closing time", async () => {
-    const day = await openDay();
-    const last = new Date(`${YESTERDAY}T11:00:00Z`);
-    await db.insert(mbosPositions).values({
-      id: id("pos"),
-      userId: salesman.id,
-      deviceId: "probe-device",
-      lat: 21.1458,
-      lng: 79.0882,
-      accuracyM: 18,
-      at: last,
-    });
-
-    await markMissedCheckouts();
-    const second = await markMissedCheckouts();
-    assert.equal(second.recordsAffected, 0, "an already-closed day was closed again");
-
-    const [after] = await db
-      .select()
-      .from(mbosAttendanceDays)
-      .where(eq(mbosAttendanceDays.id, day.id));
-    assert.equal(after.checkOutAt?.toISOString(), last.toISOString());
   });
 });

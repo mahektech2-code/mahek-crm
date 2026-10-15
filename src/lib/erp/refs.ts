@@ -26,6 +26,7 @@ export const REF_LISTS: { key: string; label: string }[] = [
   { key: "videoTag", label: "Video search tag" },
   { key: "shortLabel", label: "Short label name (Item=Label)" },
   { key: "paymentTerms", label: "Payment terms (quotations and POs)" },
+  { key: "consignmentLabel", label: "Consignment number name (LR, GR, CN…)" },
 ];
 
 export async function refValues(listKey: string): Promise<string[]> {

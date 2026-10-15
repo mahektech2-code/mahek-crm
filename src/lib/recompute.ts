@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { orderCountsSql, orderValueSql } from "./order-status";
+import { billedInMonthSql, orderCountsSql } from "./order-status";
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -41,7 +41,6 @@ import {
   calendarDate,
   monthKey,
   addMonths,
-  monthWindowSql,
   type BusinessDate,
 } from "./business-date";
 import { CANCELLED_STATUS } from "./taken-order-parse";
@@ -1110,18 +1109,13 @@ export async function seedMonthlyTargets(forMonth?: string): Promise<number> {
        * 18% above the month it was derived from, and nothing on the screen
        * says the number came from a different question.
        */
-      const window = monthWindowSql(key);
+      // By BILL DATE, the figure a target is measured against — a default
+      // derived from order dates would be proposed from a different month
+      // to the one the screen then scores it on. See `billedInMonthSql`.
       const [row] = await db
-        .select({ total: sql<number>`coalesce(sum(${orderValueSql("orders")}),0)::bigint` })
-        .from(orders)
-        .where(
-          and(
-            eq(orders.customerId, c.id),
-            sql`${orders.orderedAt} >= ${sql.raw(window.start)}`,
-            sql`${orders.orderedAt} < ${sql.raw(window.end)}`,
-            orderCountsSql("orders"),
-          ),
-        );
+        .select({ total: billedInMonthSql("customers.id", key) })
+        .from(customers)
+        .where(eq(customers.id, c.id));
       trailing.push(Number(row?.total ?? 0));
     }
 
@@ -1360,10 +1354,17 @@ export async function recomputeSalesPeople(): Promise<number> {
 export async function recomputeSalesManagers(): Promise<number> {
   const managerNameOf = await managerNameByEmployeeName();
 
+  /* THE FIELD VERIFIER'S LEADS: a lead a Salesman raised or holds is seated under
+     the person set to verify those (`leads.fieldVerifierEmail`), not under
+     whoever the org chart names — rule 3 and rule 4. Off, and nothing about this
+     pass changes. See `services/lead-verifier`. */
+  const { fieldRoutingOn } = await import("./services/lead-verifier");
+  const fieldOn = await fieldRoutingOn();
+
   // Nothing on the org chart yet is not the same as nobody having a sales
   // manager. A pass with an empty map would blank every undecided customer's
   // seat rather than leave it as it was.
-  if (!managerNameOf.size) return 0;
+  if (!managerNameOf.size && !fieldOn) return 0;
 
   const [rows, activeUsers] = await Promise.all([
     db
@@ -1386,19 +1387,39 @@ export async function recomputeSalesManagers(): Promise<number> {
   const userNameById = new Map(activeUsers.map((u) => [u.id, u.name]));
   const userIdByName = new Map(activeUsers.map((u) => [u.name.trim().toLowerCase(), u.id]));
 
+  /* Which leads are the field verifier's — two queries for the whole book, never
+     one per lead. */
+  const fieldSeats = fieldOn
+    ? await (await import("./services/lead-verifier")).fieldSeatFor(
+        rows.filter((r) => r.kind === "lead").map((r) => ({ id: r.id, ownerId: r.ownerId })),
+      )
+    : { approverId: null as string | null, seated: new Set<string>() };
+
   let changed = 0;
   for (const c of rows) {
-    const assignedName =
-      c.kind === "lead"
-        ? (c.ownerId ? (userNameById.get(c.ownerId) ?? null) : null)
-        : (c.salesPersonName ?? (c.salesAmId ? (userNameById.get(c.salesAmId) ?? null) : null));
+    let nextId: string | null;
+    let nextName: string | null;
 
-    const managerName = assignedName
-      ? (managerNameOf.get(assignedName.trim().toLowerCase()) ?? null)
-      : null;
+    if (fieldSeats.approverId && fieldSeats.seated.has(c.id)) {
+      nextId = fieldSeats.approverId;
+      nextName = null;
+    } else {
+      /* An empty org chart must not blank a seat — see the guard above, which
+         is only lifted for the field verifier's own leads. */
+      if (!managerNameOf.size) continue;
 
-    const nextId = managerName ? (userIdByName.get(managerName.trim().toLowerCase()) ?? null) : null;
-    const nextName = managerName && !nextId ? managerName : null;
+      const assignedName =
+        c.kind === "lead"
+          ? (c.ownerId ? (userNameById.get(c.ownerId) ?? null) : null)
+          : (c.salesPersonName ?? (c.salesAmId ? (userNameById.get(c.salesAmId) ?? null) : null));
+
+      const managerName = assignedName
+        ? (managerNameOf.get(assignedName.trim().toLowerCase()) ?? null)
+        : null;
+
+      nextId = managerName ? (userIdByName.get(managerName.trim().toLowerCase()) ?? null) : null;
+      nextName = managerName && !nextId ? managerName : null;
+    }
 
     if (nextId === c.salesManagerId && nextName === c.salesManagerPersonName) continue;
 
@@ -1428,6 +1449,16 @@ export async function recomputeSalesManagers(): Promise<number> {
 export async function salesManagerForOwner(
   ownerUserId: string,
 ): Promise<{ id: string | null; personName: string | null } | null> {
+  /* A lead a Salesman holds is born under the field verifier, the same answer the
+     nightly pass writes for it — see `recomputeSalesManagers`. */
+  const { fieldApprover, fieldRoutingOn, salesmenAmong } = await import("./services/lead-verifier");
+  if (await fieldRoutingOn()) {
+    const field = await fieldApprover();
+    if (field && field.id !== ownerUserId && (await salesmenAmong([ownerUserId])).has(ownerUserId)) {
+      return { id: field.id, personName: null };
+    }
+  }
+
   const managerNameOf = await managerNameByEmployeeName();
   if (!managerNameOf.size) return null;
 

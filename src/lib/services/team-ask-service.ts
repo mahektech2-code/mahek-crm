@@ -13,8 +13,11 @@ import { today } from "@/lib/recompute";
 import { readSecret } from "@/lib/secrets";
 import { managerScope } from "@/lib/services/sales-service";
 import { isPermanentRefusal } from "@/lib/voice-readiness";
-import { TABLES, allowedTables, buildViews, type BuiltView } from "@/lib/team-ask/catalog";
+import { TABLES, allowedTables, buildViews, type BuiltView, type TableSpec } from "@/lib/team-ask/catalog";
+import { CRM_MODULE_LABEL, CRM_TABLES } from "@/lib/team-ask/crm-catalog";
+import { resolveScope, scopedUserIds } from "@/lib/access-control";
 import { guardSql } from "@/lib/team-ask/sql-guard";
+import { accessRules, type AskReach } from "@/lib/team-ask/boundary";
 import { TtlCache, normaliseQuestion, normaliseSql } from "@/lib/team-ask/cache";
 
 /* ---------------------------------------------------------------------------
@@ -75,7 +78,7 @@ let shapeCache: Shape | null = null;
  */
 async function shape(): Promise<Shape> {
   if (shapeCache && Date.now() - shapeCache.at < 600_000) return shapeCache;
-  const names = TABLES.map((t) => t.table);
+  const names = [...new Set([...TABLES, ...CRM_TABLES].map((t) => t.table))];
   const rows = await pg<{ table_name: string; column_name: string; udt_name: string; data_type: string }[]>`
     select table_name, column_name, udt_name, data_type
       from information_schema.columns
@@ -164,14 +167,22 @@ function systemPrompt(input: {
   scopeLine: string;
   schema: string;
   missing: string[];
+  /** How far this person's tables reach — what they may be told about. */
+  reach: AskReach;
+  /** Who is asking and about what — the Sales Dashboard's manager unless the CRM's prompt is asked for. */
+  crm?: boolean;
 }): string {
   return [
-    "You answer a sales manager's questions about their field team at Mahek Marketing India (thinner and paint products, sold to shops across India).",
+    input.crm
+      ? "You answer questions from a member of the telecalling team in Mahek Marketing India's CRM (thinner and paint products, sold to shops across India) about the customers in their book: who owes what, who is due to order, calls made and promised, reminders, complaints, orders, bills and payments."
+      : "You answer a sales manager's questions about their field team at Mahek Marketing India (thinner and paint products, sold to shops across India).",
     "You have a read-only Postgres database through the run_sql tool. Answer ONLY from what your queries return — never invent, estimate or guess a name, figure or date. If the data cannot answer, say so plainly.",
     "",
     "HOW TO WORK",
     "- Go straight to the query; do not ask the manager to clarify unless the question is truly ambiguous. Prefer one well-built query with joins and aggregates over many small ones; run more only when needed.",
-    "- Find people by name with ILIKE on users.name (and employees.name). A field salesman is a user with an app_access row where app = 'field'.",
+    input.crm
+      ? "- Find a customer by name with ILIKE on customers.name (and contact_person, phone). Find people by name with ILIKE on users.name. A lead is customers.kind = 'lead'."
+      : "- Find people by name with ILIKE on users.name (and employees.name). A field salesman is a user with an app_access row where app = 'field'.",
     "- The session time zone is Asia/Kolkata: current_date is today in India, and some_timestamp::date gives the Indian date. Timestamps in results are already shown in IST.",
     "- Money columns ending _paise, and orders.total_amount / bills.amount / payment_receipts.amount / customers.outstanding, are in PAISE: divide by 100 for rupees. Show rupees with Indian grouping, e.g. ₹1,25,000.",
     "- Volumes in ml: divide by 1000 for litres. *_bp columns are basis points: divide by 100 for percent.",
@@ -185,10 +196,12 @@ function systemPrompt(input: {
     "- Answer in the language the question was asked in.",
     "- If something is not available because of this person's access (listed below), say which screen access they would need.",
     "",
-    "TABLES YOU CAN READ (all already narrowed to what this manager may see)",
+    ...accessRules(input.reach, input.crm ? "crm" : "sales"),
+    "",
+    input.crm ? "TABLES YOU CAN READ (all already narrowed to this person's book)" : "TABLES YOU CAN READ (all already narrowed to what this manager may see)",
     input.schema,
     ...(input.missing.length
-      ? ["", "NOT AVAILABLE to this manager (their access does not include the screen):", ...input.missing.map((m) => `- ${m}`)]
+      ? ["", `NOT AVAILABLE to this ${input.crm ? "person" : "manager"} (their access does not include the screen):`, ...input.missing.map((m) => `- ${m}`)]
       : []),
     "",
     /* THE PARTS THAT CHANGE GO LAST. OpenAI caches a prompt by its prefix, so
@@ -196,7 +209,7 @@ function systemPrompt(input: {
        rows, every question of the day — come first and are read from its
        cache; only the date and the name below are new each time. */
     input.scopeLine,
-    `The manager asking is ${input.name} (user id ${input.userId}). Today is ${input.day}.`,
+    `The ${input.crm ? "person" : "manager"} asking is ${input.name} (user id ${input.userId}). Today is ${input.day}.`,
   ].join("\n");
 }
 
@@ -299,6 +312,7 @@ async function contextFor(
       scopeLine,
       schema: describe(views, enums),
       missing,
+      reach: scope.national ? "national" : scope.own ? "own" : "team",
     }),
   };
   contexts.set(user.id, ctx, ttlSeconds * 1000);
@@ -388,51 +402,57 @@ export async function warmTeamAsk(): Promise<void> {
   }
 }
 
+/** The limits one ask runs under — the salesAsk.* settings, with the model chosen per app. */
+type AskLimits = {
+  model: string;
+  reasoningEffort: string;
+  maxQueries: number;
+  timeoutSeconds: number;
+  queryTimeoutSeconds: number;
+  resultCacheSeconds: number;
+  answerCacheSeconds: number;
+};
+
+async function limitsFor(model: string): Promise<AskLimits> {
+  const config = await getConfig();
+  return {
+    model,
+    reasoningEffort: config["salesAsk.reasoningEffort"],
+    maxQueries: config["salesAsk.maxQueries"],
+    timeoutSeconds: config["salesAsk.timeoutSeconds"],
+    queryTimeoutSeconds: config["salesAsk.queryTimeoutSeconds"],
+    resultCacheSeconds: config["salesAsk.resultCacheSeconds"],
+    answerCacheSeconds: config["salesAsk.answerCacheSeconds"],
+  };
+}
+
 /**
- * Answer one question, sending progress and the answer's text as it arrives.
- *
- * `emit` is called with steps ("Leave Mahesh took this year"), text deltas,
- * and a final `done` or `error`. Never throws.
+ * The model, the one tool and the stream, for any app's context. Throws on a
+ * failure; the caller turns it into a sentence.
  */
-export async function askTeamStream(
+async function answerStream(
+  ctx: AskContext,
+  key: string,
+  limits: AskLimits,
   question: string,
   history: AskTurn[],
   emit: (e: AskEvent) => void,
+  started: number,
 ): Promise<void> {
-  const started = Date.now();
-  let session: Session | null = null;
+  /* A FRESH QUESTION ASKED A MOMENT AGO IS ANSWERED FROM MEMORY. Only a
+     fresh one: "and last month?" means something different after every
+     conversation, so a follow-up always goes to the model. */
+  const answerKey = history.length ? null : `${ctx.visibility}|${normaliseQuestion(question)}`;
+  const remembered = answerKey ? answers.get(answerKey) : undefined;
+  if (remembered) {
+    emit({ type: "delta", text: remembered.text });
+    emit({ type: "done", queries: 0, dbQueries: 0, cached: true, ms: Date.now() - started });
+    return;
+  }
+
+  const live = new Session(ctx, limits.queryTimeoutSeconds);
   try {
-    const scope = await requireCapability("team.report");
-    const config = await getConfig();
-    if (!config["salesAsk.enabled"]) {
-      emit({ type: "error", message: "Ask about the team is switched off in Admin Console → Settings → Sales Dashboard." });
-      return;
-    }
-    const key = await readSecret("openai.apiKey");
-    if (!key) {
-      emit({
-        type: "error",
-        message: "No OpenAI account is connected yet. Add an OpenAI key in Admin Console → Integrations and this will start working.",
-      });
-      return;
-    }
-
-    const ctx = await contextFor(scope.user, config["salesAsk.contextCacheSeconds"]);
-
-    /* A FRESH QUESTION ASKED A MOMENT AGO IS ANSWERED FROM MEMORY. Only a
-       fresh one: "and last month?" means something different after every
-       conversation, so a follow-up always goes to the model. */
-    const answerKey = history.length ? null : `${ctx.visibility}|${normaliseQuestion(question)}`;
-    const remembered = answerKey ? answers.get(answerKey) : undefined;
-    if (remembered) {
-      emit({ type: "delta", text: remembered.text });
-      emit({ type: "done", queries: 0, dbQueries: 0, cached: true, ms: Date.now() - started });
-      return;
-    }
-
-    session = new Session(ctx, config["salesAsk.queryTimeoutSeconds"]);
-    const live = session;
-    const resultTtl = config["salesAsk.resultCacheSeconds"] * 1000;
+    const resultTtl = limits.resultCacheSeconds * 1000;
     let queries = 0;
     let text = "";
 
@@ -442,7 +462,7 @@ export async function askTeamStream(
     ];
 
     const result = streamText({
-      model: createOpenAI({ apiKey: key })(config["salesAsk.model"]),
+      model: createOpenAI({ apiKey: key })(limits.model),
       system: ctx.system,
       messages,
       tools: {
@@ -476,15 +496,15 @@ export async function askTeamStream(
           },
         }),
       },
-      stopWhen: isStepCount(Math.max(2, config["salesAsk.maxQueries"] + 1)),
+      stopWhen: isStepCount(Math.max(2, limits.maxQueries + 1)),
       maxRetries: 1,
-      abortSignal: AbortSignal.timeout(Math.max(10, config["salesAsk.timeoutSeconds"]) * 1000),
+      abortSignal: AbortSignal.timeout(Math.max(10, limits.timeoutSeconds) * 1000),
       providerOptions: {
         openai: {
-          reasoningEffort: config["salesAsk.reasoningEffort"] as "minimal" | "low" | "medium" | "high",
+          reasoningEffort: limits.reasoningEffort as "minimal" | "low" | "medium" | "high",
           parallelToolCalls: false,
           // Everybody who sees the same rows shares one prompt prefix.
-          promptCacheKey: `team-ask-${ctx.visibility.slice(0, 32)}`,
+          promptCacheKey: `ask-${ctx.visibility.slice(0, 32)}`,
         },
       },
     });
@@ -501,23 +521,160 @@ export async function askTeamStream(
     if (!text.trim()) {
       emit({ type: "delta", text: "I could not put an answer together from the data for that. Try asking it another way." });
     } else if (answerKey) {
-      answers.set(answerKey, { text, queries }, config["salesAsk.answerCacheSeconds"] * 1000);
+      answers.set(answerKey, { text, queries }, limits.answerCacheSeconds * 1000);
     }
     emit({ type: "done", queries, dbQueries: live.dbQueries, cached: false, ms: Date.now() - started });
-  } catch (e) {
-    const detail = e instanceof Error ? e.message : String(e);
-    console.error("Ask about the team failed:", detail);
-    emit({
-      type: "error",
-      message: isPermanentRefusal(detail)
-        ? "OpenAI refused the request — the connected account may be out of credit, the key may be invalid, or the model name in settings may be wrong. Check Admin Console → Integrations."
-        : /timeout|aborted/i.test(detail)
-          ? "That took too long to answer. Try a narrower question."
-          : /capability|not allowed|forbidden|sign in/i.test(detail)
-            ? "Your access does not include asking about the team."
-            : "Could not answer just now. Try again in a moment.",
-    });
   } finally {
-    await session?.close();
+    await live.close();
+  }
+}
+
+/** A failure, in words somebody can act on. */
+function failure(e: unknown, accessLine: string): string {
+  const detail = e instanceof Error ? e.message : String(e);
+  return isPermanentRefusal(detail)
+    ? "OpenAI refused the request — the connected account may be out of credit, the key may be invalid, or the model name in settings may be wrong. Check Admin Console → Integrations."
+    : /timeout|aborted/i.test(detail)
+      ? "That took too long to answer. Try a narrower question."
+      : /capability|not allowed|forbidden|sign in/i.test(detail)
+        ? accessLine
+        : "Could not answer just now. Try again in a moment.";
+}
+
+const NO_KEY =
+  "No OpenAI account is connected yet. Add an OpenAI key in Admin Console → Integrations and this will start working.";
+
+/**
+ * Answer one question, sending progress and the answer's text as it arrives.
+ *
+ * `emit` is called with steps ("Leave Mahesh took this year"), text deltas,
+ * and a final `done` or `error`. Never throws.
+ */
+export async function askTeamStream(
+  question: string,
+  history: AskTurn[],
+  emit: (e: AskEvent) => void,
+): Promise<void> {
+  const started = Date.now();
+  try {
+    const scope = await requireCapability("team.report");
+    const config = await getConfig();
+    if (!config["salesAsk.enabled"]) {
+      emit({ type: "error", message: "Ask about the team is switched off in Admin Console → Settings → Sales Dashboard." });
+      return;
+    }
+    const key = await readSecret("openai.apiKey");
+    if (!key) {
+      emit({ type: "error", message: NO_KEY });
+      return;
+    }
+    const ctx = await contextFor(scope.user, config["salesAsk.contextCacheSeconds"]);
+    await answerStream(ctx, key, await limitsFor(config["salesAsk.model"]), question, history, emit, started);
+  } catch (e) {
+    console.error("Ask about the team failed:", e instanceof Error ? e.message : e);
+    emit({ type: "error", message: failure(e, "Your access does not include asking about the team.") });
+  }
+}
+
+/* ------------------------------------------------------------- the CRM's */
+
+/**
+ * What one CRM user may read: the CRM catalog, narrowed to the people
+ * `resolveScope()` puts in their book and the CRM screens they hold.
+ */
+async function crmContextFor(user: { id: string; name: string }, ttlSeconds: number): Promise<AskContext> {
+  const cacheKey = `crm:${user.id}`;
+  const cached = contexts.get(cacheKey);
+  if (cached) return cached;
+
+  const [apps, scope, day, { columns, enums }] = await Promise.all([
+    listUserApps(user.id),
+    resolveScope(),
+    today(),
+    shape(),
+  ]);
+  const modules = new Set(
+    apps.includes("crm") ? (await listUserModules(user.id, "crm")).map((m) => m.key) : [],
+  );
+  const ids = scopedUserIds(scope.scope);
+  const tables: TableSpec[] = CRM_TABLES;
+  const { statements, views } = buildViews({
+    salesmanIds: ids,
+    selfId: user.id,
+    own: scope.role === "associate",
+    modules,
+    columns,
+    tables,
+  });
+  const allowed = new Set(allowedTables(modules, tables).map((t) => t.table));
+  const missing = tables
+    .filter((t) => !allowed.has(t.table))
+    .map((t) => `${t.table} — needs ${t.modules.map((m) => CRM_MODULE_LABEL[m] ?? m).join(" or ")}`);
+  const scopeLine =
+    ids === null
+      ? "They see the whole company's book: every customer."
+      : ids.length <= 1
+        ? "They see only their own book: the customers assigned to them."
+        : `They see their team's book: the customers of ${ids.length} people. Nobody else's customers are in the tables.`;
+
+  const ctx: AskContext = {
+    userId: user.id,
+    name: user.name,
+    statements,
+    visibility: createHash("sha256").update(statements.join(";\n")).digest("hex"),
+    system: systemPrompt({
+      name: user.name,
+      userId: user.id,
+      day,
+      scopeLine,
+      schema: describe(views, enums),
+      missing,
+      reach: ids === null ? "national" : ids.length <= 1 ? "own" : "team",
+      crm: true,
+    }),
+  };
+  contexts.set(cacheKey, ctx, ttlSeconds * 1000);
+  return ctx;
+}
+
+/** Build what this person may read before they type. A courtesy; never throws. */
+export async function warmCrmAsk(): Promise<void> {
+  try {
+    const user = (await resolveScope()).user;
+    const config = await getConfig();
+    if (!config["crmAsk.enabled"]) return;
+    await crmContextFor(user, config["salesAsk.contextCacheSeconds"]);
+  } catch {
+    /* the question will say what went wrong */
+  }
+}
+
+/**
+ * Ask the CRM: the same stream as "Ask about the team", over the CRM catalog
+ * and the asker's own book. Never throws.
+ */
+export async function askCrmStream(
+  question: string,
+  history: AskTurn[],
+  emit: (e: AskEvent) => void,
+): Promise<void> {
+  const started = Date.now();
+  try {
+    const { user } = await resolveScope();
+    const config = await getConfig();
+    if (!config["crmAsk.enabled"]) {
+      emit({ type: "error", message: "Ask the CRM is switched off in Admin Console → Settings → AI assistants." });
+      return;
+    }
+    const key = await readSecret("openai.apiKey");
+    if (!key) {
+      emit({ type: "error", message: NO_KEY });
+      return;
+    }
+    const ctx = await crmContextFor(user, config["salesAsk.contextCacheSeconds"]);
+    await answerStream(ctx, key, await limitsFor(config["crmAsk.model"]), question, history, emit, started);
+  } catch (e) {
+    console.error("Ask the CRM failed:", e instanceof Error ? e.message : e);
+    emit({ type: "error", message: failure(e, "Your access does not include asking the CRM.") });
   }
 }

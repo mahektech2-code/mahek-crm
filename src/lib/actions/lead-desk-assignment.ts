@@ -13,7 +13,13 @@ import { notifyUser } from "@/lib/notify";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
 import { MBOS_EVENT, writeTimelineEvent } from "@/lib/timeline";
 import { leadRow } from "@/lib/services/lead-service";
-import { DESK_MODULE, deskHolders } from "@/lib/services/lead-desk-assignment-service";
+import { realignNotice, realignVerifierSeats } from "@/lib/services/lead-verifier";
+import {
+  DESK_MODULE,
+  assignableOwner,
+  placeSentence,
+  type OwnerPlace,
+} from "@/lib/services/lead-desk-assignment-service";
 import { LEAD_BULK_CAP } from "@/lib/services/sales-service";
 
 /* ---------------------------------------------------------------------------
@@ -57,13 +63,19 @@ import { LEAD_BULK_CAP } from "@/lib/services/sales-service";
  * ------------------------------------------------------------------------- */
 const schema = z.object({
   customerId: z.string().min(1),
-  ownerId: z.string().min(1, "Pick who it goes to."),
+  ownerId: z.string().min(1, "Pick who it goes to.").nullable(),
 });
 
 type Actor = Awaited<ReturnType<typeof requireCapability>>;
 
 type AssignResult =
-  | { ok: true; changed: boolean; leadName: string }
+  | {
+      ok: true;
+      changed: boolean;
+      leadName: string;
+      /** Moved, but its verification seat could not follow — said, never swallowed. */
+      notice?: string;
+    }
   | { ok: false; error: string; code: "not_found" | "rule_violation"; leadName?: string };
 
 /**
@@ -74,10 +86,13 @@ type AssignResult =
  * is not caught here: a lead the actor may not see must not be named back to
  * them.
  */
+/** `null` is UNASSIGNED: the lead goes back to the pool nobody's desk holds. */
+type Target = { id: string; name: string; place: OwnerPlace; noArea?: boolean } | null;
+
 async function assignOne(
   ctx: Actor,
   customerId: string,
-  target: { id: string; name: string },
+  target: Target,
 ): Promise<AssignResult> {
   const lead = await leadRow(customerId);
   if (!lead || lead.leadStage === null) {
@@ -101,7 +116,7 @@ async function assignOne(
       leadManagerId: lead.leadManagerId,
     });
   }
-  if (lead.ownerId === target.id) return { ok: true, changed: false, leadName: lead.name };
+  if ((lead.ownerId ?? null) === (target?.id ?? null)) return { ok: true, changed: false, leadName: lead.name };
 
   /* A next action owed by the old owner follows the lead; one owed by anybody
      else — the manager's verification, the manager's review — stays with them.
@@ -113,15 +128,28 @@ async function assignOne(
     ? (await db.select({ name: users.name }).from(users).where(eq(users.id, lead.ownerId)).limit(1))[0]
     : undefined;
 
-  await db.transaction(async (tx) => {
+  let realigned: Awaited<ReturnType<typeof realignVerifierSeats>>;
+  try {
+    realigned = await db.transaction(async (tx) => {
     await tx
       .update(customers)
       .set({
-        ownerId: target.id,
-        ...(followsOwner ? { leadNextActionOwnerId: target.id } : {}),
+        ownerId: target?.id ?? null,
+        ...(followsOwner ? { leadNextActionOwnerId: target?.id ?? null } : {}),
         updatedAt: new Date(),
       })
       .where(eq(customers.id, lead.id));
+    /* A lead given to or taken off a Salesman has a different verifier now, so
+       the Sales Manager seat, the verification next action and the open call
+       follow it IN THIS COMMIT: if they cannot, the owner does not move either.
+       A verifier that is merely unusable does not roll this back — it comes back
+       in the result and is said below. The owner is never written by it. */
+    const aligned = await realignVerifierSeats(
+      [lead.id],
+      ctx.user.id,
+      { app: ctx.authorisedIn, role: ctx.authorisedBy },
+      { tx },
+    );
     await writeTimelineEvent(tx, {
       customerId: lead.id,
       eventType: MBOS_EVENT.ownerChange,
@@ -129,14 +157,16 @@ async function assignOne(
       sourceRecordId: `${lead.id}:desk:${randomUUID().slice(0, 8)}`,
       occurredAt: new Date(),
       actorUserId: ctx.user.id,
-      summary: previous
-        ? `Reassigned from ${previous.name} to ${target.name}`
-        : `Assigned to ${target.name} on the calling desk`,
+      summary: !target
+        ? `Unassigned${previous ? ` from ${previous.name}` : ""}`
+        : previous
+          ? `Reassigned from ${previous.name} to ${target.name}`
+          : `Assigned to ${target.name} on the calling desk`,
     });
     await tx.insert(auditLog).values({
       id: `aud_${randomUUID().slice(0, 12)}`,
       actorId: ctx.user.id,
-      action: lead.ownerId ? "lead.reassigned" : "lead.deskAssigned",
+      action: !target ? "lead.unassigned" : lead.ownerId ? "lead.reassigned" : "lead.deskAssigned",
       entityType: "customer",
       entityId: lead.id,
       actorRole: ctx.authorisedBy,
@@ -146,34 +176,58 @@ async function assignOne(
         nextActionOwnerId: lead.leadNextActionOwnerId ?? null,
       },
       afterState: {
-        ownerId: target.id,
-        nextActionOwnerId: followsOwner ? target.id : (lead.leadNextActionOwnerId ?? null),
+        ownerId: target?.id ?? null,
+        nextActionOwnerId: followsOwner ? (target?.id ?? null) : (lead.leadNextActionOwnerId ?? null),
         nextActionFollowed: followsOwner,
       },
     });
-  });
+    return aligned;
+    });
+  } catch (e) {
+    /* Nothing was written: the transaction rolled back as one. Said, so the lead
+       is not left looking moved. (A scope refusal threw earlier, outside this
+       block, and is still the caller's.) */
+    return {
+      ok: false,
+      code: "rule_violation",
+      error: `Not moved — nothing was changed, because its verification seat could not be updated (${
+        e instanceof Error ? e.message : "database error"
+      }). Try again.`,
+      leadName: lead.name,
+    };
+  }
+  const notice = realignNotice(realigned) ?? undefined;
 
   /* The new owner is told, and the old one — a lead that leaves a book silently
      reads as a bug in the list. Never able to fail the assignment. */
-  if (target.id !== ctx.user.id) {
+  if (target && target.id !== ctx.user.id) {
     await notifyUser({
       userId: target.id,
       title: `A lead was assigned to you: ${lead.name}`,
       body: `${ctx.user.name} put it on your calling desk.`,
       kind: "info",
-      href: `/crm/leads/calling-desk/${lead.id}`,
+      /* Where it will actually be for THEM: a person with no Calling desk is
+         sent to the record, and a handset-only person to no web route at all. */
+      href:
+        target.place === "desk"
+          ? `/crm/leads/calling-desk/${lead.id}`
+          : target.place === "crm"
+            ? `/crm/leads/${lead.id}`
+            : undefined,
     }).catch(() => {});
   }
-  if (lead.ownerId && lead.ownerId !== ctx.user.id && lead.ownerId !== target.id) {
+  if (lead.ownerId && lead.ownerId !== ctx.user.id && lead.ownerId !== (target?.id ?? null)) {
     await notifyUser({
       userId: lead.ownerId,
       title: `${lead.name} was moved`,
-      body: `${ctx.user.name} reassigned it to ${target.name}.`,
+      body: target
+        ? `${ctx.user.name} reassigned it to ${target.name}.`
+        : `${ctx.user.name} took it off your desk. It is unassigned for now.`,
       kind: "info",
     }).catch(() => {});
   }
 
-  return { ok: true, changed: true, leadName: lead.name };
+  return { ok: true, changed: true, leadName: lead.name, notice };
 }
 
 function refresh(customerId?: string) {
@@ -199,12 +253,16 @@ async function requireAssigner(): Promise<{ ctx: Actor } | { refusal: ReturnType
   return { ctx };
 }
 
-async function desk(ownerId: string) {
-  return (await deskHolders()).find((h) => h.id === ownerId) ?? null;
+/* Anybody active who holds the CRM or the Salesman App — the same people the
+   picker offers (`ownerChoices`), so an offered choice is never refused. The
+   Calling desk used to be required here; it no longer is, and `placeSentence`
+   says where the lead lands when it is not on one. */
+async function assignee(ownerId: string) {
+  return assignableOwner(ownerId);
 }
 
-const NOT_ON_A_DESK =
-  "That person cannot open the Calling desk, so a lead given to them would not be on any desk they can see. Grant it on the Access screen first.";
+const NOT_ASSIGNABLE =
+  "That person has no active CRM or Salesman App account, so a lead given to them would not be visible to anybody. Grant them an app on the Access screen first.";
 
 export async function assignDeskLead(
   input: z.input<typeof schema>,
@@ -217,17 +275,27 @@ export async function assignDeskLead(
     const gate = await requireAssigner();
     if ("refusal" in gate) return gate.refusal;
 
-    const target = await desk(p.ownerId);
-    if (!target) {
-      return err(NOT_ON_A_DESK, "rule_violation", [{ field: "ownerId", message: "Does not hold the Calling desk." }]);
+    /* `null` is Unassigned; anybody else must be an active CRM or Salesman App account. */
+    const target = p.ownerId === null ? null : await assignee(p.ownerId);
+    if (p.ownerId !== null && !target) {
+      return err(NOT_ASSIGNABLE, "rule_violation", [{ field: "ownerId", message: "Not an active CRM or Salesman App account." }]);
     }
 
     const done = await assignOne(gate.ctx, p.customerId, target);
     if (!done.ok) return err(done.error, done.code);
-    if (!done.changed) return ok({ ownerName: target.name }, `Already ${target.name}'s.`);
+    if (!done.changed) {
+      return ok({ ownerName: target?.name ?? "Unassigned" }, target ? `Already ${target.name}'s.` : "Already unassigned.");
+    }
 
     refresh(p.customerId);
-    return ok({ ownerName: target.name }, `Assigned to ${target.name}.`);
+    const said = target
+      ? `Assigned to ${target.name}.${placeSentence(target.name, target.place, target.noArea)}`
+      : "Unassigned — it is on nobody's desk until somebody is given it.";
+    /* Moved, but never reported as complete when its verification seat could not
+       follow. */
+    return done.notice
+      ? ok({ ownerName: target?.name ?? "Unassigned" }, `${said} ${done.notice}`, [done.notice])
+      : ok({ ownerName: target?.name ?? "Unassigned" }, said);
   } catch (e) {
     return fromThrown(e);
   }
@@ -235,7 +303,7 @@ export async function assignDeskLead(
 
 const bulkSchema = z.object({
   leadIds: z.array(z.string().min(1)).min(1, "Nothing selected."),
-  ownerId: z.string().min(1, "Pick who they go to."),
+  ownerId: z.string().min(1, "Pick who they go to.").nullable(),
 });
 
 /**
@@ -246,7 +314,14 @@ const bulkSchema = z.object({
  */
 export async function bulkAssignDeskLeads(
   input: z.input<typeof bulkSchema>,
-): Promise<Result<{ done: number; failed: Array<{ id: string; name: string; why: string }> }>> {
+): Promise<
+  Result<{
+    done: number;
+    failed: Array<{ id: string; name: string; why: string }>;
+    /** Moved, but the verification seat could not follow — named, never swallowed. */
+    attention?: Array<{ id: string; name: string; why: string }>;
+  }>
+> {
   try {
     const parsed = bulkSchema.safeParse(input);
     if (!parsed.success) return err(parsed.error.issues[0]?.message ?? "Nothing selected.", "validation");
@@ -254,20 +329,24 @@ export async function bulkAssignDeskLeads(
     const gate = await requireAssigner();
     if ("refusal" in gate) return gate.refusal;
 
-    const target = await desk(parsed.data.ownerId);
-    if (!target) {
-      return err(NOT_ON_A_DESK, "rule_violation", [{ field: "ownerId", message: "Does not hold the Calling desk." }]);
+    const target = parsed.data.ownerId === null ? null : await assignee(parsed.data.ownerId);
+    if (parsed.data.ownerId !== null && !target) {
+      return err(NOT_ASSIGNABLE, "rule_violation", [{ field: "ownerId", message: "Not an active CRM or Salesman App account." }]);
     }
 
     const ids = Array.from(new Set(parsed.data.leadIds)).slice(0, LEAD_BULK_CAP);
     let done = 0;
     const failed: Array<{ id: string; name: string; why: string }> = [];
+    const attention: Array<{ id: string; name: string; why: string }> = [];
     for (const id of ids) {
       try {
         const r = await assignOne(gate.ctx, id, target);
         if (!r.ok) failed.push({ id, name: r.leadName ?? "A lead", why: r.error });
-        else if (!r.changed) failed.push({ id, name: r.leadName, why: "already theirs" });
-        else done += 1;
+        else if (!r.changed) failed.push({ id, name: r.leadName, why: target ? "already theirs" : "already unassigned" });
+        else {
+          done += 1;
+          if (r.notice) attention.push({ id, name: r.leadName, why: r.notice });
+        }
       } catch {
         /* Out of scope: refused without being named — a lead the caller may not
            see is not described back to them. */
@@ -276,15 +355,23 @@ export async function bulkAssignDeskLeads(
     }
 
     refresh();
-    const head = `${done} ${done === 1 ? "lead" : "leads"} now ${target.name}'s.`;
+    const head = target
+      ? `${done} ${done === 1 ? "lead" : "leads"} now ${target.name}'s.${placeSentence(target.name, target.place, target.noArea)}`
+      : `${done} ${done === 1 ? "lead" : "leads"} now unassigned.`;
+    const attn = attention.length
+      ? ` ${attention.length} moved but still need${attention.length === 1 ? "s" : ""} attention: ${attention
+          .slice(0, 3)
+          .map((a) => `${a.name} — ${a.why}`)
+          .join("; ")}`
+      : "";
     return ok(
-      { done, failed },
+      { done, failed, ...(attention.length ? { attention } : {}) },
       failed.length
         ? `${head} ${failed.length} did not move: ${failed
             .slice(0, 3)
             .map((f) => `${f.name} — ${f.why}`)
-            .join("; ")}`
-        : head,
+            .join("; ")}${attn}`
+        : `${head}${attn}`,
     );
   } catch (e) {
     return fromThrown(e);

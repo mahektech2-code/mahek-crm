@@ -34,7 +34,7 @@ import {
   pricingOptions,
 } from "@/lib/services/price-list-service";
 import { quickNotes as quickNotesTable } from "@/db/schema";
-import { targetFor } from "@/lib/services/worklist-services";
+import { customerAchievedFor, targetFor } from "@/lib/services/worklist-services";
 import { customerStatusLabel, daysBetween } from "@/lib/format";
 import { categoryLabel, categoryValue } from "@/lib/complaint-labels";
 // How much of the timeline the page arrives with — see `TIMELINE_PAGE`. The
@@ -105,6 +105,7 @@ export default async function CustomerRecordPage({
      */
     pricing,
     pricingLists,
+    achievedThisMonth,
   ] = await Promise.all([
     getConfig(),
     // The FIRST PAGE of it, not the history. See `customerTimeline`.
@@ -115,7 +116,7 @@ export default async function CustomerRecordPage({
     // whole targets list read to `.find` one row out of it. See `targetFor`.
     targetFor(id, period),
     getFollowUpDetail(id),
-    // Order count, month-to-date value and how long they actually take to pay,
+    // Order count and how long they actually take to pay,
     // in one round trip.
     db
       .select({
@@ -136,11 +137,6 @@ export default async function CustomerRecordPage({
            where o.customer_id = ${id} and ${orderCountsSql("o")}
              and o.ordered_at >= now() - interval '6 months'
         )`,
-        thisMonth: sql<number>`coalesce((
-          select sum(o.total_amount) from ${orders} o
-           where o.customer_id = ${id} and ${orderCountsSql("o")}
-             and o.ordered_at >= date_trunc('month', current_date)
-        ), 0)`,
         /*
          * HOW LONG THEY ACTUALLY TAKE TO PAY, over money that actually arrived.
          *
@@ -169,6 +165,9 @@ export default async function CustomerRecordPage({
       .then((r) => r[0]),
     customerPricing(id, day),
     pricingOptions(),
+    // What the target card measures, by bill date — the same figure the
+    // Monthly Targets list prints for this shop. See `customerAchievedFor`.
+    customerAchievedFor(id, period),
   ]);
 
   const [quickNoteRows, productRows, amChanges, backOfficePeople] = await Promise.all([
@@ -365,7 +364,7 @@ export default async function CustomerRecordPage({
          * delivery shop with a month of real orders behind it.
          */
         amount: target?.amount ?? null,
-        achieved: Number(stats?.thisMonth ?? 0),
+        achieved: achievedThisMonth,
         isDefault: target?.isDefault ?? true,
         shareOfBook: target?.shareOfBookPercent ?? null,
         billTarget: target?.billTarget ?? null,

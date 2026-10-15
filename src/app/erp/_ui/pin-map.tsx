@@ -15,7 +15,7 @@ import { OlaMapsStyleSwitcher, olaMapsStyleUrl, olaMapsTransformRequest, type Ol
 /** Where the map opens with no pin yet: Mahek's own patch of Maharashtra. */
 const HOME: [number, number] = [73.0, 19.2];
 
-export function PinMap({ apiKey, pin, onPick }: { apiKey: string; pin: { lat: number; lng: number } | null; onPick: (lat: number, lng: number) => void }) {
+export function PinMap({ apiKey, pin, onPick, height = 280 }: { apiKey: string; pin: { lat: number; lng: number } | null; onPick: (lat: number, lng: number) => void; height?: number }) {
   const box = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const marker = useRef<maplibregl.Marker | null>(null);
@@ -85,16 +85,16 @@ export function PinMap({ apiKey, pin, onPick }: { apiKey: string; pin: { lat: nu
 
   return (
     <div className="grid gap-1">
-      <div className="relative h-[280px] overflow-hidden rounded-[4px] border border-line">
+      <div className="relative overflow-hidden rounded-control border border-line" style={{ height }}>
         <div ref={box} className="h-full w-full" />
         <OlaMapsStyleSwitcher mode={mode} onChange={switchTo} />
         {failed ? (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-canvas/95 px-6 text-center text-[13px] text-body">
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-canvas/95 px-6 text-center text-meta text-body">
             The map could not load — the key in Admin Console → Integrations may be wrong or expired. Type the pin or use your location instead.
           </div>
         ) : null}
       </div>
-      <span className="text-[12px] text-muted">Click the office’s doorway, or drag the pin. Satellite shows the building.</span>
+      <span className="text-xs text-muted">Click the exact spot to drop the pin, or drag it. Satellite shows the building.</span>
     </div>
   );
 }

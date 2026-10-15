@@ -171,6 +171,6 @@ registerCalc("transfers.summary", ({ h, data }) => {
   const s = map<number>(data, "avail")[key(h.type, h.from, h.lot)];
   if (!q || s == null) return "";
   if (q > s + 1e-9) return `warn:Select Correct Quantity! ${fmt(s)} available.`;
-  if (h.to === "Item Lost Record") return "warn:This writes the stock off.";
+  if (map<number>(data, "lost")[h.to]) return "warn:This writes the stock off.";
   return "";
 });

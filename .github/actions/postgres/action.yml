@@ -1,0 +1,35 @@
+# Postgres 16 on 127.0.0.1:5432 for a CI job, as the `services:` block used to
+# start it — but a service container is pulled from ONE registry before the
+# first step runs, and when public.ecr.aws answers "toomanyrequests: Data limit
+# exceeded" the job dies without a line of ours having run. Here the mirror is
+# tried with backoff, Docker Hub is the fallback, and only both refusing fails
+# the job: a refused download is not a fault in the change under test.
+name: Postgres
+description: Start postgres:16 on 127.0.0.1:5432, pulling from the mirror or Docker Hub
+runs:
+  using: composite
+  steps:
+    - name: Start Postgres
+      shell: bash
+      run: |
+        pull() {
+          for wait in 10 20 40 0; do
+            docker pull "$1" && return 0
+            [ "$wait" = 0 ] && return 1
+            echo "pull of $1 refused; trying again in ${wait}s"; sleep "$wait"
+          done
+        }
+        img=""
+        for candidate in public.ecr.aws/docker/library/postgres:16 docker.io/library/postgres:16; do
+          if pull "$candidate"; then img="$candidate"; break; fi
+          echo "::warning::$candidate could not be pulled; trying the next registry"
+        done
+        [ -n "$img" ] || { echo "::error::postgres:16 could not be pulled from any registry"; exit 1; }
+        docker run -d --name db -p 5432:5432 \
+          -e POSTGRES_USER=mahek -e POSTGRES_PASSWORD=mahek -e POSTGRES_DB=mahekone \
+          "$img"
+        for i in $(seq 1 60); do
+          docker exec db pg_isready -h 127.0.0.1 -U mahek -d mahekone >/dev/null 2>&1 && { echo "ready after ${i}s"; exit 0; }
+          sleep 1
+        done
+        docker logs db; echo "::error::Postgres did not become ready"; exit 1

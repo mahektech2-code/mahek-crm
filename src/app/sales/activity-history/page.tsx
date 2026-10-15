@@ -1,27 +1,29 @@
 import { addDays } from "@/lib/business-date";
 import { today } from "@/lib/recompute";
+import { longDate } from "@/lib/format";
 import {
-  fieldActivityHistory,
-  fieldActivityMatchCounts,
-  fieldActivitySalesmen,
+  activityHistory,
+  activityHistoryCounts,
+  activityHistorySalesmen,
+  type ActivityMatch,
+  type ActivitySource,
 } from "@/lib/services/sales-service";
 import { Empty, FilterChips, ScreenHeader } from "@/components/console/parts";
 import { ActivityTable } from "./activity-table";
 import { ReparseButton } from "./reparse-button";
 import { getCurrentUser } from "@/lib/auth";
-import { isPlatformAdmin } from "@/lib/access-control";
+import { isPlatformAdmin, levelInApp } from "@/lib/access-control";
+import { canOpenModule } from "@/lib/access";
 
 export const metadata = {
   title: "Activity history — Sales Dashboard — MahekOne",
 };
 
 /**
- * A manager's read of the "Mahek EMP 2.0" field activity backfill — the
- * WHOLE imported record, including rows that never resolved to a real
- * customer, unlike the MBOS device's own `timeline` pull channel, which only
- * ever receives the matched subset. See `sheet_field_activity_rows`'s own
- * doc comment in schema.ts for why this is a separate table from `mbos_visits`
- * rather than a filter on the Visits screen.
+ * Every visit the field team made: MBOS visits, which are the record, and —
+ * for the days before `fieldActivity.cutoverDate` only — the old field app's
+ * (EMP 2.0) sheet, marked as such. `activityHistory` in the sales service
+ * carries the reasoning.
  */
 export default async function Page({
   searchParams,
@@ -30,6 +32,7 @@ export default async function Page({
     from?: string;
     to?: string;
     salesman?: string;
+    source?: string;
     match?: string;
     page?: string;
     per?: string;
@@ -41,13 +44,21 @@ export default async function Page({
   const to = /^\d{4}-\d{2}-\d{2}$/.test(params.to ?? "") ? params.to! : now;
   const from = /^\d{4}-\d{2}-\d{2}$/.test(params.from ?? "")
     ? params.from!
-    : addDays(now, -90);
-  const salesmanName = params.salesman || undefined;
+    : addDays(now, -30);
+  const salesman = /^[un]:.+/.test(params.salesman ?? "")
+    ? params.salesman
+    : undefined;
   const match = (["matched", "ambiguous", "unmatched"] as const).includes(
     params.match as never,
   )
-    ? (params.match as "matched" | "ambiguous" | "unmatched")
+    ? (params.match as ActivityMatch)
     : undefined;
+  // A match is a question about the old app's rows, so it implies them.
+  const source: ActivitySource | undefined = match
+    ? "sheet"
+    : params.source === "mbos" || params.source === "sheet"
+      ? params.source
+      : undefined;
   const page = Math.max(1, Number(params.page) || 1);
   const perPage = [25, 50, 100].includes(Number(params.per))
     ? Number(params.per)
@@ -55,23 +66,25 @@ export default async function Page({
 
   const me = await getCurrentUser();
   const canReparse = !!me && (await isPlatformAdmin(me));
+  // Standing behind or asking about a visit are Journeys & visits' actions.
+  const canActOnVisits = !!me && (await canOpenModule(me.id, "sales.journeys"));
+  // Saying which account an old-app shop name is: a Sales manager's call.
+  const salesLevel = me ? await levelInApp(me, "sales") : null;
+  const canDecideShops =
+    canReparse || salesLevel === "manager" || salesLevel === "admin";
 
-  const [salesmen, counts, result] = await Promise.all([
-    fieldActivitySalesmen(),
-    fieldActivityMatchCounts({ from, to, salesmanName }),
-    fieldActivityHistory({
-      from,
-      to,
-      salesmanName,
-      matchStatus: match,
-      page,
-      perPage,
-    }),
+  const [people, counts, result] = await Promise.all([
+    activityHistorySalesmen(),
+    activityHistoryCounts({ from, to, salesman }),
+    activityHistory({ from, to, salesman, source, match, page, perPage }),
   ]);
+  const cutover = result.cutover;
+  const rangeTouchesOldApp = from < cutover;
 
   const query = (patch: Record<string, string | undefined>) => {
     const q = new URLSearchParams({ from, to });
-    if (salesmanName) q.set("salesman", salesmanName);
+    if (salesman) q.set("salesman", salesman);
+    if (source) q.set("source", source);
     if (match) q.set("match", match);
     for (const [k, v] of Object.entries(patch)) {
       if (v === undefined) q.delete(k);
@@ -88,7 +101,7 @@ export default async function Page({
     <div className="p-6">
       <ScreenHeader
         title="Activity history"
-        subtitle="Visits and calls from the old field app (EMP 2.0)."
+        subtitle={`Every visit the field team logged. MBOS is the record; before ${longDate(cutover)} the old field app (EMP 2.0) is shown beside it, marked "Old app".`}
         actions={canReparse ? <ReparseButton /> : undefined}
       />
 
@@ -108,17 +121,31 @@ export default async function Page({
           <Field label="Salesman">
             <select
               name="salesman"
-              defaultValue={salesmanName ?? ""}
-              className={input}
+              defaultValue={salesman ?? ""}
+              className={`${input} max-w-[260px]`}
             >
               <option value="">Everybody</option>
-              {salesmen.map((s) => (
-                <option key={s.name} value={s.name}>
-                  {s.name}
-                </option>
-              ))}
+              {people.accounts.length ? (
+                <optgroup label="On MahekOne">
+                  {people.accounts.map((p) => (
+                    <option key={p.id} value={`u:${p.id}`}>
+                      {p.name}
+                    </option>
+                  ))}
+                </optgroup>
+              ) : null}
+              {people.sheetNames.length ? (
+                <optgroup label="Old app only (no account)">
+                  {people.sheetNames.map((p) => (
+                    <option key={p.name} value={`n:${p.name}`}>
+                      {p.name}
+                    </option>
+                  ))}
+                </optgroup>
+              ) : null}
             </select>
           </Field>
+          {source ? <input type="hidden" name="source" value={source} /> : null}
           {match ? <input type="hidden" name="match" value={match} /> : null}
           <button
             type="submit"
@@ -130,50 +157,93 @@ export default async function Page({
 
         <div className="[&>div]:mb-0">
           <FilterChips
-            current={match ?? "all"}
+            current={source ?? "all"}
             options={[
               {
                 key: "all",
-                href: qs({ match: undefined }),
+                href: qs({ source: undefined, match: undefined }),
                 label: "All",
                 count: counts.all,
               },
               {
-                key: "matched",
-                href: qs({ match: "matched" }),
-                label: "Matched",
-                count: counts.matched,
+                key: "mbos",
+                href: qs({ source: "mbos", match: undefined }),
+                label: "MBOS",
+                count: counts.mbos,
               },
-              {
-                key: "ambiguous",
-                href: qs({ match: "ambiguous" }),
-                label: "Needs review",
-                count: counts.ambiguous,
-              },
-              {
-                key: "unmatched",
-                href: qs({ match: "unmatched" }),
-                label: "No match",
-                count: counts.unmatched,
-              },
+              ...(rangeTouchesOldApp || counts.sheet
+                ? [
+                    {
+                      key: "sheet",
+                      href: qs({ source: "sheet", match: undefined }),
+                      label: "Old app",
+                      count: counts.sheet,
+                    },
+                  ]
+                : []),
             ]}
           />
         </div>
       </div>
 
+      {source === "sheet" ? (
+        <div className="mb-3 flex flex-wrap items-center gap-3">
+          <span className="text-[12px] text-muted">
+            Old app rows, by whether the shop was found on MahekOne:
+          </span>
+          <div className="[&>div]:mb-0">
+            <FilterChips
+              current={match ?? "all"}
+              options={[
+                {
+                  key: "all",
+                  href: qs({ match: undefined }),
+                  label: "Any",
+                  count: counts.sheet,
+                },
+                {
+                  key: "matched",
+                  href: qs({ match: "matched" }),
+                  label: "Matched",
+                  count: counts.matched,
+                },
+                {
+                  key: "ambiguous",
+                  href: qs({ match: "ambiguous" }),
+                  label: "Needs review",
+                  count: counts.ambiguous,
+                },
+                {
+                  key: "unmatched",
+                  href: qs({ match: "unmatched" }),
+                  label: "No match",
+                  count: counts.unmatched,
+                },
+              ]}
+            />
+          </div>
+        </div>
+      ) : null}
+
+      {to >= cutover && rangeTouchesOldApp ? (
+        <p className="mb-3 rounded-[6px] border border-line bg-canvas px-3 py-2 text-[13px] text-body">
+          From <span className="font-medium">{longDate(cutover)}</span>{" "}
+          only MBOS visits are shown. The old app&rsquo;s sheet is kept as it was for
+          the days before.
+        </p>
+      ) : null}
+
       {result.rows.length === 0 ? (
-        /* THREE REASONS TO BE EMPTY, and they need three different things
-           doing about them — see `fieldActivityHistory`'s `everInTable`. */
         <Empty
           title={
-            result.everInTable === 0
-              ? "Nothing has been imported yet"
-              : "Nothing in this range"
+            result.everAnything
+              ? "Nothing in this range"
+              : "No visits have been logged yet"
           }
           body={
-            result.everInTable === 0
-              ? "Run the field-activity sync from the Admin Console, then come back."
-              : `Widen the dates or clear the salesman. ${result.everInTable.toLocaleString("en-IN")} rows are stored in total.`
+            result.everAnything
+              ? "Widen the dates, clear the salesman or pick All."
+              : "Visits appear here as salesmen check in and out of shops on MBOS."
           }
         />
       ) : (
@@ -183,6 +253,8 @@ export default async function Page({
           page={result.page}
           perPage={result.perPage}
           baseQuery={query({})}
+          canActOnVisits={canActOnVisits}
+          canDecideShops={canDecideShops}
         />
       )}
     </div>

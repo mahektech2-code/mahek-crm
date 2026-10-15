@@ -8,7 +8,7 @@ import { erpAudit, stampLine, text, type ScreenModule } from "../server";
 import type { ActionSpec, BulkSpec, ColSpec, ListRow, ToolResult } from "../ui";
 import { manualMove, packLabel, UNIT_STATUS_LABEL, type UnitStatus } from "../engines/trace";
 import { unitEvent } from "../units";
-import { erpLabelsHref, erpTraceHref } from "../trace-links";
+import { erpDispatchHref, erpLabelsHref, erpTraceHref } from "../trace-links";
 import { inTx, refuse } from "./common";
 
 /* ---------------------------------------------------------------------------
@@ -95,7 +95,6 @@ function unitScreen(key: "units" | "allUnits"): ScreenModule {
           agg: { k: "cans", l: "cans" },
           godownKey: "godown",
           bulk,
-          download: true,
           sortDefault: ["id", -1],
           noDataLine:
             key === "units"
@@ -109,7 +108,7 @@ function unitScreen(key: "units" | "allUnits"): ScreenModule {
           const actions: ActionSpec[] = [
             { id: "print", l: r.printedAt ? "Reprint label" : "Print label", primary: !r.printedAt && status === "available", href: erpLabelsHref({ ids: [r.id] }) },
             { id: "trace", l: "Trace this box", href: erpTraceHref(r.id) },
-            ...(status === "scanned" && r.orderNo ? [{ id: "desk", l: `Open order ${r.orderNo} at the dispatch desk`, href: `/erp/dispatch?order=${r.orderNo}` } as ActionSpec] : []),
+            ...(status === "scanned" && r.orderNo ? [{ id: "desk", l: `Open order ${r.orderNo} at the dispatch desk`, href: erpDispatchHref(r.orderNo) } as ActionSpec] : []),
             { id: "hold", l: "Put on hold", why: can("hold") ?? "", prompt: { title: `Hold ${r.id}`, sub: "A box on hold cannot be scanned for dispatch until it is released.", submit: "Hold", fields: [{ k: "note", l: "Why", t: "area", req: true }] } },
             { id: "release", l: status === "returned" ? "Back into stock" : "Release hold", why: can("available") ?? "", confirm: `Put ${r.id} back into stock?` },
             { id: "reject", l: "Reject", why: needPower("rejected"), prompt: { title: `Reject ${r.id}`, sub: "A rejected box never leaves. The reason stays on its history.", submit: "Reject", fields: [{ k: "note", l: "Why", t: "area", req: true }] } },

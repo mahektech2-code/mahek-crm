@@ -1,0 +1,139 @@
+Reminders are rows in `reminders`. The list is `listReminders` in `worklist-services.ts`, which derives the display status on read. Writes come from three directions: the call and collections save paths insert rows inside their own transactions, the Reminders screen calls the services through `lib/actions/crm.ts`, and **every** event that could keep a promise calls `closeRemindersOnEvidence` inside its transaction — a thin wrapper around the pure engine in `lib/engines/reminder-closure.ts`.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route guard | `src/app/crm/reminders/layout.tsx` | `requireModule(user.id, "crm.reminders")` |
+| Page (server) | `src/app/crm/reminders/page.tsx` | `listReminders()`, `listCustomers()`, `canFor(user, "reminder.close")` |
+| Screen (client) | `src/app/crm/reminders/reminders-screen.tsx` | Tabs, buckets, `closureLine`, `stillOpenLine`, `overdueByPerson`, New / Reschedule / Dismiss modals |
+| Actions | `src/lib/actions/crm.ts` | `createReminder`, `createRemindersBulk`, `completeReminder`, `cancelReminder`, `rescheduleReminder`, hold action |
+| Service | `src/lib/services/worklist-services.ts` | `listReminders`, `reminderSchema`, `createReminder`, `completeReminder`, `dismissReminder`, `closeRemindersOnEvidence`, `rescheduleReminder`, `holdOtherReasonsUntilReminder`, `carryForward` |
+| Engine (pure) | `src/lib/engines/reminder-closure.ts` | `remindersClosedBy`, `closureNoteFor` |
+| Type mapping | `src/lib/call-reasons.ts` | `reminderTypeFor(actions)` — next actions → reminder type |
+| Call Log | `src/lib/engines/queue.ts` | `reminderOverdue` / `reminderDueToday` reasons, `holdWindow` |
+| Badge | `src/lib/queries.ts` | `crmBadgeCounts` |
+
+## The closure path
+
+<Flow caption="A call that keeps a promise" chart={`
+sequenceDiagram
+  autonumber
+  participant A as saveInteraction / logPaymentFollowUp / confirmReceipt
+  participant TX as transaction
+  participant C as closeRemindersOnEvidence
+  participant E as remindersClosedBy (pure)
+  A->>TX: insert call / order / receipt, insert any new reminders (callId stamped)
+  A->>C: (tx, customerId, event, sourceId, actorId, exclude)
+  C->>TX: select pending reminders for the customer
+  C->>C: drop excluded ids and rows whose call_id = sourceId
+  C->>E: (pending, event)
+  E-->>C: ids to close
+  C->>TX: update status completed, closed_by, closed_by_source_id, closure_note
+  C-->>A: count closed (shown in the save message)
+`} />
+
+<Code file="src/lib/engines/reminder-closure.ts" symbol="ClosureEvent" />
+
+<Code file="src/lib/engines/reminder-closure.ts" symbol="remindersClosedBy" />
+
+<Code file="src/lib/engines/reminder-closure.ts" symbol="closes" />
+
+<Code file="src/lib/services/worklist-services.ts" symbol="closeRemindersOnEvidence" collapsed />
+
+Call sites:
+
+| Caller | Event |
+|---|---|
+| `interaction-service.ts` `saveInteraction` | `call` (answered unless No answer); `order` when an order was taken |
+| `payment-followup-service.ts` `logPaymentFollowUp` | `call` (answered unless Not reachable) |
+| `receipt-service.ts` `closePaymentPromises`, from the two paths that confirm money | `payment` — called with `db`, after the confirmation is written, not inside its transaction |
+| `actions/lead-calling-desk.ts` | `call` from the lead calling desk |
+
+<Callout kind="rule">
+Pass the **transaction**, never `db`. `closeRemindersOnEvidence` takes `Pick<typeof db, "select" | "update">` so a caller cannot accidentally close reminders outside the write that justified it.
+</Callout>
+
+## Reading the list
+
+<Code file="src/lib/services/worklist-services.ts" symbol="ReminderRow" collapsed />
+
+<Code file="src/lib/services/worklist-services.ts" symbol="listReminders" collapsed />
+
+`hasConflictToday` is computed by calling `nextStepForCustomer` for every **future** pending reminder and checking whether the promise it names is this one — the same live read the post-save dialog uses. That is one `buildQueue` sweep per future reminder; keep it in mind if the list grows.
+
+## Closing by hand
+
+<Code file="src/lib/services/worklist-services.ts" symbol="completeReminder" />
+
+`dismissReminder` is the same shape with a required reason, `status: "dismissed"` and action `reminder.dismiss` in the audit log.
+
+<CapabilityGrid names={["reminder.write", "reminder.close"]} />
+
+## Writing one
+
+<Code file="src/lib/services/worklist-services.ts" symbol="reminderSchema" />
+
+<Code file="src/lib/services/worklist-services.ts" symbol="createReminder" collapsed />
+
+`skipCustomerScope` exists for exactly one caller — the Website Enquiries app — and is a plain TypeScript parameter, never part of the schema, so it cannot arrive from a request.
+
+## The table
+
+<DbTable name="reminders" note={{
+  due_date: "A business date. Overdue / due today / upcoming are derived on read, never stored.",
+  status: "pending, completed or dismissed.",
+  call_id: "The call that wrote it. The closure pass never lets that call close it.",
+  system_generated: "Written by a save path rather than typed by a person.",
+  reschedule_count: "Incremented by every reschedule; the screen warns at reminders.rescheduleWarningCount.",
+  hold_other_reasons_until_due: "The telecaller's decision to silence order and check-in reasons until the due date.",
+  closed_by: "person, call, order or payment — what closed it.",
+  closed_by_source_id: "The call, order or receipt that is the evidence. Null for a person.",
+  closure_note: "The sentence from closureNoteFor, or the person's note.",
+}} />
+
+<DbEnum name="reminder_type" />
+<DbEnum name="reminder_status" />
+<DbEnum name="reminder_closure_source" />
+
+## Access
+
+- **Module:** <ModuleRef k="crm.reminders" />.
+- **Scope:** `listReminders` filters by `assigned_user_id in scopedUserIds(scope)`, and hides reminders whose customer is in the lead trash.
+- **Writes:** `createReminder` runs `assertCustomerInScope`; `completeReminder` and `dismissReminder` run `requireCapability("reminder.close")`.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/engines/reminder-closure.test.ts` | Answered vs unanswered calls, due vs future, order and payment by type, reported money closes nothing |
+| `npm run test` | `src/lib/engines/engines.test.ts` (queue) | Reminder reasons, reminder overrides of the quiet window and WhatsApp cooldown |
+| `npm run test:integration` | `src/lib/journeys.test.ts` | A saved call closes the due reminder; a Follow-up call does not close the reminder it wrote |
+
+## Changing it safely
+
+<Steps>
+<Step title="A new kind of evidence goes in the engine">
+Add a `ClosureEvent` kind and its `closes` arm and `closureNoteFor` sentence, and a `reminder_closure_source` value. Then call `closeRemindersOnEvidence` from the new write path, inside its transaction.
+</Step>
+<Step title="Never close what the same write created">
+Stamp `call_id` on reminders a call writes, or pass `exclude`.
+</Step>
+<Step title="Keep hand-closing behind the capability">
+Any new "close" or "dismiss" path must call `requireCapability("reminder.close")` and write an audit row.
+</Step>
+<Step title="Keep the badge and Needs action the same count">
+Both are pending and `due_date` on or before today. Change one, change the other.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| `rescheduleReminder` and `holdOtherReasonsUntilReminder` look the reminder up by id with no scope check and no audit row | `worklist-services.ts` |
+| The badge counts all pending reminders when `getScope === "team"` (`${teamWide} or …`), the list narrows to the team's ids | `queries.ts` `crmBadgeCounts` vs `listReminders` |
+| `hasConflictToday` runs `nextStepForCustomer` once per future reminder on every page load | `worklist-services.ts` `listReminders` |
+| Confirmed money closes payment promises outside the confirming transaction (`closeRemindersOnEvidence(db, …)`) | `receipt-service.ts` `closePaymentPromises` |
+| `reminders` has both `created_by_user_id` and `created_by_id`, written with the same value | `worklist-services.ts` `createReminder` |
+| The reminders page asks `getScope(user)` without naming the app | `app/crm/reminders/page.tsx` |

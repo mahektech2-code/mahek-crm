@@ -1,0 +1,405 @@
+MahekOne is one Next.js 16 application talking to one Postgres database, plus a separate Expo project for the field salesman's handset in `mbos-app/`. Getting a laptop from a fresh clone to a running app takes four commands, and **only one environment variable is required** — `DATABASE_URL`. Everything else (Google Sheets, WhatsApp, dictation, mail, file storage) is optional locally and switches itself off, saying so on the screen, when its variables are missing.
+
+This page is the whole path: what to install, what `npm run db:setup` actually does, how migrations are written in this repository (by hand — never generated), the test suites, the handset, and the failures that look like success.
+
+## What you need installed
+
+| Tool | Version | Where the version comes from |
+|---|---|---|
+| Node.js | **24** | Not pinned in `package.json` (`engines` is absent) and there is no `.nvmrc`. 24 is what production runs: the `Dockerfile` builds and runs on `node:24-alpine`, and `ci.yml` and `deploy.yml` both use `node-version: 24`. |
+| npm | ships with Node | `package-lock.json` is committed; CI runs `npm ci`. |
+| Postgres | **16** locally (17 works) | The root `docker-compose.yml` runs `postgres:16`, CI's service container is `postgres:16`, and `setup-db.mjs` looks for Homebrew's `postgresql@17`, `@16`, `@15` or `@14`. Production is `postgres:17-alpine` (`deploy/docker-compose.yml`). |
+| Docker | optional | Only if you would rather run Postgres in a container than install it. |
+| Java 17 + Android SDK | only for a local APK | The handset. Most handset work needs neither — see [The handset](#the-handset-mbos-app). |
+
+<Callout kind="note">
+There is no shared development database and no cloud credential needed to develop. Every developer runs their own Postgres; CI gets its own throwaway one the same way.
+</Callout>
+
+## First run
+
+<Flow caption="From a fresh clone to a running app" chart={`
+flowchart TD
+  A["git clone"] --> B["npm install"]
+  B --> C{"Postgres installed?"}
+  C -- "no" --> D["docker compose up -d<br/>(root compose file, postgres:16)"]
+  C -- "yes" --> E["brew services start postgresql@16"]
+  D --> F["npm run db:setup"]
+  E --> F
+  F --> F1["1. .env.local from .env.example"]
+  F1 --> F2["2. find psql, check port 5432"]
+  F2 --> F3["3. create role and database mahekone"]
+  F3 --> F4["4. drizzle-kit migrate"]
+  F4 --> F5["5. npm run db:seed"]
+  F5 --> G["npm run dev<br/>localhost:3000"]
+  G --> H["Sign in as a seeded account"]
+  H --> I["optional: npm run app:grant<br/>for apps the seed does not give"]
+`} />
+
+<Steps>
+<Step title="Install dependencies">
+```bash
+npm install
+```
+</Step>
+<Step title="Start Postgres">
+Either natively (`brew install postgresql@16 && brew services start postgresql@16` on macOS) or with the compose file in the repository root, which is a bare Postgres for development and nothing else:
+
+```bash
+docker compose up -d
+```
+
+The container is `mahek-db`, on port 5432, with the role, password and database name that `.env.example`'s `DATABASE_URL` already expects — so `.env.local` does not change between the two.
+
+<Callout kind="warn" title="Two compose files">
+`docker-compose.yml` in the root is the development database. `deploy/docker-compose.yml` is the production stack (Caddy, the app, Postgres 17) and is copied to the droplet. Never run the second one locally — it needs a production `.env` and would try to obtain a TLS certificate.
+</Callout>
+</Step>
+<Step title="Run the setup script">
+```bash
+npm run db:setup
+```
+
+What it does is described exactly in the next section. It is safe to run again.
+</Step>
+<Step title="Start the app">
+```bash
+npm run dev
+```
+
+Open `http://localhost:3000` and sign in with a seeded account (see [Seed data](#seed-data)).
+</Step>
+</Steps>
+
+## What `npm run db:setup` does
+
+`db:setup` is `node scripts/setup-db.mjs`. It has five numbered stages and prints each as it goes:
+
+| Stage | What happens | When it stops |
+|---|---|---|
+| **1. Environment** | Copies `.env.example` to `.env.local` if `.env.local` does not exist; otherwise leaves it alone. Reads `DATABASE_URL` out of it. | No `DATABASE_URL` → stops with "No DATABASE_URL in .env.local". A URL that is **not** `localhost`/`127.0.0.1` → warns that seeding a shared database would wipe it, and exits without touching anything. |
+| **2. Postgres** | Finds `psql` on `PATH`, or under Homebrew's `/opt/homebrew` or `/usr/local` for `postgresql@17` down to `@14`. Runs `select 1` against the `postgres` database. | Not installed → prints the `brew`/`apt` or `docker run` command for your platform. Installed but not listening on 5432 → prints how to start it. |
+| **3. Role and database** | Creates the `mahek` role (login, `createdb`) and the `mahekone` database owned by it, each only if missing. | No permission → suggests running the `create role` as a superuser. |
+| **4. Schema** | `npx drizzle-kit migrate` — every migration in `drizzle/`. | Whatever drizzle-kit does (see [Troubleshooting](#troubleshooting): it can exit having applied nothing). |
+| **5. Demo data** | `npm run db:seed`. | — |
+
+It ends with "Ready. Start the app with: npm run dev".
+
+<Callout kind="warn" title="Re-running it reseeds">
+Stage 5 runs every time, and the seed **wipes and reseeds** the book (it also clears sessions). If you only want to catch up on migrations, run `npm run db:migrate` instead.
+</Callout>
+
+## Environment variables
+
+Locally everything lives in `.env.local`, which is never committed. Next.js loads it itself; scripts outside Next (drizzle-kit, the seed, the job runner) either pass `--env-file=.env.local` to `tsx`/`node` in `package.json`, or call `loadEnv()`, which only fills variables not already set:
+
+<Code file="src/lib/load-env.ts" symbol="loadEnv" />
+
+### Required
+
+| Variable | Why |
+|---|---|
+| `DATABASE_URL` | `src/db/index.ts` **throws at import time** without it — "DATABASE_URL is not set. Copy .env.example to .env.local for development". That is deliberate, and it is why the Docker build has to set a deliberately unresolvable placeholder (see [Deploying](/docs/platform/deploy-digitalocean)). |
+
+### Optional, and what happens without them
+
+Checked against `grep -rhoE 'process\.env\.[A-Z0-9_]+' src`. Several keys can also be set from the Admin Console into `app_secrets`, which wins over the environment — see [Configuration](/docs/platform/configuration/developer).
+
+| Variable(s) | Feature | Without it |
+|---|---|---|
+| `DATABASE_POOL_MAX`, `DATABASE_PREPARE` | Pool size (default 10) and prepared statements (on unless the word `false`) | Defaults are right for a laptop. |
+| `APP_URL` | Absolute links (password reset) | Built from the incoming request — set it only behind a tunnel. |
+| `RESEND_API_KEY`, `MAIL_FROM` | Password-reset mail | The mail is written to the server log and the screen says so — which is what local development wants. |
+| `GOOGLE_SA_EMAIL`, `GOOGLE_SA_PRIVATE_KEY` | Reading the Google workbooks | The sheet sync reports "not configured". The private key keeps its newlines as literal `\n`, in double quotes. |
+| `ORDERS_SHEET_ID`, `ORDERS_SHEET_TAB`, `PARTY_SHEET_ID`, `PARTY_SHEET_TAB`, `PAYMENTS_SHEET_TAB`, `TAKEN_ORDER_SHEET_ID`, `TAKEN_ORDER_SHEET_TAB`, `HR_SHEET_ID`, `FIELD_ACTIVITY_SHEET_ID` | Which workbooks and tabs | The production ids are hardcoded in the sync services; these only point a deployment at a copy. |
+| `CRON_SECRET` | Bearer token for `/api/sheets/sync` and `/api/hrms/sync` | Both endpoints refuse every request. |
+| `SYNC_OWNER_EMAIL` | Who the sheet projection publishes as | Optional in the app; required by the droplet's cron script. |
+| `MBOS_JWT_SECRET` (legacy `JWT_SECRET`) | Handset sign-in tokens | The handset cannot sign in: "MBOS_JWT_SECRET (or JWT_SECRET) is not set". Set any long random string locally if you run the handset. |
+| `SARVAM_API_KEY`, `OPENAI_API_KEY` | Dictation | No microphone is drawn. Also settable from Admin Console → Voice. |
+| `WATI_API_TOKEN`, `WATI_API_BASE`, `WATI_TENANT_ID` | WhatsApp through Wati | Nothing is sent; the service also has to be switched on in the app. |
+| `ENQUIRY_INGEST_SECRET` | The public website forwarding enquiries | `/api/public/enquiries` refuses every request. |
+| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT`, `R2_ATTACHMENTS_BUCKET` (or the five `S3_*`) | Attachment bytes in object storage | Bytes stay in Postgres (`attachment_bytes`), which is the default. See [Files and R2](/docs/platform/storage-r2/developer). |
+
+<Callout kind="warn" title="Never run vercel env pull">
+The app ran on Vercel and Neon until August 2026. `vercel env pull` re-adds that account's dead credentials to `.env.local`. Production is now reached only through an SSH tunnel — see [Deploying](/docs/platform/deploy-digitalocean#running-a-job-against-production).
+</Callout>
+
+## Migrations
+
+The schema is declared in `src/db/schema.ts` (Drizzle ORM) and changed by SQL files in `drizzle/`, listed in order in `drizzle/meta/_journal.json`. `drizzle.config.ts` points drizzle-kit at both.
+
+| Command | What it runs | Use it for |
+|---|---|---|
+| `npm run db:migrate` | `drizzle-kit migrate` | Catching your local database up |
+| `npm run db:deploy` | `node scripts/migrate-deploy.mjs` | The deploy (and CI's `stack` job). Same migrator, but it prints the real Postgres error and counts what was applied |
+| `npm run deploy:db` | `db:deploy && catalogue:deploy && hire:deploy` | What `deploy.yml` runs over the SSH tunnel: migrations, the idempotent catalogue import, and Hire's install step |
+| `npm run db:generate` | `drizzle-kit generate` | **Do not use** — see below |
+
+### Write migrations by hand
+
+<Rule title="Never run drizzle-kit generate in this repository">
+`drizzle/meta/` holds snapshots for only a few dozen of the more than two hundred migrations, so `generate` diffs against a schema hundreds of migrations out of date and emits a "new" migration that re-creates tables that already exist. It also stamps `when` from the wall clock, which can land below the hand-written values. Write the `.sql` file yourself, append the journal entry yourself, and never commit a generated `meta/NNNN_snapshot.json`.
+</Rule>
+
+The house style is a prose comment at the top saying what the migration is for and any trap it avoids. The most recent one is a good model:
+
+```sql
+-- Documentation: its own MahekOne app, at /docs.
+--
+-- The app id is added here and USED nowhere in this file: a value added to an
+-- enum cannot be used in the transaction that adds it, and drizzle-kit runs
+-- every pending migration in one. Granting it is `npm run app:grant -- docs`
+-- or the Access screen, after this has committed.
+alter type "public"."app_id" add value if not exists 'docs';
+```
+
+Statements within one file are separated by `--> statement-breakpoint`.
+
+### The journal and `when`
+
+Each journal entry has an `idx`, a `tag` (the file name without `.sql`) and a `when`. **drizzle decides what is pending by comparing each entry's `when` with the newest `created_at` in `drizzle.__drizzle_migrations`** — it does not check that every entry was applied. Three things follow:
+
+- A new entry's `when` must be **above every existing one**. Take the last entry's value and add a small step; recent entries step by 1000.
+- A migration written on a branch while `main` moved on may carry a `when` below `main`'s newest. Once both land, it is **skipped for ever** and the run still reports success. When `_journal.json` conflicts in a merge, `main`'s entries are authoritative: renumber your files above `main`'s highest index and make the `when` sequence strictly increasing across the whole file.
+- File numbers and `idx` can diverge (there are gaps in the `NNNN_` prefixes). The journal, not the file name, is the order.
+
+`migrate-deploy.mjs` exists to make these visible. It counts `drizzle.__drizzle_migrations` before and after, prints "N applied, now X of Y in the journal", and emits a `::warning::` naming the watermark trap when fewer rows exist than journal entries. On failure it prints the driver error's `code`, `detail`, table, column and constraint (drizzle-kit's own CLI prints nothing), and for an "already exists" error it queries what is actually there:
+
+<Code file="scripts/migrate-deploy.mjs" symbol="appliedCount" />
+
+### Enum values: add in one, use in a later commit
+
+<Rule title="A value added to an existing enum cannot be used in the same run">
+`drizzle-kit migrate` applies **every pending migration in one transaction**, and Postgres refuses to use a value added by `ALTER TYPE … ADD VALUE` until that transaction commits. So no later migration in the same batch may reference it either — not in an `INSERT`, a `CHECK`, or an index predicate. It passes on every developer's database (which already committed the value long ago) and fails only from scratch: CI and a fresh clone.
+</Rule>
+
+- Compare as text instead: `o.status::text in ('captured', …)` needs no enum member.
+- Grants of a new `app_id` go through `npm run app:grant`, never a migration.
+- Renaming an app slug is `ALTER TYPE app_id RENAME VALUE`, never add-and-migrate.
+- A brand-new type created with `CREATE TYPE … AS ENUM` and used in the same file is fine — the restriction is only on values added to an already committed enum.
+
+### Every migration must be additive
+
+The deploy migrates **before** the new image starts, while the old code is still serving (see [Deploying](/docs/platform/deploy-digitalocean#a-deploy-step-by-step)). New columns, new tables and backfills that match on `updated_by_id is null` are safe. Dropping or renaming a column the running code reads needs two releases: one that stops reading it, then one that removes it.
+
+### Checking a migration before you push
+
+1. Apply it to a database built from nothing — `npm run test:db` rebuilds `mahekone_test` from every migration, which is exactly the from-scratch case. (It drops and recreates `mahekone_test`; if somebody else is running integration tests against the same Postgres, use a throwaway database instead.)
+2. Query `information_schema.columns` for a column your migration adds. "Applied successfully" is not evidence.
+3. CI's `ci` job runs `db:migrate` against an empty database, and the `stack` job runs `deploy:db` the way the deploy does.
+
+## Seed data
+
+```bash
+npm run db:seed        # tsx src/db/seed.ts
+```
+
+The seed **wipes and reseeds** a deterministic demo book (a fixed pseudo-random seed, so a reseed produces the same customers), imports the product catalogue, creates the demo accounts with their app grants, and then runs the engines over the seeded book so the derived caches are filled. It also clears every session, so you will be signed out.
+
+Every seeded account has the same password, given in `AGENTS.md`, and signs in with its email or its work number. The full list is in `AGENTS.md` under **Seeded accounts**. By role:
+
+| Seeded account | App and level | Lands on |
+|---|---|---|
+| Four telecaller accounts | CRM, associate | Straight into the CRM |
+| A CRM associate with Reports | CRM and Reports, associate | The launcher |
+| The manager account | CRM manager, Accounts, HRMS admin, Admin Console, Founder | The launcher |
+| The field salesman account | `field` (the handset) only | `/apps`, which says there is nothing for him in a browser |
+| The ledger-desk account | Accounts, manager | Straight into order approvals |
+
+`npm run demo:clear` removes the demo data again.
+
+### Granting apps the seed does not give
+
+New apps (Documentation, ERP, Hire and others added after the seed was written) are not granted by it. Grant one by hand:
+
+```bash
+npm run app:grant -- docs example@mahek.in               # associate
+npm run app:grant -- hrms example@mahek.in --level=manager
+```
+
+`scripts/grant-app.ts` takes an app id and an email or work number, always writes a level (associate unless `--level` says otherwise), re-derives the account's own level from all its grants, and is idempotent. `admin` granted at `--level=admin` is what makes a platform administrator. Related helpers: `npm run user:password`, `npm run user:role`.
+
+## Running it
+
+| Command | What |
+|---|---|
+| `npm run dev` | `next dev` on port 3000 |
+| `npm run build` | `prebuild` runs `docs:index` first, then `next build`, which type-checks the whole codebase |
+| `npm start` | Serves the built app |
+| `npm run jobs -- <name>` | Any scheduled job by hand, against `.env.local` (`npm run jobs -- nightly`) |
+| `npm run check:links` | Crawls a **running** app as a seeded user (it mints a session row directly) and fails on any broken internal link. Needs `db:seed` first |
+| `npm run docs:index` | Rebuilds `src/docs/_generated/index.json` — see below |
+
+### The documentation index
+
+The docs pages quote code with `<Code file symbol>`, and production runs Next's standalone server with no source tree beside it. So `scripts/docs-index.mjs` cuts every quoted excerpt out of the source at build time, highlights it, and writes it with the page headings and search text to `src/docs/_generated/index.json`.
+
+```bash
+npm run docs:index              # write it
+node scripts/docs-index.mjs --check   # exit 1 if the committed file is stale
+```
+
+It exits non-zero naming any `<Code>` whose file or symbol does not exist. A symbol must be a top-level `function`, `const`, `let`, `type`, `interface`, `class` or `enum` declaration. Because `prebuild` runs it, a page quoting a renamed function fails `npm run build`, not a reader.
+
+## Lint and the React Compiler rules
+
+```bash
+npm run lint            # eslint, the root config
+npx eslint src          # what deploy.yml runs
+```
+
+`eslint.config.mjs` is `eslint-config-next` (core web vitals + TypeScript), which brings `eslint-plugin-react-hooks` v7 and its React Compiler rules. `mbos-app/**` is ignored by the root config — the handset lints itself (`cd mbos-app && npm run lint`), and CI runs both.
+
+Two rules the compiler lint enforces, and the house pattern for each:
+
+- **Do not reset state in an effect when a prop changes.** Give the component a `key` and let it remount. Every modal and drawer does this (`ConfirmDialog`, `CallPanel`).
+- **Do not read the clock during render.** `Date.now()` and `new Date()` are impure. Read it in a server component and pass the value down:
+
+<Code file="src/lib/format.ts" symbol="nowMs" />
+
+<Callout kind="note">
+These are lint rules. The compiler itself is not switched on in `next.config.ts` (there is no `reactCompiler` key and `babel-plugin-react-compiler` is not installed), so the rules keep components compiler-safe without the build depending on it.
+</Callout>
+
+## The test suites
+
+| Command | Database | What it runs |
+|---|---|---|
+| `npm run test` | none | The pure suite: every `src/lib/engines/*.test.ts` plus a long, **explicit** list of other pure tests in `package.json` (it is not a glob — a new pure test file must be added there) |
+| `npm run test:db` | creates `mahekone_test` | `scripts/make-test-db.mjs`: drops and recreates `mahekone_test` next to your dev database, then `drizzle-kit migrate` into it. Run it first, and again after any schema change |
+| `npm run test:integration` | `mahekone_test` | `scripts/run-integration.mjs`: the §11 journeys and every other integration suite, **one file per process, one after another** |
+| `npm run test:accounts` | `mahekone_test` | `src/lib/accounts.test.ts` alone |
+| `npm run test:owner` | `mahekone_test` | `src/lib/owner-dashboard.test.ts` alone |
+| `npm run test:performance` | `mahekone_test` | The salesman targets and score |
+| `npm run test:outstanding` | `mahekone_test` | The outstanding-by-customer screen |
+| `npm run test:all` | both | `test` then `test:integration` |
+| `cd mbos-app && npm test` | none | The handset's engines, sync ordering and local store |
+
+### How the integration runner finds its database
+
+Every runner reads `DATABASE_URL` from `.env.local` and **replaces the database name with `mahekone_test`**, sets `NODE_ENV=test`, and runs `tsx --conditions=react-server --test <file>`. So your development database is never touched. Individual suites also assert the URL matches `mahekone_test` in their `before` hook ("Integration tests must run against mahekone_test. Run `npm run test:db` first."), and each suite truncates the tables it uses itself.
+
+Files run sequentially because they share one database and truncate the same tables: run in parallel they produced unique-key violations and a different failure count on every run. The runner keeps going after a failure and prints "N of M integration suites failed". `src/lib/mbos-columns.test.ts` runs first — a schema column that no migration created breaks every other suite with "column does not exist", and that one test says which table.
+
+### Signing in inside a test
+
+Integration tests do not go through `/login`. `lib/auth.ts` carries a seam that exists only under `NODE_ENV=test`:
+
+<Code file="src/lib/auth.ts" symbol="setTestUser" />
+
+`getCurrentUser()` returns that user when `NODE_ENV === "test"`. Everything downstream — scope, capabilities, the audit log — is the real code.
+
+<Callout kind="warn" title="Close the pool">
+Each integration suite must end with `after(() => db.$client.end())`. A suite that leaves the Postgres pool open never exits, and in CI that shows as a check running for an hour.
+</Callout>
+
+## The handset (mbos-app)
+
+`mbos-app/` is a separate npm package — its own `package.json` and lockfile, not a workspace of the root. It is React Native on **Expo SDK 57** (`expo ~57.0.26`, React Native 0.86, `expo-router`), with SQLite as its local store.
+
+```bash
+cd mbos-app
+npm install
+npm run typecheck      # tsc --noEmit
+npm test               # engines, sync ordering, local store — no device
+npm run lint
+```
+
+### Pointing it at your laptop
+
+The API base is read in `src/sync/api.ts` and **inlined at bundle time**:
+
+<Code file="mbos-app/src/sync/api.ts" symbol="BASE" />
+
+So set `EXPO_PUBLIC_API_BASE` when you start Metro, to an address the phone can reach (your LAN IP, not `localhost`, on a real device):
+
+```bash
+EXPO_PUBLIC_API_BASE=http://192.168.1.20:3000 npx expo start
+```
+
+The web app must also have `MBOS_JWT_SECRET` set, and the account you sign in with needs the `field` app (the seeded field salesman has it).
+
+### Expo Go or a development build
+
+The app uses native code Expo Go does not carry — MapLibre for the map and offline packs, push notifications, and three local modules in `mbos-app/modules/` (`location-service`, `pdf-preview`, `phone-setup`). For quick screen work, Metro can swap the two that throw on import for stand-ins in `mbos-app/dev/`:
+
+```bash
+EXPO_GO=1 EXPO_PUBLIC_API_BASE=http://192.168.1.20:3000 npx expo start
+```
+
+With `EXPO_GO=1`, `metro.config.js` resolves `@maplibre/maplibre-react-native` to `dev/maplibre-expo-go.tsx` (the map says it needs the full app) and `expo-notifications` to `dev/notifications-expo-go.ts`. Without the variable — every real build — resolution is Expo's default. Anything touching background location, maps or push needs a development build: `npm run android` (`expo run:android`), which needs Java 17 and the Android SDK.
+
+### Engines shared with the server
+
+Two engines run in both places — `expense-policy.ts` and `travel-distance.ts` — and the handset's copies under `mbos-app/src/engines/generated/` are generated:
+
+```bash
+npm run mbos:sync-engines      # from the repository root
+```
+
+A `shared-engines.test.ts` in each project fails if the copy is stale. Never edit the generated files.
+
+Building and releasing an APK is covered in [Releasing the MBOS handset app](/docs/platform/handset-release). A local `gradlew assembleRelease` is only for trying a change on your own phone.
+
+## Troubleshooting
+
+### `tsc` is quiet, exits 0, and checks nothing
+
+`tsconfig.json` includes `.next/dev/types/**/*.ts`. When that generated file is stale it can contain a syntax error; `tsc` then reports only those parse errors, **exits 0, and never checks `src/`**. If `npx tsc --noEmit` looks suspiciously clean, or its only output names `.next/dev/types/routes.d.ts`:
+
+```bash
+rm -rf .next/dev tsconfig.tsbuildinfo
+npx tsc --noEmit
+```
+
+Plant a deliberate type error in a `src/` file now and then to prove it is really checking.
+
+### `db:migrate` says "applying migrations…" and applies nothing
+
+Two different causes look identical:
+
+1. **The watermark.** A row in `drizzle.__drizzle_migrations` carries a `created_at` above some journal entries (often from a branch you once ran). Every entry below it is skipped, silently, for ever.
+2. **An enum value used in the same batch.** drizzle-kit exits 1 with no error text. Run `npm run db:deploy` instead — it prints the real Postgres error.
+
+Either way, compare what is applied with the journal:
+
+```sql
+select count(*) from drizzle.__drizzle_migrations;
+select created_at from drizzle.__drizzle_migrations order by created_at desc limit 5;
+```
+
+against the number of entries and the `when` values in `drizzle/meta/_journal.json`. To catch up **without** wiping your data, apply each missing `drizzle/<tag>.sql` yourself — split on `--> statement-breakpoint`, run the statements in one transaction — then insert its `sha256` hash with the journal's `when` as `created_at` into `drizzle.__drizzle_migrations`. Or, if the data does not matter, `npm run db:setup` against a freshly dropped database. Before blaming `main`, build a database from `main` alone.
+
+### Every page returns 200 but is broken
+
+A database missing recent migrations does not fail visibly. Next renders the error boundary inside the shell and still answers **200** with a full-size body, so a `curl -w "%{http_code}"` smoke test over every route is all green while every page is broken. Check the migration count first, then assert on content (a string only the real screen renders) and grep the dev-server log for `PostgresError`.
+
+### `TurbopackInternalError: Symlink … node_modules is invalid`
+
+Building a copy of the repository outside the working tree with a symlinked `node_modules` fails: Turbopack refuses a symlink pointing out of the project root. Hard-link the tree instead:
+
+```bash
+rsync -a --link-dest="$REPO/node_modules/" "$REPO/node_modules/" ./node_modules/
+```
+
+### Other traps worth knowing
+
+| Symptom | Cause |
+|---|---|
+| Integration failures vary between runs | Two sessions sharing one `mahekone_test`, or `test:db` run while another session's tests are running. Use your own copy of the database. |
+| "Cannot find module 'server-only'" across many suites | `node_modules` was deleted or reinstalled mid-run. Infrastructure, not your change. |
+| A `timeout … tsc` pipeline reports nothing on macOS | macOS has no `timeout` binary, so nothing ran. Print exit codes. |
+| A raw `db.execute` returns a string where the type says `Date` | Raw SQL returns timestamps as strings; use `asDate()`. |
+| A `sql` template with prose comments fails strangely | A backtick inside a `` sql`…` `` literal ends it. `sql-backticks.test.ts` guards this. |
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| No Node version is pinned for developers — no `engines` field, no `.nvmrc`; production is 24, the APK workflow uses 22 | `package.json`; `Dockerfile`; `.github/workflows/mbos-apk.yml` |
+| `AGENTS.md` lists `npm run db:generate` as the way to write a migration, contradicting the hand-written rule this page states | `AGENTS.md` "Commands"; `package.json` `db:generate` |
+| `AGENTS.md` says the integration runner "refuses to start against a database not named mahekone_test, and truncates between tests". The runner rewrites the name rather than refusing, and does no truncating — each suite guards and truncates itself | `scripts/run-integration.mjs`; e.g. `src/lib/journeys.test.ts` |
+| `mbos-app/README.md` says "Built on Expo SDK 54 … runs in Expo Go"; the package is SDK 57 and needs `EXPO_GO=1` stubs to open in Expo Go at all. Its "What is not" table (no push, no office end) is also out of date | `mbos-app/README.md`; `mbos-app/package.json`; `mbos-app/metro.config.js` |
+| `db:setup` always reseeds, so re-running it to catch up on migrations destroys local data | `scripts/setup-db.mjs` stage 5 |
+| `src/db/index.ts` explains the pool size against `max_connections=30`; production Postgres is configured with 20 | `src/db/index.ts`; `deploy/docker-compose.yml` |
+| The seed grants none of the apps added since it was written (Documentation, ERP, Hire); they need `app:grant` by hand | `src/db/seed.ts` `apps:` blocks |

@@ -9,6 +9,7 @@ import { asc, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appAccess, appModuleAccess, employees, erpUserPowers, hireUserRoles, hrmsUserPowers, users } from "@/db/schema";
 import { APPS, type AppId } from "@/lib/apps";
+import { placeFromRow, type CrewRole, type FactoryDept, type FactoryPlace } from "@/lib/factory/departments";
 import { isAlwaysOpen, moduleAllowed, moduleKeysForApp, modulesForApp } from "@/lib/modules";
 
 /* ---------------------------------------------------------------------------
@@ -108,6 +109,8 @@ export type AccessRow = {
   hrmsPowers: string[];
   /** Their job inside Hire, where one is set; null means the level decides. */
   hireRole: string | null;
+  /** Where they work on the factory floor, with the Factory level their department-level permission. */
+  factoryPlace: FactoryPlace | null;
   /**
    * The ERP designation this person holds, and whether their access is still
    * exactly it. `matches: false` is CUSTOMISED: an edit to the designation
@@ -228,7 +231,7 @@ function buildGrants(
 
 /** Every account, with what it opens and how far into each app it reaches. */
 export async function listAccess(): Promise<AccessRow[]> {
-  const [accounts, access, moduleRows, staff, powerRows, hrmsPowerRows, hireRoleRows, standings] = await Promise.all([
+  const [accounts, access, moduleRows, staff, powerRows, hrmsPowerRows, hireRoleRows, standings, factoryRows] = await Promise.all([
     db
       .select({
         id: users.id,
@@ -257,7 +260,12 @@ export async function listAccess(): Promise<AccessRow[]> {
     db.select({ userId: hrmsUserPowers.userId, power: hrmsUserPowers.power }).from(hrmsUserPowers),
     db.select({ userId: hireUserRoles.userId, role: hireUserRoles.role }).from(hireUserRoles),
     designationStandings(),
+    db.execute(sql`
+      select s.user_id as "userId", s.area, s.areas, s.badge_code as badge, s.hr_confirmed as "hrConfirmed",
+             (select coalesce(json_object_agg(d.proc, d.role), '{}'::json) from factory_team_defaults d where d.user_id = s.user_id) as crews
+        from factory_staff s`) as unknown as Promise<{ userId: string; area: FactoryDept; areas: FactoryDept[] | null; badge: string | null; hrConfirmed: boolean; crews: Record<string, CrewRole> }[]>,
   ]);
+  const placeByUser = new Map(factoryRows.map((r) => [r.userId, placeFromRow(r)]));
   const hireRoleByUser = new Map(hireRoleRows.map((r) => [r.userId, r.role]));
   const hrmsPowersByUser = new Map<string, string[]>();
   for (const p of hrmsPowerRows) hrmsPowersByUser.set(p.userId, [...(hrmsPowersByUser.get(p.userId) ?? []), p.power]);
@@ -346,6 +354,7 @@ export async function listAccess(): Promise<AccessRow[]> {
       erpPowers: powersByUser.get(u.id) ?? [],
       hrmsPowers: hrmsPowersByUser.get(u.id) ?? [],
       hireRole: hireRoleByUser.get(u.id) ?? null,
+      factoryPlace: placeByUser.get(u.id) ?? null,
       erpDesignation: standings.get(u.id) ?? null,
     };
   });
@@ -380,8 +389,8 @@ export type Candidate = {
 };
 
 /**
- * Everybody access could be given to: the employee master and the accounts
- * that already exist, merged on email or work number.
+ * Everybody access could be given to: the HRMS People directory, one row per
+ * employee, each with the account linked to it where there is one.
  *
  * Read fresh on every open of the dialog, so an employee added to the sheet
  * and synced a minute ago is pickable without anybody reloading the console.
@@ -396,6 +405,7 @@ export async function listCandidates(): Promise<Candidate[]> {
         email: users.email,
         phone: users.phone,
         active: users.active,
+        employeeId: users.employeeId,
       })
       .from(users)
       .orderBy(asc(users.name)),
@@ -413,28 +423,64 @@ export async function listCandidates(): Promise<Candidate[]> {
     rolesByUserApp.set(`${a.userId}:${a.app}`, (a.role as Role) ?? null);
   }
 
-  const userByEmail = new Map(
-    accounts.flatMap((u) => {
-      const k = emailKey(u.email);
-      return k ? ([[k, u]] as const) : [];
-    }),
-  );
-  const userByPhone = new Map(
-    accounts.flatMap((u) => {
-      const k = phoneKey(u.phone);
-      return k ? ([[k, u]] as const) : [];
-    }),
-  );
+  /*
+   * ONE ROW PER PERSON IN THE HRMS DIRECTORY, under the name HRMS gives them.
+   *
+   * The account behind a row is the one somebody LINKED to it
+   * (`users.employee_id`), and only failing that one matched on an email or a
+   * number — and only where that email or number is on exactly one employee
+   * and exactly one account. The sheet gives a shared company address
+   * (mahekmarketing1@gmail.com) to helpers and delivery staff alike, so a
+   * match on it named seven different employees after the one account that
+   * also used it, and picking any of them opened THAT account. An account is
+   * attached to one row at most.
+   *
+   * Accounts with nobody behind them in HRMS are not offered here: this is a
+   * list of the people who work here. They are still on the Access table and
+   * their own Manage access.
+   */
+  const countBy = (keys: (string | null)[]) => {
+    const n = new Map<string, number>();
+    for (const k of keys) if (k) n.set(k, (n.get(k) ?? 0) + 1);
+    return n;
+  };
+  const staffEmails = countBy(staff.map((e) => emailKey(e.email)));
+  const staffPhones = countBy(staff.map((e) => e.phone));
+  const accountEmails = countBy(accounts.map((u) => emailKey(u.email)));
+  const accountPhones = countBy(accounts.map((u) => phoneKey(u.phone)));
+  const staffIds = new Set(staff.map((e) => e.id));
 
   const claimed = new Set<string>();
+  const accountFor = new Map<string, (typeof accounts)[number]>();
+  // Deliberate links first, so a guess can never take an account somebody
+  // has already said belongs to a different employee.
+  for (const u of accounts) {
+    if (u.employeeId && staffIds.has(u.employeeId) && !accountFor.has(u.employeeId)) {
+      accountFor.set(u.employeeId, u);
+      claimed.add(u.id);
+    }
+  }
+  for (const e of staff) {
+    if (accountFor.has(e.id)) continue;
+    const em = emailKey(e.email);
+    const ph = e.phone;
+    const account =
+      (em && staffEmails.get(em) === 1 && accountEmails.get(em) === 1
+        ? accounts.find((u) => emailKey(u.email) === em)
+        : undefined) ??
+      (ph && staffPhones.get(ph) === 1 && accountPhones.get(ph) === 1
+        ? accounts.find((u) => phoneKey(u.phone) === ph)
+        : undefined);
+    if (account && !claimed.has(account.id) && !account.employeeId) {
+      accountFor.set(e.id, account);
+      claimed.add(account.id);
+    }
+  }
+
   const out: Candidate[] = [];
 
   for (const e of staff) {
-    const account =
-      userByEmail.get(emailKey(e.email) ?? "") ??
-      userByPhone.get(e.phone ?? "") ??
-      null;
-    if (account) claimed.add(account.id);
+    const account = accountFor.get(e.id) ?? null;
 
     // Only an active employee gets access. A leaver whose row is still in the
     // sheet, and somebody whose status cell nobody filled in, are both refused
@@ -454,9 +500,9 @@ export async function listCandidates(): Promise<Candidate[]> {
       userId: account?.id ?? null,
       employeeId: e.id,
       employeeCode: e.employeeCode,
-      name: account?.name ?? e.name,
-      email: account?.email ?? e.email,
-      phone: account?.phone ?? e.phone,
+      name: e.name,
+      email: e.email ?? account?.email ?? null,
+      phone: e.phone ?? account?.phone ?? null,
       department: e.department,
       position: e.position,
       office: e.officeName,
@@ -464,29 +510,6 @@ export async function listCandidates(): Promise<Candidate[]> {
       accountActive: account?.active ?? false,
       apps: account ? (appsByUser.get(account.id) ?? []) : [],
       blocked,
-    });
-  }
-
-  // Accounts with nobody behind them in HRMS. Several are real — an account
-  // created before the employee sheet existed, or somebody the sheet spells
-  // differently — so they are offered rather than dropped, and labelled so
-  // whoever grants knows the check that could not be made.
-  for (const u of accounts) {
-    if (claimed.has(u.id)) continue;
-    out.push({
-      userId: u.id,
-      employeeId: null,
-      employeeCode: null,
-      name: u.name,
-      email: u.email,
-      phone: u.phone,
-      department: null,
-      position: null,
-      office: null,
-      employeeStatus: null,
-      accountActive: u.active,
-      apps: appsByUser.get(u.id) ?? [],
-      blocked: u.active ? null : "This account is deactivated.",
     });
   }
 

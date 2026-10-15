@@ -1,7 +1,7 @@
 import "server-only";
 import { getConfig } from "@/lib/config/store";
 import { recipeLinesByProduct, recipeMap, recipeQtyByName } from "./recipes";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   erpFgEntries,
@@ -49,9 +49,12 @@ import {
   sfgRates,
   type Ex,
 } from "../stock";
-import { godownIdByName, godownOptions, has, inTx, pair, refuse, today, type Col, type Tx } from "./common";
+import { type Col, godownField, godownIdByName, godownOptions, has, inTx, pair, refuse, today, type Tx } from "./common";
 import { sfgQcMap, sfgQcOf, setSfgQc } from "../qc";
 import { qcRefusal } from "../engines/trace";
+import { hasEvidence, evidenceFileIds, qcEvidenceFields, readQcEvidence, testResultsLine, type QcEvidence } from "../engines/sfg-tests";
+import { bindErpFiles } from "../attachments";
+import { refValues } from "../refs";
 import { cancelBatchBoxes, ensureBatchBoxes, looseHeadroom, mintLooseUnits, trimLooseUnits } from "../units";
 import { erpLabelsHref, erpTraceHref } from "../trace-links";
 
@@ -135,7 +138,7 @@ export async function sfgForm(ctx: ErpContext, fixed?: { sfgNo: number; date: st
     header: [
       { k: "sfgNo", l: "SFG No", t: "derived", calc: "sfg.no" },
       { k: "date", l: "Date", t: "date", req: true, readOnly: !!fixed },
-      { k: "godown", l: "Godown", t: "select", req: true, opts: gds.map((g) => g.name), readOnly: !!fixed },
+      godownField(gds, { readOnly: !!fixed }),
       { k: "product", l: "SFG product", t: "select", req: true, opts: forms.map((f) => f.name), readOnly: !!fixed },
       { k: "batches", l: "Number of batches", t: "num", req: true, min: 0.01, readOnly: !!fixed },
     ],
@@ -222,8 +225,16 @@ const sfgBatches: ScreenModule = {
     const posted = new Set(
       (await db.select({ id: erpSfgEntries.sourceId }).from(erpSfgEntries).where(eq(erpSfgEntries.sourceType, "sfg"))).map((x) => x.id),
     );
-    const qc = await sfgQcMap();
+    const [qc, qcTests] = await Promise.all([sfgQcMap(), refValues("testingList")]);
     const qcApprover = ctx.powers.has("approveSfgQc");
+    /* The Testing list's active values are what QC is asked about, with the
+       same evidence a purchase test records — a photograph per test, the
+       smell, the readings, a video — and none of it required
+       (`engines/sfg-tests.ts`). A reject still needs its reason. */
+    const testsSub = qcTests.length ? " Add what was checked for each test on the Testing list." : "";
+    const evidenceFields = () => qcEvidenceFields(qcTests) as FieldSpec[];
+    const approveFields = (): FieldSpec[] => [...evidenceFields(), { k: "note", l: "QC note", t: "area", mic: true, untagged: true }];
+    const rejectFields = (why: string): FieldSpec[] => [...evidenceFields(), { k: "note", l: why, t: "area", req: true, mic: true }];
     const all: Col[] = [
       { k: "sfgNo", l: "SFG no", t: "mono" },
       { k: "date", l: "Date", t: "d" },
@@ -247,8 +258,22 @@ const sfgBatches: ScreenModule = {
         screen: "sfgBatches",
         cols,
         hidden,
-        groups: ["godown"],
+        /* A batch is one SFG number however many lots it drew, so the list
+           reads as one batch per group: the batch's own facts in the header,
+           a line per raw-material lot beneath. */
+        groups: ["sfgNo"],
+        groupHead: ["date", "product", "batches", "godown", "lotCode", "qc", "sfgRate"],
         agg: { k: "total", l: "litres used" },
+        /* QC is a verdict on a LOT, and a batch's lines share one lot, so
+           ticking any line of a batch decides that batch; "Select all" on a
+           group header takes the whole batch and the header box the page. */
+        groupSel: qcApprover,
+        bulk: qcApprover
+          ? [
+              { id: "qcApprove", l: "QC approve", prompt: { title: "Approve the selected SFG lots", sub: `Every batch with a ticked line is approved, with these results. Once approved a lot can be filled into cans and drums.${testsSub}`, submit: "Approve", fields: approveFields() } },
+              { id: "qcReject", l: "QC reject", prompt: { title: "Reject the selected SFG lots", sub: "Every batch with a ticked line is rejected and cannot be filled. What has already been filled stays traceable to it. Record the tests you ran.", submit: "Reject", fields: rejectFields("Why they failed") } },
+            ]
+          : undefined,
         godownKey: "godown",
         newForm: await sfgForm(ctx),
         newLabel: "New SFG batch",
@@ -257,9 +282,9 @@ const sfgBatches: ScreenModule = {
       rows: rows.map((x): ListRow => {
         const rate = rmRate.get(x.l.rmLotNo) ?? null;
         const actions: ActionSpec[] = [
-          { id: "more", l: "ADD More SFG", primary: true, loadsForm: true },
+          { id: "more", l: "Add another", primary: true, loadsForm: true },
           { id: "edit", l: "Edit", loadsForm: true },
-          { id: "select", l: "Select SFG", href: `?f=${encodeURIComponent(rows.filter((y) => y.l.sfgNo === x.l.sfgNo).map((y) => y.l.id).join(","))}&fl=${encodeURIComponent(`SFG ${x.l.sfgNo}`)}` },
+          { id: "select", l: "Show the whole SFG", href: `?f=${encodeURIComponent(rows.filter((y) => y.l.sfgNo === x.l.sfgNo).map((y) => y.l.id).join(","))}&fl=${encodeURIComponent(`SFG ${x.l.sfgNo}`)}` },
           {
             id: "delete",
             l: "Delete",
@@ -272,9 +297,10 @@ const sfgBatches: ScreenModule = {
         const qcStatus = verdict?.status ?? "Pending";
         const noQcPower = qcApprover ? "" : "Only the SFG QC approver decides QC";
         if (qcStatus !== "Approved")
-          actions.unshift({ id: "qcApprove", l: "QC approve", primary: qcStatus === "Pending", why: noQcPower, prompt: { title: `Approve SFG lot ${x.l.lotCode}`, sub: "Once approved the lot can be filled into cans and drums.", submit: "Approve", fields: [{ k: "note", l: "QC note (readings, remarks)", t: "area", mic: true }] } });
+          actions.unshift({ id: "qcApprove", l: "QC approve", primary: qcStatus === "Pending", why: noQcPower, prompt: { title: `Approve SFG lot ${x.l.lotCode}`, sub: `Once approved the lot can be filled into cans and drums.${testsSub}`, submit: "Approve", fields: approveFields() } });
         if (qcStatus !== "Rejected")
-          actions.push({ id: "qcReject", l: qcStatus === "Approved" ? "Withdraw QC approval (reject)" : "QC reject", why: noQcPower, prompt: { title: `Reject SFG lot ${x.l.lotCode}`, sub: "A rejected lot cannot be filled. What has already been filled from it stays traceable to it.", submit: "Reject", fields: [{ k: "note", l: "Why it failed", t: "area", req: true, mic: true }] } });
+          actions.push({ id: "qcReject", l: qcStatus === "Approved" ? "Withdraw QC approval (reject)" : "QC reject", why: noQcPower, prompt: { title: `Reject SFG lot ${x.l.lotCode}`, sub: "A rejected lot cannot be filled. What has already been filled from it stays traceable to it. Record the tests you ran.", submit: "Reject", fields: rejectFields("Why it failed") } });
+        actions.push({ id: "label", l: "Print SFG label", href: erpLabelsHref({ sfg: x.l.lotCode, godown: x.l.godownId }) });
         actions.push({ id: "trace", l: "Trace this lot", href: erpTraceHref(x.l.lotCode) });
         return {
           id: x.l.id,
@@ -304,11 +330,33 @@ const sfgBatches: ScreenModule = {
           fields: [
             { l: "Available SFG (litres)", v: nf(sfgYield(x.l.totalUse, x.l.litresAdjusted)), der: true },
             { l: "QC", v: verdict && verdict.status !== "Pending" ? `${verdict.status}${verdict.by ? ` by ${verdict.by}` : ""}${verdict.note ? ` · ${verdict.note}` : ""}` : "Pending — the lot cannot be filled until QC approves it" },
+            ...(testResultsLine(verdict?.tests) ? [{ l: "QC tests", v: testResultsLine(verdict?.tests)! }] : []),
             ...(recipeFor(x) != null
               ? [{ l: "Recipe", v: `${nf(recipeFor(x)! * Number(x.l.batches))} Ltr for ${nf(Number(x.l.batches))} batch${Number(x.l.batches) === 1 ? "" : "es"} · this batch used ${nf(usedBy.get(`${x.l.sfgNo}|${x.l.rawMaterialId}`) ?? 0)} Ltr`, der: true }]
               : []),
           ],
           actions,
+          ...(verdict && hasEvidence(verdict.evidence)
+            ? {
+                panel: {
+                  kind: "testEvidence",
+                  data: {
+                    title: "QC evidence",
+                    optional: true,
+                    status: verdict.status,
+                    tests: Object.keys(verdict.evidence.photos ?? {})
+                      .concat(verdict.evidence.smell ? ["Smell"] : [], verdict.evidence.density != null ? ["Density"] : [], verdict.evidence.phValue != null ? ["PH"] : [])
+                      .filter((t, i, a) => a.indexOf(t) === i),
+                    smell: verdict.evidence.smell ?? null,
+                    density: verdict.evidence.density ?? null,
+                    phValue: verdict.evidence.phValue ?? null,
+                    photos: verdict.evidence.photos ?? {},
+                    video: verdict.evidence.video ?? null,
+                    registerExists: false,
+                  },
+                },
+              }
+            : {}),
           by: stampLine(x.by, x.l.createdAt),
         };
       }),
@@ -375,14 +423,32 @@ const sfgBatches: ScreenModule = {
       });
     },
   },
+  bulk: {
+    async qcApprove(ctx, ids, values) {
+      const ev = await qcEvidenceFrom(values);
+      if (!ev.ok) return ev;
+      return decideQcMany(ctx, ids, "Approved", text(values.note), ev.data);
+    },
+    async qcReject(ctx, ids, values) {
+      const ev = await qcEvidenceFrom(values);
+      if (!ev.ok) return ev;
+      const note = text(values.note);
+      if (!note) return fieldErr("note", "Say why the lots failed QC");
+      return decideQcMany(ctx, ids, "Rejected", note, ev.data);
+    },
+  },
   actions: {
     async qcApprove(ctx, id, values) {
-      return decideQc(ctx, id, "Approved", text(values.note));
+      const ev = await qcEvidenceFrom(values);
+      if (!ev.ok) return ev;
+      return decideQc(ctx, id, "Approved", text(values.note), ev.data);
     },
     async qcReject(ctx, id, values) {
+      const ev = await qcEvidenceFrom(values);
+      if (!ev.ok) return ev;
       const note = text(values.note);
       if (!note) return fieldErr("note", "Say why the lot failed QC");
-      return decideQc(ctx, id, "Rejected", note);
+      return decideQc(ctx, id, "Rejected", note, ev.data);
     },
     async post(ctx, id) {
       const [l] = await db.select().from(erpSfgLines).where(eq(erpSfgLines.id, id));
@@ -407,15 +473,57 @@ const sfgBatches: ScreenModule = {
  * Rejecting an approved lot stops further filling and leaves what was already
  * filled exactly where it is — still traceable to the lot that failed.
  */
-async function decideQc(ctx: ErpContext, lineId: string, status: "Approved" | "Rejected", note: string | null): Promise<Result<unknown>> {
+/**
+ * The evidence the prompt sent, read against the Testing list as it stands
+ * NOW. Nothing is required; what was given has to make sense, and a value for
+ * a test not on the list is dropped.
+ */
+async function qcEvidenceFrom(values: Record<string, string>): Promise<Result<QcEvidence>> {
+  const read = readQcEvidence(await refValues("testingList"), values);
+  if (!read.ok) return fieldErr(read.field, read.message);
+  return { ok: true, data: read.evidence };
+}
+
+async function decideQc(ctx: ErpContext, lineId: string, status: "Approved" | "Rejected", note: string | null, evidence: QcEvidence = { photos: {} }): Promise<Result<unknown>> {
   if (!ctx.powers.has("approveSfgQc")) return err("Only the SFG QC approver decides QC.", "not_permitted");
   const [l] = await db.select({ lot: erpSfgLines.lotCode }).from(erpSfgLines).where(eq(erpSfgLines.id, lineId));
   if (!l) return err("That batch line no longer exists.", "not_found");
   const before = await sfgQcOf(l.lot);
   if (before === status) return err(`SFG lot ${l.lot} is already ${status}.`, "rule_violation");
-  await db.transaction((tx) => setSfgQc(tx, l.lot, status, note, ctx.user.id));
-  await erpAudit(ctx, status === "Approved" ? "erp.sfg.qcApprove" : "erp.sfg.qcReject", "erp_sfg_qc", l.lot, { status: before }, { status, note });
+  await db.transaction(async (tx) => {
+    await setSfgQc(tx, l.lot, status, note, ctx.user.id, {}, evidence);
+    await bindErpFiles(tx as unknown as typeof db, evidenceFileIds(evidence), "erp_sfg_qc", l.lot, ctx.user.id);
+  });
+  await erpAudit(ctx, status === "Approved" ? "erp.sfg.qcApprove" : "erp.sfg.qcReject", "erp_sfg_qc", l.lot, { status: before }, { status, note, evidence });
   return okVoid(status === "Approved" ? `SFG lot ${l.lot} approved · it can be filled now` : `SFG lot ${l.lot} rejected · it cannot be filled`);
+}
+
+/**
+ * The same decision over a selection. Lines are read back to their LOTS — a
+ * batch of three lines is one lot, decided once — and a lot already at the
+ * verdict is skipped and counted rather than refusing the rest.
+ */
+async function decideQcMany(ctx: ErpContext, lineIds: string[], status: "Approved" | "Rejected", note: string | null, evidence: QcEvidence = { photos: {} }): Promise<Result<unknown>> {
+  if (!ctx.powers.has("approveSfgQc")) return err("Only the SFG QC approver decides QC.", "not_permitted");
+  const lines = await db.select({ lot: erpSfgLines.lotCode }).from(erpSfgLines).where(inArray(erpSfgLines.id, lineIds));
+  const lots = Array.from(new Set(lines.map((l) => l.lot).filter((l): l is string => !!l)));
+  if (!lots.length) return err("Those batch lines no longer exist.", "not_found");
+  const qc = await sfgQcMap();
+  const todo = lots.filter((lot) => (qc.get(lot)?.status ?? "Pending") !== status);
+  const already = lots.length - todo.length;
+  if (!todo.length) return err(`${lots.length === 1 ? `SFG lot ${lots[0]} is` : `All ${lots.length} lots are`} already ${status}.`, "rule_violation");
+  await db.transaction(async (tx) => {
+    for (const lot of todo) await setSfgQc(tx, lot, status, note, ctx.user.id, {}, evidence);
+    /* One set of files for every lot decided: filed under the first, and read
+       by any of them, because a file is opened under the screen, not the lot. */
+    await bindErpFiles(tx as unknown as typeof db, evidenceFileIds(evidence), "erp_sfg_qc", todo[0], ctx.user.id);
+  });
+  for (const lot of todo)
+    await erpAudit(ctx, status === "Approved" ? "erp.sfg.qcApprove" : "erp.sfg.qcReject", "erp_sfg_qc", lot, { status: qc.get(lot)?.status ?? "Pending" }, { status, note, evidence, bulk: true });
+  const verb = status === "Approved" ? "approved" : "rejected";
+  const named = todo.length <= 4 ? ` (${todo.join(", ")})` : "";
+  const skipped = already ? ` · ${already} already ${verb}` : "";
+  return okVoid(`${todo.length} SFG ${todo.length === 1 ? "lot" : "lots"} ${verb}${named}${skipped}${status === "Approved" ? " · they can be filled now" : ""}`);
 }
 
 async function saveSfg(ctx: ErpContext, h: Record<string, string>, lines: Record<string, string>[]): Promise<Result<unknown>> {
@@ -595,7 +703,7 @@ async function fillForm(ctx: ErpContext, fixed?: { fgNum: number; date: string; 
     header: [
       { k: "fgNum", l: "FG num", t: "derived", calc: "fg.num" },
       { k: "date", l: "Date", t: "date", req: true, readOnly: !!fixed },
-      { k: "godown", l: "Godown", t: "select", req: true, opts: gds.map((g) => g.name), readOnly: !!fixed },
+      godownField(gds, { readOnly: !!fixed }),
       { k: "sfg", l: "SFG product", t: "select", req: true, optsBy: { by: "godown", map: products }, when: { k: "godown", notEmpty: true } },
       { k: "sfgLot", l: "SFG lot code", t: "select", req: true, optsBy: { by: ["godown", "sfg"], map: lotsOf }, when: { k: "sfg", notEmpty: true }, hint: "Only lots QC has approved are offered." },
       { k: "sfgAvail", l: "SFG available (litres)", t: "derived", calc: "fg.sfgAvail" },
@@ -654,7 +762,8 @@ const fgFill: ScreenModule = {
         screen: "fgFill",
         cols,
         hidden,
-        groups: ["godown", "date"],
+        groups: ["fgNum"],
+        groupHead: ["date", "godown"],
         godownKey: "godown",
         newForm: await fillForm(ctx),
         newLabel: "New FG filling",
@@ -671,7 +780,7 @@ const fgFill: ScreenModule = {
         });
         const actions: ActionSpec[] = [
           { id: "more", l: "Add to this run", loadsForm: true },
-          { id: "select", l: "Select SFG 2", href: `?f=${encodeURIComponent(rows.filter((y) => y.f.fgNum === x.f.fgNum).map((y) => y.f.id).join(","))}&fl=${encodeURIComponent(`FG ${x.f.fgNum}`)}` },
+          { id: "select", l: "Show the whole fill", href: `?f=${encodeURIComponent(rows.filter((y) => y.f.fgNum === x.f.fgNum).map((y) => y.f.id).join(","))}&fl=${encodeURIComponent(`FG ${x.f.fgNum}`)}` },
           { id: "trace", l: "Trace this lot", href: erpTraceHref(x.f.lotCode) },
           { id: "adjust", l: "Edit cans adjusted", prompt: { title: "Cans adjusted", sub: `${x.fg} · ${x.f.lotCode}`, submit: "Save", fields: [{ k: "adjusted", l: "Cans lost or adjusted", t: "num", req: true, min: 0, max: x.f.cans }], init: { adjusted: String(x.f.canAdjusted) } } },
           { id: "delete", l: "Delete", why: ctx.administrator ? "" : "Only an administrator deletes a posted filling", confirm: `Delete FG filling ${x.f.lotCode}? Its stock entry stays in the log, flagged as deleted.` },
@@ -899,7 +1008,7 @@ async function packForm(ctx: ErpContext, fixed?: { serial: number; batchNo: stri
     header: [
       { k: "batchNo", l: "Batch no", t: "derived", calc: "pack.batchNo" },
       { k: "date", l: "Date", t: "date", req: true, readOnly: !!fixed },
-      { k: "godown", l: "Godown", t: "select", req: true, opts: gds.map((g) => g.name), readOnly: !!fixed },
+      godownField(gds, { readOnly: !!fixed }),
       { k: "fg", l: "FG product", t: "select", req: true, optsBy: { by: "godown", map: productsAt }, when: { k: "godown", notEmpty: true }, readOnly: !!fixed },
       { k: "sku", l: "Description of goods (boxed SKU)", t: "select", req: true, optsBy: { by: "fg", map: skusOf }, when: { k: "fg", notEmpty: true }, readOnly: !!fixed },
       { k: "boxes", l: "Boxes in the whole batch", t: "num", req: true, min: 1, readOnly: !!fixed },
@@ -951,7 +1060,8 @@ const packBatches: ScreenModule = {
         screen: "packBatches",
         cols,
         hidden,
-        groups: ["godown", "date"],
+        groups: ["batchNo"],
+        groupHead: ["date", "sku", "boxes", "match", "boxType", "emptyBoxes", "godown"],
         godownKey: "godown",
         newForm: await packForm(ctx),
         newLabel: "New packing batch",
@@ -962,10 +1072,10 @@ const packBatches: ScreenModule = {
         const st = batchState(x.l.boxes, x.cpb, batch.map((b) => ({ id: b.l.id, cans: b.l.cans })));
         const box = boxFigures(x.l.boxes, x.empty ?? 0, null);
         const actions: ActionSpec[] = [];
-        if (st.remaining > 0) actions.push({ id: "more", l: "Add More", primary: true, loadsForm: true });
+        if (st.remaining > 0) actions.push({ id: "more", l: "Add another", primary: true, loadsForm: true });
         else actions.push({ id: "labels", l: "Print box labels", primary: true, href: erpLabelsHref({ batch: x.l.batchNo }) });
         actions.push({ id: "trace", l: "Trace this batch", href: erpTraceHref(x.l.batchNo) });
-        actions.push({ id: "select", l: "Select Batch", href: `?f=${encodeURIComponent(batch.map((b) => b.l.id).join(","))}&fl=${encodeURIComponent(x.l.batchNo)}` });
+        actions.push({ id: "select", l: "Show the whole batch", href: `?f=${encodeURIComponent(batch.map((b) => b.l.id).join(","))}&fl=${encodeURIComponent(x.l.batchNo)}` });
         actions.push({
           id: "delete",
           l: "Delete",
@@ -1120,10 +1230,10 @@ async function savePack(ctx: ErpContext, h: Record<string, string>): Promise<Res
 async function entryOrphans(table: "sfg" | "fg" | "pack"): Promise<Set<string>> {
   const q =
     table === "sfg"
-      ? sql`select e.id from erp_sfg_entries e where (e.source_type = 'sfg' and not exists (select 1 from erp_sfg_lines l where l.id = e.source_id)) or (e.source_type = 'transfer' and not exists (select 1 from erp_transfers t where t.id = e.source_id))`
+      ? sql`select e.id from erp_sfg_entries e where (e.source_type = 'sfg' and not exists (select 1 from erp_sfg_lines l where l.id = e.source_id)) or (e.source_type = 'transfer' and not exists (select 1 from erp_transfers t where t.id = e.source_id)) or (e.source_type = 'rework' and not exists (select 1 from erp_rework_orders w where w.id = e.source_id and w.status = 'completed'))`
       : table === "fg"
-        ? sql`select e.id from erp_fg_entries e where (e.source_type = 'fill' and not exists (select 1 from erp_fg_fills f where f.id = e.source_id)) or (e.source_type = 'transfer' and not exists (select 1 from erp_transfers t where t.id = e.source_id))`
-        : sql`select e.id from erp_pack_entries e where (e.source_type = 'batch' and not exists (select 1 from erp_pack_lines l where l.batch_no = e.source_id)) or (e.source_type = 'transfer' and not exists (select 1 from erp_transfers t where t.id = e.source_id))`;
+        ? sql`select e.id from erp_fg_entries e where (e.source_type = 'fill' and not exists (select 1 from erp_fg_fills f where f.id = e.source_id)) or (e.source_type = 'transfer' and not exists (select 1 from erp_transfers t where t.id = e.source_id)) or (e.source_type = 'return' and not exists (select 1 from erp_return_dispositions d where d.id = e.source_id and d.status = 'active'))`
+        : sql`select e.id from erp_pack_entries e where (e.source_type = 'batch' and not exists (select 1 from erp_pack_lines l where l.batch_no = e.source_id)) or (e.source_type = 'transfer' and not exists (select 1 from erp_transfers t where t.id = e.source_id)) or (e.source_type = 'return' and not exists (select 1 from erp_return_dispositions d where d.id = e.source_id and d.status = 'active'))`;
   return new Set(((await db.execute(q)) as unknown as { id: string }[]).map((r) => r.id));
 }
 
@@ -1143,12 +1253,11 @@ const sfgStock: ScreenModule = {
       { k: "type", l: "Type", t: "s" },
       { k: "rate", l: "SFG rate", t: "m", pw: "viewCost" },
       { k: "value", l: "Stock value", t: "m", pw: "viewCost" },
-      { k: "entry", l: "Entry id", t: "mono" },
       { k: "batches", l: "Batches", t: "n" },
     ];
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
     return {
-      spec: { screen: "sfgStock", cols, hidden, groups: ["godown", "lot"], agg: { k: "stock", l: "litres" }, godownKey: "godown", readOnly: true, download: true, noDataLine: "No SFG in stock. Stock appears as SFG batches are saved." },
+      spec: { screen: "sfgStock", cols, hidden, groups: ["godown", "lot"], agg: { k: "stock", l: "litres" }, godownKey: "godown", readOnly: true, noDataLine: "No SFG in stock. Stock appears as SFG batches are saved." },
       rows: lots.map((l) => ({
         id: `${l.lotCode}|${l.godownId}`,
         v: withoutHidden(
@@ -1163,7 +1272,6 @@ const sfgStock: ScreenModule = {
             type: l.latestType,
             rate: l.ratePaise,
             value: l.ratePaise == null ? null : Math.round(l.ratePaise * l.stock),
-            entry: l.latestEntryId,
             batches: l.batches,
           },
           hiddenKeys,
@@ -1171,7 +1279,10 @@ const sfgStock: ScreenModule = {
         flags: [],
         title: `${l.product} · ${l.lotCode}`,
         header: `${nf(l.stock)} Ltr at ${l.godown}`,
-        actions: [{ id: "trace", l: "Trace this lot", href: erpTraceHref(l.lotCode) }],
+        actions: [
+          { id: "label", l: "Print SFG label", primary: true, href: erpLabelsHref({ sfg: l.lotCode, godown: l.godownId }) },
+          { id: "trace", l: "Trace this lot", href: erpTraceHref(l.lotCode) },
+        ],
       })),
     };
   },
@@ -1318,7 +1429,8 @@ function logScreen(key: "sfgLog" | "fgLog" | "packLog"): ScreenModule {
             : sql`select e.id, e.entry_date::text as date, e.source_type as type, e.source_id as source, p.name as item, e.batch_no as lot, e.boxes::float8 as qty, g.name as godown, e.posted_at as "postedAt"
                     from erp_pack_entries e join products p on p.id = e.sku_id join erp_godowns g on g.id = e.godown_id order by e.entry_date desc, e.posted_at desc, e.id desc`;
       const rows = (await db.execute(q)) as unknown as { id: string; date: string; type: string; source: string; item: string; lot: string; qty: number; godown: string; postedAt: Date }[];
-      const typeLabel = (t: string) => (t === "transfer" ? "Transfer" : table === "sfg" ? "Semi Finished" : table === "fg" ? "Finish Goods" : "FG Packing");
+      const typeLabel = (t: string) =>
+        t === "transfer" ? "Transfer" : t === "return" ? "Customer return (reused)" : t === "rework" ? "Rework" : table === "sfg" ? "Batch" : table === "fg" ? "Filling" : "Packing";
       const cols: ColSpec[] = [
         { k: "date", l: "Date", t: "d" },
         { k: "type", l: "Entry", t: "s" },
@@ -1326,7 +1438,6 @@ function logScreen(key: "sfgLog" | "fgLog" | "packLog"): ScreenModule {
         { k: "lot", l: table === "pack" ? "Batch" : "Lot", t: "mono" },
         { k: "qty", l: table === "sfg" ? "Litres" : table === "fg" ? "Cans" : "Boxes", t: "n" },
         { k: "godown", l: "Godown", t: "t" },
-        { k: "source", l: "Source", t: "mono" },
         { k: "f", l: "Flags", t: "f" },
       ];
       return {

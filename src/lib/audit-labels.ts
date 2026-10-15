@@ -67,6 +67,8 @@ export const AUDIT_GROUPS = [
       "mbos.priceList.",
       "mbos.scheme.",
       "mbos.evidence.",
+      "mbos.expense_payout.",
+      "mbos.expense.",
       "import.bills",
     ],
   },
@@ -322,6 +324,53 @@ const strong = (s: string): Piece => ({ strong: s });
  * not enough.
  */
 const DESCRIBE: Record<string, Describer> = {
+  /* ---- stock checks */
+  "erp.floorCheck.record": () => ["recorded a stock check"],
+  "erp.floorCheck.review": () => ["reviewed a stock check that did not match the book"],
+  "erp.floorCheck.escalate": () => ["raised a stock check mismatch into a formal count"],
+  /* ---- empty drums, scrap sale and scrap receipts */
+  "erp.rawMaterial.photos": () => ["changed a can's photos"],
+  "erp.canGroup.byName": () => ["grouped the cans by name"],
+  "erp.drum.empty": () => ["recorded an empty drum, weighed"],
+  "erp.drum.classify": () => ["decided who owns an empty drum"],
+  "erp.drum.weight": () => ["corrected an empty drum's weight"],
+  "erp.drum.cancel": () => ["cancelled an empty-drum entry"],
+  "erp.drum.adjust.request": () => ["asked for a drum correction"],
+  "erp.drum.adjust.approve": () => ["approved a drum correction"],
+  "erp.drum.adjust.reject": () => ["rejected a drum correction"],
+  "erp.drum.return": () => ["returned empty drums to their supplier"],
+  "erp.drum.return.cancel": () => ["cancelled a returnable drum outward"],
+  "erp.scrap.sale": () => ["recorded a scrap sale"],
+  "erp.scrap.sale.cancel": () => ["cancelled a scrap sale"],
+  "erp.scrap.entry": () => ["recorded scrap"],
+  "erp.scrap.entry.cancel": () => ["cancelled a scrap entry"],
+  "erp.scrapBuyer.create": () => ["added a scrap buyer"],
+  "erp.scrapBuyer.retire": () => ["retired a scrap buyer"],
+  "erp.scrapBuyer.restore": () => ["restored a scrap buyer"],
+  "erp.receipt.create": () => ["recorded a Petty Cash/Bank receipt"],
+  "erp.receipt.allocate": () => ["matched a receipt to a scrap sale"],
+  "erp.receipt.unallocate": () => ["undid a receipt's match to a scrap sale"],
+  "erp.receipt.void": () => ["voided a Petty Cash/Bank receipt"],
+  /* ---- material returns */
+  "erp.purchaseReturn.create": () => ["raised a purchase return"],
+  "erp.purchaseReturn.approve": () => ["approved a purchase return"],
+  "erp.purchaseReturn.ownerApprove": () => ["gave the owner's approval to a purchase return"],
+  "erp.purchaseReturn.reject": () => ["rejected a purchase return"],
+  "erp.purchaseReturn.cancel": () => ["cancelled a purchase return"],
+  "erp.returnOutward.create": () => ["prepared a goods return outward"],
+  "erp.returnOutward.confirm": () => ["confirmed goods returned to a vendor"],
+  "erp.returnOutward.cancel": () => ["cancelled a goods return outward"],
+  "erp.returnOutward.reverse": () => ["reversed goods returned to a vendor"],
+  "erp.customerReturn.create": () => ["recorded a customer return"],
+  "erp.customerReturn.receive": () => ["received a customer return into quarantine"],
+  "erp.customerReturn.reject": () => ["rejected a customer return"],
+  "erp.customerReturn.approve": () => ["approved a credit note on a customer return"],
+  "erp.customerReturn.ownerApprove": () => ["gave the owner's approval to a customer return's credit note"],
+  "erp.customerReturn.decide": () => ["recorded a QC decision on returned material"],
+  "erp.customerReturn.reverseDecision": () => ["reversed a QC decision on returned material"],
+  "erp.customerReturn.cancel": () => ["cancelled a customer return"],
+  "erp.rework.complete": () => ["completed a rework of returned material"],
+  "erp.waste.dispose": () => ["recorded a waste disposal"],
   /* ---- money */
   "payment.record": (c) => ({
     says: [
@@ -428,6 +477,9 @@ const DESCRIBE: Record<string, Describer> = {
   "mbos.approval.rejected": () => ({ says: ["turned down a field request"], changes: false }),
   "mbos.evidence.accepted": () => ({ says: ["accepted a salesman's evidence for an expense claim"], changes: false }),
   "mbos.evidence.rejected": () => ({ says: ["rejected a salesman's evidence for an expense claim"], changes: false }),
+  "mbos.expense.entered_for": (c) => ({ says: ["entered an expense for a salesman", ...(num(c.a.amountPaise) ? ["of", strong(rupees(c.a.amountPaise)!)] : [])], changes: false }),
+  "mbos.expense_payout.recorded": (c) => ({ says: ["recorded a reimbursement to a salesman", ...(num(c.a.amountPaise) ? ["of", strong(rupees(c.a.amountPaise)!)] : [])], changes: false }),
+  "mbos.expense_payout.voided": () => ({ says: ["voided a reimbursement to a salesman"], changes: false }),
   "expense.day_approved": () => ({ says: ["approved a salesman's day of expenses"], changes: false }),
   "expense.day_partially_approved": () => ({ says: ["partly approved a salesman's day of expenses"], changes: false }),
   "expense.day_rejected": () => ({ says: ["rejected a salesman's day of expenses"], changes: false }),
@@ -535,6 +587,7 @@ const DESCRIBE: Record<string, Describer> = {
   "lead.priority": (c) => ({ says: ["set the priority of", c.subject(), "to", strong(words(str(c.a.leadPriority) ?? "none"))], changes: false }),
   "lead.deskAssigned": (c) => ({ says: ["gave the lead", c.subject(), "to", c.user(c.a.ownerId)], changes: false }),
   "lead.reassigned": (c) => ({ says: ["moved the lead", c.subject(), "from", c.user(c.b.ownerId), "to", c.user(c.a.ownerId)], changes: false }),
+  "lead.unassigned": (c) => ({ says: ["took the lead", c.subject(), "off", c.user(c.b.ownerId), "— it is unassigned"], changes: false }),
   "lead.callingDesk.call": (c) => ({
     says: ["called the lead", c.subject(), ...(str(c.a.outcome) ? [`— ${words(str(c.a.outcome)!)}`] : [])],
     changes: false,
@@ -547,6 +600,7 @@ const DESCRIBE: Record<string, Describer> = {
   "lead.prospectRequest.return": (c) => ({ says: ["sent back the request to make", c.subject(), "a prospect"], changes: false }),
   "lead.qualificationReview": (c) => ({ says: ["reviewed the qualification of", c.subject()], changes: false }),
   "lead.manager.assign": (c) => ({ says: ["made", c.user(c.a.leadManagerId), "the manager of the lead", c.subject()], changes: false }),
+  "lead.verifier.align": (c) => ({ says: ["moved the verification of", c.subject(), "to", c.user(c.a.leadManagerId, "its designated verifier")], changes: false }),
   "lead.firstOrder.confirm": (c) => ({ says: ["confirmed the first order of", c.customer(c.a.customerId), ...(num(c.a.valuePaise) ? ["worth", strong(rupees(c.a.valuePaise)!)] : [])], changes: false }),
   "lead.duplicate.dismissed": (c) => ({ says: ["said two leads that looked alike are different shops"], note: str(c.a.reason), changes: false }),
   "whatsapp.sent_api": (c) => ({ says: ["sent", c.customer(c.a.customerId), "a WhatsApp message", ...(str(c.a.watiTemplate) ? [`(${words(str(c.a.watiTemplate)!)})`] : [])], changes: false }),
@@ -606,6 +660,13 @@ const DESCRIBE: Record<string, Describer> = {
   "mbos.holiday.deallocate": (c) => ({ says: ["took the holiday", strong(str(c.a.name) ?? ""), "away from", strong(str(c.a.person) ?? "somebody")], changes: false }),
   "mbos.holiday.reset": (c) => ({ says: ["put", strong(str(c.a.person) ?? "somebody"), "back on the usual rule for", strong(str(c.a.name) ?? "")], changes: false }),
   "mbos.visit.accept": () => ({ says: ["accepted a salesman's visit as genuine"], changes: false }),
+  "mbos.oldAppShop.decide": (c) => ({
+    says: c.a.customerId
+      ? ["said which account an old-app shop name is, for", strong(String(num(c.a.rows) ?? 0)), "visits"]
+      : ["marked an old-app shop name as not on MahekOne"],
+    changes: false,
+  }),
+  "mbos.oldAppShop.undo": () => ({ says: ["took back which account an old-app shop name is"], changes: false }),
   "mbos.visit.pin.accept": (c) => ({ says: ["moved the map pin of", c.subject(), "to where the salesman checked in"], changes: false }),
   "mbos.visit.pin.reject": (c) => ({ says: ["kept the map pin of", c.subject(), "where it was"], changes: false }),
   "mbos.visit.ask": () => ({ says: ["asked a salesman about a visit"], changes: false }),
@@ -680,6 +741,28 @@ const DESCRIBE: Record<string, Describer> = {
   "whatsapp.automation_window": () => ["changed when automatic WhatsApp messages may be sent"],
   "whatsapp.template_link": (c) => ({ says: ["linked a WhatsApp template to", strong(words(str(c.a.watiTemplateName) ?? "nothing"))], changes: false }),
   "expense_policy.published": (c) => ({ says: ["published the expense policy", ...(str(c.a.effectiveFrom) ? ["from", strong(shortDate(str(c.a.effectiveFrom)!))] : [])], changes: false }),
+  "expense_policy.set.create": (c) => ({ says: ["created the expense policy", strong(str(c.a.name) ?? "")], changes: false }),
+  "expense_policy.set.save": (c) => ({ says: ["edited the expense policy", strong(str(c.a.name) ?? "")], changes: false }),
+  "expense_policy.set.activate": () => ({ says: ["switched an expense policy on"], changes: false }),
+  "expense_policy.set.deactivate": () => ({ says: ["switched an expense policy off"], changes: false }),
+  "expense_policy.set.delete": (c) => ({ says: ["deleted the expense policy", strong(str(c.b.name) ?? "")], changes: false }),
+  "expense_policy.hometown": (c) => {
+    /* A row is one town ({city, state}) before a salesman could have several,
+       and the whole set ({towns: [...]}) after. */
+    const town = (t: Record<string, unknown>) =>
+      str(t.city) ? `${str(t.city)}${str(t.state) ? `, ${str(t.state)}` : ""}` : null;
+    const towns = Array.isArray(c.a.towns)
+      ? (c.a.towns as Record<string, unknown>[]).map(town).filter((t): t is string => !!t)
+      : [town(c.a)].filter((t): t is string => !!t);
+    return {
+      says: [
+        towns.length > 1 ? "set a salesman's hometowns to" : "set a salesman's hometown to",
+        strong(towns.length ? towns.join("; ") : "nothing"),
+      ],
+      changes: false,
+    };
+  },
+  "expense_policy.set.assign": () => ({ says: ["changed which expense policy salesmen are on"], changes: false }),
   "job.run": (c) => ({ says: ["ran the job", strong(words(str(c.a.job) ?? str(c.e.entityId) ?? ""))], changes: false }),
   "job.dry_run": (c) => ({ says: ["tried the job", strong(words(str(c.a.job) ?? str(c.e.entityId) ?? "")), "without saving anything"], changes: false }),
 
@@ -783,6 +866,21 @@ const APPS: Record<string, string> = {
 
 /** Past-tense verbs. A token found here, at the END of a code, is the verb. */
 export const VERBS: Record<string, string> = {
+  /* The logistics desk (erp.logistics.*). */
+  atTransport: "marked {} as reached the transporter",
+  delivered: "marked {} delivered",
+  due: "planned when {} reaches the transporter",
+  issue: "reported a problem on {}",
+  issueCleared: "cleared a problem on {}",
+  lrAttach: "attached an LR to {}",
+  lrDetach: "took {} off its LR",
+  lrEdit: "edited an LR on {}",
+  lrUpload: "uploaded LRs for {}",
+  lrVoid: "voided an LR on {}",
+  messageSent: "marked a customer message about {} sent",
+  messageSkipped: "decided not to send a customer message about {}",
+  packages: "corrected the boxes on {}",
+  transporter: "edited a transporter on {}",
   create: "added",
   created: "added",
   add: "added",
@@ -876,6 +974,19 @@ export const VERBS: Record<string, string> = {
   sendBack: "sent back",
   select: "selected",
   decideMethod: "decided how to buy",
+  /* Inventory Accuracy Control. */
+  exceptionRequest: "asked for an urgent purchase of",
+  exceptionApprove: "approved an urgent purchase of",
+  exceptionReject: "turned down an urgent purchase of",
+  newCount: "opened a stock count for",
+  qtyConfirm: "confirmed the quantity on",
+  recountShelf: "asked for a recount for",
+  request: "requested",
+  cycle: "opened today's cycle {0}s",
+  full: "opened full-godown {0}s",
+  open: "opened",
+  recount: "asked for a recount of",
+  submit: "submitted",
   selectVendor: "chose the vendor for",
   billReceived: "marked the bill received on",
   billNotReceived: "marked the bill not received on",
@@ -983,7 +1094,9 @@ export const VERBS: Record<string, string> = {
 
 /** Nouns. A code's middle tokens are looked up here. */
 export const NOUNS: Record<string, string> = {
+  logistics: "consignment",
   rawMaterial: "raw material",
+  canGroup: "can group",
   supplier: "supplier",
   product: "product",
   customer: "customer",
@@ -1000,6 +1113,8 @@ export const NOUNS: Record<string, string> = {
   fg: "finished-goods fill",
   pack: "packing entry",
   requisition: "purchase requirement",
+  stockCount: "stock count",
+  stockAdjustment: "stock adjustment",
   quotation: "quotation",
   purchaseOrder: "purchase order",
   inward: "goods inward",

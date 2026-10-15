@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { orderTraceCode } from "@/lib/erp/trace-links";
 import { cookies } from "next/headers";
 import { db } from "@/db";
 import { eq, inArray } from "drizzle-orm";
@@ -17,7 +18,7 @@ import type { FormSpec } from "@/lib/erp/ui";
 import { erpAudit } from "@/lib/erp/server";
 
 /* ---------------------------------------------------------------------------
- * The ERP's writes, all through four doors.
+ * The ERP's writes, all through five doors.
  *
  * Every generic screen asks one of these, naming the screen and the action or
  * form; each re-checks that the person holds the screen (a server action is a
@@ -61,6 +62,20 @@ export async function erpRunBulk(screen: string, action: string, ids: string[], 
     if (!handler) return err("That action is not available.", "not_found");
     if (!ids.length) return err("Nothing selected.");
     const res = await handler(ctx, ids, values);
+    if (res.ok) revalidate(screen);
+    return res;
+  } catch (e) {
+    return refused(e);
+  }
+}
+
+/** A header button that acts on the screen as a whole ("Group cans by name"). */
+export async function erpRunTool(screen: string, tool: string, values: Record<string, string> = {}): Promise<Result<unknown>> {
+  try {
+    const ctx = await requireErpWrite(screen);
+    const handler = screenModule(screen)?.tools?.[tool];
+    if (!handler) return err("That action is not available.", "not_found");
+    const res = await handler(ctx, values);
     if (res.ok) revalidate(screen);
     return res;
   } catch (e) {
@@ -228,7 +243,7 @@ export async function erpSearch(q: string): Promise<ErpSearchHit[]> {
     const { erpTraceHref } = await import("@/lib/erp/trace-links");
     const hit = term.length >= 3 ? await resolveTrace(term) : null;
     const kinds: Record<string, string> = { unit: "Box", pack: "Packing batch", fg: "Refill lot", sfg: "SFG lot", rm: "Lot", order: "Order", bill: "Bill" };
-    if (hit) out.unshift({ kind: kinds[hit.kind] ?? "Trace", name: hit.kind === "order" ? `Order ${hit.code}` : hit.code, meta: "Trace back and forward", href: erpTraceHref(hit.kind === "order" ? `ORDER-${hit.code}` : hit.code) });
+    if (hit) out.unshift({ kind: kinds[hit.kind] ?? "Trace", name: hit.kind === "order" ? `Order ${hit.code}` : hit.code, meta: "Trace back and forward", href: erpTraceHref(hit.kind === "order" ? orderTraceCode(hit.code) : hit.code) });
   }
   if (ctx.screens.has("inward") && /^\d+$/.test(term)) {
     const rows = (await db.execute(

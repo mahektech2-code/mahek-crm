@@ -31,13 +31,13 @@ function TracePanel({ data }: PanelProps) {
   return (
     <section className="grid gap-3">
       {a.cluster ? (
-        <div role="alert" className="rounded-[4px] border border-danger-soft border-l-[3px] border-l-danger bg-danger-soft px-3 py-2.5 text-[13px] text-danger">
+        <div role="alert" className="rounded-control border border-danger-soft border-l-[3px] border-l-danger bg-danger-soft px-3 py-2.5 text-meta text-danger">
           <strong>Possible batch problem.</strong> {a.cluster.count} requests in the window share{" "}
           {a.cluster.lots.map((l) => l.replace(/^(fg|sfg|rm):/, "")).join(", ") || "a lot"}
           {a.cluster.parties.length ? ` — also from ${a.cluster.parties.join(", ")}` : ""}.
         </div>
       ) : null}
-      <div className="rounded-[6px] border border-line p-3.5">
+      <div className="rounded-card border border-line p-3.5">
         <SectionLabel>Batch trace</SectionLabel>
         {a.steps.length ? (
           <ol className="mt-2.5 grid list-none gap-2 p-0">
@@ -45,9 +45,9 @@ function TracePanel({ data }: PanelProps) {
               const link = href(s);
               return (
                 <li key={`${s.stage}-${i}`} className="grid grid-cols-[20px_1fr] gap-2">
-                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-brand-soft text-[11px] font-semibold text-[#5223E0]">{i + 1}</span>
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-brand-soft text-2xs font-semibold text-brand-hover">{i + 1}</span>
                   <span className="min-w-0">
-                    <span className="block text-[13px] font-semibold text-ink">
+                    <span className="block text-meta font-semibold text-ink">
                       {s.stage} · {link ? <a href={link} className="text-brand">{s.label}</a> : s.label}
                     </span>
                     <span className="mt-0.5 block text-xs [overflow-wrap:anywhere] text-body">{s.detail}</span>
@@ -64,13 +64,13 @@ function TracePanel({ data }: PanelProps) {
         ))}
       </div>
       {a.people.length ? (
-        <div className="text-[13px] text-body">
+        <div className="text-meta text-body">
           <SectionLabel>Handled the traced steps</SectionLabel>
           <div className="mt-1">{a.people.join(", ")} — a suggestion for the responsible employee, not an assignment.</div>
         </div>
       ) : null}
       {a.previous.length ? (
-        <div className="text-[13px] text-body">
+        <div className="text-meta text-body">
           <SectionLabel>This customer&apos;s earlier requests</SectionLabel>
           <ul className="mt-1 list-disc pl-[18px]">
             {a.previous.map((p, i) => (

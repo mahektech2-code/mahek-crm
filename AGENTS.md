@@ -44,6 +44,8 @@ npm run jobs -- taken-order-sync           # pull the Taken Order tab, then
                            # rebuild who is held back from order chasing
 npm run jobs -- erp-seed-profiles          # ERP customer profiles from the Sales
                            # Party sheet — fills blanks only, re-runnable
+npm run jobs -- erp-cycle-counts           # today's ABC cycle counts (Inventory
+                           # Accuracy Control) — they also open hourly
 npm run jobs -- erp-alerts                 # the ERP's unusual-activity checks —
                            # they also run hourly
 npm run jobs -- erp-digest                 # yesterday's owner summary — it also
@@ -81,6 +83,12 @@ npm run jobs -- resolve-places --dry-run   # the master it WOULD build, off
 npm run jobs -- resolve-places             # build `places` and point every
                            # shop at its leaf. Also the REPARSE: the one to
                            # run when the READING changed, not the answers
+npm run factory:seed       # a factory floor to look at locally — the design's
+                           # people and products, made through the ERP's own
+                           # handlers. Every PIN is 1234.
+npm run factory:staff -- 9850220231 --area=mixing --role="Machine operator" --crew=operator
+                           # put a real person on the floor (grants the app)
+npm run factory:staff -- --list
 npm run hrms:sync    # pull the employee sheet now
 npm run app:grant -- hrms vikram@mahek.in --level=manager
                      # give somebody an app; the level defaults to associate
@@ -1691,6 +1699,47 @@ date and name last, with a `promptCacheKey` per visibility, so OpenAI reads the
 long prefix from its own cache. All of it is in memory and re-derivable — losing
 it costs a slower answer, never a wrong one.
 
+**AND IT ANSWERS ONLY WITHIN THAT ACCESS, which the views alone could not
+promise.** The views decide what the model can READ; they cannot stop it
+answering "what is the company's revenue?" from a telecaller's own book and
+saying it as the company's figure — wrong, and believable. `team-ask/boundary.ts`
+(pure, tested) is the rule, in every Ask prompt: a narrowed reader's question
+about the company, another employee, another department or a customer not in
+their tables is declined in one sentence, never answered from the partial rows;
+every total is named for what it covers ("in your book"); and profit, margin
+and cost are declined for EVERYBODY, because no view carries a cost. The views
+back it: a product's cost is in no view (its price is in the CRM's, where it
+is quoted, and not the Sales Dashboard's), `places.shops` — a company-wide
+count — is shown only to a reader nothing narrows (`nationalOnlyCols`), and an
+employee's private details (`PERSONAL_COLS`) are in no view. The ERP's prompt
+says the same about its screen tools.
+
+**ONE HEADER BOX FINDS A THING OR ASKS ABOUT IT, in the ERP, the CRM and the
+Sales Dashboard.** `components/shell/smart-search.tsx` searches as it
+is typed and answers with one flat list grouped by what each row is
+(`SearchHit` in `lib/search-hit.ts`): customers, leads, bills, orders,
+complaints, salesmen, products and the screens this person holds — built by
+`lib/services/app-search-service.ts` through `/api/crm/search` and
+`/api/sales/search` (the ERP's rows are `erpSearch`, through `/api/erp/search`), narrowed by `scopedToUsers` or `managerScope`, and a kind
+of record is searched only where its screen is held. ↑ ↓ and Enter work it.
+What reads as a question (`looksLikeQuestion`: a trailing "?", or a sentence
+starting with a question word) puts "Ask AI" first, and choosing it opens the
+app's Ask AI drawer with the answer already coming. `/api/search` keeps its
+three sections for the two pickers that read them.
+
+**ASK AI IS ONE DRAWER AND ONE ENGINE, and an app joins with a catalog.**
+`components/shell/ask-panel.tsx` (the "Ask AI" header button) streams from the
+app's endpoint; `team-ask-service.ts`'s `answerStream` is the model, the one
+`run_sql` tool and the caches for every app. The CRM's catalog is
+`team-ask/crm-catalog.ts`: the same temporary-view rule, with `{S}` the people
+`resolveScope()` puts in the asker's book, the customers `scopedToUsers` would
+list, and a table only where a CRM screen that shows it is held.
+`crmAsk.enabled` / `crmAsk.model` switch and choose it; its limits and caches
+are the `salesAsk.*` ones. The ERP keeps its own engine — tools that call each
+screen's loader, `lib/erp/ai-ask.ts` — behind `/api/erp/ask`, which speaks the
+same stream and adds the records it read as links. The next app is an
+endpoint that streams those events and an `AskSetup` in `ask-setups.ts`.
+
 ## The ERP (operations app)
 
 **The ERP is the client's AppSheet "Mahek Plus" rebuilt as a MahekOne app**
@@ -1720,6 +1769,21 @@ module, so it can never be granted apart from its screen, and
 pasting `?f=` onto `erpHref` — a tab's link already carries a query.
 `0182_erp_screens_merged` moved every grant naming an old screen onto the
 screen it became; `next.config.ts` redirects the old URLs.
+
+**AN ERP LIST NEVER SCROLLS SIDEWAYS; it draws the columns that fit.** A
+server module names every column a person's powers reveal — order details
+names twenty-six — and drawn as they came the busiest lists were thousands of
+pixels wider than their card. `app/erp/_ui/fit-columns.ts` (pure, tested) takes
+the measured width and draws a prefix of the server's order, always keeping the
+first column, the record's name, its first status and its flags; the table is
+`table-fixed`, a long value ends in "…" with the whole of it on hover, and a
+heading wraps rather than widening its column. The rest are FOLDED, not lost:
+still searched, still exported, and in full in the record drawer a row opens.
+The Columns menu lets a person choose their own set, remembered per browser per
+list, and a column with no room at this width says so instead of being added.
+So the ORDER of a screen's `cols` is now its priority: put what is read first,
+first. HRMS draws the same list and gets the same behaviour. A drawer is 600px,
+so a panel table of more than four columns is drawn as a card per row.
 
 **Its decisions are POWERS granted to people, not capabilities of a level.**
 The source tied "verify a test", "see purchase money" and the rest to three
@@ -1785,11 +1849,12 @@ which could ask for anything; `0233` retired that list and `saveRequirement`
 refuses any other label, except that an edit leaving an older requirement's
 label alone keeps it. A store re-order is raised under the team that asks for
 its category (`departmentForCategory`). The requirement's `department` column
-stays the LABEL it always was. **Departments** (`/erp/departments`) is the
-step-by-step page: one numbered card per step with what is waiting on it and a
-button that opens the ordinary form already filled in (`?new=1&field=value` on
-any list opens its new form with those answers — only the form's own fields
-are taken). Testing is recorded by the department; VERIFYING a test is still
+stays the LABEL it always was. The step-by-step **Departments** page
+(`/erp/departments`) was taken out of the ERP; its steps live on in
+`lib/erp/departments.ts` for the purchase flow, and a grant of `erp.departments`
+left on a designation is ignored. Any list still opens its new form already
+filled in from `?new=1&field=value` (only the form's own fields are taken).
+Testing is recorded by the department; VERIFYING a test is still
 the `verifyTest` power, which no departmental designation carries by default.
 
 **PREVIEW ACCESS AS is the design's sidebar control, made real and made
@@ -1805,9 +1870,33 @@ an ERP administrator, so taking that away ends the preview too. A designation
 has nobody behind it, so lists that belong to a person answer for the
 administrator, and the banner says so. `erpAudit` always records the actor.
 
-**Every write goes through four server actions** (`lib/actions/erp.ts`): run
-an action, run a bulk action, submit a form, load a form (which writes nothing
-and is the one a preview may open). Each re-checks that
+**ONE HOME FOR EACH SHARED PIECE, and the map is in the docs.** The ERP
+grew screen by screen and copies drifted: extra expenses had two writers (one
+skipped the transport record), Logistics drew its own tab strip, the same
+order column had three headings, the dashboard listed the stock-control
+counts twice. ERP → Overview → Developer, "One home for each shared piece",
+names the single home of every piece two screens share — page frame and
+`QuickFind`, `screenTabs` and `erpNavCounts` (a tab's badge is the figure the
+sidebar sums), `isPendingLine`/`isWorkingLine`, `ORDER_COL`, `godownField`,
+`isErpManager`, `useAct`, `controlClass`, the link builders in
+`trace-links.ts`, the type and colour tokens. Look there before writing
+something a second time; never type an `/erp/…` URL, a hex brand colour, a
+pixel font size or a time zone.
+
+**A SCREEN SAYS A THING ONCE.** The generic list and drawer drop what would
+repeat: a flag whose words are the row's own status (`flagsBesideStatus` in
+`_ui/badge.tsx`), the grouped-by column on grouped rows, the toolbar on a list
+with no rows, and the status strip that only repeated the status tabs. In a
+drawer a record field with a column's label replaces that column, and a panel
+lists the column keys it already draws in `covers`. Write a screen's
+`noDataLine` as a short first sentence (the heading) and an optional second
+(the explanation); keep subtitles to one line; name buttons as verbs ("Accept",
+"Add another", "Show the whole order"), never past tenses or "Do …".
+
+**Every write goes through five server actions** (`lib/actions/erp.ts`): run
+an action, run a bulk action, run a header tool (a `ToolSpec` with no `href`,
+answered by the module's `tools`), submit a form, load a form (which writes
+nothing and is the one a preview may open). Each re-checks that
 the person holds the SCREEN before the screen module's own handler checks any
 power, because a server action is a URL and a hidden button is not a
 permission. Screen modules live in `lib/erp/screens/`; a module is a loader
@@ -2042,7 +2131,137 @@ through its tools, and each tool calls the SCREEN'S OWN LOADER as the person
 asking, so an answer can never hold a row or column their screen would not.
 
 **The ERP drops the desktop floor** (`AppFrame floor={false}`) — it is used on
-a tablet at the godown gate — and every other app keeps it.
+a tablet at the godown gate — and every other app keeps it. It was lost once
+in a header refactor and every ERP page sat at 1100px; below 1280px the ERP
+header draws Feedback and the account chip as icons so it fits a tablet.
+
+## Can photos and groups
+
+**A CAN IS RECOGNISED BY SIGHT, SO IT CARRIES PHOTOS AND A GROUP.** Raw
+materials of type Can take up to three photos each ("Photos" on the row,
+attachments under `erp_raw_material`), and belong to at most one look-alike
+group (`erp_raw_materials.group_id` → `erp_material_groups`, 0263): one print
+in several sizes — "Mahek Yellow", "Naked". A group has a name anybody holding
+Raw materials can change, up to three photos of its own
+(`erp_material_group`), and its members. Both photo kinds are read under the
+Raw materials screen; taking one off marks it removed, never deletes it
+(`lib/erp/can-photos.ts`). The limits are `MAX_CAN_PHOTOS` and
+`MAX_GROUP_PHOTOS`.
+
+**GROUPS ARE A TAB, AND GROUPING BY NAME IS A SUGGESTION.** Raw materials →
+Can groups (`screens/can-groups.ts`) draws each group as a card with its photo
+(else its first can's). "Group cans by name" reads each ungrouped active can's
+FAMILY — its name with the size and the words every can carries taken out
+(`engines/can-groups.ts`, pure) — joins it to an existing group of that family,
+or makes a new group where two or more share one. It never moves a can
+somebody already grouped (`group_id is null` is in the write too), leaves a
+can whose name is only a size, and lists what it left. A mistake is fixed by
+Edit group (rename, tick the cans — ticking one moves it here), Rename, Delete
+group (its cans stay, not grouped), or a can's own Edit form.
+
+## Inventory Accuracy Control
+
+**NO PURCHASE METHOD BEFORE THE SHELF IS COUNTED.** A raw-material requirement
+raised while `erp.stockCheck.onRequirement` is on opens a BLIND count of its
+item at its godown in the same transaction (`openRequirementCounts`), and the
+flow is Requirement → **Blind count** → Purchase method → Vendor / quotation →
+Approval → PO → Receipt. The setting is COPIED onto the row (`stock_check_required`),
+like the purchase rule, so nothing raised before it was held up. The rules are
+pure in `engines/stock-check.ts`; `stock-check.ts` hands them the ledgers'
+figures; `screens/stock-check.ts` is the Stock accuracy screen (To count · Red
+flags · Adjustments · Missing records · Every count).
+
+**THE COUNT HOLDS ONLY UNTIL IT IS ENTERED, AND THAT IS A REVERSAL (Oct
+2026).** It used to hold the purchase until the count MATCHED or its difference
+was resolved, PO approval was refused over an open discrepancy, and an "urgent
+purchase" approval and a "confirm quantity" step were the ways round. Work
+stopped behind stock paperwork, so Mahek's rule now is: count first, then the
+purchase carries on whatever the count found. `stockGate` blocks in one state,
+`to_count` (no count entered — none, open or cancelled), which `stageOf` hands
+to `requirementStage` as the **Blind count** stage; every buying handler asks
+`heldByStock` again, because a server action is a URL. `flagged` and
+`over_justified` block nothing and carry a FLAG the requirements list draws
+(`stockFlag`, `stockOverJustified`). A requirement reads the counts raised for
+it, any later count of its shelf, and any count of its shelf still UNRESOLVED,
+so an open discrepancy flags every requirement for that shelf. PO approval does
+not read the stock check. The `stock_exception_*` and `qty_confirm_*` columns
+are no longer written; an exception approved under the old rule still unblocks
+its requirement (`gatesFor`).
+
+**A RED FLAG IS TOLD.** With nothing held, the bell is what makes a leak reach
+somebody: `notifyStockFlag`, after `submitCount` commits, tells every active
+`stockControl` holder on the ERP, every ERP administrator and whoever raised
+the requirement — not the counter, who saw it — on a new red flag and again
+when a recount confirms it. It cannot fail the count.
+
+**THE COUNT IS BLIND.** Nothing on To count, its prompt or its drawer shows the
+book; Every count blanks it on an open row. The book is read and SNAPSHOTTED
+(`book_qty`, `pending_in`) inside the submit's transaction and only then shown
+back. It is compared with the RECONCILED book — ledger + goods at the gate,
+under test or unposted for want of a rate — because a drum waiting for its test
+is paperwork in progress, not a discrepancy. Tolerance: the item's
+`count_tolerance_percent`, else `erp.stockCheck.tolerancePercent`, never below
+`toleranceFloor`.
+
+**A RED FLAG IS RECOUNTED BY SOMEBODY ELSE.** A recount is a child count
+(`recount_of_id`); only ROOT counts carry the check's state. `recountOutcome`
+compares it with the book and with the first count carried to today's book:
+book → resolved (`book_confirmed`); first count → `investigating`; neither →
+flagged again. The first counter may not count it (refused on the server).
+
+**CAUSES ARE SUGGESTED, NEVER ENTERED.** `causeCandidates` lists only records
+that exist (`shelfFacts`), marks one likely when its quantity accounts for the
+gap, and names a shortage nothing explains a missing PHYSICAL item. The
+assistant (`erp.ai.stockCheck.*`) only ranks those records; anything it names
+that is not on the list is dropped. "The missing record is entered" re-reads
+the book and refuses unless it now agrees.
+
+**NEVER A SILENT ADJUSTMENT.** `erp_stock_adjustments`: a coded reason and a
+sentence, one pending per count, posted only when somebody OTHER than the
+requester with `stockControl` approves it. A shortage is transfers to Item Lost
+Record, oldest lot first, refused if the lots do not hold it (no negative
+stock); a surplus is an `erp_rm_entries` row with `source_type = 'adjustment'`
+on the newest lot. Lots are locked under BOTH spellings the ERP uses (`rm`,
+`Purchase`) and read again under the locks.
+
+**A QUANTITY THE SHELF DOES NOT NEED IS FLAGGED.** `reorderJustification`:
+up to the maximum level is justified; more than that by
+`erp.stockCheck.unexpectedQtyPercent` flags the requirement "More than the
+shelf needs". Nothing is confirmed and nothing waits.
+
+**CYCLE COUNTS ARE OPENED HOURLY, ONCE A DAY'S WORTH.** `erp-cycle-counts`
+(`planCycleCounts`) ranks shelves by ABC (value moved over 90 days, 80/95),
+how overdue against the class's cycle (halved after a discrepancy), movement
+and past discrepancies, up to `erp.stockCheck.dailyCount` per day. One open
+count per shelf (a partial unique index); `openCount` answers with the open
+one rather than opening a second.
+
+**MISSING RECORDS ARE A LIST, NOT A FIX.** `missingRecords` finds SFG lines
+without an SFG entry, fills without an FG entry, register lots not in stock,
+inward lines two days old with no register row, transfers whose destination
+has no entry, and packing batches whose cans do not match their boxes. Each
+opens its record; nothing is created.
+
+**EACH DEPARTMENT CHECKS ITS OWN STOCK, ANY TIME.** Stock check on the
+factory app (`Me.counts`) lists, at the person's godown, what their
+departments keep (`lib/factory/stock-reach.ts`, pure): Mixing & Blending the
+raw chemicals and SFG; Filling the empty cans and drums, filled cans and
+packed boxes; Packing the empty boxes and stationery; Dispatch filled cans and
+packed boxes; Quality chemicals and SFG. A raw material is placed by its
+item-master type, and a type no department names is the whole floor's.
+Several departments reach the union; the Production Head over the whole floor
+and an administrator reach everything. The office's open counts are offered
+the same way (a count named to one person stays theirs), and the save refuses
+anything else. Before this every department checked everything. The list never carries a quantity; the
+book is read when the figure arrives (`lib/erp/floor-checks.ts`, judged by the
+same `judgeCount` and tolerance as a formal count) and stored beside it in
+`erp_floor_checks`. A mismatch is said on the phone with the book and the
+difference, asks for an optional reason, and waits for the office on the
+dashboard tile and ERP → Stock accuracy → Stock checks until it is reviewed
+or, on a raw material, raised into a formal count. A check moves no stock.
+It needs the network on purpose: a figure queued for hours would be judged
+against a book that has moved. An office count from the phone goes through
+the ERP's own `submitCount`.
 
 **PRODUCTION & DISPATCH ARE TRACEABLE, BOX BY BOX.** SFG lot → refill (FG
 filling) lot → packing batch → BOX → order → customer, and back. The lots
@@ -2062,7 +2281,17 @@ form offers approved lots only and `saveFill` refuses any other
 (`qcRefusal`). Deciding is the `approveSfgQc` power; a reject needs a reason,
 and rejecting an approved lot stops further filling while what was filled
 stays traceable to it. Every lot in the book when this shipped was written
-Approved, or refilling would have stopped on deploy day.
+Approved, or refilling would have stopped on deploy day. In the ERP the
+decision asks, for each ACTIVE value of the Testing list (ERP → Settings →
+Reference lists), the same EVIDENCE Purchase → Lot testing records — a
+photograph per test, the smell, the pH and density readings, a video — from
+one list (`EVIDENCE_FIELDS` in `engines/sfg-tests.ts`, which Lot testing reads
+too). NONE of it is required and no field says "Optional" (`untagged`); what is
+given must make sense (a smell from the list, a density in range). It is
+stored in `erp_sfg_qc.evidence` (`0265`), its files filed under `erp_sfg_qc`
+and read by whoever holds SFG batches, and drawn in the batch's drawer. A
+reject still needs its reason. The factory phone still asks Pass / Fail per
+test (`erp_sfg_qc.tests`, every one Pass to approve) until its APK changes.
 
 **A BOX ID IS WHAT THE QR CARRIES; THE LOT IS LINKED DATA.** `erp_units`, one
 row per box (`BX-YYMMDD-NNNNNN`, series `unit`), minted by `syncPackEntry`
@@ -2119,10 +2348,48 @@ shipped. `erp.dispatch.requireScan` turns the wait off for a day the scanners
 are down; scanning is still checked. Billing still comes BEFORE dispatch
 verification, as it did: the Tally bill number is entered first.
 
-**LABELS ARE DRAWN FROM THE RECORD** (`/erp/print-labels`, not `/erp/labels`,
-which redirects to the Orders tab of that name): box labels by batch, lot or
-selection, and dispatch stickers for an order's scanned boxes, with the QR
-(`qrcode`, server-side SVG). Printing stamps `label_printed_at`.
+**LABELS ARE DRAWN FROM THE RECORD, FOUR OF THEM, AND NEVER TYPED**
+(`/erp/print-labels`, not `/erp/labels`, which redirects to the Orders tab of
+that name). The box label is 50 × 50 mm (`?batch=`, `?lot=`, `?ids=`): the
+box's QR and id, the pack size, cans per box, the product, and the batch, box
+number and packing date; printing stamps `label_printed_at`. The other three
+are 80 × 80 mm: the SFG lot's (`?sfg=`, from SFG batches and Semi-finished
+stock; QR = the lot code), the purchased lot's (`?purchase=`, from the Purchase
+barcode list and the register; QR = the lot number; one a drum unless
+`&copies=` says otherwise), and the dispatch label (`?order=`). `label-data.ts`
+reads each through the function its own list reads — `sfgLots`,
+`purchaseFigures`, `orderLines` — so a drum and the screen it was printed from
+cannot disagree.
+
+**A DISPATCH LABEL IS PER PIECE, NOT PER SCANNED BOX, and that is a
+reversal.** It was a sticker for each box already scanned onto the order,
+carrying the box's QR. It is now one label for every `labelCount` of every line
+not cancelled — a box on a boxed line, a can otherwise — printable before
+anything is scanned, with no QR (the box's own label is what the desk scans),
+and each carries the LOT SIZE: every label on the order added up (`lotSize`),
+so the pieces are counted on and off the lorry against one figure.
+
+**A VALUE THAT CAN BE LONG IS SIZED TO FIT, in `engines/labels.ts`.** A label
+is cut to size and nobody scrolls it, so `fitPt` steps a name down through set
+sizes against Helvetica Bold's own widths, a long product name on a box label
+takes two lines (`boxNameFit`), and the last line of a box label shortens to
+"Box 118/120" (`boxFoot`). The CSS ellipsis is the net under that, not the
+plan. `label-css.ts` is ONE stylesheet as a string, in millimetres and points.
+
+**THE LABEL PRINTER IS SENT A PICTURE OF THE LABEL ON THE PAGE.** The godown's
+printers speak TSPL. The printer team's samples set each line in the printer's
+own fonts, which ties a layout to one model, one firmware and one installed
+font file (`ROMAN.TTF`). `printer.tsx` instead rasterises each label's own
+markup under `LABEL_CSS` at `erp.labels.dotsPerMm` and `engines/tspl.ts` packs
+it as one `BITMAP` — so "Send to printer" (WebUSB, Chrome and Edge), "Save
+print file" (`.prn`) and the browser's print dialog cannot print three
+different labels. In TSPL a set bit is WHITE; `packBitmap` is the only place
+that is written. Each QR is redrawn from its modules on whole dots (`qrGrid`).
+The same label several times over is one picture and a count (`printRuns`,
+keyed on `data-key`). `erp.labels.gapMm` and `erp.labels.direction` are the
+other two printer settings. A Windows printer driver holds the USB port, so
+there WebUSB is refused and the screen says to use Print; the print dialog is
+never removed.
 
 **TRACE TAKES ANYTHING ON A LABEL** (`/erp/trace?q=`): a box id, an SFG,
 refill or raw-material lot, a packing batch, `ORDER-n` or a Tally bill — back
@@ -2130,6 +2397,74 @@ to the supplier's drum and QC, forward to every refill lot, batch, box,
 customer and what is still on a shelf. With nothing searched it is the
 traceability dashboard: today's production and dispatch, and every exception.
 A link that is missing is said to be missing, never guessed.
+
+## Empty drums and scrap
+
+**A DRUM IS REGISTERED WHEN IT IS EMPTY, OFF ITS EXISTING GRN LABEL.** The GRN
+is not redesigned and never edited: production scans the drum's lot label
+(the purchase register's `lot_no`, or its id) once the material is used up,
+weighs the empty drum, and `recordEmptyDrum` (`lib/erp/drums.ts`) writes an
+`erp_empty_drums` row that COPIES the GRN, supplier, material, lot and the
+declared empty weight (`erp_inward.empty_drum_weight`). From then on the
+record carries the link, so a label that tears or falls off in the yard costs
+nothing. The rules are pure in `engines/drums.ts`; the screens are
+`screens/scrap.ts`; the phone's Empty drum entry is two factory ops,
+`drumLookup` and `emptyDrum`, and the `drum` route in both factory apps. Who
+on the floor sees it is `erp.drums.factoryDepartments` plus every supervisor.
+
+**OWNERSHIP IS READ, NEVER GUESSED.** `erp_inward.drum_ownership` (the GRN
+line's "Drums belong to", copied from the supplier at save) wins over
+`erp_suppliers.drum_ownership` ("Their drums are"); null on both is a drum in
+`review`, which the Production Head classifies with a sentence. A lot whose
+owner a person decided under the first version of this module
+(`erp_purchases.drum_ownership`, carried by `0257` with every drum, sale and
+receipt 0256 recorded) wins over both. Changing an
+already-classified drum's owner is an `erp_drum_adjustments` row of kind
+`ownership`, approved by somebody else holding `scrapApprove`.
+
+**ONE RECORD PER DRUM OF A LOT.** A label names a lot and a lot brings
+`drums` drums, so each emptied drum takes the next `seq` of its lot under an
+advisory lock, held at the database by a partial unique index on
+`(purchase_id, seq)`; a fifth drum off a four-drum lot is refused with the four
+already recorded. A second drum of the same lot within
+`erp.drums.sameLotMinutes` is saved only after the person says it is a
+different drum. A GRN with no drum count cannot be checked, so its drums go to
+review. The phone's `DRM-…` key is `client_key`: a resend answers from the
+first save. The weight must sit between `erp.drums.minEmptyKg` and
+`maxEmptyKg` unless a `scrapApprove` holder writes why it is right.
+
+**MAHEK'S DRUMS AND A SUPPLIER'S NEVER MIX.** Status is the stock: `available`
+is Mahek's scrap, `returnable` a supplier's drum waiting to go back. A scrap
+sale draws only `available` drums and a returnable outward only that
+supplier's `returnable` ones, both BY QUANTITY and OLDEST FIRST (`fifoPick`,
+over a pool selected `for update`). The allocation is stored on the drums
+(`scrap_sale_id`, `return_id`) for traceability; it does not claim anybody
+checked those physical drums. A returnable drum named in a sale is refused
+with "This drum is vendor-returnable. Please use Returnable Drum Outward."
+whatever button sent it. Nothing holds a balance: every stock figure is a
+count of records, and every change is a row in `erp_drum_events`, which a
+trigger makes append-only.
+
+**A SCRAP SALE IS A RECEIVABLE, AND ONLY THE ACCOUNTANT CLEARS IT.** What is
+owed is the sale less its live `erp_scrap_allocations`, read and never stored.
+Money arrives as an `erp_cash_receipts` row on Petty Cash/Bank → Receipts
+(`scrapAccounts`) and is matched to one or more sales; `allocateReceipt` locks
+both rows and refuses more than the receipt has left or the sale owes. A wrong
+match is voided with a reason, never deleted. Production cannot mark a sale
+paid. `ref_kind = 'none'` is a sale with no external invoice: it carries NO
+reference — a check constraint refuses one — and is traced by its `sale_no`.
+
+**NON-DRUM SCRAP IS A BATCH, NOT A RECORD PER BAG.** Plastic, cardboard and
+the rest of the `scrapCategory` reference list are `erp_scrap_entries` by
+category, unit and godown, and a sale is refused above recorded less sold.
+
+**CORRECTIONS ARE SOMEBODY ELSE'S.** Opening stock (drums here before
+MahekOne, with no GRN — `source = 'opening'`, the one kind of drum the link
+check allows), write-offs and owner changes are asked for by one person and
+approved by another holding `scrapApprove`, an ERP administrator excepted.
+Weight corrections, cancelled entries, cancelled sales (only with nothing
+matched) and cancelled outwards need `scrapApprove` and a reason, and keep the
+original in the drum's history.
 
 ## Layout
 
@@ -2141,6 +2476,12 @@ src/
     apps/                  the launcher, 1–9 opens an app — `field` is never
                            one of the 1–9: it is `mobileOnly` in lib/apps.ts,
                            MBOS's own handset, and has no route here at all
+    factory/               the Factory app — the floor's PHONE app: one client
+                           screen (_ui/factory-app.tsx, the design ported screen
+                           for screen) and its label page; public/factory-sw.js
+                           is what lets it open with no network
+    api/factory/rpc/       the factory phone's one door, by op name — stable
+                           across deploys, unlike a server action
     accounts/              the Accounts app — today, order approvals, payments
                            to confirm, credit notes, record a payment,
                            outstanding, bills, customer account, on account,
@@ -2160,6 +2501,9 @@ src/
       complaints/  targets/  eod/  whatsapp/
       help/  settings/     SOPs and the manager configuration screen
     hrms/employees/        HRMS — the employee master, one module
+    docs/                  the Documentation app — every app's pages, three tabs
+                           each; content is MDX in src/docs/, see "The
+                           Documentation app" below
     hire/                  Hire — role blueprints, the pipeline, AI-assisted
                            interviews with evidence, decisions, onboarding,
                            provisioning. Rules in "## Hire" below; engines in
@@ -3430,6 +3774,17 @@ used only for a day with neither: a position is evidence the phone was on, and
 a forgotten punch-out left the tracker recording through the evening at home,
 so the day used to close at 23:58.
 
+**AND NOTHING CLOSES A DAY ANY MORE, which reverses the paragraph above
+(October 2026).** Field salesmen who start at ten at night to travel between
+cities were punched out by the nightly `markMissedCheckouts` while still on
+the road, so it is gone: only a punch-out ends a day. A day nobody punched out
+of stays open and carries no verdict until a regularisation closes it. The
+handset's start-of-day tidy-up (`state/boot.tsx`) closes nothing on or after
+the stretch still running (`runningSince`), and the positions route accepts
+an open day's trail for `mbos.location.serviceMaxDayHours` from the start of
+that stretch instead of stopping at midnight, the same ceiling the handset's
+recorder keeps.
+
 **A regularisation request is something somebody asked for.** The handset sends
 `regularisationRequested: true` on every punch-in outside the radius, reason or
 none; with a company-wide base location that filed a "request" for every
@@ -4188,6 +4543,20 @@ never will be, and the tap would land on a screen that does not contain it. A
 null falls through to `/notifications`, which carries the reason in the body —
 the honest default `notify.ts` names, and better than a deep link that is
 confidently pointed at nothing.
+
+**EACH APP'S BELL IS THAT APP'S, AND THE APP IS READ OFF THE LINK.** The bell
+used to be one list per person in every header, so the ERP's badge on a godown
+tablet counted CRM leads. A notification belongs to the app its `href` opens —
+`notificationAppOf` in `lib/notification-apps.ts`, pure, over the same
+`APP_ROUTES` (`lib/app-routes.ts`) the proxy names a request's app with — and
+`notificationAppSql` is the same rule as SQL for the badge, the list and "Mark
+all read"; `notification-apps.db.test.ts` fails if the two disagree. It is
+DERIVED, never stored: a dozen writers insert their own rows, and a column each
+had to fill would be empty on the one that forgot. No link, or a link into no
+app, is GENERAL and shows in every bell; a handset-only row is `field`. An
+app's bell counts and pops its own and the general ones; "All apps" is one tab
+away and "Unread in other apps" says what waits where. Give a new notification
+the right `href` and it lands in the right bell.
 
 **A NOTIFICATION CARRIES TWO ADDRESSES, AND BOTH ARE STORED.** `href` is the
 web route and `mbos_href` the handset's. The second used to ride on the push
@@ -4990,6 +5359,35 @@ workbook. `?mode=field-activity-project` writes matched rows onto
 `timeline_events`, which is how this reaches a customer's shared history and
 a salesman's phone.
 
+**AND MBOS IS NOW THE RECORD; THE SHEET IS ITS PAST.** `fieldActivity.cutoverDate`
+(10 Oct 2026) is the first day only MBOS counts. The sync still runs, so an
+edit to an old row lands, but a row dated on or after the cutover is read,
+counted in the run's detail and NOT stored (it is still marked seen, so a
+reconcile never takes "not stored" for "gone"), and the timeline projection
+never projects one already stored. Activity history (`activityHistory` in
+`sales-service.ts`) is one list of every MBOS visit plus the sheet's rows
+before the cutover, each marked MBOS or Old app; a past day can carry both
+because some men typed a visit into each app, and nothing merges them. Its
+salesman filter is `u:<user id>` (his MBOS visits and the sheet rows matched
+to him) or `n:<name>` (a name only the sheet carries). `visitSelect()` is the
+one select of a `VisitRow`, shared with the Visit log.
+
+**AN OLD-APP SHOP NAME IS LINKED ONLY WHERE NOTHING COULD BE WRONG.** The
+importer used to auto-link any name scoring 0.6 trigram similarity, which put
+"Shree Ganesh Paints" visits on "Shree Ganesh Paint House" and an Ajmer shop's
+on its Mumbai namesake — read on those timelines as fact. `decideCustomerMatch`
+now links a name only when exactly ONE account carries it once folded
+(`foldShopName`: case, spacing and punctuation only), or when a person decided
+it; several exact namesakes and every close name are "Needs review" with the
+shortlist. A person decides once per NAME on the row's detail
+(`lib/actions/field-activity.ts`, a Sales manager holding Activity history),
+stored in `field_activity_customer_decisions`, and every row typed under that
+name moves with it; "not on MahekOne" is an answer too. The nightly
+`field-activity-shops` pass (and `npm run jobs -- field-activity-rematch`)
+re-judges every stored row and takes back the timeline entries wrong links
+wrote. The pin import (`customer-location-import-service.ts`) uses the same
+matcher, `shop-name-match-service.ts`.
+
 **A flag that is silently discarded is worse than one that is rejected.**
 `npm run jobs -- project-sheet --bills` used to run the projection with no
 options whatsoever: the argument was read into argv, dropped before `runJob`,
@@ -5155,6 +5553,25 @@ default, the server filters to it, and the table pages within it. Paging is
 over what is filtered IN, so the totals row, the aging strip and the export all
 describe the whole year while only the table is cut into pages — a page that
 changed the totals under it would show a different figure on every click.
+
+**A YEAR IS EITHER WAY OF COUNTING, AND THE CURRENT FINANCIAL YEAR IS THE
+DEFAULT.** `lib/year-period.ts` is the one rule: "26-27" is a financial year
+(1 April – 31 March, the shape `?fy=` links already carried) and "2026" a
+calendar year, so one value carries both and an old link keeps opening the
+year it named. `components/ui/year-filter.tsx` is the one picker — the kind,
+then the year, with the dates it covers beside it — on Accounts → Bills, CRM →
+Sales bills, Accounts → Customer account and the CRM record's Ledger tab.
+Outstanding is deliberately NOT year-cut (the oldest debt is usually last
+year's), and holidays and leave count in calendar years by nature.
+
+**A CUSTOMER'S STATEMENT IS ONE COMPONENT IN TWO APPS.**
+`components/ledger/customer-statement.tsx` draws the period bar, the opening
+balance + billed − received = closing balance sum and the statement table;
+Accounts → Customer account renders it with its export, By bill view and
+Reverse, and the CRM customer record's Ledger tab renders it compact and
+read-only through `/api/customer-statement`. Both read
+`customerStatement` (`services/customer-statement-service.ts`), so a
+telecaller and the ledger desk quote one customer one balance.
 
 **"Who owes us" is a different question to "what did we bill", and it has its
 own screen.** The ledger is a list of bills; Outstanding is a list of CUSTOMERS,
@@ -5651,7 +6068,10 @@ and to the droplet as the one stable `/downloads/mbos.apk`. It is
 `workflow_dispatch` — `gh workflow run "MBOS APK" --ref main -f
 api_base=https://one.mahekindia.com -f publish=true` — because sideloading has
 no staged rollout and no rollback, so a release is a decision somebody makes.
-`api_base` is baked into the bundle and cannot be changed afterwards.
+`api_base` is baked into the bundle and cannot be changed afterwards. It
+builds TWO APKs — `mbos.apk` (64-bit ARM) and `mbos-32bit.apk` (32-bit, for
+the "Android Go" phones that refused the first with "App not installed") — and
+`engines/app-update.ts` hands each phone the one its Android runs.
 
 A release built by hand and copied up skips the signature check, the versioned
 archive and any record of what shipped, and puts the app back on whichever
@@ -6534,6 +6954,157 @@ on the write path) so `mbos_expense_days.policy_id` keeps its foreign key; the
 old tables, actions and simulator are left in place and read by no screen. The
 manager's Expenses screen reads "Asked for / Policy allows / Status", one
 Review button a day.
+
+**AND IT IS EDITABLE AGAIN, AS NAMED POLICIES — a second reversal (Oct 2026).**
+The paragraph above is history: the figures in `lib/expense-policy-standard.ts`
+are now only the standard policy's SHIPPED DEFAULTS. `expense_policy_sets`
+(0241) holds named policies — the standard one (`xpol_standard`, seeded from
+the code by `ensureStandardSet` the first time it is read, then the row is the
+policy) plus any number of others — each a whole `PolicyRule[]` in one jsonb
+column, saved whole with the revision it was edited from (a stale save is
+refused, never merged) and snapshotted in `expense_policy_set_revisions`, so
+History can restore any version as a new one. **No row in
+`expense_policy_assignments` means standard**, so adding a policy moves nobody;
+a switched-off policy hands its people back to standard without forgetting
+them; one that has priced a day cannot be deleted, only switched off; the
+standard one can be neither. `policyForDate(day, userId)` is the one lookup —
+the claim path, the handset's pull and the simulator all pass the person — and
+named policies carry no dates, so an edit applies from the next day worked out
+and the next handset sync (today's and yesterday's allowances are re-worked at
+once for whoever it moves). The editor (Admin Console → Expense policy → a
+policy) is drawn from the same `RULE_KINDS` specs, a dropdown wherever the
+answer is a list; `checkRules` in `lib/expense-policy-sets.ts` is run by the
+screen on every keystroke and by `savePolicySet` before it writes, and refuses
+two rules answering one question for the same grade and city class. Preview
+and "Try a day" run over the UNSAVED rules with the real engine. Every write is
+`expense.policy.write`. A named policy's id doubles as an archived anchor row in
+`expense_policies`, written when it is created, so a day stamped with it keeps
+its foreign key.
+
+**THE STANDARD POLICY IS THE ISSUED DOCUMENT, and that dropped two things the
+code used to pay (Oct 2026).** Mahek's written Expense Policy is the standard
+policy's shipped figures, rule for rule (`STANDARD_DEFAULTS_VERSION` 2): a meal
+needs him to have LEFT between 11 PM and 8 AM (breakfast ₹100, lunch ₹150), and
+dinner (₹200) also needs him back after 10:30 PM — leaving after 8 AM earns
+nothing; a hotel is a FIXED ₹450 a night, paid whatever the bill (`flatPerNight`,
+and `decideExpense` approves that figure even above what he logged); a day room
+nothing; the ₹250 dormitory is paid beside the day's meals; local travel at
+actuals with no limit; a bill or a recorded trip with every claim
+(`travelLogCounts`). Own vehicles are NOT in the document, so they are
+`zero_rated` — the ₹3.50/km bike allowance is gone from the standard policy —
+and a food bill pays nothing, because meals are the allowance. Each of these is
+a field on a rule (`leftFrom/leftTo`, `returnedAfter/returnedBy`,
+`awayFromHometownOnly`, `flatPerNight`, `travelLogCounts`), so any of it can be
+undone or varied per policy from the editor. An untouched standard row
+(`updated_by_id` null) moves onto a newer edition on its next read, with a
+revision saying so; an edited one does not.
+
+**A POLICY CARRIES ITS OWN GUIDELINES.** `expense_policy_sets.guidelines` is the
+lines no rule can say — bills with every claim, advances by GPay, no calls after
+hours — edited on the Rules tab, shown in Preview, on the Sales page and, first,
+in the handset's policy sentences (no APK needed). **"Away from his hometown" is
+decided by the office**: the handset always sends true, so `refreshDayMoney`
+derives `departed_from_hometown` from `expense_hometowns` (set per salesman on
+"Who is on which") against the towns of the shops he checked in at, the city he
+named, and an overnight (`lib/expense-hometown.ts`, pure). With no hometown set
+the recorded answer stands. The tour advance the document describes (GPay 1–2
+days before a tour) is NOT built — there is no advance ledger yet.
+
+**A HOMETOWN IS PICKED FROM THE REVIEWED TREE, AND IT LIVES BESIDE "WORKS".**
+Typed, a hometown was a string the pay rule compared against shop towns read
+through `placeNameSql`, so "Nagpur " or "nagpur city" matched nothing and made
+every day an away day. It is now a city node of `places` (state › district ›
+city), stored as `expense_hometowns.place_id` with the name and state beside it
+(`0246`; a typed row that names exactly one city was adopted, the rest show as
+"Typed"). It is set on the Sales Dashboard's Salesmen screen (`/sales/people`,
+a Hometowns column, a "Hometown not set" filter and a banner counting the
+backlog) and on each salesman's page, through `setSalesmanHometowns`
+(`sales.people`, his manager's team), and on the Admin Console's "Who is on
+which" through `setExpenseHometowns` (`expense.policy.write`). Both doors are
+`HometownPicker` and both write through `writeHometowns` in
+`services/hometown-service.ts`, which refuses anything that is not a city.
+
+**A SALESMAN MAY HAVE SEVERAL HOMETOWNS, and a day in any of them is a day at
+home.** He lives in one town and his family in another, or two towns run into
+each other, and one hometown made every day in the second an away day.
+`expense_hometowns` is one row per town, keyed on (user, town) since `0252`;
+`awayFromHometown` takes the list and calls a day away only where it reached a
+town that is none of them. The picker ticks towns across states and saves the
+WHOLE set, so unticking a town takes it off and an empty set clears them. A
+town typed before the picker stays only while the picker is told to keep it
+(`keepTyped`), and that is never a way to type a new one in. Two picked towns
+of one name are one hometown, because the rule compares names.
+
+**A LOGGED BILL IS WORTH ITS OWN FIGURE.** `DayComputation.lineEligiblePaise`
+is per line, and `writeLineFigures` reads it; it used to share the day's
+eligible total in proportion to what was claimed, which with a ₹0 food bill
+beside a bus fare paid the food bill part of the fare.
+**THERE IS NO CLOSING A DAY, and that is a REVERSAL (Oct 2026).** A day used to
+reach a manager only when the salesman pressed Close the day → Send day on his
+phone, which priced it, LOCKED it and raised one approval for the whole day. In
+ten days on prod one day was sent; a fortnight of travel and claims sat on the
+server under "Not sent yet" and the field reported that expenses were broken.
+Mahek's answer splits the money in two, and `lib/expense-money-sql.ts` is the
+one statement of it:
+
+- **An ALLOWANCE is automatic.** The meal allowance from his punch-in and
+  punch-out, and the kilometre allowance on a trip by his own bike or car, are
+  lines the office writes (`source_type` `expense_day` / `travel_leg`). They
+  need nobody's approval and count as paid the moment they exist.
+  `refreshDayMoney` writes them, and runs after every sync batch that touches a
+  punch, a trip, a day or a logged expense, hourly over the last two days (the
+  trail arrives late) and nightly back as far as a claim may still be logged.
+  A trip that earns nothing — a walk, a company vehicle, no distance yet — gets
+  NO line: a ₹0 allowance reads as money withheld, so one is never written and
+  one written earlier is deleted when the trip stops earning.
+- **An EXPENSE is what he logs** — a hotel, a food bill, a bus, train or auto
+  fare. Each is its own `expense_claim` approval from the moment it lands,
+  decided one at a time on `/sales/expenses` through `decideExpense`, which
+  wraps `decideApproval` and adds only what is about money: a part approval
+  must be above ₹0 and below what he logged, and an expense whose approval has
+  not arrived yet gets one. A fare is NOT an allowance — the trip only earns
+  kilometres on his own vehicle, so a fare nobody logs is a fare nobody pays,
+  and "Bus or train" is a claim kind for exactly that.
+
+Nothing locks. `handleTravelLeg` and `handleExpenseDay` no longer refuse a
+"submitted" day, and an older phone's `expense_day_submit` is ACCEPTED as a
+refresh so its outbox drains; delete that case once no build older than the
+release carrying this is reporting. The handset learns all of it from
+`expenseBook`, sent WHOLE every pull (`expenseBookFor`), because a decision on
+an approval and an allowance re-worked from the trail move no row a cursor
+could follow; `applyExpenseBook` upserts and drops only ALLOWANCES the office no
+longer names — an expense he logged is never deleted on his phone. Every reader
+that adds money up — the salary screen's reimbursement, the expense ROI report,
+the salesman's profile — reads `paidPaiseSql` / `expenseStateSql`, never a day
+approval. The per-day approvals already decided stay as the record they are;
+`0240` deleted only the pending ones and the ₹0 lines the old close-the-day
+wrote.
+
+**THE EXPENSE LEDGER IS DERIVED, AND A REIMBURSEMENT IS PAID AGAINST THE
+BALANCE.** Expenses → Ledger (`/sales/expenses/ledger`, and one salesman's
+statement under `/[userId]`) answers what he claimed, what the policy allows
+and why (`mbos_expense_exceptions` per line), what was approved, cut or
+refused with the remark, what is waiting, what his work log earned, what has
+been paid and what is owed now. `mbos_expense_payouts` (0245) is the only new
+record: money handed over, never pinned to an expense — one transfer covers a
+week — so `lib/engines/expense-ledger.ts` (pure) allocates it to approved lines
+OLDEST FIRST on every read for the per-line Paid / Part paid / Not paid. "Owed
+now" is all-time (a payment in October settles a September fare); a month only
+narrows the rows drawn. A wrong payment is VOIDED with a reason, never deleted.
+Recording one is a sales manager's (`sales.expenses`), audited, and the
+salesman is told on his phone. Nothing here touches the policy.
+
+**THE OFFICE CAN ADD AN EXPENSE FOR A SALESMAN, AND IT IS HIS EXPENSE.**
+"+ Add expense" on every Expenses screen (`add-expense.tsx`, `addExpenseFor`)
+writes exactly what the handset's claim sheet writes — an `mbos_expenses` line
+of `source_type = 'manual'` under his day, priced by `refreshDayMoney`, with an
+`expense_claim` approval raised in HIS name — so it is decided, paid and
+reported like one he logged, and `expenseBookFor` carries it to his phone on
+the next pull. `created_by_id` is who entered it, and the screens say
+"Entered by". Bills go up through `/api/sales/expense-file` (a route, past the
+action body cap) and are filed under it. "Add and approve" goes through
+`decideExpense` and is offered only to whoever may decide expenses. It is
+gated like a payout (`sales.expenses`, manager, own team) and audited.
 
 **TRAVEL IS ASKED TWICE A DAY, AND NEVER AT A SHOP — a reversal (Sep 2026).**
 The paragraphs below describe how a visit used to ask how he was travelling,
@@ -7833,6 +8404,141 @@ moves them; a reviewed or hand-picked place is never touched. The sheet's own
 read that shows a town goes through `placeNameSql`, the tree's name falling
 back to the typed one.
 
+## Material returns
+
+**FINANCIAL DOCUMENTS ADJUST THE LEDGER; PHYSICAL TRANSACTIONS ADJUST STOCK.**
+The ERP's Material returns group is two screens: Vendor returns (Purchase
+returns · Debit notes · Return outward) and Customer returns (Returns ·
+Quarantine & QC · Rework · Waste disposal). Rules are pure in
+`engines/returns.ts`; reads in `lib/erp/returns.ts`; screens in
+`screens/returns.ts`. A debit note or a credit note never moves stock.
+
+**A RETURN NAMES ITS ORIGINAL.** A purchase return is raised against a GRN
+lot (`erp_purchases`) and refused past what the lot received less earlier
+returns, or past what is still on a shelf. A customer return is raised against
+a dispatched `erp_batch_codes` row (the line and the lot that left) and
+refused past what was sent less what is already back. Both are approved by
+somebody other than their raiser (`returnApprove`), and above
+`erp.returns.ownerApprovalPaise` an ERP administrator approves second
+(`approvalRefusal`).
+
+**VENDOR: APPROVAL ISSUES THE DEBIT NOTE, THE OUTWARD MOVES THE STOCK.** The
+last approval writes `erp_debit_notes` at the lot's CURRENT rate and GST, in
+the same transaction. `syncPurchasePayouts` nets issued debit notes off the
+PR's unpaid payout. A goods return outward is prepared at a godown and changes
+nothing until it is confirmed; `rmLots` then counts a CONFIRMED
+`erp_return_outwards` row as an outflow of its lot, after locking the lot under
+both spellings (`rm`, `Purchase`) and refusing a shortfall. A confirmed outward
+is reversed (marked cancelled, stock back), never deleted.
+
+**CUSTOMER: RECEIVED INTO QUARANTINE, OUT OF SALEABLE STOCK.** Quarantine is a
+state on the return, not a ledger: the returned boxes/cans are `returned` in
+`erp_units`, which dispatch already refuses. The credit note is the Accounts
+one: the approval raises a complaint (`createComplaint`, `requestCn`,
+`cn_amount` the return's value) and Accounts issue it with `issueCreditNote`.
+QC (`returnQc`) splits what is left in quarantine across decisions
+(`erp_return_dispositions`), each posting into an EXISTING ledger: reuse →
+`erp_fg_entries`/`erp_pack_entries` on the SAME lot (`source_type 'return'`);
+rework → `erp_rework_orders`, whose completion posts `erp_sfg_entries`
+(`source_type 'rework'`) on lot `RW<n>` with an `erp_sfg_qc` Pending row;
+chemical scrap → `erp_scrap_entries` under `Chemical Scrap` (Kg, sellable);
+waste → `erp_waste_disposals` (date, method, responsible person, agency, cost,
+certificate). A decision is reversed only while what it posted is still there.
+`entryOrphans` treats a return/rework entry without its live parent as a
+missing record.
+
+**THE BATCH TRACE SHOWS RETURNS.** `traceCode` appends a "Material returns"
+stage from `returnRowsForTrace`: a raw-material lot's purchase returns, an FG
+or packing lot's (or an order's) customer returns, and an `RW` lot's source.
+
+## Logistics — from the factory gate to the party's door
+
+**THE ERP'S TRANSPORT SCREEN IS THE LOGISTICS DESK** (`/erp/transport`, key and
+slug kept so grants and bookmarks hold). One tab per step: **To transporter**
+(dispatched bills on their way to the transporter's godown at Bhiwandi — due
+today / tomorrow / a day, box count, "Reached transporter"), **LR desk** (LRs
+the dispatch team uploaded, attached to their bills), **On the road** (one card
+per LR: ring, update, report a problem, deliver), **Delivered**, **Customer
+messages** and **Transporters**; **Today** is the pipeline and what needs
+attention. Rules are pure in `engines/logistics.ts`; reads and writes in
+`lib/erp/logistics.ts`; actions in `lib/actions/erp-logistics.ts`.
+
+**THE PHASE IS DERIVED, NEVER STORED** — the stage plus whether there is an LR
+(`phaseOf`). "At transport" is the one new stage (0250 widened the check). A
+bill moved past Dispatched with no LR is still waiting for its LR.
+
+**COLLECTING AN LR AND ATTACHING IT ARE TWO JOBS.** The dispatch team uploads
+(`erp_lrs`) through the Upload LRs MODAL on the Logistics screen and the
+Dispatch desk (`parts/upload-lrs-button.tsx`; the old `/erp/transport/upload`
+only redirects to a desk with it open); logistics attaches on the LR desk.
+**A photo is READ as it uploads** (`lr-upload-read.ts`, OpenAI through
+`erp.ai.photos` and its cap): the model is given every transporter's
+`consignment_label` and its last few LR numbers, because a receipt carries half
+a dozen numbers and the transporter's own style is what picks the right one;
+`engines/lr-read.ts` matches the transporter to the desk's spelling, marks a
+number not shaped like its earlier ones to check, and drops an impossible date.
+It fills only fields nobody typed; Upload is still the save, and settles the
+reading accepted or edited.
+**No upload field is required** (`lrRowHasAnything`): a photo alone is an LR,
+so `lr_no` is nullable (`0251`), and the number is demanded at ATTACH instead,
+because the customer's message quotes it — the desk marks such an LR "Number
+not typed" and Edit adds it. An upload is never
+deleted — voided with a reason. One LR is one delivery party (`attachRefusal`).
+Once attached, the LR is the unit on the road: every update moves every bill
+under it. Every step writes `erp_transport_events`, append-only.
+
+**A TRANSPORTER'S GODOWNS ARE ROWS, AN AREA AND A GST NUMBER EACH, WITH THEIR
+OWN PEOPLE — and that is a reversal.** `erp_transporter_godowns` is a godown: a
+name, ONE AREA of the reviewed place tree picked State → District → City → Area,
+every rung required, each list narrowed by the one above; its own GST number
+(`gstin`, `0262`), OPTIONAL — GST is mandatory nowhere on a transporter; its PIN (`lat`/`lng`, both or neither); and its people. It
+was picked at a district only, and `0259` had moved every city and area up to
+it — Mahek asked for all four. The tree is built from where CUSTOMERS are, so
+it is missing places a godown can be in (211 of its 581 cities carry no area):
+a district, city or area that is not listed is TYPED under the rung above and
+created on save by `placeFor` in `logistics.ts`, matched first on `placeKey`
+under the same parent so it is never made twice — a typed name that is already
+listed IS the listed one (`resolvePick`). A state is never typed: the picker
+offers the country's (`INDIA_STATES`). GST is registered per state, so a
+godown's number, where one is given, must check out AND its first two digits
+must name the godown's state (`godownGstProblem`); the transporter's own `gstin` is now the
+optional head-office number. The transporter form lists the godowns and each
+opens in its own modal (`GodownDialog`), whose Done runs the same
+`cleanGodowns` as the save. A godown saved before this reads at its district
+and is refused on the next save until its city and area are picked —
+editing a transporter is when the gap is filled, never silently. The places a
+godown adds are ordinary `places` rows with `shops = 0`, so the customer place
+filters may list them. `lib/erp/transporter-godowns.ts` is the rule, pure. The pin is
+picked on the map, typed, or read off the device standing in it; the ERP's pin
+fields fetch the tile key from `/api/erp/map-key` (anybody holding the ERP; the
+live key in the pool), and "Find in map" writes a click or a drag into the
+field at once. There is no address on the form; a godown that carried one
+keeps it unseen. `erp_transporter_contacts` is a person there, with up to three
+numbers (a check constraint holds the three); the form shows a name and one
+number, and more numbers saved earlier are kept. `0255` carried each earlier
+picked place in as a godown and the old contact columns in as its first person.
+The godowns are saved WHOLE, ids
+kept only where they were this transporter's own. `erp_transporters.phone`,
+`alt_phone` and `contact_person` are MIRRORS of the first person with a
+number (`mirrorsFrom`), written on save, because the call buttons on bills and
+LRs read the row.
+
+**THE CUSTOMER IS TOLD AT EVERY STEP THAT MOVES, from facts only.** LR attached,
+stage or expected day moved, a problem, delivered — `customerMessage` leaves out
+anything nobody entered. A call that moved nothing tells nobody. Messages live
+in `erp_transport_messages`, NOT `wa_messages`: a confirmed message there is
+contact and quiets the Call Log, and a lorry update must not. They go through
+Wati only with the founder's switch on and `erp.logistics.watiTemplate` naming
+an approved template that asks for nothing logistics cannot fill; otherwise
+they wait as "to send" with the reason, sent by hand from WhatsApp and marked.
+DND, do-not-contact, no mobile and a staff member's number are recorded as
+skipped with why. Wati's ticks reach them through `applyWatiEvent` (`etmsg_`).
+
+**THE CUSTOMER'S LINK NEEDS NO SIGN-IN AND SHOWS NOTHING INTERNAL.**
+`/track/<token>` (20 random characters per bill) shows the bill, the LR and
+the shared steps — never call notes, problem notes, prices or staff names,
+because a WhatsApp link gets forwarded.
+
 ## Hire — hiring and onboarding
 
 `/hire`, its own app. The PRD and functional spec are the client's; the
@@ -7942,6 +8648,431 @@ seeds the blueprints the first time Hire opens on an empty database. Everybody
 else gets Hire, and their role in it, on the Access screen.
 `npm run hire:seed -- --demo --reset`
 wipes Hire and loads the demo pipeline, development only.
+
+## The factory floor app
+
+**THE FLOOR WORKS FROM A PHONE, AND THE ERP STAYS THE STOCK SYSTEM.** `/factory`
+is the mixing, filling, packing and dispatch teams' app — scan a label, see the
+picture, enter the count, send — and the Production Head's live view of the
+floor. It writes no stock table. A mixing batch is `sfgBatches.forms.new`, a
+fill is `fgFill.forms.new`, packing is one `packBatches.forms.new` per pallet
+per batch, all called with an `ErpContext` built for the person (`erpCtxFor`),
+so the lot locks, the QC gate, the can and box checks and the complete-batch
+rule apply to the floor exactly as they do to the office, and the worker is the
+author of every document. What the factory tables add is what the ERP never
+had: who was GIVEN the work (`factory_tasks`), who DID it by role
+(`factory_task_members` — owner, operator, helpers, verifier, kept apart from
+whoever pressed Send), why a machine stopped (`factory_downtime`), and what the
+Production Head still has to look at (`factory_reviews`). Team output is
+counted once, on the task, never once per person.
+
+**ONE KEY, ONE POSTING.** The phone mints `MOB-<task>-<random>` when a job is
+started and every attempt carries it; `factory_submissions` is the ledger. The
+first attempt claims the row, later ones are answered from it, and `progress`
+records each ERP document already written, so a packing count spanning two
+batches RESUMES rather than repeats. The ERP has no idempotency of its own —
+this is it.
+
+**THE PHONE KEEPS WORK FOR 48 HOURS, AND OPENS WITH NO NETWORK.** A service
+worker (`public/factory-sw.js`, scoped to `/factory`) keeps the page and its
+hashed scripts; the floor data and the queue live in the page's own storage,
+and a photo taken offline in IndexedDB. A job finished offline is queued with
+when it was finished, sent by itself when the network returns (on reconnect,
+on every return to the app, and every 30 seconds), and the ERP document is
+dated the day the work was DONE, not the day it arrived. Past `OFFLINE_HOURS`
+a job is still taken — it goes to the Production Head first, because stock
+read two days late cannot be trusted to still be there.
+
+**THE WORKER IS NEVER HANDED AN ERROR FOR SAVING OR SENDING.** Three answers:
+`done`; `held` — received, safe, and with the Production Head as an `unposted`
+review item, because the ERP refused it now (a drum used by somebody else while
+the phone was offline) and the worker cannot go back to Tuesday to fix it; and
+`retry` — not received, kept, and sent again by itself. A job the worker is
+still holding that the ERP refuses offers Fix it AND Send to supervisor, so
+there is always a way to finish. "Put it in the ERP" on the review posts it
+under the WORKER's name; the head's decision is the line in the history.
+
+**THE IN-CHARGE RAISES PURCHASE REQUIREMENTS FROM THE PHONE, AND COUNTS EVERY
+ITEM FIRST.** More → Purchase requirement is offered to whoever holds a
+department's `owner` crew seat, a manager over that department, and the
+Production Head. It covers the three departments that buy anything
+(`FactoryCtx.reqDepts`): Mixing & Blending, Refilling and Packing. It is the
+ERP's own requirement, raised through `raiseRequirementWith`, so the
+department's categories, the material duties, the purchase rule and the stock
+check all still apply. Each item is COUNTED before it is added. The phone is
+never sent a stock figure: not in the item list, and not after the save. The
+count is written onto the item's blind count by `writeCounted` in the same
+transaction, so it is the requirement's stock check. The answer is only
+"matches" or "doesn't match". A count that doesn't match goes to stock control
+through `notifyStockFlag`, and buying carries on. It needs the network,
+because a count judged hours later is judged against a book that has moved.
+The phone's key in `factory_requirement_sends` answers a resend from the first
+save. An item can be cancelled from the phone until it is on a PO. The steps
+take the whole screen, as the design draws them. The screens are in the APK,
+so they reach the floor with a Factory release.
+
+**A FIELD STAYS IN VIEW WHEN THE KEYBOARD OPENS.** On the native app, every
+scrolling box offers `reveal` (`ScrollBox` in `web.tsx`), and an `Input` that
+gains focus scrolls itself into view, again once `keyboardDidShow` fires.
+Don't build a scrolling form that bypasses `Div`'s `overflowY: auto`, or its
+fields lose this.
+
+**A MIXING WORKER STARTS HIS OWN BATCH.** Work used to reach the floor only
+through a supervisor's Give a task, so a mixing worker with a recipe in the
+ERP and nobody to type it in had an empty Home and no way to start. "Start a
+mixing batch" on his Home (`startsOwnBatch` in `rules.ts`: a non-supervisor
+with mixing among his departments) picks a base that HAS a recipe and how
+many batches (up to `MIX_BATCH_MAX`, 10 — the same ceiling Give a task and
+the batch sheet use); `startMixingBatch` in `head.ts` checks the recipe again (an
+active formulation with a line above 0 L), makes the same `factory_tasks` row
+Give a task makes — the standing mixing crew, with HIM in charge — and the job
+opens straight into its batch sheet. It posts through the ERP's SFG form like
+any other job. A packing worker starts his own packing from a scanned pallet, below. The op is
+`startBatch`, and the native APK needs a release to show the button.
+
+**A FILLING WORKER STARTS A FILLING FROM THE TANK HE SCANS.** Scanning (or
+typing) an SFG lot on Home used to show the card and close it with a toast.
+The card now carries QC and the day it was made, and "Fill from this lot"
+opens New filling: the products made from that base (`fillFromLot` in
+`rules.ts`, which also words the five refusals the card shows) and how many
+cans. `startFillFromLot` in `head.ts` checks it all again against the ledger
+(filling is his work, the lot is here, has stock, is QC approved, and the
+product is of that base), makes the same `factory_tasks` row Give a task
+makes with him in charge and the lot as its `sfg_lot`, and the job opens
+with that tank already scanned (`Draft.fromLot`, phone-only). It posts
+through the ERP's FG fill form like any other filling. Saved offers "Fill
+more from" the same lot. A mixing or packing worker sees the card with OK
+only. The op is `startFill`.
+
+**A PACKING WORKER STARTS A PACKING FROM THE PALLET HE SCANS.** Scanning (or
+typing) an FG lot on Home shows when the cans were filled and how the product
+is boxed, and "Pack from this lot" opens New packing batch — the ERP's own
+questions: the FG product is the lot's, then which boxed SKU (`packFromLot` in
+`rules.ts`, which also words the refusals: not his work, another godown,
+nothing left, sold loose, fewer cans than one box), then how many boxes.
+`packNeeds` says what that takes: the cans, the open batch of that box filled
+first, and the empty boxes — a NEW batch takes all of its boxes on its first
+line, exactly as the ERP's packing form does, so `packBatchPlan` counts whole
+new batches and `emptyBoxShort` greys out Start where the godown is short
+(`FactoryData.emptyBoxes`, null where the ERP does not count that box type).
+More boxes than the lot holds is allowed: the job scans another pallet.
+`startPackFromLot` in `head.ts` checks it all again and makes the same
+`factory_tasks` row Give a task makes, with him in charge; the job opens with
+the pallet already scanned (`Draft.fromLot`, phone-only) and posts through the
+ERP's packing form like any other packing. Saved offers "Pack more from" the
+same lot. The op is `startPack`.
+
+**A MIXING WORKER MAY USE HIS OWN RECIPE, AND THE HEAD IS TOLD.** The job's
+first step draws the batch sheet with "Use my own recipe" under it: the editor
+opens with the sheet filled in, any active raw material can be added (those in
+stock at his godown first), litres per batch changed and a material taken off;
+"Batch sheet" puts the ERP's recipe back. `Draft.ownRecipe` marks it and `rm`
+then carries his `per`; `recipeLines` is what the first step and the review
+read, `recipeProblem` is the one sentence the screen and `postMixing` both
+refuse with, and `mixDeviation` holds the yield to his recipe's litres. It is
+not a gate: the batch posts through the ERP's SFG form as always, and a
+`manual` review item "Own recipe used" puts his recipe beside the batch sheet
+for the Production Head.
+
+**EVERY SCAN CAN BE TYPED.** The scan screen — one screen for every purpose,
+badge, task sheet, drum, base, cans, pallet, loading, empty drum and LR — has
+"Type the code" under the camera. What is typed goes through `doScan` exactly
+as a scan does, so it meets the same check and is not flagged to the
+supervisor the way "pick from photos" is: it names one label, it does not
+choose from a list. `typedCode` in `rules.ts` matches it against every code the
+phone holds ignoring spaces and case, and answers in the label's own spelling;
+the camera pauses while somebody types.
+
+**AN OLD PAGE STILL SENDS.** A station phone keeps its page for days. So the
+phone never calls a server action — their ids change on every deploy — but
+`/api/factory/rpc` by op NAME, and an op is added and never renamed or
+removed. The payload carries `v`, and `normalizeDraft` reads every shape there
+has been: numbers as text, a bare "HH:MM", fields an old page never had. A page
+that sees a newer build in an answer reloads itself, but only once nothing is
+in hand and nothing is waiting to send.
+
+**A MIXING MATERIAL MAY COME FROM SEVERAL DRUMS, AND NEXT WAITS FOR THE
+SHEET.** A drum that holds less than the sheet asks is poured empty and "Add
+another drum" opens a row for a second lot of the same material (`extra` on its
+`RmLine`; only those rows come off again); emptying a drum with the sheet still
+short opens that row by itself. `rmTotals`, `rmPlan`, `addRmDrum` and
+`removeRmDrum` in `lib/factory/rules.ts` are the rule, shared by both apps, and
+`stepCheck` holds the materials step until each material's drums add up to
+exactly `per × batches`. Each drum is its own ERP line on the one SFG batch,
+which the ERP already reads per lot and sums per material for the recipe check.
+There is no "How much was made" step any more: the batch made what was poured
+(`mixMade`), and the machine-stopped question moved onto the materials page. A
+draft from an older page that carries `out` is still read with it. The Saved
+screen has no Print QR label button.
+
+**SIGNING IN IS A NUMBER AND FOUR DIGITS.** The mobile number, then a PIN
+(hashed like a password, throttled like one). A forgotten PIN is the SMS code
+the web sign-in already sends, then a new PIN. A badge QR only says WHO — the
+PIN is still asked.
+
+**STAFF ARE PLACED IN ADMIN CONSOLE → ACCESS, BESIDE THE FACTORY GRANT.**
+Ticking Factory draws a Department row: the department, their seat in its
+standing crew (in charge, operator, helpers, who checks), their badge, and
+whether HR has confirmed the name and role. With the grant's level it is a
+DEPARTMENT-LEVEL permission (`lib/factory/departments.ts`, read by the dialog
+and enforced by the server): an associate works their department's jobs only;
+a manager of a department supervises THAT department — its Today, its review
+items, its teams, Give a task for it — and nothing else; a manager of the whole
+floor is the Production Head. Picking the whole floor raises the level to
+manager, the way an ERP designation sets the ERP's. Taking Factory away takes
+the place with it. The seat writes `factory_team_defaults` — one person in
+charge and one operator per department, any number of helpers — which is what
+every new job starts with. `npm run factory:staff` does the same from a
+terminal, for a pilot.
+
+**A PERSON MAY WORK SEVERAL DEPARTMENTS, and the phone switches between
+them.** The Department row is a set of checkboxes, not a dropdown: a loader
+who helps on the packing line is in Dispatch AND Packing, with a crew seat
+answered per ticked department. `factory_staff.areas` is the whole list
+(`0261`); `area` stays its first, so every reader that knows one department
+reads the one it always read. The whole floor is a list of one (ticking it
+clears the rest — it already covers them), and `cleanDepts` keeps the stored
+order fixed. An associate does the jobs of any of their departments
+(`worksOn`); a manager supervises exactly the ticked ones (`FactoryCtx.scopes`,
+null for the whole floor or quality). `scope` is still sent, as the one
+department when there is exactly one, because an APK in the field reads it.
+On the phone, `myDepts`/`activeDept`/`inDept` in `lib/factory/rules.ts` (pure,
+shared by both apps) decide what shows: somebody with more than one department
+gets a pill under their name that opens "Which work are you doing now?", and
+chips across My work — All my work, then each department with its open jobs.
+The pick is a VIEW, remembered per person on the phone, and never a
+permission: scanning a task of another of their departments still opens it,
+and the server never reads the pick.
+
+**Loading never waits for the office to give lots.** A Ready order opens on
+the phone, and the box or lot label the loader scans is judged by the ERP's
+dispatch desk (`scanOntoOrder`), which allocates it there and then, as at the
+office desk. The load step owes "still to find" until every line's lots cover
+it (`stepCheck`), and the phone sends any label the order was not given to the
+server rather than refusing it (`lotGiven`).
+
+**Loading is CHECKED, never dispatched.** The dispatch team scans the
+allocated lots, loads exactly what the order takes, ticks the checklist and
+photographs the truck; the ERP's verification, transport row and order book
+stay with the office (PRD §7.4.6).
+
+**LOADING IS BY TRANSPORTER, ITEM BY ITEM, and that is a reversal (Oct
+2026).** The two paragraphs above are how an older page loads, one order at a
+time. Today's page shows "Transports to load" on Home: every Ready line at the
+godown that is not yet dispatch-verified, whatever its day, grouped by the
+transporter typed on the line (`lorryKeyOf` ignores spacing and capitals; no
+name is its own row). Tapping one opens its loading straight away. The step bar
+is Load → Team → Check and send (`stepsOf`), with no order step, checklist or
+truck photo. The loader never picks or sees an order. `lib/factory/lorry.ts`
+picks the order each scanned box goes onto: an approved override's line first,
+then a line whose allocated lot the box is from, then the soonest due. It then
+calls the desk's own `scanOntoOrder` there. A lot label (stock with no box ids,
+and loose cans) fills orders soonest due first until the lot runs out. A
+mismatch is asked about against an item still short on the lorry
+(`requestOverride` takes that line). The job (`factory_tasks`, item = the
+lorry key, no `order_no`) is made by the first scan that loads something, so
+opening a transport starts nothing. A box scanned on Home opens the one lorry
+that needs it, and asks only when several do. Team stays locked until every
+piece is on. Sending closes the older one-order jobs for the lorry's orders,
+and the lorry shows "Loaded · waiting for the office" until the office
+verifies. `ensureDispatchTasks` still makes one-order jobs for APKs older than
+this; today's page does not list them (`isOrderLoad`).
+
+**THE ANDROID APP IS NATIVE, AND IT IS THE WEB APP'S SCREENS.** `factory-mobile/`
+is an Expo app — the APK on `/download/factory` — and it was first a Trusted
+Web Activity around `/factory`. Floor staff asked for an app rather than a
+website in one, so the screens moved onto the phone: `factory-mobile/src/
+factory-app.tsx` is `src/app/factory/_ui/factory-app.tsx` with its elements
+swapped for `web.tsx`'s and its browser parts for the phone's. `web.tsx` is
+the reason that is a port and not a redesign: `Div`, `Span`, `Btn` and
+`Input` take the design's own inline CSS and draw View, Text, Pressable and
+TextInput, doing what the web does and native does not — text style
+inherits, `display: flex` is a row, flex items shrink, a run of words is one
+paragraph, `display: grid` with N columns, `overflow: auto` scrolls. A screen
+changed on one side and not the other is a regression on the floor, so a
+change to either file is a change to both.
+
+**THE RULES ARE NOT COPIED.** The phone imports `lib/factory/rules`, `types`
+and `i18n` from `../src` through its Metro config, so a scan is judged by the
+same function on the phone and on the server, and the phone still decides
+nothing the server does not decide again. `native-imports.test.ts` pins that
+list and walks it for server code, because a database driver reached from
+there would ship inside an APK nobody can recall.
+
+**THE SESSION IS A HEADER.** A phone has no cookie jar, so the rpc route
+returns the session id as `x-factory-session` when a call changes it, the app
+keeps it in SQLite, and `proxy.ts` turns the header back into the
+`mahekone_session` cookie on `/api/factory/*` — every action resolves the
+person exactly as for the browser. The page at `/factory` still works and is
+what a laptop opens; the queue, the 48 hours, the idempotency key and the old
+-version rules above are the server's and hold for both.
+
+**WORK IS ONE TAB, SETTINGS ANOTHER.** The name used to open one long sheet
+mixing the day's tools with the phone's settings. A worker's bar is Home ·
+More · Scan · Sending · Settings; the Production Head's is Today · Review ·
+Scan · Teams · More, with Machines and Sending inside More. More holds the work
+(Stock check, Quality check, Empty drum entry, Upload LR); Settings holds who they are, the
+language, the PIN, Help and Sign out, and tapping the name opens it.
+
+**QUALITY CHECKS SFG LOTS FROM THE PHONE, WITH THE TESTING LIST.** More →
+Quality check lists the SFG lots waiting for QC (Pending, with litres left)
+and those decided in the last week, and asks each ACTIVE Testing-list value
+as Pass / Fail beside an optional note — the ERP's SFG batches decision on a
+phone. `lib/factory/qc.ts` reads the answers with the same `readQcTests`
+(approving needs every test answered and passed; rejecting records what was
+run and needs a reason), writes the same `erp_sfg_qc` row and the same
+`erp.sfg.qcApprove`/`qcReject` audit lines, so the fill gate cannot tell the
+doors apart. `FactoryCtx.qc` decides who sees it: somebody placed in the
+Mixing & Blending department, and nobody else — not Quality, not the
+Production Head, not an ERP power holder (Mahek's rule, Oct 2026; the ERP's
+`approveSfgQc` power still decides on ERP → SFG batches). It needs the network, like Stock check: the list is
+read again at the save.
+
+**THE SCAN PAGE HAS TWO MODES, SCAN AND TYPE.** "Type the code" swaps the
+whole screen: the camera stops, the frame and torch go, and a large box takes
+focus so the keyboard opens; "Scan instead" (or the phone's Back) returns to
+the camera. A phone with no camera, or one not allowed, opens straight in Type
+mode — once, so "Scan instead" is not bounced back (`camState`, `camAsked`).
+The typed text survives a refused code, so "Try again" is a fix, not a retype.
+A typed code is judged exactly as a scan (`submitTyped` → `doScan`).
+
+**IN A COLUMN NOTHING SHRINKS (`web.tsx`).** The web never squeezes a box below
+its content in a column (`min-height: auto`); native has no such floor, so the
+old blanket `flexShrink: 1` crushed buttons, inputs and cards whenever a screen
+or sheet ran short of height. Items shrink only inside a row, and a scrolling
+box is the one thing in a column that gives way.
+
+**LRs COME IN STACKS.** Upload LR opens on Many photos: up to `LR_BATCH_MAX`
+(20) from the camera or the gallery, uploaded three at a time, and stored in
+one press by `saveLrPhotos` as photo-only LRs for the LR desk to match. A photo
+that fails stays in the tray to resend; a resend stores nothing twice; a file
+that is not the sender's own fresh upload is refused. Reading them is
+secondary: `readStoredLrs` runs after the answer (`after()`), only where
+`erp.ai.photos` is on, fills only blank fields, and leaves an unsure number, or
+one already on the desk, as a note for the desk instead of writing it.
+
+**THE PHONE ASKS TO UPDATE ITSELF, AND REFRESH IS ONE BUTTON.** The round
+button in the header sends what is waiting, pulls the latest from the office
+and asks whether a newer APK is out, all in one press. The newer build is read
+off `/downloads/factory.json`, the manifest the release workflow already writes
+beside the APK, compared by versionCode (`factory-mobile/src/update.ts`, pure
+and tested). It is asked on opening, on every return to the app and every half
+hour. Where one exists, a popup offers Update now or Update later. Later is a
+three-hour snooze (`SNOOZE_MS`, one per phone in `kv`), never a dismissal, and
+a refresh pressed by hand asks at once. The popup waits while a job, a scan or
+a result is open. Update now downloads the APK INSIDE the app with progress
+(`updater.ts`) and hands it to Android's installer, which opens over the app;
+that confirmation cannot be skipped, because only a device owner installs
+silently. It needs `REQUEST_INSTALL_PACKAGES` and `expo-intent-launcher`, so it
+arrives with an APK and older builds never show it. A failed download offers
+the browser. The web page has the refresh button and no popup, because it picks
+up a new build by itself.
+
+**THE FLOOR READS A 12-HOUR CLOCK; THE APP KEEPS A 24-HOUR ONE.** Every time
+a person reads — the header clock, a job's due time, "saved at", the history,
+review notes — says "3 PM" or "9:05 AM" (`clock12`, and `clockText` for a time
+inside a sentence, both in `lib/factory/time.ts`). What is stored and compared
+stays "HH:MM" on the 24-hour clock (`hhmm`, `nowHM`), because "is this job
+late" is a string comparison and "3 PM" < "10 AM" is not. Convert only where it
+is drawn, never before it is stored.
+
+**A SCREEN CHANGE NEEDS A RELEASE; A RULE CHANGE DOES NOT.** The screens are
+in the APK now, so they reach the floor only through the Factory APK
+workflow (DEPLOY.md); what the server accepts and posts still changes with
+every deploy. Test the app with no device: `cd factory-mobile &&
+EXPO_PUBLIC_SITE=http://localhost:3000 npx expo start --web` runs the same
+code in a browser, where the scanner takes its no-camera path and offers the
+floor's real labels to tap.
+## The Documentation app
+
+**`/docs` is an app like any other**, granted in `app_access` and checked in
+its layout. Everybody granted it reads every page and all three tabs — that is
+a decision, recorded on `docs.app` in `lib/modules.ts`, not an omission.
+
+**Every page has three tabs for three readers**: Guide (the person using the
+screen), How it works (the owner: the rule, why, and the setting that changes
+it) and Developer (routes, services, engine, tables, tests). `src/docs/registry.ts`
+lists the pages; `src/docs/<app>/<slug>/<tab>.mdx` is the content;
+`src/docs/content.ts` is the one map from one to the other.
+
+**No page types a setting's value.** `<Setting k="queue.quietDaysAfterOrder"/>`
+reads it through `getConfig()` from the database the deployment is connected
+to, so prod's docs quote prod's settings and a value changed on the Settings
+screen changes the page. `<SettingsTable>`, `<SettingMap>`, `<DbTable>`,
+`<DbEnum>`, `<CapabilityGrid>` and `<ModuleRef>` read the registry, the schema
+and the matrix the same way, and a name that no longer exists renders as a red
+mistake rather than a confident fiction.
+
+**Code is quoted by SYMBOL, cut at build.** The runtime image carries no
+source, so `<Code file="…" symbol="buildQueue"/>` is resolved by
+`scripts/docs-index.mjs`, which `prebuild` runs: a renamed symbol fails the
+build instead of quoting whatever now sits on those lines. The index
+(`src/docs/_generated/`) is BUILT, never committed: npm runs it before `dev`,
+`lint`, `test` and `build`, because a committed copy quotes the source as it
+was and went stale — failing CI on unrelated PRs — the moment main moved.
+`coverage.test.ts` fails on a quoted symbol that no longer exists, on a module
+of a documented app that no page claims, and on a `;` inside a Mermaid chart,
+which Mermaid reads as the end of a statement.
+
+**Wireframes, never screenshots, and no names.** A screenshot carries real
+customers into a page every grantee can read and goes stale when a column
+moves. Wireframes are built from the design tokens (`components/wireframe.tsx`)
+and use placeholders — "Customer A" — never seed or production names.
+A `url` that is not a web path ("MBOS · Pay") draws a handset screen in a phone
+frame instead of a browser window.
+
+**THE SIDEBAR IS ONE APP AT A TIME.** It listed every app's every page down
+one column, so a reader could not tell from it which app they were in. Now the
+front page's sidebar is the list of apps; inside an app a switcher names it and
+opens onto the others, and below it are only that app's sections, folding,
+with the reader's own section open and the page's tabs under it, plus a filter
+over the app's page names (`app/docs/docs-sidebar.tsx`). Each `DocApp` carries
+an `icon` for it.
+
+**ASK THE DOCS ANSWERS FROM THE PAGES, WITH LINKS, OR SAYS IT CANNOT.** The
+header's "Ask the docs" docks a chat on the right (`app/docs/ask-panel.tsx`) —
+docked rather than modal, so following a citation keeps the conversation — and
+⌘K offers any typed words to it. `/api/docs/ask` (behind the `docs` grant)
+streams `askDocsStream` (`services/docs-ask-service.ts`): the model is given
+the contents, a first search already run, and three tools — `search_docs`,
+`read_section`, and `read_setting`, which reads the live value of a setting
+some page names, so an answer quotes this deployment's number exactly as the
+page would. "Search in" above the box asks ONE app's documentation or all of
+it: it starts on the app being read and follows the reader until they pick,
+and a one-app question is held to that app's sections in the first search and
+in both tools, not merely asked nicely. It is OpenAI only, on `openai.apiKey`,
+and the `docsAsk.*` settings sit on Admin Console → Settings → AI assistants.
+
+**AN ANSWER MAY BE A PICTURE.** Fenced blocks in the answer are drawn by
+`app/docs/answer-blocks.tsx`: ```` ```mermaid ```` with the pages' own `<Flow>`,
+```` ```wireframe ```` in the pages' own `<Wireframe>`/`Wf*` markup, read by
+`lib/docs-ask/wire-markup.ts` — PARSED, never compiled: known tags and literal
+props only, so an event handler, a style or an unknown tag in model output is
+dropped — and ```` ```svg ```` shown through `<img>` from a data URL, where it
+cannot run or fetch anything. Markdown tables render too. `ask.json` keeps
+every page's diagrams and wireframes as source, so the usual picture is the
+page's own, trimmed; a test parses every wireframe in the book.
+
+**ONE SEARCH ENGINE, ON THE SERVER, MEASURED.** ⌘K and the assistant both read
+`lib/docs-ask/retrieve.ts` (pure): BM25F over an inverted index built once per
+process from `_generated/ask.json` (`docs-ask/corpus.ts`, server-only — the
+browser no longer receives a search index). Fields are weighted title >
+heading > summary > body; each word of a query is a group of spellings — its
+light stem, completions while it is still being typed, typo corrections within
+one or two edits (only where the word as typed is not one the docs use), and
+MahekOne's abbreviations both ways (`SYNONYMS`: PO, GRN, LR, CN, OTP…). A
+section covering every word, naming it in its title or heading, or holding the
+words side by side ranks higher; the Developer tab is held back unless the
+question is about code, and overview pages yield to particular ones.
+`search-benchmark.ts` is real questions with the page that answers each —
+typos, abbreviations and half-typed words included — and `retrieve.test.ts`
+fails unless every one finds its page in the top three and 95% find it first
+(64 of 66 today), and unless a search of the whole book stays fast (about 1 ms
+warm). Add a question there whenever a search goes wrong; lower neither bar.
+
+**A page describes the code as it stands.** Where the code and the intent
+disagree, the How it works and Developer tabs say so under "Where the code and
+the intent disagree today", rather than documenting the intent as if it shipped.
 
 ## Testing
 

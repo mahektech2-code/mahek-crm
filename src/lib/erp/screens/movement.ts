@@ -22,7 +22,7 @@ import type { ActionSpec, ColSpec, FormSpec, ListRow } from "../ui";
 import { nf } from "../ui";
 import { fgReorderPercent, rmReorderPercent, rmRequired } from "../engines/production";
 import { fgLevelAvailable, fgLots, lockLot, packLots, rmLevelAvailable, rmLots, sfgLots, type Ex } from "../stock";
-import { godownIdByName, godownOptions, inTx, materials, pair, refuse, today, type Tx } from "./common";
+import { godownField, godownIdByName, godownOptions, inTx, materials, pair, refuse, today, type Tx } from "./common";
 import { requisitionForm } from "./purchase-flow";
 import { departmentForCategory, requirementDepartmentsFor } from "../departments";
 import { levelSuggestions } from "../suggest";
@@ -77,7 +77,8 @@ async function transferForm(ctx: ErpContext): Promise<FormSpec> {
     submit: "Transfer",
     confirm: "Transfer {item} {qty}",
     init: { date: today(), from: ctx.workingGodown?.name ?? "" },
-    data: { avail },
+    /* Which godowns write stock off, by the flag rather than by the name. */
+    data: { avail, lost: Object.fromEntries(tos.filter((g) => g.reserved).map((g) => [g.name, 1])) },
     header: [
       { k: "date", l: "Transfer date", t: "date", req: true },
       { k: "type", l: "Item type", t: "select", req: true, opts: [...TYPES] },
@@ -246,7 +247,7 @@ async function rmLevelForm(ctx: ErpContext, id?: string): Promise<FormSpec | nul
     submit: id ? "Save level" : "Add level",
     init,
     header: [
-      { k: "godown", l: "Godown", t: "select", req: true, opts: gds.map((g) => g.name), readOnly: !!id },
+      godownField(gds, { readOnly: !!id }),
       { k: "type", l: "Material type", t: "select", req: true, opts: LEVEL_TYPES, readOnly: !!id },
       { k: "item", l: "Raw item", t: "select", req: true, optsBy: { by: "type", map: byType }, when: { k: "type", notEmpty: true }, readOnly: !!id },
       { k: "min", l: "Minimum quantity", t: "num", req: true, min: 0 },
@@ -364,12 +365,12 @@ function rmLevelList(key: "rmLevels" | "reorderRm"): ScreenModule {
           .map((r): ListRow => {
             const actions: ActionSpec[] = [];
             if (reorder || (r.required ?? 0) > 0)
-              actions.push({ id: "raise", l: "Raise requisition", primary: true, loadsForm: true });
+              actions.push({ id: "raise", l: "Raise requirement", primary: true, loadsForm: true });
             if (!reorder && r.suggestion && (r.suggestion.min !== r.min || r.suggestion.max !== r.max))
               actions.push({ id: "apply", l: "Apply suggestion", confirm: `Set ${r.item} at ${r.godown} to min ${r.suggestion.min}, max ${r.suggestion.max}? ${r.suggestion.basis}` });
             if (!reorder) {
               actions.push({ id: "edit", l: "Edit", loadsForm: true });
-              actions.push({ id: "copy", l: "Add More", loadsForm: true });
+              actions.push({ id: "copy", l: "Add another", loadsForm: true });
               actions.push({ id: "delete", l: "Delete", confirm: `Remove the level for ${r.item} at ${r.godown}?` });
             }
             return {
@@ -464,7 +465,7 @@ async function fgLevelForm(ctx: ErpContext, id?: string): Promise<FormSpec | nul
     submit: id ? "Save level" : "Add level",
     init,
     header: [
-      { k: "godown", l: "Godown", t: "select", req: true, opts: gds.map((g) => g.name), readOnly: !!id },
+      godownField(gds, { readOnly: !!id }),
       { k: "sku", l: "Product (SKU)", t: "select", req: true, opts: skus.map((s) => s.name), readOnly: !!id },
       { k: "min", l: "Minimum quantity", t: "num", req: true, min: 0 },
       { k: "status", l: "Status", t: "select", req: true, opts: ["Follow", "UnFollow"] },
@@ -586,7 +587,7 @@ function fgLevelList(key: "fgLevels" | "reorderFg"): ScreenModule {
             : [
                 ...(r.suggestion && r.suggestion.min !== r.min ? [{ id: "apply", l: "Apply suggestion", confirm: `Set the minimum for ${r.sku} at ${r.godown} to ${r.suggestion.min}? ${r.suggestion.basis}` }] : []),
                 { id: "edit", l: "Edit", loadsForm: true },
-                { id: "copy", l: "Add More", loadsForm: true },
+                { id: "copy", l: "Add another", loadsForm: true },
                 { id: "delete", l: "Delete", confirm: `Remove the level for ${r.sku} at ${r.godown}?` },
               ],
           by: stampLine(r.by, r.updatedAt).replace(/^Created/, "Updated"),

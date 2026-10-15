@@ -1,5 +1,5 @@
 /**
- * ERP departments — purchase and production, step by step, department by
+ * ERP departments — who raises which purchase requirements and sees which, department by
  * department, against a real database through the real handlers:
  *
  *   Mixing & Blending  chemical requirement → test the inward chemical → SFG
@@ -17,11 +17,11 @@ import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, erpDesignations, erpInward, erpRawMaterials, erpRequisitions, erpSuppliers, erpUserDesignations, users } from "@/db/schema";
+import { appAccess, appSettings, erpDesignations, erpRawMaterials, erpRequisitions, erpSuppliers, erpUserDesignations, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
+import { invalidateConfig } from "@/lib/config/store";
 import { erpContext } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
-import { departmentBoard } from "@/lib/erp/department-board";
 import { erpNavCounts } from "@/lib/erp/counts";
 import type { FieldSpec } from "@/lib/erp/ui";
 
@@ -69,6 +69,12 @@ const raise = async (u: typeof users.$inferSelect, department: string, type: str
   mod("requisitions").forms!.new(await as(u), { date: TODAY, requiredBy: "2026-10-20", department, godown: "Bhiwandi", type, item, required: qty, priority: "Medium" }, []);
 
 before(async () => {
+  /* This suite is about the flow after the stock check; the check has its own suite (erp-stock-check). */
+  await db
+    .insert(appSettings)
+    .values({ key: "erp.stockCheck.onRequirement", value: false, valueType: "boolean", category: "erp", label: "Count stock before every purchase requirement" })
+    .onConflictDoUpdate({ target: appSettings.key, set: { value: false } });
+  invalidateConfig();
   await db.execute(
     sql`truncate users, erp_designations, erp_raw_materials, erp_suppliers, erp_inward, erp_tests, erp_purchases, erp_rm_entries, erp_requisitions, erp_quotations, erp_purchase_orders, erp_po_lines, erp_user_powers, erp_godown_staff, erp_user_settings, audit_log restart identity cascade`,
   );
@@ -208,49 +214,5 @@ describe("each department sees its own requirements", () => {
     const mixing = (await erpNavCounts(await as(mixer))).requisitions ?? 0;
     const everybody = (await erpNavCounts(await as(admin))).requisitions ?? 0;
     assert.ok(mixing < everybody, `${mixing} < ${everybody}`);
-  });
-});
-
-describe("the Departments page", () => {
-  test("a department sees its own steps in order; the head sees all three", async () => {
-    const mine = await departmentBoard(await as(mixer));
-    assert.deepEqual(mine.map((d) => d.label), ["Mixing & Blending"]);
-    assert.deepEqual(mine[0].steps.map((s) => s.label), ["Create chemical requirement", "Test the inward chemical", "Make SFG"]);
-    const all = await departmentBoard(await as(head));
-    assert.deepEqual(all.map((d) => d.label), ["Mixing & Blending", "Refilling", "Packing"]);
-    assert.deepEqual(all[2].steps.map((s) => s.key), ["boxReq", "stationeryReq", "pack"]);
-  });
-
-  test("a requirement step counts what is waiting on purchase and starts a new one already filled in", async () => {
-    const [packing] = await departmentBoard(await as(packer));
-    const box = packing.steps.find((s) => s.key === "boxReq")!;
-    assert.equal(box.figures.find((f) => f.l === "Waiting on purchase")?.v, "1");
-    assert.equal(box.rows[0].title, "5 L Box");
-    assert.ok(box.start!.href.startsWith("/erp/requisitions?new=1"));
-    assert.ok(box.start!.href.includes("department=Packing") && box.start!.href.includes("type=Box"));
-    const stationery = packing.steps.find((s) => s.key === "stationeryReq")!;
-    assert.equal(stationery.figures.find((f) => f.l === "Waiting on purchase")?.v, "2", "the packer's and the head's");
-  });
-
-  test("the testing step lists the chemical lots that arrived and have not been tested", async () => {
-    const [g] = (await db.execute(sql`select id from erp_godowns where name = 'Bhiwandi'`)) as unknown as { id: string }[];
-    await db.insert(erpInward).values({
-      id: "inw_1",
-      prNumber: 5001,
-      receivedDate: TODAY,
-      godownId: g.id,
-      supplierId: "sup_a",
-      materialType: "Chemical",
-      rawMaterialId: "rm_tol",
-      quantity: 400,
-      unit: "Litre",
-      testingRequired: true,
-      routed: "Testing",
-    });
-    const [mixing] = await departmentBoard(await as(mixer));
-    const t = mixing.steps.find((s) => s.key === "chemicalTest")!;
-    assert.equal(t.figures[0].v, "1");
-    assert.equal(t.rows[0].title, "Toluene");
-    assert.ok(t.rows[0].href.includes("new=1") && t.rows[0].href.includes("line="), "opens the test form on that line");
   });
 });

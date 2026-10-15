@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { updateVerdict } from './app-update';
+import { runs32BitOnly, updateVerdict } from './app-update';
 
 const ok = { version: '1.5.0', versionCode: 6, url: 'https://one.mahekindia.com/downloads/mbos.apk' };
 
@@ -62,5 +62,33 @@ describe('whether to offer an update', () => {
   it('falls back to the code where the name is missing', () => {
     const v = updateVerdict({ versionCode: 6, url: ok.url }, 5);
     assert.equal(v.kind === 'available' && v.version, '6');
+  });
+});
+
+describe('which APK a phone is handed', () => {
+  const both = { ...ok, url32: 'https://one.mahekindia.com/downloads/mbos-32bit.apk' };
+
+  it('reads a 32-bit-only Android from the ABIs it reports', () => {
+    assert.equal(runs32BitOnly(['arm64-v8a', 'armeabi-v7a', 'armeabi']), false);
+    assert.equal(runs32BitOnly(['armeabi-v7a', 'armeabi']), true);
+    assert.equal(runs32BitOnly([]), false);
+    assert.equal(runs32BitOnly(null), false);
+    assert.equal(runs32BitOnly(['x86_64']), false);
+  });
+
+  it('gives a 64-bit phone the 64-bit build', () => {
+    const v = updateVerdict(both, 5, false);
+    assert.equal(v.kind === 'available' && v.url, ok.url);
+  });
+
+  it('gives a 32-bit phone the 32-bit build', () => {
+    const v = updateVerdict(both, 5, true);
+    assert.equal(v.kind === 'available' && v.url, both.url32);
+  });
+
+  /* The 64-bit file would download, fail to install, and teach him the card is broken. */
+  it('offers a 32-bit phone nothing when no 32-bit build is published', () => {
+    assert.equal(updateVerdict(ok, 5, true).kind, 'current');
+    assert.equal(updateVerdict({ ...ok, url32: 'http://x/mbos-32bit.apk' }, 5, true).kind, 'current');
   });
 });

@@ -1,4 +1,5 @@
 import "server-only";
+import { APP_TIMEZONE } from "@/lib/business-date";
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
@@ -29,6 +30,8 @@ export type FormHandler = (
   lines: Values[],
   recordId?: string,
 ) => Promise<Result<unknown>>;
+/** A header button that acts on the screen rather than on a record (ToolSpec). */
+export type ToolHandler = (ctx: ErpContext, values: Values) => Promise<Result<unknown>>;
 /** Building a form on demand (an "Edit" opened from a record). */
 export type FormBuilder = (ctx: ErpContext, recordId?: string) => Promise<FormSpec | null>;
 
@@ -38,6 +41,8 @@ export type ScreenModule = {
   actions?: Record<string, ActionHandler>;
   bulk?: Record<string, BulkHandler>;
   forms?: Record<string, FormHandler>;
+  /** Header buttons (ToolSpec) that act on the screen as a whole. */
+  tools?: Record<string, ToolHandler>;
   /** Forms built for one record on demand — keyed by the action id that opens them. */
   formLoaders?: Record<string, (ctx: ErpContext, id: string) => Promise<FormSpec | null>>;
 };
@@ -48,7 +53,7 @@ export type ScreenModule = {
  */
 export async function nextNumber(
   tx: { execute: (q: ReturnType<typeof sql>) => Promise<unknown> },
-  key: "pr" | "sfg" | "fg" | "packBatch" | "order" | "po" | "requirement" | "unit",
+  key: "pr" | "sfg" | "fg" | "packBatch" | "order" | "po" | "requirement" | "unit" | "stockCount" | "emptyDrum" | "scrapSale" | "drumReturn" | "cashReceipt" | "purchaseReturn" | "debitNote" | "returnOutward" | "customerReturn" | "reworkOrder" | "wasteDisposal",
 ): Promise<number> {
   const rows = (await tx.execute(sql`update erp_series set last = last + 1 where key = ${key} returning last`)) as unknown as { last: number }[];
   if (!rows[0]) throw new Error(`No ERP series "${key}"`);
@@ -120,16 +125,14 @@ export function multi(v: string | undefined): string[] {
     .filter(Boolean);
 }
 
-/** Paise → a rupees string for pre-filling a form. */
-export function rupeesField(p: number | null | undefined): string {
-  return p == null ? "" : String(p / 100);
-}
+/* Client-safe, so a client form pre-fills a figure the same way a server form does. */
+export { rupeesField } from "./ui";
 
 export function stampLine(by: string | null | undefined, at: Date | string | null | undefined): string {
   if (!at) return by ? `Created by ${by}` : "";
   const d = typeof at === "string" ? new Date(at) : at;
   const when = d.toLocaleString("en-IN", {
-    timeZone: "Asia/Kolkata",
+    timeZone: APP_TIMEZONE,
     day: "numeric",
     month: "short",
     year: "numeric",

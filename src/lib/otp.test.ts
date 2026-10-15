@@ -5,7 +5,7 @@
  * Pins: nothing is offered until an approved template is named · every code,
  * whatever it is for, goes to the PERSONAL MOBILE in HRMS through the
  * account's employee link, and never to the work number · that number signs
- * in too · only a hash is stored · one use · wrong
+ * in too, and is the ONLY number a code can be asked for by · only a hash is stored · one use · wrong
  * guesses run out · it expires · resend cooldown · the handset signs in with a
  * code in place of the password · change and reset a password with a code.
  *
@@ -25,6 +25,7 @@ import {
   forgetOtpAvailability,
   otpAvailability,
   findAccount,
+  findAccountForCode,
   resetPasswordWithOtp,
   sendOtp,
   verifyOtp,
@@ -218,6 +219,34 @@ test("a personal mobile on two linked accounts signs in nobody", async () => {
     .returning();
   await db.insert(users).values({ id: id("usr"), name: "Twin", email: "twin@t.local", passwordHash: "x", role: "associate", initials: "TW", employeeId: emp2.id });
   assert.equal(await findAccount(PERSONAL), null);
+});
+
+/* ---------------------------------------- a code is asked for by ONE number */
+
+test("a code is asked for by the personal mobile only — never the work number or the email", async () => {
+  assert.equal((await findAccountForCode(PERSONAL))?.id, priya.id);
+  assert.equal((await findAccountForCode(`+91 ${PERSONAL}`))?.id, priya.id);
+  assert.equal(await findAccountForCode("9820011001"), null, "the work number finds nobody");
+  assert.equal(await findAccountForCode("priya@t.local"), null, "the email finds nobody");
+  // The password lookup is untouched: work number and email still sign in.
+  assert.equal((await findAccount("9820011001"))?.id, priya.id);
+  assert.equal((await findAccount("priya@t.local"))?.id, priya.id);
+});
+
+test("a personal mobile that is somebody else's work number still means the personal mobile for a code", async () => {
+  /* The case this exists for: an account carrying another person's phone as
+     its work number. The code goes to whoever HR says owns the number typed. */
+  await db.insert(users).values({ id: id("usr"), name: "Rakesh", email: "rakesh@t.local", phone: PERSONAL, passwordHash: "x", role: "associate", initials: "RA" });
+  assert.equal((await findAccountForCode(PERSONAL))?.id, priya.id);
+});
+
+test("the handset accepts a code only with the personal mobile", async () => {
+  await configure();
+  await sendOtp(priya.id, "login");
+  const viaWork = await runLoginChecks({ mobile: "9820011001", otp: lastCode! });
+  assert.equal(viaWork.ok, false, "the right code with the work number is refused");
+  const viaPersonal = await runLoginChecks({ mobile: PERSONAL, otp: lastCode! });
+  assert.equal(viaPersonal.ok, true);
 });
 
 test("the handset signs in with a code in place of the password, and a wrong one is refused", async () => {

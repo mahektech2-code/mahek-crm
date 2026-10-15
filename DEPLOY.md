@@ -411,6 +411,15 @@ itself compares, and it is what `nativeBuildVersion` reports beside the
 version, so move both. Nothing pins either — `runtimeVersion` is the
 `fingerprint` policy precisely so that it does not.
 
+**One run makes TWO APKs**, one per processor (`plugins/withLeanAndroid.js`):
+`/downloads/mbos.apk` is 64-bit ARM, as it always was, and
+`/downloads/mbos-32bit.apk` is for the cheap 32-bit "Android Go" phones that
+answered the 64-bit file with "App not installed". Both are signed, checked
+and published by the same steps, and `mbos.json` names both (`url`, `url32`),
+so the in-app update check hands each phone the file it can install and the
+download page offers the 32-bit one under "Download for older phones". Android
+older than 7.0 cannot run MBOS at all — that is React Native's own floor.
+
 **`api_base` is baked into the bundle** and cannot be changed after the build,
 so a build made against the wrong one is a broken binary rather than a wrong
 setting. The workflow refuses anything that is not https or that ends in a
@@ -425,15 +434,58 @@ step that must not be skipped.
 
 Publishing writes to two places, answering two questions: R2 keeps every
 release under a versioned name and outlives any one droplet, and the droplet
-holds the single stable file `/downloads/mbos.apk` that people are given a link
-to. Caddy serves that off the droplet's own disk — nothing serves `/downloads`
-from R2.
+holds the single stable file `/downloads/mbos.apk`. Caddy serves that off the
+droplet's own disk — nothing serves `/downloads` from R2. The link people are
+given is the page, `https://one.mahekindia.com/download/mbos`, which carries the
+download button, how to sign in and the version read from `mbos.json`.
 
 **Do not build a release by hand and `scp` it up.** It skips the signature
 check, the versioned archive and the record of what was shipped, and it puts
 the release back on whichever laptop has a JDK — which is the situation this
 workflow exists to end. Local `gradlew assembleRelease` is for trying a change
 on your own phone.
+
+## Releasing the Factory app (Android)
+
+The Factory app is a native Android app (`factory-mobile/`, Expo). Its
+screens are on the phone, so a change to them reaches the floor only through
+a release; what the server accepts and posts to the ERP changes with every
+deploy, because every job goes through `/api/factory/rpc`.
+
+```bash
+gh workflow run "Factory APK" --ref main -f site=https://one.mahekindia.com -f version=2.0.0 -f publish=true
+```
+
+`site` is baked into the APK and cannot be changed afterwards. It signs with
+the MBOS release key and puts `factory.apk` and `factory.json` on the droplet
+beside `mbos.apk`. Every build's versionCode is 100 + the run number, so it
+installs over the earlier Trusted Web Activity build (same package, same key)
+as an update. Floor staff install it from
+`https://one.mahekindia.com/download/factory`.
+
+### Over the air, from 2.1.1
+
+Every Factory APK from 2.1.1 carries expo-updates (EAS project
+`@dasabhinaba34/mahek-factory`, channel `production`). It checks on launch,
+downloads in the background and applies on the NEXT launch. 2.1.0 and older
+have no updates at all and need the APK.
+
+The runtime is the APP VERSION (`runtimeVersion.policy: appVersion`), which the
+workflow stamps from its `version` input. An update reaches exactly the APKs
+built with the version it was published under, so a JS-only fix for 2.1.1
+phones is published with `version` still `2.1.1` in `app.json`:
+
+```bash
+cd factory-mobile
+EXPO_PUBLIC_SITE=https://one.mahekindia.com npx eas-cli@latest update \
+  --branch production --platform android --environment production \
+  --message "what changed" --non-interactive
+```
+
+Forgetting `EXPO_PUBLIC_SITE` falls back to `extra.site`, which is production
+too, but say it anyway. ANY native change (a new Expo module, a plugin, a
+permission) needs a new version and a new APK: an update cannot carry native
+code, and published under the old version it would load on a binary without it.
 
 ## Push notifications
 

@@ -45,40 +45,88 @@ export function matchSalesmanName(
 }
 
 export type CustomerCandidate = { id: string; name: string; score: number };
+/** An account carrying exactly the name asked about, once folded. */
+export type ShopCandidate = { id: string; name: string; city?: string | null };
 
 /**
- * The floor a customer-name candidate has to clear to be worth listing at
- * all — the same 0.25–0.35 range product search already uses for this
- * column of similarity.
+ * One shop name, folded so that only spelling decides: case, spacing and
+ * punctuation are not part of a name ("K. RAMSING SALES" is "K RAMSING
+ * SALES"), every other character is. The same fold the shop-master
+ * projection matches on, so the two importers agree about what "the same
+ * name" means.
  */
+export function foldShopName(name: string | null | undefined): string {
+  return (name ?? "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim();
+}
+
+/** The floor a close name has to clear to be worth SHOWING to a person. */
 const CANDIDATE_FLOOR = 0.3;
-/** How confident the top candidate has to be, alone, to auto-match. */
-const MATCH_THRESHOLD = 0.6;
-/** How far ahead of the runner-up the top candidate has to be. */
-const MATCH_GAP = 0.1;
+
+const describeShop = (c: ShopCandidate) => (c.city ? `${c.name} (${c.city})` : c.name);
 
 /**
- * 5,180 free-text shop names against a real customer book. A candidate that
- * clears the floor but isn't clearly the best of the shortlist is held for a
- * person rather than picked — the same "ambiguous, never auto-picked"
- * discipline `sheetOrderRows.productMatchStatus` already uses for a product
- * name that could mean five different brand lines.
+ * WHICH ACCOUNT A TYPED SHOP NAME IS — and a name is only ever linked on its
+ * own where nothing could be wrong about it.
+ *
+ * This used to auto-link any name scoring 0.6 trigram similarity with a 0.1
+ * lead over the runner-up, which links "Shree Ganesh Paints" to "Shree Ganesh
+ * Paint House" and a shop in Ajmer to a namesake in Mumbai. Every such link
+ * put somebody else's visit on a customer's timeline, read as fact. So:
+ *
+ *   1. a PERSON'S decision wins, whatever it says — including "not on
+ *      MahekOne";
+ *   2. exactly ONE account on the book with the same folded name is a match;
+ *   3. several with that exact name is a question, listing them with towns;
+ *   4. a close name is NEVER a match — it is a question with the shortlist;
+ *   5. nothing close is unmatched.
+ *
+ * A wrong link is far worse than a held one: a held one is on the review
+ * list saying so, a wrong one is on nobody's.
  */
-export function decideCustomerMatch(candidates: CustomerCandidate[]): MatchResult {
-  const ranked = [...candidates]
+export function decideCustomerMatch(input: {
+  exact: ShopCandidate[];
+  near?: CustomerCandidate[];
+  /** What a person decided for this name, if anybody did. */
+  decision?: { customerId: string | null; customerName?: string | null } | null;
+}): MatchResult {
+  if (input.decision) {
+    return input.decision.customerId
+      ? {
+          status: "matched",
+          matchedId: input.decision.customerId,
+          note: "Linked by a person.",
+        }
+      : {
+          status: "unmatched",
+          matchedId: null,
+          note: "A person decided this shop is not on MahekOne.",
+        };
+  }
+
+  if (input.exact.length === 1) {
+    return { status: "matched", matchedId: input.exact[0].id, note: null };
+  }
+  if (input.exact.length > 1) {
+    return {
+      status: "ambiguous",
+      matchedId: null,
+      note: `${input.exact.length} accounts carry exactly this name: ${input.exact
+        .slice(0, 6)
+        .map(describeShop)
+        .join(", ")}`,
+    };
+  }
+
+  const close = [...(input.near ?? [])]
     .filter((c) => c.score >= CANDIDATE_FLOOR)
     .sort((a, b) => b.score - a.score);
-
-  if (ranked.length === 0) return { status: "unmatched", matchedId: null, note: null };
-
-  const [top, second] = ranked;
-  const clear = top.score >= MATCH_THRESHOLD && (!second || top.score - second.score >= MATCH_GAP);
-
-  if (clear) return { status: "matched", matchedId: top.id, note: null };
-
-  const shortlist = ranked
-    .slice(0, 5)
-    .map((c) => `${c.name} (${c.score.toFixed(2)})`)
-    .join(", ");
-  return { status: "ambiguous", matchedId: null, note: `Candidates: ${shortlist}` };
+  if (!close.length) return { status: "unmatched", matchedId: null, note: null };
+  return {
+    status: "ambiguous",
+    matchedId: null,
+    note: `No account has exactly this name. Close names: ${close
+      .slice(0, 5)
+      .map((c) => c.name)
+      .join(", ")}`,
+  };
 }

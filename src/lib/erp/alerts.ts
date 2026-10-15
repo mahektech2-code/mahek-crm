@@ -8,6 +8,7 @@ import { purchaseFigures } from "./engines/purchase";
 import { batchState } from "./engines/production";
 import {
   belowLevel,
+  drumVariances,
   cashNegative,
   cnsNotIssued,
   duplicateExpenses,
@@ -94,6 +95,11 @@ export async function currentCandidates(t: Thresholds, now = new Date()): Promis
     rmReorderRows(),
     fgReorderRows(),
   ]);
+  const drumConfig = await getConfig();
+  const drums = await q(sql`
+    select d.id, d.drum_no as no, s.name as supplier, d.lot_no as lot, d.declared_tare_kg::float8 as declared, d.actual_kg::float8 as actual
+      from erp_empty_drums d left join erp_suppliers s on s.id = d.supplier_id
+     where d.status <> 'cancelled' and d.declared_tare_kg is not null and d.actual_kg is not null`);
 
   const purchaseFacts = purchases.map((p) => ({
     id: String(p.id),
@@ -143,6 +149,10 @@ export async function currentCandidates(t: Thresholds, now = new Date()): Promis
     ...cnsNotIssued(reqs.map((r) => ({ id: String(r.id), party: String(r.party), approvedAt: r.approvedAt ? asDate(r.approvedAt) : null, issued: Boolean(r.issued), accepted: Boolean(r.accepted), cn: Boolean(r.cn) })), now, t),
     ...duplicateExpenses(expenses.map((e) => ({ id: String(e.id), by: String(e.by), amountPaise: Number(e.amount), particular: (e.particular as string) ?? null, date: String(e.date) })), t),
     ...cashNegative([...balanceRows.values()]),
+    ...drumVariances(
+      drums.map((d) => ({ id: String(d.id), label: `DRM-${d.no}`, supplier: String(d.supplier ?? "the supplier"), lot: String(d.lot ?? ""), declaredKg: Number(d.declared), actualKg: Number(d.actual) })),
+      { alertKg: drumConfig["erp.drums.varianceAlertKg"], alertPercent: drumConfig["erp.drums.varianceAlertPercent"] },
+    ),
     ...belowLevel([
       ...rmRe.map((r) => ({ id: r.id, screen: "reorderRm" as const, item: r.item, godown: r.godown, available: r.available ?? 0, min: r.min })),
       ...fgRe.map((r) => ({ id: r.id, screen: "reorderFg" as const, item: r.sku, godown: r.godown, available: r.available, min: r.min })),

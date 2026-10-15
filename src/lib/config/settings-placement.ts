@@ -117,6 +117,7 @@ const ERP_ASSISTANT: Record<string, string> = {
   ask: "Ask the ERP",
   photos: "LR and test photos",
   qc: "Quality checks",
+  stockCheck: "Stock discrepancies",
   visionModel: "Models",
   textModel: "Models",
 };
@@ -162,6 +163,7 @@ const RULES: Rule[] = [
   { test: /^mbos\.attendance\./, page: "sales", tab: "attendance", group: "Check-in and the day" },
   { test: /^mbos\.leave\./, page: "sales", tab: "attendance", group: "Leave" },
   { test: /^mbos\.(visits?|travel)\./, page: "sales", tab: "visits", group: "Visits" },
+  { test: /^fieldActivity\./, page: "sales", tab: "visits", group: "The old field app" },
   { test: /^mbos\.route\./, page: "sales", tab: "visits", group: "Ordering a day's route" },
   { test: /^mbos\.location\.nearby(RadiusOptions|PerKilometreCost)$/, page: "sales", tab: "visits", group: "What is near me" },
   {
@@ -209,8 +211,14 @@ const RULES: Rule[] = [
 
   /* ------------------------------------------------------------------- ERP */
   { test: /^erp\.purchase\./, page: "erp", tab: "general", group: "Purchase" },
+  { test: /^erp\.factory\./, page: "erp", tab: "general", group: "Factory app" },
   { test: /^erp\.(production|orders|dispatch)\./, page: "erp", tab: "general", group: "Production and orders" },
   { test: /^erp\.location\./, page: "erp", tab: "general", group: "Working location" },
+  { test: /^erp\.labels\./, page: "erp", tab: "general", group: "Label printer" },
+  { test: /^erp\.logistics\./, page: "erp", tab: "general", group: "Logistics" },
+  { test: /^erp\.stockCheck\./, page: "erp", tab: "general", group: "Inventory accuracy" },
+  { test: /^erp\.returns\./, page: "erp", tab: "general", group: "Material returns" },
+  { test: /^erp\.drums\./, page: "erp", tab: "general", group: "Empty drums and scrap" },
   { test: /^erp\.ai\.alerts\.enabled$/, page: "erp", tab: "alerts", group: "Switch" },
   { test: /^erp\.ai\.alerts\./, page: "erp", tab: "alerts", group: "Thresholds" },
   { test: /^erp\.ai\./, page: "erp", tab: "assistants", group: (k) => ERP_ASSISTANT[k.split(".")[2]] ?? "Other" },
@@ -233,6 +241,8 @@ const RULES: Rule[] = [
   },
   { test: /^voice\./, page: "ai", tab: "dictation" },
   { test: /^callIntel\./, page: "ai", tab: "call-assistant" },
+  { test: /^docsAsk\./, page: "ai", tab: "assistants", group: "Ask the docs" },
+  { test: /^crmAsk\./, page: "ai", tab: "assistants", group: "Ask the CRM" },
   {
     test: /^(taskIntel|visitIntel|leadCallIntel|verifyIntel|convertIntel|intakeIntel|leadScan|leadVoice|mbos\.ai)\./,
     page: "ai",

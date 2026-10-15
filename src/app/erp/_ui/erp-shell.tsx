@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppFrame } from "@/components/shell/app-frame";
 import { AccountMenu } from "@/components/shell/account-menu";
@@ -12,7 +12,10 @@ import { NotificationBell } from "@/components/shell/notification-bell";
 import { cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
 import { ToastProvider, useToast } from "@/components/ui/toast";
-import { erpAsk, erpLocateWorkingGodown, erpSearch, erpSetWorkingGodown, erpStartViewAs, erpStopViewAs, type ErpLocateResult, type ErpSearchHit } from "@/lib/actions/erp";
+import { erpLocateWorkingGodown, erpSetWorkingGodown, erpStartViewAs, erpStopViewAs, type ErpLocateResult } from "@/lib/actions/erp";
+import { SmartSearch } from "@/components/shell/smart-search";
+import { AskPanel } from "@/components/shell/ask-panel";
+import { ERP_ASK } from "@/components/shell/ask-setups";
 import type { ErpViewingAs } from "@/lib/erp/access";
 import type { PreviewTargets } from "@/lib/services/erp-designation-service";
 import type { Notification } from "@/db/schema";
@@ -184,7 +187,8 @@ export function ErpShell({
     .filter((g) => !PINNED_GROUPS.has(g.id))
     .map((g) => {
       const icon = GROUP_ICON[g.icon] ?? g.icon;
-      return { label: g.label, icon, items: g.screens.map((s) => toRow(s, icon)) };
+      /* A flat group's one row wears the group's icon, so it looks the same shut or open. */
+      return { label: g.label, icon, items: g.screens.map((s) => (g.single ? { ...toRow(s, icon), icon } : toRow(s, icon))), flat: g.single };
     });
   const counts = new Map(nav.flatMap((g) => g.screens.map((s) => [s.href, s.count ?? 0] as const)));
 
@@ -192,6 +196,8 @@ export function ErpShell({
     <ToastProvider>
       <ErpUiProvider voice={voice}>
         <AppFrame
+          /* Used on a tablet at the godown gate as much as at a desk: no 1100px floor. */
+          floor={false}
           header={
             <header className="z-30 flex h-14 flex-none items-center gap-5 border-b border-line bg-surface px-4">
               <div className="flex w-[216px] flex-none items-center">
@@ -205,23 +211,34 @@ export function ErpShell({
                 />
               </div>
 
-              <ErpSearch ask={ask} />
+              {/* The shared header box: find a customer, lot, PR, PO, box or
+                  order — or, typed as a question, ask the ERP in the drawer. */}
+              <SmartSearch
+                endpoint="/api/erp/search"
+                placeholder={ask ? "Search lots, PRs, POs, boxes, orders — or ask a question" : "Search customers, lots, PRs, POs, boxes, orders…"}
+                ask={ask ? ERP_ASK.title : undefined}
+                className="max-w-[440px]"
+              />
 
               <div className="flex-1" />
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-none items-center gap-2">
                 <WorkingAt godowns={godowns} working={working} locate={locate} />
-                <FeedbackButton />
+                {ask ? <AskPanel setup={ERP_ASK} /> : null}
+                {/* Below 1280px the header has a tablet's width to fit in: the
+                    Feedback button and the account chip are drawn as icons. */}
+                <FeedbackButton compact className="xl:hidden" />
+                <FeedbackButton className="hidden xl:flex" />
                 <button
                   onClick={() => setShortcutsOpen(true)}
                   title="Keyboard shortcuts"
-                  className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-[4px] border border-line bg-surface text-[13px] font-medium text-muted hover:bg-canvas hover:text-body"
+                  className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-control border border-line bg-surface text-meta font-medium text-muted hover:bg-canvas hover:text-body"
                 >
                   ?
                 </button>
                 <NotificationBell notifications={notifications} />
                 <span className="mx-1 h-6 w-px bg-divider" />
-                <AccountMenu user={user} hat={hat} variant="header" />
+                <AccountMenu user={user} hat={hat} variant="header" nameFromXl />
               </div>
             </header>
           }
@@ -243,11 +260,11 @@ export function ErpShell({
                 /* Alerts are the one queue that is red whatever it counts: an
                    open alert is something the ERP could not explain. */
                 badgeToneFor={(item) => (item.href === "/erp/alerts" ? "danger" : "warn")}
+                showSizes={false}
               />
+              {/* The account is in the header, top right; a second copy of it
+                  here was the same name, the same menu, twice on one screen. */}
               {preview && !collapsed ? <PreviewAs preview={preview} /> : null}
-              <div className="flex flex-none items-center border-t border-divider px-2 py-2">
-                <AccountMenu user={user} hat={hat} variant="sidebar" collapsed={collapsed} />
-              </div>
             </aside>
           }
         >
@@ -260,7 +277,7 @@ export function ErpShell({
             {SHORTCUTS.map((s) => (
               <div key={s.what} className="flex items-center justify-between border-b border-divider py-2.5 last:border-0">
                 <span className="text-sm text-body">{s.what}</span>
-                <kbd className="rounded-[4px] border border-line bg-canvas px-2 py-0.5 font-mono text-xs text-body">{s.key}</kbd>
+                <kbd className="rounded-control border border-line bg-canvas px-2 py-0.5 font-mono text-xs text-body">{s.key}</kbd>
               </div>
             ))}
           </div>
@@ -296,17 +313,17 @@ function PreviewAs({ preview }: { preview: { targets: PreviewTargets; current: E
   };
   return (
     <div className="flex-none border-t border-divider px-3 pt-2.5 pb-2">
-      <div className="mb-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">Preview access as</div>
+      <div className="mb-1.5 text-2xs font-medium tracking-[0.04em] text-muted uppercase">View the ERP as</div>
       <select
         value={value}
         onChange={(e) => pick(e.target.value)}
         aria-label="Preview access as"
         className={cx(
-          "h-8.5 w-full cursor-pointer rounded-[4px] border bg-surface px-2 text-[13px]",
+          "h-8.5 w-full cursor-pointer rounded-control border bg-surface px-2 text-meta",
           preview.current ? "border-brand text-brand-hover" : "border-line text-body",
         )}
       >
-        <option value="">Myself — {preview.self.name}</option>
+        <option value="">Myself</option>
         {preview.targets.designations.length ? (
           <optgroup label="Designations">
             {preview.targets.designations.map((d) => (
@@ -338,7 +355,7 @@ function PreviewBanner({ current }: { current: ErpViewingAs }) {
   const router = useRouter();
   const { push } = useToast();
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-brand bg-brand-soft px-6 py-2 text-[13px] text-ink">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-brand bg-brand-soft px-6 py-2 text-meta text-ink">
       <Icon n="lock" s={14} />
       <span>
         Previewing the ERP as <span className="font-medium">{current.label}</span>
@@ -355,7 +372,7 @@ function PreviewBanner({ current }: { current: ErpViewingAs }) {
             router.refresh();
           })
         }
-        className="cursor-pointer rounded-[4px] border border-brand bg-surface px-2.5 py-1 text-[13px] font-medium text-brand-hover hover:bg-canvas"
+        className="cursor-pointer rounded-control border border-brand bg-surface px-2.5 py-1 text-meta font-medium text-brand-hover hover:bg-canvas"
       >
         Back to my ERP
       </button>
@@ -485,15 +502,15 @@ function WorkingAt({
     return (
       <span
         title="Ask an ERP administrator to assign you to a godown"
-        className="flex h-7.5 items-center rounded-[4px] border border-dashed border-warn-line px-2 text-[13px] whitespace-nowrap text-warn-ink"
+        className="flex h-7.5 items-center rounded-control border border-dashed border-warn-line px-2 text-meta whitespace-nowrap text-warn-ink"
       >
         No godown assigned
       </span>
     );
   }
   return (
-    <div className="flex h-7.5 items-center gap-1.5 rounded-[4px] border border-dashed border-line-strong pr-1 pl-2">
-      <span className="text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">Working at</span>
+    <div className="flex h-7.5 items-center gap-1.5 rounded-control border border-line pr-1 pl-2">
+      <span className="hidden text-2xs font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase xl:inline">Working at</span>
       <GodownPicker
         look="chip"
         value={working?.id ?? ""}
@@ -519,8 +536,8 @@ function WorkingAt({
           title="Find my godown from where I am standing"
           aria-label="Find my godown from where I am standing"
           className={cx(
-            "inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-[#5223E0] disabled:cursor-wait",
-            finding && "animate-pulse text-[#5223E0]",
+            "inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-control text-muted hover:bg-canvas hover:text-brand-hover disabled:cursor-wait",
+            finding && "animate-pulse text-brand-hover",
           )}
         >
           <Icon n="locate" s={14} />
@@ -530,133 +547,3 @@ function WorkingAt({
   );
 }
 
-/** Header search, drawn as the CRM's. `/` focuses it; a question ending in ? is asked of the ERP. */
-function ErpSearch({ ask }: { ask: boolean }) {
-  const router = useRouter();
-  const [q, setQ] = useState("");
-  const [hits, setHits] = useState<ErpSearchHit[]>([]);
-  const [asked, setAsked] = useState("");
-  const [answer, setAnswer] = useState<{ q: string; text: string; records: { label: string; href: string }[]; readAt: string } | null>(null);
-  const [thinking, setThinking] = useState(false);
-  const runAsk = () => {
-    const question = q.trim();
-    if (question.length < 3 || thinking) return;
-    setThinking(true);
-    void erpAsk(question).then((r) => {
-      setThinking(false);
-      setAnswer(r.ok ? { q: question, text: r.answer.answer, records: r.answer.records, readAt: r.answer.readAt } : { q: question, text: r.error, records: [], readAt: "" });
-    });
-  };
-  const ref = useRef<HTMLInputElement>(null);
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const clear = () => {
-    setQ("");
-    setAnswer(null);
-  };
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const t = (e.target as HTMLElement | null)?.tagName ?? "";
-      if (e.key === "/" && t !== "INPUT" && t !== "TEXTAREA" && t !== "SELECT") {
-        e.preventDefault();
-        ref.current?.focus();
-      }
-      if (e.key === "Escape") clear();
-    };
-    const onDown = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) clear();
-    };
-    window.addEventListener("keydown", onKey);
-    document.addEventListener("mousedown", onDown);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      document.removeEventListener("mousedown", onDown);
-    };
-  }, []);
-  useEffect(() => {
-    const term = q.trim();
-    if (term.length < 2) return;
-    const t = setTimeout(() => {
-      void erpSearch(term).then((r) => {
-        setHits(r);
-        setAsked(term);
-      });
-    }, 180);
-    return () => clearTimeout(t);
-  }, [q]);
-  const openRes = q.trim().length >= 2 && asked === q.trim();
-  const go = (href: string) => {
-    clear();
-    router.push(href);
-  };
-  return (
-    <div ref={wrapRef} className="relative w-[400px] min-w-0">
-      <ShellIcon name="search" size={16} className="pointer-events-none absolute top-[9px] left-2.5 text-muted" />
-      <input
-        ref={ref}
-        value={q}
-        onChange={(e) => {
-          setQ(e.target.value);
-          setAnswer(null);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && ask && q.trim().endsWith("?")) runAsk();
-        }}
-        placeholder={ask ? "Search, or ask a question ending in ?" : "Search customers, orders, lots, PRs, bills, LRs…"}
-        className="h-8.5 w-full rounded-[4px] border border-line bg-canvas pr-3 pl-8 text-sm text-ink outline-none focus:border-brand focus:bg-surface"
-      />
-      {openRes || answer || thinking ? (
-        <div className="animate-fade-in absolute top-10 left-0 z-40 w-full overflow-hidden rounded-[6px] border border-line bg-surface py-1.5 shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
-          {ask ? (
-            answer ? (
-              <div role="status" className="border-b border-divider bg-brand-soft/40 px-3 py-2.5">
-                <div className="text-[11px] font-medium tracking-[0.04em] text-[#5223E0] uppercase">Ask the ERP · {answer.q}</div>
-                <div className="mt-1 text-sm leading-5 text-ink">{answer.text}</div>
-                {answer.records.map((r) => (
-                  <button key={r.href + r.label} onClick={() => go(r.href)} className="block w-full cursor-pointer py-1 text-left text-[13px] text-brand hover:underline">
-                    {r.label} →
-                  </button>
-                ))}
-                {answer.readAt ? (
-                  <div className="mt-1 text-[11px] text-muted">
-                    Read from the ERP at {new Date(answer.readAt).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })} · answers only, it cannot change anything
-                  </div>
-                ) : null}
-              </div>
-            ) : (
-              <button
-                onClick={runAsk}
-                disabled={thinking || q.trim().length < 3}
-                className="flex w-full cursor-pointer items-center gap-2.5 px-3 py-[7px] text-left text-sm text-[#5223E0] hover:bg-canvas disabled:cursor-default"
-              >
-                <Icon n="spark" />
-                {thinking ? "Reading the ERP…" : `Ask the ERP: “${q.trim()}”`}
-              </button>
-            )
-          ) : null}
-          {openRes && !answer && hits.length ? (
-            <div className={cx(ask && "mt-1.5 border-t border-divider")}>
-              {hits.map((r) => (
-                <button
-                  key={`${r.kind}:${r.href}`}
-                  onClick={() => go(r.href)}
-                  className="flex w-full cursor-pointer items-center justify-between gap-3 px-3 py-[7px] text-left hover:bg-canvas"
-                >
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium text-ink">{r.name}</span>
-                    <span className="block truncate text-[13px] text-muted">{r.meta}</span>
-                  </span>
-                  <span className="flex-none text-[11px] font-medium tracking-[0.04em] text-muted uppercase">{r.kind}</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
-          {openRes && !answer && !hits.length ? (
-            <div className="px-3 py-5 text-center text-sm text-muted">
-              Nothing you can open matches “{q}”. Try a customer, order no, lot, PR, bill or LR{ask ? ", or ask it as a question" : ""}.
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
-}

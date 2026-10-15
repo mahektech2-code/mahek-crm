@@ -1,0 +1,146 @@
+The CRM is a Next.js App Router subtree at `src/app/crm`. One layout gates the app and builds the shell; one layout per module gates each screen; every page is a server component that calls **reads** from `lib/queries.ts` or a `lib/services/*` file and hands plain data to a client screen, and every button calls a **server action** in `lib/actions/*` that delegates to the same services. Pure rules live in `lib/engines/` and never touch the database.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| App gate and shell | `src/app/crm/layout.tsx` | `listUserApps` → redirect to `/apps`; `listUserModules`; scope, notifications, sidebar badges; renders `AppShell` |
+| App root | `src/app/crm/page.tsx` | Redirects to the first module the person holds (Dashboard for nearly everybody) |
+| Module guards | `src/app/crm/<module>/layout.tsx` | `requireModule(user.id, "crm.<module>")` — a typed URL is refused, not just undrawn |
+| Navigation | `src/components/shell/nav.ts` | `NAV`, `PINNED`, `navForModules`, `pinnedForModules` |
+| Shell | `src/components/shell/app-shell.tsx`, `sidebar.tsx`, `header.tsx` | Header, scope switch, notifications, grouped sidebar with badges |
+| Module registry | `src/lib/modules.ts` | `APP_MODULES` — every grantable screen; keys are join keys and never renamed |
+| Access | `src/lib/access.ts` | `listUserApps`, `listUserModules`, `requireModule`, `canOpenModule`, `whatsappLevel` |
+| Capabilities | `src/lib/capability-matrix.ts`, `src/lib/access-control.ts` | `CAPABILITIES`, the per-app matrix, `canFor`, `requireCapability`, `resolveScope`, `scopedToUsers`, `ASSIGNED_TO_SQL`, `assertCustomerInScope` |
+| Scope | `src/lib/scope.ts` | `getScope`, `managesHere`, `scopeLabel` |
+| Reads | `src/lib/queries.ts` | Customers, timeline, interactions, day activity, badges |
+| Services | `src/lib/services/*.ts` | One file per module (table below) |
+| Writes | `src/lib/actions/crm.ts` and siblings | `"use server"` wrappers: validate, call the service, `refreshAll()`, return a `Result` |
+| Engines | `src/lib/engines/*.ts` | Pure rules: queue, next step, escalation, payment follow-up, allocation, outstanding, reminder closure |
+| Config | `src/lib/config/registry.ts`, `store.ts` | Every setting, its validation; `getConfig()` caches 30 s |
+
+## Where each module's code lives
+
+| Screen | Route | Service / read | Engine |
+|---|---|---|---|
+| Dashboard | `crm/dashboard` | `rangeActivity`, `teamRange` (queries) → `eodMetricsForRange` (eod-service), `queueProgress` | — |
+| Call Log | `crm/call-log` | `queue-service.ts` | `queue.ts`, `next-step.ts`, `buying-cycle.ts` |
+| Reminders | `crm/reminders` | `worklist-services.ts` (`listReminders`, `createReminder`, …) | `reminder-closure.ts` |
+| Call History | `crm/history` | `listInteractions` (queries) | — |
+| Opportunities | `crm/opportunities` | `opportunity-service.ts` | — |
+| Payment Follow-up | `crm/payments` | `payment-service.ts`, `payment-followup-service.ts`, `receipt-service.ts` | `escalation.ts`, `payment-followup.ts`, `allocation.ts` |
+| WhatsApp | `crm/whatsapp` | `whatsapp-service.ts`, `whatsapp-chat-service.ts` | — |
+| Outstanding | `crm/outstanding` | `outstandingPage` (payment-service) | `outstanding.ts` |
+| Sales Bills | `crm/bills` | `billLedgerPage`, `billLedgerTotals`, `openBillAges` (payment-service) | `escalation.ts#agingBucket` |
+| Customers | `crm/customers`, `crm/customers/[id]` | `listCustomersPage`, `customerFilterClause` (queries), `customer-record-service.ts`, `account-manager-service.ts` | — |
+| Complaints | `crm/complaints` | `worklist-services.ts`, `complaint-create.ts` | — |
+| Price lists | `crm/price-lists` | `price-list-service.ts` | `price-resolution.ts`, `price-math.ts` |
+
+## A request, end to end
+
+<Flow caption="GET /crm/<module>" chart={`
+sequenceDiagram
+  autonumber
+  participant B as Browser
+  participant L as crm/layout.tsx
+  participant M as crm/module/layout.tsx
+  participant P as module/page.tsx
+  participant S as lib/services or queries
+  participant DB as Postgres
+  B->>L: request
+  L->>DB: listUserApps, getScope, notifications, badges (one Promise.all)
+  alt CRM not granted, or no modules held
+    L-->>B: redirect /apps
+  end
+  L->>M: render children
+  M->>M: requireModule(user, "crm.module")
+  alt module not held
+    M-->>B: redirect to first held module
+  end
+  M->>P: render
+  P->>S: read(s) — each resolves scope itself
+  S->>DB: scoped SQL (scopedToUsers / ASSIGNED_TO_SQL)
+  S-->>P: plain rows
+  P-->>B: client screen with props
+`} />
+
+### The app layout
+
+<Code file="src/app/crm/layout.tsx" symbol="AppLayout" collapsed />
+
+<Code file="src/app/crm/layout.tsx" symbol="sidebarBadges" />
+
+`crmBadgeCounts` is wrapped in React `cache`, so the dashboard reading it in the same request costs nothing and cannot show a different number:
+
+<Code file="src/lib/queries.ts" symbol="crmBadgeCounts" />
+
+### The module guard
+
+<Code file="src/lib/access.ts" symbol="requireModule" />
+
+### Navigation
+
+<Code file="src/components/shell/nav.ts" symbol="navForModules" />
+
+<CapabilityGrid names={["customer.read", "call.log", "order.capture", "reminder.write", "reminder.close", "payment.record", "payment.confirm", "customer.reassign", "customer.assignSalesManager", "customer.export"]} />
+
+## Scope
+
+<Code file="src/lib/scope.ts" symbol="getScope" />
+
+<Code file="src/lib/access-control.ts" symbol="ASSIGNED_TO_SQL" />
+
+<Code file="src/lib/access-control.ts" symbol="scopedToUsers" />
+
+`scopedToUsers` answers "may this reader see the row" and reads **both** working seats (sales and back office, plus the lead manager and relationship seats). `ASSIGNED_TO_SQL` answers "whose book is it" and reads exactly one. Do not substitute one for the other: the first is for visibility, the second for credit and for the "Assigned to" column.
+
+## Writes
+
+Every action in `lib/actions/crm.ts` has the same shape: a `try`, a call into the service, `refreshAll()` to revalidate the CRM's paths, and `fromThrown(e)` on failure so the client always receives a `Result` rather than an exception. Permission is checked **in the service** with `requireCapability` or `assertCustomerInScope` — never by hiding a button.
+
+## The modules this section documents
+
+<ModuleRef k="crm.dashboard" /> <ModuleRef k="crm.call-log" /> <ModuleRef k="crm.reminders" /> <ModuleRef k="crm.history" /> <ModuleRef k="crm.opportunities" /> <ModuleRef k="crm.payments" /> <ModuleRef k="crm.whatsapp" /> <ModuleRef k="crm.whatsapp-reply" /> <ModuleRef k="crm.outstanding" /> <ModuleRef k="crm.bills" /> <ModuleRef k="crm.customers" /> <ModuleRef k="crm.complaints" /> <ModuleRef k="crm.price-lists" />
+
+## Tests that pin the shell
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/modules.test.ts` | Every module key, the WhatsApp write level, no nav item without a module |
+| `npm run test` | `src/lib/app-routing.test.ts` | Where somebody lands for each set of grants |
+| `npm run test` | `src/lib/shell-header-parity.test.ts` | The header draws the same controls in every app |
+| `npm run test` | `src/docs/coverage.test.ts` | Every CRM module is claimed by a docs page |
+| `npm run test:integration` | `src/lib/journeys.test.ts` | The six §11 journeys through the real services |
+
+## Adding a CRM screen safely
+
+<Steps>
+<Step title="Register the module">
+Add it to `APP_MODULES` in `lib/modules.ts`. The key is stored in `app_module_access` — choose it once, never rename it.
+</Step>
+<Step title="Add the nav item">
+`NAV` in `components/shell/nav.ts`. A nav item without a module is filtered out, which is the safe failure.
+</Step>
+<Step title="Guard the folder">
+Give the route a `layout.tsx` that calls `requireModule`. The sidebar hiding a link is a courtesy, not a permission.
+</Step>
+<Step title="Read through a service, scoped">
+Use `resolveScope()` and `scopedToUsers` or `ASSIGNED_TO_SQL`. Never write a second spelling of whose book an account is in.
+</Step>
+<Step title="Write through an action that checks">
+`requireCapability` or `assertCustomerInScope` in the service. Return a `Result` and call `refreshAll()`.
+</Step>
+<Step title="Claim it in the docs registry">
+`src/docs/registry.ts` — the coverage test fails until a page claims the new module.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| The Reminders badge is company-wide for any team-scope reader; the list is narrowed to the team | `lib/queries.ts` `crmBadgeCounts` (`${teamWide} or …`) vs `worklist-services.ts` `listReminders` |
+| Complaints badge and dashboard complaint flags filter by `owner_id`, not `ASSIGNED_TO_SQL` | `lib/queries.ts` `crmBadgeCounts`; `app/crm/dashboard/page.tsx` `dashboardCounts` |
+| Opportunities team view uses `isManager(user)` (widest level anywhere) rather than `managesHere(user, "crm")` | `app/crm/opportunities/page.tsx` |
+| Several pages call `getScope(user)` without naming the app, so the level is resolved from the request header rather than the CRM grant | `app/crm/reminders/page.tsx`, `history/page.tsx`, `payments/page.tsx`, `outstanding/page.tsx`, `bills/page.tsx`, `customers/page.tsx` |
+| The CRM's Outstanding and Sales Bills exports link to the Accounts app's export routes | `app/crm/outstanding/outstanding-screen.tsx`, `app/crm/bills/bills-screen.tsx` |

@@ -433,7 +433,22 @@ export async function bulkAdvanceLeadStage(input: {
   to: LeadStage;
   reasonCode?: string;
   note?: string;
-}): Promise<Result<{ done: number; failed: Array<{ id: string; name: string; why: string }> }>> {
+  /**
+   * What a PARK demands, asked once for the whole batch: when it comes back, and
+   * what happens then. Meaningless on any other move. The next action carries NO
+   * owner - each lead's own owner holds it (see the loop), so one press cannot
+   * hand twenty people's leads to one person.
+   */
+  hold?: { reason?: string; resumeDate: string };
+  nextAction?: { action: string; date: string; outcome?: string };
+}): Promise<
+  Result<{
+    done: number;
+    failed: Array<{ id: string; name: string; why: string }>;
+    /** Already where the batch was sending them - left as they were, not a failure. */
+    unchanged: Array<{ id: string; name: string }>;
+  }>
+> {
   try {
     /* The cap is the SELECTION'S own, read from the same place the screen
        reads it. Two different numbers means "Select all 200" is followed by a
@@ -449,14 +464,88 @@ export async function bulkAdvanceLeadStage(input: {
        working. */
     await requireCapability("lead.work");
 
+    /* A PARK IS REFUSED WHOLE, BEFORE ANYTHING IS ATTEMPTED, when what it demands
+       is missing. The same answers `advanceLeadStage` asks of the record's own
+       control, on the same configured list - and said once, because the
+       alternative is one identical refusal per lead. */
+    const parking = input.to === "on_hold";
+    if (parking) {
+      const missing: FieldError[] = [];
+      const holdCodes = (await getConfig())["leads.holdReasons"];
+      const code = input.reasonCode ?? "";
+      if (!code || !holdCodes.some((r) => r.code === code)) {
+        missing.push({ field: "reasonCode", message: "Why is it stopping?" });
+      }
+      if (code === REASON_CODE_NEEDING_REMARKS && !input.hold?.reason?.trim()) {
+        missing.push({ field: "holdReason", message: "You picked Other - say in words what it actually is." });
+      }
+      if (!input.hold?.resumeDate) {
+        missing.push({ field: "holdResumeDate", message: "When should it come back?" });
+      }
+      if (!input.nextAction?.action?.trim() || !input.nextAction?.date) {
+        missing.push({ field: "nextAction", message: "What happens when it does?" });
+      }
+      if (missing.length) {
+        return {
+          ok: false,
+          error:
+            "On hold is a pause, not a quiet death. Pick why it stopped, name the day it comes back, and say what happens when it does — otherwise it comes back to nobody.",
+          code: "validation",
+          fieldErrors: missing,
+        };
+      }
+    }
+
     let done = 0;
     const failed: Array<{ id: string; name: string; why: string }> = [];
+    const unchanged: Array<{ id: string; name: string }> = [];
     for (const id of ids) {
+      /* PER LEAD, FOR A PARK: where it stands, and who owes the next action.
+         The owner is the lead's OWN owner - `customers.owner_id`, which is what
+         every list reads as whose lead it is - and where there is none, or the
+         account cannot sign in, the lead is refused with that said, rather than
+         the action being handed to somebody the batch happened to have in hand. */
+      let nextAction: { action: string; date: string; ownerId: string; outcome?: string } | undefined;
+      if (parking && input.nextAction) {
+        let lead: LeadRow;
+        try {
+          const reach = await reachableLead(id);
+          if (!reach.ok) {
+            failed.push({ id, name: "A lead", why: reach.refusal.error });
+            continue;
+          }
+          lead = reach.lead;
+        } catch {
+          failed.push({ id, name: "A lead", why: "not in your book" });
+          continue;
+        }
+        if (lead.leadStage === "on_hold") {
+          unchanged.push({ id, name: lead.name });
+          continue;
+        }
+        const ownerId = lead.ownerId;
+        const [owner] = ownerId
+          ? await db.select({ active: users.active }).from(users).where(eq(users.id, ownerId)).limit(1)
+          : [];
+        if (!ownerId || !owner?.active) {
+          failed.push({
+            id,
+            name: lead.name,
+            why: ownerId
+              ? "its owner can no longer sign in, so nobody can be given the next action - reassign it first"
+              : "nobody owns it, so there is nobody to be given the next action - assign an owner first",
+          });
+          continue;
+        }
+        nextAction = { ...input.nextAction, ownerId };
+      }
+
       const result = await advanceLeadStage({
         customerId: id,
         to: input.to,
         reasonCode: input.reasonCode,
         note: input.note,
+        ...(parking ? { hold: input.hold, nextAction } : {}),
       });
       if (result.ok) {
         done += 1;
@@ -475,14 +564,18 @@ export async function bulkAdvanceLeadStage(input: {
       failed.push({ id, name, why: result.error });
     }
 
-    const head = `${done} ${done === 1 ? "lead" : "leads"} moved to ${stageLabel(input.to)}.`;
-    if (!failed.length) return ok({ done, failed }, head);
+    const head =
+      `${done} ${done === 1 ? "lead" : "leads"} moved to ${stageLabel(input.to)}.` +
+      (unchanged.length
+        ? ` ${unchanged.length} already ${unchanged.length === 1 ? "was" : "were"} at ${stageLabel(input.to)} - left as ${unchanged.length === 1 ? "it was" : "they were"}.`
+        : "");
+    if (!failed.length) return ok({ done, failed, unchanged }, head);
     const shown = failed
       .slice(0, 3)
       .map((f) => `${f.name} — ${f.why}`)
       .join("; ");
     const more = failed.length > 3 ? ` and ${failed.length - 3} more` : "";
-    return ok({ done, failed }, `${head} ${failed.length} did not move: ${shown}${more}`);
+    return ok({ done, failed, unchanged }, `${head} ${failed.length} did not move: ${shown}${more}`);
   } catch (e) {
     return fromThrown(e);
   }

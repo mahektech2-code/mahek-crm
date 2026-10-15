@@ -45,7 +45,6 @@ const HANDSET_SRC = "mbos-app/src";
 const NEVER_A_DEPENDENCY: Record<string, string> = {
   competitor: "a sighting is filed against a visit or a lead; nothing is filed against it",
   samplefb: "trial feedback rides inside the sample's own record on the wire",
-  expsubmit: "a submission is the last word about a day; nothing follows it",
   media: "a photograph is bound to its parent by name, through a queue of its own",
   tl: "the handset's own timeline rows never go up",
   le: "lead events are a local log, written beside the outbox and never sent",

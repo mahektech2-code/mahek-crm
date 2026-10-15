@@ -1,5 +1,6 @@
 import "server-only";
 import { notConverted } from "@/lib/lead-action-window";
+import { capCutOffLiveLeads } from "@/lib/sales-lead-pipeline/desk";
 
 import { sql } from "drizzle-orm";
 
@@ -14,6 +15,7 @@ import { gateForNext, gateTo, mustDecideSuspect, checklistFor, qualificationAnsw
 import { isParked } from "@/lib/engines/lead-ladder";
 import { isReopenTransition, reopenTarget } from "@/lib/engines/lead-reopen";
 import { isRecentLead } from "@/lib/lead-recent";
+import { stageAgeDays } from "@/lib/sales-lead-pipeline/stage-age";
 import { stampDate } from "@/lib/format";
 import {
   COMMUNICATION_ACTIONS,
@@ -55,7 +57,8 @@ import {
 } from "@/lib/services/lead-record-service";
 import { QUAL_NEXT } from "@/lib/services/lead-qualification-flow-service";
 import { leadTileCounts } from "@/lib/services/lead-views-service";
-import { fieldTeam, leadsPage, leadsVisible, managerScope } from "@/lib/services/sales-service";
+import { leadsPage, leadsVisible, managerScope } from "@/lib/services/sales-service";
+import { ownerChoices } from "@/lib/services/lead-desk-assignment-service";
 
 import { STAGE_LABEL, ladderFor } from "./reference";
 import type {
@@ -139,7 +142,7 @@ export async function pipelineRefs(): Promise<PipelineRefs> {
   const [user, config, team, owners] = await Promise.all([
     requireUser(),
     getConfig(),
-    fieldTeam(),
+    ownerChoices(),
     nextActionOwnerCandidates(),
   ]);
 
@@ -153,10 +156,10 @@ export async function pipelineRefs(): Promise<PipelineRefs> {
     prospectReasons: coded(config["leads.prospectReasons"]),
     sampleReasons: coded(config["leads.sampleReasons"]),
     orderBlockers: coded(config["leads.orderBlockers"]),
-    /* Only people who can actually be given a book: an ACTIVE account holding
-       the Salesman App. `reassignLead` refuses anybody else, so offering them
-       would put the refusal after the choice. */
-    salesmen: team.filter((s) => s.active).map((s) => ({ id: s.id, name: s.name })),
+    /* EVERYBODY A LEAD CAN BE GIVEN TO: every active person holding the CRM or
+       the Salesman App - telecallers and salesmen alike, the same list the Change
+       owner list offers. `reassignLead` accepts exactly this set (by id). */
+    salesmen: team.map((s) => ({ id: s.id, name: s.name })),
     actionOwners: owners.map((o) => ({ id: o.id, name: o.name })),
     me: { id: user.id, name: user.name },
   };
@@ -276,6 +279,8 @@ function toRow(r: PageRow, extra: RowExtra | undefined, recentDays: number): Pip
     contact: clean(extra?.contact),
     salesType: salesTypeOf(r.salesType),
     stage: lost ? null : (r.stage as Stage),
+    /* `stageDays` is selected by `leadsPage` from `lead_stage_since`, null where none is recorded. */
+    stageDays: lost ? undefined : (r.stageDays ?? undefined),
     lost,
     priority: priorityOf(r.priority),
     owner: r.salesmanName ?? "",
@@ -1141,6 +1146,8 @@ export async function pipelineLead(
     isRecent: extra ? isRecentLead(extra.ageDays, config["mbos.leads.recentDays"]) : false,
     salesType: salesTypeOf(record.salesType),
     stage,
+    /* `leadRecord`'s own `stuckDays` — coalesced to 0 in SQL, so it is only trusted where a stage date exists. */
+    stageDays: stageAgeDays(record.stageSince, record.stuckDays),
     priority: priorityOf(record.priority),
     owner: record.salesmanName ?? "",
     ownerId: record.salesmanId,
@@ -1283,15 +1290,22 @@ export async function pipelineLead(
 /** Pages of 200, five of them. A Sales Manager's seat is a few hundred leads; past this the desk says so rather than loading on. */
 const DESK_PAGES = 5;
 
-async function everyPage(day: string, view: LeadView): Promise<{ rows: PageRow[]; truncated: boolean }> {
+async function everyPage(
+  day: string,
+  view: LeadView,
+  options: { deskOrder?: boolean } = {},
+): Promise<{ rows: PageRow[]; truncated: boolean }> {
   const rows: PageRow[] = [];
-  let truncated = false;
+  let hitCap = false;
   for (let page = 1; page <= DESK_PAGES; page += 1) {
-    const got = await leadsPage(day, { view, page, perPage: 200 });
+    const got = await leadsPage(day, { view, page, perPage: 200, deskOrder: options.deskOrder });
     rows.push(...got.rows);
     if (page >= got.pageCount) break;
-    if (page === DESK_PAGES) truncated = true;
+    if (page === DESK_PAGES) hitCap = true;
   }
+  /* With the desk's own order (live first) a cap that cut only lost leads has
+     cut nothing the desk would have drawn, so it is not reported as a tail. */
+  const truncated = options.deskOrder ? capCutOffLiveLeads(rows, hitCap) : hitCap;
   return { rows, truncated };
 }
 
@@ -1299,7 +1313,7 @@ export async function pipelineDesk(day: string): Promise<DeskData> {
   const user = await requireUser();
 
   const [book, overdue, verify, samples, open, slipped, nurture] = await Promise.all([
-    everyPage(day, "all"),
+    everyPage(day, "all", { deskOrder: true }),
     everyPage(day, "overdue"),
     verificationQueue(day, { limit: 500 }),
     sampleDesk(day, { limit: 500 }),

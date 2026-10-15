@@ -9,6 +9,9 @@ import {
   DESK_VIEWS,
   NO_SALESMAN,
   QUEUE_HELP,
+  SUSPECT_HELP,
+  SUSPECT_LABEL,
+  suspectCount,
   QUEUE_LABEL,
   groupBySalesman,
   queueCounts,
@@ -83,7 +86,7 @@ function LeadRow({ row, base, day }: { row: DeskRow; base: string; day: string }
         <span className="flex flex-wrap items-center gap-2">
           <span className="truncate text-sm font-medium text-ink">{row.name}</span>
           <PSalesTypeBadge salesType={row.salesType} />
-          <PStageBadge stage={row.stage} />
+          <PStageBadge stage={row.stage} days={row.stageDays} />
           <PPriorityBadge priority={row.priority} />
           {row.isRecent ? <PBadge tone="success">Recently</PBadge> : null}
           {row.queues.map((q) => (
@@ -192,7 +195,8 @@ export function Dashboard({
 
   const tiles: { key: DeskView; label: string; value: number; sub: string }[] = [
     { key: "all", label: "All leads", value: counts.all, sub: "in your book" },
-    ...(DESK_VIEWS.filter((v): v is DeskQueue => v !== "all").map((k) => ({
+    { key: "suspect", label: SUSPECT_LABEL, value: suspectCount(data.rows), sub: "at Suspect stage" },
+    ...(DESK_VIEWS.filter((v): v is DeskQueue => v !== "all" && v !== "suspect").map((k) => ({
       key: k as DeskView,
       label: QUEUE_LABEL[k],
       value: counts[k],
@@ -220,7 +224,7 @@ export function Dashboard({
             type="button"
             onClick={() => pick(t.key)}
             aria-pressed={view === t.key}
-            title={t.key === "all" ? undefined : QUEUE_HELP[t.key as DeskQueue]}
+            title={t.key === "all" ? undefined : t.key === "suspect" ? SUSPECT_HELP : QUEUE_HELP[t.key as DeskQueue]}
             className={cx(
               "min-w-[132px] flex-1 border-r border-divider px-[18px] py-3.5 text-left last:border-r-0 hover:bg-canvas",
               view === t.key && "bg-brand-soft",
@@ -240,11 +244,11 @@ export function Dashboard({
         ))}
       </div>
 
-      {view !== "all" ? <p className="mb-3 text-[12.5px] text-muted">{QUEUE_HELP[view]}</p> : null}
+      {view !== "all" ? <p className="mb-3 text-[12.5px] text-muted">{view === "suspect" ? SUSPECT_HELP : QUEUE_HELP[view]}</p> : null}
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <PSectionLabel className="mb-0 mr-auto">
-          {view === "all" ? "Leads by salesman" : QUEUE_LABEL[view]} · {shown}
+          {view === "all" ? "Leads by salesman" : view === "suspect" ? SUSPECT_LABEL : QUEUE_LABEL[view]} · {shown}
         </PSectionLabel>
         <input
           value={q}

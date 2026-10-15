@@ -2,24 +2,22 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { and, eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { auditLog, mbosApprovals, mbosExpenseExceptions } from "@/db/schema";
+import { auditLog, mbosExpenseExceptions } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
-import { requireCapability, canFor } from "@/lib/access-control";
-import { reopenDay, submitDay } from "@/lib/services/expense-submit-service";
-import { today } from "@/lib/recompute";
+import { requireCapability } from "@/lib/access-control";
 import { err as fail, ok, okVoid, type Result } from "@/lib/result";
 
 /* ---------------------------------------------------------------------------
  * Deciding what the field spent.
  *
  * The rules that decide the AMOUNTS live in the policy and the engine; nothing
- * in this file works out a rupee. What it does is record decisions — somebody
- * answering an exception, somebody approving a day, somebody reopening one —
- * and every one of them is capability-checked here rather than by hiding a
- * button, because a server action is a URL.
+ * in this file works out a rupee. What it records here is somebody answering a
+ * flag on a day, capability-checked rather than hidden behind a button, because
+ * a server action is a URL. Each expense is approved on its own, through
+ * `decideExpense` in `lib/actions/sales.ts`.
  * ------------------------------------------------------------------------- */
 
 const newId = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -71,8 +69,8 @@ const resolveSchema = z.object({
  * checked here as well as in the dialog, because the dialog is not a check.
  *
  * A resolved exception is never deleted and never re-raised by a recompute:
- * `submitDay` replaces only the UNRESOLVED ones, so an answer given survives
- * the day being priced again.
+ * `refreshDayMoney` replaces only the UNRESOLVED ones, so an answer given
+ * survives the day being priced again.
  */
 export async function resolveException(input: unknown): Promise<Result> {
   await requireCapability("order.approve");
@@ -119,170 +117,6 @@ export async function resolveException(input: unknown): Promise<Result> {
         : "Marked corrected.",
   );
 }
-
-/* --------------------------------------------------------- deciding a day */
-
-const decideSchema = z.object({
-  dayId: z.string(),
-  decision: z.enum(["approved", "partially_approved", "rejected"]),
-  approvedAmountPaise: z.number().int().min(0).nullish(),
-  note: z.string().trim().max(2000).nullish(),
-});
-
-/**
- * Approve, part-approve or refuse a submitted day.
- *
- * `mbos_approvals` is the one approval table in MBOS and this writes into it
- * unchanged — the day's state is DERIVED from the highest step, never written
- * onto the day beside it. Two copies of one decision is how a screen ends up
- * showing a refusal beside a payment.
- *
- * A refusal takes a reason and a part-approval takes a figure, both refused
- * here rather than merely required by the form. `partially_approved` without a
- * number is a shrug wearing a status.
- */
-export async function decideExpenseDay(input: unknown): Promise<Result> {
-  /* The hat that allowed it, not the person's widest one. `audit_log.actor_role`
-     exists to tell the accounts clerk doing their job from an administrator
-     reaching past a rule, and it can only do that if the NARROWEST granting
-     role is what gets written. */
-  const granting = await requireCapability("order.approve");
-  const user = await requireUser();
-
-  const parsed = decideSchema.safeParse(input);
-  if (!parsed.success) return fail("That decision cannot be saved.", "validation");
-  const p = parsed.data;
-
-  if (p.decision === "rejected" && !p.note?.trim()) {
-    return fail("A refusal has to say why — the salesman has to be told something.", "validation", [
-      { field: "note", message: "Say why." },
-    ]);
-  }
-  if (p.decision === "partially_approved" && (p.approvedAmountPaise ?? null) === null) {
-    return fail(
-      "Allowing part of a claim needs the figure allowed. Without it the decision is a shrug wearing a status.",
-      "validation",
-      [{ field: "approvedAmountPaise", message: "How much is allowed?" }],
-    );
-  }
-
-  const steps = await db
-    .select()
-    .from(mbosApprovals)
-    .where(
-      and(
-        eq(mbosApprovals.subjectType, "mbos_expense_days"),
-        eq(mbosApprovals.subjectId, p.dayId),
-      ),
-    )
-    .orderBy(sql`${mbosApprovals.stepIndex} asc`);
-
-  const pending = steps.find((s) => s.state === "pending");
-  if (!pending) {
-    return fail("There is nothing waiting on this day.", "not_found");
-  }
-
-  await db
-    .update(mbosApprovals)
-    .set({
-      state: p.decision,
-      decidedAt: new Date(),
-      approverUserId: user.id,
-      decisionNote: p.note ?? null,
-      approvedAmountPaise: p.approvedAmountPaise ?? null,
-    })
-    .where(eq(mbosApprovals.id, pending.id));
-
-  await audit(user.id, `expense.day_${p.decision}`, p.dayId, pending, p, granting.authorisedBy);
-  refresh();
-
-  const remaining = steps.filter((s) => s.id !== pending.id && s.state === "pending").length;
-  return okVoid(
-    remaining
-      ? `Saved. This day still needs ${remaining} more decision — it was escalated as well as sent to you.`
-      : p.decision === "rejected"
-        ? "Refused. The salesman is told, with your reason."
-        : "Saved.",
-  );
-}
-
-/* ---------------------------------------------------- submitting, reopening */
-
-const submitSchema = z.object({
-  userId: z.string(),
-  day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  note: z.string().trim().max(2000).nullish(),
-});
-
-/**
- * Submit a day from the office.
- *
- * Ordinarily the salesman does this on the handset. This exists for the day he
- * cannot — a broken phone, a resignation mid-month — and it is deliberately
- * NOT open to everybody: submitting prices a day and can auto-approve it, so
- * somebody submitting their own would be approving their own.
- */
-export async function submitExpenseDay(input: unknown): Promise<Result<{ dayId: string }>> {
-  await requireCapability("order.approve");
-  const user = await requireUser();
-
-  const parsed = submitSchema.safeParse(input);
-  if (!parsed.success) return fail("That day cannot be submitted.", "validation");
-  const p = parsed.data;
-
-  if (p.userId === user.id) {
-    return fail(
-      "You cannot submit your own day from here — a submission can approve itself, and that would be approving your own claim.",
-      "not_permitted",
-    );
-  }
-
-  const outcome = await submitDay(p.userId, p.day, { note: p.note ?? null });
-  if (!outcome.ok) return fail(outcome.reason, "conflict");
-
-  await audit(user.id, "expense.day_submitted_by_office", outcome.dayId, null, outcome);
-  refresh();
-  return ok({ dayId: outcome.dayId }, outcome.routeReason);
-}
-
-const reopenSchema = z.object({
-  dayId: z.string(),
-  reason: z.string().trim().min(3).max(2000),
-});
-
-/**
- * Requirement 50 — reopen a submitted day.
- *
- * Takes a reason, always. What was submitted is not erased: a correction
- * supersedes a line rather than editing one, so the original claim stays
- * readable beside what replaced it. Erasing it would destroy the only record
- * of what was originally asked for, which is the thing an audit is FOR.
- */
-export async function reopenExpenseDay(input: unknown): Promise<Result> {
-  await requireCapability("order.approve");
-  const user = await requireUser();
-
-  const parsed = reopenSchema.safeParse(input);
-  if (!parsed.success) {
-    return fail("A reopening has to say why.", "validation", [
-      { field: "reason", message: "Say why this day is being reopened." },
-    ]);
-  }
-
-  const outcome = await reopenDay(parsed.data.dayId, user.id, parsed.data.reason, await today());
-  if (!outcome.ok) return fail(outcome.reason, "rule_violation");
-
-  await audit(user.id, "expense.day_reopened", parsed.data.dayId, null, parsed.data);
-  refresh();
-  return okVoid(outcome.reason);
-}
-
-/** Whether this viewer may decide claims. Read by the screens to draw controls. */
-export async function canDecideExpenses(): Promise<boolean> {
-  const user = await requireUser();
-  return canFor(user, "order.approve");
-}
-
 
 /* ------------------------------------------------- the attachment store */
 
@@ -391,25 +225,4 @@ function adviseOn(message: string): string | null {
     return "The endpoint could not be reached at all. Check the address, and that the droplet has outbound network access.";
   }
   return null;
-}
-
-/**
- * The claims behind a day, for the Decide dialog — read-only.
- *
- * Asked of the same people who can open the Sales Dashboard, and narrowed by
- * the same scope its list is: a server action is a URL, and the dialog is not
- * the only thing that can post to it.
- */
-export async function claimLinesForDayAction(
-  dayId: string,
-): Promise<Result<import("@/lib/services/expense-claims-service").ClaimLine[]>> {
-  const user = await requireUser();
-  const { listUserApps } = await import("@/lib/access");
-  if (!(await listUserApps(user.id)).includes("sales")) {
-    return fail("The Sales Dashboard is not open to you.", "not_permitted");
-  }
-  const { claimLinesForDay } = await import("@/lib/services/expense-claims-service");
-  const lines = await claimLinesForDay(String(dayId));
-  if (lines === null) return fail("That day is not one you can see.", "not_found");
-  return ok(lines);
 }

@@ -1,0 +1,106 @@
+Two rules hold the CRM's behaviour together. **Nothing business-critical is a constant**: every threshold a manager might one day want to change is a setting, stored in the database, read through one cached function, and changed from a screen. **There is one place to change it**: the Admin Console's settings pages, which validate, check the whole configuration for consistency, and audit every change. The Help Center sits beside them as the one place SOPs and call scripts are written.
+
+<Callout kind="live">
+Every table on this page shows the value in force now, its shipped default, and who last changed it.
+</Callout>
+
+## How a setting reaches the screen
+
+<Flow caption="A setting, from the console to the Call Log" chart={`
+flowchart TD
+  M["A CRM manager edits a tab<br/>in Admin Console → Telecaller CRM"] --> V{"Every value valid?<br/>(type, bounds, options)"}
+  V -- "No" --> E["Refused — under the field it names"]
+  V -- "Yes" --> C{"Does the new set introduce<br/>an inconsistency?"}
+  C -- "Yes" --> E2["Refused — the relationship named"]
+  C -- "No" --> R["Review this change set<br/>(old, new, worklists affected)"]
+  R --> T["ONE transaction — every value written,<br/>an audit row per setting with before and after"]
+  T --> K["Cache invalidated —<br/>every reader sees it within 30 seconds"]
+`} />
+
+<Rule title="A section is saved as one change set">
+Related settings — three escalation thresholds, a set of aging buckets — are saved together or not at all. Half-applying them would leave the system briefly describing a policy nobody agreed to.
+</Rule>
+
+<Rule title="Consistency is checked across the whole configuration">
+Some settings are two statements of one fact: the collections quiet window and the stage-2 threshold, the aging buckets and the escalation stages, the six performance weights and the number 100. A change that **introduces** a contradiction is refused with the relationship named. A contradiction that was **already** there does not block a save — refusing would trap whoever is fixing one half of it.
+</Rule>
+
+<Callout kind="why">
+A wrong setting is worse than a wrong row: it is read by every engine on every request. Reading every value through one 30-second cache means a change lands everywhere at once, and an audit row with before and after means "why does the Call Log do that" always has an answer with a name and a date on it.
+</Callout>
+
+## Who may change what
+
+<Rule title="config.write, and a standing in the app the setting belongs to">
+Changing a setting needs the configuration permission (managers hold it) **and** manager or admin level in an app that owns that settings page. A CRM manager changes the **Telecaller CRM** and **Lead funnel** pages; the **Platform** page — sign-in, the working day, attachments — is the platform administrator's alone, as is any setting marked admin-only. A setting that sits on no page cannot be changed by id at all.
+</Rule>
+
+<Callout kind="why">
+The permission is held at manager level in several apps. Without the second check, a manager of the Sales Dashboard could post a change to the CRM's collections thresholds by URL, though the console would never have drawn them that page. The write now asks the same question the console asks before drawing it. A platform administrator's write also passes the console's password re-check, which is off unless <Setting k="auth.console.confirmMinutes" /> is set above zero.
+</Callout>
+
+`/crm/settings` permanently redirects to the console. The module that guards it still exists.
+
+## The Telecaller CRM page, tab by tab
+
+### Call queue
+
+How the Call Log is built. Explained on [Call Log → How it works](/docs/crm/call-log/how-it-works).
+
+<SettingsTable prefix="queue." />
+
+### Collections
+
+When a late bill is messaged, then called, then escalated; aging buckets; credit terms; the slow-payer flag. Explained on [Payment Follow-up → How it works](/docs/crm/payments/how-it-works).
+
+<SettingsTable keys={[
+  "escalation.stage1Days", "escalation.stage2Days", "escalation.stage3Days", "escalation.stageDriver",
+  "escalation.partialPaymentResetsClock", "escalation.disputeHoldsEscalation", "escalation.quietCallDays",
+  "escalation.messageIntervalDays", "escalation.callIntervalDays", "escalation.slowPayerLookbackMonths",
+  "escalation.slowPayerGraceDays", "escalation.slowPayerLateCount",
+  "bills.agingBuckets", "bills.defaultCreditDays", "bills.creditDayOptions", "customers.defaultCreditDays",
+]} />
+
+### Targets & cycles
+
+Buying cycles, inactivity, per-customer target defaults and the Top customers list. See [Monthly Targets](/docs/crm/targets/how-it-works).
+
+<SettingsTable keys={[
+  "buyingCycle.method", "buyingCycle.lookbackOrders", "buyingCycle.minIntervals", "buyingCycle.defaultDays",
+  "buyingCycle.minDays", "buyingCycle.maxDays", "inactive.cycleMultiplier", "inactive.decisionAgeWarningDays",
+  "targets.defaultMethod", "targets.trailingMonths", "targets.defaultUpliftPercent", "targets.proRateNewCustomers",
+  "topCustomers.count",
+]} />
+
+### Interactions, products, WhatsApp, reminders, complaints
+
+<SettingsTable keys={[
+  "interactions.maxNotesLength", "interactions.followUpDefaultDays", "interactions.paymentPromiseDefaultDays",
+  "interactions.singleSelectOutcomes", "customers.birthdayHeadsUpDays",
+  "products.frequentCount", "products.frequentRanking", "products.starterListCount", "products.priceSource",
+  "products.searchOnOrderForms", "products.searchMinChars",
+  "whatsapp.contactsPerWeekLimit", "whatsapp.unconfirmedExpiryHours", "whatsapp.autoConfirmAfterHours",
+  "reminders.rollForwardOnNonWorkingDays", "reminders.rescheduleWarningCount", "dashboard.reminderOverdueFlagDays",
+  "complaints.slaHours", "complaints.defaultSeverity", "complaints.categories", "dashboard.complaintUnresolvedFlagDays",
+]} />
+
+The catalogue, quick notes, WhatsApp templates and help articles appear on these tabs as **collections of rows** rather than single values, because they are things a person edits one at a time — on their own screens.
+
+### The Lead funnel page
+
+Shared by the CRM and the Sales Dashboard: **Gates & decisions** (`leads.*`, the Suspect visit cap), **Reason lists** (every coded list), and **On the handset** (`mbos.leads.*`, `mbos.samples.*`). Explained across the [Lead Management](/docs/crm/leads/how-it-works) pages.
+
+## The Help Center
+
+- **One place scripts are written.** The call panel shows call scripts straight from the Help Center's articles of type *call script*, ordered by title, so a script is never written twice.
+- **Placeholders the CRM can answer are answered** in the call panel — contact name, customer, town, your name, outstanding, last order, and the bill being chased with its amount, due date and days overdue. What it cannot fill stays in braces and is highlighted, because `am I speaking to {contact name}?` read aloud is a stumble the system could have prevented, and dressing a real name and a placeholder alike is how somebody says "bill number" on a live call.
+- **Audience.** Each article lists who it is for. The server shows an article to a person whose level for the request is listed on it (or to everyone where it says *all*); the screen's filter then starts on *Telecaller* for an associate.
+- **Categories and search** are client-side over what was sent.
+
+## Where the code and the intent disagree today
+
+- **Help articles cannot be written from any screen.** The only writer of `help_articles` is the seed; the console lists them with the note "Nothing edits them from a screen yet" (`src/lib/config/presentation.ts`; `src/db/seed.ts`).
+- **"Reached from the Help Center" is stale.** The `crm.settings` module note says it is reached from the Help Center; the Help Center has no link to it, and `/crm/settings` permanently redirects to `/admin` (`src/lib/modules.ts`; `src/app/crm/help/help-screen.tsx`; `src/app/crm/settings/page.tsx`).
+- **The audience filter is applied twice with two vocabularies.** The server filters on the person's level (`lib/queries.ts` `listHelpArticles`), so an article tagged with the legacy word *telecaller* is never sent, though the screen's own filter still recognises that word (`help-screen.tsx` `AUDIENCE`).
+- **The "Report a problem on WhatsApp" link is a hard-coded number** in the screen, not a setting (`help-screen.tsx`).
+- **Settings that change nothing are still on the Call queue tab:** `queue.leadPercent`, `queue.leadMinDays`, `queue.leadMaxDays`, `queue.noOrderCooldownDays`, and `queue.snapshotHour` (display only). See the Call Log's own list.

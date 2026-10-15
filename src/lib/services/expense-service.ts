@@ -324,7 +324,7 @@ export async function priceDay(userId: string, day: string): Promise<DayAnswer |
           cityClass: s.cityClass,
         }));
 
-  const policy = await policyForDate(day);
+  const policy = await policyForDate(day, userId);
   if (!policy) {
     return {
       day: row,

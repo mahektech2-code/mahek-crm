@@ -1,0 +1,97 @@
+Outstanding answers **who owes us money, and for what**. It is one row per customer — what they owe, how old the oldest of it is — and every row opens to show the bills behind the figure. Use it to decide who to chase and to have the bill numbers in front of you when you do.
+
+It covers every open bill, **whatever financial year it is from**, because the oldest debt on an account is usually last year's.
+
+## The screen at a glance
+
+<Wireframe url="/crm/outstanding" nav={["Dashboard", "#Collections", "Payment Follow-up", "WhatsApp", "Outstanding", "Sales Bills"]} active="Outstanding" caption="Outstanding, one customer opened">
+  <WfBar>
+    <WfTitle sub="What each customer still owes, with the bills behind it. Your book · open bills across every financial year, because the oldest debt on an account is usually last year's.">Outstanding</WfTitle>
+    <WfSpacer /><WfButton>Export</WfButton>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfBar>
+    <WfCard title="Outstanding"><WfText>₹9,40,000 · 38 customers</WfText></WfCard>
+    <WfCard title="Past due"><WfText>₹6,10,000 · 24 past a due date</WfText></WfCard>
+    <WfCard title="Not stated"><WfText>₹1,20,000 · 5 customers · nothing recorded either way</WfText></WfCard>
+    <Hotspot n={2} />
+  </WfBar>
+  <WfBar><WfInput placeholder="Find a customer" /><WfInput placeholder="Most owed ▾" /><WfPill>Past due only</WfPill><WfSpacer /><WfText muted>Expand this page</WfText><Hotspot n={3} /></WfBar>
+  <WfTable highlight={0} columns={["Customer", "Open bills", "Oldest", "Flags", "Not stated", "Outstanding"]} rows={[
+    [<span key="a">▾ <b>Customer A</b> <Hotspot n={4} /></span>, "3", <WfPill key="b" tone="danger">62 days</WfPill>, <WfPill key="c" tone="warn">1 disputed</WfPill>, "-", "₹1,20,000"],
+    [<span key="d">▸ <b>Customer B</b></span>, "1", "Within terms", "", "₹30,000", "₹55,000"],
+  ]} />
+  <WfCard>
+    <WfTable columns={["Bill no", "Billed", "Due", "Amount", "Paid", "Balance", "Overdue", "Status"]} rows={[
+      ["MMI/25-26/859", "9 Jun", "9 Jul", "₹59,000", "₹0", "₹59,000", "62 days", "62d overdue"],
+      ["MMI/26-27/112", "2 Aug", "1 Sep", "₹40,000", "₹19,000", "₹21,000", "", "Partly paid"],
+    ]} />
+    <WfBar><WfButton>Open record</WfButton><WfButton>WhatsApp</WfButton><Hotspot n={5} /></WfBar>
+  </WfCard>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Export.</b> Downloads <b>everybody</b> the search and past-due filter match, one line per bill — not just the page you are looking at.</span>,
+  <span key="2"><b>The three totals.</b> What is owed, how much of it is past its due date, and bills nobody has recorded a payment position for — shown, but never added to what is owed.</span>,
+  <span key="3"><b>Find and sort.</b> Search by name; sort by most owed, oldest debt or name; tick <i>Past due only</i> to hide customers whose bills are all within terms.</span>,
+  <span key="4"><b>One customer.</b> Press the row to open their bills. <i>Oldest</i> is how late their oldest bill is, or <i>Within terms</i>.</span>,
+  <span key="5"><b>Act on it.</b> Open the customer's record, or open WhatsApp on this customer to send a reminder.</span>,
+]} />
+
+## Chasing from this screen
+
+<Steps>
+<Step title="Sort by Oldest debt">
+The customer whose debt is oldest is usually the one closest to going bad.
+</Step>
+<Step title="Open the row">
+The bills are listed with what is owed first, oldest due date first — the bill that has to clear before the customer leaves the collections list is at the top.
+</Step>
+<Step title="Chase">
+**WhatsApp** opens a reminder for this customer. To log a call, use [Payment Follow-up](/docs/crm/payments), which is where calls are recorded and dated.
+</Step>
+</Steps>
+
+## What each figure and word means
+
+| On the screen | Means |
+|---|---|
+| **Outstanding** | What the customer owes on bills that are stated as owed, after confirmed payments |
+| **Open bills** | How many stated bills still have a balance |
+| **Oldest** | Days past the due date of their oldest stated bill, or **Within terms** |
+| **N disputed** | Bills the customer has disputed — a billing complaint is open |
+| **Not stated** | Bills with a balance that are **not** counted as owed — see below |
+| **Status: Nd overdue** | Nothing paid, N days past due |
+| **Status: Part paid · Nd late** | Something paid, the rest N days past due |
+| **Status: Partly paid** | Something paid, the rest not yet due |
+| **Status: Open** | Nothing paid, not yet due |
+| **Status: Disputed** | Disputed |
+| **Status: Not stated** | Not counted as owed |
+
+<Callout kind="money" title="Only confirmed money reduces a balance">
+A payment a customer says they made, or that is waiting for accounts, does not reduce what is shown here. The balance moves when accounts confirm the money.
+</Callout>
+
+### "Not stated" bills
+
+Some bills are shown with their balance but **not added up** as debt. They are listed under the customer, counted in their own column and total, and drawn as *Not stated* rather than as an amount owed. Today these are bills the order sheet's Payment Status tab marks as **received** but for which no receipt has been confirmed — the office has written down that the money came, so the bill is not chased, and accounts still have to confirm it.
+
+A customer whose only open bills are not stated sorts **below** everybody who owes something.
+
+## Questions people ask
+
+<Faq q="Why is a bill from last year here?">
+Outstanding is not cut by financial year. An unpaid bill from last year is still owed, and is usually the first one to chase. The Sales Bills screen is the one cut by year.
+</Faq>
+<Faq q="The customer paid yesterday. Why do they still owe the full amount?">
+The payment is reported or on hold with accounts. It reduces the balance when accounts confirm it.
+</Faq>
+<Faq q="What is the difference between this and Payment Follow-up?">
+Outstanding shows everybody who owes anything. Payment Follow-up is today's work: who to message or call today, and why some are being left alone.
+</Faq>
+<Faq q="Why does this figure match the Accounts app?">
+It is the same reading in both apps, through the same scope. A customer cannot be quoted two balances.
+</Faq>
+<Faq q="Export gave me more customers than the page shows.">
+Export writes everybody your filters match, not the page. The screen shows 25 at a time.
+</Faq>

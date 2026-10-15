@@ -1,0 +1,100 @@
+Two server pages, two services. `/sales/performance` calls `readingsForPeriod(month, today)` and `unattributedForPeriod(month)` in `src/lib/services/performance-service.ts` — the same functions the CRM's own performance screen and the handset's cache rebuild use — and the person drawer fetches `/api/sales/performance` for one person and range. `/sales/roi` calls `salesmanRoi`, `customerCosts` and `expenseBreakdown` in `src/lib/services/expense-roi-service.ts`, which feed the pure `src/lib/engines/sales-roi.ts`. The scoring engine and its tables are documented on [Performance in the CRM](/docs/crm/performance/developer); this page covers the team view.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Module guards | `src/app/sales/performance/layout.tsx`, `src/app/sales/roi/layout.tsx` | `sales.performance`, `sales.roi` |
+| Performance page | `src/app/sales/performance/page.tsx` | Month nav, CSV export, the two banners, metrics, the table |
+| Person drawer | `src/app/sales/performance/person-performance.tsx`, `src/app/api/sales/performance` | One person, any range, components and mix |
+| Rating colour | `src/app/sales/performance/rating-tone.ts` | Tone for the configured rating word |
+| Labels | `src/lib/performance-labels.ts` | `collectionLine`, `activityLine`, `bpPercent`, `shareBp` |
+| Readings | `src/lib/services/performance-service.ts` | `readingsForPeriod`, `actualsForPeriod`, `unattributedForPeriod`, `workingDaysIn` |
+| Engine (pure) | `src/lib/engines/performance.ts` | Six components, weights, mix bands, alerts, `ratingFor` |
+| Attribution | `src/lib/sales-attribution.ts` | `CREDITED_TO_SQL`, `creditedToSql` |
+| ROI page | `src/app/sales/roi/page.tsx` | Metrics, breakdown, per-customer costs, sortable table |
+| ROI reads | `src/lib/services/expense-roi-service.ts` | `salesmanPeriods`, `salesmanRoi`, `customerCosts`, `expenseBreakdown` |
+| ROI engine (pure) | `src/lib/engines/sales-roi.ts` | Per-km, per-visit, expense ratio, cost per new customer, ranking |
+
+## Performance, end to end
+
+<Flow caption="GET /sales/performance?month=YYYY-MM" chart={`
+sequenceDiagram
+  autonumber
+  participant P as performance/page.tsx
+  participant S as performance-service.ts
+  participant E as engines/performance.ts
+  participant DB as Postgres
+  P->>S: readingsForPeriod(month, today)
+  S->>DB: actualsForPeriod — approved orders, litres, collection, new customers, activity, by creditedToSql
+  S->>DB: workingDaysIn — holidays and the working week
+  S->>DB: published sales_targets for the month, and their bands
+  loop every person with a target or an actual
+    S->>E: scoreActuals(actuals, target, bands, config)
+  end
+  S-->>P: readings with score, mix, alerts
+  P->>S: unattributedForPeriod(month)
+  S-->>P: revenue and customers where creditedToSql is null`} />
+
+<Code file="src/lib/services/performance-service.ts" symbol="readingsForPeriod" collapsed />
+
+<Code file="src/lib/services/performance-service.ts" symbol="unattributedForPeriod" />
+
+<Code file="src/lib/sales-attribution.ts" symbol="creditedToSql" />
+
+The banner for revenue-without-volume is any reading carrying the `price-not-volume` alert; the threshold is `performance.volumeDivergencePoints`.
+
+## Cost & return
+
+<Code file="src/lib/engines/sales-roi.ts" symbol="salesPerKm" />
+
+<Code file="src/lib/engines/sales-roi.ts" symbol="travelExpenseRatioBps" />
+
+<Code file="src/lib/engines/sales-roi.ts" symbol="topAndBottom" />
+
+`salesmanRoi` narrows through `managerScope()` and credits revenue through the same `creditedToSql` as Performance, so the two screens cannot credit one invoice to two people. Distance comes from the travel ledger; cost counts approved expense lines only (`paidPaiseSql`).
+
+## Tables
+
+<DbTable name="sales_targets" only={["user_id", "period", "status", "revenue_target_paise", "volume_target_ml", "new_customer_target", "collection_target_bp", "activity_target_bp", "carried_forward"]} note={{
+  status: "draft · published. Only published targets are scored.",
+  collection_target_bp: "Share of what was overdue at the start of the month.",
+}} />
+
+`sales_performance` is the cache the handset reads; the Sales Dashboard screen computes live and does not read it.
+
+## Access
+
+- **Modules:** <ModuleRef k="sales.performance" />, <ModuleRef k="sales.roi" />.
+- **Scope:** ROI is narrowed by `managerScope`; Performance is not (see gaps).
+- **No writes** on either screen.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/engines/performance.test.ts` | Components, weights, dropped components, mix bands, alerts |
+| `npm run test` | `src/lib/performance-labels.test.ts`, `src/lib/performance-range.test.ts` | Words and ranges on the screen |
+| `npm run test:integration` | `src/lib/performance.test.ts` | Actuals off a real ledger, attribution, a formulation target through the handset wire |
+
+## Changing it safely
+
+<Steps>
+<Step title="Change the score in the engine">
+Never compute a component in the page. The CRM screen, the handset cache and this screen all read `readingsForPeriod`.
+</Step>
+<Step title="Credit through creditedToSql">
+Any new revenue figure on either screen uses the one attribution rule. A second rule is how two screens credit one invoice to two people.
+</Step>
+<Step title="Narrow by the patch">
+Pass `userIds` from `managerScope` if you touch the Performance page — see the gap below.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| `readingsForPeriod(month, now)` is called with no `userIds`, so the table is company-wide for a regional manager | `src/app/sales/performance/page.tsx` |
+| `unattributedForPeriod` has no scope | `src/lib/services/performance-service.ts` |
+| AGENTS.md describes salary read from HRMS on the Sales Dashboard; no such screen exists | `src/app/sales/` |

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { boxLots, looksLikeUnitId, manualMove, normaliseCode, packLabel, qcRefusal, scanGate, scanVerdict, unitId, type ScanLine, type ScanUnit } from "./trace";
+import { boxLots, looksLikeUnitId, lotScanVerdict, manualMove, normaliseCode, packLabel, qcRefusal, scanGate, scanVerdict, unitId, type ScanLine, type ScanLot, type ScanUnit } from "./trace";
 
 test("a unit id is the kind, the day and a six-digit serial", () => {
   assert.equal(unitId("box", "2026-10-08", 125), "BX-261008-000125");
@@ -143,4 +143,73 @@ test("a pack size reads as people say it", () => {
   assert.equal(packLabel(1), "1 L");
   assert.equal(packLabel(0.5), "500 ml");
   assert.equal(packLabel(20), "20 L");
+});
+
+/* --------------------------------------------- a lot label at the desk */
+
+const lot = (over: Partial<ScanLot> = {}): ScanLot => ({
+  code: "FP10NA",
+  stage: "pack",
+  skuId: "nano1l",
+  finishedGoodId: null,
+  name: "Nano Thinner - 1 Liter (20 Can/Box)",
+  godownIds: ["g1"],
+  hasUnits: false,
+  ...over,
+});
+
+test("the lot the line was given is a match, and says how many to load", () => {
+  const v = lotScanVerdict(lot(), [line()], 0);
+  assert.equal(v.ok, true);
+  if (v.ok) {
+    assert.equal(v.allocation, "matched");
+    assert.equal(v.qty, 5);
+    assert.match(v.message, /load 5 boxes/);
+  }
+});
+
+test("a lot of the same SKU allocates what the line is short, and no more than is free", () => {
+  const empty = line({ alloc: [] });
+  const v = lotScanVerdict(lot({ code: "FP11NA" }), [empty], 3);
+  assert.equal(v.ok, true);
+  if (v.ok) {
+    assert.equal(v.allocation, "allocate");
+    assert.equal(v.qty, 3);
+    assert.match(v.message, /2 boxes still to find/);
+  }
+  assert.equal(lotScanVerdict(lot({ code: "FP11NA" }), [empty], 0).ok, false);
+});
+
+test("another lot of the SKU on a fully allocated line names the lot it was given", () => {
+  const v = lotScanVerdict(lot({ code: "FP11NA" }), [line()], 10);
+  assert.equal(v.ok, false);
+  if (!v.ok) assert.match(v.message, /given lot FP10NA, not FP11NA/);
+});
+
+test("a lot of another product is wrong stock, with no override offered", () => {
+  const v = lotScanVerdict(lot({ code: "FP3PU", skuId: "pu1l", name: "PU Thinner 1 L" }), [line()], 10);
+  assert.equal(v.ok, false);
+  if (!v.ok) {
+    assert.equal(v.result, "mismatch");
+    assert.equal(v.mismatch, undefined);
+  }
+});
+
+test("a lot whose boxes carry labels asks for the boxes; base liquid is not packed stock", () => {
+  const boxed = lotScanVerdict(lot({ hasUnits: true }), [line()], 10);
+  assert.equal(boxed.ok, false);
+  if (!boxed.ok) assert.match(boxed.message, /scan each box/);
+  const base = lotScanVerdict(lot({ code: "FA2AM", stage: "sfg", skuId: null }), [line()], 10);
+  assert.equal(base.ok, false);
+  if (!base.ok) assert.match(base.message, /base-liquid lot/);
+  assert.equal(lotScanVerdict(null, [line()], 10).ok, false);
+});
+
+test("an FG lot matches a loose line of the same finished good", () => {
+  const loose = line({ boxed: false, target: 40, alloc: [], finishedGoodId: "fg-nano-1l" });
+  const v = lotScanVerdict(lot({ code: "FG4NA", stage: "fg", skuId: null, finishedGoodId: "fg-nano-1l" }), [loose], 100);
+  assert.equal(v.ok, true);
+  if (v.ok) assert.equal(v.qty, 40);
+  const wrong = lotScanVerdict(lot({ code: "FG4NA", stage: "fg", skuId: null, finishedGoodId: "fg-nano-1l" }), [line()], 100);
+  assert.equal(wrong.ok, false);
 });

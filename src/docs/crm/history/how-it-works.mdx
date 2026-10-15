@@ -1,0 +1,96 @@
+Call History is a read of the `calls` ledger: every interaction a person logged, in your book, newest first. It writes nothing. Its one unusual column — **Next call** — is not worked out when you open the screen. It is the sentence the telecaller was shown when they saved the call, stored on that call and never changed afterwards.
+
+## What a row is
+
+Every save that logs a conversation writes one row in the call ledger:
+
+| Path | What it writes |
+|---|---|
+| The call panel (Call Log, customer record, any screen that opens it) | One row per save, with the interaction type, outcome, notes and what it produced |
+| The collections follow-up panel | One row per collections call, marked as coming from Payment Follow-up |
+| *Order Received* on the call panel | A row for an order that arrived with no call — counted as an order, never as a call placed |
+
+The list is the newest 400 of those rows in your book. A telecaller's book is the calls **they** logged; a manager on team scope sees the calls logged by their team.
+
+<Callout kind="why" title="Why a cap at all">
+A full history in one page is megabytes of HTML for a list nobody scrolls. The screen says plainly when it is holding a full page — *132 of the newest 400 calls* — rather than presenting the cap as the history. Older calls are on each customer's record, whose timeline pages back with a cursor.
+</Callout>
+
+## The stored next step
+
+<Flow caption="Where the Next call column comes from" chart={`
+sequenceDiagram
+  autonumber
+  actor T as Telecaller
+  participant S as Save
+  participant Q as Call Log engine
+  participant C as calls row
+  participant H as Call History
+  T->>S: save the call
+  S->>S: write the call and everything it produced, then rebuild the customer's figures
+  S->>Q: when does this customer next appear?
+  Q-->>S: kind, date, reason, headline, detail
+  S->>C: store all six on the call, once
+  Note over C: never touched by any recompute
+  H->>C: read the six columns as they are
+`} />
+
+<Rule title="What the telecaller was told is a record, not a cache">
+The six next-step columns answer *what did we tell the person who logged this call, on the day they logged it*. A cache answers *when is the next call now*, and is rebuilt when the answer changes. Rebuilding these would not correct the question — it would destroy it. The current next step is worked out live on the customer's record; the two are **meant** to be able to differ, and the difference is the record of what changed since.
+</Rule>
+
+<Rule title="A past date is drawn muted">
+A stored date that is before today is drawn grey, with the day it was said on hover. It was true when it was said; it is not a promise now, and sitting in a column of future dates it would read like one.
+</Rule>
+
+<Rule title="No date is invented">
+*Needs a decision* (nobody can reach them) and *Nothing scheduled* (do not contact, or nothing within the horizon) carry no date by design and print their word instead. Calls logged before these columns existed show "-": nothing reconstructs a sentence for them, because a reconstruction would be today's answer wearing an old call's date.
+</Rule>
+
+<Rule title="Working it out never fails the save">
+The call is in the ledger before the next step is asked for. If working it out fails, the columns stay empty and the window after saving says it could not work it out — the call itself is never lost.
+</Rule>
+
+The same component draws the Next call cell on the Customers list, where it shows the **latest** call's answer for each customer.
+
+| Kind | Badge | Has a date |
+|---|---|---|
+| booked | Promised | Yes — a callback the customer asked for |
+| scheduled | Scheduled | Yes — the date the rules gave |
+| decide | Needs a decision | No |
+| none | Nothing scheduled | No |
+
+## The figures across the top
+
+The four activity cards are today's figures, from the same function the Dashboard and the EOD report use: calls placed (outbound only), connected, missed, and WhatsApp messages confirmed sent. For a manager on team scope they are the team's. The fifth card counts the rows the filters are showing.
+
+## Filters
+
+All filtering happens in the browser over the rows already loaded.
+
+| Filter | Matches |
+|---|---|
+| Search | Customer name, note text and outcome |
+| Channel | All channels, Call, WhatsApp, Visit |
+| Who | The telecaller's name (managers) |
+| Range | Today, Last 7 days, This month, All time |
+
+## The handover summary
+
+For any customer in the loaded calls, the card builds a message from three things: the last three interactions in the loaded rows, the most recent note as *Last thing promised*, and every **pending reminder** for that customer as *Open commitments*. Copy puts it on the clipboard; nothing is sent or saved.
+
+## Exporting
+
+Export needs the `customer.export` capability, checked on the screen. The file is built in the browser from what the filters are showing and says how many rows it holds against how many were loaded.
+
+<CapabilityGrid names={["customer.export"]} />
+
+## Where the code and the intent disagree today
+
+- **The subtitle says "Calls and WhatsApp messages in one stream"; only calls are listed.** Every row's channel is *Call*, so the WhatsApp and Visit channel filters always show nothing.
+- **The Status column is always blank for current calls.** It reads a connection status that nothing writes any more, and compares it with capitalised words the stored values never use. Whether a call connected is in the Outcome.
+- **The date filters are rolling, not business days.** *Today* is the last 24 hours and *This month* is the last 31 days, measured from when the page was rendered — not the business day and not the calendar month every other CRM screen means.
+- **"Last thing promised" is the newest note,** whatever it says, not a promise.
+- **The person filter matches by name**, so two people with the same name are one filter.
+- **Export is checked only on the screen.** The CSV is built in the browser, so there is no server check of `customer.export`.
+- **Missed above five is drawn red** by a fixed number, not a setting.

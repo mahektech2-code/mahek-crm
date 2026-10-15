@@ -1,13 +1,11 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { erpSetWorkingGodown } from "@/lib/actions/erp";
 import { GodownPicker } from "../_ui/godown-picker";
-import { useErpUi } from "../_ui/erp-ui";
+import { useAct } from "../_ui/use-act";
 
 export function WorkingLocation({ godowns, working }: { godowns: { id: string; name: string }[]; working: { id: string; name: string } | null }) {
-  const ui = useErpUi();
-  const router = useRouter();
+  const { run } = useAct();
   if (!godowns.length) return null;
   return (
     <GodownPicker
@@ -17,10 +15,7 @@ export function WorkingLocation({ godowns, working }: { godowns: { id: string; n
       items={godowns.map((g) => ({ v: g.id, l: g.name }))}
       onPick={(id) => {
         if (!id) return;
-        void erpSetWorkingGodown(id).then((res) => {
-          ui.toast(res.ok ? res.message ?? "Working location changed" : res.error, res.ok ? "info" : "error");
-          if (res.ok) router.refresh();
-        });
+        void run(() => erpSetWorkingGodown(id));
       }}
     />
   );

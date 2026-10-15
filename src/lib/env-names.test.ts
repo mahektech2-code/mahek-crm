@@ -82,6 +82,7 @@ const NOT_IN_PRODUCTION_ENV: Record<string, string> = {
   // The field app's older name for MBOS_JWT_SECRET, kept as a fallback for
   // deployments that still set it. New deployments set MBOS_JWT_SECRET.
   JWT_SECRET: "legacy fallback for MBOS_JWT_SECRET, which IS documented",
+  FACTORY_BUILD: "inlined at build time by next.config.ts from NEXT_DEPLOYMENT_ID, which the Dockerfile sets — nothing to put in the env file",
 };
 
 describe("The production env example matches what the code reads", () => {

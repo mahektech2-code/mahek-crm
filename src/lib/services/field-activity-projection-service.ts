@@ -2,6 +2,7 @@ import "server-only";
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { sheetFieldActivityRows } from "@/db/schema";
+import { getConfig } from "@/lib/config/store";
 import { MBOS_EVENT, writeTimelineEvents, type TimelineEventInput } from "@/lib/timeline";
 
 /* ---------------------------------------------------------------------------
@@ -65,6 +66,10 @@ export type ProjectionResult = { written: number; skipped: number; scanned: numb
  * hold back.
  */
 export async function projectFieldActivityTimeline(): Promise<ProjectionResult> {
+  /* MBOS writes its own visits onto the timeline from the cutover onwards; a
+     sheet row dated after it would be the same visit told twice, or a visit
+     typed into an app that is retired. */
+  const cutover = (await getConfig())["fieldActivity.cutoverDate"];
   let written = 0;
   let scanned = 0;
   let after = "";
@@ -86,6 +91,7 @@ export async function projectFieldActivityTimeline(): Promise<ProjectionResult> 
           eq(sheetFieldActivityRows.customerMatchStatus, "matched"),
           eq(sheetFieldActivityRows.timelineEventWritten, false),
           isNotNull(sheetFieldActivityRows.matchedCustomerId),
+          sql`${sheetFieldActivityRows.visitDate} < ${cutover}::date`,
           after ? sql`${sheetFieldActivityRows.id} > ${after}` : undefined,
         ),
       )

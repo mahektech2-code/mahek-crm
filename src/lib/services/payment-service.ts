@@ -44,7 +44,7 @@ import {
   onOrAfterWorkingDay,
   type BusinessDate,
 } from "../business-date";
-import { financialYearRange } from "../financial-year";
+import { yearKindOf, yearRange } from "../year-period";
 import { err, ok, type Result } from "../result";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -556,70 +556,86 @@ export const getPaymentFollowUpPlan = cache(
  *
  * Null when there is no overdue debt on this customer at all.
  */
-export async function paymentCadenceFor(customerId: string): Promise<{
-  nextCallOn: string;
-  totalOverdue: number;
-  daysOverdue: number;
-} | null> {
+export async function paymentCadenceFor(customerId: string): Promise<PaymentCadence | null> {
+  return (await paymentCadencesFor([customerId])).get(customerId) ?? null;
+}
+
+export type PaymentCadence = { nextCallOn: string; totalOverdue: number; daysOverdue: number };
+
+/**
+ * `paymentCadenceFor` for many customers in ONE wave of reads. The Reminders
+ * screen asks it of every upcoming reminder's customer, and asked one at a
+ * time it re-read the whole book's reported and paid maps per customer —
+ * thousands of identical reads for one page. A customer with no cadence is
+ * simply absent from the map.
+ */
+export async function paymentCadencesFor(customerIds: string[]): Promise<Map<string, PaymentCadence>> {
+  const out = new Map<string, PaymentCadence>();
+  if (!customerIds.length) return out;
   const config = await getConfig();
   const day = await today();
 
-  const [row] = await db
-    .select({
-      state: followUpStates,
-      lastCallOn: sql<string | null>`(
-        select max((a.attempted_at at time zone 'Asia/Kolkata')::date)
-          from follow_up_attempts a
-         where a.customer_id = ${followUpStates.customerId} and a.channel = 'call'
-      )`,
-      promisedDate: sql<string | null>`(
-        select a.promised_date from follow_up_attempts a
-         where a.customer_id = ${followUpStates.customerId}
-           and a.promised_date is not null
-         order by a.attempted_at desc limit 1
-      )`,
-    })
-    .from(followUpStates)
-    .where(eq(followUpStates.customerId, customerId));
+  const [rows, reportedMap, paidMap] = await Promise.all([
+    db
+      .select({
+        state: followUpStates,
+        lastCallOn: sql<string | null>`(
+          select max((a.attempted_at at time zone 'Asia/Kolkata')::date)
+            from follow_up_attempts a
+           where a.customer_id = ${followUpStates.customerId} and a.channel = 'call'
+        )`,
+        promisedDate: sql<string | null>`(
+          select a.promised_date from follow_up_attempts a
+           where a.customer_id = ${followUpStates.customerId}
+             and a.promised_date is not null
+           order by a.attempted_at desc limit 1
+        )`,
+      })
+      .from(followUpStates)
+      .where(inArray(followUpStates.customerId, customerIds)),
+    reportedQuietByCustomer(),
+    lastPaidOnByCustomer(day),
+  ]);
 
-  if (!row || row.state.totalOverdue <= 0) return null;
+  for (const row of rows) {
+    if (row.state.totalOverdue <= 0) continue;
 
-  // A disputed account has no cadence — somebody is handling it, and inventing
-  // a date for it would put a chasing call on a telecaller's screen for a bill
-  // that is under argument.
-  if (row.state.held) return null;
+    // A disputed account has no cadence — somebody is handling it, and inventing
+    // a date for it would put a chasing call on a telecaller's screen for a bill
+    // that is under argument.
+    if (row.state.held) continue;
 
-  const anchorDueDate =
-    row.state.oldestOverdueBillDate ?? addDays(day, -row.state.daysOverdue);
+    const customerId = row.state.customerId;
+    const anchorDueDate =
+      row.state.oldestOverdueBillDate ?? addDays(day, -row.state.daysOverdue);
 
-  let on = nextCallOn({ anchorDueDate, lastCallOn: row.lastCallOn }, config);
+    let on = nextCallOn({ anchorDueDate, lastCallOn: row.lastCallOn }, config);
 
-  /*
-   * The two things that push the date out, in the same order the worklist
-   * applies them. Reading the interval alone would answer "chase them in three
-   * days" to a telecaller who has just been promised the money on the 20th —
-   * which is the one call that must not be made.
-   */
-  const reported = (await reportedQuietByCustomer()).get(customerId);
-  if (reported) {
-    const until = addDays(reported.reportedOn, config["payments.reportedQuietDays"]);
-    if (until > on) on = until;
+    /*
+     * The two things that push the date out, in the same order the worklist
+     * applies them. Reading the interval alone would answer "chase them in three
+     * days" to a telecaller who has just been promised the money on the 20th —
+     * which is the one call that must not be made.
+     */
+    const reported = reportedMap.get(customerId);
+    if (reported) {
+      const until = addDays(reported.reportedOn, config["payments.reportedQuietDays"]);
+      if (until > on) on = until;
+    }
+    if (row.promisedDate && row.promisedDate >= day) {
+      const until = addDays(row.promisedDate, 1);
+      if (until > on) on = until;
+    }
+    const cooledOn = paidCoolingEndsOn(paidMap.get(customerId) ?? null, config);
+    if (cooledOn && cooledOn > on) on = cooledOn;
+
+    out.set(customerId, {
+      nextCallOn: on,
+      totalOverdue: row.state.totalOverdue,
+      daysOverdue: row.state.daysOverdue,
+    });
   }
-  if (row.promisedDate && row.promisedDate >= day) {
-    const until = addDays(row.promisedDate, 1);
-    if (until > on) on = until;
-  }
-  const cooledOn = paidCoolingEndsOn(
-    (await lastPaidOnByCustomer(day)).get(customerId) ?? null,
-    config,
-  );
-  if (cooledOn && cooledOn > on) on = cooledOn;
-
-  return {
-    nextCallOn: on,
-    totalOverdue: row.state.totalOverdue,
-    daysOverdue: row.state.daysOverdue,
-  };
+  return out;
 }
 
 export async function getFollowUpDetail(customerId: string) {
@@ -879,7 +895,12 @@ export type BillFilters = {
    * `customerIds` above states, for the same reason.
    */
   billIds?: string[];
-  /** "26-27". Absent means every year, which the export uses. */
+  /**
+   * A year, either kind: "26-27" (financial) or "2026" (calendar) — see
+   * `year-period.ts`. Absent means every year, which the export uses.
+   */
+  year?: string;
+  /** The older name for `year`, still read so existing callers keep working. */
   financialYear?: string;
   /**
    * Only bills with something still open on them.
@@ -935,10 +956,14 @@ export type BillFilters = {
   customerIds?: string[];
 };
 
-/** 1 April to 31 March, as SQL. The end is exclusive — see financial-year.ts. */
-function financialYearWhere(fy?: string) {
-  if (!fy) return undefined;
-  const { start, end } = financialYearRange(fy);
+/**
+ * A financial or calendar year, as SQL. The end is exclusive — see
+ * year-period.ts. A string that is neither shape filters nothing rather than
+ * guessing: the screens only ever send a year they offered.
+ */
+function yearWhere(year?: string) {
+  if (!year || !yearKindOf(year)) return undefined;
+  const { start, end } = yearRange(year);
   return and(gte(bills.billDate, start), lt(bills.billDate, end));
 }
 
@@ -984,7 +1009,7 @@ function billsWhere(ids: string[] | null, filters?: BillFilters) {
         ? inArray(bills.customerId, filters.customerIds)
         : sql`false`
       : undefined,
-    financialYearWhere(filters?.financialYear),
+    yearWhere(filters?.year ?? filters?.financialYear),
     filters?.status ? eq(bills.status, filters.status as "unpaid") : undefined,
     filters?.billIds
       ? filters.billIds.length

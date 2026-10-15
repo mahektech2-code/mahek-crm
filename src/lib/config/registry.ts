@@ -3778,6 +3778,15 @@ export const SETTINGS = [
     default: "",
   },
   {
+    key: "leads.fieldVerifierEmail",
+    type: "text",
+    category: "mbos-leads",
+    label: "Who verifies a lead a Salesman raised or holds",
+    description:
+      "The work email of the person who verifies the Prospect on a lead a Salesman raised on the handset, and on ANY lead a Salesman currently holds, whoever raised it — a Telecaller's or a Sales Manager's lead that has been given to a Salesman is theirs. They are seated as that lead's Sales Manager, so the seat-based permission and the Sales Manager workspace already reach it; nothing about their level changes. A lead they raised themselves is never theirs to verify: it stays with the desk verifier. Blank switches the rule off and routing is exactly as before. A name that matches no active account refuses conversion of such a lead in words rather than routing it elsewhere.",
+    default: "",
+  },
+  {
     key: "leads.figuresFreshDays",
     type: "integer",
     category: "mbos-leads",
@@ -3934,6 +3943,15 @@ export const SETTINGS = [
     default: 20,
     min: 0,
     max: 500,
+  },
+  {
+    key: "fieldActivity.cutoverDate",
+    type: "text",
+    category: "mbos-location",
+    label: "First day MBOS is the only record of a visit",
+    description:
+      "A date, YYYY-MM-DD. Before it, the Activity history screen shows the old field app's sheet (the Activity tab of Mahek EMP 2.0) beside MBOS; from it onwards only MBOS. A sheet row dated on or after it is not stored, not put on a customer's timeline and not counted anywhere — the old app is retired and its past stays exactly as it was read. Moving it later lets a straggler's late entries in; moving it earlier hides rows already stored without deleting them.",
+    default: "2026-10-10",
   },
   {
     key: "mbos.travel.maxLegKilometres",
@@ -4383,6 +4401,110 @@ export const SETTINGS = [
     max: 10,
   },
   {
+    key: "erp.returns.ownerApprovalPaise",
+    type: "integer",
+    category: "erp",
+    label: "Material return needing the owner's approval (paise)",
+    description:
+      "A purchase return or customer return worth more than this, with GST, needs the owner (an ERP administrator) to approve it as well, after the ordinary approval. 0 switches the second approval off. In paise: 1,00,00,000 is ₹1,00,000.",
+    default: 10_000_000,
+    min: 0,
+  },
+  {
+    key: "erp.stockCheck.onRequirement",
+    type: "boolean",
+    category: "erp",
+    label: "Count stock before every purchase requirement",
+    description:
+      "Every raw-material requirement raised from now opens a blind physical count of the item at its godown, and waits only until the count is entered before its purchase method, vendor or PO. Whatever the count finds, the purchase carries on: a count that differs from the book beyond its tolerance flags the requirement and notifies stock control, and is recounted, investigated or adjusted on the side. Requirements already raised are not affected.",
+    default: true,
+  },
+  {
+    key: "erp.stockCheck.tolerancePercent",
+    type: "decimal",
+    category: "erp",
+    label: "Count tolerance (% of the book)",
+    description:
+      "How far a physical count may sit from the reconciled book before it is a red flag, as a percentage of the book. An item can carry its own tolerance on its master record.",
+    default: 2,
+    min: 0,
+    max: 50,
+  },
+  {
+    key: "erp.stockCheck.toleranceFloor",
+    type: "decimal",
+    category: "erp",
+    label: "Smallest tolerance (litres or pieces)",
+    description:
+      "A tolerance never smaller than this, so an item whose book is near zero does not flag on a single can or a cupful.",
+    default: 1,
+    min: 0,
+    max: 1000,
+  },
+  {
+    key: "erp.stockCheck.unexpectedQtyPercent",
+    type: "integer",
+    category: "erp",
+    label: "Quantity above what the count justifies",
+    description:
+      "A requirement asking for more than the count justifies (up to the item's maximum level) by more than this percentage is flagged \"More than the shelf needs\" on the requirements list. It is not held.",
+    default: 25,
+    min: 0,
+    max: 1000,
+  },
+  {
+    key: "erp.stockCheck.dailyCount",
+    type: "integer",
+    category: "erp",
+    label: "Cycle counts a day",
+    description:
+      "How many items the daily cycle count picks, ranked by ABC class, how overdue, how much they move and how often they were wrong. Zero stops the daily cycle count.",
+    default: 10,
+    min: 0,
+    max: 500,
+  },
+  {
+    key: "erp.stockCheck.cycleDaysA",
+    type: "integer",
+    category: "erp",
+    label: "Count class A items every (days)",
+    description: "The items making up the first 80% of the value that moved over the last 90 days. Halved while an item has a recent discrepancy.",
+    default: 30,
+    min: 1,
+    max: 365,
+  },
+  {
+    key: "erp.stockCheck.cycleDaysB",
+    type: "integer",
+    category: "erp",
+    label: "Count class B items every (days)",
+    description: "The items making up the next 15% of the value that moved.",
+    default: 60,
+    min: 1,
+    max: 365,
+  },
+  {
+    key: "erp.stockCheck.cycleDaysC",
+    type: "integer",
+    category: "erp",
+    label: "Count class C items every (days)",
+    description: "Everything else, including items that did not move.",
+    default: 90,
+    min: 1,
+    max: 730,
+  },
+  {
+    key: "erp.stockCheck.fullCountDays",
+    type: "integer",
+    category: "erp",
+    label: "Full count every (days)",
+    description:
+      "A comprehensive count of every item with stock is due this often; the dashboard says when it is due. Zero turns the reminder off.",
+    default: 180,
+    min: 0,
+    max: 730,
+  },
+  {
     key: "erp.purchase.receiptTolerancePercent",
     type: "integer",
     category: "erp",
@@ -4405,6 +4527,107 @@ export const SETTINGS = [
     max: 100,
   },
   {
+    key: "erp.factory.packBatchBoxes",
+    type: "integer",
+    category: "erp",
+    label: "Factory app · boxes in a packing batch",
+    description:
+      "How many boxes make one packing batch on the factory floor. The factory app opens an ERP packing batch of this many boxes and fills it from what the packers count; a batch short of it stays incomplete and is not packing stock until it is full.",
+    default: 50,
+    min: 1,
+    max: 1000,
+  },
+  {
+    key: "erp.factory.mixTolerancePercent",
+    type: "decimal",
+    category: "erp",
+    label: "Factory app · mixing output limit",
+    description:
+      "How far, in percent either way, the litres a mixing batch made may differ from its batch sheet before the Production Head is asked to check it. It never refuses the batch.",
+    default: 1.5,
+    min: 0,
+    max: 50,
+  },
+  {
+    key: "erp.factory.dispatchDue",
+    type: "text",
+    category: "erp",
+    label: "Factory app · loading due by",
+    description: "The time, as HH:MM, a loading job made from an ERP order is due by on the dispatch team's phones.",
+    default: "17:00",
+  },
+  {
+    key: "erp.drums.minEmptyKg",
+    type: "decimal",
+    category: "erp",
+    label: "Empty drum · lightest weight accepted (kg)",
+    description:
+      "An empty drum weighed below this is not saved: it is weighed again, or saved only with the Production Head's approval written on it. Catches a scale left at zero or a typed 1.8 meant as 18.",
+    default: 2,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "erp.drums.maxEmptyKg",
+    type: "decimal",
+    category: "erp",
+    label: "Empty drum · heaviest weight accepted (kg)",
+    description:
+      "An empty drum weighed above this is not saved: a drum that heavy is usually not empty. Checked again, or saved only with the Production Head's approval written on it.",
+    default: 40,
+    min: 1,
+    max: 500,
+  },
+  {
+    key: "erp.drums.varianceAlertKg",
+    type: "decimal",
+    category: "erp",
+    label: "Empty drum · tare variance worth a look (kg)",
+    description:
+      "An empty drum heavier or lighter than the supplier declared on the GRN by more than this is flagged on the variance report and raises an alert. The GRN's own figure is never changed.",
+    default: 1.5,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "erp.drums.varianceAlertPercent",
+    type: "decimal",
+    category: "erp",
+    label: "Empty drum · tare variance worth a look (%)",
+    description: "The same, as a percentage of the declared tare. Either limit being passed flags the drum.",
+    default: 15,
+    min: 0,
+    max: 500,
+  },
+  {
+    key: "erp.drums.sameLotMinutes",
+    type: "integer",
+    category: "erp",
+    label: "Empty drum · ask \"is this a different drum?\" within (minutes)",
+    description:
+      "A label names a LOT, and a lot can bring several drums. A second drum of the same lot scanned within this many minutes of the last is saved only after the person confirms it is a different drum, so one drum scanned twice is not counted twice.",
+    default: 120,
+    min: 0,
+    max: 10080,
+  },
+  {
+    key: "erp.drums.factoryDepartments",
+    type: "text",
+    category: "erp",
+    label: "Factory app · departments that record empty drums",
+    description:
+      "Comma-separated factory departments whose people see Empty drum entry on the factory phone: mixing, filling, packing, dispatch, qc. A Production Head and any department supervisor always do.",
+    default: "mixing, qc",
+  },
+  {
+    key: "erp.factory.shift",
+    type: "text",
+    category: "erp",
+    label: "Factory app · shift line",
+    description: "The shift the factory app names under each person's work place, e.g. \"Shift A · 06:00–14:00\".",
+    default: "Shift A · 06:00–14:00",
+  },
+  {
     key: "erp.dispatch.requireScan",
     type: "boolean",
     category: "erp",
@@ -4412,6 +4635,96 @@ export const SETTINGS = [
     description:
       "On: a billed line whose lots carry box ids cannot be dispatch-verified until every box (or labelled loose unit) on it has been scanned at the Dispatch desk and passed the order check. Stock packed before box ids existed has none and is not held back. Off: scanning is still offered and still checked, but Do Verified no longer waits for it — for a day the scanners are down.",
     default: true,
+  },
+  {
+    key: "erp.labels.dotsPerMm",
+    type: "integer",
+    category: "erp",
+    label: "Label printer · dots per millimetre",
+    description:
+      "How fine the label printers print: 8 for a 203 dpi printer, which is what most are, and 12 for a 300 dpi one. It is printed on the printer's own self-test label. Labels sent straight to the printer are drawn at exactly this, so the wrong figure prints every label at two thirds or one and a half times its size.",
+    default: 8,
+    min: 6,
+    max: 24,
+  },
+  {
+    key: "erp.labels.gapMm",
+    type: "decimal",
+    category: "erp",
+    label: "Label printer · gap between labels",
+    description:
+      "Millimetres of backing paper between one label and the next on the roll. The printer finds the top of each label from it, so a figure that does not match the roll makes the print creep down the label, a little further each time.",
+    default: 3,
+    min: 0,
+    max: 10,
+  },
+  {
+    key: "erp.labels.shiftMm",
+    type: "decimal",
+    category: "erp",
+    label: "Label printer · move the print up or down",
+    description:
+      "Millimetres to move everything printed on a label, along the roll, for labels sent straight to the printer. Use it when every label comes out the same distance too high or too low — the print running onto the label before or after — once the printer has been calibrated to the roll (hold the feed button until it feeds a few labels and stops). If the print moves the wrong way, use the same figure with a minus sign. 0 sends nothing. It has no effect on the browser's own print dialog.",
+    default: 0,
+    min: -20,
+    max: 20,
+  },
+  {
+    key: "erp.labels.direction",
+    type: "integer",
+    category: "erp",
+    label: "Label printer · which way up",
+    description:
+      "0 or 1: which edge of the label leaves the printer first. If labels sent straight to the printer come out upside down for the way they are peeled and stuck, change this to the other value. It has no effect on the browser's own print dialog.",
+    default: 1,
+    min: 0,
+    max: 1,
+  },
+  {
+    key: "erp.logistics.notifyCustomers",
+    type: "boolean",
+    category: "erp",
+    label: "Tell customers where their goods are",
+    description:
+      "On: attaching an LR to a bill, every status update logistics shares, a problem on the road and the delivery each write a WhatsApp to the party. It goes through Wati where the founder has WhatsApp switched on and a logistics template is named below; otherwise it waits under Logistics → Customer messages for somebody to send it by hand. Off: nothing is written for customers, and the updates stay inside MahekOne.",
+    default: true,
+  },
+  {
+    key: "erp.logistics.watiTemplate",
+    type: "text",
+    category: "erp",
+    label: "Logistics · Wati template",
+    description:
+      "The name of the APPROVED Wati template logistics messages go out as. It may use {{name}}, {{bill_no}}, {{lr_no}}, {{lr_date}}, {{transporter}}, {{boxes}}, {{status}}, {{expected}}, {{track_link}} and {{message}} (the whole update in one line). A template asking for anything else is not sent. Blank: every message is sent by hand.",
+    default: "",
+  },
+  {
+    key: "erp.logistics.signature",
+    type: "text",
+    category: "erp",
+    label: "Logistics · message signature",
+    description: "The line every customer message ends with.",
+    default: "Mahek Marketing India",
+  },
+  {
+    key: "erp.logistics.callEveryDays",
+    type: "integer",
+    category: "erp",
+    label: "Logistics · call the transporter every",
+    description: "Days after an update on the road that the next call to the transporter falls due, unless the person updating picks another day.",
+    default: 2,
+    min: 1,
+    max: 30,
+  },
+  {
+    key: "erp.logistics.lateAfterDays",
+    type: "integer",
+    category: "erp",
+    label: "Logistics · late after",
+    description: "Days on the road, counted from dispatch, after which a consignment with no expected delivery date is flagged as running late. One with an expected date is late the day after it.",
+    default: 7,
+    min: 1,
+    max: 60,
   },
   {
     key: "erp.location.autoDetect",
@@ -4812,6 +5125,26 @@ export const SETTINGS = [
     max: 100,
   },
   {
+    key: "erp.ai.stockCheck.enabled",
+    type: "boolean",
+    category: "erp-ai",
+    label: "ERP · discrepancy assistant",
+    description:
+      "Explains a red-flagged count in words: which pending or missing records could account for the difference, and whether a record or the goods themselves look missing. It ranks the records the rules found and never creates an entry.",
+    default: true,
+  },
+  {
+    key: "erp.ai.stockCheck.monthlyCap",
+    type: "integer",
+    category: "erp-ai",
+    label: "Discrepancy explanations a month",
+    description:
+      "Past this many explanations in a calendar month the assistant goes quiet and says so; the rules' own list of causes still shows.",
+    default: 500,
+    min: 0,
+    max: 100000,
+  },
+  {
     key: "erp.ai.complaints.monthlyCap",
     type: "integer",
     category: "erp-ai",
@@ -4936,6 +5269,84 @@ export const SETTINGS = [
     default: 300,
     min: 0,
     max: 3600,
+  },
+  /* ---------------------------------------------- ask the documentation
+   *
+   * The Documentation app's "Ask the docs" panel. The model searches the
+   * written pages through a tool and answers with links to the sections it
+   * read; it never reads the database except to quote a setting's live value.
+   */
+  /* ------------------------------------------------- ask the CRM
+   *
+   * The Telecaller CRM's Ask AI: the header search box and its drawer. Same
+   * engine as "Ask about the team" — the model writes read-only queries over
+   * views narrowed to the asker's own book — so the time limits and caches
+   * are the salesAsk.* ones; only whether it is on and which model reads are
+   * the CRM's own.
+   */
+  {
+    key: "crmAsk.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Ask the CRM",
+    description:
+      "Let anybody who holds the CRM ask a question in plain words — who owes the most, which customers are due to order, what was promised on a call — and have it answered from their own book. Off hides the answers immediately.",
+    default: true,
+  },
+  {
+    key: "crmAsk.model",
+    type: "text",
+    category: "voice",
+    label: "Ask the CRM · model",
+    description:
+      "The OpenAI model that reads the question and writes the queries. A faster model answers sooner; a stronger one handles harder questions.",
+    default: "gpt-5-mini",
+  },
+  {
+    key: "docsAsk.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Ask the docs",
+    description:
+      "Let anybody who holds the Documentation app ask a question in plain words and have it answered from the written pages, with links to the sections it came from. Off hides the answers immediately.",
+    default: true,
+  },
+  {
+    key: "docsAsk.model",
+    type: "text",
+    category: "voice",
+    label: "Ask the docs · model",
+    description: "The OpenAI model that searches the documentation and writes the answer.",
+    default: "gpt-5-mini",
+  },
+  {
+    key: "docsAsk.reasoningEffort",
+    type: "text",
+    category: "voice",
+    label: "Ask the docs · thinking effort",
+    description:
+      "How long a reasoning model thinks before answering: minimal, low, medium or high. Lower is faster. Ignored by models that do not reason.",
+    default: "low",
+  },
+  {
+    key: "docsAsk.maxLookups",
+    type: "integer",
+    category: "voice",
+    label: "Ask the docs · lookups per question",
+    description: "The most searches and section reads one question may make before it has to answer with what it has found.",
+    default: 8,
+    min: 1,
+    max: 20,
+  },
+  {
+    key: "docsAsk.timeoutSeconds",
+    type: "integer",
+    category: "voice",
+    label: "Ask the docs · time limit",
+    description: "Seconds before a question is given up on and the reader is asked to narrow it.",
+    default: 60,
+    min: 10,
+    max: 240,
   },
   /* ------------------------------------------------------------------ hire */
   {
@@ -5165,10 +5576,27 @@ export function validateSetting(key: string, raw: unknown): ValidationResult {
 export function checkConsistency(config: Config): string[] {
   const problems: string[] = [];
 
+  /* A lightest weight above the heaviest would refuse every empty drum. */
+  if (config["erp.drums.minEmptyKg"] >= config["erp.drums.maxEmptyKg"]) {
+    problems.push("The lightest empty drum weight must be below the heaviest.");
+  }
+
+  /* A cutover nobody can read is a cutover that hides everything or nothing,
+     and which of the two depends on how Postgres happens to parse it. */
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(config["fieldActivity.cutoverDate"]) ||
+      Number.isNaN(Date.parse(`${config["fieldActivity.cutoverDate"]}T00:00:00Z`))) {
+    problems.push(
+      `The MBOS cutover date must be a date written YYYY-MM-DD, not "${config["fieldActivity.cutoverDate"]}".`,
+    );
+  }
+
   /* The effort is passed to OpenAI as written, and a word it does not know is
      a refused request on every question rather than a slower answer. */
   if (!["minimal", "low", "medium", "high"].includes(config["salesAsk.reasoningEffort"])) {
     problems.push("Ask about the team's thinking effort must be minimal, low, medium or high.");
+  }
+  if (!["minimal", "low", "medium", "high"].includes(config["docsAsk.reasoningEffort"])) {
+    problems.push("Ask the docs' thinking effort must be minimal, low, medium or high.");
   }
 
   /* A suggested minimum at or above the suggested maximum is a level nobody can hold. */
@@ -5659,6 +6087,12 @@ export function checkConsistency(config: Config): string[] {
     );
   }
 
+  /* A class counted less often than the class below it inverts ABC: the
+     valuable shelf would be the one nobody looks at. */
+  if (!(config["erp.stockCheck.cycleDaysA"] <= config["erp.stockCheck.cycleDaysB"] && config["erp.stockCheck.cycleDaysB"] <= config["erp.stockCheck.cycleDaysC"])) {
+    problems.push("Class A items must be counted at least as often as class B, and B at least as often as C.");
+  }
+
   return problems;
 }
 
@@ -5881,8 +6315,39 @@ export type Config = {
   "erp.purchase.ownVehicleRatePerKmPaise": number;
   "erp.purchase.minQuotations": number;
   "erp.purchase.receiptTolerancePercent": number;
+  "erp.returns.ownerApprovalPaise": number;
+  "erp.stockCheck.onRequirement": boolean;
+  "erp.stockCheck.tolerancePercent": number;
+  "erp.stockCheck.toleranceFloor": number;
+  "erp.stockCheck.unexpectedQtyPercent": number;
+  "erp.stockCheck.dailyCount": number;
+  "erp.stockCheck.cycleDaysA": number;
+  "erp.stockCheck.cycleDaysB": number;
+  "erp.stockCheck.cycleDaysC": number;
+  "erp.stockCheck.fullCountDays": number;
+  "erp.ai.stockCheck.enabled": boolean;
+  "erp.ai.stockCheck.monthlyCap": number;
   "erp.production.recipeTolerancePercent": number;
+  "erp.factory.packBatchBoxes": number;
+  "erp.factory.mixTolerancePercent": number;
+  "erp.drums.minEmptyKg": number;
+  "erp.drums.maxEmptyKg": number;
+  "erp.drums.varianceAlertKg": number;
+  "erp.drums.varianceAlertPercent": number;
+  "erp.drums.sameLotMinutes": number;
+  "erp.drums.factoryDepartments": string;
+  "erp.factory.shift": string;
+  "erp.factory.dispatchDue": string;
   "erp.dispatch.requireScan": boolean;
+  "erp.labels.dotsPerMm": number;
+  "erp.labels.gapMm": number;
+  "erp.labels.shiftMm": number;
+  "erp.labels.direction": number;
+  "erp.logistics.notifyCustomers": boolean;
+  "erp.logistics.watiTemplate": string;
+  "erp.logistics.signature": string;
+  "erp.logistics.callEveryDays": number;
+  "erp.logistics.lateAfterDays": number;
   "erp.ai.voice.enabled": boolean;
   "erp.ai.alerts.enabled": boolean;
   "erp.ai.alerts.rateJumpPct": number;
@@ -5930,6 +6395,13 @@ export type Config = {
   "salesAsk.resultCacheSeconds": number;
   "salesAsk.answerCacheSeconds": number;
   "salesAsk.contextCacheSeconds": number;
+  "crmAsk.enabled": boolean;
+  "crmAsk.model": string;
+  "docsAsk.enabled": boolean;
+  "docsAsk.model": string;
+  "docsAsk.reasoningEffort": string;
+  "docsAsk.maxLookups": number;
+  "docsAsk.timeoutSeconds": number;
   "hire.ai.enabled": boolean;
   "hire.ai.reasoningModel": string;
   "hire.ai.fastModel": string;
@@ -5987,6 +6459,7 @@ export type Config = {
   "mbos.location.unplannedVisitsPerDay": number;
   "mbos.location.trackWhileWorking": boolean;
   "mbos.location.trackEverySeconds": number;
+  "mbos.location.serviceMaxDayHours": number;
   "mbos.location.trailKeepEverySeconds": number;
   "mbos.location.trailStalledAfterMisses": number;
   "mbos.location.queueRetentionDays": number;
@@ -6132,6 +6605,7 @@ export type Config = {
   "leads.verificationDueDays": number;
   "leads.selfRaisedVerifierEmail": string;
   "leads.telecallerVerifierEmail": string;
+  "leads.fieldVerifierEmail": string;
   "leads.figuresFreshDays": number;
   "leads.sources": { code: string; label: string }[];
   "leads.distributorDiscountApprovalPercent": number;
@@ -6142,6 +6616,7 @@ export type Config = {
   "mbos.approvals.escalationHours": number;
   "mbos.visits.minimumDwellSeconds": number;
   "mbos.visits.minimumNoteChars": number;
+  "fieldActivity.cutoverDate": string;
   "mbos.travel.maxLegKilometres": number;
   "mbos.sync.mediaWifiOnly": boolean;
   "mbos.ai.retainAudioAfterTranscription": boolean;

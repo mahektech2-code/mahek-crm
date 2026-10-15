@@ -1,0 +1,194 @@
+Payment Follow-up turns the bill ledger into a day's collections work. Three rules decide it: **how late** a customer is (their stage), **whether today** is a day to message or call them (the cadence), and **what holds them back** (a promise, a dispute, money they say they paid). Underneath all three sits the rule the whole money side of MahekOne turns on: **money a customer says they paid is not money the business has seen**.
+
+Every value quoted is the one your CRM is using right now.
+
+## Who is on the list
+
+A customer is on the collections worklist when at least one of their bills is **stated as owed**, has a balance, and is past its due date. Five overdue bills make one row — the list is grouped by customer, never by bill. Paying everything removes them the moment the money is confirmed; there is no separate "close" step.
+
+<Rule title="A bill's due date">
+The bill's own due date, or else the bill date plus the credit period in force: the term agreed on the order, then the customer's standing term, then <Setting k="bills.defaultCreditDays" /> days. A customer on 45 days never quietly becomes 30 because nobody typed a date onto the bill.
+</Rule>
+
+## The stage
+
+<Flow caption="How a stage is decided" chart={`
+flowchart TD
+  B["The customer's stated, overdue bills"] --> A["Anchor bill: the oldest<br/>(or the largest, by setting)"]
+  A --> D["Days overdue on the anchor"]
+  D --> S{"Days overdue"}
+  S -->|"below stage 2"| S1["Stage 1"]
+  S -->|"stage 2 or more"| S2["Stage 2"]
+  S -->|"stage 3 or more"| S3["Stage 3"]
+  S1 --> H{"A bill disputed, and<br/>disputes hold?"}
+  S2 --> H
+  S3 --> H
+  H -- "Yes" --> K["Keep the stage it already had"]
+  H -- "No" --> F["Take the higher of this<br/>and the hand-raised floor"]
+  K --> F
+`} />
+
+| Setting | Now |
+|---|---|
+| Stage 2 begins at | <Setting k="escalation.stage2Days" /> days overdue |
+| Stage 3 begins at | <Setting k="escalation.stage3Days" /> days overdue |
+| Which bill drives the stage | <Setting k="escalation.stageDriver" /> |
+| A part payment restarts the clock | <Setting k="escalation.partialPaymentResetsClock" /> |
+| A dispute holds the stage | <Setting k="escalation.disputeHoldsEscalation" /> |
+
+<Rule title="Stage 1 is WhatsApp only">
+A call cannot be logged against a stage 1 account — the server refuses it with *Stage 1 is a WhatsApp-only nudge*. Stage 2 alternates channels so a customer is not messaged twice running; stage 3 is a call.
+</Rule>
+
+### The floor: what a refusal earns
+
+<Rule title="The stage has a floor, and only a person raises it">
+*Refused to commit* and *Not reachable* raise a floor one stage above where the account sits (at most 3), with the reason and who set it. The stage still rises with the age of the debt; it simply never reads below the floor.
+</Rule>
+
+<Callout kind="why">
+A customer who refuses to commit has told you something their bill dates have not. The floor leaves with the row when nothing is overdue any more, because it described a debt that no longer exists. A floor a nightly rebuild erased would not be a floor — there is a test saying so.
+</Callout>
+
+## The cadence: message before call
+
+<Flow caption="One overdue bill, day by day" chart={`
+flowchart TD
+  D0["Bill falls due"] --> Q["Quiet window: no calls.<br/>A reminder message every few days,<br/>counted from the due date"]
+  Q --> O["Calling opens the day after<br/>the window closes"]
+  O --> C["Call. Rest a few days.<br/>Call again."]
+  C --> C
+  Q -. "messages continue" .-> C
+`} />
+
+| Rule | Setting |
+|---|---|
+| No calls for the first | <Setting k="escalation.quietCallDays" /> days past the due date |
+| A reminder message every | <Setting k="escalation.messageIntervalDays" /> days, from the last one sent (or from the due date) |
+| After a logged call, rest | <Setting k="escalation.callIntervalDays" /> days |
+
+<Callout kind="why">
+A bill a few days late is usually paperwork rather than refusal — a cheque in the post, an accounts department that pays on Fridays. Messages do not stop when calling starts; the two run alongside. The quiet window and the stage 2 threshold are two statements of one fact, so the settings screen refuses values that would let the list offer a call on a day the server still calls stage 1.
+</Callout>
+
+Within each list, the oldest debt comes first, then the largest.
+
+## What holds a customer back
+
+Whatever stops the chasing stops **both** channels, and the strip says so once per channel the customer would otherwise have appeared on. The first matching reason wins:
+
+| Order | Held because | Expires? |
+|---|---|---|
+| 1 | Marked do not contact | No — a standing instruction |
+| 2 | A bill is disputed | When the dispute is resolved |
+| 3 | Money **on hold** with accounts | **No.** Only a person in accounts ends it |
+| 4 | A **post-dated cheque** not yet at its date | On the cheque's date, then the ordinary window runs from there |
+| 5 | Money **reported** paid | After <Setting k="payments.reportedQuietDays" /> days |
+| 6 | Paid something recently | After <Setting k="payments.paidCoolingDays" /> day(s) |
+| 7 | A live promise | The day after the promised date |
+| 8 | Already contacted today | Tomorrow |
+
+<Callout kind="why" title="Why reported quiet expires and a hold does not">
+A bare report is nobody's decision. If it did not expire, a customer could take themselves off the collections list for good by saying they had paid, and the account would simply stop appearing. A hold is a named person in accounts saying *I am looking for this in the bank statement* — chasing through that is worse than any call not made. What replaces the expiry is visibility: the hold ages on accounts' own list and is flagged after <Setting k="payments.holdStaleDays" /> days.
+</Callout>
+
+## The six outcomes, in one transaction
+
+<Rule title="One outcome, one transaction">
+A collections call can produce a promise and its reminder, a payment spread over bills, a billing complaint and a raised floor. All of it — plus the attempt, the call in the interaction log and the timeline entry — is written together or not at all. The outcomes and what each requires are declared once, so the form and the server cannot disagree about which fields are mandatory.
+</Rule>
+
+| Outcome | Requires | Writes |
+|---|---|---|
+| Payment promised | Amount, date (today or later) | Attempt with the promise; reminder (payment promise) for the next working day after the date |
+| Already paid | Amount | A **reported** receipt, allocated across the oldest open bills; proof photographs bound afterwards |
+| Call back later | Date | Callback reminder |
+| Dispute raised | — | Billing complaint at the default priority and deadline; oldest open bill marked disputed |
+| Refused to commit | — | Floor raised one stage |
+| Not reachable | — | Floor raised one stage; the call counts as unanswered |
+
+*Part payment promised* is retired: it is never offered and never accepted, but attempts recorded against it still read back with their label.
+
+After the transaction, the follow-up state is rebuilt, and the CRM works out when the customer comes back to the Call Log and stores that sentence on the call — exactly as on the routine calling path. An answered collections call closes the customer's reminders that were due; *Not reachable* closes none.
+
+## Money: reported, held, confirmed, rejected, reversed
+
+<Flow caption="A receipt's life" chart={`
+stateDiagram-v2
+  [*] --> reported: telecaller or collections call
+  [*] --> confirmed: entered by somebody who can confirm
+  reported --> held: accounts park it, with a reason
+  reported --> confirmed: found in the bank
+  reported --> rejected: never arrived
+  held --> confirmed
+  held --> rejected
+  confirmed --> reversed: bounced, duplicate, wrong customer
+`} />
+
+<Callout kind="money" title="Only confirmed money counts">
+A bill's paid amount is **rebuilt from confirmed receipts only**, every time — never incremented — so confirming, rejecting and re-confirming all land on the same answer. Outstanding, aging, the slow-payer flag and this worklist all read from that. A reported or held receipt moves no rupee anywhere.
+</Callout>
+
+| Status | Means | On the customer's statement |
+|---|---|---|
+| reported | Somebody says it was paid; nobody has looked | "waiting for accounts" |
+| held | Accounts are checking it | "on hold with accounts, being checked" |
+| confirmed | Found in the bank | Counts |
+| rejected | Accounts looked and it never arrived | The reason — the row stays |
+| reversed | It counted and then failed | "reversed — reason" |
+
+<Rule title="Who can confirm">
+Confirming, holding, rejecting and reversing need `payment.confirm` — the accounts desk. Somebody holding it who records money is believed as they write it (confirmed at once), **except** on a collections call, which is always reported. Everybody else reports. Reversing refuses a reported receipt: nothing has counted yet, so rejection is the honest answer.
+</Rule>
+
+<CapabilityGrid names={["payment.record", "payment.confirm"]} />
+
+### Cheques
+
+A cheque has two dates: when we got it, and the date written on it. Modes that carry the second are <Setting k="payments.datedModes" />. A post-dated cheque buys quiet until it can be banked; once its date passes the ordinary reported window runs **from the cheque's date**, not from when it was written down.
+
+## The slow-payer flag
+
+<Rule title="Late means past the due date plus a grace">
+A confirmed payment counts as late when it landed more than <Setting k="escalation.slowPayerGraceDays" /> days after its bill's due date. A customer with <Setting k="escalation.slowPayerLateCount" /> or more late payments in the last <Setting k="escalation.slowPayerLookbackMonths" /> months is a slow payer. The flag is rebuilt nightly and shown beside the name everywhere.
+</Rule>
+
+<Callout kind="why">
+A payment a day or two past its term is ordinary business. Counting those flagged customers who pay perfectly reliably, just not to the calendar. The grace is on the **date**, not the count: three payments a fortnight late is still a slow payer.
+</Callout>
+
+## Every setting that shapes collections
+
+<SettingsTable keys={[
+  "escalation.stage1Days",
+  "escalation.stage2Days",
+  "escalation.stage3Days",
+  "escalation.stageDriver",
+  "escalation.partialPaymentResetsClock",
+  "escalation.disputeHoldsEscalation",
+  "escalation.quietCallDays",
+  "escalation.messageIntervalDays",
+  "escalation.callIntervalDays",
+  "escalation.slowPayerLookbackMonths",
+  "escalation.slowPayerGraceDays",
+  "escalation.slowPayerLateCount",
+  "payments.reportedQuietDays",
+  "payments.paidCoolingDays",
+  "payments.holdStaleDays",
+  "payments.datedModes",
+  "payments.modes",
+  "payments.allowOnAccountRemainder",
+  "bills.defaultCreditDays",
+  "attachments.maxPerFollowUp",
+]} />
+
+## Where the code and the intent disagree today
+
+<Callout kind="warn" title="'Collected this month' counts money nobody has confirmed">
+The figure adds up every payment line dated this month in your book — including money only reported on a call, money on hold, and money accounts rejected. Every other money figure is confirmed-only. Its "of … due" companion and the *Outstanding* card also include bills that are not stated as owed.
+</Callout>
+
+- **The "Already paid" outcome's own description is out of date.** It says the amount "is applied to the oldest bills first, and the outstanding figure updates everywhere". The amount is allocated, but recorded as reported: outstanding does not move until accounts confirm.
+- **The slow-payer count is of payment lines, not bills.** A bill paid late in two instalments counts as two late payments; the lookback is 30 days per month rather than calendar months.
+- **Raising the floor needs a call, and stage 1 refuses calls.** A stage 1 customer who refuses or cannot be reached cannot have their floor raised from the panel.
+- **The collections audit row records no hat.** It is written without the role and app that allowed it.

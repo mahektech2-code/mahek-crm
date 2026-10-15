@@ -54,6 +54,17 @@
   --radius-control: 4px;
   --radius-card: 6px;
 
+  /* The sizes between Tailwind's steps that the dense screens (the ERP above
+     all) are drawn in. Named so a screen says text-meta, not text-[13px], and
+     a change to the scale is one line here. No line height of their own: they
+     sit inside a line set by their parent, as the literal sizes always did. */
+  --text-2xs: 11px;
+  --text-meta: 13px;
+  --text-md: 15px;
+
+  /* WhatsApp's own green, for a button that opens a chat. */
+  --color-whatsapp: #25d366;
+
   --font-sans: "Google Sans Flex", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
   /* What a candidate SAID is set in a serif — testimony, set apart from the
@@ -567,3 +578,24 @@
 /* Hire: table rows are 44px comfortable, 36px compact (design brief §4.3). */
 .hire-root .hire-row { height: 44px; }
 .hire-root[data-density="compact"] .hire-row { height: 36px; }
+
+/* ---------------------------------------------------------------------------
+   Documentation: code excerpts carry the SOURCE file's line numbers.
+
+   Shiki emits one `span.line` per line; `<Code>` sets the counter to start at
+   the excerpt's first line, so "L812" on the page is L812 in the file.
+--------------------------------------------------------------------------- */
+.docs-code .line::before {
+  counter-increment: line;
+  content: counter(line);
+  display: inline-block;
+  width: 3.2em;
+  margin-right: 1.2em;
+  text-align: right;
+  color: var(--color-faint);
+  user-select: none;
+}
+.docs-code pre,
+.docs-fence {
+  font-family: var(--font-mono);
+}

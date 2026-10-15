@@ -1,0 +1,104 @@
+"Territory" means two different things in MahekOne, and confusing them is how real checks get deleted. A **region** decides which salesmen a manager oversees. A salesman's **working area** decides which of his own shops reach his phone. Neither is a permission: who may see a record is decided elsewhere, and a territory can only ever take rows away.
+
+## Two kinds of territory, one table
+
+| | Region | Working area |
+|---|---|---|
+| Held by | A manager | A salesman |
+| Kinds | state | state, city, beat |
+| Decides | Which salesmen the manager's Sales Dashboard shows | Which of his own shops his phone carries |
+| Empty means | National — the whole country | **No book on the phone** |
+| Set by | A national manager, with **Set the patch** | A manager, with **Where they work** |
+
+<Rule title="A territory narrows a book. It is not a permission.">
+Whose book a customer is in, and who may see it, is decided by the account's seats. The working area is applied **on top** and can only remove shops. Allocating a salesman Nagpur shows him *his* shops in Nagpur — never another salesman's.
+</Rule>
+
+<Callout kind="why" title="Why this is written down">
+The two look alike from a distance. Somebody who reads the territory as the security boundary might delete a real check believing it redundant.
+</Callout>
+
+## A territory is a hierarchy, picked from the top
+
+A city belongs to a state and a beat to a city. Every working-area row remembers what it was picked **under**:
+
+| Kind | Picked under |
+|---|---|
+| state | — |
+| city | a state |
+| beat | a city |
+
+<Rule title="Down a branch is AND, across branches is OR">
+Maharashtra plus Pune inside it means **Pune**. The narrowest pick in each branch is the allocation; the wider ones are the path to it. Saving prunes to those leaves on the server, because stored as both, the rule would OR them and hand him the whole state — the opposite of what picking a city meant.
+</Rule>
+
+<Rule title="A city needs its state">
+A city sent without the state it sits in is refused: *"Pick the state first — … needs to sit inside one."* A row written before the hierarchy existed has no parent and still means "this place wherever it is", so nothing allocated last month silently stops matching.
+</Rule>
+
+States are matched on **every spelling** — the book holds "Gujrat" beside "Gujarat", and a chip saying Gujarat must cover both. Cities and beats are matched trimmed and case-insensitive.
+
+### The picker is a tree because a flat list was unusable
+
+Customer records hold whatever was typed as the city, and on a real book that is several hundred values, many of them whole postal addresses. Nesting under states makes them **reachable**: a state's worth is a list somebody can search. Every node carries its shop count, biggest first, so the city somebody means is at the top. Shops naming no state are counted and said out loud: no territory can reach them.
+
+## No territory now means no book — and that was a reversal
+
+<Rule title="An unallocated salesman's phone is empty">
+It used to mean "no narrowing", and the old reasoning is still true: allocate eight people and forget the ninth, and she gets an empty phone that looks like having no work. What changed is the other side of the trade — an unallocated salesman carried the **whole book**, thousands of shops on one phone, and nothing said he should not.
+</Rule>
+
+What pays for the reversal is that the emptiness is **named at both ends**: the phone says "no area set for you yet" rather than "nothing in your book", and the Salesmen row says *No area · empty handset*.
+
+<Rule title="Managers and admins are carved out, and only they">
+A manager on a phone is not walking a beat; his scope has already answered the question. Emptying his phone for want of an allocation nobody would think to make reads as a broken sync.
+</Rule>
+
+<Rule title="A lead he raised himself stays with him">
+A shop a salesman created as a lead on his own phone stays on it whatever his area, so the lead he met yesterday does not vanish because it sits one town over.
+</Rule>
+
+## Changing an area takes shops off the phone
+
+<Flow caption="Saving a new working area" chart={`
+flowchart TD
+  A["Manager saves Where they work"] --> B["Refuse kinds that are not places,<br/>and cities without a state"]
+  B --> C["Prune to the narrowest pick in each branch"]
+  C --> D{"Same as before?"}
+  D -- "Yes" --> N["Nothing changed"]
+  D -- "No" --> E["Work out which of HIS shops leave:<br/>in the old area, not in the new"]
+  E --> F["Replace his working-area rows<br/>(regions untouched)"]
+  F --> G["A deletion notice per leaving shop"]
+  G --> H["Audit row, and tell the salesman"]
+  H --> I["Holiday membership rebuilt for the new area"]
+`} />
+
+<Rule title="A pull says what exists; only a deletion notice says what stopped">
+Without a notice per leaving shop, a salesman moved from Maharashtra to Gujarat would keep every Maharashtra shop on his phone for ever — and walk to one with nothing looking wrong. The difference is taken over **his own book**, not the whole customer table, or a reallocation would send thousands of notices for shops that were never on the phone. A salesman with no previous area is treated as having had his whole book.
+</Rule>
+
+The salesman is told: *"Your handset now shows your customers in …. Everything else is still yours — it is just not on this list."* — or, if the area was cleared, that his list will be empty until the office sets one.
+
+## Regions
+
+<Rule title="Only a national manager draws the patches">
+`Set the patch` is refused to a regional manager and to anybody setting their own. An empty list means the whole country, and the dialog says so in as many words because it is the widest scope there is. Changing a manager's regions never touches anybody's working area — the two kinds share a table and each write deletes only its own kind.
+</Rule>
+
+## The Territory screen
+
+The screen asks a **geographic** question — who covers Nagpur, how much of a state has nobody — so it does not narrow the way worklists do. A shop is yours to see here if it **sits in one of your regions or belongs to one of your salesmen**. Narrowing only by owner would hide exactly the unallocated shops a coverage map exists to show. An admin is never narrowed by regions on this screen.
+
+<Callout kind="why" title="Why the map's quick view is the CRM's own answer">
+Clicking a shop runs the same two reads the CRM record page uses, so a figure read off a pin can never disagree with the record. It is fetched on click, because most of a few thousand pins are never clicked.
+</Callout>
+
+## Asking for different cities
+
+A salesman can ask, from his phone, to work different cities. The request lands on [Approvals](/docs/sales/approvals). **Approving says yes; it does not change his area.** A person still changes it with *Where they work*.
+
+## Where the code and the intent disagree today
+
+- **The phone-side scope still carries a comment saying no territory keeps the whole book.** The code returns an empty book; the comment above it describes the old rule.
+- **Approving a territory request changes nothing by itself.** That is stated in the schema, but the salesman is told his request was *approved*, which reads as done.
+- **The allocation controls live on Salesmen, not Territory**, though the action requires either module.

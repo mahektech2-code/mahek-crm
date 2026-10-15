@@ -12,6 +12,7 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
+import { refValues } from "@/lib/erp/refs";
 import {
   appAccess,
   erpFgFills,
@@ -168,8 +169,31 @@ describe("filling", () => {
     const refused = await mod("sfgBatches").actions!.qcApprove(await as(clerk), line.id, {});
     assert.equal(refused.ok, false, "a clerk without the QC power cannot approve");
     assert.equal(fieldMsg(await mod("sfgBatches").actions!.qcReject(await as(admin), line.id, {})), "Say why the lot failed QC");
-    const ok = await mod("sfgBatches").actions!.qcApprove(await as(admin), line.id, { note: "Viscosity 18 s, clear" });
+    /* The bulk path: a clerk is refused and is not even offered it; a reject
+       needs its reason; approving two lines of one batch decides its ONE lot. */
+    assert.equal((await mod("sfgBatches").load(await as(clerk))).spec.bulk, undefined, "no bulk QC for somebody without the power");
+    assert.ok((await mod("sfgBatches").load(await as(admin))).spec.bulk?.some((b) => b.id === "qcApprove"));
+    assert.equal((await mod("sfgBatches").bulk!.qcApprove(await as(clerk), [line.id], {})).ok, false);
+    assert.equal(fieldMsg(await mod("sfgBatches").bulk!.qcReject(await as(admin), [line.id], {})), "Say why the lots failed QC");
+    const all = await db.select().from(erpSfgLines);
+    const bulk = await mod("sfgBatches").bulk!.qcReject(await as(admin), all.map((l) => l.id), { note: "Hazy" });
+    assert.ok(bulk.ok, JSON.stringify(bulk));
+    assert.equal((await mod("sfgBatches").bulk!.qcReject(await as(admin), all.map((l) => l.id), { note: "Hazy" })).ok, false, "already rejected");
+    /* The Testing list's active values are asked for the same evidence a
+       purchase test records, and nothing is required: an empty approval goes
+       through. What IS given has to make sense, and is stored with the verdict. */
+    const tests = await refValues("testingList");
+    assert.ok(tests.length > 0, "the seeded Testing list has values");
+    if (tests.includes("Density"))
+      assert.equal(fieldMsg(await mod("sfgBatches").actions!.qcApprove(await as(admin), line.id, { density: "9" })), "Density value must be between 0.5 and 1.5");
+    const ok = await mod("sfgBatches").actions!.qcApprove(await as(admin), line.id, { ...(tests.includes("Smell") ? { smell: "Good" } : {}), note: "Viscosity 18 s, clear" });
     assert.ok(ok.ok, JSON.stringify(ok));
+    const [stored] = (await db.execute(sql`select evidence from erp_sfg_qc where lot_code = ${line.lotCode}`)) as unknown as { evidence: { smell?: string; photos: Record<string, string> } }[];
+    if (tests.includes("Smell")) assert.equal(stored.evidence.smell, "Good");
+    assert.deepEqual(stored.evidence.photos, {});
+    const prompt = (await mod("sfgBatches").load(await as(admin))).spec.bulk!.find((b) => b.id === "qcApprove")!.prompt!;
+    assert.ok(prompt.fields.every((f) => !f.req && f.untagged), "nothing is required and nothing says optional");
+    assert.ok(prompt.fields.some((f) => f.t === "photo"), "the prompt takes photographs, as Lot testing does");
     const after = await mod("fgFill").load(await as(admin));
     assert.deepEqual(Object.values(after.spec.newForm!.header.find((f) => f.k === "sfgLot")!.optsBy!.map).flat(), ["1ASTOL1"]);
   });

@@ -12,6 +12,7 @@ import { calendarDate, nextWorkingDay, type BusinessDate } from "../business-dat
 import { managerNameByEmployeeName } from "./org-service";
 import { MBOS_EVENT, writeTimelineEvent } from "../timeline";
 import { notifyUser } from "../notify";
+import { fieldRouteFor } from "./lead-verifier";
 
 /* ---------------------------------------------------------------------------
  * §D and §E — what happens the moment a lead becomes a Prospect.
@@ -121,6 +122,7 @@ export async function qualifyLead(
     .select({
       leadManagerId: customers.leadManagerId,
       decidedAt: customers.leadManagerDecidedAt,
+      ownerId: customers.ownerId,
     })
     .from(customers)
     .where(eq(customers.id, customerId))
@@ -132,7 +134,18 @@ export async function qualifyLead(
     return { leadManagerId: lead?.leadManagerId ?? null, taskId: null, assigned: false };
   }
 
-  const leadManagerId = await lineManagerFor(salesmanId);
+  /* A LEAD A SALESMAN RAISED OR HOLDS goes to the field verifier, not to
+     whoever the org chart puts above him. Blank setting: off, and the org chart
+     answers exactly as before. Configured but unusable: said, never quietly
+     routed elsewhere — it falls through to the same notice a missing line
+     manager gets. */
+  const fieldRoute = await fieldRouteFor({ id: customerId, ownerId: lead.ownerId });
+  const leadManagerId =
+    fieldRoute.kind === "verifier" || fieldRoute.kind === "fallback"
+      ? fieldRoute.id
+      : fieldRoute.kind === "refuse"
+        ? null
+        : await lineManagerFor(salesmanId);
   if (!leadManagerId) {
     /*
      * NOBODY ON THE ORG CHART, and that is said out loud rather than silently
@@ -149,7 +162,9 @@ export async function qualifyLead(
       await tell(
         salesman.reportsToId,
         "A Prospect has no Lead Manager",
-        `${salesman.name} qualified ${customerName}, and the org chart names nobody above them. Assign somebody to run it, or it sits.`,
+        fieldRoute.kind === "refuse"
+          ? `${salesman.name} qualified ${customerName}, but it cannot be routed to a verifier: ${fieldRoute.message}`
+          : `${salesman.name} qualified ${customerName}, and the org chart names nobody above them. Assign somebody to run it, or it sits.`,
         "/sales/leads",
         "/leads",
       );

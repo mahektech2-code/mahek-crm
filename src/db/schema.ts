@@ -633,6 +633,23 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
   "erp_video",
   /** A vendor's quotation, photographed or as its PDF. */
   "erp_quotation",
+  /** A lorry receipt the dispatch team uploaded to the Logistics LR desk (0250). */
+  "erp_lr",
+  /** Retired with the petty cash module (0249). Postgres cannot drop an enum
+      value, so it stays declared; nothing writes it. */
+  "erp_petty",
+  /** A vendor return's photographs and documents, a return outward's (0258). */
+  "erp_vendor_return",
+  /** A customer return's photographs and transport papers (0258). */
+  "erp_customer_return",
+  /** A waste disposal's certificate or receipt (0258). */
+  "erp_waste",
+  /** A can's own photographs, up to three (0263). */
+  "erp_raw_material",
+  /** A can group's photographs, up to three (0263). */
+  "erp_material_group",
+  /** An SFG lot's QC evidence photographs and video, keyed by lot code (0265). */
+  "erp_sfg_qc",
   /* HRMS parents: read under the HRMS screen the record lives on (see
      lib/hrms/attachments.ts), never under a customer's scope. */
   "hrms_attendance",
@@ -644,6 +661,8 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
   /** A vendor's invoice (proforma, tax invoice, debit note…) on a payout. Read
       by whoever holds Accounts → Vendor payouts. */
   "vendor_payout_invoice",
+  /** The photograph of a loaded truck the dispatch team takes as proof (factory app). */
+  "factory_task",
 ]);
 
 /**
@@ -678,6 +697,10 @@ export const appIdEnum = pgEnum("app_id", [
   "website",
   /** Hiring and onboarding — the pipeline that ends in a provisioned account. */
   "hire",
+  /** The factory floor's phone app: mixing, filling, packing, dispatch. */
+  "factory",
+  /** Documentation — every app's guide, rules and developer reference, in one place. */
+  "docs",
 ]);
 
 /* --------------------------------------------------------- §2 configuration */
@@ -5822,6 +5845,28 @@ export const sheetFieldActivityRows = pgTable(
 );
 
 /**
+ * WHICH ACCOUNT AN OLD-APP SHOP NAME IS, as a person decided it.
+ *
+ * The old field app (EMP 2.0) named a shop in free text and nothing else, so
+ * a sheet row reaches a customer only by its name. The importer links a name
+ * on its own only where exactly one account on the book carries that name,
+ * spelled the same; everything else is a question for a person. This is the
+ * answer, keyed on the FOLDED name (`foldShopName`) because the old app was
+ * keyed on the name too — one decision covers every row typed under it, and
+ * no sync or re-match overrides it.
+ *
+ * `customer_id` null is a real answer: "this shop is not on MahekOne".
+ */
+export const fieldActivityCustomerDecisions = pgTable("field_activity_customer_decisions", {
+  nameKey: text("name_key").primaryKey(),
+  /** The name as somebody saw it when deciding, for reading back. */
+  shownName: text("shown_name").notNull(),
+  customerId: text("customer_id").references(() => customers.id, { onDelete: "cascade" }),
+  decidedById: text("decided_by_id").references(() => users.id, { onDelete: "set null" }),
+  decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
  * One row per pin from a third-party field-tracking app the salesmen used to
  * drop a shop's location before MBOS existed — a one-time CSV export, not a
  * live sheet, so this carries none of `sheet_sync_runs`' watermark machinery.
@@ -7364,6 +7409,43 @@ export const mbosExpenses = pgTable(
   ],
 );
 
+/**
+ * A REIMBURSEMENT HANDED OVER — the money that settles what the expense
+ * ledger says a salesman is owed.
+ *
+ * It is paid against his BALANCE, never against one expense: one transfer at
+ * the end of the week covers a dozen fares and a hotel, and pinning it to
+ * lines would make the ordinary case a chore. Which lines it covered is worked
+ * out oldest first by `lib/engines/expense-ledger.ts` on every read, so the
+ * per-line "paid" is a reading of this table and never a second copy of it.
+ *
+ * A wrong entry is VOIDED with a reason, never deleted or edited: "we paid
+ * ₹4,000 and then took it back" is a fact about his money that the statement
+ * must go on showing.
+ */
+export const mbosExpensePayouts = pgTable(
+  "mbos_expense_payouts",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    paidOn: date("paid_on").notNull(),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    /** Bank transfer, UPI, cash, with salary … — free text, offered as chips. */
+    mode: text("mode"),
+    /** UTR, cheque number, payroll month — what finds it in a statement. */
+    reference: text("reference"),
+    note: text("note"),
+    recordedById: text("recorded_by_id").references(() => users.id),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+    voidedAt: timestamp("voided_at", { withTimezone: true }),
+    voidedById: text("voided_by_id").references(() => users.id),
+    voidReason: text("void_reason"),
+  },
+  (t) => [index("mbos_expense_payouts_user_idx").on(t.userId, t.paidOn)],
+);
+
 /* ------------------------------------------------- the expense POLICY */
 
 /**
@@ -7475,6 +7557,106 @@ export const expensePolicyRules = pgTable(
       t.sequence,
     ),
   ],
+);
+
+/**
+ * A NAMED expense policy — the standard one, or one a salesman is put on
+ * instead.
+ *
+ * `rules` is the engine's own `PolicyRule[]`, saved whole by the editor and
+ * read whole by the engine: one list, so what the screen shows and what a day
+ * is priced with are the same JSON. Validated on the way in by
+ * `checkRules` in `lib/expense-policy-sets.ts`, the same per-kind checks the
+ * old builder ran. `revision` moves on every save and is what the editor's
+ * "somebody else saved this" check compares.
+ *
+ * The id doubles as an archived anchor row in `expense_policies`, because
+ * `mbos_expense_days.policy_id` references that table (see `ensurePolicyRow`).
+ * Exactly one row is `is_standard` (a partial unique index in 0241), and the
+ * name is unique case-insensitively (a functional index, so only in SQL).
+ */
+export const expensePolicySets = pgTable("expense_policy_sets", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description"),
+  isStandard: boolean("is_standard").notNull().default(false),
+  active: boolean("active").notNull().default(true),
+  rules: jsonb("rules").$type<unknown[]>().notNull().default([]),
+  revision: integer("revision").notNull().default(1),
+  clonedFromId: text("cloned_from_id"),
+  /** The policy's own written lines, beside the rules. A list of strings. */
+  guidelines: jsonb("guidelines").$type<unknown[]>().notNull().default([]),
+  /** Which edition of the shipped figures an untouched standard row holds. */
+  defaultsVersion: integer("defaults_version").notNull().default(1),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  createdById: text("created_by_id").references(() => users.id),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedById: text("updated_by_id").references(() => users.id),
+});
+
+/** Every saved state of a policy — read back on its History tab, restorable. */
+export const expensePolicySetRevisions = pgTable(
+  "expense_policy_set_revisions",
+  {
+    id: text("id").primaryKey(),
+    setId: text("set_id")
+      .notNull()
+      .references(() => expensePolicySets.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    rules: jsonb("rules").$type<unknown[]>().notNull(),
+    guidelines: jsonb("guidelines").$type<unknown[]>().notNull().default([]),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [uniqueIndex("expense_policy_set_revisions_key").on(t.setId, t.revision)],
+);
+
+/**
+ * Who is NOT on the standard policy. No row means standard — so adding a
+ * policy moves nobody until somebody is deliberately put on it, and deleting
+ * one returns its people to standard by the cascade.
+ */
+export const expensePolicyAssignments = pgTable(
+  "expense_policy_assignments",
+  {
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
+    setId: text("set_id")
+      .notNull()
+      .references(() => expensePolicySets.id, { onDelete: "cascade" }),
+    assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
+    assignedById: text("assigned_by_id").references(() => users.id),
+  },
+  (t) => [index("expense_policy_assignments_set_idx").on(t.setId)],
+);
+
+/**
+ * Where a salesman lives, for the expense policy's "away from his hometown".
+ * One row per town: a salesman may have SEVERAL hometowns (he lives in one
+ * and his family in another, or two towns run into each other), and a day in
+ * any of them is a day at home. No row means not set, and the day keeps what
+ * the handset recorded.
+ */
+export const expenseHometowns = pgTable(
+  "expense_hometowns",
+  {
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  /** The town's name — what the pay rule compares the visited shops' towns against. */
+  city: text("city").notNull(),
+  /** The city node it was picked as. Null on a town typed before the picker. */
+  placeId: text("place_id").references(() => places.id, { onDelete: "set null" }),
+  /** The state it was picked under, for drawing the path. */
+  state: text("state"),
+  setAt: timestamp("set_at", { withTimezone: true }).notNull().defaultNow(),
+  setById: text("set_by_id").references(() => users.id),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.city] })],
 );
 
 /**
@@ -11132,6 +11314,28 @@ export const erpRefValues = pgTable(
  * A chemical carries a density (kg → litre) and the tests every lot must pass;
  * both are required for chemicals and meaningless otherwise (spec §4.1).
  */
+/**
+ * A group of look-alike cans (0263): "Mahek Yellow", "Plain", "Naked" — one
+ * print in several sizes, so the floor can recognise a can by its group's
+ * photographs. A name somebody can change, up to three photos of its own
+ * (attachments under `erp_material_group`), and its members are the raw
+ * materials whose `group_id` names it.
+ */
+export const erpMaterialGroups = pgTable(
+  "erp_material_groups",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    materialType: text("material_type").notNull().default("Can"),
+    remark: text("remark"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [uniqueIndex("erp_material_groups_name_key").on(t.materialType, sql`lower(${t.name})`)],
+);
+
 export const erpRawMaterials = pgTable(
   "erp_raw_materials",
   {
@@ -11157,7 +11361,17 @@ export const erpRawMaterials = pgTable(
     purchaseMethod: text("purchase_method").notNull().default("direct"),
     /** The vendor a direct purchase is offered first. A suggestion, never a lock. */
     preferredSupplierId: text("preferred_supplier_id").references(() => erpSuppliers.id),
+    /**
+     * How far a physical count may sit from the book before it is a red flag,
+     * as a percentage of the book. Null: `erp.stockCheck.tolerancePercent`.
+     */
+    countTolerancePercent: numeric("count_tolerance_percent", { precision: 6, scale: 2, mode: "number" }),
     remark: text("remark"),
+    /**
+     * The look-alike group a can belongs to (0263). Filled by "Group by name"
+     * only where it is empty, so a can somebody moved stays where they put it.
+     */
+    groupId: text("group_id").references(() => erpMaterialGroups.id, { onDelete: "set null" }),
     active: boolean("active").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -11166,6 +11380,7 @@ export const erpRawMaterials = pgTable(
   },
   (t) => [
     uniqueIndex("erp_raw_materials_name_key").on(t.name),
+    index("erp_raw_materials_group_idx").on(t.groupId),
     check("erp_raw_materials_purchase_method_check", sql`${t.purchaseMethod} in ('direct', 'quotation', 'buyer')`),
     uniqueIndex("erp_raw_materials_serial_key").on(t.serialNo),
     check("erp_raw_materials_unit_check", sql`${t.unit} in ('Kg', 'Litre', 'Unit')`),
@@ -11228,6 +11443,13 @@ export const erpSuppliers = pgTable(
     grade: text("grade"),
     email: text("email"),
     gstin: text("gstin"),
+    /**
+     * Who owns the drums this supplier sends: `mahek` (they become our scrap)
+     * or `returnable` (they go back to the supplier). Null is unknown. Copied
+     * onto each GRN line as it is saved; a drum whose answer is unknown on
+     * both waits for the Production Head rather than being guessed.
+     */
+    drumOwnership: text("drum_ownership"),
     active: boolean("active").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -11359,12 +11581,32 @@ export const erpRequisitions = pgTable(
     /** Why a quotation that was not the cheapest landed cost was chosen. */
     selectionNote: text("selection_note"),
     cancelReason: text("cancel_reason"),
+    /**
+     * INVENTORY ACCURACY CONTROL: whether this requirement waits for a blind
+     * physical count before it is bought. COPIED on raise from
+     * `erp.stockCheck.onRequirement`, so a requirement in flight when the
+     * rule changes is never re-routed — and every row from before it reads
+     * false.
+     */
+    stockCheckRequired: boolean("stock_check_required").notNull().default(false),
+    /** The urgent-purchase exception: requested | approved | rejected. */
+    stockExceptionStatus: text("stock_exception_status"),
+    stockExceptionReason: text("stock_exception_reason"),
+    stockExceptionRequestedById: text("stock_exception_requested_by_id").references(() => users.id),
+    stockExceptionDecidedById: text("stock_exception_decided_by_id").references(() => users.id),
+    stockExceptionDecidedAt: timestamp("stock_exception_decided_at", { withTimezone: true }),
+    stockExceptionNote: text("stock_exception_note"),
+    /** A quantity well above what the count justifies, confirmed by a person, with why. */
+    qtyConfirmNote: text("qty_confirm_note"),
+    qtyConfirmedById: text("qty_confirmed_by_id").references(() => users.id),
+    qtyConfirmedAt: timestamp("qty_confirmed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id").references(() => users.id),
     updatedById: text("updated_by_id"),
   },
   (t) => [
+    check("erp_requisitions_stock_exception_check", sql`${t.stockExceptionStatus} is null or ${t.stockExceptionStatus} in ('requested', 'approved', 'rejected')`),
     index("erp_requisitions_status_idx").on(t.status, t.reqDate),
     index("erp_requisitions_req_no_idx").on(t.reqNo),
     check("erp_requisitions_priority_check", sql`${t.priority} in ('Urgent', 'Medium', 'For Stock')`),
@@ -11405,6 +11647,8 @@ export const erpInward = pgTable(
     quantity: numeric("quantity", { precision: 14, scale: 3, mode: "number" }).notNull(),
     unit: text("unit").notNull(),
     remark: text("remark"),
+    /** mahek | returnable | null — who owns these drums, copied from the supplier at save and editable on the line. */
+    drumOwnership: text("drum_ownership"),
     /** Decided at save from the item's testing list; kept because the list can change later. */
     testingRequired: boolean("testing_required").notNull(),
     /** The PO this delivery was received against. Null only on lines from before POs were compulsory. */
@@ -11574,6 +11818,14 @@ export const erpPurchases = pgTable(
     source: text("source").notNull(),
     /** AI-1: the values were read off a supplier bill and accepted by a person. */
     aiFilled: boolean("ai_filled").notNull().default(false),
+    /**
+     * Who owns this lot's drums, where a person decided it for the lot (the
+     * first version of the empty-drum module, 0256). Wins over the GRN line
+     * and the supplier when a drum is recorded empty. `mahek` | `returnable`.
+     */
+    drumOwnership: text("drum_ownership"),
+    drumOwnershipSetById: text("drum_ownership_set_by_id").references(() => users.id),
+    drumOwnershipSetAt: timestamp("drum_ownership_set_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id").references(() => users.id),
@@ -11732,7 +11984,7 @@ export const erpRmEntries = pgTable(
   "erp_rm_entries",
   {
     id: text("id").primaryKey(),
-    /** purchase | transfer. */
+    /** purchase | transfer | adjustment (an approved stock adjustment's surplus — Inventory Accuracy Control). */
     sourceType: text("source_type").notNull(),
     sourceId: text("source_id").notNull(),
     entryDate: date("entry_date").notNull(),
@@ -12136,6 +12388,20 @@ export const erpSfgQc = pgTable(
     /** Pending | Approved | Rejected. */
     status: text("status").notNull().default("Pending"),
     note: text("note"),
+    /**
+     * The Testing list's checks as answered at this decision: test name →
+     * Pass | Fail. Keyed by name so a test renamed or switched off later still
+     * reads back as what was checked. Empty for a decision made before the
+     * checks were asked, and for a reject that stopped at the first failure.
+     */
+    tests: jsonb("tests").$type<Record<string, "Pass" | "Fail">>().notNull().default(sql`'{}'::jsonb`),
+    /**
+     * The evidence the ERP's approve and reject prompts record, the same as a
+     * purchase test's: a photograph per test, the smell, the pH and density
+     * readings and a video (`QcEvidence` in `lib/erp/engines/sfg-tests.ts`).
+     * None of it is required. Empty for a decision made before it was asked.
+     */
+    evidence: jsonb("evidence").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
     decidedById: text("decided_by_id").references(() => users.id),
     decidedAt: timestamp("decided_at", { withTimezone: true }),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -12296,12 +12562,241 @@ export const erpTransports = pgTable(
     /** Track | Don't Track. */
     trackStatus: text("track_status").notNull().default("Don't Track"),
     materialStage: text("material_stage").notNull().default("Dispatched"),
+    /** The next call to the transporter about this consignment. */
     reminderDate: date("reminder_date"),
+    /* ---- 0250: the logistics flow. See "## Logistics" in AGENTS.md. ---- */
+    /** Boxes (packages) the bill left the factory as — read off its lines when it opened, corrected by logistics. */
+    packages: integer("packages"),
+    /** Litres on the bill, read off its lines when it opened. */
+    litres: numeric("litres", { precision: 12, scale: 2, mode: "number" }),
+    /** The day the material is expected to reach the transporter's godown. */
+    transportDueOn: date("transport_due_on"),
+    /** When logistics confirmed the transporter has it. */
+    atTransportAt: timestamp("at_transport_at", { withTimezone: true }),
+    /** The uploaded LR this bill travels under; `lr_no` mirrors its number. */
+    lrId: text("lr_id"),
+    /** The day the transporter expects it to reach the party. */
+    expectedDeliveryOn: date("expected_delivery_on"),
+    /** Closed: the day the party received it, and who signed for it. */
+    deliveredOn: date("delivered_on"),
+    receivedBy: text("received_by"),
+    /** An open problem on the road — Delayed, Damaged, Short, Held at transport, Wrong address, Other — and what was said. */
+    issue: text("issue"),
+    issueNote: text("issue_note"),
+    issueAt: timestamp("issue_at", { withTimezone: true }),
+    /** The unguessable part of the customer's tracking link (/track/<token>). */
+    trackToken: text("track_token"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     updatedById: text("updated_by_id").references(() => users.id),
   },
-  (t) => [uniqueIndex("erp_transports_order_key").on(t.orderNo)],
+  (t) => [
+    uniqueIndex("erp_transports_order_key").on(t.orderNo),
+    uniqueIndex("erp_transports_track_token_key").on(t.trackToken),
+    index("erp_transports_lr_idx").on(t.lrId),
+  ],
+);
+
+/**
+ * A lorry receipt as the dispatch team uploads it, BEFORE anybody has said
+ * which bills it carries. Logistics then attaches it to the bills on the LR
+ * desk (status `assigned`); a wrong upload is voided, never deleted. One LR is
+ * one physical consignment to one consignee, so it may carry several bills.
+ */
+export const erpLrs = pgTable(
+  "erp_lrs",
+  {
+    id: text("id").primaryKey(),
+    /** Optional at upload — logistics may read it off the photo — and required before the LR is attached. */
+    lrNo: text("lr_no"),
+    lrDate: date("lr_date"),
+    transporter: text("transporter"),
+    /** The destination printed on the LR. */
+    destination: text("destination"),
+    /** Articles / packages printed on the LR. */
+    packages: integer("packages"),
+    weightKg: numeric("weight_kg", { precision: 10, scale: 2, mode: "number" }),
+    freightPaise: bigint("freight_paise", { mode: "number" }),
+    /** Paid | To pay | TBB. */
+    freightTerm: text("freight_term"),
+    /** The photograph or PDF of the receipt (attachment parent `erp_lr`). */
+    fileId: text("file_id"),
+    godownId: text("godown_id").references(() => erpGodowns.id),
+    note: text("note"),
+    /** unassigned | assigned | void. */
+    status: text("status").notNull().default("unassigned"),
+    voidReason: text("void_reason"),
+    uploadedById: text("uploaded_by_id").references(() => users.id),
+    uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
+    assignedById: text("assigned_by_id").references(() => users.id),
+    assignedAt: timestamp("assigned_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("erp_lrs_number_key").on(sql`lower(coalesce(${t.transporter}, ''))`, sql`upper(${t.lrNo})`).where(sql`${t.status} <> 'void'`),
+    index("erp_lrs_status_idx").on(t.status),
+    check("erp_lrs_status_check", sql`${t.status} in ('unassigned', 'assigned', 'void')`),
+  ],
+);
+
+/**
+ * Everything that happened to a consignment, append-only: it opened, it is due
+ * at the transporter, it reached them, its LR was attached, a call was made, its
+ * stage moved, a problem was raised or cleared, it was delivered. The customer's
+ * tracking page and the consignment's own page are both read from here.
+ */
+export const erpTransportEvents = pgTable(
+  "erp_transport_events",
+  {
+    id: text("id").primaryKey(),
+    transportId: text("transport_id")
+      .notNull()
+      .references(() => erpTransports.id, { onDelete: "cascade" }),
+    /** opened | due | at_transport | lr | lr_removed | call | stage | issue | issue_cleared | delivered | reopened | note | packages. */
+    kind: text("kind").notNull(),
+    /** The stage the consignment was at after this event. */
+    stage: text("stage"),
+    note: text("note"),
+    /** Shown on the customer's tracking page — a call note about a transporter's excuses is not. */
+    shared: boolean("shared").notNull().default(true),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    byId: text("by_id").references(() => users.id),
+  },
+  (t) => [index("erp_transport_events_transport_idx").on(t.transportId, t.at)],
+);
+
+/**
+ * Every WhatsApp the logistics flow sent a customer, or has ready for a person
+ * to send. Kept apart from `wa_messages` on purpose: a confirmed message there
+ * is CONTACT, and quiets the customer on the Call Log — a note saying the goods
+ * are on a lorry is not a sales conversation and must not cost one.
+ */
+export const erpTransportMessages = pgTable(
+  "erp_transport_messages",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id),
+    /** The bills this message speaks for. */
+    transportIds: text("transport_ids").array().notNull(),
+    lrId: text("lr_id"),
+    eventId: text("event_id"),
+    /** lr | stage | issue | delivered. */
+    kind: text("kind").notNull(),
+    phone: text("phone"),
+    body: text("body").notNull(),
+    /** sent | to_send | sent_by_hand | failed | skipped | delivered | read. */
+    status: text("status").notNull(),
+    /** Why it was not sent through Wati, or why it failed. */
+    why: text("why"),
+    providerRef: text("provider_ref"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    sentById: text("sent_by_id").references(() => users.id),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    readAt: timestamp("read_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    index("erp_transport_messages_status_idx").on(t.status),
+    index("erp_transport_messages_customer_idx").on(t.customerId, t.createdAt),
+    check("erp_transport_messages_status_check", sql`${t.status} in ('sent', 'to_send', 'sent_by_hand', 'failed', 'skipped', 'delivered', 'read')`),
+  ],
+);
+
+/**
+ * The transport companies logistics rings. A name is what bills and LRs carry
+ * as text, so a transporter here is matched to them by name; the row adds the
+ * numbers to call and, where the company has one, its online tracking page.
+ */
+export const erpTransporters = pgTable(
+  "erp_transporters",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    /**
+     * MIRRORS of the first godown's first person — their name and first two
+     * numbers — written by `saveTransporter` so the call buttons on bills and
+     * LRs, which read these, need no join. The godowns are the truth.
+     */
+    phone: text("phone"),
+    altPhone: text("alt_phone"),
+    contactPerson: text("contact_person"),
+    /** Its GST number, upper case, checked against the GSTIN checksum on save. */
+    gstin: text("gstin"),
+    /**
+     * What this company calls its consignment number — "LR Number", "GR
+     * Number", "G.C Number"… A value of the `consignmentLabel` reference list.
+     */
+    consignmentLabel: text("consignment_label"),
+    /** Where its godown was, as typed before godowns were rows. Carried into one by 0255; read by nothing. */
+    address: text("address"),
+    /** Its tracking page, with {lr} where the LR number goes. */
+    trackingUrl: text("tracking_url"),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [uniqueIndex("erp_transporters_name_key").on(sql`lower(${t.name})`)],
+);
+
+/**
+ * A transporter's godown: ONE town on the reviewed place tree, the street
+ * address as typed, and the people there to ring. A company with godowns in
+ * Bhiwandi and Pune is two rows, each in one town — never a state, district,
+ * city and area picked separately.
+ */
+export const erpTransporterGodowns = pgTable(
+  "erp_transporter_godowns",
+  {
+    id: text("id").primaryKey(),
+    transporterId: text("transporter_id")
+      .notNull()
+      .references(() => erpTransporters.id, { onDelete: "cascade" }),
+    /** What they call it — "Main godown", "Booking office". */
+    label: text("label"),
+    /**
+     * The AREA the godown is in, State → District → City → Area all picked (or
+     * added) on the godown dialog. A godown saved before that is filed at a
+     * district and asks for its city and area the next time it is edited.
+     */
+    placeId: text("place_id").references(() => places.id, { onDelete: "set null" }),
+    /** This godown's own GST number — registered per state, so the first two digits name the state it is in. Null only on godowns saved before it was asked. */
+    gstin: text("gstin"),
+    /** Street, landmark. No longer asked for; kept where a godown had one. */
+    address: text("address"),
+    /** Where the godown is, as a map pin: picked on the map, typed, or read off a device standing in it. Both or neither. */
+    lat: doublePrecision("lat"),
+    lng: doublePrecision("lng"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("erp_transporter_godowns_transporter_idx").on(t.transporterId, t.sortOrder),
+    check("erp_transporter_godowns_pin_check", sql`(${t.lat} is null) = (${t.lng} is null)`),
+  ],
+);
+
+/** A person at a transporter's godown, with up to three numbers to ring. */
+export const erpTransporterContacts = pgTable(
+  "erp_transporter_contacts",
+  {
+    id: text("id").primaryKey(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpTransporterGodowns.id, { onDelete: "cascade" }),
+    name: text("name"),
+    /** What they look after — "Booking", "Delivery", "Owner". Free text. */
+    role: text("role"),
+    phones: text("phones").array().notNull().default(sql`'{}'::text[]`),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("erp_transporter_contacts_godown_idx").on(t.godownId, t.sortOrder),
+    check("erp_transporter_contacts_phones_max", sql`cardinality(${t.phones}) <= 3`),
+  ],
 );
 
 /**
@@ -12438,6 +12933,479 @@ export const erpAlerts = pgTable(
     resolveReason: text("resolve_reason"),
   },
   (t) => [index("erp_alerts_status_idx").on(t.status, t.raisedAt)],
+);
+
+/* ---- Inventory Accuracy Control (AGENTS.md) ---- */
+
+/**
+ * ONE PHYSICAL COUNT of one raw material at one godown. Counted BLIND: the
+ * book figure is snapshotted at the moment the count is submitted and never
+ * shown to the counter before. A count is never edited after it is
+ * submitted — a doubt is a RECOUNT (`recount_of_id`), by somebody else.
+ */
+export const erpStockCounts = pgTable(
+  "erp_stock_counts",
+  {
+    id: text("id").primaryKey(),
+    countNo: integer("count_no").notNull(),
+    /** reorder | cycle | recount | event | full. */
+    kind: text("kind").notNull(),
+    /** open | matched | flagged | recount | investigating | resolved | cancelled. */
+    status: text("status").notNull().default("open"),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    /** Ltr | Pcs — the unit stock is held in. */
+    unit: text("unit").notNull(),
+    requisitionId: text("requisition_id").references(() => erpRequisitions.id),
+    recountOfId: text("recount_of_id"),
+    reason: text("reason").notNull(),
+    assignedToId: text("assigned_to_id").references(() => users.id),
+    dueDate: date("due_date").notNull(),
+    countedQty: erpQty("counted_qty"),
+    bin: text("bin"),
+    lotNote: text("lot_note"),
+    countNote: text("count_note"),
+    countedById: text("counted_by_id").references(() => users.id),
+    countedAt: timestamp("counted_at", { withTimezone: true }),
+    /** The reconciled book at the moment of the count. A snapshot, never recomputed. */
+    bookQty: erpQty("book_qty"),
+    pendingIn: erpQty("pending_in"),
+    pendingOut: erpQty("pending_out"),
+    /** Counted − book. */
+    difference: erpQty("difference"),
+    tolerance: erpQty("tolerance"),
+    /** The assistant's last reading of the possible causes. A suggestion, never an entry. */
+    aiCauses: jsonb("ai_causes").$type<Record<string, unknown>>(),
+    /** book_confirmed | missing_entry | adjusted | cancelled. */
+    resolution: text("resolution"),
+    resolutionNote: text("resolution_note"),
+    resolvedById: text("resolved_by_id").references(() => users.id),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_stock_counts_no_key").on(t.countNo),
+    index("erp_stock_counts_status_idx").on(t.status, t.dueDate),
+    index("erp_stock_counts_item_idx").on(t.rawMaterialId, t.godownId),
+    index("erp_stock_counts_requisition_idx").on(t.requisitionId),
+    uniqueIndex("erp_stock_counts_one_open_key").on(t.rawMaterialId, t.godownId).where(sql`${t.status} = 'open'`),
+    check("erp_stock_counts_kind_check", sql`${t.kind} in ('reorder', 'cycle', 'recount', 'event', 'full')`),
+    check("erp_stock_counts_status_check", sql`${t.status} in ('open', 'matched', 'flagged', 'recount', 'investigating', 'resolved', 'cancelled')`),
+    check("erp_stock_counts_unit_check", sql`${t.unit} in ('Ltr', 'Pcs')`),
+    check("erp_stock_counts_resolution_check", sql`${t.resolution} is null or ${t.resolution} in ('book_confirmed', 'missing_entry', 'adjusted', 'cancelled')`),
+    check("erp_stock_counts_counted_check", sql`(${t.countedQty} is null) = (${t.countedAt} is null)`),
+  ],
+);
+
+/**
+ * A STOCK CHECK FROM THE FLOOR — anybody, any time, any kind of stock. The
+ * person picks an item at their godown, counts it and sends the figure; the
+ * book is read and snapshotted only then, and a check outside its tolerance is
+ * a MISMATCH the office reviews (ERP → Stock accuracy → Stock checks, and the
+ * dashboard). It moves no stock: a real difference on a raw material becomes a
+ * formal count (`stock_count_id`), whose red flag, recount and approved
+ * adjustment are the only way the book changes.
+ */
+export const erpFloorChecks = pgTable(
+  "erp_floor_checks",
+  {
+    id: text("id").primaryKey(),
+    /** rm | sfg | fg | pack — which ledger the book is read from. */
+    stage: text("stage").notNull(),
+    /** A raw material, a formulation, a finished good or a SKU, by `stage`. */
+    itemId: text("item_id").notNull(),
+    itemName: text("item_name").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    /** Ltr | Pcs | Cans | Boxes. */
+    unit: text("unit").notNull(),
+    countedQty: erpQty("counted_qty").notNull(),
+    /** The book at the moment the figure arrived. A snapshot, never recomputed. */
+    bookQty: erpQty("book_qty").notNull(),
+    /** On the shelf and not yet in the book (raw materials: at the gate, under test, unposted). */
+    pendingIn: erpQty("pending_in").notNull().default(0),
+    /** Counted − (book + pending). */
+    difference: erpQty("difference").notNull(),
+    tolerance: erpQty("tolerance").notNull(),
+    matched: boolean("matched").notNull(),
+    /** Why the counter thinks it differs — optional, asked only on a mismatch. */
+    reason: text("reason"),
+    bin: text("bin"),
+    /** factory | erp — where the check was entered. */
+    source: text("source").notNull().default("factory"),
+    /** The phone's own key: a resend answers with the first save. */
+    clientKey: text("client_key"),
+    countedById: text("counted_by_id")
+      .notNull()
+      .references(() => users.id),
+    countedAt: timestamp("counted_at", { withTimezone: true }).notNull().defaultNow(),
+    reviewedById: text("reviewed_by_id").references(() => users.id),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    reviewNote: text("review_note"),
+    /** The formal count a mismatch was escalated into. */
+    stockCountId: text("stock_count_id").references(() => erpStockCounts.id),
+  },
+  (t) => [
+    uniqueIndex("erp_floor_checks_client_key").on(t.clientKey),
+    index("erp_floor_checks_open_idx").on(t.matched, t.reviewedAt),
+    index("erp_floor_checks_item_idx").on(t.stage, t.itemId, t.godownId, t.countedAt),
+    check("erp_floor_checks_stage_check", sql`${t.stage} in ('rm', 'sfg', 'fg', 'pack')`),
+    check("erp_floor_checks_unit_check", sql`${t.unit} in ('Ltr', 'Pcs', 'Cans', 'Boxes')`),
+    check("erp_floor_checks_source_check", sql`${t.source} in ('factory', 'erp')`),
+  ],
+);
+
+/**
+ * A STOCK ADJUSTMENT, requested from a flagged count and posted only once a
+ * holder of `stockControl` approves it. Never a silent edit: a shortage is
+ * written off to Item Lost Record as transfers, a surplus is an inflow entry
+ * of its own, and `posted` names what was written.
+ */
+export const erpStockAdjustments = pgTable(
+  "erp_stock_adjustments",
+  {
+    id: text("id").primaryKey(),
+    countId: text("count_id")
+      .notNull()
+      .references(() => erpStockCounts.id),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    /** Signed: below zero takes stock off, above zero puts it on. */
+    quantity: erpQty("quantity").notNull(),
+    reasonCode: text("reason_code").notNull(),
+    reason: text("reason").notNull(),
+    /** pending | approved | rejected. */
+    status: text("status").notNull().default("pending"),
+    requestedById: text("requested_by_id").references(() => users.id),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+    decidedById: text("decided_by_id").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decisionNote: text("decision_note"),
+    posted: jsonb("posted").$type<{ transfers?: string[]; entry?: string }>(),
+  },
+  (t) => [
+    uniqueIndex("erp_stock_adjustments_one_pending_key").on(t.countId).where(sql`${t.status} = 'pending'`),
+    index("erp_stock_adjustments_status_idx").on(t.status, t.requestedAt),
+    check("erp_stock_adjustments_status_check", sql`${t.status} in ('pending', 'approved', 'rejected')`),
+    check(
+      "erp_stock_adjustments_reason_check",
+      sql`${t.reasonCode} in ('damage', 'spillage', 'evaporation', 'theft', 'unrecorded_issue', 'unrecorded_receipt', 'measurement', 'other')`,
+    ),
+    check("erp_stock_adjustments_qty_check", sql`${t.quantity} <> 0`),
+    check("erp_stock_adjustments_reason_len_check", sql`length(trim(${t.reason})) >= 10`),
+  ],
+);
+
+/* ---- Empty drums, scrap sale and vendor-returnable drums (0257) ----------
+ * A drum is registered when it becomes EMPTY: scanned off its GRN/lot label
+ * and weighed. The record carries the GRN, supplier, material and lot from
+ * then on, so the label can fall off. Mahek-owned drums are scrap stock sold
+ * by quantity, oldest first; supplier-owned ones are returned to the supplier
+ * by quantity, oldest first, and can never be sold. See AGENTS.md, "## Empty
+ * drums and scrap".
+ * ------------------------------------------------------------------------- */
+
+/** A party scrap is sold to. Not a supplier and not a customer: nobody buys paint from a scrap dealer. */
+export const erpScrapBuyers = pgTable(
+  "erp_scrap_buyers",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    phone: text("phone"),
+    gstin: text("gstin"),
+    address: text("address"),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [uniqueIndex("erp_scrap_buyers_name_key").on(sql`lower(${t.name})`)],
+);
+
+/**
+ * A scrap sale: one category, a quantity, a rate. For empty drums the
+ * quantity is drums, and the drums are allocated oldest first in the same
+ * transaction (`erp_empty_drums.scrap_sale_id`). `ref_kind = 'none'` is a sale
+ * with no external invoice or challan; it carries NO reference, and its
+ * identity is `sale_no`. What is still owed is read from allocations, never
+ * stored.
+ */
+export const erpScrapSales = pgTable(
+  "erp_scrap_sales",
+  {
+    id: text("id").primaryKey(),
+    saleNo: integer("sale_no").notNull(),
+    saleDate: date("sale_date").notNull(),
+    buyerId: text("buyer_id")
+      .notNull()
+      .references(() => erpScrapBuyers.id),
+    /** `drum` for empty metal drums, else a value of the scrapCategory reference list. */
+    category: text("category").notNull(),
+    godownId: text("godown_id").references(() => erpGodowns.id),
+    quantity: numeric("quantity", { precision: 14, scale: 3, mode: "number" }).notNull(),
+    /** Pcs | Kg. */
+    unit: text("unit").notNull(),
+    ratePaise: bigint("rate_paise", { mode: "number" }).notNull(),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    /** invoice | challan | none. */
+    refKind: text("ref_kind").notNull(),
+    externalRef: text("external_ref"),
+    dueDate: date("due_date"),
+    remark: text("remark"),
+    /** confirmed | cancelled. */
+    status: text("status").notNull().default("confirmed"),
+    cancelReason: text("cancel_reason"),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_scrap_sales_no_key").on(t.saleNo),
+    index("erp_scrap_sales_buyer_idx").on(t.buyerId, t.saleDate),
+    check("erp_scrap_sales_status_check", sql`${t.status} in ('confirmed', 'cancelled')`),
+    check("erp_scrap_sales_qty_check", sql`${t.quantity} > 0`),
+    check("erp_scrap_sales_amount_check", sql`${t.ratePaise} >= 0 and ${t.amountPaise} >= 0`),
+    check("erp_scrap_sales_ref_check", sql`(${t.refKind} = 'none') = (${t.externalRef} is null) and ${t.refKind} in ('invoice', 'challan', 'none')`),
+    check("erp_scrap_sales_cancel_check", sql`(${t.status} = 'cancelled') = (${t.cancelledAt} is not null)`),
+  ],
+);
+
+/** Supplier-owned empty drums sent back to the supplier, by quantity; the drums are allocated oldest first. */
+export const erpDrumReturns = pgTable(
+  "erp_drum_returns",
+  {
+    id: text("id").primaryKey(),
+    returnNo: integer("return_no").notNull(),
+    supplierId: text("supplier_id")
+      .notNull()
+      .references(() => erpSuppliers.id),
+    returnDate: date("return_date").notNull(),
+    quantity: integer("quantity").notNull(),
+    challanRef: text("challan_ref"),
+    remark: text("remark"),
+    /** confirmed | cancelled. */
+    status: text("status").notNull().default("confirmed"),
+    cancelReason: text("cancel_reason"),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_drum_returns_no_key").on(t.returnNo),
+    check("erp_drum_returns_status_check", sql`${t.status} in ('confirmed', 'cancelled')`),
+    check("erp_drum_returns_qty_check", sql`${t.quantity} > 0`),
+  ],
+);
+
+/**
+ * The authorised way a drum count or a drum's ownership changes: an opening
+ * stock of drums that predate MahekOne, a write-off of drums that are gone,
+ * or a drum's ownership corrected. Asked for by one person, decided by
+ * another holding `scrapApprove`; only an approved one touches a drum.
+ */
+export const erpDrumAdjustments = pgTable(
+  "erp_drum_adjustments",
+  {
+    id: text("id").primaryKey(),
+    /** opening | write_off | ownership. */
+    kind: text("kind").notNull(),
+    ownership: text("ownership"),
+    supplierId: text("supplier_id").references(() => erpSuppliers.id),
+    godownId: text("godown_id").references(() => erpGodowns.id),
+    quantity: integer("quantity"),
+    drumId: text("drum_id"),
+    newOwnership: text("new_ownership"),
+    reason: text("reason").notNull(),
+    /** pending | approved | rejected. */
+    status: text("status").notNull().default("pending"),
+    requestedById: text("requested_by_id").references(() => users.id),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+    decidedById: text("decided_by_id").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decisionNote: text("decision_note"),
+    posted: jsonb("posted").$type<{ drums?: string[] }>(),
+  },
+  (t) => [
+    index("erp_drum_adjustments_status_idx").on(t.status, t.requestedAt),
+    check("erp_drum_adjustments_kind_check", sql`${t.kind} in ('opening', 'write_off', 'ownership')`),
+    check("erp_drum_adjustments_status_check", sql`${t.status} in ('pending', 'approved', 'rejected')`),
+    check("erp_drum_adjustments_reason_check", sql`length(trim(${t.reason})) >= 10`),
+  ],
+);
+
+/**
+ * One empty drum. `status` is the lifecycle: available (Mahek's, for scrap)
+ * | returnable (the supplier's, awaiting return) | review (ownership unknown
+ * or a source gap — the Production Head decides) | sold | returned |
+ * adjusted (written off) | cancelled (an entry made in error, kept).
+ * The GRN columns are copied when the drum is registered and never edited.
+ */
+export const erpEmptyDrums = pgTable(
+  "erp_empty_drums",
+  {
+    id: text("id").primaryKey(),
+    drumNo: integer("drum_no").notNull(),
+    purchaseId: text("purchase_id").references(() => erpPurchases.id),
+    lotNo: text("lot_no"),
+    inwardId: text("inward_id").references(() => erpInward.id),
+    prNumber: integer("pr_number"),
+    supplierId: text("supplier_id").references(() => erpSuppliers.id),
+    rawMaterialId: text("raw_material_id").references(() => erpRawMaterials.id),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    /** Which drum of its lot: 1..drums on the GRN. */
+    seq: integer("seq"),
+    /** mahek | returnable | null (unknown — never guessed). */
+    ownership: text("ownership"),
+    /** The supplier's empty-drum weight from the GRN, copied. Null where the GRN carried none. */
+    declaredTareKg: numeric("declared_tare_kg", { precision: 10, scale: 3, mode: "number" }),
+    actualKg: numeric("actual_kg", { precision: 10, scale: 3, mode: "number" }),
+    status: text("status").notNull(),
+    /** scan (the factory phone) | desk (the ERP) | opening (an approved opening adjustment). */
+    source: text("source").notNull(),
+    reviewReason: text("review_reason"),
+    /** Why a weight outside the configured limits was accepted, and by whom it was approved. */
+    weightException: text("weight_exception"),
+    scrapSaleId: text("scrap_sale_id").references(() => erpScrapSales.id),
+    returnId: text("return_id").references(() => erpDrumReturns.id),
+    adjustmentId: text("adjustment_id").references(() => erpDrumAdjustments.id),
+    clientKey: text("client_key"),
+    recordedById: text("recorded_by_id").references(() => users.id),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("erp_empty_drums_no_key").on(t.drumNo),
+    uniqueIndex("erp_empty_drums_lot_seq_key").on(t.purchaseId, t.seq).where(sql`${t.status} <> 'cancelled' AND ${t.purchaseId} IS NOT NULL`),
+    uniqueIndex("erp_empty_drums_client_key").on(t.clientKey).where(sql`${t.clientKey} IS NOT NULL`),
+    index("erp_empty_drums_status_idx").on(t.status, t.recordedAt),
+    index("erp_empty_drums_supplier_idx").on(t.supplierId, t.status),
+    check("erp_empty_drums_status_check", sql`${t.status} in ('available', 'returnable', 'review', 'sold', 'returned', 'adjusted', 'cancelled')`),
+    check("erp_empty_drums_ownership_check", sql`${t.ownership} is null or ${t.ownership} in ('mahek', 'returnable')`),
+    check("erp_empty_drums_source_check", sql`${t.source} in ('scan', 'desk', 'opening')`),
+  ],
+);
+
+/** A drum's history, appended to and never rewritten (a trigger refuses UPDATE and DELETE). */
+export const erpDrumEvents = pgTable(
+  "erp_drum_events",
+  {
+    id: text("id").primaryKey(),
+    drumId: text("drum_id")
+      .notNull()
+      .references(() => erpEmptyDrums.id),
+    kind: text("kind").notNull(),
+    fromStatus: text("from_status"),
+    toStatus: text("to_status"),
+    note: text("note"),
+    detail: jsonb("detail"),
+    byId: text("by_id").references(() => users.id),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("erp_drum_events_drum_idx").on(t.drumId, t.at)],
+);
+
+/** Plastic, cardboard and other non-drum scrap, recorded by category a batch at a time. */
+export const erpScrapEntries = pgTable(
+  "erp_scrap_entries",
+  {
+    id: text("id").primaryKey(),
+    entryDate: date("entry_date").notNull(),
+    category: text("category").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    quantity: numeric("quantity", { precision: 14, scale: 3, mode: "number" }).notNull(),
+    /** Kg | Pcs. */
+    unit: text("unit").notNull(),
+    note: text("note"),
+    /** active | cancelled. */
+    status: text("status").notNull().default("active"),
+    cancelReason: text("cancel_reason"),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    check("erp_scrap_entries_qty_check", sql`${t.quantity} > 0`),
+    check("erp_scrap_entries_unit_check", sql`${t.unit} in ('Kg', 'Pcs')`),
+    check("erp_scrap_entries_status_check", sql`${t.status} in ('active', 'cancelled')`),
+  ],
+);
+
+/**
+ * Money that came into Petty Cash/Bank from a scrap buyer. The accountant
+ * records it and matches it to one or more scrap sales; what is left of it is
+ * read from the allocations, never stored. A wrong receipt is voided, never
+ * deleted, and only once nothing is matched to it.
+ */
+export const erpCashReceipts = pgTable(
+  "erp_cash_receipts",
+  {
+    id: text("id").primaryKey(),
+    receiptNo: integer("receipt_no").notNull(),
+    receiptDate: date("receipt_date").notNull(),
+    /** Cash | Bank transfer | UPI | Cheque. */
+    mode: text("mode").notNull(),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    buyerId: text("buyer_id").references(() => erpScrapBuyers.id),
+    /** The name on the bank line, where it is not a buyer we know. */
+    payer: text("payer"),
+    /** UTR, cheque number or the cash slip. */
+    reference: text("reference"),
+    note: text("note"),
+    /** active | void. */
+    status: text("status").notNull().default("active"),
+    voidReason: text("void_reason"),
+    voidedById: text("voided_by_id").references(() => users.id),
+    voidedAt: timestamp("voided_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_cash_receipts_no_key").on(t.receiptNo),
+    check("erp_cash_receipts_amount_check", sql`${t.amountPaise} > 0`),
+    check("erp_cash_receipts_status_check", sql`${t.status} in ('active', 'void')`),
+  ],
+);
+
+/** A receipt matched to a scrap sale. Undone by voiding, with a reason — never deleted. */
+export const erpScrapAllocations = pgTable(
+  "erp_scrap_allocations",
+  {
+    id: text("id").primaryKey(),
+    receiptId: text("receipt_id")
+      .notNull()
+      .references(() => erpCashReceipts.id),
+    saleId: text("sale_id")
+      .notNull()
+      .references(() => erpScrapSales.id),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    byId: text("by_id").references(() => users.id),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    voidedAt: timestamp("voided_at", { withTimezone: true }),
+    voidedById: text("voided_by_id").references(() => users.id),
+    voidReason: text("void_reason"),
+  },
+  (t) => [
+    index("erp_scrap_allocations_sale_idx").on(t.saleId),
+    index("erp_scrap_allocations_receipt_idx").on(t.receiptId),
+    check("erp_scrap_allocations_amount_check", sql`${t.amountPaise} > 0`),
+    check("erp_scrap_allocations_void_check", sql`(${t.voidedAt} is null) = (${t.voidReason} is null)`),
+  ],
 );
 
 export const erpAiSuggestions = pgTable(
@@ -13873,8 +14841,573 @@ export const vendorPayoutInvoices = pgTable(
   ],
 );
 
+/* ===================================================== the factory floor app
+ *
+ * The phone app the mixing, filling, packing and dispatch teams work from
+ * (`src/app/factory`). It is NOT a second stock system: every litre, can and
+ * box it records is posted through the ERP's own save handlers, so stock is
+ * still derived from `erp_sfg_lines`, `erp_fg_fills` and `erp_pack_lines`.
+ * What these tables add is what the ERP never had — who was given the work,
+ * who actually did it, why a machine stopped, and what the Production Head
+ * still has to look at.
+ * ========================================================================= */
+
+/**
+ * A person on the floor: which team they work in, what their badge says, and
+ * the four-digit PIN they sign in with. The PIN is hashed like a password; a
+ * badge is only a QR of a code, never a credential on its own — scanning one
+ * still asks for the PIN.
+ */
+export const factoryStaff = pgTable(
+  "factory_staff",
+  {
+    userId: text("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+    /** head | mixing | filling | packing | dispatch | qc */
+    area: text("area").notNull(),
+    /**
+     * Every department they work in — `area` is the first of these, their
+     * home department. A worker may do the jobs of any of them; the phone
+     * switches between them.
+     */
+    areas: text("areas").array().notNull().default(sql`'{}'::text[]`),
+    /** "Machine operator", "Helper" — the words under their name. */
+    roleLabel: text("role_label"),
+    badgeCode: text("badge_code").unique(),
+    pinHash: text("pin_hash"),
+    /** en | hi | mr */
+    lang: text("lang").notNull().default("en"),
+    /** False until HR has confirmed the name and role (PRD §5.1). */
+    hrConfirmed: boolean("hr_confirmed").notNull().default(true),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check("factory_staff_area_check", sql`${t.area} in ('head', 'mixing', 'filling', 'packing', 'dispatch', 'qc')`),
+    check("factory_staff_areas_check", sql`${t.areas} <@ ARRAY['head','mixing','filling','packing','dispatch','qc']::text[] AND cardinality(${t.areas}) > 0 AND ${t.area} = ANY(${t.areas})`),
+    check("factory_staff_lang_check", sql`${t.lang} in ('en', 'hi', 'mr')`),
+  ],
+);
+
+/** The standing team of each process — what a new task starts with, and what the Production Head changes. */
+export const factoryTeamDefaults = pgTable(
+  "factory_team_defaults",
+  {
+    proc: text("proc").notNull(),
+    /** owner | operator | helper | verifier */
+    role: text("role").notNull(),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  },
+  (t) => [
+    primaryKey({ name: "factory_team_defaults_pk", columns: [t.proc, t.role, t.userId] }),
+    check("factory_team_defaults_proc_check", sql`${t.proc} in ('mixing', 'filling', 'packing', 'dispatch')`),
+    check("factory_team_defaults_role_check", sql`${t.role} in ('owner', 'operator', 'helper', 'verifier')`),
+  ],
+);
+
+/**
+ * One piece of assigned work. `item` is what it makes, in the process's own
+ * terms: a formulation id (mixing), `<finished good id>:<litres>` (filling) or
+ * a boxed product id (packing). Dispatch names the ERP order instead.
+ * `out` is what the floor reported once the ERP accepted it — a summary for
+ * the dashboard; the ERP documents named in it are the truth.
+ */
+export const factoryTasks = pgTable(
+  "factory_tasks",
+  {
+    id: text("id").primaryKey(),
+    proc: text("proc").notNull(),
+    godownId: text("godown_id").notNull().references(() => erpGodowns.id),
+    workDate: date("work_date").notNull(),
+    /** "HH:MM", Asia/Kolkata */
+    due: text("due").notNull(),
+    /** ready | done | cancelled — blocked and waiting-to-send are derived. */
+    status: text("status").notNull().default("ready"),
+    item: text("item"),
+    batches: integer("batches"),
+    target: integer("target"),
+    sfgLot: text("sfg_lot"),
+    orderNo: text("order_no"),
+    out: jsonb("out"),
+    doneAt: timestamp("done_at", { withTimezone: true }),
+    createdById: text("created_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("factory_tasks_day_idx").on(t.godownId, t.workDate),
+    uniqueIndex("factory_tasks_order_key").on(t.orderNo).where(sql`${t.proc} = 'dispatch' and ${t.status} <> 'cancelled'`),
+    check("factory_tasks_proc_check", sql`${t.proc} in ('mixing', 'filling', 'packing', 'dispatch')`),
+    check("factory_tasks_status_check", sql`${t.status} in ('ready', 'done', 'cancelled')`),
+  ],
+);
+
+/**
+ * Who is on a job, by role — responsibility kept apart from participation
+ * (PRD §5): one owner, one operator, any number of helpers, an optional
+ * verifier. The person who pressed Send is `factory_submissions.user_id`,
+ * never assumed to be any of these.
+ */
+export const factoryTaskMembers = pgTable(
+  "factory_task_members",
+  {
+    taskId: text("task_id").notNull().references(() => factoryTasks.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => users.id),
+    role: text("role").notNull(),
+    assignedById: text("assigned_by_id").references(() => users.id),
+    assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ name: "factory_task_members_pk", columns: [t.taskId, t.userId, t.role] }),
+    check("factory_task_members_role_check", sql`${t.role} in ('owner', 'operator', 'helper', 'verifier')`),
+  ],
+);
+
+/**
+ * THE IDEMPOTENCY LEDGER. The phone mints `key` when a job is started and
+ * sends it with every attempt; the first attempt claims the row and every
+ * later one — a double tap, a retry after a dropped connection, the queue
+ * draining after the app was killed — reads the stored result instead of
+ * posting again. `progress` records each ERP document already written, so a
+ * job that posts several (a packing count spanning two batches) resumes
+ * rather than repeats.
+ */
+export const factorySubmissions = pgTable(
+  "factory_submissions",
+  {
+    key: text("key").primaryKey(),
+    taskId: text("task_id").notNull().references(() => factoryTasks.id),
+    userId: text("user_id").notNull().references(() => users.id),
+    payload: jsonb("payload").notNull(),
+    /**
+     * processing | done | failed | held. HELD is received but not in the ERP:
+     * work sent from a phone's queue that the ERP refused (the stock moved
+     * while the phone was offline, the job was closed meanwhile). The worker
+     * is not handed an error for something that happened hours ago; the
+     * Production Head is handed a review item to post or close.
+     */
+    status: text("status").notNull().default("processing"),
+    progress: jsonb("progress").notNull().default([]),
+    result: jsonb("result"),
+    attempts: integer("attempts").notNull().default(1),
+    /** When the phone saved it — differs from created_at for work sent from the queue. */
+    savedAt: text("saved_at"),
+    /** The build of the page that sent it — old phones keep sending for days after a deploy. */
+    appBuild: text("app_build"),
+    /** The payload's own shape version; `normalizeDraft` reads every one there has been. */
+    schemaVersion: integer("schema_version").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("factory_submissions_task_idx").on(t.taskId),
+    check("factory_submissions_status_check", sql`${t.status} in ('processing', 'done', 'failed', 'held')`),
+  ],
+);
+
+/**
+ * A purchase requirement sent from the factory phone, by the key the phone
+ * minted when it was started. The ERP has no idempotency of its own: a resend
+ * after a dropped answer is answered from `result` rather than raising the
+ * same requirement twice. `processing` holds the key while the first send runs.
+ */
+export const factoryRequirementSends = pgTable("factory_requirement_sends", {
+  key: text("key").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id),
+  status: text("status").notNull().default("processing"),
+  result: jsonb("result"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * What the app could not accept on its own: output outside the limit, a lot
+ * picked by photo, a correction asked for, a job saved with nobody helping, a
+ * problem reported before starting. Closed with a decision AND a reason, and
+ * never deleted.
+ */
+export const factoryReviews = pgTable(
+  "factory_reviews",
+  {
+    id: text("id").primaryKey(),
+    /** tolerance | manual | correction | attribution | issue | unposted */
+    kind: text("kind").notNull(),
+    taskId: text("task_id").notNull().references(() => factoryTasks.id),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    meta: text("meta").notNull(),
+    /** For a correction: the change asked for, applied only on approval. */
+    change: jsonb("change"),
+    status: text("status").notNull().default("open"),
+    decision: text("decision"),
+    reason: text("reason"),
+    decidedById: text("decided_by_id").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    createdById: text("created_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("factory_reviews_open_idx").on(t.status),
+    check("factory_reviews_kind_check", sql`${t.kind} in ('tolerance', 'manual', 'correction', 'attribution', 'issue', 'unposted')`),
+    check("factory_reviews_status_check", sql`${t.status} in ('open', 'closed')`),
+  ],
+);
+
+/** A machine stop, with its reason and minutes, as the team recorded it on the job. */
+export const factoryDowntime = pgTable(
+  "factory_downtime",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id").notNull().references(() => factoryTasks.id),
+    godownId: text("godown_id").notNull().references(() => erpGodowns.id),
+    proc: text("proc").notNull(),
+    reason: text("reason").notNull(),
+    minutes: integer("minutes").notNull(),
+    recordedById: text("recorded_by_id").references(() => users.id),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("factory_downtime_at_idx").on(t.godownId, t.recordedAt), check("factory_downtime_minutes_check", sql`${t.minutes} > 0`)],
+);
+
+/* ---- ERP material returns (0258) ------------------------------------------
+ * Financial documents adjust the ledger; physical transactions adjust stock.
+ * A debit note and a credit note move no stock. A confirmed goods return
+ * outward is an OUTFLOW of its raw-material lot (read by `rmLots`), and a
+ * customer return sits in quarantine — on its own record, outside every
+ * saleable stock — until QC disposes of it into the existing FG, SFG and
+ * scrap ledgers or to waste.
+ * ------------------------------------------------------------------------- */
+
+/** A purchase return against one GRN lot of the purchase register. */
+export const erpPurchaseReturns = pgTable(
+  "erp_purchase_returns",
+  {
+    id: text("id").primaryKey(),
+    returnNo: integer("return_no").notNull(),
+    returnDate: date("return_date").notNull(),
+    purchaseId: text("purchase_id")
+      .notNull()
+      .references(() => erpPurchases.id),
+    supplierId: text("supplier_id")
+      .notNull()
+      .references(() => erpSuppliers.id),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    lotNo: text("lot_no").notNull(),
+    prNumber: integer("pr_number").notNull(),
+    /** In the lot's purchase unit (Kg | Litre | Pcs). */
+    quantity: erpQty("quantity").notNull(),
+    unit: text("unit").notNull(),
+    /** The same quantity in the stock ledger's unit (litres or pieces). */
+    stockQty: erpQty("stock_qty").notNull(),
+    ratePaise: bigint("rate_paise", { mode: "number" }),
+    gstBp: integer("gst_bp").notNull().default(1800),
+    amountPaise: bigint("amount_paise", { mode: "number" }),
+    taxPaise: bigint("tax_paise", { mode: "number" }),
+    totalPaise: bigint("total_paise", { mode: "number" }),
+    /** quality_defect | damaged | wrong_material | wrong_spec | other. */
+    reasonCode: text("reason_code").notNull(),
+    remarks: text("remarks"),
+    /** pending | approved | rejected | cancelled. */
+    status: text("status").notNull().default("pending"),
+    /** Above `erp.returns.ownerApprovalPaise`: the owner approves it as well. */
+    needsOwner: boolean("needs_owner").notNull().default(false),
+    approvedById: text("approved_by_id").references(() => users.id),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    ownerApprovedById: text("owner_approved_by_id").references(() => users.id),
+    ownerApprovedAt: timestamp("owner_approved_at", { withTimezone: true }),
+    decisionNote: text("decision_note"),
+    cancelReason: text("cancel_reason"),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("erp_purchase_returns_no_key").on(t.returnNo),
+    index("erp_purchase_returns_lot_idx").on(t.purchaseId),
+    check("erp_purchase_returns_qty_check", sql`${t.quantity} > 0 AND ${t.stockQty} > 0`),
+    check("erp_purchase_returns_status_check", sql`${t.status} in ('pending', 'approved', 'rejected', 'cancelled')`),
+    check("erp_purchase_returns_reason_check", sql`${t.reasonCode} in ('quality_defect', 'damaged', 'wrong_material', 'wrong_spec', 'other')`),
+  ],
+);
+
+/** The debit note an approved purchase return generates. Moves no stock. */
+export const erpDebitNotes = pgTable(
+  "erp_debit_notes",
+  {
+    id: text("id").primaryKey(),
+    noteNo: integer("note_no").notNull(),
+    noteDate: date("note_date").notNull(),
+    purchaseReturnId: text("purchase_return_id")
+      .notNull()
+      .references(() => erpPurchaseReturns.id),
+    supplierId: text("supplier_id")
+      .notNull()
+      .references(() => erpSuppliers.id),
+    purchaseId: text("purchase_id")
+      .notNull()
+      .references(() => erpPurchases.id),
+    prNumber: integer("pr_number").notNull(),
+    /** The supplier's bill (the purchase invoice) the lot came on. */
+    billNumber: text("bill_number"),
+    lotNo: text("lot_no").notNull(),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    quantity: erpQty("quantity").notNull(),
+    unit: text("unit").notNull(),
+    ratePaise: bigint("rate_paise", { mode: "number" }).notNull(),
+    gstBp: integer("gst_bp").notNull(),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    taxPaise: bigint("tax_paise", { mode: "number" }).notNull(),
+    totalPaise: bigint("total_paise", { mode: "number" }).notNull(),
+    reasonCode: text("reason_code").notNull(),
+    /** issued | cancelled. */
+    status: text("status").notNull().default("issued"),
+    cancelReason: text("cancel_reason"),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_debit_notes_no_key").on(t.noteNo),
+    uniqueIndex("erp_debit_notes_live_key").on(t.purchaseReturnId).where(sql`${t.status} = 'issued'`),
+    check("erp_debit_notes_status_check", sql`${t.status} in ('issued', 'cancelled')`),
+    check("erp_debit_notes_total_check", sql`${t.totalPaise} > 0`),
+  ],
+);
+
+/** The physical return to the vendor. Stock leaves only when it is CONFIRMED. */
+export const erpReturnOutwards = pgTable(
+  "erp_return_outwards",
+  {
+    id: text("id").primaryKey(),
+    outwardNo: integer("outward_no").notNull(),
+    purchaseReturnId: text("purchase_return_id")
+      .notNull()
+      .references(() => erpPurchaseReturns.id),
+    supplierId: text("supplier_id")
+      .notNull()
+      .references(() => erpSuppliers.id),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    lotNo: text("lot_no").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    quantity: erpQty("quantity").notNull(),
+    unit: text("unit").notNull(),
+    stockQty: erpQty("stock_qty").notNull(),
+    packing: text("packing"),
+    transporter: text("transporter"),
+    vehicleNo: text("vehicle_no"),
+    lrNo: text("lr_no"),
+    dispatchDate: date("dispatch_date").notNull(),
+    note: text("note"),
+    /** draft | confirmed | cancelled. */
+    status: text("status").notNull().default("draft"),
+    confirmedById: text("confirmed_by_id").references(() => users.id),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    cancelReason: text("cancel_reason"),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_return_outwards_no_key").on(t.outwardNo),
+    uniqueIndex("erp_return_outwards_live_key").on(t.purchaseReturnId).where(sql`${t.status} <> 'cancelled'`),
+    index("erp_return_outwards_lot_idx").on(t.lotNo, t.godownId),
+    check("erp_return_outwards_status_check", sql`${t.status} in ('draft', 'confirmed', 'cancelled')`),
+    check("erp_return_outwards_qty_check", sql`${t.stockQty} > 0`),
+  ],
+);
+
+/** A customer's return against one dispatched order line and the lot that went on it. */
+export const erpCustomerReturns = pgTable(
+  "erp_customer_returns",
+  {
+    id: text("id").primaryKey(),
+    returnNo: integer("return_no").notNull(),
+    returnDate: date("return_date").notNull(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id),
+    orderId: text("order_id")
+      .notNull()
+      .references(() => erpOrders.id),
+    batchCodeId: text("batch_code_id")
+      .notNull()
+      .references(() => erpBatchCodes.id),
+    skuId: text("sku_id")
+      .notNull()
+      .references(() => products.id),
+    finishedGoodId: text("finished_good_id").references(() => finishedGoods.id),
+    /** fg (cans) | pack (boxes) — the unit the lot was allocated in. */
+    lotFrom: text("lot_from").notNull(),
+    lotCode: text("lot_code").notNull(),
+    quantity: erpQty("quantity").notNull(),
+    /** Cans | Boxes. */
+    unit: text("unit").notNull(),
+    litres: erpQty("litres").notNull(),
+    ratePaise: bigint("rate_paise", { mode: "number" }),
+    discountBp: integer("discount_bp"),
+    gstBp: integer("gst_bp").notNull().default(1800),
+    totalPaise: bigint("total_paise", { mode: "number" }),
+    reasonCode: text("reason_code").notNull(),
+    customerRemarks: text("customer_remarks"),
+    transporter: text("transporter"),
+    vehicleNo: text("vehicle_no"),
+    lrNo: text("lr_no"),
+    /** open | rejected | cancelled — the stage is derived from what was received and decided. */
+    status: text("status").notNull().default("open"),
+    receivedQty: erpQty("received_qty"),
+    receivedGodownId: text("received_godown_id").references(() => erpGodowns.id),
+    receivedById: text("received_by_id").references(() => users.id),
+    receivedAt: timestamp("received_at", { withTimezone: true }),
+    needsOwner: boolean("needs_owner").notNull().default(false),
+    approvedById: text("approved_by_id").references(() => users.id),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    ownerApprovedById: text("owner_approved_by_id").references(() => users.id),
+    ownerApprovedAt: timestamp("owner_approved_at", { withTimezone: true }),
+    /** The complaint that carries the credit note to Accounts. */
+    complaintId: text("complaint_id").references(() => complaints.id),
+    decisionNote: text("decision_note"),
+    cancelReason: text("cancel_reason"),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("erp_customer_returns_no_key").on(t.returnNo),
+    index("erp_customer_returns_order_idx").on(t.orderId),
+    index("erp_customer_returns_lot_idx").on(t.lotFrom, t.lotCode),
+    check("erp_customer_returns_qty_check", sql`${t.quantity} > 0`),
+    check("erp_customer_returns_received_check", sql`${t.receivedQty} is null or (${t.receivedQty} > 0 and ${t.receivedQty} <= ${t.quantity})`),
+    check("erp_customer_returns_status_check", sql`${t.status} in ('open', 'rejected', 'cancelled')`),
+    check("erp_customer_returns_lot_check", sql`${t.lotFrom} in ('fg', 'pack')`),
+    check("erp_customer_returns_reason_check", sql`${t.reasonCode} in ('quality_defect', 'damaged', 'wrong_product', 'wrong_spec', 'excess', 'other')`),
+  ],
+);
+
+/** QC's decision on part (or all) of a customer return. Reversed, never deleted. */
+export const erpReturnDispositions = pgTable(
+  "erp_return_dispositions",
+  {
+    id: text("id").primaryKey(),
+    customerReturnId: text("customer_return_id")
+      .notNull()
+      .references(() => erpCustomerReturns.id),
+    /** reuse | rework | scrap | waste. */
+    kind: text("kind").notNull(),
+    /** In the return's unit (cans or boxes). */
+    quantity: erpQty("quantity").notNull(),
+    litres: erpQty("litres").notNull(),
+    godownId: text("godown_id").references(() => erpGodowns.id),
+    scrapKg: erpQty("scrap_kg"),
+    scrapEntryId: text("scrap_entry_id").references(() => erpScrapEntries.id),
+    note: text("note"),
+    /** active | reversed. */
+    status: text("status").notNull().default("active"),
+    decidedById: text("decided_by_id").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+    reverseReason: text("reverse_reason"),
+    reversedById: text("reversed_by_id").references(() => users.id),
+    reversedAt: timestamp("reversed_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("erp_return_dispositions_return_idx").on(t.customerReturnId),
+    check("erp_return_dispositions_kind_check", sql`${t.kind} in ('reuse', 'rework', 'scrap', 'waste')`),
+    check("erp_return_dispositions_status_check", sql`${t.status} in ('active', 'reversed')`),
+    check("erp_return_dispositions_qty_check", sql`${t.quantity} > 0`),
+  ],
+);
+
+/** Returned liquid reworked through the existing SFG process. Completing it posts its own SFG lot. */
+export const erpReworkOrders = pgTable(
+  "erp_rework_orders",
+  {
+    id: text("id").primaryKey(),
+    reworkNo: integer("rework_no").notNull(),
+    dispositionId: text("disposition_id")
+      .notNull()
+      .references(() => erpReturnDispositions.id),
+    customerReturnId: text("customer_return_id")
+      .notNull()
+      .references(() => erpCustomerReturns.id),
+    formulationId: text("formulation_id")
+      .notNull()
+      .references(() => productFormulations.id),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    inputLitres: erpQty("input_litres").notNull(),
+    outputLitres: erpQty("output_litres"),
+    lossLitres: erpQty("loss_litres"),
+    sfgLotCode: text("sfg_lot_code").notNull(),
+    operator: text("operator"),
+    reworkDate: date("rework_date"),
+    note: text("note"),
+    /** open | completed | cancelled. */
+    status: text("status").notNull().default("open"),
+    completedById: text("completed_by_id").references(() => users.id),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    cancelReason: text("cancel_reason"),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_rework_orders_no_key").on(t.reworkNo),
+    uniqueIndex("erp_rework_orders_lot_key").on(t.sfgLotCode),
+    check("erp_rework_orders_status_check", sql`${t.status} in ('open', 'completed', 'cancelled')`),
+    check("erp_rework_orders_output_check", sql`${t.outputLitres} is null or (${t.outputLitres} >= 0 and ${t.outputLitres} <= ${t.inputLitres})`),
+  ],
+);
+
+/** Returned material that can be neither reused nor sold as scrap, and its disposal. */
+export const erpWasteDisposals = pgTable(
+  "erp_waste_disposals",
+  {
+    id: text("id").primaryKey(),
+    wasteNo: integer("waste_no").notNull(),
+    dispositionId: text("disposition_id")
+      .notNull()
+      .references(() => erpReturnDispositions.id),
+    customerReturnId: text("customer_return_id")
+      .notNull()
+      .references(() => erpCustomerReturns.id),
+    litres: erpQty("litres").notNull(),
+    reason: text("reason").notNull(),
+    /** pending | disposed | cancelled. */
+    status: text("status").notNull().default("pending"),
+    disposalDate: date("disposal_date"),
+    method: text("method"),
+    responsible: text("responsible"),
+    agency: text("agency"),
+    costPaise: bigint("cost_paise", { mode: "number" }),
+    note: text("note"),
+    disposedById: text("disposed_by_id").references(() => users.id),
+    disposedAt: timestamp("disposed_at", { withTimezone: true }),
+    cancelReason: text("cancel_reason"),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_waste_disposals_no_key").on(t.wasteNo),
+    check("erp_waste_disposals_status_check", sql`${t.status} in ('pending', 'disposed', 'cancelled')`),
+    check("erp_waste_disposals_cost_check", sql`${t.costPaise} is null or ${t.costPaise} >= 0`),
+  ],
+);
+
 /* ---------------------------------------------------------------------------
- * THE WEBSITE CMS (migration 0240).
+ * THE WEBSITE CMS (migration 0267).
  *
  * `website_content` holds every editable piece of mahekindia.com. Two copies
  * of each: `data`, the working copy the editor shows and a preview renders, and

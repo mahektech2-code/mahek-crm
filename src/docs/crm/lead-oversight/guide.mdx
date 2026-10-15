@@ -1,0 +1,114 @@
+These are the manager's screens of Lead Management. **Oversight** shows the gates somebody walked past, everything done to the funnel and under whose authority, and the thresholds the funnel runs on. The **Sales Manager desk** is the working desk of a sales manager — every lead where they are the named sales manager, sorted into queues. **Lost** is the central record of every lead closed lost. **Funnel & conversion** shows the shape of the book, where it came from and what it is dying of.
+
+Each is a separate module. You will only see the ones you have been given.
+
+<Callout kind="live">
+Settings on this page are read live.
+</Callout>
+
+## Oversight
+
+| Tab | What it shows |
+|---|---|
+| **Overrides** | Every stage move a manager made through a shut gate: who, when, the reason they gave, and **exactly what was still missing**. Beside it, the conditions most often waived. |
+| **Audit** | Everything done to the funnel — moves, reassignments, verifications, priorities — with who did it and under which app and level. |
+| **Thresholds** | Every lead setting, its value, whether it is still the shipped default, and who last changed it. Read-only here. |
+
+<Wireframe url="/crm/leads/oversight" nav={["#Lead Management", "Handovers", "Oversight", "Sales Manager", "Lost"]} active="Oversight" caption="Oversight — the override log">
+  <WfTabs items={["Overrides", "Audit", "Thresholds"]} active="Overrides" />
+  <WfBar>
+    <WfCard title="Gates passed"><WfText>7</WfText></WfCard>
+    <WfCard title="Managers involved"><WfText>2</WfText></WfCard>
+    <WfCard title="Most often waived"><WfText>Next action</WfText></WfCard>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfTable
+    columns={["Lead", "Moved to", "Who, and under which hat", "Why", "Still missing"]}
+    rows={[
+      [<b key="a">Customer A</b>, "Sample / trial", "A sales manager · CRM manager", "It was done. Written down later", <span key="b">GST validated · trial plan <Hotspot n={2} /></span>],
+      [<b key="c">Customer B</b>, "Negotiation", "A sales manager · Sales manager", "Customer will not wait", "Feedback written down"],
+    ]}
+  />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Summary.</b> How many gates were passed, by how many managers, and which condition is waived most.</span>,
+  <span key="2"><b>Still missing.</b> The exact conditions that were not met at the moment of the override — kept for ever.</span>,
+]} />
+
+To change a threshold, somebody who holds the Admin Console changes it there (see [Help Center and Manager settings](/docs/crm/help-and-settings)); this tab only shows the value in force, so anybody looking at a stuck lead can read the number without needing the console.
+
+## The Sales Manager desk
+
+The desk shows **only leads where you are the named sales manager** (an administrator sees all of them), grouped by the salesman or telecaller who owns each lead.
+
+| Queue | What is in it |
+|---|---|
+| **Verify prospect** | Prospects, and calling-desk requests, waiting for your verification call |
+| **Qualification review** | Qualifications a telecaller completed and asked you to review |
+| **Sample** | Requests to approve, approved samples to send, samples on the road, trials nobody has reviewed |
+| **Order confirmation** | Expected orders on file that have not become an actual order yet |
+| **Overdue** | Leads whose next action date has passed |
+| **Nurture task** | Leads with a follow-up task due today or late |
+
+The tiles and the list are counted from the same rows, so a tile that says 14 always opens a list of 14. The other tabs — **Today**, **List**, **Mine**, **Overdue**, **Pipeline**, **Distributors** — are different cuts of the same book.
+
+<Steps>
+<Step title="Start from a queue">
+Press a tile to see its leads. Search by name, town, contact, owner or product.
+</Step>
+<Step title="Open a lead and act">
+Verify a Prospect, review a qualification, approve or chase a sample, or confirm an order — each opens its own form.
+</Step>
+<Step title="Leads you cannot see">
+A lead with an owner but no sales manager named is in **nobody's** Sales Manager desk until somebody names one.
+</Step>
+</Steps>
+
+## Lost
+
+Every lead closed lost, whatever rung it was lost from.
+
+| Column | Means |
+|---|---|
+| **Lost date** | When it was closed |
+| **Stage at loss** | The rung it was on when it was lost. *Not recorded* for leads lost before the stage history existed |
+| **Lost reason** | The coded reason chosen; *No reason recorded* for old leads |
+| **Lost by** | Who closed it |
+
+Filter by owner, type, stage at loss, reason and dates. The tiles count **Total lost**, **Lost this week** and **Lost this month**.
+
+### Reversing a lost lead
+
+Press **Reverse Lead**, choose why it is being reopened (and add a note where asked), and confirm. The dialog tells you where it will go: usually **the rung it was lost from**. A lead lost on a failed verification goes back to Prospect to be verified again; one whose ladder has changed, or with no record of where it was lost, goes to the foot of its ladder; one lost at the rung that makes it a customer comes back one rung below. From there every ordinary gate applies again.
+
+### Deleting and restoring
+
+From All Leads, a manager can **delete** leads (move them to the trash) with a sentence saying why. A lead that has been billed cannot be deleted — deactivate it instead. Deleted leads leave every screen; an administrator can **restore** them.
+
+## Funnel & conversion
+
+| Tab | What it shows |
+|---|---|
+| **Funnel** | How many leads stand on each rung of each ladder, and how long they have been there; parked leads counted separately. Then **Cohort conversion**: leads raised in a period, followed forward. |
+| **Sources** | Where leads came from, and how well each source converts. |
+| **Reasons** | Why leads became Prospects, why customers wanted samples, why leads were lost, and why gates were overridden — by salesman and by town. |
+
+<Callout kind="note" title="Reading the cohort">
+Cohort conversion follows leads raised in a window for <Setting k="owner.conversionWindowDays" /> days. **Converted** reached the book; **Lost, or past its window** did not; **Not yet** are still inside their window and are counted but not divided. *Nothing has closed its window* means it is too early to give a rate — not that the rate is zero.
+</Callout>
+
+## Questions people ask
+
+<Faq q="A lead I manage is not on my Sales Manager desk.">
+The desk shows leads where you are the named sales manager. If the lead has an owner but no sales manager, nobody's desk shows it until one is named.
+</Faq>
+<Faq q="Why does the override log show conditions as missing when the work was done?">
+It shows what the record said at the moment of the move. If the work was recorded later, the override reason usually says so.
+</Faq>
+<Faq q="The Reasons tab shows fewer reasons than leads lost.">
+Leads lost before reasons were required carry no code. They are counted as *uncoded* so the totals add up.
+</Faq>
+<Faq q="Can I change a threshold from Oversight?">
+No — it only shows them. Settings are changed in the Admin Console, which checks the whole set before saving; the change then appears here with the name of whoever made it.
+</Faq>

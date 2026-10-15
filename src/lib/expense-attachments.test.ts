@@ -14,7 +14,8 @@
  *   - the bills can be opened by the man who claimed them and by a manager
  *     holding the Sales Dashboard, and by no other salesman — before this, they
  *     could be opened by nobody at all;
- *   - the Decide dialog's read returns the day's claims with their files.
+ *   - the Expenses desk lists each claim with its files, and nothing waits
+ *     for a day to be closed: allowances appear as the day's records land.
  *
  * Needs mahekone_test, which `npm run test:db` creates from the migrations.
  */
@@ -29,8 +30,8 @@ import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { ingestSyncBatch, storeMbosMedia } from "@/lib/actions/mbos";
 import { canRead } from "@/lib/services/attachment-service";
-import { claimLinesForDay } from "@/lib/services/expense-claims-service";
-import type { MbosPrincipal } from "@/lib/services/mbos-service";
+import { expenseLines } from "@/lib/services/expense-claims-service";
+import { expenseBookFor, type MbosPrincipal } from "@/lib/services/mbos-service";
 import type { SyncItem } from "@/lib/mbos/types";
 import { addDays, today } from "@/lib/format";
 
@@ -117,6 +118,7 @@ before(async () => {
 beforeEach(async () => {
   await db.execute(sql`
     truncate table
+      mbos_expense_exceptions, mbos_travel_legs, mbos_sync_receipts,
       mbos_expenses, mbos_expense_days, mbos_approvals, mbos_devices, attachments,
       audit_log, notifications, app_access, sessions, users, app_settings
     restart identity cascade
@@ -221,8 +223,8 @@ describe("who can open the bills", () => {
   });
 });
 
-describe("the Decide dialog", () => {
-  test("it reads the day's claims with every file behind each", async () => {
+describe("the Review dialog", () => {
+  test("each expense is listed with every file behind it", async () => {
     const a = id("exp");
     const b = id("exp");
     const a1 = await upload(principal, a, JPEG, "a1.jpg");
@@ -234,12 +236,76 @@ describe("the Decide dialog", () => {
     ]);
 
     setTestUser(manager);
-    const lines = await claimLinesForDay(dayId);
-    assert.ok(lines, "the manager can read the day");
-    assert.equal(lines!.length, 2);
-    const la = lines!.find((l) => l.id === a)!;
+    const lines = (await expenseLines({ from: DAY, to: DAY })).filter((l) => !l.allowance);
+    assert.equal(lines.length, 2, "both expenses, with no day closed");
+    const la = lines.find((l) => l.id === a)!;
     assert.deepEqual(la.files.map((f) => f.id).sort(), [a1, a2].sort());
     assert.equal(la.files.find((f) => f.id === a2)?.contentType, "application/pdf");
-    assert.equal(lines!.find((l) => l.id === b)!.files.length, 1);
+    assert.equal(lines.find((l) => l.id === b)!.files.length, 1);
+    assert.ok(lines.every((l) => l.state === "pending"), "each waiting on its own decision");
+  });
+});
+
+describe("nothing waits for a day to be closed", () => {
+  function item(entityType: SyncItem["entityType"], entityId: string, payload: Record<string, unknown>): SyncItem {
+    return {
+      queueId: id("q"),
+      entityId,
+      entityType,
+      op: "update",
+      idempotencyKey: `${entityId}:${entityType}:${randomUUID()}`,
+      clientCreatedAt: Date.now(),
+      payload,
+    };
+  }
+  const ist = (h: number) => new Date(`${DAY}T${String(h).padStart(2, "0")}:00:00+05:30`).getTime();
+
+  test("a punched day and a claim reach the office as an allowance and an expense waiting", async () => {
+    const bill = await upload(principal, "pending", JPEG, "auto.jpg");
+    const expenseId = id("mbos_expense");
+    const results = await ingestSyncBatch(principal, [
+      item("expense_day", dayId, { day: DAY, departedAt: ist(7), returnedAt: ist(20) }),
+      claim(expenseId, { attachmentIds: [bill] }),
+    ]);
+    assert.ok(results.every((r) => r.status === "accepted"), JSON.stringify(results));
+
+    const book = await expenseBookFor(salesman.id);
+    const rows = book.rows as { id: string; allowance: number; state: string; amountPaise: number; kind: string }[];
+    const logged = rows.find((r) => r.id === expenseId);
+    assert.ok(logged, "the claim comes back to the phone");
+    assert.equal(logged!.state, "pending", "waiting on his manager, with no day closed");
+    assert.equal(logged!.allowance, 0);
+
+    const meal = rows.find((r) => r.allowance === 1 && r.kind === "food");
+    assert.ok(meal, "the meal allowance was worked out as the day synced");
+    assert.ok(meal!.amountPaise > 0, "never a ₹0 line");
+    assert.equal(meal!.state, "allowance");
+    assert.ok(rows.every((r) => r.amountPaise > 0), "nothing on his phone reads ₹0");
+  });
+
+  test("an older phone's Send day is accepted, and locks nothing", async () => {
+    const results = await ingestSyncBatch(principal, [
+      item("expense_day", dayId, { day: DAY, departedAt: ist(7), returnedAt: ist(20) }),
+      item("expense_day_submit", id("mbos_expsubmit"), { day: DAY, clientClaimedPaise: 0, note: null }),
+    ]);
+    assert.ok(results.every((r) => r.status === "accepted"), JSON.stringify(results));
+
+    const [day] = await db
+      .select({ lockedAt: mbosExpenseDays.lockedAt, submittedAt: mbosExpenseDays.submittedAt })
+      .from(mbosExpenseDays)
+      .where(eq(mbosExpenseDays.id, dayId));
+    assert.equal(day!.lockedAt, null);
+    assert.equal(day!.submittedAt, null);
+
+    /* And a trip after it is still taken — the refusal this replaced. */
+    const after_ = await ingestSyncBatch(principal, [
+      item("expense_day", dayId, { day: DAY, departedAt: ist(7), returnedAt: ist(21) }),
+    ]);
+    assert.equal(after_[0]!.status, "accepted");
+  });
+
+  test("a ₹0 expense is refused at the door", async () => {
+    const [r] = await ingestSyncBatch(principal, [claim(id("mbos_expense"), { amountPaise: 0 })]);
+    assert.equal(r!.status, "rejected");
   });
 });

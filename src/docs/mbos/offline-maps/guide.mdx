@@ -1,0 +1,76 @@
+The map on your phone needs the internet to draw streets — unless you have **saved the map** for that area. Save the towns you work in while you are on Wi-Fi, and the map draws in a market with no signal at all.
+
+## Saving maps
+
+Open **More → Maps kept on the phone**.
+
+<Wireframe url="MBOS · Maps" caption="The places you work, with their size before you save">
+<div className="mx-auto max-w-[300px] space-y-3">
+  <WfTitle sub="Maps kept on the phone, so the map still draws in a market with no signal.">Maps</WfTitle>
+  <WfCard title="Area 1 · Town A">
+    <WfText muted>62 shops · about 180 MB</WfText>
+    <WfBar><WfButton primary>Save</WfButton><Hotspot n={1} /></WfBar>
+  </WfCard>
+  <WfCard title="Area 2 · Town B">
+    <WfText muted>Saved 12 days ago · 9 shops not in the saved map</WfText>
+    <WfBar><WfButton>Update</WfButton><WfButton>Remove</WfButton><Hotspot n={2} /></WfBar>
+  </WfCard>
+  <WfCard title="Area 3 · Town C">
+    <WfText muted>Downloading · 46%</WfText>
+    <WfBar><WfButton>Pause</WfButton><Hotspot n={3} /></WfBar>
+  </WfCard>
+  <WfCard tone="warn"><WfText>None of your shops are in these places now. Nothing is deleted.</WfText><Hotspot n={4} /></WfCard>
+</div>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>A place you work.</b> Made from your own shops — the towns you actually call on, not a whole district. The size is shown <b>before</b> you press Save. It is an estimate.</span>,
+  <span key="2"><b>A saved map.</b> If you have added shops outside it since, it says how many. <i>Update</i> saves the bigger area; your old map keeps working until the new one is finished.</span>,
+  <span key="3"><b>Downloading.</b> You can pause it. If the signal drops, it picks up where it stopped.</span>,
+  <span key="4"><b>Old maps.</b> Maps for places no longer on your book are listed, never deleted for you. Remove them yourself to free space.</span>,
+]} />
+
+<Steps>
+<Step title="Connect to Wi-Fi">
+Maps can be several hundred megabytes. While <Setting k="mbos.maps.downloadOnWifiOnly" /> is on, the phone will not download on mobile data and says *Connect to Wi-Fi*.
+</Step>
+<Step title="Pick the places you work this week">
+Read the size on each row. Save the ones you need.
+</Step>
+<Step title="Leave the screen open or come back later">
+The download carries on. Open the screen again to see how far it has got.
+</Step>
+</Steps>
+
+<Callout kind="note">
+A shop with no pin does not make a place. Checking in at a shop saves its pin, and its area appears here.
+</Callout>
+
+## What the map shows out in the field
+
+Wherever a map appears (Customers, Nearby, the journey), it tells you which of four things is true:
+
+| You see | It means |
+|---|---|
+| **The map, as normal** | The area is saved, or you have signal. It makes no difference which. |
+| **The map, with "Not in the saved map"** | Part of the area is saved. Some shops are on a blank patch — the message says how many. |
+| **"Save maps for offline"** instead of a map | No signal and nothing saved here. Tap it to go to the Maps screen. |
+| **No map at all, with a sentence** | The office has not set up maps yet, or none of these shops has a pin. |
+
+## Questions people ask
+
+<Faq q="The size was much bigger (or smaller) than the screen said.">
+The size is an estimate. A busy market has more detail than farmland. It is right about whether it is tens or hundreds of megabytes.
+</Faq>
+<Faq q="It says the area is too big.">
+The office limits how big one saved map can be (<Setting k="mbos.maps.maxPackMegabytes" /> MB). *Ask the office to make this area smaller.*
+</Faq>
+<Faq q="My saved map is old.">
+After <Setting k="mbos.maps.refreshAfterDays" /> days the row suggests updating. It only downloads what changed. Old maps still work.
+</Faq>
+<Faq q="Will the app delete my maps to save space?">
+No. Nothing is ever removed unless you press Remove.
+</Faq>
+<Faq q="It says maps are not set up yet.">
+The office has to add a maps key. Then maps work after your next sync. Nobody in the field can fix this.
+</Faq>

@@ -14,6 +14,8 @@ import {
   mbosCourses,
   mbosDeletions,
   mbosDocuments,
+  mbosExpenses,
+  mbosExpensePayouts,
   mbosHolidays,
   mbosHolidayAssignments,
   mbosLeaveRequests,
@@ -66,7 +68,15 @@ import {
   type TerritoryKind,
 } from "@/lib/services/territory-service";
 import { bookIdsIgnoringTerritory } from "@/lib/services/mbos-service";
-import { repriceDay, rescoreLeg } from "@/lib/services/expense-submit-service";
+import {
+  assignableOwner,
+  placeSentence,
+  type OwnerPlace,
+} from "@/lib/services/lead-desk-assignment-service";
+import { refreshDayMoney, repriceDay, rescoreLeg } from "@/lib/services/expense-submit-service";
+import { ensureDay } from "@/lib/services/expense-service";
+import { writeHometowns } from "@/lib/services/hometown-service";
+import { ADMIN } from "@/lib/admin-routes";
 import { notifyUsers } from "../notify";
 import { announce } from "@/lib/services/announcement-service";
 import { mirrorToHrms, removeEverywhere } from "@/lib/services/holiday-calendar";
@@ -107,6 +117,7 @@ import {
   type TaskLinkTarget,
 } from "@/lib/task-form";
 import { linkContexts } from "@/lib/services/task-link-service";
+import { realignNotice, realignVerifierSeats } from "@/lib/services/lead-verifier";
 import { taskCampaign } from "@/lib/services/task-campaign-service";
 import {
   draftTask,
@@ -292,6 +303,37 @@ async function tell(userId: string, title: string, body: string, mbosHref: strin
      REFUSED — a screen that by construction cannot contain either. Null is the
      honest default and falls through to `/notifications`. */
   await notifyUsers([{ userId, title, body, mbosHref }]).catch(() => {});
+}
+
+/**
+ * TELL WHOEVER WAS JUST GIVEN LEAD(S), saying where they will find them.
+ *
+ * `tell` only ever carried a handset route, which was right while the new owner
+ * was always a salesman. A telecaller or a CRM-only account is given a web
+ * route instead, and a handset person with no allocated area is told the
+ * truth: it is theirs, and it will show once an area is set.
+ */
+async function notifyNewOwner(
+  to: { id: string; place: OwnerPlace; noArea: boolean },
+  n: { id: string | null; title: string; body: string; handsetHref: string },
+) {
+  const where =
+    to.place === "handset"
+      ? to.noArea
+        ? " It will show on your handset once an area is allocated to you."
+        : " It is on your handset at the next sync."
+      : to.place === "crm"
+        ? " It is in your All Leads."
+        : " It is on your Calling desk.";
+  await notifyUsers([
+    {
+      userId: to.id,
+      title: n.title,
+      body: `${n.body}${where}`,
+      href: to.place === "handset" ? undefined : n.id ? `/crm/leads/${n.id}` : "/crm/leads",
+      mbosHref: to.place === "handset" ? n.handsetHref : null,
+    },
+  ]).catch(() => {});
 }
 
 /** The handset screen an approval's decision is about. */
@@ -480,8 +522,12 @@ export async function decideApproval(input: {
         approverUserId: user.id,
         decidedAt: new Date(),
         decisionNote: note || null,
+        /* A full approval carries an amount only where the policy pays MORE
+           than was logged — a fixed hotel rate on a cheaper room. */
         approvedAmountPaise:
-          input.decision === "partially_approved" ? input.approvedAmountPaise : null,
+          input.decision === "partially_approved" || input.decision === "approved"
+            ? (input.approvedAmountPaise ?? null)
+            : null,
         updatedAt: new Date(),
         updatedById: user.id,
       })
@@ -538,6 +584,392 @@ export async function decideApproval(input: {
 
     refresh();
     return okVoid(`Answered — ${approval.type.replace(/_/g, " ")} ${words}.`);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════ one expense */
+
+/**
+ * Whether this viewer may decide expenses — read by the Expenses screen to draw
+ * the buttons. The SAME gate `decideApproval` applies when the button is
+ * pressed, so a control is never drawn for somebody the action would refuse.
+ */
+export async function canDecideExpenseLines(): Promise<boolean> {
+  try {
+    await requireSalesAccess({ modules: ["sales.approvals", "sales.expenses"], manager: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Answer one expense a salesman logged.
+ *
+ * Every expense is its own decision now, from the moment he logs it — there is
+ * no day to close and nothing waits for one. This finds the expense's own
+ * approval and answers it through `decideApproval`, so the gate, the team
+ * scope, "nobody answers their own", the reason a refusal needs, the audit row
+ * and the message to the salesman are all the ones every other request gets.
+ *
+ * Two things are added because they are about MONEY:
+ *  - A part approval has to be LESS than he logged and more than nothing. At
+ *    or above the amount it is a yes, and is recorded as one.
+ *  - An expense whose approval has not reached the office yet — the handset
+ *    sends it as its own record right behind the expense — gets one here, so a
+ *    manager looking at the expense is never told there is nothing to decide.
+ *
+ * An allowance is never decided: it is his by the work log, and is refused here.
+ */
+export async function decideExpense(input: {
+  expenseId: string;
+  decision: ApprovalDecision;
+  note?: string;
+  approvedAmountPaise?: number;
+}): Promise<Result> {
+  try {
+    await requireSalesAccess({ modules: ["sales.approvals", "sales.expenses"], manager: true });
+
+    const [line] = await db
+      .select({
+        id: mbosExpenses.id,
+        userId: mbosExpenses.userId,
+        amountPaise: mbosExpenses.amountPaise,
+        eligiblePaise: mbosExpenses.eligiblePaise,
+        sourceType: mbosExpenses.sourceType,
+        remarks: mbosExpenses.remarks,
+      })
+      .from(mbosExpenses)
+      .where(eq(mbosExpenses.id, input.expenseId))
+      .limit(1);
+    if (!line) return err("That expense no longer exists.", "not_found");
+    if (line.sourceType === "travel_leg" || line.sourceType === "expense_day") {
+      return err(
+        "This is an allowance, worked out from his punch times and trips. There is nothing to approve — it is his by the work log.",
+        "conflict",
+      );
+    }
+
+    let decision = input.decision;
+    if (decision === "partially_approved") {
+      const amount = input.approvedAmountPaise ?? 0;
+      if (!Number.isInteger(amount) || amount <= 0) {
+        return err("Say how much you are allowing. It has to be more than ₹0.", "validation");
+      }
+      if (amount >= Number(line.amountPaise)) decision = "approved";
+    }
+
+    const [existing] = await db
+      .select({ id: mbosApprovals.id, state: mbosApprovals.state })
+      .from(mbosApprovals)
+      .where(and(eq(mbosApprovals.subjectType, "expense"), eq(mbosApprovals.subjectId, line.id)))
+      .orderBy(sql`${mbosApprovals.stepIndex} desc, ${mbosApprovals.requestedAt} desc`)
+      .limit(1);
+
+    let approvalId = existing?.id ?? null;
+    if (!approvalId) {
+      approvalId = gen("mbappr");
+      await db
+        .insert(mbosApprovals)
+        .values({
+          id: approvalId,
+          type: "expense_claim",
+          requestedByUserId: line.userId,
+          subjectType: "expense",
+          subjectId: line.id,
+          reason: line.remarks ?? null,
+          createdById: line.userId,
+          updatedById: line.userId,
+        })
+        .onConflictDoNothing();
+    }
+
+    const out = await decideApproval({
+      approvalId,
+      decision,
+      note: input.note,
+      /* A fixed allowance (a flat hotel rate) can be worth more than the bill;
+         approving it in full pays what the policy allows, not the bill. */
+      approvedAmountPaise:
+        decision === "partially_approved"
+          ? input.approvedAmountPaise
+          : decision === "approved" && line.eligiblePaise !== null && Number(line.eligiblePaise) > Number(line.amountPaise)
+            ? Number(line.eligiblePaise)
+            : undefined,
+    });
+    try {
+      revalidatePath("/sales/expenses");
+    } catch {
+      /* no request context */
+    }
+    return out;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ═══════════════════════════════════════ an expense entered by the office */
+
+/** The kinds a salesman logs, and the older category column each one fills. */
+const ENTERED_KINDS = {
+  travel: "travel",
+  local_transport: "travel",
+  food: "food",
+  lodging: "lodging",
+  other: "other",
+} as const;
+
+const enteredExpenseSchema = z.object({
+  userId: z.string().min(1, "Pick the salesman."),
+  day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick the day it was spent."),
+  kind: z.enum(["travel", "local_transport", "food", "lodging", "other"]),
+  amountPaise: z.number().int().positive("The amount has to be more than ₹0."),
+  vendorName: z.string().trim().max(200).optional(),
+  billNumber: z.string().trim().max(100).optional(),
+  billDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  remarks: z.string().trim().max(2000).optional(),
+  attachmentIds: z.array(z.string().min(1).max(100)).max(10).optional(),
+  /** Approve it in the same breath — only where the reader may decide expenses. */
+  approve: z.boolean().optional(),
+});
+
+/**
+ * ENTER AN EXPENSE FOR A SALESMAN — the office's door onto what the handset's
+ * claim sheet does. For the bill handed over at the desk, the phone that was
+ * lost, the claim older than the handset will take ("Ask your manager to
+ * enter it for you" is the handset's own refusal, and this is where that
+ * sentence leads).
+ *
+ * It is the SAME record a phone writes: an `mbos_expenses` line of
+ * `source_type = 'manual'` under his day, priced by the policy through
+ * `refreshDayMoney`, with its own `expense_claim` approval raised in HIS name —
+ * so it is decided, paid and reported exactly like one he logged, and reaches
+ * his phone on the next pull. `created_by_id` is the person who entered it,
+ * which is how every screen says "entered by the office". The bills are filed
+ * under it here; nobody else's uploads can be moved. Approving now goes
+ * through `decideExpense`, so the gate, the audit and the message are the
+ * ordinary ones.
+ */
+export async function addExpenseFor(
+  input: z.input<typeof enteredExpenseSchema>,
+): Promise<Result<{ id: string; approved: boolean }>> {
+  try {
+    const user = await requireSalesAccess({ modules: ["sales.expenses"], manager: true });
+    const parsed = enteredExpenseSchema.safeParse(input);
+    if (!parsed.success) return err(parsed.error.issues[0]?.message ?? "Check the expense.", "validation");
+    const p = parsed.data;
+    if (await salesmanOutsideScope(p.userId)) return err(NOT_YOUR_TEAM, "not_permitted");
+    if (p.day > (await today())) return err("An expense cannot be dated in the future.", "validation");
+
+    const [who] = await db.select({ id: users.id, name: users.name }).from(users).where(eq(users.id, p.userId)).limit(1);
+    if (!who) return err("That person no longer exists.", "not_found");
+
+    const id = gen("mbexp");
+    const expenseDayId = await ensureDay(p.userId, p.day, null);
+    const files = [...new Set(p.attachmentIds ?? [])];
+
+    await db.insert(mbosExpenses).values({
+      id,
+      userId: p.userId,
+      category: ENTERED_KINDS[p.kind],
+      kind: p.kind,
+      amountPaise: p.amountPaise,
+      expenseDate: p.day,
+      remarks: p.remarks || null,
+      vendorName: p.vendorName || null,
+      billNumber: p.billNumber || null,
+      billDate: p.billDate ?? null,
+      billPhotoId: files[0] ?? null,
+      sourceType: "manual",
+      expenseDayId,
+      createdById: user.id,
+      updatedById: user.id,
+    });
+    if (files.length) {
+      await db
+        .update(attachments)
+        .set({ parentType: "mbos_expense", parentId: id, updatedAt: new Date() })
+        .where(and(inArray(attachments.id, files), eq(attachments.uploadedById, user.id), isNull(attachments.parentId)));
+    }
+    await db
+      .insert(mbosApprovals)
+      .values({
+        id: gen("mbappr"),
+        type: "expense_claim",
+        requestedByUserId: p.userId,
+        subjectType: "expense",
+        subjectId: id,
+        reason: p.remarks || null,
+        createdById: user.id,
+        updatedById: user.id,
+      })
+      .onConflictDoNothing();
+
+    /* What the policy allows on it — written by the same pass a phone's claim
+       gets, so the Review dialog shows the figure. Never fails the entry. */
+    await refreshDayMoney(p.userId, p.day).catch(() => {});
+
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.expense.entered_for",
+      entityType: "mbos_expense",
+      entityId: id,
+      beforeState: null as never,
+      afterState: { ...p, attachmentIds: files } as never,
+    });
+
+    let approved = false;
+    if (p.approve) {
+      const decided = await decideExpense({ expenseId: id, decision: "approved" });
+      if (!decided.ok) {
+        return err(`The expense was added, but it could not be approved: ${decided.error}`, decided.code);
+      }
+      approved = true;
+    } else {
+      const rupees = `₹${(p.amountPaise / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+      await tell(
+        p.userId,
+        "An expense was added for you",
+        `${user.name} added ${rupees} for ${p.day} on your behalf. It is waiting for approval.`,
+        "/expenses",
+      );
+    }
+    try {
+      revalidatePath("/sales/expenses");
+    } catch {
+      /* no request context */
+    }
+    return ok({ id, approved });
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ═══════════════════════════════════════════ reimbursements handed over */
+
+/** Whether the reader may record and void reimbursements — the screen asks, the actions re-check. */
+export async function canRecordExpensePayouts(): Promise<boolean> {
+  try {
+    await requireSalesAccess({ modules: ["sales.expenses"], manager: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const payoutSchema = z.object({
+  userId: z.string().min(1),
+  amountPaise: z.number().int().positive("The amount has to be more than ₹0."),
+  paidOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick the day it was paid."),
+  mode: z.string().trim().max(60).optional(),
+  reference: z.string().trim().max(120).optional(),
+  note: z.string().trim().max(500).optional(),
+});
+
+/**
+ * RECORD MONEY HANDED OVER against a salesman's expense balance.
+ *
+ * Paid against the balance, never against one expense — the ledger works out
+ * which lines it covered, oldest first. Paying more than is owed is allowed
+ * and shown as an advance, because an advance before a tour is ordinary; a day
+ * in the future is not, because a payout that has not happened is a plan.
+ * Same gate as deciding an expense, and only for somebody in your team.
+ */
+export async function recordExpensePayout(input: z.input<typeof payoutSchema>): Promise<Result<{ id: string }>> {
+  try {
+    const user = await requireSalesAccess({ modules: ["sales.expenses"], manager: true });
+    const parsed = payoutSchema.safeParse(input);
+    if (!parsed.success) return err(parsed.error.issues[0]?.message ?? "Check the payment.", "validation");
+    const p = parsed.data;
+    if (await salesmanOutsideScope(p.userId)) return err(NOT_YOUR_TEAM, "not_permitted");
+    if (p.paidOn > (await today())) return err("A payment cannot be dated in the future.", "validation");
+
+    const id = gen("mbpay");
+    await db.insert(mbosExpensePayouts).values({
+      id,
+      userId: p.userId,
+      paidOn: p.paidOn,
+      amountPaise: p.amountPaise,
+      mode: p.mode || null,
+      reference: p.reference || null,
+      note: p.note || null,
+      recordedById: user.id,
+    });
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.expense_payout.recorded",
+      entityType: "mbos_expense_payout",
+      entityId: id,
+      beforeState: null as never,
+      afterState: p as never,
+    });
+    const rupees = `₹${(p.amountPaise / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+    await tell(
+      p.userId,
+      "Expenses reimbursed",
+      `${rupees} was paid to you against your expenses${p.mode ? ` by ${p.mode.toLowerCase()}` : ""}${p.reference ? ` (ref ${p.reference})` : ""}.`,
+      "/expenses",
+    );
+    try {
+      revalidatePath("/sales/expenses");
+    } catch {
+      /* no request context */
+    }
+    return ok({ id });
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * VOID a payout recorded wrongly. Never deleted and never edited: the
+ * statement goes on listing it, struck through, with who voided it and why.
+ */
+export async function voidExpensePayout(input: { payoutId: string; reason: string }): Promise<Result> {
+  try {
+    const user = await requireSalesAccess({ modules: ["sales.expenses"], manager: true });
+    const reason = input.reason?.trim() ?? "";
+    if (!reason) return err("Say why this payment is being voided.", "validation");
+    const [row] = await db
+      .select({
+        id: mbosExpensePayouts.id,
+        userId: mbosExpensePayouts.userId,
+        voidedAt: mbosExpensePayouts.voidedAt,
+        amountPaise: mbosExpensePayouts.amountPaise,
+      })
+      .from(mbosExpensePayouts)
+      .where(eq(mbosExpensePayouts.id, input.payoutId))
+      .limit(1);
+    if (!row) return err("That payment no longer exists.", "not_found");
+    if (await salesmanOutsideScope(row.userId)) return err(NOT_YOUR_TEAM, "not_permitted");
+    if (row.voidedAt) return err("That payment was already voided.", "conflict");
+
+    await db
+      .update(mbosExpensePayouts)
+      .set({ voidedAt: new Date(), voidedById: user.id, voidReason: reason })
+      .where(and(eq(mbosExpensePayouts.id, row.id), isNull(mbosExpensePayouts.voidedAt)));
+    await db.insert(auditLog).values({
+      id: gen("aud"),
+      actorId: user.id,
+      action: "mbos.expense_payout.voided",
+      entityType: "mbos_expense_payout",
+      entityId: row.id,
+      beforeState: { amountPaise: row.amountPaise } as never,
+      afterState: { voided: true, reason } as never,
+    });
+    try {
+      revalidatePath("/sales/expenses");
+    } catch {
+      /* no request context */
+    }
+    return okVoid();
   } catch (e) {
     return fromThrown(e);
   }
@@ -1658,6 +2090,56 @@ export async function setSalesmanTerritories(input: {
   }
 }
 
+/**
+ * WHERE HE LIVES — the expense policy's "away from his hometown".
+ *
+ * Set beside where he works, because it is the same kind of fact, and picked
+ * from the reviewed place tree so it matches the towns of the shops he visits.
+ * He may have several. The Admin Console's "Who is on which" writes the same
+ * record through the same `writeHometowns`; this door is the Salesmen screen's, so it asks what
+ * that screen asks — the screen, and that he is in this manager's team.
+ */
+export async function setSalesmanHometowns(input: {
+  salesmanId: string;
+  /** The WHOLE set of city nodes; empty clears them. */
+  placeIds: string[];
+  /** Towns typed before the picker that are to stay. */
+  keepTyped?: string[];
+}): Promise<Result<void>> {
+  try {
+    const user = await requireSalesAccess(SALES_MANAGER("sales.people"));
+    if (await salesmanOutsideScope(input.salesmanId)) return err(NOT_YOUR_TEAM, "not_permitted");
+    const [person] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.id, input.salesmanId))
+      .limit(1);
+    if (!person) return err("That account is not on MahekOne.", "not_found");
+
+    if (!Array.isArray(input.placeIds) || input.placeIds.length > 20) {
+      return err("Pick each town from the list.", "validation");
+    }
+    const result = await writeHometowns(
+      user.id,
+      input.salesmanId,
+      input.placeIds,
+      Array.isArray(input.keepTyped) ? input.keepTyped : [],
+    );
+    if (result.ok) {
+      try {
+        revalidatePath("/sales/people");
+        revalidatePath(`/sales/people/${input.salesmanId}`);
+        revalidatePath(ADMIN.expensePolicy(), "layout");
+      } catch {
+        /* No request scope — nothing cached to drop. */
+      }
+    }
+    return result;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
 export async function setManagerTerritories(input: {
   managerId: string;
   regions: string[];
@@ -1900,23 +2382,17 @@ export async function reassignLead(input: {
       return ok(undefined, "Already theirs.");
     }
 
-    const [salesman] = await db
-      .select({ id: users.id, name: users.name, active: users.active })
-      .from(users)
-      .innerJoin(
-        appAccess,
-        and(eq(appAccess.userId, users.id), eq(appAccess.app, "field")),
-      )
-      .where(eq(users.id, input.salesmanId))
-      .limit(1);
+    /* ANY ACTIVE CRM OR SALESMAN APP ACCOUNT, by id — the same set the "New
+       owner" list and the Change owner list offer (`assignableOwner`), so an
+       offered choice is never refused. This asked for the Salesman App alone,
+       which refused every telecaller. Where the lead will appear for them is
+       said in the confirmation rather than assumed. */
+    const salesman = await assignableOwner(input.salesmanId);
     if (!salesman) {
       return err(
-        "That person does not hold the Salesman App, so a lead cannot be put on their handset.",
+        "That person has no active CRM or Salesman App account, so a lead given to them would not be visible to anybody.",
         "validation",
       );
-    }
-    if (!salesman.active) {
-      return err(`${salesman.name}'s account is closed.`, "validation");
     }
 
     const [previousOwner] = lead.ownerId
@@ -1929,28 +2405,42 @@ export async function reassignLead(input: {
 
     /* The owner IS the assignment — `ASSIGNED_TO_SQL` resolves a lead through
      * `owner_id`, so one write puts it on the salesman's handset and in the
-     * office's scoped lists at the same time. */
-    await db
-      .update(customers)
-      .set({ ownerId: input.salesmanId, updatedAt: new Date() })
-      .where(eq(customers.id, input.leadId));
+     * office's scoped lists at the same time.
+     *
+     * ONE COMMIT with the verification seat that follows it. Given to a Salesman,
+     * a lead is the field verifier's; taken off one, it goes back. The Sales
+     * Manager seat, the verification call and its task move IN THIS TRANSACTION,
+     * so a failure leaves the owner where it was rather than the lead half moved.
+     * A verifier that is merely unusable does not roll anything back: it comes
+     * back in `realigned` and is said in the answer. The owner is never written
+     * by the realignment — who follows the lead up is not the verifier's. */
+    const realigned = await db.transaction(async (tx) => {
+      await tx
+        .update(customers)
+        .set({ ownerId: input.salesmanId, updatedAt: new Date() })
+        .where(eq(customers.id, input.leadId));
 
-    await db.insert(auditLog).values({
-      id: gen("aud"),
-      actorId: user.id,
-      action: "mbos.lead.reassign",
-      entityType: "mbos_lead",
-      entityId: input.leadId,
-      beforeState: { assignedToUserId: lead.ownerId ?? null } as never,
-      afterState: { assignedToUserId: input.salesmanId } as never,
+      const out = await realignVerifierSeats([input.leadId], user.id, null, { tx });
+
+      await tx.insert(auditLog).values({
+        id: gen("aud"),
+        actorId: user.id,
+        action: "mbos.lead.reassign",
+        entityType: "mbos_lead",
+        entityId: input.leadId,
+        beforeState: { assignedToUserId: lead.ownerId ?? null } as never,
+        afterState: { assignedToUserId: input.salesmanId } as never,
+      });
+      return out;
     });
+    const notice = realignNotice(realigned);
 
-    await tell(
-      input.salesmanId,
-      `${leadLabel(lead)} is now yours`,
-      `${user.name} assigned you this lead${lead.city ? ` in ${lead.city}` : ""}. It is on your handset at the next sync.`,
-      `/lead?id=${encodeURIComponent(input.leadId)}`,
-    );
+    await notifyNewOwner(salesman, {
+      id: input.leadId,
+      title: `${leadLabel(lead)} is now yours`,
+      body: `${user.name} assigned you this lead${lead.city ? ` in ${lead.city}` : ""}.`,
+      handsetHref: `/lead?id=${encodeURIComponent(input.leadId)}`,
+    });
     if (previousOwner) {
       await tell(
         previousOwner.id,
@@ -1961,7 +2451,10 @@ export async function reassignLead(input: {
     }
 
     refresh();
-    return okVoid(`${leadLabel(lead)} reassigned to ${salesman.name}.`);
+    const done = `${leadLabel(lead)} reassigned to ${salesman.name}.${placeSentence(salesman.name, salesman.place, salesman.noArea)}`;
+    /* Moved, but never reported as complete when its verification seat could not
+       follow: the message and the warning both say so. */
+    return notice ? ok(undefined, `${done} ${notice}`, [notice]) : okVoid(done);
   } catch (e) {
     return fromThrown(e);
   }
@@ -2267,6 +2760,13 @@ export type BulkOutcome = {
    * leads again by hand, which is the work the batch was supposed to save.
    */
   failed: Array<{ id: string; name: string; why: string }>;
+  /**
+   * Moved, but not finished: the lead is where it was asked to go and its
+   * verification seat could not follow because the verifier cannot be used.
+   * Counted in `done` and named here, so a batch is never reported as complete
+   * when part of it was left for somebody to fix.
+   */
+  attention?: Array<{ id: string; name: string; why: string }>;
 };
 
 type ScopedLead = Awaited<ReturnType<typeof leadsInScope>>[number];
@@ -2300,13 +2800,19 @@ async function bulkLeads(
 }
 
 function bulkMessage(outcome: BulkOutcome, verb: string): string {
-  if (!outcome.failed.length) return `${plural(outcome.done, "lead")} ${verb}.`;
+  const attention = outcome.attention?.length
+    ? ` ${plural(outcome.attention.length, "lead")} moved but still need${outcome.attention.length === 1 ? "s" : ""} attention: ${outcome.attention
+        .slice(0, 3)
+        .map((a) => `${a.name} — ${a.why}`)
+        .join("; ")}${outcome.attention.length > 3 ? ` and ${outcome.attention.length - 3} more` : ""}`
+    : "";
+  if (!outcome.failed.length) return `${plural(outcome.done, "lead")} ${verb}.${attention}`;
   const named = outcome.failed
     .slice(0, 3)
     .map((f) => `${f.name} — ${f.why}`)
     .join("; ");
   const more = outcome.failed.length > 3 ? ` and ${outcome.failed.length - 3} more` : "";
-  return `${plural(outcome.done, "lead")} ${verb}. ${plural(outcome.failed.length, "was", "were")} not: ${named}${more}`;
+  return `${plural(outcome.done, "lead")} ${verb}. ${plural(outcome.failed.length, "was", "were")} not: ${named}${more}${attention}`;
 }
 
 /**
@@ -2356,19 +2862,14 @@ export async function bulkReassignLeads(input: {
   try {
     const user = await requireSalesAccess({ modules: LEAD_MODULES, manager: true });
 
-    const [salesman] = await db
-      .select({ id: users.id, name: users.name, active: users.active })
-      .from(users)
-      .innerJoin(appAccess, and(eq(appAccess.userId, users.id), eq(appAccess.app, "field")))
-      .where(eq(users.id, input.salesmanId))
-      .limit(1);
+    /* The same set `reassignLead` accepts and the picker offers. */
+    const salesman = await assignableOwner(input.salesmanId);
     if (!salesman) {
       return err(
-        "That person does not hold the Salesman App, so leads cannot be put on their handset.",
+        "That person has no active CRM or Salesman App account, so leads given to them would not be visible to anybody.",
         "validation",
       );
     }
-    if (!salesman.active) return err(`${salesman.name}'s account is closed.`, "validation");
 
     const { leads, missing } = await bulkLeads(input.leadIds);
     if (!leads.length && !missing.length) return err("Nothing selected.", "validation");
@@ -2386,34 +2887,59 @@ export async function bulkReassignLeads(input: {
       return true;
     });
 
-    if (moving.length) {
-      await db
-        .update(customers)
-        .set({ ownerId: input.salesmanId, updatedAt: new Date() })
-        .where(inArray(customers.id, moving.map((l) => l.id)));
+    /* ONE LEAD, ONE COMMIT. Each lead's owner, the verification seat that
+       follows it and its audit row are written in one transaction of its own, so
+       a lead is either moved with its seat or not moved at all, and one lead
+       that fails cannot stop — or silently half-do — the ones after it. What did
+       not move is NAMED in `failed`; what moved but whose verifier cannot be
+       used is named in `attention`, so a batch never reads as complete when it
+       was not. The owner is the move; the realignment never writes it. */
+    const moved: typeof moving = [];
+    const attention: Array<{ id: string; name: string; why: string }> = [];
+    for (const l of moving) {
+      try {
+        const realigned = await db.transaction(async (tx) => {
+          await tx
+            .update(customers)
+            .set({ ownerId: input.salesmanId, updatedAt: new Date() })
+            .where(eq(customers.id, l.id));
+          const out = await realignVerifierSeats([l.id], user.id, null, { tx });
+          await tx.insert(auditLog).values({
+            id: gen("aud"),
+            actorId: user.id,
+            action: "mbos.lead.reassign",
+            entityType: "mbos_lead",
+            entityId: l.id,
+            beforeState: { assignedToUserId: l.ownerId ?? null } as never,
+            afterState: { assignedToUserId: input.salesmanId } as never,
+          });
+          return out;
+        });
+        moved.push(l);
+        const notice = realignNotice(realigned);
+        if (notice) attention.push({ id: l.id, name: leadLabel(l), why: notice });
+      } catch (e) {
+        failed.push({
+          id: l.id,
+          name: leadLabel(l),
+          why: `not moved, nothing changed — its verification seat could not be updated (${
+            e instanceof Error ? e.message : "database error"
+          })`,
+        });
+      }
+    }
 
-      await db.insert(auditLog).values(
-        moving.map((l) => ({
-          id: gen("aud"),
-          actorId: user.id,
-          action: "mbos.lead.reassign",
-          entityType: "mbos_lead",
-          entityId: l.id,
-          beforeState: { assignedToUserId: l.ownerId ?? null } as never,
-          afterState: { assignedToUserId: input.salesmanId } as never,
-        })),
-      );
-
-      await tell(
-        input.salesmanId,
-        `${plural(moving.length, "lead")} ${moving.length === 1 ? "is" : "are"} now yours`,
-        `${user.name} assigned them to you. They are on your handset at the next sync.`,
-        "/leads",
-      );
+    if (moved.length) {
+      await notifyNewOwner(salesman, {
+        id: null,
+        title: `${plural(moved.length, "lead")} ${moved.length === 1 ? "is" : "are"} now yours`,
+        body: `${user.name} assigned them to you.`,
+        handsetHref: "/leads",
+      });
 
       /* One message per person who lost work, not one per lead. */
       const lost = new Map<string, number>();
-      for (const l of moving) {
+      for (const l of moved) {
         if (l.ownerId) lost.set(l.ownerId, (lost.get(l.ownerId) ?? 0) + 1);
       }
       for (const [ownerId, n] of lost) {
@@ -2427,8 +2953,13 @@ export async function bulkReassignLeads(input: {
     }
 
     refresh();
-    const outcome = { done: moving.length, failed };
-    return ok(outcome, bulkMessage(outcome, `moved to ${salesman.name}`));
+    const outcome: BulkOutcome = { done: moved.length, failed, ...(attention.length ? { attention } : {}) };
+    return ok(
+      outcome,
+      `${bulkMessage(outcome, `moved to ${salesman.name}`)}${
+        moved.length ? placeSentence(salesman.name, salesman.place, salesman.noArea) : ""
+      }`,
+    );
   } catch (e) {
     return fromThrown(e);
   }

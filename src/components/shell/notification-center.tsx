@@ -19,6 +19,8 @@ import {
   type NotifyTone,
 } from "@/lib/notification-feed";
 import { playChime, primeAudio } from "@/lib/notification-sound";
+import { appFor } from "@/lib/app-routes";
+import { shownIn, type AppUnread } from "@/lib/notification-apps";
 import { cx } from "@/components/ui/primitives";
 import { Icon } from "./icons";
 
@@ -46,9 +48,21 @@ import { Icon } from "./icons";
 
 /* ------------------------------------------------------------------ store */
 
-type FeedState = { items: FeedItem[] | null; unread: number | null };
+/**
+ * One answer, for the app the tab is showing. `forApp` is which app it was
+ * asked for, so a bell drawn a moment after the tab moved from the CRM to the
+ * ERP does not paint the CRM's list under the ERP's header.
+ */
+type FeedState = {
+  items: FeedItem[] | null;
+  unread: number | null;
+  all: FeedItem[] | null;
+  byApp: AppUnread[] | null;
+  forApp: string | null | undefined;
+};
 
-let state: FeedState = { items: null, unread: null };
+const EMPTY: FeedState = { items: null, unread: null, all: null, byApp: null, forApp: undefined };
+let state: FeedState = EMPTY;
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((l) => l());
 const subscribe = (l: () => void) => {
@@ -56,7 +70,7 @@ const subscribe = (l: () => void) => {
   return () => listeners.delete(l);
 };
 const getSnapshot = () => state;
-const SERVER_STATE: FeedState = { items: null, unread: null };
+const SERVER_STATE: FeedState = EMPTY;
 const getServerSnapshot = () => SERVER_STATE;
 
 function setFeed(next: FeedState) {
@@ -69,23 +83,46 @@ export function refreshNotifications() {
   if (typeof window !== "undefined") window.dispatchEvent(new Event("mahek:notifications-refresh"));
 }
 
-/** Marks read locally at once, so the badge falls before the server answers. */
-function markLocal(id: string | null) {
+/**
+ * Marks read locally at once, so the badge falls before the server answers.
+ * `hits` says which rows: one id, or every row of an app's view.
+ */
+function markLocal(hits: (n: FeedItem) => boolean) {
   if (!state.items) return;
-  const items = state.items.map((n) => (id === null || n.id === id ? { ...n, read: true } : n));
-  const wasUnread = id === null ? (state.unread ?? 0) : state.items.some((n) => n.id === id && !n.read) ? 1 : 0;
-  setFeed({ items, unread: id === null ? 0 : Math.max(0, (state.unread ?? 0) - wasUnread) });
+  const mark = (rows: FeedItem[] | null) => rows?.map((n) => (hits(n) ? { ...n, read: true } : n)) ?? null;
+  const items = mark(state.items)!;
+  const fell = new Map<string | null, number>();
+  const seen = new Set<string>();
+  for (const n of [...state.items, ...(state.all ?? [])]) {
+    if (n.read || seen.has(n.id) || !hits(n)) continue;
+    seen.add(n.id);
+    fell.set(n.app, (fell.get(n.app) ?? 0) + 1);
+  }
+  const byApp = state.byApp?.map((r) => ({ ...r, unread: Math.max(0, r.unread - (fell.get(r.app) ?? 0)) })) ?? null;
+  const dropped = [...fell.entries()]
+    .filter(([app]) => state.forApp == null || app === null || app === state.forApp)
+    .reduce((t, [, c]) => t + c, 0);
+  setFeed({ ...state, items, all: mark(state.all), byApp, unread: Math.max(0, (state.unread ?? 0) - dropped) });
 }
 
 export async function readOne(id: string) {
-  markLocal(id);
+  markLocal((n) => n.id === id);
   await markNotificationRead(id);
   refreshNotifications();
 }
 
-export async function readAll() {
-  markLocal(null);
-  await markNotificationsRead();
+/**
+ * Every notification in a view read: one app's (and the general ones), or —
+ * with `app` null — every app's.
+ */
+export async function readAll(app: string | null = null) {
+  if (app === null) {
+    markLocal(() => true);
+    setFeed({ ...state, unread: 0, byApp: state.byApp?.map((r) => ({ ...r, unread: 0 })) ?? null });
+  } else {
+    markLocal((n) => shownIn(n.app, app));
+  }
+  await markNotificationsRead(app);
   refreshNotifications();
 }
 
@@ -93,11 +130,19 @@ export async function readAll() {
  * What a header bell draws: the live list once the centre has an answer, and
  * until then the list its layout rendered on the server.
  */
-export function useNotificationFeed(initial: FeedItem[]) {
+export function useNotificationFeed(initial: FeedItem[], viewApp: string | null) {
   const live = React.useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
-  const items = live.items ?? initial;
-  const unread = live.unread ?? initial.filter((n) => !n.read).length;
-  return { items, unread };
+  const fresh = live.items !== null && live.forApp === viewApp;
+  const mine = initial.filter((n) => shownIn(n.app, viewApp));
+  const items = fresh ? live.items! : mine;
+  const all = fresh ? (live.all ?? live.items!) : initial;
+  const unread = fresh ? (live.unread ?? 0) : mine.filter((n) => !n.read).length;
+  const byApp: AppUnread[] = fresh
+    ? (live.byApp ?? [])
+    : [...initial.reduce((m, n) => (n.read ? m : m.set(n.app, (m.get(n.app) ?? 0) + 1)), new Map<string | null, number>())].map(
+        ([app, c]) => ({ app, unread: c }),
+      );
+  return { items, unread, all, byApp };
 }
 
 /* ------------------------------------------------------------ preferences */
@@ -214,6 +259,10 @@ type Pop = {
 export function NotificationCenter() {
   const router = useRouter();
   const pathname = usePathname();
+  /* The app this tab is showing. The list, the badge and what pops are that
+     app's (and the general ones); a CRM decision does not pop over the ERP. */
+  const viewApp = pathname ? appFor(pathname) : null;
+  const appRef = React.useRef(viewApp);
   const [pops, setPops] = React.useState<Pop[]>([]);
   const known = React.useRef<Set<string> | null>(null);
   const signedOut = React.useRef(false);
@@ -223,7 +272,13 @@ export function NotificationCenter() {
     const announced = new Set(Object.keys(announcedMap()));
     const fresh = arrivals(answer, known.current, announced);
     known.current = new Set(answer.items.map((n) => n.id));
-    setFeed({ items: answer.items, unread: answer.unread });
+    setFeed({
+      items: answer.items,
+      unread: answer.unread,
+      all: answer.all ?? answer.items,
+      byApp: answer.byApp ?? [],
+      forApp: appRef.current,
+    });
     if (!fresh.length) return;
 
     const hidden = document.visibilityState === "hidden";
@@ -278,16 +333,22 @@ export function NotificationCenter() {
     if (inFlight.current) return;
     inFlight.current = true;
     try {
-      const res = await fetch("/api/notifications", { cache: "no-store", credentials: "same-origin" });
+      const asked = appRef.current;
+      const url = asked ? `/api/notifications?app=${encodeURIComponent(asked)}` : "/api/notifications";
+      const res = await fetch(url, { cache: "no-store", credentials: "same-origin" });
       if (res.status === 401) {
         signedOut.current = true;
         known.current = null;
-        setFeed({ items: null, unread: null });
+        setFeed(EMPTY);
         return;
       }
       if (!res.ok) return;
       signedOut.current = false;
-      announce((await res.json()) as FeedAnswer);
+      const answer = (await res.json()) as FeedAnswer;
+      /* The tab moved to another app while this was in flight: the answer is
+         about the app it left, and the next poll asks the right one. */
+      if (asked !== appRef.current) return;
+      announce(answer);
     } catch {
       /* offline for a moment: the next tick asks again */
     } finally {
@@ -334,6 +395,17 @@ export function NotificationCenter() {
     if (signedOut.current) void poll();
   }, [pathname, poll]);
 
+  /* Moving into another app asks for ITS list at once. `known` starts again,
+     so what pops on arrival is only what is fresh and was never announced —
+     a notification that came for this app while the tab was elsewhere, not
+     the app's whole history. */
+  React.useEffect(() => {
+    if (appRef.current === viewApp) return;
+    appRef.current = viewApp;
+    known.current = null;
+    void poll();
+  }, [viewApp, poll]);
+
   // A browser lets audio start only from a gesture; the first one unlocks it.
   React.useEffect(() => {
     const unlock = () => primeAudio();
@@ -349,7 +421,9 @@ export function NotificationCenter() {
     setPops((p) => p.filter((x) => x.key !== key));
   }, []);
 
-  const onSignIn = pathname?.startsWith("/login");
+  /* The factory app is a phone screen of its own, with its own toasts; a
+     desktop pop-up over a scan screen covers the one button that matters. */
+  const onSignIn = pathname?.startsWith("/login") || pathname?.startsWith("/factory");
   if (onSignIn || !pops.length) return null;
 
   return (
@@ -375,7 +449,7 @@ export function NotificationCenter() {
           }}
           onReadAll={async () => {
             setPops([]);
-            await readAll();
+            await readAll(appRef.current);
           }}
         />
       ))}
