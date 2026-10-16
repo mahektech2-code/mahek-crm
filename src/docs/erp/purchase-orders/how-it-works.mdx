@@ -36,7 +36,7 @@ The form fills itself from what is known: delivery date from the quotation's del
 ## Approving
 
 <Rule title="Raised for approval, approved by somebody else">
-Approve and Send back need the **Approve purchase orders** power — or, for a PO carrying a material with named approvers, to be one of them. Whoever raised a PO cannot approve it unless they are an ERP administrator.
+Approve and Send back need the **Approve purchase orders** power, given in Admin Console → Access and nowhere else. Whoever raised a PO cannot approve it unless they are an ERP administrator.
 </Rule>
 
 <Callout kind="why">
@@ -95,5 +95,5 @@ POs awaiting approval ("you approve these" for an approver), POs to send to the 
 
 - **Send to vendor** does not check the purchase-money power, yet its dialog shows the PO written out with every rate and total; the printed PO, by contrast, refuses somebody without the power.
 - Send marks the PO Sent when the button is pressed, before the person has actually sent the WhatsApp or email it opens.
-- **Close short** and **Cancel PO** need only the screen — no power or duty — although each changes what its requirements say.
+- **Close short** and **Cancel PO** need only the screen — no power — although each changes what its requirements say.
 - The company name on the written-out PO is fixed in the code.

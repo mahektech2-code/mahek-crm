@@ -62,7 +62,6 @@ const files = [
   // Petty Cash/Bank, corrections approved by somebody else.
   "src/lib/erp/erp-scrap.test.ts",
   "src/lib/erp/erp-returns.test.ts",
-  "src/lib/erp/erp-material-duties.test.ts",
   // Can photos and look-alike can groups: grouping by name never moves a can
   // somebody placed, photos are capped and taken off without deleting.
   "src/lib/erp/erp-can-groups.test.ts",

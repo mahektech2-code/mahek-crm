@@ -1877,6 +1877,13 @@
       "when": 1792619844442,
       "tag": "0270_erp_quotation_manager",
       "breakpoints": true
+    },
+    {
+      "idx": 268,
+      "version": "7",
+      "when": 1792620044442,
+      "tag": "0271_material_duties_removed",
+      "breakpoints": true
     }
   ]
 }

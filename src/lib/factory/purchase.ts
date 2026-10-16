@@ -5,7 +5,6 @@ import { getConfig } from "@/lib/config/store";
 import type { ErpContext } from "@/lib/erp/access";
 import { SEAT_LABEL, type ErpDepartmentSeat, categoriesForDepartment, departmentByLabel } from "@/lib/erp/departments";
 import { FLOW_STEPS, poLabel, purchaseUnit, requirementLabel, type PurchaseMethod } from "@/lib/erp/engines/purchase-flow";
-import { dutyKit } from "@/lib/erp/material-duties-server";
 import { cancelRequirementItem, raiseRequirementWith, requirementViews, stageOf, type ReqView } from "@/lib/erp/screens/purchase-flow";
 import { materials } from "@/lib/erp/screens/common";
 import { stockUnit } from "@/lib/erp/stock";
@@ -81,11 +80,10 @@ export async function requirementKit(fc: FactoryCtx): Promise<ReqKit> {
   const depts = await Promise.all(
     fc.reqDepts.map(async (key) => {
       const label = REQ_DEPT_LABEL[key];
-      const duties = await dutyKit(erpCtxForReq(fc, key));
       const cats = categoriesForDepartment(label);
       const recent = new Set(recentRows.filter((r) => r.department === label).map((r) => r.id));
       const items: ReqItem[] = mats
-        .filter((m) => cats.includes(m.materialType) && duties.allows(m.id, "request"))
+        .filter((m) => cats.includes(m.materialType))
         .map((m) => ({
           id: m.id,
           name: m.name,
