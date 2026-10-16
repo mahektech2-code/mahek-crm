@@ -65,6 +65,12 @@
   /* WhatsApp's own green, for a button that opens a chat. */
   --color-whatsapp: #25d366;
 
+  /* The Quotation manager's three cell colours, the desk's own sheet legend:
+     PO made (yellow), PO / order cancelled (red), picked up (cyan). */
+  --color-quote-po: #fff27a;
+  --color-quote-cancel: #ffcdc9;
+  --color-quote-pickup: #c4f2fa;
+
   --font-sans: "Google Sans Flex", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
   /* What a candidate SAID is set in a serif — testimony, set apart from the

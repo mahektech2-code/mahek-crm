@@ -812,6 +812,14 @@ export const DOC_APPS: DocApp[] = [
         written: ALL,
       },
       {
+        slug: "quotation-manager",
+        title: "Quotation manager",
+        summary: "The purchase desk's rate sheet: suppliers' rates by date and material, edited like a spreadsheet, coloured for PO made, cancelled and picked up.",
+        group: "Purchase",
+        modules: ["erp.quoteManager"],
+        written: ALL,
+      },
+      {
         slug: "goods-receipt-and-testing",
         title: "Goods receipt, testing and the register",
         summary: "Receiving at the gate against a PO, lots, drum labels, lab testing and matching the supplier's bill.",

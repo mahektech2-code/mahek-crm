@@ -330,6 +330,7 @@ const DESCRIBE: Record<string, Describer> = {
   "erp.floorCheck.escalate": () => ["raised a stock check mismatch into a formal count"],
   /* ---- empty drums, scrap sale and scrap receipts */
   "erp.rawMaterial.photos": () => ["changed a can's photos"],
+  "erp.quotes.edit": () => ["edited the quotation sheet"],
   "erp.canGroup.byName": () => ["grouped the cans by name"],
   "erp.drum.empty": () => ["recorded an empty drum, weighed"],
   "erp.drum.classify": () => ["decided who owns an empty drum"],

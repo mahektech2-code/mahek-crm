@@ -118,6 +118,7 @@ export const ERP_GROUPS: ErpGroup[] = [
         v("barcode", "Drum labels"),
       ]),
       s("testing", "testing", "Lot testing", "Test evidence for each chemical lot, for the verifier to verify.", true),
+      s("quoteManager", "quotation-manager", "Quotation manager", "Supplier rates by date, party and material, kept like the desk's sheet: every row, column and cell editable.", true),
     ],
   },
   {

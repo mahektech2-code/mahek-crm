@@ -1870,6 +1870,13 @@
       "when": 1792619744442,
       "tag": "0269_erp_ledger_ticks",
       "breakpoints": true
+    },
+    {
+      "idx": 267,
+      "version": "7",
+      "when": 1792619844442,
+      "tag": "0270_erp_quotation_manager",
+      "breakpoints": true
     }
   ]
 }
