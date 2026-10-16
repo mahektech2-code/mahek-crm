@@ -12,7 +12,6 @@ import {
   parseTsv,
   QUOTE_STATUS_LABEL,
   QUOTE_STATUS_SHORT,
-  QUOTE_STATUSES,
   rateNumber,
   type QuoteColumnKind,
   type QuoteStatus,
@@ -46,7 +45,9 @@ import { useErpUi } from "../_ui/erp-ui";
  */
 
 type Pos = { r: number; c: number };
-type Editing = { r: number; c: number; draft: string; token: number };
+type Editing = { r: number; c: number; draft: string; token: number; picker: boolean };
+type CellRef = { rowId: string; columnId: string };
+type NoteAt = CellRef & { rect: DOMRect; pinned: boolean };
 
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 function showDate(d: string): string {
@@ -54,19 +55,29 @@ function showDate(d: string): string {
   return y && m && day ? `${Number(day)}-${MON[Number(m) - 1]}-${y}` : d;
 }
 
-/* The sheet's three marks in the design system's tones: the soft tint of the
-   tone with its edge, the same pairing a list row uses for its status. */
+/* The sheet's marks in the design system's tones: the tint of the tone with
+   its edge, the same pairing a list row uses for its status. Ready to buy is
+   grey — a rate somebody chose, waiting to be bought; bought is yellow. */
 const STATUS_CELL: Record<QuoteStatus, string> = {
-  po: "bg-warn-soft text-ink shadow-[inset_3px_0_0_var(--color-warn)]",
+  ready: "bg-line text-ink shadow-[inset_3px_0_0_var(--color-line-strong)]",
+  po: "bg-warn-line text-ink shadow-[inset_3px_0_0_var(--color-warn)]",
   cancel: "bg-danger-soft text-danger line-through decoration-danger/50 shadow-[inset_3px_0_0_var(--color-danger)]",
   pickup: "bg-info-soft text-ink shadow-[inset_3px_0_0_var(--color-info)]",
 };
 
 const STATUS_SWATCH: Record<QuoteStatus, string> = {
-  po: "bg-warn-soft shadow-[inset_0_0_0_1.5px_var(--color-warn)]",
+  ready: "bg-line shadow-[inset_0_0_0_1.5px_var(--color-line-strong)]",
+  po: "bg-warn-line shadow-[inset_0_0_0_1.5px_var(--color-warn)]",
   cancel: "bg-danger-soft shadow-[inset_0_0_0_1.5px_var(--color-danger)]",
   pickup: "bg-info-soft shadow-[inset_0_0_0_1.5px_var(--color-info)]",
 };
+
+/** When the clock string of a purchase is drawn. */
+function stampText(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return d.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" });
+}
 
 /* The list screens' header cell, and the toolbar's control. */
 const HEAD = "sticky top-0 border-r border-b border-divider border-b-line bg-canvas px-3 py-2 align-bottom text-xs font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase";
@@ -98,6 +109,8 @@ export function QuoteGrid({
   sixMonths,
   threeMonths,
   readOnly,
+  canReady,
+  me,
 }: {
   title: string;
   sub: string;
@@ -107,6 +120,10 @@ export function QuoteGrid({
   sixMonths: string;
   threeMonths: string;
   readOnly: boolean;
+  /** An ERP manager or administrator: may mark a rate Ready to buy. */
+  canReady: boolean;
+  /** The signed-in person's name, shown on a purchase until the page reloads. */
+  me: string;
 }) {
   const router = useRouter();
   const ui = useErpUi();
@@ -122,9 +139,13 @@ export function QuoteGrid({
   const [showArchived, setShowArchived] = useState(false);
   const [search, setSearch] = useState(filter.q);
   const dragging = useRef(false);
-  /* The open suggestion list: where its cell is on screen, and the highlighted row (-1: none). */
-  const [suggestAt, setSuggestAt] = useState<DOMRect | null>(null);
-  const [hl, setHl] = useState(-1);
+  /* Where an open option picker sits (the rectangle of its cell). */
+  const [pickerAt, setPickerAt] = useState<DOMRect | null>(null);
+  /* The cell a Purchase it dialog is open for, the PO note showing, and the right-click menu. */
+  const [purchase, setPurchase] = useState<CellRef | null>(null);
+  const [note, setNote] = useState<NoteAt | null>(null);
+  const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   /* An edit is closed once: Enter, Tab and Escape all move focus off the input, and its blur must not save it a second time. */
   const closedToken = useRef(0);
   const nextToken = useRef(0);
@@ -234,18 +255,38 @@ export function QuoteGrid({
     });
   }
 
+  /** The party and every text column are picked from a list; dates and rates are typed. */
+  function isPickerCell(c: number): boolean {
+    return c === 1 || (c >= FIXED && cols[c - FIXED]?.kind === "text");
+  }
+
+  function cellRect(r: number, c: number): DOMRect | null {
+    return gridRef.current?.querySelector(`[data-cell="${r}:${c}"]`)?.getBoundingClientRect() ?? null;
+  }
+
   function startEdit(r: number, c: number, initial?: string) {
     if (readOnly || !rows[r]) return;
     const row = rows[r];
+    const picker = isPickerCell(c);
     const base = c === 0 ? showDate(row.date) : cellText(row, c);
     nextToken.current += 1;
-    setEditing({ r, c, draft: initial ?? base, token: nextToken.current });
+    setNote(null);
+    if (picker) setPickerAt(cellRect(r, c));
+    setEditing({ r, c, draft: picker ? (initial ?? "") : (initial ?? base), token: nextToken.current, picker });
   }
 
-  /** Editing the party of a row just added, before the rows above have re-rendered. */
-  function startEditAt(r: number, draft: string) {
+  /** Picking the party of a row just added, before the rows above have re-rendered. */
+  function startEditAt(r: number) {
     nextToken.current += 1;
-    setEditing({ r, c: 1, draft, token: nextToken.current });
+    requestAnimationFrame(() => setPickerAt(cellRect(r, 1)));
+    setEditing({ r, c: 1, draft: "", token: nextToken.current, picker: true });
+  }
+
+  function cancelEdit() {
+    if (editing) closedToken.current = editing.token;
+    setEditing(null);
+    setPickerAt(null);
+    gridRef.current?.focus();
   }
 
   function finishEdit(then?: Pos, picked?: string) {
@@ -253,7 +294,7 @@ export function QuoteGrid({
     closedToken.current = editing.token;
     const row = rows[editing.r];
     setEditing(null);
-    setSuggestAt(null);
+    setPickerAt(null);
     if (row) {
       const op = writeOp(row, editing.c, picked ?? editing.draft);
       if (typeof op === "string") ui.toast(op, "error");
@@ -278,7 +319,7 @@ export function QuoteGrid({
     if (at >= 0) {
       setFocus({ r: at, c: 1 });
       setAnchor({ r: at, c: 1 });
-      setTimeout(() => startEditAt(at, copyFrom?.party ?? ""), 0);
+      if (!copyFrom) setTimeout(() => startEditAt(at), 0);
     }
   }
 
@@ -295,19 +336,105 @@ export function QuoteGrid({
     commit(ops);
   }
 
+  /**
+   * Put a mark on the selection. The buying rule (quoteStatusRefusal) is the
+   * server's, and it refuses a whole save for one wrong cell — so cells the
+   * rule would refuse are left as they are here and counted, rather than
+   * sinking the rest: a rate with nothing in it is not Ready to buy, a bought
+   * rate is changed only by Purchase it, and only a manager marks or unmarks
+   * Ready to buy.
+   */
   function colour(status: QuoteStatus | null) {
     const ops: SheetOp[] = [];
+    let skipped = 0;
     for (let r = sel.r0; r <= sel.r1; r++) {
       const row = rows[r];
       if (!row) continue;
-      if (sel.c0 < FIXED && row.status !== status) ops.push({ op: "row", rowId: row.id, status });
+      if (sel.c0 < FIXED && status !== "ready" && row.status !== status) ops.push({ op: "row", rowId: row.id, status });
       for (let c = Math.max(sel.c0, FIXED); c <= sel.c1; c++) {
         const col = cols[c - FIXED];
-        if (col && (row.cells[col.id]?.status ?? null) !== status) ops.push({ op: "cell", rowId: row.id, columnId: col.id, status });
+        if (!col) continue;
+        const cell = row.cells[col.id];
+        const prev = cell?.status ?? null;
+        if (prev === status) continue;
+        const blocked =
+          (status === "ready" && (!canReady || col.kind !== "rate" || !cell?.value)) ||
+          (prev === "po" && !(canReady || status === "ready")) ||
+          (prev === "ready" && !canReady);
+        if (blocked) {
+          skipped++;
+          continue;
+        }
+        ops.push({ op: "cell", rowId: row.id, columnId: col.id, status });
       }
     }
     commit(ops);
+    if (skipped)
+      ui.toast(
+        status === "ready" && !canReady
+          ? "Only a manager or an administrator marks a rate Ready to buy."
+          : `${skipped} cell${skipped === 1 ? " was" : "s were"} left as ${skipped === 1 ? "it was" : "they were"}: an empty cell cannot be Ready to buy, a bought rate changes through Purchase it, and only a manager takes off Ready to buy.`,
+        "error",
+      );
     gridRef.current?.focus();
+  }
+
+  /* ---------------------------------------------------------- buying */
+
+  function cellAt(ref: CellRef | null) {
+    if (!ref) return null;
+    const r = rows.findIndex((x) => x.id === ref.rowId);
+    const ci = cols.findIndex((x) => x.id === ref.columnId);
+    if (r < 0 || ci < 0) return null;
+    const row = rows[r];
+    const col = cols[ci];
+    return { r, c: ci + FIXED, row, col, cell: row.cells[col.id] ?? null };
+  }
+
+  function focusedRef(): CellRef | null {
+    const row = rows[focus.r];
+    const col = focus.c >= FIXED ? cols[focus.c - FIXED] : null;
+    return row && col ? { rowId: row.id, columnId: col.id } : null;
+  }
+
+  const focusedCell = cellAt(focusedRef());
+  const focusedStatus = focusedCell?.cell?.status ?? null;
+
+  function openPurchase(ref: CellRef | null) {
+    const at = cellAt(ref);
+    if (!at) return;
+    const st = at.cell?.status ?? null;
+    if (st !== "ready" && st !== "po") {
+      ui.toast(canReady ? "Mark the rate Ready to buy first." : "Only a rate a manager has marked Ready to buy can be bought.", "error");
+      return;
+    }
+    setNote(null);
+    setMenu(null);
+    setPurchase(ref);
+  }
+
+  function savePurchase(ref: CellRef, drums: number, poNo: string) {
+    commit([{ op: "cell", ...ref, status: "po", drums, poNo, poBy: me, poAt: new Date().toISOString() }]);
+    setPurchase(null);
+    gridRef.current?.focus();
+  }
+
+  function undoPurchase(ref: CellRef) {
+    commit([{ op: "cell", ...ref, status: "ready", drums: null, poNo: null, poBy: null, poAt: null }]);
+    setNote(null);
+    gridRef.current?.focus();
+  }
+
+  function showNote(ref: CellRef, el: HTMLElement, pinned: boolean) {
+    if (noteTimer.current) clearTimeout(noteTimer.current);
+    const rect = el.getBoundingClientRect();
+    if (pinned) setNote({ ...ref, rect, pinned: true });
+    else noteTimer.current = setTimeout(() => setNote((n) => (n?.pinned ? n : { ...ref, rect, pinned: false })), 350);
+  }
+
+  function hideHoverNote() {
+    if (noteTimer.current) clearTimeout(noteTimer.current);
+    setNote((n) => (n?.pinned ? n : null));
   }
 
   function copySelection() {
@@ -439,6 +566,12 @@ export function QuoteGrid({
       case "F2":
         e.preventDefault();
         return startEdit(focus.r, focus.c);
+      case "ContextMenu": {
+        e.preventDefault();
+        const rect = cellRect(focus.r, focus.c);
+        if (rect) setMenu({ x: rect.left + 8, y: rect.bottom });
+        return;
+      }
       case "Delete":
       case "Backspace":
         e.preventDefault();
@@ -455,29 +588,15 @@ export function QuoteGrid({
 
   function onEditKey(e: React.KeyboardEvent<HTMLInputElement>) {
     if (!editing) return;
-    const picked = hl >= 0 ? suggestions[hl] : undefined;
-    if (e.key === "ArrowDown" && suggestions.length) {
+    if (e.key === "Enter") {
       e.preventDefault();
-      setHl((h) => Math.min(suggestions.length - 1, h + 1));
-    } else if (e.key === "ArrowUp" && suggestions.length) {
-      e.preventDefault();
-      setHl((h) => Math.max(-1, h - 1));
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      finishEdit({ r: editing.r + (e.shiftKey ? -1 : 1), c: editing.c }, picked);
+      finishEdit({ r: editing.r + (e.shiftKey ? -1 : 1), c: editing.c });
     } else if (e.key === "Tab") {
       e.preventDefault();
-      finishEdit({ r: editing.r, c: editing.c + (e.shiftKey ? -1 : 1) }, picked);
+      finishEdit({ r: editing.r, c: editing.c + (e.shiftKey ? -1 : 1) });
     } else if (e.key === "Escape") {
       e.preventDefault();
-      if (hl >= 0) {
-        setHl(-1);
-        return;
-      }
-      closedToken.current = editing.token;
-      setEditing(null);
-      setSuggestAt(null);
-      gridRef.current?.focus();
+      cancelEdit();
     }
   }
 
@@ -522,7 +641,8 @@ export function QuoteGrid({
     if (!editingCol || editingCol.kind !== "text") return [];
     return [...new Set(state.rows.map((r) => r.cells[editingCol.id]?.value ?? "").filter(Boolean))].sort((a, b) => a.localeCompare(b));
   }, [editingCol, state.rows]);
-  const suggestions = !editing ? [] : suggestFor(editing.c === 1 ? parties : editingCol?.kind === "text" ? columnValues : [], editing.draft);
+  const pickerOptions = !editing?.picker ? [] : editing.c === 1 ? parties : columnValues;
+  const pickerCol = editing?.picker && editing.c >= FIXED ? cols[editing.c - FIXED] : null;
 
   const preset = filter.all ? "all" : filter.from === sixMonths && !filter.to ? "6" : filter.from === threeMonths && !filter.to ? "3" : "custom";
 
@@ -623,19 +743,21 @@ export function QuoteGrid({
         {/* Marking — the sheet's legend, and the way a mark is put on. */}
         <div className="flex flex-wrap items-center gap-2 border-b border-divider bg-canvas px-4 py-2">
           <span className="mr-1 text-2xs font-medium tracking-[0.04em] text-muted uppercase">Mark selected</span>
-          {QUOTE_STATUSES.map((s) => (
-            <button
-              key={s}
-              type="button"
-              disabled={readOnly}
-              onClick={() => colour(s)}
-              title={QUOTE_STATUS_LABEL[s]}
-              className="inline-flex h-7 cursor-pointer items-center gap-2 rounded-control border border-line bg-surface px-2.5 text-meta text-body hover:border-line-strong disabled:cursor-default"
-            >
-              <span aria-hidden className={cx("h-3 w-3 rounded-[3px]", STATUS_SWATCH[s])} />
-              {QUOTE_STATUS_LABEL[s]}
-            </button>
-          ))}
+          {canReady ? (
+            <MarkButton status="ready" disabled={readOnly} onClick={() => colour("ready")} title="Choose this rate to buy — the cell turns grey and the team can buy it" />
+          ) : null}
+          <button
+            type="button"
+            disabled={readOnly || (focusedStatus !== "ready" && focusedStatus !== "po")}
+            onClick={() => openPurchase(focusedRef())}
+            title={focusedStatus === "ready" || focusedStatus === "po" ? "Record the drums and the PO number for this rate" : "Select a grey (Ready to buy) rate to buy it"}
+            className="inline-flex h-7 cursor-pointer items-center gap-2 rounded-control border border-brand bg-brand px-2.5 text-meta font-medium text-white hover:bg-brand-hover disabled:cursor-default disabled:border-line disabled:bg-surface disabled:font-normal disabled:text-line-strong"
+          >
+            <span aria-hidden className={cx("h-3 w-3 rounded-[3px]", STATUS_SWATCH.po)} />
+            {focusedStatus === "po" ? "Edit purchase" : "Purchase it"}
+          </button>
+          <MarkButton status="cancel" disabled={readOnly} onClick={() => colour("cancel")} />
+          <MarkButton status="pickup" disabled={readOnly} onClick={() => colour("pickup")} />
           <button
             type="button"
             disabled={readOnly}
@@ -644,7 +766,7 @@ export function QuoteGrid({
           >
             Clear mark
           </button>
-          <span className="ml-auto text-xs text-muted">Type to edit · Enter or Tab to move · Shift to select · Ctrl+V pastes from Excel · Ctrl+Z undoes</span>
+          <span className="ml-auto text-xs text-muted">Right-click a cell for more · Ctrl+V pastes from Excel · Ctrl+Z undoes</span>
         </div>
 
         <div
@@ -657,9 +779,8 @@ export function QuoteGrid({
             paste(e.clipboardData.getData("text/plain"));
           }}
           onScroll={() => {
-            if (!editing) return;
-            const el = document.activeElement;
-            if (el instanceof HTMLInputElement && gridRef.current?.contains(el)) setSuggestAt(el.getBoundingClientRect());
+            if (note) setNote(null);
+            if (menu) setMenu(null);
           }}
           onMouseUp={() => (dragging.current = false)}
           onMouseLeave={() => (dragging.current = false)}
@@ -778,7 +899,23 @@ export function QuoteGrid({
                             dragging.current = true;
                             gridRef.current?.focus();
                           }}
-                          onMouseEnter={() => dragging.current && setFocus({ r, c })}
+                          onMouseEnter={(e) => {
+                            if (dragging.current) setFocus({ r, c });
+                            else if (st === "po" && col && !isEdit) showNote({ rowId: row.id, columnId: col.id }, e.currentTarget, false);
+                          }}
+                          onMouseLeave={() => st === "po" && hideHoverNote()}
+                          onClick={(e) => {
+                            if (st === "po" && col && !e.shiftKey && !isEdit) showNote({ rowId: row.id, columnId: col.id }, e.currentTarget, true);
+                          }}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            if (!inSel(r, c)) {
+                              setFocus({ r, c });
+                              setAnchor({ r, c });
+                            } else setFocus({ r, c });
+                            hideHoverNote();
+                            setMenu({ x: e.clientX, y: e.clientY });
+                          }}
                           onDoubleClick={() => startEdit(r, c)}
                           className={cx(
                             "relative h-9 border-r border-b border-divider px-3 text-sm whitespace-nowrap",
@@ -789,24 +926,23 @@ export function QuoteGrid({
                             st ? STATUS_CELL[st] : "bg-surface",
                             lowest && "font-semibold text-success",
                           )}
-                          title={st ? QUOTE_STATUS_LABEL[st] : lowest ? "Lowest rate in this column for the rows shown" : c === 1 && val ? val : undefined}
+                          title={st === "po" ? undefined : st ? QUOTE_STATUS_LABEL[st] : lowest ? "Lowest rate in this column for the rows shown" : c === 1 && val ? val : undefined}
                         >
                           {inSel(r, c) && !isFocus ? <span className="pointer-events-none absolute inset-0 bg-brand/8" /> : null}
                           {isFocus ? <span className="pointer-events-none absolute inset-0 z-[1] outline-2 -outline-offset-2 outline-brand" /> : null}
-                          {isEdit ? (
+                          {st === "po" ? <span aria-hidden className="pointer-events-none absolute top-0 right-0 z-[1] border-t-[7px] border-l-[7px] border-t-warn border-l-transparent" /> : null}
+                          {isEdit && editing.picker ? (
+                            <span className="flex items-center justify-between gap-2">
+                              <span className="truncate">{val || <span className="text-muted">Choose…</span>}</span>
+                              <ShellIcon name="chevron" size={14} className="shrink-0 rotate-90 text-brand" />
+                            </span>
+                          ) : isEdit ? (
                             <input
                               autoFocus
                               value={editing.draft}
                               autoComplete="off"
-                              role={c === 1 || col?.kind === "text" ? "combobox" : undefined}
-                              aria-expanded={c === 1 || col?.kind === "text" ? suggestions.length > 0 : undefined}
-                              aria-controls={c === 1 || col?.kind === "text" ? "quote-suggest" : undefined}
-                              onFocus={(e) => setSuggestAt(e.currentTarget.getBoundingClientRect())}
                               inputMode={rate ? "decimal" : undefined}
-                              onChange={(e) => {
-                                setEditing({ ...editing, draft: e.target.value });
-                                setHl(-1);
-                              }}
+                              onChange={(e) => setEditing({ ...editing, draft: e.target.value })}
                               onKeyDown={onEditKey}
                               onBlur={() => finishEdit()}
                               className={cx("absolute inset-0 z-[2] w-full rounded-[2px] border-2 border-brand bg-surface px-[10px] text-sm text-ink outline-none", rate && "text-right tabular-nums")}
@@ -859,16 +995,101 @@ export function QuoteGrid({
         </div>
       </Card>
 
-      {editing && suggestAt && suggestions.length ? (
-        <SuggestList
-          anchor={suggestAt}
-          items={suggestions}
-          draft={editing.draft}
-          active={hl}
-          onHover={setHl}
+      {editing?.picker && pickerAt ? (
+        <OptionPicker
+          key={editing.token}
+          anchor={pickerAt}
+          title={editing.c === 1 ? "Party" : pickerCol?.name || "Value"}
+          noun={editing.c === 1 ? "parties" : "values"}
+          options={pickerOptions}
+          value={rows[editing.r] ? cellText(rows[editing.r], editing.c) : ""}
+          initialQuery={editing.draft}
           onPick={(v) => finishEdit(undefined, v)}
+          onClose={cancelEdit}
         />
       ) : null}
+
+      {note
+        ? (() => {
+            const at = cellAt(note);
+            if (!at || at.cell?.status !== "po") return null;
+            return (
+              <PoNote
+                at={note.rect}
+                pinned={note.pinned}
+                rowNo={at.r + 1}
+                date={showDate(at.row.date)}
+                party={at.row.party}
+                column={[at.col.pack, at.col.name, at.col.brand].filter(Boolean).join(" · ")}
+                rate={at.cell.value}
+                drums={at.cell.drums}
+                poNo={at.cell.poNo}
+                by={at.cell.poBy}
+                when={stampText(at.cell.poAt)}
+                readOnly={readOnly}
+                onClose={() => setNote(null)}
+                onEdit={() => openPurchase(note)}
+                onUndo={() => undoPurchase(note)}
+              />
+            );
+          })()
+        : null}
+
+      {menu ? (
+        <CellMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => {
+            setMenu(null);
+            gridRef.current?.focus();
+          }}
+          items={[
+            { label: "Edit cell", hint: "Enter", onSelect: () => startEdit(focus.r, focus.c), disabled: readOnly },
+            ...(focusedCell
+              ? focusedStatus === "po"
+                ? [
+                    { label: "View PO note", onSelect: () => { const el = gridRef.current?.querySelector(`[data-cell="${focus.r}:${focus.c}"]`); if (el instanceof HTMLElement) showNote(focusedRef()!, el, true); } },
+                    { label: "Edit purchase…", onSelect: () => openPurchase(focusedRef()), disabled: readOnly },
+                    { label: "Undo purchase (back to Ready to buy)", onSelect: () => undoPurchase(focusedRef()!), disabled: readOnly },
+                  ]
+                : focusedStatus === "ready"
+                  ? [
+                      { label: "Purchase it…", onSelect: () => openPurchase(focusedRef()), disabled: readOnly, strong: true },
+                      ...(canReady ? [{ label: "Remove Ready to buy", onSelect: () => colour(null), disabled: readOnly }] : []),
+                    ]
+                  : canReady && focusedCell.col.kind === "rate"
+                    ? [{ label: "Mark Ready to buy", onSelect: () => colour("ready"), disabled: readOnly || !focusedCell.cell?.value }]
+                    : []
+              : []),
+            { label: "Mark cancelled", onSelect: () => colour("cancel"), disabled: readOnly, divider: true },
+            { label: "Mark picked up", onSelect: () => colour("pickup"), disabled: readOnly },
+            { label: "Clear mark", onSelect: () => colour(null), disabled: readOnly },
+            { label: "Copy", hint: "Ctrl+C", onSelect: copySelection, divider: true },
+          ]}
+        />
+      ) : null}
+
+      {purchase
+        ? (() => {
+            const at = cellAt(purchase);
+            if (!at) return null;
+            return (
+              <PurchaseDialog
+                key={`${purchase.rowId}:${purchase.columnId}`}
+                rowNo={at.r + 1}
+                date={showDate(at.row.date)}
+                party={at.row.party}
+                column={[at.col.pack, at.col.name, at.col.brand].filter(Boolean).join(" · ")}
+                rate={at.cell?.value ?? ""}
+                drums={at.cell?.drums ?? null}
+                poNo={at.cell?.poNo ?? ""}
+                editing={at.cell?.status === "po"}
+                onClose={() => setPurchase(null)}
+                onSave={(d, po) => savePurchase(purchase, d, po)}
+              />
+            );
+          })()
+        : null}
 
       {focusRow ? (
         <div className="mt-2 flex flex-wrap gap-x-3 text-xs text-muted">
@@ -923,95 +1144,6 @@ export function QuoteGrid({
         )}
       </Modal>
     </>
-  );
-}
-
-/** What the list offers for what is typed: names starting with it first, then names containing it. */
-function suggestFor(all: string[], draft: string): string[] {
-  const q = draft.trim().toLowerCase();
-  if (!q) return all.slice(0, 50);
-  const starts: string[] = [];
-  const has: string[] = [];
-  for (const v of all) {
-    const l = v.toLowerCase();
-    if (l === q) continue;
-    if (l.startsWith(q)) starts.push(v);
-    else if (l.includes(q)) has.push(v);
-  }
-  return [...starts, ...has].slice(0, 50);
-}
-
-/**
- * The suggestion list under a cell being edited — the app's own menu surface
- * rather than the browser's datalist, which cannot be styled. It sits on the
- * page (fixed, through a portal) so the grid's scroll box cannot clip it, and
- * opens upwards where there is no room below. Pressing an item keeps focus in
- * the cell (mousedown is prevented) and saves it.
- */
-function SuggestList({
-  anchor,
-  items,
-  draft,
-  active,
-  onHover,
-  onPick,
-}: {
-  anchor: DOMRect;
-  items: string[];
-  draft: string;
-  active: number;
-  onHover: (i: number) => void;
-  onPick: (v: string) => void;
-}) {
-  const MAX = 264;
-  const below = typeof window === "undefined" || anchor.bottom + MAX + 8 < window.innerHeight || anchor.top < MAX + 8;
-  const q = draft.trim().toLowerCase();
-  return (
-    <BodyPortal>
-      <div
-        id="quote-suggest"
-        role="listbox"
-        style={{
-          left: anchor.left,
-          minWidth: Math.max(anchor.width, 220),
-          maxWidth: 420,
-          maxHeight: MAX,
-          ...(below ? { top: anchor.bottom + 4 } : { bottom: window.innerHeight - anchor.top + 4 }),
-        }}
-        className="animate-fade-in fixed z-[95] overflow-y-auto rounded-card border border-line bg-surface py-1 shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
-      >
-        {items.map((v, i) => {
-          const at = q ? v.toLowerCase().indexOf(q) : -1;
-          return (
-            <div
-              key={v}
-              role="option"
-              aria-selected={i === active}
-              ref={(el) => {
-                if (el && i === active) el.scrollIntoView({ block: "nearest" });
-              }}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                onPick(v);
-              }}
-              onMouseEnter={() => onHover(i)}
-              className={cx("cursor-pointer truncate px-3 py-1.5 text-sm", i === active ? "bg-brand-soft text-brand-hover" : "text-body hover:bg-canvas")}
-              title={v}
-            >
-              {at >= 0 ? (
-                <>
-                  {v.slice(0, at)}
-                  <span className="font-semibold text-ink">{v.slice(at, at + q.length)}</span>
-                  {v.slice(at + q.length)}
-                </>
-              ) : (
-                v
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </BodyPortal>
   );
 }
 
@@ -1119,5 +1251,447 @@ function Labelled({ label, hint, children }: { label: string; hint?: string; chi
       </span>
       {children}
     </label>
+  );
+}
+
+function MarkButton({ status, disabled, onClick, title }: { status: QuoteStatus; disabled: boolean; onClick: () => void; title?: string }) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      title={title ?? QUOTE_STATUS_LABEL[status]}
+      className="inline-flex h-7 cursor-pointer items-center gap-2 rounded-control border border-line bg-surface px-2.5 text-meta text-body hover:border-line-strong disabled:cursor-default"
+    >
+      <span aria-hidden className={cx("h-3 w-3 rounded-[3px]", STATUS_SWATCH[status])} />
+      {QUOTE_STATUS_LABEL[status]}
+    </button>
+  );
+}
+
+/** Where a floating panel goes beside a cell: below it, or above where there is no room. */
+function placeBy(anchor: DOMRect, height: number, width: number): React.CSSProperties {
+  const below = anchor.bottom + height + 8 < window.innerHeight || anchor.top < height + 8;
+  const left = Math.max(8, Math.min(anchor.left, window.innerWidth - width - 8));
+  return below ? { left, top: anchor.bottom + 4 } : { left, bottom: window.innerHeight - anchor.top + 4 };
+}
+
+const PAGE = 10;
+
+/**
+ * THE OPTION PICKER — a select menu in the app's own surface, not a list of
+ * suggestions. It names what is being chosen and how many there are, marks
+ * the current value, and shows ten at a time: past ten options it carries a
+ * search box, and "Show more" brings the next ten. A name that is not on the
+ * list is added from the same box. ↑ ↓ Enter work it; Esc or a click outside
+ * closes it without changing anything.
+ */
+function OptionPicker({
+  anchor,
+  title,
+  noun,
+  options,
+  value,
+  initialQuery,
+  onPick,
+  onClose,
+}: {
+  anchor: DOMRect;
+  title: string;
+  noun: string;
+  options: string[];
+  value: string;
+  initialQuery: string;
+  onPick: (v: string) => void;
+  onClose: () => void;
+}) {
+  const searchable = options.length > PAGE;
+  const [query, setQuery] = useState(initialQuery);
+  const [adding, setAdding] = useState(!searchable && !!initialQuery);
+  const [limit, setLimit] = useState(PAGE);
+  const [hl, setHl] = useState(0);
+  const q = query.trim().toLowerCase();
+  const matched = useMemo(() => {
+    if (!q || (!searchable && !adding)) return options;
+    const starts: string[] = [];
+    const has: string[] = [];
+    for (const v of options) {
+      const l = v.toLowerCase();
+      if (l.startsWith(q)) starts.push(v);
+      else if (l.includes(q)) has.push(v);
+    }
+    return [...starts, ...has];
+  }, [options, q, searchable, adding]);
+  const shown = matched.slice(0, limit);
+  const canAdd = !!q && !options.some((v) => v.toLowerCase() === q);
+  /* The rows the keyboard walks: the shown options, then "Add". */
+  const total = shown.length + (canAdd ? 1 : 0);
+  const pick = (i: number) => (i < shown.length ? onPick(shown[i]) : canAdd ? onPick(query.trim()) : undefined);
+
+  function onKey(e: React.KeyboardEvent) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHl((h) => Math.min(total - 1, h + 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHl((h) => Math.max(0, h - 1));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (total) pick(Math.min(hl, total - 1));
+    } else if (e.key === "Escape" || e.key === "Tab") {
+      e.preventDefault();
+      onClose();
+    }
+  }
+
+  const showInput = searchable || adding;
+  return (
+    <BodyPortal>
+      <div className="fixed inset-0 z-[94]" onMouseDown={onClose} aria-hidden />
+      <div
+        role="dialog"
+        aria-label={`Choose ${title}`}
+        tabIndex={-1}
+        ref={(el) => {
+          if (el && !showInput && document.activeElement !== el && !el.contains(document.activeElement)) el.focus();
+        }}
+        onKeyDown={onKey}
+        style={{ ...placeBy(anchor, 380, 300), width: Math.max(anchor.width, 300) }}
+        className="animate-fade-in fixed z-[95] flex max-h-[380px] flex-col overflow-hidden rounded-card border border-line bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)] outline-none"
+      >
+        <div className="flex items-center justify-between gap-2 border-b border-divider px-3 py-2">
+          <span className="text-2xs font-medium tracking-[0.04em] text-muted uppercase">{title}</span>
+          <span className="text-2xs text-muted">
+            {q && showInput ? `${matched.length} of ${options.length}` : `${options.length} ${noun}`}
+          </span>
+        </div>
+        {showInput ? (
+          <div className="relative border-b border-divider p-2">
+            <ShellIcon name="search" size={15} className="pointer-events-none absolute top-[17px] left-4.5 text-muted" />
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setLimit(PAGE);
+                setHl(0);
+              }}
+              placeholder={searchable ? `Search ${noun}, or type a new one` : "Type a new name"}
+              className="h-8 w-full rounded-control border border-line pr-2 pl-7.5 text-sm outline-none focus:border-brand"
+            />
+          </div>
+        ) : null}
+        <div role="listbox" className="min-h-0 flex-1 overflow-y-auto py-1">
+          {shown.map((v, i) => {
+            const at = q && showInput ? v.toLowerCase().indexOf(q) : -1;
+            const current = v === value;
+            return (
+              <div
+                key={v}
+                role="option"
+                aria-selected={current}
+                ref={(el) => {
+                  if (el && i === hl) el.scrollIntoView({ block: "nearest" });
+                }}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  onPick(v);
+                }}
+                onMouseEnter={() => setHl(i)}
+                title={v}
+                className={cx("flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm", i === hl ? "bg-canvas text-ink" : "text-body")}
+              >
+                <span className="w-4 shrink-0 text-brand">{current ? <ShellIcon name="tick" size={14} /> : null}</span>
+                <span className={cx("truncate", current && "font-medium text-ink")}>
+                  {at >= 0 ? (
+                    <>
+                      {v.slice(0, at)}
+                      <span className="font-semibold text-ink">{v.slice(at, at + q.length)}</span>
+                      {v.slice(at + q.length)}
+                    </>
+                  ) : (
+                    v
+                  )}
+                </span>
+              </div>
+            );
+          })}
+          {!shown.length && !canAdd ? <div className="px-3 py-3 text-sm text-muted">No {noun} match “{query.trim()}”.</div> : null}
+          {canAdd ? (
+            <div
+              role="option"
+              aria-selected={false}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                onPick(query.trim());
+              }}
+              onMouseEnter={() => setHl(shown.length)}
+              className={cx("flex cursor-pointer items-center gap-2 border-t border-divider px-3 py-2 text-sm text-brand-hover", hl === shown.length ? "bg-brand-soft" : "")}
+            >
+              <ShellIcon name="plus" size={14} className="w-4 shrink-0" />
+              <span className="truncate">
+                Add “<span className="font-medium">{query.trim()}</span>”
+              </span>
+            </div>
+          ) : null}
+        </div>
+        {matched.length > limit || (!showInput && !adding) || value ? (
+          <div className="flex items-center gap-2 border-t border-divider bg-canvas px-3 py-1.5">
+            {matched.length > limit ? (
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setLimit((l) => l + PAGE)}
+                className="cursor-pointer text-meta font-medium text-brand-hover hover:underline"
+              >
+                Show {Math.min(PAGE, matched.length - limit)} more · {matched.length - limit} left
+              </button>
+            ) : !showInput ? (
+              <button type="button" onClick={() => setAdding(true)} className="inline-flex cursor-pointer items-center gap-1.5 text-meta font-medium text-brand-hover hover:underline">
+                <ShellIcon name="plus" size={13} /> Add new
+              </button>
+            ) : null}
+            <span className="flex-1" />
+            {value ? (
+              <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => onPick("")} className="cursor-pointer text-meta text-muted hover:text-danger">
+                Clear
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </BodyPortal>
+  );
+}
+
+/**
+ * THE PO NOTE — Excel's cell comment for a bought rate. Hovering a yellow
+ * cell shows it; clicking pins it with its actions; the small corner mark on
+ * the cell says a note is there.
+ */
+function PoNote({
+  at,
+  pinned,
+  rowNo,
+  date,
+  party,
+  column,
+  rate,
+  drums,
+  poNo,
+  by,
+  when,
+  readOnly,
+  onClose,
+  onEdit,
+  onUndo,
+}: {
+  at: DOMRect;
+  pinned: boolean;
+  rowNo: number;
+  date: string;
+  party: string;
+  column: string;
+  rate: string;
+  drums: number | null;
+  poNo: string | null;
+  by: string | null;
+  when: string;
+  readOnly: boolean;
+  onClose: () => void;
+  onEdit: () => void;
+  onUndo: () => void;
+}) {
+  const W = 300;
+  const right = at.right + W + 12 < window.innerWidth;
+  const style: React.CSSProperties = right
+    ? { left: at.right + 6, top: Math.min(at.top - 4, window.innerHeight - 280) }
+    : { left: Math.max(8, at.left - W - 6), top: Math.min(at.top - 4, window.innerHeight - 280) };
+  return (
+    <BodyPortal>
+      {pinned ? <div className="fixed inset-0 z-[94]" onMouseDown={onClose} aria-hidden /> : null}
+      <div
+        role="note"
+        style={{ ...style, width: W }}
+        onKeyDown={(e) => e.key === "Escape" && onClose()}
+        className={cx(
+          "animate-fade-in fixed z-[95] overflow-hidden rounded-card border border-warn-line bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.14)]",
+          !pinned && "pointer-events-none",
+        )}
+      >
+        <div className="flex items-start justify-between gap-2 border-b border-warn-line bg-warn-soft px-3.5 py-2.5 shadow-[inset_3px_0_0_var(--color-warn)]">
+          <div>
+            <div className="text-2xs font-medium tracking-[0.04em] text-warn-ink uppercase">PO made in Tally &amp; mailed</div>
+            <div className="mt-0.5 font-mono text-md font-semibold text-ink">{poNo || "—"}</div>
+          </div>
+          <span className="rounded-[3px] bg-surface px-1.5 py-0.5 text-2xs font-medium text-body tabular-nums">Row {rowNo}</span>
+        </div>
+        <dl className="grid grid-cols-[92px_1fr] gap-x-3 gap-y-1.5 px-3.5 py-3 text-meta">
+          <dt className="text-muted">Drums</dt>
+          <dd className="font-semibold text-ink tabular-nums">{drums ?? "—"}</dd>
+          <dt className="text-muted">Rate</dt>
+          <dd className="text-ink tabular-nums">{rate || "—"}</dd>
+          <dt className="text-muted">Material</dt>
+          <dd className="text-ink">{column}</dd>
+          <dt className="text-muted">Party</dt>
+          <dd className="text-ink">{party || "—"}</dd>
+          <dt className="text-muted">Quoted</dt>
+          <dd className="text-ink">{date}</dd>
+        </dl>
+        <div className="border-t border-divider px-3.5 py-2 text-xs text-muted">
+          {by ? `Bought by ${by}` : "Bought"}
+          {when ? ` · ${when}` : ""}
+        </div>
+        {pinned && !readOnly ? (
+          <div className="flex items-center justify-end gap-2 border-t border-divider bg-canvas px-3.5 py-2">
+            <Button size="sm" variant="ghost" onClick={onUndo}>
+              Undo purchase
+            </Button>
+            <Button size="sm" onClick={onEdit}>
+              Edit
+            </Button>
+          </div>
+        ) : null}
+      </div>
+    </BodyPortal>
+  );
+}
+
+type CellMenuItem = { label: string; onSelect: () => void; disabled?: boolean; hint?: string; divider?: boolean; strong?: boolean };
+
+/** The right-click menu on a cell, in the row menu's surface. */
+function CellMenu({ x, y, items, onClose }: { x: number; y: number; items: CellMenuItem[]; onClose: () => void }) {
+  const W = 260;
+  const H = items.length * 32 + 16;
+  const style: React.CSSProperties = {
+    left: Math.max(8, Math.min(x, window.innerWidth - W - 8)),
+    top: y + H + 8 < window.innerHeight ? y : Math.max(8, y - H),
+    width: W,
+  };
+  return (
+    <BodyPortal>
+      <div
+        className="fixed inset-0 z-[94]"
+        onMouseDown={onClose}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          onClose();
+        }}
+        aria-hidden
+      />
+      <div
+        role="menu"
+        tabIndex={-1}
+        ref={(el) => el?.focus()}
+        onKeyDown={(e) => e.key === "Escape" && onClose()}
+        style={style}
+        className="animate-fade-in fixed z-[95] flex flex-col overflow-hidden rounded-card border border-line bg-surface py-1 shadow-[0_8px_24px_rgba(22,22,22,0.12)] outline-none"
+      >
+        {items.map((it, i) => (
+          <button
+            key={i}
+            type="button"
+            role="menuitem"
+            disabled={it.disabled}
+            onClick={() => {
+              onClose();
+              it.onSelect();
+            }}
+            className={cx(
+              "flex items-center justify-between gap-3 px-3 py-1.5 text-left text-sm",
+              it.divider && i > 0 && "mt-1 border-t border-divider pt-2",
+              it.disabled ? "cursor-default text-line-strong" : it.strong ? "cursor-pointer font-medium text-brand-hover hover:bg-brand-soft" : "cursor-pointer text-body hover:bg-canvas",
+            )}
+          >
+            <span className="truncate">{it.label}</span>
+            {it.hint ? <span className="shrink-0 text-2xs text-muted">{it.hint}</span> : null}
+          </button>
+        ))}
+      </div>
+    </BodyPortal>
+  );
+}
+
+/** Purchase it: the drums and the PO number, for one Ready to buy rate. */
+function PurchaseDialog({
+  rowNo,
+  date,
+  party,
+  column,
+  rate,
+  drums,
+  poNo,
+  editing,
+  onClose,
+  onSave,
+}: {
+  rowNo: number;
+  date: string;
+  party: string;
+  column: string;
+  rate: string;
+  drums: number | null;
+  poNo: string;
+  editing: boolean;
+  onClose: () => void;
+  onSave: (drums: number, poNo: string) => void;
+}) {
+  const [d, setD] = useState(drums ? String(drums) : "");
+  const [po, setPo] = useState(poNo);
+  const [tried, setTried] = useState(false);
+  const n = Number(d);
+  const drumsBad = !d.trim() || !Number.isInteger(n) || n < 1;
+  const poBad = !po.trim();
+  function save() {
+    setTried(true);
+    if (drumsBad || poBad) return;
+    onSave(n, po.trim());
+  }
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={editing ? "Edit purchase" : "Purchase it"}
+      width={480}
+      footer={
+        <div className="flex w-full items-center justify-end gap-2">
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="primary" onClick={save}>
+            {editing ? "Save purchase" : "Save and mark bought"}
+          </Button>
+        </div>
+      }
+    >
+      <div className="mb-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 rounded-control border border-line bg-canvas px-3.5 py-3 text-meta">
+        <span className="text-muted">Material</span>
+        <span className="font-medium text-ink">{column}</span>
+        <span className="text-muted">Party</span>
+        <span className="text-ink">{party || "—"}</span>
+        <span className="text-muted">Quoted</span>
+        <span className="text-ink">
+          {date} · row {rowNo}
+        </span>
+        <span className="text-muted">Rate</span>
+        <span className="font-semibold text-ink tabular-nums">{rate || "—"}</span>
+      </div>
+      <form
+        className="grid grid-cols-2 gap-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          save();
+        }}
+      >
+        <Labelled label="Number of drums">
+          <Input autoFocus inputMode="numeric" value={d} onChange={(e) => setD(e.target.value.replace(/[^\d]/g, ""))} invalid={tried && drumsBad} placeholder="e.g. 4" />
+          {tried && drumsBad ? <span className="text-xs text-danger">Enter how many drums, a whole number.</span> : null}
+        </Labelled>
+        <Labelled label="PO number">
+          <Input value={po} onChange={(e) => setPo(e.target.value)} maxLength={40} invalid={tried && poBad} placeholder="The Tally PO number" className="font-mono" />
+          {tried && poBad ? <span className="text-xs text-danger">Enter the PO number.</span> : null}
+        </Labelled>
+        <p className="col-span-2 text-xs text-muted">Saving turns the cell yellow. Hover it, or right-click it, to see this purchase.</p>
+        <button type="submit" className="hidden" />
+      </form>
+    </Modal>
   );
 }

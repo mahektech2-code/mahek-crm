@@ -16,9 +16,19 @@ Every edit — one cell, a paste of hundreds, a colour across a block — is sen
 
 A rate column holds a number, or nothing. Commas, spaces and a rupee sign are taken out of what is pasted; anything else is refused rather than stored as a rate nobody can compare. A text column holds up to 200 characters.
 
-## The colours
+## Buying: grey, then yellow
 
-They are the sheet's legend: **PO made in Tally & PO mailed** (yellow), **PO / order cancelled** (red), and **Material picked up by transporter** (cyan). They record what happened; they do not raise a PO. A cancelled rate is left out of the latest and lowest rates.
+A rate is chosen by a manager and bought by the team, in that order:
+
+- **Ready to buy (grey)** is put on, or taken off, only by an ERP manager or administrator. Only a rate with a figure in it can be Ready to buy.
+- **Purchase it** turns a grey rate yellow, and it always records the **number of drums** and the **PO number**: neither may be left out. A rate that isn't grey can't be bought, except by a manager.
+- **Undo purchase** puts a yellow rate back to grey, and anybody may do it, because it corrects a purchase entered by mistake. Any other change to a bought rate is a manager's.
+
+The screen offers only what is allowed, and the server refuses the rest whatever the screen sent. The PO number, the drums, and who bought it and when are kept on the cell and shown in its note.
+
+## The other marks
+
+**PO / order cancelled** (red) and **Material picked up by transporter** (blue) are put on by anybody. A cancelled rate is left out of the latest and lowest rates.
 
 ## The period
 

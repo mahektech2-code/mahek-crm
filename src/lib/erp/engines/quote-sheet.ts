@@ -13,7 +13,19 @@
 import type { QuoteColumnKind, QuoteStatus } from "./quotes";
 
 export type SheetOp =
-  | { op: "cell"; rowId: string; columnId: string; value?: string; status?: QuoteStatus | null }
+  | {
+      op: "cell";
+      rowId: string;
+      columnId: string;
+      value?: string;
+      status?: QuoteStatus | null;
+      /** The purchase: drums and the PO number. Set together with `status: "po"`. */
+      drums?: number | null;
+      poNo?: string | null;
+      /** Who bought it and when — written by the server; carried here only so the screen can show it at once. */
+      poBy?: string | null;
+      poAt?: string | null;
+    }
   | { op: "row"; rowId: string; create?: boolean; date?: string; party?: string; status?: QuoteStatus | null }
   | { op: "deleteRow"; rowId: string }
   | { op: "restoreRow"; rowId: string }
@@ -32,7 +44,14 @@ export type SheetColumn = {
   archived: boolean;
 };
 
-export type SheetCell = { value: string; status: QuoteStatus | null };
+export type SheetCell = {
+  value: string;
+  status: QuoteStatus | null;
+  drums: number | null;
+  poNo: string | null;
+  poBy: string | null;
+  poAt: string | null;
+};
 
 export type SheetRow = {
   id: string;
@@ -46,7 +65,9 @@ export type SheetRow = {
 
 export type SheetState = { columns: SheetColumn[]; rows: SheetRow[] };
 
-const EMPTY: SheetCell = { value: "", status: null };
+const EMPTY: SheetCell = { value: "", status: null, drums: null, poNo: null, poBy: null, poAt: null };
+
+const PURCHASE_KEYS = ["drums", "poNo", "poBy", "poAt"] as const;
 
 export function applySheetOps(s: SheetState, ops: SheetOp[]): SheetState {
   let columns = s.columns;
@@ -69,6 +90,10 @@ export function applySheetOps(s: SheetState, ops: SheetOp[]): SheetState {
           const next: SheetCell = {
             value: o.value !== undefined ? o.value : prev.value,
             status: o.status !== undefined ? o.status : prev.status,
+            drums: o.drums !== undefined ? o.drums : prev.drums,
+            poNo: o.poNo !== undefined ? o.poNo : prev.poNo,
+            poBy: o.poBy !== undefined ? o.poBy : prev.poBy,
+            poAt: o.poAt !== undefined ? o.poAt : prev.poAt,
           };
           return { ...r, cells: { ...r.cells, [o.columnId]: next } };
         });
@@ -144,6 +169,7 @@ export function invertSheetOps(s: SheetState, ops: SheetOp[]): SheetOp[] {
         const back: SheetOp = { op: "cell", rowId: o.rowId, columnId: o.columnId };
         if (o.value !== undefined) back.value = prev.value;
         if (o.status !== undefined) back.status = prev.status;
+        for (const k of PURCHASE_KEYS) if (o[k] !== undefined) (back as Record<string, unknown>)[k] = prev[k];
         out.push(back);
         break;
       }
