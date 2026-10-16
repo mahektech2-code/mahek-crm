@@ -15519,3 +15519,82 @@ export const websitePublishLog = pgTable(
 export type WebsiteContentRow = typeof websiteContent.$inferSelect;
 export type WebsiteMediaRow = typeof websiteMedia.$inferSelect;
 export type WebsitePublishLogRow = typeof websitePublishLog.$inferSelect;
+
+/* ---------------------------------------------------------------------------
+ * THE QUOTATION MANAGER (ERP → Purchase → Quotation manager).
+ *
+ * The purchase desk's rate sheet, rebuilt as a grid: a ROW is one quotation —
+ * a date and a party — and a COLUMN is one thing quoted for (pack, material,
+ * brand), or a text column such as the broker. Both are rows of their own so
+ * a person adds, renames, reorders and removes them from the screen; nothing
+ * about the sheet's shape is in code. A cell is one value and, like the sheet,
+ * a colour: `po` (PO made in Tally and mailed), `cancel` (PO / order
+ * cancelled), `pickup` (material picked up by the transporter).
+ *
+ * A removed column is ARCHIVED, never dropped, so its cells come back with it;
+ * a removed row is marked deleted for the same reason.
+ * ------------------------------------------------------------------------- */
+export const erpQuoteColumns = pgTable(
+  "erp_quote_columns",
+  {
+    id: text("id").primaryKey(),
+    position: integer("position").notNull(),
+    /** The three header lines, top to bottom: pack, material, brand. */
+    pack: text("pack").notNull().default(""),
+    name: text("name").notNull().default(""),
+    brand: text("brand").notNull().default(""),
+    /** `rate` (a number, right-aligned) or `text`. */
+    kind: text("kind").notNull().default("rate"),
+    rawMaterialId: text("raw_material_id").references(() => erpRawMaterials.id),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("erp_quote_columns_position_idx").on(t.position),
+    check("erp_quote_columns_kind_check", sql`${t.kind} in ('rate', 'text')`),
+  ],
+);
+
+export const erpQuoteRows = pgTable(
+  "erp_quote_rows",
+  {
+    id: text("id").primaryKey(),
+    quoteDate: date("quote_date", { mode: "string" }).notNull(),
+    /** The order rows were entered in: rows pasted together share a timestamp, never this. */
+    seq: bigserial("seq", { mode: "number" }).notNull(),
+    party: text("party").notNull().default(""),
+    /** The purchase party the typed name matches, where one does exactly. */
+    supplierId: text("supplier_id").references(() => erpSuppliers.id),
+    /** The colour on the date and party cells: `po`, `cancel`, `pickup` or null. */
+    status: text("status"),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("erp_quote_rows_date_idx").on(t.quoteDate),
+    check("erp_quote_rows_status_check", sql`${t.status} is null or ${t.status} in ('po', 'cancel', 'pickup')`),
+  ],
+);
+
+export const erpQuoteCells = pgTable(
+  "erp_quote_cells",
+  {
+    rowId: text("row_id").notNull().references(() => erpQuoteRows.id, { onDelete: "cascade" }),
+    columnId: text("column_id").notNull().references(() => erpQuoteColumns.id, { onDelete: "cascade" }),
+    value: text("value").notNull().default(""),
+    status: text("status"),
+    updatedById: text("updated_by_id").references(() => users.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.rowId, t.columnId] }),
+    check("erp_quote_cells_status_check", sql`${t.status} is null or ${t.status} in ('po', 'cancel', 'pickup')`),
+  ],
+);
+
+export type ErpQuoteColumn = typeof erpQuoteColumns.$inferSelect;
+export type ErpQuoteRow = typeof erpQuoteRows.$inferSelect;

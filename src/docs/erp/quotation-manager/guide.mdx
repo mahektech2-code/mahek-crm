@@ -1,0 +1,47 @@
+The **Quotation manager** is the purchase desk's rate sheet. Each **row** is one quotation — the date and the party (supplier) who quoted — and each **column** is something quoted for: the pack on top, the material in the middle and the brand underneath, exactly as the sheet heads them. A column can also hold text, such as the broker's name.
+
+Everything on it can be changed in place: the cells, the date and party of a row, and the columns themselves.
+
+<Wireframe url="/erp/quotation-manager" nav={["Dashboard", "#Purchase", "Requirements", "Purchase orders", "Quotation manager"]} active="Quotation manager" caption="The Quotation manager">
+  <WfBar>
+    <WfTitle sub="Supplier rates by date, party and material, kept like the desk's sheet.">Quotation manager</WfTitle>
+  </WfBar>
+  <WfBar><WfInput placeholder="Search party" /><WfText muted>Last 6 months</WfText><WfSpacer /><WfButton>Export CSV</WfButton><WfButton>+ Column</WfButton><WfButton primary>+ Row</WfButton><Hotspot n={1} /></WfBar>
+  <WfBar><WfText muted>Colour the selected cells:</WfText><WfPill tone="warn">PO made in Tally & PO mailed</WfPill><WfPill tone="danger">PO / order cancelled</WfPill><WfPill tone="info">Material picked up by transporter</WfPill><Hotspot n={2} /></WfBar>
+  <WfTable
+    columns={["Date", "Party", "Material A", "Material B", "Broker name"]}
+    rows={[
+      ["1-Oct-2026", <b key="a">Supplier A</b>, "134", "140", "Self"],
+      ["3-Oct-2026", <b key="b">Supplier B</b>, "", "48.5", "Self"],
+      ["Latest rate", "", "134", "48.5", ""],
+    ]}
+  />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Rows and columns.</b> + Row adds a quotation dated today; + Column adds something to quote for. Hover a column heading for move left, edit, insert after and move right.</span>,
+  <span key="2"><b>Colours.</b> Select cells, then press a colour. A colour on the date or party marks the whole quotation.</span>,
+]} />
+
+## Working the grid
+
+- **Click a cell and type** to replace it; **double-click** or press **Enter** to change what is there.
+- **Enter** saves and moves down, **Tab** saves and moves right, **Esc** cancels.
+- **Arrow keys** walk the grid; hold **Shift** (or drag) to select a block.
+- **Delete** clears the selected cells.
+- **Ctrl+C** copies the selection and **Ctrl+V** pastes a block copied from Excel or Google Sheets, starting at the selected cell. Rows past the bottom are added. A value that is not a number in a rate column is left out and the sheet says which.
+- **Ctrl+Z** (or **Undo**) takes back the last change.
+
+Every change is saved as you make it. The words beside Undo say whether everything is saved.
+
+## Rows
+
+Use the **⋯** beside a row number to add a row below it with the same date, duplicate the row, or delete it. A date can be typed as `14-Oct-2026`, `14/10/2026` or `2026-10-14`. The party offers the purchase parties as you type, and a name that matches one exactly is linked to it.
+
+## Columns
+
+Double-click a heading, or use its **✎**, to change its three lines, whether it holds rates or text, and (optionally) which raw material it is for. **Remove column** hides it; its rates are kept, and **Removed columns** brings it back.
+
+## The two rows at the foot
+
+**Latest rate** is the newest rate in each column for the rows shown, and **Lowest rate** the lowest. Cancelled rates count for neither. The lowest rate in a column is also drawn in green where it sits.
