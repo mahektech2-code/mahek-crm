@@ -8,6 +8,7 @@ import {
   moduleForPath,
   moduleGroupsForApp,
   modulesForApp,
+  REMOVED_MODULES,
 } from "./modules";
 import { WHATSAPP_MODULES, getModule, grantableApps, writeModuleOf } from "./modules";
 import { NAV, PINNED, navHrefs as crmNavHrefs } from "@/components/shell/nav";
@@ -43,6 +44,19 @@ describe("what a module grant means", () => {
     const granted = ["accounts.approvals"];
     assert.equal(moduleAllowed("crm.call-log", granted, "crm"), true);
     assert.equal(moduleAllowed("accounts.bills", granted, "accounts"), false);
+  });
+
+  it("a row for a REMOVED screen still narrows its app, and opens nothing", () => {
+    // Somebody whose only ERP row named My customers must not fall through to
+    // "no rows, so the whole ERP" the day that screen was taken out.
+    for (const gone of Object.keys(REMOVED_MODULES)) {
+      assert.equal(getModule(gone), undefined, `${gone} is still in the registry`);
+    }
+    assert.equal(moduleAllowed("erp.orders", ["erp.myCustomers"], "erp"), false);
+    assert.equal(moduleAllowed("erp.customers", ["erp.priceLists", "erp.customers"], "erp"), true);
+    assert.equal(moduleAllowed("erp.orders", ["erp.priceLists", "erp.customers"], "erp"), false);
+    // ...and only its own app.
+    assert.equal(moduleAllowed("crm.call-log", ["erp.myCustomers"], "crm"), true);
   });
 
   it("an administrator holds every offByDefault module whatever the rows say, except an explicitOnly one, and nothing else beyond them", () => {

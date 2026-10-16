@@ -6,7 +6,6 @@ The Masters decide what every later record can say. Three principles run through
 |---|---|---|
 | Sales parties | MahekOne's `customers` | An ERP profile: state, transporter, weight type, segment, counter types, grade, standing instructions, allocation email, and whether it is **pending activation** |
 | Products | The catalogue's SKUs | Packing: the can or drum it is filled into, empty boxes per box, box type, box rate |
-| Price lists | The Price Desk's published lists | Nothing — read only |
 | Godown staff | People who hold the ERP | Which godowns each may work at |
 | Raw materials, Purchase parties, Godowns | The ERP's own | — |
 
@@ -84,24 +83,16 @@ Deactivate sets the MahekOne customer to `deactivated`, with "Deactivated in the
 - The list holds every MahekOne **customer**, plus every lead that has an ERP profile.
 - A customer's **monthly target** is the CRM's Monthly Targets figure for this month, shown only with the sales-amounts power — the ERP keeps no target of its own.
 
-## My customers
-
-The customers whose sales seat is you, or whose sales person name is your name. Their complaints are the CRM's complaints — one record, whichever app raised it — so the open count matches what the telecaller sees. The tagged person may edit their details except GST number, company name, segment, standing instructions and allocation email; the save re-checks that the customer is still tagged to them.
-
 ## Godowns
 
 <Rule title="Item Lost Record is a real, reserved godown">
-Stock written off is moved **into** a reserved godown rather than simply vanishing, so every ledger records the loss. It cannot be edited or switched off, and only somebody with the write-off power may pick it on a form.
+Stock written off is moved **into** a reserved godown rather than simply vanishing, so every ledger records the loss. It is not listed on the Godowns screen, cannot be edited or switched off, and only somebody with the write-off power may pick it on a form.
 </Rule>
 
 - Registering, editing, switching off and assigning staff need the **ERP administration** power.
 - A godown's name is unique (ignoring capitals).
 - **Assigned employees** are chosen from people who hold the ERP; the working location is picked from these.
 - The **map pin** lets the ERP find the godown from where somebody stands; the fence is <Setting k="erp.location.godownRadiusM" /> metres.
-
-## Price lists
-
-The ERP reads the **published** lists of the Price Desk. Where a list states only one of the two rates, the other is worked out at 18% GST. The sales rate is visible only with the sales-rate power.
 
 ## Reference lists
 
@@ -116,15 +107,11 @@ Sixteen open lists a manager can grow without a deploy. A value is **retired**, 
 | Purchase parties | Anyone holding the screen | Retire / restore: anyone holding the screen | — |
 | Products (packing) | Anyone holding the screen | — | Box rate: cost and margin |
 | Sales parties | Anyone holding the screen | Customer status power | Monthly target: sales amounts |
-| My customers | The tagged sales person | — | — |
 | Godowns | ERP administration power | ERP administration power | — |
-| Price lists | Read only (Price Desk) | — | Rates: sales rate |
 | Reference lists | Anyone holding the screen | Anyone holding the screen | — |
 
 ## Where the code and the intent disagree today
 
 - A raw material's name is refused if **any** category already uses it, while the requirement form is written to tell apart two items that share a name across categories ("name · category") — a situation the save never lets arise.
 - "Item code" is marked required on the form but the save accepts an item without one, and the lot number is then built without it.
-- **My customers** shows each customer's monthly target to the tagged person without the sales-amounts power that hides the same figure on Sales parties.
-- The **tagged sales person** can change their own customers' credit days, and clearing the field saves it empty rather than keeping the old term.
-- Price lists show one discount per list, whichever discount term is read first, where a list may have several.
+- Clearing credit days on a sales party saves it empty rather than keeping the old term.

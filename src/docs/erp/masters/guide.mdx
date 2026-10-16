@@ -1,14 +1,14 @@
-The Masters are the lists every other ERP screen picks from: what the business buys, who it buys from, what it makes, who it sells to, where it keeps stock, at what price, and the small value lists behind every drop-down. Get these right and every form further on fills itself in; get one wrong and every record that names it carries the mistake.
+The Masters are the lists every other ERP screen picks from: what the business buys, who it buys from, what it makes, who it sells to, where it keeps stock, and the small value lists behind every drop-down. Get these right and every form further on fills itself in; get one wrong and every record that names it carries the mistake.
 
 <Callout kind="note">
-Several of these are not the ERP's own lists. **Sales parties** are MahekOne's customers, **Products** are the catalogue's SKUs, and **Price lists** are the Price Desk's. The ERP adds what it needs beside them — so a change you make here is seen in the CRM and Accounts too.
+Several of these are not the ERP's own lists. **Sales parties** are MahekOne's customers and **Products** are the catalogue's SKUs. The ERP adds what it needs beside them — so a change you make here is seen in the CRM and Accounts too.
 </Callout>
 
 ## Raw materials
 
 Every item the business buys: chemicals, cans, drums, boxes, packing stationery.
 
-<Wireframe url="/erp/raw-materials" nav={["Dashboard", "#Masters", "Raw materials", "Purchase parties", "Products", "Sales parties", "Godowns", "Price lists", "Reference lists"]} active="Raw materials" caption="Raw materials, grouped by material type">
+<Wireframe url="/erp/raw-materials" nav={["Dashboard", "#Masters", "Raw materials", "Purchase parties", "Products", "Sales parties", "Godowns", "Reference lists"]} active="Raw materials" caption="Raw materials, grouped by material type">
   <WfBar>
     <WfTitle sub="Every material the business buys. Chemicals carry a density and the tests each lot must pass.">Raw materials</WfTitle>
     <WfSpacer /><WfButton primary>New raw material</WfButton><Hotspot n={1} />
@@ -108,21 +108,13 @@ MahekOne's customers, as the ERP sees them, grouped by status.
 
 **Edit details** changes the grade, area, location, state, transporter, payment type (Paid / To Pay), delivery type (Door / Godown), weight type, contacts, counter types, credit days, segment, standing instructions, GST number and company name. Emptying the city or the mobile keeps what was there, because the CRM needs both.
 
-## My customers
-
-The customers tagged to **you** as their sales person, with their grade, area, transport, payment type, credit days, this month's target and how many of their complaints are still open. Open one to see their latest complaints, call them, or edit their details. You may edit the same fields as on Sales parties except the GST number, company name, segment, standing instructions and allocation email.
-
 ## Godowns
 
 Every godown by region, with the address, map pin and the people assigned to it. Only an ERP administrator registers, edits, switches off a godown or assigns its employees.
 
 - **Assign employees** decides who may choose it as their working location. Only people who hold the ERP are listed.
 - **Latitude and longitude** are the map pin. Without one, the ERP cannot find the godown by where somebody is standing.
-- **Item Lost Record** is a reserved godown. It cannot be edited or switched off, and stock goes into it only as a write-off — see [Stock](/docs/erp/stock).
-
-## Price lists
-
-A read-only view of every **published** price list from the Price Desk: list, product, rate including GST and excluding GST, and discount. Rates are visible only with the sales-rate power. Lists are written and published on the Price Desk, never here — see [Price lists in the CRM](/docs/crm/price-lists).
+- **Item Lost Record**, where written-off stock goes, is not listed here. It still appears on a transfer form for whoever holds the write-off power — see [Stock](/docs/erp/stock).
 
 ## Reference lists
 

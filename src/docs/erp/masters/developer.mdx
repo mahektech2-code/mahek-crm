@@ -1,11 +1,10 @@
-The Masters are seven screen modules in `lib/erp/screens/masters.ts` (raw materials, purchase parties, products, sales parties, godowns, price lists, reference lists) plus **My customers** in `screens/logistics.ts`. Three of them write MahekOne's own tables (`customers`, and the catalogue's `products` through a side table); the rest write `erp_*` tables. Per-material duties are pure in `lib/erp/material-duties.ts` and wired in `material-duties-server.ts`.
+The Masters are six screen modules in `lib/erp/screens/masters.ts` (raw materials, purchase parties, products, sales parties, godowns, reference lists). Three of them write MahekOne's own tables (`customers`, and the catalogue's `products` through a side table); the rest write `erp_*` tables. Per-material duties are pure in `lib/erp/material-duties.ts` and wired in `material-duties-server.ts`.
 
 ## Map of the code
 
 | Layer | File | What lives there |
 |---|---|---|
-| Screen modules | `src/lib/erp/screens/masters.ts` | `rawMaterials`, `suppliers`, `productsScreen`, `customersScreen`, `godowns`, `priceListsScreen`, `refListsScreen` |
-| My customers | `src/lib/erp/screens/logistics.ts` | `myCustomers` — reads `loadCustomers` narrowed to the person, edits through `saveCustomerDetails(…, mine = true)` |
+| Screen modules | `src/lib/erp/screens/masters.ts` | `rawMaterials`, `suppliers`, `productsScreen`, `customersScreen`, `godowns`, `refListsScreen` |
 | Value lists | `src/lib/erp/refs.ts` | `REF_LISTS` (open, in `erp_ref_values`), `refValues`, and the fixed lists (`RM_UNITS`, `BOX_TYPES`, `GRADES`, `REGIONS`…) |
 | Purchase rule | `src/lib/erp/engines/purchase-flow.ts` | `PURCHASE_METHODS`, `methodLabel`, `methodByLabel` |
 | Duties (pure) | `src/lib/erp/material-duties.ts` | `MATERIAL_DUTIES`, `dutyAllows`, `dutyAllowsAll`, `dutyRefusal`, `dutyBookFrom` |
@@ -120,12 +119,10 @@ New customers are inserted as `kind = 'lead'`, `status = 'active'`, `lead_source
 | <ModuleRef k="erp.suppliers" /> | Purchase parties |
 | <ModuleRef k="erp.products" /> | Products |
 | <ModuleRef k="erp.customers" /> | Sales parties |
-| <ModuleRef k="erp.myCustomers" /> | My customers |
 | <ModuleRef k="erp.godowns" /> | Godowns |
-| <ModuleRef k="erp.priceLists" /> | Price lists |
 | <ModuleRef k="erp.refLists" /> | Reference lists |
 
-Powers checked in these handlers: `viewPurchaseMoney` (raw material price), `viewCost` (box rate), `viewSalesRate` (price list rates), `viewSalesAmounts` (monthly target on Sales parties), `customerStatus`, `employeeAdmin` (godowns and staff).
+Powers checked in these handlers: `viewPurchaseMoney` (raw material price), `viewCost` (box rate), `viewSalesAmounts` (monthly target on Sales parties), `customerStatus`, `employeeAdmin` (godowns and staff).
 
 ## Tests that pin this
 
@@ -157,8 +154,5 @@ Mark it `pw` with the power that reveals it, and make the save leave it alone fo
 |---|---|
 | Raw material name uniqueness is across all categories, but `itemPickLabels` is written for names shared across categories | `screens/masters.ts` `saveRawMaterial`; `engines/purchase-flow.ts` `itemPickLabels` |
 | Item code is `req` on the form only; the save stores null and the lot number is built without it | `saveRawMaterial`; `engines/purchase.ts` `lotNumber` |
-| My customers shows `monthlyTargetPaise` with no `viewSalesAmounts` check | `screens/logistics.ts` `myCustomers` |
 | Clearing credit days on a customer saves null (city and phone are protected; credit days is not) | `saveCustomerDetails` |
-| A price list's discount is the first `price_list_discount_terms` row read, with no ordering | `priceListsScreen` |
-| The 18% used to derive a missing incl./excl. rate is a literal | `priceListsScreen` |
 | Retire / restore on raw materials and suppliers, and every reference-list change, need only the screen | `masters.ts` actions |

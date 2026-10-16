@@ -792,7 +792,7 @@ export const DOC_APPS: DocApp[] = [
         title: "Masters",
         summary: "Raw materials, suppliers, products, sales parties, godowns, price lists and reference lists.",
         group: "Masters",
-        modules: ["erp.rawMaterials", "erp.suppliers", "erp.products", "erp.customers", "erp.myCustomers", "erp.godowns", "erp.priceLists", "erp.refLists"],
+        modules: ["erp.rawMaterials", "erp.suppliers", "erp.products", "erp.customers", "erp.godowns", "erp.refLists"],
         written: ALL,
       },
       {

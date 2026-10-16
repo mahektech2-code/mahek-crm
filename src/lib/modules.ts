@@ -1110,6 +1110,20 @@ const BY_KEY = new Map(APP_MODULES.map((m) => [m.key, m]));
 export const RETIRED_MODULES: Readonly<Record<string, string>> = {};
 
 /**
+ * KEYS REMOVED WITH NOTHING TO REPLACE THEM, and the app each belonged to.
+ *
+ * The same widening trap as above, without a successor to translate to. A
+ * person narrowed to ERP screens that included one of these must stay narrowed
+ * to the rest, not fall through to "no rows, so the whole app" — so a stored
+ * row naming one still counts as a narrowing of its app, and opens nothing.
+ */
+export const REMOVED_MODULES: Readonly<Record<string, AppId>> = {
+  /* Masters → My customers and Price lists, taken out of the ERP on 2026-10-15. */
+  "erp.myCustomers": "erp",
+  "erp.priceLists": "erp",
+};
+
+/**
  * Modules a holder of the app reaches WHATEVER was ticked — HRMS's check-in
  * screen, the ERP's dashboard and settings. Their own apps enforce this
  * (`lib/hrms/access.ts`, `lib/erp/access.ts`); it is read here so the Access
@@ -1221,7 +1235,8 @@ export function moduleAllowed(
   const parent = getModule(key)?.writeOf;
   if (parent && !moduleAllowed(parent, granted, app, administrator)) return false;
   if (administrator && getModule(key)?.offByDefault) return true;
-  return forApp.length === 0 || forApp.includes(key);
+  const narrowed = forApp.length > 0 || granted.some((g) => REMOVED_MODULES[g] === app);
+  return !narrowed || forApp.includes(key);
 }
 
 /** The write companion of a module, where it has one. */

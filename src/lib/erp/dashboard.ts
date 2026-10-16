@@ -1,13 +1,11 @@
 import "server-only";
-import { eq, or, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { db } from "@/db";
-import { customers } from "@/db/schema";
 import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
 import type { ErpContext } from "./access";
 import { visibleAlerts } from "./alerts";
 import { incompletePackIds } from "./counts";
 import { ALERT_LABEL, type AlertKind } from "./engines/alerts";
-import { monthId, targetReached } from "./engines/sales";
 import { erpLink } from "./registry";
 import { today } from "./screens/common";
 import { purchaseOrderViews, requirementWork } from "./screens/purchase-flow";
@@ -470,19 +468,6 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
   if (has("customers") && pw("customerStatus")) {
     const pending = (await loadCustomers()).filter((c) => partyStatus(c) === "Pending");
     cust.push({ l: "Customers pending activation", v: String(pending.length), sub: "an admin activates them", tone: pending.length ? "warn" : undefined, href: tileHref("customers", pending.map((c) => c.id), "Pending") });
-  }
-  if (has("myCustomers")) {
-    const mine = await loadCustomers(or(eq(customers.salesAmId, ctx.user.id), sql`lower(${customers.salesPersonName}) = lower(${ctx.user.name})`));
-    const { rows } = await details();
-    const mid = monthId(day);
-    const withTarget = mine.filter((c) => (c.monthlyTargetPaise ?? 0) > 0);
-    const reached = withTarget.filter((c) =>
-      targetReached(
-        rows.filter((r) => r.l.o.billingCustomerId === c.id && r.monthId === mid).reduce((a, r) => a + (r.amount ?? 0), 0),
-        c.monthlyTargetPaise,
-      ),
-    );
-    cust.push({ l: "My customers at target", v: `${reached.length} of ${withTarget.length}`, sub: `this month · ${plural(mine.length, "customer")} tagged to you`, href: tileHref("myCustomers", null, "") });
   }
   push("Customers", cust);
 

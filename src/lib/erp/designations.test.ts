@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { moduleKeysForApp } from "../modules";
+import { moduleKeysForApp, REMOVED_MODULES } from "../modules";
 import { ERP_POWERS } from "./powers";
 import {
   designationShape,
@@ -71,7 +71,10 @@ test("every screen and power the seed migration names is real", () => {
   const modules = [...sql.matchAll(/\('erpd_\w+', '(erp\.\w+)'\)/g)].map((m) => m[1]);
   const powers = [...sql.matchAll(/\('erpd_\w+', '(\w+)'\)/g)].map((m) => m[1]).filter((p) => !p.startsWith("erp"));
   assert.ok(modules.length > 30 && powers.length > 10, "the seed was read");
-  assert.deepEqual(modules.filter((k) => !ALL.includes(k)), [], "screens the ERP does not have");
+  /* A screen taken out later is removed from the templates by its own
+     migration (0268 for My customers and Price lists), and listed in
+     REMOVED_MODULES so a stored row of it narrows rather than widens. */
+  assert.deepEqual(modules.filter((k) => !ALL.includes(k) && !(k in REMOVED_MODULES)), [], "screens the ERP does not have");
   assert.deepEqual(modules.filter((k) => k === "erp.dashboard" || k === "erp.settings"), [], "always-open screens are never stored");
   assert.deepEqual(powers.filter((p) => !(ERP_POWERS as readonly string[]).includes(p)), [], "powers the ERP does not have");
 });
