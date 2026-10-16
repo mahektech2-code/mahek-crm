@@ -4,7 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { appModuleAccess, erpUserPowers } from "@/db/schema";
 import type { AppId } from "@/lib/apps";
-import { moduleKeysForApp } from "@/lib/modules";
+import { isWholeApp } from "@/lib/modules";
 
 /* ---------------------------------------------------------------------------
  * The two writes every path that changes somebody's access goes through — the
@@ -20,16 +20,20 @@ export type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 /**
  * Write one app's module rows.
  *
- * Every module ticked stores NO rows rather than a row each. That is what
- * makes "the whole app" a single fact instead of fourteen that can go stale:
- * add a fifteenth screen to the CRM tomorrow and everybody who holds the whole
- * app gets it, while everybody who was deliberately narrowed does not — which
- * is what both of those decisions meant.
+ * Every ordinary module ticked stores NO rows rather than a row each. That is
+ * what makes "the whole app" a single fact instead of fourteen that can go
+ * stale: add a fifteenth screen to the CRM tomorrow and everybody who holds the
+ * whole app gets it, while everybody who was deliberately narrowed does not —
+ * which is what both of those decisions meant.
+ *
+ * An `explicitOnly` module is the exception: no rows never means it, so a save
+ * that ticks one stores rows (see `isWholeApp`). Collapsing it to "no rows"
+ * used to drop it without a word, and the audit still read "13/13".
  */
 export async function writeModules(tx: Tx, userId: string, app: AppId, modules: string[], grantedById: string) {
   await tx.delete(appModuleAccess).where(and(eq(appModuleAccess.userId, userId), eq(appModuleAccess.app, app)));
 
-  if (modules.length >= moduleKeysForApp(app).length) return;
+  if (isWholeApp(app, modules)) return;
 
   await tx.insert(appModuleAccess).values(
     modules.map((module) => ({
