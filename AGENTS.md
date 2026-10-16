@@ -9074,6 +9074,44 @@ warm). Add a question there whenever a search goes wrong; lower neither bar.
 disagree, the How it works and Developer tabs say so under "Where the code and
 the intent disagree today", rather than documenting the intent as if it shipped.
 
+**AN ERP LIST SENDS ONE PAGE, NEVER THE LIST.** The generic list searched,
+sorted, grouped and paged in the browser over every row the server sent, and
+on the real book that was every row there is: the SFG batch screen was 34 MB of
+HTML, each of ten thousand lines carrying its drawer and its actions, to draw
+twenty-five of them. The search, the chip, the godown, grouping, the sort and
+the page now travel in the URL; `[slug]/page.tsx` runs `pageOf` in
+`lib/erp/list-query.ts` over the module's rows and sends one page, the counts
+the toolbar needs, and each group on the page WHOLE — its count, its aggregate
+and every id, so "Select all 14" on a group still means fourteen. Export and
+"Select all" across pages ask the server (`erpListExport`, `erpListIds`) under
+the same reading. HRMS and the other short lists still send every row and run
+the SAME `pageOf` in the browser, so a search cannot answer differently
+depending on which side ran it.
+
+**A PAGE ASKS EACH LEDGER ONCE.** Stock is added up from the whole history of
+its ledger, and a screen asks for it through several doors at once — its rows,
+its form's lot picker, a rate behind a costing column — so the SFG screen read
+the raw-material ledger five times for one page. `withReadMemo` around a page's
+reads (`lib/erp/read-memo.ts`) answers an identical statement once. Only a page
+opens one, because a page writes nothing; a server action never runs inside it.
+
+**AND A LEDGER NOTHING HAS WRITTEN TO IS NOT ADDED UP AGAIN.**
+`lib/erp/ledger-cache.ts` keeps each stock statement's answer between requests
+under a stamp: the count and highest id of `erp_ledger_ticks`, which a STATEMENT
+TRIGGER on every table those reads touch appends to (`0269`). The stamp is read
+in the reader's own snapshot, so it moves only once a write has committed —
+from the factory app, the dispatch desk, a terminal import, anything — and
+nothing in the app has to remember to invalidate it. A table a stock read
+starts reading must get the trigger too, or that read goes stale silently. A
+read on a transaction never touches the cache: whatever is about to spend stock
+reads it afresh under its lock. The nightly prunes ticks older than two days;
+pruning moves the stamp, which costs one re-read.
+
+**`toLocaleString` with options builds a formatter per call.** `nf`, `inrRate`
+and `stampLine` are called several times a row, and on ten thousand rows the
+formatters alone were half a second. They hold one `Intl` formatter each now;
+a new number or date helper on a list path should do the same.
+
 ## Testing
 
 `npm run test` runs the engine tests: pure, fast, no database. They pin the

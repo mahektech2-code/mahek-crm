@@ -14,7 +14,9 @@ import { err, fromThrown, okVoid, ok, type Result } from "@/lib/result";
 import { ErpNotPermitted, VIEW_AS_COOKIE, erpContext, isErpAdministrator, previewRefusal, requireErpForm, requireErpWrite, setTestViewAs } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
 import { erpScreen, erpHref, erpLink } from "@/lib/erp/registry";
-import type { FormSpec } from "@/lib/erp/ui";
+import { FLAG, type FormSpec } from "@/lib/erp/ui";
+import { listCsv, parseListQuery, queryRows } from "@/lib/erp/list-query";
+import { withReadMemo } from "@/lib/erp/read-memo";
 import { erpAudit } from "@/lib/erp/server";
 
 /* ---------------------------------------------------------------------------
@@ -110,6 +112,35 @@ export async function erpLoadForm(screen: string, action: string, id: string): P
     const spec = await loader(ctx, id);
     if (!spec) return err("That record no longer exists.", "not_found");
     return ok(spec);
+  } catch (e) {
+    return refused(e);
+  }
+}
+
+/**
+ * A paged list's whole filtered set, read the way the page read it: the list
+ * in the browser holds one page, so exporting it or selecting every row asks
+ * the server for the rest. Read access only — the screen held, nothing more.
+ */
+export async function erpListExport(screen: string, query: Record<string, string>): Promise<Result<{ csv: string; n: number }>> {
+  try {
+    const ctx = await requireErpForm(screen);
+    const mod = screenModule(screen);
+    if (!mod) return err("That list is not available.", "not_found");
+    const { spec, rows } = await withReadMemo(() => mod.load(ctx));
+    return ok(listCsv(spec, rows, parseListQuery(query), FLAG));
+  } catch (e) {
+    return refused(e);
+  }
+}
+
+export async function erpListIds(screen: string, query: Record<string, string>): Promise<Result<string[]>> {
+  try {
+    const ctx = await requireErpForm(screen);
+    const mod = screenModule(screen);
+    if (!mod) return err("That list is not available.", "not_found");
+    const { spec, rows } = await withReadMemo(() => mod.load(ctx));
+    return ok(queryRows(spec, rows, parseListQuery(query), FLAG).list.map((r) => r.id));
   } catch (e) {
     return refused(e);
   }

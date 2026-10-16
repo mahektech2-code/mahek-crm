@@ -4,6 +4,7 @@ import {
   integer,
   smallint,
   bigint,
+  bigserial,
   numeric,
   boolean,
   doublePrecision,
@@ -15008,6 +15009,19 @@ export const factorySubmissions = pgTable(
  * after a dropped answer is answered from `result` rather than raising the
  * same requirement twice. `processing` holds the key while the first send runs.
  */
+/**
+ * One row per statement that wrote to a table the stock reads touch, added by
+ * a trigger (`0269_erp_ledger_ticks.sql`) — never by the app. Its count and
+ * highest id are the stamp `lib/erp/ledger-cache.ts` keeps a stock read under,
+ * so a cached read is dropped the moment any committed write could have
+ * changed it. Pruned nightly; pruning changes the stamp, which costs one
+ * re-read and nothing else.
+ */
+export const erpLedgerTicks = pgTable("erp_ledger_ticks", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const factoryRequirementSends = pgTable("factory_requirement_sends", {
   key: text("key").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id),

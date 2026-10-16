@@ -1,6 +1,8 @@
 import "server-only";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
+import { readOnce } from "./read-memo";
+import { ledgerRead } from "./ledger-cache";
 import { fillFigures, packCosting, boxFigures, sfgRate } from "./engines/production";
 import { landingFigures, shareInwardCost } from "./engines/purchase";
 
@@ -30,6 +32,10 @@ const r3 = (v: number) => Math.round(v * 1000) / 1000;
 export type Ex = { execute: (q: ReturnType<typeof sql>) => Promise<unknown> };
 
 async function rows<T>(q: ReturnType<typeof sql>, ex: Ex = db): Promise<T[]> {
+  /* On the pool, a page asks each ledger once however many doors ask
+     (`read-memo.ts`), and a ledger nothing has written to since the last ask
+     is not added up again (`ledger-cache.ts`). On a transaction, always afresh. */
+  if (ex === db) return readOnce(q, () => ledgerRead(q, async () => (await db.execute(q)) as unknown as T[]));
   return (await ex.execute(q)) as unknown as T[];
 }
 
@@ -189,7 +195,12 @@ export async function rmLots(ex: Ex = db): Promise<RmLot[]> {
    */
   const used = await packingUse(ex);
   const byItem = new Map<string, typeof lots>();
-  for (const l of lots) byItem.set(`${l.rawMaterialId}|${l.godownId}`, [...(byItem.get(`${l.rawMaterialId}|${l.godownId}`) ?? []), l]);
+  for (const l of lots) {
+    const k = `${l.rawMaterialId}|${l.godownId}`;
+    const at = byItem.get(k);
+    if (at) at.push(l);
+    else byItem.set(k, [l]);
+  }
   for (const [k, n] of used) {
     const list = (byItem.get(k) ?? []).sort((a, b) => a.firstDate.localeCompare(b.firstDate) || a.lotNo.localeCompare(b.lotNo));
     if (!list.length) continue;

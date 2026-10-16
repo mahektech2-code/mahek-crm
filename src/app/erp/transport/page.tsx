@@ -8,6 +8,9 @@ import { refValues } from "@/lib/erp/refs";
 import { consignments, lrUploadKit, messages, placeOptions, transporters, uploadedLrs } from "@/lib/erp/logistics";
 import { today as businessToday } from "@/lib/erp/screens/common";
 import { ListScreen, ListTabs } from "../_ui/list-screen";
+import { pageOf, parseListQuery } from "@/lib/erp/list-query";
+import { withReadMemo } from "@/lib/erp/read-memo";
+import { FLAG } from "@/lib/erp/ui";
 import { screenTabs } from "../_ui/screen-tabs";
 import { Page } from "../_ui/page-head";
 import { LrDesk } from "./parts/lr-desk";
@@ -54,14 +57,20 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
   if (!BOARD.has(view)) {
     const mod = screenModule(view);
     if (!mod) notFound();
-    const { spec, rows } = await mod.load(ctx);
+    const { spec, rows } = await withReadMemo(() => mod.load(ctx));
     const f = one("f");
+    /* One page travels, as on every other ERP list (`[slug]/page.tsx`). */
+    const query = parseListQuery(raw);
+    const page = pageOf(spec, rows, query, FLAG);
+    const open = one("open");
     return (
       <ListScreen
-        key={`${view}|${f ?? ""}`}
+        key={`${view}|${f ?? ""}|${open ?? ""}`}
         initialNew={null}
         spec={spec}
-        rows={rows}
+        rows={page.rows}
+        server={{ ...page, query }}
+        openRow={open ? (rows.find((r) => r.id === open) ?? null) : null}
         label={screen.label}
         sub={screen.sub}
         tabs={tabs}

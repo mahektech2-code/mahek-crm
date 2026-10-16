@@ -6,6 +6,7 @@ import { isErpAdministrator, requireErpApp } from "@/lib/erp/access";
 import { erpPreviewTargets } from "@/lib/services/erp-designation-service";
 import { ERP_GROUPS, erpHref, erpKeysOf } from "@/lib/erp/registry";
 import { erpNavCounts } from "@/lib/erp/counts";
+import { withReadMemo } from "@/lib/erp/read-memo";
 import { getConfig } from "@/lib/config/store";
 import { featureState } from "@/lib/erp/ai";
 import { listNotifications } from "@/lib/queries";
@@ -26,7 +27,7 @@ export default async function ErpLayout({ children }: { children: React.ReactNod
   const [apps, ownHat, counts, config, askState, notifications, canPreview] = await Promise.all([
     listUserApps(ctx.actor.id),
     hatForHeader(ctx.actor, "erp"),
-    erpNavCounts(ctx),
+    withReadMemo(() => erpNavCounts(ctx)),
     getConfig(),
     featureState("ask", true),
     listNotifications(ctx.actor.id),

@@ -462,15 +462,22 @@ export function inrRate(paise: CellValue | undefined): string {
   const n = Number(paise);
   if (!Number.isFinite(n)) return String(paise);
   const r = n / 100;
-  return (r < 0 ? "−" : "") + "₹" + Math.abs(r).toLocaleString("en-IN", { minimumFractionDigits: Number.isInteger(r) ? 0 : 2, maximumFractionDigits: 2 });
+  return (r < 0 ? "−" : "") + "₹" + (Number.isInteger(r) ? RATE_WHOLE : RATE_PAISE).format(Math.abs(r));
 }
 
 /** 12345.5 → "12,345.5" in Indian grouping, up to two decimals. */
+/* One formatter, built once. `toLocaleString` with options builds a fresh
+   Intl formatter on EVERY call, and a list of ten thousand rows formats a
+   number several times a row — that alone was half a second of a page load. */
+const NF = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 });
+const RATE_WHOLE = new Intl.NumberFormat("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+const RATE_PAISE = new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 export function nf(v: CellValue | undefined): string {
   if (v == null || v === "") return "";
   const n = Number(v);
   if (!Number.isFinite(n)) return String(v);
-  return n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
+  return NF.format(n);
 }
 
 export function cellText(col: ColSpec, v: CellValue | undefined): string {

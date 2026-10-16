@@ -4,6 +4,9 @@ import { erpScreenBySlug } from "@/lib/erp/registry";
 import { screenModule } from "@/lib/erp/screens";
 import { ListScreen } from "../_ui/list-screen";
 import { screenTabs } from "../_ui/screen-tabs";
+import { LIST_QUERY_KEYS, pageOf, parseListQuery } from "@/lib/erp/list-query";
+import { FLAG } from "@/lib/erp/ui";
+import { withReadMemo } from "@/lib/erp/read-memo";
 
 /**
  * Every list screen in the ERP. The screen's module on the server decides the
@@ -28,7 +31,7 @@ export default async function ErpScreenPage({
   const sp = { f: one("f"), fl: one("fl"), open: one("open"), view: one("view"), new: one("new") };
   /* `?new=1&department=…&type=…` opens the new form with those answers in it;
      the list keeps only the keys that are fields of its form. */
-  const RESERVED = new Set(["f", "fl", "open", "view", "new"]);
+  const RESERVED = new Set<string>(["f", "fl", "open", "view", "new", ...LIST_QUERY_KEYS]);
   const initialNew = sp.new
     ? Object.fromEntries(Object.entries(raw).filter((e): e is [string, string] => !RESERVED.has(e[0]) && typeof e[1] === "string"))
     : null;
@@ -44,19 +47,25 @@ export default async function ErpScreenPage({
   const mod = screenModule(key);
   if (!mod) notFound();
 
-  const { spec, rows } = await mod.load(ctx);
+  const [{ spec, rows }, { tabs, toggle }] = await withReadMemo(() => Promise.all([mod.load(ctx), screenTabs(ctx, screen, key)]));
   /* A dashboard tile opens its list pre-filtered: `f` is the ids it counted,
      `fl` what to call them. */
   const filter = sp.f ? { label: sp.fl ?? "Filtered", ids: sp.f.split(",") } : null;
-
-  const { tabs, toggle } = await screenTabs(ctx, screen, key);
+  /* ONE PAGE travels, never the list. The search, the chip, the sort and the
+     page are in the URL and read here; the browser is sent the twenty-five
+     rows it draws and what it needs to say about the rest. */
+  const query = parseListQuery(raw);
+  const page = pageOf(spec, rows, query, FLAG);
+  const openRow = sp.open ? (rows.find((r) => r.id === sp.open) ?? null) : null;
 
   return (
     <ListScreen
       key={`${key}|${sp.open ?? ""}|${sp.f ?? ""}`}
       initialNew={initialNew}
       spec={spec}
-      rows={rows}
+      rows={page.rows}
+      server={{ ...page, query }}
+      openRow={openRow}
       label={screen.label}
       sub={screen.sub}
       tabs={tabs}

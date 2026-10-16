@@ -70,9 +70,42 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
   const lines = memo(orderLines);
   const details = memo(detailRows);
 
+  /*
+   * EVERY READ STARTS NOW, TOGETHER. The sections below are drawn in order and
+   * used to read in order too — fifteen round trips, each waiting for the one
+   * before, on the page everybody opens first. Each is started here, once,
+   * for exactly the sections this person holds, and a section awaits its own.
+   */
+  const start = <T,>(on: boolean, f: () => Promise<T>): Promise<T> | null => {
+    if (!on) return null;
+    const p = f();
+    p.catch(() => {});
+    return p;
+  };
+  const stockStages: Record<string, () => Promise<{ godown: string; stock: number; value: number | null }[]>> = {
+    rmStock: async () => (await rmLots()).map((l) => ({ godown: l.godown, stock: l.stock, value: l.ratePaise == null ? null : l.ratePaise * l.stock })),
+    sfgStock: async () => (await sfgLots()).map((l) => ({ godown: l.godown, stock: l.stock, value: l.ratePaise == null ? null : l.ratePaise * l.stock })),
+    fgStock: async () => (await fgLots()).map((l) => ({ godown: l.godown, stock: l.stock, value: l.perCanPaise == null ? null : l.perCanPaise * l.stock })),
+    packStock: async () => (await packLots()).map((l) => ({ godown: l.godown, stock: l.stock, value: l.perBoxPaise == null ? null : l.perBoxPaise * l.stock })),
+  };
+  const pre = {
+    alerts: start(has("alerts"), () => visibleAlerts(ctx.screens, ctx.powers, "open")),
+    control: start(has("stockCheck"), () => Promise.all([controlWork(), fullCountDue(), openMismatches()])),
+    work: start(has("requisitions"), () => requirementWork(ctx)),
+    pos: start(has("purchaseOrders"), () => purchaseOrderViews({ status: ["Pending approval", "Approved", "Sent", "Partly received"] })),
+    stock: Object.fromEntries(Object.entries(stockStages).map(([k, f]) => [k, start(has(k), f)])),
+    incomplete: start(has("packBatches"), () => incompletePackIds()),
+    reorderRm: start(has("reorderRm"), () => rmReorderRows()),
+    reorderFg: start(has("reorderFg"), () => fgReorderRows()),
+    lines: start(["orders", "pendingOrders", "readyOrders", "labels"].some(has), lines),
+    details: start(has("orderDetails"), details),
+    returns: start(has("vendorReturns") || has("customerReturns"), () => returnsSummary()),
+    customers: start(has("customers") && pw("customerStatus"), () => loadCustomers()),
+  };
+
   /* ============================================================ alerts */
   if (has("alerts")) {
-    const alerts = await visibleAlerts(ctx.screens, ctx.powers, "open");
+    const alerts = (await pre.alerts)!;
     const by = new Map<string, string[]>();
     alerts.forEach((a) => by.set(a.kind, [...(by.get(a.kind) ?? []), a.id]));
     push(
@@ -97,7 +130,7 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
        (`accuracyFlow`), drawn for exactly the people this section is. Listing
        them here again put every one of those numbers on the screen twice.
        This section carries what the strip does not. */
-    const [w, full, mism] = await Promise.all([controlWork(), fullCountDue(), openMismatches()]);
+    const [w, full, mism] = (await pre.control)!;
     const ids = (l: { id: string; godown: string }[]) => l.filter((x) => inG(x.godown)).map((x) => x.id);
     const acc: Tile[] = [];
     const mis = ids(mism);
@@ -113,7 +146,7 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
   const purchase: Tile[] = [];
   /* THE PURCHASE FLOW, one tile per step that is waiting on somebody. */
   if (has("requisitions")) {
-    const work = await requirementWork(ctx);
+    const work = (await pre.work)!;
     const ids = (stage: string) => (work[stage] ?? []).filter((r) => inG(r.godown)).map((r) => r.id);
     const tile = (stage: string, l: string, sub: string, tone: Tone | undefined, always = false) => {
       const list = ids(stage);
@@ -136,7 +169,7 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
     if (late.length) purchase.push({ l: "Requirements past their date", v: String(late.length), sub: "required by a date already gone", tone: "danger", href: tileHref("requisitions", late, "Past its required date") });
   }
   if (has("purchaseOrders")) {
-    const pos = (await purchaseOrderViews({ status: ["Pending approval", "Approved", "Sent", "Partly received"] })).filter((p) => inG(p.godown));
+    const pos = (await pre.pos)!.filter((p) => inG(p.godown));
     const by = (st: string) => pos.filter((p) => p.po.status === st).map((p) => p.po.id);
     purchase.push({
       l: "POs awaiting approval",
@@ -196,15 +229,15 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
 
   /* ============================================================= stock */
   const stock: Tile[] = [];
-  const stages: { key: string; label: string; unit: string; load: () => Promise<{ godown: string; stock: number; value: number | null }[]> }[] = [
-    { key: "rmStock", label: "Raw material", unit: "", load: async () => (await rmLots()).map((l) => ({ godown: l.godown, stock: l.stock, value: l.ratePaise == null ? null : l.ratePaise * l.stock })) },
-    { key: "sfgStock", label: "SFG", unit: "Ltr", load: async () => (await sfgLots()).map((l) => ({ godown: l.godown, stock: l.stock, value: l.ratePaise == null ? null : l.ratePaise * l.stock })) },
-    { key: "fgStock", label: "Loose FG", unit: "cans", load: async () => (await fgLots()).map((l) => ({ godown: l.godown, stock: l.stock, value: l.perCanPaise == null ? null : l.perCanPaise * l.stock })) },
-    { key: "packStock", label: "Boxed", unit: "boxes", load: async () => (await packLots()).map((l) => ({ godown: l.godown, stock: l.stock, value: l.perBoxPaise == null ? null : l.perBoxPaise * l.stock })) },
+  const stages: { key: string; label: string; unit: string }[] = [
+    { key: "rmStock", label: "Raw material", unit: "" },
+    { key: "sfgStock", label: "SFG", unit: "Ltr" },
+    { key: "fgStock", label: "Loose FG", unit: "cans" },
+    { key: "packStock", label: "Boxed", unit: "boxes" },
   ];
   for (const st of stages) {
     if (!has(st.key)) continue;
-    const lots = (await st.load()).filter((l) => l.stock > 0 && inG(l.godown));
+    const lots = (await pre.stock[st.key])!.filter((l) => l.stock > 0 && inG(l.godown));
     const total = lots.reduce((a, l) => a + l.stock, 0);
     stock.push({ l: `${st.label} lots`, v: String(lots.length), sub: st.unit ? `${nf(total)} ${st.unit}` : `${nf(total)} in stock`, href: tileHref(st.key, null, "") });
     if (pw("viewCost")) {
@@ -228,7 +261,7 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
   /* ======================================================== production */
   const prod: Tile[] = [];
   if (has("packBatches")) {
-    const ids = await incompletePackIds();
+    const ids = (await pre.incomplete)!;
     const mine = ids.length ? (await q(sql`select l.id, g.name as godown from erp_pack_lines l join erp_godowns g on g.id = l.godown_id where l.id in ${ids}`)).filter((r) => inG(r.godown)).map((r) => String(r.id)) : [];
     prod.push({ l: "Incomplete packing batches", v: String(mine.length), sub: "boxes not in stock until the cans match", tone: mine.length ? "warn" : undefined, href: tileHref("packBatches", mine, "Incomplete") });
   }
@@ -268,11 +301,11 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
     }
   }
   if (has("reorderRm")) {
-    const rows = (await rmReorderRows()).filter((r) => inG(r.godown));
+    const rows = (await pre.reorderRm)!.filter((r) => inG(r.godown));
     prod.push({ l: "Raw items to re-order", v: String(rows.length), sub: "followed items below their level", tone: rows.length ? "danger" : undefined, href: tileHref("reorderRm", null, "") });
   }
   if (has("reorderFg")) {
-    const rows = (await fgReorderRows()).filter((r) => inG(r.godown));
+    const rows = (await pre.reorderFg)!.filter((r) => inG(r.godown));
     prod.push({ l: "Finished goods below minimum", v: String(rows.length), tone: rows.length ? "danger" : undefined, href: tileHref("reorderFg", null, "") });
   }
   push("Production and re-order", prod);
@@ -426,7 +459,7 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
 
   /* ================================================== material returns */
   if (has("vendorReturns") || has("customerReturns")) {
-    const m = await returnsSummary();
+    const m = (await pre.returns)!;
     const money = ctx.administrator || pw("viewPurchaseMoney") || pw("returnApprove");
     const t: Tile[] = [];
     if (has("vendorReturns")) {
@@ -466,7 +499,7 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
   /* ========================================================= customers */
   const cust: Tile[] = [];
   if (has("customers") && pw("customerStatus")) {
-    const pending = (await loadCustomers()).filter((c) => partyStatus(c) === "Pending");
+    const pending = (await pre.customers)!.filter((c) => partyStatus(c) === "Pending");
     cust.push({ l: "Customers pending activation", v: String(pending.length), sub: "an admin activates them", tone: pending.length ? "warn" : undefined, href: tileHref("customers", pending.map((c) => c.id), "Pending") });
   }
   push("Customers", cust);

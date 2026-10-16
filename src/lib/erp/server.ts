@@ -128,17 +128,13 @@ export function multi(v: string | undefined): string[] {
 /* Client-safe, so a client form pre-fills a figure the same way a server form does. */
 export { rupeesField } from "./ui";
 
+/* Built once: a formatter per call was most of the cost of a long list. */
+const STAMP = new Intl.DateTimeFormat("en-IN", { timeZone: APP_TIMEZONE, day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+
 export function stampLine(by: string | null | undefined, at: Date | string | null | undefined): string {
   if (!at) return by ? `Created by ${by}` : "";
   const d = typeof at === "string" ? new Date(at) : at;
-  const when = d.toLocaleString("en-IN", {
-    timeZone: APP_TIMEZONE,
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  const when = STAMP.format(d);
   return `Created ${by ? "by " + by + " · " : ""}${when}`;
 }
 

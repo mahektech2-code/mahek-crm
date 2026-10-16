@@ -1,11 +1,12 @@
 "use client";
 
 import { Page } from "./page-head";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ColSpec, ListRow, ListSpec, Tone } from "@/lib/erp/ui";
 import { cellText, inr, nf } from "@/lib/erp/ui";
+import { colOf as colIn, listCsv, listQueryParams, LIST_QUERY_KEYS, pageOf, type ListPage, type ListQuery } from "@/lib/erp/list-query";
 import { Icon as ShellIcon } from "@/components/shell/icons";
 import { Button, Card, cx, EmptyState, SortableTh, Td, Th, Tr } from "@/components/ui/primitives";
 import { SelectionBar, Tabs } from "@/components/ui/overlays";
@@ -30,6 +31,14 @@ import { useColumnChoice } from "./use-column-choice";
  * that shape rather than beside it.
  *
  * Rules are the server's: this only filters, sorts and pages what it was sent.
+ *
+ * TWO WAYS TO PAGE, ONE READING. Given `server`, the rows are ONE page the
+ * server already searched, sorted and cut, and every change to the toolbar
+ * or the pager is a change to the URL that asks it for the next one — the
+ * ERP's lists run to tens of thousands of rows, and sending all of them to
+ * draw twenty-five was most of every page load. Without it (HRMS and the
+ * other short lists) the rows are all there are and the same `pageOf` runs
+ * here instead, so neither side can read a search differently.
  * ------------------------------------------------------------------------- */
 
 /** More status values than this and they are a dropdown, not a row of tabs. */
@@ -100,8 +109,11 @@ export function ListScreen({
   toggle,
   above,
   initialNew,
+  server,
+  openRow,
 }: {
   spec: ListSpec;
+  /** Every row, or — with `server` — the one page the server cut. */
   rows: ListRow[];
   /** The screen's name: the page title and the record drawer's kind line. */
   label: string;
@@ -125,19 +137,46 @@ export function ListScreen({
    * are taken; anything else in the query is ignored.
    */
   initialNew?: Record<string, string> | null;
+  /** The server's page: what it read the URL as, and everything about the rows not sent. */
+  server?: ListPage & { query: ListQuery };
+  /** The record `?open=` names, sent beside the page because it may be on another one. */
+  openRow?: ListRow | null;
 }) {
   const ui = useErpUi();
-  const { flags: FLAG, place } = useKit();
+  const { flags: FLAG, place, exportList, listIds } = useKit();
   const router = useRouter();
   const path = usePathname();
   const params = useSearchParams();
-  const [q, setQ] = useState("");
-  const [chip, setChip] = useState("");
-  const [gf, setGf] = useState("");
-  const [groupOn, setGroupOn] = useState(true);
-  const [sort, setSort] = useState<{ k: string; d: 1 | -1 } | null>(null);
-  const [page, setPage] = useState(1);
-  const [size, setSize] = useState(25);
+  const [local, setLocal] = useState<ListQuery>({ q: "", chip: "", gf: "", grp: true, sort: null, page: 1, size: 25, ids: filter?.ids ?? null });
+  /* While the server cuts the next page the current one stays, dimmed — never a blank table between two pages. */
+  const [pending, startTransition] = useTransition();
+  /* The search box answers as it is typed; the server is asked once the typing pauses. */
+  const [qInput, setQInput] = useState(server?.query.q ?? "");
+  const query: ListQuery = server ? { ...server.query, q: qInput } : local;
+  const go = (next: ListQuery, extra?: (p: URLSearchParams) => void) => {
+    const p = new URLSearchParams(params.toString());
+    for (const k of LIST_QUERY_KEYS) p.delete(k);
+    p.delete("open");
+    for (const [k, v] of Object.entries(listQueryParams(next))) p.set(k, v);
+    extra?.(p);
+    const qs = p.toString();
+    startTransition(() => router.replace(qs ? `${path}?${qs}` : path, { scroll: false }));
+  };
+  const setQuery = (patch: Partial<ListQuery>) => {
+    if (server) go({ ...server.query, q: qInput, ...patch });
+    else setLocal((l) => ({ ...l, ...patch }));
+  };
+  const serverQ = server?.query.q;
+  useEffect(() => {
+    if (serverQ === undefined || qInput === serverQ) return;
+    const t = setTimeout(() => go({ ...server!.query, q: qInput, page: 1 }), 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only the typed text starts a search
+  }, [qInput, serverQ]);
+  const q = server ? qInput : local.q;
+  const setQ = (v: string) => (server ? setQInput(v) : setLocal((l) => ({ ...l, q: v, page: 1 })));
+  const { chip, gf, size } = query;
+  const setPage = (n: number) => setQuery({ page: n });
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [openId, setOpenId] = useState<string | null>(initialOpen ?? null);
   /* Opened once per arrival, then the query is cleared so a reload does not open it again. */
@@ -178,74 +217,20 @@ export function ListScreen({
   const [chosenCols, setChosenCols] = useColumnChoice(`${path}|${spec.screen}`);
   /* A group key that is not a declared column still gets words, not its
      identifier: "monthLbl" reads "Month". */
-  const colOf = (k: string): ColSpec =>
-    cols.find((c) => c.k === k) ?? {
-      k,
-      l: k.replace(/Lbl$/, "").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (c) => c.toUpperCase()),
-      t: "t",
-    };
+  const colOf = (k: string): ColSpec => colIn(cols, k);
 
-  const filtered = useMemo(() => {
-    let all = rows;
-    if (filter) {
-      const ids = new Set(filter.ids);
-      all = all.filter((r) => ids.has(r.id));
-    }
-    if (spec.godownKey && gf) all = all.filter((r) => String(r.v[spec.godownKey!] ?? "") === gf);
-    return all;
-  }, [rows, filter, gf, spec.godownKey]);
-
-  const chips = useMemo(() => {
-    if (!spec.chips) return [];
-    const vals = Array.from(new Set(filtered.map((r) => String(r.v[spec.chips!] ?? "")).filter(Boolean)));
-    return vals.map((v) => ({ v, n: filtered.filter((r) => String(r.v[spec.chips!]) === v).length }));
-  }, [filtered, spec.chips]);
-
-  const view = useMemo(() => {
-    let all = filtered;
-    if (spec.chips && chip) all = all.filter((r) => String(r.v[spec.chips!] ?? "") === chip);
-    const ql = q.trim().toLowerCase();
-    if (ql) {
-      all = all.filter((r) =>
-        cols
-          .map((c) => (c.t === "f" ? r.flags.map((f) => FLAG[f]?.[0] ?? f).join(" ") : cellText(c, r.v[c.k])))
-          .join(" ")
-          .toLowerCase()
-          .includes(ql),
-      );
-    }
-    const srt = sort ?? (spec.sortDefault ? { k: spec.sortDefault[0], d: spec.sortDefault[1] } : null);
-    if (srt) {
-      all = all.slice().sort((a, b) => {
-        const x = a.v[srt.k];
-        const y = b.v[srt.k];
-        const c = typeof x === "number" && typeof y === "number" ? x - y : String(x ?? "").localeCompare(String(y ?? ""));
-        return c * srt.d;
-      });
-    }
-    return { all, srt };
-  }, [filtered, chip, q, sort, cols, spec.chips, spec.sortDefault, FLAG]);
-
-  const gk = spec.groups && groupOn ? spec.groups : null;
-  const gOf = (r: ListRow) => (gk ?? []).map((k) => cellText(colOf(k), r.v[k])).join(" · ");
-  /* Grouping reorders the rows so each group is contiguous, in the order its
-     first row appears — cheap enough to do every render at list sizes. */
-  const grouped = (() => {
-    if (!gk) return { list: view.all, by: null as Map<string, ListRow[]> | null };
-    const by = new Map<string, ListRow[]>();
-    view.all.forEach((r) => {
-      const g = gOf(r);
-      by.set(g, [...(by.get(g) ?? []), r]);
-    });
-    return { list: Array.from(by.values()).flat(), by };
-  })();
-
-  const total = grouped.list.length;
-  const pages = Math.max(1, Math.ceil(total / size));
-  const pg = Math.min(page, pages);
-  const pageRows = grouped.list.slice((pg - 1) * size, (pg - 1) * size + size);
-  const inView = new Set(rows.map((r) => r.id));
-  const chosen = Object.keys(sel).filter((id) => sel[id] && inView.has(id));
+  /* The page: the server's, or cut here from every row by the same function. */
+  const lp: ListPage = useMemo(() => server ?? pageOf(spec, rows, local, FLAG), [server, spec, rows, local, FLAG]);
+  const chips = lp.chips;
+  const view = { srt: lp.sort };
+  const gk = spec.groups && query.grp ? spec.groups : null;
+  const total = lp.total;
+  const pg = lp.page;
+  const pageRows = lp.rows;
+  /* A whole list drops a ticked row that has since gone; a paged one cannot
+     see past its page, and the server refuses an id that no longer exists. */
+  const inView = useMemo(() => (server ? null : new Set(rows.map((r) => r.id))), [server, rows]);
+  const chosen = Object.keys(sel).filter((id) => sel[id] && (!inView || inView.has(id)));
   const allOnPage = pageRows.length > 0 && pageRows.every((r) => sel[r.id]);
   const bulkOn = !!spec.bulk?.length;
   /* Columns that are facts about the group are drawn once in its header while
@@ -255,57 +240,72 @@ export function ListScreen({
      do not repeat it — a godown column reading "Bhiwandi" fourteen times under
      a header that says Bhiwandi is noise. */
   const lineCols = gk ? cols.filter((c) => !headCols.includes(c) && !gk.includes(c.k)) : cols;
-  /* The longest badge each status and flags column will draw on these rows. */
-  const badgeChars: Record<string, number> = {};
-  for (const c of lineCols) {
-    if (c.t === "s") badgeChars[c.k] = rows.reduce((n, r) => Math.max(n, r.v[c.k] == null ? 0 : String(r.v[c.k]).length), 0);
-    if (c.t === "f") badgeChars[c.k] = rows.reduce((n, r) => r.flags.reduce((m, f) => Math.max(m, (FLAG[f]?.[0] ?? f).length), n), 0);
-  }
+  /* The longest badge each status and flags column will draw, over every row rather than this page, so widths hold still from page to page. */
+  const badgeChars = lp.badgeChars;
   const fit = fitColumns({ cols: lineCols, avail, check: bulkOn, chosen: chosenCols, badgeChars });
   const shownCols = fit.shown;
 
-  const exportCsv = () => {
-    const head = cols.map((c) => c.l).join(",");
-    const body = grouped.list
-      .map((r) =>
-        cols
-          .map((c) => `"${(c.t === "f" ? r.flags.map((f) => FLAG[f]?.[0] ?? f).join("; ") : cellText(c, r.v[c.k])).replace(/"/g, '""')}"`)
-          .join(","),
-      )
-      .join("\n");
-    const url = URL.createObjectURL(new Blob([`${head}\n${body}`], { type: "text/csv" }));
+  const exportCsv = async () => {
+    let out: { csv: string; n: number };
+    if (server) {
+      if (!exportList) return;
+      ui.toast("Preparing the export…");
+      const res = await exportList(spec.screen, listQueryParamsWithIds(query));
+      if (!res.ok) return ui.toast(res.error);
+      out = res.data;
+    } else out = listCsv(spec, rows, local, FLAG);
+    const url = URL.createObjectURL(new Blob([out.csv], { type: "text/csv" }));
     const a = document.createElement("a");
     a.href = url;
     a.download = `${spec.screen}.csv`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    ui.toast(`Exported ${nf(grouped.list.length)} rows as shown`);
+    ui.toast(`Exported ${nf(out.n)} rows as shown`);
+  };
+  /* "Select all" across every page: the ids are here already for a short
+     list, and asked of the server for a paged one. */
+  const selectAll = async () => {
+    let ids: string[];
+    if (server) {
+      if (!listIds) return;
+      const res = await listIds(spec.screen, listQueryParamsWithIds(query));
+      if (!res.ok) return ui.toast(res.error);
+      ids = res.data;
+    } else ids = pageOf(spec, rows, { ...local, page: 1, size: Number.MAX_SAFE_INTEGER }, FLAG).rows.map((r) => r.id);
+    setSel((s) => {
+      const n = { ...s };
+      ids.forEach((id) => (n[id] = true));
+      return n;
+    });
   };
 
-  const open = rows.find((r) => r.id === openId) ?? null;
+  const open = pageRows.find((r) => r.id === openId) ?? (openRow && openRow.id === openId ? openRow : null) ?? (server ? null : rows.find((r) => r.id === openId) ?? null);
   const closeRec = () => {
     setOpenId(null);
-    if (params.get("open")) router.replace(home);
+    if (params.get("open")) {
+      const p = new URLSearchParams(params.toString());
+      p.delete("open");
+      const qs = p.toString();
+      router.replace(qs ? `${path}?${qs}` : path, { scroll: false });
+    }
   };
   const clearAll = () => {
-    setQ("");
-    setChip("");
-    setGf("");
-    setPage(1);
-    if (filter) router.replace(home);
+    setQInput("");
+    if (server) go({ ...server.query, q: "", chip: "", gf: "", page: 1, ids: null }, (p) => (p.delete("f"), p.delete("fl")));
+    else {
+      setLocal((l) => ({ ...l, q: "", chip: "", gf: "", page: 1 }));
+      if (filter) router.replace(home);
+    }
   };
   /* "Nothing here yet. Entries appear as …" reads as a heading and the
      sentence that explains it, not as one bold paragraph. */
   const [emptyTitle, emptyBody] = splitFirstSentence(spec.noDataLine ?? "Nothing here yet.");
   const noMatchBits = [q ? `“${q}”` : "", chip, filter ? filter.label.toLowerCase() : "", gf].filter(Boolean).join(" · ");
-  const pickChip = (v: string) => {
-    setChip(v);
-    setPage(1);
-  };
+  const pickChip = (v: string) => setQuery({ chip: v, page: 1 });
 
   const sortBy = (k: string) => {
     const on = view.srt && view.srt.k === k;
-    setSort({ k, d: on && view.srt!.d > 0 ? -1 : 1 });
+    setQuery({ sort: { k, d: on && view.srt!.d > 0 ? -1 : 1 } });
   };
 
   return (
@@ -316,7 +316,7 @@ export function ListScreen({
         <>
           {/* One export for every list: it used to sit beside a "Download"
               that did exactly the same thing on the stock and label lists. */}
-          {rows.length ? (
+          {lp.all ? (
             <Button variant="secondary" onClick={exportCsv} title="Download these rows, as filtered, as CSV">
               <Icon n="dl" />
               Export
@@ -348,28 +348,27 @@ export function ListScreen({
       {above}
 
       {/* Not overflow-hidden: the filter bar's menus open over the rows, and on a short list they would be cut off at the card's edge. */}
-      <Card>
+      <Card className="relative">
+        {/* The next page is on its way: a bar along the top, and the rows it replaces dimmed, so a click visibly took. */}
+        {pending ? <span aria-hidden className="absolute inset-x-0 top-0 z-10 h-0.5 animate-pulse rounded-t-[6px] bg-brand" /> : null}
         {chips.length >= 2 && chips.length <= MAX_TABS ? (
           <Tabs
             className="px-4"
             value={chip}
             onChange={pickChip}
-            tabs={[{ key: "", label: "All", count: filtered.length }, ...chips.map((c) => ({ key: c.v, label: c.v, count: c.n }))]}
+            tabs={[{ key: "", label: "All", count: lp.beforeChip }, ...chips.map((c) => ({ key: c.v, label: c.v, count: c.n }))]}
           />
         ) : null}
 
         {/* An empty list has nothing to search, group or choose columns of:
             the toolbar is drawn once there is something to work on. */}
-        {rows.length > 0 || filter ? (
+        {lp.all > 0 || filter ? (
         <div className="flex flex-wrap items-center gap-2.5 border-b border-divider px-4 py-3">
           <div className="relative w-[300px] max-w-full">
             <ShellIcon name="search" size={16} className="pointer-events-none absolute top-2 left-2.5 text-muted" />
             <input
               value={q}
-              onChange={(e) => {
-                setQ(e.target.value);
-                setPage(1);
-              }}
+              onChange={(e) => setQ(e.target.value)}
               placeholder="Search this list"
               className="h-8 w-full rounded-control border border-line pr-7 pl-7.5 text-sm outline-none focus:border-brand"
             />
@@ -386,7 +385,7 @@ export function ListScreen({
               aria-label={colOf(spec.chips!).l}
               className="h-8 cursor-pointer rounded-control border border-line bg-surface px-2.5 text-meta text-body outline-none focus:border-brand"
             >
-              <option value="">All {colOf(spec.chips!).l.toLowerCase()} · {nf(filtered.length)}</option>
+              <option value="">All {colOf(spec.chips!).l.toLowerCase()} · {nf(lp.beforeChip)}</option>
               {chips.map((c) => (
                 <option key={c.v} value={c.v}>
                   {c.v} · {nf(c.n)}
@@ -400,18 +399,12 @@ export function ListScreen({
               label={gf || `All ${place.many}`}
               align="left"
               items={[{ v: "", l: `All ${place.many}`, sub: `${godowns.length} ${place.many}` }, ...godowns]}
-              onPick={(v) => {
-                setGf(v);
-                setPage(1);
-              }}
+              onPick={(v) => setQuery({ gf: v, page: 1 })}
             />
           ) : null}
           {spec.groups ? (
             <button
-              onClick={() => {
-                setGroupOn((g) => !g);
-                setPage(1);
-              }}
+              onClick={() => setQuery({ grp: !query.grp, page: 1 })}
               aria-pressed={!!gk}
               className={cx(
                 "h-8 cursor-pointer rounded-control border px-2.5 text-meta whitespace-nowrap",
@@ -424,7 +417,7 @@ export function ListScreen({
           {filter ? (
             <span className="inline-flex h-8 items-center gap-1.5 rounded-control border border-brand bg-brand-soft pr-1 pl-2.5 text-meta font-medium text-brand-hover">
               From dashboard · {filter.label}
-              <button onClick={() => router.replace(home)} aria-label="Remove filter" className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-[3px] hover:bg-brand-softer">
+              <button onClick={() => (server ? go({ ...server.query, ids: null, page: 1 }, (p) => (p.delete("f"), p.delete("fl"))) : router.replace(home))} aria-label="Remove filter" className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-[3px] hover:bg-brand-softer">
                 <ShellIcon name="close" size={14} />
               </button>
             </span>
@@ -442,7 +435,7 @@ export function ListScreen({
 
         {spec.scopedLine ? <div className="border-b border-divider bg-brand-soft/40 px-4 py-2 text-meta text-brand-hover">{spec.scopedLine}</div> : null}
 
-        {rows.length === 0 ? (
+        {lp.all === 0 ? (
           <EmptyState
             title={emptyTitle}
             body={emptyBody}
@@ -465,7 +458,7 @@ export function ListScreen({
             }
           />
         ) : (
-          <>
+          <div className={cx("transition-opacity", pending && "pointer-events-none opacity-60")} aria-busy={pending || undefined}>
             {spec.cards ? (
               <div className="grid grid-cols-2 gap-3 p-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
                 {pageRows.map((r) => {
@@ -546,17 +539,13 @@ export function ListScreen({
                     let lastG: string | null = null;
                     const out: React.ReactNode[] = [];
                     pageRows.forEach((r) => {
-                      if (gk && grouped.by) {
-                        const g = gOf(r);
+                      if (gk) {
+                        const g = lp.groupOf[r.id] ?? "";
                         if (g !== lastG) {
-                          const rs = grouped.by.get(g) ?? [];
-                          let aggText = `${nf(rs.length)} ${rs.length === 1 ? "row" : "rows"}`;
-                          if (spec.agg && cols.some((c) => c.k === spec.agg!.k)) {
-                            const s = rs.reduce((t, x) => t + (Number(x.v[spec.agg!.k]) || 0), 0);
-                            const v = spec.agg.t === "avg" ? s / (rs.length || 1) : s;
-                            aggText += ` · ${colOf(spec.agg.k).t === "m" ? inr(v) : nf(v)} ${spec.agg.l}`;
-                          }
-                          const allSel = rs.every((x) => sel[x.id]);
+                          const grp = lp.groups[g] ?? { n: 0, agg: null, ids: [], head: {} };
+                          let aggText = `${nf(grp.n)} ${grp.n === 1 ? "row" : "rows"}`;
+                          if (spec.agg && grp.agg != null) aggText += ` · ${colOf(spec.agg.k).t === "m" ? inr(grp.agg) : nf(grp.agg)} ${spec.agg.l}`;
+                          const allSel = grp.ids.every((id) => sel[id]);
                           out.push(
                             <tr key={`g:${g}`} className="border-b border-divider bg-canvas">
                               <td colSpan={shownCols.length + (bulkOn ? 1 : 0)} className="px-3 py-2">
@@ -564,19 +553,19 @@ export function ListScreen({
                                   <span className="text-2xs font-medium tracking-[0.04em] text-muted uppercase">{gk.map((k) => colOf(k).l).join(" · ")}</span>
                                   <span className="text-meta font-semibold text-ink">{g || "—"}</span>
                                   {headCols.map((c) => (
-                                    <GroupFact key={c.k} c={c} v={rs[0]?.v[c.k]} />
+                                    <GroupFact key={c.k} c={c} v={grp.head[c.k]} />
                                   ))}
                                   <span className={cx("text-xs text-muted", headCols.length > 0 && "ml-auto")}>{aggText}</span>
                                   {spec.groupSel && bulkOn ? (
                                     <button
                                       onClick={() => {
                                         const n = { ...sel };
-                                        rs.forEach((x) => (n[x.id] = !allSel));
+                                        grp.ids.forEach((id) => (n[id] = !allSel));
                                         setSel(n);
                                       }}
                                       className="h-6 cursor-pointer rounded-control border border-line bg-surface px-2 text-xs text-brand-hover hover:bg-brand-soft"
                                     >
-                                      {allSel ? "Clear" : `Select all ${rs.length}`}
+                                      {allSel ? "Clear" : `Select all ${grp.n}`}
                                     </button>
                                   ) : null}
                                 </span>
@@ -618,13 +607,10 @@ export function ListScreen({
                 page={pg}
                 perPage={size}
                 onPage={setPage}
-                onPerPage={(n) => {
-                  setSize(n);
-                  setPage(1);
-                }}
+                onPerPage={(n) => setQuery({ size: n, page: 1 })}
               />
             </div>
-          </>
+          </div>
         )}
       </Card>
 
@@ -634,11 +620,7 @@ export function ListScreen({
               search, chips and godown filter leave, across every page. */}
           {chosen.length < total ? (
             <button
-              onClick={() => {
-                const n = { ...sel };
-                grouped.list.forEach((r) => (n[r.id] = true));
-                setSel(n);
-              }}
+              onClick={selectAll}
               className="cursor-pointer text-meta text-line-strong underline-offset-2 hover:text-white hover:underline"
             >
               Select all {nf(total)}
@@ -730,4 +712,9 @@ function Cell({ c, r, edge, cols }: { c: ColSpec; r: ListRow; edge?: string; col
       {txt}
     </Td>
   );
+}
+
+/** A query as the export and select-all actions take it: the URL's keys, plus the dashboard's ids. */
+function listQueryParamsWithIds(q: ListQuery): Record<string, string> {
+  return { ...listQueryParams(q), ...(q.ids ? { f: q.ids.join(",") } : {}) };
 }
