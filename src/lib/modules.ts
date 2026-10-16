@@ -1153,6 +1153,26 @@ export function moduleKeysForApp(app: AppId): string[] {
 }
 
 /**
+ * What a grant with NO module rows stands for: every module a whole-app grant
+ * carries. An `explicitOnly` module is never one of them — it answers to its
+ * own row alone (see `moduleAllowed`), so "no rows" cannot mean it.
+ */
+export function wholeAppKeys(app: AppId): string[] {
+  return modulesForApp(app).filter((m) => !m.explicitOnly).map((m) => m.key);
+}
+
+/**
+ * Whether ticking exactly these modules IS the whole app, so it may be stored
+ * as no rows: every ordinary module ticked and no explicit-only one. Ticking an
+ * explicit-only module is never "the whole app" — storing it as no rows would
+ * silently drop it.
+ */
+export function isWholeApp(app: AppId, modules: readonly string[]): boolean {
+  const ticked = new Set(modules);
+  return modulesForApp(app).every((m) => (m.explicitOnly ? !ticked.has(m.key) : ticked.has(m.key)));
+}
+
+/**
  * The review table renders in sections, in the order the sidebar draws them.
  *
  * ONE SECTION PER GROUP NAME, not one per run of them. This used to merge only

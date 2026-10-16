@@ -19,7 +19,7 @@ import {
   users,
 } from "@/db/schema";
 import { APP_IDS, getApp, type AppId } from "@/lib/apps";
-import { getModule, moduleKeysForApp } from "@/lib/modules";
+import { getModule, moduleKeysForApp, wholeAppKeys } from "@/lib/modules";
 import { hashPassword } from "@/lib/auth";
 import { newPassword } from "@/lib/password";
 import { initialsOf } from "@/lib/format";
@@ -667,9 +667,9 @@ export async function setAccess(
     const app = r.app as AppId;
     storedByApp.set(app, [...(storedByApp.get(app) ?? []), r.module]);
   }
-  /** What they hold today, with "no rows" spelled out as every module. */
+  /** What they hold today, with "no rows" spelled out as every ordinary module — never an explicit-only one. */
   const before = new Map<AppId, string[]>(
-    held.map((a) => [a, storedByApp.get(a) ?? moduleKeysForApp(a)]),
+    held.map((a) => [a, storedByApp.get(a) ?? wholeAppKeys(a)]),
   );
 
   const granted = [...wanted.keys()].filter((a) => !held.includes(a));
