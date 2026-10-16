@@ -3,6 +3,7 @@ import { and, asc, desc, eq, isNotNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { customers } from "@/db/schema";
 import { getConfig } from "@/lib/config/store";
+import { stageLabel, type LeadStage } from "@/lib/lead-labels";
 import {
   PROMO_FACET_LIMIT,
   clampPage,
@@ -11,6 +12,7 @@ import {
   type PromoFacetsQuery,
   type PromoFeedQuery,
   type PromoListResult,
+  type PromoRecord,
 } from "@/lib/promo-feed";
 import {
   COUNT,
@@ -38,10 +40,57 @@ import {
  * Every record is returned whoever owns it. The owner and the sales manager are
  * joined to be shown as names, and filtered on only when the caller asks.
  *
- * Trash: a lead in the trash is never returned. A customer carries a `trashed`
- * flag instead — whether the tool hides trashed customers is a decision the
- * owner has not made, so this feed neither hides nor invents it.
+ * Trash: nothing in the trash is returned, by the list, the total, the facets or
+ * a lookup by id. In the CRM only a lead can be trashed (an account that has
+ * been billed is deactivated instead), and a deactivated customer is not trash:
+ * it is listed with its status.
  * ------------------------------------------------------------------------- */
+
+/** The one columns list every read of a record uses, so a record by id is exactly a record in the list. */
+const RECORD_COLUMNS = {
+  id: customers.id,
+  kind: customers.kind,
+  name: customers.name,
+  companyName: customers.companyName,
+  contactPerson: customers.contactPerson,
+  city: customers.city,
+  districtName: promoDistrict.name,
+  stateName: promoState.name,
+  ownerUserName: promoOwner.name,
+  amUserName: promoAccountManager.name,
+  salesPersonName: customers.salesPersonName,
+  smUserName: promoSalesManager.name,
+  salesManagerPersonName: customers.salesManagerPersonName,
+  createdAt: customers.createdAt,
+  leadStage: customers.leadStage,
+  status: customers.status,
+  leadArchived: customers.leadArchived,
+  deletedAt: customers.deletedAt,
+  doNotContact: customers.doNotContact,
+  whatsappDnd: customers.whatsappDnd,
+  leadSource: customers.leadSource,
+};
+
+async function sourceLabels(): Promise<Map<string, string>> {
+  const config = await getConfig();
+  return new Map<string, string>((config["leads.sources"] ?? []).map((s: { code: string; label: string }) => [s.code, s.label]));
+}
+
+/** One record by id, under the same rule as the list (a trashed lead is not there), or null. */
+export async function getPromoRecord(id: string): Promise<PromoRecord | null> {
+  const where = and(promoWhere({ kind: null, q: null, state: null, district: null, city: null, owner: null, salesManager: null, stage: null, status: null }), eq(customers.id, id));
+  const [row] = await db
+    .select(RECORD_COLUMNS)
+    .from(customers)
+    .leftJoin(promoOwner, eq(customers.ownerId, promoOwner.id))
+    .leftJoin(promoAccountManager, eq(customers.salesAmId, promoAccountManager.id))
+    .leftJoin(promoSalesManager, eq(customers.salesManagerId, promoSalesManager.id))
+    .leftJoin(promoState, eq(customers.resolvedStateId, promoState.id))
+    .leftJoin(promoDistrict, eq(customers.resolvedDistrictId, promoDistrict.id))
+    .where(where)
+    .limit(1);
+  return row ? shapePromoRecord(row, await sourceLabels()) : null;
+}
 
 export async function listPromoRecords(query: PromoFeedQuery): Promise<PromoListResult> {
   const where = promoWhere(query);
@@ -56,29 +105,7 @@ export async function listPromoRecords(query: PromoFeedQuery): Promise<PromoList
   const { page, pageCount, offset } = clampPage(total, query.page, query.pageSize);
 
   const rows = await db
-    .select({
-      id: customers.id,
-      kind: customers.kind,
-      name: customers.name,
-      companyName: customers.companyName,
-      contactPerson: customers.contactPerson,
-      city: customers.city,
-      districtName: promoDistrict.name,
-      stateName: promoState.name,
-      ownerUserName: promoOwner.name,
-      amUserName: promoAccountManager.name,
-      salesPersonName: customers.salesPersonName,
-      smUserName: promoSalesManager.name,
-      salesManagerPersonName: customers.salesManagerPersonName,
-      createdAt: customers.createdAt,
-      leadStage: customers.leadStage,
-      status: customers.status,
-      leadArchived: customers.leadArchived,
-      deletedAt: customers.deletedAt,
-      doNotContact: customers.doNotContact,
-      whatsappDnd: customers.whatsappDnd,
-      leadSource: customers.leadSource,
-    })
+    .select(RECORD_COLUMNS)
     .from(customers)
     .leftJoin(promoOwner, eq(customers.ownerId, promoOwner.id))
     .leftJoin(promoAccountManager, eq(customers.salesAmId, promoAccountManager.id))
@@ -90,14 +117,13 @@ export async function listPromoRecords(query: PromoFeedQuery): Promise<PromoList
     .limit(query.pageSize)
     .offset(offset);
 
-  const config = await getConfig();
-  const labels = new Map<string, string>((config["leads.sources"] ?? []).map((s: { code: string; label: string }) => [s.code, s.label]));
+  const labels = await sourceLabels();
   return { records: rows.map((row) => shapePromoRecord(row, labels)), total, page, pageCount };
 }
 
 /** The values the filters can take, over the same eligible records the list covers. */
 export async function promoFacets(query: PromoFacetsQuery): Promise<PromoFacets> {
-  const where = promoWhere({ kind: query.kind, q: null, state: null, district: null, city: null, owner: null, salesManager: null, stage: null, status: null, restricted: query.restricted });
+  const where = promoWhere({ kind: query.kind, q: null, state: null, district: null, city: null, owner: null, salesManager: null, stage: null, status: null });
   const take = PROMO_FACET_LIMIT + 1;
   const cut = <T>(rows: T[]) => ({ rows: rows.slice(0, PROMO_FACET_LIMIT), truncated: rows.length > PROMO_FACET_LIMIT });
 
@@ -166,7 +192,7 @@ export async function promoFacets(query: PromoFacetsQuery): Promise<PromoFacets>
     cities: c.rows.map((r) => ({ name: r.name, count: Number(r.count) })),
     owners: o.rows.map((r) => ({ id: r.id, name: r.name, count: Number(r.count) })),
     salesManagers: m.rows.map((r) => ({ id: r.id, name: r.name, count: Number(r.count) })),
-    stages: stages.flatMap((r) => (r.value === null ? [] : [{ value: r.value, count: Number(r.count) }])),
+    stages: stages.flatMap((r) => (r.value === null ? [] : [{ value: r.value, label: stageLabel(r.value as LeadStage), count: Number(r.count) }])),
     statuses: statuses.map((r) => ({ value: String(r.value), count: Number(r.count) })),
     truncated: { states: s.truncated, districts: d.truncated, cities: c.truncated, owners: o.truncated, salesManagers: m.truncated },
   };

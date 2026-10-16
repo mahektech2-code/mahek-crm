@@ -1,8 +1,8 @@
 import { handlePromoFacetsRequest } from "@/lib/promo-feed";
-import { listPromoRecords, promoFacets } from "@/lib/services/promo-feed-service";
+import { getPromoRecord, listPromoRecords, promoFacets } from "@/lib/services/promo-feed-service";
 
 /* ---------------------------------------------------------------------------
- * GET /api/integrations/promo/v1/facets?kind=lead|customer&restricted=
+ * GET /api/integrations/promo/v1/facets?kind=lead|customer
  *
  * The values the Promotional App's filters can take (states, districts,
  * cities, owners, sales managers, stages, statuses), each with how many
@@ -12,7 +12,7 @@ import { listPromoRecords, promoFacets } from "@/lib/services/promo-feed-service
 
 export const dynamic = "force-dynamic";
 
-const handle = (request: Request) => handlePromoFacetsRequest(request, { secret: process.env.PROMO_FEED_SECRET, list: listPromoRecords, facets: promoFacets });
+const handle = (request: Request) => handlePromoFacetsRequest(request, { secret: process.env.PROMO_FEED_SECRET, list: listPromoRecords, facets: promoFacets, get: getPromoRecord });
 
 export const GET = handle;
 export const POST = handle;

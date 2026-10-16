@@ -2,7 +2,9 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { and, eq } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
+import { customers } from "@/db/schema";
 import {
   PROMO_FACET_LIMIT,
   PROMO_FEED_CONTRACT,
@@ -12,6 +14,7 @@ import {
   authorizePromoFeed,
   clampPage,
   handlePromoFacetsRequest,
+  handlePromoRecordRequest,
   handlePromoFeedRequest,
   likePattern,
   parsePromoFacetsQuery,
@@ -64,7 +67,7 @@ const raw = (o: Partial<PromoRawRow> = {}): PromoRawRow => ({
   ...o,
 });
 
-const NONE: PromoFilters = { kind: null, q: null, state: null, district: null, city: null, owner: null, salesManager: null, stage: null, status: null, restricted: "include" };
+const NONE: PromoFilters = { kind: null, q: null, state: null, district: null, city: null, owner: null, salesManager: null, stage: null, status: null };
 const EMPTY_FACETS: PromoFacets = { states: [], districts: [], cities: [], owners: [], salesManagers: [], stages: [], statuses: [], truncated: { states: false, districts: false, cities: false, owners: false, salesManagers: false } };
 
 const URL_BASE = "http://x/api/integrations/promo/v1/recipients";
@@ -74,6 +77,7 @@ const deps = (o: Partial<PromoFeedDeps> = {}): PromoFeedDeps => ({
   secret: SECRET,
   list: async (q) => ({ records: [shapePromoRecord(raw())], total: 1, page: q.page, pageCount: 1 }),
   facets: async () => EMPTY_FACETS,
+  get: async (id) => (id === "cus_1" ? shapePromoRecord(raw()) : null),
   now: () => new Date("2026-10-09T10:00:00.000Z"),
   ...o,
 });
@@ -168,9 +172,9 @@ describe("who may ask (fail closed)", () => {
 describe("read only", () => {
   test("every method but GET is 405 with Allow: GET before anything is read", async () => {
     let called = 0;
-    const d = deps({ list: async () => { called++; return { records: [], total: 0, page: 1, pageCount: 1 }; }, facets: async () => { called++; return EMPTY_FACETS; } });
+    const d = deps({ list: async () => { called++; return { records: [], total: 0, page: 1, pageCount: 1 }; }, facets: async () => { called++; return EMPTY_FACETS; }, get: async () => { called++; return null; } });
     for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
-      for (const handler of [handlePromoFeedRequest, handlePromoFacetsRequest]) {
+      for (const handler of [handlePromoFeedRequest, handlePromoFacetsRequest, (r: Request, dd: PromoFeedDeps) => handlePromoRecordRequest(r, "cus_1", dd)]) {
         const res = await handler(new Request(URL_BASE, { method, headers: { authorization: `Bearer ${SECRET}` }, body: "{}" }), d);
         assert.equal(res.status, 405, method);
         assert.equal(res.headers.get("allow"), "GET");
@@ -202,8 +206,8 @@ describe("read only", () => {
     assert.deepEqual(used, ["city", "companyName", "contactPerson", "createdAt", "deletedAt", "doNotContact", "id", "kind", "leadArchived", "leadSource", "leadStage", "name", "ownerId", "resolvedDistrictId", "resolvedStateId", "salesAmId", "salesManagerId", "salesManagerPersonName", "salesPersonName", "status", "whatsappDnd"]);
   });
   test("the route files export only the five handlers, the secret comes from the environment, and each is its own file", () => {
-    for (const dir of ["recipients", "facets"]) {
-      const text = fs.readFileSync(path.join(root, "..", "app", "api", "integrations", "promo", "v1", dir, "route.ts"), "utf8");
+    for (const dir of ["recipients", "recipients/[id]", "facets"]) {
+      const text = fs.readFileSync(path.join(root, "..", "app", "api", "integrations", "promo", "v1", ...dir.split("/"), "route.ts"), "utf8");
       assert.deepEqual([...text.matchAll(/export const ([A-Z]+) =/g)].map((m) => m[1]), ["GET", "POST", "PUT", "PATCH", "DELETE"], dir);
       assert.ok(/process\.env\.PROMO_FEED_SECRET/.test(text), dir);
     }
@@ -211,15 +215,15 @@ describe("read only", () => {
 });
 
 describe("the request: parameters", () => {
-  test("defaults: both kinds, no filter, newest first, page 1 of 50, restricted records included", () => {
+  test("defaults: both kinds, no filter, newest first, page 1 of 50", () => {
     const r = parse("");
     assert.ok(r.ok);
     if (r.ok) assert.deepEqual(r.query, { ...NONE, sort: "created_desc", page: 1, pageSize: PROMO_FEED_DEFAULT_PAGE_SIZE });
   });
   test("every filter is parsed", () => {
-    const r = parse("kind=lead&q=%20shah%20%20paints%20&state=pl_st1&district=pl_d1&city=Rajkot&owner=u_1&salesManager=u_2&stage=new&restricted=exclude&sort=name_asc&page=3&pageSize=25");
+    const r = parse("kind=lead&q=%20shah%20%20paints%20&state=pl_st1&district=pl_d1&city=Rajkot&owner=u_1&salesManager=u_2&stage=new&sort=name_asc&page=3&pageSize=25");
     assert.ok(r.ok);
-    if (r.ok) assert.deepEqual(r.query, { kind: "lead", q: "shah paints", state: "pl_st1", district: "pl_d1", city: "Rajkot", owner: "u_1", salesManager: "u_2", stage: "new", status: null, restricted: "exclude", sort: "name_asc", page: 3, pageSize: 25 });
+    if (r.ok) assert.deepEqual(r.query, { kind: "lead", q: "shah paints", state: "pl_st1", district: "pl_d1", city: "Rajkot", owner: "u_1", salesManager: "u_2", stage: "new", status: null, sort: "name_asc", page: 3, pageSize: 25 });
   });
   test("pageSize is at most 100, a whole number from 1", () => {
     assert.equal(PROMO_FEED_MAX_PAGE_SIZE, 100);
@@ -253,12 +257,12 @@ describe("the request: parameters", () => {
     assert.ok(blank.ok);
     if (blank.ok) assert.deepEqual([blank.query.q, blank.query.city], [null, null]);
   });
-  test("stage, status, kind, sort and restricted accept only known values", () => {
-    for (const bad of ["stage=made_up", "stage=NEW", "status=gone", "kind=vendor", "kind=", "sort=owner", "restricted=maybe"]) assert.equal(parse(bad).ok, false, bad);
-    for (const ok of ["stage=lost", "stage=active_distributor", "status=inactive", "status=deactivated", "sort=created_asc", "sort=name_desc", "restricted=include"]) assert.equal(parse(ok).ok, true, ok);
+  test("stage, status, kind and sort accept only known values", () => {
+    for (const bad of ["stage=made_up", "stage=NEW", "status=gone", "kind=vendor", "kind=", "sort=owner"]) assert.equal(parse(bad).ok, false, bad);
+    for (const ok of ["stage=lost", "stage=active_distributor", "status=inactive", "status=deactivated", "sort=created_asc", "sort=name_desc"]) assert.equal(parse(ok).ok, true, ok);
   });
-  test("the facets request takes only kind and restricted", () => {
-    assert.equal(parsePromoFacetsQuery(new URL("http://x/f?kind=lead&restricted=exclude")).ok, true);
+  test("the facets request takes only kind", () => {
+    assert.equal(parsePromoFacetsQuery(new URL("http://x/f?kind=lead")).ok, true);
     for (const bad of ["q=a", "page=2", "owner=u1", "kind=vendor"]) assert.equal(parsePromoFacetsQuery(new URL(`http://x/f?${bad}`)).ok, false, bad);
   });
 });
@@ -310,17 +314,24 @@ describe("the SQL is built from bound parameters (query safety)", () => {
       assert.ok(!sql.includes(v), `${v} spliced into the SQL text`);
     }
   });
-  test("with no filter only trashed leads are excluded; nothing restricts by owner, manager, status or source", () => {
+  test("with no filter only the trash, archived leads and lost leads are excluded; nothing restricts by owner, manager, status or source", () => {
     const { sql, params } = render(promoWhere(NONE));
     assert.match(sql, /"deleted_at" is null/);
-    assert.deepEqual(params, ["customer"]);
-    assert.ok(!/owner|sales_manager|sales_am|status|lead_source|lead_stage|lead_archived/.test(sql), sql);
+    assert.deepEqual(params, ["customer", false, "lost"]);
+    assert.ok(!/owner|sales_manager|sales_am|status|lead_source/.test(sql), sql);
   });
-  test("restricted=exclude leaves out archived and lost leads only", () => {
-    const { sql } = render(promoWhere({ ...NONE, restricted: "exclude" }));
-    assert.match(sql, /"lead_archived" = /);
-    assert.match(sql, /"lead_stage" <> /);
-    assert.ok(!/"status"/.test(sql));
+  test("archived and lost leads are always left out, for every kind and every filter; customers are never subject to it", () => {
+    for (const f of [NONE, { ...NONE, kind: "lead" as const }, { ...NONE, kind: "customer" as const }, { ...NONE, stage: "lost" }, { ...NONE, q: "shah" }]) {
+      const { sql } = render(promoWhere(f));
+      assert.match(sql, /"customers"\."kind" = \$\d+ or \("customers"\."lead_archived" = \$\d+ and \("customers"\."lead_stage" is null or "customers"\."lead_stage" <> \$\d+\)\)/, JSON.stringify(f));
+    }
+    assert.ok(!/"status"/.test(render(promoWhere(NONE)).sql), "a deactivated or inactive customer is not filtered out");
+  });
+  test("a caller cannot ask for them: the parameter that used to allow it is refused, on the list and on the facets", () => {
+    for (const qs of ["restricted=include", "restricted=exclude", "restricted="]) {
+      assert.equal(parse(qs).ok, false, qs);
+      assert.equal(parsePromoFacetsQuery(new URL(`http://x/f?${qs}`)).ok, false, qs);
+    }
   });
   test("an owner filter uses the same display-owner rule the records are shown with", () => {
     const { sql } = render(promoWhere({ ...NONE, owner: "u_1" }));
@@ -403,5 +414,113 @@ describe("the list and facets endpoints", () => {
     for (const d of [deps(), deps({ secret: undefined }), deps({ list: async () => { throw new Error(`boom ${SECRET}`); } })]) {
       assert.ok(!(await (await handlePromoFeedRequest(get(), d)).text()).includes(SECRET));
     }
+  });
+});
+
+describe("a record by id", () => {
+  const byId = (id: string, o: { qs?: string; headers?: Record<string, string>; deps?: Partial<PromoFeedDeps> } = {}) =>
+    handlePromoRecordRequest(new Request(`${URL_BASE}/${id}${o.qs ? `?${o.qs}` : ""}`, { method: "GET", headers: o.headers ?? { authorization: `Bearer ${SECRET}` } }), id, deps(o.deps));
+
+  test("returns the record with exactly the allow-listed fields, and the same record the list carries", async () => {
+    const res = await byId("cus_1");
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("cache-control"), "no-store");
+    const body = (await res.json()) as { ok: boolean; contract: string; generatedAt: string; record: Record<string, unknown> };
+    assert.deepEqual(Object.keys(body).sort(), ["contract", "generatedAt", "ok", "record"]);
+    assert.deepEqual(Object.keys(body.record), [...PROMO_FEED_FIELDS]);
+    assert.deepEqual(body.record, JSON.parse(JSON.stringify(shapePromoRecord(raw()))));
+  });
+  test("a field the service should not have returned is dropped before it leaves", async () => {
+    const leaky = async () => ({ ...shapePromoRecord(raw()), phone: "9876543210", address: "12 Main Rd" }) as unknown as ReturnType<typeof shapePromoRecord>;
+    const text = await (await byId("cus_1", { deps: { get: leaky } })).text();
+    assert.ok(!/9876543210|12 Main/.test(text));
+  });
+  test("an id with no record, or one the feed does not show, is 404 and says nothing about why", async () => {
+    const res = await byId("cus_missing");
+    assert.equal(res.status, 404);
+    assert.deepEqual(await res.json(), { ok: false, error: "There is no such record." });
+  });
+  test("an id that is not an id is 400 and is never passed to the service", async () => {
+    let called = 0;
+    for (const bad of ["a b", "x'; drop table customers; --", "..%2F..", "a".repeat(101), "%", "id.with.dots"]) {
+      const res = await byId(bad, { deps: { get: async () => { called++; return null; } } });
+      assert.equal(res.status, 400, bad);
+    }
+    assert.equal(called, 0);
+  });
+  test("a query string is refused: the path takes none", async () => {
+    assert.equal((await byId("cus_1", { qs: "kind=lead" })).status, 400);
+  });
+  test("the same bearer rule: 401 without or with a wrong token, 503 with no secret configured, and nothing is read", async () => {
+    let called = 0;
+    const get = async () => { called++; return null; };
+    assert.equal((await byId("cus_1", { headers: {}, deps: { get } })).status, 401);
+    assert.equal((await byId("cus_1", { headers: { authorization: "Bearer nope" }, deps: { get } })).status, 401);
+    assert.equal((await byId("cus_1", { deps: { secret: undefined, get } })).status, 503);
+    assert.equal(called, 0);
+  });
+  test("a failing service is 503 with a fixed message, and the secret is not in the response", async () => {
+    const res = await byId("cus_1", { deps: { get: async () => { throw new Error(`boom ${SECRET} Shah Paints`); } } });
+    assert.equal(res.status, 503);
+    const text = await res.text();
+    assert.ok(!text.includes(SECRET) && !text.includes("Shah") && !text.includes("boom"));
+  });
+  test("the lookup uses the list's own rule: same columns, the trash rule, and the id as a bound parameter", () => {
+    const text = source("services", "promo-feed-service.ts");
+    assert.match(text, /export async function getPromoRecord/);
+    assert.match(text, /\.select\(RECORD_COLUMNS\)[\s\S]*\.where\(where\)\s*\.limit\(1\)/);
+    const { sql, params } = render(and(promoWhere(NONE), eq(customers.id, "x'; drop table customers; --"))!);
+    assert.match(sql, /"deleted_at" is null/);
+    assert.ok(params.includes("x'; drop table customers; --") && !sql.includes("drop table"));
+  });
+});
+
+describe("what is in the trash", () => {
+  test("a customer in the trash is left out of the list, its total and its facets, exactly as a lead is (one rule: promoWhere)", () => {
+    const service = source("services", "promo-feed-service.ts");
+    assert.equal([...service.matchAll(/promoWhere\(/g)].length, 3, "list, facets and lookup all use the one rule");
+    for (const kind of ["lead", "customer"] as const) assert.match(render(promoWhere({ ...NONE, kind })).sql, /"deleted_at" is null/);
+  });
+  test("a deactivated or inactive customer is not trash: no status filter is applied unless asked for", () => {
+    assert.ok(!/"status"/.test(render(promoWhere(NONE)).sql));
+  });
+});
+
+describe("stage labels", () => {
+  test("every stage the CRM defines has its own label, and the facets carry it beside the code", async () => {
+    const { stageLabel } = await import("./lead-labels");
+    const { mbosLeadStageEnum } = await import("@/db/schema");
+    for (const code of mbosLeadStageEnum.enumValues) {
+      const label = stageLabel(code);
+      assert.ok(label && label !== code, code);
+    }
+    assert.equal(stageLabel("sample_trial"), "Sample / trial");
+    assert.equal(stageLabel("first_order"), "1st order");
+    assert.match(source("services", "promo-feed-service.ts"), /label: stageLabel\(r\.value as LeadStage\)/);
+  });
+});
+
+describe("archived and lost leads: one rule for the list, the total, the facets and a lookup by id", () => {
+  test("the list, the facets and the lookup all build their filter with the one promoWhere, which carries the rule", () => {
+    const service = source("services", "promo-feed-service.ts");
+    assert.equal([...service.matchAll(/promoWhere\(/g)].length, 3);
+    assert.ok(!/[^A-Za-z](ne|isNull|or)\(/.test(service), "the service adds no filter of its own and drops none");
+  });
+  test("a lookup by id adds the id to that same rule, as a bound parameter", () => {
+    const { sql, params } = render(and(promoWhere(NONE), eq(customers.id, "lead_archived_1"))!);
+    assert.match(sql, /"lead_archived" = /);
+    assert.match(sql, /"lead_stage" <> /);
+    assert.ok(params.includes("lost") && params.includes("lead_archived_1") && !sql.includes("lead_archived_1"));
+  });
+  test("an archived or lost lead is 404 by id when the service does not return it, with nothing said about why", async () => {
+    for (const flag of [{ archived: true }, { lost: true }]) {
+      const res = await handlePromoRecordRequest(new Request(`${URL_BASE}/lead_x`, { headers: { authorization: `Bearer ${SECRET}` } }), "lead_x", deps({ get: async () => null }));
+      assert.equal(res.status, 404, JSON.stringify(flag));
+      assert.deepEqual(await res.json(), { ok: false, error: "There is no such record." });
+    }
+  });
+  test("every record the list returns is not archived and not lost: the flags remain in the contract but are false", () => {
+    const listed = shapePromoRecord(raw());
+    assert.deepEqual([listed.archived, listed.lost, listed.trashed], [false, false, false]);
   });
 });

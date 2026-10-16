@@ -28,13 +28,15 @@ export const COUNT = sql<number>`count(*)::int`;
 /** The WHERE for a set of filters. Pure: building it touches no database, so it can be tested by rendering it. */
 export function promoWhere(f: PromoFilters): SQL | undefined {
   const parts: (SQL | undefined)[] = [
-    // a lead in the trash is not listed; a customer is listed with its flag
-    or(eq(customers.kind, "customer"), isNull(customers.deletedAt)),
+    // anything in the trash is left out of every list, count and facet, as in every CRM screen. Only a lead can be
+    // trashed (lead-trash-service refuses an account that has been billed: it is deactivated instead), and a
+    // deactivated customer is NOT trash: it stays listed with its status.
+    isNull(customers.deletedAt),
     f.kind ? eq(customers.kind, f.kind) : undefined,
-    // archived and lost leads are the restricted ones; customers are never restricted by this
-    f.restricted === "exclude"
-      ? or(eq(customers.kind, "customer"), and(eq(customers.leadArchived, false), or(isNull(customers.leadStage), ne(customers.leadStage, "lost"))))
-      : undefined,
+    // an archived or lost lead is never offered, to a list, a count, a facet or a lookup by id: the rule is here, on the
+    // CRM server, so no caller can ask for them. A customer is not subject to it (an inactive or deactivated customer
+    // stays listed, with its status); only a lead is archived or lost.
+    or(eq(customers.kind, "customer"), and(eq(customers.leadArchived, false), or(isNull(customers.leadStage), ne(customers.leadStage, "lost")))),
     f.state ? eq(customers.resolvedStateId, f.state) : undefined,
     f.district ? eq(customers.resolvedDistrictId, f.district) : undefined,
     f.city ? sql`lower(${customers.city}) = lower(${f.city})` : undefined,

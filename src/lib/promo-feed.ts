@@ -80,6 +80,7 @@ export type PromoRecord = {
   archived: boolean;
   /** A lead whose stage is `lost`. */
   lost: boolean;
+  /** In the CRM's trash. The feed never lists a record that is, so this is false on every record it returns; kept for contract stability. */
   trashed: boolean;
   /** Do Not Contact (a call instruction) and WhatsApp-only DND: two separate facts, sent as stated. */
   dnc: boolean;
@@ -175,12 +176,10 @@ export type PromoFilters = {
   stage: string | null;
   /** A customer status. */
   status: "active" | "inactive" | "deactivated" | null;
-  /** `exclude` leaves out archived and lost leads; `include` (the default) returns them, flagged. */
-  restricted: "include" | "exclude";
 };
 
 export type PromoFeedQuery = PromoFilters & { sort: PromoSort; page: number; pageSize: number };
-export type PromoFacetsQuery = Pick<PromoFilters, "kind" | "restricted">;
+export type PromoFacetsQuery = Pick<PromoFilters, "kind">;
 
 export type PromoFacetValue = { id: string; name: string; count: number };
 export type PromoFacets = {
@@ -189,14 +188,15 @@ export type PromoFacets = {
   cities: { name: string; count: number }[];
   owners: PromoFacetValue[];
   salesManagers: PromoFacetValue[];
-  stages: { value: string; count: number }[];
+  /** `value` is the CRM's stage code (what a filter sends); `label` is the CRM's own name for it (`lib/lead-labels.ts`). */
+  stages: { value: string; label: string; count: number }[];
   statuses: { value: string; count: number }[];
   /** Which lists were cut at PROMO_FACET_LIMIT. Never silent. */
   truncated: { states: boolean; districts: boolean; cities: boolean; owners: boolean; salesManagers: boolean };
 };
 
-const LIST_PARAMS = ["kind", "q", "state", "district", "city", "owner", "salesManager", "stage", "status", "restricted", "sort", "page", "pageSize"] as const;
-const FACET_PARAMS = ["kind", "restricted"] as const;
+const LIST_PARAMS = ["kind", "q", "state", "district", "city", "owner", "salesManager", "stage", "status", "sort", "page", "pageSize"] as const;
+const FACET_PARAMS = ["kind"] as const;
 const ID = /^[A-Za-z0-9_-]{1,100}$/;
 const CONTROL = /[\u0000-\u001f\u007f]/;
 const MAX_TERMS = 5;
@@ -257,9 +257,6 @@ function parseFilters(get: (key: string) => string | null): { ok: true; filters:
   const status = get("status");
   if (status !== null && status !== "" && !(customerStatusEnum.enumValues as readonly string[]).includes(status)) return { ok: false, message: "status is not a known customer status." };
 
-  const restricted = get("restricted");
-  if (restricted !== null && restricted !== "include" && restricted !== "exclude") return { ok: false, message: 'restricted must be "include" or "exclude".' };
-
   return {
     ok: true,
     filters: {
@@ -272,7 +269,6 @@ function parseFilters(get: (key: string) => string | null): { ok: true; filters:
       salesManager: ids.salesManager,
       stage: stage === null || stage === "" ? null : stage,
       status: status === null || status === "" ? null : (status as PromoFilters["status"]),
-      restricted: restricted === "exclude" ? "exclude" : "include",
     },
   };
 }
@@ -309,7 +305,7 @@ export function parsePromoFacetsQuery(url: URL): Parsed<PromoFacetsQuery> {
   if (!params.ok) return params;
   const filters = parseFilters(params.get);
   if (!filters.ok) return filters;
-  return { ok: true, query: { kind: filters.filters.kind, restricted: filters.filters.restricted } };
+  return { ok: true, query: { kind: filters.filters.kind } };
 }
 
 /** Clamp a requested page to the pages that exist (the first page when there are no records). */
@@ -351,6 +347,8 @@ export type PromoFeedDeps = {
   secret: string | null | undefined;
   /** Reads one page with the filters applied, and the total. Read-only by its type: it returns records and counts. */
   list: (query: PromoFeedQuery) => Promise<PromoListResult>;
+  /** Reads one record by id, or null when there is none the feed may show. */
+  get: (id: string) => Promise<PromoRecord | null>;
   /** The values the filters can take. */
   facets: (query: PromoFacetsQuery) => Promise<PromoFacets>;
   now?: () => Date;
@@ -399,6 +397,23 @@ export function handlePromoFeedRequest(request: Request, deps: PromoFeedDeps): P
       { ok: true, contract: PROMO_FEED_CONTRACT, generatedAt: generatedAt(deps), total: result.total, page: result.page, pageSize: parsed.query.pageSize, pageCount: result.pageCount, records },
       { headers: NO_STORE },
     );
+  });
+}
+
+/**
+ * One record by id: the same record, with the same allow-listed fields, that the list would carry for it.
+ * An id the feed would not list (a lead in the trash, or one that does not exist) is 404. The path takes
+ * no query string at all.
+ */
+export function handlePromoRecordRequest(request: Request, id: string, deps: PromoFeedDeps): Promise<Response> {
+  return guarded(request, deps, async (url) => {
+    const params = readParams(url, []);
+    if (!params.ok) return refuse(400, params.message);
+    if (!ID.test(id)) return refuse(400, "id is not a valid id.");
+    const found = await deps.get(id);
+    if (!found) return refuse(404, "There is no such record.");
+    const record = Object.fromEntries(PROMO_FEED_FIELDS.map((f) => [f, found[f]]));
+    return Response.json({ ok: true, contract: PROMO_FEED_CONTRACT, generatedAt: generatedAt(deps), record }, { headers: NO_STORE });
   });
 }
 
