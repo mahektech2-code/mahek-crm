@@ -30,6 +30,7 @@ import {
 import { Button, Callout, Card, cx, Dot, EmptyState, Input, PageHeader, Select } from "@/components/ui/primitives";
 import { Icon as ShellIcon } from "@/components/shell/icons";
 import { Modal } from "@/components/ui/modal";
+import { BodyPortal } from "@/components/ui/body-portal";
 import { RowMenu } from "@/components/ui/overlays";
 import { useErpUi } from "../_ui/erp-ui";
 
@@ -121,6 +122,9 @@ export function QuoteGrid({
   const [showArchived, setShowArchived] = useState(false);
   const [search, setSearch] = useState(filter.q);
   const dragging = useRef(false);
+  /* The open suggestion list: where its cell is on screen, and the highlighted row (-1: none). */
+  const [suggestAt, setSuggestAt] = useState<DOMRect | null>(null);
+  const [hl, setHl] = useState(-1);
   /* An edit is closed once: Enter, Tab and Escape all move focus off the input, and its blur must not save it a second time. */
   const closedToken = useRef(0);
   const nextToken = useRef(0);
@@ -244,13 +248,14 @@ export function QuoteGrid({
     setEditing({ r, c: 1, draft, token: nextToken.current });
   }
 
-  function finishEdit(then?: Pos) {
+  function finishEdit(then?: Pos, picked?: string) {
     if (!editing || closedToken.current === editing.token) return;
     closedToken.current = editing.token;
     const row = rows[editing.r];
     setEditing(null);
+    setSuggestAt(null);
     if (row) {
-      const op = writeOp(row, editing.c, editing.draft);
+      const op = writeOp(row, editing.c, picked ?? editing.draft);
       if (typeof op === "string") ui.toast(op, "error");
       else if (op) commit([op]);
     }
@@ -450,16 +455,28 @@ export function QuoteGrid({
 
   function onEditKey(e: React.KeyboardEvent<HTMLInputElement>) {
     if (!editing) return;
-    if (e.key === "Enter") {
+    const picked = hl >= 0 ? suggestions[hl] : undefined;
+    if (e.key === "ArrowDown" && suggestions.length) {
       e.preventDefault();
-      finishEdit({ r: editing.r + (e.shiftKey ? -1 : 1), c: editing.c });
+      setHl((h) => Math.min(suggestions.length - 1, h + 1));
+    } else if (e.key === "ArrowUp" && suggestions.length) {
+      e.preventDefault();
+      setHl((h) => Math.max(-1, h - 1));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      finishEdit({ r: editing.r + (e.shiftKey ? -1 : 1), c: editing.c }, picked);
     } else if (e.key === "Tab") {
       e.preventDefault();
-      finishEdit({ r: editing.r, c: editing.c + (e.shiftKey ? -1 : 1) });
+      finishEdit({ r: editing.r, c: editing.c + (e.shiftKey ? -1 : 1) }, picked);
     } else if (e.key === "Escape") {
       e.preventDefault();
+      if (hl >= 0) {
+        setHl(-1);
+        return;
+      }
       closedToken.current = editing.token;
       setEditing(null);
+      setSuggestAt(null);
       gridRef.current?.focus();
     }
   }
@@ -503,8 +520,9 @@ export function QuoteGrid({
   const editingCol = editing && editing.c >= FIXED ? cols[editing.c - FIXED] : null;
   const columnValues = useMemo(() => {
     if (!editingCol || editingCol.kind !== "text") return [];
-    return [...new Set(state.rows.map((r) => r.cells[editingCol.id]?.value ?? "").filter(Boolean))].sort();
+    return [...new Set(state.rows.map((r) => r.cells[editingCol.id]?.value ?? "").filter(Boolean))].sort((a, b) => a.localeCompare(b));
   }, [editingCol, state.rows]);
+  const suggestions = !editing ? [] : suggestFor(editing.c === 1 ? parties : editingCol?.kind === "text" ? columnValues : [], editing.draft);
 
   const preset = filter.all ? "all" : filter.from === sixMonths && !filter.to ? "6" : filter.from === threeMonths && !filter.to ? "3" : "custom";
 
@@ -637,6 +655,11 @@ export function QuoteGrid({
             if (editing) return;
             e.preventDefault();
             paste(e.clipboardData.getData("text/plain"));
+          }}
+          onScroll={() => {
+            if (!editing) return;
+            const el = document.activeElement;
+            if (el instanceof HTMLInputElement && gridRef.current?.contains(el)) setSuggestAt(el.getBoundingClientRect());
           }}
           onMouseUp={() => (dragging.current = false)}
           onMouseLeave={() => (dragging.current = false)}
@@ -774,9 +797,16 @@ export function QuoteGrid({
                             <input
                               autoFocus
                               value={editing.draft}
-                              list={c === 1 ? "quote-parties" : col?.kind === "text" ? "quote-col-values" : undefined}
+                              autoComplete="off"
+                              role={c === 1 || col?.kind === "text" ? "combobox" : undefined}
+                              aria-expanded={c === 1 || col?.kind === "text" ? suggestions.length > 0 : undefined}
+                              aria-controls={c === 1 || col?.kind === "text" ? "quote-suggest" : undefined}
+                              onFocus={(e) => setSuggestAt(e.currentTarget.getBoundingClientRect())}
                               inputMode={rate ? "decimal" : undefined}
-                              onChange={(e) => setEditing({ ...editing, draft: e.target.value })}
+                              onChange={(e) => {
+                                setEditing({ ...editing, draft: e.target.value });
+                                setHl(-1);
+                              }}
                               onKeyDown={onEditKey}
                               onBlur={() => finishEdit()}
                               className={cx("absolute inset-0 z-[2] w-full rounded-[2px] border-2 border-brand bg-surface px-[10px] text-sm text-ink outline-none", rate && "text-right tabular-nums")}
@@ -829,16 +859,16 @@ export function QuoteGrid({
         </div>
       </Card>
 
-      <datalist id="quote-parties">
-        {parties.map((p) => (
-          <option key={p} value={p} />
-        ))}
-      </datalist>
-      <datalist id="quote-col-values">
-        {columnValues.map((p) => (
-          <option key={p} value={p} />
-        ))}
-      </datalist>
+      {editing && suggestAt && suggestions.length ? (
+        <SuggestList
+          anchor={suggestAt}
+          items={suggestions}
+          draft={editing.draft}
+          active={hl}
+          onHover={setHl}
+          onPick={(v) => finishEdit(undefined, v)}
+        />
+      ) : null}
 
       {focusRow ? (
         <div className="mt-2 flex flex-wrap gap-x-3 text-xs text-muted">
@@ -893,6 +923,95 @@ export function QuoteGrid({
         )}
       </Modal>
     </>
+  );
+}
+
+/** What the list offers for what is typed: names starting with it first, then names containing it. */
+function suggestFor(all: string[], draft: string): string[] {
+  const q = draft.trim().toLowerCase();
+  if (!q) return all.slice(0, 50);
+  const starts: string[] = [];
+  const has: string[] = [];
+  for (const v of all) {
+    const l = v.toLowerCase();
+    if (l === q) continue;
+    if (l.startsWith(q)) starts.push(v);
+    else if (l.includes(q)) has.push(v);
+  }
+  return [...starts, ...has].slice(0, 50);
+}
+
+/**
+ * The suggestion list under a cell being edited — the app's own menu surface
+ * rather than the browser's datalist, which cannot be styled. It sits on the
+ * page (fixed, through a portal) so the grid's scroll box cannot clip it, and
+ * opens upwards where there is no room below. Pressing an item keeps focus in
+ * the cell (mousedown is prevented) and saves it.
+ */
+function SuggestList({
+  anchor,
+  items,
+  draft,
+  active,
+  onHover,
+  onPick,
+}: {
+  anchor: DOMRect;
+  items: string[];
+  draft: string;
+  active: number;
+  onHover: (i: number) => void;
+  onPick: (v: string) => void;
+}) {
+  const MAX = 264;
+  const below = typeof window === "undefined" || anchor.bottom + MAX + 8 < window.innerHeight || anchor.top < MAX + 8;
+  const q = draft.trim().toLowerCase();
+  return (
+    <BodyPortal>
+      <div
+        id="quote-suggest"
+        role="listbox"
+        style={{
+          left: anchor.left,
+          minWidth: Math.max(anchor.width, 220),
+          maxWidth: 420,
+          maxHeight: MAX,
+          ...(below ? { top: anchor.bottom + 4 } : { bottom: window.innerHeight - anchor.top + 4 }),
+        }}
+        className="animate-fade-in fixed z-[95] overflow-y-auto rounded-card border border-line bg-surface py-1 shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
+      >
+        {items.map((v, i) => {
+          const at = q ? v.toLowerCase().indexOf(q) : -1;
+          return (
+            <div
+              key={v}
+              role="option"
+              aria-selected={i === active}
+              ref={(el) => {
+                if (el && i === active) el.scrollIntoView({ block: "nearest" });
+              }}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                onPick(v);
+              }}
+              onMouseEnter={() => onHover(i)}
+              className={cx("cursor-pointer truncate px-3 py-1.5 text-sm", i === active ? "bg-brand-soft text-brand-hover" : "text-body hover:bg-canvas")}
+              title={v}
+            >
+              {at >= 0 ? (
+                <>
+                  {v.slice(0, at)}
+                  <span className="font-semibold text-ink">{v.slice(at, at + q.length)}</span>
+                  {v.slice(at + q.length)}
+                </>
+              ) : (
+                v
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </BodyPortal>
   );
 }
 
