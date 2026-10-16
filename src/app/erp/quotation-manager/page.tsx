@@ -5,7 +5,6 @@ import { quoteSheet } from "@/lib/erp/quotes";
 import { parseQuoteDate } from "@/lib/erp/engines/quotes";
 import { calendarDate } from "@/lib/business-date";
 import { nowMs } from "@/lib/format";
-import { Page } from "../_ui/page-head";
 import { QuoteGrid } from "./grid";
 
 /**
@@ -37,8 +36,10 @@ export default async function ErpQuotationManager({ searchParams }: { searchPara
   const sheet = await quoteSheet({ from, to, q });
 
   return (
-    <Page title={SCREEN.label} sub={SCREEN.sub}>
+    <div className="px-6 pt-6 pb-10">
       <QuoteGrid
+        title={SCREEN.label}
+        sub={SCREEN.sub}
         key={`${from}|${to}|${q}`}
         sheet={sheet}
         today={today}
@@ -47,6 +48,6 @@ export default async function ErpQuotationManager({ searchParams }: { searchPara
         threeMonths={monthsBack(today, 3)}
         readOnly={!!ctx.viewingAs}
       />
-    </Page>
+    </div>
   );
 }

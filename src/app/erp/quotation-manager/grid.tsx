@@ -27,7 +27,8 @@ import {
   type SheetRow,
   type SheetState,
 } from "@/lib/erp/engines/quote-sheet";
-import { Button, Card, cx, Input, Select } from "@/components/ui/primitives";
+import { Button, Callout, Card, cx, Dot, EmptyState, Input, PageHeader, Select } from "@/components/ui/primitives";
+import { Icon as ShellIcon } from "@/components/shell/icons";
 import { Modal } from "@/components/ui/modal";
 import { RowMenu } from "@/components/ui/overlays";
 import { useErpUi } from "../_ui/erp-ui";
@@ -52,11 +53,25 @@ function showDate(d: string): string {
   return y && m && day ? `${Number(day)}-${MON[Number(m) - 1]}-${y}` : d;
 }
 
-const STATUS_BG: Record<QuoteStatus, string> = {
-  po: "bg-quote-po",
-  cancel: "bg-quote-cancel",
-  pickup: "bg-quote-pickup",
+/* The sheet's three marks in the design system's tones: the soft tint of the
+   tone with its edge, the same pairing a list row uses for its status. */
+const STATUS_CELL: Record<QuoteStatus, string> = {
+  po: "bg-warn-soft text-ink shadow-[inset_3px_0_0_var(--color-warn)]",
+  cancel: "bg-danger-soft text-danger line-through decoration-danger/50 shadow-[inset_3px_0_0_var(--color-danger)]",
+  pickup: "bg-info-soft text-ink shadow-[inset_3px_0_0_var(--color-info)]",
 };
+
+const STATUS_SWATCH: Record<QuoteStatus, string> = {
+  po: "bg-warn-soft shadow-[inset_0_0_0_1.5px_var(--color-warn)]",
+  cancel: "bg-danger-soft shadow-[inset_0_0_0_1.5px_var(--color-danger)]",
+  pickup: "bg-info-soft shadow-[inset_0_0_0_1.5px_var(--color-info)]",
+};
+
+/* The list screens' header cell, and the toolbar's control. */
+const HEAD = "sticky top-0 border-r border-b border-divider border-b-line bg-canvas px-3 py-2 align-bottom text-xs font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase";
+const FOOT = "sticky h-9 bg-canvas px-3";
+const FROZEN_EDGE = "shadow-[inset_-1px_0_0_var(--color-line)]";
+const TOOL = "h-8 rounded-control border border-line bg-surface px-2.5 text-meta text-body outline-none focus:border-brand";
 
 const FIXED = 2;
 
@@ -74,6 +89,8 @@ function csvCell(v: string): string {
 }
 
 export function QuoteGrid({
+  title,
+  sub,
   sheet,
   today,
   filter,
@@ -81,6 +98,8 @@ export function QuoteGrid({
   threeMonths,
   readOnly,
 }: {
+  title: string;
+  sub: string;
   sheet: QuoteSheet;
   today: string;
   filter: { from: string | null; to: string | null; q: string; all: boolean };
@@ -490,93 +509,126 @@ export function QuoteGrid({
   const preset = filter.all ? "all" : filter.from === sixMonths && !filter.to ? "6" : filter.from === threeMonths && !filter.to ? "3" : "custom";
 
   return (
-    <div>
-      {/* Toolbar */}
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <form
-          className="flex items-center gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            go({ q: search.trim() });
-          }}
-        >
-          <div className="w-[200px]">
-            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search party" />
-          </div>
-        </form>
-        <Select
-          value={preset}
-          onChange={(e) => {
-            const v = e.target.value;
-            if (v === "all") go({ from: "all", to: null });
-            else if (v === "6") go({ from: sixMonths, to: null });
-            else if (v === "3") go({ from: threeMonths, to: null });
-          }}
-          aria-label="Period"
-        >
-          <option value="3">Last 3 months</option>
-          <option value="6">Last 6 months</option>
-          <option value="all">Every date</option>
-          {preset === "custom" ? <option value="custom">Chosen dates</option> : null}
-        </Select>
-        <div className="w-[150px]">
-          <Input type="date" value={filter.all ? "" : (filter.from ?? "")} onChange={(e) => e.target.value && go({ from: e.target.value })} aria-label="From" />
-        </div>
-        <span className="text-sm text-muted">to</span>
-        <div className="w-[150px]">
-          <Input type="date" value={filter.to ?? ""} onChange={(e) => go({ to: e.target.value || null })} aria-label="To" />
-        </div>
-        <div className="flex-1" />
-        <span className={cx("text-sm", failed ? "text-danger" : "text-muted")} aria-live="polite">
-          {saving ? "Saving…" : failed ? "Last change not saved" : readOnly ? "Preview — read only" : "All changes saved"}
-        </span>
-        <Button size="sm" onClick={doUndo} disabled={!undo.length || readOnly} title="Undo (Ctrl+Z)">
-          Undo
-        </Button>
-        <Button size="sm" onClick={exportCsv}>
-          Export CSV
-        </Button>
-        {archived.length ? (
-          <Button size="sm" onClick={() => setShowArchived(true)}>
-            Removed columns ({archived.length})
-          </Button>
-        ) : null}
-        <Button size="sm" onClick={() => setColEdit({ id: null, at: cols.length })} disabled={readOnly}>
-          + Column
-        </Button>
-        <Button size="sm" variant="primary" onClick={() => addRow()} disabled={readOnly}>
-          + Row
-        </Button>
-      </div>
-
-      {/* Colour bar — the sheet's legend, and what applies a colour */}
-      <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
-        <span className="text-muted">Colour the selected cells:</span>
-        {QUOTE_STATUSES.map((s) => (
-          <button
-            key={s}
-            type="button"
-            disabled={readOnly}
-            onClick={() => colour(s)}
-            className={cx("cursor-pointer rounded-control border border-line px-2.5 py-1 text-ink", STATUS_BG[s])}
-            title={QUOTE_STATUS_LABEL[s]}
-          >
-            {QUOTE_STATUS_LABEL[s]}
-          </button>
-        ))}
-        <button type="button" disabled={readOnly} onClick={() => colour(null)} className="cursor-pointer rounded-control border border-line bg-surface px-2.5 py-1 text-body">
-          No colour
-        </button>
-        <span className="ml-auto text-xs text-muted">Type to edit · Enter / Tab to move · Shift to select · Ctrl+V pastes a block from Excel</span>
-      </div>
+    <>
+      <PageHeader
+        title={title}
+        subtitle={sub}
+        actions={
+          <>
+            <Button onClick={exportCsv}>Export CSV</Button>
+            <Button onClick={() => setColEdit({ id: null, at: cols.length })} disabled={readOnly}>
+              Add column
+            </Button>
+            <Button variant="primary" onClick={() => addRow()} disabled={readOnly}>
+              Add row
+            </Button>
+          </>
+        }
+      />
 
       {sheet.truncated ? (
-        <div className="mb-3 rounded-control border border-warn-line bg-warn-soft px-3 py-2 text-sm text-warn-ink">
-          Only the newest 3,000 rows of this period are shown. Narrow the dates to see older ones.
-        </div>
+        <Callout>
+          <span className="text-sm text-warn-ink">Only the newest 3,000 rows of this period are shown. Narrow the dates to see older ones.</span>
+        </Callout>
       ) : null}
 
-      <Card className="overflow-hidden">
+      <Card className="relative">
+        {saving ? <span aria-hidden className="absolute inset-x-0 top-0 z-40 h-0.5 animate-pulse rounded-t-[6px] bg-brand" /> : null}
+
+        {/* Toolbar — the list screens' own: search, period, then what the sheet can do. */}
+        <div className="flex flex-wrap items-center gap-2.5 border-b border-divider px-4 py-3">
+          <form
+            className="relative w-[260px] max-w-full"
+            onSubmit={(e) => {
+              e.preventDefault();
+              go({ q: search.trim() });
+            }}
+          >
+            <ShellIcon name="search" size={16} className="pointer-events-none absolute top-2 left-2.5 text-muted" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search party"
+              aria-label="Search party"
+              className="h-8 w-full rounded-control border border-line pr-7 pl-7.5 text-sm outline-none focus:border-brand"
+            />
+            {search ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearch("");
+                  if (filter.q) go({ q: "" });
+                }}
+                aria-label="Clear search"
+                className="absolute top-1.5 right-1.5 flex h-5 w-5 cursor-pointer items-center justify-center text-muted hover:text-body"
+              >
+                <ShellIcon name="close" size={14} />
+              </button>
+            ) : null}
+          </form>
+          <select
+            value={preset}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === "all") go({ from: "all", to: null });
+              else if (v === "6") go({ from: sixMonths, to: null });
+              else if (v === "3") go({ from: threeMonths, to: null });
+            }}
+            aria-label="Period"
+            className={TOOL}
+          >
+            <option value="3">Last 3 months</option>
+            <option value="6">Last 6 months</option>
+            <option value="all">Every date</option>
+            {preset === "custom" ? <option value="custom">Chosen dates</option> : null}
+          </select>
+          <span className="inline-flex items-center gap-1.5">
+            <input type="date" value={filter.all ? "" : (filter.from ?? "")} onChange={(e) => e.target.value && go({ from: e.target.value })} aria-label="From" className={cx(TOOL, "w-[136px]")} />
+            <span className="text-meta text-muted">to</span>
+            <input type="date" value={filter.to ?? ""} onChange={(e) => go({ to: e.target.value || null })} aria-label="To" className={cx(TOOL, "w-[136px]")} />
+          </span>
+          <span className="flex-1" />
+          <span className="flex items-center gap-1.5 text-meta text-muted" aria-live="polite">
+            <Dot tone={failed ? "danger" : saving ? "brand" : readOnly ? "muted" : "success"} />
+            {saving ? "Saving…" : failed ? "Last change not saved" : readOnly ? "Preview — read only" : "All changes saved"}
+          </span>
+          <button type="button" onClick={doUndo} disabled={!undo.length || readOnly} title="Undo (Ctrl+Z)" className={cx(TOOL, "cursor-pointer hover:bg-canvas disabled:cursor-default disabled:text-line-strong disabled:hover:bg-surface")}>
+            Undo
+          </button>
+          {archived.length ? (
+            <button type="button" onClick={() => setShowArchived(true)} className={cx(TOOL, "cursor-pointer hover:bg-canvas")}>
+              Removed columns · {archived.length}
+            </button>
+          ) : null}
+        </div>
+
+        {/* Marking — the sheet's legend, and the way a mark is put on. */}
+        <div className="flex flex-wrap items-center gap-2 border-b border-divider bg-canvas px-4 py-2">
+          <span className="mr-1 text-2xs font-medium tracking-[0.04em] text-muted uppercase">Mark selected</span>
+          {QUOTE_STATUSES.map((s) => (
+            <button
+              key={s}
+              type="button"
+              disabled={readOnly}
+              onClick={() => colour(s)}
+              title={QUOTE_STATUS_LABEL[s]}
+              className="inline-flex h-7 cursor-pointer items-center gap-2 rounded-control border border-line bg-surface px-2.5 text-meta text-body hover:border-line-strong disabled:cursor-default"
+            >
+              <span aria-hidden className={cx("h-3 w-3 rounded-[3px]", STATUS_SWATCH[s])} />
+              {QUOTE_STATUS_LABEL[s]}
+            </button>
+          ))}
+          <button
+            type="button"
+            disabled={readOnly}
+            onClick={() => colour(null)}
+            className="inline-flex h-7 cursor-pointer items-center rounded-control px-2 text-meta text-muted hover:text-body disabled:cursor-default"
+          >
+            Clear mark
+          </button>
+          <span className="ml-auto text-xs text-muted">Type to edit · Enter or Tab to move · Shift to select · Ctrl+V pastes from Excel · Ctrl+Z undoes</span>
+        </div>
+
         <div
           ref={gridRef}
           tabIndex={0}
@@ -588,176 +640,192 @@ export function QuoteGrid({
           }}
           onMouseUp={() => (dragging.current = false)}
           onMouseLeave={() => (dragging.current = false)}
-          className="max-h-[calc(100vh-260px)] overflow-auto outline-none"
+          className="max-h-[calc(100vh-300px)] overflow-auto rounded-b-[6px] outline-none"
         >
-          <table className="border-separate border-spacing-0 text-sm" style={{ minWidth: "100%" }}>
+          <table className="border-separate border-spacing-0" style={{ minWidth: "100%" }}>
             <thead>
               <tr>
-                <th className="sticky top-0 left-0 z-30 w-[44px] min-w-[44px] border-r border-b border-line bg-ink px-1 text-center text-xs font-semibold text-surface" title="Rows shown">
+                <th className={cx(HEAD, "left-0 z-30 w-[52px] min-w-[52px] text-center tabular-nums")} title="Rows shown">
                   {rows.length}
                 </th>
-                <th className="sticky top-0 left-[44px] z-30 w-[118px] min-w-[118px] border-r border-b border-line bg-ink px-2 py-2 text-left font-semibold text-surface">Date</th>
-                <th className="sticky top-0 left-[162px] z-30 w-[220px] min-w-[220px] border-r border-b border-line bg-ink px-2 py-2 text-left font-semibold text-surface">Party</th>
-                {cols.map((c, i) => (
-                  <th
-                    key={c.id}
-                    onClick={(e) => {
-                      if (e.shiftKey) setFocus({ r: rows.length - 1, c: FIXED + i });
-                      else {
-                        setAnchor({ r: 0, c: FIXED + i });
-                        setFocus({ r: Math.max(0, rows.length - 1), c: FIXED + i });
-                      }
-                      gridRef.current?.focus();
-                    }}
-                    onDoubleClick={() => !readOnly && setColEdit({ id: c.id, at: i })}
-                    className={cx(
-                      "group sticky top-0 z-20 cursor-pointer border-r border-b border-line bg-ink px-2 py-1.5 text-center align-bottom font-semibold text-surface",
-                      c.kind === "text" ? "min-w-[150px]" : "min-w-[104px]",
-                    )}
-                    title="Click to select the column · double-click to edit it"
-                  >
-                    {c.pack ? <div className="text-xs leading-tight font-medium opacity-90">{c.pack}</div> : null}
-                    <div className="leading-tight">{c.name || <span className="opacity-60">Untitled</span>}</div>
-                    {c.brand ? <div className="mt-0.5 border-t border-surface/30 pt-0.5 text-xs leading-tight opacity-90">{c.brand}</div> : null}
-                    {!readOnly ? (
-                      <span className="mt-1 flex justify-center gap-1 opacity-0 group-hover:opacity-100">
-                        <HeadBtn label="Move left" onClick={() => moveColumn(c.id, -1)} disabled={i === 0}>‹</HeadBtn>
-                        <HeadBtn label="Edit column" onClick={() => setColEdit({ id: c.id, at: i })}>✎</HeadBtn>
-                        <HeadBtn label="Insert a column after" onClick={() => setColEdit({ id: null, at: i + 1 })}>+</HeadBtn>
-                        <HeadBtn label="Move right" onClick={() => moveColumn(c.id, 1)} disabled={i === cols.length - 1}>›</HeadBtn>
-                      </span>
-                    ) : null}
-                  </th>
-                ))}
-                <th className="sticky top-0 z-20 w-full border-b border-line bg-ink" />
+                <th className={cx(HEAD, "left-[52px] z-30 w-[124px] min-w-[124px] text-left")}>Date</th>
+                <th className={cx(HEAD, FROZEN_EDGE, "left-[176px] z-30 w-[220px] min-w-[220px] text-left")}>Party</th>
+                {cols.map((c, i) => {
+                  const colSelected = sel.c0 <= FIXED + i && FIXED + i <= sel.c1;
+                  return (
+                    <th
+                      key={c.id}
+                      onClick={(e) => {
+                        if (e.shiftKey) setFocus({ r: rows.length - 1, c: FIXED + i });
+                        else {
+                          setAnchor({ r: 0, c: FIXED + i });
+                          setFocus({ r: Math.max(0, rows.length - 1), c: FIXED + i });
+                        }
+                        gridRef.current?.focus();
+                      }}
+                      onDoubleClick={() => !readOnly && setColEdit({ id: c.id, at: i })}
+                      className={cx(
+                        "group sticky top-0 z-20 cursor-pointer border-r border-b border-divider border-b-line px-3 pt-2 pb-1.5 align-bottom font-normal",
+                        colSelected ? "bg-brand-soft" : "bg-canvas hover:bg-divider",
+                        c.kind === "text" ? "min-w-[160px] text-left" : "min-w-[128px] text-right",
+                      )}
+                      title={`${[c.pack, c.name, c.brand].filter(Boolean).join(" · ")}\nClick to select the column · double-click to edit it`}
+                    >
+                      <div className="h-4 truncate text-2xs leading-4 font-medium tracking-[0.04em] text-muted uppercase">{c.pack}</div>
+                      <div className="text-meta leading-tight font-semibold whitespace-normal text-ink">{c.name || <span className="font-normal text-muted">Untitled</span>}</div>
+                      <div className="h-4 truncate text-2xs leading-4 text-muted">{c.brand}</div>
+                      {!readOnly ? (
+                        <span className={cx("mt-1 flex gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100", c.kind === "text" ? "justify-start" : "justify-end")}>
+                          <HeadBtn label="Move left" onClick={() => moveColumn(c.id, -1)} disabled={i === 0}>
+                            <ShellIcon name="chevron" size={12} className="rotate-180" />
+                          </HeadBtn>
+                          <HeadBtn label="Move right" onClick={() => moveColumn(c.id, 1)} disabled={i === cols.length - 1}>
+                            <ShellIcon name="chevron" size={12} />
+                          </HeadBtn>
+                          <HeadBtn label="Insert a column after" onClick={() => setColEdit({ id: null, at: i + 1 })}>
+                            <ShellIcon name="plus" size={12} />
+                          </HeadBtn>
+                          <HeadBtn label="Edit column" onClick={() => setColEdit({ id: c.id, at: i })}>
+                            <ShellIcon name="settings" size={12} />
+                          </HeadBtn>
+                        </span>
+                      ) : null}
+                    </th>
+                  );
+                })}
+                <th className="sticky top-0 z-20 w-full border-b border-line bg-canvas" />
               </tr>
             </thead>
             <tbody>
-              {rows.map((row, r) => (
-                <tr key={row.id}>
-                  <td className={cx("sticky left-0 z-10 border-r border-b border-divider px-1 text-center text-xs text-muted", sel.r0 <= r && r <= sel.r1 ? "bg-brand-soft" : "bg-canvas")}>
-                    <span className="inline-flex items-center gap-0.5">
-                      <button
-                        type="button"
-                        className="cursor-pointer tabular-nums"
-                        onClick={(e) => {
-                          if (e.shiftKey) setFocus({ r, c: width - 1 });
-                          else {
-                            setAnchor({ r, c: 0 });
-                            setFocus({ r, c: width - 1 });
-                          }
-                          gridRef.current?.focus();
-                        }}
-                        title="Select the row"
-                      >
-                        {r + 1}
-                      </button>
-                      {!readOnly ? (
-                        <RowMenu
-                          items={[
-                            { label: "Add a row below, same date", onSelect: () => addRow(row) },
-                            { label: "Duplicate this row", onSelect: () => addRow(row, row) },
-                            { label: "Delete this row", destructive: true, onSelect: () => commit([{ op: "deleteRow", rowId: row.id }]) },
-                          ]}
-                        />
-                      ) : null}
-                    </span>
-                  </td>
-                  {Array.from({ length: width }, (_, c) => {
-                    const st = cellStatus(row, c);
-                    const isFocus = focus.r === r && focus.c === c;
-                    const isEdit = editing?.r === r && editing.c === c;
-                    const col = c >= FIXED ? cols[c - FIXED] : null;
-                    const val = c === 0 ? showDate(row.date) : cellText(row, c);
-                    const rate = col?.kind === "rate";
-                    const s = col && rate ? stats.get(col.id) : null;
-                    const n = rate ? rateNumber(val) : null;
-                    const lowest = s && n != null && s.count > 1 && n === s.lowest && st !== "cancel";
-                    return (
-                      <td
-                        key={c}
-                        data-cell={`${r}:${c}`}
-                        onMouseDown={(e) => {
-                          if (isEdit) return;
-                          if (e.shiftKey) setFocus({ r, c });
-                          else {
-                            setFocus({ r, c });
-                            setAnchor({ r, c });
-                          }
-                          dragging.current = true;
-                          gridRef.current?.focus();
-                        }}
-                        onMouseEnter={() => dragging.current && setFocus({ r, c })}
-                        onDoubleClick={() => startEdit(r, c)}
-                        className={cx(
-                          "relative h-[30px] border-r border-b border-divider px-2 whitespace-nowrap",
-                          c === 0 && "sticky left-[44px] z-10",
-                          c === 1 && "sticky left-[162px] z-10 max-w-[220px] truncate",
-                          rate ? "text-right tabular-nums" : "text-left",
-                          st ? STATUS_BG[st] : c < FIXED ? "bg-warn-soft" : "bg-surface",
-                          st === "cancel" && "text-danger line-through",
-                          lowest && "font-semibold text-success",
-                        )}
-                        title={st ? QUOTE_STATUS_LABEL[st] : lowest ? "Lowest rate in this column for the rows shown" : undefined}
-                      >
-                        {inSel(r, c) && !isFocus ? <span className="pointer-events-none absolute inset-0 bg-brand/10" /> : null}
-                        {isFocus ? <span className="pointer-events-none absolute inset-0 z-[1] outline-2 -outline-offset-2 outline-brand" /> : null}
-                        {isEdit ? (
-                          <input
-                            autoFocus
-                            value={editing.draft}
-                            list={c === 1 ? "quote-parties" : col?.kind === "text" ? "quote-col-values" : undefined}
-                            inputMode={rate ? "decimal" : undefined}
-                            onChange={(e) => setEditing({ ...editing, draft: e.target.value })}
-                            onKeyDown={onEditKey}
-                            onBlur={() => finishEdit()}
-                            className={cx("absolute inset-0 z-[2] w-full border-2 border-brand bg-surface px-2 text-sm text-ink outline-none", rate && "text-right")}
-                          />
-                        ) : (
-                          val
-                        )}
-                      </td>
-                    );
-                  })}
-                  <td className="border-b border-divider" />
-                </tr>
-              ))}
-              {!rows.length ? (
-                <tr>
-                  <td colSpan={width + 2} className="px-4 py-6 text-sm text-muted">
-                    No quotations in this period.{" "}
-                    {!readOnly ? (
-                      <button type="button" className="cursor-pointer text-brand" onClick={() => addRow()}>
-                        Add the first row
-                      </button>
-                    ) : null}{" "}
-                    or paste a block from your sheet after adding one.
-                  </td>
-                </tr>
-              ) : null}
+              {rows.map((row, r) => {
+                const rowSelected = sel.r0 <= r && r <= sel.r1;
+                return (
+                  <tr key={row.id} className="group/row">
+                    <td className={cx("sticky left-0 z-10 border-r border-b border-divider px-1 text-center", rowSelected ? "bg-brand-soft" : "bg-canvas")}>
+                      <span className="flex items-center justify-between gap-0.5">
+                        <button
+                          type="button"
+                          className={cx("min-w-[22px] cursor-pointer text-2xs tabular-nums", rowSelected ? "font-medium text-brand-hover" : "text-muted hover:text-body")}
+                          onClick={(e) => {
+                            if (e.shiftKey) setFocus({ r, c: width - 1 });
+                            else {
+                              setAnchor({ r, c: 0 });
+                              setFocus({ r, c: width - 1 });
+                            }
+                            gridRef.current?.focus();
+                          }}
+                          title="Select the row"
+                        >
+                          {r + 1}
+                        </button>
+                        {!readOnly ? (
+                          <span className="opacity-0 group-hover/row:opacity-100 focus-within:opacity-100">
+                            <RowMenu
+                              items={[
+                                { label: "Add a row below, same date", onSelect: () => addRow(row) },
+                                { label: "Duplicate this row", onSelect: () => addRow(row, row) },
+                                { label: "Delete this row", destructive: true, onSelect: () => commit([{ op: "deleteRow", rowId: row.id }]) },
+                              ]}
+                            />
+                          </span>
+                        ) : null}
+                      </span>
+                    </td>
+                    {Array.from({ length: width }, (_, c) => {
+                      const st = cellStatus(row, c);
+                      const isFocus = focus.r === r && focus.c === c;
+                      const isEdit = editing?.r === r && editing.c === c;
+                      const col = c >= FIXED ? cols[c - FIXED] : null;
+                      const val = c === 0 ? showDate(row.date) : cellText(row, c);
+                      const rate = col?.kind === "rate";
+                      const s = col && rate ? stats.get(col.id) : null;
+                      const n = rate ? rateNumber(val) : null;
+                      const lowest = s && n != null && s.count > 1 && n === s.lowest && st !== "cancel";
+                      return (
+                        <td
+                          key={c}
+                          data-cell={`${r}:${c}`}
+                          onMouseDown={(e) => {
+                            if (isEdit) return;
+                            if (e.shiftKey) setFocus({ r, c });
+                            else {
+                              setFocus({ r, c });
+                              setAnchor({ r, c });
+                            }
+                            dragging.current = true;
+                            gridRef.current?.focus();
+                          }}
+                          onMouseEnter={() => dragging.current && setFocus({ r, c })}
+                          onDoubleClick={() => startEdit(r, c)}
+                          className={cx(
+                            "relative h-9 border-r border-b border-divider px-3 text-sm whitespace-nowrap",
+                            c === 0 && "sticky left-[52px] z-10 text-body",
+                            c === 1 && cx("sticky left-[176px] z-10 max-w-[220px] truncate font-medium text-ink", FROZEN_EDGE),
+                            c >= FIXED && "text-body",
+                            rate ? "text-right tabular-nums" : "text-left",
+                            st ? STATUS_CELL[st] : "bg-surface",
+                            lowest && "font-semibold text-success",
+                          )}
+                          title={st ? QUOTE_STATUS_LABEL[st] : lowest ? "Lowest rate in this column for the rows shown" : c === 1 && val ? val : undefined}
+                        >
+                          {inSel(r, c) && !isFocus ? <span className="pointer-events-none absolute inset-0 bg-brand/8" /> : null}
+                          {isFocus ? <span className="pointer-events-none absolute inset-0 z-[1] outline-2 -outline-offset-2 outline-brand" /> : null}
+                          {isEdit ? (
+                            <input
+                              autoFocus
+                              value={editing.draft}
+                              list={c === 1 ? "quote-parties" : col?.kind === "text" ? "quote-col-values" : undefined}
+                              inputMode={rate ? "decimal" : undefined}
+                              onChange={(e) => setEditing({ ...editing, draft: e.target.value })}
+                              onKeyDown={onEditKey}
+                              onBlur={() => finishEdit()}
+                              className={cx("absolute inset-0 z-[2] w-full rounded-[2px] border-2 border-brand bg-surface px-[10px] text-sm text-ink outline-none", rate && "text-right tabular-nums")}
+                            />
+                          ) : (
+                            val
+                          )}
+                        </td>
+                      );
+                    })}
+                    <td className="border-b border-divider bg-surface" />
+                  </tr>
+                );
+              })}
             </tbody>
             {rows.length ? (
               <tfoot>
-                {(["latest", "lowest"] as const).map((k) => (
-                  <tr key={k}>
-                    <td className="sticky bottom-0 left-0 z-10 border-t border-line bg-canvas" />
-                    <td colSpan={2} className="sticky bottom-0 left-[44px] z-10 border-t border-r border-line bg-canvas px-2 py-1.5 text-xs font-semibold text-body">
-                      {k === "latest" ? "Latest rate" : "Lowest rate"}
+                {(["latest", "lowest"] as const).map((k, fi) => (
+                  /* Both rows stay in view: the first sits one row-height above the second. */
+                  <tr key={k} className={fi === 0 ? "[&>td]:bottom-9" : "[&>td]:bottom-0"}>
+                    <td className={cx(FOOT, "left-0 z-20", fi === 0 && "border-t border-line")} />
+                    <td colSpan={2} className={cx(FOOT, FROZEN_EDGE, "left-[52px] z-20 text-left", fi === 0 && "border-t border-line")}>
+                      <span className="text-2xs font-medium tracking-[0.04em] text-muted uppercase">{k === "latest" ? "Latest rate" : "Lowest rate"}</span>
                     </td>
                     {cols.map((c) => {
                       const s = stats.get(c.id);
                       return (
-                        <td key={c.id} className="sticky bottom-0 border-t border-r border-line bg-canvas px-2 py-1.5 text-right text-xs font-semibold tabular-nums text-ink" title={k === "latest" && s?.latestDate ? showDate(s.latestDate) : undefined}>
-                          {s ? (k === "latest" ? (s.latest ?? "") : (s.lowest ?? "")) : ""}
+                        <td
+                          key={c.id}
+                          className={cx(FOOT, "border-r border-divider text-right text-meta font-semibold text-ink tabular-nums", fi === 0 && "border-t border-line")}
+                          title={k === "latest" && s?.latestDate ? `Quoted ${showDate(s.latestDate)}` : undefined}
+                        >
+                          {s ? (k === "latest" ? (s.latest ?? "—") : (s.lowest ?? "—")) : ""}
                         </td>
                       );
                     })}
-                    <td className="sticky bottom-0 border-t border-line bg-canvas" />
+                    <td className={cx(FOOT, fi === 0 && "border-t border-line")} />
                   </tr>
                 ))}
               </tfoot>
             ) : null}
           </table>
+          {!rows.length ? (
+            <EmptyState
+              title={filter.q || filter.to || !filter.all ? "No quotations in this period" : "No quotations yet"}
+              body="Add a row for each quotation, or select a cell and paste a block straight from your sheet."
+              action={!readOnly ? <Button variant="primary" onClick={() => addRow()}>Add row</Button> : undefined}
+            />
+          ) : null}
         </div>
       </Card>
 
@@ -773,10 +841,12 @@ export function QuoteGrid({
       </datalist>
 
       {focusRow ? (
-        <div className="mt-2 text-xs text-muted">
-          Row {focus.r + 1}: {showDate(focusRow.date)} · {focusRow.party || "no party"}
-          {focus.c >= FIXED && cols[focus.c - FIXED] ? ` · ${[cols[focus.c - FIXED].pack, cols[focus.c - FIXED].name].filter(Boolean).join(" ")}` : ""}
-          {sel.r1 > sel.r0 || sel.c1 > sel.c0 ? ` · ${(sel.r1 - sel.r0 + 1) * (sel.c1 - sel.c0 + 1)} cells selected` : ""}
+        <div className="mt-2 flex flex-wrap gap-x-3 text-xs text-muted">
+          <span>
+            Row {focus.r + 1} · {showDate(focusRow.date)} · {focusRow.party || "no party"}
+            {focus.c >= FIXED && cols[focus.c - FIXED] ? ` · ${[cols[focus.c - FIXED].pack, cols[focus.c - FIXED].name].filter(Boolean).join(" ")}` : ""}
+          </span>
+          {sel.r1 > sel.r0 || sel.c1 > sel.c0 ? <span>{(sel.r1 - sel.r0 + 1) * (sel.c1 - sel.c0 + 1)} cells selected</span> : null}
         </div>
       ) : null}
 
@@ -807,8 +877,11 @@ export function QuoteGrid({
         {archived.length ? (
           <ul className="divide-y divide-divider">
             {archived.map((c) => (
-              <li key={c.id} className="flex items-center justify-between gap-3 py-2 text-sm">
-                <span>{[c.pack, c.name, c.brand].filter(Boolean).join(" · ") || "Untitled"}</span>
+              <li key={c.id} className="flex items-center justify-between gap-3 py-2.5 text-sm">
+                <span>
+                  <span className="font-medium text-ink">{c.name || "Untitled"}</span>
+                  {c.pack || c.brand ? <span className="ml-1.5 text-muted">{[c.pack, c.brand].filter(Boolean).join(" · ")}</span> : null}
+                </span>
                 <Button size="sm" onClick={() => commit([{ op: "restoreColumn", columnId: c.id }])}>
                   Bring back
                 </Button>
@@ -819,7 +892,7 @@ export function QuoteGrid({
           <p className="text-sm text-muted">No column has been removed.</p>
         )}
       </Modal>
-    </div>
+    </>
   );
 }
 
@@ -835,7 +908,7 @@ function HeadBtn({ label, onClick, disabled, children }: { label: string; onClic
         onClick();
       }}
       onDoubleClick={(e) => e.stopPropagation()}
-      className="h-5 w-5 cursor-pointer rounded bg-surface/20 text-xs leading-5 text-surface hover:bg-surface/40 disabled:cursor-default disabled:opacity-30"
+      className="flex h-5 w-5 cursor-pointer items-center justify-center rounded-[3px] text-muted hover:bg-surface hover:text-ink disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent"
     >
       {children}
     </button>
