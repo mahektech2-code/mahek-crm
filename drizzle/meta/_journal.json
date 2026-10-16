@@ -1863,6 +1863,13 @@
       "when": 1792619644442,
       "tag": "0268_erp_masters_screens_removed",
       "breakpoints": true
+    },
+    {
+      "idx": 266,
+      "version": "7",
+      "when": 1792619744442,
+      "tag": "0269_erp_ledger_ticks",
+      "breakpoints": true
     }
   ]
 }

@@ -1,0 +1,234 @@
+/* ---------------------------------------------------------------------------
+ * ONE READING OF A LIST: filter, chips, search, sort, group, page.
+ *
+ * The generic list used to do all of this in the browser, over every row the
+ * server sent — which was every row there is. With the ERP holding real
+ * history (ten thousand SFG lines, nine thousand FG fills) that was megabytes
+ * of rows serialised into every page, each carrying its drawer and its
+ * actions, to draw twenty-five of them. Now the ERP's page runs this on the
+ * server and sends one page; HRMS and the other small lists still run it in
+ * the browser. It is the SAME function in both places, so a search or a sort
+ * cannot answer differently depending on which side happened to run it.
+ *
+ * PURE and client-safe.
+ * ------------------------------------------------------------------------- */
+
+import { cellText, type ColSpec, type ListRow, type ListSpec, type Tone } from "./ui";
+
+export type ListSort = { k: string; d: 1 | -1 };
+
+/** Everything the list's toolbar and pager can say, as it travels in the URL. */
+export type ListQuery = {
+  q: string;
+  chip: string;
+  /** The godown filter. */
+  gf: string;
+  /** Grouping on (the default where the spec groups at all). */
+  grp: boolean;
+  sort: ListSort | null;
+  page: number;
+  size: number;
+  /** A dashboard pre-filter: only these ids. */
+  ids: string[] | null;
+};
+
+export const PAGE_SIZES = [25, 50, 100] as const;
+
+/** The query keys a list owns in the URL, beside the page's own (`view`, `open`, `f`, `fl`, `new`). */
+export const LIST_QUERY_KEYS = ["q", "chip", "gf", "grp", "sort", "page", "size"] as const;
+
+type Raw = Record<string, string | string[] | undefined>;
+const one = (raw: Raw, k: string) => (typeof raw[k] === "string" ? (raw[k] as string) : "");
+
+export function parseListQuery(raw: Raw): ListQuery {
+  const s = /^(.+)\.(a|d)$/.exec(one(raw, "sort"));
+  const size = Number(one(raw, "size"));
+  const page = Number(one(raw, "page"));
+  const f = one(raw, "f");
+  return {
+    q: one(raw, "q"),
+    chip: one(raw, "chip"),
+    gf: one(raw, "gf"),
+    grp: one(raw, "grp") !== "0",
+    sort: s ? { k: s[1], d: s[2] === "d" ? -1 : 1 } : null,
+    page: Number.isInteger(page) && page > 0 ? page : 1,
+    size: (PAGE_SIZES as readonly number[]).includes(size) ? size : 25,
+    ids: f ? f.split(",") : null,
+  };
+}
+
+/** The URL form of a query, leaving out every default so a plain list keeps a plain address. */
+export function listQueryParams(q: ListQuery): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (q.q) out.q = q.q;
+  if (q.chip) out.chip = q.chip;
+  if (q.gf) out.gf = q.gf;
+  if (!q.grp) out.grp = "0";
+  if (q.sort) out.sort = `${q.sort.k}.${q.sort.d < 0 ? "d" : "a"}`;
+  if (q.page > 1) out.page = String(q.page);
+  if (q.size !== 25) out.size = String(q.size);
+  return out;
+}
+
+export type ListGroup = {
+  /** Rows in the whole group, not just the part on this page. */
+  n: number;
+  /** The spec's aggregate over the whole group, already summed or averaged. */
+  agg: number | null;
+  /** Every id in the group, for "Select all" on a group. */
+  ids: string[];
+  /** The group's first row's values, for the facts drawn in its header. */
+  head: ListRow["v"];
+};
+
+export type ListPage = {
+  /** The rows on this page, in order, grouped rows contiguous. */
+  rows: ListRow[];
+  /** Rows the filters leave, across every page. */
+  total: number;
+  /** The page actually drawn — a page past the end is the last page. */
+  page: number;
+  /** Rows before the chip is applied: the "All" tab's count. */
+  beforeChip: number;
+  chips: { v: string; n: number }[];
+  sort: ListSort | null;
+  /** The group label of each row on the page, by id. */
+  groupOf: Record<string, string>;
+  groups: Record<string, ListGroup>;
+  /** The longest badge each status and flags column draws across ALL rows, so widths do not jump page to page. */
+  badgeChars: Record<string, number>;
+  /** Rows the screen holds before any filter — the difference between "nothing yet" and "nothing matches". */
+  all: number;
+};
+
+export function colOf(cols: ColSpec[], k: string): ColSpec {
+  return (
+    cols.find((c) => c.k === k) ?? {
+      k,
+      l: k.replace(/Lbl$/, "").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (c) => c.toUpperCase()),
+      t: "t",
+    }
+  );
+}
+
+/** The rows the filters, chip and search leave, sorted and grouped — every page of them. */
+export function queryRows(
+  spec: Pick<ListSpec, "cols" | "chips" | "godownKey" | "sortDefault" | "groups">,
+  rows: ListRow[],
+  query: ListQuery,
+  flagWords: Record<string, [string, Tone]>,
+): { list: ListRow[]; beforeChip: ListRow[]; sort: ListSort | null; gk: string[] | null; gOf: (r: ListRow) => string; by: Map<string, ListRow[]> | null } {
+  const cols = spec.cols;
+  let all = rows;
+  if (query.ids) {
+    const ids = new Set(query.ids);
+    all = all.filter((r) => ids.has(r.id));
+  }
+  if (spec.godownKey && query.gf) all = all.filter((r) => String(r.v[spec.godownKey!] ?? "") === query.gf);
+  const beforeChip = all;
+  if (spec.chips && query.chip) all = all.filter((r) => String(r.v[spec.chips!] ?? "") === query.chip);
+  const ql = query.q.trim().toLowerCase();
+  if (ql) {
+    all = all.filter((r) =>
+      cols
+        .map((c) => (c.t === "f" ? r.flags.map((f) => flagWords[f]?.[0] ?? f).join(" ") : cellText(c, r.v[c.k])))
+        .join(" ")
+        .toLowerCase()
+        .includes(ql),
+    );
+  }
+  const sort = query.sort ?? (spec.sortDefault ? { k: spec.sortDefault[0], d: spec.sortDefault[1] } : null);
+  if (sort) {
+    all = all.slice().sort((a, b) => {
+      const x = a.v[sort.k];
+      const y = b.v[sort.k];
+      const c = typeof x === "number" && typeof y === "number" ? x - y : String(x ?? "").localeCompare(String(y ?? ""));
+      return c * sort.d;
+    });
+  }
+  const gk = spec.groups && query.grp ? spec.groups : null;
+  const gOf = (r: ListRow) => (gk ?? []).map((k) => cellText(colOf(cols, k), r.v[k])).join(" · ");
+  if (!gk) return { list: all, beforeChip, sort, gk, gOf, by: null };
+  /* Each group contiguous, in the order its first row appears. Pushed onto
+     its own array — spreading a fresh copy per row was quadratic, and on a
+     group of eight thousand that is the whole page load. */
+  const by = new Map<string, ListRow[]>();
+  for (const r of all) {
+    const g = gOf(r);
+    const at = by.get(g);
+    if (at) at.push(r);
+    else by.set(g, [r]);
+  }
+  return { list: Array.from(by.values()).flat(), beforeChip, sort, gk, gOf, by };
+}
+
+/** The status-value chips over the rows before a chip is picked. */
+export function chipCounts(spec: Pick<ListSpec, "chips">, rows: ListRow[]): { v: string; n: number }[] {
+  if (!spec.chips) return [];
+  const n = new Map<string, number>();
+  for (const r of rows) {
+    const v = String(r.v[spec.chips] ?? "");
+    if (v) n.set(v, (n.get(v) ?? 0) + 1);
+  }
+  return Array.from(n, ([v, c]) => ({ v, n: c }));
+}
+
+export function badgeWidths(cols: ColSpec[], rows: ListRow[], flagWords: Record<string, [string, Tone]>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const c of cols) {
+    if (c.t === "s") out[c.k] = rows.reduce((n, r) => Math.max(n, r.v[c.k] == null ? 0 : String(r.v[c.k]).length), 0);
+    if (c.t === "f") out[c.k] = rows.reduce((n, r) => r.flags.reduce((m, f) => Math.max(m, (flagWords[f]?.[0] ?? f).length), n), 0);
+  }
+  return out;
+}
+
+/** One page of a list, with everything the toolbar, the group headers and the pager need about the rest. */
+export function pageOf(spec: ListSpec, rows: ListRow[], query: ListQuery, flagWords: Record<string, [string, Tone]>): ListPage {
+  const r = queryRows(spec, rows, query, flagWords);
+  const total = r.list.length;
+  const pages = Math.max(1, Math.ceil(total / query.size));
+  const page = Math.min(query.page, pages);
+  const slice = r.list.slice((page - 1) * query.size, page * query.size);
+  const groupOf: Record<string, string> = {};
+  const groups: Record<string, ListGroup> = {};
+  if (r.by) {
+    for (const row of slice) {
+      const g = r.gOf(row);
+      groupOf[row.id] = g;
+      if (groups[g]) continue;
+      const rs = r.by.get(g) ?? [];
+      let agg: number | null = null;
+      if (spec.agg && spec.cols.some((c) => c.k === spec.agg!.k)) {
+        const s = rs.reduce((t, x) => t + (Number(x.v[spec.agg!.k]) || 0), 0);
+        agg = spec.agg.t === "avg" ? s / (rs.length || 1) : s;
+      }
+      groups[g] = { n: rs.length, agg, ids: rs.map((x) => x.id), head: rs[0]?.v ?? {} };
+    }
+  }
+  return {
+    rows: slice,
+    total,
+    page,
+    beforeChip: r.beforeChip.length,
+    chips: chipCounts(spec, r.beforeChip),
+    sort: r.sort,
+    groupOf,
+    groups,
+    badgeChars: badgeWidths(spec.cols, rows, flagWords),
+    all: rows.length,
+  };
+}
+
+/** The filtered list as CSV, every page of it, as the Export button gives it. */
+export function listCsv(spec: ListSpec, rows: ListRow[], query: ListQuery, flagWords: Record<string, [string, Tone]>): { csv: string; n: number } {
+  const { list } = queryRows(spec, rows, query, flagWords);
+  const head = spec.cols.map((c) => c.l).join(",");
+  const body = list
+    .map((r) =>
+      spec.cols
+        .map((c) => `"${(c.t === "f" ? r.flags.map((f) => flagWords[f]?.[0] ?? f).join("; ") : cellText(c, r.v[c.k])).replace(/"/g, '""')}"`)
+        .join(","),
+    )
+    .join("\n");
+  return { csv: `${head}\n${body}`, n: list.length };
+}

@@ -156,6 +156,8 @@ export type JobName =
   /** HRMS: this month's paid-leave credit for every active employee — idempotent. */
   | "hrms-leave-credit"
   | "erp-digest"
+  /** The stock-read cache's stamp table, kept short: ticks older than two days go. */
+  | "erp-ledger-ticks"
   | "erp-inbox"
   /** Inventory Accuracy Control: today's cycle counts, by ABC class — idempotent, runs hourly. */
   | "erp-cycle-counts"
@@ -231,6 +233,16 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
       const { runMonthlyLeaveCredit } = await import("./hrms/jobs");
       const r = await runMonthlyLeaveCredit();
       return { recordsAffected: r.created, detail: `${r.created} credit${r.created === 1 ? "" : "s"} written` };
+    }, triggeredById),
+  );
+
+  /* The stock-read cache's stamp is a count over this table, so it is kept
+     to the last two days. Pruning moves the stamp, which costs every kept
+     stock read one re-read and is never wrong (`lib/erp/ledger-cache.ts`). */
+  results.push(
+    await run("erp-ledger-ticks", async () => {
+      const gone = (await db.execute(sql`delete from erp_ledger_ticks where at < now() - interval '2 days' returning id`)) as unknown as unknown[];
+      return { recordsAffected: gone.length, detail: `${gone.length} old ticks removed` };
     }, triggeredById),
   );
 

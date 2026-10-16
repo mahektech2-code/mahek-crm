@@ -1,6 +1,7 @@
 import { APP_TIMEZONE } from "@/lib/business-date";
 import Link from "next/link";
 import { erpContext } from "@/lib/erp/access";
+import { withReadMemo } from "@/lib/erp/read-memo";
 import { accuracyFlow, dashboardSections, latestDigest } from "@/lib/erp/dashboard";
 import { Callout, Card, cx, Dot } from "@/components/ui/primitives";
 import { Icon } from "@/components/shell/icons";
@@ -15,7 +16,7 @@ import { CardGrid } from "@/components/ui/card-grid";
 export default async function ErpDashboard() {
   const ctx = await erpContext();
   const where = ctx.workingGodown?.name ?? null;
-  const [sections, digest, flow] = await Promise.all([dashboardSections(ctx, where), latestDigest(), accuracyFlow(ctx, where)]);
+  const [sections, digest, flow] = await withReadMemo(() => Promise.all([dashboardSections(ctx, where), latestDigest(), accuracyFlow(ctx, where)]));
   const first = ctx.user.name.split(" ")[0];
   const hour = Number(new Date().toLocaleString("en-IN", { timeZone: APP_TIMEZONE, hour: "numeric", hour12: false }));
   const hello = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";

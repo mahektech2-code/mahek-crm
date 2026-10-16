@@ -253,6 +253,9 @@ const sfgBatches: ScreenModule = {
       { k: "godown", l: "Godown", t: "t" },
     ];
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
+    /* Every line's batch, gathered once: asked per row it was a scan of every line for every line. */
+    const linesOf = new Map<number, string[]>();
+    for (const y of rows) (linesOf.get(y.l.sfgNo) ?? linesOf.set(y.l.sfgNo, []).get(y.l.sfgNo)!).push(y.l.id);
     return {
       spec: {
         screen: "sfgBatches",
@@ -284,7 +287,7 @@ const sfgBatches: ScreenModule = {
         const actions: ActionSpec[] = [
           { id: "more", l: "Add another", primary: true, loadsForm: true },
           { id: "edit", l: "Edit", loadsForm: true },
-          { id: "select", l: "Show the whole SFG", href: `?f=${encodeURIComponent(rows.filter((y) => y.l.sfgNo === x.l.sfgNo).map((y) => y.l.id).join(","))}&fl=${encodeURIComponent(`SFG ${x.l.sfgNo}`)}` },
+          { id: "select", l: "Show the whole SFG", href: `?f=${encodeURIComponent(linesOf.get(x.l.sfgNo)!.join(","))}&fl=${encodeURIComponent(`SFG ${x.l.sfgNo}`)}` },
           {
             id: "delete",
             l: "Delete",
@@ -757,6 +760,9 @@ const fgFill: ScreenModule = {
       { k: "godown", l: "Godown", t: "t" },
     ];
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
+    /* Every fill's run, gathered once rather than scanned for per row. */
+    const fillsOf = new Map<number, string[]>();
+    for (const y of rows) (fillsOf.get(y.f.fgNum) ?? fillsOf.set(y.f.fgNum, []).get(y.f.fgNum)!).push(y.f.id);
     return {
       spec: {
         screen: "fgFill",
@@ -780,7 +786,7 @@ const fgFill: ScreenModule = {
         });
         const actions: ActionSpec[] = [
           { id: "more", l: "Add to this run", loadsForm: true },
-          { id: "select", l: "Show the whole fill", href: `?f=${encodeURIComponent(rows.filter((y) => y.f.fgNum === x.f.fgNum).map((y) => y.f.id).join(","))}&fl=${encodeURIComponent(`FG ${x.f.fgNum}`)}` },
+          { id: "select", l: "Show the whole fill", href: `?f=${encodeURIComponent(fillsOf.get(x.f.fgNum)!.join(","))}&fl=${encodeURIComponent(`FG ${x.f.fgNum}`)}` },
           { id: "trace", l: "Trace this lot", href: erpTraceHref(x.f.lotCode) },
           { id: "adjust", l: "Edit cans adjusted", prompt: { title: "Cans adjusted", sub: `${x.fg} · ${x.f.lotCode}`, submit: "Save", fields: [{ k: "adjusted", l: "Cans lost or adjusted", t: "num", req: true, min: 0, max: x.f.cans }], init: { adjusted: String(x.f.canAdjusted) } } },
           { id: "delete", l: "Delete", why: ctx.administrator ? "" : "Only an administrator deletes a posted filling", confirm: `Delete FG filling ${x.f.lotCode}? Its stock entry stays in the log, flagged as deleted.` },
