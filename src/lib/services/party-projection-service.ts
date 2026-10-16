@@ -137,13 +137,32 @@ export async function projectParties(
       leadSource: customers.leadSource,
       creditDays: customers.creditDays,
       kind: customers.kind,
+      deletedAt: customers.deletedAt,
       status: customers.status,
       deactivatedAt: customers.deactivatedAt,
       deactivationReason: customers.deactivationReason,
       statusDecidedAt: customers.statusDecidedAt,
     })
     .from(customers);
-  const byKey = new Map(existing.map((c) => [partyNameKey(c.name), c]));
+  /*
+   * ONE ROW PER NAME, AND THE CUSTOMER WINS IT.
+   *
+   * A lead and a customer can share a name — the order sheet used to create a
+   * fresh customer beside a lead the field had already raised for the same
+   * shop — and a plain `new Map` kept whichever row happened to come last. So
+   * the master's phone, GST number and seats could land on the lead while the
+   * account actually being billed went without them, and after the lead was
+   * trashed as that customer's twin it went on being enriched in the trash.
+   * A live customer beats a live lead, and anything in the trash loses to both.
+   */
+  const rank = (c: (typeof existing)[number]) =>
+    c.deletedAt ? 0 : c.kind === "customer" ? 2 : 1;
+  const byKey = new Map<string, (typeof existing)[number]>();
+  for (const c of existing) {
+    const key = partyNameKey(c.name);
+    const held = byKey.get(key);
+    if (!held || rank(c) > rank(held)) byKey.set(key, c);
+  }
 
   /*
    * Customers whose contacts a person has written. Their WhatsApp number is a

@@ -14,6 +14,8 @@ import {
   type OrderLine,
 } from "@/db/schema";
 import { isReceived, netOfTaxPaise } from "@/lib/sheet-parse";
+import { calendarDate } from "@/lib/business-date";
+import { conversionColumns, recordConversion } from "./lead-conversion-service";
 import { getConfig } from "@/lib/config/store";
 import {
   recomputeAllBillPaid,
@@ -93,6 +95,11 @@ export type ProjectionReport = {
   customers: {
     created: number;
     updated: number;
+    /**
+     * Leads the field had already raised for a party, taken over and made the
+     * customer rather than given a twin. See `projectCustomers`.
+     */
+    adoptedLeads: number;
     withoutPhone: number;
     /** Created in nobody's book, so visible on no list. */
     unassigned: number;
@@ -262,7 +269,63 @@ export async function projectCustomers(
     : [];
   const byCode = new Map(existing.map((c) => [c.externalCode!, c]));
 
+  /*
+   * A PARTY THE FIELD ALREADY RAISED AS A LEAD IS THAT LEAD, NOT A NEW ROW.
+   *
+   * This projection knows a customer by its external code and nothing else,
+   * and a lead raised on a handset, at a desk or from a website form has none.
+   * So the day such a shop's first order reached the sheet, a SECOND row was
+   * written beside the lead — a customer with the orders and the bills, and a
+   * lead with the visits, the calls and the stage, both carrying one name. A
+   * customer only ever comes from a lead, so a lead sharing a customer's name
+   * is that customer's own past sitting on the calling list, and the office
+   * rang shops it was already billing to ask for a first order.
+   *
+   * Matched on the same fold `partyKey` uses — case and spacing, nothing
+   * looser — and ONLY where exactly one live lead carries the name. Two leads
+   * called "Shree Paints" in two towns are two shops, and guessing which one
+   * the sheet means would put one shop's orders on the other's record; that
+   * party is created as before and the pair is left to the duplicates screen.
+   * A lead already holding a code belongs to some other party and is never
+   * taken.
+   *
+   * Adopting CONVERTS, through the one conversion the rest of the app uses:
+   * every party this sheet names is billed, which is why a party it creates is
+   * a customer from its first row, and a lead it adopts must not be the one
+   * billed account still reading as a prospect.
+   */
+  const nameOf = (party: PartyRow) => partyKey(party.name).slice("SHEET:".length);
+  const unmatchedNames = [
+    ...new Set(parties.filter((p) => !byCode.has(partyKey(p.name))).map(nameOf)),
+  ];
+  const leadRows = unmatchedNames.length
+    ? ((await db.execute(sql`
+        select c.id, c.owner_id as "ownerId", c.sales_am_id as "salesAmId",
+               c.lead_source as "leadSource", c.phone, c.customer_since as "customerSince",
+               upper(btrim(regexp_replace(c.name, '\\s+', ' ', 'g'))) as key
+          from customers c
+         where c.kind = 'lead'
+           and c.deleted_at is null
+           and c.external_code is null
+           and upper(btrim(regexp_replace(c.name, '\\s+', ' ', 'g'))) in (${sql.join(
+             unmatchedNames.map((n) => sql`${n}`),
+             sql`, `,
+           )})
+      `)) as unknown as Array<{
+        id: string;
+        ownerId: string | null;
+        salesAmId: string | null;
+        leadSource: string | null;
+        phone: string;
+        customerSince: string | null;
+        key: string;
+      }>)
+    : [];
+  const leadsByName = new Map<string, typeof leadRows>();
+  for (const l of leadRows) leadsByName.set(l.key, [...(leadsByName.get(l.key) ?? []), l]);
+
   let created = 0;
+  let adoptedLeads = 0;
   let updated = 0;
   let withoutPhone = 0;
   let unassigned = 0;
@@ -363,6 +426,47 @@ export async function projectCustomers(
         },
       });
       updated++;
+    } else if (leadsByName.get(nameOf(party))?.length === 1) {
+      const lead = leadsByName.get(nameOf(party))![0];
+      // Taken once: a party spelled twice in one pass must not adopt it twice.
+      leadsByName.delete(nameOf(party));
+      if (!lead.phone.trim()) withoutPhone++;
+      adoptedLeads++;
+      if (options.dryRun) continue;
+
+      const orderedOn = party.firstOrder ?? calendarDate(new Date());
+      const convertible = {
+        id: lead.id,
+        kind: "lead" as const,
+        ownerId: lead.ownerId,
+        salesAmId: lead.salesAmId,
+        leadSource: lead.leadSource,
+      };
+      const columns = conversionColumns(convertible, orderedOn);
+      await db.transaction(async (tx) => {
+        const moved = await tx
+          .update(customers)
+          .set({
+            ...columns,
+            externalCode: partyKey(party.name),
+            customerSince: lead.customerSince ?? orderedOn,
+            creditTermDays: party.creditDays ?? 30,
+            creditDays: party.creditDays,
+            updatedAt: new Date(),
+          })
+          // Guarded, so a lead an order converted between the read and this
+          // write is not recorded as converted a second time.
+          .where(and(eq(customers.id, lead.id), eq(customers.kind, "lead")))
+          .returning({ id: customers.id });
+        if (!moved.length) return;
+        await recordConversion(
+          tx,
+          convertible,
+          options.assignToUserId ?? null,
+          columns.salesAmId ?? null,
+          "its first order reached the order sheet",
+        );
+      });
     } else {
       toInsert.push({
         id: newId("cus"),
@@ -406,7 +510,7 @@ export async function projectCustomers(
     }
   }
 
-  return { created, updated, withoutPhone, unassigned };
+  return { created, updated, adoptedLeads, withoutPhone, unassigned };
 }
 
 /* ---------------------------------------------------------------- orders */

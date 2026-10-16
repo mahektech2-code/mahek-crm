@@ -52,6 +52,7 @@ import {
 import { syncPartySheet } from "./services/party-sync-service";
 import { syncTakenOrderSheet } from "./services/taken-order-sync-service";
 import { projectSheet, revertSheetSettledBills } from "./services/sheet-projection-service";
+import { trashLeadTwins, type LeadTwin } from "./services/lead-twin-service";
 import { projectParties } from "./services/party-projection-service";
 import { provisionBackOffice } from "./services/team-service";
 import {
@@ -167,6 +168,8 @@ export type JobName =
   | "party-sync"
   | "project-sheet"
   | "revert-sheet-paid"
+  /** Leads sharing a live customer's name, to the Lead Trash. `--dry-run` first. */
+  | "trash-lead-twins"
   | "provision-team"
   | "backfill-timeline"
   /** Find the photographs and PDFs customers sent before the webhook kept them. */
@@ -1165,6 +1168,8 @@ export async function runJob(
       return [await runProjection(triggeredById, options)];
     case "revert-sheet-paid":
       return [await runRevertSheetPaid(triggeredById, options)];
+    case "trash-lead-twins":
+      return [await runTrashLeadTwins(triggeredById, options)];
     case "provision-team":
       return [await runTeamProvision(triggeredById, options)];
     case "backfill-timeline":
@@ -1573,7 +1578,10 @@ async function runProjection(
       });
 
       const detail =
-        `customers ${orders.customers.created} new / ${orders.customers.updated} updated, ` +
+        `customers ${orders.customers.created} new / ${orders.customers.updated} updated` +
+        (orders.customers.adoptedLeads
+          ? ` / ${orders.customers.adoptedLeads} leads converted rather than duplicated`
+          : "") + ", " +
         `orders ${orders.orders.created} new (${orders.orders.lines} lines), ` +
         `bills ${orders.bills.skipped ? "skipped" : orders.bills.created}` +
         (orders.bills.clashed ? ` (${orders.bills.clashed} bill numbers already taken)` : "") +
@@ -1609,6 +1617,37 @@ async function runProjection(
  * longer settles a bill the Payment Status tab calls unpaid, so this cleans up
  * what the old behaviour left behind rather than holding a line against it.
  */
+/**
+ * Leads that share a live customer's name, moved to the Lead Trash.
+ *
+ * BY HAND, NEVER SCHEDULED, like the revert above it: it takes leads off every
+ * list, and the dry run — which names every pair — is the only review it gets.
+ * Restorable from Admin Console → Trash. See `lead-twin-service.ts`.
+ */
+async function runTrashLeadTwins(
+  triggeredById?: string,
+  options: JobOptions = {},
+): Promise<JobResult> {
+  return run(
+    "trash-lead-twins",
+    async () => {
+      const report = await trashLeadTwins({ dryRun: options.dryRun });
+      const line = (t: LeadTwin) =>
+        `  ${t.leadName} (${t.leadCity || "no town"}) → ${t.customerName} (${t.customerCity || "no town"})` +
+        (t.leadOrders ? ` — lead has ${t.leadOrders} orders, LEFT` : "");
+      const movable = report.twins.length - report.keptWithOrders.length;
+      const head = report.dryRun
+        ? `dry run — ${report.twins.length} leads share a customer's name; ${movable} would go to the trash, ` +
+          `${report.keptWithOrders.length} carry orders of their own and would be left.`
+        : `${report.trashed} leads moved to the trash as twins of a customer; ` +
+          `${report.keptWithOrders.length} carrying orders of their own were left.`;
+      const detail = [head, ...report.twins.map(line)].join("\n");
+      return { recordsAffected: report.dryRun ? 0 : report.trashed, detail };
+    },
+    triggeredById,
+  );
+}
+
 async function runRevertSheetPaid(
   triggeredById?: string,
   options: JobOptions = {},

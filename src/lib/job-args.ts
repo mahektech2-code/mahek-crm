@@ -92,6 +92,7 @@ export const JOB_USAGE = [
   "  npm run jobs -- sheet-payments",
   "  npm run jobs -- project-sheet --owner=vikram@mahek.in --bills",
   "  npm run jobs -- revert-sheet-paid --dry-run",
+  "  npm run jobs -- trash-lead-twins --dry-run",
   "  npm run jobs -- call-intel-train",
   "  npm run jobs -- call-intel-eval --limit=80",
 ].join("\n");
