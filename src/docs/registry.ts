@@ -797,7 +797,7 @@ export const DOC_APPS: DocApp[] = [
       },
       {
         slug: "purchase-requirements",
-        title: "Purchase requirements and quotations",
+        title: "Purchase requirements",
         summary: "A department asks for something; the purchase rule decides direct buy, quotation or the buyer's call.",
         group: "Purchase",
         modules: ["erp.requisitions"],

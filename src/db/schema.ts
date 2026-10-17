@@ -11808,11 +11808,10 @@ export const erpPurchases = pgTable(
 );
 
 /**
- * A vendor's quotation against one requirement — the QUOTATION method's step
- * between the requirement and the PO. Collected until there are enough to
- * compare (`erp.purchase.minQuotations`), compared on LANDED cost (rate ×
- * quantity, its GST and the freight), and exactly one is Selected: that
- * choice is the requirement's vendor, and its rate is the PO's rate.
+ * A vendor's quotation against one requirement, from when a requirement's
+ * Quotations tab collected and compared them. RETIRED (Oct 2026): supplier
+ * rates are kept on the Quotation manager, and nothing reads or writes this
+ * table any more; it is kept as the record it is.
  */
 export const erpQuotations = pgTable(
   "erp_quotations",

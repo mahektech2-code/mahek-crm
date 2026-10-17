@@ -1,7 +1,6 @@
 import "server-only";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
-import { getConfig } from "@/lib/config/store";
 import type { ErpContext } from "@/lib/erp/access";
 import { SEAT_LABEL, type ErpDepartmentSeat, categoriesForDepartment, departmentByLabel } from "@/lib/erp/departments";
 import { FLOW_STEPS, purchaseUnit, requirementLabel, type PurchaseMethod } from "@/lib/erp/engines/purchase-flow";
@@ -49,7 +48,7 @@ function erpCtxForReq(fc: FactoryCtx, dept: ReqDept): ErpContext {
 const countUnitOf = (rmUnit: string): "L" | "pcs" => (stockUnit(rmUnit) === "Pcs" ? "pcs" : "L");
 
 function howBought(rule: string, vendor: string | null): string {
-  if (rule === "quotation") return "Quotations needed first";
+  if (rule === "quotation") return "On the Quotation manager";
   if (rule === "buyer") return "The buyer decides how";
   return vendor ? `Direct from ${vendor}` : "Direct purchase";
 }
@@ -60,22 +59,20 @@ const isOpen = (stage: string) => !["Cancelled", "Received", "Closed", "Closed s
 export async function requirementKit(fc: FactoryCtx): Promise<ReqKit> {
   if (!fc.reqDepts.length)
     return { ok: false, title: "Not for your role", text: "Purchase requirements are raised by whoever is in charge of Mixing, Refilling or Packing.", fix: "Ask the Production Head if you should be." };
-  const [mats, views, config, suppliers, recentRows] = await Promise.all([
+  const [mats, views, suppliers, recentRows] = await Promise.all([
     materials(),
     requirementViews(),
-    getConfig(),
     db.execute(sql`select id, name from erp_suppliers`) as unknown as Promise<{ id: string; name: string }[]>,
     db.execute(sql`
       select distinct raw_material_id as id, department from erp_requisitions
        where raw_material_id is not null and created_at > now() - interval '90 days'`) as unknown as Promise<{ id: string; department: string | null }[]>,
   ]);
   const supplier = new Map(suppliers.map((s) => [s.id, s.name]));
-  const minQ = config["erp.purchase.minQuotations"];
   const mine = views.filter((v) => !v.legacy && !!v.r.rawMaterialId && fc.reqDepts.includes(deptOfLabel(v.r.department) as ReqDept));
 
   /* An open requirement for the item at this godown, so nobody asks twice without knowing. */
   const openFor = new Map<string, string>();
-  for (const v of mine) if (v.r.godownId === fc.godown.id && v.r.reqNo && isOpen(stageOf(v, minQ).stage)) openFor.set(`${deptOfLabel(v.r.department)}|${v.r.rawMaterialId}`, requirementLabel(v.r.reqNo));
+  for (const v of mine) if (v.r.godownId === fc.godown.id && v.r.reqNo && isOpen(stageOf(v).stage)) openFor.set(`${deptOfLabel(v.r.department)}|${v.r.rawMaterialId}`, requirementLabel(v.r.reqNo));
 
   const depts = await Promise.all(
     fc.reqDepts.map(async (key) => {
@@ -97,11 +94,11 @@ export async function requirementKit(fc: FactoryCtx): Promise<ReqKit> {
       return { key, label, items };
     }),
   );
-  return { ok: true, godown: fc.godown.name, today: today(), steps: [...FLOW_STEPS], depts, reqs: await cards(fc, mine, minQ) };
+  return { ok: true, godown: fc.godown.name, today: today(), steps: [...FLOW_STEPS], depts, reqs: await cards(fc, mine) };
 }
 
 /** The department's requirements, newest first: every open one, and the last 60 days of the rest. */
-async function cards(fc: FactoryCtx, views: ReqView[], minQ: number): Promise<ReqCard[]> {
+async function cards(fc: FactoryCtx, views: ReqView[]): Promise<ReqCard[]> {
   const ids = views.map((v) => v.r.id);
   /* The requester's own count of each item, and where its stock check stands. Never the book. */
   const counts = ids.length
@@ -119,7 +116,7 @@ async function cards(fc: FactoryCtx, views: ReqView[], minQ: number): Promise<Re
   for (const [no, vs] of byNo) {
     if (!no) continue;
     const lines: ReqLine[] = vs.map((v) => {
-      const st = stageOf(v, minQ);
+      const st = stageOf(v);
       const c = countOf.get(v.r.id);
       const own = c && c.by === fc.user.id && c.qty != null;
       const countState: ReqLine["countState"] = !c ? null : c.status === "open" ? "waiting" : ["matched", "resolved"].includes(c.status) ? "matched" : "flagged";
@@ -137,9 +134,8 @@ async function cards(fc: FactoryCtx, views: ReqView[], minQ: number): Promise<Re
         countState,
         cancel: st.step < 0 || st.step >= FLOW_STEPS.length ? null : cancellable ? { ok: true } : { ok: false, why: "It is on a PO already. Ask the office to change it." },
         po: v.po ? v.po.name : null,
-        vendor: v.supplier ?? v.selected?.supplier ?? null,
+        vendor: v.supplier ?? v.po?.supplier ?? null,
         received: v.po ? Number(v.po.received) : null,
-        quotes: v.quotes.length,
       };
     });
     const r = vs[0].r;
@@ -237,7 +233,7 @@ export async function raiseFromFloor(fc: FactoryCtx, input: ReqInput): Promise<R
 function nextWords(items: { item: string; rule: PurchaseMethod; vendor: string | null }[]): string[] {
   const out: string[] = [];
   for (const x of items) {
-    const how = x.rule === "quotation" ? "the office collects quotations" : x.rule === "buyer" ? "the buyer decides how to buy it" : `a PO goes to ${x.vendor ?? "the vendor"}`;
+    const how = x.rule === "quotation" ? "it is bought on the Quotation manager" : x.rule === "buyer" ? "the buyer decides how to buy it" : `a PO goes to ${x.vendor ?? "the vendor"}`;
     out.push(`${x.item}: ${how}.`);
   }
   out.push("You see each item move here as the office works on it.");

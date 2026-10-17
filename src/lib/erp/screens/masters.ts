@@ -128,7 +128,7 @@ async function rawMaterialForm(ctx: ErpContext, id?: string): Promise<FormSpec> 
         req: true,
         sec: "Purchase rule",
         opts: PURCHASE_METHODS.map((m) => m.label),
-        hint: "Direct: pick the vendor and raise the PO. Quotation: compare quotations first. Buyer decides: chosen per requirement.",
+        hint: "Direct: pick the vendor and raise the PO. Quotation: bought on the Quotation manager, whose PO number the requirement links. Buyer decides: chosen per requirement.",
       },
       {
         k: "preferredSupplier",

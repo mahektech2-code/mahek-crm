@@ -2011,8 +2011,7 @@ Approval → PO → Receipt, and NO PURCHASE IS COMPLETED WITHOUT A PO.** Goods
 inward (the GRN) names an approved PO and every line one of its items; a lot
 entered by hand on the register does the same; neither takes a typed supplier
 or item any more. `engines/purchase-flow.ts` is the rule, pure, and
-`screens/purchase-flow.ts` the requirements, their Quotations tab and the
-Purchase orders screen. The receipt side stays in `screens/purchase.ts`.
+`screens/purchase-flow.ts` the requirements and the Purchase orders screen. The receipt side stays in `screens/purchase.ts`.
 
 **THE PO COMES BY THE ITEM'S PURCHASE RULE, AND NOTHING IS APPROVED — a
 reversal (Oct 2026).** The flow is now Requirement → Blind count → Book
@@ -2077,21 +2076,24 @@ PO-in-the-header form, and a line naming no PO takes the header's.
 
 **The ITEM MASTER says how an item is bought** — `erp_raw_materials.purchase_method`:
 `direct` (boxes, cans, stationery, routine chemicals: pick the vendor, raise
-the PO), `quotation` (price-sensitive chemicals: quotations are collected and
-compared first) or `buyer` (the buyer decides per requirement, with the
+the PO), `quotation` (price-sensitive chemicals: bought on the Quotation
+manager, whose PO number the requirement links) or `buyer` (the buyer decides per requirement, with the
 `purchaseBuyer` power). `preferred_supplier_id` is the vendor a direct purchase
 is offered. **The rule is COPIED onto the requirement when it is raised**
 (`purchase_rule`, and the resolved `method`), so changing an item's rule never
 re-routes a requirement already in flight. `0222` started every chemical on
 quotation and everything else direct.
 
-**A quotation is required ONLY where the rule says so.** A quotation
-requirement is not ready for a PO until one quotation is SELECTED, and one can
-be selected only once `erp.purchase.minQuotations` are in. They are compared on
-LANDED cost (rate × quantity, its GST, the freight); an expired one is never
-the lowest; choosing other than the lowest needs the reason in words
-(`selection_note`). The PO takes the selected quotation's rate and refuses
-another — the negotiation is recorded on the quotation, not hidden on the PO.
+**A REQUIREMENT HAS NO QUOTATIONS TAB, and that is a reversal (Oct 2026).**
+Quotations were collected, compared on landed cost and selected on the
+requirement itself (a Quotations tab, `erp.purchase.minQuotations`, a PO that
+refused any rate but the selected one's). Supplier rates are now kept on the
+Quotation manager, and a quotation item links the PO number made there, so the
+tab, its form and actions, the ranking engine and the setting are gone.
+`erp_quotations` and the requisition's `quotation_id` and `selection_note` are
+kept as the record they are and read by nothing. The Quotation manager's grid
+lists its rows LATEST FIRST — newest date on top, the last entered first within
+a date (`visibleRows` in `engines/quote-sheet.ts`).
 
 **WHO MAY ACT IN PURCHASE IS SET IN THE ADMIN CONSOLE, and only there.**
 Raising a requirement, raising a PO and recording a lot test follow the screen

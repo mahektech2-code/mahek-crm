@@ -31,20 +31,6 @@ import { Stepper } from "./parts";
  * ------------------------------------------------------------------------- */
 
 type Fact = { l: string; v: string; href?: string };
-type QuoteRow = {
-  vendor: string;
-  rate: string | null;
-  gst: string;
-  freight: string | null;
-  landed: string | null;
-  delivery: string;
-  terms: string;
-  validUntil: string;
-  lowest: boolean;
-  expired: boolean;
-  selected: boolean;
-  document: string | null;
-};
 type CreateData = {
   why: string;
   item: string;
@@ -87,7 +73,6 @@ type Flow = {
     canUnlink: boolean;
   } | null;
   entry: { held: boolean; link: boolean; create: CreateData | null } | null;
-  quotes: { min: number; money: boolean; rows: QuoteRow[] } | null;
 };
 
 const rupees = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: paise % 100 ? 2 : 0, maximumFractionDigits: 2 })}`;
@@ -563,70 +548,6 @@ function PurchaseFlow({ data }: PanelProps) {
           ) : null}
           {creating && f.entry.create ? <CreatePoModal key={f.id} id={f.id} d={f.entry.create} onClose={() => setCreating(false)} /> : null}
         </>
-      ) : null}
-      {f.quotes ? (
-        <div className="grid gap-1.5">
-          <div className="flex items-baseline justify-between">
-            <SectionLabel>Quotations recorded before the Quotation manager</SectionLabel>
-            <span className="text-xs text-muted">
-              {f.quotes.rows.length} in · at least {f.quotes.min} needed
-            </span>
-          </div>
-          {f.quotes.rows.length ? (
-            /* A card per quotation: eight figures across a 600px drawer would
-               scroll sideways, and the comparison is read vendor by vendor —
-               the landed cost on the right is the one being compared. */
-            <div className="grid gap-2">
-              {f.quotes.rows.map((q) => (
-                <div
-                  key={q.vendor}
-                  className={cx(
-                    "rounded-control border px-3 py-2 text-meta",
-                    q.selected ? "border-success/40 bg-success-soft/50" : "border-divider",
-                    q.expired && "text-muted",
-                  )}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                      <span className="font-medium text-ink">{q.vendor}</span>
-                      {q.selected ? <span className="rounded-[3px] bg-success-soft px-1 text-2xs text-success">Selected</span> : null}
-                      {q.lowest ? <span className="rounded-[3px] bg-brand-soft px-1 text-2xs text-brand-hover">Lowest</span> : null}
-                      {q.expired ? <span className="rounded-[3px] bg-canvas px-1 text-2xs">Expired</span> : null}
-                      {q.document ? (
-                        <a href={`/api/attachments/${q.document}`} target="_blank" rel="noreferrer" className="text-2xs text-brand-hover hover:underline">
-                          file
-                        </a>
-                      ) : null}
-                    </div>
-                    {f.quotes!.money ? (
-                      <span className="flex-none text-right">
-                        <span className="block text-2xs tracking-[0.04em] text-muted uppercase">Landed</span>
-                        <span className="font-semibold text-ink tabular-nums">{q.landed}</span>
-                      </span>
-                    ) : null}
-                  </div>
-                  <dl className="mt-1.5 grid grid-cols-3 gap-x-3 gap-y-1.5">
-                    {[
-                      ...(f.quotes!.money ? [["Rate", q.rate], ["Freight", q.freight]] : []),
-                      ["GST", q.gst],
-                      ["Delivery", q.delivery],
-                      ["Valid until", q.validUntil],
-                      ["Terms", q.terms],
-                    ].map(([l, v]) => (
-                      <div key={l} className="min-w-0">
-                        <dt className="text-2xs tracking-[0.04em] text-muted uppercase">{l}</dt>
-                        <dd className="break-words text-body tabular-nums">{v || "—"}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <span className="text-meta text-muted">No quotations yet. Add each vendor&apos;s quotation as it comes in.</span>
-          )}
-          {!f.quotes.money ? <span className="text-xs text-muted">Rates and landed costs are not shown on your account.</span> : null}
-        </div>
       ) : null}
     </section>
   );

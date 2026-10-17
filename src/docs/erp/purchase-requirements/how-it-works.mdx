@@ -17,7 +17,7 @@ flowchart TD
 ## The requirement
 
 <Rule title="One requirement, every item, one save">
-A department's monthly list is a hundred items, so a requirement carries as many as it needs (up to five hundred) under one number, `REQ-n`. Each item is its own record — its method, quotations, vendor and PO line are decided item by item — but they are written together: a bad line refuses the whole save and names the line, so a requirement is never half raised.
+A department's monthly list is a hundred items, so a requirement carries as many as it needs (up to five hundred) under one number, `REQ-n`. Each item is its own record — its method, vendor and PO line are decided item by item — but they are written together: a bad line refuses the whole save and names the line, so a requirement is never half raised.
 </Rule>
 
 <Rule title="It says when, where and how badly">
@@ -60,28 +60,9 @@ Changing an item's rule later never re-routes a requirement already in flight.
 Approval was dropped on every route in October 2026: a PO is ready to send and receive against as soon as it is linked or created. POs raised earlier that still wait keep their Approve and Send back buttons.
 </Rule>
 
-## Quotations recorded before the Quotation manager
+## No quotations on a requirement
 
-Requirements raised before the change may still carry quotations collected on the requirement; the record shows them as history. The rules below are how they were collected.
-
-
-<Rule title="A quotation is required only where the rule says so">
-A quotation requirement is not ready for a PO until one quotation is **selected**, and one can be selected only once <Setting k="erp.purchase.minQuotations" /> quotations are in. One vendor quotes once per requirement.
-</Rule>
-
-<Rule title="Compared on landed cost">
-Each quotation is costed for the quantity required: rate × quantity, plus GST on that, plus the vendor's freight. They are ranked cheapest first; an **expired** quotation (valid-until in the past) is ranked after every live one, can never be the lowest, and cannot be selected.
-</Rule>
-
-<Rule title="Not the lowest? Say why">
-Selecting anything other than the lowest landed cost needs the reason in words. It is stored on the requirement, because that is exactly the decision an auditor asks about.
-</Rule>
-
-<Rule title="The PO takes the selected quotation's rate">
-The PO line for a quotation requirement must be at the selected quotation's rate; a different rate is refused with "change the quotation, not the PO". Any negotiation is recorded on the quotation, not hidden on the PO.
-</Rule>
-
-Adding, editing, removing and selecting quotations all need the **purchase money** power, because they are prices. The selected quotation cannot be removed — select another first — and nothing about a requirement's quotations can change once it is on a PO.
+Supplier rates are kept on the **Quotation manager**, so a requirement no longer collects, compares or selects quotations — the Quotations tab is gone. Quotations recorded on requirements before the change stay in the database as history.
 
 ## Who may do what to an item
 
@@ -91,7 +72,7 @@ Anyone holding Requirements may request any item their department asks for; anyo
 
 ## The stage is derived, never typed
 
-A requirement's stage is worked out from its own record each time it is read: its method, vendor, quotations and the PO it is on, with what that PO has ordered and received. The stored status moves only with the flow — Pending, then **Order Placed** when it is put on a PO, then **Received** — and there is no button to type one. A status somebody types can say Received with nothing at the gate.
+A requirement's stage is worked out from its own record each time it is read: its method, vendor and the PO it is on, with what that PO has ordered and received. The stored status moves only with the flow — Pending, then **Order Placed** when it is put on a PO, then **Received** — and there is no button to type one. A status somebody types can say Received with nothing at the gate.
 
 Requirements raised before purchase orders existed show their old status with "(before POs)" and are flagged "Before POs"; nothing back-fills a PO for them.
 
@@ -101,7 +82,7 @@ Each requirement shows the **present quantity** the godown's re-order level coun
 
 ## Settings
 
-<SettingsTable keys={["erp.purchase.poGstPercent", "erp.purchase.minQuotations"]} />
+<SettingsTable keys={["erp.purchase.poGstPercent"]} />
 
 ## Where the code and the intent disagree today
 
