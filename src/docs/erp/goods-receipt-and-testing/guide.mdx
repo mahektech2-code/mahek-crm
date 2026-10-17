@@ -23,11 +23,14 @@ When a lorry arrives at the gate, three things happen in the ERP: the goods are 
 ]} />
 
 <Steps>
-<Step title="Pick the purchase order">
-Only approved POs that still have something to receive are offered. The vendor comes from the PO. The **Godown** starts as the PO's deliver-to godown — change it if the goods came somewhere else.
+<Step title="Search the item that arrived">
+Type the item's name or code. Items with an approved PO still waiting are listed first, with how many POs, how much is pending and from which vendors. An item with no approved PO is still listed, greyed out as **Cannot receive** — its requirement has to be raised and its PO approved first.
 </Step>
-<Step title="One line per item that arrived">
-Pick the **PO item**. "Against the PO" shows what is still pending. For a chemical, enter the **Drums**.
+<Step title="Pick the PO it came against">
+Only the approved POs still waiting for that item are offered, oldest due date first, each with what was ordered, received and is still pending. Where only one PO is waiting it is picked for you and this step is skipped. The vendor comes from the PO, and the **Godown** starts as its deliver-to godown — change it if the goods came somewhere else.
+</Step>
+<Step title="Another item from the same truck">
+Press **Add another item from this truck** and search again. Only the same vendor's open POs are offered — one GRN is one vendor's delivery — and they may be different POs of that vendor. For a chemical, enter the **Drums** on each line.
 </Step>
 <Step title="Enter what actually came">
 For a chemical bought in kilograms, enter the **Weight with drum** off the scale and the **Empty drum weight** (per drum); the **Weight without drum** is worked out for you, whatever anybody typed elsewhere. For anything else, the **Quantity received** starts at what is pending — change it to what actually arrived.
@@ -36,7 +39,7 @@ For a chemical bought in kilograms, enter the **Weight with drum** off the scale
 How the goods came: **Supplier Transport**, **Mahek Own Vehicle**, **Third-Party Transport** or **No Transport Charges**. For supplier or third-party transport enter the cost from their bill; for our own vehicle enter the **kilometres** and the **tempo number** — the cost is worked out from the approved rate per kilometre. Add any **other direct inward cost** (loading, unloading, octroi) and what it was.
 </Step>
 <Step title="Save">
-"PR 1230 · 2 lines received against PO-90 · 1 to testing, 1 in the register". Every line is saved under one PR number.
+"PR 1230 · 2 lines received against PO-90, PO-92 · 1 to testing, 1 in the register". Every line is saved under one PR number, each against its own PO.
 </Step>
 </Steps>
 

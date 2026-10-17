@@ -70,8 +70,15 @@ registerCalc("purchaseOrders.summary", ({ h, lines }) => {
   return `ok:PO total ₹${fmt(total / 100)} with GST${n(h.freight) ? " and freight" : ""} · it goes for approval on save, and only an approved PO is sent and received against.`;
 });
 
-registerCalc("inward.supplier", ({ h, data }) => (h.po ? String(map(data, "supplierOf")[h.po] ?? "") : "The PO's vendor"));
-registerCalc("inward.pending", ({ h, l, data }) => (h.po && l.poLine ? String(map(data, "pendingOf")[`${h.po}|${l.poLine}`] ?? "") : ""));
+/* A receipt started from the item names its PO on each line; the PO form names it once in the header. */
+registerCalc("inward.supplier", ({ h, lines, data }) => {
+  const po = h.po || lines.find((l) => l.po)?.po;
+  return po ? String(map(data, "supplierOf")[po] ?? "") : "The PO's vendor";
+});
+registerCalc("inward.pending", ({ h, l, data }) => {
+  const po = l.po || h.po;
+  return po && l.poLine ? String(map(data, "pendingOf")[`${po}|${l.poLine}`] ?? "") : "";
+});
 registerCalc("register.pending", ({ h, data }) => (h.po && h.poLine ? String(map(data, "pendingOf")[`${h.po}|${h.poLine}`] ?? "") : ""));
 
 registerCalc("inward.pr", ({ h }) => (h.prFixed ? h.prFixed : "Next PR number, on save"));
