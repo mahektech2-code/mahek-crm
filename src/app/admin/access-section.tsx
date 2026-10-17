@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/primitives";
 import { FilterPills, Modal, RowMenu } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
-import { getModule, grantableApps, isAlwaysOpen, moduleGroupsForApp, modulesForApp } from "@/lib/modules";
+import { getModule, grantableApps, isAlwaysOpen, moduleGroupsForApp, modulesForApp, writeLevelsForApp } from "@/lib/modules";
 import {
   describeDiff,
   designationShape,
@@ -1636,7 +1636,7 @@ function AppBlock({
   const always = ALWAYS_OF(app);
   /* A write level is not a screen: it is drawn as Read / Write on the row of
      the screen it belongs to, and counted nowhere a screen is counted. */
-  const writeOf = new Map(modulesForApp(app).filter((m) => m.writeOf).map((m) => [m.writeOf!, m.key]));
+  const writeOf = writeLevelsForApp(app);
   const isWrite = new Set(writeOf.values());
   const groups = moduleGroupsForApp(app).map((g) => ({ ...g, modules: g.modules.filter((m) => !isWrite.has(m.key)) }));
   const screens = all.filter((k) => !isWrite.has(k));
@@ -2110,8 +2110,9 @@ function ReviewStep({
     const screens = mods.filter((m) => !m.writeOf);
     const n = screens.filter((m) => held.includes(m.key)).length;
     const total = screens.length;
+    const levels = new Set(writeLevelsForApp(id).values());
     const readOnly = mods
-      .filter((m) => m.writeOf && held.includes(m.writeOf) && !held.includes(m.key))
+      .filter((m) => levels.has(m.key) && m.writeOf && held.includes(m.writeOf) && !held.includes(m.key))
       .map((m) => `${modulesForApp(id).find((x) => x.key === m.writeOf)?.label} read only`);
     const base =
       n >= total ? (total === 1 ? "its one screen" : `all ${total} screens`) : `${n} of ${total} screens`;
