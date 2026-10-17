@@ -12,14 +12,12 @@ import { EnquiriesShell } from "./enquiries-shell";
 /**
  * The Website Enquiries shell.
  *
- * Two modules today — Overview and the worklist itself — in a sidebar that
- * collapses to icons, like every other app's. A third arrives beside them
- * rather than rearranging the app somebody has already learned.
+ * One page — the stats and the worklist together — in a sidebar that
+ * collapses to icons, like every other app's. Overview and the worklist are
+ * still two modules to GRANT, and this page opens for whoever holds either,
+ * so the one entry is drawn for anybody who got past the guard below.
  */
-const MODULES = [
-  { href: "/enquiries", label: "Overview", icon: "dashboard", exact: true },
-  { href: "/enquiries/list", label: "Enquiries", icon: "mail" },
-];
+const MODULES = [{ href: "/enquiries", label: "Enquiries", icon: "mail", exact: true }];
 
 export default async function EnquiriesLayout({
   children,
@@ -47,7 +45,7 @@ export default async function EnquiriesLayout({
       <EnquiriesShell
         apps={webApps(apps)}
         label={app.name}
-        modules={MODULES.filter((m) => modules.some((a) => a.href === m.href))}
+        modules={MODULES}
         headerRight={
           <>
             <span className="text-[13px] text-muted">

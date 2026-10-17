@@ -51,7 +51,6 @@ const isReminderType = (v: unknown): v is EnquiryReminderType =>
 function refresh(enquiryId?: string) {
   try {
     revalidatePath("/enquiries");
-    revalidatePath("/enquiries/list");
     if (enquiryId) revalidatePath(`/enquiries/list/${enquiryId}`);
   } catch {
     /* no request context — nothing cached to invalidate */

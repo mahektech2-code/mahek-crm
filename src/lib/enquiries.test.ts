@@ -1599,6 +1599,24 @@ describe("enquiryDashboardCounts", () => {
     assert.equal(counts.byStage.contacted, 1);
     assert.equal(counts.unassigned, 2, "b and c are still unassigned");
     assert.equal(counts.highOrUrgent, 1);
+    assert.equal(counts.unassignedHighOrUrgent, 1, "c is urgent and nobody has it");
+    assert.equal(counts.newThisMonth, 3, "all three were received just now");
+  });
+
+  test("unassignedHighOrUrgent leaves out an urgent enquiry somebody has picked up", async () => {
+    const owner = await makeUser("Owner11", "associate");
+    const e = await createEnquiryFromWebsite({
+      sourceForm: "CONTACT",
+      externalRef: randomUUID(),
+      receivedAt: new Date(),
+      submission: {},
+    });
+    await changePriority(e.id, "urgent");
+    await assignEnquiry(e.id, owner.id);
+
+    const counts = await enquiryDashboardCounts();
+    assert.equal(counts.highOrUrgent, 1);
+    assert.equal(counts.unassignedHighOrUrgent, 0);
   });
 
   test("listEnquiries filters by unassigned and by stage the same way the dashboard counts them", async () => {

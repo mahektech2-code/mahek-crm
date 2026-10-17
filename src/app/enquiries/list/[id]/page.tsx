@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { canOpenModule } from "@/lib/access";
+import { canOpenModule, requireModule } from "@/lib/access";
 import { DESK_MODULE } from "@/lib/services/lead-desk-assignment-service";
 import {
   getEnquiry,
@@ -21,6 +21,11 @@ export default async function EnquiryDetailPage({
 }) {
   const { id } = await params;
   const user = await requireUser();
+
+  // The guard the worklist's folder layout used to give everything under it:
+  // the detail page is the worklist's module, and a bookmarked enquiry must
+  // not open for somebody who was never given it.
+  await requireModule(user.id, "enquiries.list");
 
   const enquiry = await getEnquiry(id);
   if (!enquiry) notFound();

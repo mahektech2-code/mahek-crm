@@ -15,6 +15,8 @@ import {
 
 import { requireUser } from "@/lib/auth";
 import { listUserApps } from "@/lib/access";
+import { monthKey, monthWindowSql } from "@/lib/business-date";
+import { today } from "@/lib/recompute";
 import type { AppId } from "@/lib/apps";
 import { err, ok, okVoid, type Err, type Result } from "@/lib/result";
 import type { User } from "@/db/schema";
@@ -230,11 +232,18 @@ export type EnquiryDashboardCounts = {
   byStage: Record<EnquiryStage, number>;
   unassigned: number;
   highOrUrgent: number;
+  /** High or urgent AND nobody has picked it up — the figure under Unassigned. */
+  unassignedHighOrUrgent: number;
+  /** Received in the current calendar month, in the business zone. */
+  newThisMonth: number;
 };
 
 export async function enquiryDashboardCounts(): Promise<EnquiryDashboardCounts> {
   const { error } = await requireEnquiriesAccess();
   if (error) throw new Error(error.error);
+
+  // A half-open range of instants in the app's zone, never a bare cast.
+  const month = monthWindowSql(monthKey(await today()));
 
   const [row] = await db.execute<{
     total: number;
@@ -246,6 +255,8 @@ export async function enquiryDashboardCounts(): Promise<EnquiryDashboardCounts> 
     closed: number;
     unassigned: number;
     high_or_urgent: number;
+    unassigned_high_or_urgent: number;
+    new_this_month: number;
   }>(sql`
     select
       count(*)::int as total,
@@ -256,7 +267,9 @@ export async function enquiryDashboardCounts(): Promise<EnquiryDashboardCounts> 
       count(*) filter (where stage = 'converted')::int as converted,
       count(*) filter (where stage = 'closed')::int as closed,
       count(*) filter (where assigned_to_id is null)::int as unassigned,
-      count(*) filter (where priority in ('high','urgent'))::int as high_or_urgent
+      count(*) filter (where priority in ('high','urgent'))::int as high_or_urgent,
+      count(*) filter (where assigned_to_id is null and priority in ('high','urgent'))::int as unassigned_high_or_urgent,
+      count(*) filter (where received_at >= ${sql.raw(month.start)} and received_at < ${sql.raw(month.end)})::int as new_this_month
     from enquiries
     where workspace = 'enquiries'
   `);
@@ -273,6 +286,8 @@ export async function enquiryDashboardCounts(): Promise<EnquiryDashboardCounts> 
     },
     unassigned: row?.unassigned ?? 0,
     highOrUrgent: row?.high_or_urgent ?? 0,
+    unassignedHighOrUrgent: row?.unassigned_high_or_urgent ?? 0,
+    newThisMonth: row?.new_this_month ?? 0,
   };
 }
 

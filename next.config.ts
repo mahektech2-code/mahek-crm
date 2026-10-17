@@ -141,6 +141,14 @@ const nextConfig: NextConfig = {
   async redirects() {
     return [
       /*
+       * Website Enquiries was an Overview and a worklist at /enquiries/list;
+       * it is one page now. Exact match on purpose: /enquiries/list/:id is the
+       * enquiry's own page and stays where it is. The query string rides along,
+       * so a saved filtered worklist link lands on the same filtered view.
+       */
+      { source: "/enquiries/list", destination: "/enquiries", permanent: true },
+
+      /*
        * The Admin Console's old addresses — one page that read its screen out
        * of the path — and where each screen lives now. See the file itself.
        */

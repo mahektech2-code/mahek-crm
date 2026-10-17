@@ -726,7 +726,6 @@ export async function captureLead(
     if (v.fromEnquiry) {
       try {
         revalidatePath("/enquiries");
-        revalidatePath("/enquiries/list");
         revalidatePath(`/enquiries/list/${v.fromEnquiry.enquiryId}`);
       } catch {
         /* no request context */
