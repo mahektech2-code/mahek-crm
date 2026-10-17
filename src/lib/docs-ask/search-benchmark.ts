@@ -59,7 +59,7 @@ export const SEARCH_BENCHMARK: BenchmarkCase[] = [
   // ---- the ERP
   { q: "scan a box at dispatch", pages: ["erp/dispatch"] },
   { q: "raise a purchase order", pages: ["erp/purchase-orders"] },
-  { q: "quotation comparison", pages: ["erp/purchase-requirements"] },
+  { q: "quotation comparison", pages: ["erp/quotation-manager", "erp/purchase-requirements"] },
   { q: "goods receipt testing", pages: ["erp/goods-receipt-and-testing"] },
   { q: "sfg batch qc approval", pages: ["erp/production"] },
   { q: "reorder level", pages: ["erp/stock-levels"] },

@@ -7,7 +7,6 @@ A purchase requirement is a department saying "we need this bought". It is the f
     <WfTitle sub="What a department needs bought, through blind count and stock verification to the PO. The item's purchase rule decides how the PO comes.">Purchase requirements</WfTitle>
     <WfSpacer /><WfButton primary>New requirement</WfButton><Hotspot n={1} />
   </WfBar>
-  <WfTabs items={["Requirements", "Quotations"]} active="Requirements" />
   <WfBar><WfInput placeholder="Search" /><WfPill tone="brand">Create PO 3</WfPill><WfPill>Waiting for PO number 2</WfPill><WfPill>Blind count 1</WfPill><WfPill>Waiting for goods 4</WfPill><Hotspot n={2} /></WfBar>
   <WfTable
     highlight={0}
@@ -37,7 +36,7 @@ A purchase requirement is a department saying "we need this bought". It is the f
 Type in "Add an item — type to search", or paste a list: one item a row with its quantity last — "Solvent A, 200", or copied straight from Excel. A row that names nothing the ERP knows is shown to you rather than guessed. Each item shows what is **in stock**, its **unit** and where it **goes to** (Direct · the vendor, Quotations, or Buyer decides).
 </Step>
 <Step title="Raise requirement">
-All items are saved together under one number — "REQ-412 raised · 3 items · 2 direct · 1 for quotations". If one line is wrong, nothing is saved and that line is marked.
+All items are saved together under one number — "REQ-412 raised · 3 items · 2 direct · 1 by quotation". If one line is wrong, nothing is saved and that line is marked.
 </Step>
 </Steps>
 

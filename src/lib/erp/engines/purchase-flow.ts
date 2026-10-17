@@ -24,8 +24,7 @@
  * NO PURCHASE IS COMPLETED WITHOUT A PO: goods inward and a register row both
  * name an approved PO's line.
  *
- * One file says where a requirement has got to, what a quotation lands at,
- * what a PO is worth and what a receipt does to it — so the list, the drawer,
+ * One file says where a requirement has got to, what a PO is worth and what a receipt does to it — so the list, the drawer,
  * the dashboard tile and the form summary read one answer.
  * ------------------------------------------------------------------------- */
 
@@ -76,9 +75,6 @@ export type RequirementState = {
   rule: PurchaseMethod;
   method: "direct" | "quotation" | null;
   supplierId: string | null;
-  quotationId: string | null;
-  quoteCount: number;
-  minQuotations: number;
   /** The live PO this requirement is on, with what was ordered and what has arrived. */
   po: { status: string; ordered: number; received: number } | null;
   /** A requirement from before POs, already ordered or received the old way. */
@@ -185,35 +181,6 @@ export function pickQuotePoCell(
   const ratePaise = quoteRatePaise(cell.value);
   if (ratePaise == null) return { ok: false, error: `The rate for ${item} on PO ${shown} is "${cell.value}", which is not a number.` };
   return { ok: true, cell, ratePaise };
-}
-
-/* ------------------------------------------------------------- quotations */
-
-export type QuoteIn = { id: string; ratePaise: number; gstBp: number; freightPaise: number; validUntil: string | null };
-
-export type QuoteFigures = { materialPaise: number; gstPaise: number; freightPaise: number; landedPaise: number; perUnitLandedPaise: number };
-
-/** What a quotation lands at for the quantity required: material, its GST and the freight. */
-export function quoteFigures(q: Pick<QuoteIn, "ratePaise" | "gstBp" | "freightPaise">, quantity: number): QuoteFigures {
-  const materialPaise = Math.round(q.ratePaise * quantity);
-  const gstPaise = Math.round((materialPaise * q.gstBp) / 10000);
-  const landedPaise = materialPaise + gstPaise + (q.freightPaise || 0);
-  return { materialPaise, gstPaise, freightPaise: q.freightPaise || 0, landedPaise, perUnitLandedPaise: quantity > 0 ? Math.round(landedPaise / quantity) : 0 };
-}
-
-export function quoteExpired(validUntil: string | null, today: string): boolean {
-  return !!validUntil && validUntil < today;
-}
-
-/**
- * The quotations ranked by landed cost, cheapest first. An expired quotation
- * is ranked after every live one and can never be the lowest: a price the
- * vendor no longer stands behind is not a price.
- */
-export function rankQuotes<T extends QuoteIn>(quotes: T[], quantity: number, today: string): (T & { fig: QuoteFigures; rank: number; lowest: boolean; expired: boolean })[] {
-  const out = quotes.map((q) => ({ ...q, fig: quoteFigures(q, quantity), expired: quoteExpired(q.validUntil, today) }));
-  out.sort((a, b) => Number(a.expired) - Number(b.expired) || a.fig.landedPaise - b.fig.landedPaise);
-  return out.map((q, i) => ({ ...q, rank: i + 1, lowest: i === 0 && !q.expired }));
 }
 
 /* --------------------------------------------------------------------- POs */

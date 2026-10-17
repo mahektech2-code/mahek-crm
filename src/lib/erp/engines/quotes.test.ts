@@ -73,7 +73,8 @@ test("every change is undone by its inverse, whatever it touched", () => {
   ];
   const s0 = base();
   const s1 = applySheetOps(s0, ops);
-  assert.equal(visibleRows(s1)[0].party, "Saraswati");
+  /* Latest first: the October row sits above the September one it was entered after. */
+  assert.deepEqual(visibleRows(s1).map((r) => r.party), ["Garnet Chemicals", "Saraswati"]);
   assert.deepEqual(visibleColumns(s1).map((c) => c.id), ["c3", "c1"]);
   assert.deepEqual(s1.rows[0].cells.c1, { value: "50", status: "po", drums: null, poNo: null, poBy: null, poAt: null });
 
@@ -81,6 +82,15 @@ test("every change is undone by its inverse, whatever it touched", () => {
   assert.deepEqual(visibleRows(back).map((r) => r.id), ["r1"]);
   assert.deepEqual(back.rows.find((r) => r.id === "r1"), s0.rows[0]);
   assert.deepEqual(visibleColumns(back).map((c) => [c.id, c.name, c.kind]), [["c1", "Butyl", "rate"], ["c2", "Broker", "text"]]);
+});
+
+test("rows are latest first: newest date on top, and the last entered first within a date", () => {
+  const s = applySheetOps(base(), [
+    { op: "row", rowId: "r2", create: true, date: "2026-10-01", party: "Later the same day" },
+    { op: "row", rowId: "r3", create: true, date: "2026-10-05", party: "Newest" },
+    { op: "row", rowId: "r4", create: true, date: "2026-08-15", party: "Oldest" },
+  ]);
+  assert.deepEqual(visibleRows(s).map((r) => r.id), ["r3", "r2", "r1", "r4"]);
 });
 
 test("deleting a row hides it and undoing brings it back with its cells", () => {

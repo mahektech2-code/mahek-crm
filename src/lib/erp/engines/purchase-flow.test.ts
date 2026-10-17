@@ -5,7 +5,6 @@ import {
   poStatusAfterReceipt,
   poTotals,
   purchaseUnit,
-  rankQuotes,
   receivableQuantity,
   requirementStage,
   type RequirementState,
@@ -19,9 +18,6 @@ const base: RequirementState = {
   rule: "direct",
   method: "direct",
   supplierId: null,
-  quotationId: null,
-  quoteCount: 0,
-  minQuotations: 2,
   po: null,
   legacy: false,
 };
@@ -59,23 +55,6 @@ test("the PO drives the rest: receipt, and an old PO's approval", () => {
   assert.equal(on("Received", 100).step, FLOW_STEPS.length);
   assert.equal(on("Closed", 40).stage, "Closed short");
   assert.equal(requirementStage({ ...base, status: "Cancelled" }).step, -1);
-});
-
-test("quotations are ranked by LANDED cost, and an expired one can never be the lowest", () => {
-  const ranked = rankQuotes(
-    [
-      { id: "cheap-rate", ratePaise: 9000, gstBp: 1800, freightPaise: 300000, validUntil: null },
-      { id: "landed-best", ratePaise: 9500, gstBp: 1800, freightPaise: 0, validUntil: "2026-12-31" },
-      { id: "expired", ratePaise: 5000, gstBp: 1800, freightPaise: 0, validUntil: "2026-01-01" },
-    ],
-    100,
-    "2026-10-06",
-  );
-  assert.deepEqual(ranked.map((q) => q.id), ["landed-best", "cheap-rate", "expired"]);
-  assert.equal(ranked[0].lowest, true);
-  assert.equal(ranked[0].fig.landedPaise, 1121000, "100 × ₹95 + 18% GST");
-  assert.equal(ranked[1].fig.landedPaise, 1362000, "100 × ₹90 + 18% GST + ₹3,000 freight");
-  assert.equal(ranked[2].lowest, false);
 });
 
 test("a PO's status follows what was received, and only in the receiving states", () => {
