@@ -11,8 +11,8 @@ Everything on it can be changed in place: the cells, the date and party of a row
   <WfTable
     columns={["Date", "Party", "Material A", "Material B", "Broker name"]}
     rows={[
-      ["3-Oct-2026", <b key="b">Supplier B</b>, "", "48.5", "Self"],
       ["1-Oct-2026", <b key="a">Supplier A</b>, "134", "140", "Self"],
+      ["3-Oct-2026", <b key="b">Supplier B</b>, "", "48.5", "Self"],
       ["Latest rate", "", "134", "48.5", ""],
     ]}
   />
@@ -41,7 +41,7 @@ The **Party** column, and any text column such as **Broker name**, open a menu r
 ## Buying a rate
 
 1. **Ready to buy (grey).** A manager or administrator selects the rate to buy (one cell or a block) and presses **Ready to buy**. The cell turns grey: the team may now buy it.
-2. **Purchase it.** Anybody on the team selects a grey cell and presses **Purchase it**, or right-clicks it. They enter the **number of drums** and the **PO number**, then **Save and mark bought**.
+2. **Purchase it.** Anybody on the team selects a grey cell and presses **Purchase it**, or right-clicks it. They enter the **number of drums** and press **Save and mark bought**. MahekOne makes the **PO number** for them (PO-1243, the next number in the ERP's PO series) and shows it in a message and in the cell's note. Nobody types it. Production then enters that number on their purchase requirement to fetch the order.
 3. **Bought (yellow).** The cell turns yellow with a small mark in its corner, like a note in Excel. **Hover** over it to read the purchase: the PO number, drums, rate, material, party, quote date, the sheet's row number, and who bought it and when. **Click** it to pin the note, then **Edit** or **Undo purchase**, which puts it back to grey.
 
 Only a manager or an administrator marks a rate Ready to buy or takes the mark off. A rate that isn't grey can't be bought.
@@ -50,9 +50,7 @@ Only a manager or an administrator marks a rate Ready to buy or takes the mark o
 
 ## Rows
 
-The newest quotation is at the top: rows are sorted by date, latest first, and within one date the row entered last comes first.
-
-Use the **⋯** beside a row number to **Add a row, same date**, duplicate the row, or delete it. A date can be typed as `14-Oct-2026`, `14/10/2026` or `2026-10-14`. The party offers the purchase parties as you type, and a name that matches one exactly is linked to it.
+Use the **⋯** beside a row number to add a row below it with the same date, duplicate the row, or delete it. A date can be typed as `14-Oct-2026`, `14/10/2026` or `2026-10-14`. The party offers the purchase parties as you type, and a name that matches one exactly is linked to it.
 
 ## Columns
 

@@ -5,38 +5,77 @@ import {
   poStatusAfterReceipt,
   poTotals,
   purchaseUnit,
+  rankQuotes,
   receivableQuantity,
   requirementStage,
   type RequirementState,
 } from "./purchase-flow";
 
 /* The purchase flow's rules, pinned:
-   Requirement → Blind count → Vendor → Approval → PO → Receipt. */
+   Requirement → Blind count → Book comparison → Verification → Purchase method → PO number → Receipt. */
 
 const base: RequirementState = {
   status: "Pending",
+  rule: "direct",
+  method: "direct",
   supplierId: null,
+  quotationId: null,
+  quoteCount: 0,
+  minQuotations: 2,
   po: null,
   legacy: false,
 };
 
-test("direct purchase: select the vendor, then the PO", () => {
-  assert.equal(requirementStage(base).stage, "Select vendor");
-  const ready = requirementStage({ ...base, supplierId: "s1" });
-  assert.equal(ready.stage, "Ready for PO");
-  assert.equal(ready.readyForPo, true);
-  assert.equal(FLOW_STEPS[ready.step], "Approval");
+test("once counted, the item's purchase rule decides: Quotation links the Quotation manager's PO number, Direct creates one", () => {
+  const direct = requirementStage(base);
+  assert.equal(direct.stage, "Create PO");
+  assert.equal(FLOW_STEPS[direct.step], "Purchase method");
+  assert.equal(FLOW_STEPS[direct.step + 1], "PO number");
+  assert.equal(direct.readyForPo, true, "no quotation is needed for a direct purchase");
+  const quote = requirementStage({ ...base, rule: "quotation", method: "quotation" });
+  assert.equal(quote.stage, "Waiting for PO number");
+  assert.equal(quote.readyForPo, false, "a quotation item is bought on the Quotation manager, not created here");
+  const buyer = requirementStage({ ...base, rule: "buyer", method: null });
+  assert.equal(buyer.stage, "Create or link PO");
+  assert.equal(buyer.readyForPo, true);
 });
 
-test("the PO drives the rest: approval, sending, receipt", () => {
+test("the route follows the decided method over the rule", async () => {
+  const { poRouteOf } = await import("./purchase-flow");
+  assert.equal(poRouteOf({ rule: "quotation", method: null }), "link");
+  assert.equal(poRouteOf({ rule: "direct", method: null }), "create");
+  assert.equal(poRouteOf({ rule: "buyer", method: null }), "either");
+  assert.equal(poRouteOf({ rule: "buyer", method: "quotation" }), "link");
+  assert.equal(poRouteOf({ rule: "quotation", method: "direct" }), "create");
+});
+
+test("the PO drives the rest: receipt, and an old PO's approval", () => {
   const on = (status: string, received = 0) => requirementStage({ ...base, supplierId: "s1", po: { status, ordered: 100, received } });
   assert.equal(on("Pending approval").stage, "PO awaiting approval");
-  assert.equal(on("Approved").stage, "PO approved");
-  assert.equal(on("Sent").stage, "PO sent");
+  assert.equal(on("Approved").stage, "Waiting for goods");
+  assert.equal(on("Sent").stage, "Waiting for goods");
+  assert.equal(FLOW_STEPS[on("Sent").step], "Receipt");
   assert.equal(on("Partly received", 40).stage, "Partly received");
   assert.equal(on("Received", 100).step, FLOW_STEPS.length);
   assert.equal(on("Closed", 40).stage, "Closed short");
   assert.equal(requirementStage({ ...base, status: "Cancelled" }).step, -1);
+});
+
+test("quotations are ranked by LANDED cost, and an expired one can never be the lowest", () => {
+  const ranked = rankQuotes(
+    [
+      { id: "cheap-rate", ratePaise: 9000, gstBp: 1800, freightPaise: 300000, validUntil: null },
+      { id: "landed-best", ratePaise: 9500, gstBp: 1800, freightPaise: 0, validUntil: "2026-12-31" },
+      { id: "expired", ratePaise: 5000, gstBp: 1800, freightPaise: 0, validUntil: "2026-01-01" },
+    ],
+    100,
+    "2026-10-06",
+  );
+  assert.deepEqual(ranked.map((q) => q.id), ["landed-best", "cheap-rate", "expired"]);
+  assert.equal(ranked[0].lowest, true);
+  assert.equal(ranked[0].fig.landedPaise, 1121000, "100 × ₹95 + 18% GST");
+  assert.equal(ranked[1].fig.landedPaise, 1362000, "100 × ₹90 + 18% GST + ₹3,000 freight");
+  assert.equal(ranked[2].lowest, false);
 });
 
 test("a PO's status follows what was received, and only in the receiving states", () => {
@@ -94,15 +133,51 @@ test("a pasted list: the last number is the quantity, names match exactly or uni
   assert.deepEqual(parsePastedLines("Toluene 5", labels, ["Toluene"]).duplicates, ["Toluene"]);
 });
 
-test("a requirement waiting for its blind count sits at that step, before the vendor", () => {
+test("a requirement waiting for its blind count sits at that step, before the purchase method", () => {
   const held = requirementStage({ ...base, gate: { blocks: true, stage: "Blind count", next: "Count it." } });
   assert.equal(FLOW_STEPS[held.step], "Blind count");
-  assert.equal(FLOW_STEPS[held.step + 1], "Vendor");
+  assert.equal(FLOW_STEPS[held.step + 1], "Book comparison");
   assert.equal(held.stage, "Blind count");
   assert.equal(held.readyForPo, false);
   const counted = requirementStage({ ...base, gate: { blocks: false, stage: null, next: null } });
   assert.deepEqual(counted, requirementStage(base), "once counted — matched or not — nothing changes");
   /* A PO already raised is never pulled back by a later count. */
   const onPo = requirementStage({ ...base, po: { status: "Sent", ordered: 10, received: 0 }, gate: { blocks: true, stage: "Blind count", next: null } });
-  assert.equal(onPo.stage, "PO sent");
+  assert.equal(onPo.stage, "Waiting for goods");
+});
+
+test("a PO number picks the bought cell for this item, or says why not", async () => {
+  const { pickQuotePoCell, normalisePoNo, quoteRatePaise } = await import("./purchase-flow");
+  const cell = (o: Record<string, unknown> = {}) => ({
+    rowId: "r1", columnId: "c1", materialId: "tol", material: "Drum · Toluene · Reliance", party: "Shree Krishna",
+    supplierId: "s1", value: "89.5", status: "po", rowStatus: null, drums: 3, poNo: "MM/PO/1", quotedOn: "2026-10-15",
+    boughtBy: "Vikram", boughtAt: "2026-10-17T05:00:00Z", ...o,
+  });
+  assert.equal(normalisePoNo("  mm/po/2627/121 "), "MM/PO/2627/121");
+  assert.equal(quoteRatePaise("₹ 89.50/kg"), 8950);
+  assert.equal(quoteRatePaise("1,250"), 125000);
+  assert.equal(quoteRatePaise("ask"), null);
+  const ok = pickQuotePoCell([cell()], "tol", "Toluene", "MM/PO/1");
+  assert.ok(ok.ok && ok.ratePaise === 8950);
+  const none = pickQuotePoCell([], "tol", "Toluene", "MM/PO/9");
+  assert.ok(!none.ok && /No PO numbered MM\/PO\/9/.test(none.error));
+  const other = pickQuotePoCell([cell({ materialId: "xyl", material: "Drum · Xylene · IOCL" })], "tol", "Toluene", "MM/PO/1");
+  assert.ok(!other.ok && /for Drum · Xylene · IOCL — not Toluene/.test(other.error));
+  const ready = pickQuotePoCell([cell({ status: "ready" })], "tol", "Toluene", "MM/PO/1");
+  assert.ok(!ready.ok, "a rate only marked Ready to buy has not been bought");
+  const cancelled = pickQuotePoCell([cell({ rowStatus: "cancel" })], "tol", "Toluene", "MM/PO/1");
+  assert.ok(!cancelled.ok && /cancelled/.test(cancelled.error));
+  const noParty = pickQuotePoCell([cell({ supplierId: null })], "tol", "Toluene", "MM/PO/1");
+  assert.ok(!noParty.ok && /not one of the Purchase parties/.test(noParty.error));
+  const badRate = pickQuotePoCell([cell({ value: "tbd" })], "tol", "Toluene", "MM/PO/1");
+  assert.ok(!badRate.ok && /not a number/.test(badRate.error));
+  const newest = pickQuotePoCell([cell({ value: "80", boughtAt: "2026-10-01" }), cell({ value: "90", boughtAt: "2026-10-16" })], "tol", "Toluene", "MM/PO/1");
+  assert.ok(newest.ok && newest.ratePaise === 9000, "the newest purchase of the item on one PO number");
+});
+
+test("a PO number the Quotation manager made is the ERP's own number; a typed one is not", async () => {
+  const { seriesNumberOf, poLabel } = await import("./purchase-flow");
+  assert.equal(seriesNumberOf(poLabel(1243)), 1243);
+  assert.equal(seriesNumberOf(" po-77 "), 77);
+  assert.equal(seriesNumberOf("MM/PO/2627/121"), null);
 });

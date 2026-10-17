@@ -2,7 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { erpContext } from "@/lib/erp/access";
 import { erpLink } from "@/lib/erp/registry";
 import { purchaseOrderViews } from "@/lib/erp/screens/purchase-flow";
-import { poLabel, poLineFigures, poTotals } from "@/lib/erp/engines/purchase-flow";
+import { poName, poLineFigures, poTotals } from "@/lib/erp/engines/purchase-flow";
 import { fdLong, inr, inrRate, nf } from "@/lib/erp/ui";
 import { PrintButton } from "./print-button";
 import { calendarDate } from "@/lib/business-date";
@@ -23,7 +23,7 @@ export default async function PurchaseOrderPrint({ params }: { params: Promise<{
   if (!p.po.approvedAt || p.po.status === "Rejected" || p.po.status === "Pending approval")
     return (
       <div className="p-6 text-sm text-body">
-        {poLabel(p.po.poNumber)} is {p.po.status.toLowerCase()} — a PO is printed once it is approved.{" "}
+        {poName(p.po)} is {p.po.status.toLowerCase()} — a PO is printed once it is approved.{" "}
         <a href={back} className="text-brand-hover underline">
           Back to the PO
         </a>
@@ -44,7 +44,7 @@ export default async function PurchaseOrderPrint({ params }: { params: Promise<{
       <style>{`@media print { body * { visibility: hidden; } .po-paper, .po-paper * { visibility: visible; } .po-paper { position: absolute; inset: 0 auto auto 0; width: 100%; border: 0 !important; } }`}</style>
       <div className="flex items-center justify-between gap-3 print:hidden">
         <a href={back} className="text-sm text-brand-hover hover:underline">
-          ← Back to {poLabel(p.po.poNumber)}
+          ← Back to {poName(p.po)}
         </a>
         <PrintButton />
       </div>
@@ -55,7 +55,7 @@ export default async function PurchaseOrderPrint({ params }: { params: Promise<{
             <div className="text-body">Purchase order</div>
           </div>
           <div className="text-right">
-            <div className="text-2xl font-semibold tracking-tight">{poLabel(p.po.poNumber)}</div>
+            <div className="text-2xl font-semibold tracking-tight">{poName(p.po)}</div>
             <div className="text-body">Date {fdLong(p.po.poDate)}</div>
           </div>
         </header>
@@ -133,7 +133,7 @@ export default async function PurchaseOrderPrint({ params }: { params: Promise<{
           </section>
         ) : null}
         <footer className="flex items-end justify-between gap-6 border-t border-divider pt-4 text-body">
-          <span>Please quote {poLabel(p.po.poNumber)} on your invoice and delivery challan.</span>
+          <span>Please quote {poName(p.po)} on your invoice and delivery challan.</span>
           <span className="text-right">
             Approved{p.approver ? ` by ${p.approver}` : ""}
             <br />

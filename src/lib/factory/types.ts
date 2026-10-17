@@ -539,7 +539,7 @@ export type ReqLine = {
   item: string;
   qty: number;
   unit: string;
-  /** The ERP's stage, in its words: "Blind count", "Select vendor", "PO approved", "Received". */
+  /** The ERP's stage, in its words: "Count stock", "Collect quotations", "PO approved", "Received". */
   stage: string;
   /** Index into `steps`; −1 cancelled; steps.length done. */
   step: number;
@@ -556,6 +556,8 @@ export type ReqLine = {
   vendor: string | null;
   /** Received so far against the PO, in the requirement's unit. */
   received: number | null;
+  /** Quotations collected, for an item bought on quotations. */
+  quotes: number;
 };
 
 export type ReqCard = {

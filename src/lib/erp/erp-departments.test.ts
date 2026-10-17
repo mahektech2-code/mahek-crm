@@ -93,7 +93,7 @@ before(async () => {
   admin = await makeUser("Kavita Admin", "admin");
   await db.insert(erpSuppliers).values([{ id: "sup_a", name: "Asian Solvents", partyCode: "AS" }]);
   await db.insert(erpRawMaterials).values([
-    { id: "rm_tol", serialNo: 1, name: "Toluene", unit: "Litre", materialType: "Chemical", density: 0.87, testingList: ["Smell"], purchaseMethod: "direct" },
+    { id: "rm_tol", serialNo: 1, name: "Toluene", unit: "Litre", materialType: "Chemical", density: 0.87, testingList: ["Smell"], purchaseMethod: "quotation" },
     { id: "rm_can", serialNo: 2, name: "1 L Tin Can", unit: "Unit", materialType: "Can", testingList: [], purchaseMethod: "direct", preferredSupplierId: "sup_a" },
     { id: "rm_drum", serialNo: 3, name: "210 L Drum", unit: "Unit", materialType: "Drum", testingList: [], purchaseMethod: "direct" },
     { id: "rm_box", serialNo: 4, name: "5 L Box", unit: "Unit", materialType: "Box", testingList: [], purchaseMethod: "direct", preferredSupplierId: "sup_a" },

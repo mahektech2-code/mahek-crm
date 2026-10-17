@@ -209,7 +209,7 @@ export function GrnDrawer({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
                       <span className="min-w-0">
                         <span className={cx("block text-sm font-semibold", hit.receivable ? "text-ink" : "text-muted")}>{hit.item.item}</span>
                         <span className="mt-0.5 block text-xs text-muted">
-                          {hit.receivable ? hitSummary(hit.lines, nf) : vendor ? `No open PO from ${vendor} for this item` : "No approved PO is waiting for this item"}
+                          {hit.receivable ? hitSummary(hit.lines, nf) : vendor ? `No open PO from ${vendor} for this item` : "No PO is waiting for this item"}
                         </span>
                       </span>
                       <span

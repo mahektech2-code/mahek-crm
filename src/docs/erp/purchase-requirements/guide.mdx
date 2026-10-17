@@ -1,20 +1,21 @@
-A purchase requirement is a department saying "we need this bought". It is the first step of every purchase: nothing reaches a purchase order, the gate or stock without one. One requirement can carry every item a department needs this month, and each item then goes to a vendor of its own. Supplier rates are kept on the [Quotation manager](/docs/erp/quotation-manager), not here.
+A purchase requirement is a department saying "we need this bought". It is the first step of every purchase: nothing reaches a purchase order, the gate or stock without one. One requirement can carry every item a department needs this month. Each item is counted blind first, then gets its PO by its purchase rule: a **Quotation** item links the PO number the Quotation manager made, a **Direct purchase** item creates its PO here at the item's price. No PO is approved.
 
 ## The screen at a glance
 
 <Wireframe url="/erp/requisitions" nav={["Dashboard", "#Purchase", "Purchase requirements", "Purchase orders", "Purchases", "Lot testing"]} active="Purchase requirements" caption="Purchase requirements, grouped by stage">
   <WfBar>
-    <WfTitle sub="What a department needs bought. Each requirement moves on to a vendor, an approved PO and the goods.">Purchase requirements</WfTitle>
+    <WfTitle sub="What a department needs bought, through blind count and stock verification to the PO. The item's purchase rule decides how the PO comes.">Purchase requirements</WfTitle>
     <WfSpacer /><WfButton primary>New requirement</WfButton><Hotspot n={1} />
   </WfBar>
-  <WfBar><WfInput placeholder="Search" /><WfPill tone="brand">Ready for PO 3</WfPill><WfPill>Select vendor 2</WfPill><WfPill>Blind count 1</WfPill><WfPill>PO sent 4</WfPill><Hotspot n={2} /></WfBar>
+  <WfTabs items={["Requirements", "Quotations"]} active="Requirements" />
+  <WfBar><WfInput placeholder="Search" /><WfPill tone="brand">Create PO 3</WfPill><WfPill>Waiting for PO number 2</WfPill><WfPill>Blind count 1</WfPill><WfPill>Waiting for goods 4</WfPill><Hotspot n={2} /></WfBar>
   <WfTable
     highlight={0}
-    columns={["Requirement", "Item", "Quantity", "Required by", "Department", "Priority", "Stage", "Vendor", "PO"]}
+    columns={["Requirement", "Item", "Quantity", "Required by", "Department", "Priority", "Method", "Stage", "Vendor", "PO"]}
     rows={[
-      ["REQ-412", <b key="a">Tin can 5 L</b>, "1,200 Pcs", "12 Oct", "Refilling", <WfPill key="b" tone="danger">Urgent</WfPill>, <span key="c">Ready for PO <Hotspot n={3} /></span>, "Supplier B", "—"],
-      ["REQ-411", <b key="d">Solvent A</b>, "800 Kg", "15 Oct", "Mixing & Blending", "Medium", "Select vendor", "—", "—"],
-      ["REQ-409", <b key="e">Empty Box 5 Liter</b>, "500 Pcs", "20 Oct", "Packing", "For Stock", "PO sent", "Supplier C", <span key="f">PO-88 <Hotspot n={4} /></span>],
+      ["REQ-412", <b key="a">Tin can 5 L</b>, "1,200 Pcs", "12 Oct", "Refilling", <WfPill key="b" tone="danger">Urgent</WfPill>, "Direct purchase", <span key="c">Create PO <Hotspot n={3} /></span>, "—", "—"],
+      ["REQ-411", <b key="d">Solvent A</b>, "800 Kg", "15 Oct", "Mixing & Blending", "Medium", "Quotation", "Waiting for PO number", "—", "—"],
+      ["REQ-409", <b key="e">Empty Box 5 Liter</b>, "500 Pcs", "20 Oct", "Packing", "For Stock", "Direct purchase", "Waiting for goods", "Supplier C", <span key="f">PO-88 <Hotspot n={4} /></span>],
     ]}
   />
 </Wireframe>
@@ -33,10 +34,10 @@ A purchase requirement is a department saying "we need this bought". It is the f
 **Date** (today), **Required by** (when the department needs the goods in hand), **Department**, **Deliver to** (your working godown), **Priority** (Urgent, Medium or For Stock) and **Remarks**.
 </Step>
 <Step title="Add every item">
-Type in "Add an item — type to search", or paste a list: one item a row with its quantity last — "Solvent A, 200", or copied straight from Excel. A row that names nothing the ERP knows is shown to you rather than guessed. Each item shows what is **in stock**, its **unit** and its **vendor** — the item's default vendor where it has one, otherwise "Chosen next".
+Type in "Add an item — type to search", or paste a list: one item a row with its quantity last — "Solvent A, 200", or copied straight from Excel. A row that names nothing the ERP knows is shown to you rather than guessed. Each item shows what is **in stock**, its **unit** and where it **goes to** (Direct · the vendor, Quotations, or Buyer decides).
 </Step>
 <Step title="Raise requirement">
-All items are saved together under one number — "REQ-412 raised · 3 items · 2 with a vendor offered · 1 to choose". If one line is wrong, nothing is saved and that line is marked.
+All items are saved together under one number — "REQ-412 raised · 3 items · 2 direct · 1 for quotations". If one line is wrong, nothing is saved and that line is marked.
 </Step>
 </Steps>
 
@@ -65,20 +66,32 @@ What they counted becomes that item's stock check. They see only whether it matc
 
 ## What happens to each item next
 
-Every item is bought direct from one vendor. If the item has a **default vendor** on its [raw material](/docs/erp/masters) record, that vendor is offered as you raise it; otherwise somebody picks one.
+First the shelf is **counted blind** — the count is entered without seeing the book. The requirement's drawer then shows the **book comparison** (the count against the reconciled system quantity) and the verdict: **Stock verification passed**, or a **Red flag** where it differs beyond the allowed difference. A red flag tells stock control; the purchase carries on.
 
-| Stage | What it means | Who acts |
+Then the PO comes by the item's **purchase rule**, copied from the item when you raised it:
+
+| Stage | What it means | What you do |
 |---|---|---|
-| **Blind count** | The stock check is on and the shelf has not been counted yet | Whoever counts presses **Count the stock** — see [Stock accuracy](/docs/erp/stock-accuracy) |
-| **Select vendor** | No vendor yet | Anyone on the screen presses **Select vendor** |
-| **Ready for PO** | The vendor is decided | **Create PO** opens a purchase order for this vendor. **Change vendor** picks another |
-| **PO awaiting approval / PO approved / PO sent** | On a purchase order | The PO's approver, then whoever sends it |
-| **Partly received / Received / Closed short** | Goods have come in against the PO | The gate |
+| **Blind count** | The count has not been entered | Count the stock |
+| **Waiting for PO number** | Quotation: bought on the Quotation manager | Type the PO number in the drawer and **Link PO** |
+| **Create PO** | Direct purchase: no quotation | **Create PO** in the drawer |
+| **Create or link PO** | Buyer decision | Either of the two |
+| **Waiting for goods / Partly received** | On a PO | Receive the goods against its PO number |
+| **Received / Closed short** | Done | — |
 | **Cancelled** | Cancelled with a reason | — |
 
-A requirement already on a PO cannot be edited or cancelled — the PO has to be cancelled or sent back first, and the record says so.
+## Getting the PO
 
-To compare what vendors charge before choosing one, look the item up on the [Quotation manager](/docs/erp/quotation-manager).
+Both happen in the requirement's own drawer. Nothing is approved: the PO is ready to receive against straight away.
+
+<Steps>
+<Step title="Quotation — Link PO">
+On the Quotation manager the admin marks the rate **Ready to buy** and the desk presses **Purchase it** with the number of drums. The PO number is made for them — **PO-1243**. In the requirement's drawer, type that number in **PO number**: the vendor, material, rate, drums and who bought it are fetched and checked against the requirement. Press **Link PO to requirement**. A wrong number can be **unlinked** until goods arrive.
+</Step>
+<Step title="Direct purchase — Create PO">
+Press **Create PO**. It opens over the drawer, in three pages: **Vendor** (the item's default vendor first, and the quantity), **Delivery** (where, by when, payment terms, freight, remarks) and **Review**. The rate is the item's price in Masters → Raw materials — nobody types an amount. An item with no price is ordered at **₹0**, and the Review page says so.
+</Step>
+</Steps>
 
 ## Cancelling
 
@@ -86,20 +99,24 @@ To compare what vendors charge before choosing one, look the item up on the [Quo
 
 ## Common questions
 
-<Faq q="Why does a new requirement go straight to 'Ready for PO'?">
-The item has a default vendor, so the vendor was offered as you raised it. Press **Change vendor** to buy from somebody else.
+<Faq q="Why is there a PO number box on one item and a Create PO button on another?">
+The item's purchase rule decides. A Quotation item is bought on the Quotation manager, which makes its PO number; a Direct purchase item is created here at its price. A Buyer-decision item offers both.
+</Faq>
+
+<Faq q="The PO number is refused.">
+It must be a number the Quotation manager made for a purchase of this same item — the message says what it found instead: no such number, a cancelled row, or a different material.
 </Faq>
 
 <Faq q="I can't see the requirements another department raised.">
 In a production department you see your own department's requirements, and any you raised yourself. The Production Head, the store and administrators see every department's.
 </Faq>
 
-<Faq q="Where did the Quotations tab go?">
-Supplier rates are kept on the [Quotation manager](/docs/erp/quotation-manager) now. A requirement no longer collects or selects quotations: you choose the vendor, and the rate is typed on the purchase order.
+<Faq q="Why is the rate ₹0 on my PO?">
+The item has no price in Masters → Raw materials. Add one there to order it at a rate next time. The lot is held out of stock until the supplier's bill rate is entered.
 </Faq>
 
-<Faq q="Create PO is greyed out.">
-It says why on hover: Purchase orders is not on your account, or purchase money is not.
+<Faq q="I changed the item's purchase rule, but the old requirement still asks for a PO number.">
+A requirement keeps the rule it was raised with, so a change to the item never re-routes work already in progress. Cancel it and raise a new one if it must change.
 </Faq>
 
 <Faq q="The 'Present qty' column is blank.">

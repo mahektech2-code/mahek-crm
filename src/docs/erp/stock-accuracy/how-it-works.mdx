@@ -3,11 +3,11 @@ Inventory Accuracy Control puts a count of the shelf in front of every purchase,
 ## The rules
 
 <Rule title="A requirement waits for its blind count to be entered — and for nothing else">
-With <Setting k="erp.stockCheck.onRequirement" /> on, every raw-material requirement opens a count of its item at its godown when it is raised, in the same transaction. Until that count is **entered**, the requirement cannot have a vendor chosen or a PO raised — every one of those is refused on the server, not only drawn disabled. Once the count is in, the requirement moves on to its vendor **whether it matched or not**.
+With <Setting k="erp.stockCheck.onRequirement" /> on, every raw-material requirement opens a count of its item at its godown when it is raised, in the same transaction. Until that count is **entered**, the requirement cannot have a method decided, a vendor chosen, a quotation added or selected, or a PO raised — every one of those is refused on the server, not only drawn disabled. Once the count is in, the requirement moves on to its purchase method **whether it matched or not**.
 </Rule>
 
 <Rule title="A difference is a flag and a notification, never a hold">
-A count that differs from the book flags the requirement (**Stock difference — red flag**) and notifies everybody with the stock-control power, every ERP administrator, and whoever raised the requirement. A recount that confirms the difference notifies them again. Nothing about a red flag holds a requirement or a PO approval; the recount, the investigation and any adjustment run on the side.
+A count that differs from the book flags the requirement (**Stock difference — red flag**) and notifies everybody with the stock-control power, every ERP administrator, and whoever raised the requirement. A recount that confirms the difference notifies them again. Nothing about a red flag holds a requirement, a quotation or a PO approval; the recount, the investigation and any adjustment run on the side.
 </Rule>
 
 <Callout kind="why">
@@ -15,7 +15,7 @@ It used to be the other way round: a difference held the purchase until it was r
 </Callout>
 
 <Callout kind="why">
-The setting is **copied onto each requirement** when it is raised. Requirements already in flight when it was switched on carry "not required", so nothing in progress waits for a count.
+The setting is **copied onto each requirement** when it is raised, like the purchase rule. Requirements already in flight when it was switched on carry "not required", so nothing in progress waits for a count.
 </Callout>
 
 <Rule title="The count is blind">

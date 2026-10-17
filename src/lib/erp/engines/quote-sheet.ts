@@ -224,11 +224,11 @@ export function invertSheetOps(s: SheetState, ops: SheetOp[]): SheetOp[] {
   return out.reverse();
 }
 
-/** The rows on the screen: not deleted, latest first — newest date on top, and the last entered first within a date. */
+/** The rows on the screen: not deleted, by date, then in the order entered. */
 export function visibleRows(s: SheetState): SheetRow[] {
   return s.rows
     .filter((r) => !r.deleted)
-    .sort((a, b) => (a.date > b.date ? -1 : a.date < b.date ? 1 : b.seq - a.seq));
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.seq - b.seq));
 }
 
 export function visibleColumns(s: SheetState): SheetColumn[] {

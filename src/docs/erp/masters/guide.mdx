@@ -15,11 +15,11 @@ Every item the business buys: chemicals, cans, drums, boxes, packing stationery.
   </WfBar>
   <WfBar><WfInput placeholder="Search" /><WfPill tone="brand">Active</WfPill><WfPill>Inactive</WfPill><Hotspot n={2} /></WfBar>
   <WfTable
-    columns={["S.no", "Item", "Code", "Unit", "Material type", "Density", "Testing list", "Default vendor", "Total stock"]}
+    columns={["S.no", "Item", "Code", "Unit", "Material type", "Density", "Testing list", "Purchase rule", "Default vendor", "Total stock"]}
     rows={[
-      ["14", <b key="a">Solvent A</b>, "SOA", "Kg", "Chemical", "0.87", "Smell, Density", <span key="b">— <Hotspot n={3} /></span>, "1,240"],
-      ["15", <b key="c">Tin can 5 L</b>, "TC5", "Unit", "Can", "—", "—", "Supplier B", "3,600"],
-      ["16", <b key="d">Empty Box 5 Liter</b>, "EB5", "Unit", "Box", "—", "—", "Supplier C", "500"],
+      ["14", <b key="a">Solvent A</b>, "SOA", "Kg", "Chemical", "0.87", "Smell, Density", <span key="b">Quotation <Hotspot n={3} /></span>, "—", "1,240"],
+      ["15", <b key="c">Tin can 5 L</b>, "TC5", "Unit", "Can", "—", "—", "Direct purchase", "Supplier B", "3,600"],
+      ["16", <b key="d">Empty Box 5 Liter</b>, "EB5", "Unit", "Box", "—", "—", "Direct purchase", "Supplier C", "500"],
     ]}
   />
 </Wireframe>
@@ -27,7 +27,7 @@ Every item the business buys: chemicals, cans, drums, boxes, packing stationery.
 <Hotspots items={[
   <span key="1"><b>New raw material.</b> Opens the form described below.</span>,
   <span key="2"><b>Active and Inactive.</b> A retired item stays on every record that already names it and is no longer offered on new ones.</span>,
-  <span key="3"><b>Default vendor.</b> Offered as the vendor the moment a requirement for this item is raised. Blank: the vendor is chosen on each requirement.</span>,
+  <span key="3"><b>Purchase rule.</b> How this item is bought — it decides where a requirement for it goes the moment it is raised.</span>,
 ]} />
 
 ### The fields
@@ -41,7 +41,8 @@ Every item the business buys: chemicals, cans, drums, boxes, packing stationery.
 | **Density (kg to litre)** | Chemicals only, between 0.1 and 3 | Turns kilograms bought into litres in stock |
 | **Testing list** | Chemicals only, at least one test | Every lot of it must pass these before it reaches stock |
 | **Price (₹)** | Only if you can see purchase money | Used as the packing rate for cans and drums |
-| **Default vendor** | Under **Purchase**, the vendor this item is usually bought from | Offered as the vendor when a requirement is raised. Blank: the vendor is chosen on each requirement |
+| **Purchase rule** | Direct purchase, Quotation, or Buyer decision | Chemicals start on Quotation, everything else on Direct |
+| **Default vendor** | For Direct or Buyer decision | Offered automatically when a direct purchase is raised |
 | **Remark** | Anything worth knowing | Has a microphone if voice notes are on |
 
 ### Can photos and can groups

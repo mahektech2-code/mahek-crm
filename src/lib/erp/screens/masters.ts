@@ -49,6 +49,7 @@ import {
 import type { ActionSpec, ColSpec, FieldSpec, FormSpec, ListRow } from "../ui";
 import { inr } from "../ui";
 import { rmTotalsByItem } from "../stock";
+import { PURCHASE_METHODS, methodByLabel, methodLabel, type PurchaseMethod } from "../engines/purchase-flow";
 import { OWNERSHIP_LABEL, ownershipByLabel, type DrumOwnership } from "../engines/drums";
 import { MAX_CAN_PHOTOS } from "../engines/can-groups";
 import { photoUrl, photosOf, setPhotos } from "../can-photos";
@@ -88,6 +89,7 @@ async function rawMaterialForm(ctx: ErpContext, id?: string): Promise<FormSpec> 
         density: r.density == null ? "" : String(r.density),
         testingList: r.testingList.join("|"),
         price: rupeesField(r.pricePaise),
+        purchaseMethod: methodLabel(r.purchaseMethod),
         preferredSupplier: sups.find((x) => x.id === r.preferredSupplierId)?.name ?? "",
         group: groups.find((g) => g.id === r.groupId)?.name ?? "",
         remark: r.remark ?? "",
@@ -120,12 +122,21 @@ async function rawMaterialForm(ctx: ErpContext, id?: string): Promise<FormSpec> 
       },
       ...(money ? [{ k: "price", l: "Price (₹)", t: "num" as const, min: 0, hint: "Used as the packing rate for cans and drums." }] : []),
       {
+        k: "purchaseMethod",
+        l: "Purchase rule",
+        t: "select",
+        req: true,
+        sec: "Purchase rule",
+        opts: PURCHASE_METHODS.map((m) => m.label),
+        hint: "Direct: pick the vendor and raise the PO. Quotation: compare quotations first. Buyer decides: chosen per requirement.",
+      },
+      {
         k: "preferredSupplier",
         l: "Default vendor",
         t: "select",
-        sec: "Purchase",
         opts: sups.filter((x) => x.active).map((x) => x.name),
-        hint: "Offered as the vendor when a requirement is raised. Blank: the vendor is chosen on each requirement.",
+        when: { k: "purchaseMethod", in: [methodLabel("direct"), methodLabel("buyer")] },
+        hint: "Offered as the vendor when a direct purchase is raised. Blank: the vendor is chosen on each requirement.",
       },
       { k: "remark", l: "Remark", t: "area", mic: true },
     ],
@@ -155,6 +166,7 @@ const rawMaterials: ScreenModule = {
       { k: "photos", l: "Photos", t: "n" },
       { k: "density", l: "Density", t: "n" },
       { k: "tests", l: "Testing list", t: "t" },
+      { k: "rule", l: "Purchase rule", t: "s" },
       { k: "vendor", l: "Default vendor", t: "t" },
       { k: "price", l: "Price", t: "m", pw: "viewPurchaseMoney" },
       { k: "stock", l: "Total stock", t: "n" },
@@ -184,6 +196,7 @@ const rawMaterials: ScreenModule = {
             photos: r.materialType === "Can" ? (canPhotos.get(r.id)?.length ?? 0) : null,
             density: r.density,
             tests: r.testingList.join(", ") || "—",
+            rule: methodLabel(r.purchaseMethod),
             vendor: r.preferredSupplierId ? (supName.get(r.preferredSupplierId) ?? null) : null,
             price: r.pricePaise,
             stock: totals.get(r.id) ?? 0,
@@ -264,9 +277,14 @@ async function saveRawMaterial(ctx: ErpContext, h: Record<string, string>, id?: 
   const tests = multi(h.testingList);
   if (chemical && (density == null || density <= 0)) return fieldErr("density", "Density is required for a chemical");
   if (chemical && tests.length === 0) return fieldErr("testingList", "Testing list is required for a chemical");
-  /* Every item is bought direct; a save that does not name the vendor keeps the stored one. */
-  const keepVendor = id && h.preferredSupplier === undefined;
-  const vendorName = text(h.preferredSupplier);
+  /* The form always asks; a save that names no rule keeps the stored one, or starts from the
+     category's usual answer — chemicals are price-sensitive, everything else is routine. */
+  const stored = id ? (await db.select({ m: erpRawMaterials.purchaseMethod }).from(erpRawMaterials).where(eq(erpRawMaterials.id, id)))[0]?.m : null;
+  const typed = text(h.purchaseMethod);
+  const purchaseMethod = typed ? methodByLabel(typed) : ((stored as PurchaseMethod | null) ?? (chemical ? "quotation" : "direct"));
+  if (!purchaseMethod) return fieldErr("purchaseMethod", "Purchase rule is required");
+  const keepVendor = id && !typed && h.preferredSupplier === undefined;
+  const vendorName = purchaseMethod === "quotation" ? null : text(h.preferredSupplier);
   const [vendor] = vendorName ? await db.select({ id: erpSuppliers.id }).from(erpSuppliers).where(eq(erpSuppliers.name, vendorName)) : [];
   if (vendorName && !vendor) return fieldErr("preferredSupplier", "Pick a vendor from the list");
 
@@ -298,7 +316,7 @@ async function saveRawMaterial(ctx: ErpContext, h: Record<string, string>, id?: 
     materialType,
     density: chemical ? density : null,
     testingList: chemical ? tests : [],
-    purchaseMethod: "direct",
+    purchaseMethod,
     ...(keepVendor ? {} : { preferredSupplierId: vendor?.id ?? null }),
     remark: text(h.remark),
     ...(groupId === undefined ? {} : { groupId }),

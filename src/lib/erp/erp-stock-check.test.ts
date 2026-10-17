@@ -64,7 +64,7 @@ const raise = async (u: typeof users.$inferSelect, item: string, required: strin
 const reqOf = async (rm: string) => (await db.select().from(erpRequisitions).where(eq(erpRequisitions.rawMaterialId, rm)).orderBy(sql`created_at desc`))[0];
 const stage = async (reqId: string) => {
   const [v] = await requirementViews({ ids: [reqId] });
-  return stageOf(v);
+  return stageOf(v, 2);
 };
 const rootCount = async (rm: string) => (await db.select().from(erpStockCounts).where(sql`raw_material_id = ${rm} and recount_of_id is null`).orderBy(sql`created_at desc`))[0];
 
@@ -147,7 +147,7 @@ describe("a requirement waits for its blind count to be entered, and no longer",
     assert.equal(v.stock?.gate.blocks, false);
     assert.equal(v.stock?.gate.flag, null);
     assert.equal(v.stock?.justification?.justified, 305);
-    assert.equal(stageOf(v).readyForPo, true, "direct, default vendor, counted — ready for the PO");
+    assert.equal(stageOf(v, 2).readyForPo, true, "direct, default vendor, counted — ready for the PO");
   });
 
   test("asking for far more than the count justifies is flagged, not held", async () => {
@@ -160,7 +160,7 @@ describe("a requirement waits for its blind count to be entered, and no longer",
     assert.ok((await mod("countTasks").actions!.count(await as(store2), count.id, { qty: "500" })).ok);
     const [v] = await requirementViews({ ids: [req.id] });
     assert.equal(v.stock?.gate.flag, "stockOverJustified");
-    assert.equal(stageOf(v).readyForPo, true, "nothing to confirm — it goes on");
+    assert.equal(stageOf(v, 2).readyForPo, true, "nothing to confirm — it goes on");
   });
 });
 

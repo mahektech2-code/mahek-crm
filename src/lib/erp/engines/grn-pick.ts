@@ -97,7 +97,7 @@ export function searchGrnItems(items: GrnItem[], query: string, opts: { supplier
 
 /** "2 open POs · 1,400 kg pending · Dharam Chem Impex, Shree Ganesh Chemical". */
 export function hitSummary(lines: GrnPoLine[], nf: (n: number) => string): string {
-  if (!lines.length) return "No approved PO is waiting for this item";
+  if (!lines.length) return "No PO is waiting for this item";
   const pos = new Set(lines.map((l) => l.po)).size;
   const pending = lines.reduce((a, l) => a + l.pending, 0);
   const vendors = [...new Set(lines.map((l) => l.supplier))].join(", ");

@@ -4,11 +4,11 @@ import { db } from "@/db";
 import { erpQuoteCells, erpQuoteColumns, erpQuoteRows, erpRawMaterials, erpSuppliers, users } from "@/db/schema";
 import { err, ok, type Result } from "@/lib/result";
 import type { ErpContext } from "./access";
-import { erpAudit } from "./server";
+import { erpAudit, nextNumber } from "./server";
+import { poLabel } from "./engines/purchase-flow";
 import {
   cleanCell,
   isQuoteStatus,
-  MAX_PO_CHARS,
   quoteStatusRefusal,
   ROW_STATUSES,
   MAX_HEADER_CHARS,
@@ -196,11 +196,15 @@ export function quoteManagerOf(ctx: ErpContext): boolean {
   return ctx.administrator || ctx.level === "manager" || ctx.level === "admin";
 }
 
-export async function applyQuoteOps(ctx: ErpContext, ops: QuoteOp[]): Promise<Result<{ applied: number }>> {
-  if (!Array.isArray(ops) || !ops.length) return ok({ applied: 0 });
+/** A PO number the server made while saving, so the grid can show it. */
+export type MintedPo = { rowId: string; columnId: string; poNo: string };
+
+export async function applyQuoteOps(ctx: ErpContext, ops: QuoteOp[]): Promise<Result<{ applied: number; minted: MintedPo[] }>> {
+  if (!Array.isArray(ops) || !ops.length) return ok({ applied: 0, minted: [] });
   if (ops.length > MAX_OPS) return err(`At most ${MAX_OPS} changes go in one save. Paste in smaller blocks.`, "validation");
   const who = ctx.actor.id;
   const manager = quoteManagerOf(ctx);
+  const minted: MintedPo[] = [];
   try {
     await db.transaction(async (tx) => {
       const kinds = new Map<string, QuoteColumnKind>();
@@ -270,11 +274,11 @@ export async function applyQuoteOps(ctx: ErpContext, ops: QuoteOp[]): Promise<Re
               if (o.drums !== null && (typeof o.drums !== "number" || !Number.isFinite(o.drums))) throw new QuoteRefusal("The number of drums must be a number.");
               set.drums = o.drums;
             }
-            if (o.poNo !== undefined) {
-              const po = o.poNo === null ? null : String(o.poNo).trim();
-              if (po && po.length > MAX_PO_CHARS) throw new QuoteRefusal(`A PO number is at most ${MAX_PO_CHARS} characters.`);
-              set.poNo = po || null;
-            }
+            /* The PO number is MADE here, never typed: a purchase takes the
+               next number of the ERP's own PO series. The only thing the
+               screen may say about it is to clear it, which undoing a
+               purchase does. */
+            if (o.poNo === null) set.poNo = null;
             if (o.status !== undefined) set.status = statusOf(o.status);
             if (!Object.keys(set).length) break;
             const [prev] = await tx
@@ -287,10 +291,14 @@ export async function applyQuoteOps(ctx: ErpContext, ops: QuoteOp[]): Promise<Re
             if (set.status !== undefined || after === "po") {
               const refusal = quoteStatusRefusal(
                 before as QuoteStatus | null,
-                { status: after as QuoteStatus | null, drums: set.drums !== undefined ? set.drums : (prev?.drums ?? null), poNo: set.poNo !== undefined ? set.poNo : (prev?.poNo ?? null) },
+                { status: after as QuoteStatus | null, drums: set.drums !== undefined ? set.drums : (prev?.drums ?? null) },
                 manager,
               );
               if (refusal) throw new QuoteRefusal(refusal);
+            }
+            if (after === "po" && !(set.poNo !== undefined ? set.poNo : prev?.poNo)) {
+              set.poNo = poLabel(await nextNumber(tx, "po"));
+              minted.push({ rowId: o.rowId, columnId: o.columnId, poNo: set.poNo });
             }
             if (after === "po" && (before !== "po" || set.drums !== undefined || set.poNo !== undefined)) {
               set.poById = who;
@@ -379,5 +387,5 @@ export async function applyQuoteOps(ctx: ErpContext, ops: QuoteOp[]): Promise<Re
   const counts: Record<string, number> = {};
   for (const o of ops) counts[o.op] = (counts[o.op] ?? 0) + 1;
   await erpAudit(ctx, "erp.quotes.edit", "erp_quote_sheet", null, null, { counts, sample: ops.slice(0, 20) });
-  return ok({ applied: ops.length });
+  return ok({ applied: ops.length, minted });
 }

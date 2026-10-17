@@ -4,7 +4,7 @@ When a lorry arrives at the gate, three things happen in the ERP: the goods are 
 
 <Wireframe url="/erp/register" nav={["Dashboard", "#Purchase", "Purchase requirements", "Purchase orders", "Purchases", "Lot testing"]} active="Purchases" caption="Purchases → Goods receipt (GRN)">
   <WfBar>
-    <WfTitle sub="Goods received against an approved PO and the lots they become.">Purchases</WfTitle>
+    <WfTitle sub="Goods received against a PO and the lots they become.">Purchases</WfTitle>
     <WfSpacer /><WfButton primary>New goods receipt</WfButton><Hotspot n={1} />
   </WfBar>
   <WfTabs items={["Goods receipt (GRN)", "Register", "Drum labels"]} active="Goods receipt (GRN)" />
@@ -24,10 +24,10 @@ When a lorry arrives at the gate, three things happen in the ERP: the goods are 
 
 <Steps>
 <Step title="Search the item that arrived">
-Type the item's name or code. Items with an approved PO still waiting are listed first, with how many POs, how much is pending and from which vendors. An item with no approved PO is still listed, greyed out as **Cannot receive** — its requirement has to be raised and its PO approved first.
+Type the item's name or code. Items with a PO still waiting are listed first, with how many POs, how much is pending and from which vendors. An item with no PO is still listed, greyed out as **Cannot receive** — its requirement needs its PO first: linked from the Quotation manager, or created on the requirement.
 </Step>
 <Step title="Pick the PO it came against">
-Only the approved POs still waiting for that item are offered, oldest due date first, each with what was ordered, received and is still pending. Where only one PO is waiting it is picked for you and this step is skipped. The vendor comes from the PO, and the **Godown** starts as its deliver-to godown — change it if the goods came somewhere else.
+Only the POs still waiting for that item are offered, oldest due date first, each with what was ordered, received and is still pending. Where only one PO is waiting it is picked for you and this step is skipped. The vendor comes from the PO, and the **Godown** starts as its deliver-to godown — change it if the goods came somewhere else.
 </Step>
 <Step title="Another item from the same truck">
 Press **Add another item from this truck** and search again. Only the same vendor's open POs are offered — one GRN is one vendor's delivery — and they may be different POs of that vendor. For a chemical, enter the **Drums** on each line.
@@ -112,7 +112,7 @@ Every lot bought, with what it cost. A row arrives on its own — from a receipt
 | **Change status** | Purchase money | Invoice Received or Purchase Matched; the verifier sets only Purchase Verified |
 | **Back to pending** | The reopen power (an admin) | Sets a verified purchase back to Pending |
 | **Read supplier bill** | Purchase money, AI bills on | Reads a photo or PDF of the bill and matches it to this PR's rows for you to review |
-| **New purchase**, **Edit**, **Add another** | The screen | Enter a lot by hand against an approved PO, correct a row, or add another lot to the PR |
+| **New purchase**, **Edit**, **Add another** | The screen | Enter a lot by hand against a PO, correct a row, or add another lot to the PR |
 
 <Callout kind="money">
 A lot is in stock only once it has a rate above zero. A row from a PO already has the PO's rate, so it is in stock the moment it is saved. "Not posted: rate missing" in the Inventory column says why one is not.
@@ -127,7 +127,7 @@ A list of chemical purchases at **your working godown**, with each lot's short l
 ## Common questions
 
 <Faq q="The PO I need is not in the receipt form.">
-It is not approved yet, it is already fully received, or it was closed or cancelled. Only an approved PO with something pending can be received against.
+It is already fully received, or it was closed or cancelled — or the requirement has not been linked to its Quotation manager PO number yet. Only a PO with something pending can be received against.
 </Faq>
 
 <Faq q="'! Please Change 4 Digit PR Num Manually or Generate New PR Num!'">

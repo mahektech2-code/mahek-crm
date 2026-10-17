@@ -5,7 +5,7 @@ The Quotation manager is its own route, `app/erp/quotation-manager`, not a gener
 | Layer | File | What lives there |
 |---|---|---|
 | Rules (pure) | `src/lib/erp/engines/quotes.ts` | `cleanCell`, `cleanRate`, `parseQuoteDate`, `parseTsv`, `columnStats`, `QUOTE_STATUSES` |
-| Grid state (pure) | `src/lib/erp/engines/quote-sheet.ts` | `applySheetOps`, `invertSheetOps` — optimistic display, roll-back and Undo; `visibleRows` — latest first |
+| Grid state (pure) | `src/lib/erp/engines/quote-sheet.ts` | `applySheetOps`, `invertSheetOps` — optimistic display, roll-back and Undo |
 | Reads and the write | `src/lib/erp/quotes.ts` | `quoteSheet`, `applyQuoteOps` |
 | Action | `src/lib/actions/erp-quotes.ts` | `erpQuoteApply` — `requireErpWrite("quoteManager")` |
 | Page | `src/app/erp/quotation-manager/page.tsx` | the period and search from the URL |

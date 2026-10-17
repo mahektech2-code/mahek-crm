@@ -20,6 +20,7 @@ export const ERP_POWERS = [
   "verifyTest",
   "verifyPurchase",
   "reopenPurchase",
+  "purchaseBuyer",
   "approvePurchaseOrder",
   "lostStock",
   "customerStatus",
@@ -66,6 +67,10 @@ export const ERP_POWER_LABEL: Record<ErpPower, { label: string; source: string }
   reopenPurchase: {
     label: "Set a verified purchase back to Pending",
     source: "“Do Pending” on the purchase register (admin in the source).",
+  },
+  purchaseBuyer: {
+    label: "Decide how a requirement is bought (the buyer)",
+    source: "Buyer decision: for an item whose purchase rule is “Buyer decides”, chooses direct purchase or quotations, per requirement.",
   },
   approvePurchaseOrder: {
     label: "Approve purchase orders",

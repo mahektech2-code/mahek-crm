@@ -1606,6 +1606,7 @@ export class FactoryApp extends Component<Props, State> {
             const facts: [string, string][] = [];
             if (l.po) facts.push(["Purchase order", l.po + (l.vendor ? " · " + l.vendor : "")]);
             else if (l.vendor) facts.push(["Vendor", l.vendor]);
+            if (l.quotes && !l.po) facts.push(["Quotations", l.quotes + " in"]);
             if (l.received != null) facts.push(["Received", qtyW(l.received, l.unit) + " of " + qtyW(l.qty, l.unit)]);
             return (
               <div key={l.id} style={{ ...cardS, padding: "14px", display: "flex", flexDirection: "column", gap: "10px" }}>

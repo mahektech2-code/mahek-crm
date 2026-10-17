@@ -23,15 +23,15 @@ flowchart TD
 A PO line is a requirement that is Ready for PO, for this PO's vendor, not already on another live PO. There is no free-typed item or supplier: a PO can only buy what a department asked for, from the vendor that was chosen for it.
 </Rule>
 
-<Rule title="The rate is typed on the PO">
-Each line's rate is typed when the PO is raised; nothing fills it in or refuses a rate. Vendors' quoted rates are kept on the [Quotation manager](/docs/erp/quotation-manager/how-it-works), which is where the rate is looked up.
+<Rule title="The rate of a quotation item is the quotation's">
+A requirement bought by quotation must be ordered at the selected quotation's rate. Negotiation is recorded on the quotation, where it can be compared, rather than hidden on the PO.
 </Rule>
 
 <Rule title="Money is needed to raise one">
 Raising or editing a PO needs the **purchase money** power, because it sets rates.
 </Rule>
 
-The form fills itself from what is known: delivery date from the requirement's required-by date, payment terms from the vendor's credit days, GST at eighteen per cent unless changed. The delivery date may not be before the PO date. The value is the sum of each line's quantity × rate plus its GST, plus freight once for the whole PO.
+The form fills itself from what is known: delivery date from the quotation's delivery days (or the requirement's required-by date), payment terms from the quotation (or the vendor's credit days), freight from the quotation, GST at eighteen per cent unless changed. The delivery date may not be before the PO date. The value is the sum of each line's quantity × rate plus its GST, plus freight once for the whole PO.
 
 ## Approving
 
@@ -89,7 +89,7 @@ POs awaiting approval ("you approve these" for an approver), POs to send to the 
 
 ## Settings
 
-<SettingsTable keys={["erp.purchase.receiptTolerancePercent"]} />
+<SettingsTable keys={["erp.purchase.receiptTolerancePercent", "erp.purchase.minQuotations"]} />
 
 ## Where the code and the intent disagree today
 

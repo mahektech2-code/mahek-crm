@@ -19,8 +19,8 @@ Mahek Plus kept its own copy of customers and products, and they drifted from Ma
 A chemical must carry a density (between 0.1 and 3) and at least one test. The density turns kilograms bought into litres in stock; the testing list is what every lot of it must prove before it reaches the register. For any other type both are meaningless and are cleared.
 </Rule>
 
-<Rule title="The item master names its usual vendor">
-Every item is bought direct. A **default vendor** is offered as the vendor when a requirement for the item is raised; without one, the vendor is picked on each requirement. Items no longer carry a purchase rule, and nothing collects quotations: vendors' rates are kept on the [Quotation manager](/docs/erp/quotation-manager/how-it-works).
+<Rule title="The item master says how an item is bought">
+Every item carries a **purchase rule**: **Direct purchase** (pick the vendor, raise the PO — boxes, cans, stationery, routine chemicals), **Quotation** (collect and compare quotations first — price-sensitive chemicals), or **Buyer decision** (the buyer chooses, requirement by requirement). A new chemical starts on Quotation and anything else on Direct. A **default vendor** is offered on a direct purchase; it is cleared on a Quotation item, where the vendor is whoever's quotation is chosen.
 </Rule>
 
 <Callout kind="note">

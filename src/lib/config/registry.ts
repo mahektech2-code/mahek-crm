@@ -4399,6 +4399,17 @@ export const SETTINGS = [
     max: 100000,
   },
   {
+    key: "erp.purchase.minQuotations",
+    type: "integer",
+    category: "erp",
+    label: "Quotations needed before one is selected",
+    description:
+      "For an item whose purchase rule is Quotation (or a requirement the buyer sent for quotations): how many vendors' quotations must be in before one can be selected and the PO raised. One means a single quotation is enough; two or more is a real comparison.",
+    default: 2,
+    min: 1,
+    max: 10,
+  },
+  {
     key: "erp.returns.ownerApprovalPaise",
     type: "integer",
     category: "erp",
@@ -4512,6 +4523,17 @@ export const SETTINGS = [
     default: 5,
     min: 0,
     max: 50,
+  },
+  {
+    key: "erp.purchase.poGstPercent",
+    type: "integer",
+    category: "erp",
+    label: "GST on a PO from a requirement",
+    description:
+      "The GST rate written on a PO line made from a requirement — linked from the Quotation manager, or created at the item's price. Neither the sheet nor the raw material holds a GST rate, so this is the rate the ERP PO, the register and the vendor payout read.",
+    default: 18,
+    min: 0,
+    max: 28,
   },
   {
     key: "erp.production.recipeTolerancePercent",
@@ -6322,7 +6344,9 @@ export type Config = {
   "erp.location.godownRadiusM": number;
   "erp.orders.live": boolean;
   "erp.purchase.ownVehicleRatePerKmPaise": number;
+  "erp.purchase.minQuotations": number;
   "erp.purchase.receiptTolerancePercent": number;
+  "erp.purchase.poGstPercent": number;
   "erp.returns.ownerApprovalPaise": number;
   "erp.stockCheck.onRequirement": boolean;
   "erp.stockCheck.tolerancePercent": number;

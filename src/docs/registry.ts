@@ -797,8 +797,8 @@ export const DOC_APPS: DocApp[] = [
       },
       {
         slug: "purchase-requirements",
-        title: "Purchase requirements",
-        summary: "A department asks for something; the shelf is counted, a vendor is chosen, and the PO follows.",
+        title: "Purchase requirements and quotations",
+        summary: "A department asks for something; the purchase rule decides direct buy, quotation or the buyer's call.",
         group: "Purchase",
         modules: ["erp.requisitions"],
         written: ALL,
@@ -846,7 +846,7 @@ export const DOC_APPS: DocApp[] = [
       {
         slug: "stock-accuracy",
         title: "Stock accuracy and counting",
-        summary: "Inventory Accuracy Control: a blind count before every purchase and every day, red flags that notify without stopping the purchase, recounts, causes, approved adjustments and missing records.",
+        summary: "Inventory Accuracy Control: a blind count before every purchase method and every day, red flags that notify without stopping the purchase, recounts, causes, approved adjustments and missing records.",
         group: "Make and store",
         modules: ["erp.stockCheck"],
         written: ALL,
