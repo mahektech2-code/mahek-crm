@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cleanCell, cleanRate, columnStats, parseQuoteDate, parseTsv, validQuoteId, newQuoteId } from "./quotes";
+import { cleanCell, cleanRate, columnStats, parseQuoteDate, parseTsv, quoteStatusRefusal, validQuoteId, newQuoteId } from "./quotes";
 import { applySheetOps, invertSheetOps, visibleColumns, visibleRows, type SheetOp, type SheetState } from "./quote-sheet";
 
 test("a rate is a number, with the commas and rupee sign a paste carries taken out", () => {
@@ -56,7 +56,7 @@ const base = (): SheetState => ({
     { id: "c1", pack: "185 KG", name: "Butyl", brand: "Mahek", kind: "rate", rawMaterialId: null, archived: false },
     { id: "c2", pack: "", name: "Broker", brand: "", kind: "text", rawMaterialId: null, archived: false },
   ],
-  rows: [{ id: "r1", date: "2026-10-01", party: "Garnet", status: null, seq: 0, deleted: false, cells: { c1: { value: "48.5", status: null } } }],
+  rows: [{ id: "r1", date: "2026-10-01", party: "Garnet", status: null, seq: 0, deleted: false, cells: { c1: { value: "48.5", status: null, drums: null, poNo: null, poBy: null, poAt: null } } }],
 });
 
 test("every change is undone by its inverse, whatever it touched", () => {
@@ -75,7 +75,7 @@ test("every change is undone by its inverse, whatever it touched", () => {
   const s1 = applySheetOps(s0, ops);
   assert.equal(visibleRows(s1)[0].party, "Saraswati");
   assert.deepEqual(visibleColumns(s1).map((c) => c.id), ["c3", "c1"]);
-  assert.deepEqual(s1.rows[0].cells.c1, { value: "50", status: "po" });
+  assert.deepEqual(s1.rows[0].cells.c1, { value: "50", status: "po", drums: null, poNo: null, poBy: null, poAt: null });
 
   const back = applySheetOps(s1, invertSheetOps(s0, ops));
   assert.deepEqual(visibleRows(back).map((r) => r.id), ["r1"]);
@@ -89,5 +89,30 @@ test("deleting a row hides it and undoing brings it back with its cells", () => 
   const s1 = applySheetOps(s0, ops);
   assert.equal(visibleRows(s1).length, 0);
   const back = applySheetOps(s1, invertSheetOps(s0, ops));
-  assert.deepEqual(visibleRows(back)[0].cells.c1, { value: "48.5", status: null });
+  assert.deepEqual(visibleRows(back)[0].cells.c1, { value: "48.5", status: null, drums: null, poNo: null, poBy: null, poAt: null });
+});
+
+test("a rate is bought only once a manager has marked it Ready to buy, and never without drums and a PO", () => {
+  const buy = { status: "po" as const, drums: 4, poNo: "PO-118" };
+  assert.equal(quoteStatusRefusal(null, { status: "ready", drums: null, poNo: null }, false) !== null, true);
+  assert.equal(quoteStatusRefusal(null, { status: "ready", drums: null, poNo: null }, true), null);
+  assert.equal(quoteStatusRefusal("ready", buy, false), null);
+  assert.match(quoteStatusRefusal(null, buy, false)!, /Ready to buy/);
+  assert.equal(quoteStatusRefusal(null, buy, true), null);
+  assert.match(quoteStatusRefusal("ready", { ...buy, drums: 0 }, false)!, /drums/);
+  assert.match(quoteStatusRefusal("ready", { ...buy, poNo: " " }, false)!, /PO number/);
+  assert.equal(quoteStatusRefusal("po", { status: "ready", drums: 4, poNo: "PO-118" }, false), null, "undoing a purchase is anybody's");
+  assert.match(quoteStatusRefusal("po", { status: null, drums: 4, poNo: "PO-118" }, false)!, /manager/);
+  assert.match(quoteStatusRefusal("ready", { status: null, drums: null, poNo: null }, false)!, /manager/);
+  assert.equal(quoteStatusRefusal(null, { status: "pickup", drums: null, poNo: null }, false), null);
+});
+
+test("undoing a purchase puts back the drums and PO number it replaced", () => {
+  const s0 = base();
+  s0.rows[0].cells.c1.status = "ready";
+  const ops: SheetOp[] = [{ op: "cell", rowId: "r1", columnId: "c1", status: "po", drums: 4, poNo: "PO-1", poBy: "Me", poAt: "2026-10-16T10:00:00Z" }];
+  const s1 = applySheetOps(s0, ops);
+  assert.equal(s1.rows[0].cells.c1.poNo, "PO-1");
+  const back = applySheetOps(s1, invertSheetOps(s0, ops));
+  assert.deepEqual(back.rows[0].cells.c1, s0.rows[0].cells.c1);
 });

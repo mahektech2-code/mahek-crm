@@ -1891,6 +1891,13 @@
       "when": 1792620244442,
       "tag": "0272_erp_orders_source",
       "breakpoints": true
+    },
+    {
+      "idx": 270,
+      "version": "7",
+      "when": 1792620344442,
+      "tag": "0273_erp_quote_purchase",
+      "breakpoints": true
     }
   ]
 }

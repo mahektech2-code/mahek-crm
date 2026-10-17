@@ -15566,13 +15566,21 @@ export const erpQuoteCells = pgTable(
     rowId: text("row_id").notNull().references(() => erpQuoteRows.id, { onDelete: "cascade" }),
     columnId: text("column_id").notNull().references(() => erpQuoteColumns.id, { onDelete: "cascade" }),
     value: text("value").notNull().default(""),
+    /** `ready` (grey: a manager chose this rate to buy), `po` (yellow: bought), `cancel` or `pickup`. */
     status: text("status"),
+    /** The purchase, written by Purchase it: how many drums and the PO number. */
+    drums: integer("drums"),
+    poNo: text("po_no"),
+    poById: text("po_by_id").references(() => users.id),
+    poAt: timestamp("po_at", { withTimezone: true }),
+    readyById: text("ready_by_id").references(() => users.id),
+    readyAt: timestamp("ready_at", { withTimezone: true }),
     updatedById: text("updated_by_id").references(() => users.id),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     primaryKey({ columns: [t.rowId, t.columnId] }),
-    check("erp_quote_cells_status_check", sql`${t.status} is null or ${t.status} in ('po', 'cancel', 'pickup')`),
+    check("erp_quote_cells_status_check", sql`${t.status} is null or ${t.status} in ('ready', 'po', 'cancel', 'pickup')`),
   ],
 );
 

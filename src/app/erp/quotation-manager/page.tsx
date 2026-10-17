@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { erpContext } from "@/lib/erp/access";
 import { erpScreen } from "@/lib/erp/registry";
-import { quoteSheet } from "@/lib/erp/quotes";
+import { quoteManagerOf, quoteSheet } from "@/lib/erp/quotes";
 import { parseQuoteDate } from "@/lib/erp/engines/quotes";
 import { calendarDate } from "@/lib/business-date";
 import { nowMs } from "@/lib/format";
@@ -47,6 +47,8 @@ export default async function ErpQuotationManager({ searchParams }: { searchPara
         sixMonths={monthsBack(today, 6)}
         threeMonths={monthsBack(today, 3)}
         readOnly={!!ctx.viewingAs}
+        canReady={quoteManagerOf(ctx)}
+        me={ctx.actor.name}
       />
     </div>
   );

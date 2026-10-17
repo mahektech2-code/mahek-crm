@@ -20,7 +20,7 @@ Everything on it can be changed in place: the cells, the date and party of a row
 
 <Hotspots items={[
   <span key="1"><b>Rows and columns.</b> + Row adds a quotation dated today; + Column adds something to quote for. Hover a column heading for move left, edit, insert after and move right.</span>,
-  <span key="2"><b>Colours.</b> Select cells, then press a colour. A colour on the date or party marks the whole quotation.</span>,
+  <span key="2"><b>Marks.</b> Select cells, then press a mark. Ready to buy (grey) is a manager's; Purchase it turns a grey rate yellow. A mark on the date or party marks the whole quotation.</span>,
 ]} />
 
 ## Working the grid
@@ -33,6 +33,20 @@ Everything on it can be changed in place: the cells, the date and party of a row
 - **Ctrl+Z** (or **Undo**) takes back the last change.
 
 Every change is saved as you make it. The words beside Undo say whether everything is saved.
+
+## Choosing a party or a broker
+
+The **Party** column, and any text column such as **Broker name**, open a menu rather than a typing box. It shows ten at a time with the current one ticked. With more than ten to choose from it has a search box, and **Show more** brings the next ten. A name that isn't on the list is added from the same box (**Add “…”**), and **Clear** empties the cell.
+
+## Buying a rate
+
+1. **Ready to buy (grey).** A manager or administrator selects the rate to buy (one cell or a block) and presses **Ready to buy**. The cell turns grey: the team may now buy it.
+2. **Purchase it.** Anybody on the team selects a grey cell and presses **Purchase it**, or right-clicks it. They enter the **number of drums** and the **PO number**, then **Save and mark bought**.
+3. **Bought (yellow).** The cell turns yellow with a small mark in its corner, like a note in Excel. **Hover** over it to read the purchase: the PO number, drums, rate, material, party, quote date, the sheet's row number, and who bought it and when. **Click** it to pin the note, then **Edit** or **Undo purchase**, which puts it back to grey.
+
+Only a manager or an administrator marks a rate Ready to buy or takes the mark off. A rate that isn't grey can't be bought.
+
+**Right-click** any cell for everything it offers: edit, Ready to buy, Purchase it, the PO note, cancelled, picked up, clear and copy.
 
 ## Rows
 

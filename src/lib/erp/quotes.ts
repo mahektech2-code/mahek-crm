@@ -1,13 +1,16 @@
 import "server-only";
 import { and, asc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { erpQuoteCells, erpQuoteColumns, erpQuoteRows, erpRawMaterials, erpSuppliers } from "@/db/schema";
+import { erpQuoteCells, erpQuoteColumns, erpQuoteRows, erpRawMaterials, erpSuppliers, users } from "@/db/schema";
 import { err, ok, type Result } from "@/lib/result";
 import type { ErpContext } from "./access";
 import { erpAudit } from "./server";
 import {
   cleanCell,
   isQuoteStatus,
+  MAX_PO_CHARS,
+  quoteStatusRefusal,
+  ROW_STATUSES,
   MAX_HEADER_CHARS,
   MAX_OPS,
   MAX_PARTY_CHARS,
@@ -41,7 +44,17 @@ export type QuoteRowView = {
   supplierId: string | null;
   status: QuoteStatus | null;
   seq: number;
-  cells: Record<string, { value: string; status: QuoteStatus | null }>;
+  cells: Record<string, QuoteCellView>;
+};
+
+export type QuoteCellView = {
+  value: string;
+  status: QuoteStatus | null;
+  drums: number | null;
+  poNo: string | null;
+  /** Who bought it, by name, and when (ISO). */
+  poBy: string | null;
+  poAt: string | null;
 };
 
 export type QuoteSheet = {
@@ -99,14 +112,31 @@ export async function quoteSheet(f: { from: string | null; to: string | null; q:
   const ids = kept.map((r) => r.id);
   const cells = ids.length
     ? await db
-        .select({ rowId: erpQuoteCells.rowId, columnId: erpQuoteCells.columnId, value: erpQuoteCells.value, status: erpQuoteCells.status })
+        .select({
+          rowId: erpQuoteCells.rowId,
+          columnId: erpQuoteCells.columnId,
+          value: erpQuoteCells.value,
+          status: erpQuoteCells.status,
+          drums: erpQuoteCells.drums,
+          poNo: erpQuoteCells.poNo,
+          poBy: users.name,
+          poAt: erpQuoteCells.poAt,
+        })
         .from(erpQuoteCells)
+        .leftJoin(users, eq(users.id, erpQuoteCells.poById))
         .where(inArray(erpQuoteCells.rowId, ids))
     : [];
   const byRow = new Map<string, QuoteRowView["cells"]>();
   for (const c of cells) {
     const m = byRow.get(c.rowId) ?? {};
-    m[c.columnId] = { value: c.value, status: isQuoteStatus(c.status) ? c.status : null };
+    m[c.columnId] = {
+      value: c.value,
+      status: isQuoteStatus(c.status) ? c.status : null,
+      drums: c.drums,
+      poNo: c.poNo,
+      poBy: c.poBy,
+      poAt: c.poAt ? c.poAt.toISOString() : null,
+    };
     byRow.set(c.rowId, m);
   }
 
@@ -137,7 +167,7 @@ export async function quoteSheet(f: { from: string | null; to: string | null; q:
 /* -------------------------------------------------------------- the write */
 
 export type QuoteOp =
-  | { op: "cell"; rowId: string; columnId: string; value?: string; status?: QuoteStatus | null }
+  | { op: "cell"; rowId: string; columnId: string; value?: string; status?: QuoteStatus | null; drums?: number | null; poNo?: string | null }
   | { op: "row"; rowId: string; create?: boolean; date?: string; party?: string; status?: QuoteStatus | null }
   | { op: "deleteRow"; rowId: string }
   | { op: "restoreRow"; rowId: string }
@@ -161,10 +191,16 @@ function statusOf(v: unknown): QuoteStatus | null {
 
 class QuoteRefusal extends Error {}
 
+/** Who chooses the rate to buy: an ERP manager or administrator. */
+export function quoteManagerOf(ctx: ErpContext): boolean {
+  return ctx.administrator || ctx.level === "manager" || ctx.level === "admin";
+}
+
 export async function applyQuoteOps(ctx: ErpContext, ops: QuoteOp[]): Promise<Result<{ applied: number }>> {
   if (!Array.isArray(ops) || !ops.length) return ok({ applied: 0 });
   if (ops.length > MAX_OPS) return err(`At most ${MAX_OPS} changes go in one save. Paste in smaller blocks.`, "validation");
   const who = ctx.actor.id;
+  const manager = quoteManagerOf(ctx);
   try {
     await db.transaction(async (tx) => {
       const kinds = new Map<string, QuoteColumnKind>();
@@ -203,7 +239,10 @@ export async function applyQuoteOps(ctx: ErpContext, ops: QuoteOp[]): Promise<Re
               set.party = p;
               set.supplierId = await supplierIdFor(p);
             }
-            if (o.status !== undefined) set.status = statusOf(o.status);
+            if (o.status !== undefined) {
+              set.status = statusOf(o.status);
+              if (set.status && !ROW_STATUSES.includes(set.status as QuoteStatus)) throw new QuoteRefusal("Ready to buy marks a rate, not a whole row.");
+            }
             if (!knownRows.has(o.rowId)) {
               if (!o.create) throw new QuoteRefusal("That row is no longer on the sheet. Refresh the page.");
               if (!set.quoteDate) throw new QuoteRefusal("A new row needs its date.");
@@ -221,17 +260,49 @@ export async function applyQuoteOps(ctx: ErpContext, ops: QuoteOp[]): Promise<Re
             if (!knownRows.has(o.rowId)) throw new QuoteRefusal("That row is no longer on the sheet. Refresh the page.");
             const kind = kinds.get(o.columnId);
             if (!kind) throw new QuoteRefusal("That column is no longer on the sheet. Refresh the page.");
-            const set: { value?: string; status?: QuoteStatus | null } = {};
+            const set: Partial<typeof erpQuoteCells.$inferInsert> = {};
             if (o.value !== undefined) {
               const c = cleanCell(kind, String(o.value));
               if (!c.ok) throw new QuoteRefusal(c.error);
               set.value = c.value;
             }
+            if (o.drums !== undefined) {
+              if (o.drums !== null && (typeof o.drums !== "number" || !Number.isFinite(o.drums))) throw new QuoteRefusal("The number of drums must be a number.");
+              set.drums = o.drums;
+            }
+            if (o.poNo !== undefined) {
+              const po = o.poNo === null ? null : String(o.poNo).trim();
+              if (po && po.length > MAX_PO_CHARS) throw new QuoteRefusal(`A PO number is at most ${MAX_PO_CHARS} characters.`);
+              set.poNo = po || null;
+            }
             if (o.status !== undefined) set.status = statusOf(o.status);
             if (!Object.keys(set).length) break;
+            const [prev] = await tx
+              .select({ status: erpQuoteCells.status, drums: erpQuoteCells.drums, poNo: erpQuoteCells.poNo })
+              .from(erpQuoteCells)
+              .where(and(eq(erpQuoteCells.rowId, o.rowId), eq(erpQuoteCells.columnId, o.columnId)))
+              .limit(1);
+            const before = isQuoteStatus(prev?.status) ? prev!.status : null;
+            const after = set.status !== undefined ? set.status : before;
+            if (set.status !== undefined || after === "po") {
+              const refusal = quoteStatusRefusal(
+                before as QuoteStatus | null,
+                { status: after as QuoteStatus | null, drums: set.drums !== undefined ? set.drums : (prev?.drums ?? null), poNo: set.poNo !== undefined ? set.poNo : (prev?.poNo ?? null) },
+                manager,
+              );
+              if (refusal) throw new QuoteRefusal(refusal);
+            }
+            if (after === "po" && (before !== "po" || set.drums !== undefined || set.poNo !== undefined)) {
+              set.poById = who;
+              set.poAt = new Date();
+            }
+            if (set.status === "ready" && before !== "ready") {
+              set.readyById = who;
+              set.readyAt = new Date();
+            }
             await tx
               .insert(erpQuoteCells)
-              .values({ rowId: o.rowId, columnId: o.columnId, value: set.value ?? "", status: set.status ?? null, updatedById: who })
+              .values({ rowId: o.rowId, columnId: o.columnId, value: "", ...set, updatedById: who })
               .onConflictDoUpdate({
                 target: [erpQuoteCells.rowId, erpQuoteCells.columnId],
                 set: { ...set, updatedById: who, updatedAt: new Date() },
