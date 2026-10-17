@@ -13,6 +13,7 @@
  * PURE and client-safe.
  * ------------------------------------------------------------------------- */
 
+import { validPeriod } from "./period";
 import { cellText, type ColSpec, type ListRow, type ListSpec, type Tone } from "./ui";
 
 export type ListSort = { k: string; d: 1 | -1 };
@@ -30,12 +31,18 @@ export type ListQuery = {
   size: number;
   /** A dashboard pre-filter: only these ids. */
   ids: string[] | null;
+  /**
+   * The period a windowed register is read through (`period.ts`): a preset,
+   * `c:<from>:<to>`, `all`, or empty for the screen's own default. Lists that
+   * are not windowed ignore it.
+   */
+  pd: string;
 };
 
 export const PAGE_SIZES = [25, 50, 100] as const;
 
 /** The query keys a list owns in the URL, beside the page's own (`view`, `open`, `f`, `fl`, `new`). */
-export const LIST_QUERY_KEYS = ["q", "chip", "gf", "grp", "sort", "page", "size"] as const;
+export const LIST_QUERY_KEYS = ["q", "chip", "gf", "grp", "sort", "page", "size", "pd"] as const;
 
 type Raw = Record<string, string | string[] | undefined>;
 const one = (raw: Raw, k: string) => (typeof raw[k] === "string" ? (raw[k] as string) : "");
@@ -54,6 +61,7 @@ export function parseListQuery(raw: Raw): ListQuery {
     page: Number.isInteger(page) && page > 0 ? page : 1,
     size: (PAGE_SIZES as readonly number[]).includes(size) ? size : 25,
     ids: f ? f.split(",") : null,
+    pd: validPeriod(one(raw, "pd")) ? one(raw, "pd") : "",
   };
 }
 
@@ -67,6 +75,7 @@ export function listQueryParams(q: ListQuery): Record<string, string> {
   if (q.sort) out.sort = `${q.sort.k}.${q.sort.d < 0 ? "d" : "a"}`;
   if (q.page > 1) out.page = String(q.page);
   if (q.size !== 25) out.size = String(q.size);
+  if (q.pd) out.pd = q.pd;
   return out;
 }
 
@@ -99,6 +108,12 @@ export type ListPage = {
   badgeChars: Record<string, number>;
   /** Rows the screen holds before any filter — the difference between "nothing yet" and "nothing matches". */
   all: number;
+  /**
+   * The window a register was read through, where the screen has one. `tooWide`
+   * is set when the period holds more rows than one page load may build: the
+   * rows are then empty and the screen asks for a narrower period instead.
+   */
+  window?: { pd: string; label: string; dateLabel: string; tooWide: { n: number; cap: number } | null };
 };
 
 export function colOf(cols: ColSpec[], k: string): ColSpec {

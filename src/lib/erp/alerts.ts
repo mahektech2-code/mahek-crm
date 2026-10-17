@@ -30,6 +30,8 @@ import { cashBalances, cashKey } from "./engines/cash";
 import { today } from "./screens/common";
 import { fgReorderRows, rmReorderRows } from "./screens/movement";
 import { detailRows, orderLines } from "./screens/sales";
+import { shiftDays } from "./period";
+import type { LoadScope } from "./window";
 
 /* ---------------------------------------------------------------------------
  * AI-4, the running half: read the facts, apply the rules in
@@ -66,35 +68,80 @@ export async function thresholds(): Promise<Thresholds & { enabled: boolean }> {
   };
 }
 
-/** Every alert condition that holds right now. */
+/**
+ * Every alert condition that holds right now — read through the lookback.
+ *
+ * An alert is news: a rate that just jumped, a batch that just lost too much,
+ * an order that took too long to go. So the pass reads what happened inside
+ * `erp.ai.alerts.lookbackDays` and nothing older; it used to read every
+ * purchase, SFG line, fill and billed line there has ever been, which on the
+ * imported history raised 237 "rate jumps" from 2024 and held the whole of it
+ * in memory once an hour. What is STILL STUCK is read by state instead, however
+ * old: an undecided test, a bill without its LR, an incomplete packing batch, a
+ * credit note not issued. An alert whose subject falls out of the lookback
+ * resolves on the next pass, because it is no longer a candidate.
+ */
 export async function currentCandidates(t: Thresholds, now = new Date()): Promise<Candidate[]> {
   const day = today();
+  const lookback = (await getConfig())["erp.ai.alerts.lookbackDays"];
+  const since = shiftDays(day, -lookback);
+  const recentScope: LoadScope = { pd: `c:${since}:${day}`, window: { from: since, to: day }, ids: null, open: null };
   const [purchases, sfg, fills, lost, packs, tests, details, lines, transports, reqs, credits, expenses, rmRe, fgRe] = await Promise.all([
+    /* This lookback's purchases, the rateless ones whatever their age, and — so a
+       jump has something to be measured against — the `rateLookback` purchases
+       of the same item from the same supplier before the lookback began. */
     q(sql`
-      select p.id, m.name as item, p.raw_material_id as "itemId", s.name as supplier, p.supplier_id as "supplierId", p.lot_no as lot,
-             p.purchase_date::text as date, p.created_at as "createdAt", p.rate_paise::float8 as rate, p.unit, p.density::float8 as density, p.quantity::float8 as qty
-        from erp_purchases p join erp_raw_materials m on m.id = p.raw_material_id join erp_suppliers s on s.id = p.supplier_id`),
-    q(sql`select l.id, l.sfg_no as "sfgNo", f.name as product, l.total_use::float8 as "totalUse", l.litres_adjusted::float8 as adjusted from erp_sfg_lines l join product_formulations f on f.id = l.formulation_id`),
-    q(sql`select f.id, f.lot_code as lot, fg.name as product, f.cans, f.can_adjusted as adjusted from erp_fg_fills f join finished_goods fg on fg.id = f.finished_good_id`),
+      with p as (
+        select p.*, row_number() over (partition by p.raw_material_id, p.supplier_id order by p.purchase_date desc, p.created_at desc) as rn
+          from erp_purchases p where p.purchase_date < ${since}::date
+      )
+      select x.id, m.name as item, x.raw_material_id as "itemId", s.name as supplier, x.supplier_id as "supplierId", x.lot_no as lot,
+             x.purchase_date::text as date, x.created_at as "createdAt", x.rate_paise::float8 as rate, x.unit, x.density::float8 as density, x.quantity::float8 as qty,
+             x.recent
+        from (
+          select id, raw_material_id, supplier_id, lot_no, purchase_date, created_at, rate_paise, unit, density, quantity, true as recent
+            from erp_purchases where purchase_date >= ${since}::date or rate_paise is null or rate_paise <= 0
+          union all
+          select id, raw_material_id, supplier_id, lot_no, purchase_date, created_at, rate_paise, unit, density, quantity, false
+            from p where rn <= ${t.rateLookback} and rate_paise > 0
+        ) x
+        join erp_raw_materials m on m.id = x.raw_material_id join erp_suppliers s on s.id = x.supplier_id`),
+    q(sql`select l.id, l.sfg_no as "sfgNo", f.name as product, l.total_use::float8 as "totalUse", l.litres_adjusted::float8 as adjusted
+            from erp_sfg_lines l join product_formulations f on f.id = l.formulation_id where l.batch_date >= ${since}::date`),
+    q(sql`select f.id, f.lot_code as lot, fg.name as product, f.cans, f.can_adjusted as adjusted
+            from erp_fg_fills f join finished_goods fg on fg.id = f.finished_good_id where f.fill_date >= ${since}::date`),
     q(sql`
       select t.id, t.transfer_date::text as date, coalesce(u.name, 'Unknown') as by, g.name as "fromGodown"
         from erp_transfers t join erp_godowns r on r.id = t.to_godown_id and r.reserved
-        join erp_godowns g on g.id = t.from_godown_id left join users u on u.id = t.created_by_id`),
-    q(sql`select l.id, l.batch_no as "batchNo", l.pack_date::text as date, l.boxes, l.cans, p.cans_per_box as cpb from erp_pack_lines l join products p on p.id = l.sku_id`),
-    q(sql`select t.id, t.pr_number as pr, m.name as item, t.created_at as "createdAt", t.decided_at is not null as decided from erp_tests t join erp_raw_materials m on m.id = t.raw_material_id`),
-    detailRows(),
-    orderLines(),
-    q(sql`select t.id, t.bill_no as "billNo", c.name as party, t.bill_date::text as "billDate", t.lr_no as lr from erp_transports t join customers c on c.id = t.billing_customer_id`),
+        join erp_godowns g on g.id = t.from_godown_id left join users u on u.id = t.created_by_id
+       where t.transfer_date >= ${shiftDays(day, -Math.max(lookback, t.writeOffDays))}::date`),
+    /* Only the batches that are not complete: a complete batch can never be stuck. */
+    q(sql`
+      select l.id, l.batch_no as "batchNo", l.pack_date::text as date, l.boxes, l.cans, p.cans_per_box as cpb
+        from erp_pack_lines l join products p on p.id = l.sku_id
+       where l.batch_no in (
+         select l2.batch_no from erp_pack_lines l2 join products p2 on p2.id = l2.sku_id
+          group by l2.batch_no having sum(l2.cans) <> max(l2.boxes) * max(p2.cans_per_box))`),
+    q(sql`select t.id, t.pr_number as pr, m.name as item, t.created_at as "createdAt", t.decided_at is not null as decided
+            from erp_tests t join erp_raw_materials m on m.id = t.raw_material_id where t.decided_at is null`),
+    detailRows({ window: { scope: recentScope, on: "dispatch" } }),
+    orderLines({ openWork: true }),
+    q(sql`select t.id, t.bill_no as "billNo", c.name as party, t.bill_date::text as "billDate", t.lr_no as lr
+            from erp_transports t join customers c on c.id = t.billing_customer_id where coalesce(t.lr_no, '') = ''`),
     /* Accepted = the complaint moved to in_progress; when is its status history. */
     q(sql`select r.id, c.name as party,
                  (select min(h.at) from complaint_status_history h where h.complaint_id = r.id and h.to_status = 'in_progress') as "approvedAt",
                  r.cn_status = 'issued' as issued, r.status = 'in_progress' as accepted, r.request_cn as cn
-            from complaints r join customers c on c.id = r.customer_id`),
-    q(sql`select c.id, c.employee_name as employee, c.godown_id as "godownId", g.name as godown, c.mode, c.amount_paise::float8 as amount from erp_credits c join erp_godowns g on g.id = c.godown_id`),
-    q(sql`select e.id, e.expense_by as by, e.godown_id as "godownId", g.name as godown, e.mode, e.amount_paise::float8 as amount, e.particular, e.expense_date::text as date from erp_expenses e join erp_godowns g on g.id = e.godown_id`),
+            from complaints r join customers c on c.id = r.customer_id
+           where r.request_cn and r.status = 'in_progress' and r.cn_status is distinct from 'issued'`),
+    /* Cash in hand is a running balance, so it is summed in SQL — one row per person, godown and mode. */
+    q(sql`select c.employee_name as employee, c.godown_id as "godownId", c.mode, sum(c.amount_paise)::float8 as amount from erp_credits c group by 1, 2, 3`),
+    q(sql`select e.id, e.expense_by as by, e.godown_id as "godownId", g.name as godown, e.mode, e.amount_paise::float8 as amount, e.particular, e.expense_date::text as date
+            from erp_expenses e join erp_godowns g on g.id = e.godown_id where e.expense_date >= ${since}::date`),
     rmReorderRows(),
     fgReorderRows(),
   ]);
+  const spent = await q(sql`select e.expense_by as by, e.godown_id as "godownId", e.mode, sum(e.amount_paise)::float8 as amount from erp_expenses e group by 1, 2, 3`);
   const drumConfig = await getConfig();
   const drums = await q(sql`
     select d.id, d.drum_no as no, s.name as supplier, d.lot_no as lot, d.declared_tare_kg::float8 as declared, d.actual_kg::float8 as actual
@@ -112,6 +159,8 @@ export async function currentCandidates(t: Thresholds, now = new Date()): Promis
     litreRatePaise: purchaseFigures({ quantity: Number(p.qty), unit: String(p.unit), ratePaise: p.rate == null ? null : Number(p.rate), density: p.density == null ? null : Number(p.density), feedAdjustedLitre: 0, feedAdjustedAmountPaise: 0, gstBp: 0, drums: null }).literRatePaise,
   }));
 
+  const recentIds = new Set(purchases.filter((p) => p.recent && String(p.date) >= since).map((p) => String(p.id)));
+
   const batches = new Map<string, { batchNo: string; ids: string[]; date: string; boxes: number; cpb: number; cans: { id: string; cans: number }[] }>();
   for (const p of packs) {
     const k = String(p.batchNo);
@@ -123,7 +172,7 @@ export async function currentCandidates(t: Thresholds, now = new Date()): Promis
 
   const bal = cashBalances(
     credits.map((c) => ({ employee: String(c.employee), godownId: String(c.godownId), mode: String(c.mode), amountPaise: Number(c.amount) })),
-    expenses.map((e) => ({ employee: String(e.by), godownId: String(e.godownId), mode: String(e.mode), amountPaise: Number(e.amount) })),
+    spent.map((e) => ({ employee: String(e.by), godownId: String(e.godownId), mode: String(e.mode), amountPaise: Number(e.amount) })),
   );
   const balanceRows = new Map<string, { key: string; employee: string; godown: string; mode: string; availablePaise: number; ids: string[] }>();
   for (const e of expenses) {
@@ -134,8 +183,9 @@ export async function currentCandidates(t: Thresholds, now = new Date()): Promis
   }
 
   return [
-    ...rateJumps(purchaseFacts, t),
-    ...ratesMissing(purchases.map((p) => ({ id: String(p.id), item: String(p.item), lot: String(p.lot), date: String(p.date), ratePaise: p.rate == null ? null : Number(p.rate) })), day, t),
+    /* Measured against the older purchases, raised only on this lookback's. */
+    ...rateJumps(purchaseFacts, t).filter((c) => recentIds.has(c.subject)),
+    ...ratesMissing(purchases.filter((p) => p.recent).map((p) => ({ id: String(p.id), item: String(p.item), lot: String(p.lot), date: String(p.date), ratePaise: p.rate == null ? null : Number(p.rate) })), day, t),
     ...sfgLosses(sfg.map((l) => ({ id: String(l.id), sfgNo: Number(l.sfgNo), product: String(l.product), totalUse: Number(l.totalUse), adjusted: Number(l.adjusted) })), t),
     ...fillLosses(fills.map((f) => ({ id: String(f.id), lot: String(f.lot), product: String(f.product), cans: Number(f.cans), adjusted: Number(f.adjusted) })), t),
     ...writeOffs(lost.map((x) => ({ id: String(x.id), date: String(x.date), by: String(x.by), fromGodown: String(x.fromGodown) })), day, t),

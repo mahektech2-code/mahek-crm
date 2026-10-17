@@ -125,7 +125,8 @@ export async function startFillFromLot(fc: FactoryCtx, a: { lot: string; item: s
   if (!worksOn(fc, "filling")) return err("Filling is for the filling team. Tell your supervisor.", "not_permitted");
   const qty = Math.floor(Number(a.qty));
   if (!(qty > 0) || qty > FILL_FROM_LOT_MAX) return err(`Enter how many cans, 1 to ${FILL_FROM_LOT_MAX}.`, "validation");
-  const all = await sfgLots();
+  /* The lot named, whatever it holds, so an empty one is refused as empty rather than as unknown. */
+  const all = await sfgLots(undefined, { lots: [a.lot] });
   const lot = all.find((l) => l.lotCode === a.lot && l.godownId === fc.godown.id);
   if (!lot) {
     const elsewhere = all.find((l) => l.lotCode === a.lot);

@@ -50,3 +50,21 @@ export function statementKey(q: SQL): string {
   const { sql, params } = dialect.sqlToQuery(q);
   return `${sql}\u0000${JSON.stringify(params)}`;
 }
+
+/**
+ * A read that is not one statement — `orderLines`, built from six — shared the
+ * same way, under a key the caller names. The badges, the dashboard and the
+ * list each asked for the open order lines on one page; now the page asks once.
+ */
+export function readOnceKeyed<T>(key: string, run: () => Promise<T>): Promise<T> {
+  const memo = store.getStore();
+  if (!memo) return run();
+  const k = `keyed\u0000${key}`;
+  let p = memo.get(k) as Promise<T> | undefined;
+  if (!p) {
+    p = run();
+    memo.set(k, p);
+    p.catch(() => memo.delete(k));
+  }
+  return p;
+}

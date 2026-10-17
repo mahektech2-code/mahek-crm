@@ -15,6 +15,7 @@ import { returnsSummary } from "./returns";
 import { loadCustomers, partyStatus } from "./screens/masters";
 import { fgReorderRows, rmReorderRows } from "./screens/movement";
 import { detailRows, isWorkingLine, orderLines, ORDER_STATUSES } from "./screens/sales";
+import { scopeFor } from "./window";
 import { fgLots, packLots, rmLots, sfgLots } from "./stock";
 import { controlWork, fullCountDue, type ControlWork } from "./stock-check";
 import { openMismatches } from "./floor-checks";
@@ -67,8 +68,9 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
   const push = (t: string, tiles: Tile[]) => {
     if (tiles.length) out.push({ t, tiles });
   };
-  const lines = memo(orderLines);
-  const details = memo(detailRows);
+  /* Open work, and this month's dispatches — what the tiles count, never the book. */
+  const lines = memo(() => orderLines({ openWork: true }));
+  const details = memo(() => detailRows({ window: { scope: scopeFor({ label: "Dispatch date", default: "month" }, { pd: "", ids: null }, null, day), on: "dispatch" } }, { withUnverified: true }));
 
   /*
    * EVERY READ STARTS NOW, TOGETHER. The sections below are drawn in order and

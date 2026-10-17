@@ -1,7 +1,8 @@
 import "server-only";
 import { EVIDENCE_FIELDS } from "../engines/sfg-tests";
 import { getConfig } from "@/lib/config/store";
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { inWindow, STOCK_WINDOW, tooWide, unscoped, windowWhere } from "../window";
 import { db } from "@/db";
 import {
   erpGodowns,
@@ -424,9 +425,17 @@ export async function inwardFormForPo(ctx: ErpContext, poId: string): Promise<Fo
   return inwardForm(ctx, undefined, { poId });
 }
 
+/** Goods inward is a register by received date; a line not yet routed is work and always shows. */
+const INWARD_WINDOW = { label: "Received date", default: "month" } as const;
+
 const inward: ScreenModule = {
   key: "inward",
-  async load(ctx) {
+  window: INWARD_WINDOW,
+  async load(ctx, s) {
+    const sc = s ?? unscoped();
+    const where = sc.ids?.length ? windowWhere(sql`${erpInward.receivedDate}`, sql`${erpInward.id}`, sc) : sql`(${windowWhere(sql`${erpInward.receivedDate}`, sql`${erpInward.id}`, sc)} or ${erpInward.routed} is null)`;
+    const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(erpInward).where(where);
+    const wide = tooWide(Number(n), sc);
     const rows = await db
       .select({ r: erpInward, supplier: erpSuppliers.name, item: erpRawMaterials.name, godown: erpGodowns.name, by: users.name, poNumber: erpPurchaseOrders.poNumber, poStatus: erpPurchaseOrders.status })
       .from(erpInward)
@@ -435,8 +444,10 @@ const inward: ScreenModule = {
       .innerJoin(erpRawMaterials, eq(erpRawMaterials.id, erpInward.rawMaterialId))
       .innerJoin(erpGodowns, eq(erpGodowns.id, erpInward.godownId))
       .leftJoin(users, eq(users.id, erpInward.createdById))
+      .where(wide ? sql`false` : where)
       .orderBy(desc(erpInward.prNumber), asc(erpInward.createdAt));
-    const [form, costRows] = await Promise.all([inwardForm(ctx), db.select().from(erpPrCosts)]);
+    const prs = [...new Set(rows.map((x) => x.r.prNumber))];
+    const [form, costRows] = await Promise.all([inwardForm(ctx), prs.length ? db.select().from(erpPrCosts).where(inArray(erpPrCosts.prNumber, prs)) : Promise.resolve([] as (typeof erpPrCosts.$inferSelect)[])]);
     const costs = new Map(costRows.map((c) => [c.prNumber, c]));
     const cols: ColSpec[] = [
       { k: "pr", l: "PR no", t: "mono" },
@@ -470,6 +481,7 @@ const inward: ScreenModule = {
         newLabel: "Receive goods",
         noDataLine: "No goods received yet. Goods are received against an approved PO.",
       },
+      tooWide: wide,
       rows: rows.map((x) => {
         const actions: ActionSpec[] = [];
         if (!x.r.routed && x.r.testingRequired)
@@ -877,9 +889,17 @@ function missingEvidence(t: typeof erpTests.$inferSelect): string[] {
   return miss;
 }
 
+/** Testing is a register by testing date; a test nobody has decided is work and always shows. */
+const TEST_WINDOW = { label: "Testing date", default: "month" } as const;
+
 const testing: ScreenModule = {
   key: "testing",
-  async load(ctx) {
+  window: TEST_WINDOW,
+  async load(ctx, s) {
+    const sc = s ?? unscoped();
+    const where = sc.ids?.length ? windowWhere(sql`${erpTests.testingDate}`, sql`${erpTests.id}`, sc) : sql`(${windowWhere(sql`${erpTests.testingDate}`, sql`${erpTests.id}`, sc)} or ${erpTests.decidedAt} is null)`;
+    const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(erpTests).where(where);
+    const wide = tooWide(Number(n), sc);
     const rows = await db
       .select({ t: erpTests, item: erpRawMaterials.name, godown: erpGodowns.name, tester: users.name, supplier: erpSuppliers.name })
       .from(erpTests)
@@ -887,9 +907,11 @@ const testing: ScreenModule = {
       .innerJoin(erpGodowns, eq(erpGodowns.id, erpTests.godownId))
       .leftJoin(users, eq(users.id, erpTests.testerId))
       .leftJoin(erpSuppliers, eq(erpSuppliers.id, erpTests.supplierId))
+      .where(wide ? sql`false` : where)
       .orderBy(desc(erpTests.testingDate), desc(erpTests.prNumber));
+    const testIds = rows.map((x) => x.t.id);
     const withRegister = new Set(
-      (await db.select({ testId: erpPurchases.testId }).from(erpPurchases).where(sql`${erpPurchases.testId} is not null`)).map((x) => x.testId!),
+      (testIds.length ? await db.select({ testId: erpPurchases.testId }).from(erpPurchases).where(inArray(erpPurchases.testId, testIds)) : []).map((x) => x.testId!),
     );
     const newForm = await testForm(ctx);
     const verifier = ctx.powers.has("verifyTest");
@@ -920,6 +942,7 @@ const testing: ScreenModule = {
         newLabel: "Record a test",
         noDataLine: "No tests yet. Chemical lots arrive here as they are received.",
       },
+      tooWide: wide,
       rows: rows.map((x) => {
         const reg = withRegister.has(x.t.id);
         const miss = missingEvidence(x.t);
@@ -1174,7 +1197,8 @@ type RegRow = {
   by: string | null;
 };
 
-async function registerRows(): Promise<RegRow[]> {
+/** Register rows, read under `where` — a window, one id, or a godown's chemicals; never the whole register. */
+async function registerRows(where: SQL): Promise<RegRow[]> {
   return (await db
     .select({
       p: erpPurchases,
@@ -1191,6 +1215,7 @@ async function registerRows(): Promise<RegRow[]> {
     .innerJoin(erpRawMaterials, eq(erpRawMaterials.id, erpPurchases.rawMaterialId))
     .innerJoin(erpGodowns, eq(erpGodowns.id, erpPurchases.godownId))
     .leftJoin(users, eq(users.id, erpPurchases.createdById))
+    .where(where)
     .orderBy(desc(erpPurchases.purchaseDate), desc(erpPurchases.prNumber))) as RegRow[];
 }
 
@@ -1232,7 +1257,7 @@ async function purchaseForm(ctx: ErpContext, id?: string): Promise<FormSpec | nu
   };
   let editing: RegRow | undefined;
   if (id) {
-    editing = (await registerRows()).find((r) => r.p.id === id);
+    [editing] = await registerRows(eq(erpPurchases.id, id));
     if (!editing) return null;
     const p = editing.p;
     init = {
@@ -1355,10 +1380,17 @@ function landingFields(materialPaise: number | null, l: LotLanding | undefined, 
   ];
 }
 
+const REGISTER_WINDOW = { label: "Purchase date", default: "month" } as const;
+
 const register: ScreenModule = {
   key: "register",
-  async load(ctx) {
-    const [rows, pairs, landings, prCosts] = await Promise.all([registerRows(), refValues("shortLabel"), lotLandings(), db.select({ pr: erpPrCosts.prNumber }).from(erpPrCosts)]);
+  window: REGISTER_WINDOW,
+  async load(ctx, s) {
+    const sc = s ?? unscoped();
+    const where = windowWhere(sql`${erpPurchases.purchaseDate}`, sql`${erpPurchases.id}`, sc);
+    const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(erpPurchases).where(where);
+    const wide = tooWide(Number(n), sc);
+    const [rows, pairs, landings, prCosts] = await Promise.all([wide ? Promise.resolve([] as RegRow[]) : registerRows(where), refValues("shortLabel"), lotLandings(), db.select({ pr: erpPrCosts.prNumber }).from(erpPrCosts)]);
     const costed = new Set(prCosts.map((c) => c.pr));
     const lineIds = rows.map((r) => r.p.poLineId).filter((x): x is string => !!x);
     const poRate = new Map(
@@ -1409,6 +1441,7 @@ const register: ScreenModule = {
         bulk: money ? [{ id: "billReceivedMany", l: "Mark bill received", confirm: "Mark every selected purchase's bill as received?" }] : undefined,
         noDataLine: "No purchases yet. Rows arrive as goods are received against a PO.",
       },
+      tooWide: wide,
       rows: rows.map((r) => {
         const p = r.p;
         const f = purchaseFigures(figIn(p));
@@ -1758,12 +1791,19 @@ async function savePurchase(ctx: ErpContext, h: Record<string, string>, id?: str
 
 /* ============================================================= barcode */
 
+const BARCODE_WINDOW = { label: "Purchase date", default: "month" } as const;
+
 const barcode: ScreenModule = {
   key: "barcode",
-  async load(ctx) {
+  window: BARCODE_WINDOW,
+  async load(ctx, s) {
+    const sc = s ?? unscoped();
     const pairs = await refValues("shortLabel");
     const here = ctx.workingGodown?.id ?? null;
-    const rows = (await registerRows()).filter((r) => r.type === "Chemical" && r.p.godownId === here);
+    const where = sql`${windowWhere(sql`${erpPurchases.purchaseDate}`, sql`${erpPurchases.id}`, sc)} and ${erpRawMaterials.materialType} = 'Chemical' and ${here ? sql`${erpPurchases.godownId} = ${here}` : sql`false`}`;
+    const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(erpPurchases).innerJoin(erpRawMaterials, eq(erpRawMaterials.id, erpPurchases.rawMaterialId)).where(where);
+    const wide = tooWide(Number(n), sc);
+    const rows = wide ? [] : await registerRows(where);
     const cols: ColSpec[] = [
       { k: "date", l: "Purchase date", t: "d" },
       { k: "lot", l: "Lot", t: "mono" },
@@ -1790,6 +1830,7 @@ const barcode: ScreenModule = {
         scopedLine: ctx.workingGodown ? `Showing ${ctx.workingGodown.name} only · change your working location in the header` : "No working location set — choose one in the header",
         noDataLine: "No chemical purchases at this godown yet.",
       },
+      tooWide: wide,
       rows: rows.map((r) => {
         const f = purchaseFigures(figIn(r.p));
         return {
@@ -1823,8 +1864,12 @@ const barcode: ScreenModule = {
 
 const rmStock: ScreenModule = {
   key: "rmStock",
-  async load(ctx) {
-    const lots = (await rmLots()).filter((l) => l.stock > 0);
+  window: STOCK_WINDOW,
+  async load(ctx, s) {
+    const sc = s ?? unscoped();
+    const inStock = (await rmLots()).filter((l) => l.stock > 0 && inWindow(l.latestDate, `${l.lotNo}|${l.godownId}`, sc));
+    const wide = tooWide(inStock.length, sc);
+    const lots = wide ? [] : inStock;
     const all: Col[] = [
       { k: "item", l: "Item", t: "b" },
       { k: "stock", l: "Current stock", t: "n" },
@@ -1845,6 +1890,7 @@ const rmStock: ScreenModule = {
         readOnly: true,
         noDataLine: "Nothing in stock yet. Stock appears as purchases are given a rate.",
       },
+      tooWide: wide,
       rows: lots.map((l) => ({
         id: `${l.lotNo}|${l.godownId}`,
         v: withoutHidden(
@@ -1867,16 +1913,24 @@ const rmStock: ScreenModule = {
   },
 };
 
+const RMLOG_WINDOW = { label: "Entry date", default: "month" } as const;
+
 const rmLog: ScreenModule = {
   key: "rmLog",
-  async load() {
-    const rows = (await db.execute(sql`
+  window: RMLOG_WINDOW,
+  async load(_ctx, s) {
+    const sc = s ?? unscoped();
+    const within = windowWhere(sql`e.entry_date`, sql`e.id`, sc);
+    const [{ n }] = (await db.execute(sql`select count(*)::int as n from erp_rm_entries e where ${within}`)) as unknown as { n: number }[];
+    const wide = tooWide(Number(n), sc);
+    const rows = wide ? [] : (await db.execute(sql`
       select e.id, e.entry_date::text as date, e.source_type as "sourceType", e.source_id as "sourceId",
              m.name as item, e.lot_no as lot, e.quantity::float8 as qty, g.name as godown, e.posted_at as "postedAt",
              (e.source_type = 'purchase' and not exists (select 1 from erp_purchases p where p.id = e.source_id)) as orphan
         from erp_rm_entries e
         join erp_raw_materials m on m.id = e.raw_material_id
         join erp_godowns g on g.id = e.godown_id
+       where ${within}
        order by e.entry_date desc, e.posted_at desc, e.id desc
     `)) as unknown as { id: string; date: string; sourceType: string; sourceId: string; item: string; lot: string; qty: number; godown: string; postedAt: Date; orphan: boolean }[];
     const cols: ColSpec[] = [
@@ -1898,6 +1952,7 @@ const rmLog: ScreenModule = {
         sortDefault: ["date", -1],
         noDataLine: "No entries yet. They appear as purchases and transfers post.",
       },
+      tooWide: wide,
       rows: rows.map((r) => ({
         id: r.id,
         v: { date: r.date, type: r.sourceType === "purchase" ? "Purchase" : r.sourceType === "adjustment" ? "Stock adjustment" : "Transfer", item: r.item, lot: r.lot, qty: Number(r.qty), godown: r.godown, source: r.sourceId },
