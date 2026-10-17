@@ -425,7 +425,11 @@ type Scope = "orders" | "pendingOrders" | "readyOrders" | "labels";
  * different set from the list it opens.
  */
 export function isPendingLine(l: OrderLine, detailedOrders: Set<number>): boolean {
-  return l.o.status !== "Cancel" && l.sku.name !== "Empty Drum" && !detailedOrders.has(l.o.orderNo);
+  /* Not Ready: a Ready line has stock on the shelf and has moved on to Under
+     process & ready. Mahek Plus's Pending view had no status test, so every
+     line sat there from entry to billing, Ready lines included, and the same
+     line was on two tabs at once. */
+  return l.o.status !== "Cancel" && l.o.status !== "Ready" && l.sku.name !== "Empty Drum" && !detailedOrders.has(l.o.orderNo);
 }
 
 /** Being worked on: Ready or Under Process, and not yet done. Also the Labels tab's rows. */
@@ -487,7 +491,7 @@ function orderList(scope: Scope): ScreenModule {
             scope === "orders"
               ? "No sales orders yet."
               : scope === "pendingOrders"
-                ? "Nothing pending. Every open line has reached order details."
+                ? "Nothing pending. Every open line is Ready or has reached order details."
                 : "Nothing under process or ready.",
         },
         rows: shown.map((l): ListRow => {
