@@ -1,11 +1,10 @@
-The ERP decides what somebody may do in four layers, and each answers a different question. Keeping them apart is what lets the owner say "the godown team opens Stock" without also saying "the godown team sees what we paid for it".
+The ERP decides what somebody may do in three layers, all set in the Admin Console, and each answers a different question. Keeping them apart is what lets the owner say "the godown team opens Stock" without also saying "the godown team sees what we paid for it".
 
 | Layer | Question | Where it is set |
 |---|---|---|
 | **The ERP grant and its level** | Does this person have the ERP at all, and are they an associate, a manager or an administrator in it? | Admin Console → Access |
 | **Screens** | Which sidebar entries can they open? | Admin Console → Access (ticked, or from a designation) |
 | **Powers** | Which money may they see, and which decisions may they take? | Admin Console → Access, beside the screens |
-| **Duties on a material** | For one item, who requests it, raises its PO, approves the PO and tests its lots? | ERP → Raw materials → the item → Who does what |
 
 The fifth fact, the **department**, rides on the designation and narrows what a production person may ask to be bought. It is explained below and on [Purchase requirements](/docs/erp/purchase-requirements/how-it-works).
 
@@ -33,7 +32,7 @@ A grant that ticks every screen stores no list at all, so a screen built next mo
 |---|---|
 | **Associate** | Works the screens ticked. Reads help videos; reads recipes. |
 | **Manager** | Also adds and removes help videos, sets recipes, verifies expenses and runs the alert checks. |
-| **Admin** (ERP administrator) | Every power without a tick, every godown without being assigned, may set who does what on a material, may delete posted production lines, may preview the ERP as anybody. |
+| **Admin** (ERP administrator) | Every power without a tick, every godown without being assigned, may delete posted production lines, may preview the ERP as anybody. |
 
 A platform administrator is also an ERP administrator. Everything an administrator does is still audited under their own name.
 

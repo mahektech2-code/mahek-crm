@@ -49,7 +49,6 @@ import {
 } from "../engines/purchase-flow";
 import { fgLevelAvailable, rmLevelAvailable, rmLots } from "../stock";
 import { bindErpFiles } from "../attachments";
-import { dutyKit, type DutyKit } from "../material-duties-server";
 import { godownIdByName, godownOptions, has, inTx, materials, refuse, today, type Col, type Tx } from "./common";
 import { countLabel, gatesFor, notifyStockFlag, openCount, type GateInfo } from "../stock-check";
 import { openRequirementCounts, writeCounted } from "./stock-check";
@@ -355,9 +354,8 @@ async function presentQuantities() {
  * "Check purchase rule" is a step of the flow, so the person raising it sees
  * where it will go before they raise it.
  */
-export async function requisitionForm(ctx: ErpContext, init?: Record<string, string>, editing?: ReqView, kit?: DutyKit): Promise<FormSpec> {
-  const duties = kit ?? (await dutyKit(ctx));
-  const [allMats, gds, rm, allTypes, sups] = await Promise.all([
+export async function requisitionForm(ctx: ErpContext, init?: Record<string, string>, editing?: ReqView): Promise<FormSpec> {
+  const [mats, gds, rm, allTypes, sups] = await Promise.all([
     materials(),
     godownOptions(ctx, { lost: false }),
     rmLots(),
@@ -365,9 +363,7 @@ export async function requisitionForm(ctx: ErpContext, init?: Record<string, str
     db.select({ id: erpSuppliers.id, name: erpSuppliers.name }).from(erpSuppliers),
   ]);
   const supName = new Map(sups.map((s) => [s.id, s.name]));
-  /* Only what this person may ask for (`material-duties.ts`); a category with
-     nothing left in it is not offered, so the form never opens onto an empty list. */
-  const mats = allMats.filter((m) => duties.allows(m.id, "request") || m.id === editing?.r.rawMaterialId);
+  /* A category with no active item is not offered, so the form never opens onto an empty list. */
   const types = allTypes.filter((t) => mats.some((m) => m.materialType === t));
   /* A requirement is raised by one of the four teams, and the team decides the
      categories it may ask for; somebody in one team raises for it only
@@ -593,8 +589,7 @@ export async function cancelRequirementItem(ctx: ErpContext, id: string, reason:
 const requisitions: ScreenModule = {
   key: "requisitions",
   async load(ctx) {
-    const kit = await dutyKit(ctx);
-    const [views, config, form, present] = await Promise.all([requirementViews(), getConfig(), requisitionForm(ctx, undefined, undefined, kit), presentQuantities()]);
+    const [views, config, form, present] = await Promise.all([requirementViews(), getConfig(), requisitionForm(ctx), presentQuantities()]);
     const min = config["erp.purchase.minQuotations"];
     const money = ctx.powers.has("viewPurchaseMoney");
     const buyer = ctx.powers.has("purchaseBuyer");
@@ -627,9 +622,6 @@ const requisitions: ScreenModule = {
         const st = stageOf(v, min);
         const r = v.r;
         const actions: ActionSpec[] = [];
-        const mat = { id: r.rawMaterialId ?? "", name: v.item };
-        const mayRequest = !r.rawMaterialId || kit.allows(r.rawMaterialId, "request");
-        const mayRaisePo = !r.rawMaterialId || kit.allows(r.rawMaterialId, "raisePo");
         const open = st.step >= 0 && !v.po && !v.legacy;
         const held = open && !!v.stock?.gate.blocks;
         if (open && v.stock) actions.push(...stockActions(v));
@@ -690,10 +682,10 @@ const requisitions: ScreenModule = {
             l: "Create PO",
             primary: true,
             loadsForm: true,
-            why: !poScreen ? "Purchase orders is not on your account" : !money ? MONEY_WHY : mayRaisePo ? "" : (kit.refusal(mat, "raisePo") ?? ""),
+            why: !poScreen ? "Purchase orders is not on your account" : !money ? MONEY_WHY : "",
           });
         if (v.po) actions.push({ id: "openPo", l: `Open ${poLabel(v.po.number)}`, href: erpLink("purchaseOrders", { open: v.po.id }) });
-        if (open) actions.push({ id: "edit", l: "Edit", loadsForm: true, why: mayRequest ? "" : (kit.refusal(mat, "request") ?? "") });
+        if (open) actions.push({ id: "edit", l: "Edit", loadsForm: true });
         if (st.step >= 0 && st.step < FLOW_STEPS.length && (!v.po || v.legacy))
           actions.push({
             id: "cancel",
@@ -870,10 +862,6 @@ async function saveRequirement(ctx: ErpContext, h: Record<string, string>, id?: 
     if (!v) return err("That requirement no longer exists.", "not_found");
     if (v.po || v.legacy || v.r.status === "Cancelled") return err("A requirement on a PO, received or cancelled is not edited.", "conflict");
     if (!requirementVisibleTo(ctx.department, v.r.department, v.r.createdById === ctx.user.id)) return err("That requirement belongs to another department.", "not_permitted");
-    if (v.r.rawMaterialId) {
-      const duties = await dutyKit(ctx);
-      if (!duties.allows(v.r.rawMaterialId, "request")) return err(`${duties.refusal({ id: v.r.rawMaterialId, name: v.item }, "request")}.`, "not_permitted");
-    }
     /* An older requirement may keep the label it was raised under; moving it is held to the four. */
     const refusedEdit = department === v.r.department ? null : requirementRefusal(ctx.department, department, v.itemType);
     if (refusedEdit) return fieldErr(refusedEdit.field, refusedEdit.message);
@@ -958,7 +946,7 @@ export async function raiseRequirementWith(
   const cap = 500;
   if (lines.length > cap) return err(`A requirement carries at most ${cap} items — split this one in two.`, "validation");
 
-  const [mats, categories, duties] = await Promise.all([materials(), refValues("materialType"), dutyKit(ctx)]);
+  const [mats, categories] = await Promise.all([materials(), refValues("materialType")]);
   const labels = itemPickLabels(mats);
   const byKey = new Map(mats.map((m) => [`${m.materialType}|${m.name}`, m]));
   /* A line's field, as the form knows it: `item` on a single-item header, `l3.item` on line 4. */
@@ -971,7 +959,6 @@ export async function raiseRequirementWith(
     if (idPick) {
       const m = byId.get(idPick);
       if (!m) return fieldErr(at(i, "item"), "That item is no longer active");
-      if (!duties.allows(m.id, "request")) return fieldErr(at(i, "item"), `${duties.refusal(m, "request") ?? "You may not request this item"}.`);
       const refused = requirementRefusal(ctx.department, department, m.materialType);
       if (refused) return fieldErr(at(i, "item"), refused.message);
       const qty = num(l.required);
@@ -989,7 +976,6 @@ export async function raiseRequirementWith(
     const name = labels.get(pick)?.name ?? pick;
     const m = type ? byKey.get(`${type}|${name}`) : undefined;
     if (!m) return fieldErr(at(i, "item"), single ? "Pick an item of this category" : `"${pick}" is not an active item`);
-    if (!duties.allows(m.id, "request")) return fieldErr(at(i, "item"), `${duties.refusal(m, "request") ?? "You may not request this item"}.`);
     const refused = requirementRefusal(ctx.department, department, m.materialType);
     if (refused) return fieldErr(refused.field === "type" && !single ? at(i, "item") : refused.field, refused.message);
     const qty = num(l.required);
@@ -1418,22 +1404,16 @@ const quotations: ScreenModule = {
 /* ======================================================== purchase orders */
 
 /** Everything the PO form needs: requirements ready for a PO (or already on the one being edited), by vendor. */
-async function poFormData(editingPoId?: string, kit?: DutyKit) {
+async function poFormData(editingPoId?: string) {
   const [views, config] = await Promise.all([requirementViews(), getConfig()]);
   const min = config["erp.purchase.minQuotations"];
-  /* With a kit: only what this person may put on a PO (`material-duties.ts`). */
-  const eligible = views.filter(
-    (v) =>
-      (stageOf(v, min).readyForPo || (editingPoId && v.po?.id === editingPoId)) &&
-      (!kit || !v.r.rawMaterialId || kit.allows(v.r.rawMaterialId, "raisePo")),
-  );
+  const eligible = views.filter((v) => stageOf(v, min).readyForPo || (editingPoId && v.po?.id === editingPoId));
   return { eligible, map: labelled(eligible) };
 }
 
 export async function purchaseOrderForm(ctx: ErpContext, opts: { supplierId?: string; focus?: string; poId?: string } = {}): Promise<FormSpec | null> {
-  const kit = await dutyKit(ctx);
   const [{ map }, gds, sups, terms] = await Promise.all([
-    poFormData(opts.poId, kit),
+    poFormData(opts.poId),
     godownOptions(ctx, { lost: false }),
     db.select().from(erpSuppliers).orderBy(asc(erpSuppliers.name)),
     refValues("paymentTerms"),
@@ -1555,7 +1535,7 @@ async function savePurchaseOrder(ctx: ErpContext, h: Record<string, string>, lin
   const freight = paise(h.freight) ?? 0;
   if (freight < 0) return fieldErr("freight", "Minus Quantity Not Allowed");
   if (!lines.length) return err("Add at least one item.");
-  const [{ map }, duties] = await Promise.all([poFormData(poId), dutyKit(ctx)]);
+  const { map } = await poFormData(poId);
   const parsed: { v: ReqView; qty: number; rate: number; gstBp: number }[] = [];
   const seen = new Set<string>();
   for (let i = 0; i < lines.length; i++) {
@@ -1563,8 +1543,6 @@ async function savePurchaseOrder(ctx: ErpContext, h: Record<string, string>, lin
     const v = map.get(text(l.requirement) ?? "");
     if (!v) return fieldErr(`l${i}.requirement`, "Pick a requirement ready for a PO");
     if (seen.has(v.r.id)) return fieldErr(`l${i}.requirement`, "This requirement is already on the PO");
-    if (v.r.rawMaterialId && !duties.allows(v.r.rawMaterialId, "raisePo"))
-      return fieldErr(`l${i}.requirement`, `${duties.refusal({ id: v.r.rawMaterialId, name: v.item }, "raisePo")}.`);
     seen.add(v.r.id);
     if (v.r.supplierId !== vendor.id) return fieldErr(`l${i}.requirement`, `This requirement's vendor is not ${vendor.name}`);
     const qty = num(l.qty);
@@ -1664,23 +1642,21 @@ function poPanel(p: PoView, money: boolean) {
 }
 
 /**
- * Whether this person may decide (approve or send back) the PO: for every
- * line, the material's named approvers where they are set, the "Approve
- * purchase orders" power where they are not. Null: they may.
+ * Whether this person may decide (approve or send back) the PO: the "Approve
+ * purchase orders" power, granted in the Admin Console and nowhere else.
+ * Null: they may.
  */
 async function approvalRefusal(ctx: ErpContext, poId: string): Promise<Result<unknown> | null> {
-  const [[p], kit] = await Promise.all([purchaseOrderViews({ ids: [poId] }), dutyKit(ctx)]);
+  const [p] = await purchaseOrderViews({ ids: [poId] });
   if (!p) return err("That PO no longer exists.", "not_found");
-  const approver = ctx.powers.has("approvePurchaseOrder");
-  const line = p.lines.find((l) => !kit.allows(l.rawMaterialId, "approve", approver));
-  if (!line) return null;
-  return err(`${kit.refusal({ id: line.rawMaterialId, name: line.item }, "approve") ?? "Only the PO approver decides a purchase order"}.`, "not_permitted");
+  if (ctx.powers.has("approvePurchaseOrder")) return null;
+  return err("Only the PO approver decides a purchase order.", "not_permitted");
 }
 
 const purchaseOrders: ScreenModule = {
   key: "purchaseOrders",
   async load(ctx) {
-    const [pos, form, kit] = await Promise.all([purchaseOrderViews(), purchaseOrderForm(ctx), dutyKit(ctx)]);
+    const [pos, form] = await Promise.all([purchaseOrderViews(), purchaseOrderForm(ctx)]);
     const money = ctx.powers.has("viewPurchaseMoney");
     const approver = ctx.powers.has("approvePurchaseOrder");
     const canReceive = ctx.screens.has("inward");
@@ -1706,11 +1682,7 @@ const purchaseOrders: ScreenModule = {
       const doneLines = p.lines.filter((l) => l.received >= l.quantity).length;
       const self = p.po.createdById === ctx.user.id && !ctx.administrator;
       const actions: ActionSpec[] = [];
-      /* Approval follows each line's material where its approver is set, and the power where it is not. */
-      const notMine = p.lines.find((l) => !kit.allows(l.rawMaterialId, "approve", approver));
-      const approveWhy = notMine ? (kit.refusal({ id: notMine.rawMaterialId, name: notMine.item }, "approve") ?? "Only the PO approver approves") : "";
-      const notRaisable = p.lines.find((l) => !kit.allows(l.rawMaterialId, "raisePo"));
-      const editWhy = notRaisable ? (kit.refusal({ id: notRaisable.rawMaterialId, name: notRaisable.item }, "raisePo") ?? "") : "";
+      const approveWhy = approver ? "" : "Only the PO approver approves";
       if (s === "Pending approval") {
         actions.push({
           id: "approve",
@@ -1725,7 +1697,7 @@ const purchaseOrders: ScreenModule = {
           why: approveWhy,
           prompt: { title: `Send back ${poLabel(p.po.poNumber)}`, sub: "Its requirements return to Ready for PO, to be raised again corrected.", submit: "Send back", fields: [{ k: "reason", l: "What needs changing", t: "area", req: true }] },
         });
-        actions.push({ id: "edit", l: "Edit", loadsForm: true, why: money ? editWhy : MONEY_WHY });
+        actions.push({ id: "edit", l: "Edit", loadsForm: true, why: money ? "" : MONEY_WHY });
       }
       if (s === "Approved" || s === "Sent" || s === "Partly received") {
         actions.push({
@@ -1951,14 +1923,14 @@ const purchaseOrders: ScreenModule = {
 
 /** Badge counts for the sidebar: requirements waiting on somebody, and POs waiting on approval or on being sent. */
 export async function purchaseFlowCounts(ctx: ErpContext): Promise<{ requisitions: number; purchaseOrders: number }> {
-  const [work, pos, kit] = await Promise.all([requirementWork(ctx), purchaseOrderViews({ status: ["Pending approval", "Approved"] }), dutyKit(ctx)]);
+  const [work, pos] = await Promise.all([requirementWork(ctx), purchaseOrderViews({ status: ["Pending approval", "Approved"] })]);
   const buyer = ctx.powers.has("purchaseBuyer");
   const requisitions = REQUIREMENT_ACTION_STAGES.filter((s) => s !== "Buyer decision" || buyer).reduce((n, s) => n + (work[s]?.length ?? 0), 0);
   const approver = ctx.powers.has("approvePurchaseOrder");
   const purchaseOrders = pos.filter(
     (p) =>
       p.po.status === "Approved" ||
-      (kit.allowsAll(p.lines.map((l) => l.rawMaterialId), "approve", approver) && (p.po.createdById !== ctx.user.id || ctx.administrator)),
+      (approver && (p.po.createdById !== ctx.user.id || ctx.administrator)),
   ).length;
   return { requisitions, purchaseOrders };
 }

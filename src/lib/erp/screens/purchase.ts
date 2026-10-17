@@ -51,7 +51,6 @@ import {
 } from "../engines/purchase";
 import { lotLandings, rmLots, type LotLanding } from "../stock";
 import { bindErpFiles } from "../attachments";
-import { dutyKit } from "../material-duties-server";
 import { type Col, godownField, godownIdByName, godownOptions, has, today, type Tx } from "./common";
 import { RECEIVABLE_PO, poLabel, receivableQuantity } from "../engines/purchase-flow";
 import { OWNERSHIP_LABEL, ownershipByLabel } from "../engines/drums";
@@ -774,7 +773,6 @@ const PHOTO_COL: Record<string, keyof typeof erpTests.$inferInsert> = {
 };
 
 async function testForm(ctx: ErpContext, testId?: string): Promise<FormSpec | null> {
-  const duties = await dutyKit(ctx);
   const testers = await db.select({ name: users.name }).from(users).where(eq(users.active, true)).orderBy(asc(users.name));
   const gds = await godownOptions(ctx, { lost: false });
   const evidence = (on: string) =>
@@ -836,8 +834,7 @@ async function testForm(ctx: ErpContext, testId?: string): Promise<FormSpec | nu
     .orderBy(desc(erpInward.prNumber));
   const testsOf: Record<string, string[]> = {};
   const lineId: Record<string, string> = {};
-  /* Only the lots of chemicals this person tests (`material-duties.ts`). */
-  lines.filter((l) => duties.allows(l.itemId, "test")).forEach((l) => {
+  lines.forEach((l) => {
     const label = `PR ${l.pr} · ${l.item}`;
     testsOf[label] = l.tests;
     lineId[label] = l.id;
@@ -894,7 +891,7 @@ const testing: ScreenModule = {
     const withRegister = new Set(
       (await db.select({ testId: erpPurchases.testId }).from(erpPurchases).where(sql`${erpPurchases.testId} is not null`)).map((x) => x.testId!),
     );
-    const [newForm, kit] = await Promise.all([testForm(ctx), dutyKit(ctx)]);
+    const newForm = await testForm(ctx);
     const verifier = ctx.powers.has("verifyTest");
     const ai = await import("../ai");
     const pendingPhotos = await ai.pendingFor("photos");
@@ -930,7 +927,6 @@ const testing: ScreenModule = {
            an undecided test reads as waiting, never as rejected. */
         const shown = x.t.decidedAt ? x.t.status : "Pending";
         const actions: ActionSpec[] = [];
-        const testWhy = kit.allows(x.t.rawMaterialId, "test") ? "" : (kit.refusal({ id: x.t.rawMaterialId, name: x.item }, "test") ?? "");
         if (x.t.status !== "Verified")
           actions.push({
             id: "verify",
@@ -947,13 +943,13 @@ const testing: ScreenModule = {
               ? `A purchase register row already exists for this lot. Marking it Not Verified leaves that row in place — remove it from the register separately.`
               : `Mark ${x.item} (PR ${x.t.prNumber}) Not Verified?`,
           });
-        if (x.t.status !== "Verified") actions.push({ id: "edit", l: "Record evidence", loadsForm: true, why: testWhy });
+        if (x.t.status !== "Verified") actions.push({ id: "edit", l: "Record evidence", loadsForm: true });
         if (x.t.status !== "Verified" && pendingPhotos.has(x.t.id)) {
-          actions.unshift({ id: "aiTest", l: "Review photo readings", ai: true, primary: true, loadsForm: true, why: testWhy });
+          actions.unshift({ id: "aiTest", l: "Review photo readings", ai: true, primary: true, loadsForm: true });
           actions.push({ id: "aiTestReject", l: "Reject photo readings", confirm: "Reject the AI readings? Nothing changes." });
         } else if (x.t.status !== "Verified" && photosOn && (x.t.densityPhotoId || x.t.phPhotoId))
-          actions.push({ id: "aiTestRead", l: "Read test photos", ai: true, why: testWhy });
-        actions.push({ id: "addLot", l: "Add another lot", loadsForm: true, why: testWhy });
+          actions.push({ id: "aiTestRead", l: "Read test photos", ai: true });
+        actions.push({ id: "addLot", l: "Add another lot", loadsForm: true });
         return {
           id: x.t.id,
           v: {
@@ -1048,12 +1044,7 @@ const testing: ScreenModule = {
     },
   },
   actions: {
-    aiTestRead: async (ctx, id) => {
-      const [t] = await db.select({ m: erpTests.rawMaterialId, item: erpRawMaterials.name }).from(erpTests).innerJoin(erpRawMaterials, eq(erpRawMaterials.id, erpTests.rawMaterialId)).where(eq(erpTests.id, id));
-      const duties = await dutyKit(ctx);
-      if (t && !duties.allows(t.m, "test")) return err(`${duties.refusal({ id: t.m, name: t.item }, "test")}.`, "not_permitted");
-      return (await import("../ai-photos")).readTestPhotos(ctx, id);
-    },
+    aiTestRead: async (ctx, id) => (await import("../ai-photos")).readTestPhotos(ctx, id),
     aiTestReject: async (ctx, id) => (await import("../ai-photos")).rejectPhotoReading(ctx, id),
     async verify(ctx, id) {
       if (!ctx.powers.has("verifyTest")) return err("Only the verifier decides a purchase test.", "not_permitted");
@@ -1124,8 +1115,6 @@ async function saveTest(
   const rawMaterialId = src?.rawMaterialId ?? base!.rawMaterialId;
   const [mat] = await db.select().from(erpRawMaterials).where(eq(erpRawMaterials.id, rawMaterialId));
   if (!mat) return err("The item no longer exists.", "not_found");
-  const duties = await dutyKit(ctx);
-  if (!duties.allows(mat.id, "test")) return err(`${duties.refusal(mat, "test")}.`, "not_permitted");
   const tests = from.existing?.tests ?? mat.testingList;
   const [tester] = await db.select({ id: users.id }).from(users).where(eq(users.name, text(h.tester) ?? ctx.user.name));
   const density = num(h.density);

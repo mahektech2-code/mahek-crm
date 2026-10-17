@@ -8,7 +8,7 @@ Purchase orders are the `purchaseOrders` screen module in `lib/erp/screens/purch
 | Reading | `src/lib/erp/screens/purchase-flow.ts` | `purchaseOrderViews`, `receivedByLine`, `poOption` |
 | Form | same | `poFormData`, `purchaseOrderForm` (header + lines, filled from the selected quotation / vendor) |
 | Writes | same | `savePurchaseOrder`; actions `approve`, `sendBack`, `send`, `close`, `cancel`; form loader `receive` → `inwardFormForPo` |
-| Approval rule | same | `approvalRefusal` — duties per line, else the power |
+| Approval rule | same | `approvalRefusal` — the `approvePurchaseOrder` power |
 | After a receipt | same | `refreshPurchaseOrder(tx, poId)` |
 | Print | `src/app/erp/po/[id]/page.tsx` | Approved POs only; needs `viewPurchaseMoney` |
 | Badge | same | `purchaseFlowCounts` |
@@ -25,11 +25,11 @@ sequenceDiagram
   U->>F: forms.new -> savePurchaseOrder(h, lines)
   F->>F: vendor, deliver-to, dates, terms, freight
   loop each line
-    F->>F: requirement ready for PO, this vendor, raisePo duty, qty, rate (= selected quotation), GST
+    F->>F: requirement ready for PO, this vendor, qty, rate (= selected quotation), GST
   end
   F->>DB: tx: nextNumber(po), erp_purchase_orders (Pending approval), erp_po_lines - refuse a requirement already on a live PO
   AP->>F: actions.approve
-  F->>F: approvalRefusal (duties or approvePurchaseOrder), not the raiser unless administrator
+  F->>F: approvalRefusal (approvePurchaseOrder), not the raiser unless administrator
   F->>DB: tx (row locked): status Approved, requirements Order Placed
   U->>F: actions.send (via)
   F->>DB: status Sent, sent_via, sent_at
@@ -92,7 +92,6 @@ sequenceDiagram
 |---|---|---|
 | `npm run test` | `src/lib/erp/engines/purchase-flow.test.ts` | The PO drives the requirement's stage; status follows what was received, only in the receiving states; tolerance is a share of what was ordered; totals add GST per line and freight once |
 | `npm run test:integration` | `src/lib/erp/erp-purchase.test.ts` | The PO is raised from the vendor's ready requirements at the quotation's rate; nothing is received against a PO awaiting approval; nobody approves their own; sending records how and hands back the PO written out |
-| `npm run test:integration` | `src/lib/erp/erp-material-duties.test.ts` | A named approver approves without the power; an unnamed power holder may not |
 
 ## Changing it safely
 
@@ -114,6 +113,6 @@ A new way of receiving goods that forgets leaves the PO at Sent with the goods i
 |---|---|
 | `send` has no `viewPurchaseMoney` check, but returns `poMessage` with rates and totals | `screens/purchase-flow.ts` `purchaseOrders.actions.send` |
 | `send` sets Sent before the message leaves | same |
-| `close` and `cancel` check no power or duty | `purchaseOrders.actions.close`, `.cancel` |
+| `close` and `cancel` check no power | `purchaseOrders.actions.close`, `.cancel` |
 | The company on the written-out PO is the literal "Mahek Marketing India" | `purchaseOrders.actions.send` |
 | Send back writes `approved_by_id` / `approved_at` for a rejection | `purchaseOrders.actions.sendBack` |

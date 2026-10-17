@@ -1,4 +1,4 @@
-Requirements and their Quotations tab are two screen modules (`requisitions`, `quotations`) in `lib/erp/screens/purchase-flow.ts`, under one screen in the registry. The rules — the stage, landed cost, ranking, units and paste matching — are pure in `lib/erp/engines/purchase-flow.ts`. Department rules are `lib/erp/departments.ts`; per-material duties come through `dutyKit(ctx)`.
+Requirements and their Quotations tab are two screen modules (`requisitions`, `quotations`) in `lib/erp/screens/purchase-flow.ts`, under one screen in the registry. The rules — the stage, landed cost, ranking, units and paste matching — are pure in `lib/erp/engines/purchase-flow.ts`. Department rules are `lib/erp/departments.ts`.
 
 ## Map of the code
 
@@ -10,7 +10,6 @@ Requirements and their Quotations tab are two screen modules (`requisitions`, `q
 | Form | same | `requisitionForm` (new: header + `table` lines; edit: one item) |
 | Writes | same | `raiseRequirement`, `saveRequirement` (edit), `decide`, `vendor`, `selectQuote`, `cancel`; `saveQuotation`, `selectQuotation`, quotation `remove` |
 | Departments (pure) | `src/lib/erp/departments.ts` | `requirementDepartmentsFor`, `categoriesFor`, `requirementRefusal`, `requirementVisibleTo` |
-| Duties | `src/lib/erp/material-duties-server.ts` | `dutyKit(ctx)` → `allows(materialId, "request" \| "raisePo")`, `refusal(...)` |
 | Line table UI | `src/app/erp/_ui/line-table.tsx` | Add-by-search and paste for `lineLayout: "table"` |
 | Form calculators | `src/lib/erp/calcs/purchase.ts` | `requisitions.unit`, `requisitions.rule`, `requisitions.stockShort` … |
 
@@ -22,14 +21,14 @@ sequenceDiagram
   participant UI as Form drawer
   participant A as actions/erp.ts
   participant F as screens/purchase-flow.ts
-  participant D as departments.ts / dutyKit
+  participant D as departments.ts
   participant DB as Postgres
   UI->>A: erpSubmitForm(requisitions, new, header, lines)
   A->>A: requireErpWrite(requisitions)
   A->>F: forms.new -> raiseRequirement(ctx, h, lines)
   F->>F: requirementHeader - dates, department, priority
   loop every line
-    F->>D: item active? duty request allowed? requirementRefusal(seat, department, category)?
+    F->>D: item active? requirementRefusal(seat, department, category)?
     F->>F: quantity above zero, item not already on the requirement
   end
   F->>DB: transaction: nextNumber(requirement), one erp_requisitions row per item
@@ -110,7 +109,6 @@ The list, the badge (`requirementWork(ctx)`), the edit and the cancel all filter
 | `npm run test` | `src/lib/erp/departments.test.ts` | Categories per department; four teams; visibility |
 | `npm run test:integration` | `src/lib/erp/erp-purchase.test.ts` — "the purchase flow up to the PO" | The rule routes on raise; date and department required, finished goods never bought; only the buyer decides; quotations cannot be skipped and the lowest wins unless explained; a clerk without purchase money cannot add a quotation or raise a PO |
 | `npm run test:integration` | `src/lib/erp/erp-departments.test.ts` | Each department raises and sees its own; the head and the store see all; cross-department cancel refused; the badge counts the department's own |
-| `npm run test:integration` | `src/lib/erp/erp-material-duties.test.ts` | Named requesters |
 
 ## Changing it safely
 
@@ -121,7 +119,7 @@ Add it to `requirementStage` and its test. If somebody has to act on it before a
 <Step title="Never store the stage">
 The stored `status` is moved only by approval, receipt and cancel. A typed status can say Received with nothing at the gate.
 </Step>
-<Step title="Check departments and duties on the server">
+<Step title="Check departments on the server">
 The form filters with the same functions, but `raiseRequirement` and `saveRequirement` must refuse on their own.
 </Step>
 </Steps>
@@ -130,6 +128,5 @@ The form filters with the same functions, but `raiseRequirement` and `saveRequir
 
 | Gap | Where |
 |---|---|
-| The `vendor` action checks neither the `request` nor the `raisePo` duty | `screens/purchase-flow.ts` `requisitions.actions.vendor` |
 | The five-hundred-item cap is a literal, not a setting | `raiseRequirement` (`const cap = 500`) |
 | `itemPickLabels` handles names shared across categories, but `saveRawMaterial` refuses such names | `engines/purchase-flow.ts`; `screens/masters.ts` |

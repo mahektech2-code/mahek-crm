@@ -8,7 +8,6 @@ ERP access is resolved **once per request** by `erpContext` (`lib/erp/access.ts`
 | Powers (pure) | `src/lib/erp/powers.ts` | `ERP_POWERS`, `ERP_POWER_LABEL`, `isErpPower` |
 | Designations (pure) | `src/lib/erp/designations.ts` | `heldShape`, `designationShape`, `diffFromDesignation`, `draftFor`, `describeDiff` |
 | Departments (pure) | `src/lib/erp/departments.ts` | `ERP_DEPARTMENTS`, seats, `requirementRefusal`, `requirementVisibleTo` |
-| Material duties (pure) | `src/lib/erp/material-duties.ts` | Who requests, raises the PO, approves it and tests a material |
 | Designation writes | `src/lib/actions/erp-designations.ts` | `saveErpDesignation`, `deleteErpDesignation` (platform admins only) |
 | Designation reads | `src/lib/services/erp-designation-service.ts` | `listErpDesignations`, `erpHeldBy`, `designationStandings`, `designationRoster`, `erpPreviewTargets` |
 | Access writes | `src/lib/actions/access.ts` → `src/lib/services/access-writes.ts` | `setAccess` (ERP powers, designation link); `writeModules`, `writeErpPowers` |
