@@ -1,4 +1,4 @@
-The Masters are six screen modules in `lib/erp/screens/masters.ts` (raw materials, purchase parties, products, sales parties, godowns, reference lists). Three of them write MahekOne's own tables (`customers`, and the catalogue's `products` through a side table); the rest write `erp_*` tables. Per-material duties are pure in `lib/erp/material-duties.ts` and wired in `material-duties-server.ts`.
+The Masters are six screen modules in `lib/erp/screens/masters.ts` (raw materials, purchase parties, products, sales parties, godowns, reference lists). Three of them write MahekOne's own tables (`customers`, and the catalogue's `products` through a side table); the rest write `erp_*` tables.
 
 ## Map of the code
 
@@ -7,8 +7,6 @@ The Masters are six screen modules in `lib/erp/screens/masters.ts` (raw material
 | Screen modules | `src/lib/erp/screens/masters.ts` | `rawMaterials`, `suppliers`, `productsScreen`, `customersScreen`, `godowns`, `refListsScreen` |
 | Value lists | `src/lib/erp/refs.ts` | `REF_LISTS` (open, in `erp_ref_values`), `refValues`, and the fixed lists (`RM_UNITS`, `BOX_TYPES`, `GRADES`, `REGIONS`…) |
 | Purchase rule | `src/lib/erp/engines/purchase-flow.ts` | `PURCHASE_METHODS`, `methodLabel`, `methodByLabel` |
-| Duties (pure) | `src/lib/erp/material-duties.ts` | `MATERIAL_DUTIES`, `dutyAllows`, `dutyAllowsAll`, `dutyRefusal`, `dutyBookFrom` |
-| Duties (data) | `src/lib/erp/material-duties-server.ts` | `dutyKit(ctx)`, `dutyFieldsFor`, `dutyCandidates`, `replaceMaterialDuties` |
 | Shared helpers | `src/lib/erp/screens/common.ts` | `godownOptions` (Item Lost Record only with `lostStock`), `godownIdByName`, `materials` |
 | Customer status | `src/lib/erp/screens/masters.ts` | `partyStatus`, `loadCustomers`, `saveCustomerDetails` |
 
@@ -36,20 +34,6 @@ Notes on what it does:
   preferred_supplier_id: "The default vendor for a direct purchase.",
   active: "Retire sets false; never deleted.",
 }} />
-
-## Who does what
-
-<Code file="src/lib/erp/material-duties.ts" symbol="dutyAllows" />
-
-<Code file="src/lib/erp/material-duties.ts" symbol="dutyRefusal" />
-
-<DbTable name="erp_material_duties" note={{
-  duty: "request · raisePo · approve · test (test only applies to a Chemical).",
-  user_id: "A named person, or null.",
-  designation_id: "A named ERP designation (a department), or null.",
-}} />
-
-The form is `dutiesForm`, opened by the administrator-only **Who does what** action; `saveDuties` refuses anybody but `ctx.administrator`, and refuses a named person who no longer holds the ERP or a designation that no longer exists. `dutyKit(ctx)` is what every purchase screen asks: `kit.allows(materialId, duty, fallback)` and `kit.refusal(material, duty)`.
 
 ## Can photos and groups
 
@@ -131,8 +115,6 @@ Powers checked in these handlers: `viewPurchaseMoney` (raw material price), `vie
 | `npm run test:integration` | `src/lib/erp/erp-foundation.test.ts` — "raw materials" | A chemical needs a density and a testing list; serials follow on and names are unique ignoring case; the price never reaches a clerk and a clerk's save cannot overwrite it |
 | | "customers" | Created Pending, only a status-holder activates; deactivating is the customer's own status, so the CRM sees it |
 | | "powers and godowns" | The reserved godown cannot be switched off; staff decide the working location |
-| `npm run test:integration` | `src/lib/erp/erp-material-duties.test.ts` | Only an administrator sets duties; an empty duty is open; a named requester / approver / tester is enforced; clearing reopens |
-| `npm run test` | `src/lib/erp/material-duties.test.ts` | The duty rules, pure |
 
 ## Changing it safely
 
