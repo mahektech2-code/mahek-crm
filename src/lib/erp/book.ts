@@ -106,6 +106,9 @@ async function linesOf(orderNos: number[]): Promise<LineRow[]> {
       left join erp_order_details d on d.order_id = o.id
       left join erp_transports t on t.order_no = o.order_no
      where o.order_no in ${orderNos}
+       /* A line copied in from the Taken Order tab is already in the book as the
+          sheet's own SHEET- order; writing it again would count it twice. */
+       and o.source = 'erp'
      order by o.order_no, o.created_at
   `)) as unknown as LineRow[];
   /* db.execute hands numbers back as text where Postgres says bigint. */
@@ -260,7 +263,7 @@ export async function orderNosOf(lineIds: string[]): Promise<number[]> {
 /** Rebuilds every ERP order in the book — the job to run the day the switch is turned on. */
 export async function syncAllBookOrders(): Promise<number> {
   if (!(await erpOrdersLive())) return 0;
-  const rows = (await db.execute(sql`select distinct order_no as n from erp_orders`)) as unknown as { n: number }[];
+  const rows = (await db.execute(sql`select distinct order_no as n from erp_orders where source = 'erp'`)) as unknown as { n: number }[];
   const nos = rows.map((r) => Number(r.n));
   for (let i = 0; i < nos.length; i += 200) await syncBookOrders(nos.slice(i, i + 200));
   return nos.length;

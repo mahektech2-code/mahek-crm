@@ -12288,12 +12288,27 @@ export const erpOrders = pgTable(
     entryStatus: text("entry_status").notNull().default("Not Done"),
     /** "Pending" when the billing party was pending on entry; "Approved By Admin" once approved. */
     partyStatus: text("party_status"),
+    /**
+     * WHERE THE LINE WAS WRITTEN: `erp` for an order taken in the ERP, `sheet`
+     * for one copied in from the Taken Order tab (0272). The book already holds
+     * a sheet order as its own `SHEET-` row, so `syncBookOrders` never writes a
+     * `sheet` line — switching `erp.orders.live` on must not count the copied
+     * history a second time. `sourceRef` is the tab's line key, so the copy can
+     * be re-run while the sheet is still where orders are typed.
+     */
+    source: text("source").notNull().default("erp"),
+    sourceRef: text("source_ref"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id").references(() => users.id),
     updatedById: text("updated_by_id"),
   },
-  (t) => [index("erp_orders_no_idx").on(t.orderNo), index("erp_orders_billing_idx").on(t.billingCustomerId)],
+  (t) => [
+    index("erp_orders_no_idx").on(t.orderNo),
+    index("erp_orders_billing_idx").on(t.billingCustomerId),
+    uniqueIndex("erp_orders_source_ref_key").on(t.sourceRef).where(sql`${t.sourceRef} is not null`),
+    check("erp_orders_source_check", sql`${t.source} in ('erp', 'sheet')`),
+  ],
 );
 
 /** A lot allocated to an order line: it takes the stock the moment it is written (spec §11.4). */
