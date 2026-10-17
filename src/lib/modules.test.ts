@@ -10,7 +10,8 @@ import {
   modulesForApp,
   REMOVED_MODULES,
 } from "./modules";
-import { WHATSAPP_MODULES, getModule, grantableApps, writeModuleOf } from "./modules";
+import { WHATSAPP_MODULES, getModule, grantableApps, writeLevelsForApp, writeModuleOf } from "./modules";
+import { readFileSync } from "node:fs";
 import { NAV, PINNED, navHrefs as crmNavHrefs } from "@/components/shell/nav";
 import { NOT_IN_SIDEBAR, SALES_NAV, SALES_PINNED, navHrefs } from "@/app/sales/nav";
 
@@ -403,5 +404,24 @@ describe("WhatsApp has a Read and a Write level", () => {
       assert.equal(screen.app, m.app);
       assert.equal(screen.writeOf, undefined, "a write level of a write level means nothing");
     }
+  });
+});
+
+describe("write levels on the access screen", () => {
+  it("each screen has exactly one Read/Write level, and the first registered is it", () => {
+    const levels = writeLevelsForApp("website");
+    assert.equal(levels.get("website.dashboard"), "website.publish");
+    assert.equal(new Set(levels.values()).size, levels.size);
+  });
+
+  it("website.review is an ordinary checkbox, not the dashboard's Write option", () => {
+    assert.ok(![...writeLevelsForApp("website").values()].includes("website.review"));
+    assert.ok(getModule("website.review"), "the module exists");
+  });
+
+  it("the access screen reads the levels from the one function, not a Map of every writeOf", () => {
+    const src = readFileSync(new URL("../app/admin/access-section.tsx", import.meta.url), "utf8");
+    assert.match(src, /writeLevelsForApp\(app\)/);
+    assert.doesNotMatch(src, /new Map\(modulesForApp\(app\)\.filter\(\(m\) => m\.writeOf\)/);
   });
 });
