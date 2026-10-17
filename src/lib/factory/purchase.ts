@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { getConfig } from "@/lib/config/store";
 import type { ErpContext } from "@/lib/erp/access";
 import { SEAT_LABEL, type ErpDepartmentSeat, categoriesForDepartment, departmentByLabel } from "@/lib/erp/departments";
-import { FLOW_STEPS, poLabel, purchaseUnit, requirementLabel, type PurchaseMethod } from "@/lib/erp/engines/purchase-flow";
+import { FLOW_STEPS, purchaseUnit, requirementLabel, type PurchaseMethod } from "@/lib/erp/engines/purchase-flow";
 import { cancelRequirementItem, raiseRequirementWith, requirementViews, stageOf, type ReqView } from "@/lib/erp/screens/purchase-flow";
 import { materials } from "@/lib/erp/screens/common";
 import { stockUnit } from "@/lib/erp/stock";
@@ -136,7 +136,7 @@ async function cards(fc: FactoryCtx, views: ReqView[], minQ: number): Promise<Re
         countUnit: countUnitOf(v.itemUnit),
         countState,
         cancel: st.step < 0 || st.step >= FLOW_STEPS.length ? null : cancellable ? { ok: true } : { ok: false, why: "It is on a PO already. Ask the office to change it." },
-        po: v.po ? poLabel(v.po.number) : null,
+        po: v.po ? v.po.name : null,
         vendor: v.supplier ?? v.selected?.supplier ?? null,
         received: v.po ? Number(v.po.received) : null,
         quotes: v.quotes.length,

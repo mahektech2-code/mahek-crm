@@ -344,6 +344,10 @@ const DESCRIBE: Record<string, Describer> = {
   /* ---- empty drums, scrap sale and scrap receipts */
   "erp.rawMaterial.photos": () => ["changed a can's photos"],
   "erp.quotes.edit": () => ["edited the quotation sheet"],
+  /* ---- a requirement's PO, by the item's purchase rule */
+  "erp.requisition.linkPo": () => ["linked a purchase requirement to a PO number from the Quotation manager"],
+  "erp.requisition.unlinkPo": () => ["took a Quotation manager PO number off a purchase requirement"],
+  "erp.requisition.createPo": () => ["created a PO for a direct-purchase requirement, at the item's price"],
   "erp.canGroup.byName": () => ["grouped the cans by name"],
   "erp.drum.empty": () => ["recorded an empty drum, weighed"],
   "erp.drum.classify": () => ["decided who owns an empty drum"],

@@ -152,14 +152,14 @@ describe("the migration and the code agree on what is allowed", () => {
     assert.doesNotMatch(code, /app_module_access/i);
     assert.doesNotMatch(code, /website\.review/);
   });
-  it("is the next migration, and its journal entry is newer than every other", () => {
+  it("sits in the journal in order: newer than every migration before it, older than every one after", () => {
     const journal = JSON.parse(read("drizzle", "meta", "_journal.json")) as { entries: { idx: number; when: number; tag: string }[] };
     const mine = journal.entries.find((e) => e.tag === "0274_website_review_workflow");
     assert.ok(mine, "no journal entry");
     for (const e of journal.entries) {
-      if (e !== mine) assert.ok(mine.when > e.when, `${e.tag} has a later or equal 'when' — drizzle would skip this migration`);
+      if (e.idx < mine.idx) assert.ok(mine.when > e.when, `${e.tag} has a later or equal 'when' — drizzle would skip this migration`);
+      if (e.idx > mine.idx) assert.ok(e.when > mine.when, `${e.tag} comes after it but is not newer — drizzle would skip that one`);
     }
-    assert.equal(mine.idx, journal.entries.length - 1);
   });
 });
 

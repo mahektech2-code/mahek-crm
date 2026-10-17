@@ -157,7 +157,7 @@ function Control({
     );
   }
   if (f.t === "select") {
-    if (opts.length > 12) return <Combo value={value} opts={opts} error={error} onChange={onChange} />;
+    if ((opts.length > 12 || f.typed) && !f.readOnly) return <Combo value={value} opts={opts} error={error} onChange={onChange} placeholder={f.typed} />;
     return (
       <select value={value} disabled={f.readOnly} onChange={(e) => onChange(e.target.value)} className={control(error, "cursor-pointer")}>
         <option value="">{opts.length ? "Choose…" : "Nothing available"}</option>
@@ -219,7 +219,7 @@ function Control({
 }
 
 /** A select with more than twelve options becomes a search box. */
-function Combo({ value, opts, error, onChange }: { value: string; opts: string[]; error: boolean; onChange: (v: string) => void }) {
+function Combo({ value, opts, error, onChange, placeholder }: { value: string; opts: string[]; error: boolean; onChange: (v: string) => void; placeholder?: string }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const ql = q.trim().toLowerCase();
@@ -228,7 +228,7 @@ function Combo({ value, opts, error, onChange }: { value: string; opts: string[]
     <span className="relative block">
       <input
         value={open ? q : value}
-        placeholder={value || `Search ${opts.length.toLocaleString("en-IN")} options`}
+        placeholder={value || placeholder || `Search ${opts.length.toLocaleString("en-IN")} options`}
         onFocus={() => {
           setOpen(true);
           setQ("");

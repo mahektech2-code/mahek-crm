@@ -69,6 +69,12 @@ export type FieldSpec = {
   sec?: string;
   req?: boolean;
   /**
+   * A select drawn as a box somebody TYPES into, however few its options —
+   * the GRN's PO number is typed, never scrolled for. The text is the
+   * placeholder.
+   */
+  typed?: string;
+  /**
    * Draw no "Optional" tag beside a field that is not required — for a form
    * where nothing is, so saying it on every field says nothing.
    */
@@ -334,7 +340,7 @@ export const ST_TONE: Record<string, Tone> = {
   "Purchase Verified": "success", Dispatched: "success", Transfer: "neutral", Declined: "danger",
   Arrived: "neutral", Tested: "info", "Bill received": "info", Matched: "brand",
   "Buyer decision": "brand", "Select vendor": "warn", "Collect quotations": "warn", "Compare quotations": "info",
-  "Ready for PO": "brand", "PO awaiting approval": "warn", "PO approved": "info", "PO sent": "info",
+  "Ready for PO": "brand", "Waiting for PO number": "warn", "Create PO": "brand", "Create or link PO": "brand", "Waiting for goods": "info", "PO awaiting approval": "warn", "PO approved": "info", "PO sent": "info",
   "Partly received": "warn", "Closed short": "muted", Closed: "muted", Cancelled: "muted",
   "Direct purchase": "neutral", Quotation: "info", "Pending approval": "warn", Approved: "success",
   Sent: "info", Selected: "success", "Not selected": "muted",

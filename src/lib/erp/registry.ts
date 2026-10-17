@@ -107,7 +107,7 @@ export const ERP_GROUPS: ErpGroup[] = [
     label: "Purchase",
     icon: "cart",
     screens: [
-      s("requisitions", "requisitions", "Requirements", "What each department needs bought, through to vendor, PO and goods.", true, [
+      s("requisitions", "requisitions", "Requirements", "What each department needs bought, through blind count and stock verification to the PO and the goods.", true, [
         v("requisitions", "Requirements"),
         v("quotations", "Quotations"),
       ]),

@@ -18,3 +18,9 @@ ALTER TABLE "erp_po_lines" ADD COLUMN IF NOT EXISTS "quote_row_id" text;
 ALTER TABLE "erp_po_lines" ADD COLUMN IF NOT EXISTS "quote_column_id" text;
 --> statement-breakpoint
 ALTER TABLE "erp_po_lines" ADD COLUMN IF NOT EXISTS "drums" integer;
+--> statement-breakpoint
+-- A direct purchase is created at the item's price in Raw materials, and an
+-- item with no price there is ordered at ₹0 — so a PO line's rate may be 0.
+ALTER TABLE "erp_po_lines" DROP CONSTRAINT IF EXISTS "erp_po_lines_amounts_check";
+--> statement-breakpoint
+ALTER TABLE "erp_po_lines" ADD CONSTRAINT "erp_po_lines_amounts_check" CHECK ("quantity" > 0 and "rate_paise" >= 0 and "gst_bp" >= 0);

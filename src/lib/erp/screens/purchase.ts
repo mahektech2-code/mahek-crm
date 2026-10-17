@@ -53,7 +53,7 @@ import {
 import { lotLandings, rmLots, type LotLanding } from "../stock";
 import { bindErpFiles } from "../attachments";
 import { type Col, godownField, godownIdByName, godownOptions, has, today, type Tx } from "./common";
-import { RECEIVABLE_PO, poLabel, receivableQuantity } from "../engines/purchase-flow";
+import { RECEIVABLE_PO, normalisePoNo, poLabel, poName, receivableQuantity } from "../engines/purchase-flow";
 import { OWNERSHIP_LABEL, ownershipByLabel } from "../engines/drums";
 
 /** The GRN line's drum ownership: the supplier's usual answer unless the line says otherwise. */
@@ -328,7 +328,16 @@ async function receivable(tolerancePercent: number) {
       }`;
     }
   }
-  return { pos, byLabel, linesBy, typeOf, itemOf, pendingOf, qtyOf, supplierOf, godownOf };
+  /* A PO named by its label as the form picks it, or by its bare number as somebody typed it. */
+  const find = (typedOrLabel: string | null | undefined): PoView | undefined => {
+    const t = (typedOrLabel ?? "").trim();
+    if (!t) return undefined;
+    const hit = byLabel.get(t);
+    if (hit) return hit;
+    const n = normalisePoNo(t);
+    return pos.find((p) => normalisePoNo(poName(p.po)) === n);
+  };
+  return { pos, byLabel, find, linesBy, typeOf, itemOf, pendingOf, qtyOf, supplierOf, godownOf };
 }
 
 async function inwardForm(ctx: ErpContext, init?: Record<string, string>, opts: { poId?: string; fixed?: boolean } = {}): Promise<FormSpec> {
@@ -360,8 +369,8 @@ async function inwardForm(ctx: ErpContext, init?: Record<string, string>, opts: 
   return {
     screen: "inward",
     id: "new",
-    title: fixedPo ? `Receive goods · ${poLabel(fixedPo.po.poNumber)}` : "Goods receipt (GRN)",
-    sub: "Against an approved PO, one line per item that arrived.",
+    title: fixedPo ? `Receive goods · ${poName(fixedPo.po)}` : "Goods receipt (GRN)",
+    sub: "Against a PO number, one line per item that arrived.",
     submit: "Save receipt",
     lineLabel: "Item",
     init: {
@@ -388,9 +397,12 @@ async function inwardForm(ctx: ErpContext, init?: Record<string, string>, opts: 
         l: "Purchase order",
         t: "select",
         req: true,
+        typed: "Type the PO number",
         opts: poInit && !rx.byLabel.has(poInit) ? [...rx.byLabel.keys(), poInit] : [...rx.byLabel.keys()],
         readOnly: !!(fixedPo || opts.fixed),
-        hint: rx.byLabel.size ? "No goods are received without a PO." : "No PO is waiting for goods. A PO can be received against once it is approved.",
+        hint: rx.byLabel.size
+          ? "Type the PO number — from the Quotation manager or created on a requirement; the vendor and items fill in. No goods are received without a PO."
+          : "No PO is waiting for goods. Link one from the Quotation manager or create one on a requirement.",
       },
       { k: "supplier", l: "Vendor", t: "derived", calc: "inward.supplier" },
       { k: "date", l: "Date received", t: "date", req: true },
@@ -568,8 +580,8 @@ const inward: ScreenModule = {
       /* NO PURCHASE WITHOUT A PO: the receipt names an approved PO, and every line one of its items. */
       const rx = await receivable(tolerance);
       const poText = text(h.poFixed) ?? text(h.po);
-      const po = poText ? rx.byLabel.get(poText) : undefined;
-      if (!po) return fieldErr("po", poText ? "That PO can no longer be received against — it is not approved, or it is already received or closed" : "Pick the purchase order these goods came against");
+      const po = poText ? rx.find(poText) : undefined;
+      if (!po) return fieldErr("po", poText ? "No PO by that number is waiting for goods — check the number; it may be received in full or closed" : "Type the PO number these goods came against");
       const godownId = await godownIdByName(text(h.godown));
       if (!godownId) return fieldErr("godown", "Godown is required");
       if (!lines.length) return err("Add at least one item.");
@@ -687,10 +699,10 @@ const inward: ScreenModule = {
         }
         await refreshPurchaseOrder(tx, po.po.id);
       });
-      await erpAudit(ctx, "erp.inward.create", "erp_inward", String(pr), null, { lines: parsed.length, po: poLabel(po.po.poNumber), supplier: po.supplier, ...sent });
+      await erpAudit(ctx, "erp.inward.create", "erp_inward", String(pr), null, { lines: parsed.length, po: poName(po.po), supplier: po.supplier, ...sent });
       const where = [sent.testing ? `${sent.testing} to testing` : "", sent.register ? `${sent.register} in the register` : ""].filter(Boolean).join(", ");
       return okVoid(
-        `PR ${pr} · ${parsed.length} line${parsed.length > 1 ? "s" : ""} received against ${poLabel(po.po.poNumber)}${where ? ` · ${where}` : ""}` +
+        `PR ${pr} · ${parsed.length} line${parsed.length > 1 ? "s" : ""} received against ${poName(po.po)}${where ? ` · ${where}` : ""}` +
           (sent.stuck.length ? ` · ${sent.stuck.join(", ")} not in the register: that lot number is taken — change the PR number and send it` : ""),
       );
     },
@@ -1755,7 +1767,7 @@ async function savePurchase(ctx: ErpContext, h: Record<string, string>, id?: str
   /* NO PURCHASE WITHOUT A PO: the party and the item are the PO line's, never typed. */
   const tolerance = (await getConfig())["erp.purchase.receiptTolerancePercent"];
   const rx = await receivable(tolerance);
-  const po = rx.byLabel.get(text(h.po) ?? "");
+  const po = rx.find(text(h.po));
   if (!po) return fieldErr("po", "Pick the approved purchase order this lot was bought on");
   const line = po.lines.find((l) => l.label === text(h.poLine));
   if (!line) return fieldErr("poLine", "Pick an item on this PO");

@@ -4,7 +4,7 @@ When a lorry arrives at the gate, three things happen in the ERP: the goods are 
 
 <Wireframe url="/erp/register" nav={["Dashboard", "#Purchase", "Purchase requirements", "Purchase orders", "Purchases", "Lot testing"]} active="Purchases" caption="Purchases → Goods receipt (GRN)">
   <WfBar>
-    <WfTitle sub="Goods received against an approved PO and the lots they become.">Purchases</WfTitle>
+    <WfTitle sub="Goods received against a PO and the lots they become.">Purchases</WfTitle>
     <WfSpacer /><WfButton primary>New goods receipt</WfButton><Hotspot n={1} />
   </WfBar>
   <WfTabs items={["Goods receipt (GRN)", "Register", "Drum labels"]} active="Goods receipt (GRN)" />
@@ -23,8 +23,8 @@ When a lorry arrives at the gate, three things happen in the ERP: the goods are 
 ]} />
 
 <Steps>
-<Step title="Pick the purchase order">
-Only approved POs that still have something to receive are offered. The vendor comes from the PO. The **Godown** starts as the PO's deliver-to godown — change it if the goods came somewhere else.
+<Step title="Type the PO number">
+Type the **PO number** — the one the Quotation manager made, or the one a requirement's Create PO made — and pick it as it appears. Only POs that still have something to receive are offered. The vendor comes from the PO. The **Godown** starts as the PO's deliver-to godown — change it if the goods came somewhere else.
 </Step>
 <Step title="One line per item that arrived">
 Pick the **PO item**. "Against the PO" shows what is still pending. For a chemical, enter the **Drums**.
@@ -109,7 +109,7 @@ Every lot bought, with what it cost. A row arrives on its own — from a receipt
 | **Change status** | Purchase money | Invoice Received or Purchase Matched; the verifier sets only Purchase Verified |
 | **Back to pending** | The reopen power (an admin) | Sets a verified purchase back to Pending |
 | **Read supplier bill** | Purchase money, AI bills on | Reads a photo or PDF of the bill and matches it to this PR's rows for you to review |
-| **New purchase**, **Edit**, **Add another** | The screen | Enter a lot by hand against an approved PO, correct a row, or add another lot to the PR |
+| **New purchase**, **Edit**, **Add another** | The screen | Enter a lot by hand against a PO, correct a row, or add another lot to the PR |
 
 <Callout kind="money">
 A lot is in stock only once it has a rate above zero. A row from a PO already has the PO's rate, so it is in stock the moment it is saved. "Not posted: rate missing" in the Inventory column says why one is not.
@@ -124,7 +124,7 @@ A list of chemical purchases at **your working godown**, with each lot's short l
 ## Common questions
 
 <Faq q="The PO I need is not in the receipt form.">
-It is not approved yet, it is already fully received, or it was closed or cancelled. Only an approved PO with something pending can be received against.
+It is already fully received, or it was closed or cancelled — or the requirement has not been linked to its Quotation manager PO number yet. Only a PO with something pending can be received against.
 </Faq>
 
 <Faq q="'! Please Change 4 Digit PR Num Manually or Generate New PR Num!'">

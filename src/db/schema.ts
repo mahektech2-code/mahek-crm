@@ -11950,7 +11950,7 @@ export const erpPoLines = pgTable(
   (t) => [
     index("erp_po_lines_po_idx").on(t.poId),
     index("erp_po_lines_requisition_idx").on(t.requisitionId),
-    check("erp_po_lines_amounts_check", sql`${t.quantity} > 0 and ${t.ratePaise} > 0 and ${t.gstBp} >= 0`),
+    check("erp_po_lines_amounts_check", sql`${t.quantity} > 0 and ${t.ratePaise} >= 0 and ${t.gstBp} >= 0`),
     check("erp_po_lines_unit_check", sql`${t.unit} in ('Kg', 'Litre', 'Pcs')`),
   ],
 );
