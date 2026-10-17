@@ -92,19 +92,18 @@ test("deleting a row hides it and undoing brings it back with its cells", () => 
   assert.deepEqual(visibleRows(back)[0].cells.c1, { value: "48.5", status: null, drums: null, poNo: null, poBy: null, poAt: null });
 });
 
-test("a rate is bought only once a manager has marked it Ready to buy, and never without drums and a PO", () => {
-  const buy = { status: "po" as const, drums: 4, poNo: "PO-118" };
-  assert.equal(quoteStatusRefusal(null, { status: "ready", drums: null, poNo: null }, false) !== null, true);
-  assert.equal(quoteStatusRefusal(null, { status: "ready", drums: null, poNo: null }, true), null);
+test("a rate is bought only once a manager has marked it Ready to buy, and never without drums — the PO number is the server's", () => {
+  const buy = { status: "po" as const, drums: 4 };
+  assert.equal(quoteStatusRefusal(null, { status: "ready", drums: null }, false) !== null, true);
+  assert.equal(quoteStatusRefusal(null, { status: "ready", drums: null }, true), null);
   assert.equal(quoteStatusRefusal("ready", buy, false), null);
   assert.match(quoteStatusRefusal(null, buy, false)!, /Ready to buy/);
   assert.equal(quoteStatusRefusal(null, buy, true), null);
   assert.match(quoteStatusRefusal("ready", { ...buy, drums: 0 }, false)!, /drums/);
-  assert.match(quoteStatusRefusal("ready", { ...buy, poNo: " " }, false)!, /PO number/);
-  assert.equal(quoteStatusRefusal("po", { status: "ready", drums: 4, poNo: "PO-118" }, false), null, "undoing a purchase is anybody's");
-  assert.match(quoteStatusRefusal("po", { status: null, drums: 4, poNo: "PO-118" }, false)!, /manager/);
-  assert.match(quoteStatusRefusal("ready", { status: null, drums: null, poNo: null }, false)!, /manager/);
-  assert.equal(quoteStatusRefusal(null, { status: "pickup", drums: null, poNo: null }, false), null);
+  assert.equal(quoteStatusRefusal("po", { status: "ready", drums: 4 }, false), null, "undoing a purchase is anybody's");
+  assert.match(quoteStatusRefusal("po", { status: null, drums: 4 }, false)!, /manager/);
+  assert.match(quoteStatusRefusal("ready", { status: null, drums: null }, false)!, /manager/);
+  assert.equal(quoteStatusRefusal(null, { status: "pickup", drums: null }, false), null);
 });
 
 test("undoing a purchase puts back the drums and PO number it replaced", () => {

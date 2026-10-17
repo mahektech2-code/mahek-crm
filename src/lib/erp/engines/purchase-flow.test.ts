@@ -12,7 +12,7 @@ import {
 } from "./purchase-flow";
 
 /* The purchase flow's rules, pinned:
-   Requirement → Purchase method → Vendor / quotation → Approval → PO → Receipt. */
+   Requirement → Blind count → Book comparison → Verification → Purchase method → PO number → Receipt. */
 
 const base: RequirementState = {
   status: "Pending",
@@ -26,35 +26,25 @@ const base: RequirementState = {
   legacy: false,
 };
 
-test("direct purchase: select the vendor, then the PO", () => {
-  assert.equal(requirementStage(base).stage, "Select vendor");
-  const ready = requirementStage({ ...base, supplierId: "s1" });
-  assert.equal(ready.stage, "Ready for PO");
-  assert.equal(ready.readyForPo, true);
-  assert.equal(FLOW_STEPS[ready.step], "Approval");
-});
-
-test("quotation: collect until the minimum, compare, then select — and only then a PO", () => {
-  const q = { ...base, rule: "quotation" as const, method: "quotation" as const };
-  assert.equal(requirementStage({ ...q, quoteCount: 1 }).stage, "Collect quotations");
-  assert.equal(requirementStage({ ...q, quoteCount: 2 }).stage, "Compare quotations");
-  /* A vendor without a selected quotation is not ready: the rule says a quotation is required. */
-  assert.equal(requirementStage({ ...q, quoteCount: 2, supplierId: "s1" }).readyForPo, false);
-  assert.equal(requirementStage({ ...q, quoteCount: 2, supplierId: "s1", quotationId: "q1" }).stage, "Ready for PO");
-});
-
-test("buyer decision waits on the buyer, and nothing can be ordered meanwhile", () => {
-  const s = requirementStage({ ...base, rule: "buyer", method: null, supplierId: "s1" });
-  assert.equal(s.stage, "Buyer decision");
+test("once counted, a requirement waits for the PO number the Quotation manager gives it", () => {
+  const s = requirementStage(base);
+  assert.equal(s.stage, "Waiting for PO number");
   assert.equal(FLOW_STEPS[s.step], "Purchase method");
+  assert.equal(FLOW_STEPS[s.step + 1], "PO number");
+  /* No vendor, quotation or buyer decision is asked for any more, whatever the item's rule. */
+  assert.equal(requirementStage({ ...base, rule: "quotation", method: "quotation" }).stage, "Waiting for PO number");
+  assert.equal(requirementStage({ ...base, rule: "buyer", method: null }).stage, "Waiting for PO number");
+  /* Only a requirement whose vendor was chosen the old way can still go on the manual PO form. */
   assert.equal(s.readyForPo, false);
+  assert.equal(requirementStage({ ...base, supplierId: "s1" }).readyForPo, true);
 });
 
-test("the PO drives the rest: approval, sending, receipt", () => {
+test("the PO drives the rest: receipt, and an old PO's approval", () => {
   const on = (status: string, received = 0) => requirementStage({ ...base, supplierId: "s1", po: { status, ordered: 100, received } });
   assert.equal(on("Pending approval").stage, "PO awaiting approval");
-  assert.equal(on("Approved").stage, "PO approved");
-  assert.equal(on("Sent").stage, "PO sent");
+  assert.equal(on("Approved").stage, "Waiting for goods");
+  assert.equal(on("Sent").stage, "Waiting for goods");
+  assert.equal(FLOW_STEPS[on("Sent").step], "Receipt");
   assert.equal(on("Partly received", 40).stage, "Partly received");
   assert.equal(on("Received", 100).step, FLOW_STEPS.length);
   assert.equal(on("Closed", 40).stage, "Closed short");
@@ -136,12 +126,48 @@ test("a pasted list: the last number is the quantity, names match exactly or uni
 test("a requirement waiting for its blind count sits at that step, before the purchase method", () => {
   const held = requirementStage({ ...base, gate: { blocks: true, stage: "Blind count", next: "Count it." } });
   assert.equal(FLOW_STEPS[held.step], "Blind count");
-  assert.equal(FLOW_STEPS[held.step + 1], "Purchase method");
+  assert.equal(FLOW_STEPS[held.step + 1], "Book comparison");
   assert.equal(held.stage, "Blind count");
   assert.equal(held.readyForPo, false);
   const counted = requirementStage({ ...base, gate: { blocks: false, stage: null, next: null } });
   assert.deepEqual(counted, requirementStage(base), "once counted — matched or not — nothing changes");
   /* A PO already raised is never pulled back by a later count. */
   const onPo = requirementStage({ ...base, po: { status: "Sent", ordered: 10, received: 0 }, gate: { blocks: true, stage: "Blind count", next: null } });
-  assert.equal(onPo.stage, "PO sent");
+  assert.equal(onPo.stage, "Waiting for goods");
+});
+
+test("a PO number picks the bought cell for this item, or says why not", async () => {
+  const { pickQuotePoCell, normalisePoNo, quoteRatePaise } = await import("./purchase-flow");
+  const cell = (o: Record<string, unknown> = {}) => ({
+    rowId: "r1", columnId: "c1", materialId: "tol", material: "Drum · Toluene · Reliance", party: "Shree Krishna",
+    supplierId: "s1", value: "89.5", status: "po", rowStatus: null, drums: 3, poNo: "MM/PO/1", quotedOn: "2026-10-15",
+    boughtBy: "Vikram", boughtAt: "2026-10-17T05:00:00Z", ...o,
+  });
+  assert.equal(normalisePoNo("  mm/po/2627/121 "), "MM/PO/2627/121");
+  assert.equal(quoteRatePaise("₹ 89.50/kg"), 8950);
+  assert.equal(quoteRatePaise("1,250"), 125000);
+  assert.equal(quoteRatePaise("ask"), null);
+  const ok = pickQuotePoCell([cell()], "tol", "Toluene", "MM/PO/1");
+  assert.ok(ok.ok && ok.ratePaise === 8950);
+  const none = pickQuotePoCell([], "tol", "Toluene", "MM/PO/9");
+  assert.ok(!none.ok && /No PO numbered MM\/PO\/9/.test(none.error));
+  const other = pickQuotePoCell([cell({ materialId: "xyl", material: "Drum · Xylene · IOCL" })], "tol", "Toluene", "MM/PO/1");
+  assert.ok(!other.ok && /for Drum · Xylene · IOCL — not Toluene/.test(other.error));
+  const ready = pickQuotePoCell([cell({ status: "ready" })], "tol", "Toluene", "MM/PO/1");
+  assert.ok(!ready.ok, "a rate only marked Ready to buy has not been bought");
+  const cancelled = pickQuotePoCell([cell({ rowStatus: "cancel" })], "tol", "Toluene", "MM/PO/1");
+  assert.ok(!cancelled.ok && /cancelled/.test(cancelled.error));
+  const noParty = pickQuotePoCell([cell({ supplierId: null })], "tol", "Toluene", "MM/PO/1");
+  assert.ok(!noParty.ok && /not one of the Purchase parties/.test(noParty.error));
+  const badRate = pickQuotePoCell([cell({ value: "tbd" })], "tol", "Toluene", "MM/PO/1");
+  assert.ok(!badRate.ok && /not a number/.test(badRate.error));
+  const newest = pickQuotePoCell([cell({ value: "80", boughtAt: "2026-10-01" }), cell({ value: "90", boughtAt: "2026-10-16" })], "tol", "Toluene", "MM/PO/1");
+  assert.ok(newest.ok && newest.ratePaise === 9000, "the newest purchase of the item on one PO number");
+});
+
+test("a PO number the Quotation manager made is the ERP's own number; a typed one is not", async () => {
+  const { seriesNumberOf, poLabel } = await import("./purchase-flow");
+  assert.equal(seriesNumberOf(poLabel(1243)), 1243);
+  assert.equal(seriesNumberOf(" po-77 "), 77);
+  assert.equal(seriesNumberOf("MM/PO/2627/121"), null);
 });

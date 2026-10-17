@@ -42,12 +42,13 @@ export const MAX_DRUMS = 100000;
 /**
  * THE BUYING RULE. A rate is chosen by a manager — marked Ready to buy, grey
  * — and only then bought by the team: Purchase it records the number of
- * drums and the PO number, and the cell turns yellow. So:
+ * drums, the server gives it the next PO number of the ERP's own series —
+ * nobody types one — and the cell turns yellow. So:
  *
  * - putting a cell into Ready to buy, or taking it out (other than by buying
  *   it), is a manager's;
  * - a cell is bought only from Ready to buy (or re-saved while bought), unless
- *   a manager does it, and never without drums and a PO number;
+ *   a manager does it, and never without drums;
  * - a bought cell may go back to Ready to buy by anybody — that is undoing a
  *   purchase entered by mistake — but anything else is a manager's.
  *
@@ -55,14 +56,13 @@ export const MAX_DRUMS = 100000;
  */
 export function quoteStatusRefusal(
   prev: QuoteStatus | null,
-  next: { status: QuoteStatus | null; drums: number | null; poNo: string | null },
+  next: { status: QuoteStatus | null; drums: number | null },
   manager: boolean,
 ): string | null {
   const to = next.status;
   if (to === "po") {
     if (!next.drums || next.drums < 1) return "Say how many drums are being bought.";
     if (next.drums > MAX_DRUMS || !Number.isInteger(next.drums)) return "The number of drums must be a whole number.";
-    if (!next.poNo || !next.poNo.trim()) return "Give the PO number.";
     if (prev !== "ready" && prev !== "po" && !manager) return "Only a rate marked Ready to buy can be bought. Ask a manager to mark it.";
     return null;
   }
