@@ -15496,6 +15496,139 @@ export const websitePublishLog = pgTable(
   (t) => [index("website_publish_log_at_idx").on(t.at)],
 );
 
+/* ---------------------------------------------------------------------------
+ * THE WEBSITE REVIEW WORKFLOW — see drizzle/0274_website_review_workflow.sql and
+ * lib/website-cms/review-status.ts, which states the allowed values once. Text
+ * columns with CHECK constraints rather than enums, for the reason the
+ * migration gives.
+ * ------------------------------------------------------------------------- */
+
+export const websiteAssignment = pgTable(
+  "website_assignment",
+  {
+    id: text("id").primaryKey(),
+    employeeId: text("employee_id").notNull().references(() => users.id),
+    /** A content kind, or `media`. */
+    kind: text("kind").notNull(),
+    /** Null = every item of the kind — also the only scope that covers an item not yet created. */
+    contentId: text("content_id").references(() => websiteContent.id, { onDelete: "cascade" }),
+    scopeNote: text("scope_note"),
+    assignedById: text("assigned_by_id").notNull().references(() => users.id),
+    assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    revokedById: text("revoked_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("website_assignment_active_key")
+      .on(t.employeeId, t.kind, sql`coalesce(${t.contentId}, '')`)
+      .where(sql`${t.revokedAt} is null`),
+    index("website_assignment_employee_idx").on(t.employeeId),
+    index("website_assignment_content_idx").on(t.contentId),
+    check(
+      "website_assignment_kind_check",
+      sql`${t.kind} in ('product', 'industry', 'gallery', 'job', 'testimonial', 'milestone', 'page', 'seo', 'navigation', 'settings', 'media')`,
+    ),
+    check("website_assignment_revoked_pair", sql`(${t.revokedAt} is null) = (${t.revokedById} is null)`),
+  ],
+);
+
+export const websiteChangeRequest = pgTable(
+  "website_change_request",
+  {
+    id: text("id").primaryKey(),
+    submitterId: text("submitter_id").notNull().references(() => users.id),
+    /** `submitted`, `approved`, `rejected`, `revoked`, `expired`, `stale`, `published`, `withdrawn`. */
+    status: text("status").notNull().default("submitted"),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }).notNull().defaultNow(),
+    note: text("note"),
+    reviewerId: text("reviewer_id").references(() => users.id),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    rejectReason: text("reject_reason"),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    approvalExpiresAt: timestamp("approval_expires_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    revokedById: text("revoked_by_id").references(() => users.id),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    publishedById: text("published_by_id").references(() => users.id),
+    resubmissionOf: text("resubmission_of").references((): AnyPgColumn => websiteChangeRequest.id),
+  },
+  (t) => [
+    index("website_change_request_status_idx").on(t.status, t.submittedAt),
+    index("website_change_request_submitter_idx").on(t.submitterId, t.submittedAt),
+    check(
+      "website_change_request_status_check",
+      sql`${t.status} in ('submitted', 'approved', 'rejected', 'revoked', 'expired', 'stale', 'published', 'withdrawn')`,
+    ),
+    check("website_change_request_not_self_reviewed", sql`${t.reviewerId} is null or ${t.reviewerId} <> ${t.submitterId}`),
+    check(
+      "website_change_request_reject_has_reason",
+      sql`${t.status} <> 'rejected' or length(btrim(coalesce(${t.rejectReason}, ''))) > 0`,
+    ),
+    check(
+      "website_change_request_approved_has_expiry",
+      sql`${t.status} <> 'approved' or (${t.reviewerId} is not null and ${t.approvedAt} is not null and ${t.approvalExpiresAt} is not null)`,
+    ),
+    check(
+      "website_change_request_published_has_stamp",
+      sql`${t.status} <> 'published' or (${t.publishedAt} is not null and ${t.publishedById} is not null)`,
+    ),
+  ],
+);
+
+export const websiteChangeItem = pgTable(
+  "website_change_item",
+  {
+    id: text("id").primaryKey(),
+    requestId: text("request_id").notNull().references(() => websiteChangeRequest.id, { onDelete: "cascade" }),
+    /** No foreign key: a request is history and outlives a draft that was later deleted. */
+    contentId: text("content_id").notNull(),
+    kind: text("kind").notNull(),
+    slug: text("slug").notNull(),
+    /** `add` (not live when submitted) or `edit`. There is no `remove` in v1. */
+    action: text("action").notNull(),
+    baseVersion: integer("base_version"),
+    /** What was live when it was submitted. Null for an `add`. */
+    baseData: jsonb("base_data").$type<Record<string, unknown>>(),
+    /** The exact working copy at submission. */
+    proposedData: jsonb("proposed_data").$type<Record<string, unknown>>().notNull(),
+    /** sha256 of the stable-key-sorted JSON of `proposedData`. */
+    proposedHash: text("proposed_hash").notNull(),
+    submittedVersion: integer("submitted_version").notNull(),
+    mediaBefore: jsonb("media_before").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    mediaAfter: jsonb("media_after").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    /** `contentId` while the request is open, else null — what the unique index below hangs on. */
+    openContentId: text("open_content_id"),
+  },
+  (t) => [
+    uniqueIndex("website_change_item_open_key").on(t.openContentId).where(sql`${t.openContentId} is not null`),
+    uniqueIndex("website_change_item_request_content_key").on(t.requestId, t.contentId),
+    index("website_change_item_content_idx").on(t.contentId),
+    check("website_change_item_action_check", sql`${t.action} in ('add', 'edit')`),
+    check(
+      "website_change_item_kind_check",
+      sql`${t.kind} in ('product', 'industry', 'gallery', 'job', 'testimonial', 'milestone', 'page', 'seo', 'navigation', 'settings')`,
+    ),
+    check("website_change_item_hash_check", sql`length(${t.proposedHash}) = 64`),
+    check("website_change_item_add_has_no_base", sql`(${t.action} = 'add') = (${t.baseData} is null)`),
+  ],
+);
+
+export const websiteReviewSetting = pgTable(
+  "website_review_setting",
+  {
+    /** Always `site`. */
+    id: text("id").primaryKey(),
+    enforceAssignments: boolean("enforce_assignments").notNull().default(false),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [check("website_review_setting_single_row", sql`${t.id} = 'site'`)],
+);
+
+export type WebsiteAssignmentRow = typeof websiteAssignment.$inferSelect;
+export type WebsiteChangeRequestRow = typeof websiteChangeRequest.$inferSelect;
+export type WebsiteChangeItemRow = typeof websiteChangeItem.$inferSelect;
+
 export type WebsiteContentRow = typeof websiteContent.$inferSelect;
 export type WebsiteMediaRow = typeof websiteMedia.$inferSelect;
 export type WebsitePublishLogRow = typeof websitePublishLog.$inferSelect;
