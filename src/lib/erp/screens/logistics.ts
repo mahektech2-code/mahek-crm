@@ -12,7 +12,8 @@ import { cashBalances, cashKey } from "../engines/cash";
 import { monthId } from "../engines/sales";
 import { refValues } from "../refs";
 import { type Col, godownField, godownIdByName, godownOptions, has, isErpManager, today } from "./common";
-import { detailRows, EXTRA_EXPENSE_PROMPT, setExtraExpenses } from "./sales";
+import { countLines, detailRows, EXTRA_EXPENSE_PROMPT, type LineFilter, monthlySalesFor, setExtraExpenses } from "./sales";
+import { tooWide, unscoped, windowWhere } from "../window";
 import { syncBookOrders } from "../book";
 import { CLOSED, STAGES } from "../engines/logistics";
 
@@ -47,24 +48,39 @@ type TransportScope = "transport" | "pendingLr" | "trackLr";
  * read-only, and `pendingLr` / `trackLr` are kept as modules so a dashboard
  * tile, an alert or the AI LR reading that names them still resolves.
  */
+/** The bills register is read by bill date; the LR and tracking lists are open work, read by state. */
+const BILLS_WINDOW = { label: "Bill date", default: "month" } as const;
+
 function transportList(scope: TransportScope, key: string = scope): ScreenModule {
   const register = key === "allBills";
+  const windowed = scope === "transport";
   return {
     key,
-    async load(ctx) {
-      const [rows, details] = await Promise.all([
-        db
-          .select({ t: erpTransports, party: customers.name, salesPerson: customers.salesPersonName, by: users.name })
-          .from(erpTransports)
-          .innerJoin(customers, eq(customers.id, erpTransports.billingCustomerId))
-          .leftJoin(users, eq(users.id, erpTransports.updatedById))
-          .orderBy(desc(erpTransports.billDate), desc(erpTransports.orderNo)),
-        detailRows(),
-      ]);
+    ...(windowed ? { window: BILLS_WINDOW } : {}),
+    async load(ctx, s) {
+      const sc = s ?? unscoped();
+      const where =
+        scope === "pendingLr"
+          ? sql`coalesce(${erpTransports.lrNo}, '') = ''`
+          : scope === "trackLr"
+            ? sql`coalesce(${erpTransports.lrNo}, '') <> '' and ${erpTransports.materialStage} <> ${CLOSED}`
+            : windowWhere(sql`${erpTransports.billDate}`, sql`${erpTransports.id}`, sc);
+      const wide = windowed ? tooWide(Number((await db.select({ n: sql<number>`count(*)::int` }).from(erpTransports).where(where))[0]?.n ?? 0), sc) : null;
+      const rows = wide
+        ? []
+        : await db
+            .select({ t: erpTransports, party: customers.name, salesPerson: customers.salesPersonName, by: users.name })
+            .from(erpTransports)
+            .innerJoin(customers, eq(customers.id, erpTransports.billingCustomerId))
+            .leftJoin(users, eq(users.id, erpTransports.updatedById))
+            .where(where)
+            .orderBy(desc(erpTransports.billDate), desc(erpTransports.orderNo));
+      const details = { monthly: await monthlySalesFor(rows.map((r) => r.t.billDate)) };
       const shown = rows.filter((r) => (scope === "pendingLr" ? !r.t.lrNo : scope === "trackLr" ? onTheRoad(r.t) : true));
       /* The godown a bill left from, for "Dispatched from …". */
+      const nos = [...new Set(rows.map((r) => r.t.orderNo))];
       const from = new Map(
-        ((await db.execute(sql`select o.order_no as n, min(g.name) as g from erp_orders o join erp_godowns g on g.id = o.godown_id group by o.order_no`)) as unknown as { n: number; g: string }[]).map((x) => [Number(x.n), x.g]),
+        (nos.length ? ((await db.execute(sql`select o.order_no as n, min(g.name) as g from erp_orders o join erp_godowns g on g.id = o.godown_id where o.order_no in ${nos} group by o.order_no`)) as unknown as { n: number; g: string }[]) : []).map((x) => [Number(x.n), x.g]),
       );
       const stageWord = (t: typeof rows[number]["t"]) => (t.materialStage === "Dispatched" && from.get(t.orderNo) ? `Dispatched from ${from.get(t.orderNo)}` : t.materialStage);
       const { featureState, pendingFor } = await import("../ai");
@@ -99,6 +115,7 @@ function transportList(scope: TransportScope, key: string = scope): ScreenModule
           noDataLine:
             scope === "pendingLr" ? "Every dispatched bill has its LR number." : scope === "trackLr" ? "No consignment is being tracked." : "Nothing dispatched yet. A bill appears here once its first line is dispatch-verified.",
         },
+        tooWide: wide,
         rows: shown.map((r): ListRow => {
           const t = r.t;
           const mid = monthId(t.billDate);
@@ -186,11 +203,21 @@ function transportList(scope: TransportScope, key: string = scope): ScreenModule
   };
 }
 
-/** Paid-freight detail lines still without their extra expense (spec §12.1 "Transportation Paid"). */
+/**
+ * Paid-freight detail lines still without their extra expense (spec §12.1
+ * "Transportation Paid"), by dispatch date. A window, because the history
+ * copied in from the sheet never had this step and must not read as a backlog.
+ */
+const FREIGHT_WINDOW = { label: "Dispatch date", default: "month" } as const;
+
 const paidFreight: ScreenModule = {
   key: "paidFreight",
-  async load(ctx) {
-    const { rows } = await detailRows();
+  window: FREIGHT_WINDOW,
+  async load(ctx, s) {
+    const sc = s ?? unscoped();
+    const f: LineFilter = sc.ids?.length ? { ids: sc.ids } : { window: { scope: sc, on: "dispatch" } };
+    const wide = sc.ids?.length ? null : tooWide(await countLines({ ...f, billed: true }), sc);
+    const { rows } = wide ? { rows: [] as Awaited<ReturnType<typeof detailRows>>["rows"] } : await detailRows(f);
     const shown = rows.filter((r) => r.l.billing.freightTerm === "Paid" && r.d.extraExpensesPaise == null);
     /* The same gate Orders → Billing & dispatch puts on these columns. */
     const { cols, hidden, hiddenKeys } = visibleCols(
@@ -207,6 +234,7 @@ const paidFreight: ScreenModule = {
     const bulk: BulkSpec[] = [{ id: "extra", l: "Extra expenses", prompt: EXTRA_EXPENSE_PROMPT }];
     return {
       spec: { screen: "paidFreight", cols, hidden, groups: ["transporter"], agg: { k: "extra", l: "extra expenses" }, bulk, noDataLine: "Every paid-freight line has its extra expense." },
+      tooWide: wide,
       rows: shown.map((r) => ({
         id: r.l.o.id,
         v: withoutHidden({ party: r.l.billing.name, extra: r.d.extraExpensesPaise, sku: r.l.sku.name, litres: r.litres, payment: r.l.billing.freightTerm, transporter: r.l.o.transporter ?? r.l.delivery.p?.transporter ?? "—" }, hiddenKeys),

@@ -29,3 +29,8 @@ const BY_KEY = new Map(ALL.map((m) => [m.key, m]));
 export function screenModule(key: string): ScreenModule | undefined {
   return BY_KEY.get(key);
 }
+
+/** Every built module — for the scale test, which holds every one of them to the row cap. */
+export function allScreenModules(): ScreenModule[] {
+  return ALL;
+}

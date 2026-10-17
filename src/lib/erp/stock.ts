@@ -31,6 +31,16 @@ const r3 = (v: number) => Math.round(v * 1000) / 1000;
 /** Anything that runs SQL: the pool, or a transaction that has locked the lot it is about to consume. */
 export type Ex = { execute: (q: ReturnType<typeof sql>) => Promise<unknown> };
 
+/**
+ * WHICH LOTS A STOCK READ RETURNS. By default, the lots that hold something —
+ * stock above or below zero (below is a shortfall, and a fact to see). A lot
+ * used up is history: there are thousands of them and nothing that shows stock
+ * wants them. A caller that needs particular lots whatever they hold — a
+ * trace, a label, the lot a scan names, the rate of a lot already sold — names
+ * them, and gets exactly those, zero or not.
+ */
+export type LotPick = { lots?: string[] };
+
 async function rows<T>(q: ReturnType<typeof sql>, ex: Ex = db): Promise<T[]> {
   /* On the pool, a page asks each ledger once however many doors ask
      (`read-memo.ts`), and a ledger nothing has written to since the last ask
@@ -114,11 +124,11 @@ export function stockUnit(rmUnit: string): "Ltr" | "Pcs" {
 }
 
 /**
- * Every raw-material lot at every godown with its current stock. Lots at zero
- * are included (the log and the validations need them); screens that show
- * "available" stock filter to above zero.
+ * Raw-material lots at each godown with their current stock: those that hold
+ * something, or exactly the lots named (`LotPick`) — a validation names the lot
+ * it is checking, and the SFG costing names the lots its lines drew.
  */
-export async function rmLots(ex: Ex = db): Promise<RmLot[]> {
+export async function rmLots(ex: Ex = db, pick: LotPick = {}): Promise<RmLot[]> {
   const out = await rows<Row>(
     sql`
     with inflow as (
@@ -212,7 +222,9 @@ export async function rmLots(ex: Ex = db): Promise<RmLot[]> {
     }
     if (left > 0) list[list.length - 1].stock = r3(list[list.length - 1].stock - left);
   }
-  return lots.map((l) => ({
+  /* Filtered only now: the oldest-first allocation above has to see every lot of an item at a godown. */
+  const named = pick.lots ? new Set(pick.lots) : null;
+  return lots.filter((l) => (named ? named.has(l.lotNo) : l.stock !== 0)).map((l) => ({
     rawMaterialId: l.rawMaterialId,
     item: l.item,
     materialType: l.materialType,
@@ -257,7 +269,7 @@ async function packingUse(ex: Ex = db): Promise<Map<string, number>> {
 
 /** One lot's current stock at one godown — the figure every consuming form validates against. */
 export async function rmLotStock(lotNo: string, godownId: string, ex: Ex = db): Promise<number> {
-  const lots = await rmLots(ex);
+  const lots = await rmLots(ex, { lots: [lotNo] });
   return lots.find((l) => l.lotNo === lotNo && l.godownId === godownId)?.stock ?? 0;
 }
 
@@ -293,12 +305,19 @@ export type SfgLot = {
   ratePaise: number | null;
 };
 
-/** The SFG rate of every lot code, from its batch lines and their raw-material lots' rates. */
-export async function sfgRates(): Promise<Map<string, number | null>> {
-  const rm = new Map((await rmLots()).map((l) => [l.lotNo, l.ratePaise]));
+/**
+ * The SFG rate of these lot codes, from their batch lines and their raw-material
+ * lots' rates — summed per raw-material lot in SQL, and only for the lots asked
+ * about. With no list, every lot: kept for callers that genuinely cost them all.
+ */
+export async function sfgRates(lotCodes?: string[]): Promise<Map<string, number | null>> {
+  if (lotCodes && !lotCodes.length) return new Map();
   const lines = await rows<{ lotCode: string; lot: string; use: number }>(
-    sql`select lot_code as "lotCode", rm_lot_no as lot, total_use::float8 as use from erp_sfg_lines`,
+    sql`select lot_code as "lotCode", rm_lot_no as lot, sum(total_use)::float8 as use from erp_sfg_lines
+         ${lotCodes ? sql`where lot_code in ${lotCodes}` : sql``} group by 1, 2`,
   );
+  const rmLotNos = [...new Set(lines.map((l) => l.lot))];
+  const rm = new Map((rmLotNos.length ? await rmLots(db, { lots: rmLotNos }) : []).map((l) => [l.lotNo, l.ratePaise]));
   const by = new Map<string, { totalUse: number; rmRatePaise: number | null }[]>();
   for (const l of lines) {
     const a = by.get(l.lotCode) ?? [];
@@ -310,9 +329,8 @@ export async function sfgRates(): Promise<Map<string, number | null>> {
   return out;
 }
 
-export async function sfgLots(ex: Ex = db): Promise<SfgLot[]> {
-  const [out, rates, sizes] = await Promise.all([
-    rows<Row>(sql`
+export async function sfgLots(ex: Ex = db, pick: LotPick = {}): Promise<SfgLot[]> {
+  const out = await rows<Row>(sql`
       with inflow as (
         select formulation_id, lot_code, godown_id, sum(quantity)::float8 as qty from erp_sfg_entries group by 1, 2, 3
       ),
@@ -335,12 +353,17 @@ export async function sfgLots(ex: Ex = db): Promise<SfgLot[]> {
         join erp_godowns g on g.id = i.godown_id
         left join outflow o on o.lot_code = i.lot_code and o.godown_id = i.godown_id
         left join latest l on l.lot_code = i.lot_code and l.godown_id = i.godown_id
+       where ${pick.lots ? (pick.lots.length ? sql`i.lot_code in ${pick.lots}` : sql`false`) : sql`(i.qty - coalesce(o.qty, 0)) <> 0`}
        order by f.name, i.lot_code, g.name
-    `, ex),
-    sfgRates(),
-    rows<{ lotCode: string; use: number; batches: number }>(
-      sql`select lot_code as "lotCode", sum(total_use)::float8 as use, max(batches)::float8 as batches from erp_sfg_lines group by lot_code`,
-    ),
+    `, ex);
+  const codes = [...new Set(out.map((r) => String(r.lotCode)))];
+  const [rates, sizes] = await Promise.all([
+    sfgRates(codes),
+    codes.length
+      ? rows<{ lotCode: string; use: number; batches: number }>(
+          sql`select lot_code as "lotCode", sum(total_use)::float8 as use, max(batches)::float8 as batches from erp_sfg_lines where lot_code in ${codes} group by lot_code`,
+        )
+      : Promise.resolve([] as { lotCode: string; use: number; batches: number }[]),
   ]);
   const size = new Map(sizes.map((s) => [s.lotCode, s]));
   return out.map((r) => {
@@ -385,16 +408,16 @@ export type FgLot = {
 
 const fgKey = (fg: string, lot: string) => `${fg}|${lot}`;
 
-/** Every FG lot's rate, from its filling records' costing. */
-export async function fgRates(): Promise<Map<string, { ratePaise: number | null; perCanPaise: number | null }>> {
-  const [fills, sfg] = await Promise.all([
-    rows<Row>(sql`
+/** The rate of these FG lot codes (every lot, with no list), from their filling records' costing. */
+export async function fgRates(lotCodes?: string[]): Promise<Map<string, { ratePaise: number | null; perCanPaise: number | null }>> {
+  if (lotCodes && !lotCodes.length) return new Map();
+  const fills = await rows<Row>(sql`
       select f.finished_good_id as fg, f.lot_code as lot, f.sfg_lot_code as "sfgLot", f.can_size::float8 as "canSize",
              f.cans, f.can_adjusted as "canAdjusted", f.packing_type as "packingType", m.price_paise::float8 as "packingRate"
         from erp_fg_fills f left join erp_raw_materials m on m.id = f.can_use_id
-    `),
-    sfgRates(),
-  ]);
+       ${lotCodes ? sql`where f.lot_code in ${lotCodes}` : sql``}
+    `);
+  const sfg = await sfgRates([...new Set(fills.map((f) => String(f.sfgLot)))]);
   const acc = new Map<string, { cost: number; cans: number; litres: number; basis: string; unknown: boolean }>();
   for (const f of fills) {
     const fig = fillFigures({
@@ -425,9 +448,8 @@ export async function fgRates(): Promise<Map<string, { ratePaise: number | null;
   return out;
 }
 
-export async function fgLots(ex: Ex = db): Promise<FgLot[]> {
-  const [out, rates] = await Promise.all([
-    rows<Row>(sql`
+export async function fgLots(ex: Ex = db, pick: LotPick = {}): Promise<FgLot[]> {
+  const out = await rows<Row>(sql`
       with inflow as (
         select finished_good_id, lot_code, godown_id, sum(quantity)::float8 as qty from erp_fg_entries group by 1, 2, 3
       ),
@@ -453,10 +475,10 @@ export async function fgLots(ex: Ex = db): Promise<FgLot[]> {
         left join outflow o on o.fg = i.finished_good_id and o.lot_code = i.lot_code and o.godown_id = i.godown_id
         left join latest l on l.finished_good_id = i.finished_good_id and l.lot_code = i.lot_code and l.godown_id = i.godown_id
         left join products p on p.id = l.sku_id
+       where ${pick.lots ? (pick.lots.length ? sql`i.lot_code in ${pick.lots}` : sql`false`) : sql`(i.qty - coalesce(o.qty, 0)) <> 0`}
        order by fg.name, i.lot_code, g.name
-    `, ex),
-    fgRates(),
-  ]);
+    `, ex);
+  const rates = await fgRates([...new Set(out.map((r) => String(r.lotCode)))]);
   return out.map((r) => {
     const rate = rates.get(fgKey(String(r.finishedGoodId), String(r.lotCode)));
     return {
@@ -497,16 +519,16 @@ export type PackLot = {
   amountPaise: number | null;
 };
 
-/** The costing of every packing batch: FG lot rates for its cans plus its boxes, paid once. */
-export async function packBatchCosting(): Promise<Map<string, { amountPaise: number | null; cans: number; boxes: number; lines: Map<string, number | null> }>> {
-  const [lines, rates] = await Promise.all([
-    rows<Row>(sql`
+/** The costing of these packing batches (every batch, with no list): FG lot rates for their cans plus their boxes, paid once. */
+export async function packBatchCosting(batchNos?: string[]): Promise<Map<string, { amountPaise: number | null; cans: number; boxes: number; lines: Map<string, number | null> }>> {
+  if (batchNos && !batchNos.length) return new Map();
+  const lines = await rows<Row>(sql`
       select l.id, l.batch_no as "batchNo", l.finished_good_id as fg, l.fg_lot_code as lot, l.cans, l.boxes,
              pk.empty_boxes_required as "emptyBoxes", pk.box_rate_paise::float8 as "boxRate"
         from erp_pack_lines l left join erp_product_packing pk on pk.product_id = l.sku_id
-    `),
-    fgRates(),
-  ]);
+       ${batchNos ? sql`where l.batch_no in ${batchNos}` : sql``}
+    `);
+  const rates = await fgRates([...new Set(lines.map((l) => String(l.lot)))]);
   const by = new Map<string, Row[]>();
   for (const l of lines) {
     const a = by.get(String(l.batchNo)) ?? [];
@@ -529,9 +551,8 @@ export async function packBatchCosting(): Promise<Map<string, { amountPaise: num
   return out;
 }
 
-export async function packLots(ex: Ex = db): Promise<PackLot[]> {
-  const [out, costing] = await Promise.all([
-    rows<Row>(sql`
+export async function packLots(ex: Ex = db, pick: LotPick = {}): Promise<PackLot[]> {
+  const out = await rows<Row>(sql`
       with inflow as (
         select sku_id, batch_no, godown_id, sum(boxes)::float8 as qty from erp_pack_entries group by 1, 2, 3
       ),
@@ -554,10 +575,10 @@ export async function packLots(ex: Ex = db): Promise<PackLot[]> {
         join erp_godowns g on g.id = i.godown_id
         left join outflow o on o.batch_no = i.batch_no and o.godown_id = i.godown_id
         left join latest l on l.batch_no = i.batch_no and l.godown_id = i.godown_id
+       where ${pick.lots ? (pick.lots.length ? sql`i.batch_no in ${pick.lots}` : sql`false`) : sql`(i.qty - coalesce(o.qty, 0)) <> 0`}
        order by p.name, i.batch_no, g.name
-    `, ex),
-    packBatchCosting(),
-  ]);
+    `, ex);
+  const costing = await packBatchCosting([...new Set(out.map((r) => String(r.batchNo)))]);
   return out.map((r) => {
     const c = costing.get(String(r.batchNo));
     const amount = c?.amountPaise ?? null;

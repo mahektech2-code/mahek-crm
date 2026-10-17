@@ -293,15 +293,24 @@ export async function masters(): Promise<Masters> {
 
 export async function lotsFor(godown: { id: string; name: string }, m: Masters): Promise<Record<string, Lot>> {
   const lots: Record<string, Lot> = {};
-  const [rms, sfgs, fgs, packs, levelAvail, qc, sizes, open] = await Promise.all([
+  /* Lots that hold something (`LotPick`), and the QC and can size of THOSE lots —
+     this runs on every phone's poll, so it must cost what is on the shelf, not
+     what has ever been made. */
+  const [rms, sfgs, fgs, packs, levelAvail, open] = await Promise.all([
     rmLots(),
     sfgLots(),
     fgLots(),
     packLots(),
     rmLevelAvailable(),
-    q<{ lot: string; status: string }>(sql`select lot_code as lot, status from erp_sfg_qc`),
-    q<{ lot: string; fg: string; size: number }>(sql`select distinct on (lot_code) lot_code as lot, finished_good_id as fg, can_size::float8 as size from erp_fg_fills order by lot_code, created_at`),
     openPackBatches(godown.id),
+  ]);
+  const sfgCodes = [...new Set(sfgs.map((l) => l.lotCode))];
+  const fgCodes = [...new Set(fgs.map((l) => l.lotCode))];
+  const [qc, sizes] = await Promise.all([
+    sfgCodes.length ? q<{ lot: string; status: string }>(sql`select lot_code as lot, status from erp_sfg_qc where lot_code in ${sfgCodes}`) : Promise.resolve([]),
+    fgCodes.length
+      ? q<{ lot: string; fg: string; size: number }>(sql`select distinct on (lot_code) lot_code as lot, finished_good_id as fg, can_size::float8 as size from erp_fg_fills where lot_code in ${fgCodes} order by lot_code, created_at`)
+      : Promise.resolve([]),
   ]);
   const qcOf = new Map(qc.map((r) => [r.lot, r.status]));
   const sizeOf = new Map(sizes.map((r) => [r.lot, r.fg + ":" + n(r.size)]));

@@ -7,6 +7,7 @@ import { auditLog } from "@/db/schema";
 import type { Result } from "@/lib/result";
 import type { ErpContext } from "./access";
 import type { ListRow, ListSpec, FormSpec, CellValue } from "./ui";
+import type { LoadScope, ScreenWindow } from "./window";
 
 /* ---------------------------------------------------------------------------
  * What every ERP screen module is made of, and the few helpers they share.
@@ -17,6 +18,8 @@ export type Values = Record<string, string>;
 export type ScreenLoad = {
   spec: ListSpec;
   rows: ListRow[];
+  /** Set by a windowed register whose window holds more than `ROW_CAP` rows: nothing was built. */
+  tooWide?: { n: number; cap: number } | null;
 };
 
 /** Acting on one record: a button in its drawer, perhaps after a prompt. */
@@ -37,7 +40,17 @@ export type FormBuilder = (ctx: ErpContext, recordId?: string) => Promise<FormSp
 
 export type ScreenModule = {
   key: string;
-  load: (ctx: ErpContext) => Promise<ScreenLoad>;
+  /**
+   * The screen's rows. A REGISTER — a list that grows with history — declares
+   * `window` and reads `scope.window` IN SQL (`window.ts`), so it builds only
+   * what the period holds; a list of open work reads only open work. Neither
+   * may read a whole history table into memory: that is what took the server
+   * past its heap with 22,154 order lines (`erp-scale.test.ts` holds the line).
+   * Called without a scope it reads its default window.
+   */
+  load: (ctx: ErpContext, scope?: LoadScope) => Promise<ScreenLoad>;
+  /** A register's window: the date it is cut by and the period it opens on. */
+  window?: ScreenWindow;
   actions?: Record<string, ActionHandler>;
   bulk?: Record<string, BulkHandler>;
   forms?: Record<string, FormHandler>;
