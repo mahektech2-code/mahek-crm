@@ -32,10 +32,24 @@
 export type PurchaseMethod = "direct" | "quotation" | "buyer";
 
 export const PURCHASE_METHODS: { v: PurchaseMethod; label: string; sub: string }[] = [
-  { v: "direct", label: "Direct purchase", sub: "Pick the vendor, raise the PO. Regular boxes, cans, stationery and the routine chemicals." },
-  { v: "quotation", label: "Quotation", sub: "Collect quotations, compare them, select one, then raise the PO. Price-sensitive chemicals." },
-  { v: "buyer", label: "Buyer decision", sub: "The buyer decides, requirement by requirement, whether it is a direct purchase or a quotation." },
+  { v: "direct", label: "Direct purchase", sub: "No quotation: create the PO on the requirement, to the item's default vendor. Regular boxes, cans, stationery and the routine chemicals." },
+  { v: "quotation", label: "Quotation", sub: "Rates are compared and bought on the Quotation manager, which makes the PO number; the requirement links that number. Price-sensitive chemicals." },
+  { v: "buyer", label: "Buyer decision", sub: "Decided requirement by requirement: create the PO on it, or link a PO number from the Quotation manager." },
 ];
+
+/**
+ * HOW A REQUIREMENT GETS ITS PO, read off the item's purchase rule (copied on
+ * raise): a Quotation item is bought on the Quotation manager and LINKS the PO
+ * number made there; a Direct purchase item needs no quotation and CREATES its
+ * PO on the requirement. A Buyer-decision item, or one an old buyer decision
+ * left open, may do either.
+ */
+export type PoRoute = "link" | "create" | "either";
+
+export function poRouteOf(r: Pick<RequirementState, "rule" | "method">): PoRoute {
+  const m = r.method ?? (r.rule === "buyer" ? null : r.rule);
+  return m === "quotation" ? "link" : m === "direct" ? "create" : "either";
+}
 
 export function methodLabel(m: string | null | undefined): string {
   return PURCHASE_METHODS.find((x) => x.v === m)?.label ?? "—";
@@ -103,14 +117,13 @@ export function requirementStage(r: RequirementState): Stage {
   if (r.gate?.blocks) {
     return { stage: r.gate.stage ?? "Blind count", step: STEP.count, next: r.gate.next ?? "Count the stock first.", readyForPo: false };
   }
-  /* Counted (or never asked to be): the comparison and the verdict are the count's own answer, so the next thing owed is the PO number. */
-  return {
-    stage: "Waiting for PO number",
-    step: STEP.method,
-    next: "Buy it on the Quotation manager, then enter its PO number here.",
-    /* The old manual PO still takes a requirement whose vendor was chosen before the change. */
-    readyForPo: !!r.supplierId,
-  };
+  /* Counted (or never asked to be): the comparison and the verdict are the count's own answer, so the next thing owed is the PO — by the item's rule. */
+  const route = poRouteOf(r);
+  if (route === "link")
+    return { stage: "Waiting for PO number", step: STEP.method, next: "Buy it on the Quotation manager, then link the PO number it made here.", readyForPo: false };
+  if (route === "create")
+    return { stage: "Create PO", step: STEP.method, next: "Direct purchase — no quotation. Create the PO here.", readyForPo: true };
+  return { stage: "Create or link PO", step: STEP.method, next: "Buyer decision — create the PO here, or link a PO number from the Quotation manager.", readyForPo: true };
 }
 
 /* ------------------------------------------------- the Quotation manager's PO */

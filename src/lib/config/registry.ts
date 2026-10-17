@@ -4525,6 +4525,17 @@ export const SETTINGS = [
     max: 50,
   },
   {
+    key: "erp.purchase.quoteManagerGstPercent",
+    type: "integer",
+    category: "erp",
+    label: "GST on a Quotation manager PO",
+    description:
+      "The GST rate written on a PO line when a requirement is linked to a PO number from the Quotation manager. The sheet holds a rate and drums but no GST, so this is the rate the ERP PO, the register and the vendor payout read.",
+    default: 18,
+    min: 0,
+    max: 28,
+  },
+  {
     key: "erp.production.recipeTolerancePercent",
     type: "integer",
     category: "erp",
@@ -6335,6 +6346,7 @@ export type Config = {
   "erp.purchase.ownVehicleRatePerKmPaise": number;
   "erp.purchase.minQuotations": number;
   "erp.purchase.receiptTolerancePercent": number;
+  "erp.purchase.quoteManagerGstPercent": number;
   "erp.returns.ownerApprovalPaise": number;
   "erp.stockCheck.onRequirement": boolean;
   "erp.stockCheck.tolerancePercent": number;

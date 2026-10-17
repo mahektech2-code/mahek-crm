@@ -26,17 +26,27 @@ const base: RequirementState = {
   legacy: false,
 };
 
-test("once counted, a requirement waits for the PO number the Quotation manager gives it", () => {
-  const s = requirementStage(base);
-  assert.equal(s.stage, "Waiting for PO number");
-  assert.equal(FLOW_STEPS[s.step], "Purchase method");
-  assert.equal(FLOW_STEPS[s.step + 1], "PO number");
-  /* No vendor, quotation or buyer decision is asked for any more, whatever the item's rule. */
-  assert.equal(requirementStage({ ...base, rule: "quotation", method: "quotation" }).stage, "Waiting for PO number");
-  assert.equal(requirementStage({ ...base, rule: "buyer", method: null }).stage, "Waiting for PO number");
-  /* Only a requirement whose vendor was chosen the old way can still go on the manual PO form. */
-  assert.equal(s.readyForPo, false);
-  assert.equal(requirementStage({ ...base, supplierId: "s1" }).readyForPo, true);
+test("once counted, the item's purchase rule decides: Quotation links the Quotation manager's PO number, Direct creates one", () => {
+  const direct = requirementStage(base);
+  assert.equal(direct.stage, "Create PO");
+  assert.equal(FLOW_STEPS[direct.step], "Purchase method");
+  assert.equal(FLOW_STEPS[direct.step + 1], "PO number");
+  assert.equal(direct.readyForPo, true, "no quotation is needed for a direct purchase");
+  const quote = requirementStage({ ...base, rule: "quotation", method: "quotation" });
+  assert.equal(quote.stage, "Waiting for PO number");
+  assert.equal(quote.readyForPo, false, "a quotation item is bought on the Quotation manager, not created here");
+  const buyer = requirementStage({ ...base, rule: "buyer", method: null });
+  assert.equal(buyer.stage, "Create or link PO");
+  assert.equal(buyer.readyForPo, true);
+});
+
+test("the route follows the decided method over the rule", async () => {
+  const { poRouteOf } = await import("./purchase-flow");
+  assert.equal(poRouteOf({ rule: "quotation", method: null }), "link");
+  assert.equal(poRouteOf({ rule: "direct", method: null }), "create");
+  assert.equal(poRouteOf({ rule: "buyer", method: null }), "either");
+  assert.equal(poRouteOf({ rule: "buyer", method: "quotation" }), "link");
+  assert.equal(poRouteOf({ rule: "quotation", method: "direct" }), "create");
 });
 
 test("the PO drives the rest: receipt, and an old PO's approval", () => {
