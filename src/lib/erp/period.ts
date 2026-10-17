@@ -50,6 +50,12 @@ function lastOfMonth(y: number, m: number): string {
   return iso(y, m, new Date(Date.UTC(y, m, 0)).getUTCDate());
 }
 
+/** One calendar month, `YYYY-MM`, as a window. */
+export function monthWindow(ym: string): { from: string; to: string } {
+  const [y, m] = ym.split("-").map(Number);
+  return { from: iso(y, m, 1), to: lastOfMonth(y, m) };
+}
+
 /** The financial year a day falls in, April to March — Mahek's own bill numbers carry it (MMI/26-27/…). */
 function fyStart(day: string): number {
   const [y, m] = day.split("-").map(Number);

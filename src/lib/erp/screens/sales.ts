@@ -43,6 +43,7 @@ import { fgLevelAvailable, fgLots, fgRates, lockLot, packBatchCosting, packLots 
 import { erpOrdersLive, orderNosOf, syncBookOrders } from "../book";
 import { erpLink } from "../registry";
 import { readOnceKeyed } from "../read-memo";
+import { monthWindow } from "../period";
 import { type LoadScope, tooWide, unscoped, windowWhere } from "../window";
 import { issuedCreditNotes } from "./complaints";
 import { type Col, godownField, godownIdByName, godownOptions, has, inTx, refuse, today } from "./common";
@@ -1179,9 +1180,8 @@ export async function monthlySalesFor(days: (string | null)[]): Promise<Map<stri
   const out = new Map<string, number>();
   const months = [...new Set(days.map((d) => d?.slice(0, 7)).filter((m): m is string => !!m))];
   for (const m of months) {
-    const [y, mo] = m.split("-").map(Number);
-    const to = new Date(Date.UTC(y, mo, 0)).toISOString().slice(0, 10);
-    const scope: LoadScope = { pd: `c:${m}-01:${to}`, window: { from: `${m}-01`, to }, ids: null, open: null };
+    const w = monthWindow(m);
+    const scope: LoadScope = { pd: `c:${w.from}:${w.to}`, window: w, ids: null, open: null };
     const ls = await orderLines({ billed: true, window: { scope, on: "dispatch" } });
     const ds = ls.length ? await db.select({ id: erpOrderDetails.orderId, gst: erpOrderDetails.gstBp, day: erpOrderDetails.dispatchDate }).from(erpOrderDetails).where(inArray(erpOrderDetails.orderId, ls.map((l) => l.o.id))) : [];
     const d = new Map(ds.map((x) => [x.id, x]));
