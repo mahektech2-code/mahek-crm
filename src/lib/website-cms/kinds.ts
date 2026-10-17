@@ -211,6 +211,14 @@ export function moduleKeyFor(kind: KindKey): string {
 export const PUBLISH_MODULE_KEY = "website.publish";
 
 /**
+ * The right to ASSIGN content to employees, decide their submissions and change
+ * whether assignments are enforced. Explicit-only like `website.publish`
+ * (lib/modules.ts): ticked for a named person on the Access screen, never
+ * implied, and never granted by a migration or a script.
+ */
+export const REVIEW_MODULE_KEY = "website.review";
+
+/**
  * The row's slug for a piece of data — the product's own slug, an SEO path, the
  * fixed word for a singleton. `null` where the kind has no natural one and the
  * server must mint it.

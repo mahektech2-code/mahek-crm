@@ -5,6 +5,7 @@ import type { Result } from "@/lib/result";
 import type { ConnectionCheck, LiveRefresh } from "@/lib/website-cms/live-site";
 import * as cms from "@/lib/website-cms/commands";
 import type { ImportReport, ItemView, PublishOutcome } from "@/lib/website-cms/service";
+import type { AssignmentView, RequestView, SubmittedView } from "@/lib/website-cms/review-service";
 
 /* ---------------------------------------------------------------------------
  * The Website CMS's server actions — deliberately three lines each: run the
@@ -75,4 +76,37 @@ export async function deleteMediaAction(id: string): Promise<Result> {
 }
 export async function getContentAction(id: string): Promise<Result<ItemView>> {
   return cms.readContent(id);
+}
+
+/* ------------------------------------------------- the review workflow */
+
+export async function assignWorkAction(employeeId: string, kind: string, contentId?: string | null, scopeNote?: string): Promise<Result<AssignmentView>> {
+  return done(await cms.assignWork(employeeId, kind, contentId ?? undefined, scopeNote));
+}
+export async function revokeAssignmentAction(assignmentId: string): Promise<Result> {
+  return done(await cms.revokeAssignment(assignmentId));
+}
+export async function setEnforceAssignmentsAction(on: boolean): Promise<Result<{ enforced: boolean }>> {
+  return done(await cms.setEnforceAssignments(on));
+}
+export async function submitForVerificationAction(ids: string[], note?: string, resubmissionOf?: string): Promise<Result<SubmittedView>> {
+  return done(await cms.submitForVerification(ids, note, resubmissionOf));
+}
+export async function approveRequestAction(requestId: string): Promise<Result<{ approvalExpiresAt: string }>> {
+  return done(await cms.approveRequest(requestId));
+}
+export async function rejectRequestAction(requestId: string, reason: string): Promise<Result> {
+  return done(await cms.rejectRequest(requestId, reason));
+}
+export async function revokeApprovalAction(requestId: string): Promise<Result> {
+  return done(await cms.revokeApproval(requestId));
+}
+export async function withdrawRequestAction(requestId: string): Promise<Result> {
+  return done(await cms.withdrawRequest(requestId));
+}
+export async function publishApprovedAction(requestId: string): Promise<Result<PublishOutcome>> {
+  return done(await cms.publishApproved(requestId));
+}
+export async function getRequestAction(requestId: string): Promise<Result<RequestView>> {
+  return cms.readRequest(requestId);
 }

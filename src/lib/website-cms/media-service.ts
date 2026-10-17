@@ -1,8 +1,8 @@
 import "server-only";
 import { createHash, randomUUID } from "node:crypto";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { db } from "@/db";
-import { websiteContent, websiteMedia, websitePublishLog, type User } from "@/db/schema";
+import { websiteChangeItem, websiteContent, websiteMedia, websitePublishLog, type User } from "@/db/schema";
 import { err, ok, type Result } from "@/lib/result";
 import { fileStorage } from "@/lib/storage";
 import { checkWebsiteImage, mediaIdsIn, mediaPublicPath, safeMediaFilename } from "./media-types";
@@ -45,6 +45,23 @@ async function usageIndex(): Promise<{ byId: Map<string, string[]>; texts: { lab
   for (const r of rows) {
     const label = `${r.kind}: ${(r.data as { name?: string; label?: string; title?: string; path?: string }).name ?? (r.data as { label?: string }).label ?? (r.data as { title?: string }).title ?? r.slug}`;
     const json = JSON.stringify([r.data, r.publishedData]);
+    texts.push({ label, json });
+    for (const id of mediaIdsIn(json)) byId.set(id, [...(byId.get(id) ?? []), label]);
+  }
+  /*
+   * An image that content waiting in a review request points at is IN USE too,
+   * though the request's copy is a frozen snapshot rather than a row's `data`.
+   * Deleting it would leave the reviewer looking at a broken picture and, if
+   * the request were approved, publishing one. Closed requests are history and
+   * hold nothing.
+   */
+  const waiting = await db
+    .select({ kind: websiteChangeItem.kind, slug: websiteChangeItem.slug, proposed: websiteChangeItem.proposedData })
+    .from(websiteChangeItem)
+    .where(isNotNull(websiteChangeItem.openContentId));
+  for (const w of waiting) {
+    const label = `${w.kind}: ${w.slug} (awaiting review)`;
+    const json = JSON.stringify(w.proposed);
     texts.push({ label, json });
     for (const id of mediaIdsIn(json)) byId.set(id, [...(byId.get(id) ?? []), label]);
   }

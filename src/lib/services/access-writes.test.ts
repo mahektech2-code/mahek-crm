@@ -48,6 +48,22 @@ describe("writeModules and explicit-only rights", () => {
     for (const k of ORDINARY("website")) assert.equal(moduleAllowed(k, s.rows(), "website"), true, k);
   });
 
+  test("website: ticking only the review right stores rows, holds it, and does not carry publishing", async () => {
+    const s = store();
+    await writeModules(s.tx, "u", "website", [...ORDINARY("website"), "website.review"], "me");
+    assert.ok(s.rows().includes("website.review"), "the explicit-only right is written as a row, not implied by the whole app");
+    assert.equal(moduleAllowed("website.review", s.rows(), "website"), true);
+    assert.equal(moduleAllowed("website.publish", s.rows(), "website"), false);
+  });
+
+  test("website: every ordinary screen with NEITHER explicit right is still the whole app (no rows) and neither is held", async () => {
+    const s = store();
+    await writeModules(s.tx, "u", "website", ORDINARY("website"), "me");
+    assert.deepEqual(s.rows(), []);
+    assert.equal(moduleAllowed("website.review", s.rows(), "website"), false);
+    assert.equal(moduleAllowed("website.review", s.rows(), "website", true), false, "not even an administrator hat");
+  });
+
   test("website: every ordinary screen WITHOUT publish is still the whole app (no rows) and publish is not held", async () => {
     const s = store();
     await writeModules(s.tx, "u", "website", ORDINARY("website"), "me");
@@ -124,8 +140,9 @@ describe("what no rows stands for", () => {
   });
 
   test("the explicit-only registry is what these tests think it is", () => {
-    assert.deepEqual(EXPLICIT("website"), ["website.publish"]);
+    assert.deepEqual(EXPLICIT("website"), ["website.publish", "website.review"]);
     assert.deepEqual(EXPLICIT("sales"), ["sales.lead-pipeline"]);
     assert.equal(getModule("website.publish")?.explicitOnly, true);
+    assert.equal(getModule("website.review")?.explicitOnly, true);
   });
 });
