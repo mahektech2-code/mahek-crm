@@ -155,6 +155,7 @@ A draft becomes an order only through the normal order form, with every rule abo
 
 ## Where the code and the intent disagree today
 
+- **A Ready line is not Pending.** Pending is the lines not yet Ready (Under Process or Hold From Office) and not billed; marking a line Ready moves it to *Under process & ready*. Mahek Plus's Pending view had no status test, so a Ready line sat on both tabs until it was billed.
 - **Pending hides a whole order once any line of it is billed.** An order with one billed line and one unbilled line vanishes from Pending; the unbilled line is only on *Under process & ready* and *All lines*.
 - **A line marked Not Verify can never be verified again.** Mark dispatch-verified accepts only a blank or Pending verification; the only way back is to undo billing and bill it again.
 - **The "Ready but not billed" alert dates Ready from the line's last change**, not from when it became Ready — any edit restarts the clock.

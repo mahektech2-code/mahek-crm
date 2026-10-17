@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { calendarDate } from "@/lib/business-date";
+import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -39,9 +39,12 @@ import {
   type Allocation,
   type OrderType,
 } from "../engines/sales";
-import { fgLevelAvailable, fgLots, lockLot, packLots } from "../stock";
+import { fgLevelAvailable, fgLots, fgRates, lockLot, packBatchCosting, packLots } from "../stock";
 import { erpOrdersLive, orderNosOf, syncBookOrders } from "../book";
 import { erpLink } from "../registry";
+import { readOnceKeyed } from "../read-memo";
+import { monthWindow } from "../period";
+import { type LoadScope, tooWide, unscoped, windowWhere } from "../window";
 import { issuedCreditNotes } from "./complaints";
 import { type Col, godownField, godownIdByName, godownOptions, has, inTx, refuse, today } from "./common";
 import { markDispatched, scanGateFor, scannedOnAllocation } from "../dispatch";
@@ -147,6 +150,8 @@ export type OrderLine = {
   allocations: number;
   allocation: Allocation;
   inDetails: boolean;
+  /** Some line of the same order is in order details. */
+  orderDetailed: boolean;
   /** Dispatch-verified: the goods have left. */
   dispatched: boolean;
   due: Due;
@@ -155,25 +160,86 @@ export type OrderLine = {
   by: string | null;
 };
 
-/** Every order line with what the screens derive from it — the one reading every sales list shares. */
-export async function orderLines(): Promise<OrderLine[]> {
-  const [rows, parties, skus, prices, alloc, details] = await Promise.all([
-    db
-      .select({ o: erpOrders, godown: erpGodowns.name, by: users.name })
-      .from(erpOrders)
-      .innerJoin(erpGodowns, eq(erpGodowns.id, erpOrders.godownId))
-      .leftJoin(users, eq(users.id, erpOrders.createdById))
-      .orderBy(desc(erpOrders.orderNo), desc(erpOrders.orderDate), asc(erpOrders.createdAt)),
-    loadCustomersAll(),
+/**
+ * WHICH ORDER LINES TO READ — said in SQL, never filtered out of the whole
+ * book in memory. The book is every line Mahek has ever sold (22,154 on the
+ * day it was imported) and grows every day; reading it whole to draw one page,
+ * three times a request for the badges, is what took the server past its heap.
+ *
+ *  - `openWork`: still being worked — not cancelled, and not both billed and
+ *    dispatch-verified. Every working list, badge and dashboard tile is a
+ *    subset of it, and it is as large as the godown's backlog, not the history.
+ *  - `window`: a register's period (`window.ts`), on the order date or on the
+ *    dispatch date. The record a link opens and the ids a tile names widen it.
+ *  - `ids` / `orderNos`: exactly these, for an action, a form or one order's labels.
+ *
+ * Filters given together all apply. No filter at all is refused: there is no
+ * caller that needs the whole book, and a default that read it would be the
+ * one somebody forgets.
+ */
+export type LineFilter = {
+  openWork?: boolean;
+  window?: { scope: LoadScope; on: "order" | "dispatch" };
+  ids?: string[];
+  orderNos?: number[];
+  /** Only lines that have reached order details (billed). */
+  billed?: boolean;
+};
+
+/** Order lines with what the screens derive from them — the one reading every sales list shares. */
+export async function orderLines(f: LineFilter): Promise<OrderLine[]> {
+  return readOnceKeyed(`orderLines:${JSON.stringify(f)}`, () => readLines(f));
+}
+
+function lineWhere(f: LineFilter) {
+  const where = [];
+  if (f.ids) where.push(f.ids.length ? sql`${erpOrders.id} in ${f.ids}` : sql`false`);
+  if (f.orderNos) where.push(f.orderNos.length ? sql`${erpOrders.orderNo} in ${f.orderNos}` : sql`false`);
+  if (f.billed) where.push(sql`${erpOrderDetails.orderId} is not null`);
+  if (f.openWork)
+    where.push(sql`${erpOrders.status} <> 'Cancel' and not (${erpOrders.entryStatus} = 'Done' and ${erpOrderDetails.verification} is not distinct from 'Verified')`);
+  if (f.window) where.push(windowWhere(f.window.on === "dispatch" ? sql`${erpOrderDetails.dispatchDate}` : sql`${erpOrders.orderDate}`, sql`${erpOrders.id}`, f.window.scope));
+  if (!where.length) throw new Error("orderLines needs a filter: openWork, a window, ids or orderNos.");
+  return sql.join(where, sql` and `);
+}
+
+/** How many lines a filter holds — one count, so a register can refuse a period too long to build. */
+export async function countLines(f: LineFilter): Promise<number> {
+  const [r] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(erpOrders)
+    .leftJoin(erpOrderDetails, eq(erpOrderDetails.orderId, erpOrders.id))
+    .where(lineWhere(f));
+  return Number(r?.n ?? 0);
+}
+
+async function readLines(f: LineFilter): Promise<OrderLine[]> {
+  const rows = await db
+    .select({
+      o: erpOrders,
+      godown: erpGodowns.name,
+      by: users.name,
+      verification: erpOrderDetails.verification,
+      detailRow: sql<boolean>`${erpOrderDetails.orderId} is not null`,
+      /* Whether ANY line of this order has reached order details — the Pending
+         list's rule. Asked in SQL because the other lines may be outside this read. */
+      orderDetailed: sql<boolean>`exists (select 1 from erp_orders o2 join erp_order_details d2 on d2.order_id = o2.id where o2.order_no = "erp_orders"."order_no")`,
+      allocQty: sql<number>`(select coalesce(sum(b.quantity), 0)::float8 from erp_batch_codes b where b.order_id = "erp_orders"."id")`,
+      allocN: sql<number>`(select count(*)::int from erp_batch_codes b where b.order_id = "erp_orders"."id")`,
+    })
+    .from(erpOrders)
+    .innerJoin(erpGodowns, eq(erpGodowns.id, erpOrders.godownId))
+    .leftJoin(users, eq(users.id, erpOrders.createdById))
+    .leftJoin(erpOrderDetails, eq(erpOrderDetails.orderId, erpOrders.id))
+    .where(lineWhere(f))
+    .orderBy(desc(erpOrders.orderNo), desc(erpOrders.orderDate), asc(erpOrders.createdAt));
+  if (!rows.length) return [];
+  const [parties, skus, prices] = await Promise.all([
+    customersById([...new Set(rows.flatMap((r) => [r.o.billingCustomerId, r.o.deliveryCustomerId]))]),
     skuCatalogue(),
     priceBook(),
-    db.execute(sql`select order_id as id, sum(quantity)::float8 as qty, count(*)::int as n from erp_batch_codes group by order_id`) as unknown as Promise<{ id: string; qty: number; n: number }[]>,
-    db.select({ id: erpOrderDetails.orderId, verification: erpOrderDetails.verification }).from(erpOrderDetails),
   ]);
   const now = today();
-  const allocBy = new Map(alloc.map((a) => [a.id, a]));
-  const inDetails = new Set(details.map((d) => d.id));
-  const verified = new Set(details.filter((d) => d.verification === "Verified").map((d) => d.id));
   const out: OrderLine[] = [];
   for (const r of rows) {
     const billing = parties.get(r.o.billingCustomerId);
@@ -183,8 +249,8 @@ export async function orderLines(): Promise<OrderLine[]> {
     const type = orderType(sku.boxType);
     const boxed = isBoxed(sku);
     const { boxes, valid } = boxQuantity(r.o.qtyCans, sku.cpb, !boxed);
-    const a = allocBy.get(r.o.id);
-    const allocated = a ? Number(a.qty) : 0;
+    const allocated = Number(r.allocQty ?? 0);
+    const verified = r.verification === "Verified";
     out.push({
       o: r.o,
       godown: r.godown,
@@ -197,11 +263,12 @@ export async function orderLines(): Promise<OrderLine[]> {
       boxesValid: valid,
       labels: labelCount(type, boxes, r.o.qtyCans),
       allocated,
-      allocations: a ? Number(a.n) : 0,
+      allocations: Number(r.allocN ?? 0),
       allocation: allocationState(allocationTarget(boxed, boxes, r.o.qtyCans), allocated),
-      inDetails: inDetails.has(r.o.id),
-      dispatched: verified.has(r.o.id),
-      due: dueOf(r.o.dispatchOn, verified.has(r.o.id), r.o.status, now),
+      inDetails: !!r.detailRow,
+      orderDetailed: !!r.orderDetailed,
+      dispatched: verified,
+      due: dueOf(r.o.dispatchOn, verified, r.o.status, now),
       si: standingInstructions({ instructions: delivery.p?.standingInstructions ?? null, deliveryType: delivery.deliveryType, paymentType: delivery.freightTerm, weightType: delivery.p?.weightType ?? null }),
       liveRatePaise: prices(billing.priceTag, sku).ratePaise,
       by: r.by,
@@ -210,9 +277,16 @@ export async function orderLines(): Promise<OrderLine[]> {
   return out;
 }
 
-/** Every customer an order can name — including ones not in the ERP's own party list. */
-async function loadCustomersAll(): Promise<Map<string, CustomerRow>> {
-  return new Map((await loadCustomers()).map((c) => [c.id, c]));
+/** The customers these lines name — never the whole customer book. */
+async function customersById(ids: string[]): Promise<Map<string, CustomerRow>> {
+  const out = new Map<string, CustomerRow>();
+  for (let i = 0; i < ids.length; i += 1000) for (const c of await loadCustomers(inArray(customers.id, ids.slice(i, i + 1000)))) out.set(c.id, c);
+  return out;
+}
+
+/** The orders some of these lines belong to that have a billed line — the Pending list's rule, read off the lines. */
+export function detailedOrdersOf(lines: OrderLine[]): Set<number> {
+  return new Set(lines.filter((l) => l.orderDetailed).map((l) => l.o.orderNo));
 }
 
 /**
@@ -309,7 +383,7 @@ export async function orderForm(ctx: ErpContext, fixed?: { orderNo: number; date
 }
 
 async function editForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
-  const l = (await orderLines()).find((x) => x.o.id === id);
+  const [l] = await orderLines({ ids: [id] });
   if (!l) return null;
   const names = (await loadCustomers()).filter((p) => partyStatus(p) !== "Deactive").map((p) => p.name);
   const seeRate = ctx.powers.has("viewSalesRate");
@@ -350,7 +424,7 @@ async function editForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
 }
 
 async function allocateForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
-  const l = (await orderLines()).find((x) => x.o.id === id);
+  const [l] = await orderLines({ ids: [id] });
   if (!l) return null;
   const lots = l.boxed
     ? (await packLots()).filter((x) => x.skuId === l.sku.id && x.godownId === l.o.godownId && x.stock > 0).map((x) => ({ code: x.batchNo, stock: x.stock }))
@@ -425,7 +499,11 @@ type Scope = "orders" | "pendingOrders" | "readyOrders" | "labels";
  * different set from the list it opens.
  */
 export function isPendingLine(l: OrderLine, detailedOrders: Set<number>): boolean {
-  return l.o.status !== "Cancel" && l.sku.name !== "Empty Drum" && !detailedOrders.has(l.o.orderNo);
+  /* Not Ready: a Ready line has stock on the shelf and has moved on to Under
+     process & ready. Mahek Plus's Pending view had no status test, so every
+     line sat there from entry to billing, Ready lines included, and the same
+     line was on two tabs at once. */
+  return l.o.status !== "Cancel" && l.o.status !== "Ready" && l.sku.name !== "Empty Drum" && !detailedOrders.has(l.o.orderNo);
 }
 
 /** Being worked on: Ready or Under Process, and not yet done. Also the Labels tab's rows. */
@@ -439,12 +517,29 @@ function inScope(scope: Scope, l: OrderLine, detailedOrders: Set<number>): boole
   return isWorkingLine(l);
 }
 
+/** The orders list is the register: every line, read by order date. The other three are open work. */
+const ORDERS_WINDOW = { label: "Order date", default: "month" } as const;
+
+/**
+ * The lines a list draws, read in SQL: the register through its window, a
+ * working list as open work, and "Show the whole order" (ids) as exactly those.
+ * Null where the window holds more than one load may build.
+ */
+async function listLines(scope: Scope, s: LoadScope | undefined): Promise<{ lines: OrderLine[]; wide: { n: number; cap: number } | null }> {
+  if (s?.ids?.length) return { lines: await orderLines({ ids: s.ids }), wide: null };
+  if (scope !== "orders") return { lines: await orderLines({ openWork: true }), wide: null };
+  const f: LineFilter = { window: { scope: s ?? unscoped(), on: "order" } };
+  const wide = tooWide(await countLines(f), f.window!.scope);
+  return { lines: wide ? [] : await orderLines(f), wide };
+}
+
 function orderList(scope: Scope): ScreenModule {
   return {
     key: scope,
-    async load(ctx) {
-      const lines = await orderLines();
-      const detailedOrders = new Set(lines.filter((l) => l.inDetails).map((l) => l.o.orderNo));
+    ...(scope === "orders" ? { window: ORDERS_WINDOW } : {}),
+    async load(ctx, s) {
+      const { lines, wide } = await listLines(scope, s);
+      const detailedOrders = detailedOrdersOf(lines);
       const shown = lines.filter((l) => inScope(scope, l, detailedOrders));
       const labels = scope === "labels";
       const all: Col[] = labels
@@ -487,9 +582,10 @@ function orderList(scope: Scope): ScreenModule {
             scope === "orders"
               ? "No sales orders yet."
               : scope === "pendingOrders"
-                ? "Nothing pending. Every open line has reached order details."
+                ? "Nothing pending. Every open line is Ready or has reached order details."
                 : "Nothing under process or ready.",
         },
+        tooWide: wide,
         rows: shown.map((l): ListRow => {
           const blockers = billBlockers(l);
           const actions: ActionSpec[] = labels
@@ -572,7 +668,7 @@ function orderList(scope: Scope): ScreenModule {
 
 async function lines(ids: string[]): Promise<OrderLine[]> {
   const set = new Set(ids);
-  return (await orderLines()).filter((l) => set.has(l.o.id));
+  return (await orderLines({ ids })).filter((l) => set.has(l.o.id));
 }
 
 async function setMany(ctx: ErpContext, ids: string[], values: Partial<typeof erpOrders.$inferInsert>, action: string, msg: (n: number) => string): Promise<Result<unknown>> {
@@ -597,7 +693,8 @@ const stillToAllocate = (l: OrderLine) => Math.max(0, allocationTarget(l.boxed, 
  */
 /** The lines among these that the shelf cannot cover, each with the sentence that says so. */
 async function stockShortfalls(asked: { l: OrderLine; need: number }[]): Promise<Map<string, string>> {
-  const all = await orderLines();
+  /* What the lines already Ready will take: open work, by definition. */
+  const all = await orderLines({ openWork: true });
   const onShelf = await fgLevelAvailable();
   const free = new Map(asked.map(({ l }) => [stockKey(l), onShelf(l.sku.id, l.boxed, l.o.godownId)]));
   const askedIds = new Set(asked.map(({ l }) => l.o.id));
@@ -877,9 +974,16 @@ async function saveAllocation(ctx: ErpContext, h: Record<string, string>, id?: s
 
 /* ========================================================= batch codes */
 
+const BATCH_WINDOW = { label: "Allocation date", default: "month" } as const;
+
 const batchCodes: ScreenModule = {
   key: "batchCodes",
-  async load(ctx) {
+  window: BATCH_WINDOW,
+  async load(ctx, s) {
+    const scope = s ?? unscoped();
+    const where = windowWhere(sql`(${erpBatchCodes.createdAt} at time zone ${APP_TIMEZONE})::date`, sql`${erpBatchCodes.id}`, scope);
+    const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(erpBatchCodes).where(where);
+    const wide = tooWide(Number(n), scope);
     const [rows, fg, pack] = await Promise.all([
       db
         .select({ b: erpBatchCodes, o: erpOrders, sku: products.name, godown: erpGodowns.name, by: users.name, verified: erpOrderDetails.verification })
@@ -889,6 +993,7 @@ const batchCodes: ScreenModule = {
         .innerJoin(erpGodowns, eq(erpGodowns.id, erpBatchCodes.godownId))
         .leftJoin(erpOrderDetails, eq(erpOrderDetails.orderId, erpOrders.id))
         .leftJoin(users, eq(users.id, erpBatchCodes.createdById))
+        .where(wide ? sql`false` : where)
         .orderBy(desc(erpBatchCodes.createdAt)),
       fgLots(),
       packLots(),
@@ -908,6 +1013,7 @@ const batchCodes: ScreenModule = {
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
     return {
       spec: { screen: "batchCodes", cols, hidden, groups: ["godown"], godownKey: "godown", noDataLine: "No lots allocated yet. Lots are allocated on the Dispatch desk, by scanning the boxes." },
+      tooWide: wide,
       rows: rows.map((r): ListRow => {
         const dispatched = r.verified === "Verified";
         return {
@@ -1013,8 +1119,29 @@ function creditOf(credits: Map<string, number>, l: OrderLine, gstBp: number): nu
   return paid == null ? null : Math.round((paid * 10000) / (10000 + gstBp));
 }
 
-export async function detailRows(): Promise<{ rows: DetailRow[]; billTotal: Map<string, number>; monthly: Map<string, number> }> {
-  const [ls, details, costs, credits] = await Promise.all([orderLines(), db.select().from(erpOrderDetails), allocationCosts(), issuedCreditNotes()]);
+/**
+ * Billed lines, with their figures. `f` says which, in SQL (`LineFilter`); it
+ * is always narrowed to billed lines. With `withUnverified` the lines still
+ * waiting for dispatch verification are added whatever the window — they are
+ * work, and a period that hid them would hide the backlog.
+ *
+ * The MONTHLY sale (a customer's dispatched value in a month) is a fact about
+ * whole months, so it is summed over every billed line in the months the rows
+ * fall in, not over the rows a window happens to hold.
+ */
+export async function detailRows(f: LineFilter, opts: { withUnverified?: boolean } = {}): Promise<{ rows: DetailRow[]; billTotal: Map<string, number>; monthly: Map<string, number> }> {
+  const [main, open] = await Promise.all([
+    orderLines({ ...f, billed: true }),
+    opts.withUnverified ? orderLines({ billed: true, openWork: true }) : Promise.resolve([] as OrderLine[]),
+  ]);
+  const seen = new Set(main.map((l) => l.o.id));
+  const ls = [...main, ...open.filter((l) => !seen.has(l.o.id))];
+  const ids = ls.map((l) => l.o.id);
+  const [details, costs, credits] = await Promise.all([
+    ids.length ? db.select().from(erpOrderDetails).where(inArray(erpOrderDetails.orderId, ids)) : Promise.resolve([] as (typeof erpOrderDetails.$inferSelect)[]),
+    allocationCosts(ids),
+    issuedCreditNotes(),
+  ]);
   const byId = new Map(ls.map((l) => [l.o.id, l]));
   const rows: DetailRow[] = [];
   for (const d of details) {
@@ -1037,23 +1164,50 @@ export async function detailRows(): Promise<{ rows: DetailRow[]; billTotal: Map<
     });
   }
   const billTotal = new Map<string, number>();
-  const monthly = new Map<string, number>();
   for (const r of rows) {
     const bk = `${r.l.o.orderNo}|${r.l.o.billingCustomerId}`;
     billTotal.set(bk, (billTotal.get(bk) ?? 0) + (r.final ?? 0));
-    if (r.monthId) {
-      const mk = `${r.monthId}|${r.l.o.billingCustomerId}`;
-      monthly.set(mk, (monthly.get(mk) ?? 0) + (r.amount ?? 0));
+  }
+  return { rows, billTotal, monthly: await monthlySalesFor(rows.map((r) => r.d.dispatchDate)) };
+}
+
+/**
+ * Each customer's dispatched value per month (keyed `<monthId>|<customer>`),
+ * for the months these days fall in — each summed over the WHOLE month, so a
+ * period that cuts a month in half cannot halve the figure beside it.
+ */
+export async function monthlySalesFor(days: (string | null)[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const months = [...new Set(days.map((d) => d?.slice(0, 7)).filter((m): m is string => !!m))];
+  for (const m of months) {
+    const w = monthWindow(m);
+    const scope: LoadScope = { pd: `c:${w.from}:${w.to}`, window: w, ids: null, open: null };
+    const ls = await orderLines({ billed: true, window: { scope, on: "dispatch" } });
+    const ds = ls.length ? await db.select({ id: erpOrderDetails.orderId, gst: erpOrderDetails.gstBp, day: erpOrderDetails.dispatchDate }).from(erpOrderDetails).where(inArray(erpOrderDetails.orderId, ls.map((l) => l.o.id))) : [];
+    const d = new Map(ds.map((x) => [x.id, x]));
+    for (const l of ls) {
+      const x = d.get(l.o.id);
+      const id = monthId(x?.day ?? null);
+      if (!x || !id) continue;
+      const bill = billFigures({ type: l.type, qtyCans: l.o.qtyCans, litresPerCan: l.sku.litresPerCan, ratePaise: l.o.ratePaise, discountBp: l.o.discountBp, transportCostPaise: l.o.transportCostPaise, gstBp: x.gst });
+      const mk = `${id}|${l.o.billingCustomerId}`;
+      out.set(mk, (out.get(mk) ?? 0) + (bill.amountPaise ?? 0));
     }
   }
-  return { rows, billTotal, monthly };
+  return out;
 }
 
 /** Each order line's allocated lots' costing, per can (or per litre on a drum lot). */
-async function allocationCosts(): Promise<Map<string, (number | null)[]>> {
-  const [codes, fg, pack] = await Promise.all([db.select().from(erpBatchCodes), fgLots(), packLots()]);
-  const fgRate = new Map(fg.map((l) => [`${l.finishedGoodId}|${l.lotCode}`, l.ratePaise]));
-  const packRate = new Map(pack.map((l) => [l.batchNo, l.perCanPaise]));
+async function allocationCosts(orderIds: string[]): Promise<Map<string, (number | null)[]>> {
+  if (!orderIds.length) return new Map();
+  /* The rates of the lots these lines drew — usually used up by now, so asked for by name rather than read off stock. */
+  const codes = await db.select().from(erpBatchCodes).where(inArray(erpBatchCodes.orderId, orderIds));
+  const [fg, pack] = await Promise.all([
+    fgRates([...new Set(codes.filter((b) => b.lotFrom !== "pack").map((b) => b.lotCode))]),
+    packBatchCosting([...new Set(codes.filter((b) => b.lotFrom === "pack").map((b) => b.lotCode))]),
+  ]);
+  const fgRate = new Map([...fg].map(([k, v]) => [k, v.ratePaise]));
+  const packRate = new Map([...pack].map(([k, c]) => [k, c.amountPaise == null || !c.cans ? null : Math.round(c.amountPaise / c.cans)]));
   const out = new Map<string, (number | null)[]>();
   for (const b of codes) {
     const c = b.lotFrom === "pack" ? (packRate.get(b.lotCode) ?? null) : (fgRate.get(`${b.finishedGoodId}|${b.lotCode}`) ?? null);
@@ -1062,11 +1216,18 @@ async function allocationCosts(): Promise<Map<string, (number | null)[]>> {
   return out;
 }
 
+/** Order details is a register too: billed lines by dispatch date, plus every line still awaiting verification. */
+const DETAILS_WINDOW = { label: "Dispatch date", default: "month" } as const;
+
 const orderDetails: ScreenModule = {
   key: "orderDetails",
-  async load(ctx) {
+  window: DETAILS_WINDOW,
+  async load(ctx, s) {
+    const scope = s ?? unscoped();
+    const f: LineFilter = scope.ids?.length ? { ids: scope.ids } : { window: { scope, on: "dispatch" } };
+    const wide = scope.ids?.length ? null : tooWide(await countLines({ ...f, billed: true }), scope);
     const [{ rows, billTotal, monthly }, targetRows] = await Promise.all([
-      detailRows(),
+      wide ? Promise.resolve({ rows: [] as DetailRow[], billTotal: new Map<string, number>(), monthly: new Map<string, number>() }) : detailRows(f, { withUnverified: !scope.ids?.length }),
       db.execute(sql`select customer_id as c, year as y, month as m, target_amount as t from monthly_targets`) as unknown as Promise<{ c: string; y: number; m: number; t: number }[]>,
     ]);
     /* The customer's target for the month a line was dispatched in — the CRM's
@@ -1113,6 +1274,7 @@ const orderDetails: ScreenModule = {
         ],
         noDataLine: "Nothing to bill yet. A ready, fully allocated line arrives here once billed.",
       },
+      tooWide: wide,
       rows: rows
         .sort((a, b) => (a.l.o.orderDate < b.l.o.orderDate ? 1 : a.l.o.orderDate > b.l.o.orderDate ? -1 : b.d.createdAt.getTime() - a.d.createdAt.getTime()))
         .map((r): ListRow => {

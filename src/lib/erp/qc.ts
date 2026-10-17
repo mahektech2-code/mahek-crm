@@ -8,10 +8,16 @@ import type { Ex } from "./stock";
 /** Every SFG lot's QC verdict. A lot missing from the map is Pending. */
 export type SfgQcVerdict = { status: SfgQc; note: string | null; tests: TestResults; evidence: QcEvidence; by: string | null; at: string | null };
 
-export async function sfgQcMap(ex: Ex = db): Promise<Map<string, SfgQcVerdict>> {
+/**
+ * The QC verdicts of these lots — every lot ever made has one, each with its
+ * evidence, so a screen asks only for the lots it is drawing.
+ */
+export async function sfgQcMap(lots: string[], ex: Ex = db): Promise<Map<string, SfgQcVerdict>> {
+  if (!lots.length) return new Map();
   const rows = (await ex.execute(sql`
     select q.lot_code as lot, q.status, q.note, q.tests, q.evidence, u.name as by, q.decided_at::text as at
       from erp_sfg_qc q left join users u on u.id = q.decided_by_id
+     where q.lot_code in ${[...new Set(lots)]}
   `)) as unknown as (SfgQcVerdict & { lot: string })[];
   return new Map(rows.map((r) => [r.lot, { status: r.status, note: r.note, tests: r.tests ?? {}, evidence: (r.evidence ?? { photos: {} }) as QcEvidence, by: r.by, at: r.at }]));
 }

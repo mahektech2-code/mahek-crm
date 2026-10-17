@@ -1,5 +1,5 @@
 import "server-only";
-import { asc, desc, eq } from "drizzle-orm";
+import { asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   erpFgEntries,
@@ -18,6 +18,7 @@ import {
 import { err, fieldErr, okVoid, type Result } from "@/lib/result";
 import type { ErpContext } from "../access";
 import { erpAudit, erpId, num, stampLine, text, type ScreenModule } from "../server";
+import { tooWide, unscoped, windowWhere } from "../window";
 import type { ActionSpec, ColSpec, FormSpec, ListRow } from "../ui";
 import { nf } from "../ui";
 import { fgReorderPercent, rmReorderPercent, rmRequired } from "../engines/production";
@@ -123,11 +124,19 @@ async function postTransferIn(tx: Tx, t: typeof erpTransfers.$inferSelect) {
   }
 }
 
+/* Transfers are a register: read by transfer date, never the whole history (`window.ts`). */
+const TRANSFER_WINDOW = { label: "Transfer date", default: "month" } as const;
+
 const transfers: ScreenModule = {
   key: "transfers",
-  async load(ctx) {
+  window: TRANSFER_WINDOW,
+  async load(ctx, s) {
+    const sc = s ?? unscoped();
+    const where = windowWhere(sql`${erpTransfers.transferDate}`, sql`${erpTransfers.id}`, sc);
+    const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(erpTransfers).where(where);
+    const wide = tooWide(Number(n), sc);
     const [rows, gds] = await Promise.all([
-      db.select({ t: erpTransfers, by: users.name }).from(erpTransfers).leftJoin(users, eq(users.id, erpTransfers.createdById)).orderBy(desc(erpTransfers.transferDate), asc(erpTransfers.itemType)),
+      db.select({ t: erpTransfers, by: users.name }).from(erpTransfers).leftJoin(users, eq(users.id, erpTransfers.createdById)).where(wide ? sql`false` : where).orderBy(desc(erpTransfers.transferDate), asc(erpTransfers.itemType)),
       db.select({ id: erpGodowns.id, name: erpGodowns.name, reserved: erpGodowns.reserved }).from(erpGodowns),
     ]);
     const g = new Map(gds.map((x) => [x.id, x]));
@@ -155,6 +164,7 @@ const transfers: ScreenModule = {
         newLabel: "New transfer",
         noDataLine: "No transfers yet.",
       },
+      tooWide: wide,
       rows: rows.map((x): ListRow => {
         const from = g.get(x.t.fromGodownId);
         const to = g.get(x.t.toGodownId);

@@ -10,6 +10,7 @@ import { today as businessToday } from "@/lib/erp/screens/common";
 import { ListScreen, ListTabs } from "../_ui/list-screen";
 import { pageOf, parseListQuery } from "@/lib/erp/list-query";
 import { withReadMemo } from "@/lib/erp/read-memo";
+import { scopeFor, windowInfo } from "@/lib/erp/window";
 import { FLAG } from "@/lib/erp/ui";
 import { screenTabs } from "../_ui/screen-tabs";
 import { Page } from "../_ui/page-head";
@@ -57,12 +58,13 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
   if (!BOARD.has(view)) {
     const mod = screenModule(view);
     if (!mod) notFound();
-    const { spec, rows } = await withReadMemo(() => mod.load(ctx));
     const f = one("f");
-    /* One page travels, as on every other ERP list (`[slug]/page.tsx`). */
+    /* One page travels, as on every other ERP list (`[slug]/page.tsx`), read through the register's window. */
     const query = parseListQuery(raw);
-    const page = pageOf(spec, rows, query, FLAG);
     const open = one("open");
+    const scope = scopeFor(mod.window, query, open ?? null);
+    const { spec, rows, tooWide } = await withReadMemo(() => mod.load(ctx, scope));
+    const page = { ...pageOf(spec, rows, query, FLAG), ...(mod.window ? { window: windowInfo(mod.window, scope, tooWide ?? null) } : {}) };
     return (
       <ListScreen
         key={`${view}|${f ?? ""}|${open ?? ""}`}

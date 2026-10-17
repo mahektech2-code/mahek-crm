@@ -1,7 +1,7 @@
 import "server-only";
 import { getConfig } from "@/lib/config/store";
 import { recipeLinesByProduct, recipeMap, recipeQtyByName } from "./recipes";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import {
   erpFgEntries,
@@ -21,6 +21,7 @@ import {
 import { err, fieldErr, okVoid, type Result } from "@/lib/result";
 import type { ErpContext } from "../access";
 import { erpAudit, erpId, int, nextNumber, num, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
+import { inWindow, type LoadScope, STOCK_WINDOW, tooWide, unscoped, windowWhere } from "../window";
 import type { ActionSpec, ColSpec, FieldSpec, FormSpec, ListRow } from "../ui";
 import { inr, nf } from "../ui";
 import {
@@ -37,7 +38,6 @@ import {
 import {
   fgLots,
   fgLotStock,
-  fgRates,
   lockLot,
   packBatchCosting,
   packLots,
@@ -191,10 +191,41 @@ async function sfgEditForm(ctx: ErpContext, id: string): Promise<FormSpec | null
   };
 }
 
+/*
+ * The production registers are read through a window (`window.ts`): only the
+ * period's rows are built. A batch is several lines, so a batch is windowed
+ * by its FIRST line's date — a line added to it a day later must not split it
+ * across two periods, half a batch on each.
+ */
+const SFG_WINDOW = { label: "Batch date", default: "month" } as const;
+const PACK_WINDOW = { label: "Pack date", default: "month" } as const;
+
+/**
+ * A grouped register's window, a whole group at a time: the group is in when
+ * its first line's date is, and a record asked for by id (`?open=`, `?f=`)
+ * brings its whole group with it — the batch's totals, its recipe check and
+ * its remaining cans are figures about every line of it.
+ */
+function groupWhere(table: "erp_sfg_lines" | "erp_pack_lines", key: "sfg_no" | "batch_no", day: "batch_date" | "pack_date", sc: LoadScope) {
+  const t = sql.raw(`"${table}"`);
+  const k = sql.raw(`"${key}"`);
+  const d = sql.raw(`"${day}"`);
+  const groupsOf = (ids: string[]) => sql`${t}.${k} in (select g.${k} from ${t} g where g."id" in ${ids})`;
+  if (sc.ids?.length) return groupsOf(sc.ids);
+  const inside = windowWhere(sql`(select min(g.${d}) from ${t} g where g.${k} = ${t}.${k})`, sql`${t}."id"`, { ...sc, open: null });
+  return sc.open ? sql`(${inside} or ${groupsOf([sc.open])})` : inside;
+}
+const sfgWhere = (sc: LoadScope) => groupWhere("erp_sfg_lines", "sfg_no", "batch_date", sc);
+
 const sfgBatches: ScreenModule = {
   key: "sfgBatches",
-  async load(ctx) {
-    const [rows, rates, rm] = await Promise.all([
+  window: SFG_WINDOW,
+  async load(ctx, s) {
+    const sc = s ?? unscoped();
+    const where = sfgWhere(sc);
+    const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(erpSfgLines).where(where);
+    const wide = tooWide(Number(n), sc);
+    const [rows] = await Promise.all([
       db
         .select({ l: erpSfgLines, item: erpRawMaterials.name, godown: erpGodowns.name, product: productFormulations.name, by: users.name })
         .from(erpSfgLines)
@@ -202,9 +233,13 @@ const sfgBatches: ScreenModule = {
         .innerJoin(erpGodowns, eq(erpGodowns.id, erpSfgLines.godownId))
         .innerJoin(productFormulations, eq(productFormulations.id, erpSfgLines.formulationId))
         .leftJoin(users, eq(users.id, erpSfgLines.createdById))
+        .where(wide ? sql`false` : where)
         .orderBy(desc(erpSfgLines.batchDate), desc(erpSfgLines.sfgNo), asc(erpSfgLines.createdAt)),
-      sfgRates(),
-      rmLots(),
+    ]);
+    /* Rates for THESE lots and the raw-material lots they drew — used up long ago, so named rather than read off stock. */
+    const [rates, rm] = await Promise.all([
+      sfgRates([...new Set(rows.map((x) => x.l.lotCode))]),
+      rmLots(undefined, { lots: [...new Set(rows.map((x) => x.l.rmLotNo))] }),
     ]);
     const rmRate = new Map(rm.map((l) => [l.lotNo, l.ratePaise]));
     /*
@@ -222,10 +257,14 @@ const sfgBatches: ScreenModule = {
       if (per == null) return false;
       return (usedBy.get(`${x.l.sfgNo}|${x.l.rawMaterialId}`) ?? 0) > per * Number(x.l.batches) * (1 + tolerance) + 1e-9;
     };
+    /* Which of THESE lines have posted — never every entry in the ledger. */
+    const lineIds = rows.map((x) => x.l.id);
     const posted = new Set(
-      (await db.select({ id: erpSfgEntries.sourceId }).from(erpSfgEntries).where(eq(erpSfgEntries.sourceType, "sfg"))).map((x) => x.id),
+      lineIds.length
+        ? (await db.select({ id: erpSfgEntries.sourceId }).from(erpSfgEntries).where(and(eq(erpSfgEntries.sourceType, "sfg"), inArray(erpSfgEntries.sourceId, lineIds)))).map((x) => x.id)
+        : [],
     );
-    const [qc, qcTests] = await Promise.all([sfgQcMap(), refValues("testingList")]);
+    const [qc, qcTests] = await Promise.all([sfgQcMap(rows.map((x) => x.l.lotCode)), refValues("testingList")]);
     const qcApprover = ctx.powers.has("approveSfgQc");
     /* The Testing list's active values are what QC is asked about, with the
        same evidence a purchase test records — a photograph per test, the
@@ -282,6 +321,7 @@ const sfgBatches: ScreenModule = {
         newLabel: "New SFG batch",
         noDataLine: "No SFG batches yet. A batch consumes raw-material lots at one godown.",
       },
+      tooWide: wide,
       rows: rows.map((x): ListRow => {
         const rate = rmRate.get(x.l.rmLotNo) ?? null;
         const actions: ActionSpec[] = [
@@ -511,7 +551,7 @@ async function decideQcMany(ctx: ErpContext, lineIds: string[], status: "Approve
   const lines = await db.select({ lot: erpSfgLines.lotCode }).from(erpSfgLines).where(inArray(erpSfgLines.id, lineIds));
   const lots = Array.from(new Set(lines.map((l) => l.lot).filter((l): l is string => !!l)));
   if (!lots.length) return err("Those batch lines no longer exist.", "not_found");
-  const qc = await sfgQcMap();
+  const qc = await sfgQcMap(lots);
   const todo = lots.filter((lot) => (qc.get(lot)?.status ?? "Pending") !== status);
   const already = lots.length - todo.length;
   if (!todo.length) return err(`${lots.length === 1 ? `SFG lot ${lots[0]} is` : `All ${lots.length} lots are`} already ${status}.`, "rule_violation");
@@ -668,15 +708,15 @@ async function fgCatalogue() {
 }
 
 async function fillForm(ctx: ErpContext, fixed?: { fgNum: number; date: string; godown: string }): Promise<FormSpec> {
-  const [gds, sfg, cat, levelAvail, rates, mats, qc] = await Promise.all([
+  const [gds, sfg, cat, levelAvail, mats] = await Promise.all([
     godownOptions(ctx, { lost: false }),
     sfgLots(),
     fgCatalogue(),
     rmLevelAvailable(),
-    sfgRates(),
     db.select({ id: erpRawMaterials.id, name: erpRawMaterials.name, price: erpRawMaterials.pricePaise, type: erpRawMaterials.materialType }).from(erpRawMaterials),
-    sfgQcMap(),
   ]);
+  /* The lots in stock carry their own rate; their QC is asked for them alone. */
+  const qc = await sfgQcMap(sfg.filter((l) => l.stock > 0).map((l) => l.lotCode));
   const products: Record<string, string[]> = {};
   const lotsOf: Record<string, string[]> = {};
   const avail: Record<string, number> = {};
@@ -688,7 +728,7 @@ async function fillForm(ctx: ErpContext, fixed?: { fgNum: number; date: string; 
     if (!(products[l.godown] ??= []).includes(l.product)) products[l.godown].push(l.product);
     (lotsOf[pair(l.godown, l.product)] ??= []).push(l.lotCode);
     avail[pair(l.godown, l.lotCode)] = l.stock;
-    sfgRate[l.lotCode] = rates.get(l.lotCode) ?? null;
+    sfgRate[l.lotCode] = l.ratePaise;
   }
   const packAvail: Record<string, number> = {};
   const packRate: Record<string, number | null> = {};
@@ -724,10 +764,17 @@ async function fillForm(ctx: ErpContext, fixed?: { fgNum: number; date: string; 
   };
 }
 
+const FILL_WINDOW = { label: "Fill date", default: "month" } as const;
+
 const fgFill: ScreenModule = {
   key: "fgFill",
-  async load(ctx) {
-    const [rows, rates, sfg] = await Promise.all([
+  window: FILL_WINDOW,
+  async load(ctx, s) {
+    const sc = s ?? unscoped();
+    const where = windowWhere(sql`${erpFgFills.fillDate}`, sql`${erpFgFills.id}`, sc);
+    const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(erpFgFills).where(where);
+    const wide = tooWide(Number(n), sc);
+    const [rows] = await Promise.all([
       db
         .select({ f: erpFgFills, fg: finishedGoods.name, sfg: productFormulations.name, godown: erpGodowns.name, canUse: erpRawMaterials.name, packPrice: erpRawMaterials.pricePaise, by: users.name })
         .from(erpFgFills)
@@ -736,12 +783,16 @@ const fgFill: ScreenModule = {
         .innerJoin(erpGodowns, eq(erpGodowns.id, erpFgFills.godownId))
         .leftJoin(erpRawMaterials, eq(erpRawMaterials.id, erpFgFills.canUseId))
         .leftJoin(users, eq(users.id, erpFgFills.createdById))
+        .where(wide ? sql`false` : where)
         .orderBy(desc(erpFgFills.fillDate), desc(erpFgFills.fgNum)),
-      fgRates(),
-      sfgRates(),
     ]);
-    void rates;
-    const posted = new Set((await db.select({ id: erpFgEntries.sourceId }).from(erpFgEntries).where(eq(erpFgEntries.sourceType, "fill"))).map((x) => x.id));
+    const sfg = await sfgRates([...new Set(rows.map((x) => x.f.sfgLotCode))]);
+    const fillIds = rows.map((x) => x.f.id);
+    const posted = new Set(
+      fillIds.length
+        ? (await db.select({ id: erpFgEntries.sourceId }).from(erpFgEntries).where(and(eq(erpFgEntries.sourceType, "fill"), inArray(erpFgEntries.sourceId, fillIds)))).map((x) => x.id)
+        : [],
+    );
     const all: Col[] = [
       { k: "fgNum", l: "FG num", t: "mono" },
       { k: "date", l: "Date", t: "d" },
@@ -775,6 +826,7 @@ const fgFill: ScreenModule = {
         newLabel: "New FG filling",
         noDataLine: "No FG filling yet. A filling draws SFG from one lot into cans or drums.",
       },
+      tooWide: wide,
       rows: rows.map((x): ListRow => {
         const fig = fillFigures({
           canSize: x.f.canSize,
@@ -1029,9 +1081,13 @@ async function packForm(ctx: ErpContext, fixed?: { serial: number; batchNo: stri
 
 const packBatches: ScreenModule = {
   key: "packBatches",
-  async load(ctx) {
-    const [rows, costing, posted] = await Promise.all([
-      db
+  window: PACK_WINDOW,
+  async load(ctx, s) {
+    const sc = s ?? unscoped();
+    const where = groupWhere("erp_pack_lines", "batch_no", "pack_date", sc);
+    const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(erpPackLines).where(where);
+    const wide = tooWide(Number(n), sc);
+    const rowsQ = db
         .select({ l: erpPackLines, fg: finishedGoods.name, sku: products.name, cpb: products.cansPerBox, godown: erpGodowns.name, empty: erpProductPacking.emptyBoxesRequired, boxType: erpProductPacking.boxType, by: users.name })
         .from(erpPackLines)
         .innerJoin(finishedGoods, eq(finishedGoods.id, erpPackLines.finishedGoodId))
@@ -1039,10 +1095,15 @@ const packBatches: ScreenModule = {
         .innerJoin(erpGodowns, eq(erpGodowns.id, erpPackLines.godownId))
         .leftJoin(erpProductPacking, eq(erpProductPacking.productId, erpPackLines.skuId))
         .leftJoin(users, eq(users.id, erpPackLines.createdById))
-        .orderBy(desc(erpPackLines.packDate), desc(erpPackLines.batchSerial), asc(erpPackLines.createdAt)),
-      packBatchCosting(),
-      db.select({ id: erpPackEntries.sourceId }).from(erpPackEntries).where(eq(erpPackEntries.sourceType, "batch")),
-    ]);
+        .where(wide ? sql`false` : where)
+        .orderBy(desc(erpPackLines.packDate), desc(erpPackLines.batchSerial), asc(erpPackLines.createdAt));
+    const rows = await rowsQ;
+    const costing = await packBatchCosting([...new Set(rows.map((r) => r.l.batchNo))]);
+    /* Which of THESE batches have posted — never every entry in the ledger. */
+    const batchNos = [...new Set(rows.map((r) => r.l.batchNo))];
+    const posted = batchNos.length
+      ? await db.select({ id: erpPackEntries.sourceId }).from(erpPackEntries).where(and(eq(erpPackEntries.sourceType, "batch"), inArray(erpPackEntries.sourceId, batchNos)))
+      : [];
     const postedSet = new Set(posted.map((p) => p.id));
     const byBatch = new Map<string, typeof rows>();
     rows.forEach((r) => byBatch.set(r.l.batchNo, [...(byBatch.get(r.l.batchNo) ?? []), r]));
@@ -1073,6 +1134,7 @@ const packBatches: ScreenModule = {
         newLabel: "New packing batch",
         noDataLine: "No packing yet. A batch boxes loose cans of one SKU.",
       },
+      tooWide: wide,
       rows: rows.map((x): ListRow => {
         const batch = byBatch.get(x.l.batchNo) ?? [x];
         const st = batchState(x.l.boxes, x.cpb, batch.map((b) => ({ id: b.l.id, cans: b.l.cans })));
@@ -1233,21 +1295,26 @@ async function savePack(ctx: ErpContext, h: Record<string, string>): Promise<Res
 
 /* ========================================================= stock screens */
 
-async function entryOrphans(table: "sfg" | "fg" | "pack"): Promise<Set<string>> {
+/** Entries whose source is gone — among those `within` keeps (the log's window), or all of them. */
+async function entryOrphans(table: "sfg" | "fg" | "pack", within: SQL = sql`true`): Promise<Set<string>> {
   const q =
     table === "sfg"
-      ? sql`select e.id from erp_sfg_entries e where (e.source_type = 'sfg' and not exists (select 1 from erp_sfg_lines l where l.id = e.source_id)) or (e.source_type = 'transfer' and not exists (select 1 from erp_transfers t where t.id = e.source_id)) or (e.source_type = 'rework' and not exists (select 1 from erp_rework_orders w where w.id = e.source_id and w.status = 'completed'))`
+      ? sql`select e.id from erp_sfg_entries e where (${within}) and ((e.source_type = 'sfg' and not exists (select 1 from erp_sfg_lines l where l.id = e.source_id)) or (e.source_type = 'transfer' and not exists (select 1 from erp_transfers t where t.id = e.source_id)) or (e.source_type = 'rework' and not exists (select 1 from erp_rework_orders w where w.id = e.source_id and w.status = 'completed')))`
       : table === "fg"
-        ? sql`select e.id from erp_fg_entries e where (e.source_type = 'fill' and not exists (select 1 from erp_fg_fills f where f.id = e.source_id)) or (e.source_type = 'transfer' and not exists (select 1 from erp_transfers t where t.id = e.source_id)) or (e.source_type = 'return' and not exists (select 1 from erp_return_dispositions d where d.id = e.source_id and d.status = 'active'))`
-        : sql`select e.id from erp_pack_entries e where (e.source_type = 'batch' and not exists (select 1 from erp_pack_lines l where l.batch_no = e.source_id)) or (e.source_type = 'transfer' and not exists (select 1 from erp_transfers t where t.id = e.source_id)) or (e.source_type = 'return' and not exists (select 1 from erp_return_dispositions d where d.id = e.source_id and d.status = 'active'))`;
+        ? sql`select e.id from erp_fg_entries e where (${within}) and ((e.source_type = 'fill' and not exists (select 1 from erp_fg_fills f where f.id = e.source_id)) or (e.source_type = 'transfer' and not exists (select 1 from erp_transfers t where t.id = e.source_id)) or (e.source_type = 'return' and not exists (select 1 from erp_return_dispositions d where d.id = e.source_id and d.status = 'active')))`
+        : sql`select e.id from erp_pack_entries e where (${within}) and ((e.source_type = 'batch' and not exists (select 1 from erp_pack_lines l where l.batch_no = e.source_id)) or (e.source_type = 'transfer' and not exists (select 1 from erp_transfers t where t.id = e.source_id)) or (e.source_type = 'return' and not exists (select 1 from erp_return_dispositions d where d.id = e.source_id and d.status = 'active')))`;
   return new Set(((await db.execute(q)) as unknown as { id: string }[]).map((r) => r.id));
 }
 
 const sfgStock: ScreenModule = {
   key: "sfgStock",
-  async load(ctx) {
-    const [all0, qc] = await Promise.all([sfgLots(), sfgQcMap()]);
-    const lots = all0.filter((l) => l.stock > 0);
+  window: STOCK_WINDOW,
+  async load(ctx, s) {
+    const sc = s ?? unscoped();
+    const inStock = (await sfgLots()).filter((l) => l.stock > 0 && inWindow(l.latestDate, `${l.lotCode}|${l.godownId}`, sc));
+    const wide = tooWide(inStock.length, sc);
+    const lots = wide ? [] : inStock;
+    const qc = await sfgQcMap(lots.map((l) => l.lotCode));
     const all: Col[] = [
       { k: "date", l: "Date", t: "d" },
       { k: "product", l: "SFG product", t: "b" },
@@ -1264,6 +1331,7 @@ const sfgStock: ScreenModule = {
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
     return {
       spec: { screen: "sfgStock", cols, hidden, groups: ["godown", "lot"], agg: { k: "stock", l: "litres" }, godownKey: "godown", readOnly: true, noDataLine: "No SFG in stock. Stock appears as SFG batches are saved." },
+      tooWide: wide,
       rows: lots.map((l) => ({
         id: `${l.lotCode}|${l.godownId}`,
         v: withoutHidden(
@@ -1296,8 +1364,12 @@ const sfgStock: ScreenModule = {
 
 const fgStock: ScreenModule = {
   key: "fgStock",
-  async load(ctx) {
-    const lots = (await fgLots()).filter((l) => l.stock > 0);
+  window: STOCK_WINDOW,
+  async load(ctx, s) {
+    const sc = s ?? unscoped();
+    const inStock = (await fgLots()).filter((l) => l.stock > 0 && inWindow(l.latestDate, `${l.finishedGoodId}|${l.lotCode}|${l.godownId}`, sc));
+    const wide = tooWide(inStock.length, sc);
+    const lots = wide ? [] : inStock;
     const labelled = new Map(
       ((await db.execute(sql`select lot_code || '|' || godown_id as k, count(*)::int as n from erp_units where lot_from = 'fg' and status in ('available', 'hold') group by 1`)) as unknown as { k: string; n: number }[]).map((r) => [r.k, Number(r.n)]),
     );
@@ -1315,6 +1387,7 @@ const fgStock: ScreenModule = {
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
     return {
       spec: { screen: "fgStock", cols, hidden, groups: ["godown"], agg: { k: "stock", l: "cans" }, godownKey: "godown", readOnly: true, noDataLine: "No finished goods in stock. Stock appears as filling is saved." },
+      tooWide: wide,
       rows: lots.map((l) => ({
         id: `${l.finishedGoodId}|${l.lotCode}|${l.godownId}`,
         v: withoutHidden(
@@ -1379,8 +1452,12 @@ const fgStock: ScreenModule = {
 
 const packStock: ScreenModule = {
   key: "packStock",
-  async load(ctx) {
-    const lots = (await packLots()).filter((l) => l.stock > 0);
+  window: STOCK_WINDOW,
+  async load(ctx, s) {
+    const sc = s ?? unscoped();
+    const inStock = (await packLots()).filter((l) => l.stock > 0 && inWindow(l.latestDate, `${l.batchNo}|${l.godownId}`, sc));
+    const wide = tooWide(inStock.length, sc);
+    const lots = wide ? [] : inStock;
     const all: Col[] = [
       { k: "date", l: "Date", t: "d" },
       { k: "batch", l: "Batch no", t: "mono" },
@@ -1393,6 +1470,7 @@ const packStock: ScreenModule = {
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
     return {
       spec: { screen: "packStock", cols, hidden, groups: ["sku"], agg: { k: "stock", l: "boxes" }, godownKey: "godown", readOnly: true, noDataLine: "No boxed stock. A packing batch reaches stock once its cans match its boxes." },
+      tooWide: wide,
       rows: lots.map((l) => ({
         id: `${l.batchNo}|${l.godownId}`,
         v: withoutHidden(
@@ -1419,22 +1497,31 @@ const packStock: ScreenModule = {
   },
 };
 
+/* A stock log is the ledger itself, the fastest-growing table there is: read by entry date. */
+const LOG_WINDOW = { label: "Entry date", default: "month" } as const;
+
 function logScreen(key: "sfgLog" | "fgLog" | "packLog"): ScreenModule {
   return {
     key,
-    async load() {
+    window: LOG_WINDOW,
+    async load(_ctx, s) {
+      const sc = s ?? unscoped();
       const table = key === "sfgLog" ? "sfg" : key === "fgLog" ? "fg" : "pack";
-      const orphans = await entryOrphans(table);
+      const within = windowWhere(sql`e.entry_date`, sql`e.id`, sc);
+      const ledger = sql.raw(table === "sfg" ? "erp_sfg_entries" : table === "fg" ? "erp_fg_entries" : "erp_pack_entries");
+      const [{ n }] = (await db.execute(sql`select count(*)::int as n from ${ledger} e where ${within}`)) as unknown as { n: number }[];
+      const wide = tooWide(Number(n), sc);
+      const orphans = wide ? new Set<string>() : await entryOrphans(table, within);
       const q =
         table === "sfg"
           ? sql`select e.id, e.entry_date::text as date, e.source_type as type, e.source_id as source, f.name as item, e.lot_code as lot, e.quantity::float8 as qty, g.name as godown, e.posted_at as "postedAt"
-                  from erp_sfg_entries e join product_formulations f on f.id = e.formulation_id join erp_godowns g on g.id = e.godown_id order by e.entry_date desc, e.posted_at desc, e.id desc`
+                  from erp_sfg_entries e join product_formulations f on f.id = e.formulation_id join erp_godowns g on g.id = e.godown_id where ${within} order by e.entry_date desc, e.posted_at desc, e.id desc`
           : table === "fg"
             ? sql`select e.id, e.entry_date::text as date, e.source_type as type, e.source_id as source, fg.name as item, e.lot_code as lot, e.quantity::float8 as qty, g.name as godown, e.posted_at as "postedAt"
-                    from erp_fg_entries e join finished_goods fg on fg.id = e.finished_good_id join erp_godowns g on g.id = e.godown_id order by e.entry_date desc, e.posted_at desc, e.id desc`
+                    from erp_fg_entries e join finished_goods fg on fg.id = e.finished_good_id join erp_godowns g on g.id = e.godown_id where ${within} order by e.entry_date desc, e.posted_at desc, e.id desc`
             : sql`select e.id, e.entry_date::text as date, e.source_type as type, e.source_id as source, p.name as item, e.batch_no as lot, e.boxes::float8 as qty, g.name as godown, e.posted_at as "postedAt"
-                    from erp_pack_entries e join products p on p.id = e.sku_id join erp_godowns g on g.id = e.godown_id order by e.entry_date desc, e.posted_at desc, e.id desc`;
-      const rows = (await db.execute(q)) as unknown as { id: string; date: string; type: string; source: string; item: string; lot: string; qty: number; godown: string; postedAt: Date }[];
+                    from erp_pack_entries e join products p on p.id = e.sku_id join erp_godowns g on g.id = e.godown_id where ${within} order by e.entry_date desc, e.posted_at desc, e.id desc`;
+      const rows = wide ? [] : ((await db.execute(q)) as unknown as { id: string; date: string; type: string; source: string; item: string; lot: string; qty: number; godown: string; postedAt: Date }[]);
       const typeLabel = (t: string) =>
         t === "transfer" ? "Transfer" : t === "return" ? "Customer return (reused)" : t === "rework" ? "Rework" : table === "sfg" ? "Batch" : table === "fg" ? "Filling" : "Packing";
       const cols: ColSpec[] = [
@@ -1448,6 +1535,7 @@ function logScreen(key: "sfgLog" | "fgLog" | "packLog"): ScreenModule {
       ];
       return {
         spec: { screen: key, cols, hidden: [], groups: ["godown"], godownKey: "godown", readOnly: true, sortDefault: ["date", -1], noDataLine: "Nothing here yet. Entries appear on their own as documents post." },
+        tooWide: wide,
         rows: rows.map((r) => ({
           id: r.id,
           v: { date: r.date, type: typeLabel(r.type), item: r.item, lot: r.lot, qty: Number(r.qty), godown: r.godown, source: r.source },

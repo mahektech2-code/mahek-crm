@@ -31,7 +31,8 @@ const NOT_YOURS = { title: "Not yours to decide", text: "Only Mixing & Blending 
 const DECIDED_DAYS = 7;
 
 async function lotsWithVerdicts(): Promise<QcLot[]> {
-  const [lots, qc] = await Promise.all([sfgLots(), sfgQcMap()]);
+  const lots = await sfgLots();
+  const qc = await sfgQcMap(lots.map((l) => l.lotCode));
   /* sfgLots is a row per lot per godown: a lot moved between godowns is one
      lot, decided once, so it is summed here and named by where most of it is. */
   const byLot = new Map<string, { product: string; made: string; litres: number; godown: string; most: number }>();

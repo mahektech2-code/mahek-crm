@@ -7,6 +7,7 @@ import { screenTabs } from "../_ui/screen-tabs";
 import { LIST_QUERY_KEYS, pageOf, parseListQuery } from "@/lib/erp/list-query";
 import { FLAG } from "@/lib/erp/ui";
 import { withReadMemo } from "@/lib/erp/read-memo";
+import { scopeFor, windowInfo } from "@/lib/erp/window";
 
 /**
  * Every list screen in the ERP. The screen's module on the server decides the
@@ -47,15 +48,17 @@ export default async function ErpScreenPage({
   const mod = screenModule(key);
   if (!mod) notFound();
 
-  const [{ spec, rows }, { tabs, toggle }] = await withReadMemo(() => Promise.all([mod.load(ctx), screenTabs(ctx, screen, key)]));
+  /* ONE PAGE travels, never the list. The search, the chip, the sort and the
+     page are in the URL and read here; the browser is sent the twenty-five
+     rows it draws and what it needs to say about the rest. A register is also
+     READ through its window (`window.ts`): only the period's rows are built. */
+  const query = parseListQuery(raw);
+  const scope = scopeFor(mod.window, query, sp.open ?? null);
+  const [{ spec, rows, tooWide }, { tabs, toggle }] = await withReadMemo(() => Promise.all([mod.load(ctx, scope), screenTabs(ctx, screen, key)]));
   /* A dashboard tile opens its list pre-filtered: `f` is the ids it counted,
      `fl` what to call them. */
   const filter = sp.f ? { label: sp.fl ?? "Filtered", ids: sp.f.split(",") } : null;
-  /* ONE PAGE travels, never the list. The search, the chip, the sort and the
-     page are in the URL and read here; the browser is sent the twenty-five
-     rows it draws and what it needs to say about the rest. */
-  const query = parseListQuery(raw);
-  const page = pageOf(spec, rows, query, FLAG);
+  const page = { ...pageOf(spec, rows, query, FLAG), ...(mod.window ? { window: windowInfo(mod.window, scope, tooWide ?? null) } : {}) };
   const openRow = sp.open ? (rows.find((r) => r.id === sp.open) ?? null) : null;
 
   return (

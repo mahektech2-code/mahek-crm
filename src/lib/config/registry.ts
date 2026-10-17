@@ -4937,6 +4937,17 @@ export const SETTINGS = [
     max: 90,
   },
   {
+    key: "erp.ai.alerts.lookbackDays",
+    type: "integer",
+    category: "erp-ai",
+    label: "Alert lookback (days)",
+    description:
+      "How far back the alert pass looks for something new: a rate, a loss, a slow dispatch, an expense. Anything older is history, not news — it is never raised, and an alert about it resolves. What is still stuck (a test undecided, a bill without its LR, a packing batch incomplete) is found however old it is.",
+    default: 30,
+    min: 1,
+    max: 365,
+  },
+  {
     key: "erp.ai.alerts.duplicateExpenseDays",
     type: "integer",
     category: "erp-ai",
@@ -6373,6 +6384,7 @@ export type Config = {
   "erp.ai.alerts.stuckLrDays": number;
   "erp.ai.alerts.stuckCnDays": number;
   "erp.ai.alerts.stuckPackDays": number;
+  "erp.ai.alerts.lookbackDays": number;
   "erp.ai.alerts.duplicateExpenseDays": number;
   "erp.ai.complaints.enabled": boolean;
   "erp.ai.complaints.clusterThreshold": number;

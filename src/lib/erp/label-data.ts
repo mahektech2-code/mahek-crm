@@ -111,7 +111,7 @@ export type SfgLabelRow = { label: SfgLabel; qr: Qr };
  * on the drum are the ones on the screen.
  */
 export async function sfgLabel(lotCode: string, godownId: string | null): Promise<SfgLabelRow | null> {
-  const lots = (await sfgLots()).filter((l) => l.lotCode === lotCode);
+  const lots = await sfgLots(undefined, { lots: [lotCode] });
   const l = lots.find((x) => x.godownId === godownId) ?? (godownId ? undefined : lots.find((x) => x.stock > 0) ?? lots[0]);
   if (!l) return null;
   return {
@@ -186,7 +186,7 @@ export type DispatchLabelRow = { label: DispatchLabel; lineId: string; copies: n
  * are the ones on the Labels tab.
  */
 export async function dispatchLabels(orderNo: number): Promise<DispatchLabelRow[]> {
-  const lines = (await orderLines()).filter((l) => l.o.orderNo === orderNo && l.o.status !== "Cancel");
+  const lines = (await orderLines({ orderNos: [orderNo] })).filter((l) => l.o.status !== "Cancel");
   if (!lines.length) return [];
   /* Entered order, not newest first: the labels come off the roll as the order was written. */
   lines.sort((a, b) => a.o.createdAt.getTime() - b.o.createdAt.getTime());

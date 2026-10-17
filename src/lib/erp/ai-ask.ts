@@ -8,6 +8,8 @@ import type { ErpContext } from "./access";
 import { featureState, logSuggestion } from "./ai";
 import { erpLink, erpListLabel, erpScreen } from "./registry";
 import { screenModule } from "./screens";
+import { withReadMemo } from "./read-memo";
+import { scopeFor } from "./window";
 import { today } from "./screens/common";
 import { traceBill } from "./trace";
 import type { CellValue, ListRow } from "./ui";
@@ -30,7 +32,12 @@ async function fromScreen(ctx: ErpContext, key: string, keep: (r: ListRow) => bo
   if (!ctx.screens.has(key)) return { refused: `The ${erpListLabel(key)} screen is not on this person's account.` };
   const mod = screenModule(key);
   if (!mod) return { refused: "That screen is not built." };
-  const { spec, rows } = await mod.load(ctx);
+  /* A question reaches further back than a page opens on, but never the whole
+     history: the widest window that fits under the cap — this financial year,
+     else the last ninety days, else thirty. */
+  let read = await withReadMemo(() => mod.load(ctx, scopeFor(mod.window, { pd: "fy", ids: null }, null)));
+  for (const pd of ["90d", "30d"]) if (read.tooWide) read = await withReadMemo(() => mod.load(ctx, scopeFor(mod.window, { pd, ids: null }, null)));
+  const { spec, rows } = read;
   const kept = rows.filter(keep);
   const href = kept.length && kept.length <= 200 ? erpLink(key, { f: kept.map((r) => r.id).join(","), fl: label }) : erpLink(key);
   records.push({ label: `${erpListLabel(key)} · ${label} (${kept.length})`, href });

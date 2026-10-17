@@ -6,7 +6,7 @@ import { db } from "@/db";
 import { erpInward, erpPurchases, erpTests } from "@/db/schema";
 import type { ErpContext } from "./access";
 import { fgReorderRows, rmReorderRows } from "./screens/movement";
-import { detailRows, isPendingLine, isWorkingLine, orderLines } from "./screens/sales";
+import { detailedOrdersOf, isPendingLine, isWorkingLine, orderLines } from "./screens/sales";
 
 /* ---------------------------------------------------------------------------
  * The sidebar's badges: work waiting on a screen (untested inward lines,
@@ -59,8 +59,9 @@ export async function incompletePackIds(): Promise<string[]> {
 
 /** Open order lines not yet in order details, the Pending Orders list's own rule. */
 export async function salesCounts() {
-  const lines = await orderLines();
-  const detailed = new Set(lines.filter((l) => l.inDetails).map((l) => l.o.orderNo));
+  /* Every badge is open work, so open work is all that is read — never the book. */
+  const lines = await orderLines({ openWork: true });
+  const detailed = detailedOrdersOf(lines);
   const pending = lines.filter((l) => isPendingLine(l, detailed));
   const working = lines.filter(isWorkingLine);
   const toAllocate = lines.filter((l) => l.o.status === "Ready" && l.o.entryStatus !== "Done" && l.allocation === "Add More Quantity");
@@ -70,7 +71,12 @@ export async function salesCounts() {
 
 /** Detail lines still waiting for dispatch verification. */
 export async function unverifiedIds(): Promise<string[]> {
-  return (await detailRows()).rows.filter((r) => !r.d.verification || r.d.verification === "Pending").map((r) => r.l.o.id);
+  /* One indexed read, not the order details screen's whole build: a badge is a number. */
+  const rows = (await db.execute(sql`
+    select d.order_id as id from erp_order_details d join erp_orders o on o.id = d.order_id
+     where d.verification is null or d.verification = 'Pending'
+  `)) as unknown as { id: string }[];
+  return rows.map((r) => r.id);
 }
 
 /**

@@ -11,6 +11,7 @@ import { Icon as ShellIcon } from "@/components/shell/icons";
 import { Button, Card, cx, EmptyState, SortableTh, Td, Th, Tr } from "@/components/ui/primitives";
 import { SelectionBar, Tabs } from "@/components/ui/overlays";
 import { Pager } from "@/components/ui/pager";
+import { PeriodPicker } from "./period-picker";
 import { FlagBadge, flagsBesideStatus, rowTone, StatusBadge } from "./badge";
 import { GodownPicker, type PickItem } from "./godown-picker";
 import { Icon } from "./icons";
@@ -147,7 +148,7 @@ export function ListScreen({
   const router = useRouter();
   const path = usePathname();
   const params = useSearchParams();
-  const [local, setLocal] = useState<ListQuery>({ q: "", chip: "", gf: "", grp: true, sort: null, page: 1, size: 25, ids: filter?.ids ?? null });
+  const [local, setLocal] = useState<ListQuery>({ q: "", chip: "", gf: "", grp: true, sort: null, page: 1, size: 25, ids: filter?.ids ?? null, pd: "" });
   /* While the server cuts the next page the current one stays, dimmed — never a blank table between two pages. */
   const [pending, startTransition] = useTransition();
   /* The search box answers as it is typed; the server is asked once the typing pauses. */
@@ -300,6 +301,8 @@ export function ListScreen({
   /* "Nothing here yet. Entries appear as …" reads as a heading and the
      sentence that explains it, not as one bold paragraph. */
   const [emptyTitle, emptyBody] = splitFirstSentence(spec.noDataLine ?? "Nothing here yet.");
+  /* A register read through a window: the period picker, and what to say when the period is empty or too long. */
+  const win = server?.window ?? null;
   const noMatchBits = [q ? `“${q}”` : "", chip, filter ? filter.label.toLowerCase() : "", gf].filter(Boolean).join(" · ");
   const pickChip = (v: string) => setQuery({ chip: v, page: 1 });
 
@@ -362,7 +365,7 @@ export function ListScreen({
 
         {/* An empty list has nothing to search, group or choose columns of:
             the toolbar is drawn once there is something to work on. */}
-        {lp.all > 0 || filter ? (
+        {lp.all > 0 || filter || win ? (
         <div className="flex flex-wrap items-center gap-2.5 border-b border-divider px-4 py-3">
           <div className="relative w-[300px] max-w-full">
             <ShellIcon name="search" size={16} className="pointer-events-none absolute top-2 left-2.5 text-muted" />
@@ -378,6 +381,7 @@ export function ListScreen({
               </button>
             ) : null}
           </div>
+          {win ? <PeriodPicker key={win.pd} pd={win.pd} label={win.label} dateLabel={win.dateLabel} onPick={(pd) => setQuery({ pd, page: 1 })} /> : null}
           {chips.length > MAX_TABS ? (
             <select
               value={chip}
@@ -435,7 +439,14 @@ export function ListScreen({
 
         {spec.scopedLine ? <div className="border-b border-divider bg-brand-soft/40 px-4 py-2 text-meta text-brand-hover">{spec.scopedLine}</div> : null}
 
-        {lp.all === 0 ? (
+        {win?.tooWide ? (
+          <EmptyState
+            title="That period is too long to show"
+            body={`${win.label} holds ${nf(win.tooWide.n)} rows, and this list reads at most ${nf(win.tooWide.cap)} at a time. Pick a shorter period, or search within one.`}
+          />
+        ) : lp.all === 0 && win ? (
+          <EmptyState title={`Nothing in ${lowerFirst(win.label)}`} body={`No rows have a ${lowerFirst(win.dateLabel)} in this period. Pick a longer one to see older rows.`} />
+        ) : lp.all === 0 ? (
           <EmptyState
             title={emptyTitle}
             body={emptyBody}

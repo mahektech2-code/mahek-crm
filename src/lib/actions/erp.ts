@@ -17,6 +17,7 @@ import { erpScreen, erpHref, erpLink } from "@/lib/erp/registry";
 import { FLAG, type FormSpec } from "@/lib/erp/ui";
 import { listCsv, parseListQuery, queryRows } from "@/lib/erp/list-query";
 import { withReadMemo } from "@/lib/erp/read-memo";
+import { scopeFor } from "@/lib/erp/window";
 import { erpAudit } from "@/lib/erp/server";
 
 /* ---------------------------------------------------------------------------
@@ -127,8 +128,10 @@ export async function erpListExport(screen: string, query: Record<string, string
     const ctx = await requireErpForm(screen);
     const mod = screenModule(screen);
     if (!mod) return err("That list is not available.", "not_found");
-    const { spec, rows } = await withReadMemo(() => mod.load(ctx));
-    return ok(listCsv(spec, rows, parseListQuery(query), FLAG));
+    const q = parseListQuery(query);
+    const { spec, rows, tooWide } = await withReadMemo(() => mod.load(ctx, scopeFor(mod.window, q, null)));
+    if (tooWide) return err(`That period holds ${tooWide.n.toLocaleString("en-IN")} rows — pick a shorter one to export.`, "rule_violation");
+    return ok(listCsv(spec, rows, q, FLAG));
   } catch (e) {
     return refused(e);
   }
@@ -139,8 +142,9 @@ export async function erpListIds(screen: string, query: Record<string, string>):
     const ctx = await requireErpForm(screen);
     const mod = screenModule(screen);
     if (!mod) return err("That list is not available.", "not_found");
-    const { spec, rows } = await withReadMemo(() => mod.load(ctx));
-    return ok(queryRows(spec, rows, parseListQuery(query), FLAG).list.map((r) => r.id));
+    const q = parseListQuery(query);
+    const { spec, rows } = await withReadMemo(() => mod.load(ctx, scopeFor(mod.window, q, null)));
+    return ok(queryRows(spec, rows, q, FLAG).list.map((r) => r.id));
   } catch (e) {
     return refused(e);
   }

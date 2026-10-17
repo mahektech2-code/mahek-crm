@@ -2925,6 +2925,62 @@ and the arrangement sat a hundred screens below the fold. The accounts with the
 most history are the ones somebody most needs to read before ringing, and they
 were the ones whose record you could reach the least of.
 
+**A LIST COSTS ITS PAGE, NEVER ITS HISTORY.** The ERP's screen contract was
+`load(ctx)` — every row the screen could ever show, built into objects with
+their drawers and actions, then searched, sorted and cut to twenty-five in
+memory. Fine at twelve trial orders; the day the Taken Order history arrived it
+was 22,154 order lines, and the sidebar badges read the whole book three times a
+request on top of the screen itself. The server went past its 320 MB heap, was
+killed, restarted, was killed again, and the whole suite answered 502.
+
+So there are two kinds of list and each is read in SQL. A REGISTER — orders,
+order details, purchases, inward, tests, SFG/FG/packing batches, the three
+stock logs, transfers, batch codes, the bills register — declares a `window`
+(the date it is cut by, and the period it opens on, usually this month) and
+`load(ctx, scope)` turns `scope.window` into a WHERE (`lib/erp/window.ts`); the
+period travels in the URL as `pd` and the toolbar has a picker
+(`lib/erp/period.ts`, pure, financial year from April). A LIST OF WORK — pending
+and ready orders, the labels list, badges, the dashboard's sales tiles, the
+alerts' "still stuck" checks, the factory phone — reads by STATE
+(`orderLines({ openWork: true })`), so it is as large as the backlog. Every
+search, chip, sort and group keeps working inside what was read.
+
+**The window cuts the register, never the work.** A line still awaiting
+dispatch verification, an inward not yet routed, a test nobody has decided all
+show whatever the period. `?open=` and a dashboard's `?f=` ids WIDEN a window
+rather than narrow it, because they name records somebody asked for; "Show the
+whole order" is ids for the same reason.
+
+**And a window has a ceiling.** A register counts before it builds and, past
+`ROW_CAP` (3,000), builds nothing and says so ("that period is too long to
+show"). That is what makes the server's memory a function of the cap rather
+than of the data: "All time" is allowed while all time is small and refused, in
+words, the day it is not. Stock screens open on all time under the same cap — a
+healthy book has a few hundred lots in stock; one whose dispatches have not
+been imported holds every lot ever made.
+
+**Stock reads return lots that hold something, and rates only for those.**
+`rmLots`/`sfgLots`/`fgLots`/`packLots` used to return every lot ever made and
+cost every one of them from every line (`sfgRates`, `fgRates`,
+`packBatchCosting` pulled ~10k raw rows each, on the factory phone's 45-second
+poll). Now the default is non-zero stock, and a caller that needs a used-up lot
+— a trace, a label, the lot a scan names, the costing of a lot already
+allocated — names it (`LotPick`). The rate helpers take the lots they are asked
+about and sum in SQL.
+
+**`erp-scale.test.ts` holds the line.** It seeds a book the size of the real one
+and loads EVERY built module as the page would, failing if any builds more than
+`ROW_CAP` rows: a new screen that reads a whole table fails in CI, not in
+production. `load(ctx)` with no scope reads all time under the cap — that is for
+tests and tools; every request path (the page, Logistics, Export, Select all,
+the ask box) passes a scope.
+
+**Alerts are news, so they read a lookback.** `erp.ai.alerts.lookbackDays`
+(30): purchases, losses, slow dispatches and expenses from inside it, and what
+is still stuck by state however old. Reading everything raised 237 "rate jumps"
+out of 2024 purchases the day they were imported; an alert whose subject falls
+out of the lookback resolves on the next pass.
+
 **A capped list says what it is a slice of, and the count comes from SQL.** The
 timeline's filter pills used to count what had been loaded, which is exactly
 why the page loaded everything: a capped read would have printed "Bill 34"

@@ -312,8 +312,9 @@ async function logScan(ctx: ErpContext, code: string, orderNo: number, result: s
 
 /** How many units of a lot at a godown the stock ledger still has free for allocation. */
 async function lotFree(tx: Tx, lotFrom: "pack" | "fg", lot: string, godownId: string, skuId: string): Promise<number> {
-  if (lotFrom === "pack") return (await packLots(tx)).find((x) => x.batchNo === lot && x.godownId === godownId)?.stock ?? 0;
-  return (await fgLots(tx)).find((x) => x.lotCode === lot && x.godownId === godownId && x.skuId === skuId)?.stock ?? (await fgLots(tx)).find((x) => x.lotCode === lot && x.godownId === godownId)?.stock ?? 0;
+  if (lotFrom === "pack") return (await packLots(tx, { lots: [lot] })).find((x) => x.batchNo === lot && x.godownId === godownId)?.stock ?? 0;
+  const fg = await fgLots(tx, { lots: [lot] });
+  return fg.find((x) => x.lotCode === lot && x.godownId === godownId && x.skuId === skuId)?.stock ?? fg.find((x) => x.lotCode === lot && x.godownId === godownId)?.stock ?? 0;
 }
 
 /** What lot a scanned code names, when it names no box: a packing batch, an FG, base-liquid or raw-material lot. */
