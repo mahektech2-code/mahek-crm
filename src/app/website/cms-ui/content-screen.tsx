@@ -17,13 +17,18 @@ import {
   restoreItemAction,
   saveContentAction,
   unpublishItemAction,
+  withdrawRequestAction,
 } from "@/lib/actions/website-cms";
 import { validateKindData } from "@/lib/website-cms/kinds";
+import type { ItemReview } from "@/lib/website-cms/review-queries";
 import type { ItemView } from "@/lib/website-cms/service";
 import { FieldEditor, firstPerPath, type Errors } from "./field-editor";
 import { LIST_UI, type ListKind } from "./field-defs";
 import { MediaThumb } from "./media-picker";
 import { reportPublish, reportResult, StateBadge } from "./report";
+import { isHeldByRequest } from "@/lib/website-cms/review-status";
+import { LockedFields } from "./locked-fields";
+import { ReviewBadge, ReviewLockNotice, ReviewReturnNotice, SubmitDialog } from "./review-ui";
 
 /* ---------------------------------------------------------------------------
  * ONE SCREEN FOR EVERY LIST OF WEBSITE CONTENT — products, industries, gallery,
@@ -50,11 +55,23 @@ export function ContentScreen({
   kind,
   items,
   canPublish,
+  canSubmit = false,
+  canCreate = true,
+  canMove = true,
+  review = {},
   orderChanged,
 }: {
   kind: ListKind;
   items: ItemView[];
   canPublish: boolean;
+  /** Hands work in for review rather than publishing it. */
+  canSubmit?: boolean;
+  /** Adding needs a whole-kind assignment where assignments are enforced. */
+  canCreate?: boolean;
+  /** So does reordering. */
+  canMove?: boolean;
+  /** Where each item stands in review: held by a request, or returned to this person. */
+  review?: Record<string, ItemReview>;
   /** The editor's order differs from the live order for this list. */
   orderChanged: boolean;
 }) {
@@ -65,7 +82,13 @@ export function ContentScreen({
   const [creating, setCreating] = React.useState(false);
   const [editing, setEditing] = React.useState<ItemView | null>(null);
   const [confirm, setConfirm] = React.useState<Confirm>(null);
+  const [submitting, setSubmitting] = React.useState<ItemView | null>(null);
   const [busy, setBusy] = React.useState(false);
+
+  /** Held by an OPEN request: it cannot be changed, deleted or submitted again. */
+  const held = (item: ItemView) => isHeldByRequest(review[item.id]);
+  /** Something to hand in: a draft nobody has seen, or a live item with unpublished changes. */
+  const submittable = (item: ItemView) => item.state !== "archived" && ((item.state === "published" && item.hasChanges) || (item.state === "draft" && !item.everPublished));
 
   const pending = items.filter((i) => (i.state === "published" && i.hasChanges) || (i.state === "draft" && !i.everPublished)).length + (orderChanged ? 1 : 0);
   const rows = items.filter((i) => filter === "all" || (filter === "live" && i.state === "published") || (filter === "draft" && i.state === "draft") || (filter === "archived" && i.state === "archived"));
@@ -100,8 +123,19 @@ export function ContentScreen({
       m.push({ label: "Archive", destructive: true, onSelect: () => setConfirm({ action: "archive", item }) });
     }
     if (canPublish && item.state === "archived") m.push({ label: "Restore as draft", onSelect: () => void run(async () => void reportPublish(toast, await restoreItemAction(item.id))) });
-    if (item.state === "draft" && !item.everPublished) m.push({ label: "Delete draft", destructive: true, onSelect: () => setConfirm({ action: "delete", item }) });
-    if (ui.ordered && filter === "all") {
+    const request = review[item.id];
+    if (canSubmit && submittable(item) && !held(item)) m.push({ label: "Submit for Verification", onSelect: () => setSubmitting(item) });
+    if (request?.mine) {
+      m.push({ label: request.status === "approved" ? "Open request — publish" : "Open request", onSelect: () => router.push(`/website/my-work/${request.requestId}`) });
+      if (held(item)) {
+        m.push({
+          label: "Withdraw request",
+          onSelect: () => void run(async () => void reportResult(toast, await withdrawRequestAction(request.requestId))),
+        });
+      }
+    }
+    if (item.state === "draft" && !item.everPublished && !held(item)) m.push({ label: "Delete draft", destructive: true, onSelect: () => setConfirm({ action: "delete", item }) });
+    if (ui.ordered && filter === "all" && canMove) {
       const i = items.findIndex((x) => x.id === item.id);
       m.push({ label: "Move up", disabled: i <= 0, onSelect: () => void run(async () => void reportResult(toast, await moveContentAction(item.id, "up"))) });
       m.push({ label: "Move down", disabled: i === items.length - 1, onSelect: () => void run(async () => void reportResult(toast, await moveContentAction(item.id, "down"))) });
@@ -163,12 +197,16 @@ export function ContentScreen({
                 Publish all pending ({pending})
               </Button>
             ) : null}
-            <Button variant="primary" onClick={() => setCreating(true)}>{ui.addLabel}</Button>
+            {canCreate ? <Button variant="primary" onClick={() => setCreating(true)}>{ui.addLabel}</Button> : null}
           </div>
         }
       />
 
-      {!canPublish ? (
+      {!canPublish && canSubmit ? (
+        <Callout tone="brand">
+          You can edit and preview. Your changes go live only after a reviewer approves them — press “Submit for Verification” on an item when it is ready.
+        </Callout>
+      ) : !canPublish ? (
         <Callout tone="brand">You can edit and preview. Publishing to the live site needs the “Publish to the live site” permission.</Callout>
       ) : null}
       {orderChanged ? <Callout tone="warn">The order here is different from the live order. It goes live with the next publish of this list.</Callout> : null}
@@ -215,7 +253,12 @@ export function ContentScreen({
                       </div>
                     </Td>
                     <Td className="whitespace-normal">{ui.meta.of(item.data)}</Td>
-                    <Td><StateBadge item={item} /></Td>
+                    <Td>
+                      <span className="inline-flex flex-wrap items-center gap-1.5">
+                        <StateBadge item={item} />
+                        {review[item.id] ? <ReviewBadge review={review[item.id]} /> : null}
+                      </span>
+                    </Td>
                     <Td>{plainDate(item.updatedAt)}</Td>
                     <Td align="right"><RowMenu items={menuFor(item)} /></Td>
                   </Tr>
@@ -227,7 +270,25 @@ export function ContentScreen({
       </Card>
 
       {creating ? <ItemEditor kind={kind} item={null} canPublish={canPublish} onClose={() => setCreating(false)} /> : null}
-      {editing ? <ItemEditor kind={kind} item={editing} canPublish={canPublish} onClose={() => setEditing(null)} /> : null}
+      {editing ? (
+        <ItemEditor
+          kind={kind}
+          item={editing}
+          canPublish={canPublish}
+          canSubmit={canSubmit}
+          review={review[editing.id]}
+          onClose={() => setEditing(null)}
+        />
+      ) : null}
+      <SubmitDialog
+        open={submitting !== null}
+        ids={submitting ? [submitting.id] : []}
+        onClose={() => setSubmitting(null)}
+        onDone={() => {
+          setSubmitting(null);
+          router.refresh();
+        }}
+      />
 
       <ConfirmDialog
         open={confirm !== null}
@@ -248,10 +309,27 @@ function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v)) as T;
 }
 
-export function ItemEditor({ kind, item, canPublish, onClose }: { kind: ListKind; item: ItemView | null; canPublish: boolean; onClose: () => void }) {
+export function ItemEditor({
+  kind,
+  item,
+  canPublish,
+  canSubmit = false,
+  review,
+  onClose,
+}: {
+  kind: ListKind;
+  item: ItemView | null;
+  canPublish: boolean;
+  canSubmit?: boolean;
+  review?: ItemReview;
+  onClose: () => void;
+}) {
   const ui = LIST_UI[kind];
   const router = useRouter();
   const toast = useToast();
+  const [submitOpen, setSubmitOpen] = React.useState(false);
+  /* A request holds this item: what the reviewer reads must be what gets published, so it cannot be changed under them. */
+  const locked = isHeldByRequest(review);
   const [current, setCurrent] = React.useState<ItemView | null>(item);
   const [data, setData] = React.useState<Record<string, unknown>>(() => clone(item?.data ?? ui.blank()));
   const [saved, setSaved] = React.useState<string>(() => JSON.stringify(item?.data ?? ui.blank()));
@@ -313,7 +391,20 @@ export function ItemEditor({ kind, item, canPublish, onClose }: { kind: ListKind
     setBusy(null);
   }
 
-  const fields = <FieldEditor fields={ui.fields} value={data} onChange={setData} errors={errors} existing={!isNew} />;
+  /** Saves first if there is something unsaved — the request freezes what is SAVED — then asks for the note. */
+  async function onSubmit() {
+    setBusy("save");
+    const target = dirty ? await save() : current;
+    setBusy(null);
+    if (target) setSubmitOpen(true);
+  }
+
+  const fields = (
+    <LockedFields locked={locked}>
+      <FieldEditor fields={ui.fields} value={data} onChange={setData} errors={errors} existing={!isNew} />
+    </LockedFields>
+  );
+  const lockedNotice = locked && review ? <ReviewLockNotice review={review} /> : null;
   const problems = Object.entries(errors);
   const summary =
     problems.length > 0 ? (
@@ -338,7 +429,12 @@ export function ItemEditor({ kind, item, canPublish, onClose }: { kind: ListKind
           {busy === "publish" ? "Publishing…" : dirty ? "Save and publish" : "Publish"}
         </Button>
       ) : null}
-      <Button variant="primary" onClick={onSave} disabled={busy !== null || (!isNew && !dirty)}>
+      {!isNew && canSubmit && !locked && current && (dirty || (current.state === "published" && current.hasChanges) || (current.state === "draft" && !current.everPublished)) ? (
+        <Button variant="secondary" onClick={() => void onSubmit()} disabled={busy !== null}>
+          {dirty ? "Save and submit for verification" : "Submit for Verification"}
+        </Button>
+      ) : null}
+      <Button variant="primary" onClick={onSave} disabled={busy !== null || locked || (!isNew && !dirty)}>
         {busy === "save" ? "Saving…" : isNew ? `Create ${ui.noun}` : "Save"}
       </Button>
     </>
@@ -362,6 +458,8 @@ export function ItemEditor({ kind, item, canPublish, onClose }: { kind: ListKind
         </span>
       </DrawerHeader>
       <div className="flex-1 overflow-y-auto px-5 py-4">
+        {lockedNotice}
+        {review && !locked ? <ReviewReturnNotice review={review} /> : null}
         {summary}
         {current?.state === "published" && !dirty && !current.hasChanges ? (
           <p className="mb-3 text-[13px] text-muted">This is exactly what is live. Changes you save stay private until you publish.</p>
@@ -369,6 +467,16 @@ export function ItemEditor({ kind, item, canPublish, onClose }: { kind: ListKind
         {fields}
       </div>
       <div className="flex flex-none flex-wrap justify-end gap-2.5 border-t border-divider px-5 py-3">{footer}</div>
+      <SubmitDialog
+        open={submitOpen}
+        ids={current ? [current.id] : []}
+        onClose={() => setSubmitOpen(false)}
+        onDone={() => {
+          setSubmitOpen(false);
+          router.refresh();
+          onClose();
+        }}
+      />
     </Drawer>
   );
 }

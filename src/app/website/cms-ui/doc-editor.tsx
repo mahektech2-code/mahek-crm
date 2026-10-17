@@ -7,9 +7,13 @@ import { ConfirmDialog } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { discardChangesAction, previewItemAction, publishItemsAction, saveContentAction, unpublishItemAction } from "@/lib/actions/website-cms";
 import { validateKindData, type KindKey } from "@/lib/website-cms/kinds";
+import type { ItemReview } from "@/lib/website-cms/review-queries";
 import type { ItemView } from "@/lib/website-cms/service";
 import type { FieldDef } from "./field-defs";
 import { FieldEditor, firstPerPath, type Errors } from "./field-editor";
+import { isHeldByRequest } from "@/lib/website-cms/review-status";
+import { LockedFields } from "./locked-fields";
+import { ReviewLockNotice, ReviewReturnNotice, SubmitDialog } from "./review-ui";
 import { reportPublish, StateBadge } from "./report";
 
 /* ---------------------------------------------------------------------------
@@ -31,6 +35,8 @@ export function DocEditor({
   item,
   fields,
   canPublish,
+  canSubmit = false,
+  review,
   what,
   stacked = false,
 }: {
@@ -38,6 +44,10 @@ export function DocEditor({
   item: ItemView;
   fields: FieldDef[];
   canPublish: boolean;
+  /** Hands work in for review rather than publishing it. */
+  canSubmit?: boolean;
+  /** Where this record stands in review: held by a request, or returned to this person. */
+  review?: ItemReview;
   /** "the site settings", "this page" — used in the confirmations. */
   what: string;
   /** Footer buttons stay at the bottom of a drawer; on a page they follow the form. */
@@ -51,6 +61,9 @@ export function DocEditor({
   const [errors, setErrors] = React.useState<Errors>({});
   const [busy, setBusy] = React.useState<null | string>(null);
   const [confirm, setConfirm] = React.useState<null | "unpublish" | "discard">(null);
+  const [submitOpen, setSubmitOpen] = React.useState(false);
+  /* Held by an open request: what the reviewer reads must be what gets published, so it cannot be changed under them. */
+  const locked = isHeldByRequest(review);
 
   // The screen that draws this keys it on the row's version and state (`docKey`), so a
   // refresh after a save, publish or takedown remounts it on the new row.
@@ -124,11 +137,20 @@ export function DocEditor({
     });
   };
 
+  const onSubmit = () =>
+    guarded("submit", async () => {
+      const target = dirty ? await save() : current;
+      if (target) setSubmitOpen(true);
+    });
+
   const problems = Object.entries(errors);
   const needsPublish = current.state !== "published" || current.hasChanges || dirty;
+  const submittable = dirty || current.hasChanges || (current.state === "draft" && !current.everPublished);
 
   return (
     <div>
+      {locked && review ? <ReviewLockNotice review={review} /> : null}
+      {review && !locked ? <ReviewReturnNotice review={review} /> : null}
       <div className="mb-3 flex items-center gap-2 text-sm text-muted">
         <StateBadge item={current} />
         {current.state === "published" && !current.hasChanges && !dirty ? <span>This is exactly what is live.</span> : null}
@@ -143,7 +165,9 @@ export function DocEditor({
           {problems.length > 5 ? <div>…and {problems.length - 5} more.</div> : null}
         </div>
       ) : null}
-      <FieldEditor fields={fields} value={data} onChange={setData} errors={errors} existing />
+      <LockedFields locked={locked}>
+        <FieldEditor fields={fields} value={data} onChange={setData} errors={errors} existing />
+      </LockedFields>
       <div className={stacked ? "mt-5 flex flex-wrap justify-end gap-2.5 border-t border-divider pt-3" : "mt-5 flex flex-wrap justify-end gap-2.5"}>
         {canPublish && current.state === "published" ? (
           <Button variant="secondary" onClick={() => setConfirm("unpublish")} disabled={busy !== null}>Back to the site&apos;s built-in version</Button>
@@ -159,8 +183,22 @@ export function DocEditor({
             {busy === "publish" ? "Publishing…" : dirty ? "Save and publish" : "Publish"}
           </Button>
         ) : null}
-        <Button variant="primary" onClick={onSave} disabled={busy !== null || !dirty}>{busy === "save" ? "Saving…" : "Save"}</Button>
+        {canSubmit && !locked && submittable ? (
+          <Button variant="secondary" onClick={onSubmit} disabled={busy !== null}>
+            {dirty ? "Save and submit for verification" : "Submit for Verification"}
+          </Button>
+        ) : null}
+        <Button variant="primary" onClick={onSave} disabled={busy !== null || locked || !dirty}>{busy === "save" ? "Saving…" : "Save"}</Button>
       </div>
+      <SubmitDialog
+        open={submitOpen}
+        ids={[current.id]}
+        onClose={() => setSubmitOpen(false)}
+        onDone={() => {
+          setSubmitOpen(false);
+          router.refresh();
+        }}
+      />
 
       <ConfirmDialog
         open={confirm !== null}

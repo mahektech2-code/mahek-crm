@@ -9,6 +9,7 @@ import { HeaderLead } from "@/components/shell/header-lead";
 import type { AppDefinition } from "@/lib/apps";
 import { Icon } from "@/components/shell/icons";
 import { SignOutButton } from "@/components/shell/sign-out-button";
+import { NotificationBell } from "@/components/shell/notification-bell";
 
 /* ---------------------------------------------------------------------------
  * The Website app's shell: a flat 12-item sidebar, the same shape Accounts
@@ -39,9 +40,23 @@ const NAV: Item[] = [
   { href: "/website/settings", label: "Settings", icon: "settings" },
 ];
 
+/**
+ * The review workflow's three screens. They are not modules — what opens them is
+ * the review right or having work to do — so they are drawn from flags the layout
+ * worked out, in a group of their own under the content screens.
+ */
+const WORK_NAV: { key: "myWork" | "review" | "assignments"; item: Item }[] = [
+  { key: "myWork", item: { href: "/website/my-work", label: "My work", icon: "clipboard" } },
+  { key: "review", item: { href: "/website/review", label: "Review", icon: "check" } },
+  { key: "assignments", item: { href: "/website/assignments", label: "Assignments", icon: "people" } },
+];
+
+export type WorkNav = { myWork: boolean; review: boolean; pendingReview: number };
+
 export function WebsiteShell({
   user,
   allowed,
+  work,
   apps,
   feedback,
   children,
@@ -49,6 +64,8 @@ export function WebsiteShell({
   user: { name: string; initials: string; role: string };
   /** The routes this person may open, resolved in the layout. */
   allowed: string[];
+  /** Which of the review workflow's screens to draw, resolved in the layout. */
+  work: WorkNav;
   /** Every web app this person opens, for the switcher — drawn always. */
   apps: AppDefinition[];
   feedback: React.ReactNode;
@@ -57,6 +74,7 @@ export function WebsiteShell({
   const pathname = usePathname();
   const permitted = new Set(allowed);
   const items = NAV.filter((i) => permitted.has(i.href));
+  const workItems = WORK_NAV.filter((w) => (w.key === "myWork" ? work.myWork : w.key === "review" ? work.review : work.review)).map((w) => w.item);
   /* The sidebar narrows to an icon rail; the toggle is HeaderLead's ☰. */
   const [collapsed, setCollapsed] = React.useState(false);
 
@@ -73,6 +91,8 @@ export function WebsiteShell({
             label="MAHEK WA"
           />
           <span className="flex-1" />
+          {/* Where the review workflow's messages arrive: an approval the employee never sees is one that expires unpublished. */}
+          <NotificationBell />
           {feedback}
           <span className="mx-1 h-6 w-px flex-none bg-divider" />
           <div className="flex flex-none items-center gap-2">
@@ -99,11 +119,13 @@ export function WebsiteShell({
           )}
         >
           <nav aria-label="Website sections" className="flex-1 overflow-y-auto px-1.5 pt-2 pb-4">
-            {items.map((item) => {
+            {[...items, ...workItems].map((item, index) => {
+              const first = index === items.length && workItems.length > 0 && items.length > 0;
               const active = item.exact ? pathname === item.href : pathname.startsWith(item.href);
               return (
+                <React.Fragment key={item.href}>
+                {first ? <div className="mx-2 my-2 border-t border-divider" /> : null}
                 <Link
-                  key={item.href}
                   href={item.href}
                   aria-current={active ? "page" : undefined}
                   aria-label={collapsed ? item.label : undefined}
@@ -125,7 +147,13 @@ export function WebsiteShell({
                       {item.label}
                     </span>
                   )}
+                  {!collapsed && item.href === "/website/review" && work.pendingReview > 0 ? (
+                    <span className="relative z-1 flex h-5 min-w-5 flex-none items-center justify-center rounded-full bg-brand px-1.5 text-[11px] font-semibold text-white">
+                      {work.pendingReview}
+                    </span>
+                  ) : null}
                 </Link>
+                </React.Fragment>
               );
             })}
           </nav>

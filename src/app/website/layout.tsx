@@ -6,6 +6,9 @@ import { FeedbackButton } from "@/components/shell/feedback-button";
 import { ToastProvider } from "@/components/ui/toast";
 import { initialsOf } from "@/lib/format";
 import { hatForHeader } from "@/lib/hat-for-header";
+import { canEditAny, holdsReview } from "@/lib/website-cms/access";
+import { pendingReviewCount, scopeFor } from "@/lib/website-cms/review-queries";
+import { slugVisible } from "@/lib/website-cms/review-scope";
 import { ConnectionNotice } from "./connection-notice";
 import { WebsiteShell } from "./website-shell";
 
@@ -32,11 +35,25 @@ export default async function WebsiteLayout({
 
   const hat = await hatForHeader(user, "website");
 
+  /* What the sidebar offers is what the person may be SHOWN: where assignments are
+     enforced, a module they were assigned nothing in is not drawn (and its route
+     sends them to My work). The check is the folder's own layout; this is the courtesy. */
+  const scope = await scopeFor(user.id);
+  const slugOf = (href: string) => href.replace(/^\/website\/?/, "") || "dashboard";
+  const allowed = modules.map((m) => m.href).filter((href) => slugVisible(scope, slugOf(href)));
+  const isReviewer = await holdsReview(user.id);
+  const work = {
+    myWork: isReviewer || (await canEditAny(user.id)),
+    review: isReviewer,
+    pendingReview: isReviewer ? await pendingReviewCount() : 0,
+  };
+
   return (
     <ToastProvider>
       <WebsiteShell
         user={{ name: user.name, initials: initialsOf(user.name), role: hat.label }}
-        allowed={modules.map((m) => m.href)}
+        allowed={allowed}
+        work={work}
         apps={webApps(apps)}
         feedback={<FeedbackButton />}
       >
