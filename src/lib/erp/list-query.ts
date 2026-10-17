@@ -197,6 +197,25 @@ export function badgeWidths(cols: ColSpec[], rows: ListRow[], flagWords: Record<
   return out;
 }
 
+/**
+ * The facts a group's header draws: the first row's values, except that a
+ * fact the rows DISAGREE on is every value they carry, in order — a goods
+ * receipt across two POs heads "PO-15, PO-16", never only its first line's,
+ * and a first line with no value does not hide a later line's.
+ */
+export function groupHeadValues(rs: ListRow[], keys: string[]): ListRow["v"] {
+  const head: ListRow["v"] = { ...(rs[0]?.v ?? {}) };
+  for (const k of keys) {
+    const seen: string[] = [];
+    for (const r of rs) {
+      const v = r.v[k];
+      if (typeof v === "string" && v !== "" && !seen.includes(v)) seen.push(v);
+    }
+    if (seen.length > 1 || (seen.length === 1 && head[k] !== seen[0])) head[k] = seen.join(", ");
+  }
+  return head;
+}
+
 /** One page of a list, with everything the toolbar, the group headers and the pager need about the rest. */
 export function pageOf(spec: ListSpec, rows: ListRow[], query: ListQuery, flagWords: Record<string, [string, Tone]>): ListPage {
   const r = queryRows(spec, rows, query, flagWords);
@@ -217,7 +236,7 @@ export function pageOf(spec: ListSpec, rows: ListRow[], query: ListQuery, flagWo
         const s = rs.reduce((t, x) => t + (Number(x.v[spec.agg!.k]) || 0), 0);
         agg = spec.agg.t === "avg" ? s / (rs.length || 1) : s;
       }
-      groups[g] = { n: rs.length, agg, ids: rs.map((x) => x.id), head: rs[0]?.v ?? {} };
+      groups[g] = { n: rs.length, agg, ids: rs.map((x) => x.id), head: groupHeadValues(rs, spec.groupHead ?? []) };
     }
   }
   return {

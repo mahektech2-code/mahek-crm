@@ -1,7 +1,7 @@
-import { test } from "node:test";
+import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import type { ListRow, ListSpec, Tone } from "./ui";
-import { listCsv, listQueryParams, pageOf, parseListQuery, queryRows, type ListQuery } from "./list-query";
+import { groupHeadValues, listCsv, listQueryParams, pageOf, parseListQuery, queryRows, type ListQuery } from "./list-query";
 
 const FLAGS: Record<string, [string, Tone]> = { late: ["Running late", "danger"] };
 const spec: ListSpec = {
@@ -94,4 +94,20 @@ test("the export is every filtered row, not the page", () => {
   assert.equal(n, 3);
   assert.equal(csv.split("\n").length, 4);
   assert.match(csv.split("\n")[0], /^No,Item,Qty,Status,Godown,Flags$/);
+});
+
+describe("a group's header facts", () => {
+  const row = (id: string, po: string | null, date: string) => ({ id, v: { pr: "15", po, date } }) as unknown as ListRow;
+  test("a fact every row shares is drawn once", () => {
+    assert.equal(groupHeadValues([row("a", "PO-15", "2026-10-17"), row("b", "PO-15", "2026-10-17")], ["po", "date"]).po, "PO-15");
+  });
+  test("a fact the rows disagree on lists every value, in order", () => {
+    const h = groupHeadValues([row("a", "PO-15", "2026-10-17"), row("b", "PO-16", "2026-10-17"), row("c", "PO-15", "2026-10-17")], ["po", "date"]);
+    assert.equal(h.po, "PO-15, PO-16");
+    assert.equal(h.date, "2026-10-17");
+  });
+  test("an empty value is not listed beside a real one", () => {
+    assert.equal(groupHeadValues([row("a", null, "x"), row("b", "PO-9", "x")], ["po"]).po, "PO-9");
+    assert.equal(groupHeadValues([row("a", "PO-9", "x"), row("b", null, "x")], ["po"]).po, "PO-9");
+  });
 });
