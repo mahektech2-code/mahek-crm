@@ -231,6 +231,13 @@ export type GateInfo = {
   justification: Justification | null;
   /** What is on the shelf by the newest count, in the stock unit. */
   onShelf: number | null;
+  /**
+   * The book comparison of that newest count, snapshotted when it was
+   * entered: the ledger, goods on their way in and out, the reconciled book
+   * (ledger + in − out), and the difference against the tolerance allowed.
+   * Null until a count is entered.
+   */
+  comparison: { book: number; pendingIn: number; pendingOut: number; reconciled: number; difference: number; tolerance: number } | null;
   unit: "Ltr" | "Pcs";
 };
 
@@ -260,9 +267,11 @@ export async function gatesFor(reqs: GateReq[]): Promise<Map<string, GateInfo>> 
   if (!want.length) return out;
   const items = [...new Set(want.map((r) => r.rawMaterialId as string))];
   const [counts, levels, mats, config] = await Promise.all([
-    q<{ id: string; no: number; status: CountStatus; kind: string; req: string | null; parent: string | null; rm: string; godown: string; created: string; counted: number | null; countedAt: string | null }>(
+    q<{ id: string; no: number; status: CountStatus; kind: string; req: string | null; parent: string | null; rm: string; godown: string; created: string; counted: number | null; countedAt: string | null; book: number | null; pendingIn: number | null; pendingOut: number | null; difference: number | null; tolerance: number | null }>(
       sql`select id, count_no as no, status, kind, requisition_id as req, recount_of_id as parent, raw_material_id as rm, godown_id as godown,
-                 created_at::text as created, counted_qty::float8 as counted, counted_at::text as "countedAt"
+                 created_at::text as created, counted_qty::float8 as counted, counted_at::text as "countedAt",
+                 book_qty::float8 as book, pending_in::float8 as "pendingIn", pending_out::float8 as "pendingOut",
+                 difference::float8 as difference, tolerance::float8 as tolerance
             from erp_stock_counts where raw_material_id in ${items}`,
     ),
     q<{ rm: string; godown: string; min: number; max: number }>(
@@ -301,6 +310,17 @@ export async function gatesFor(reqs: GateReq[]): Promise<Map<string, GateInfo>> 
       count: root ? { id: root.id, countNo: Number(root.no), status: root.status, kind: root.kind } : null,
       justification,
       onShelf,
+      comparison:
+        latest && latest.book != null
+          ? {
+              book: Number(latest.book),
+              pendingIn: Number(latest.pendingIn ?? 0),
+              pendingOut: Number(latest.pendingOut ?? 0),
+              reconciled: Number(latest.book) + Number(latest.pendingIn ?? 0) - Number(latest.pendingOut ?? 0),
+              difference: Number(latest.difference ?? 0),
+              tolerance: Number(latest.tolerance ?? 0),
+            }
+          : null,
       unit: stockUnit(m?.unit ?? "Litre"),
     });
   }

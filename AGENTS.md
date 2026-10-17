@@ -2014,6 +2014,42 @@ or item any more. `engines/purchase-flow.ts` is the rule, pure, and
 `screens/purchase-flow.ts` the requirements, their Quotations tab and the
 Purchase orders screen. The receipt side stays in `screens/purchase.ts`.
 
+**THE PO COMES BY THE ITEM'S PURCHASE RULE, AND NOTHING IS APPROVED — a
+reversal (Oct 2026).** The flow is now Requirement → Blind count → Book
+comparison → Verification → Purchase method → PO number → Receipt; the vendor /
+quotation step and PO approval in the paragraphs below are history. At the
+purchase method the item's rule (`poRouteOf`) decides, and both happen inside
+the requirement's drawer (`screens/requirement-po.ts`, the `purchaseFlow`
+panel):
+
+- **Quotation** — the rate is chosen and bought on the Quotation manager.
+  Purchase it asks only for the drums: **the PO number is MADE by the server**
+  from the ERP's own `po` series (`applyQuoteOps` mints `PO-n`; a typed one is
+  ignored; editing keeps it; undoing gives it up). The requirement's tab has a
+  PO NUMBER box (never a pop-up): what is typed is looked up on the sheet
+  (`erpRequirementPoLookup`, a read) and shown, then **Link PO** keeps an ERP PO
+  for it — `source = 'quotation_manager'`, `qm_po_no`, the same `po_number`
+  where the sheet made it, status **Sent**, the cell's rate, drums and
+  `erp.purchase.poGstPercent`. Several requirements on one number are one PO.
+  **Unlink** is allowed while nothing has arrived; a PO left empty is cancelled
+  and reused if linked again (the number is unique).
+- **Direct purchase** — no quotation. **Create PO** opens a three-page modal
+  (Vendor → Delivery → Review) OVER the drawer, which stays open. The rate is
+  the item's `erp_raw_materials.price_paise` and is never read from the request;
+  **no price is ₹0** (`0275` lets a PO line's rate be 0), and the register then
+  holds that lot out of stock until the bill's rate is entered, like any lot
+  with no rate. The PO is **Approved** on save, ready to send and receive.
+- **Buyer decision** — either.
+
+A new PO on the Purchase orders screen is Approved on save too. POs raised
+before this that still say Pending approval keep their Approve / Send back
+buttons, and the dashboard tile shows only while one is left. A new GRN starts
+from the item (#829); the PO-in-header form ("Receive goods" on a PO, "Add
+more") types its PO (`FieldSpec.typed`) and the receipt also accepts a bare
+number. Every screen names a PO with `poName` (the sheet's number where it came
+from there). The old decide / vendor / quotation handlers remain for records
+already on that path; nothing on the drawer offers them.
+
 **A REQUIREMENT CARRIES EVERY ITEM A DEPARTMENT NEEDS, under one number.**
 It used to be one item per form, and a department's monthly list is a hundred.
 Each item is still its own `erp_requisitions` row — its method, quotations,
@@ -2068,10 +2104,10 @@ approves this PO" is one too many, so it was removed and
 (`lib/erp/departments.ts`) still applies: it rides on the designation, which
 is itself set in the Admin Console.
 
-**A requirement's STAGE is derived, never typed** (`requirementStage`): Buyer
-decision, Select vendor, Collect / Compare quotations, Ready for PO, PO awaiting
-approval, PO approved, PO sent, Partly received, Received, Closed short,
-Cancelled. `erp_requisitions.status` is written by the flow (Pending → Order
+**A requirement's STAGE is derived, never typed** (`requirementStage`): Blind
+count, Waiting for PO number (quotation), Create PO (direct), Create or link PO
+(buyer), PO awaiting approval (an old PO only), Waiting for goods, Partly
+received, Received, Closed short, Cancelled. `erp_requisitions.status` is written by the flow (Pending → Order
 Placed on approval → Received) and the old "Change status" button is gone,
 because a status somebody types can say Received with nothing in the gate.
 

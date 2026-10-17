@@ -184,7 +184,16 @@ export function QuoteGrid({
           if (opts.recordUndo !== false) setUndo((u) => u.filter((x) => x !== inverse));
           ui.toast(res.error, "error");
           setFailed(true);
-        } else setFailed(false);
+        } else {
+          setFailed(false);
+          /* A purchase's PO number is made by the server; show it once it is. */
+          const made = res.data.minted ?? [];
+          if (made.length) {
+            setBoth(applySheetOps(stateRef.current, made.map((m) => ({ op: "cell" as const, rowId: m.rowId, columnId: m.columnId, poNo: m.poNo }))));
+            if (made.length === 1) ui.toast(`Bought on ${made[0].poNo}. Enter this PO number on the purchase requirement.`);
+            else ui.toast(`Bought on ${made.length} new PO numbers.`);
+          }
+        }
       } catch {
         setBoth(applySheetOps(stateRef.current, inverse));
         ui.toast("That change could not be saved. Check the connection and try again.", "error");
@@ -413,8 +422,8 @@ export function QuoteGrid({
     setPurchase(ref);
   }
 
-  function savePurchase(ref: CellRef, drums: number, poNo: string) {
-    commit([{ op: "cell", ...ref, status: "po", drums, poNo, poBy: me, poAt: new Date().toISOString() }]);
+  function savePurchase(ref: CellRef, drums: number) {
+    commit([{ op: "cell", ...ref, status: "po", drums, poBy: me, poAt: new Date().toISOString() }]);
     setPurchase(null);
     gridRef.current?.focus();
   }
@@ -750,7 +759,7 @@ export function QuoteGrid({
             type="button"
             disabled={readOnly || (focusedStatus !== "ready" && focusedStatus !== "po")}
             onClick={() => openPurchase(focusedRef())}
-            title={focusedStatus === "ready" || focusedStatus === "po" ? "Record the drums and the PO number for this rate" : "Select a grey (Ready to buy) rate to buy it"}
+            title={focusedStatus === "ready" || focusedStatus === "po" ? "Record the drums for this rate; the PO number is made for you" : "Select a grey (Ready to buy) rate to buy it"}
             className="inline-flex h-7 cursor-pointer items-center gap-2 rounded-control border border-brand bg-brand px-2.5 text-meta font-medium text-white hover:bg-brand-hover disabled:cursor-default disabled:border-line disabled:bg-surface disabled:font-normal disabled:text-line-strong"
           >
             <span aria-hidden className={cx("h-3 w-3 rounded-[3px]", STATUS_SWATCH.po)} />
@@ -1085,7 +1094,7 @@ export function QuoteGrid({
                 poNo={at.cell?.poNo ?? ""}
                 editing={at.cell?.status === "po"}
                 onClose={() => setPurchase(null)}
-                onSave={(d, po) => savePurchase(purchase, d, po)}
+                onSave={(d) => savePurchase(purchase, d)}
               />
             );
           })()
@@ -1612,7 +1621,7 @@ function CellMenu({ x, y, items, onClose }: { x: number; y: number; items: CellM
   );
 }
 
-/** Purchase it: the drums and the PO number, for one Ready to buy rate. */
+/** Purchase it: the drums for one Ready to buy rate. The PO number is made by the server on save, never typed. */
 function PurchaseDialog({
   rowNo,
   date,
@@ -1634,18 +1643,16 @@ function PurchaseDialog({
   poNo: string;
   editing: boolean;
   onClose: () => void;
-  onSave: (drums: number, poNo: string) => void;
+  onSave: (drums: number) => void;
 }) {
   const [d, setD] = useState(drums ? String(drums) : "");
-  const [po, setPo] = useState(poNo);
   const [tried, setTried] = useState(false);
   const n = Number(d);
   const drumsBad = !d.trim() || !Number.isInteger(n) || n < 1;
-  const poBad = !po.trim();
   function save() {
     setTried(true);
-    if (drumsBad || poBad) return;
-    onSave(n, po.trim());
+    if (drumsBad) return;
+    onSave(n);
   }
   return (
     <Modal
@@ -1686,10 +1693,15 @@ function PurchaseDialog({
           {tried && drumsBad ? <span className="text-xs text-danger">Enter how many drums, a whole number.</span> : null}
         </Labelled>
         <Labelled label="PO number">
-          <Input value={po} onChange={(e) => setPo(e.target.value)} maxLength={40} invalid={tried && poBad} placeholder="The Tally PO number" className="font-mono" />
-          {tried && poBad ? <span className="text-xs text-danger">Enter the PO number.</span> : null}
+          <div className="flex h-9 items-center rounded-control border border-line bg-canvas px-3 font-mono text-sm text-ink">
+            {poNo || <span className="font-sans text-muted">Made when you save</span>}
+          </div>
         </Labelled>
-        <p className="col-span-2 text-xs text-muted">Saving turns the cell yellow. Hover it, or right-click it, to see this purchase.</p>
+        <p className="col-span-2 text-xs text-muted">
+          {poNo
+            ? "This purchase keeps its PO number. Saving turns the cell yellow."
+            : "Saving gives this purchase the next PO number and turns the cell yellow. Enter that number on the purchase requirement to fetch the order."}
+        </p>
         <button type="submit" className="hidden" />
       </form>
     </Modal>

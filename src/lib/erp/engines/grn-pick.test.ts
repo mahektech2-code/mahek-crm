@@ -62,6 +62,6 @@ describe("the goods receipt starts from the item", () => {
 
   test("a hit says how many POs, how much and from whom", () => {
     assert.equal(hitSummary(items[0].lines, String), "2 open POs · 1400 kg pending · Shree Ganesh, Dharam Chem");
-    assert.equal(hitSummary([], String), "No approved PO is waiting for this item");
+    assert.equal(hitSummary([], String), "No PO is waiting for this item");
   });
 });

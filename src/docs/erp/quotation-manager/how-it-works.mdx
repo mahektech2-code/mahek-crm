@@ -21,7 +21,7 @@ A rate column holds a number, or nothing. Commas, spaces and a rupee sign are ta
 A rate is chosen by a manager and bought by the team, in that order:
 
 - **Ready to buy (grey)** is put on, or taken off, only by an ERP manager or administrator. Only a rate with a figure in it can be Ready to buy.
-- **Purchase it** turns a grey rate yellow, and it always records the **number of drums** and the **PO number**: neither may be left out. A rate that isn't grey can't be bought, except by a manager.
+- **Purchase it** turns a grey rate yellow and records the **number of drums**, which may not be left out. The **PO number is made by the server** at that moment, the next number of the ERP's own PO series, so two purchases can never share one and nobody can mistype one. Editing a purchase keeps its number; undoing it gives the number up, and buying the rate again makes a new one. A rate that isn't grey can't be bought, except by a manager.
 - **Undo purchase** puts a yellow rate back to grey, and anybody may do it, because it corrects a purchase entered by mistake. Any other change to a bought rate is a manager's.
 
 The screen offers only what is allowed, and the server refuses the rest whatever the screen sent. The PO number, the drums, and who bought it and when are kept on the cell and shown in its note.

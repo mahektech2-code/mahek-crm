@@ -11894,6 +11894,15 @@ export const erpPurchaseOrders = pgTable(
     closeReason: text("close_reason"),
     closedAt: timestamp("closed_at", { withTimezone: true }),
     closedById: text("closed_by_id").references(() => users.id),
+    /**
+     * erp | quotation_manager. A Quotation manager PO was bought there — the
+     * admin marked the rate Ready to buy, Purchase it made the PO number from
+     * the ERP's own series — so it is never approved in the ERP: it arrives
+     * Sent, ready to receive, and keeps that number as its `po_number`.
+     */
+    source: text("source").notNull().default("erp"),
+    /** The PO number as the Quotation manager carries it (an older, typed one too); the name every screen prints. */
+    qmPoNo: text("qm_po_no"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id").references(() => users.id),
@@ -11901,6 +11910,8 @@ export const erpPurchaseOrders = pgTable(
   },
   (t) => [
     uniqueIndex("erp_purchase_orders_number_key").on(t.poNumber),
+    uniqueIndex("erp_purchase_orders_qm_po_no_key").on(sql`upper(${t.qmPoNo})`).where(sql`${t.qmPoNo} is not null`),
+    check("erp_purchase_orders_source_check", sql`${t.source} in ('erp', 'quotation_manager')`),
     index("erp_purchase_orders_status_idx").on(t.status, t.poDate),
     check(
       "erp_purchase_orders_status_check",
@@ -11930,11 +11941,16 @@ export const erpPoLines = pgTable(
     ratePaise: bigint("rate_paise", { mode: "number" }).notNull(),
     gstBp: integer("gst_bp").notNull().default(1800),
     sortOrder: integer("sort_order").notNull().default(0),
+    /** The Quotation manager cell this line was bought on: its row and column. Plain text, so a row tidied off the sheet leaves the PO alone. */
+    quoteRowId: text("quote_row_id"),
+    quoteColumnId: text("quote_column_id"),
+    /** Drums bought, as the desk recorded them on Purchase it. */
+    drums: integer("drums"),
   },
   (t) => [
     index("erp_po_lines_po_idx").on(t.poId),
     index("erp_po_lines_requisition_idx").on(t.requisitionId),
-    check("erp_po_lines_amounts_check", sql`${t.quantity} > 0 and ${t.ratePaise} > 0 and ${t.gstBp} >= 0`),
+    check("erp_po_lines_amounts_check", sql`${t.quantity} > 0 and ${t.ratePaise} >= 0 and ${t.gstBp} >= 0`),
     check("erp_po_lines_unit_check", sql`${t.unit} in ('Kg', 'Litre', 'Pcs')`),
   ],
 );

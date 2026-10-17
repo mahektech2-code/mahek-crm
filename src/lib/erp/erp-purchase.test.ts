@@ -1,7 +1,8 @@
 /**
  * ERP purchase — the whole flow, against a real database through the real
- * handlers: requirement → purchase method → vendor / quotation → approval →
- * PO → receipt (goods inward) → testing → register → raw-material stock.
+ * handlers: requirement → purchase method (the item's rule) → PO number,
+ * linked from the Quotation manager or created at the item's price, with no
+ * approval → receipt (goods inward) → testing → register → raw-material stock.
  *
  *   npm run test:integration
  *
@@ -21,7 +22,9 @@ import {
   erpPrCosts,
   erpPurchaseOrders,
   erpPurchases,
-  erpQuotations,
+  erpQuoteCells,
+  erpQuoteColumns,
+  erpQuoteRows,
   erpRawMaterials,
   erpRequisitions,
   erpRmEntries,
@@ -37,6 +40,8 @@ import { rmLots, rmLotStock } from "@/lib/erp/stock";
 import { erpNavCounts } from "@/lib/erp/counts";
 import { invalidateConfig } from "@/lib/config/store";
 import { approvedPo } from "@/lib/erp/po-fixture";
+import { applyQuoteOps } from "@/lib/erp/quotes";
+import { lookupRequirementPo } from "@/lib/erp/screens/requirement-po";
 import type { GrnItem } from "@/lib/erp/engines/grn-pick";
 import type { ToolResult } from "@/lib/erp/ui";
 
@@ -94,7 +99,7 @@ before(async () => {
     .onConflictDoUpdate({ target: appSettings.key, set: { value: false } });
   invalidateConfig();
   await db.execute(
-    sql`truncate users, erp_raw_materials, erp_suppliers, erp_inward, erp_tests, erp_purchases, erp_rm_entries, erp_requisitions, erp_quotations, erp_purchase_orders, erp_po_lines, erp_user_powers, erp_godown_staff, erp_user_settings, audit_log restart identity cascade`,
+    sql`truncate users, erp_raw_materials, erp_suppliers, erp_inward, erp_tests, erp_purchases, erp_rm_entries, erp_requisitions, erp_quotations, erp_purchase_orders, erp_po_lines, erp_quote_cells, erp_quote_rows, erp_quote_columns, erp_user_powers, erp_godown_staff, erp_user_settings, audit_log restart identity cascade`,
   );
   await db.execute(sql`update erp_series set last = 1000 where key = 'pr'`);
   await db.execute(sql`update erp_series set last = 0 where key = 'po'`);
@@ -105,11 +110,13 @@ before(async () => {
     { id: "sup_b", name: "Bharat Chemicals", partyCode: "BC" },
   ]);
   await db.insert(erpRawMaterials).values([
-    /* The three purchase rules: a price-sensitive chemical on quotation, a routine one direct
-       from its default vendor, and cans left to the buyer. */
+    /* The three purchase rules: chemicals bought on the Quotation manager, cans left to the
+       buyer, and routine boxes bought direct at the price on the item — one with no price. */
     { id: "rm_tol", serialNo: 1, name: "Toluene", code: "TOL", unit: "Litre", materialType: "Chemical", density: 0.87, testingList: ["Smell", "Density"], purchaseMethod: "quotation" },
-    { id: "rm_mek", serialNo: 2, name: "MEK", code: "MEK", unit: "Kg", materialType: "Chemical", density: 0.8, testingList: [], purchaseMethod: "direct", preferredSupplierId: "sup_a" },
+    { id: "rm_mek", serialNo: 2, name: "MEK", code: "MEK", unit: "Kg", materialType: "Chemical", density: 0.8, testingList: [], purchaseMethod: "quotation" },
     { id: "rm_can", serialNo: 3, name: "1 L Tin Can", code: "CAN1", unit: "Unit", materialType: "Can", testingList: [], purchaseMethod: "buyer" },
+    { id: "rm_box", serialNo: 4, name: "Carton 12", code: "BOX12", unit: "Unit", materialType: "Box", testingList: [], purchaseMethod: "direct", preferredSupplierId: "sup_a", pricePaise: 1450 },
+    { id: "rm_plain", serialNo: 5, name: "Plain Carton", code: "BOXP", unit: "Unit", materialType: "Box", testingList: [], purchaseMethod: "direct", preferredSupplierId: "sup_b" },
   ]);
 });
 
@@ -131,18 +138,20 @@ describe("the purchase flow up to the PO", () => {
     const { rows } = await mod("requisitions").load(await as(admin));
     return rows.find((r) => r.v.item === item)?.v.stage;
   };
+  const cell = (rowId: string, columnId: string) => ({ rowId, columnId });
 
-  test("the item's purchase rule decides where a requirement goes the moment it is raised", async () => {
+  test("the item's purchase rule decides how the PO comes, the moment it is raised", async () => {
     assert.ok((await raise("Toluene", "Chemical", "400")).ok);
     assert.ok((await raise("MEK", "Chemical", "200")).ok);
     assert.ok((await raise("1 L Tin Can", "Can", "500")).ok);
-    assert.equal(await stage("Toluene"), "Collect quotations");
-    assert.equal(await stage("MEK"), "Ready for PO", "direct, and its default vendor is offered");
-    assert.equal(await stage("1 L Tin Can"), "Buyer decision");
-    const mek = await req("rm_mek");
-    assert.equal(mek.purchaseRule, "direct");
-    assert.equal(mek.supplierId, "sup_a");
-    assert.equal(mek.unit, "Kg", "a requirement is counted in the item's own purchase unit");
+    assert.ok((await raise("Carton 12", "Box", "1200")).ok);
+    assert.equal(await stage("Toluene"), "Waiting for PO number", "quotation — bought on the Quotation manager");
+    assert.equal(await stage("1 L Tin Can"), "Create or link PO", "buyer decision — either");
+    assert.equal(await stage("Carton 12"), "Create PO", "direct purchase — no quotation");
+    const box = await req("rm_box");
+    assert.equal(box.purchaseRule, "direct");
+    assert.equal(box.supplierId, "sup_a", "the item's default vendor");
+    assert.equal((await req("rm_mek")).unit, "Kg", "a requirement is counted in the item's own purchase unit");
     assert.equal((await req("rm_can")).unit, "Pcs");
   });
 
@@ -154,106 +163,128 @@ describe("the purchase flow up to the PO", () => {
     assert.ok(!fg.ok && fg.fieldErrors?.[0].field === "type");
   });
 
-  test("only the buyer decides a Buyer-decision requirement, and direct then asks for a vendor", async () => {
-    const can = await req("rm_can");
-    const refused = await mod("requisitions").actions!.decide(await as(clerk), can.id, { method: "Direct purchase" });
-    assert.ok(!refused.ok && refused.code === "not_permitted");
-    assert.ok((await mod("requisitions").actions!.decide(await as(admin), can.id, { method: "Direct purchase", note: "Same tins as always" })).ok);
-    assert.equal(await stage("1 L Tin Can"), "Select vendor");
-    assert.ok((await mod("requisitions").actions!.vendor(await as(clerk), can.id, { vendor: "Asian Solvents" })).ok);
-    assert.equal(await stage("1 L Tin Can"), "Ready for PO");
+  test("Purchase it on the Quotation manager makes the PO number — nobody types one", async () => {
+    const a = await as(admin);
+    await db.insert(erpQuoteColumns).values([
+      { id: "eqc_toluene", position: 1, pack: "Drum", name: "Toluene", brand: "Reliance", rawMaterialId: "rm_tol" },
+      { id: "eqc_mekdrum", position: 2, pack: "Drum", name: "MEK", brand: "", rawMaterialId: "rm_mek" },
+      { id: "eqc_tincan", position: 3, pack: "Can", name: "1 L Tin", brand: "", rawMaterialId: "rm_can" },
+    ]);
+    await db.insert(erpQuoteRows).values({ id: "eqr_asian1", quoteDate: "2026-09-18", party: "Asian Solvents", supplierId: "sup_a" });
+    await db.insert(erpQuoteCells).values([
+      { rowId: "eqr_asian1", columnId: "eqc_toluene", value: "100", status: "ready" },
+      { rowId: "eqr_asian1", columnId: "eqc_mekdrum", value: "90" },
+      { rowId: "eqr_asian1", columnId: "eqc_tincan", value: "10" },
+    ]);
+    /* A typed PO number is ignored: the server makes it. */
+    const bought = await applyQuoteOps(a, [{ op: "cell", ...cell("eqr_asian1", "eqc_toluene"), status: "po", drums: 2, poNo: "TYPED-99" } as never]);
+    assert.ok(bought.ok, JSON.stringify(bought));
+    assert.deepEqual(bought.data.minted, [{ rowId: "eqr_asian1", columnId: "eqc_toluene", poNo: "PO-1" }]);
+    const [c1] = await db.select().from(erpQuoteCells).where(sql`column_id = 'eqc_toluene'`);
+    assert.equal(c1.poNo, "PO-1");
+    /* Editing the purchase keeps its number. */
+    const again = await applyQuoteOps(a, [{ op: "cell", ...cell("eqr_asian1", "eqc_toluene"), status: "po", drums: 3 }]);
+    assert.ok(again.ok && again.data.minted.length === 0);
+    /* The other two were bought under the same number the old way, when the desk typed it. */
+    await db.update(erpQuoteCells).set({ status: "po", poNo: "PO-1", drums: 1, poAt: new Date() }).where(sql`column_id in ('eqc_mekdrum', 'eqc_tincan')`);
   });
 
-  test("a quotation item cannot skip its quotations, and the lowest landed cost wins unless somebody says why", async () => {
+  test("a PO number is looked up and checked against the requirement before it is linked", async () => {
     const a = await as(admin);
     const tol = await req("rm_tol");
-    const label = (await mod("quotations").load(a)).spec.newForm!.header.find((f) => f.k === "requirement")!.opts![0];
-    /* Not ready for a PO until a quotation is selected — direct vendor selection is refused. */
-    assert.ok(!(await mod("requisitions").actions!.vendor(a, tol.id, { vendor: "Asian Solvents" })).ok);
-    const q1 = await mod("quotations").forms!.new(a, { requirement: label, vendor: "Asian Solvents", date: TODAY, rate: "100", gst: "18", deliveryDays: "5", terms: "30 days credit" }, []);
-    assert.ok(q1.ok, JSON.stringify(q1));
-    const [first] = await db.select().from(erpQuotations);
-    const early = await mod("quotations").actions!.select(a, first.id, {});
-    assert.ok(!early.ok && /At least 2/.test(early.error), "two quotations before one is selected");
-    const dup = await mod("quotations").forms!.new(a, { requirement: label, vendor: "Asian Solvents", date: TODAY, rate: "99", gst: "18" }, []);
-    assert.ok(!dup.ok && dup.fieldErrors?.[0].field === "vendor", "one quotation per vendor");
-    /* Bharat quotes a lower rate, but its freight makes it dearer landed. */
-    assert.ok((await mod("quotations").forms!.new(a, { requirement: label, vendor: "Bharat Chemicals", date: TODAY, rate: "95", gst: "18", freight: "5000" }, [])).ok);
-    assert.equal(await stage("Toluene"), "Compare quotations");
-    const { rows } = await mod("quotations").load(a);
-    const bharat = rows.find((r) => r.v.vendor === "Bharat Chemicals")!;
-    assert.deepEqual(rows.find((r) => r.v.vendor === "Asian Solvents")!.flags, ["lowestQuote"]);
-    const why = await mod("quotations").actions!.select(a, bharat.id, {});
-    assert.ok(!why.ok && why.fieldErrors?.[0].field === "note", "not the lowest — say why");
-    assert.ok((await mod("quotations").actions!.select(a, first.id, {})).ok);
-    const after = await req("rm_tol");
-    assert.equal(after.supplierId, "sup_a");
-    assert.equal(after.quotationId, first.id);
-    assert.equal(await stage("Toluene"), "Ready for PO");
+    const unknown = await lookupRequirementPo(a, tol.id, "PO-77");
+    assert.ok(!unknown.ok && /No PO numbered PO-77/.test(unknown.fieldErrors?.[0].message ?? ""));
+    const seen = await lookupRequirementPo(a, tol.id, " po-1 ");
+    assert.ok(seen.ok, JSON.stringify(seen));
+    assert.equal(seen.data.vendor, "Asian Solvents");
+    assert.equal(seen.data.drums, 3);
+    assert.match(seen.data.rate ?? "", /100/);
+    /* The route is the item's rule: a direct item is not linked, a quotation item is not created. */
+    const box = await req("rm_box");
+    const wrongWay = await mod("requisitions").actions!.linkPo(a, box.id, { poNo: "PO-1" });
+    assert.ok(!wrongWay.ok && /direct purchase/.test(wrongWay.error));
+    const notCreated = await mod("requisitions").actions!.createPo(a, tol.id, { vendor: "Asian Solvents" });
+    assert.ok(!notCreated.ok && /Quotation manager/.test(notCreated.error));
   });
 
-  test("a clerk without purchase money cannot add a quotation or raise a PO", async () => {
-    const c = await as(clerk);
-    const r = await mod("quotations").forms!.new(c, { requirement: "x", vendor: "Asian Solvents", date: TODAY, rate: "1", gst: "18" }, []);
-    assert.ok(!r.ok && r.code === "not_permitted");
-    const po = await mod("purchaseOrders").forms!.new(c, { vendor: "Asian Solvents" }, []);
-    assert.ok(!po.ok && po.code === "not_permitted");
-  });
-
-  test("the PO is raised from the vendor's ready requirements, at the quotation's rate", async () => {
-    await db.execute(sql`insert into erp_user_powers (user_id, power) values (${clerk.id}, 'viewPurchaseMoney'), (${clerk.id}, 'approvePurchaseOrder') on conflict do nothing`);
-    const c = await as(clerk);
-    const mek = await req("rm_mek");
-    const form = await mod("requisitions").formLoaders!.createPo(c, mek.id);
-    assert.ok(form);
-    assert.equal(form!.init!.vendor, "Asian Solvents");
-    assert.equal(form!.initLines!.length, 3, "every requirement ready for this vendor comes onto the PO");
-    const lines = form!.initLines!.map((l) => ({ ...l, requirement: l.requirement ?? "", rate: l.rate || "90" }));
-    const tolLine = lines.findIndex((l) => l.requirement.startsWith("Toluene"));
-    assert.equal(lines[tolLine].rate, "100", "the quotation's rate");
-    const h = { date: TODAY, vendor: "Asian Solvents", deliverTo: "Bhiwandi", deliveryDate: "2026-09-25", terms: "30 days credit" };
-    const off = await mod("purchaseOrders").forms!.new(c, h, lines.map((l, i) => (i === tolLine ? { ...l, rate: "110" } : l)));
-    assert.ok(!off.ok && off.fieldErrors?.[0].field === `l${tolLine}.rate`, "the PO keeps the selected quotation's rate");
-    const made = await mod("purchaseOrders").forms!.new(c, h, lines.map((l) => (l.requirement.startsWith("1 L") ? { ...l, rate: "10" } : l)));
-    assert.ok(made.ok, JSON.stringify(made));
-    const [po] = await db.select().from(erpPurchaseOrders);
-    assert.equal(po.poNumber, 1);
-    assert.equal(po.status, "Pending approval");
-    assert.equal((await db.select().from(erpPoLines)).length, 3);
-    assert.equal(await stage("Toluene"), "PO awaiting approval");
-    const twice = await mod("purchaseOrders").forms!.new(c, h, lines);
+  test("linking needs no approval: the PO is the same number, sent, ready to receive", async () => {
+    const a = await as(admin);
+    for (const item of ["rm_tol", "rm_mek", "rm_can"]) {
+      const r = await mod("requisitions").actions!.linkPo(a, (await req(item)).id, { poNo: "PO-1" });
+      assert.ok(r.ok, `${item}: ${JSON.stringify(r)}`);
+    }
+    const pos = await db.select().from(erpPurchaseOrders);
+    assert.equal(pos.length, 1, "three requirements on one PO number are one PO");
+    const [po] = pos;
+    assert.equal(po.poNumber, 1, "the Quotation manager's number is the ERP's");
+    assert.equal(po.qmPoNo, "PO-1");
+    assert.equal(po.source, "quotation_manager");
+    assert.equal(po.status, "Sent");
+    const lines = await db.select().from(erpPoLines).orderBy(erpPoLines.sortOrder);
+    assert.deepEqual(
+      lines.map((l) => [l.rawMaterialId, l.quantity, l.ratePaise, l.gstBp, l.drums]),
+      [
+        ["rm_tol", 400, 10000, 1800, 3],
+        ["rm_mek", 200, 9000, 1800, 1],
+        ["rm_can", 500, 1000, 1800, 1],
+      ],
+    );
+    assert.equal(await stage("Toluene"), "Waiting for goods");
+    assert.equal((await req("rm_tol")).status, "Order Placed");
+    const twice = await mod("requisitions").actions!.linkPo(a, (await req("rm_tol")).id, { poNo: "PO-1" });
     assert.ok(!twice.ok, "a requirement is on one PO");
   });
 
-  test("nothing is received against a PO awaiting approval, and nobody approves their own", async () => {
-    const [po] = await db.select().from(erpPurchaseOrders);
-    const gate = await mod("inward").forms!.new(await as(admin), { date: TODAY, po: `PO-1 · Asian Solvents`, godown: "Bhiwandi", transportMode: NONE }, [{ poLine: "1. Toluene", qty: "1" }]);
-    assert.ok(!gate.ok && gate.fieldErrors?.[0].field === "po");
-    const sent = await mod("purchaseOrders").actions!.send(await as(admin), po.id, { via: "WhatsApp" });
-    assert.ok(!sent.ok, "a PO is approved before it is sent");
-    const own = await mod("purchaseOrders").actions!.approve(await as(clerk), po.id, {});
-    assert.ok(!own.ok && own.code === "not_permitted");
-    assert.ok((await mod("purchaseOrders").actions!.approve(await as(admin), po.id, { note: "OK" })).ok);
-    assert.equal((await req("rm_tol")).status, "Order Placed");
+  test("a direct purchase creates its PO at the item's price — the amount is never typed", async () => {
+    const a = await as(admin);
+    const box = await req("rm_box");
+    const r = await mod("requisitions").actions!.createPo(a, box.id, {
+      vendor: "Asian Solvents",
+      qty: "1200",
+      deliverTo: "Bhiwandi",
+      deliveryDate: "2099-09-30",
+      terms: "30 days credit",
+      rate: "1", // ignored: the rate is the item's
+    });
+    assert.ok(r.ok, JSON.stringify(r));
+    const [po] = await db.select().from(erpPurchaseOrders).where(eq(erpPurchaseOrders.id, (r.data as { poId: string }).poId));
+    assert.equal(po.status, "Approved", "no approval");
+    assert.equal(po.source, "erp");
+    const [line] = await db.select().from(erpPoLines).where(eq(erpPoLines.poId, po.id));
+    assert.equal(line.ratePaise, 1450);
+    assert.equal(line.quantity, 1200);
+    assert.equal(await stage("Carton 12"), "Waiting for goods");
+  });
+
+  test("an item with no price in Raw materials is ordered at ₹0", async () => {
+    const a = await as(admin);
+    assert.ok((await raise("Plain Carton", "Box", "300")).ok);
+    const plain = await req("rm_plain");
+    const r = await mod("requisitions").actions!.createPo(a, plain.id, { vendor: "Bharat Chemicals", qty: "300", deliverTo: "Bhiwandi", deliveryDate: "2099-09-30", terms: "Advance" });
+    assert.ok(r.ok && /no price on the item/.test(r.message ?? ""), JSON.stringify(r));
+    const [line] = await db.select().from(erpPoLines).where(eq(erpPoLines.requisitionId, plain.id));
+    assert.equal(line.ratePaise, 0);
   });
 
   test("sending the PO records how, and hands back the PO written out for the vendor", async () => {
-    const [po] = await db.select().from(erpPurchaseOrders);
+    await db.execute(sql`insert into erp_user_powers (user_id, power) values (${clerk.id}, 'viewPurchaseMoney') on conflict do nothing`);
+    const [po] = await db.select().from(erpPurchaseOrders).where(eq(erpPurchaseOrders.poNumber, 1));
     const r = await mod("purchaseOrders").actions!.send(await as(clerk), po.id, { via: "WhatsApp" });
     assert.ok(r.ok, JSON.stringify(r));
     const d = (r.data as ToolResult).dialog!;
     assert.match(d.text!, /PURCHASE ORDER PO-1/);
     assert.match(d.open!.href, /^https:\/\/wa\.me\/919820012345\?text=/);
-    const [after] = await db.select().from(erpPurchaseOrders);
+    const [after] = await db.select().from(erpPurchaseOrders).where(eq(erpPurchaseOrders.poNumber, 1));
     assert.equal(after.status, "Sent");
     assert.equal(after.sentVia, "WhatsApp");
-    assert.equal(await stage("Toluene"), "PO sent");
     const { spec } = await mod("inward").load(await as(admin));
-    flowPo = spec.newForm!.header.find((f) => f.k === "po")!.opts![0];
+    const po1 = spec.newForm!.header.find((f) => f.k === "po")!;
+    assert.ok(po1.typed, "the GRN's PO number is typed");
+    flowPo = po1.opts!.find((o) => o.startsWith("PO-1 "))!;
     assert.equal(flowPo, "PO-1 · Asian Solvents");
     for (const key of Object.keys(spec.newForm!.data!.pendingOf as object)) {
-      const line = key.split("|")[1];
-      flowLine[line.replace(/^\d+\. /, "")] = line;
+      const [label, line] = key.split("|");
+      if (label === flowPo) flowLine[line.replace(/^\d+\. /, "")] = line;
     }
     /* The clerk goes back to having no purchase money for the tests that follow. */
     await db.execute(sql`delete from erp_user_powers where user_id = ${clerk.id}`);
@@ -287,6 +318,11 @@ describe("inward", () => {
     assert.equal(rows.every((x) => x.poLineId && x.poId === po.id), true);
     const [can] = await db.select().from(erpRequisitions).where(eq(erpRequisitions.rawMaterialId, "rm_can"));
     assert.equal(can.status, "Received", "500 of 500 tins");
+  });
+
+  test("a GRN takes the PO number as typed", async () => {
+    const r = await mod("inward").forms!.new(await as(admin), { date: TODAY, po: "po-1", godown: "Bhiwandi", transportMode: NONE }, [{ poLine: flowLine["1 L Tin Can"], qty: "26" }]);
+    assert.ok(!r.ok && /More than the PO allows/.test(r.fieldErrors?.[0].message ?? ""), "found by its bare number — and refused only for the quantity");
   });
 
   test("more than the PO allows is refused, beyond the tolerance", async () => {
@@ -362,7 +398,7 @@ describe("testing", () => {
     assert.equal(regs[0].lotNo, "ASTOL1001");
     assert.equal(regs[0].density, 0.9);
     assert.equal(regs[0].poNumber, "PO-1", "a tested lot carries the PO it was bought on");
-    assert.equal(regs[0].ratePaise, 10000, "at the selected quotation's rate");
+    assert.equal(regs[0].ratePaise, 10000, "at the Quotation manager's rate");
     const again = await mod("testing").actions!.verify(ctx, t.id, {});
     assert.ok(!again.ok);
     assert.equal((await db.select().from(erpPurchases).where(eq(erpPurchases.testId, t.id))).length, 1);
@@ -568,41 +604,55 @@ describe("net quantity off the scale", () => {
   });
 });
 
-describe("after the PO: sending back, cancelling, closing short", () => {
-  const raiseMek = async () =>
-    mod("requisitions").forms!.new(await as(admin), { date: TODAY, requiredBy: "2026-10-30", department: "Production Head", godown: "Bhiwandi", type: "Chemical", item: "MEK", required: "50", priority: "Urgent" }, []);
-  const openMek = async () => (await db.select().from(erpRequisitions).where(sql`raw_material_id = 'rm_mek' and status = 'Pending' and required_by = '2026-10-30'`))[0];
-  const raisePo = async (reqId: string) => {
-    const a = await as(admin);
-    const f = (await mod("requisitions").formLoaders!.createPo(a, reqId))!;
-    const lines = f.initLines!.map((l) => ({ requirement: l.requirement ?? "", qty: l.qty ?? "", rate: "90", gst: "18" }));
-    const r = await mod("purchaseOrders").forms!.new(a, { date: TODAY, vendor: "Asian Solvents", deliverTo: "Bhiwandi", deliveryDate: TODAY, terms: "Advance" }, lines);
+const req0 = async (item: string) => (await db.select().from(erpRequisitions).where(sql`raw_material_id = ${item} and purchase_rule is not null and department = 'Production Head' and required_by = '2026-09-30'`))[0];
+
+describe("after the PO: cancelling, unlinking, closing short", () => {
+  const raiseBox = async () =>
+    mod("requisitions").forms!.new(await as(admin), { date: TODAY, requiredBy: "2026-10-30", department: "Production Head", godown: "Bhiwandi", type: "Box", item: "Carton 12", required: "50", priority: "Urgent" }, []);
+  const openBox = async () => (await db.select().from(erpRequisitions).where(sql`raw_material_id = 'rm_box' and status = 'Pending' and required_by = '2026-10-30'`))[0];
+  const createPo = async (reqId: string) => {
+    const r = await mod("requisitions").actions!.createPo(await as(admin), reqId, { vendor: "Asian Solvents", qty: "50", deliverTo: "Bhiwandi", deliveryDate: "2099-10-30", terms: "Advance" });
     assert.ok(r.ok, JSON.stringify(r));
-    return (r.data as { id: string }).id;
+    return (r.data as { poId: string }).poId;
   };
   const stageOf = async (id: string) => (await mod("requisitions").load(await as(admin))).rows.find((r) => r.id === id)!.v.stage;
 
-  test("a PO sent back frees its requirements for a corrected one, and needs a reason", async () => {
-    assert.ok((await raiseMek()).ok);
-    const req = await openMek();
-    const po = await raisePo(req.id);
-    const a = await as(admin);
-    assert.ok(!(await mod("purchaseOrders").actions!.sendBack(a, po, {})).ok);
-    assert.ok((await mod("purchaseOrders").actions!.sendBack(a, po, { reason: "Wrong delivery date" })).ok);
-    assert.equal(await stageOf(req.id), "Ready for PO");
-  });
-
-  test("a cancelled PO frees its requirements too; a requirement on a live PO cannot be cancelled", async () => {
-    const req = await openMek();
-    const po = await raisePo(req.id);
+  test("a cancelled PO frees its requirement for a new one; a requirement on a live PO cannot be cancelled", async () => {
+    assert.ok((await raiseBox()).ok);
+    const req = await openBox();
+    const po = await createPo(req.id);
     const a = await as(admin);
     const blocked = await mod("requisitions").actions!.cancel(a, req.id, { reason: "Not needed" });
     assert.ok(!blocked.ok, "it is on a PO");
-    assert.ok((await mod("purchaseOrders").actions!.approve(a, po, {})).ok);
     assert.ok((await mod("purchaseOrders").actions!.cancel(a, po, { reason: "Vendor out of stock" })).ok);
-    assert.equal(await stageOf(req.id), "Ready for PO");
+    assert.equal(await stageOf(req.id), "Create PO");
+    const second = await createPo(req.id);
+    assert.ok(second, "a new PO for the same requirement");
+    assert.ok((await mod("purchaseOrders").actions!.cancel(a, second, { reason: "Bought from the market" })).ok);
     assert.ok((await mod("requisitions").actions!.cancel(a, req.id, { reason: "Bought from the market" })).ok);
     assert.equal(await stageOf(req.id), "Cancelled");
+  });
+
+  test("a wrong Quotation manager PO number is unlinked while nothing has arrived", async () => {
+    const a = await as(admin);
+    assert.ok((await mod("requisitions").forms!.new(a, { date: TODAY, requiredBy: "2026-11-15", department: "Production Head", godown: "Bhiwandi", type: "Chemical", item: "MEK", required: "60", priority: "Medium" }, [])).ok);
+    const [mek] = await db.select().from(erpRequisitions).where(sql`raw_material_id = 'rm_mek' and required_by = '2026-11-15'`);
+    await db.insert(erpQuoteRows).values({ id: "eqr_bharat1", quoteDate: "2026-09-19", party: "Bharat Chemicals", supplierId: "sup_b" });
+    const bought = await applyQuoteOps(a, [{ op: "cell", rowId: "eqr_bharat1", columnId: "eqc_mekdrum", value: "88", status: "po", drums: 1 }]);
+    assert.ok(bought.ok, JSON.stringify(bought));
+    const poNo = bought.data.minted[0].poNo;
+    assert.ok((await mod("requisitions").actions!.linkPo(a, mek.id, { poNo })).ok);
+    assert.equal(await stageOf(mek.id), "Waiting for goods");
+    assert.ok((await mod("requisitions").actions!.unlinkPo(a, mek.id, {})).ok);
+    assert.equal(await stageOf(mek.id), "Waiting for PO number");
+    const [po] = await db.select().from(erpPurchaseOrders).where(sql`qm_po_no = ${poNo}`);
+    assert.equal(po.status, "Cancelled", "a PO left with nothing on it is cancelled");
+    /* And linked again — the same number, the same PO row. */
+    assert.ok((await mod("requisitions").actions!.linkPo(a, mek.id, { poNo })).ok);
+    const [back] = await db.select().from(erpPurchaseOrders).where(sql`qm_po_no = ${poNo}`);
+    assert.equal(back.id, po.id);
+    assert.equal(back.status, "Sent");
+    assert.ok(!(await mod("requisitions").actions!.unlinkPo(a, (await req0("rm_tol")).id, {})).ok, "goods arrived against PO-1 — it stays");
   });
 
   test("a partly received PO is closed short with a reason, and its requirements count as received", async () => {
@@ -663,7 +713,7 @@ describe("one requirement, many items", () => {
       ],
       "the blank row is dropped; the header travels to every item",
     );
-    assert.equal(rows[1].purchaseRule, "direct", "each item copies its own rule");
+    assert.equal(rows[1].purchaseRule, "quotation", "each item copies its own rule");
     assert.equal(rows[2].purchaseRule, "quotation");
     /* The list names the requirement on each of its items. */
     const listed = (await mod("requisitions").load(await as(admin))).rows.filter((x) => x.v.reqNo === `REQ-${reqNo}`);
