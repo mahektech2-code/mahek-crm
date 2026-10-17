@@ -104,6 +104,14 @@ const files = [
   "src/lib/vendor-payouts.test.ts",
   // The Website CMS: what is saved stays saved, publishing is atomic and honest about the live site, and the server refuses who may not.
   "src/lib/website-cms/website-cms.test.ts",
+  // The review workflow's tables: what the migration itself enforces, whatever code writes the row.
+  "src/lib/website-cms/review-schema.test.ts",
+  // The review workflow itself, called as people with different grants: who may assign, edit, submit, decide and publish, and what an approval covers.
+  "src/lib/website-cms/review-workflow.test.ts",
+  // What the Website screens SHOW: where assignments are enforced, an editor's lists, counts and entry points are their own work and nobody else's.
+  "src/lib/website-cms/review-visibility.test.ts",
+  // Who is TOLD what: each step's recipient, wording and link, that nobody else is told, that a broken bell changes nothing, and the launcher tile and hourly sweep.
+  "src/lib/website-cms/review-notifications.test.ts",
   "src/lib/bill-paging.test.ts",
   // A call's own reminder is folded onto the call in the All view.
   "src/lib/timeline-fold.test.ts",

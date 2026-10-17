@@ -1,5 +1,9 @@
+import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { requireModule } from "@/lib/access";
+import { canEditAny, holdsReview } from "@/lib/website-cms/access";
+import { scopeFor } from "@/lib/website-cms/review-queries";
+import { slugVisible } from "@/lib/website-cms/review-scope";
 
 /**
  * The route guard for one Website module — the same shape the Website
@@ -14,8 +18,30 @@ import { requireModule } from "@/lib/access";
  *
  * `slug` is the module key's tail: `website.products` is `"products"`, and the
  * dashboard (`website.dashboard`, the app root) is `"dashboard"`.
+ *
+ * WHERE ASSIGNMENTS ARE ENFORCED a module is not enough on its own: somebody who
+ * holds Products and was assigned nothing in it has no Products screen, because
+ * what the screen would list is other people's work. They are sent to My work,
+ * which says what they have been given.
  */
 export async function requireWebsiteModule(slug: string): Promise<void> {
   const user = await requireUser();
   await requireModule(user.id, `website.${slug}`);
+  if (!slugVisible(await scopeFor(user.id), slug)) redirect("/website/my-work");
+}
+
+/**
+ * My work and a request's own page: for somebody who works on the website or
+ * reviews it. What a request page then shows is the command's own rule — the
+ * person who submitted it, or a reviewer, and nobody else.
+ */
+export async function requireWebsiteWorkflow(): Promise<void> {
+  const user = await requireUser();
+  if (!((await canEditAny(user.id)) || (await holdsReview(user.id)))) redirect("/website");
+}
+
+/** The review queue, a request under review, and the assign screen: `website.review`, which nothing implies. */
+export async function requireWebsiteReview(): Promise<void> {
+  const user = await requireUser();
+  if (!(await holdsReview(user.id))) redirect("/website");
 }

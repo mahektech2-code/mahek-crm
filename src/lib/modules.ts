@@ -1066,6 +1066,29 @@ export const APP_MODULES: AppModule[] = [
     offByDefault: true,
     note: "Making a change live on mahekindia.com, taking it down, archiving, and refreshing the site. Without it a person can still edit and preview, but nothing they do reaches the public.",
   },
+  /*
+   * REVIEWING IS NOT PUBLISHING, and neither is editing. Somebody holding this
+   * decides what employees may change (assignments), reads what they submit
+   * and says yes or no — and an employee whose submission is approved publishes
+   * exactly that content themselves, without ever holding `website.publish`.
+   *
+   * `explicitOnly` for the reason `website.publish` is: the right to approve is
+   * ticked, for a named person, on the Access screen, and no app grant, no
+   * administrator hat, no migration and no script carries it. Nobody can
+   * approve their own submission whatever they hold — the service refuses it,
+   * and so does the database.
+   */
+  {
+    key: "website.review",
+    app: "website",
+    label: "Review website changes",
+    group: "Website",
+    href: "/website",
+    writeOf: "website.dashboard",
+    explicitOnly: true,
+    offByDefault: true,
+    note: "Assigning website content to employees, reading what they submit, and granting or refusing permission to publish it. Without it a person can still be an assigned editor, but cannot approve anything.",
+  },
 
   /*
    * THE ERP: one module per BUILT screen, read off its own registry so the

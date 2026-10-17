@@ -314,6 +314,32 @@ export async function launcherApps(user: User): Promise<LauncherApp[]> {
       continue;
     }
 
+    /*
+     * The Website tile counts what is waiting on THIS person, which is two
+     * different things for two different people: a reviewer has requests to
+     * decide, and an employee has approved changes to publish and requests that
+     * came back to them. Somebody who is both sees both. The badge is the sum of
+     * exactly the parts the sentence names — never a number the words do not
+     * describe — and says "Nothing waiting" when the sum is nothing.
+     *
+     * Imported on demand: the workflow's queries import this file for the module
+     * rules, so a static import here would be a cycle.
+     */
+    if (app.id === "website") {
+      const [{ launcherCounts }, { holdsReview }] = await Promise.all([import("./website-cms/review-queries"), import("./website-cms/access")]);
+      const counts = await launcherCounts(user.id, await holdsReview(user.id));
+      const parts: string[] = [];
+      if (counts.waiting) parts.push(`${counts.waiting} change${counts.waiting === 1 ? "" : "s"} to review`);
+      if (counts.toPublish) parts.push(`${counts.toPublish} approved — ready to publish`);
+      if (counts.returned) parts.push(`${counts.returned} sent back to you`);
+      out.push({
+        ...app,
+        count: counts.waiting + counts.toPublish + counts.returned,
+        status: parts.length ? parts.join(" · ") : "Nothing waiting",
+      });
+      continue;
+    }
+
     if (app.id !== "crm") {
       out.push({
         ...app,

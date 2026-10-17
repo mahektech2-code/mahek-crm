@@ -21,6 +21,7 @@ import {
   type KindKey,
 } from "./kinds";
 import { previewLink, refreshLiveSite, type LiveRefresh } from "./live-site";
+import type { ItemScope } from "./review-scope";
 import { parseSeed, seedToRows } from "./seed";
 import seedJson from "./seed/cms-seed.bundle.json";
 
@@ -601,11 +602,23 @@ export type DashboardSummary = {
   lastRefresh: { ok: boolean; at: string; detail: string | null } | null;
   /** A publish or unpublish happened after the last refresh that succeeded. */
   refreshOutstanding: boolean;
+  /** Narrowed to somebody's assignments: every figure below is theirs, and nobody else's work is in it. */
+  scoped: boolean;
   activity: { at: string; action: string; label: string | null; ok: boolean; detail: string | null }[];
 };
 
-export async function dashboardSummary(): Promise<DashboardSummary> {
-  const rows = await db.select().from(websiteContent);
+/**
+ * The numbers on the dashboard. With a `scope` that is not "everything" — an
+ * editor whose assignments are enforced — they are counted over THEIR rows only:
+ * a count of "12 drafts" that includes other people's would tell them how much
+ * work there is that they are not part of, and which kinds have any. Kinds they
+ * have nothing in come back empty, and the activity list carries only entries
+ * about their own content.
+ */
+export async function dashboardSummary(scope?: ItemScope): Promise<DashboardSummary> {
+  const everything = !scope || scope.everything;
+  const all = await db.select().from(websiteContent);
+  const rows = everything ? all : all.filter((r) => scope.covers(r.kind as KindKey, r.id));
   const kinds: KindSummary[] = KIND_KEYS.map((kind) => {
     const mine = rows.filter((r) => r.kind === kind);
     return {
@@ -626,7 +639,15 @@ export async function dashboardSummary(): Promise<DashboardSummary> {
     .where(sql`${websiteMedia.deletedAt} is null`)
     .groupBy(websiteMedia.source);
 
-  const logs = await db.select().from(websitePublishLog).orderBy(desc(websitePublishLog.at)).limit(40);
+  const visibleIds = new Set(rows.map((r) => r.id));
+  const logs = (await db.select().from(websitePublishLog).orderBy(desc(websitePublishLog.at)).limit(everything ? 40 : 400)).filter(
+    (l) =>
+      everything ||
+      // The refresh log is about the live site, not about anybody's content; every other entry must be about a row they can see.
+      l.action === "refresh" ||
+      (l.contentId !== null && visibleIds.has(l.contentId)) ||
+      (l.action.startsWith("media-") && scope.hasKind("media")),
+  );
   const refresh = logs.find((l) => l.action === "refresh") ?? null;
   const lastGood = logs.find((l) => l.action === "refresh" && l.ok) ?? null;
   const lastChange = logs.find((l) => ["publish", "unpublish", "archive"].includes(l.action)) ?? null;
@@ -639,8 +660,8 @@ export async function dashboardSummary(): Promise<DashboardSummary> {
     imported: rows.length > 0,
     kinds,
     pending: kinds.reduce((n, k) => n + k.changes + k.neverPublished + (k.orderChanged ? 1 : 0), 0),
-    mediaUploads: media.find((m) => m.source === "upload")?.n ?? 0,
-    mediaSite: media.find((m) => m.source === "site")?.n ?? 0,
+    mediaUploads: everything || scope.hasKind("media") ? (media.find((m) => m.source === "upload")?.n ?? 0) : 0,
+    mediaSite: everything || scope.hasKind("media") ? (media.find((m) => m.source === "site")?.n ?? 0) : 0,
     lastPublish: lastPublished
       ? {
           at: lastPublished.publishedAt!.toISOString(),
@@ -650,6 +671,7 @@ export async function dashboardSummary(): Promise<DashboardSummary> {
       : null,
     lastRefresh: refresh ? { ok: refresh.ok, at: refresh.at.toISOString(), detail: refresh.detail } : null,
     refreshOutstanding: lastChange !== null && (lastGood === null || lastChange.at.getTime() > lastGood.at.getTime()),
+    scoped: !everything,
     activity: logs
       .filter((l) => l.action !== "save")
       .slice(0, 12)

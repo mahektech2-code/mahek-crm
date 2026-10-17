@@ -4,10 +4,12 @@ import * as React from "react";
 import { Badge, Card, EmptyState, PageHeader } from "@/components/ui/primitives";
 import { Drawer, DrawerHeader } from "@/components/ui/overlays";
 import type { PageBlock } from "@/lib/website-cms/contract";
+import type { ItemReview } from "@/lib/website-cms/review-queries";
 import type { ItemView } from "@/lib/website-cms/service";
 import { DocEditor, docKey } from "./doc-editor";
 import { NAVIGATION_FIELDS, SETTINGS_FIELDS, type FieldDef } from "./field-defs";
 import { StateBadge } from "./report";
+import { ReviewBadge } from "./review-ui";
 
 /* ---------------------------------------------------------------------------
  * The three screens built on `DocEditor`: site settings, the menus, and pages.
@@ -22,20 +24,20 @@ const NOT_IMPORTED = (what: string) => (
   </Card>
 );
 
-export function SettingsScreen({ item, canPublish }: { item: ItemView | null; canPublish: boolean }) {
+export function SettingsScreen({ item, canPublish, canSubmit = false, review }: { item: ItemView | null; canPublish: boolean; canSubmit?: boolean; review?: ItemReview }) {
   return (
     <div className="max-w-[900px] p-6">
       <PageHeader title="Settings" subtitle="Company details, the figures quoted across the site, social links and analytics." />
-      {item ? <DocEditor key={docKey(item)} kind="settings" item={item} fields={SETTINGS_FIELDS} canPublish={canPublish} what="the site settings" /> : NOT_IMPORTED("The site settings")}
+      {item ? <DocEditor key={docKey(item)} kind="settings" item={item} fields={SETTINGS_FIELDS} canPublish={canPublish} canSubmit={canSubmit} review={review} what="the site settings" /> : NOT_IMPORTED("The site settings")}
     </div>
   );
 }
 
-export function NavigationScreen({ item, canPublish }: { item: ItemView | null; canPublish: boolean }) {
+export function NavigationScreen({ item, canPublish, canSubmit = false, review }: { item: ItemView | null; canPublish: boolean; canSubmit?: boolean; review?: ItemReview }) {
   return (
     <div className="max-w-[900px] p-6">
       <PageHeader title="Navigation" subtitle="The header menu and the footer links. The order here is the order visitors see." />
-      {item ? <DocEditor key={docKey(item)} kind="navigation" item={item} fields={NAVIGATION_FIELDS} canPublish={canPublish} what="the menus" /> : NOT_IMPORTED("The menus")}
+      {item ? <DocEditor key={docKey(item)} kind="navigation" item={item} fields={NAVIGATION_FIELDS} canPublish={canPublish} canSubmit={canSubmit} review={review} what="the menus" /> : NOT_IMPORTED("The menus")}
     </div>
   );
 }
@@ -61,7 +63,7 @@ function blockFields(blocks: PageBlock[]): FieldDef[] {
   return [...groups.entries()].map(([section, fields]) => ({ type: "group", label: pretty(section), fields }));
 }
 
-export function PagesScreen({ items, canPublish }: { items: ItemView[]; canPublish: boolean }) {
+export function PagesScreen({ items, canPublish, canSubmit = false, review = {} }: { items: ItemView[]; canPublish: boolean; canSubmit?: boolean; review?: Record<string, ItemReview> }) {
   const [open, setOpen] = React.useState<string | null>(null);
   const page = items.find((i) => i.id === open) ?? null;
   return (
@@ -84,7 +86,10 @@ export function PagesScreen({ items, canPublish }: { items: ItemView[]; canPubli
                       <div className="text-sm font-semibold text-ink">{p.label}</div>
                       <div className="text-xs text-muted">{String(p.data.path ?? "")}</div>
                     </div>
-                    <StateBadge item={p} />
+                    <span className="flex flex-col items-end gap-1">
+                      <StateBadge item={p} />
+                      {review[p.id] ? <ReviewBadge review={review[p.id]} /> : null}
+                    </span>
                   </div>
                   <Badge tone="brand" className="w-fit">{blocks} editable {blocks === 1 ? "block" : "blocks"}</Badge>
                 </Card>
@@ -104,6 +109,8 @@ export function PagesScreen({ items, canPublish }: { items: ItemView[]; canPubli
                 item={page}
                 fields={blockFields((page.data.blocks as PageBlock[]) ?? [])}
                 canPublish={canPublish}
+                canSubmit={canSubmit}
+                review={review[page.id]}
                 what="this page's wording"
                 stacked
               />

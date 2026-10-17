@@ -324,6 +324,19 @@ const strong = (s: string): Piece => ({ strong: s });
  * not enough.
  */
 const DESCRIBE: Record<string, Describer> = {
+  /* ---- the website's review workflow */
+  "website.assignment.assigned": () => ["assigned website content to an employee"],
+  "website.assignment.revoked": () => ["took website content away from an employee"],
+  "website.review.submitted": () => ["submitted website changes for verification"],
+  "website.review.approved": () => ["granted permission to publish website changes"],
+  "website.review.rejected": () => ["rejected website changes"],
+  "website.review.revoked": () => ["revoked an approval to publish website changes"],
+  "website.review.withdrawn": () => ["withdrew website changes from review"],
+  "website.review.expired": () => ["let an approval to publish website changes expire"],
+  "website.review.stale": () => ["voided an approval because the content changed after it was submitted"],
+  "website.review.published": () => ["published approved website changes"],
+  "website.review.enforcement_changed": () => ["changed whether website assignments are enforced"],
+  "website.access.denied": () => ["was refused a website action"],
   /* ---- stock checks */
   "erp.floorCheck.record": () => ["recorded a stock check"],
   "erp.floorCheck.review": () => ["reviewed a stock check that did not match the book"],

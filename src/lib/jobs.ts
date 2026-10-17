@@ -153,6 +153,8 @@ export type JobName =
   /** The Mahek Plus "My Products" tab's Can Use and boxes onto ERP packing. `--dry-run` to look first. */
   | "erp-packing-import"
   | "erp-alerts"
+  /** Website review: approvals whose seven days have passed become `expired`, freeing their items. Idempotent. */
+  | "website-review-expiry"
   /** HRMS: this month's paid-leave credit for every active employee — idempotent. */
   | "hrms-leave-credit"
   | "erp-digest"
@@ -642,6 +644,19 @@ export async function resettleQueues(
 /* ----------------------------------------------------------------- hourly */
 
 /** AI-4: the ERP's unusual-activity checks. Raises what is new, resolves what has cleared. */
+/**
+ * An approval to publish website changes lasts seven days. Whoever tries to use
+ * a lapsed one is refused and the sweep runs then, but an approval nobody tries
+ * to use would sit "approved" for ever — holding its items so nobody else can
+ * submit them, and never telling the employee. Hourly, so the message arrives
+ * within the hour of the deadline rather than whenever somebody next looks.
+ */
+async function websiteReviewExpiryStep() {
+  const { sweepExpiredApprovals } = await import("./website-cms/review-service");
+  const expired = await sweepExpiredApprovals();
+  return { recordsAffected: expired, detail: expired ? `${expired} lapsed approval${expired === 1 ? "" : "s"} expired` : "no approval had lapsed" };
+}
+
 async function erpAlertsStep() {
   const { runErpAlerts } = await import("./erp/alerts");
   const r = await runErpAlerts();
@@ -685,6 +700,9 @@ export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
   results.push(await run("erp-cycle-counts", erpCycleCountStep, triggeredById));
 
   results.push(await run("mbos-hourly", mbosHourly, triggeredById));
+
+  // Website review: approvals past their seven days.
+  results.push(await run("website-review-expiry", websiteReviewExpiryStep, triggeredById));
 
   // The Top customers report has its own 10:00 IST cron line on the 1st. This
   // is the net under it: a droplet whose crontab predates that line still
@@ -1104,6 +1122,8 @@ export async function runJob(
       return [await runPartySync(triggeredById)];
     case "erp-alerts":
       return [await run("erp-alerts", erpAlertsStep, triggeredById)];
+    case "website-review-expiry":
+      return [await run("website-review-expiry", websiteReviewExpiryStep, triggeredById)];
     case "hrms-leave-credit":
       return [
         await run("hrms-leave-credit", async () => {
