@@ -1,79 +1,105 @@
-import Link from "next/link";
+import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { requireModule } from "@/lib/access";
-import { enquiryDashboardCounts } from "@/lib/services/enquiry-service";
-import { PageHeader, Card, MetricStrip } from "@/components/ui/primitives";
-import { STAGE_LABEL } from "@/lib/enquiry-labels";
+import { listUserModules } from "@/lib/access";
+import {
+  listEnquiries,
+  assignableUsers,
+  enquiryDashboardCounts,
+  type EnquiryFilters,
+} from "@/lib/services/enquiry-service";
+import { EnquiryListScreen } from "@/components/enquiries/enquiry-list-screen";
+import { decodeEnquiryCursors } from "@/lib/enquiry-labels";
+import type { EnquiryPriority, EnquiryStage } from "@/lib/enquiry-labels";
 
-export const metadata = { title: "Website Enquiries — Overview" };
+export const metadata = { title: "Website Enquiries" };
 
-export default async function EnquiriesOverviewPage() {
+const STAGES = new Set(["new", "contacted", "follow_up", "qualified", "converted", "closed"]);
+const PRIORITIES = new Set(["low", "normal", "high", "urgent"]);
+
+export default async function EnquiriesPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const user = await requireUser();
 
-  // Overview is a module like any other, and it is the app's own root — so it
-  // cannot have a folder layout to guard it, and the guard runs here instead.
-  await requireModule(user.id, "enquiries.overview");
+  /*
+   * ONE page for what used to be two modules, so it opens for whoever held
+   * EITHER: the Overview (the numbers) or the worklist (the rows). Both keys
+   * still exist and are still granted separately — somebody who held only one
+   * of them must not lose the app because the screens merged.
+   *
+   * It is the app's own root, so it has no folder layout to guard it and the
+   * check runs here. `listUserModules` answers whole for somebody with no
+   * module rows, which is the rule that lets a terminal grant open the app.
+   */
+  const modules = await listUserModules(user.id, "enquiries");
+  const keys = new Set(modules.map((m) => m.key));
+  if (!keys.has("enquiries.overview") && !keys.has("enquiries.list")) redirect("/apps");
+  // A row links to the enquiry's own page only for somebody who may open it:
+  // that page is still the worklist module's, and Overview alone does not
+  // widen into it.
+  const canOpenEnquiry = keys.has("enquiries.list");
 
-  const counts = await enquiryDashboardCounts();
+  const params = await searchParams;
+  const one = (k: string) => {
+    const v = params[k];
+    return Array.isArray(v) ? v[0] : v;
+  };
 
-  const metrics = [
-    { label: "Total enquiries", value: String(counts.total) },
-    { label: "New", value: String(counts.byStage.new) },
-    { label: "Contacted", value: String(counts.byStage.contacted) },
-    { label: "Follow-up", value: String(counts.byStage.follow_up) },
-    { label: "Qualified", value: String(counts.byStage.qualified) },
-    { label: "Converted", value: String(counts.byStage.converted), tone: "success" as const },
-    { label: "Closed", value: String(counts.byStage.closed) },
-    { label: "Unassigned", value: String(counts.unassigned), tone: counts.unassigned > 0 ? "danger" as const : undefined },
-    { label: "High / urgent priority", value: String(counts.highOrUrgent), tone: counts.highOrUrgent > 0 ? "danger" as const : undefined },
-  ];
+  const q = one("q") ?? "";
+  const stageParam = one("stage");
+  const priorityParam = one("priority");
+  const sourceParam = one("source");
+  const assignedParam = one("assigned");
+  const linkedParam = one("linked");
+  const sortParam = one("sort");
+  // A stack of keyset cursors, one per page boundary already crossed — see
+  // `decodeEnquiryCursors`. "Page" is derived from its length rather than
+  // stored separately, so a hand-edited URL cannot name a page number the
+  // cursor chain does not actually reach.
+  const cursors = decodeEnquiryCursors(one("cursors"));
+  const page = cursors.length + 1;
+
+  const filters: EnquiryFilters = {
+    q: q || undefined,
+    stage: stageParam && STAGES.has(stageParam) ? (stageParam as EnquiryStage) : undefined,
+    priority: priorityParam && PRIORITIES.has(priorityParam) ? (priorityParam as EnquiryPriority) : undefined,
+    source: sourceParam || undefined,
+    assignedToId: assignedParam === "unassigned" ? "unassigned" : assignedParam || undefined,
+    linked: linkedParam === "linked" || linkedParam === "unlinked" ? linkedParam : undefined,
+    sort: sortParam === "received_asc" ? "received_asc" : "received_desc",
+    cursor: cursors.length ? cursors[cursors.length - 1] : null,
+    pageSize: 25,
+  };
+
+  const [{ items, total, cursor: nextCursor, more }, team, counts] = await Promise.all([
+    listEnquiries(filters),
+    assignableUsers(),
+    enquiryDashboardCounts(),
+  ]);
 
   return (
-    <div className="max-w-[1200px] px-6 pt-6 pb-10">
-      <PageHeader
-        title="Website Enquiries"
-        subtitle="Every enquiry from the website and beyond, from first contact through to delivery."
-        actions={
-          <Link
-            href="/enquiries/list"
-            className="inline-flex h-9 items-center rounded-[4px] border border-brand bg-brand px-4 text-sm font-medium text-white hover:bg-brand-hover"
-          >
-            Open the worklist
-          </Link>
-        }
-      />
-
-      <MetricStrip metrics={metrics} />
-
-      {counts.total === 0 ? (
-        <Card className="px-6 py-14 text-center">
-          <div className="text-lg font-semibold text-ink">No enquiries yet</div>
-          <p className="mx-auto mt-1.5 max-w-[440px] text-[15px] text-muted">
-            Once a website enquiry arrives it will appear here, unassigned, ready to be worked.
-          </p>
-        </Card>
-      ) : (
-        <Card className="px-5 py-4">
-          <div className="text-sm text-muted">
-            {counts.unassigned > 0 ? (
-              <>
-                <span className="font-medium text-ink">{counts.unassigned}</span> enquir
-                {counts.unassigned === 1 ? "y is" : "ies are"} waiting to be assigned. Open the{" "}
-                <Link href="/enquiries/list?assigned=unassigned" className="text-brand hover:text-brand-hover">
-                  worklist
-                </Link>{" "}
-                to hand them out.
-              </>
-            ) : (
-              "Every enquiry currently has somebody assigned."
-            )}
-          </div>
-        </Card>
-      )}
-
-      <p className="mt-4 text-xs text-muted">
-        Stages: {Object.values(STAGE_LABEL).join(" · ")}
-      </p>
-    </div>
+    <EnquiryListScreen
+      items={items}
+      total={total}
+      page={page}
+      pageSize={25}
+      cursors={cursors}
+      nextCursor={nextCursor}
+      more={more}
+      team={team}
+      counts={counts}
+      canOpenEnquiry={canOpenEnquiry}
+      filters={{
+        q,
+        stage: filters.stage,
+        priority: filters.priority,
+        source: filters.source,
+        assigned: assignedParam ?? "",
+        linked: filters.linked,
+        sort: filters.sort ?? "received_desc",
+      }}
+    />
   );
 }

@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { listUserApps, listUserModules } from "@/lib/access";
 import { getApp, webApps } from "@/lib/apps";
@@ -14,15 +13,9 @@ import { ToastProvider } from "@/components/ui/toast";
 /**
  * The Website Enquiries shell.
  *
- * Like HRMS and unlike the CRM: no calling sidebar, and few enough modules
- * that a flat top-nav says everything the sidebar would. Two modules today —
- * Overview and the worklist itself — and a third arrives beside them rather
- * than rearranging the app somebody has already learned.
+ * Like HRMS and unlike the CRM: no calling sidebar. The app is one page, so
+ * there is no module nav to draw — the wordmark is the way home.
  */
-const MODULES = [
-  { href: "/enquiries", label: "Overview" },
-  { href: "/enquiries/list", label: "Enquiries" },
-];
 
 export default async function EnquiriesLayout({
   children,
@@ -55,17 +48,6 @@ export default async function EnquiriesLayout({
                 <AppSwitcher apps={webApps(apps)} current="enquiries" />
               ) : null}
               <Wordmark label={app.name} />
-              <nav className="ml-4 flex items-center gap-1">
-                {MODULES.filter((m) => modules.some((a) => a.href === m.href)).map((m) => (
-                  <Link
-                    key={m.href}
-                    href={m.href}
-                    className="rounded-[4px] px-3 py-1.5 text-[13px] font-medium text-body hover:bg-canvas"
-                  >
-                    {m.label}
-                  </Link>
-                ))}
-              </nav>
               <span className="flex-1" />
               <span className="text-[13px] text-muted">
                 {user.name} · {hat.label}

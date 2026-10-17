@@ -81,6 +81,14 @@ const nextConfig: NextConfig = {
   async redirects() {
     return [
       /*
+       * Website Enquiries was an Overview and a worklist at /enquiries/list;
+       * it is one page now. Exact match on purpose: /enquiries/list/:id is the
+       * enquiry's own page and stays where it is. The query string rides along,
+       * so a saved filtered worklist link lands on the same filtered view.
+       */
+      { source: "/enquiries/list", destination: "/enquiries", permanent: true },
+
+      /*
        * The Accounts app was called Orders, and lived at /orders, until it grew
        * past the name — it now holds approvals, receipts, the bill ledger,
        * credit notes, on-account balances, the sheet import and the audit log.

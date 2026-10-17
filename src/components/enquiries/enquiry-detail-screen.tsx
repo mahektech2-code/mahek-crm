@@ -82,7 +82,7 @@ export function EnquiryDetailScreen({
   return (
     <div className="max-w-[1200px] px-6 pt-6 pb-10">
       <Link
-        href="/enquiries/list"
+        href="/enquiries"
         className="mb-2.5 inline-flex items-center gap-1.5 text-[13px] text-muted no-underline hover:no-underline hover:text-body"
       >
         ← All enquiries
