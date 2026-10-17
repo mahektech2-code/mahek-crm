@@ -10,7 +10,7 @@
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
@@ -37,6 +37,7 @@ import { rmLots, rmLotStock } from "@/lib/erp/stock";
 import { erpNavCounts } from "@/lib/erp/counts";
 import { invalidateConfig } from "@/lib/config/store";
 import { approvedPo } from "@/lib/erp/po-fixture";
+import type { GrnItem } from "@/lib/erp/engines/grn-pick";
 import type { ToolResult } from "@/lib/erp/ui";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -692,5 +693,41 @@ describe("one requirement, many items", () => {
     assert.deepEqual(form.line!.map((f) => f.k), ["item", "stock", "required", "unit", "rule"]);
     assert.ok(form.line!.find((f) => f.k === "item")!.optsBy!.map["Production Head"].includes("Toluene"));
     assert.equal((form.data!.ruleShortOf as Record<string, string>).Toluene, "Quotations");
+  });
+});
+
+describe("the goods receipt starts from the item", () => {
+  test("a receipt started from the item carries a line per PO, across one vendor's POs, and refuses a second vendor", async () => {
+    const a = await approvedPo("Asian Solvents", [{ item: "Toluene", quantity: 10 }]);
+    const b = await approvedPo("Asian Solvents", [{ item: "1 L Tin Can", quantity: 10 }]);
+    const c = await approvedPo("Bharat Chemicals", [{ item: "1 L Tin Can", quantity: 10 }]);
+    const ctx = await as(admin);
+    const { spec } = await mod("inward").load(ctx);
+    assert.equal(spec.newForm!.flow, "grn");
+    const grn = spec.newForm!.data!.grn as GrnItem[];
+    const tol = grn.find((x) => x.item === "Toluene")!;
+    assert.ok(tol.lines.some((l) => l.po === a.po && l.poLine === a.lines.Toluene), "the item offers its open PO line");
+    const tins = grn.find((x) => x.item === "1 L Tin Can")!;
+    assert.ok(tins.lines.some((l) => l.po === b.po) && tins.lines.some((l) => l.po === c.po), "both vendors' open lines are offered for the item");
+
+    const mixed = await mod("inward").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", transportMode: NONE }, [
+      { po: a.po, poLine: a.lines.Toluene, drums: "1", qty: "5" },
+      { po: c.po, poLine: c.lines["1 L Tin Can"], qty: "3" },
+    ]);
+    assert.ok(!mixed.ok && mixed.fieldErrors?.[0].field === "l1.poLine" && /one vendor/.test(mixed.fieldErrors[0].message), JSON.stringify(mixed));
+
+    const r = await mod("inward").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", transportMode: NONE }, [
+      { po: a.po, poLine: a.lines.Toluene, drums: "1", qty: "5" },
+      { po: b.po, poLine: b.lines["1 L Tin Can"], qty: "3" },
+    ]);
+    assert.ok(r.ok, JSON.stringify(r));
+    const rows = await db.select().from(erpInward).where(inArray(erpInward.poId, [a.poId, b.poId]));
+    assert.equal(rows.length, 2);
+    assert.equal(new Set(rows.map((x) => x.prNumber)).size, 1, "one truck, one PR");
+    assert.deepEqual(new Set(rows.map((x) => x.poId)), new Set([a.poId, b.poId]));
+    const [pa] = await db.select().from(erpPurchaseOrders).where(eq(erpPurchaseOrders.id, a.poId));
+    const [pb] = await db.select().from(erpPurchaseOrders).where(eq(erpPurchaseOrders.id, b.poId));
+    assert.equal(pa.status, "Partly received");
+    assert.equal(pb.status, "Partly received");
   });
 });

@@ -2028,6 +2028,17 @@ search or by pasting a list ("Toluene, 200" a row, straight from Excel) that
 names one item itself and sends no lines is a requirement of one item, which is
 what the re-order levels' "Raise requirement" still sends.
 
+**THE GRN STARTS FROM THE ITEM THAT ARRIVED.** The gate knows what came off
+the truck, not the PO number, so a new goods receipt is `flow: "grn"`
+(`app/erp/_ui/grn-drawer.tsx`): search the item, pick one of the approved PO
+lines still open for it (picked for you where there is one), then the ordinary
+line fields. Every line carries its own `po`, so one GRN may span several POs —
+of ONE vendor: "Add another item from this truck" searches only that vendor's
+open lines, and `inward.new` refuses a second vendor. The pick is pure in
+`engines/grn-pick.ts`; an item with no open line is listed as "Cannot receive",
+never hidden. "Receive goods" on a PO and "Add more" on a PR keep the
+PO-in-the-header form, and a line naming no PO takes the header's.
+
 **The ITEM MASTER says how an item is bought** — `erp_raw_materials.purchase_method`:
 `direct` (boxes, cans, stationery, routine chemicals: pick the vendor, raise
 the PO), `quotation` (price-sensitive chemicals: quotations are collected and
