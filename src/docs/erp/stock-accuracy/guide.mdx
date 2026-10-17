@@ -1,13 +1,13 @@
-**Stock accuracy** is where the ERP checks that what is on the shelf is what the book says. It is the screen behind **Inventory Accuracy Control**: when a purchase requirement is raised, somebody counts the item on the shelf without seeing the book, and the requirement moves on to its purchase method as soon as that count is entered. **Whatever the count finds, the purchase is never stopped.** A count that disagrees with the book raises a **red flag** on the requirement and notifies stock control, and the recount, investigation and any adjustment happen beside the purchase, whenever somebody gets to them. Stock is never changed quietly — only through an adjustment somebody else approves.
+**Stock accuracy** is where the ERP checks that what is on the shelf is what the book says. It is the screen behind **Inventory Accuracy Control**: when a purchase requirement is raised, somebody counts the item on the shelf without seeing the book, and the requirement moves on to its vendor as soon as that count is entered. **Whatever the count finds, the purchase is never stopped.** A count that disagrees with the book raises a **red flag** on the requirement and notifies stock control, and the recount, investigation and any adjustment happen beside the purchase, whenever somebody gets to them. Stock is never changed quietly — only through an adjustment somebody else approves.
 
-<Flow caption="The blind count comes before the purchase method; a difference flags and notifies, and the purchase carries on" chart={`
+<Flow caption="The blind count comes before the vendor; a difference flags and notifies, and the purchase carries on" chart={`
 flowchart LR
   R[Purchase requirement] --> C[Blind count]
   C --> K{Matches the book?}
-  K -- yes --> M[Purchase method]
+  K -- yes --> M[Vendor]
   K -- no --> F[Red flag on the requirement]
   F -- purchase carries on --> M
-  M --> V[Vendor / quotation] --> A[PO approval] --> PO[PO sent] --> G[Receipt / GRN]
+  M --> A[PO approval] --> PO[PO sent] --> G[Receipt / GRN]
   subgraph S[Side track - never holds the purchase]
     N[Notify stock control, ERP admins, requirement raiser]
     X[Recount / investigate / adjust when somebody gets to it] --> D[Resolved]
@@ -59,7 +59,7 @@ Go to the shelf. Count every drum, can or box of the item, in litres or pieces a
 Write the figure — zero if the shelf is empty — where on the floor you counted, and any lot numbers you saw. A recount is counted in the same place.
 </Step>
 <Step title="Submit">
-Only now is the book shown: "Counted 480 Ltr · book 500. Red flag: −20 Ltr, beyond the 10 tolerance — stock control has been told, and any purchase carries on." A count within tolerance says "Matches the book". Either way, a requirement waiting on the count moves on to its purchase method.
+Only now is the book shown: "Counted 480 Ltr · book 500. Red flag: −20 Ltr, beyond the 10 tolerance — stock control has been told, and any purchase carries on." A count within tolerance says "Matches the book". Either way, a requirement waiting on the count moves on to its vendor.
 </Step>
 </Steps>
 
@@ -98,11 +98,11 @@ Rejecting sends the check back to **Investigating**.
 
 ## On a purchase requirement
 
-A requirement raised while the stock check is switched on sits at **Blind count** in its flow until the count is entered, then moves on to **Purchase method** whatever the count found. Its drawer says what the count found, what is on the shelf and how much the shelf needs to reach its maximum level. A difference shows up as a flag on the requirements list and never stops the purchase.
+A requirement raised while the stock check is switched on sits at **Blind count** in its flow until the count is entered, then moves on to **Select vendor** (or **Ready for PO**, where the item's default vendor was offered) whatever the count found. Its drawer says what the count found, what is on the shelf and how much the shelf needs to reach its maximum level. A difference shows up as a flag on the requirements list and never stops the purchase.
 
 | What you see | What it means |
 |---|---|
-| Stage **Blind count** | The count has not been entered yet. Press **Count the stock**. Method, vendor, quotations and the PO wait for this, and only this. |
+| Stage **Blind count** | The count has not been entered yet. Press **Count the stock**. The vendor and the PO wait for this, and only this. |
 | Flag **Stock difference — red flag** | The count differs from the book. Stock control has been notified; the purchase carries on. **Open the red flag** shows it. |
 | Flag **More than the shelf needs** | The count matched, but more is asked for than the shelf needs to reach its maximum level. Nothing to confirm — it is a warning. |
 

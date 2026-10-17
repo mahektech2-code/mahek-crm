@@ -1,21 +1,20 @@
-A purchase requirement is a department saying "we need this bought". It is the first step of every purchase: nothing reaches a purchase order, the gate or stock without one. One requirement can carry every item a department needs this month, and each item then finds its own way — straight to a vendor, through quotations, or to the buyer for a decision.
+A purchase requirement is a department saying "we need this bought". It is the first step of every purchase: nothing reaches a purchase order, the gate or stock without one. One requirement can carry every item a department needs this month, and each item then goes to a vendor of its own. Supplier rates are kept on the [Quotation manager](/docs/erp/quotation-manager), not here.
 
 ## The screen at a glance
 
 <Wireframe url="/erp/requisitions" nav={["Dashboard", "#Purchase", "Purchase requirements", "Purchase orders", "Purchases", "Lot testing"]} active="Purchase requirements" caption="Purchase requirements, grouped by stage">
   <WfBar>
-    <WfTitle sub="What a department needs bought. The item's purchase rule decides the method — direct purchase, quotation, or the buyer decides — and each requirement moves on to a vendor, an approved PO and the goods.">Purchase requirements</WfTitle>
+    <WfTitle sub="What a department needs bought. Each requirement moves on to a vendor, an approved PO and the goods.">Purchase requirements</WfTitle>
     <WfSpacer /><WfButton primary>New requirement</WfButton><Hotspot n={1} />
   </WfBar>
-  <WfTabs items={["Requirements", "Quotations"]} active="Requirements" />
-  <WfBar><WfInput placeholder="Search" /><WfPill tone="brand">Ready for PO 3</WfPill><WfPill>Collect quotations 2</WfPill><WfPill>Buyer decision 1</WfPill><WfPill>PO sent 4</WfPill><Hotspot n={2} /></WfBar>
+  <WfBar><WfInput placeholder="Search" /><WfPill tone="brand">Ready for PO 3</WfPill><WfPill>Select vendor 2</WfPill><WfPill>Blind count 1</WfPill><WfPill>PO sent 4</WfPill><Hotspot n={2} /></WfBar>
   <WfTable
     highlight={0}
-    columns={["Requirement", "Item", "Quantity", "Required by", "Department", "Priority", "Method", "Stage", "Vendor", "PO"]}
+    columns={["Requirement", "Item", "Quantity", "Required by", "Department", "Priority", "Stage", "Vendor", "PO"]}
     rows={[
-      ["REQ-412", <b key="a">Tin can 5 L</b>, "1,200 Pcs", "12 Oct", "Refilling", <WfPill key="b" tone="danger">Urgent</WfPill>, "Direct purchase", <span key="c">Ready for PO <Hotspot n={3} /></span>, "Supplier B", "—"],
-      ["REQ-411", <b key="d">Solvent A</b>, "800 Kg", "15 Oct", "Mixing & Blending", "Medium", "Quotation", "Collect quotations", "—", "—"],
-      ["REQ-409", <b key="e">Empty Box 5 Liter</b>, "500 Pcs", "20 Oct", "Packing", "For Stock", "Direct purchase", "PO sent", "Supplier C", <span key="f">PO-88 <Hotspot n={4} /></span>],
+      ["REQ-412", <b key="a">Tin can 5 L</b>, "1,200 Pcs", "12 Oct", "Refilling", <WfPill key="b" tone="danger">Urgent</WfPill>, <span key="c">Ready for PO <Hotspot n={3} /></span>, "Supplier B", "—"],
+      ["REQ-411", <b key="d">Solvent A</b>, "800 Kg", "15 Oct", "Mixing & Blending", "Medium", "Select vendor", "—", "—"],
+      ["REQ-409", <b key="e">Empty Box 5 Liter</b>, "500 Pcs", "20 Oct", "Packing", "For Stock", "PO sent", "Supplier C", <span key="f">PO-88 <Hotspot n={4} /></span>],
     ]}
   />
 </Wireframe>
@@ -34,10 +33,10 @@ A purchase requirement is a department saying "we need this bought". It is the f
 **Date** (today), **Required by** (when the department needs the goods in hand), **Department**, **Deliver to** (your working godown), **Priority** (Urgent, Medium or For Stock) and **Remarks**.
 </Step>
 <Step title="Add every item">
-Type in "Add an item — type to search", or paste a list: one item a row with its quantity last — "Solvent A, 200", or copied straight from Excel. A row that names nothing the ERP knows is shown to you rather than guessed. Each item shows what is **in stock**, its **unit** and where it **goes to** (Direct · the vendor, Quotations, or Buyer decides).
+Type in "Add an item — type to search", or paste a list: one item a row with its quantity last — "Solvent A, 200", or copied straight from Excel. A row that names nothing the ERP knows is shown to you rather than guessed. Each item shows what is **in stock**, its **unit** and its **vendor** — the item's default vendor where it has one, otherwise "Chosen next".
 </Step>
 <Step title="Raise requirement">
-All items are saved together under one number — "REQ-412 raised · 3 items · 2 direct · 1 for quotations". If one line is wrong, nothing is saved and that line is marked.
+All items are saved together under one number — "REQ-412 raised · 3 items · 2 with a vendor offered · 1 to choose". If one line is wrong, nothing is saved and that line is marked.
 </Step>
 </Steps>
 
@@ -66,36 +65,20 @@ What they counted becomes that item's stock check. They see only whether it matc
 
 ## What happens to each item next
 
-Each item follows its **purchase rule**, copied from the item when you raised it.
+Every item is bought direct from one vendor. If the item has a **default vendor** on its [raw material](/docs/erp/masters) record, that vendor is offered as you raise it; otherwise somebody picks one.
 
 | Stage | What it means | Who acts |
 |---|---|---|
-| **Buyer decision** | The item's rule is "Buyer decision" | The buyer presses **Decide method**: Direct purchase or Quotation, with a note |
-| **Select vendor** | Direct purchase, no vendor yet | Anyone on the screen presses **Select vendor** |
-| **Collect quotations** | Quotation, fewer quotations in than needed | Somebody with purchase money presses **Add quotation** |
-| **Compare quotations** | Enough quotations are in | **Compare & select** — see below |
-| **Ready for PO** | The vendor is decided | **Create PO** opens a purchase order for this vendor |
+| **Blind count** | The stock check is on and the shelf has not been counted yet | Whoever counts presses **Count the stock** — see [Stock accuracy](/docs/erp/stock-accuracy) |
+| **Select vendor** | No vendor yet | Anyone on the screen presses **Select vendor** |
+| **Ready for PO** | The vendor is decided | **Create PO** opens a purchase order for this vendor. **Change vendor** picks another |
 | **PO awaiting approval / PO approved / PO sent** | On a purchase order | The PO's approver, then whoever sends it |
 | **Partly received / Received / Closed short** | Goods have come in against the PO | The gate |
 | **Cancelled** | Cancelled with a reason | — |
 
 A requirement already on a PO cannot be edited or cancelled — the PO has to be cancelled or sent back first, and the record says so.
 
-## The Quotations tab
-
-For an item bought by quotation, collect prices from several vendors and choose one.
-
-<Steps>
-<Step title="Add a quotation">
-From the requirement's **Add quotation**, or on the Quotations tab: the vendor, the date and their reference, the **rate**, **GST %**, **freight**, delivery days, payment terms, **valid until**, and the vendor's document. One quotation per vendor per requirement — a second from the same vendor is refused; edit the first.
-</Step>
-<Step title="Compare">
-Quotations are ranked by **landed cost**: rate × quantity, plus GST, plus freight. The cheapest live one is marked "Lowest landed cost". An expired one is ranked last and cannot be chosen.
-</Step>
-<Step title="Select one">
-**Compare & select** is available once the minimum number of quotations is in. Choosing anything other than the lowest asks **Why this one** — the save is refused without it. The requirement is then **Ready for PO**, at that quotation's rate.
-</Step>
-</Steps>
+To compare what vendors charge before choosing one, look the item up on the [Quotation manager](/docs/erp/quotation-manager).
 
 ## Cancelling
 
@@ -104,19 +87,19 @@ Quotations are ranked by **landed cost**: rate × quantity, plus GST, plus freig
 ## Common questions
 
 <Faq q="Why does a new requirement go straight to 'Ready for PO'?">
-The item's rule is Direct purchase and it has a default vendor, so the vendor was decided as you raised it.
+The item has a default vendor, so the vendor was offered as you raised it. Press **Change vendor** to buy from somebody else.
 </Faq>
 
 <Faq q="I can't see the requirements another department raised.">
 In a production department you see your own department's requirements, and any you raised yourself. The Production Head, the store and administrators see every department's.
 </Faq>
 
-<Faq q="Compare & select is greyed out.">
-Either fewer quotations are in than needed — the button says how many — or purchase money is not on your account.
+<Faq q="Where did the Quotations tab go?">
+Supplier rates are kept on the [Quotation manager](/docs/erp/quotation-manager) now. A requirement no longer collects or selects quotations: you choose the vendor, and the rate is typed on the purchase order.
 </Faq>
 
-<Faq q="I changed the item's purchase rule, but the old requirement still asks for quotations.">
-A requirement keeps the rule it was raised with, so a change to the item never re-routes work already in progress. Cancel it and raise a new one if it must change.
+<Faq q="Create PO is greyed out.">
+It says why on hover: Purchase orders is not on your account, or purchase money is not.
 </Faq>
 
 <Faq q="The 'Present qty' column is blank.">

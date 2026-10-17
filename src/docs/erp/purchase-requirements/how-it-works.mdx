@@ -1,25 +1,17 @@
-The purchase flow is **Requirement → Blind count → Purchase method → Vendor or quotation → Approval → Purchase order → Receipt**, and no purchase is completed without a PO. The blind count — a physical count of the shelf, entered before the purchase method is chosen — never stops the purchase over what it finds: a difference from the book flags the requirement and notifies stock control, and the purchase carries on. It has its own page: [Stock accuracy](/docs/erp/stock-accuracy/how-it-works). This page covers the requirement, the method and the vendor: who may ask for what, how the method is decided, and how a vendor is chosen. [Purchase orders](/docs/erp/purchase-orders/how-it-works) and [Goods receipt](/docs/erp/goods-receipt-and-testing/how-it-works) cover the rest.
+The purchase flow is **Requirement → Blind count → Vendor → Approval → Purchase order → Receipt**, and no purchase is completed without a PO. The blind count — a physical count of the shelf, entered before the vendor is chosen — never stops the purchase over what it finds: a difference from the book flags the requirement and notifies stock control, and the purchase carries on. It has its own page: [Stock accuracy](/docs/erp/stock-accuracy/how-it-works). This page covers the requirement and the vendor: who may ask for what, and how a vendor is chosen. [Purchase orders](/docs/erp/purchase-orders/how-it-works) and [Goods receipt](/docs/erp/goods-receipt-and-testing/how-it-works) cover the rest.
 
 <Flow caption="Where a requirement goes" chart={`
 flowchart TD
-  R["Requirement raised<br/>the item's purchase rule is copied on"] --> C["Blind count entered<br/>a difference flags and notifies"] --> M{"Purchase rule"}
-  M -- "Buyer decision" --> B["Buyer decides<br/>direct or quotation"]
-  M -- "Direct purchase" --> V{"Default vendor?"}
-  M -- "Quotation" --> Q["Collect quotations"]
-  B -- "Direct" --> V
-  B -- "Quotation" --> Q
+  R["Requirement raised"] --> C["Blind count entered<br/>a difference flags and notifies"] --> V{"Default vendor?"}
   V -- "Yes" --> P["Ready for PO"]
   V -- "No" --> SV["Select vendor"] --> P
-  Q --> QC{"At least the minimum<br/>number of quotations in?"}
-  QC -- "No" --> Q
-  QC -- "Yes" --> CQ["Compare and select<br/>lowest landed cost, or a reason"] --> P
   P --> PO["Purchase order<br/>for approval"]
 `} />
 
 ## The requirement
 
 <Rule title="One requirement, every item, one save">
-A department's monthly list is a hundred items, so a requirement carries as many as it needs (up to five hundred) under one number, `REQ-n`. Each item is its own record — its method, quotations, vendor and PO line are decided item by item — but they are written together: a bad line refuses the whole save and names the line, so a requirement is never half raised.
+A department's monthly list is a hundred items, so a requirement carries as many as it needs (up to five hundred) under one number, `REQ-n`. Each item is its own record — its vendor and PO line are decided item by item — but they are written together: a bad line refuses the whole save and names the line, so a requirement is never half raised.
 </Rule>
 
 <Rule title="It says when, where and how badly">
@@ -46,37 +38,15 @@ Mixing & Blending asks for chemicals; Refilling for cans and drums; Packing for 
 The form used to offer a free list of departments — Production, Godown / Store, Quality, Dispatch, Office, Maintenance — each of which could ask for anything at all. That is the opposite of what departments are for. Requirements raised under the old labels keep them, and editing such a requirement without changing its department is not refused.
 </Callout>
 
-## The purchase rule decides the method
+## Every item is bought direct
 
-<Rule title="The rule is copied onto the requirement when it is raised">
-Changing an item's rule later never re-routes a requirement already in flight.
+<Rule title="A requirement goes to one vendor, and the item's default vendor is offered first">
+There is no purchase method to decide and no quotation to collect. When an item has a **default vendor** on its raw material record, that vendor is set as the requirement is raised and the requirement is Ready for PO once its blind count is in. Otherwise it waits at **Select vendor**. The vendor can be changed with **Change vendor** until the requirement is on a PO.
 </Rule>
 
-| Item's rule | What happens on raise |
-|---|---|
-| **Direct purchase** | Method is direct. With a default vendor, the vendor is set at once and the requirement is Ready for PO |
-| **Quotation** | Method is quotation; collect quotations |
-| **Buyer decision** | No method yet. Only somebody with the buyer power chooses direct or quotation, with an optional note "read by whoever picks it up next" |
-
-## Quotations
-
-<Rule title="A quotation is required only where the rule says so">
-A quotation requirement is not ready for a PO until one quotation is **selected**, and one can be selected only once <Setting k="erp.purchase.minQuotations" /> quotations are in. One vendor quotes once per requirement.
-</Rule>
-
-<Rule title="Compared on landed cost">
-Each quotation is costed for the quantity required: rate × quantity, plus GST on that, plus the vendor's freight. They are ranked cheapest first; an **expired** quotation (valid-until in the past) is ranked after every live one, can never be the lowest, and cannot be selected.
-</Rule>
-
-<Rule title="Not the lowest? Say why">
-Selecting anything other than the lowest landed cost needs the reason in words. It is stored on the requirement, because that is exactly the decision an auditor asks about.
-</Rule>
-
-<Rule title="The PO takes the selected quotation's rate">
-The PO line for a quotation requirement must be at the selected quotation's rate; a different rate is refused with "change the quotation, not the PO". Any negotiation is recorded on the quotation, not hidden on the PO.
-</Rule>
-
-Adding, editing, removing and selecting quotations all need the **purchase money** power, because they are prices. The selected quotation cannot be removed — select another first — and nothing about a requirement's quotations can change once it is on a PO.
+<Callout kind="why">
+Requirements used to carry a purchase rule — direct, quotation, or the buyer decides — and a quotation item could not reach a PO until enough quotations were in and one was selected. Supplier rates are now kept on the [Quotation manager](/docs/erp/quotation-manager/how-it-works), across every item and vendor, so the rate is looked up there and typed on the PO. Requirements raised under the old rule keep their stored columns, but nothing reads them.
+</Callout>
 
 ## Who may do what to an item
 
@@ -86,7 +56,7 @@ Anyone holding Requirements may request any item their department asks for; anyo
 
 ## The stage is derived, never typed
 
-A requirement's stage is worked out from its own record each time it is read: its method, vendor, quotations and the PO it is on, with what that PO has ordered and received. The stored status moves only with the flow — Pending, then **Order Placed** when its PO is approved, then **Received** — and there is no button to type one. A status somebody types can say Received with nothing at the gate.
+A requirement's stage is worked out from its own record each time it is read: its blind count, its vendor and the PO it is on, with what that PO has ordered and received. The stored status moves only with the flow — Pending, then **Order Placed** when its PO is approved, then **Received** — and there is no button to type one. A status somebody types can say Received with nothing at the gate.
 
 Requirements raised before purchase orders existed show their old status with "(before POs)" and are flagged "Before POs"; nothing back-fills a PO for them.
 
@@ -96,7 +66,7 @@ Each requirement shows the **present quantity** the godown's re-order level coun
 
 ## Settings
 
-<SettingsTable keys={["erp.purchase.minQuotations"]} />
+<SettingsTable keys={["erp.stockCheck.onRequirement"]} />
 
 ## Where the code and the intent disagree today
 

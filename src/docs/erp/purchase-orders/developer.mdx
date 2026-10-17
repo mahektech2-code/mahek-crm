@@ -6,7 +6,7 @@ Purchase orders are the `purchaseOrders` screen module in `lib/erp/screens/purch
 |---|---|---|
 | Engine (pure) | `src/lib/erp/engines/purchase-flow.ts` | `LIVE_PO`, `RECEIVABLE_PO`, `poLabel`, `poLineFigures`, `poTotals`, `poStatusAfterReceipt`, `receivableQuantity`, `poMessage` |
 | Reading | `src/lib/erp/screens/purchase-flow.ts` | `purchaseOrderViews`, `receivedByLine`, `poOption` |
-| Form | same | `poFormData`, `purchaseOrderForm` (header + lines, filled from the selected quotation / vendor) |
+| Form | same | `poFormData`, `purchaseOrderForm` (header + lines: delivery date from the requirement, terms from the vendor's credit days, GST 18; the rate is typed) |
 | Writes | same | `savePurchaseOrder`; actions `approve`, `sendBack`, `send`, `close`, `cancel`; form loader `receive` → `inwardFormForPo` |
 | Approval rule | same | `approvalRefusal` — the `approvePurchaseOrder` power |
 | After a receipt | same | `refreshPurchaseOrder(tx, poId)` |
@@ -25,7 +25,7 @@ sequenceDiagram
   U->>F: forms.new -> savePurchaseOrder(h, lines)
   F->>F: vendor, deliver-to, dates, terms, freight
   loop each line
-    F->>F: requirement ready for PO, this vendor, qty, rate (= selected quotation), GST
+    F->>F: requirement ready for PO, this vendor, qty, rate (typed), GST
   end
   F->>DB: tx: nextNumber(po), erp_purchase_orders (Pending approval), erp_po_lines - refuse a requirement already on a live PO
   AP->>F: actions.approve
@@ -76,7 +76,7 @@ sequenceDiagram
 <DbTable name="erp_po_lines" note={{
   requisition_id: "The requirement this line buys — one live PO per requirement.",
   quantity: "In the requirement's purchase unit.",
-  rate_paise: "Per unit; equal to the selected quotation's for a quotation requirement.",
+  rate_paise: "Per unit, as typed on the PO.",
   gst_bp: "1800 = 18%.",
 }} />
 
@@ -91,7 +91,7 @@ sequenceDiagram
 | Suite | File | What it pins |
 |---|---|---|
 | `npm run test` | `src/lib/erp/engines/purchase-flow.test.ts` | The PO drives the requirement's stage; status follows what was received, only in the receiving states; tolerance is a share of what was ordered; totals add GST per line and freight once |
-| `npm run test:integration` | `src/lib/erp/erp-purchase.test.ts` | The PO is raised from the vendor's ready requirements at the quotation's rate; nothing is received against a PO awaiting approval; nobody approves their own; sending records how and hands back the PO written out |
+| `npm run test:integration` | `src/lib/erp/erp-purchase.test.ts` | The PO is raised from the vendor's ready requirements; nothing is received against a PO awaiting approval; nobody approves their own; sending records how and hands back the PO written out |
 
 ## Changing it safely
 

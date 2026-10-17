@@ -6,7 +6,6 @@ The Masters are six screen modules in `lib/erp/screens/masters.ts` (raw material
 |---|---|---|
 | Screen modules | `src/lib/erp/screens/masters.ts` | `rawMaterials`, `suppliers`, `productsScreen`, `customersScreen`, `godowns`, `refListsScreen` |
 | Value lists | `src/lib/erp/refs.ts` | `REF_LISTS` (open, in `erp_ref_values`), `refValues`, and the fixed lists (`RM_UNITS`, `BOX_TYPES`, `GRADES`, `REGIONS`…) |
-| Purchase rule | `src/lib/erp/engines/purchase-flow.ts` | `PURCHASE_METHODS`, `methodLabel`, `methodByLabel` |
 | Shared helpers | `src/lib/erp/screens/common.ts` | `godownOptions` (Item Lost Record only with `lostStock`), `godownIdByName`, `materials` |
 | Customer status | `src/lib/erp/screens/masters.ts` | `partyStatus`, `loadCustomers`, `saveCustomerDetails` |
 
@@ -17,8 +16,8 @@ The Masters are six screen modules in `lib/erp/screens/masters.ts` (raw material
 Notes on what it does:
 
 - `density` and `testing_list` are written only for a Chemical; otherwise `null` and `[]`.
-- A save that sends no purchase rule keeps the stored one, or starts from Quotation for a chemical and Direct otherwise.
-- A Quotation item's `preferred_supplier_id` is cleared.
+- `purchase_method` is always written `direct`; there is no purchase rule on the form any more.
+- A save that does not send the default vendor keeps the stored one; a named vendor must be on the list.
 - `price_paise` is in the update only when the caller holds `viewPurchaseMoney` — a clerk's save never overwrites it.
 - New `serial_no` is `max + 1` under `lock table … in share row exclusive mode`.
 
@@ -30,8 +29,8 @@ Notes on what it does:
   density: "Chemicals only; kg ÷ density = litres.",
   testing_list: "Chemicals only; the tests every lot must evidence.",
   price_paise: "Packing rate for cans and drums. Written only with viewPurchaseMoney.",
-  purchase_method: "direct · quotation · buyer — copied onto each requirement as it is raised.",
-  preferred_supplier_id: "The default vendor for a direct purchase.",
+  purchase_method: "Always 'direct' now; kept from when items carried a purchase rule, read by nothing.",
+  preferred_supplier_id: "The default vendor, offered when a requirement is raised.",
   active: "Retire sets false; never deleted.",
 }} />
 

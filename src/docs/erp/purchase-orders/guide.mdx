@@ -31,10 +31,10 @@ Nothing is bought without a purchase order. A PO is raised from requirements who
 **Create PO** on a requirement that is Ready for PO opens the form with that vendor and their ready requirements already on it.
 </Step>
 <Step title="Check the header">
-**Vendor**, **Deliver to** (the godown), **Delivery date** (filled from the quotation's delivery days, or the requirement's required-by date), **Payment terms** (from the quotation, or the vendor's credit days), **Freight** for the whole PO, and **Remarks for the vendor**.
+**Vendor**, **Deliver to** (the godown), **Delivery date** (filled from the requirement's required-by date), **Payment terms** (filled from the vendor's credit days), **Freight** for the whole PO, and **Remarks for the vendor**.
 </Step>
 <Step title="Check each line">
-One line per requirement: **Quantity**, **Rate per unit** and **GST %** (eighteen unless changed). A requirement bought by quotation must keep the selected quotation's rate — "change the quotation, not the PO".
+One line per requirement: **Quantity**, **Rate per unit** and **GST %** (eighteen unless changed). Type the rate the vendor agreed — the [Quotation manager](/docs/erp/quotation-manager) is where the vendors' rates are kept.
 </Step>
 <Step title="Raise PO for approval">
 "PO-91 raised · ₹54,000 · waiting for approval". Its requirements now read "PO awaiting approval".
@@ -95,11 +95,11 @@ Once anything has been received against a PO it cannot be cancelled — close it
 ## Common questions
 
 <Faq q="The vendor I want is not in the New purchase order list.">
-Only vendors with a requirement that is Ready for PO are offered. Choose the vendor on the requirement first (Select vendor, or select their quotation).
+Only vendors with a requirement that is Ready for PO are offered. Choose the vendor on the requirement first (Select vendor, or Change vendor).
 </Faq>
 
-<Faq q="Can I change the rate on a quotation item?">
-No. The PO keeps the selected quotation's rate. If the vendor agreed a new price, edit or re-add their quotation and select it again.
+<Faq q="Where does the rate come from?">
+You type it on each line. Look up what the vendor quoted on the [Quotation manager](/docs/erp/quotation-manager). The rate can be changed while the PO is still awaiting approval.
 </Faq>
 
 <Faq q="Goods arrived but Receive goods is greyed out.">

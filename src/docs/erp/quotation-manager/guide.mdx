@@ -11,8 +11,8 @@ Everything on it can be changed in place: the cells, the date and party of a row
   <WfTable
     columns={["Date", "Party", "Material A", "Material B", "Broker name"]}
     rows={[
-      ["1-Oct-2026", <b key="a">Supplier A</b>, "134", "140", "Self"],
       ["3-Oct-2026", <b key="b">Supplier B</b>, "", "48.5", "Self"],
+      ["1-Oct-2026", <b key="a">Supplier A</b>, "134", "140", "Self"],
       ["Latest rate", "", "134", "48.5", ""],
     ]}
   />
@@ -50,7 +50,9 @@ Only a manager or an administrator marks a rate Ready to buy or takes the mark o
 
 ## Rows
 
-Use the **⋯** beside a row number to add a row below it with the same date, duplicate the row, or delete it. A date can be typed as `14-Oct-2026`, `14/10/2026` or `2026-10-14`. The party offers the purchase parties as you type, and a name that matches one exactly is linked to it.
+The newest quotation is at the top: rows are sorted by date, latest first, and within one date the row entered last comes first.
+
+Use the **⋯** beside a row number to **Add a row, same date**, duplicate the row, or delete it. A date can be typed as `14-Oct-2026`, `14/10/2026` or `2026-10-14`. The party offers the purchase parties as you type, and a name that matches one exactly is linked to it.
 
 ## Columns
 

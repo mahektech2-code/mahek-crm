@@ -10,7 +10,7 @@ Everything in the ERP follows the paint from the supplier to the customer. Each 
 
 <Flow caption="From a department's need to money in the bank" chart={`
 flowchart TD
-  A["A department needs something<br/>Purchase requirements"] --> B["How is it bought?<br/>direct · quotation · buyer decides"]
+  A["A department needs something<br/>Purchase requirements"] --> B["Blind count, then a vendor<br/>the item's default vendor, or one picked"]
   B --> C["Purchase order<br/>raised, approved, sent to the vendor"]
   C --> D["Goods arrive at the gate<br/>Goods receipt (GRN) against the PO"]
   D --> E{"Does the item<br/>need testing?"}
@@ -32,7 +32,7 @@ flowchart TD
 
 Read it top to bottom and you have the whole ERP:
 
-1. **Buy.** A department raises a [purchase requirement](/docs/erp/purchase-requirements). The item's purchase rule decides whether the store buys it directly, collects quotations first, or lets the buyer decide.
+1. **Buy.** A department raises a [purchase requirement](/docs/erp/purchase-requirements). The shelf is counted, then a vendor is chosen — the item's default vendor where it has one. Vendors' rates are kept on the [Quotation manager](/docs/erp/quotation-manager).
 2. **Order.** Nothing is bought without a [purchase order](/docs/erp/purchase-orders). Somebody other than the person who raised it approves it, and then it is sent to the vendor.
 3. **Receive and test.** Goods are received at the gate [against the PO](/docs/erp/goods-receipt-and-testing). A chemical goes to the tester; everything else goes straight into the register and into stock.
 4. **Make.** [Production](/docs/erp/production) mixes raw-material lots into semi-finished liquid (SFG), fills approved SFG into cans or drums (FG), and packs loose cans into boxes.
@@ -126,7 +126,7 @@ Every ERP screen has the same parts, so once you know one you know them all.
 |---|---|---|
 | **Dashboard, Alerts** | Dashboard, Alerts | Everyone (Alerts only if given) |
 | **Masters** | Raw materials, Purchase parties, Products, Sales parties, Godowns, Reference lists | The office, the store, the owner — see [Masters](/docs/erp/masters) |
-| **Purchase** | Purchase requirements (with Quotations), Purchase orders, Purchases (Goods receipt, Register, Drum labels), Lot testing | Production departments, the store, the buyer, the PO approver, the tester |
+| **Purchase** | Purchase requirements, Quotation manager, Purchase orders, Purchases (Goods receipt, Register, Drum labels), Lot testing | Production departments, the store, the buyer, the PO approver, the tester |
 | **Production** | SFG batches, FG filling, Packing batches, Recipes | Mixing & Blending, Refilling, Packing, the Production Head |
 | **Stock** | Stock, Boxes & labels, Item transfers, Raw-material levels, Finished-goods levels | The store and the godowns |
 | **Orders** | Orders (seven tabs), Dispatch desk | The order desk and the godown |
