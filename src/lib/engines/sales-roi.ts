@@ -38,8 +38,6 @@ export type SalesmanPeriod = {
   foodPaise: number;
   lodgingPaise: number;
   otherPaise: number;
-  /** Paise, from the HRMS mirror. Null where payroll has no row for them. */
-  salaryPaise: number | null;
 };
 
 /**
@@ -89,18 +87,21 @@ export function travelExpenseRatioBps(
 }
 
 export type CostBreakdown = {
-  salaryPaise: number;
   travelPaise: number;
   foodPaise: number;
   lodgingPaise: number;
   otherPaise: number;
   totalPaise: number;
-  /** True where payroll has no figure, so the total is expenses alone. */
-  salaryMissing: boolean;
 };
 
 /**
- * Requirement 60 — salary plus every approved expense.
+ * Requirement 60 — every approved expense.
+ *
+ * **SALARY IS NOT PART OF IT, and that is Mahek's instruction rather than an
+ * omission.** Pay is HRMS's and nobody else's: a sales manager is not to see
+ * what his salesmen earn, and a cost column of salary plus expenses beside an
+ * expense screen is a salary column with one subtraction in the way. So the
+ * cost here is what the field SPENT, and the return is revenue against that.
  *
  * **Approved, never claimed.** Money the business has agreed to pay is the
  * only cost figure that means anything, and it is the same rule the payments
@@ -108,20 +109,14 @@ export type CostBreakdown = {
  * from claims would move every time somebody submitted one and move back when
  * it was refused.
  *
- * Where payroll has no row the total is the expenses alone and `salaryMissing`
- * says so. Treating a missing salary as zero would make whoever payroll has
- * not caught up with look like the cheapest person on the team.
  */
 export function totalSalesmanCost(p: SalesmanPeriod): CostBreakdown {
-  const salary = p.salaryPaise ?? 0;
   return {
-    salaryPaise: salary,
     travelPaise: p.travelPaise,
     foodPaise: p.foodPaise,
     lodgingPaise: p.lodgingPaise,
     otherPaise: p.otherPaise,
-    totalPaise: salary + p.travelPaise + p.foodPaise + p.lodgingPaise + p.otherPaise,
-    salaryMissing: p.salaryPaise === null,
+    totalPaise: p.travelPaise + p.foodPaise + p.lodgingPaise + p.otherPaise,
   };
 }
 

@@ -2,30 +2,43 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { and, eq, inArray, isNull, ne } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
   appModuleAccess,
   auditLog,
   employees,
+  erpDesignations,
+  hireUserRoles,
+  erpUserDesignations,
+  erpUserPowers,
+  hrmsUserPowers,
   passwordResets,
   sessions,
   users,
 } from "@/db/schema";
 import { APP_IDS, getApp, type AppId } from "@/lib/apps";
-import { getModule, moduleKeysForApp } from "@/lib/modules";
-import { hashPassword, isManager, requireUser } from "@/lib/auth";
+import { getModule, moduleKeysForApp, wholeAppKeys } from "@/lib/modules";
+import { hashPassword } from "@/lib/auth";
 import { newPassword } from "@/lib/password";
 import { initialsOf } from "@/lib/format";
 import { err as fail, fieldErr, ok, type Result } from "@/lib/result";
-import { widestRole, type Role } from "@/lib/access-control";
+import { requirePlatformAdminUser, widestRole, type Role } from "@/lib/access-control";
+import { ERP_POWERS } from "@/lib/erp/powers";
+import { HRMS_POWERS } from "@/lib/hrms/powers";
+import { HIRE_ROLES, ROLE_LABEL } from "@/lib/hire/roles";
+import { CREW_ROLES, cleanDepts, crewLabel, isProc, placeFromRow, placeProblem, placeWords, procsOf, type CrewRole, type FactoryDept, type FactoryPlace } from "@/lib/factory/departments";
+import type { Proc } from "@/lib/factory/types";
 import {
   employeesForLink,
   listCandidates,
   type Candidate,
   type LinkableEmployee,
 } from "@/lib/services/access-service";
+import { ADMIN } from "@/lib/admin-routes";
+import { writeErpPowers as writeErpPowersIn, writeModules } from "@/lib/services/access-writes";
+import { ConsoleNotConfirmedError } from "@/lib/console-confirm";
 
 /* ---------------------------------------------------------------------------
  * Granting and narrowing access.
@@ -51,16 +64,22 @@ import {
 const newId = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
 /**
- * Who may change access.
+ * Who may change access: a PLATFORM ADMINISTRATOR, and nobody else.
  *
- * A platform admin, or a manager. Deliberately the same bar `people.ts`
- * already sets — this screen replaced controls that lived there, and moving a
- * permission is not the same as changing it.
+ * It was `isManager` — the widest level held in any app — and that let any
+ * manager of anything post this action for themselves with `admin` on every
+ * app. The Access screen sat behind the Admin Console's own gate, but a server
+ * action is a URL, so the gate in front of the screen protected nothing. The
+ * HRMS and ERP power gates were bypassed the same way: grant yourself admin of
+ * the app in one save, then give yourself its powers in the next.
  */
 async function actor() {
-  const user = await requireUser();
-  if (!isManager(user)) throw new Error("Only a manager can change access.");
-  return user;
+  try {
+    return await requirePlatformAdminUser();
+  } catch (e) {
+    if (e instanceof ConsoleNotConfirmedError) throw e;
+    throw new Error("Only a platform administrator can change access.");
+  }
 }
 
 async function audit(
@@ -75,13 +94,40 @@ async function audit(
     action,
     entityType: "user",
     entityId: userId,
+    /* The only hat that can reach this file — see `actor()`. */
+    actorRole: "admin",
+    actorApp: "admin",
     afterState: { detail } as never,
   });
 }
 
+/**
+ * Whether anybody OTHER than this person would still be a platform
+ * administrator with a working sign-in.
+ *
+ * The console is the only screen that grants access, so a save that leaves it
+ * with no administrator leaves the company recovering it from a terminal.
+ */
+async function anotherPlatformAdmin(userId: string): Promise<boolean> {
+  const rows = await db
+    .select({ id: users.id })
+    .from(appAccess)
+    .innerJoin(users, eq(users.id, appAccess.userId))
+    .where(
+      and(
+        eq(appAccess.app, "admin"),
+        eq(appAccess.role, "admin"),
+        eq(users.active, true),
+        ne(users.id, userId),
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
+}
+
 function refresh() {
   try {
-    revalidatePath("/admin");
+    revalidatePath(ADMIN.home, "layout");
     revalidatePath("/apps");
   } catch {
     /* outside a request, which is fine */
@@ -112,12 +158,44 @@ export type SetAccessInput = {
   employeeId?: string | null;
   /** The whole picture, not a change to it. Apps absent here are revoked. */
   grants: AccessGrantInput[];
+  /**
+   * The ERP's special powers, the whole list. Absent leaves them as they are;
+   * they are cleared with the ERP itself, like its module rows.
+   */
+  erpPowers?: string[] | null;
+  /** HRMS's special powers, the whole list, on the same terms as the ERP's. */
+  hrmsPowers?: string[] | null;
+  /**
+   * Their job inside Hire — recruiter, interviewer, hiring manager,
+   * onboarding, HR head, admin. Absent leaves it as it is; null means the
+   * level decides. It goes with Hire, like the powers go with their apps.
+   */
+  hireRole?: string | null;
+  /**
+   * Where they work on the factory floor — the department and their seat in
+   * its crew — which with the Factory level is their department-level
+   * permission (`lib/factory/departments.ts`). Absent leaves it as it is;
+   * taking the Factory app away takes it with it.
+   */
+  factoryPlace?: FactoryPlace | null;
+  /**
+   * The ERP designation this person holds. Absent leaves it as it is; null
+   * takes it away. It is a NAME on their access and the link an edit to the
+   * designation follows — the screens, level and powers themselves still
+   * arrive above, so a person can hold a designation and be customised from
+   * it. It goes with the ERP, like the powers.
+   */
+  erpDesignationId?: string | null;
   /** Only read when an account has to be created. */
   account?: {
     /** At least one of these two. Both is fine and often better. */
     email?: string | null;
     phone?: string | null;
-    role: "associate" | "manager" | "admin";
+    /**
+     * Ignored, and kept optional only so an older client still posts. The
+     * account level is DERIVED from the per-app levels — see `widestRole`.
+     */
+    role?: "associate" | "manager" | "admin";
   };
 };
 
@@ -140,7 +218,16 @@ function cleanModules(app: AppId, keys: string[]): { ok: string[]; bad: string[]
     if (getModule(k)?.app === app) good.push(k);
     else bad.push(k);
   }
-  return { ok: good, bad };
+  /* A write level without its screen is dropped, not refused: it would open
+     nothing (`moduleAllowed` says so too), and a row that grants nothing is a
+     row somebody later reads as a grant. */
+  return {
+    ok: good.filter((k) => {
+      const screen = getModule(k)?.writeOf;
+      return !screen || good.includes(screen);
+    }),
+    bad,
+  };
 }
 
 /**
@@ -152,12 +239,12 @@ function cleanModules(app: AppId, keys: string[]): { ok: string[]; bad: string[]
  */
 function desiredState(grants: AccessGrantInput[]): {
   state: Map<AppId, string[]>;
-  /** The hat each granted app is held under. Null means the account's own. */
-  roles: Map<AppId, Role | null>;
+  /** The level each granted app is held under. Never null: absent is associate. */
+  roles: Map<AppId, Role>;
   error: string | null;
 } {
   const state = new Map<AppId, string[]>();
-  const roles = new Map<AppId, Role | null>();
+  const roles = new Map<AppId, Role>();
   for (const g of grants) {
     const app = g.app as AppId;
     if (!APP_IDS.includes(app)) return { state, roles, error: `Not an app: ${g.app}` };
@@ -170,7 +257,11 @@ function desiredState(grants: AccessGrantInput[]): {
     }
     if (!modules.length) continue;
     state.set(app, [...(state.get(app) ?? []), ...modules]);
-    roles.set(app, g.role ?? null);
+    /* ASSOCIATE WHEN UNSAID. It used to be null, which meant the account's own
+       level — the widest held anywhere — so an app granted to a CRM manager
+       without a level arrived as that app's manager. A level is now written on
+       every grant, and the narrowest is what nobody chose. */
+    roles.set(app, g.role ?? "associate");
   }
   return { state, roles, error: null };
 }
@@ -179,44 +270,161 @@ function desiredState(grants: AccessGrantInput[]): {
 const ROLES = ["associate", "manager", "admin"] as const;
 
 /**
- * Write one app's module rows.
- *
- * Every module ticked stores NO rows rather than a row each. That is what
- * makes "the whole app" a single fact instead of fourteen that can go stale:
- * add a fifteenth screen to the CRM tomorrow and everybody who holds the whole
- * app gets it, while everybody who was deliberately narrowed does not — which
- * is what both of those decisions meant.
- */
-async function writeModules(
-  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
-  userId: string,
-  app: AppId,
-  modules: string[],
-  grantedById: string,
-) {
-  await tx
-    .delete(appModuleAccess)
-    .where(and(eq(appModuleAccess.userId, userId), eq(appModuleAccess.app, app)));
-
-  if (modules.length >= moduleKeysForApp(app).length) return;
-
-  await tx.insert(appModuleAccess).values(
-    modules.map((module) => ({
-      id: newId("mod"),
-      userId,
-      app,
-      module,
-      grantedById,
-    })),
-  );
-}
-
-/**
  * Set what one person can open, across every app, in one write.
  *
  * The employee must be ACTIVE in HRMS. That check is here and not only in the
  * picker, because the picker is a screen and this is the door.
  */
+function wantedHrmsPowers(input: SetAccessInput, keepsHrms: boolean, current: string[]): string[] | null {
+  if (!keepsHrms) return current.length ? [] : null;
+  if (input.hrmsPowers == null) return null;
+  const next = HRMS_POWERS.filter((p) => input.hrmsPowers!.includes(p));
+  const same = next.length === current.length && next.every((p) => current.includes(p));
+  return same ? null : next;
+}
+
+async function writeHrmsPowers(userId: string, powers: string[], by: string) {
+  await db.transaction(async (tx) => {
+    await tx.delete(hrmsUserPowers).where(eq(hrmsUserPowers.userId, userId));
+    if (powers.length) await tx.insert(hrmsUserPowers).values(powers.map((power) => ({ userId, power, grantedById: by })));
+  });
+}
+
+/**
+ * The Hire role after this save: `undefined` where it does not change, null to
+ * let the level decide. Taking Hire away takes the role with it, so a grant
+ * given back later starts from the level rather than from a forgotten job.
+ */
+function wantedHireRole(input: SetAccessInput, keepsHire: boolean, current: string | null): { next: string | null | undefined; error?: string } {
+  if (!keepsHire) return { next: current ? null : undefined };
+  if (input.hireRole === undefined) return { next: undefined };
+  const role = input.hireRole || null;
+  if (role && !(HIRE_ROLES as readonly string[]).includes(role)) return { next: undefined, error: "That is not a Hire role." };
+  return { next: role === current ? undefined : role };
+}
+
+async function writeHireRole(userId: string, role: string | null, by: string) {
+  await db.delete(hireUserRoles).where(eq(hireUserRoles.userId, userId));
+  if (role) await db.insert(hireUserRoles).values({ userId, role, grantedById: by });
+}
+
+/* ------------------------------------------------------------ the factory floor */
+
+async function currentFactoryPlace(userId: string): Promise<FactoryPlace | null> {
+  const [row] = (await db.execute(sql`
+    select s.area, s.areas, s.badge_code as badge, s.hr_confirmed as "hrConfirmed",
+           (select coalesce(json_object_agg(d.proc, d.role), '{}'::json) from factory_team_defaults d where d.user_id = s.user_id) as crews
+      from factory_staff s where s.user_id = ${userId}`)) as unknown as { area: FactoryDept; areas: FactoryDept[] | null; badge: string | null; hrConfirmed: boolean; crews: Record<string, CrewRole> }[];
+  return row ? placeFromRow(row) : null;
+}
+
+const samePlace = (a: FactoryPlace | null, b: FactoryPlace | null) =>
+  !!a && !!b
+    ? a.depts.join() === b.depts.join() &&
+      JSON.stringify(cleanCrews(a)) === JSON.stringify(cleanCrews(b)) &&
+      (a.badge || null) === (b.badge || null) &&
+      a.hrConfirmed === b.hrConfirmed
+    : a === b;
+
+/** The seats that mean something: a known role, in a production department the place ticks, in a stable order. */
+function cleanCrews(p: { depts: readonly string[]; crews?: Partial<Record<string, string | null>> | null }): Partial<Record<Proc, CrewRole>> {
+  const out: Partial<Record<Proc, CrewRole>> = {};
+  for (const d of procsOf(p.depts)) {
+    const c = p.crews?.[d];
+    if (c && (CREW_ROLES as readonly string[]).includes(c)) out[d] = c as CrewRole;
+  }
+  return out;
+}
+
+/** The floor place after this save: `undefined` where it does not change, null to take it away. */
+function wantedFactoryPlace(input: SetAccessInput, keepsFactory: boolean, current: FactoryPlace | null, level: string): { next: FactoryPlace | null | undefined; error?: string } {
+  if (!keepsFactory) return { next: current ? null : undefined };
+  if (input.factoryPlace === undefined) return { next: undefined };
+  const raw = input.factoryPlace;
+  if (raw) {
+    /* Refused rather than quietly dropped: a typo'd department must not save as fewer departments. */
+    const listed = Array.isArray(raw.depts) ? raw.depts : [];
+    const problem = placeProblem({ depts: listed, crews: raw.crews ?? {}, badge: raw.badge ?? null, hrConfirmed: raw.hrConfirmed !== false }, level);
+    if (problem) return { next: undefined, error: problem };
+  }
+  const p: FactoryPlace | null = raw
+    ? { depts: cleanDepts(raw.depts), crews: cleanCrews(raw), badge: raw.badge?.trim() || null, hrConfirmed: raw.hrConfirmed !== false }
+    : null;
+  const problem = placeProblem(p, level);
+  if (problem) return { next: undefined, error: problem };
+  return { next: samePlace(p, current) ? undefined : p };
+}
+
+/**
+ * Writes the place: the staff row with every department, and their seat in
+ * each department's standing crew. One person in charge and one operator per
+ * department — a new one in that seat takes it — and any number of helpers.
+ * The PIN on the staff row is theirs and is never touched here.
+ */
+async function writeFactoryPlace(userId: string, p: FactoryPlace | null) {
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`delete from factory_team_defaults where user_id = ${userId}`);
+    if (!p) {
+      await tx.execute(sql`delete from factory_staff where user_id = ${userId}`);
+      return;
+    }
+    const depts = cleanDepts(p.depts);
+    const seats = Object.entries(p.crews).filter((e): e is [Proc, CrewRole] => !!e[1] && isProc(e[0]));
+    const label = depts[0] === "head" ? "Production Head" : seats.length === 1 ? crewLabel(seats[0][0], seats[0][1]) : null;
+    await tx.execute(sql`
+      insert into factory_staff (user_id, area, areas, role_label, badge_code, hr_confirmed)
+      values (${userId}, ${depts[0]}, ${sql.param(depts)}::text[], ${label}, ${p.badge}, ${p.hrConfirmed})
+      on conflict (user_id) do update set area = excluded.area, areas = excluded.areas, role_label = excluded.role_label,
+        badge_code = excluded.badge_code, hr_confirmed = excluded.hr_confirmed, updated_at = now()`);
+    for (const [proc, crew] of seats) {
+      if (crew === "owner" || crew === "operator") await tx.execute(sql`delete from factory_team_defaults where proc = ${proc} and role = ${crew}`);
+      await tx.execute(sql`insert into factory_team_defaults (proc, role, user_id) values (${proc}, ${crew}, ${userId}) on conflict do nothing`);
+    }
+  });
+}
+
+const factoryPlaceWord = (p: FactoryPlace | null) => placeWords(p).replace("still to confirm", "to confirm");
+
+const hireRoleWord = (r: string | null) => (r ? (ROLE_LABEL as Record<string, string>)[r] ?? r : "level default");
+
+/** The powers a person should hold after this save, or null where they do not change. */
+function wantedErpPowers(input: SetAccessInput, keepsErp: boolean, current: string[]): string[] | null {
+  if (!keepsErp) return current.length ? [] : null;
+  if (input.erpPowers == null) return null;
+  const next = ERP_POWERS.filter((p) => input.erpPowers!.includes(p));
+  const same = next.length === current.length && next.every((p) => current.includes(p));
+  return same ? null : next;
+}
+
+async function writeErpPowers(userId: string, powers: string[], by: string) {
+  await db.transaction((tx) => writeErpPowersIn(tx, userId, powers, by));
+}
+
+/**
+ * The designation a person should hold after this save: `undefined` where it
+ * does not change, `null` where it goes, an id where it is set. Refused — not
+ * guessed at — when the id names nothing, because a typo here would quietly
+ * leave somebody outside every future edit to their job's access.
+ */
+async function wantedDesignation(
+  input: SetAccessInput,
+  keepsErp: boolean,
+  current: string | null,
+): Promise<{ next: string | null | undefined; name: string | null; error?: string }> {
+  if (!keepsErp) return { next: current ? null : undefined, name: null };
+  if (input.erpDesignationId === undefined) return { next: undefined, name: null };
+  const id = input.erpDesignationId;
+  if (!id) return { next: current ? null : undefined, name: null };
+  const [d] = await db.select({ id: erpDesignations.id, name: erpDesignations.name }).from(erpDesignations).where(eq(erpDesignations.id, id)).limit(1);
+  if (!d) return { next: undefined, name: null, error: "That designation no longer exists." };
+  return { next: id === current ? undefined : id, name: d.name };
+}
+
+async function writeDesignation(userId: string, next: string | null, by: string) {
+  await db.delete(erpUserDesignations).where(eq(erpUserDesignations.userId, userId));
+  if (next) await db.insert(erpUserDesignations).values({ userId, designationId: next, assignedById: by });
+}
+
 export async function setAccess(
   input: SetAccessInput,
 ): Promise<Result<SetAccessResult>> {
@@ -238,7 +446,7 @@ export async function setAccess(
 
   if (!userId) {
     if (!input.employeeId) return fail("Nobody was chosen.");
-    if (!input.account) return fail("A new account needs a sign-in email and a role.");
+    if (!input.account) return fail("A new account needs a work number or an email.");
     if (wanted.size === 0) {
       // For somebody who already has an account, taking every app away is a
       // real decision. Creating one that opens nothing is not — it is somebody
@@ -315,6 +523,13 @@ export async function setAccess(
       return fieldErr("phone", "An account already uses that work number.");
     }
 
+    const newDesignation = await wantedDesignation(input, wanted.has("erp"), null);
+    if (newDesignation.error) return fieldErr("erpDesignation", newDesignation.error);
+    const newHireRole = wantedHireRole(input, wanted.has("hire"), null);
+    if (newHireRole.error) return fieldErr("hireRole", newHireRole.error);
+    const newPlace = wantedFactoryPlace(input, wanted.has("factory"), null, wantedRoles.get("factory") ?? "associate");
+    if (newPlace.error) return fieldErr("factoryPlace", newPlace.error);
+
     userId = newId("usr");
     personName = employee.name;
     created = true;
@@ -342,7 +557,10 @@ export async function setAccess(
         name: employee.name,
         email,
         phone,
-        role: input.account!.role,
+        /* DERIVED, never typed. The dialog used to carry an account-level
+           select beside the per-app ones, so "Admin" there and "Associate" on
+           every app produced a platform administrator nobody had meant. */
+        role: widestRole([...wantedRoles].map(([app, role]) => ({ app, role }))),
         initials: initialsOf(employee.name),
         passwordHash,
         active: true,
@@ -360,7 +578,7 @@ export async function setAccess(
           id: newId("acc"),
           userId: userId!,
           app,
-          role: wantedRoles.get(app) ?? null,
+          role: wantedRoles.get(app) ?? "associate",
           grantedById: me.id,
         })),
       );
@@ -368,14 +586,30 @@ export async function setAccess(
         await writeModules(tx, userId!, app, modules, me.id);
       }
     });
+    const newPowers = wantedErpPowers(input, wanted.has("erp"), []);
+    if (newPowers?.length) await writeErpPowers(userId!, newPowers, me.id);
+    const newHrmsPowers = wantedHrmsPowers(input, wanted.has("hrms"), []);
+    if (newHrmsPowers?.length) await writeHrmsPowers(userId!, newHrmsPowers, me.id);
+    if (newDesignation.next) await writeDesignation(userId!, newDesignation.next, me.id);
+    if (newHireRole.next) await writeHireRole(userId!, newHireRole.next, me.id);
+    if (newPlace.next) await writeFactoryPlace(userId!, newPlace.next);
 
     await audit(
       me.id,
       "create-user",
       userId,
-      `${employee.name} · ${employee.code} · ${input.account.role} · ${apps
-        .map((a) => `${a} (${wanted.get(a)!.length}/${moduleKeysForApp(a).length})`)
-        .join(", ")}`,
+      [
+        `${employee.name} · ${employee.code} · ${apps
+          .map((a) => `${a} ${wantedRoles.get(a)} (${wanted.get(a)!.length}/${moduleKeysForApp(a).length})`)
+          .join(", ")}`,
+        newPowers?.length ? `ERP powers (${newPowers.join(", ")})` : "",
+        newHrmsPowers?.length ? `HRMS powers (${newHrmsPowers.join(", ")})` : "",
+        newDesignation.next ? `ERP designation ${newDesignation.name}` : "",
+        newHireRole.next ? `Hire role ${hireRoleWord(newHireRole.next)}` : "",
+        newPlace.next ? `Factory ${factoryPlaceWord(newPlace.next)}` : "",
+      ]
+        .filter(Boolean)
+        .join("; "),
     );
     refresh();
 
@@ -416,10 +650,13 @@ export async function setAccess(
   }
 
   const heldRows = await db
-    .select({ app: appAccess.app })
+    .select({ app: appAccess.app, role: appAccess.role })
     .from(appAccess)
     .where(eq(appAccess.userId, userId));
   const held = heldRows.map((r) => r.app as AppId);
+  const heldLevel = new Map<AppId, Role>(
+    heldRows.map((r) => [r.app as AppId, (r.role ?? "associate") as Role]),
+  );
 
   const storedRows = await db
     .select({ app: appModuleAccess.app, module: appModuleAccess.module })
@@ -430,13 +667,45 @@ export async function setAccess(
     const app = r.app as AppId;
     storedByApp.set(app, [...(storedByApp.get(app) ?? []), r.module]);
   }
-  /** What they hold today, with "no rows" spelled out as every module. */
+  /** What they hold today, with "no rows" spelled out as every ordinary module — never an explicit-only one. */
   const before = new Map<AppId, string[]>(
-    held.map((a) => [a, storedByApp.get(a) ?? moduleKeysForApp(a)]),
+    held.map((a) => [a, storedByApp.get(a) ?? wholeAppKeys(a)]),
   );
 
   const granted = [...wanted.keys()].filter((a) => !held.includes(a));
   const revoked = held.filter((a) => !wanted.has(a));
+
+  /* A retired app is never given out again; one somebody already holds may be
+     kept or taken away. */
+  const retired = granted.filter((a) => getApp(a)?.retiredInto);
+  if (retired.length) {
+    return fieldErr("grants", `${describe(retired)} is retired and cannot be granted.`);
+  }
+
+  /* THE LEVEL ALONE CAN CHANGE. This used to be invisible to the diff: a save
+     that only moved a telecaller from associate to manager answered "No
+     change." and wrote nothing, and the dialog agreed by disabling Save. */
+  const releveled = [...wanted.keys()].filter(
+    (a) => held.includes(a) && heldLevel.get(a) !== wantedRoles.get(a),
+  );
+
+  /* NOBODY REMOVES THEIR OWN ADMINISTRATION, AND NOBODY REMOVES THE LAST. */
+  const wasPlatformAdmin = heldLevel.get("admin") === "admin";
+  const staysPlatformAdmin = wantedRoles.get("admin") === "admin" && wanted.has("admin");
+  if (wasPlatformAdmin && !staysPlatformAdmin) {
+    if (userId === me.id) {
+      return fieldErr(
+        "grants",
+        "You cannot take away your own administrator access. Another administrator has to.",
+      );
+    }
+    if (!(await anotherPlatformAdmin(userId))) {
+      return fieldErr(
+        "grants",
+        `${account.name} is the only platform administrator. Make somebody else Admin on the Admin Console first.`,
+      );
+    }
+  }
   const changed = [...wanted.keys()].filter((a) => {
     if (!held.includes(a)) return false;
     const was = new Set(before.get(a) ?? []);
@@ -444,7 +713,44 @@ export async function setAccess(
     return was.size !== now.length || now.some((m) => !was.has(m));
   });
 
-  if (!granted.length && !revoked.length && !changed.length) {
+  const currentPowers = (
+    await db.select({ power: erpUserPowers.power }).from(erpUserPowers).where(eq(erpUserPowers.userId, userId))
+  ).map((r) => r.power);
+  const powers = wantedErpPowers(input, wanted.has("erp"), currentPowers);
+
+  const currentHrmsPowers = (
+    await db.select({ power: hrmsUserPowers.power }).from(hrmsUserPowers).where(eq(hrmsUserPowers.userId, userId))
+  ).map((r) => r.power);
+  const hrmsPowers = wantedHrmsPowers(input, wanted.has("hrms"), currentHrmsPowers);
+
+  const [currentDesignationRow] = await db
+    .select({ id: erpUserDesignations.designationId, name: erpDesignations.name })
+    .from(erpUserDesignations)
+    .innerJoin(erpDesignations, eq(erpDesignations.id, erpUserDesignations.designationId))
+    .where(eq(erpUserDesignations.userId, userId))
+    .limit(1);
+  const designation = await wantedDesignation(input, wanted.has("erp"), currentDesignationRow?.id ?? null);
+  if (designation.error) return fieldErr("erpDesignation", designation.error);
+
+  const [currentHireRow] = await db.select({ role: hireUserRoles.role }).from(hireUserRoles).where(eq(hireUserRoles.userId, userId)).limit(1);
+  const hireRole = wantedHireRole(input, wanted.has("hire"), currentHireRow?.role ?? null);
+  if (hireRole.error) return fieldErr("hireRole", hireRole.error);
+
+  const placeBefore = await currentFactoryPlace(userId);
+  const place = wantedFactoryPlace(input, wanted.has("factory"), placeBefore, wantedRoles.get("factory") ?? "associate");
+  if (place.error) return fieldErr("factoryPlace", place.error);
+
+  if (
+    !granted.length &&
+    !revoked.length &&
+    !changed.length &&
+    !releveled.length &&
+    !powers &&
+    !hrmsPowers &&
+    designation.next === undefined &&
+    hireRole.next === undefined &&
+    place.next === undefined
+  ) {
     return ok(
       { userId, created: false, resetLinkSent: false, granted: [], revoked: [], changed: [] },
       "No change.",
@@ -468,7 +774,7 @@ export async function setAccess(
           id: newId("acc"),
           userId: userId!,
           app,
-          role: wantedRoles.get(app) ?? null,
+          role: wantedRoles.get(app) ?? "associate",
           grantedById: me.id,
         })),
       );
@@ -480,8 +786,8 @@ export async function setAccess(
      * which would read as losing the app for a moment in the audit and in any
      * notification built from it.
      */
-    for (const [app, role] of wantedRoles) {
-      if (!wanted.has(app) || granted.includes(app)) continue;
+    for (const app of releveled) {
+      const role = wantedRoles.get(app)!;
       await tx
         .update(appAccess)
         .set({ role })
@@ -489,23 +795,19 @@ export async function setAccess(
     }
 
     /*
-     * THE PRIMARY ROLE IS A CACHE of the hats, and this is where it is
-     * rebuilt. `users.role` decides mine/team/all through `isManager`, read by
-     * thirty-one screens; rather than teach every one of them about a list, it
-     * holds the widest role the person holds anywhere. Granting somebody the
-     * manager hat in the CRM gives them their team on the day it is granted,
-     * which is what the person granting it expects.
+     * THE ACCOUNT LEVEL IS A CACHE of the hats, rebuilt on every save — see
+     * `widestRole` for what it now means. Rebuilt EVEN WHEN NOTHING IS HELD:
+     * it used to be skipped then, so a manager stripped of every app went on
+     * passing `isManager` with nothing granted to them anywhere.
      */
     const heldHats = [...wanted.keys()].map((app) => ({
       app,
-      role: (wantedRoles.get(app) ?? account.role) as Role,
+      role: wantedRoles.get(app)!,
     }));
-    if (heldHats.length) {
-      await tx
-        .update(users)
-        .set({ role: widestRole(heldHats) })
-        .where(eq(users.id, userId!));
-    }
+    await tx
+      .update(users)
+      .set({ role: widestRole(heldHats) })
+      .where(eq(users.id, userId!));
     for (const app of [...granted, ...changed]) {
       await writeModules(tx, userId!, app, wanted.get(app)!, me.id);
     }
@@ -518,12 +820,37 @@ export async function setAccess(
           .map((a) => `${a} ${before.get(a)!.length}/${moduleKeysForApp(a).length} → ${wanted.get(a)!.length}/${moduleKeysForApp(a).length}`)
           .join(", ")}`
       : "",
+    releveled.length
+      ? `level ${releveled.map((a) => `${a} ${heldLevel.get(a)} → ${wantedRoles.get(a)}`).join(", ")}`
+      : "",
+    granted.length
+      ? `level ${granted.map((a) => `${a} ${wantedRoles.get(a)}`).join(", ")}`
+      : "",
     revoked.length ? `revoked ${revoked.join(", ")}` : "",
   ]
     .filter(Boolean)
     .join("; ");
 
-  await audit(me.id, "set-app-access", userId, detail);
+  if (powers) await writeErpPowers(userId, powers, me.id);
+  const powerDetail = powers ? `ERP powers ${currentPowers.length} → ${powers.length}${powers.length ? ` (${powers.join(", ")})` : ""}` : "";
+  if (hrmsPowers) await writeHrmsPowers(userId, hrmsPowers, me.id);
+  const hrmsPowerDetail = hrmsPowers
+    ? `HRMS powers ${currentHrmsPowers.length} → ${hrmsPowers.length}${hrmsPowers.length ? ` (${hrmsPowers.join(", ")})` : ""}`
+    : "";
+
+  if (designation.next !== undefined) await writeDesignation(userId, designation.next, me.id);
+  const designationDetail =
+    designation.next === undefined
+      ? ""
+      : `ERP designation ${currentDesignationRow?.name ?? "none"} → ${designation.next ? designation.name : "none"}`;
+
+  if (hireRole.next !== undefined) await writeHireRole(userId, hireRole.next, me.id);
+  const hireRoleDetail = hireRole.next === undefined ? "" : `Hire role ${hireRoleWord(currentHireRow?.role ?? null)} → ${hireRoleWord(hireRole.next)}`;
+
+  if (place.next !== undefined) await writeFactoryPlace(userId, place.next);
+  const placeDetail = place.next === undefined ? "" : `Factory ${factoryPlaceWord(placeBefore)} → ${factoryPlaceWord(place.next)}`;
+
+  await audit(me.id, "set-app-access", userId, [detail, powerDetail, hrmsPowerDetail, designationDetail, hireRoleDetail, placeDetail].filter(Boolean).join("; "));
   refresh();
 
   const said = [
@@ -536,16 +863,28 @@ export async function setAccess(
           )
           .join(", ")
       : "",
+    releveled.length
+      ? releveled
+          .map((a) => `${levelWord(wantedRoles.get(a)!)} on ${getApp(a)?.name ?? a}`)
+          .join(", ")
+      : "",
     revoked.length ? `no longer opens ${describe(revoked)}` : "",
+    powers && wanted.has("erp") ? `holds ${powers.length} ERP power${powers.length === 1 ? "" : "s"}` : "",
+    hrmsPowers && wanted.has("hrms") ? `holds ${hrmsPowers.length} HRMS power${hrmsPowers.length === 1 ? "" : "s"}` : "",
+    designation.next ? `is ${designation.name} in the ERP` : designation.next === null && wanted.has("erp") ? "holds no ERP designation" : "",
   ].filter(Boolean);
 
   return ok(
-    { userId, created: false, granted, revoked, changed },
+    { userId, created: false, granted, revoked, changed: [...changed, ...releveled.filter((a) => !changed.includes(a))] },
     `${personName} ${said.join(" · ")}.` +
       (revoked.length && !wanted.size
         ? " They can still sign in, and the launcher will say plainly that they have nothing."
         : ""),
   );
+}
+
+function levelWord(role: Role): string {
+  return role === "admin" ? "now admin" : role === "manager" ? "now manager" : "now associate";
 }
 
 function withCount(wanted: Map<AppId, string[]>) {

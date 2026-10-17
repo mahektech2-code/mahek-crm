@@ -50,15 +50,15 @@ function toneOf(verdict: VerificationCheck['verdict']): string {
 }
 
 function headline(check: VerificationCheck): string {
-  const who = check.changedByName?.trim() || 'Somebody at the office';
+  const who = check.changedByName?.trim() || 'The office';
   const when = pretty(isoDate(new Date(check.changedAt)));
   if (check.verdict === 'corrected') {
     return `${who} corrected this ${where(check)} on ${when}`;
   }
   if (check.verdict === 'confirmed') {
-    return `${who} checked this ${where(check)} on ${when} — still right`;
+    return `${who} checked this ${where(check)} on ${when}. It is right`;
   }
-  return `${who} asked ${where(check)} on ${when} and could not confirm it`;
+  return `${who} asked ${where(check)} on ${when}. Could not confirm it`;
 }
 
 export function FieldCheckNote({ checks }: { checks: VerificationCheck[] }) {

@@ -1,0 +1,105 @@
+The **Customers** tab is your book: every shop you work in your area, and your leads. It works with no signal — everything on it is already on your phone. Tap a shop to open its record: its orders, what it owes, its samples and complaints, and everything anybody has done with it.
+
+## The screen at a glance
+
+<Wireframe url="MBOS · Customers" caption="The Customers tab">
+  <WfBar><WfPill tone="brand">Customers 214</WfPill><WfPill>Leads 9</WfPill><Hotspot n={1} /></WfBar>
+  <WfBar><WfInput placeholder="Search name, owner, town…" wide /></WfBar>
+  <WfBar><WfButton>Order: Nearest</WfButton><WfButton>Filter</WfButton><WfButton>Show on a map</WfButton><Hotspot n={2} /></WfBar>
+  <WfText muted>214 shops · Your area: Nagpur</WfText>
+  <WfTable columns={["Shop", ""]} rows={[
+    [<span key="a"><b>Customer A</b> <WfPill tone="brand">Active</WfPill><br/>0.6 km · Contact · Nagpur<br/>₹18,400 owed · Reorder due</span>, "⋯"],
+    [<span key="b"><b>Customer B</b> <WfPill tone="warn">At risk</WfPill><br/>Third party · Nagpur</span>, "⋯"],
+    [<span key="c"><b>Customer C</b><br/>Nagpur · Nothing due</span>, "⋯"],
+  ]} />
+  <Hotspot n={3} />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Customers or Leads.</b> Shops we bill, or new shops you are still working on. The number is how many.</span>,
+  <span key="2"><b>Order, filter, map.</b> Sort the list, narrow it, or see it on a map.</span>,
+  <span key="3"><b>A shop.</b> Beside the name, how the account is doing. Below it: how far away, who to ask for, the town, what they owe, and whether a reorder is due.</span>,
+]} />
+
+### Sorting the list
+
+| Order | What it does |
+|---|---|
+| **Nearest** | Closest to where you are standing. |
+| **Nearest a town** | Closest to the middle of a town you pick — for planning a day elsewhere. |
+| **A–Z** | By shop name. |
+| **Most owed** | Biggest outstanding first. |
+| **Longest since visit** | Never visited first, then the longest ago. |
+
+<Callout kind="note">
+**Nearest** sorts your whole book by distance. **More → Near me** is different: it lists only shops with a reason to go, best first. See [Journeys](/docs/mbos/journeys).
+</Callout>
+
+### What the words on a card mean
+
+| You see | It means |
+|---|---|
+| **Active** (green) | Buying on their usual rhythm. |
+| **At risk** (amber) | A while past their usual order. |
+| **Dormant** (red) | Well past it — they may have stopped. |
+| **Lost** (red) | Long past it. |
+| **Closed** (red) | The office has closed this account. |
+| Nothing beside the name | Nothing to measure yet — they have never ordered. |
+| **Reorder due** / **Reorder late** | Their own buying cycle says an order is due, or well overdue. |
+| **Third party** | A shop we deliver to but bill somebody else for. |
+| **Lead · Suspect** (and other stages) | A lead, and which stage it is at. |
+
+## When the list is empty
+
+| You see | It means |
+|---|---|
+| **No area set for you yet** | The office has not given you an area, so your list stays empty. Nothing is lost. Ask your manager. |
+| **No customers yet** | You have an area but no shops in it. |
+| **No shop matches** | Your search or filter hides everything. Press **Show all shops**. |
+
+The line under the search box tells you your area — *Your area: …*. If it is wrong, you can ask for a different area from the **Journeys** history screen; your manager decides.
+
+## A customer's record
+
+<Wireframe url="MBOS · Customer" caption="A customer record">
+  <WfTitle sub="Customer · Active · Nagpur">Customer A</WfTitle>
+  <WfBar><WfButton primary>Visit</WfButton><WfButton>Call</WfButton><WfButton>WhatsApp</WfButton><WfButton>New order</WfButton><Hotspot n={1} /></WfBar>
+  <WfTabs items={["Overview", "Timeline", "Orders", "Account", "Samples", "Complaints", "Other brands"]} active="Account" />
+  <Hotspot n={2} />
+  <WfCard title="Outstanding (office)"><WfText>₹18,400 · Orders every 21 days</WfText><Hotspot n={3} /></WfCard>
+  <WfTable columns={["Date", "", "Balance"]} rows={[["12 Sep", "Bill 1119", "₹18,400"], ["2 Sep", "Payment · Received", "₹6,200"], ["20 Aug", "Bill 1042", "₹14,900"]]} />
+  <WfText muted>This phone goes back to March.</WfText><Hotspot n={4} />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Act on the shop.</b> Start a visit, ring or message them, or take an order.</span>,
+  <span key="2"><b>The tabs.</b> Overview has contact, credit and what they can buy; Timeline has every visit, call, order and payment; Account is their statement.</span>,
+  <span key="3"><b>What they owe.</b> The office's own figure. Use this one when the shopkeeper asks.</span>,
+  <span key="4"><b>How far back.</b> The statement on your phone covers about <Setting k="mbos.sync.statementMonths" /> months, or less if the shop is newer.</span>,
+]} />
+
+### The statement
+
+The **Account** tab lists bills and payments with a running balance, newest first. Only money the office has **confirmed** moves the balance. A payment that is reported, held, rejected or reversed is shown with its word but does not count — so when the shopkeeper says "we paid that", you can see what happened to it.
+
+For the complete account, open **More → Customer accounts**. With signal it fetches the whole account from the office and remembers it, so it opens later with no signal too — and says how old it is.
+
+A **lead** or a **third-party** shop has no statement: we do not bill them. The tab says so.
+
+### "Can buy"
+
+On the Overview tab, **Can buy** is somebody's estimate of what the shop could spend in a month. It shows who made the estimate and when. Blank means nobody has judged it — not that there is nothing to win.
+
+## Questions people ask
+
+<Faq q="Why did a shop disappear from my list?">
+The office moved it out of your book, or changed your area. It leaves your phone on the next sync.
+</Faq>
+
+<Faq q="The outstanding figure and the statement do not agree.">
+Use the outstanding figure — it is the office's. The statement on your phone covers only part of the history.
+</Faq>
+
+<Faq q="Can I add a shop?">
+Yes. If no shop matches your search, press **Add the shop**. A shop we deliver to but bill someone else for needs **who gets the bill** chosen first. A brand-new shop is usually added as a lead — see [Leads](/docs/mbos/leads).
+</Faq>

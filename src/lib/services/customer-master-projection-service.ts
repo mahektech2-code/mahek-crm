@@ -17,10 +17,18 @@ import { APP_TIMEZONE } from "@/lib/business-date";
  *
  * WHAT KIND OF RECORD EACH SHOP BECOMES
  *
- * `customers.kind` is exclusive — lead or customer — and a lead's whole
- * definition is an account that has never ordered. This sheet holds no order
- * history at all, so the kind cannot be read off it directly and is decided
- * from EVIDENCE OF A PURCHASE gathered from the Activity log beside it:
+ * EVERY SHOP THIS CREATES IS A LEAD. A customer is an account that has ordered
+ * at least once, and this sheet holds no order at all — so it cannot make one.
+ * It used to: it read "customer" off the evidence below, and that put 1,574
+ * shops on the book as direct customers with no order and no bill between
+ * them, which on 2 Oct 2026 were moved by hand to Suspect. An account becomes
+ * a customer when an ORDER lands against it, through the order sheet, and
+ * nowhere else.
+ *
+ * What the evidence still decides is WHERE on the funnel the lead starts. Signs
+ * that somebody traded with the shop in the old app — gathered from the
+ * Activity log beside it — plant it at Suspect on the direct ladder, so lead
+ * management works it; a shop with none is an ordinary new lead:
  *
  *   - a Payment Collection visit. You do not collect money from a prospect,
  *     and this is the strongest signal in the data.
@@ -30,11 +38,9 @@ import { APP_TIMEZONE } from "@/lib/business-date";
  *   - a value band in the master's own Rating column. You do not rate a shop
  *     High/Medium/Low Value on a conversation.
  *
- * Anything with none of those is a LEAD, which is the honest default: absence
- * of evidence of an order is exactly what a lead is. Every verdict is stored
- * with the evidence that produced it, because "why is this one a customer"
- * is asked months later about one row, and re-running the rule then answers a
- * question about today instead.
+ * Every verdict is stored with the evidence that produced it, because "why is
+ * this one a Suspect" is asked months later about one row, and re-running the
+ * rule then answers a question about today instead.
  *
  * WHAT IT DELIBERATELY DOES NOT WRITE
  *
@@ -78,7 +84,8 @@ export type ProjectionResult = {
   updated: number;
   skipped: number;
   asLead: number;
-  asCustomer: number;
+  /** Leads planted at Suspect because the old app shows trade with the shop. */
+  asSuspect: number;
   deactivated: number;
   withGps: number;
   heldReasons: Record<string, number>;
@@ -191,7 +198,7 @@ export async function projectCustomerMaster(
     updated: 0,
     skipped: 0,
     asLead: 0,
-    asCustomer: 0,
+    asSuspect: 0,
     deactivated: 0,
     withGps: 0,
     heldReasons: {},
@@ -263,8 +270,13 @@ export async function projectCustomerMaster(
       reasons.push(`rated "${row.rating}", which is a judgement about trade`);
     }
 
-    const kind: "lead" | "customer" = reasons.length ? "customer" : "lead";
-    if (!reasons.length) reasons.push("no evidence of any order — a lead by definition");
+    const kind = "lead" as const;
+    const suspect = reasons.length > 0;
+    reasons.push(
+      suspect
+        ? "no order on record, so a Suspect rather than a customer"
+        : "no evidence of any trade — a new lead",
+    );
 
     const sheetStatus = readSheetStatus(row.sheetStatus);
     const status: "active" | "deactivated" =
@@ -276,8 +288,8 @@ export async function projectCustomerMaster(
     const pin = pins.get(key);
     if (pin) reasons.push("coordinates from the field pin export");
 
-    if (kind === "lead") result.asLead++;
-    else result.asCustomer++;
+    result.asLead++;
+    if (suspect) result.asSuspect++;
     if (status === "deactivated") result.deactivated++;
     if (pin) result.withGps++;
 
@@ -342,7 +354,10 @@ export async function projectCustomerMaster(
           /* SHORT, because it is rendered in a 140px table column and the
            * long form ("Mahek EMP 2.0 shop master") was clipped to nothing
            * useful. A source is a label somebody scans, not a sentence. */
-          leadSource: kind === "lead" ? "Mahek EMP 2.0" : null,
+          leadSource: "Mahek EMP 2.0",
+          ...(suspect
+            ? { leadSalesType: "direct" as const, leadStage: "suspect" as const, leadStageSince: sql`(now() at time zone ${APP_TIMEZONE})::date` }
+            : {}),
           gpsLat: pin?.lat,
           gpsLng: pin?.lng,
           // ownerId is deliberately null. On an imported book it would be
@@ -376,7 +391,7 @@ export async function projectCustomerMaster(
     `${result.considered} shops considered — ` +
     `${result.created} created, ${result.updated} enriched, ${result.skipped} held` +
     (held ? ` (${held})` : "") +
-    `; ${result.asLead} leads, ${result.asCustomer} customers, ` +
+    `; ${result.asLead} leads (${result.asSuspect} at Suspect), ` +
     `${result.deactivated} deactivated, ${result.withGps} with coordinates` +
     (dryRun ? " — DRY RUN, nothing written" : "");
 

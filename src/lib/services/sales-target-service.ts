@@ -358,11 +358,26 @@ export async function mixCategories(): Promise<
    * one is untouched and goes on scoring: `bandsForTargets` reads it by id and
    * does not ask, since a target somebody typed is a decision and deactivating
    * a liquid mid-month must not silently drop a share out of their score.
+   *
+   * AND OFFERED ONLY, which is a SECOND question this list used to conflate with
+   * the first. `active` says the liquid is in the catalogue; `offer_for_mix` says
+   * it is something to aim a month at, and on this book most of the nineteen are
+   * not — so a manager picked three bands out of a long alphabetical list every
+   * month with nothing marking the three that matter. The residual is offered by
+   * a check constraint, so it cannot fall out of here and leave the shares
+   * unable to add up.
+   *
+   * `display_order` HAS BEEN ON THIS TABLE SINCE IT WAS CREATED AND WAS READ BY
+   * NOTHING. This was the one list that needed it and it ordered by name, so the
+   * column was a promise nothing kept — and an admin who put the three liquids
+   * that matter at the top watched them stay in the alphabet. Name is the
+   * tiebreaker rather than the sort, so an untouched book still reads
+   * alphabetically exactly as before: every row defaults to 0.
    */
   const rows = await db.execute<{ id: string; name: string; is_residual: boolean }>(sql`
     select id, name, is_residual from product_formulations
-     where active
-     order by is_residual, name
+     where active and offer_for_mix
+     order by is_residual, display_order, name
   `);
   return rows.map((r) => ({ id: r.id, name: r.name, isResidual: r.is_residual }));
 }

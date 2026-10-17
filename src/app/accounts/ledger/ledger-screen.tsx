@@ -4,68 +4,49 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { cx } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
-import { ConfirmDialog } from "@/components/ui/overlays";
-import { reverseReceiptAction } from "@/lib/actions/payments";
 import { CustomerSearch } from "../customer-search";
+import { CUSTOM_DATES } from "@/components/ui/year-filter";
+import {
+  LedgerBalances,
+  LedgerPeriodBar,
+  StatementTable,
+  TD,
+  TD_WRAP,
+  Th,
+  deadStatus,
+  type LedgerEntry,
+  type PeriodPatch,
+  type StatementLedger,
+} from "@/components/ledger/customer-statement";
 import type { AccountServing } from "@/lib/services/distributor-service";
 import { downloadCsv, toCsv } from "@/lib/csv";
-import { longDate, money, signedMoney } from "@/lib/format";
-import {
-  Banner,
-  Cell,
-  Empty,
-  HeadCell,
-  MetricRow,
-  Pager,
-  Pill,
-  Row,
-  ScreenHeader,
-  Table,
-  plural,
-} from "../parts";
+import { longDate, money } from "@/lib/format";
+import { Banner, Empty, Pager, Pill, ScreenHeader, Table, plural } from "../parts";
 
 /* ---------------------------------------------------------------------------
  * The customer account — a statement.
  *
- * What was billed, what came in, and what is left after each line. The running
- * balance counts CONFIRMED money only, so it agrees with what the customer
- * owes at the bottom; anything still waiting on accounts is reported beside it
- * rather than folded in.
- *
- * Rejected receipts stay on it. A transfer that never landed is a fact about
- * the account, and dropping it leaves the next person wondering why the
- * balance never moved.
+ * The period, the opening and closing balance and the statement table are the
+ * shared `customer-statement` component, which the CRM customer record's
+ * Ledger tab draws too, so the two apps cannot describe one account two ways.
+ * What is Accounts' own: the export, how the account is served, and the By
+ * bill view.
  * ------------------------------------------------------------------------- */
 
-type LedgerEntry = {
-  at: string;
-  kind: "bill" | "receipt";
-  ref: string;
-  detail: string;
-  debit: number;
-  credit: number;
-  status: string | null;
-  /** Bill lines: paise claimed against it and not yet confirmed. Never subtracted. */
-  claimed?: number;
-  receiptId?: string;
-  balance: number;
-};
+type Ledger = StatementLedger;
 
-type Ledger = {
-  customerId: string;
-  customerName: string;
-  openingBalance: number;
-  entries: LedgerEntry[];
-  totals: { billed: number; received: number; outstanding: number; onAccount: number };
-  awaiting: { count: number; amount: number };
-};
+type View = "statement" | "bills";
 
 export function LedgerScreen({
   canReverse,
   ledger,
   serving,
+  period,
+  years,
+  today,
   from,
   to,
+  view,
 }: {
   /**
    * Whether this person may take back money that has counted. The same
@@ -76,17 +57,20 @@ export function LedgerScreen({
   ledger: Ledger | null;
   /** How the account is served — see the note on the page that reads it. */
   serving: AccountServing | null;
+  /** A year ("26-27" / "2026"), "all", or "custom" — see year-period.ts. */
+  period: string;
+  /** The years this account has entries in, both ways of counting. */
+  years: { fy: string[]; cy: string[] };
+  /** The business date, read on the server. */
+  today: string;
+  /** The period as dates, inclusive; empty for all time. */
   from: string;
   to: string;
+  /** Statement (date order, running balance) or By bill (each bill and the money against it). */
+  view: View;
 }) {
   const router = useRouter();
-  const { push, run } = useToast();
-  /*
-   * Which receipt is being reversed. The reason is NOT held here — the confirm
-   * dialog owns it and hands it back on confirm, and a second copy in this
-   * component was mine, left over and never read.
-   */
-  const [reversing, setReversing] = React.useState<LedgerEntry | null>(null);
+  const { push } = useToast();
   const [page, setPage] = React.useState(1);
   const [perPage, setPerPage] = React.useState(25);
 
@@ -96,7 +80,7 @@ export function LedgerScreen({
         <div className="max-w-[1400px]">
           <ScreenHeader
             title="Customer account"
-            subtitle="Everything billed and everything received, most recent first, with what was left after each line."
+            subtitle="Every bill and every payment, and which bills each payment settled."
           />
           <CustomerSearch
             title="Whose account?"
@@ -109,125 +93,106 @@ export function LedgerScreen({
     );
   }
 
-  const navigate = (patch: Record<string, string>) => {
+  const navigate = (patch: PeriodPatch & { view?: View }) => {
     const params = new URLSearchParams({ customer: ledger.customerId });
-    const next = { from, to, ...patch };
-    if (next.from) params.set("from", next.from);
-    if (next.to) params.set("to", next.to);
+    const next = { period, from, to, view, ...patch };
+    if (next.period === CUSTOM_DATES) {
+      if (next.from) params.set("from", next.from);
+      if (next.to) params.set("to", next.to);
+    } else {
+      params.set("year", next.period);
+    }
+    if (next.view !== "statement") params.set("view", next.view);
     setPage(1);
     router.push(`/accounts/ledger?${params}`);
   };
 
+
   /*
-   * NEWEST FIRST on screen, oldest first underneath.
-   *
-   * The running balance is cumulative — the server walks the entries in date
-   * order adding debits and subtracting credits — so it can only be COMPUTED
-   * oldest first. Reversing that computation would produce a column of
-   * numbers that count down from nothing to the wrong answer.
-   *
-   * What is reversed is the reading order, and only that. Each row keeps the
-   * balance it was given, which means the top row now shows the balance as it
-   * stands today rather than as it stood on the first bill of the year — the
-   * number somebody opening an account is actually looking for. Anybody
-   * following the arithmetic down the column is reading it backwards, which
-   * is what "most recent first" asks for.
-   *
-   * Copied before reversing: `reverse()` mutates, and `ledger.entries` is also
-   * what the export and the totals read.
+   * NEWEST FIRST on screen, oldest first underneath. The running balance is
+   * cumulative and can only be computed oldest first; what is reversed is the
+   * reading order, and each row keeps the balance it was given — so the top
+   * row is what the customer owes today. Copied before reversing: `reverse()`
+   * mutates, and `ledger.entries` is also what the totals read.
    */
   const ordered = [...ledger.entries].reverse();
-  const shown = ordered.slice((page - 1) * perPage, page * perPage);
-  const lastPage = Math.max(1, Math.ceil(ordered.length / perPage));
+  const billsNewestFirst = ordered.filter((e) => e.kind === "bill");
+  const looseMoney = ordered.filter(
+    (e) => e.kind === "receipt" && (e.onAccount ?? 0) > 0 && !deadStatus(e.status),
+  );
+
+  // Paging for the By bill view; the statement table pages itself.
+  const rows = billsNewestFirst;
+  const shown = rows.slice((page - 1) * perPage, page * perPage);
+  const lastPage = Math.max(1, Math.ceil(rows.length / perPage));
+
+  const exportCsv = () => {
+    downloadCsv(
+      `mahek-account-${ledger.customerName.toLowerCase().replace(/\W+/g, "-")}`,
+      toCsv(
+        [
+          "Date",
+          "Type",
+          "Reference",
+          "Mode / status",
+          "Paid against / paid by",
+          "Billed (₹)",
+          "Received (₹)",
+          "Balance (₹)",
+        ],
+        ordered.map((e) => [
+          e.at,
+          e.kind === "bill" ? "Bill" : "Payment",
+          e.ref,
+          e.detail,
+          [
+            ...(e.links ?? []).map(
+              (l) => `${l.label} ₹${Math.round(l.amount / 100)}${deadStatus(l.status) ? " (" + l.status + ")" : ""}`,
+            ),
+            ...(e.onAccount ? [`On account ₹${Math.round(e.onAccount / 100)}`] : []),
+          ].join("; "),
+          e.debit ? String(Math.round(e.debit / 100)) : "",
+          e.credit ? String(Math.round(e.credit / 100)) : "",
+          String(Math.round(e.balance / 100)),
+        ]),
+      ),
+      [from, to],
+    );
+    push(`Exported ${plural(ledger.entries.length, "row")}`);
+  };
 
   return (
     <div className="px-6 pt-6 pb-12">
       <div className="max-w-[1400px]">
         <ScreenHeader
           title={ledger.customerName}
-          subtitle="Everything billed and everything received, most recent first. The running balance is what was left after each line, so the top one is what the customer owes today - confirmed money only."
+          subtitle="Every bill and every payment on this account, and which bills each payment settled. Point at a line to light up what it is linked to."
           actions={
             <>
-              <button
-                onClick={() => router.push("/accounts/ledger")}
-                className="h-9 cursor-pointer rounded-[4px] border border-line-strong bg-surface px-3.5 text-sm font-medium text-body hover:bg-canvas"
-              >
+              <button onClick={() => router.push("/accounts/ledger")} className={BUTTON}>
                 Another account
               </button>
-              <button
-                onClick={() => {
-                  downloadCsv(
-                    `mahek-account-${ledger.customerName.toLowerCase().replace(/\W+/g, "-")}`,
-                    toCsv(
-                      [
-                        "Date",
-                        "Type",
-                        "Reference",
-                        "Detail",
-                        "Debit (₹)",
-                        "Credit (₹)",
-                        "Balance (₹)",
-                      ],
-                      // Same order as the screen, so the file matches what
-                      // was on it when somebody pressed Export.
-                      ordered.map((e) => [
-                        e.at,
-                        e.kind === "bill" ? "Bill" : "Payment",
-                        e.ref,
-                        e.detail,
-                        e.debit ? String(Math.round(e.debit / 100)) : "",
-                        e.credit ? String(Math.round(e.credit / 100)) : "",
-                        String(Math.round(e.balance / 100)),
-                      ]),
-                    ),
-                    [from, to],
-                  );
-                  push(`Exported ${plural(ledger.entries.length, "row")}`);
-                }}
-                className="h-9 cursor-pointer rounded-[4px] border border-line-strong bg-surface px-3.5 text-sm font-medium text-body hover:bg-canvas"
-              >
+              <button onClick={exportCsv} className={BUTTON}>
                 Export
               </button>
             </>
           }
         />
 
-        <MetricRow
-          metrics={[
-            {
-              label: "Outstanding",
-              value: money(ledger.totals.outstanding),
-              sub: "confirmed money only",
-              tone: ledger.totals.outstanding > 0 ? "danger" : undefined,
-            },
-            { label: "Billed", value: money(ledger.totals.billed), sub: "in this range" },
-            {
-              label: "Received",
-              value: money(ledger.totals.received),
-              sub: "confirmed",
-            },
-            {
-              label: "On account",
-              value: money(ledger.totals.onAccount),
-              sub: ledger.totals.onAccount ? "not yet against a bill" : "nothing held",
-            },
-            {
-              label: "Awaiting confirmation",
-              value: money(ledger.awaiting.amount),
-              sub: ledger.awaiting.count
-                ? plural(ledger.awaiting.count, "receipt")
-                : "nothing waiting",
-              tone: ledger.awaiting.count ? "danger" : undefined,
-            },
-          ]}
+        <LedgerPeriodBar
+          period={period}
+          years={years}
+          today={today}
+          from={from}
+          to={to}
+          onChange={navigate}
         />
+        <LedgerBalances ledger={ledger} period={period} from={from} to={to} today={today} />
 
         {/*
-          WHY THIS STATEMENT LOOKS THE WAY IT DOES, above the figures rather
-          than under them. A third-party customer has no bills and never will,
-          and an empty statement with nothing saying why reads as data missing.
-          Nothing here is editable: converting is a manager's, and an accounts
-          user holds no `customer.classify`.
+          WHY THIS STATEMENT LOOKS THE WAY IT DOES. A third-party customer has
+          no bills and never will, and an empty statement with nothing saying
+          why reads as data missing. Read-only: converting is a manager's.
         */}
         {serving?.thirdParty ? (
           <div className="mb-4 rounded-[6px] border border-line bg-surface px-5 py-3.5 text-sm text-body">
@@ -246,37 +211,38 @@ export function LedgerScreen({
           </div>
         ) : null}
 
-        <div className="mb-4 flex flex-wrap items-end gap-3 rounded-[6px] border border-line bg-surface px-5 py-3.5">
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">
-              From
-            </span>
-            <input
-              type="date"
-              value={from}
-              onChange={(e) => navigate({ from: e.target.value })}
-              className={FIELD}
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">
-              To
-            </span>
-            <input
-              type="date"
-              value={to}
-              onChange={(e) => navigate({ to: e.target.value })}
-              className={FIELD}
-            />
-          </label>
-          {from || to ? (
-            <button
-              onClick={() => router.push(`/accounts/ledger?customer=${ledger.customerId}`)}
-              className="h-9.5 cursor-pointer border-none bg-transparent px-2 text-sm font-medium text-brand hover:text-brand-hover"
-            >
-              Clear
-            </button>
-          ) : null}
+        {ledger.awaiting.count ? (
+          <div className="mb-4">
+            <Banner tone="warn">
+              {money(ledger.awaiting.amount)} across{" "}
+              {plural(ledger.awaiting.count, "receipt")} has been reported and not yet
+              confirmed. It is not in the balance, and it will not be until somebody
+              finds it.
+            </Banner>
+          </div>
+        ) : null}
+
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="inline-flex rounded-[6px] border border-line bg-surface p-0.5">
+            {(
+              [
+                ["statement", "Statement", `${ledger.entries.length}`],
+                ["bills", "By bill", `${billsNewestFirst.length}`],
+              ] as const
+            ).map(([key, label, count]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => navigate({ view: key })}
+                className={cx(
+                  "h-8 cursor-pointer rounded-[4px] px-3.5 text-sm font-medium",
+                  view === key ? "bg-canvas text-ink shadow-[inset_0_0_0_1px_var(--color-line)]" : "text-muted hover:text-body",
+                )}
+              >
+                {label} <span className="ml-1 text-xs text-muted tabular-nums">{count}</span>
+              </button>
+            ))}
+          </div>
         </div>
 
         {ledger.entries.length === 0 ? (
@@ -288,182 +254,227 @@ export function LedgerScreen({
                 : "This customer has never been billed."
             }
           />
+        ) : view === "bills" ? (
+          <BillWise
+            bills={shown}
+            looseMoney={page === lastPage ? looseMoney : []}
+            total={rows.length}
+            page={page}
+            perPage={perPage}
+            onPage={setPage}
+            onPerPage={(n) => {
+              setPerPage(n);
+              setPage(1);
+            }}
+          />
         ) : (
-          <div className="overflow-hidden rounded-[6px] border border-line bg-surface">
-            <Table
-              minWidth={900}
-              head={
-                <>
-                  <HeadCell>Date</HeadCell>
-                  <HeadCell>Reference</HeadCell>
-                  <HeadCell>Detail</HeadCell>
-                  <HeadCell align="right">Billed</HeadCell>
-                  <HeadCell align="right">Received</HeadCell>
-                  <HeadCell align="right">Balance</HeadCell>
-                </>
-              }
-            >
-              {shown.map((e, i) => {
-                // Both stop counting; they are not the same event and the
-                // statement must not call them the same thing.
-                const rejected = e.status === "rejected";
-                const reversed = e.status === "reversed";
-                const dead = rejected || reversed;
-                return (
-                  <Row key={`${e.at}-${e.ref}-${i}`} striped={i % 2 === 1}>
-                    <Cell className={dead ? "text-muted line-through" : undefined}>
-                      {longDate(e.at)}
-                    </Cell>
-                    <Cell
-                      className={cx(
-                        "font-medium",
-                        dead ? "text-muted line-through" : "text-ink",
-                      )}
-                    >
-                      {e.ref}
-                    </Cell>
-                    <td className="px-4 py-2.5 align-middle text-sm">
-                      <span className="flex flex-wrap items-center gap-2">
-                        <span className={dead ? "text-muted line-through" : "text-muted"}>
-                          {e.detail}
-                        </span>
-                        {/*
-                          On the BILL line, not the payment: money somebody has
-                          claimed against this bill and nobody has found yet.
-                          The bill still stands at its full amount — nothing
-                          unconfirmed moves a balance — so without this mark a
-                          customer who says they paid bill 0804 leaves no trace
-                          on the row they are talking about.
-                        */}
-                        {e.kind === "bill" && (e.claimed ?? 0) > 0 ? (
-                          <Pill tone="warn">{money(e.claimed!)} claimed, on hold</Pill>
-                        ) : null}
-                        {e.status === "reported" ? (
-                          <Pill tone="warn">with accounts</Pill>
-                        ) : null}
-                        {/*
-                          A hold counts no more than a report does, so it must
-                          not sit on a statement looking like money that
-                          arrived. Its own word rather than "with accounts":
-                          somebody has looked at this one and is checking it,
-                          which is a different thing to say to a customer
-                          asking why their balance has not moved.
-                        */}
-                        {e.status === "held" ? (
-                          <Pill tone="warn">on hold, being checked</Pill>
-                        ) : null}
-                        {rejected ? <Pill tone="danger">never arrived</Pill> : null}
-                        {reversed ? <Pill tone="danger">reversed</Pill> : null}
-                        {/*
-                          Offered on the line itself, because reversing a
-                          payment begins with finding it and this is the screen
-                          somebody is already on when they do. Only on money
-                          that actually counted: a reported receipt has not
-                          counted yet and is rejected instead, which is a
-                          different word for a different fact.
-                        */}
-                        {canReverse && e.kind === "receipt" && e.status === "confirmed" && e.receiptId ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setReversing(e);
-                            }}
-                            className="cursor-pointer rounded-[4px] border border-line px-2 py-0.5 text-[11px] font-medium text-body hover:bg-canvas"
-                          >
-                            Reverse
-                          </button>
-                        ) : null}
-                      </span>
-                    </td>
-                    <Cell align="right" className={dead ? "line-through" : undefined}>
-                      {e.debit ? money(e.debit) : "—"}
-                    </Cell>
-                    <Cell
-                      align="right"
-                      className={
-                        e.credit && !dead ? "text-success" : "text-muted line-through"
-                      }
-                    >
-                      {e.credit ? money(e.credit) : "—"}
-                    </Cell>
-                    <Cell align="right" className="font-medium text-ink">
-                      {signedMoney(e.balance)}
-                    </Cell>
-                  </Row>
-                );
-              })}
-
-              {/*
-                The opening balance is what was owed BEFORE this range, so it
-                belongs under the oldest entry — which, read newest first, is
-                the bottom of the last page rather than the top of the first.
-              */}
-              {from && page === lastPage ? (
-                <tr className="border-t border-divider bg-surface">
-                  <td colSpan={5} className="px-4 py-2.5 text-sm text-muted">
-                    Opening balance
-                  </td>
-                  <td className="px-4 py-2.5 text-right text-sm tabular-nums text-muted">
-                    {money(ledger.openingBalance)}
-                  </td>
-                </tr>
-              ) : null}
-            </Table>
-
-            <Pager
-              total={ledger.entries.length}
-              page={page}
-              perPage={perPage}
-              note="The balance counts confirmed money only, so it agrees with what the customer owes"
-              onPage={setPage}
-              onPerPage={(n) => {
-                setPerPage(n);
-                setPage(1);
-              }}
-            />
-          </div>
+          <StatementTable
+            // A new period is a new statement: start it on its first page.
+            key={`${period}|${from}|${to}`}
+            ledger={ledger}
+            from={from}
+            canReverse={canReverse}
+            onReversed={() => router.refresh()}
+          />
         )}
-
-        {ledger.awaiting.count ? (
-          <div className="mt-4">
-            <Banner tone="warn">
-              {money(ledger.awaiting.amount)} across{" "}
-              {plural(ledger.awaiting.count, "receipt")} has been reported and not yet
-              confirmed. It is not in the balance above, and it will not be until
-              somebody finds it.
-            </Banner>
-          </div>
-        ) : null}
       </div>
 
-      {/*
-        A reason is required and it goes on the statement, because somebody has
-        to ring the customer and say something — and because the next person to
-        open this account needs to know why the balance moved twice.
-      */}
-      <ConfirmDialog
-        // Keyed so it opens with an empty box each time rather than resetting
-        // in an effect.
-        key={reversing?.receiptId ?? "none"}
-        open={Boolean(reversing)}
-        title={`Reverse ${reversing ? money(reversing.credit) : ""}?`}
-        body="The receipt keeps its row on this statement and the money goes back onto the bills it settled. Use this when a payment counted and then failed — a bounced cheque, a duplicate entry, money applied to the wrong customer. If accounts simply never found it, reject it instead."
-        confirmLabel="Reverse payment"
-        destructive
-        needsReason
-        onClose={() => setReversing(null)}
-        onConfirm={async (why) => {
-          if (!reversing?.receiptId) return;
-          const result = await run(reverseReceiptAction(reversing.receiptId, why));
-          if (result.ok) {
-            setReversing(null);
-            router.refresh();
-          }
-        }}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ pieces */
+
+/**
+ * BY BILL: every bill, and directly under it the money that went against it.
+ * The statement answers "what is the balance"; this answers "was bill 1626
+ * paid, and by what" — read down one block instead of matching two rows.
+ */
+function BillWise({
+  bills,
+  looseMoney,
+  total,
+  page,
+  perPage,
+  onPage,
+  onPerPage,
+}: {
+  bills: LedgerEntry[];
+  looseMoney: LedgerEntry[];
+  total: number;
+  page: number;
+  perPage: number;
+  onPage: (n: number) => void;
+  onPerPage: (n: number) => void;
+}) {
+  if (total === 0) {
+    return <Empty title="No bills in these dates" body="Payments on this account are on the Statement tab." />;
+  }
+  return (
+    <div className="overflow-hidden rounded-[6px] border border-line bg-surface">
+      <Table
+        minWidth={800}
+        head={
+          <>
+            <Th width={104}>Date</Th>
+            <Th>Bill / payment against it</Th>
+            <Th align="right" width={104}>Bill amount</Th>
+            <Th align="right" width={96}>Paid</Th>
+            <Th align="right" width={96}>Due</Th>
+            <Th width={96}>Status</Th>
+          </>
+        }
+      >
+        {bills.map((b) => {
+          const paid = b.paid ?? 0;
+          const due = Math.max(0, b.debit - paid);
+          const links = b.links ?? [];
+          return (
+            <React.Fragment key={b.billId ?? b.ref}>
+              <tr className="border-t border-line bg-canvas">
+                <td className={cx(TD, "font-medium text-body")}>{longDate(b.at)}</td>
+                <td className={cx(TD_WRAP, "break-words")}>
+                  <span className="flex items-center gap-2">
+                    <span className="font-semibold text-ink">{b.ref}</span>
+                    {(b.claimed ?? 0) > 0 ? (
+                      <Pill tone="warn">{money(b.claimed!)} claimed</Pill>
+                    ) : null}
+                  </span>
+                </td>
+                <td className={cx(TD, "text-right font-medium tabular-nums text-ink")}>{money(b.debit)}</td>
+                <td className={cx(TD, "text-right tabular-nums", paid ? "text-body" : "text-muted")}>
+                  {paid ? money(paid) : "—"}
+                </td>
+                <td className={cx(TD, "text-right font-medium tabular-nums", due ? "text-danger" : "text-muted")}>
+                  {b.unstated && paid === 0 ? "not stated" : due ? money(due) : "—"}
+                </td>
+                <td className={cx(TD, "text-body")}>
+                  {b.unstated && paid === 0
+                    ? "Not stated"
+                    : b.debit > 0 && paid >= b.debit
+                      ? "Paid"
+                      : paid > 0
+                        ? "Part paid"
+                        : "Unpaid"}
+                </td>
+              </tr>
+              {links.length ? (
+                links.map((l, i) => {
+                  const dead = deadStatus(l.status);
+                  const pending = l.status === "reported" || l.status === "held";
+                  // What was left on the bill after this payment, walking the
+                  // payments in date order — confirmed money only, so a part
+                  // payment reads as the step it was.
+                  const leftAfter = Math.max(
+                    0,
+                    b.debit -
+                      links
+                        .slice(0, i + 1)
+                        .filter((x) => x.status === "confirmed")
+                        .reduce((sum, x) => sum + x.amount, 0),
+                  );
+                  return (
+                    <tr key={`${l.id}-${i}`} className="border-t border-divider bg-surface">
+                      <td className={cx(TD, "pl-8 text-muted", dead && "line-through")}>{longDate(l.at)}</td>
+                      <td className={cx(TD_WRAP, "break-words")}>
+                        <span className="flex flex-wrap items-center gap-x-2 pl-4">
+                          <span className="text-muted">↳</span>
+                          <span className={cx("text-body", dead && "text-muted line-through")}>
+                            {l.mode ?? "Payment"}
+                            {l.label !== l.mode ? <span className="text-muted"> · ref {l.label}</span> : null}
+                          </span>
+                          {(l.receiptBills ?? 1) > 1 && l.receiptAmount ? (
+                            <span className="text-xs text-muted">
+                              (part of {money(l.receiptAmount)}, split across {l.receiptBills} bills)
+                            </span>
+                          ) : null}
+                        </span>
+                      </td>
+                      <td className={TD} />
+                      <td
+                        className={cx(
+                          TD,
+                          "text-right tabular-nums",
+                          dead ? "text-muted line-through" : pending ? "text-muted" : "text-body",
+                        )}
+                      >
+                        {money(l.amount)}
+                      </td>
+                      <td className={cx(TD, "text-right text-xs tabular-nums text-muted")}>
+                        {l.status === "confirmed" ? (leftAfter ? `${money(leftAfter)} left` : "cleared") : ""}
+                      </td>
+                      <td className={TD}>
+                        {pending ? (
+                          <Pill tone="warn">not yet confirmed</Pill>
+                        ) : l.status === "rejected" ? (
+                          <Pill tone="danger">never arrived</Pill>
+                        ) : l.status === "reversed" ? (
+                          <Pill tone="danger">reversed</Pill>
+                        ) : null}
+                      </td>
+                    </tr>
+                  );
+                })
+              ) : (
+                <tr className="border-t border-divider bg-surface">
+                  <td className={TD} />
+                  <td colSpan={5} className={cx(TD, "pl-12 text-xs text-muted")}>
+                    No payment recorded against this bill
+                  </td>
+                </tr>
+              )}
+            </React.Fragment>
+          );
+        })}
+
+        {looseMoney.length ? (
+          <>
+            <tr className="border-t border-line bg-canvas">
+              <td colSpan={6} className={cx(TD, "font-medium text-ink")}>
+                Received and not against any bill
+                <span className="ml-2 text-xs font-normal text-muted">
+                  on account — it will settle a bill once accounts allocate it
+                </span>
+              </td>
+            </tr>
+            {looseMoney.map((r) => (
+              <tr key={r.receiptId} className="border-t border-divider bg-surface">
+                <td className={cx(TD, "pl-8 text-muted")}>{longDate(r.at)}</td>
+                <td className={cx(TD_WRAP, "break-words")}>
+                  <span className="flex flex-wrap items-center gap-x-2 pl-4">
+                    <span className="text-muted">↳</span>
+                    <span className="text-body">{r.detail.split(" · ")[0]}</span>
+                    {r.ref !== "—" && r.ref !== r.detail.split(" · ")[0] ? (
+                      <span className="text-muted">· ref {r.ref}</span>
+                    ) : null}
+                  </span>
+                </td>
+                <td className={TD} />
+                <td className={cx(TD, "text-right tabular-nums text-body")}>{money(r.onAccount ?? 0)}</td>
+                <td className={TD} />
+                <td className={TD}>
+                  {r.status === "confirmed" ? (
+                    <span className="text-body">On account</span>
+                  ) : (
+                    <Pill tone="warn">not yet confirmed</Pill>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </>
+        ) : null}
+      </Table>
+      <Pager
+        total={total}
+        page={page}
+        perPage={perPage}
+        note="Paid counts confirmed money only"
+        onPage={onPage}
+        onPerPage={onPerPage}
       />
     </div>
   );
 }
 
-const FIELD =
-  "h-9.5 rounded-[4px] border border-line bg-surface px-2.5 text-sm focus:border-brand focus:outline-none";
+const BUTTON =
+  "h-9 cursor-pointer rounded-[4px] border border-line-strong bg-surface px-3.5 text-sm font-medium text-body hover:bg-canvas";

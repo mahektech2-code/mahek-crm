@@ -8,7 +8,9 @@ import {
   dayLabelRelative,
   distanceLabel,
   hoursInWords,
+  compactInr,
   inr,
+  inrFromPaise,
   shopName,
 } from './format';
 
@@ -138,6 +140,16 @@ test('rupees are grouped the Indian way', () => {
   assert.equal(inr(236000), '₹2,36,000');
   assert.equal(inr(1243405), '₹12,43,405');
   assert.equal(inr(999), '₹999');
+});
+
+/* A shop in credit read as owing the same amount, in red, because the sign
+   was dropped on the way to the screen. */
+test('a negative figure keeps its minus sign', () => {
+  assert.equal(inr(-5000), '\u2212₹5,000');
+  assert.equal(inrFromPaise(-123456), '\u2212₹1,235');
+  assert.equal(compactInr(-512000), '\u2212₹5.1L');
+  assert.equal(inr(-0.4), '₹0');
+  assert.equal(inr(0), '₹0');
 });
 
 /* ------------------------------------------------------------- data size */

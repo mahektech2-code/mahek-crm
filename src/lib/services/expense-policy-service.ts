@@ -1,4 +1,5 @@
 import "server-only";
+import { employeeLateral } from "@/lib/employee-link";
 import { asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -10,6 +11,8 @@ import {
 import { parseRule, describeRule } from "@/lib/expense-rule-forms";
 import { policyOn, type Policy, type PolicySubject } from "@/lib/engines/expense-policy";
 import { asDate } from "@/lib/business-date";
+import { STANDARD_POLICY, STANDARD_POLICY_TITLE } from "@/lib/expense-policy-standard";
+import { policyOfSet, policySetForUser } from "./expense-policy-set-service";
 
 /* ---------------------------------------------------------------------------
  * Reading the expense policy, and working out which one applies to whom.
@@ -190,16 +193,59 @@ async function loadPolicies(statuses: readonly string[]): Promise<Policy[]> {
   return [...byId.values()];
 }
 
-/** The policy in force on a date, assembled for the engine. Null where none is. */
-export async function policyForDate(onDate: string): Promise<Policy | null> {
-  const policies = await loadPolicies(["published", "superseded"]);
-  return policyOn(policies, onDate);
+/**
+ * The policy in force for a person on a date.
+ *
+ * Named policies (`lib/services/expense-policy-set-service.ts`): the one the
+ * person is assigned where it is active, otherwise the standard policy —
+ * which is a row too now, seeded from the code's defaults the first time it
+ * is asked for. Named policies carry no dates, so the date only matters for
+ * `policyOn`'s own contract. With no person it is the standard policy.
+ *
+ * Still async and still nullable so its callers (the claim path, the
+ * handset's pull, the simulator) keep their shape.
+ */
+export async function policyForDate(onDate: string, userId: string | null = null): Promise<Policy | null> {
+  const set = await policySetForUser(userId);
+  return policyOn([policyOfSet(set)], onDate);
 }
 
 /** A draft, assembled for the engine — what the simulator runs against. */
 export async function draftPolicy(id: string): Promise<Policy | null> {
   const policies = await loadPolicies(["draft", "published", "superseded", "archived"]);
   return policies.find((p) => p.id === id) ?? null;
+}
+
+/**
+ * Make sure a policy has its anchor row in `expense_policies` before anything
+ * is stamped with its id — the standard one (migration 0228 writes it) or a
+ * named one (written when it is created). This is the net under both —
+ * for a database rebuilt by truncation, as the test suite does, and for a
+ * row somebody deleted. One idempotent insert, on the write paths only.
+ */
+export async function ensurePolicyRow(policyId: string): Promise<void> {
+  if (policyId === STANDARD_POLICY.id) {
+    await db.execute(sql`
+      insert into expense_policies (id, version_no, title, status, effective_from, notes)
+      values (${STANDARD_POLICY.id}, ${STANDARD_POLICY.versionNo}, ${STANDARD_POLICY_TITLE}, 'archived',
+              ${STANDARD_POLICY.effectiveFrom}::date,
+              'The standard named policy. Its rules are in expense_policy_sets; this row is only the key expense days are stamped with.')
+      on conflict do nothing
+    `);
+    return;
+  }
+  /* A named policy's anchor: archived, outside the one-version-per-date
+     constraint, and numbered above everything already there. */
+  await db.execute(sql`
+    insert into expense_policies (id, version_no, title, status, effective_from, notes)
+    select s.id,
+           (select coalesce(max(version_no), ${STANDARD_POLICY.versionNo}) + 1 from expense_policies),
+           s.name, 'archived', date '2000-01-01',
+           'A named expense policy. Its rules are in expense_policy_sets; this row is only the key expense days are stamped with.'
+      from expense_policy_sets s
+     where s.id = ${policyId}
+    on conflict do nothing
+  `);
 }
 
 /* ----------------------------------------------------- grades and cities */
@@ -336,9 +382,7 @@ export async function resolveSubject(
     select g.key as "gradeKey", e.position as "positionRaw",
            (select key from expense_grades where is_residual limit 1) as "residualKey"
       from users u
-      left join employees e
-             on lower(e.email) = lower(u.email)
-             or (e.company_mobile is not null and e.company_mobile = u.phone)
+      ${employeeLateral("u", "e")}
       left join expense_grade_map m
              on m.position_normalised = lower(regexp_replace(coalesce(e.position, ''), '\\s+', ' ', 'g'))
       left join expense_grades g on g.id = m.grade_id
@@ -384,7 +428,7 @@ export async function policyForUserOn(
   destinationCity: string | null,
 ): Promise<{ policy: Policy | null; subject: PolicySubject; gradeSource: string }> {
   const [policy, subject] = await Promise.all([
-    policyForDate(onDate),
+    policyForDate(onDate, userId),
     resolveSubject(userId, destinationCity),
   ]);
   return { policy, subject: { grade: subject.grade, cityClass: subject.cityClass }, gradeSource: subject.gradeSource };

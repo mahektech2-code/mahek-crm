@@ -5,7 +5,7 @@ import { Badge, Button, Card, Textarea, cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
 import type { SchemaTab } from "@/lib/config/schema-contract";
 import { readable, savedValue, tabFields, type Values } from "./settings-model";
-import { useAdmin } from "./store";
+import { useToast } from "@/components/ui/toast";
 
 /* ---------------------------------------------------------------------------
  * The tools around a settings section, rather than inside it.
@@ -19,10 +19,13 @@ export function SettingsToolbar({
   tab,
   owner,
   values,
+  onImport,
 }: {
   tab: SchemaTab;
   owner: string;
   values: Values;
+  /** Puts an imported file's differences in as unsaved changes, to be reviewed and saved like any other. */
+  onImport: (drafts: Values) => void;
 }) {
   const [open, setOpen] = React.useState<null | "compare" | "transfer">(null);
   const fields = tabFields(tab);
@@ -49,7 +52,15 @@ export function SettingsToolbar({
         values={values}
         owner={owner}
       />
-      <TransferModal open={open === "transfer"} onClose={() => setOpen(null)} tab={tab} values={values} owner={owner} />
+      <TransferModal
+        key={open ?? "shut"}
+        open={open === "transfer"}
+        onClose={() => setOpen(null)}
+        tab={tab}
+        values={values}
+        owner={owner}
+        onImport={onImport}
+      />
     </>
   );
 }
@@ -132,14 +143,16 @@ function TransferModal({
   tab,
   values,
   owner,
+  onImport,
 }: {
   open: boolean;
   onClose: () => void;
   tab: SchemaTab;
   values: Values;
   owner: string;
+  onImport: (drafts: Values) => void;
 }) {
-  const { notify } = useAdmin();
+  const notify = useToast().push;
   const fields = tabFields(tab);
   const current = Object.fromEntries(fields.map((f) => [f.key, savedValue(values, f)]));
   const [incoming, setIncoming] = React.useState("");
@@ -157,7 +170,7 @@ function TransferModal({
   const diff = parsed
     ? fields
         .filter((f) => f.key in parsed! && JSON.stringify(parsed![f.key]) !== JSON.stringify(current[f.key]))
-        .map((f) => ({ label: f.label, from: readable(current[f.key]), to: readable(parsed![f.key]) }))
+        .map((f) => ({ key: f.key, label: f.label, from: readable(current[f.key]), to: readable(parsed![f.key]) }))
     : [];
   const unknownKeys = parsed ? Object.keys(parsed).filter((k) => !fields.some((f) => f.key === k)) : [];
 
@@ -185,17 +198,21 @@ function TransferModal({
                     : undefined
             }
             onClick={() => {
-              notify(`${diff.length} settings would be applied as one change set`);
+              // Not written here. They become this page's unsaved changes, so
+              // they are reviewed and saved exactly as typed ones are — and the
+              // consistency check runs over them before anything is stored.
+              onImport(Object.fromEntries(diff.map((d) => [d.key, parsed![d.key]])));
+              notify(`${diff.length} ${diff.length === 1 ? "change" : "changes"} loaded. Review them, then save.`);
               onClose();
             }}
           >
-            Apply {diff.length || ""} change{diff.length === 1 ? "" : "s"}
+            Load {diff.length || ""} change{diff.length === 1 ? "" : "s"}
           </Button>
         </>
       }
     >
       <div className="text-sm leading-[21px] text-body">
-        Export this section, tune it elsewhere, and bring it back. Nothing is applied until the diff below has been read.
+        Export this section, tune it elsewhere, and bring it back. An imported file is loaded as unsaved changes — nothing is stored until you save them.
       </div>
 
       <Card className="mt-3.5 p-3.5">
@@ -204,7 +221,7 @@ function TransferModal({
             {fileName(owner, tab.key)}
           </span>
           <span className="text-[13px] text-muted">{fields.length} settings</span>
-          <Button size="sm" variant="ghost" onClick={() => notify("Configuration exported")}>
+          <Button size="sm" variant="ghost" onClick={() => download(fileName(owner, tab.key), current)}>
             Export
           </Button>
         </div>
@@ -256,6 +273,16 @@ function TransferModal({
   );
 }
 
+/** The file, from the browser: the values are already on the page, so nothing is fetched. */
+function download(name: string, data: Record<string, unknown>) {
+  const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function fileName(owner: string, tabKey: string): string {
   const slug = owner.toLowerCase().replace(/\s+/g, "-");
   return slug === tabKey ? `${slug}.json` : `${slug}-${tabKey}.json`;
@@ -269,6 +296,6 @@ function fileName(owner: string, tabKey: string): string {
  *
  * Scheduling is not a feature — there is no table and nothing applies one — so
  * the button is gone rather than reworded. History IS recorded: `updateSettings`
- * writes one audit row per setting, and Overview → Configuration shows what has
- * drifted from the code's default, with who moved it and when.
+ * writes one audit row per setting, and All settings → Changed from the default
+ * shows what has drifted, with who moved it and when.
  * ------------------------------------------------------------------------- */

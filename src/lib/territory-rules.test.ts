@@ -2,7 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PgDialect } from "drizzle-orm/pg-core";
 
-import { PARENT_KIND, territoryClause, type Territory } from "./territory-rules";
+import {
+  PARENT_KIND,
+  matchesTerritory,
+  placeNewLead,
+  territoryClause,
+  type Territory,
+} from "./territory-rules";
 
 /**
  * THE RULE ITSELF, exercised without a database.
@@ -106,4 +112,70 @@ test("the clause can be told which table the columns are on", () => {
 
   /* And the default is what every existing caller already relies on. */
   assert.match(dialect.sqlToQuery(territoryClause(one)).sql, /customers\.city/);
+});
+
+/* ------------------------------------------------ where a lead may be raised */
+
+const pritesh: Territory[] = [
+  { kind: "city", value: "Thane", parent: "Maharashtra" },
+  { kind: "city", value: "Bhopal", parent: "Madhya Pradesh" },
+  { kind: "region", value: "Maharashtra" },
+];
+const rahul: Territory[] = [{ kind: "state", value: "Madhya Pradesh" }];
+
+test("A LEAD IN AN ALLOCATED CITY takes the city's state, even from a phone that sent none", () => {
+  assert.deepEqual(placeNewLead(pritesh, { city: "thane" }, true), { ok: true, state: "Maharashtra" });
+});
+
+test("A TOWN THE BOOK KNOWS is filed under the state the book files it under", () => {
+  /* The production case: Nagpur, no state on the wire, and a region row for
+     Maharashtra. Before, the lead was accepted with no state and matched no
+     territory at all — on nobody's Customers tab, its author's included. */
+  assert.deepEqual(
+    placeNewLead(pritesh, { city: "Nagpur", bookState: "Maharashtra" }, true),
+    { ok: true, state: "Maharashtra" },
+  );
+});
+
+test("A SALESMAN ON ONE STATE needs no state from the phone", () => {
+  assert.deepEqual(placeNewLead(rahul, { city: "Rewa" }, false), { ok: true, state: "Madhya Pradesh" });
+});
+
+test("OUTSIDE THE AREA IS REFUSED, and the refusal names the area", () => {
+  const r = placeNewLead(rahul, { city: "Virar", bookState: "Maharashtra" }, false);
+  assert.deepEqual(r, { ok: false, reason: "outside", areas: ["Madhya Pradesh"] });
+});
+
+test("A CITY NARROWS INSIDE ITS STATE: Bhopal in Maharashtra is not Bhopal", () => {
+  const cityOnly: Territory[] = [{ kind: "city", value: "Bhopal", parent: "Madhya Pradesh" }];
+  assert.equal(placeNewLead(cityOnly, { city: "Bhopal", state: "Maharashtra" }, false).ok, false);
+  assert.equal(placeNewLead(cityOnly, { city: "Bhopal" }, false).ok, true);
+});
+
+test("A STATE IS MATCHED ON EVERY SPELLING, as the SQL matches it", () => {
+  const guj: Territory[] = [{ kind: "state", value: "Gujarat" }];
+  assert.equal(placeNewLead(guj, { city: "Surat", state: "Gujrat" }, false).ok, true);
+});
+
+test("AN UNRESOLVABLE STATE IS NOT GUESSED: two states and an unknown town is refused", () => {
+  const two: Territory[] = [
+    { kind: "state", value: "Odisha" },
+    { kind: "state", value: "Madhya Pradesh" },
+  ];
+  assert.equal(placeNewLead(two, { city: "Somewhere" }, false).ok, false);
+  assert.equal(placeNewLead(two, { city: "Somewhere", state: "Odisha" }, false).ok, true);
+});
+
+test("NO AREA: a salesman cannot raise a lead, a manager with no allocation can", () => {
+  assert.deepEqual(placeNewLead([], { city: "Pune" }, false), { ok: false, reason: "no_area", areas: [] });
+  assert.deepEqual(placeNewLead([], { city: "Pune", bookState: "Maharashtra" }, true), {
+    ok: true,
+    state: "Maharashtra",
+  });
+});
+
+test("A BEAT is matched on the area, inside its city", () => {
+  const beat: Territory = { kind: "beat", value: "Sadar", parent: "Nagpur" };
+  assert.equal(matchesTerritory(beat, { city: "Nagpur", area: "sadar" }), true);
+  assert.equal(matchesTerritory(beat, { city: "Pune", area: "Sadar" }), false);
 });

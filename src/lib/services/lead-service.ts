@@ -1,6 +1,7 @@
+import { stateKey, stateVariants } from "@/lib/india-states";
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   auditLog,
@@ -13,6 +14,7 @@ import {
   mbosDocuments,
   mbosUserTerritories,
   mbosSamples,
+  mbosTasks,
   mbosVisits,
   notifications,
   products,
@@ -22,14 +24,21 @@ import {
 import { orderCountsSql, orderDeliveredSql } from "../order-status";
 import { getConfig } from "../config/store";
 import { MBOS_EVENT, writeTimelineEvent } from "../timeline";
-import type { Hat } from "../access-control";
+import { canAny, hatsFor, type Hat } from "../access-control";
 import {
   gateTo,
   PROSPECT_CONDITIONS,
   type Condition,
   type LeadGateInput,
 } from "../engines/lead-gates";
-import { directionOf, isOnTheBookAt, isParked } from "../engines/lead-ladder";
+import {
+  directionOf,
+  isOnTheBookAt,
+  isParked,
+  ladderFor,
+  type MoveDirection,
+} from "../engines/lead-ladder";
+import { NURTURE_SOURCE_TYPE } from "../engines/lead-nurture";
 import {
   stageLabel,
   verificationAnswers,
@@ -91,12 +100,16 @@ const LEAD_COLUMNS = {
      Both are read by the qualification gate. */
   leadBuyer: customers.leadBuyer,
   gstVerified: customers.gstVerified,
+  gstVerifiedAt: customers.gstVerifiedAt,
+  gstVerifiedById: customers.gstVerifiedById,
   /* §5.3 — read by the gate through `figuresAreStale` and by the record page,
      which prints the date so somebody can see how old the figures are rather
      than only being refused by them. */
   leadFiguresConfirmedAt: customers.leadFiguresConfirmedAt,
   leadQualificationReview: customers.leadQualificationReview,
   leadQualificationReviewNote: customers.leadQualificationReviewNote,
+  leadQualificationReviewedAt: customers.leadQualificationReviewedAt,
+  leadQualificationReviewedById: customers.leadQualificationReviewedById,
   leadPriority: customers.leadPriority,
   leadHoldResumeDate: customers.leadHoldResumeDate,
   leadCreditDaysWanted: customers.leadCreditDaysWanted,
@@ -108,6 +121,13 @@ const LEAD_COLUMNS = {
   leadNextActionOwnerId: customers.leadNextActionOwnerId,
   leadNextActionOutcome: customers.leadNextActionOutcome,
   leadManagerId: customers.leadManagerId,
+  /* The Sales Manager seat. Read by the CRM Sales Manager workspace's scope
+     check (`assertCustomerInScope`) and by nothing else. */
+  salesManagerId: customers.salesManagerId,
+  /* Whether a PERSON set that seat (a Sales Manager raising the lead, or `assignSalesManager`)
+     rather than the nightly org-chart pass. Read by the Telecaller routing, which must not
+     mistake a derived seat for a Sales Manager being involved. */
+  salesManagerDecidedAt: customers.salesManagerDecidedAt,
   leadManagerDecidedAt: customers.leadManagerDecidedAt,
   leadVerifiedAt: customers.leadVerifiedAt,
   leadVerifiedById: customers.leadVerifiedById,
@@ -300,6 +320,7 @@ export async function leadGateInput(customerId: string): Promise<LeadGateInput |
        tick, which is what the gate used to read. The number and the check are
        two different people's statements and the gate wants both. */
     gstVerified: lead.gstVerified,
+    gstRefused: lead.gstVerified === false && lead.gstVerifiedAt != null,
     /* §5.3 — the two halves of what replaced the four questions that were cut
        out of the qualification checklist: the figures still holding, and a
        manager who said the checklist was not finished being listened to. */
@@ -651,9 +672,13 @@ export async function leadRecord(customerId: string): Promise<LeadRecord | null>
 
 export type LeadMoveKind = "passed" | "overridden" | "reverted";
 
+/** Rungs a lead has finished at. None of them can be paused. */
+const ENDED_STAGES: readonly LeadStage[] = ["lost", "won", "customer", "active_distributor"];
+
 export type LeadMoveRefusalCode =
   | "not_on_funnel"
   | "same_stage"
+  | "cannot_park"
   | "off_ladder"
   | "gate_shut"
   | "override_not_offered"
@@ -666,6 +691,39 @@ export type LeadMoveRefusalCode =
 export type LeadMoveDecision =
   | { ok: true; kind: LeadMoveKind; overriddenConditions: string[] }
   | { ok: false; code: LeadMoveRefusalCode; message: string; missing: Condition[] };
+
+/**
+ * The rung a lead was parked FROM — the `from_stage` of its newest transition into
+ * `on_hold`. That transition is the only place it is recorded: the stage column
+ * is taken by On hold itself. Null where there is no such transition.
+ */
+export async function parkedFromRung(customerId: string): Promise<LeadStage | null> {
+  const [row] = await db
+    .select({ fromStage: leadStageTransitions.fromStage })
+    .from(leadStageTransitions)
+    .where(
+      and(
+        eq(leadStageTransitions.customerId, customerId),
+        eq(leadStageTransitions.toStage, "on_hold"),
+      ),
+    )
+    .orderBy(desc(leadStageTransitions.at), desc(leadStageTransitions.id))
+    .limit(1);
+  return (row?.fromStage as LeadStage | null | undefined) ?? null;
+}
+
+/** Which way a move OUT of `on_hold` goes, judged from the rung the park came from. */
+async function resumeDirection(
+  customerId: string | undefined,
+  to: LeadStage,
+  salesType: LeadSalesType | null,
+): Promise<MoveDirection> {
+  const ladder = ladderFor(salesType);
+  if (!ladder.includes(to)) return "off_ladder";
+  const parked = customerId ? await parkedFromRung(customerId) : null;
+  if (!parked || !ladder.includes(parked)) return "up";
+  return to === parked ? "same" : directionOf(parked, to, salesType);
+}
 
 /**
  * May this lead go to that rung — the whole of it, including the parts §28
@@ -689,7 +747,12 @@ export type LeadMoveDecision =
  *     answer in.
  */
 export async function evaluateLeadStageMove(input: {
-  lead: Pick<LeadRow, "leadStage" | "leadSalesType">;
+  /**
+   * `id` is optional so a caller holding only a rung and a sales type still
+   * compiles, and it is what lets a PARKED lead be resumed: where the lead is
+   * on `on_hold` and an id is given, the rung it was parked from is read.
+   */
+  lead: Pick<LeadRow, "leadStage" | "leadSalesType"> & { id?: string };
   gate: LeadGateInput;
   to: LeadStage;
   reasonCode?: string | null;
@@ -745,11 +808,88 @@ export async function evaluateLeadStageMove(input: {
    * screen: the same split the resume date and the next action already live
    * under, two blocks down in that file.
    */
+  /*
+   * §— A LEAD THAT HAS ENDED CANNOT BE PAUSED. Asked BEFORE the park shortcut
+   * below, which answers "passed" for any lead and any stage: parking a Lost
+   * lead would walk it out of Lost by a side door that is not a reopen, and
+   * parking a Won or Customer lead does not record a pause - it overwrites the
+   * record of a sale. The record's own Park control was withheld on these four
+   * stages for exactly that reason ("the server would cheerfully accept"), which
+   * left the server itself unguarded for every other door - the All Leads bulk
+   * action among them. A pause belongs to a lead that is still being worked.
+   */
+  if (isParked(to) && ENDED_STAGES.includes(from)) {
+    return {
+      ok: false,
+      code: "cannot_park",
+      message:
+        from === "lost"
+          ? "A Lost lead is reopened, not put on hold. Reopen it first if it is being worked again."
+          : `${stageLabel(from)} is a sale on the record, so it cannot be put on hold. On hold is a pause for a lead that is still being worked.`,
+      missing: [],
+    };
+  }
+
   if (isParked(to)) {
     return { ok: true, kind: "passed", overriddenConditions: [] };
   }
 
-  const direction = directionOf(from, to, salesType);
+  let direction: MoveDirection = directionOf(from, to, salesType);
+
+  /*
+   * §— RESUMING A PARKED LEAD IS NOT A MOVE FROM A RUNG THAT DOES NOT EXIST.
+   *
+   * `on_hold` is on no ladder, so `directionOf(on_hold, anything)` answers
+   * `off_ladder` and the refusal below read "Qualification is not a rung on
+   * this lead's ladder" about a rung that plainly is — every resume
+   * through this evaluator — the record, the board and the handset all share it —
+   * was refused on it. The park DOES remember where it came from: the newest transition into
+   * `on_hold` carries it as `from_stage`, and that is the only place it exists.
+   *
+   * So a resume is judged from the PARKED-FROM rung: back to it is `same`, up
+   * from it is `up`, and below it is `down` — which demands a manager and a
+   * reason like any step backwards. Everything after this block is untouched,
+   * so the target's own gate is asked exactly as for any other move (including
+   * §24's next action), and no business rule is bypassed.
+   *
+   * Where the parked-from rung is unknown (a park written before the
+   * transitions table) or is no longer on this lead's ladder (the sales type
+   * changed while it was parked) there is nothing to walk back from, so the
+   * target is treated as an ordinary move up and its gate decides. A target not
+   * on the CURRENT ladder is refused as before.
+   */
+  if (direction === "off_ladder" && isParked(from)) {
+    direction = await resumeDirection(lead.id, to, salesType);
+  }
+
+  /*
+   * §— `new` AND `contacted` ARE THE OLD SPELLING OF SUSPECT, and a lead still
+   * spelled that way can be moved to the Suspect it already is.
+   *
+   * A lead raised before the funnel, or imported, sits at `new` or `contacted`.
+   * Give it a sales type and it is judged against the funnel ladder, which
+   * starts at `suspect` — so `directionOf` answered `off_ladder` and the move to
+   * Suspect was refused with "Suspect is not a rung on this lead's ladder.
+   * Change the sales type first", about a lead whose sales type was already set.
+   * `setLeadSalesType` leaves the stage alone on the stated understanding that
+   * the lead then moves to the foot of its new ladder; this is the move that
+   * understanding promised. The calling desk's convert-to-Prospect already
+   * treats the three as one thing (`funnelStageFor`).
+   *
+   * Narrow on purpose: only `new`/`contacted`, only to `suspect`, only onto a
+   * ladder that has it. Nothing is established at those rungs that the move
+   * could throw away and it is not a step forward, so no gate is asked — the
+   * transition row is written like any other move. `lost`, `on_hold`, `won` and
+   * the legacy `qualified` all stay off the ladder, as does every other target.
+   */
+  if (
+    direction === "off_ladder" &&
+    to === "suspect" &&
+    (from === "new" || from === "contacted") &&
+    ladderFor(salesType).includes("suspect")
+  ) {
+    return { ok: true, kind: "passed", overriddenConditions: [] };
+  }
 
   /* Walking a lead back DOWN undoes work somebody recorded, which is why the
      ladder engine's own `previousStage` says in as many words that it is for a
@@ -881,6 +1021,14 @@ export async function evaluateLeadStageMove(input: {
   return { ok: true, kind: "overridden", overriddenConditions: missing.map((c) => c.id) };
 }
 
+/** Thrown by `applyLeadStageMove` when `expectFrom` no longer matches the lead. */
+export class StageAlreadyMoved extends Error {
+  constructor() {
+    super("The lead has already moved off the rung this move was made from.");
+    this.name = "StageAlreadyMoved";
+  }
+}
+
 export type LeadMoveActor = {
   userId: string;
   /**
@@ -930,6 +1078,16 @@ export async function applyLeadStageMove(
     hold?: { reason?: string; resumeDate: string } | null;
     /** The business date, resolved by the caller — engines read no clock. */
     day: string;
+    /**
+     * The rung the caller read the lead on. Where it is given, the move is made
+     * only if the lead is STILL there when the transaction takes its lock —
+     * otherwise `StageAlreadyMoved` is thrown and nothing is written. It is what
+     * makes a move that two doors can both attempt (a verification arriving from
+     * the console and from a phone at the same moment) happen once, with one
+     * transition row, instead of twice. Optional and additive: no existing
+     * caller passes it, and the handset's own moves are unaffected.
+     */
+    expectFrom?: LeadStage | null;
   },
 ): Promise<{ transitionId: string; promoted: boolean }> {
   const salesType = lead.leadSalesType as LeadSalesType | null;
@@ -949,6 +1107,15 @@ export async function applyLeadStageMove(
   const promoted = lead.kind === "lead" && isOnTheBookAt(to, salesType);
 
   await db.transaction(async (tx) => {
+    if (o.expectFrom) {
+      const [current] = await tx
+        .select({ stage: customers.leadStage })
+        .from(customers)
+        .where(eq(customers.id, lead.id))
+        .for("update");
+      if (current?.stage !== o.expectFrom) throw new StageAlreadyMoved();
+    }
+
     await tx.insert(leadStageTransitions).values({
       id: transitionId,
       customerId: lead.id,
@@ -985,6 +1152,28 @@ export async function applyLeadStageMove(
        credit terms this quarter" is a question somebody can ask of a code and
        cannot ask of a grep. Old rows keep their sentences and still read. */
     if (to === "lost" && o.reasonCode) set.leadLostReason = o.reasonCode;
+
+    /*
+     * §— A LOST LEAD OWES NOBODY ANYTHING FURTHER.
+     *
+     * §24's next action is a promise about WORKING this lead — the day, the
+     * person, and what they are expected to come back with — and a lead closed
+     * lost has nothing left to come back about. Left standing, it would go on
+     * reading as an active promise on the one screen (Next actions & nurture,
+     * the Lost list itself) that exists to say who is owed what: a lead that
+     * closed lost yesterday would still show tomorrow's call as outstanding,
+     * to a telecaller who has no reason to make it.
+     *
+     * All four are cleared together, the same way they are written together in
+     * `o.nextAction` above — an owner or an outcome left behind describes a
+     * promise that no longer exists.
+     */
+    if (to === "lost") {
+      set.leadNextAction = null;
+      set.leadNextActionDate = null;
+      set.leadNextActionOwnerId = null;
+      set.leadNextActionOutcome = null;
+    }
 
     /*
      * §— ON HOLD IS A PAUSE, AND A PAUSE HAS TO SAY WHEN IT ENDS.
@@ -1069,6 +1258,44 @@ export async function applyLeadStageMove(
     }
 
     await tx.update(customers).set(set).where(eq(customers.id, lead.id));
+
+    /*
+     * §13's NURTURE SEQUENCE STOPS CHASING A LEAD THAT IS CLOSED.
+     *
+     * `raiseNurtureTasks` fires these off `mbos_tasks`, keyed on
+     * `sourceType = NURTURE_SOURCE_TYPE`, `customerId = <this lead>` — a task
+     * asking a lead manager to chase a sample review, or a salesman to make a
+     * repeat visit, on a lead that has just been told to stop. Closed rather
+     * than deleted, exactly as `closeNurtureTasks` in `mbos-jobs.ts` already
+     * closes these for the same reason a sample review is: a task somebody
+     * already completed is a record of them doing it, and `cancelled` is the
+     * honest status for one the world overtook rather than one that was done.
+     *
+     * SCOPED TO THIS LEAD AND THIS SOURCE TYPE ALONE. Verification calls,
+     * validation calls, sample chases and negotiation/requirement visits raise
+     * their own task rows under their own `sourceType`s — a different kind of
+     * work with its own reason to still be open — and closing those was never
+     * asked for and is not done here: "close only the relevant nurture tasks,
+     * never unrelated ones" is the rule, and the source type is what tells
+     * them apart.
+     */
+    if (to === "lost") {
+      await tx
+        .update(mbosTasks)
+        .set({
+          status: "cancelled",
+          completionNote: "The lead this task chases was closed lost.",
+          completedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(mbosTasks.customerId, lead.id),
+            eq(mbosTasks.sourceType, NURTURE_SOURCE_TYPE),
+            inArray(mbosTasks.status, ["open", "in_progress"]),
+          ),
+        );
+    }
 
     /*
      * §25 — the shared stream, which leads have written nothing to until now.
@@ -1172,32 +1399,65 @@ function stageMoveSummary(
  * a permission model that silently narrows what people already hold is one
  * nobody can deploy, and the same is true of a worklist.
  */
-export async function leadManagerCandidates(region: string | null): Promise<
-  { id: string; name: string; national: boolean }[]
-> {
+export async function leadManagerCandidates(
+  region: string | null,
+  city: string | null = null,
+): Promise<{ id: string; name: string; national: boolean }[]> {
   const [managers, territories] = await Promise.all([
     db
       .select({ id: users.id, name: users.name })
       .from(users)
       .where(and(eq(users.role, "manager"), eq(users.active, true))),
     db
-      .select({ userId: mbosUserTerritories.userId, region: mbosUserTerritories.region })
+      .select({
+        userId: mbosUserTerritories.userId,
+        kind: mbosUserTerritories.kind,
+        region: mbosUserTerritories.region,
+        parent: mbosUserTerritories.parent,
+      })
       .from(mbosUserTerritories),
   ]);
 
-  const covered = new Map<string, string[]>();
+  const covered = new Map<string, typeof territories>();
   for (const t of territories) {
-    covered.set(t.userId, [...(covered.get(t.userId) ?? []), t.region]);
+    covered.set(t.userId, [...(covered.get(t.userId) ?? []), t]);
   }
+
+  /* The lead's place, read the way `territoryClause` reads a shop's: a state on
+     every spelling of it, a city plain, trimmed and case-insensitive. The
+     sheet also writes whole postal addresses into `city`, so the first
+     comma-separated field is what is compared. */
+  const leadState = stateKey(region);
+  const leadCity = (city ?? "").split(",")[0].trim().toLowerCase();
+  const covers = (t: (typeof territories)[number]): boolean => {
+    if (t.kind === "state" || t.kind === "region") {
+      return leadState !== "" && stateVariants(t.region).includes(leadState);
+    }
+    if (t.kind === "city") {
+      if (!leadCity || t.region.trim().toLowerCase() !== leadCity) return false;
+      /* A city picked under a state only matches inside it. */
+      return !t.parent?.trim() || (leadState !== "" && stateVariants(t.parent).includes(leadState));
+    }
+    return false;
+  };
 
   const out: { id: string; name: string; national: boolean }[] = [];
   for (const m of managers) {
+    /* A candidate has to be somebody who can actually DO the verification.
+       `users.role` is the widest level held under any hat, so an Accounts-only
+       manager reads as "manager" here and would be handed a verification call
+       the capability check then refuses - a Prospect nobody can verify, with the
+       cause in a matrix nobody is looking at. `lead.verify` is asked of the
+       hats, which is the same question the verification action itself asks. */
+    if (!canAny(await hatsFor({ id: m.id, role: "manager" }), "lead.verify")) continue;
     const mine = covered.get(m.id);
     /* No rows at all is national. Rows that are all somewhere else is a
        manager who covers a different part of the country, and offering them
-       here would make the default meaningless. */
+       here would make the default meaningless. A state, region or city row is
+       all matched — the lead's real geography, not only `territory_region`,
+       which is empty on most of the book. */
     if (!mine) out.push({ id: m.id, name: m.name, national: true });
-    else if (region && mine.includes(region)) out.push({ id: m.id, name: m.name, national: false });
+    else if (mine.some(covers)) out.push({ id: m.id, name: m.name, national: false });
   }
   /* Whoever names this region sorts above whoever covers everywhere: a
      regional answer is the better default and the picker is read top-down. */
@@ -1226,10 +1486,10 @@ export async function leadManagerCandidatesFor(
   customerId: string,
 ): Promise<{ id: string; name: string; national: boolean }[]> {
   const [row] = await db
-    .select({ region: customers.territoryRegion })
+    .select({ territoryRegion: customers.territoryRegion, region: customers.region, city: customers.city })
     .from(customers)
     .where(eq(customers.id, customerId))
     .limit(1);
   if (!row) return [];
-  return leadManagerCandidates(row.region);
+  return leadManagerCandidates(row.territoryRegion?.trim() || row.region?.trim() || null, row.city);
 }

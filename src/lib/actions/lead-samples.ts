@@ -1,5 +1,6 @@
 "use server";
 
+import { assertLeadInScope } from "@/lib/services/lead-scope";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
@@ -14,7 +15,6 @@ import {
   sampleFeedback,
 } from "@/db/schema";
 import {
-  assertCustomerInScope,
   requireCapability,
 } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
@@ -34,6 +34,7 @@ import {
   raiseNurtureTasks,
 } from "@/lib/mbos-jobs";
 import { today } from "@/lib/recompute";
+import { sampleEligibility } from "@/lib/services/lead-qualification-flow-service";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
 import { writeTimelineEvent, MBOS_EVENT } from "@/lib/timeline";
 
@@ -150,7 +151,7 @@ async function loadForTransition(
   | {
       ok: true;
       sample: typeof mbosSamples.$inferSelect;
-      customer: { id: string; name: string; kind: "lead" | "customer"; ownerId: string | null; salesAmId: string | null; backOfficeAmId: string | null };
+      customer: { id: string; name: string; kind: "lead" | "customer"; ownerId: string | null; salesAmId: string | null; backOfficeAmId: string | null; salesManagerId: string | null };
     }
 > {
   const [row] = await db
@@ -163,6 +164,7 @@ async function loadForTransition(
         ownerId: customers.ownerId,
         salesAmId: customers.salesAmId,
         backOfficeAmId: customers.backOfficeAmId,
+        salesManagerId: customers.salesManagerId,
       },
     })
     .from(mbosSamples)
@@ -170,7 +172,7 @@ async function loadForTransition(
     .where(eq(mbosSamples.id, sampleId));
 
   if (!row) return { ok: false, error: err("That sample no longer exists.", "not_found") };
-  await assertCustomerInScope(row.customer);
+  await assertLeadInScope(row.customer.id, row.customer);
 
   if (to) {
     const from = row.sample.state as SampleState;
@@ -243,13 +245,39 @@ export async function requestSample(
         ownerId: customers.ownerId,
         salesAmId: customers.salesAmId,
         backOfficeAmId: customers.backOfficeAmId,
+        salesManagerId: customers.salesManagerId,
         leadStage: customers.leadStage,
         salesType: customers.leadSalesType,
       })
       .from(customers)
       .where(eq(customers.id, customerId));
     if (!customer) return err("That customer no longer exists.", "not_found");
-    await assertCustomerInScope(customer);
+    await assertLeadInScope(customerId, customer);
+
+    /*
+     * A SAMPLE IS ASKED FOR ONLY WHEN THE LEAD MAY ENTER SAMPLE / TRIAL.
+     *
+     * On a funnel ladder this is the same gate the rung move asks — the eight
+     * Qualification conditions, fresh figures, and a Sales Manager's review that
+     * is `verified` — checked HERE, on the server, before a single row is
+     * written. Disabling the button is a courtesy to the person pressing it; this
+     * is what stops a direct post to the action from putting stock in motion for
+     * a lead nobody has reviewed. A refused request leaves no sample, no
+     * approval and no task behind.
+     *
+     * This reverses "Answer 05" (a sample on a Suspect is marked, not refused)
+     * for funnel-ladder leads only: Mahek's rule is that only a reviewed
+     * Qualification is eligible. Legacy leads and distributors have no such rung
+     * and are exactly as before, and the manager's approval is still required.
+     */
+    const eligible = await sampleEligibility(customerId);
+    if (eligible.applies && !eligible.eligible) {
+      return err(
+        eligible.message,
+        "rule_violation",
+        eligible.missing.map((m) => ({ field: m.id, message: m.says })),
+      );
+    }
 
     /* The catalogue is the only thing that may name a product. A sample of
        something we do not sell is a promise nobody can keep. */

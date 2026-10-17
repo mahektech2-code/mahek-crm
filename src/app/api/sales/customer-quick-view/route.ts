@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { canOpen, canOpenModule, listUserModules } from "@/lib/access";
 import { getCurrentUser } from "@/lib/auth";
 import { getCustomer } from "@/lib/queries";
 import { customerInformation } from "@/lib/services/customer-info-service";
@@ -22,6 +23,23 @@ import { customerInformation } from "@/lib/services/customer-info-service";
 export async function GET(request: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ customer: null }, { status: 401 });
+
+  /*
+   * THE DOOR FIRST. This route sat behind a signed-in session and nothing
+   * else, so anybody with any MahekOne login — a ledger clerk, an HR associate
+   * — could read a customer's profile, outstanding and recent calls by id
+   * wherever `assertCustomerInScope` happened to answer yes, which for an
+   * account whose widest level is a manager is a whole team's book.
+   *
+   * Two apps draw the pin that calls it: the Sales Dashboard on its maps,
+   * lists and search, and the CRM's Samples desk through the shared samples
+   * screen. Holding the Sales Dashboard with any module, or the CRM's Samples
+   * module, is a reason to be asking; nothing else is.
+   */
+  const allowed =
+    ((await canOpen(user.id, "sales")) && (await listUserModules(user.id, "sales")).length > 0) ||
+    (await canOpenModule(user.id, "crm.samples"));
+  if (!allowed) return NextResponse.json({ customer: null }, { status: 403 });
 
   const customerId = new URL(request.url).searchParams.get("customerId");
   if (!customerId) return NextResponse.json({ customer: null }, { status: 400 });

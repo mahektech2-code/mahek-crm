@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { productLines } from "@/lib/catalogue";
 import { Input } from "@/components/ui/primitives";
 import { plural } from "@/components/console/words";
 
@@ -37,7 +38,12 @@ export function ProductField({
   disabled,
   onPick,
 }: {
-  customerId: string;
+  /**
+   * Whose "bought before" ranking the search uses. Absent where there is nobody
+   * yet — a lead being raised has no record — and the search then simply does
+   * not rank by purchase history.
+   */
+  customerId?: string;
   productId: string | null;
   productName: string | null;
   disabled: boolean;
@@ -80,7 +86,9 @@ export function ProductField({
     const timer = setTimeout(async () => {
       try {
         const res = await fetch(
-          `/api/product-search?q=${encodeURIComponent(q)}&customerId=${encodeURIComponent(customerId)}`,
+          `/api/product-search?q=${encodeURIComponent(q)}${
+            customerId ? `&customerId=${encodeURIComponent(customerId)}` : ""
+          }`,
         );
         const body = (await res.json()) as {
           products?: Array<{ productId: string; displayName: string; subtitle: string | null }>;
@@ -151,15 +159,27 @@ export function ProductField({
                     type="button"
                     className="w-full cursor-pointer border-0 bg-transparent px-2.5 py-1.5 text-left hover:bg-canvas"
                     onClick={() => {
+                      /* STILL `displayName`, deliberately. This is the value the
+                         form KEEPS — the product's own name — and the swap below
+                         is about which line is drawn first, not about what is
+                         stored. Writing the lead here would file a liquid's name
+                         where a product's belongs. */
                       setPickedName(r.displayName);
                       onPick(r.productId);
                       setQuery("");
                     }}
                   >
-                    <span className="block text-[13px] text-ink">{r.displayName}</span>
-                    {r.subtitle ? (
-                      <span className="block text-[12px] text-muted">{r.subtitle}</span>
-                    ) : null}
+                    {(() => {
+                      const row = productLines(r);
+                      return (
+                        <>
+                          <span className="block text-[13px] text-ink">{row.lead}</span>
+                          {row.detail ? (
+                            <span className="block text-[12px] text-muted">{row.detail}</span>
+                          ) : null}
+                        </>
+                      );
+                    })()}
                   </button>
                 </li>
               ))}

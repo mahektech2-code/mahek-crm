@@ -1,0 +1,123 @@
+The CRM is one loop with many screens around it. A customer is put in front of a telecaller for a reason, the telecaller rings and logs what happened, the call produces work for somebody else — an order for accounts, a reminder for the telecaller, a complaint for a desk, a payment claim for the ledger — and the CRM then says when that customer comes back. Every screen in the sidebar is either a door into that loop or a view of what it produced.
+
+This tab explains the rules that hold the screens together: whose book a customer is in, what scope means, why some numbers count straight away and others only after accounts decide, and why every screen reads and writes the same way.
+
+## The main loop
+
+<Flow caption="How the screens feed each other" chart={`
+flowchart TD
+  CL["Call Log<br/>who to ring today, and why"] --> CP["Call panel<br/>one save, one transaction"]
+  RM["Reminders<br/>promises falling due"] -->|"a due reminder jumps<br/>to the top"| CL
+  PF["Payment Follow-up<br/>the collections list"] --> PP["Follow-up panel<br/>one save, one transaction"]
+  CP --> ORD["Order<br/>pending approval"]
+  CP --> REM["Reminder"]
+  CP --> CMP["Complaint"]
+  CP --> OPP["Opportunity"]
+  PP --> RCP["Receipt<br/>reported, not yet money"]
+  PP --> REM
+  PP --> CMP
+  ORD --> ACC["Accounts approve or decline"]
+  RCP --> ACC2["Accounts confirm, hold,<br/>reject or reverse"]
+  ACC --> BILL["Bills and Outstanding"]
+  ACC2 --> BILL
+  CP --> NS["Next step stored on the call<br/>'Comes back to your Call Log on …'"]
+  PP --> NS
+  NS --> CL
+  REM --> RM
+`} />
+
+Three things are true at every box in this picture.
+
+<Rule title="A save is one transaction">
+Saving a call writes the call, any order, reminder, complaint and opportunity it produced, the timeline entries and the customer's rolled-up dates together, or not at all. The collections panel does the same for its attempt, promise, receipt, complaint and stage floor. A half-saved call leaves a customer's record describing something that never happened.
+</Rule>
+
+<Rule title="Evidence closes a promise, not a button">
+A reminder is closed by the call that got through, the order that was taken, or the money accounts confirmed. Closing one by hand is a capability (`reminder.close`) and is recorded as that person's decision. See [Reminders](/docs/crm/reminders/how-it-works).
+</Rule>
+
+<Rule title="Every save says what happens next, and the sentence is kept">
+After the work is written, the CRM asks the Call Log engine when this customer next appears and stores the answer on the call. It is a record of what the telecaller was told on that day, never rebuilt. [Call History](/docs/crm/history) and the Customers list both show it.
+</Rule>
+
+## Two questions about every order and every rupee
+
+<Cards cols={2}>
+<Card title="Did the customer say yes?" tone="brand">True the moment the telecaller saves. An order taken stops the Call Log chasing the customer for one; a payment reported stops collections ringing them for a few days. The dashboard counts orders **taken** straight away.</Card>
+<Card title="Did the business get it?" tone="warn">True only after accounts decide. Approved orders are what EOD value, targets, the buying cycle and the product history count. Confirmed receipts are the only money that reduces a bill, outstanding, aging and the slow-payer flag.</Card>
+</Cards>
+
+<Callout kind="money" title="Only confirmed money moves the ledger">
+A payment a customer says they made is a **reported** receipt. It is written down with the bills it would settle, but `paid_amount` on a bill is rebuilt from **confirmed** receipts only, and a customer's outstanding is rebuilt from bills. Until accounts find the money in the bank, the customer still owes it — the CRM just stops chasing them for a while and says why.
+</Callout>
+
+<Callout kind="why">
+Before this split, a telecaller's word reduced outstanding on the spot. A transfer that never landed erased real debt from every screen, with nobody's name against the decision. And an order that accounts later declined had already been counted as a sale. Two questions, two answers, and the screens say which one they are showing.
+</Callout>
+
+## Whose book a customer is in
+
+Every list in the CRM — the Call Log, Reminders, Payment Follow-up, Outstanding, Sales Bills, Complaints, Customers, Call History — is cut to a **book**. There is one definition of it, used everywhere:
+
+| The account is | It is in the book of |
+|---|---|
+| A **lead** (never ordered) | Its owner |
+| A **customer** | Its sales account manager, falling back to the owner only while nobody has decided the seat |
+
+A customer can carry up to five seats — sales, back office, sales manager, relationship and the lead owner — but only the first two decide who **sees** and works an account day to day, and only one is credited with its orders. The [Customers](/docs/crm/customers/how-it-works) page explains each seat.
+
+<Callout kind="why" title="Why one definition">
+Reading the owner alone once dropped every customer whose sales manager had been set — including off the collections list while they still owed money. A team list also says **whose call** each row is, from the same definition, and says *Unassigned* in words: a row nobody owns is the one a manager most needs to see.
+</Callout>
+
+## Scope: your book or the team
+
+| Person | What they see | Can they switch? |
+|---|---|---|
+| Telecaller (CRM associate) | Their own book | No. The switch is not drawn, and the server ignores a cookie that asks for more. |
+| CRM manager | Their team by default — their direct reports and themselves | Yes, **My book / Team** in the header changes every list at once |
+| Admin | Everybody | The switch still narrows to their own book |
+
+<Rule title="Scope narrows, it never widens">
+The switch is a view. Each list asks the server for the people in scope and filters by them; nothing on any screen can widen what a person is allowed to see. A manager "of the CRM" means a manager level held **in the CRM** — managing a different app does not draw the switch here.
+</Rule>
+
+The accounts desk is deliberately outside this narrowing. In the Accounts app the approval queue and the ledgers are every book, because the person approving an order is never the person who owns it.
+
+## Access: the app, then the screen
+
+1. **The app.** Somebody without the CRM granted is sent to the launcher, whatever URL they typed.
+2. **The screen.** The CRM is split into modules — one per sidebar entry. A manager can narrow a grant to some of them on the Access screen. A screen not held is not drawn in the sidebar, and its address redirects to the first screen the person does hold.
+3. **The action.** Some buttons need a capability as well — closing a reminder by hand, reassigning an account, confirming money. The button is drawn disabled with a sentence saying who can, and the server checks again on save.
+
+WhatsApp is the one screen with two levels: **read** the chats, or **reply and send**. They are granted separately.
+
+## Numbers beside the sidebar links
+
+| Link | What the number counts |
+|---|---|
+| Reminders | Pending reminders due today or overdue |
+| Complaints | Complaints open, in progress or awaiting the customer |
+| Close/Reopen | Requests to close or reopen an account that nobody has decided |
+| All Leads | Leads past the day something was owed, otherwise leads with something due today |
+
+These are read from the same functions the dashboard and the launcher tile read, so a badge and the screen behind it are meant to agree.
+
+## The working day
+
+Every "today" in the CRM is the business date in Asia/Kolkata. Where the day starts is <Setting k="workingDay.dayBoundaryHour" /> o'clock, and which days are working days is <Setting k="workingDay.workingDays" />. "Yesterday" on the dashboard means the previous **working** day, and a reminder set for a Sunday rolls to Monday when <Setting k="reminders.rollForwardOnNonWorkingDays" /> is on.
+
+<Callout kind="why">
+A server that counts days in GMT puts a 1 am call on the previous day. Every date in the CRM is cut in the business zone on purpose, and the screens print the dates a comparison covers rather than implying them.
+</Callout>
+
+## Nothing business-critical is a constant
+
+Thresholds that a manager might want to change — how many days of quiet after an order, when calling opens on a late bill, how long a reported payment buys, what counts as slow paying — are settings, changed in the Admin Console. Each page in this guide shows the value your CRM is using right now.
+
+## Where the code and the intent disagree today
+
+- **A manager's Reminders badge counts the whole company.** The badge counts every pending reminder for anybody on team scope, while the Reminders list beneath it is narrowed to the manager's own team.
+- **The Complaints badge and the dashboard's complaint counts read the account owner**, not the one definition of whose book an account is in. A complaint on a customer whose sales manager differs from its owner is counted against the owner.
+- **The dashboard's "Collected" figure and Payment Follow-up's "Collected this month" add up every payment line, including reported money accounts have not confirmed** and money they rejected. Every other money figure in the CRM is confirmed-only.
+- **Some screens still decide "manager" from the widest level held anywhere** rather than the level held in the CRM — the Opportunities team view is one.

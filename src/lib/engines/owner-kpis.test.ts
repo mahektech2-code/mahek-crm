@@ -477,9 +477,14 @@ describe("the owner's periods", () => {
       from: "2026-04-01",
       to: "2026-06-30",
     });
+    // The financial year: 1 April, not 1 January.
     assert.deepEqual(reportRange(TODAY, "ytd"), {
-      from: "2026-01-01",
+      from: "2026-04-01",
       to: TODAY,
+    });
+    assert.deepEqual(reportRange("2027-02-10", "ytd"), {
+      from: "2026-04-01",
+      to: "2027-02-10",
     });
   });
 

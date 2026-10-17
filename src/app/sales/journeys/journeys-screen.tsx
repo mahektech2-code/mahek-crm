@@ -6,6 +6,7 @@ import { useToast } from "@/components/ui/toast";
 import { ComboBox } from "@/components/ui/combo-box";
 import { splitBook } from "@/lib/city-match";
 import { addDays } from "@/lib/business-date";
+import { dayWhere } from "@/lib/journey-days";
 import { answerRefusal, proposeJourneyDays, saveJourneyPeriod } from "@/lib/actions/sales";
 import type { BookCustomer, JourneyPlan, Salesman } from "@/lib/services/sales-service";
 import { HEALTH_BAND_LABELS } from "@/lib/engines/inactivity";
@@ -57,16 +58,14 @@ type DayRow = {
 };
 
 export function JourneysScreen({
-  team,
   selected,
   from,
   horizon,
   plans,
   book,
   cities,
-  everyonesPlans,
+  stay = "",
 }: {
-  team: Salesman[];
   selected: Salesman | null;
   from: string;
   horizon: number;
@@ -74,7 +73,8 @@ export function JourneysScreen({
   book: BookCustomer[];
   /** The cities this salesman's own book actually names. */
   cities: string[];
-  everyonesPlans: JourneyPlan[];
+  /** Appended to the links back into this view — `&in=team` keeps it in its modal. */
+  stay?: string;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -195,14 +195,14 @@ export function JourneysScreen({
   }
 
   /** The exception: arranging a day from the office, shops and all. */
-  async function pickFromOffice(date: string, customerIds: string[]) {
+  async function pickFromOffice(date: string, city: string, customerIds: string[]) {
     if (!selected) return;
     setBusy(true);
     setError(null);
     try {
       const result = await saveJourneyPeriod({
         salesmanId: selected.id,
-        days: [{ planDate: date, customerIds }],
+        days: [{ planDate: date, city, customerIds }],
       });
       if (!result.ok) return setError(result.error);
       toast.push(result.message ?? "Saved.");
@@ -212,34 +212,10 @@ export function JourneysScreen({
     }
   }
 
-  const unplanned = team.filter(
-    (t) =>
-      t.active && t.id !== selected?.id && !everyonesPlans.some((p) => p.userId === t.id),
-  );
-
   return (
     <>
       {/* ------------------------------------------------------- the controls */}
       <div className="mb-4 flex flex-wrap items-end gap-3 rounded-[6px] border border-line bg-surface px-4 py-3">
-        <label className="block">
-          <span className="mb-1 block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-            Salesman
-          </span>
-          <select
-            value={selected?.id ?? ""}
-            onChange={(e) => go(router, e.target.value, from, horizon)}
-            className="h-8.5 min-w-[190px] rounded-[4px] border border-line bg-surface px-2 text-sm text-ink outline-none focus:border-brand"
-          >
-            <option value="">Choose somebody</option>
-            {team.map((t) => (
-              <option key={t.id} value={t.id} disabled={!t.active}>
-                {t.name}
-                {t.active ? "" : " (account closed)"}
-              </option>
-            ))}
-          </select>
-        </label>
-
         <label className="block">
           <span className="mb-1 block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
             From
@@ -247,7 +223,7 @@ export function JourneysScreen({
           <input
             type="date"
             value={from}
-            onChange={(e) => go(router, selected?.id ?? "", e.target.value, horizon)}
+            onChange={(e) => go(router, stay, selected?.id ?? "", e.target.value, horizon)}
             className="h-8.5 rounded-[4px] border border-line bg-surface px-2 text-sm text-ink outline-none focus:border-brand"
           />
         </label>
@@ -260,7 +236,7 @@ export function JourneysScreen({
             {HORIZONS.map((h) => (
               <button
                 key={h}
-                onClick={() => go(router, selected?.id ?? "", from, h)}
+                onClick={() => go(router, stay, selected?.id ?? "", from, h)}
                 className={
                   "h-8.5 cursor-pointer rounded-[4px] border px-2.5 text-sm font-medium " +
                   (horizon === h
@@ -279,7 +255,7 @@ export function JourneysScreen({
               placeholder="Custom"
               onChange={(e) => {
                 const n = Number(e.target.value);
-                if (n >= 1 && n <= 31) go(router, selected?.id ?? "", from, n);
+                if (n >= 1 && n <= 31) go(router, stay, selected?.id ?? "", from, n);
               }}
               title="Any run of days up to 31. Beyond a month a route is a forecast — the book moves under it."
               className="h-8.5 w-[92px] rounded-[4px] border border-line bg-surface px-2 text-sm text-ink outline-none focus:border-brand"
@@ -313,14 +289,6 @@ export function JourneysScreen({
           tone="warn"
           title={`${plural(refused.length, "day")} came back refused`}
           body="He has said why, and sometimes where he would rather go. Take his suggestion or put a different city back to him — there is no way to overrule it, because the reason for asking was that his answer is worth more than a guess from here."
-        />
-      ) : null}
-
-      {unplanned.length ? (
-        <Banner
-          tone="warn"
-          title={`${plural(unplanned.length, "salesman", "salesmen")} ${unplanned.length === 1 ? "has" : "have"} nothing in this period`}
-          body={unplanned.map((u) => u.name).join(", ")}
         />
       ) : null}
 
@@ -392,7 +360,7 @@ export function JourneysScreen({
                   onAnswer={(take, city) =>
                     d.plan && void answer(d.date, d.plan.id, take, city)
                   }
-                  onPickFromOffice={(ids) => void pickFromOffice(d.date, ids)}
+                  onPickFromOffice={(ids) => void pickFromOffice(d.date, d.city.trim(), ids)}
                 />
               ))}
             </div>
@@ -542,7 +510,7 @@ function DayLine({
 
         {state === "planned" ? (
           <span className="min-w-0 flex-1 text-[13px] text-body">
-            {row.plan?.city ?? row.plan?.beat ?? "Arranged"} ·{" "}
+            {(row.plan && dayWhere(row.plan).text) ?? "Arranged"} ·{" "}
             {plural(row.plan?.stops.length ?? 0, "stop")}
           </span>
         ) : (
@@ -618,19 +586,25 @@ function DayLine({
           </span>
         ) : null}
 
+        {/* CITY FIRST, THEN SHOPS. With no city the list was the whole book
+            and the day saved with no city on it, so every screen afterwards —
+            his handset included — said "No city named" above shops plainly in
+            one town. The city in the box beside it is what the list is cut by
+            AND what is saved onto the day with the shops. */}
         {state !== "planned" ? (
           <Button
             size="sm"
             tone="quiet"
-            disabled={busy}
+            disabled={busy || (!open && !proposed)}
+            title={!proposed ? "Choose the city first — the shops listed are that city's." : undefined}
             onClick={() => setOpen((o) => !o)}
           >
-            {open ? "Close" : "Pick the shops yourself"}
+            {open ? "Close" : proposed ? `Pick shops in ${proposed}` : "Choose a city to pick shops"}
           </Button>
         ) : null}
       </div>
 
-      {open ? (
+      {open && proposed ? (
         <div className="mt-2 ml-[132px] border-l border-divider pl-3">
           <p className="mb-2 max-w-[620px] text-[12px] text-pretty text-muted">
             The exception rather than the model. Arranging a day from here skips the
@@ -740,7 +714,7 @@ function DayLine({
                 disabled={busy}
                 onClick={() => onPickFromOffice(picked)}
               >
-                Arrange {plural(picked.length, "stop")} from the office
+                Arrange {plural(picked.length, "stop")} in {proposed} from the office
               </Button>
             </div>
           ) : null}
@@ -755,11 +729,14 @@ function DayLine({
 
 function go(
   router: ReturnType<typeof useRouter>,
+  stay: string,
   salesman: string,
   from: string,
   horizon: number,
 ) {
-  router.push(`/sales/journeys?salesman=${salesman}&from=${from}&days=${horizon}`);
+  router.push(
+    `/sales/journeys?tab=salesman&view=propose&salesman=${salesman}&from=${from}&days=${horizon}${stay}`,
+  );
 }
 
 function runOfDays(from: string, count: number): string[] {

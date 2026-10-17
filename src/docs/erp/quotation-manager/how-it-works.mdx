@@ -1,0 +1,33 @@
+The Quotation manager replaces the desk's own rate sheet, so it keeps the sheet's shape and its colours rather than imposing a form on it.
+
+## Rows and columns are both data
+
+Neither the materials nor the broker column are written into the code. A column is a row in `erp_quote_columns` with three heading lines, a kind (rates or text) and a position, so the desk adds, renames, moves and removes them from the screen. The columns the screen first opened with were the desk's own sheet's.
+
+## Nothing is thrown away
+
+Removing a column archives it, and deleting a row marks it deleted. The rates under either are kept, so a column brought back comes back with every rate it held.
+
+## A change is saved as it is made, and all or nothing
+
+Every edit — one cell, a paste of hundreds, a colour across a block — is sent as one list of changes and written in one transaction, so a paste is never half saved. The screen shows the change at once; if it is refused, the screen takes it back and says why.
+
+## What a cell may hold
+
+A rate column holds a number, or nothing. Commas, spaces and a rupee sign are taken out of what is pasted; anything else is refused rather than stored as a rate nobody can compare. A text column holds up to 200 characters.
+
+## The colours
+
+They are the sheet's legend: **PO made in Tally & PO mailed** (yellow), **PO / order cancelled** (red), and **Material picked up by transporter** (cyan). They record what happened; they do not raise a PO. A cancelled rate is left out of the latest and lowest rates.
+
+## The period
+
+The screen opens on the last six months. Choose three months, every date, or your own dates; the search narrows by party. At most the newest 3,000 rows of a period are drawn, and the screen says so when that cut anything off.
+
+## Who can use it
+
+Anybody given the **Quotation manager** screen on the ERP. It needs no power. A preview of the ERP as somebody else is read only.
+
+## Where the code and the intent disagree today
+
+The grid scrolls sideways when there are more columns than fit, unlike the ERP's lists — it is a sheet, and folding its columns away would hide rates.

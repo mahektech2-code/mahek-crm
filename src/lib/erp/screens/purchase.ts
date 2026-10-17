@@ -1,0 +1,1912 @@
+import "server-only";
+import { EVIDENCE_FIELDS } from "../engines/sfg-tests";
+import { getConfig } from "@/lib/config/store";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { db } from "@/db";
+import {
+  erpGodowns,
+  erpInward,
+  erpPoLines,
+  erpPrCosts,
+  erpPurchaseOrders,
+  erpPurchases,
+  erpRawMaterials,
+  erpRmEntries,
+  erpSuppliers,
+  erpTests,
+  users,
+} from "@/db/schema";
+import { err, fieldErr, okVoid, type Result } from "@/lib/result";
+import { powerRefusal, type ErpContext } from "../access";
+import { refValues } from "../refs";
+import { erpLabelsHref } from "../trace-links";
+import {
+  erpAudit,
+  erpId,
+  int,
+  nextNumber,
+  num,
+  paise,
+  rupeesField,
+  stampLine,
+  text,
+  visibleCols,
+  withoutHidden,
+  type ScreenModule,
+} from "../server";
+import type { ActionSpec, ColSpec, FieldSpec, FormSpec } from "../ui";
+import { fd, inr, nf } from "../ui";
+import {
+  TRANSPORT_MODES,
+  lotNumber,
+  netWeight,
+  postsToStock,
+  prBillLabel,
+  purchaseFigures,
+  settableStatuses,
+  shortLabel,
+  transportCostPaise,
+  transportModeByLabel,
+  transportModeLabel,
+} from "../engines/purchase";
+import { lotLandings, rmLots, type LotLanding } from "../stock";
+import { bindErpFiles } from "../attachments";
+import { type Col, godownField, godownIdByName, godownOptions, has, today, type Tx } from "./common";
+import { RECEIVABLE_PO, poLabel, receivableQuantity } from "../engines/purchase-flow";
+import { OWNERSHIP_LABEL, ownershipByLabel } from "../engines/drums";
+
+/** The GRN line's drum ownership: the supplier's usual answer unless the line says otherwise. */
+const DRUM_OWNER_OPTS = ["As the supplier's master says", OWNERSHIP_LABEL.mahek, OWNERSHIP_LABEL.returnable];
+import { poOption, purchaseOrderViews, receivedByLine, refreshPurchaseOrder, type PoView } from "./purchase-flow";
+
+/* ---------------------------------------------------------------------------
+ * Purchase (spec §5): goods inward (the GRN), testing, the purchase register
+ * and the barcode export — and posting purchases to raw-material stock (§6.2).
+ * Requirements, quotations and POs — the steps before the goods arrive — are
+ * `purchase-flow.ts`. NOTHING IS RECEIVED OR REGISTERED WITHOUT A PO: inward
+ * and a hand-entered register row both name an approved PO's line, and the
+ * lot is registered at that line's rate and GST.
+ * ------------------------------------------------------------------------- */
+
+
+
+function itemsByType(mats: { name: string; materialType: string }[], types: string[]): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const t of types) out[t] = mats.filter((m) => m.materialType === t).map((m) => m.name);
+  return out;
+}
+
+/* =============================================================== postings */
+
+/** The register's posting, for the bill-reading review (AI-1) to save through. */
+export async function syncPurchaseEntryPublic(tx: Tx, purchaseId: string) {
+  return syncPurchaseEntry(tx, purchaseId);
+}
+
+/**
+ * Posts (or re-syncs) a purchase's entry in the raw-material log: one entry
+ * per purchase, quantity = its available litres, at its godown under its lot.
+ * Only a purchase with a rate above zero posts; once posted, the entry follows
+ * the purchase through every edit, because the source reads it as a live
+ * formula on the purchase (spec §6.1).
+ */
+async function syncPurchaseEntry(tx: Tx, purchaseId: string): Promise<boolean> {
+  const [p] = await tx.select().from(erpPurchases).where(eq(erpPurchases.id, purchaseId));
+  if (!p) return false;
+  const [existing] = await tx
+    .select({ id: erpRmEntries.id })
+    .from(erpRmEntries)
+    .where(and(eq(erpRmEntries.sourceType, "purchase"), eq(erpRmEntries.sourceId, purchaseId)));
+  if (!existing && !postsToStock(p.ratePaise)) return false;
+  const values = {
+    entryDate: p.purchaseDate,
+    rawMaterialId: p.rawMaterialId,
+    lotNo: p.lotNo,
+    godownId: p.godownId,
+    quantity: p.availableLitres,
+  };
+  if (existing) {
+    await tx.update(erpRmEntries).set(values).where(eq(erpRmEntries.id, existing.id));
+  } else {
+    await tx.insert(erpRmEntries).values({ id: erpId("rme"), sourceType: "purchase", sourceId: purchaseId, ...values });
+  }
+  return true;
+}
+
+/** What a register row takes from the PO line it was bought on: the PO, and its rate and GST. */
+function poTerms(poNumber: number, poId: string, line: { id: string; ratePaise: number; gstBp: number }) {
+  return { poNumber: poLabel(poNumber), poId, poLineId: line.id, ratePaise: line.ratePaise, gstBp: line.gstBp };
+}
+
+/** The PO terms for a row whose inward line names a PO line, read back from the database (legacy lines name none). */
+async function poTermsOfInward(tx: Tx, inward: { poId: string | null; poLineId: string | null } | null | undefined) {
+  if (!inward?.poId || !inward.poLineId) return {};
+  const [x] = await tx
+    .select({ n: erpPurchaseOrders.poNumber, rate: erpPoLines.ratePaise, gst: erpPoLines.gstBp })
+    .from(erpPoLines)
+    .innerJoin(erpPurchaseOrders, eq(erpPurchaseOrders.id, erpPoLines.poId))
+    .where(eq(erpPoLines.id, inward.poLineId));
+  return x ? poTerms(x.n, inward.poId, { id: inward.poLineId, ratePaise: x.rate, gstBp: x.gst }) : {};
+}
+
+/**
+ * Creates a register row (from an inward line, a verified test, or by hand).
+ * The lot number must be new: the source's own message says what to do when it
+ * is not.
+ */
+async function createPurchase(
+  tx: Tx,
+  ctx: ErpContext,
+  v: {
+    prNumber: number;
+    purchaseDate: string;
+    supplierId: string;
+    rawMaterialId: string;
+    quantity: number;
+    unit: string;
+    godownId: string;
+    drums?: number | null;
+    weightWithDrum?: number | null;
+    density?: number | null;
+    remark?: string | null;
+    source: "inward" | "test" | "manual";
+    inwardId?: string | null;
+    poId?: string | null;
+    poLineId?: string | null;
+    testId?: string | null;
+    ratePaise?: number | null;
+    poNumber?: string | null;
+    feedAdjustedLitre?: number;
+    feedAdjustedAmountPaise?: number;
+    gstBp?: number;
+    company?: string;
+    billNumber?: string | null;
+    notes?: string | null;
+  },
+): Promise<Result<{ id: string; lotNo: string }>> {
+  const [sup] = await tx.select().from(erpSuppliers).where(eq(erpSuppliers.id, v.supplierId));
+  const [mat] = await tx.select().from(erpRawMaterials).where(eq(erpRawMaterials.id, v.rawMaterialId));
+  if (!sup || !mat) return err("The supplier or the item no longer exists.", "not_found");
+  const lotNo = lotNumber(sup.partyCode, mat.code, v.prNumber);
+  const [clash] = await tx.select({ id: erpPurchases.id }).from(erpPurchases).where(eq(erpPurchases.lotNo, lotNo));
+  if (clash) return fieldErr("prNumber", "! Please Change 4 Digit PR Num Manually or Generate New PR Num!");
+  const unit = v.unit === "Kg" || v.unit === "Litre" || v.unit === "Pcs" ? v.unit : mat.unit === "Kg" ? "Kg" : mat.unit === "Litre" ? "Litre" : "Pcs";
+  const density = v.density ?? mat.density ?? null;
+  const fig = purchaseFigures({
+    quantity: v.quantity,
+    unit,
+    ratePaise: v.ratePaise ?? null,
+    density,
+    feedAdjustedLitre: v.feedAdjustedLitre ?? 0,
+    feedAdjustedAmountPaise: v.feedAdjustedAmountPaise ?? 0,
+    gstBp: v.gstBp ?? 1800,
+    drums: v.drums ?? null,
+  });
+  const id = v.source === "inward" && v.inwardId ? v.inwardId : v.source === "test" && v.testId ? v.testId : erpId("prb");
+  await tx.insert(erpPurchases).values({
+    id,
+    prNumber: v.prNumber,
+    purchaseDate: v.purchaseDate,
+    poNumber: v.poNumber ?? null,
+    supplierId: v.supplierId,
+    rawMaterialId: v.rawMaterialId,
+    lotNo,
+    quantity: v.quantity,
+    unit,
+    ratePaise: v.ratePaise ?? null,
+    density,
+    drums: v.drums ?? null,
+    weightWithDrum: v.weightWithDrum ?? null,
+    feedAdjustedLitre: v.feedAdjustedLitre ?? 0,
+    feedAdjustedAmountPaise: v.feedAdjustedAmountPaise ?? 0,
+    gstBp: v.gstBp ?? 1800,
+    availableLitres: fig.availableLitres,
+    company: v.company ?? "Mahek Marketing India",
+    billNumber: v.billNumber ?? null,
+    notes: v.notes ?? null,
+    remark: v.remark ?? null,
+    godownId: v.godownId,
+    testId: v.testId ?? null,
+    inwardId: v.inwardId ?? null,
+    poId: v.poId ?? null,
+    poLineId: v.poLineId ?? null,
+    source: v.source,
+    createdById: ctx.user.id,
+    updatedById: ctx.user.id,
+  });
+  await syncPurchaseEntry(tx, id);
+  return { ok: true, data: { id, lotNo } };
+}
+
+/* ============================================================== inward */
+
+/*
+ * TRANSPORT AND OTHER INWARD COST, once per PR. The same fields open on a new
+ * inward and on "Transport & costs" for one already saved, and `readPrCosts`
+ * is the one reading of them both saves go through.
+ */
+const OWN = { k: "transportMode", eq: transportModeLabel("own_vehicle") };
+const BILLED_MODES = { k: "transportMode", in: [transportModeLabel("supplier"), transportModeLabel("third_party")] };
+const COST_FIELDS: FieldSpec[] = [
+  { k: "transportMode", l: "Transport mode", t: "select", req: true, sec: "Transport and landing cost", opts: TRANSPORT_MODES.map((m) => m.label) },
+  {
+    k: "transportCost",
+    l: "Transport cost (₹)",
+    t: "num",
+    req: true,
+    min: 0,
+    when: BILLED_MODES,
+    hint: "Supplier: the freight on their invoice, with its GST. Third-party: the transporter's bill.",
+  },
+  { k: "km", l: "Kilometres", t: "num", req: true, min: 0.1, when: OWN },
+  { k: "ownCost", l: "Transport cost", t: "derived", calc: "inward.ownCost", when: OWN },
+  { k: "tempo", l: "Tempo number", t: "text", reqWhen: OWN, when: { k: "transportMode", in: [transportModeLabel("supplier"), transportModeLabel("own_vehicle"), transportModeLabel("third_party")] } },
+  { k: "otherCost", l: "Other direct inward cost (₹)", t: "num", min: 0, hint: "Loading, unloading, octroi — anything paid to get these goods in." },
+  { k: "otherNote", l: "What the other cost was", t: "text", when: { k: "otherCost", notEmpty: true } },
+  { k: "landing", l: "Landing cost", t: "derived", calc: "inward.landing" },
+];
+
+function costInit(c: typeof erpPrCosts.$inferSelect | undefined): Record<string, string> {
+  if (!c) return {};
+  return {
+    transportMode: transportModeLabel(c.transportMode),
+    transportCost: c.transportMode === "supplier" || c.transportMode === "third_party" ? rupeesField(c.transportCostPaise) : "",
+    km: c.km == null ? "" : String(c.km),
+    tempo: c.tempoNumber ?? "",
+    otherCost: c.otherCostPaise ? rupeesField(c.otherCostPaise) : "",
+    otherNote: c.otherCostNote ?? "",
+  };
+}
+
+/**
+ * The cost fields as a row to store, or the field that is wrong. Our own
+ * vehicle is costed here from the APPROVED rate, which is copied onto the row
+ * — a rate changed next month must not reprice this journey — unless the PR
+ * already carries one and the kilometres did not change.
+ */
+function readPrCosts(
+  h: Record<string, string>,
+  ratePerKmPaise: number,
+  kept?: typeof erpPrCosts.$inferSelect,
+): Result<Omit<typeof erpPrCosts.$inferInsert, "prNumber">> {
+  const mode = transportModeByLabel(text(h.transportMode));
+  if (!mode) return fieldErr("transportMode", "Transport mode is required");
+  const billed = paise(h.transportCost);
+  if ((mode === "supplier" || mode === "third_party") && (billed == null || billed < 0)) return fieldErr("transportCost", "Transport cost is required");
+  const km = num(h.km);
+  if (mode === "own_vehicle" && (km == null || km <= 0)) return fieldErr("km", "Kilometres are required");
+  const tempo = text(h.tempo);
+  if (mode === "own_vehicle" && !tempo) return fieldErr("tempo", "Tempo number is required");
+  const rate = mode !== "own_vehicle" ? null : kept?.transportMode === "own_vehicle" && kept.km === km && kept.ratePerKmPaise ? kept.ratePerKmPaise : ratePerKmPaise;
+  if (mode === "own_vehicle" && !rate) return fieldErr("km", "No approved ₹/KM rate yet — an admin sets it in ERP settings");
+  const other = paise(h.otherCost) ?? 0;
+  if (other < 0) return fieldErr("otherCost", "Minus Quantity Not Allowed");
+  const transport = transportCostPaise({ mode, billedPaise: billed, km, ratePerKmPaise: rate }) ?? 0;
+  return {
+    ok: true,
+    data: {
+      transportMode: mode,
+      transportCostPaise: transport,
+      km: mode === "own_vehicle" ? km : null,
+      ratePerKmPaise: rate,
+      tempoNumber: mode === "none" ? null : tempo,
+      otherCostPaise: other,
+      otherCostNote: other ? text(h.otherNote) : null,
+    },
+  };
+}
+
+/**
+ * What can be received, as the forms pick it: every PO that is approved and
+ * not yet fully received, by label, with its lines. The server reads the same
+ * labels back, so a PO that stopped being receivable while the form was open
+ * is refused rather than guessed at.
+ */
+async function receivable(tolerancePercent: number) {
+  const pos = await purchaseOrderViews({ status: RECEIVABLE_PO });
+  const byLabel = new Map<string, PoView>(pos.map((p) => [poOption(p), p]));
+  const linesBy: Record<string, string[]> = {};
+  const typeOf: Record<string, string> = {};
+  const itemOf: Record<string, string> = {};
+  const pendingOf: Record<string, string> = {};
+  const qtyOf: Record<string, string> = {};
+  const supplierOf: Record<string, string> = {};
+  const godownOf: Record<string, string> = {};
+  for (const [label, p] of byLabel) {
+    godownOf[label] = p.godown;
+    supplierOf[label] = `${p.supplier} · deliver to ${p.godown} by ${fd(p.po.deliveryDate)}`;
+    linesBy[label] = p.lines.map((l) => l.label);
+    for (const l of p.lines) {
+      const key = `${label}|${l.label}`;
+      typeOf[key] = l.itemType;
+      itemOf[key] = l.item;
+      const left = Math.max(0, l.quantity - l.received);
+      qtyOf[key] = left > 0 ? String(left) : "";
+      pendingOf[key] = `Ordered ${nf(l.quantity)} ${l.unit} · received ${nf(l.received)} · pending ${nf(left)} ${l.unit}${
+        tolerancePercent ? ` · up to ${nf(receivableQuantity(l.quantity, l.received, tolerancePercent))} more may be taken` : ""
+      }`;
+    }
+  }
+  return { pos, byLabel, linesBy, typeOf, itemOf, pendingOf, qtyOf, supplierOf, godownOf };
+}
+
+async function inwardForm(ctx: ErpContext, init?: Record<string, string>, opts: { poId?: string; fixed?: boolean } = {}): Promise<FormSpec> {
+  const [gds, config, types] = await Promise.all([godownOptions(ctx, { lost: false }), getConfig(), refValues("materialType")]);
+  const all = await db.select().from(erpRawMaterials);
+  const rx = await receivable(config["erp.purchase.receiptTolerancePercent"]);
+  const unitOf: Record<string, string> = {};
+  const unitIs: Record<string, string[]> = {};
+  /* "scale": a kg chemical, netted off the scale; "typed": measured or counted. */
+  const qtyBy: Record<string, string[]> = {};
+  const testsOf: Record<string, string[]> = {};
+  all.forEach((m) => {
+    unitOf[m.name] = m.materialType === "Box" ? "Pcs" : m.unit;
+    unitIs[m.name] = [m.unit];
+    qtyBy[m.name] = [m.materialType === "Chemical" && m.unit === "Kg" ? "scale" : "typed"];
+    testsOf[m.name] = m.testingList;
+  });
+  const fixedPo = opts.poId ? rx.pos.find((p) => p.po.id === opts.poId) : undefined;
+  const poInit = fixedPo ? poOption(fixedPo) : (init?.po ?? "");
+  const initLines = fixedPo
+    ? fixedPo.lines
+        .filter((l) => l.received < l.quantity)
+        .map((l) => {
+          const key = `${poInit}|${l.label}`;
+          return { poLine: l.label, type: rx.typeOf[key], item: rx.itemOf[key], qty: qtyBy[l.item]?.[0] === "typed" ? rx.qtyOf[key] : "" };
+        })
+    : undefined;
+  const itemMap = itemsByType(all.filter((m) => m.active || Object.values(rx.itemOf).includes(m.name)), types);
+  return {
+    screen: "inward",
+    id: "new",
+    title: fixedPo ? `Receive goods · ${poLabel(fixedPo.po.poNumber)}` : "Goods receipt (GRN)",
+    sub: "Against an approved PO, one line per item that arrived.",
+    submit: "Save receipt",
+    lineLabel: "Item",
+    init: {
+      date: today(),
+      godown: fixedPo?.godown ?? ctx.workingGodown?.name ?? "",
+      ...init,
+      po: poInit,
+      ...(fixedPo || opts.fixed ? { poFixed: poInit } : {}),
+    },
+    initLines: initLines?.length ? initLines : undefined,
+    data: {
+      unitOf,
+      unitIs,
+      qtyBy,
+      testsOf,
+      ratePerKmPaise: config["erp.purchase.ownVehicleRatePerKmPaise"],
+      supplierOf: rx.supplierOf,
+      pendingOf: rx.pendingOf,
+    },
+    header: [
+      { k: "pr", l: "PR number", t: "derived", calc: "inward.pr" },
+      {
+        k: "po",
+        l: "Purchase order",
+        t: "select",
+        req: true,
+        opts: poInit && !rx.byLabel.has(poInit) ? [...rx.byLabel.keys(), poInit] : [...rx.byLabel.keys()],
+        readOnly: !!(fixedPo || opts.fixed),
+        hint: rx.byLabel.size ? "No goods are received without a PO." : "No PO is waiting for goods. A PO can be received against once it is approved.",
+      },
+      { k: "supplier", l: "Vendor", t: "derived", calc: "inward.supplier" },
+      { k: "date", l: "Date received", t: "date", req: true },
+      godownField(gds, { fillBy: { by: ["po"], map: rx.godownOf }, hint: "The PO's deliver-to godown, unless the goods came somewhere else." }),
+      ...COST_FIELDS,
+    ],
+    line: [
+      { k: "poLine", l: "PO item", t: "select", req: true, optsBy: { by: "po", map: rx.linesBy } },
+      { k: "type", l: "Material type", t: "select", req: true, readOnly: true, opts: types, fillBy: { by: ["po", "poLine"], map: rx.typeOf }, when: { k: "poLine", notEmpty: true } },
+      { k: "item", l: "Item", t: "select", req: true, readOnly: true, optsBy: { by: "type", map: itemMap }, fillBy: { by: ["po", "poLine"], map: rx.itemOf }, when: { k: "type", notEmpty: true } },
+      { k: "pending", l: "Against the PO", t: "derived", calc: "inward.pending", when: { k: "poLine", notEmpty: true } },
+      { k: "drums", l: "Drums", t: "num", req: true, min: 0, when: { k: "type", eq: "Chemical" } },
+      /* A kg item is weighed on the drum; a litre item is measured, so the gross weight is optional there. */
+      { k: "weight", l: "Weight with drum (kg)", t: "num", min: 0, when: { k: "type", eq: "Chemical" }, reqWhen: { k: "item", map: "unitIs", has: "Kg" } },
+      { k: "emptyDrum", l: "Empty drum weight (kg, per drum)", t: "num", min: 0, when: { k: "type", eq: "Chemical" }, reqWhen: { k: "item", map: "unitIs", has: "Kg" } },
+      /* Whose the drums are decides where they go once emptied: our scrap, or back to the supplier. */
+      { k: "drumOwner", l: "Drums belong to", t: "select", opts: DRUM_OWNER_OPTS, def: DRUM_OWNER_OPTS[0], when: { k: "type", eq: "Chemical" }, hint: "Returnable drums go back to the supplier once empty and are never sold as scrap." },
+      /* A kg chemical's net is the scale's answer, never typed; anything measured or counted is typed. */
+      { k: "net", l: "Weight without drum", t: "derived", calc: "inward.net", when: { k: "item", map: "qtyBy", has: "scale" } },
+      { k: "qty", l: "Quantity received", t: "num", req: true, min: 0.001, when: { k: "item", map: "qtyBy", has: "typed" }, fillBy: { by: ["po", "poLine"], map: rx.qtyOf }, hint: "Starts at what is pending on the PO — type what actually arrived." },
+      { k: "unit", l: "Unit", t: "derived", calc: "inward.unit" },
+      { k: "testing", l: "Testing required", t: "derived", calc: "inward.testing" },
+      { k: "remark", l: "Remark", t: "area", mic: true },
+    ],
+  };
+}
+
+/** "Receive goods" on a PO: the receipt form, the PO fixed and its pending items already on it. */
+export async function inwardFormForPo(ctx: ErpContext, poId: string): Promise<FormSpec | null> {
+  const [p] = await purchaseOrderViews({ ids: [poId] });
+  if (!p || !RECEIVABLE_PO.includes(p.po.status)) return null;
+  return inwardForm(ctx, undefined, { poId });
+}
+
+const inward: ScreenModule = {
+  key: "inward",
+  async load(ctx) {
+    const rows = await db
+      .select({ r: erpInward, supplier: erpSuppliers.name, item: erpRawMaterials.name, godown: erpGodowns.name, by: users.name, poNumber: erpPurchaseOrders.poNumber, poStatus: erpPurchaseOrders.status })
+      .from(erpInward)
+      .innerJoin(erpSuppliers, eq(erpSuppliers.id, erpInward.supplierId))
+      .leftJoin(erpPurchaseOrders, eq(erpPurchaseOrders.id, erpInward.poId))
+      .innerJoin(erpRawMaterials, eq(erpRawMaterials.id, erpInward.rawMaterialId))
+      .innerJoin(erpGodowns, eq(erpGodowns.id, erpInward.godownId))
+      .leftJoin(users, eq(users.id, erpInward.createdById))
+      .orderBy(desc(erpInward.prNumber), asc(erpInward.createdAt));
+    const [form, costRows] = await Promise.all([inwardForm(ctx), db.select().from(erpPrCosts)]);
+    const costs = new Map(costRows.map((c) => [c.prNumber, c]));
+    const cols: ColSpec[] = [
+      { k: "pr", l: "PR no", t: "mono" },
+      { k: "po", l: "PO", t: "mono" },
+      { k: "date", l: "Date", t: "d" },
+      { k: "supplier", l: "Supplier", t: "t" },
+      { k: "type", l: "Material type", t: "s" },
+      { k: "item", l: "Item", t: "b" },
+      { k: "drums", l: "Drums", t: "n" },
+      { k: "weight", l: "Weight with drum", t: "n" },
+      { k: "emptyDrum", l: "Empty drum weight", t: "n" },
+      { k: "drumOwner", l: "Drums belong to", t: "s" },
+      { k: "qty", l: "Weight without drum", t: "n" },
+      { k: "unit", l: "Unit", t: "t" },
+      { k: "godown", l: "Godown", t: "t" },
+      { k: "transport", l: "Transport", t: "s" },
+      { k: "testing", l: "Testing required", t: "s" },
+      { k: "routed", l: "Sent to", t: "s" },
+      { k: "f", l: "Flags", t: "f" },
+    ];
+    return {
+      spec: {
+        screen: "inward",
+        cols,
+        hidden: [],
+        groups: ["pr"],
+        groupHead: ["po", "date", "supplier", "godown", "transport"],
+        groupSel: true,
+        godownKey: "godown",
+        newForm: form,
+        newLabel: "Receive goods",
+        noDataLine: "No goods received yet. Goods are received against an approved PO.",
+      },
+      rows: rows.map((x) => {
+        const actions: ActionSpec[] = [];
+        if (!x.r.routed && x.r.testingRequired)
+          actions.push({ id: "toTesting", l: "Send to Testing", primary: true });
+        if (!x.r.routed && !x.r.testingRequired)
+          actions.push({ id: "toPurchase", l: "Send to Purchase", primary: true });
+        const poText = x.poNumber == null ? null : `${poLabel(x.poNumber)} · ${x.supplier}`;
+        const receivableHere = !!poText && RECEIVABLE_PO.includes(x.poStatus ?? "");
+        actions.push({
+          id: "addMore",
+          l: "Add more",
+          why: !x.r.poId ? "Received before POs — receive new goods against a PO" : receivableHere ? "" : `${poLabel(x.poNumber!)} is ${x.poStatus} — nothing more is received against it`,
+          form: receivableHere
+            ? {
+                ...form,
+                title: `Add to PR ${x.r.prNumber} · ${poLabel(x.poNumber!)}`,
+                initLines: undefined,
+                /* The PR's transport is already recorded; "Transport & costs" changes it. The PO is the PR's. */
+                header: form.header.filter((f) => !COST_FIELDS.some((c) => c.k === f.k)).map((f) => (f.k === "po" ? { ...f, readOnly: true } : f)),
+                init: { ...form.init, pr: String(x.r.prNumber), prFixed: String(x.r.prNumber), date: x.r.receivedDate, godown: x.godown, po: poText!, poFixed: poText! },
+              }
+            : undefined,
+        });
+        const c = costs.get(x.r.prNumber);
+        actions.push({
+          id: "costs",
+          l: "Transport & costs",
+          form: {
+            screen: "inward",
+            id: "costs",
+            recordId: String(x.r.prNumber),
+            title: `Transport & costs · PR ${x.r.prNumber}`,
+            sub: "Once per PR. Landing cost = material + transport + other, shared across its items by value.",
+            submit: "Save costs",
+            data: form.data,
+            init: costInit(c),
+            header: COST_FIELDS,
+          },
+        });
+        const transport = !c
+          ? "Not recorded"
+          : [transportModeLabel(c.transportMode), c.transportMode === "none" ? "" : inr(c.transportCostPaise), c.tempoNumber ?? ""].filter(Boolean).join(" · ");
+        return {
+          id: x.r.id,
+          v: {
+            pr: String(x.r.prNumber),
+            po: x.poNumber == null ? null : poLabel(x.poNumber),
+            date: x.r.receivedDate,
+            supplier: x.supplier,
+            type: x.r.materialType,
+            item: x.item,
+            drums: x.r.drums,
+            weight: x.r.weightWithDrum,
+            emptyDrum: x.r.emptyDrumWeight,
+            drumOwner: x.r.materialType !== "Chemical" ? null : x.r.drumOwnership ? OWNERSHIP_LABEL[x.r.drumOwnership as "mahek" | "returnable"] : "Not recorded",
+            qty: x.r.quantity,
+            unit: x.r.unit,
+            godown: x.godown,
+            testing: x.r.testingRequired ? "Yes" : "No",
+            routed: x.r.routed,
+            transport,
+          },
+          flags: [...(x.r.routed ? [] : ["awaitingRoute"]), ...(x.r.poId ? [] : ["noPo"])],
+          title: x.item,
+          header: [x.r.drums ? `${x.r.drums} drums` : "", x.item, `${nf(x.r.quantity)} ${x.r.unit}`].filter(Boolean).join(" · "),
+          fields: [
+            { l: "Transport", v: transport },
+            ...(c?.transportMode === "own_vehicle" && c.km != null && c.ratePerKmPaise
+              ? [{ l: "Own vehicle", v: `${nf(c.km)} km × ${inr(c.ratePerKmPaise)}`, der: true }]
+              : []),
+            ...(c?.otherCostPaise ? [{ l: "Other inward cost", v: `${inr(c.otherCostPaise)}${c.otherCostNote ? ` · ${c.otherCostNote}` : ""}` }] : []),
+            { l: "Remark", v: x.r.remark || "—" },
+          ],
+          actions,
+          by: stampLine(x.by, x.r.createdAt),
+        };
+      }),
+    };
+  },
+  forms: {
+    async new(ctx, h, lines) {
+      const config = await getConfig();
+      const tolerance = config["erp.purchase.receiptTolerancePercent"];
+      /* NO PURCHASE WITHOUT A PO: the receipt names an approved PO, and every line one of its items. */
+      const rx = await receivable(tolerance);
+      const poText = text(h.poFixed) ?? text(h.po);
+      const po = poText ? rx.byLabel.get(poText) : undefined;
+      if (!po) return fieldErr("po", poText ? "That PO can no longer be received against — it is not approved, or it is already received or closed" : "Pick the purchase order these goods came against");
+      const godownId = await godownIdByName(text(h.godown));
+      if (!godownId) return fieldErr("godown", "Godown is required");
+      if (!lines.length) return err("Add at least one item.");
+      const all = await db.select().from(erpRawMaterials);
+      const taking = new Map<string, number>();
+      const parsed: { l: Record<string, string>; m: (typeof all)[number]; qty: number; line: PoView["lines"][number] }[] = [];
+      for (let i = 0; i < lines.length; i++) {
+        const l = lines[i];
+        const line = po.lines.find((x) => x.label === l.poLine);
+        if (!line) return fieldErr(`l${i}.poLine`, "Pick an item on this PO");
+        const m = all.find((x) => x.id === line.rawMaterialId)!;
+        if (m.materialType === "Chemical" && (int(l.drums) == null || int(l.drums)! < 0)) return fieldErr(`l${i}.drums`, "Drums is required");
+        const scale = m.materialType === "Chemical" && m.unit === "Kg";
+        let qty: number | null;
+        if (scale) {
+          /* Net off the scale, whatever was typed into a quantity box. */
+          if (!(num(l.weight)! > 0)) return fieldErr(`l${i}.weight`, "Weight with drum is required for an item bought in kg");
+          const empty = num(l.emptyDrum);
+          if (empty == null || empty < 0) return fieldErr(`l${i}.emptyDrum`, empty != null ? "Minus Quantity Not Allowed" : "Empty drum weight is required");
+          qty = netWeight(num(l.weight), int(l.drums), empty);
+          if (qty == null) return fieldErr(`l${i}.weight`, "The empty drums weigh as much as the load — check the scale");
+        } else {
+          qty = num(l.qty);
+          if (qty == null || qty <= 0) return fieldErr(`l${i}.qty`, qty != null && qty < 0 ? "Minus Quantity Not Allowed" : "Quantity received is required");
+        }
+        const already = taking.get(line.id) ?? 0;
+        const room = receivableQuantity(line.quantity, line.received + already, tolerance);
+        if (qty > room)
+          return fieldErr(
+            `l${i}.${scale ? "weight" : "qty"}`,
+            `More than the PO allows: ${nf(line.quantity)} ${line.unit} ordered, ${nf(line.received + already)} received, ${nf(room)} more may be taken. Raise a requirement for the extra.`,
+          );
+        taking.set(line.id, already + qty);
+        parsed.push({ l, m, qty, line });
+      }
+      /* "Add more" on a PR keeps its number; a new inward draws the next one. */
+      const fixed = int(h.prFixed);
+      /* A new PR records how it came in; "Add more" leaves the PR's costs alone. */
+      const costRow = fixed == null ? readPrCosts(h, config["erp.purchase.ownVehicleRatePerKmPaise"]) : null;
+      if (costRow && !costRow.ok) return costRow;
+      let pr = 0;
+      /*
+       * EACH LINE GOES WHERE IT IS GOING, IN THE SAME SAVE. Mahek Plus asked a
+       * person to press "Send to Testing" or "Send to Purchase" on every line,
+       * and the item's own testing list already answered which: a line that
+       * needs testing is on the tester's queue, and one that does not is a
+       * register row at the PO line's rate. A line the register refuses (a lot
+       * number already used) stays unrouted with its manual button, rather than
+       * failing the whole delivery.
+       */
+      const sent = { testing: 0, register: 0, stuck: [] as string[] };
+      const [sup] = await db.select({ own: erpSuppliers.drumOwnership }).from(erpSuppliers).where(eq(erpSuppliers.id, po.po.supplierId));
+      const supplierDrumOwnership = sup?.own ?? null;
+      await db.transaction(async (tx) => {
+        if (fixed != null) pr = fixed;
+        else {
+          pr = await nextNumber(tx, "pr");
+          if (costRow?.ok)
+            await tx
+              .insert(erpPrCosts)
+              .values({ prNumber: pr, ...costRow.data, createdById: ctx.user.id, updatedById: ctx.user.id })
+              .onConflictDoUpdate({ target: erpPrCosts.prNumber, set: { ...costRow.data, updatedAt: new Date(), updatedById: ctx.user.id } });
+        }
+        for (const { l, m, qty, line } of parsed) {
+          const inwardId = erpId("pin");
+          const testing = m.testingList.length > 0;
+          const receivedDate = text(h.date) ?? today();
+          const unit = m.materialType === "Box" ? "Pcs" : m.unit;
+          await tx.insert(erpInward).values({
+            id: inwardId,
+            prNumber: pr,
+            receivedDate,
+            supplierId: po.po.supplierId,
+            godownId,
+            materialType: m.materialType,
+            rawMaterialId: m.id,
+            drums: m.materialType === "Chemical" ? int(l.drums) : null,
+            weightWithDrum: m.materialType === "Chemical" ? num(l.weight) : null,
+            emptyDrumWeight: m.materialType === "Chemical" ? num(l.emptyDrum) : null,
+            /* Copied from the supplier at save unless the line says otherwise; unknown stays unknown. */
+            drumOwnership: m.materialType === "Chemical" ? (ownershipByLabel(l.drumOwner) ?? supplierDrumOwnership) : null,
+            quantity: qty,
+            unit,
+            remark: text(l.remark),
+            testingRequired: testing,
+            poId: po.po.id,
+            poLineId: line.id,
+            ...(testing ? { routed: "Testing", routedAt: new Date(), routedById: ctx.user.id } : {}),
+            createdById: ctx.user.id,
+            updatedById: ctx.user.id,
+          });
+          if (testing) {
+            sent.testing++;
+            continue;
+          }
+          const made = await createPurchase(tx, ctx, {
+            prNumber: pr,
+            purchaseDate: receivedDate,
+            supplierId: po.po.supplierId,
+            rawMaterialId: m.id,
+            quantity: qty,
+            unit: unit === "Unit" ? "Pcs" : unit,
+            godownId,
+            drums: m.materialType === "Chemical" ? int(l.drums) : null,
+            weightWithDrum: m.materialType === "Chemical" ? num(l.weight) : null,
+            remark: text(l.remark),
+            source: "inward",
+            inwardId,
+            ...poTerms(po.po.poNumber, po.po.id, line),
+          });
+          if (made.ok) {
+            await tx.update(erpInward).set({ routed: "Purchase", routedAt: new Date(), routedById: ctx.user.id }).where(eq(erpInward.id, inwardId));
+            sent.register++;
+          } else sent.stuck.push(m.name);
+        }
+        await refreshPurchaseOrder(tx, po.po.id);
+      });
+      await erpAudit(ctx, "erp.inward.create", "erp_inward", String(pr), null, { lines: parsed.length, po: poLabel(po.po.poNumber), supplier: po.supplier, ...sent });
+      const where = [sent.testing ? `${sent.testing} to testing` : "", sent.register ? `${sent.register} in the register` : ""].filter(Boolean).join(", ");
+      return okVoid(
+        `PR ${pr} · ${parsed.length} line${parsed.length > 1 ? "s" : ""} received against ${poLabel(po.po.poNumber)}${where ? ` · ${where}` : ""}` +
+          (sent.stuck.length ? ` · ${sent.stuck.join(", ")} not in the register: that lot number is taken — change the PR number and send it` : ""),
+      );
+    },
+    /* A PR's transport and other cost, recorded or corrected after the inward. */
+    async costs(ctx, h, _lines, recordId) {
+      const pr = int(recordId);
+      if (pr == null) return err("Which PR is this?", "not_found");
+      const [line] = await db.select({ id: erpInward.id }).from(erpInward).where(eq(erpInward.prNumber, pr)).limit(1);
+      if (!line) return err(`PR ${pr} is not in goods inward.`, "not_found");
+      const [before] = await db.select().from(erpPrCosts).where(eq(erpPrCosts.prNumber, pr));
+      const row = readPrCosts(h, (await getConfig())["erp.purchase.ownVehicleRatePerKmPaise"], before);
+      if (!row.ok) return row;
+      await db
+        .insert(erpPrCosts)
+        .values({ prNumber: pr, ...row.data, createdById: ctx.user.id, updatedById: ctx.user.id })
+        .onConflictDoUpdate({ target: erpPrCosts.prNumber, set: { ...row.data, updatedAt: new Date(), updatedById: ctx.user.id } });
+      await erpAudit(ctx, "erp.inward.costs", "erp_pr_costs", String(pr), before ?? null, row.data);
+      return okVoid(`PR ${pr} · transport and costs saved`);
+    },
+  },
+  actions: {
+    /* Routing a line is claimed in the same statement that checks it has not
+       been routed, so two people pressing at once route it once. */
+    async toTesting(ctx, id) {
+      const res = await db.transaction(async (tx) => {
+        const claimed = await tx
+          .update(erpInward)
+          .set({ routed: "Testing", routedAt: new Date(), routedById: ctx.user.id })
+          .where(and(eq(erpInward.id, id), isNull(erpInward.routed), eq(erpInward.testingRequired, true)))
+          .returning();
+        if (!claimed.length) return err("This line has already been sent, or does not need testing.", "conflict");
+        return okVoid(`PR ${claimed[0].prNumber} sent to testing`);
+      });
+      if (res.ok) await erpAudit(ctx, "erp.inward.toTesting", "erp_inward", id);
+      return res;
+    },
+    async toPurchase(ctx, id) {
+      const res = await db.transaction(async (tx): Promise<Result<unknown>> => {
+        const claimed = await tx
+          .update(erpInward)
+          .set({ routed: "Purchase", routedAt: new Date(), routedById: ctx.user.id })
+          .where(and(eq(erpInward.id, id), isNull(erpInward.routed), eq(erpInward.testingRequired, false)))
+          .returning();
+        if (!claimed.length) return err("This line has already been sent, or needs testing first.", "conflict");
+        const r = claimed[0];
+        const made = await createPurchase(tx, ctx, {
+          prNumber: r.prNumber,
+          purchaseDate: r.receivedDate,
+          supplierId: r.supplierId,
+          rawMaterialId: r.rawMaterialId,
+          quantity: r.quantity,
+          unit: r.unit === "Unit" ? "Pcs" : r.unit,
+          godownId: r.godownId,
+          drums: r.drums,
+          remark: r.remark,
+          source: "inward",
+          inwardId: r.id,
+          ...(await poTermsOfInward(tx, r)),
+        });
+        if (!made.ok) {
+          tx.rollback();
+          return made;
+        }
+        return okVoid("Sent to the purchase register · it posts to stock once a rate is entered");
+      }).catch((e: unknown) => (e instanceof Error && e.message === "Rollback" ? null : Promise.reject(e)));
+      if (!res) return err("! Please Change 4 Digit PR Num Manually or Generate New PR Num!", "conflict");
+      if (res.ok) await erpAudit(ctx, "erp.inward.toPurchase", "erp_inward", id);
+      return res;
+    },
+  },
+};
+
+/* ============================================================== testing */
+
+/* One list of evidence for both kinds of test (`engines/sfg-tests.ts`); a
+   purchase test needs every piece its item's tests name, bar the pH reading. */
+const TEST_FIELDS: { test: string; field: FieldSpec }[] = EVIDENCE_FIELDS.map(({ test, ...field }) => ({
+  test,
+  field: { ...field, req: field.k !== "phValue" },
+}));
+
+const PHOTO_COL: Record<string, keyof typeof erpTests.$inferInsert> = {
+  ph: "phPhotoId",
+  color: "colorPhotoId",
+  oil: "oilPhotoId",
+  fast: "fastPhotoId",
+  nc: "ncPhotoId",
+  primer: "primerPhotoId",
+  densityPhoto: "densityPhotoId",
+  thermocol: "thermocolPhotoId",
+  video: "videoId",
+};
+
+async function testForm(ctx: ErpContext, testId?: string): Promise<FormSpec | null> {
+  const testers = await db.select({ name: users.name }).from(users).where(eq(users.active, true)).orderBy(asc(users.name));
+  const gds = await godownOptions(ctx, { lost: false });
+  const evidence = (on: string) =>
+    TEST_FIELDS.map(({ test, field }) => ({ ...field, when: { k: on, map: "testsOf", has: test } }) as FieldSpec);
+
+  if (testId) {
+    const [t] = await db
+      .select({ t: erpTests, item: erpRawMaterials.name, tester: users.name })
+      .from(erpTests)
+      .innerJoin(erpRawMaterials, eq(erpRawMaterials.id, erpTests.rawMaterialId))
+      .leftJoin(users, eq(users.id, erpTests.testerId))
+      .where(eq(erpTests.id, testId));
+    if (!t) return null;
+    const line = `PR ${t.t.prNumber} · ${t.item}`;
+    return {
+      screen: "testing",
+      id: "edit",
+      recordId: testId,
+      title: "Record test evidence",
+      sub: `${line} · only the evidence this item's tests need is asked for.`,
+      submit: "Save test",
+      data: { testsOf: { [line]: t.t.tests } },
+      init: {
+        line,
+        smell: t.t.smell ?? "",
+        density: t.t.density == null ? "" : String(t.t.density),
+        phValue: t.t.phValue == null ? "" : String(t.t.phValue),
+        ph: t.t.phPhotoId ?? "",
+        color: t.t.colorPhotoId ?? "",
+        oil: t.t.oilPhotoId ?? "",
+        fast: t.t.fastPhotoId ?? "",
+        nc: t.t.ncPhotoId ?? "",
+        primer: t.t.primerPhotoId ?? "",
+        densityPhoto: t.t.densityPhotoId ?? "",
+        thermocol: t.t.thermocolPhotoId ?? "",
+        video: t.t.videoId ?? "",
+        tester: t.tester ?? ctx.user.name,
+        date: t.t.testingDate,
+        remark: t.t.remark ?? "",
+      },
+      header: [
+        { k: "line", l: "Inward line", t: "text", readOnly: true },
+        { k: "tests", l: "Tests required", t: "derived", calc: "testing.tests" },
+        ...evidence("line"),
+        { k: "video", l: "Test video", t: "video" },
+        { k: "tester", l: "Tester", t: "select", req: true, opts: testers.map((u) => u.name) },
+        { k: "date", l: "Testing date", t: "date", req: true },
+        { k: "remark", l: "Remark", t: "area", mic: true },
+      ],
+    };
+  }
+
+  /* A new test is for an inward line sent to testing and not yet tested. */
+  const lines = await db
+    .select({ id: erpInward.id, pr: erpInward.prNumber, item: erpRawMaterials.name, itemId: erpRawMaterials.id, tests: erpRawMaterials.testingList })
+    .from(erpInward)
+    .innerJoin(erpRawMaterials, eq(erpRawMaterials.id, erpInward.rawMaterialId))
+    .where(and(eq(erpInward.routed, "Testing"), sql`not exists (select 1 from erp_tests t where t.inward_id = ${erpInward.id})`))
+    .orderBy(desc(erpInward.prNumber));
+  const testsOf: Record<string, string[]> = {};
+  const lineId: Record<string, string> = {};
+  lines.forEach((l) => {
+    const label = `PR ${l.pr} · ${l.item}`;
+    testsOf[label] = l.tests;
+    lineId[label] = l.id;
+  });
+  return {
+    screen: "testing",
+    id: "new",
+    title: "Record a purchase test",
+    sub: "Only the evidence the item's tests need is asked for.",
+    submit: "Save test",
+    data: { testsOf, lineId },
+    init: { tester: ctx.user.name, date: today(), godown: ctx.workingGodown?.name ?? "" },
+    header: [
+      { k: "line", l: "Inward line", t: "select", req: true, opts: Object.keys(testsOf), hint: lines.length ? undefined : "No inward line is waiting for a test. Send one to testing from Purchase inward." },
+      { k: "tests", l: "Tests required", t: "derived", calc: "testing.tests" },
+      ...evidence("line"),
+      { k: "video", l: "Test video", t: "video", when: { k: "line", notEmpty: true } },
+      { k: "tester", l: "Tester", t: "select", req: true, opts: testers.map((u) => u.name) },
+      { k: "date", l: "Testing date", t: "date", req: true },
+      godownField(gds),
+      { k: "remark", l: "Remark", t: "area", mic: true },
+    ],
+  };
+}
+
+/** Evidence a test still lacks for the tests its item needs. */
+function missingEvidence(t: typeof erpTests.$inferSelect): string[] {
+  const miss: string[] = [];
+  for (const test of t.tests) {
+    if (test === "PH" && !t.phPhotoId) miss.push("pH photo");
+    if (test === "Smell" && !t.smell) miss.push("smell");
+    if (test === "Color" && !t.colorPhotoId) miss.push("colour photo");
+    if (test === "Oil Paint" && !t.oilPhotoId) miss.push("oil-paint photo");
+    if (test === "Fast Paints" && !t.fastPhotoId) miss.push("fast-paint photo");
+    if (test === "Nc Paints" && !t.ncPhotoId) miss.push("NC-paint photo");
+    if (test === "Primer" && !t.primerPhotoId) miss.push("primer photo");
+    if (test === "Density" && (t.density == null || !t.densityPhotoId)) miss.push("density and its photo");
+    if (test === "Tharmakol Pass" && !t.thermocolPhotoId) miss.push("thermocol-pass photo");
+  }
+  return miss;
+}
+
+const testing: ScreenModule = {
+  key: "testing",
+  async load(ctx) {
+    const rows = await db
+      .select({ t: erpTests, item: erpRawMaterials.name, godown: erpGodowns.name, tester: users.name, supplier: erpSuppliers.name })
+      .from(erpTests)
+      .innerJoin(erpRawMaterials, eq(erpRawMaterials.id, erpTests.rawMaterialId))
+      .innerJoin(erpGodowns, eq(erpGodowns.id, erpTests.godownId))
+      .leftJoin(users, eq(users.id, erpTests.testerId))
+      .leftJoin(erpSuppliers, eq(erpSuppliers.id, erpTests.supplierId))
+      .orderBy(desc(erpTests.testingDate), desc(erpTests.prNumber));
+    const withRegister = new Set(
+      (await db.select({ testId: erpPurchases.testId }).from(erpPurchases).where(sql`${erpPurchases.testId} is not null`)).map((x) => x.testId!),
+    );
+    const newForm = await testForm(ctx);
+    const verifier = ctx.powers.has("verifyTest");
+    const ai = await import("../ai");
+    const pendingPhotos = await ai.pendingFor("photos");
+    const photosOn = (await ai.featureState("photos", true)).on;
+    const why = verifier ? "" : "Only the verifier decides a purchase test";
+    const cols: ColSpec[] = [
+      { k: "status", l: "Verification", t: "s" },
+      { k: "date", l: "Date", t: "d" },
+      { k: "pr", l: "PR no", t: "mono" },
+      { k: "item", l: "Item", t: "b" },
+      { k: "tests", l: "Tests required", t: "t" },
+      { k: "smell", l: "Smell", t: "s" },
+      { k: "density", l: "Density", t: "n" },
+      { k: "tester", l: "Tester", t: "t" },
+      { k: "godown", l: "Godown", t: "t" },
+    ];
+    return {
+      spec: {
+        screen: "testing",
+        cols,
+        hidden: [],
+        groups: ["status"],
+        chips: "status",
+        godownKey: "godown",
+        newForm: newForm ?? undefined,
+        newLabel: "Record a test",
+        noDataLine: "No tests yet. Chemical lots arrive here as they are received.",
+      },
+      rows: rows.map((x) => {
+        const reg = withRegister.has(x.t.id);
+        const miss = missingEvidence(x.t);
+        /* Stored "Not Verified" is also the default before anybody decides;
+           an undecided test reads as waiting, never as rejected. */
+        const shown = x.t.decidedAt ? x.t.status : "Pending";
+        const actions: ActionSpec[] = [];
+        if (x.t.status !== "Verified")
+          actions.push({
+            id: "verify",
+            l: "Verify",
+            primary: true,
+            why: why || (miss.length ? `Evidence missing: ${miss.join(", ")}` : ""),
+          });
+        if (shown !== "Not Verified" || reg)
+          actions.push({
+            id: "unverify",
+            l: "Mark not verified",
+            why,
+            confirm: reg
+              ? `A purchase register row already exists for this lot. Marking it Not Verified leaves that row in place — remove it from the register separately.`
+              : `Mark ${x.item} (PR ${x.t.prNumber}) Not Verified?`,
+          });
+        if (x.t.status !== "Verified") actions.push({ id: "edit", l: "Record evidence", loadsForm: true });
+        if (x.t.status !== "Verified" && pendingPhotos.has(x.t.id)) {
+          actions.unshift({ id: "aiTest", l: "Review photo readings", ai: true, primary: true, loadsForm: true });
+          actions.push({ id: "aiTestReject", l: "Reject photo readings", confirm: "Reject the AI readings? Nothing changes." });
+        } else if (x.t.status !== "Verified" && photosOn && (x.t.densityPhotoId || x.t.phPhotoId))
+          actions.push({ id: "aiTestRead", l: "Read test photos", ai: true });
+        actions.push({ id: "addLot", l: "Add another lot", loadsForm: true });
+        return {
+          id: x.t.id,
+          v: {
+            status: shown,
+            date: x.t.testingDate,
+            pr: String(x.t.prNumber),
+            item: x.item,
+            tests: x.t.tests.join(", ") || "—",
+            smell: x.t.smell,
+            density: x.t.density,
+            tester: x.tester,
+            godown: x.godown,
+          },
+          flags: [],
+          title: x.item,
+          header: `PR ${x.t.prNumber}${x.supplier ? ` · ${x.supplier}` : ""}${x.t.quantity ? ` · ${nf(x.t.quantity)} ${x.t.unit ?? ""}` : ""}`,
+          fields: [{ l: "Remark", v: x.t.remark || "—" }],
+          actions,
+          panel: {
+            kind: "testEvidence",
+            data: {
+              status: shown,
+              tests: x.t.tests,
+              smell: x.t.smell,
+              density: x.t.density,
+              phValue: x.t.phValue,
+              photos: {
+                PH: x.t.phPhotoId,
+                Color: x.t.colorPhotoId,
+                "Oil Paint": x.t.oilPhotoId,
+                "Fast Paints": x.t.fastPhotoId,
+                "Nc Paints": x.t.ncPhotoId,
+                Primer: x.t.primerPhotoId,
+                Density: x.t.densityPhotoId,
+                "Tharmakol Pass": x.t.thermocolPhotoId,
+              },
+              video: x.t.videoId,
+              registerExists: reg,
+            },
+          },
+          by: stampLine(x.tester, x.t.createdAt),
+        };
+      }),
+    };
+  },
+  formLoaders: {
+    edit: (ctx, id) => testForm(ctx, id),
+    aiTest: async (ctx, id) => {
+      const base = await testForm(ctx, id);
+      return base ? (await import("../ai-photos")).testReviewForm(base, id) : null;
+    },
+    /* ADD More Lot: a new test for the same inward line's PR and item. */
+    addLot: async (ctx, id) => {
+      const [t] = await db.select({ inward: erpTests.inwardId }).from(erpTests).where(eq(erpTests.id, id));
+      const f = await testForm(ctx);
+      if (!f || !t) return f;
+      return { ...f, id: "copy", recordId: id, title: "Add another lot to this test", init: { ...f.init } };
+    },
+  },
+  forms: {
+    async new(ctx, h) {
+      const f = await testForm(ctx);
+      const lineId = ((f?.data?.lineId ?? {}) as Record<string, string>)[h.line ?? ""];
+      if (!lineId) return fieldErr("line", "Pick an inward line waiting for a test");
+      const [inw] = await db.select().from(erpInward).where(eq(erpInward.id, lineId));
+      if (!inw) return fieldErr("line", "That inward line no longer exists");
+      return saveTest(ctx, h, { inward: inw });
+    },
+    async copy(ctx, h, _l, sourceId) {
+      const [src] = sourceId ? await db.select().from(erpTests).where(eq(erpTests.id, sourceId)) : [];
+      if (!src) return err("The test being copied no longer exists.", "not_found");
+      return saveTest(ctx, h, { copyOf: src });
+    },
+    async edit(ctx, h, _l, id) {
+      if (!id) return err("No test named.", "not_found");
+      const [t] = await db.select().from(erpTests).where(eq(erpTests.id, id));
+      if (!t) return err("That test no longer exists.", "not_found");
+      if (t.status === "Verified") return err("A verified test is closed. Mark it Not Verified first to change its evidence.", "rule_violation");
+      return saveTest(ctx, h, { existing: t });
+    },
+    /* AI-8: the same save as recording evidence by hand, then the reading is logged as accepted or edited. */
+    async aiTest(ctx, h, _l, suggestionId) {
+      const { erpAiSuggestions } = await import("@/db/schema");
+      const [s] = suggestionId ? await db.select().from(erpAiSuggestions).where(eq(erpAiSuggestions.id, suggestionId)) : [];
+      if (!s?.recordId) return err("That reading has already been decided.", "conflict");
+      const [t] = await db.select().from(erpTests).where(eq(erpTests.id, s.recordId));
+      if (!t) return err("That test no longer exists.", "not_found");
+      if (t.status === "Verified") return err("A verified test is closed.", "rule_violation");
+      const res = await saveTest(ctx, h, { existing: t });
+      if (res.ok) await (await import("../ai-photos")).decideTestReading(s.id, h);
+      return res;
+    },
+  },
+  actions: {
+    aiTestRead: async (ctx, id) => (await import("../ai-photos")).readTestPhotos(ctx, id),
+    aiTestReject: async (ctx, id) => (await import("../ai-photos")).rejectPhotoReading(ctx, id),
+    async verify(ctx, id) {
+      if (!ctx.powers.has("verifyTest")) return err("Only the verifier decides a purchase test.", "not_permitted");
+      const [t] = await db.select().from(erpTests).where(eq(erpTests.id, id));
+      if (!t) return err("That test no longer exists.", "not_found");
+      if (t.status === "Verified") return err("Already verified.", "conflict");
+      const miss = missingEvidence(t);
+      if (miss.length) return err(`Evidence missing: ${miss.join(", ")}`, "rule_violation");
+      let lot = "";
+      const res = await db
+        .transaction(async (tx): Promise<Result<unknown>> => {
+          await tx
+            .update(erpTests)
+            .set({ status: "Verified", decidedById: ctx.user.id, decidedAt: new Date(), updatedAt: new Date() })
+            .where(eq(erpTests.id, id));
+          /* Test To Purchase: once only (spec §5.4). */
+          const [exists] = await tx.select({ id: erpPurchases.id }).from(erpPurchases).where(eq(erpPurchases.testId, id));
+          if (exists) return okVoid("Verified · a register row already existed for this lot");
+          const inw = t.inwardId ? (await tx.select().from(erpInward).where(eq(erpInward.id, t.inwardId)))[0] : null;
+          if (!t.supplierId) {
+            tx.rollback();
+          }
+          const made = await createPurchase(tx, ctx, {
+            prNumber: t.prNumber,
+            purchaseDate: t.testingDate,
+            supplierId: t.supplierId!,
+            rawMaterialId: t.rawMaterialId,
+            quantity: t.quantity ?? inw?.quantity ?? 0,
+            unit: t.unit === "Unit" ? "Pcs" : (t.unit ?? "Litre"),
+            godownId: t.godownId,
+            drums: t.drums,
+            weightWithDrum: t.weightWithDrum,
+            density: t.density,
+            remark: t.remark,
+            source: "test",
+            testId: t.id,
+            ...(await poTermsOfInward(tx, inw)),
+          });
+          if (!made.ok) {
+            tx.rollback();
+          } else lot = made.data.lotNo;
+          return okVoid(`Verified · a purchase register row was created for lot ${lot}`);
+        })
+        .catch((e: unknown) => (e instanceof Error && e.message === "Rollback" ? null : Promise.reject(e)));
+      if (!res) return err("! Please Change 4 Digit PR Num Manually or Generate New PR Num!", "conflict");
+      await erpAudit(ctx, "erp.test.verify", "erp_test", id);
+      return res;
+    },
+    async unverify(ctx, id) {
+      if (!ctx.powers.has("verifyTest")) return err("Only the verifier decides a purchase test.", "not_permitted");
+      await db
+        .update(erpTests)
+        .set({ status: "Not Verified", decidedById: ctx.user.id, decidedAt: new Date(), updatedAt: new Date() })
+        .where(eq(erpTests.id, id));
+      await erpAudit(ctx, "erp.test.unverify", "erp_test", id);
+      return okVoid("Marked Not Verified");
+    },
+  },
+};
+
+async function saveTest(
+  ctx: ErpContext,
+  h: Record<string, string>,
+  from: { inward?: typeof erpInward.$inferSelect; copyOf?: typeof erpTests.$inferSelect; existing?: typeof erpTests.$inferSelect },
+) {
+  const src = from.inward ?? null;
+  const base = from.existing ?? from.copyOf ?? null;
+  const rawMaterialId = src?.rawMaterialId ?? base!.rawMaterialId;
+  const [mat] = await db.select().from(erpRawMaterials).where(eq(erpRawMaterials.id, rawMaterialId));
+  if (!mat) return err("The item no longer exists.", "not_found");
+  const tests = from.existing?.tests ?? mat.testingList;
+  const [tester] = await db.select({ id: users.id }).from(users).where(eq(users.name, text(h.tester) ?? ctx.user.name));
+  const density = num(h.density);
+  if (tests.includes("Density") && density != null && (density < 0.5 || density > 1.5)) return fieldErr("density", "INVALID");
+  const photoIds: Record<string, string | null> = {};
+  for (const [k, col] of Object.entries(PHOTO_COL)) photoIds[col as string] = text(h[k]);
+  const values = {
+    smell: tests.includes("Smell") ? text(h.smell) : null,
+    density: tests.includes("Density") ? density : null,
+    phValue: tests.includes("PH") ? num(h.phValue) : null,
+    ...photoIds,
+    testerId: tester?.id ?? ctx.user.id,
+    testingDate: text(h.date) ?? today(),
+    remark: text(h.remark),
+    updatedAt: new Date(),
+    updatedById: ctx.user.id,
+  };
+  const id = from.existing?.id ?? erpId("tst");
+  const godownId = (await godownIdByName(text(h.godown))) ?? src?.godownId ?? base?.godownId;
+  if (!godownId) return fieldErr("godown", "Godown is required");
+  await db.transaction(async (tx) => {
+    if (from.existing) {
+      await tx.update(erpTests).set(values).where(eq(erpTests.id, id));
+    } else {
+      await tx.insert(erpTests).values({
+        id,
+        inwardId: src?.id ?? base?.inwardId ?? null,
+        prNumber: src?.prNumber ?? base!.prNumber,
+        rawMaterialId,
+        supplierId: src?.supplierId ?? base?.supplierId ?? null,
+        godownId,
+        unit: src?.unit ?? base?.unit ?? mat.unit,
+        quantity: src?.quantity ?? base?.quantity ?? null,
+        drums: src?.drums ?? base?.drums ?? null,
+        weightWithDrum: src?.weightWithDrum ?? base?.weightWithDrum ?? null,
+        tests,
+        createdById: ctx.user.id,
+        ...values,
+      });
+    }
+    await bindErpFiles(tx as unknown as typeof db, Object.values(photoIds), "erp_test", id, ctx.user.id);
+  });
+  await erpAudit(ctx, from.existing ? "erp.test.edit" : "erp.test.create", "erp_test", id, null, { tests });
+  return okVoid(`Test saved for ${mat.name} · waiting for the verifier`);
+}
+
+/* ============================================================ register */
+
+type RegRow = {
+  p: typeof erpPurchases.$inferSelect;
+  supplier: string;
+  partyCode: string | null;
+  item: string;
+  itemCode: string | null;
+  type: string;
+  godown: string;
+  by: string | null;
+};
+
+async function registerRows(): Promise<RegRow[]> {
+  return (await db
+    .select({
+      p: erpPurchases,
+      supplier: erpSuppliers.name,
+      partyCode: erpSuppliers.partyCode,
+      item: erpRawMaterials.name,
+      itemCode: erpRawMaterials.code,
+      type: erpRawMaterials.materialType,
+      godown: erpGodowns.name,
+      by: users.name,
+    })
+    .from(erpPurchases)
+    .innerJoin(erpSuppliers, eq(erpSuppliers.id, erpPurchases.supplierId))
+    .innerJoin(erpRawMaterials, eq(erpRawMaterials.id, erpPurchases.rawMaterialId))
+    .innerJoin(erpGodowns, eq(erpGodowns.id, erpPurchases.godownId))
+    .leftJoin(users, eq(users.id, erpPurchases.createdById))
+    .orderBy(desc(erpPurchases.purchaseDate), desc(erpPurchases.prNumber))) as RegRow[];
+}
+
+async function purchaseForm(ctx: ErpContext, id?: string): Promise<FormSpec | null> {
+  const [gds, sups, config] = await Promise.all([
+    godownOptions(ctx, { lost: false }),
+    db.select().from(erpSuppliers).orderBy(asc(erpSuppliers.name)),
+    getConfig(),
+  ]);
+  const mats = await db.select().from(erpRawMaterials).orderBy(asc(erpRawMaterials.name));
+  const rx = await receivable(config["erp.purchase.receiptTolerancePercent"]);
+  const money = ctx.powers.has("viewPurchaseMoney");
+  const partyCode: Record<string, string> = {};
+  sups.forEach((s) => (partyCode[s.name] = s.partyCode ?? ""));
+  const partyOfPo: Record<string, string> = {};
+  const rateOf: Record<string, string> = {};
+  const gstOf: Record<string, string> = {};
+  const unitOfLine: Record<string, string> = {};
+  rx.byLabel.forEach((p, label) => {
+    partyOfPo[label] = sups.find((s) => s.id === p.po.supplierId)?.partyCode ?? "";
+    p.lines.forEach((l) => {
+      const key = `${label}|${l.label}`;
+      rateOf[key] = rupeesField(l.ratePaise);
+      gstOf[key] = String(l.gstBp / 100);
+      unitOfLine[key] = l.unit;
+    });
+  });
+  const itemCode: Record<string, string> = {};
+  const densityOf: Record<string, number | null> = {};
+  mats.forEach((m) => {
+    itemCode[m.name] = m.code ?? "";
+    densityOf[m.name] = m.density;
+  });
+  let init: Record<string, string> = {
+    date: today(),
+    godown: ctx.workingGodown?.name ?? "",
+    gst: "18",
+    company: "Mahek Marketing India",
+  };
+  let editing: RegRow | undefined;
+  if (id) {
+    editing = (await registerRows()).find((r) => r.p.id === id);
+    if (!editing) return null;
+    const p = editing.p;
+    init = {
+      pr: String(p.prNumber),
+      date: p.purchaseDate,
+      po: p.poNumber ? `${p.poNumber} · ${editing.supplier}` : "Bought before POs were kept in the ERP",
+      supplier: editing.supplier,
+      item: editing.item,
+      qty: String(p.quantity),
+      unit: p.unit,
+      rate: rupeesField(p.ratePaise),
+      density: p.density == null ? "" : String(p.density),
+      drums: p.drums == null ? "" : String(p.drums),
+      weight: p.weightWithDrum == null ? "" : String(p.weightWithDrum),
+      feedLitre: String(p.feedAdjustedLitre ?? 0),
+      feedAmount: rupeesField(p.feedAdjustedAmountPaise),
+      gst: String(p.gstBp / 100),
+      company: p.company,
+      billNumber: p.billNumber ?? "",
+      notes: p.notes ?? "",
+      remark: p.remark ?? "",
+      godown: editing.godown,
+    };
+  }
+  const header: FieldSpec[] = [
+    { k: "pr", l: "PR number", t: id ? "text" : "num", readOnly: !!id, hint: id ? undefined : "Blank draws the next PR number." },
+    { k: "date", l: "Purchase date", t: "date", req: true },
+    ...(id
+      ? ([
+          { k: "po", l: "Purchase order", t: "text", readOnly: true },
+          { k: "supplier", l: "Party", t: "select", req: true, opts: sups.map((s) => s.name), readOnly: true },
+          { k: "item", l: "Raw item", t: "select", req: true, opts: mats.map((m) => m.name), readOnly: true },
+        ] as FieldSpec[])
+      : ([
+          {
+            k: "po",
+            l: "Purchase order",
+            t: "select",
+            req: true,
+            opts: [...rx.byLabel.keys()],
+            hint: rx.byLabel.size ? "No purchase without a PO: a lot entered by hand is bought on an approved PO's item." : "No approved PO is waiting for goods — raise and approve the PO first.",
+          },
+          { k: "poLine", l: "PO item", t: "select", req: true, optsBy: { by: "po", map: rx.linesBy } },
+          { k: "pending", l: "Against the PO", t: "derived", calc: "register.pending", when: { k: "poLine", notEmpty: true } },
+          { k: "supplier", l: "Party", t: "derived", calc: "inward.supplier" },
+          { k: "item", l: "Raw item", t: "select", req: true, readOnly: true, opts: mats.map((m) => m.name), fillBy: { by: ["po", "poLine"], map: rx.itemOf } },
+        ] as FieldSpec[])),
+    { k: "lot", l: "Raw-material lot no", t: "derived", calc: "register.lot" },
+    { k: "qty", l: "Quantity", t: "num", req: true, min: 0.001, ...(id ? {} : { fillBy: { by: ["po", "poLine"], map: rx.qtyOf } }) },
+    { k: "unit", l: "Unit", t: "select", req: true, opts: ["Kg", "Litre", "Pcs"], ...(id ? {} : { fillBy: { by: ["po", "poLine"], map: unitOfLine } }) },
+    { k: "density", l: "Density", t: "num", min: 0 },
+    { k: "drums", l: "No. of drum", t: "num", min: 0 },
+    { k: "weight", l: "Weight with drum", t: "num", min: 0 },
+    { k: "litres", l: "In litre", t: "derived", calc: "register.litres" },
+    { k: "feedLitre", l: "Feed-adjusted litre", t: "num", min: 0 },
+    { k: "avail", l: "Available litres", t: "derived", calc: "register.available" },
+    ...(money
+      ? ([
+          {
+            k: "rate",
+            l: "Rate (₹)",
+            t: "num",
+            min: 0,
+            hint: "The PO's rate, until the supplier's bill says otherwise. Stock posts once a rate above zero is entered.",
+            ...(id ? {} : { fillBy: { by: ["po", "poLine"], map: rateOf } }),
+          },
+          { k: "gst", l: "GST %", t: "num", min: 0, max: 100, ...(id ? {} : { fillBy: { by: ["po", "poLine"], map: gstOf } }) },
+          { k: "feedAmount", l: "Feed-adjusted amount (₹)", t: "num", min: 0 },
+          { k: "final", l: "Final amount", t: "derived", calc: "register.final" },
+          { k: "company", l: "Company", t: "select", req: true, opts: ["Mahek Marketing India", "MYLAC"] },
+        ] as FieldSpec[])
+      : []),
+    { k: "billNumber", l: "Bill number", t: "text" },
+    godownField(gds),
+    { k: "notes", l: "Notes", t: "area", mic: true },
+    { k: "remark", l: "Remark", t: "area", mic: true },
+  ];
+  return {
+    screen: "register",
+    id: id ? "edit" : "new",
+    recordId: id,
+    title: id ? "Edit purchase" : "New purchase",
+    sub: id ? `${editing!.item} · lot ${editing!.p.lotNo}` : "A lot entered by hand against an approved PO.",
+    submit: id ? "Save purchase" : "Add purchase",
+    init,
+    data: { partyCode, partyOfPo, itemCode, densityOf, supplierOf: rx.supplierOf, pendingOf: rx.pendingOf },
+    header,
+  };
+}
+
+/**
+ * WHERE A PURCHASE HAS GOT TO, as one line. Mahek Plus carried three answers
+ * — the test's verdict, a purchase status and a separate "bill received"
+ * toggle — which could disagree (Purchase Matched with no bill). They are one
+ * progress now: Arrived (or Tested) → Bill received → Matched → Verified, and
+ * the bill and the status move together (see the actions below).
+ */
+export function purchaseStage(p: { status: string; billReceived: string | null; testId: string | null }): string {
+  if (p.status === "Purchase Verified") return "Verified";
+  if (p.status === "Purchase Matched") return "Matched";
+  if (p.status === "Invoice Received" || p.billReceived === "Received") return "Bill received";
+  return p.testId ? "Tested" : "Arrived";
+}
+
+/** The statuses that say a bill is in hand. */
+const BILLED = ["Invoice Received", "Purchase Matched", "Purchase Verified"];
+
+/**
+ * Landing cost on a register row: material (before GST, the stock rate's own
+ * basis) + its share of the PR's transport and other inward cost. A PR whose
+ * transport nobody recorded says so rather than reading as free delivery.
+ */
+function landingFields(materialPaise: number | null, l: LotLanding | undefined, recorded: boolean) {
+  const share = (v: number | undefined) => (v == null ? "—" : inr(v));
+  return [
+    { l: "Material cost", v: materialPaise == null ? "—" : inr(materialPaise), der: true },
+    { l: "Transport (share)", v: recorded ? share(l?.transportSharePaise ?? 0) : "Not recorded on the inward", der: true },
+    { l: "Other inward cost (share)", v: recorded ? share(l?.otherSharePaise ?? 0) : "—", der: true },
+    { l: "Landing cost", v: materialPaise == null ? "Enter a rate" : inr(l?.landingPaise ?? materialPaise), der: true },
+  ];
+}
+
+const register: ScreenModule = {
+  key: "register",
+  async load(ctx) {
+    const [rows, pairs, landings, prCosts] = await Promise.all([registerRows(), refValues("shortLabel"), lotLandings(), db.select({ pr: erpPrCosts.prNumber }).from(erpPrCosts)]);
+    const costed = new Set(prCosts.map((c) => c.pr));
+    const lineIds = rows.map((r) => r.p.poLineId).filter((x): x is string => !!x);
+    const poRate = new Map(
+      (lineIds.length ? await db.select({ id: erpPoLines.id, rate: erpPoLines.ratePaise }).from(erpPoLines).where(inArray(erpPoLines.id, lineIds)) : []).map((l) => [l.id, l.rate]),
+    );
+    const byPr = new Map<number, number>();
+    rows.forEach((r) => {
+      const f = purchaseFigures(figIn(r.p));
+      if (f.finalPaise != null) byPr.set(r.p.prNumber, (byPr.get(r.p.prNumber) ?? 0) + f.finalPaise);
+    });
+    const newForm = await purchaseForm(ctx);
+    const money = ctx.powers.has("viewPurchaseMoney");
+    const verifier = ctx.powers.has("verifyPurchase");
+    const { featureState, pendingFor } = await import("../ai");
+    const aiBills = (await featureState("bills", true)).on || (await pendingFor("bills")).size > 0;
+    const pendingBills = await pendingFor("bills");
+    const reopen = ctx.powers.has("reopenPurchase");
+    const all: Col[] = [
+      { k: "date", l: "Date", t: "d" },
+      { k: "pr", l: "PR no", t: "mono" },
+      { k: "po", l: "PO", t: "mono" },
+      { k: "lot", l: "Lot no", t: "mono" },
+      { k: "party", l: "Party", t: "t" },
+      { k: "item", l: "Item", t: "b" },
+      { k: "qty", l: "Quantity", t: "n" },
+      { k: "unit", l: "Unit", t: "t" },
+      { k: "rate", l: "Rate", t: "m", pw: "viewPurchaseMoney" },
+      { k: "gst", l: "GST %", t: "n", pw: "viewPurchaseMoney" },
+      { k: "final", l: "Final amount", t: "m", pw: "viewPurchaseMoney" },
+      { k: "landing", l: "Landing cost", t: "m", pw: "viewPurchaseMoney" },
+      { k: "stage", l: "Stage", t: "s", pw: "viewPurchaseMoney" },
+      { k: "billNo", l: "Bill no", t: "t" },
+      { k: "posting", l: "Inventory", t: "s" },
+      { k: "f", l: "Flags", t: "f" },
+    ];
+    const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
+    return {
+      spec: {
+        screen: "register",
+        cols,
+        hidden,
+        groups: ["pr"],
+        groupHead: ["date", "po", "party", "billNo"],
+        agg: money ? { k: "final", l: "on the bill" } : undefined,
+        godownKey: "godown",
+        newForm: newForm ?? undefined,
+        newLabel: "New purchase",
+        bulk: money ? [{ id: "billReceivedMany", l: "Mark bill received", confirm: "Mark every selected purchase's bill as received?" }] : undefined,
+        noDataLine: "No purchases yet. Rows arrive as goods are received against a PO.",
+      },
+      rows: rows.map((r) => {
+        const p = r.p;
+        const f = purchaseFigures(figIn(p));
+        const posted = postsToStock(p.ratePaise);
+        const actions: ActionSpec[] = [];
+        if (money && !posted)
+          actions.push({
+            id: "rate",
+            l: "Enter rate",
+            primary: true,
+            prompt: {
+              title: "Enter the purchase rate",
+              sub: `${r.item} · ${p.lotNo} · ${nf(p.quantity)} ${p.unit}`,
+              submit: "Save rate and post",
+              fields: [{ k: "rate", l: `Rate per ${p.unit} (₹)`, t: "num", req: true, min: 0.01 }],
+            },
+          });
+        if (money) {
+          if (p.billReceived !== "Received")
+            actions.push({
+              id: "billReceived",
+              l: "Record the bill",
+              prompt: { title: "Bill received", submit: "Save", fields: [{ k: "billNo", l: "Bill number", t: "text", req: true }], init: { billNo: p.billNumber ?? "" } },
+            });
+          else actions.push({ id: "billNotReceived", l: "Bill Not Received", why: p.status === "Purchase Matched" || p.status === "Purchase Verified" ? "It has been matched to its bill" : "" });
+          actions.push({
+            id: "status",
+            l: "Change status",
+            prompt: {
+              title: "Purchase status",
+              sub: verifier ? "The verifier sets Purchase Verified." : "Purchase Verified is set by the verifier.",
+              submit: "Save status",
+              fields: [{ k: "status", l: "Status", t: "select", req: true, opts: settableStatuses(verifier) }],
+            },
+          });
+          if (p.status === "Purchase Verified" || p.status === "")
+            actions.push({ id: "reopen", l: "Back to pending", why: reopen ? "" : "Only an admin sets a verified purchase back to Pending" });
+        }
+        if (money && aiBills) {
+          if (pendingBills.has(p.id)) {
+            actions.unshift({ id: "aiBill", l: "Review bill reading", ai: true, primary: true, loadsForm: true });
+            actions.push({ id: "aiBillReject", l: "Reject bill reading", confirm: "Reject the AI reading of this bill? Nothing on the register changes." });
+          } else
+            actions.push({
+              id: "aiBillRead",
+              l: "Read supplier bill",
+              ai: true,
+              prompt: {
+                title: "Read the supplier bill",
+                sub: `PR ${p.prNumber} · ${r.supplier}. The bill is read and matched to this PR's rows; you review every value before anything is saved.`,
+                submit: "Read the bill",
+                fields: [
+                  { k: "photo", l: "Bill photo or PDF", t: "photo", req: true },
+                  { k: "photo2", l: "Second page", t: "photo" },
+                ],
+              },
+            });
+        }
+        actions.push({ id: "edit", l: "Edit", loadsForm: true });
+        actions.push({ id: "addMore", l: "Add another", loadsForm: true });
+        actions.push({ id: "label", l: "Print drum label", href: erpLabelsHref({ purchase: p.id }) });
+        const moneyFields = money
+          ? [
+              { l: "Litre rate", v: f.literRatePaise == null ? "—" : inr(f.literRatePaise), der: true },
+              { l: "Sub total", v: f.subTotalPaise == null ? "—" : inr(f.subTotalPaise), der: true },
+              { l: "GST amount", v: f.gstPaise == null ? "—" : inr(f.gstPaise), der: true },
+              { l: "Amount + GST", v: f.amountWithGstPaise == null ? "—" : inr(f.amountWithGstPaise), der: true },
+              ...landingFields(f.subTotalPaise, landings.get(p.lotNo), costed.has(p.prNumber)),
+              { l: "Feed-adjusted amount", v: inr(p.feedAdjustedAmountPaise) },
+              { l: "This bill final amount", v: byPr.has(p.prNumber) ? inr(byPr.get(p.prNumber)!) : "—", der: true },
+              { l: "PO rate", v: p.poLineId && poRate.has(p.poLineId) ? inr(poRate.get(p.poLineId)!) : "—" },
+              { l: "Company", v: p.company },
+              { l: "Status", v: p.status },
+            ]
+          : [];
+        return {
+          id: p.id,
+          v: withoutHidden(
+            {
+              date: p.purchaseDate,
+              pr: String(p.prNumber),
+              po: p.poNumber,
+              lot: p.lotNo,
+              party: r.supplier,
+              item: r.item,
+              qty: p.quantity,
+              unit: p.unit,
+              rate: p.ratePaise,
+              gst: p.gstBp / 100,
+              final: f.finalPaise,
+              landing: landings.get(p.lotNo)?.landingPaise ?? f.subTotalPaise,
+              stage: purchaseStage(p),
+              billNo: p.billNumber,
+              posting: posted ? "Posted" : "Not posted: rate missing",
+              godown: r.godown,
+            },
+            hiddenKeys,
+          ),
+          flags: [
+            ...(p.ratePaise && p.ratePaise > 0 ? [] : ["rateMissing"]),
+            ...(p.aiFilled ? ["aiFilled"] : []),
+            ...(!p.poId ? ["noPo"] : p.poLineId && poRate.has(p.poLineId) && p.ratePaise != null && p.ratePaise !== poRate.get(p.poLineId) ? ["rateOffPo"] : []),
+          ],
+          title: r.item,
+          header: `Lot ${p.lotNo} · ${r.godown}`,
+          fields: [
+            { l: "Party code", v: r.partyCode ?? "—" },
+            { l: "Item code", v: r.itemCode ?? "—" },
+            { l: "Material type", v: r.type },
+            { l: "Density", v: p.density == null ? "—" : String(p.density) },
+            { l: "Drums", v: p.drums == null ? "—" : nf(p.drums) },
+            { l: "In litre", v: nf(f.inLitre), der: true },
+            { l: "Feed-adjusted litre", v: nf(p.feedAdjustedLitre) },
+            { l: "Available litres", v: nf(f.availableLitres), der: true },
+            { l: "Litres per drum", v: f.litresPerDrum == null ? "—" : nf(f.litresPerDrum), der: true },
+            { l: "Short label name", v: shortLabel(r.item, pairs), der: true },
+            { l: "PR / bill", v: prBillLabel(p.prNumber, p.billNumber, p.purchaseDate), der: true },
+            { l: "Godown", v: r.godown },
+            { l: "Notes", v: p.notes || "—" },
+            { l: "Remark", v: p.remark || "—" },
+            ...moneyFields,
+          ],
+          hiddenFields: money ? 0 : 9,
+          actions,
+          by: stampLine(r.by, p.createdAt),
+        };
+      }),
+    };
+  },
+  formLoaders: {
+    edit: (ctx, id) => purchaseForm(ctx, id),
+    aiBill: async (_ctx, id) => (await import("../ai-bills")).billReviewForm(id),
+    addMore: async (ctx, id) => {
+      const f = await purchaseForm(ctx, id);
+      if (!f) return null;
+      /* Add More: a new lot on the same PR, header carried over. */
+      const keep = ["pr", "date", "godown", "company", "billNumber"];
+      const init: Record<string, string> = {};
+      keep.forEach((k) => (init[k] = f.init?.[k] ?? ""));
+      const base = await purchaseForm(ctx);
+      if (!base) return null;
+      /* The same PR and, while it can still take goods, the same PO. */
+      const [row] = await db.select({ po: erpPurchases.poId }).from(erpPurchases).where(eq(erpPurchases.id, id));
+      const [po] = row?.po ? await purchaseOrderViews({ ids: [row.po] }) : [];
+      const poText = po && RECEIVABLE_PO.includes(po.po.status) ? poOption(po) : "";
+      return { ...base, title: `Add another lot to PR ${init.pr}`, init: { ...base.init, ...init, po: poText } };
+    },
+  },
+  forms: {
+    async new(ctx, h) {
+      return savePurchase(ctx, h);
+    },
+    async edit(ctx, h, _l, id) {
+      return savePurchase(ctx, h, id);
+    },
+    async aiBill(ctx, h, lines, suggestionId) {
+      if (!suggestionId) return err("No reading named.", "not_found");
+      return (await import("../ai-bills")).applyBill(ctx, suggestionId, h, lines);
+    },
+  },
+  actions: {
+    async aiBillRead(ctx, id, values) {
+      const files = [text(values.photo), text(values.photo2)].filter((x): x is string => !!x);
+      return (await import("../ai-bills")).readBill(ctx, id, files);
+    },
+    async aiBillReject(ctx, id) {
+      return (await import("../ai-bills")).rejectBill(ctx, id);
+    },
+    async rate(ctx, id, values) {
+      if (!ctx.powers.has("viewPurchaseMoney")) return err(powerRefusal("viewPurchaseMoney"), "not_permitted");
+      const rate = paise(values.rate);
+      if (rate == null || rate <= 0) return fieldErr("rate", "Rate is required");
+      let posted = false;
+      await db.transaction(async (tx) => {
+        await tx.update(erpPurchases).set({ ratePaise: rate, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpPurchases.id, id));
+        await refreshCache(tx, id);
+        posted = await syncPurchaseEntry(tx, id);
+      });
+      await erpAudit(ctx, "erp.purchase.rate", "erp_purchase", id, null, { ratePaise: rate });
+      const [p] = await db.select().from(erpPurchases).where(eq(erpPurchases.id, id));
+      return okVoid(posted ? `Posted · ${nf(p.availableLitres)} of lot ${p.lotNo} now in stock` : "Rate saved");
+    },
+    async billReceived(ctx, id, values) {
+      if (!ctx.powers.has("viewPurchaseMoney")) return err(powerRefusal("viewPurchaseMoney"), "not_permitted");
+      const billNo = text(values.billNo);
+      if (!billNo) return fieldErr("billNo", "Bill number is required");
+      /* A bill in hand is the Invoice Received step, not a second flag beside it. */
+      await db
+        .update(erpPurchases)
+        .set({ billReceived: "Received", billNumber: billNo, status: sql`case when ${erpPurchases.status} = 'Pending' then 'Invoice Received' else ${erpPurchases.status} end`, updatedAt: new Date(), updatedById: ctx.user.id })
+        .where(eq(erpPurchases.id, id));
+      await erpAudit(ctx, "erp.purchase.billReceived", "erp_purchase", id, null, { billNo });
+      return okVoid(`Bill ${billNo} recorded`);
+    },
+    async billNotReceived(ctx, id) {
+      if (!ctx.powers.has("viewPurchaseMoney")) return err(powerRefusal("viewPurchaseMoney"), "not_permitted");
+      const [p] = await db.select({ status: erpPurchases.status }).from(erpPurchases).where(eq(erpPurchases.id, id));
+      if (!p) return err("That purchase no longer exists.", "not_found");
+      if (p.status === "Purchase Matched" || p.status === "Purchase Verified") return err("A purchase matched to its bill has its bill.", "rule_violation");
+      await db
+        .update(erpPurchases)
+        .set({ billReceived: "Bill Not Received", status: p.status === "Invoice Received" ? "Pending" : p.status, updatedAt: new Date(), updatedById: ctx.user.id })
+        .where(eq(erpPurchases.id, id));
+      await erpAudit(ctx, "erp.purchase.billNotReceived", "erp_purchase", id);
+      return okVoid("Marked bill not received");
+    },
+    async status(ctx, id, values) {
+      if (!ctx.powers.has("viewPurchaseMoney")) return err(powerRefusal("viewPurchaseMoney"), "not_permitted");
+      const status = text(values.status);
+      const allowed = settableStatuses(ctx.powers.has("verifyPurchase"));
+      if (!status || !allowed.includes(status)) return fieldErr("status", status === "Purchase Verified" ? "Only the verifier sets Purchase Verified" : "Pick a status");
+      /* Past Pending, the bill is in hand — the one line cannot say Matched and "no bill". */
+      await db
+        .update(erpPurchases)
+        .set({ status, ...(BILLED.includes(status) ? { billReceived: "Received" } : {}), updatedAt: new Date(), updatedById: ctx.user.id })
+        .where(eq(erpPurchases.id, id));
+      await erpAudit(ctx, "erp.purchase.status", "erp_purchase", id, null, { status });
+      return okVoid(`Status is ${status}`);
+    },
+    async reopen(ctx, id) {
+      if (!ctx.powers.has("reopenPurchase")) return err("Only an admin sets a verified purchase back to Pending.", "not_permitted");
+      await db.update(erpPurchases).set({ status: "Pending", updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpPurchases.id, id));
+      await erpAudit(ctx, "erp.purchase.reopen", "erp_purchase", id);
+      return okVoid("Set back to Pending");
+    },
+  },
+  bulk: {
+    async billReceivedMany(ctx, ids) {
+      if (!ctx.powers.has("viewPurchaseMoney")) return err(powerRefusal("viewPurchaseMoney"), "not_permitted");
+      await db
+        .update(erpPurchases)
+        .set({ billReceived: "Received", status: sql`case when ${erpPurchases.status} = 'Pending' then 'Invoice Received' else ${erpPurchases.status} end`, updatedAt: new Date(), updatedById: ctx.user.id })
+        .where(inArray(erpPurchases.id, ids));
+      await erpAudit(ctx, "erp.purchase.billReceived.bulk", "erp_purchase", null, null, { ids });
+      return okVoid(`${ids.length} marked bill received`);
+    },
+  },
+};
+
+function figIn(p: typeof erpPurchases.$inferSelect) {
+  return {
+    quantity: p.quantity,
+    unit: p.unit,
+    ratePaise: p.ratePaise,
+    density: p.density,
+    feedAdjustedLitre: p.feedAdjustedLitre,
+    feedAdjustedAmountPaise: p.feedAdjustedAmountPaise,
+    gstBp: p.gstBp,
+    drums: p.drums,
+  };
+}
+
+/** Rewrites the cached available litres from the row's own figures. */
+async function refreshCache(tx: Tx, id: string) {
+  const [p] = await tx.select().from(erpPurchases).where(eq(erpPurchases.id, id));
+  if (!p) return;
+  const f = purchaseFigures(figIn(p));
+  await tx.update(erpPurchases).set({ availableLitres: f.availableLitres }).where(eq(erpPurchases.id, id));
+}
+
+async function savePurchase(ctx: ErpContext, h: Record<string, string>, id?: string): Promise<Result<unknown>> {
+  const money = ctx.powers.has("viewPurchaseMoney");
+  const qty = num(h.qty);
+  if (qty == null || qty <= 0) return fieldErr("qty", qty != null && qty < 0 ? "Minus Quantity Not Allowed" : "Quantity is required");
+  const unit = text(h.unit);
+  if (!unit || !["Kg", "Litre", "Pcs"].includes(unit)) return fieldErr("unit", "Unit is required");
+  const godownId = await godownIdByName(text(h.godown));
+  if (!godownId) return fieldErr("godown", "Godown is required");
+  const density = num(h.density);
+  if (unit === "Kg" && (density == null || density <= 0)) return fieldErr("density", "A kilogram purchase needs a density to be turned into litres");
+  const common = {
+    purchaseDate: text(h.date) ?? today(),
+    quantity: qty,
+    unit,
+    density,
+    drums: int(h.drums),
+    weightWithDrum: num(h.weight),
+    feedAdjustedLitre: num(h.feedLitre) ?? 0,
+    billNumber: text(h.billNumber),
+    notes: text(h.notes),
+    remark: text(h.remark),
+    godownId,
+    ...(money
+      ? {
+          ratePaise: paise(h.rate),
+          gstBp: Math.round((num(h.gst) ?? 18) * 100),
+          feedAdjustedAmountPaise: paise(h.feedAmount) ?? 0,
+          company: text(h.company) ?? "Mahek Marketing India",
+        }
+      : {}),
+  };
+  if (id) {
+    const [before] = await db.select().from(erpPurchases).where(eq(erpPurchases.id, id));
+    if (!before) return err("That purchase no longer exists.", "not_found");
+    /* A lot entered by hand IS the receipt against its PO line, so its quantity is held to the PO too. */
+    if (before.source === "manual" && before.poLineId && qty !== before.quantity) {
+      const [line] = await db.select().from(erpPoLines).where(eq(erpPoLines.id, before.poLineId));
+      const others = ((await receivedByLine()).get(before.poLineId) ?? 0) - before.quantity;
+      const room = line ? receivableQuantity(line.quantity, others, (await getConfig())["erp.purchase.receiptTolerancePercent"]) : Infinity;
+      if (qty > room) return fieldErr("qty", `More than the PO allows: ${nf(line!.quantity)} ${line!.unit} ordered, ${nf(others)} received on other lots`);
+    }
+    await db.transaction(async (tx) => {
+      await tx.update(erpPurchases).set({ ...common, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpPurchases.id, id));
+      await refreshCache(tx, id);
+      await syncPurchaseEntry(tx, id);
+      if (before.source === "manual") await refreshPurchaseOrder(tx, before.poId);
+    });
+    await erpAudit(ctx, "erp.purchase.edit", "erp_purchase", id, before, common);
+    return okVoid("Purchase saved");
+  }
+  /* NO PURCHASE WITHOUT A PO: the party and the item are the PO line's, never typed. */
+  const tolerance = (await getConfig())["erp.purchase.receiptTolerancePercent"];
+  const rx = await receivable(tolerance);
+  const po = rx.byLabel.get(text(h.po) ?? "");
+  if (!po) return fieldErr("po", "Pick the approved purchase order this lot was bought on");
+  const line = po.lines.find((l) => l.label === text(h.poLine));
+  if (!line) return fieldErr("poLine", "Pick an item on this PO");
+  const room = receivableQuantity(line.quantity, line.received, tolerance);
+  if (qty > room) return fieldErr("qty", `More than the PO allows: ${nf(line.quantity)} ${line.unit} ordered, ${nf(line.received)} received, ${nf(room)} more may be taken`);
+  const terms = poTerms(po.po.poNumber, po.po.id, line);
+  /* Without the money power the rate is the PO's. With it, the form opens on the PO's rate and what is
+     there on save is the answer — the bill's rate typed over it, or a blank somebody left on purpose. */
+  const priced = money ? { ratePaise: paise(h.rate), gstBp: Math.round((num(h.gst) ?? terms.gstBp / 100) * 100) } : { ratePaise: terms.ratePaise, gstBp: terms.gstBp };
+  let result: Result<{ id: string; lotNo: string }> | null = null;
+  await db
+    .transaction(async (tx) => {
+      const pr = int(h.pr) ?? (await nextNumber(tx, "pr"));
+      result = await createPurchase(tx, ctx, {
+        ...common,
+        ...terms,
+        ...priced,
+        prNumber: pr,
+        supplierId: po.po.supplierId,
+        rawMaterialId: line.rawMaterialId,
+        source: "manual",
+      });
+      if (!result.ok) tx.rollback();
+      else await refreshPurchaseOrder(tx, po.po.id);
+    })
+    .catch((e: unknown) => (e instanceof Error && e.message === "Rollback" ? null : Promise.reject(e)));
+  const r = result as Result<{ id: string; lotNo: string }> | null;
+  if (!r) return err("Could not save the purchase.");
+  if (!r.ok) return r;
+  await erpAudit(ctx, "erp.purchase.create", "erp_purchase", r.data.id, null, common);
+  return okVoid(`Purchase saved · lot ${r.data.lotNo}`);
+}
+
+/* ============================================================= barcode */
+
+const barcode: ScreenModule = {
+  key: "barcode",
+  async load(ctx) {
+    const pairs = await refValues("shortLabel");
+    const here = ctx.workingGodown?.id ?? null;
+    const rows = (await registerRows()).filter((r) => r.type === "Chemical" && r.p.godownId === here);
+    const cols: ColSpec[] = [
+      { k: "date", l: "Purchase date", t: "d" },
+      { k: "lot", l: "Lot", t: "mono" },
+      { k: "item", l: "Item name", t: "b" },
+      { k: "litres", l: "In litre", t: "n" },
+      { k: "drums", l: "Drums", t: "n" },
+      { k: "perDrum", l: "Litres per drum", t: "n" },
+      { k: "density", l: "Density", t: "n" },
+      { k: "qty", l: "Quantity", t: "n" },
+      { k: "unit", l: "Unit", t: "t" },
+      { k: "remark", l: "Remark", t: "t" },
+      { k: "prBill", l: "PR Bill no", t: "mono" },
+      { k: "pr", l: "PR number", t: "mono" },
+      { k: "testing", l: "Testing id", t: "mono" },
+    ];
+    return {
+      spec: {
+        screen: "barcode",
+        cols,
+        hidden: [],
+        download: true,
+        readOnly: true,
+        sortDefault: ["date", -1],
+        scopedLine: ctx.workingGodown ? `Showing ${ctx.workingGodown.name} only · change your working location in the header` : "No working location set — choose one in the header",
+        noDataLine: "No chemical purchases at this godown yet.",
+      },
+      rows: rows.map((r) => {
+        const f = purchaseFigures(figIn(r.p));
+        return {
+          id: r.p.id,
+          v: {
+            date: r.p.purchaseDate,
+            lot: r.p.lotNo,
+            item: shortLabel(r.item, pairs),
+            litres: f.inLitre,
+            drums: r.p.drums,
+            perDrum: f.litresPerDrum,
+            density: r.p.density,
+            qty: r.p.quantity,
+            unit: r.p.unit,
+            remark: r.p.remark,
+            prBill: r.p.id,
+            pr: String(r.p.prNumber),
+            testing: r.p.testId,
+          },
+          flags: [],
+          title: `${shortLabel(r.item, pairs)} · ${r.p.lotNo}`,
+          actions: [{ id: "label", l: "Print drum label", primary: true, href: erpLabelsHref({ purchase: r.p.id }) }],
+          by: stampLine(r.by, r.p.createdAt),
+        };
+      }),
+    };
+  },
+};
+
+/* ======================================================== raw stock */
+
+const rmStock: ScreenModule = {
+  key: "rmStock",
+  async load(ctx) {
+    const lots = (await rmLots()).filter((l) => l.stock > 0);
+    const all: Col[] = [
+      { k: "item", l: "Item", t: "b" },
+      { k: "stock", l: "Current stock", t: "n" },
+      { k: "unit", l: "Unit", t: "t" },
+      { k: "lot", l: "Lot no", t: "mono" },
+      { k: "godown", l: "Godown", t: "t" },
+      { k: "rate", l: "Rate", t: "m", pw: "viewCost" },
+      { k: "value", l: "Value", t: "m", pw: "viewCost" },
+    ];
+    const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
+    return {
+      spec: {
+        screen: "rmStock",
+        cols,
+        hidden,
+        groups: ["godown"],
+        godownKey: "godown",
+        readOnly: true,
+        noDataLine: "Nothing in stock yet. Stock appears as purchases are given a rate.",
+      },
+      rows: lots.map((l) => ({
+        id: `${l.lotNo}|${l.godownId}`,
+        v: withoutHidden(
+          {
+            item: l.item,
+            stock: l.stock,
+            unit: l.unit,
+            lot: l.lotNo,
+            godown: l.godown,
+            rate: l.ratePaise,
+            value: l.ratePaise == null ? null : Math.round(l.ratePaise * l.stock),
+          },
+          hiddenKeys,
+        ),
+        flags: [],
+        title: `${l.item} · ${l.lotNo}`,
+        header: `${nf(l.stock)} ${l.unit} at ${l.godown} · last entry ${fd(l.latestDate)}`,
+      })),
+    };
+  },
+};
+
+const rmLog: ScreenModule = {
+  key: "rmLog",
+  async load() {
+    const rows = (await db.execute(sql`
+      select e.id, e.entry_date::text as date, e.source_type as "sourceType", e.source_id as "sourceId",
+             m.name as item, e.lot_no as lot, e.quantity::float8 as qty, g.name as godown, e.posted_at as "postedAt",
+             (e.source_type = 'purchase' and not exists (select 1 from erp_purchases p where p.id = e.source_id)) as orphan
+        from erp_rm_entries e
+        join erp_raw_materials m on m.id = e.raw_material_id
+        join erp_godowns g on g.id = e.godown_id
+       order by e.entry_date desc, e.posted_at desc, e.id desc
+    `)) as unknown as { id: string; date: string; sourceType: string; sourceId: string; item: string; lot: string; qty: number; godown: string; postedAt: Date; orphan: boolean }[];
+    const cols: ColSpec[] = [
+      { k: "date", l: "Date", t: "d" },
+      { k: "type", l: "Entry", t: "s" },
+      { k: "item", l: "Item", t: "b" },
+      { k: "lot", l: "Lot", t: "mono" },
+      { k: "qty", l: "Quantity", t: "n" },
+      { k: "godown", l: "Godown", t: "t" },
+      { k: "f", l: "Flags", t: "f" },
+    ];
+    return {
+      spec: {
+        screen: "rmLog",
+        cols,
+        hidden: [],
+        godownKey: "godown",
+        readOnly: true,
+        sortDefault: ["date", -1],
+        noDataLine: "No entries yet. They appear as purchases and transfers post.",
+      },
+      rows: rows.map((r) => ({
+        id: r.id,
+        v: { date: r.date, type: r.sourceType === "purchase" ? "Purchase" : r.sourceType === "adjustment" ? "Stock adjustment" : "Transfer", item: r.item, lot: r.lot, qty: Number(r.qty), godown: r.godown, source: r.sourceId },
+        flags: r.orphan ? ["orphan"] : [],
+        title: `${r.item} · ${r.lot}`,
+        by: `Posted ${stampLine(null, r.postedAt).replace(/^Created /, "")}`,
+      })),
+    };
+  },
+};
+
+export const PURCHASE_SCREENS: ScreenModule[] = [inward, testing, register, barcode, rmStock, rmLog];

@@ -151,7 +151,7 @@ export type ValidationAnswers = {
 /** Why this cannot be saved, or null. Mirrors the server's own check. */
 export function validationRefusal(a: ValidationAnswers): string | null {
   if ((a.verdict === 'not_qualified' || a.verdict === 'on_hold') && !String(a.verdictReason ?? '').trim()) {
-    return 'Say what was wrong — the salesman who raised it will raise the next one just like it otherwise.';
+    return 'Say what was wrong. Then the salesman can do the next one right.';
   }
   return null;
 }

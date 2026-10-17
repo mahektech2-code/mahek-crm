@@ -229,6 +229,10 @@ export function deskForAction(action: string | null | undefined): string | null 
  * through one loop.
  */
 const OUTCOME_FIELDS: Record<string, ReasonField[]> = {
+  /* A Pay Promise asks nothing of its own any more: the amount box is gone, and
+     so is the date box (the server dates a promise that arrives with none).
+     Calls saved while the amount was asked keep it in their stored detail. */
+  payment_promised: [],
   no_order: [
     {
       key: "whyNoOrder",

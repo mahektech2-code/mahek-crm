@@ -1,0 +1,232 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { fromThrown, ok, type Result } from "@/lib/result";
+import {
+  linkWatiTemplate,
+  requireFounderDesk,
+  setWhatsappService,
+} from "@/lib/services/whatsapp-switch-service";
+import {
+  findCustomersByName,
+  previewMessage,
+  sendTestMessage,
+  type MessagePreview,
+} from "@/lib/services/whatsapp-service";
+import {
+  deleteRule,
+  previewAutomation,
+  ruleAudience,
+  runAutomation,
+  saveAutomationSettings,
+  saveRule,
+  setRuleStatus,
+  type RuleInput,
+  type RunSummary,
+} from "@/lib/services/whatsapp-automation-service";
+import type { RuleStatus, WindowSettings } from "@/lib/whatsapp-rules";
+import { dndHistory, setWhatsappDnd } from "@/lib/services/whatsapp-dnd-service";
+import {
+  backfillWatiReplies,
+  type BackfillSummary,
+} from "@/lib/services/wati-reply-backfill-service";
+
+/* ---------------------------------------------------------------------------
+ * The Founder Dashboard's WhatsApp screen — its two writes.
+ *
+ * Both are checked in the service (`requireFounderDesk`), not here and not by
+ * hiding the control: a server action is a URL, and the switch that decides
+ * whether messages leave the building must not be reachable by posting to one.
+ * ------------------------------------------------------------------------- */
+
+function refresh() {
+  revalidatePath("/founder/whatsapp");
+  revalidatePath("/crm/whatsapp");
+  revalidatePath("/crm/payments");
+}
+
+export async function setWhatsappServiceAction(
+  active: boolean,
+  note: string,
+): Promise<Result> {
+  try {
+    const r = await setWhatsappService({ active, note });
+    refresh();
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+export async function linkWatiTemplateAction(
+  templateId: string,
+  watiTemplateName: string | null,
+): Promise<Result> {
+  try {
+    const r = await linkWatiTemplate(templateId, watiTemplateName);
+    refresh();
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Exactly what one customer would receive from one template, or why not. */
+export async function founderPreviewAction(
+  customerId: string,
+  templateId: string,
+): Promise<Result<MessagePreview>> {
+  try {
+    await requireFounderDesk();
+    return ok(await previewMessage(customerId, templateId, "personal", { skipScope: true }));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** The real template, one real customer's facts, sent to the founder's own phone. */
+export async function sendTestAction(
+  customerId: string,
+  templateId: string,
+  phone: string,
+): Promise<Result<{ body: string }>> {
+  try {
+    const ctx = await requireFounderDesk();
+    return await sendTestMessage({ customerId, templateId, phone, userId: ctx.user.id });
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+export async function findCustomersAction(
+  q: string,
+): Promise<Result<Array<{ id: string; name: string; city: string | null }>>> {
+  try {
+    await requireFounderDesk();
+    return ok(await findCustomersByName(q));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ------------------------------------------------------------- automation */
+
+
+function refreshAutomation() {
+  revalidatePath("/founder/whatsapp/automation");
+}
+
+export async function saveWindowAction(w: WindowSettings): Promise<Result> {
+  try {
+    const r = await saveAutomationSettings(w);
+    refreshAutomation();
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+export async function saveRuleAction(input: RuleInput): Promise<Result<{ id: string }>> {
+  try {
+    const r = await saveRule(input);
+    refreshAutomation();
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+export async function setRuleStatusAction(id: string, status: RuleStatus): Promise<Result> {
+  try {
+    const r = await setRuleStatus(id, status);
+    refreshAutomation();
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+export async function deleteRuleAction(id: string): Promise<Result> {
+  try {
+    const r = await deleteRule(id);
+    refreshAutomation();
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Works out every enabled rule (or the ones named) right now. Never sends. */
+export async function previewAutomationAction(ruleIds?: string[]): Promise<Result<RunSummary>> {
+  try {
+    const r = await previewAutomation(ruleIds);
+    refreshAutomation();
+    return ok(r, `${r.wouldSend} would be sent`);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/** Who one rule reaches today. Logs nothing and sends nothing. */
+export async function ruleAudienceAction(ruleId: string): Promise<Result<RunSummary>> {
+  try {
+    return ok(await ruleAudience(String(ruleId)));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * The hourly pass, now, on the founder's word — with every gate the schedule
+ * has: the window, the service switch, Live rules only, the daily limit.
+ */
+export async function runLiveNowAction(): Promise<Result<RunSummary>> {
+  try {
+    await requireFounderDesk();
+    const r = await runAutomation({ source: "schedule" });
+    refreshAutomation();
+    return ok(r, r.runId ? `${r.sent} sent · ${r.wouldSend} previewed` : r.note);
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/* ------------------------------------------------------ WhatsApp DND */
+
+/** Put customers on WhatsApp DND or take them off, with the remark. */
+export async function setWhatsappDndAction(customerIds: string[], dnd: boolean, reason: string): Promise<Result> {
+  try {
+    const r = await setWhatsappDnd({ customerIds, dnd, reason });
+    revalidatePath("/founder/whatsapp/contacts");
+    refresh();
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+export async function dndHistoryAction(
+  customerId: string,
+): Promise<Result<{ dnd: boolean; reason: string; byName: string; at: string }[]>> {
+  try {
+    const rows = await dndHistory(customerId);
+    return ok(rows.map((r) => ({ dnd: r.dnd, reason: r.reason, byName: r.changedByName, at: r.at.toISOString() })));
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * Replies from before the webhook, read back from Wati. `dryRun` counts and
+ * writes nothing; the real run is idempotent, so pressing it twice is the
+ * same as pressing it once. The desk check is in the service.
+ */
+export async function backfillWatiRepliesAction(dryRun: boolean): Promise<Result<BackfillSummary>> {
+  try {
+    const r = await backfillWatiReplies({ dryRun: dryRun === true });
+    if (r.ok && !dryRun) refresh();
+    return r;
+  } catch (e) {
+    return fromThrown(e);
+  }
+}

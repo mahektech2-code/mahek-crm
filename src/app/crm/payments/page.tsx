@@ -1,4 +1,5 @@
-import { isManager, requireUser } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
+import { canFor } from "@/lib/access-control";
 import { getScope, scopeLabel } from "@/lib/scope";
 import {
   followUpWorklistPage,
@@ -16,6 +17,10 @@ import {
 } from "@/lib/services/payment-followup-service";
 import { WORKLIST_TABS, type WorklistTab } from "@/lib/services/payment-service";
 import { PaymentsScreen } from "./payments-screen";
+import {
+  latestMessageFor,
+  paymentReminderSummary,
+} from "@/lib/services/whatsapp-tracker-service";
 
 export const metadata = { title: "Payment follow-up - MahekOne CRM" };
 
@@ -96,6 +101,15 @@ export default async function PaymentsPage({
   // have netted off.
   const aging = agingSummary(bills);
 
+  // The newest WhatsApp message to each customer on this page, with how far it
+  // got — sent, delivered, read, replied. One read for the whole page. And the
+  // day's payment reminders over the same book, so the strip above the list
+  // answers "did today's reminders go" without opening anybody.
+  const [lastWa, reminders] = await Promise.all([
+    latestMessageFor(worklist.rows.map((r) => r.customerId)),
+    paymentReminderSummary(day, addDays(day, -1)),
+  ]);
+
   // Working days, from configuration — a collections push measured in calendar
   // days counts Sundays nobody is going to call on.
   const lastDay = `${day.slice(0, 8)}${String(daysInMonth(day)).padStart(2, "0")}`;
@@ -135,13 +149,15 @@ export default async function PaymentsPage({
       // reading it has to know whose. On their own book every row is theirs,
       // so naming a person on each one is a column of the same word repeated.
       showAssignee={scope === "team"}
-      isManager={isManager(user)}
+      canBulk={await canFor(user, "whatsapp.bulk")}
+      canExport={await canFor(user, "customer.export")}
       aging={aging}
       workingDaysLeft={workingDaysLeft}
       plan={plan}
       outcomes={offeredPayOutcomes()}
       metrics={metrics}
       batchCount={batch.templateId ? batch.customerIds.length : 0}
+      reminders={reminders}
       filters={{ tab, query: q, slowOnly, monthEnd }}
       pageInfo={{
         page: worklist.page,
@@ -156,6 +172,7 @@ export default async function PaymentsPage({
       rows={worklist.rows.map((r) => ({
         ...r,
         openBills: openBillsByCustomer.get(r.customerId) ?? [],
+        lastWa: lastWa[r.customerId] ?? null,
       }))}
     />
   );

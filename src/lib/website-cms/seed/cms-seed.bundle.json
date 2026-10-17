@@ -1,0 +1,1957 @@
+{
+  "version": 1,
+  "draft": false,
+  "revision": "seed-1",
+  "generatedAt": "1970-01-01T00:00:00.000Z",
+  "settings": {
+    "company": {
+      "name": "Mahek Marketing India",
+      "tagline": "Manufacturer of premium industrial thinners, solvents & specialty chemical products. Trusted by 1190+ customers across 8+ Indian states.",
+      "phoneDisplay": "+91 81081 06253",
+      "phoneHref": "tel:+918108106253",
+      "whatsappDisplay": "+91 81081 06253",
+      "whatsappHref": "https://wa.me/918108106253",
+      "email": "info@mahekindia.com",
+      "officeAddress": "Mumbai, Maharashtra, India",
+      "plantAddress": "Ambernath MIDC, Maharashtra, India",
+      "workingHours": "Mon–Sat, 9:30–6:30"
+    },
+    "stats": [
+      {
+        "value": 1190,
+        "suffix": "+",
+        "label": "Happy Customers",
+        "shortLabel": "Customers"
+      },
+      {
+        "value": 15,
+        "suffix": " T",
+        "label": "Daily Production",
+        "shortLabel": "Daily Output"
+      },
+      {
+        "value": 8,
+        "suffix": "+",
+        "label": "States Served",
+        "shortLabel": "States Served"
+      },
+      {
+        "value": 100,
+        "suffix": "+",
+        "label": "Distributor Network",
+        "shortLabel": "Distributor Network"
+      },
+      {
+        "value": 31,
+        "suffix": "+",
+        "label": "Years Experience",
+        "shortLabel": "Years"
+      },
+      {
+        "value": 1995,
+        "suffix": "",
+        "label": "1995",
+        "shortLabel": "1995",
+        "displayValue": "Since"
+      }
+    ],
+    "social": [
+      {
+        "label": "LinkedIn",
+        "href": null
+      },
+      {
+        "label": "Facebook",
+        "href": null
+      },
+      {
+        "label": "Instagram",
+        "href": null
+      },
+      {
+        "label": "YouTube",
+        "href": null
+      }
+    ],
+    "analyticsId": null
+  },
+  "navigation": {
+    "header": [
+      {
+        "label": "Home",
+        "href": "/"
+      },
+      {
+        "label": "About",
+        "href": "/about"
+      },
+      {
+        "label": "Products",
+        "href": "/products",
+        "mega": "products"
+      },
+      {
+        "label": "Industries",
+        "href": "/industries",
+        "mega": "industries"
+      },
+      {
+        "label": "Manufacturing & Quality",
+        "href": "/manufacturing",
+        "mega": "manufacturing"
+      },
+      {
+        "label": "Gallery",
+        "href": "/gallery"
+      },
+      {
+        "label": "Distributor",
+        "href": "/distributor"
+      },
+      {
+        "label": "Career",
+        "href": "/career"
+      },
+      {
+        "label": "Contact",
+        "href": "/contact"
+      }
+    ],
+    "manufacturingMega": [
+      {
+        "label": "Manufacturing Facility",
+        "href": "/manufacturing",
+        "description": "Ambernath MIDC plant, capacity & process"
+      },
+      {
+        "label": "Quality Control",
+        "href": "/quality",
+        "description": "Testing & certification process"
+      }
+    ],
+    "footerCompany": [
+      {
+        "label": "About Us",
+        "href": "/about"
+      },
+      {
+        "label": "Manufacturing",
+        "href": "/manufacturing"
+      },
+      {
+        "label": "Quality",
+        "href": "/quality"
+      },
+      {
+        "label": "Career",
+        "href": "/career"
+      },
+      {
+        "label": "Gallery",
+        "href": "/gallery"
+      }
+    ],
+    "footerQuick": [
+      {
+        "label": "Become a Distributor",
+        "href": "/distributor"
+      },
+      {
+        "label": "Career",
+        "href": "/career"
+      },
+      {
+        "label": "Contact Us",
+        "href": "/contact"
+      }
+    ],
+    "legal": [
+      {
+        "label": "Privacy Policy",
+        "href": "/privacy-policy"
+      },
+      {
+        "label": "Terms & Conditions",
+        "href": "/terms-and-conditions"
+      },
+      {
+        "label": "Refund Policy",
+        "href": "/refund-policy"
+      },
+      {
+        "label": "Shipping Policy",
+        "href": "/shipping-policy"
+      }
+    ]
+  },
+  "products": [
+    {
+      "id": "MTI-01",
+      "slug": "universal-thinner",
+      "name": "Mahek Universal Thinner",
+      "icon": "droplet",
+      "image": "/Mahek%20Universal%20Thinner/Mahek%20Universal%20Thinner%20Combo.webp",
+      "imageScale": {
+        "grid": 2.2,
+        "heroMobile": 1,
+        "heroDesktop": 2.3
+      },
+      "images": [
+        {
+          "size": "Combo",
+          "src": "/Mahek%20Universal%20Thinner/Mahek%20Universal%20Thinner%20Combo.webp",
+          "scale": {
+            "mobile": 1.19,
+            "desktop": 1.75
+          }
+        },
+        {
+          "size": "500ml",
+          "src": "/Mahek%20Universal%20Thinner/Mahek%20Universal%20Thinner%20500ml.webp"
+        },
+        {
+          "size": "1L",
+          "src": "/Mahek%20Universal%20Thinner/Mahek%20Universal%20Thinner%201L.webp"
+        },
+        {
+          "size": "5L",
+          "src": "/Mahek%20Universal%20Thinner/Mahek%20Universal%20Thinner%205L.webp"
+        },
+        {
+          "size": "20L",
+          "src": "/Mahek%20Universal%20Thinner/Mahek%20Universal%20Thinner%2020L.webp"
+        },
+        {
+          "size": "20L Tin",
+          "src": "/Mahek%20Universal%20Thinner/Mahek%20Universal%20Thinner%2020L%20tin.webp"
+        }
+      ],
+      "tag": "Best Seller",
+      "short": "One Thinner for all your painting needs",
+      "description": [
+        "Mahek Universal Thinner is a premium-grade, bloom-resistant thinner with a medium to fast-drying formulation that delivers excellent gloss and self-leveling finishes, making it highly versatile for use with enamel, acrylic, automotive paints, primers, lacquers, sanding sealer, as well as ideal for wood finishes, furniture polish, and automotive coatings."
+      ],
+      "applications": [
+        "Synthetic Enamel",
+        "Metal Primer",
+        "Wood Polish",
+        "PU paints",
+        "Epoxy paints",
+        "Melamine Paints"
+      ],
+      "benefits": [
+        "Fast Drying",
+        "Glossy Finish",
+        "Low Odor",
+        "Tested Quality",
+        "Multi-purpose Use"
+      ],
+      "industries": [
+        "Auto Paints",
+        "Furniture Polish",
+        "Car Colors"
+      ],
+      "packaging": [
+        "500ml",
+        "1L",
+        "5L",
+        "10L",
+        "20L",
+        "20L Tin"
+      ],
+      "specs": {
+        "Appearance": "Crystal Clear",
+        "Odor": "Fruity Smell",
+        "Drying Time": "Medium to Fast",
+        "Specific Gravity": "0.86 ± 0.05 ",
+        "Shelf Life": "6 months (sealed)"
+      }
+    },
+    {
+      "id": "MTI-02",
+      "slug": "nc-thinner",
+      "name": "Mahek NC Thinner",
+      "icon": "flask",
+      "image": "/Mahek%20NC%20Thinner/Mahek%20N.C%20Thinner%20Combo.webp",
+      "imageScale": {
+        "grid": 2.2,
+        "heroMobile": 1,
+        "heroDesktop": 2.3
+      },
+      "images": [
+        {
+          "size": "Combo",
+          "src": "/Mahek%20NC%20Thinner/Mahek%20N.C%20Thinner%20Combo.webp",
+          "scale": {
+            "mobile": 1.19,
+            "desktop": 1.75
+          }
+        },
+        {
+          "size": "500ml",
+          "src": "/Mahek%20NC%20Thinner/Mahek%20NC%20Thinner%20500ml.webp"
+        },
+        {
+          "size": "1L",
+          "src": "/Mahek%20NC%20Thinner/Mahek%20NC%20Thinner%201L.webp"
+        },
+        {
+          "size": "5L",
+          "src": "/Mahek%20NC%20Thinner/Mahek%20NC%20Thinner%205L.webp"
+        },
+        {
+          "size": "10L",
+          "src": "/Mahek%20NC%20Thinner/Mahek%20NC%20Thinner%2010L.webp"
+        },
+        {
+          "size": "20L",
+          "src": "/Mahek%20NC%20Thinner/Mahek%20NC%20Thinner%2020L.webp"
+        }
+      ],
+      "tag": "Industrial Grade",
+      "short": "Precision Formulated for Perfect Flow & Finish.",
+      "description": [
+        "Mahek N.C. Thinner is a specially formulated blend for reducing the viscosity of lacquer paints, wood polishes, and automotive coatings. It is quick-drying, low in odor, and ensures smooth consistency for uniform application. Ideal for enamel, acrylic, and lacquer-based systems, it helps achieve a bloom-resistant, self-leveling, and high-gloss finish for professional-grade results."
+      ],
+      "applications": [
+        "Cleaning Spray Guns, Rollers, and Brushes",
+        "Synthetic Enamel",
+        "Metal Primer",
+        "ASPA",
+        "Lac Dana"
+      ],
+      "benefits": [
+        "Fast Drying",
+        "Glossy Finish",
+        "Low Odor",
+        "Tested Quality",
+        "Multi-Purpose Use"
+      ],
+      "industries": [
+        "Decorative Paints",
+        "Hardware Shops",
+        "Furniture"
+      ],
+      "packaging": [
+        "500ml",
+        "1L",
+        "5L",
+        "10L",
+        "20L",
+        "20L Tin"
+      ],
+      "specs": {
+        "Appearance": "Clear, colourless liquid",
+        "Odor": "Sweet & Strong",
+        "Drying Time": "Fast Drying",
+        "Specific Gravity": "0.85 ± 0.05",
+        "Shelf Life": "6 months (sealed)"
+      }
+    },
+    {
+      "id": "MTI-03",
+      "slug": "pu-thinner",
+      "name": "Mahek PU Thinner",
+      "icon": "beaker",
+      "image": "/Mahek%20PU%20Thinner/P.U%20Thinner%20Combo.webp",
+      "imageScale": {
+        "grid": 1.9,
+        "heroMobile": 1,
+        "heroDesktop": 2.3
+      },
+      "images": [
+        {
+          "size": "Combo",
+          "src": "/Mahek%20PU%20Thinner/P.U%20Thinner%20Combo.webp",
+          "scale": {
+            "mobile": 1.19,
+            "desktop": 1.75
+          }
+        },
+        {
+          "size": "1L",
+          "src": "/Mahek%20PU%20Thinner/Mahek%20PU%20Thinner%201L.webp",
+          "scale": {
+            "mobile": 1.4,
+            "desktop": 1.55
+          }
+        },
+        {
+          "size": "1L Tin",
+          "src": "/Mahek%20PU%20Thinner/Mahek%20PU%20Thinner%201L%20tin.webp"
+        },
+        {
+          "size": "5L",
+          "src": "/Mahek%20PU%20Thinner/Mahek%20PU%20Thinner%205L.webp"
+        },
+        {
+          "size": "20L",
+          "src": "/Mahek%20PU%20Thinner/Mahek%20PU%20Thinner%2020L.webp"
+        },
+        {
+          "size": "20L Tin",
+          "src": "/Mahek%20PU%20Thinner/Mahek%20PU%20Thinner%2020L%20tin.webp",
+          "scale": {
+            "mobile": 1.4,
+            "desktop": 1.55
+          }
+        }
+      ],
+      "tag": "Premium",
+      "short": "Premium Polyurethane Thinner for Professional Finishes.",
+      "description": [
+        "Mahek Polyurethane (P.U.) Thinner is a high-performance thinner formulated for the thinning of P.U. paints. It is ideal for solvent-based polyurethane sealers, primers, clear, melamine, and pigmented topcoats—ensuring superior paint consistency and smooth, glossy application."
+      ],
+      "applications": [
+        "P.U. Melamine & Sealers",
+        "PU Wood Polish",
+        "PU Paints"
+      ],
+      "benefits": [
+        "Specialy formulated for PU paints",
+        "Pigmented topcoats",
+        "Superior paint consistency",
+        "Smooth and glossy application"
+      ],
+      "industries": [
+        "Auto Paints",
+        "Furniture Polish",
+        "Car Colors"
+      ],
+      "packaging": [
+        "1L",
+        "5L",
+        "20L",
+        "1L Tin",
+        "20L Tin"
+      ],
+      "specs": {
+        "Appearance": "Crystal Clear",
+        "Odor": "Fruity Smell",
+        "Drying Time": "Medium to Fast",
+        "Specific Gravity": "0.86 ± 0.05",
+        "Shelf Life": "6 months (sealed)"
+      }
+    },
+    {
+      "id": "MTI-04",
+      "slug": "nano-thinner",
+      "name": "Mahek Nano Thinner",
+      "icon": "target",
+      "image": "/Mahek%20Nano%20Thinner/Maruti%20Nano%20Thinner%20Combo.webp",
+      "imageScale": {
+        "grid": 2.1,
+        "heroMobile": 1,
+        "heroDesktop": 2.3
+      },
+      "images": [
+        {
+          "size": "Combo",
+          "src": "/Mahek%20Nano%20Thinner/Maruti%20Nano%20Thinner%20Combo.webp",
+          "scale": {
+            "mobile": 1.19,
+            "desktop": 1.75
+          }
+        },
+        {
+          "size": "500ml",
+          "src": "/Mahek%20Nano%20Thinner/Mahek%20Nano%20Thinner%20500ml.webp"
+        },
+        {
+          "size": "1L",
+          "src": "/Mahek%20Nano%20Thinner/Mahek%20Nano%20Thinner%201L.webp"
+        },
+        {
+          "size": "10L",
+          "src": "/Mahek%20Nano%20Thinner/Mahek%20Nano%20Thinner%2010L.webp",
+          "scale": {
+            "mobile": 1.4,
+            "desktop": 1.5
+          }
+        },
+        {
+          "size": "20L",
+          "src": "/Mahek%20Nano%20Thinner/Mahek%20Nano%20Thinner%2020L.webp"
+        }
+      ],
+      "tag": "General Purpose",
+      "short": "Premium Quality, Multipurpose Performance.",
+      "description": [
+        "Nano Thinner is designed for superior cleaning and thinning performance in paints and primers. It thins out oil-based paints & primers, easily cleans brushes, rollers, spray guns, pipes, and equipment, and is widely used across paint, hardware, and industrial applications. With fast-drying, low odor, and eco-conscious formulation, Nano Thinner ensures superior results at competitive pricing."
+      ],
+      "applications": [
+        "Cleaning Spray Guns, Rollers, and Brushes",
+        "Synthetic Enamel",
+        "Metal Primer",
+        "ASPA",
+        "Lac Dana"
+      ],
+      "benefits": [
+        "Fast Drying ",
+        "Glossy Finish",
+        "Low Odor",
+        "Tested Quality ",
+        "Multi-Purpose Use"
+      ],
+      "industries": [
+        "Auto Paints",
+        " Furniture Polish",
+        "Hardware"
+      ],
+      "packaging": [
+        "500ml",
+        "1L",
+        "5L",
+        "10L",
+        "20L"
+      ],
+      "specs": {
+        "Appearance": "Clear, water-white liquid",
+        "Odor": "Low odor",
+        "Drying Time": "Super Quick",
+        "Specific Gravity": "0.94 ± 0.05",
+        "Shelf Life": "6 months (sealed)"
+      }
+    },
+    {
+      "id": "MTI-07",
+      "slug": "mylac-135-melamine-thinner",
+      "name": "Mylac-135 Melamine Thinner",
+      "icon": "layers",
+      "image": "/Mylac-135%20Melamine%20Thinner/Mylac-135%20Melamine%20Thinner%20Combo.webp",
+      "imageScale": {
+        "grid": 1.57,
+        "heroMobile": 1.13,
+        "heroDesktop": 1.8
+      },
+      "images": [
+        {
+          "size": "Combo",
+          "src": "/Mylac-135%20Melamine%20Thinner/Mylac-135%20Melamine%20Thinner%20Combo.webp"
+        },
+        {
+          "size": "1L",
+          "src": "/Mylac-135%20Melamine%20Thinner/Mylac-135%20Melamine%20Thinner%201L.webp"
+        },
+        {
+          "size": "5L",
+          "src": "/Mylac-135%20Melamine%20Thinner/Mylac-135%20Melamine%20Thinner%205L.webp"
+        },
+        {
+          "size": "20L",
+          "src": "/Mylac-135%20Melamine%20Thinner/Mylac-135%20Melamine%20Thinner%2020L.webp"
+        }
+      ],
+      "tag": "Premium",
+      "short": "Delivers smooth flow, excellent leveling, and lasting gloss at cost-effective pricing.",
+      "description": [
+        "MYLAC-135 Melamine Thinner is a premium solvent-based reducing agent designed to provide ideal viscosity for melamine paints and polishes.It ensures uniform flow, excellent leveling, and a deep mirror-like gloss, giving furniture and coatings a flawless, durable finish. Known for its consistency, clarity, and low residue, MYLAC-135 combines performance and affordability trusted by professional applicators across India."
+      ],
+      "applications": [
+        "Polish",
+        "Melamyne",
+        "Lac Dana"
+      ],
+      "benefits": [
+        "Fast Drying ",
+        "Glossy Finish",
+        "Low Odor",
+        "Tested Quality",
+        "Multi-Purpose Use"
+      ],
+      "industries": [
+        "Decorative Paints",
+        "Hardware Shops",
+        "Furniture"
+      ],
+      "packaging": [
+        "1L",
+        "5L",
+        "20L"
+      ],
+      "specs": {
+        "Appearance": "Clear, water-white liquid",
+        "Odor": "Sweet & Strong",
+        "Drying Time": "Fast Drying",
+        "Specific Gravity": "0.88 ± 0.05",
+        "Shelf Life": "6 months (sealed)"
+      }
+    },
+    {
+      "id": "MTI-08",
+      "slug": "mahek-epoxy-thinner",
+      "name": "Mahek Epoxy Thinner",
+      "icon": "factory",
+      "image": "/Mahek%20Epoxy%20Thinner/Mahek%20Epoxy%20Thinner%20Combo.webp",
+      "imageScale": {
+        "grid": 1.57,
+        "heroMobile": 1.13,
+        "heroDesktop": 1.8
+      },
+      "images": [
+        {
+          "size": "Combo",
+          "src": "/Mahek%20Epoxy%20Thinner/Mahek%20Epoxy%20Thinner%20Combo.webp"
+        },
+        {
+          "size": "1L",
+          "src": "/Mahek%20Epoxy%20Thinner/Mahek%20Epoxy%20Thinner%201L.webp"
+        },
+        {
+          "size": "5L",
+          "src": "/Mahek%20Epoxy%20Thinner/Mahek%20Epoxy%20Thinner%205L.webp"
+        },
+        {
+          "size": "20L",
+          "src": "/Mahek%20Epoxy%20Thinner/Mahek%20Epoxy%20Thinner%2020L.webp",
+          "scale": {
+            "mobile": 1,
+            "desktop": 1
+          }
+        }
+      ],
+      "tag": "Premium",
+      "short": "Engineered for Superior Finish & Durability.",
+      "description": [
+        "Mahek Epoxy Thinner is a carefully formulated solvent blend designed to thin epoxy paints and clean application tools. It ensures perfect film thickness, reduces orange peel, and minimizes dry spots or spray dust. With a fast-drying, bloom-resistant, high-gloss, and self-leveling formulation, it delivers consistent performance for epoxy-based primers and coatings."
+      ],
+      "applications": [
+        "Epoxy Primer",
+        "Epoxy Flooring",
+        "Epoxy Paints"
+      ],
+      "benefits": [
+        "Fast Drying",
+        "Glossy Finish",
+        "Low Odor",
+        "Tested Quality ",
+        "Multi-Purpose Use"
+      ],
+      "industries": [
+        "Industrial Counters"
+      ],
+      "packaging": [
+        "1L",
+        "5L",
+        "20L",
+        "20L Tin"
+      ],
+      "specs": {
+        "Appearance": "Crystal Clear",
+        "Odor": "Fruity Smell",
+        "Drying Time": "Medium to Fast",
+        "Specific Gravity": "0.85 ± 0.05",
+        "Shelf Life": "6 months (sealed)"
+      }
+    },
+    {
+      "id": "MTI-09",
+      "slug": "mahek-polish-thinner-m1433",
+      "name": "Mahek Polish Thinner M1433",
+      "icon": "droplet",
+      "image": "/images/1433.webp",
+      "imageScale": {
+        "grid": 1.7,
+        "heroMobile": 1,
+        "heroDesktop": 1.8
+      },
+      "tag": "Polish",
+      "short": "Crystal-Clean Performance for Every Polish",
+      "description": [
+        "The Mahek M-1433 Thinner is specially formulated for removing sealants, oil, grease, wax, and paint residues. It provides powerful cleaning and degreasing, evaporates quickly without residue, and is widely used across furniture, paint, and retail industries for achieving smooth, residue-free finishes."
+      ],
+      "applications": [
+        "Cleaning Spray Guns, Rollers, and Brushes",
+        "Wood Cleaning",
+        "Wood Polish",
+        "Metal Cleaning",
+        "Lac Dana"
+      ],
+      "benefits": [
+        "Fast Drying",
+        "Sweet Fruity Smell",
+        "Crystal Clear",
+        "Smooth and Residue-Free Finishes"
+      ],
+      "industries": [
+        "Industrial Counters",
+        "Hardware Shops"
+      ],
+      "packaging": [
+        "1L",
+        "5L",
+        "20L"
+      ],
+      "specs": {
+        "Appearance": "Crystal Clear",
+        "Odor": "Sweet Fruity Smell",
+        "Drying Time": "Fast Drying",
+        "Specific Gravity": "0.85 ± 0.05",
+        "Shelf Life": "6 months (sealed)"
+      }
+    },
+    {
+      "id": "MTI-10",
+      "slug": "mahek-mild-cleaner-m164",
+      "name": "Mahek Mild Cleaner M164",
+      "icon": "beaker",
+      "image": "/images/164.webp",
+      "imageScale": {
+        "grid": 1.7,
+        "heroMobile": 1,
+        "heroDesktop": 1.8
+      },
+      "tag": "Cleaner",
+      "short": "Bringing Natural Beauty Back to Wood & Metal.",
+      "description": [
+        "Mahek M-164 Thinner is a ready-to-use mild cleaner that restores the natural appearance of weathered, gray, and dirty decks. It effectively removes mildew, algae, and fungus stains, providing deep cleaning for outdoor wood, furniture, and composite decks."
+      ],
+      "applications": [
+        "Wood Cleaning",
+        "Metal Cleaning"
+      ],
+      "benefits": [
+        "Fast Drying",
+        "Crystal Clear",
+        "Removes mildew, algae, and fungus stains",
+        "Deep cleaning for outdoor wood, furniture"
+      ],
+      "industries": [
+        "Furniture Shops",
+        "Metal Industries"
+      ],
+      "packaging": [
+        "1L",
+        "5L",
+        "20L"
+      ],
+      "specs": {
+        "Appearance": "Crystal Clear",
+        "Odor": "Mild Smell",
+        "Drying Time": "Fast Drying",
+        "Specific Gravity": "0.80 ± 0.05",
+        "Shelf Life": "6 months (sealed)"
+      }
+    },
+    {
+      "id": "MTI-11",
+      "slug": "enamel-gp-thinner",
+      "name": "Mahek Enamel / G.P. Thinner",
+      "icon": "flask",
+      "image": "/images/Mahek_Enamel/GP__Thinner.webp",
+      "imageScale": {
+        "grid": 1.15,
+        "heroMobile": 0.85,
+        "heroDesktop": 1.15
+      },
+      "tag": "General Purpose",
+      "short": "Rich Oil-Base Reducing Agent for Premium Enamel & Oil Paint Systems",
+      "description": [
+        "Mahek Enamel Thinner (MTO Base) is a premium oil-based reducing agent specially formulated to provide the required viscosity for enamel and oil paints. It ensures smooth flow, uniform film formation, and a rich high-gloss finish. Designed for both thinning and cleaning applications, it effectively reduces paint thickness while maintaining surface quality. Ideal for industrial, hardware, and decorative paint applications, Mahek Enamel Thinner delivers consistent performance at cost-effective pricing."
+      ],
+      "applications": [
+        "Cleaning Spray Guns, Rollers, and Brushes",
+        "Synthetic Enamel",
+        "Oil Primer",
+        "ASPA"
+      ],
+      "benefits": [
+        "Fast Drying",
+        "Glossy Finish",
+        "Low Odor",
+        "Tested Quality",
+        "Multi-Purpose Use"
+      ],
+      "industries": [],
+      "packaging": [
+        "800ml",
+        "1L",
+        "4L",
+        "5L",
+        "20L"
+      ],
+      "specs": {
+        "Appearance": "Clear liquid",
+        "Odor": "Low Odor",
+        "Drying Time": "Slow Drying",
+        "Specific Gravity": "0.775 ± 0.05",
+        "Shelf Life": "6 months (sealed)"
+      }
+    }
+  ],
+  "industries": [
+    {
+      "slug": "paint-industry",
+      "name": "Paint Industry",
+      "icon": "droplet",
+      "image": "/images/industries/Paint%20Industry.webp",
+      "short": "Thinning & reduction solvents for paint manufacturers and formulators.",
+      "productSlugs": [
+        "universal-thinner",
+        "pu-thinner",
+        "nano-thinner"
+      ]
+    },
+    {
+      "slug": "furniture",
+      "name": "Furniture Manufacturing",
+      "icon": "layers",
+      "image": "/images/industries/Furniture%20Manufacturing.webp",
+      "short": "Fast-drying, high-gloss finishing solvents for wood and furniture coating lines.",
+      "productSlugs": [
+        "universal-thinner",
+        "pu-thinner",
+        "nc-thinner",
+        "mylac-135-melamine-thinner"
+      ]
+    },
+    {
+      "slug": "automobile",
+      "name": "Automobile Industry",
+      "icon": "truck",
+      "image": "/images/industries/Automobile%20Industry.webp",
+      "short": "Precision thinners for OEM and refinish automotive coating systems.",
+      "productSlugs": [
+        "universal-thinner",
+        "pu-thinner",
+        "nano-thinner"
+      ]
+    },
+    {
+      "slug": "cleaning-industry",
+      "name": "Cleaning Industry",
+      "icon": "beaker",
+      "image": "/images/Mahek_Enamel/Cleaning%20Industry.webp",
+      "short": "Multi-purpose cleaning solvents for degreasing, surface preparation and equipment maintenance.",
+      "productSlugs": []
+    },
+    {
+      "slug": "general-purpose-thinner",
+      "name": "General Purpose Thinner",
+      "icon": "flask",
+      "image": "/images/industries/General%20purpose%20thinner.webp",
+      "short": "General-purpose thinning solutions for everyday industrial and commercial applications.",
+      "productSlugs": []
+    },
+    {
+      "slug": "industrial-manufacturing",
+      "name": "Industrial Manufacturing",
+      "icon": "gauge",
+      "image": "/images/industries/Industrial%20Manufacturing.webp",
+      "short": "Reliable bulk-grade solvents for degreasing, cleaning and processing lines.",
+      "productSlugs": [
+        "universal-thinner",
+        "nano-thinner",
+        "nc-thinner"
+      ]
+    },
+    {
+      "slug": "marine",
+      "name": "Marine Coatings",
+      "icon": "globe",
+      "image": "/images/industries/Marine%20Coatings.webp",
+      "short": "Durable coating-grade thinners built for marine-grade PU and protective systems.",
+      "productSlugs": [
+        "pu-thinner",
+        "mahek-epoxy-thinner",
+        "universal-thinner"
+      ]
+    },
+    {
+      "slug": "wood-coating",
+      "name": "Wood Cleaning",
+      "icon": "award",
+      "image": "/images/industries/Wood%20Cleaning.webp",
+      "short": "Specialty NC and PU thinners for fine wood coating and polishing applications.",
+      "productSlugs": [
+        "universal-thinner",
+        "mylac-135-melamine-thinner",
+        "pu-thinner",
+        "nc-thinner"
+      ]
+    }
+  ],
+  "gallery": [
+    {
+      "category": "Factory",
+      "label": "Ambernath MIDC Plant — Exterior",
+      "image": "/images/factor/Ambernath%20MIDC%20Plant%20%E2%80%94%20Exterio.jpg"
+    },
+    {
+      "category": "Factory",
+      "label": "Production Line 1",
+      "image": "/images/factor/manufacturing.jpg"
+    },
+    {
+      "category": "Factory",
+      "label": "Raw Material Storage Yard",
+      "image": "/images/factor/raw%20matarial.jpg"
+    },
+    {
+      "category": "Factory",
+      "label": "Dispatch Bay",
+      "image": "/images/factor/Dispatch1.jpg"
+    },
+    {
+      "category": "Dealer Meet",
+      "label": "Annual Dealer Meet 2025",
+      "image": "/images/dealer%20meeting/dealers%20first.jpg"
+    },
+    {
+      "category": "Dealer Meet",
+      "label": "Dealer Network Visit",
+      "image": "/images/dealer%20meeting/dealers.jpg",
+      "imagePosition": "50% 15%"
+    },
+    {
+      "category": "Dealer Meet",
+      "label": "Regional Dealer Conference",
+      "image": "/images/dealer%20meeting/distributors.jpg",
+      "imagePosition": "50% 22%"
+    },
+    {
+      "category": "Dealer Meet",
+      "label": "Dealer Meet — Store Launch",
+      "image": "/images/dealer%20meeting/distributor2.webp"
+    },
+    {
+      "category": "Dealer Meet",
+      "label": "Distributor Visit",
+      "image": "/images/dealer%20meeting/distributor3.webp"
+    },
+    {
+      "category": "Dealer Meet",
+      "label": "Distributor Store Visit",
+      "image": "/images/dealer%20meeting/distributor4.webp",
+      "imagePosition": "50% 30%"
+    },
+    {
+      "category": "Dealer Meet",
+      "label": "Dealer Outlet Visit",
+      "image": "/images/dealer%20meeting/distributor5.webp"
+    },
+    {
+      "category": "Painter Meet",
+      "label": "Painter Training Workshop",
+      "image": "/images/painter%20meeting/painters%20meeting.jpg"
+    }
+  ],
+  "jobs": [
+    {
+      "title": "Production Supervisor",
+      "department": "Manufacturing",
+      "location": "Ambernath MIDC",
+      "type": "Full-time"
+    },
+    {
+      "title": "Quality Control Chemist",
+      "department": "Laboratory",
+      "location": "Ambernath MIDC",
+      "type": "Full-time"
+    },
+    {
+      "title": "Area Sales Executive",
+      "department": "Sales",
+      "location": "Mumbai",
+      "type": "Full-time"
+    },
+    {
+      "title": "Logistics Coordinator",
+      "department": "Supply Chain",
+      "location": "Mumbai",
+      "type": "Full-time"
+    }
+  ],
+  "testimonials": [
+    {
+      "name": "R. Deshmukh",
+      "role": "Proprietor",
+      "company": "Deshmukh Paint Traders, Pune",
+      "quote": "Consistent quality batch after batch — our painters trust the finish every single time. Delivery has never been late in three years.",
+      "initials": "RD"
+    },
+    {
+      "name": "S. Iyer",
+      "role": "Purchase Manager",
+      "company": "Iyer Furniture Works, Coimbatore",
+      "quote": "Switched our entire NC thinner supply to Mahek. The evaporation rate is far more consistent than our previous vendor.",
+      "initials": "SI"
+    },
+    {
+      "name": "A. Khan",
+      "role": "Distributor",
+      "company": "Khan Chemicals, Lucknow",
+      "quote": "Becoming a Mahek distributor was straightforward — good margins, marketing support and a sales team that actually responds.",
+      "initials": "AK"
+    },
+    {
+      "name": "V. Patil",
+      "role": "Plant Head",
+      "company": "Patil Auto Components, Nashik",
+      "quote": "We moved our OEM private-label thinner requirement to Mahek. Their MOQ and lead times fit our production schedule perfectly.",
+      "initials": "VP"
+    }
+  ],
+  "milestones": [
+    {
+      "year": "1995",
+      "title": "Foundation of the Company",
+      "description": "Melody Chemical was established by Bipin Doshi in Bhandup, Mumbai, with a focus on manufacturing thinners and solvents in bulk quantities. This marked the beginning of our journey in the chemical manufacturing industry."
+    },
+    {
+      "year": "2005",
+      "title": "Building Our Product Portfolio",
+      "description": "Mahek Marketing was established, with the business shifting its operations to Bhiwandi. As customer requirements evolved, we expanded beyond a single product and developed a broader portfolio for diverse applications across the paint, coating, and industrial markets. Our portfolio grew to include products such as Mahek Universal Thinner, Mahek NC Thinner, Mahek PU Thinner, Mahek Nano Thinner, and specialty solvent products."
+    },
+    {
+      "year": "2020",
+      "title": "Reassessing & Planning for Growth",
+      "description": "The COVID-19 pandemic highlighted key areas where the business needed to evolve. We undertook a detailed review of our operations, identified areas for improvement, and strengthened our business policies and processes. This period also marked the development of clear growth goals and a focused roadmap for the future."
+    },
+    {
+      "year": "2022",
+      "title": "Ambernath MIDC Manufacturing Expansion",
+      "description": "The development of our manufacturing facility at Ambernath MIDC, Maharashtra, marked an important stage in our growth. It strengthened our control over production, quality, batch consistency, packaging and supply planning."
+    },
+    {
+      "year": "2023",
+      "title": "Growing Our Customer Network",
+      "description": "Our growth has been driven by the relationships we built with paint dealers, distributors, industrial customers, painters, contractors and retailers. Our customer network grew to 850+ customers, reflecting the trust placed in our products and service."
+    },
+    {
+      "year": "2024",
+      "title": "Expanding Across India",
+      "description": "We expanded beyond our original market and established a presence across 8+ states in India. Our focus evolved from simply selling products to building a stronger and more structured distribution network for long-term national growth."
+    },
+    {
+      "year": "2025",
+      "title": "Product & Market Innovation",
+      "description": "As customer requirements continued to evolve, we began focusing more strongly on specialty applications and new product opportunities, including solutions for industrial and adhesive-related applications. Our approach remains focused on identifying real customer requirements and developing practical product solutions around them."
+    },
+    {
+      "year": "2026",
+      "title": "Building the Next Generation of Mahek",
+      "description": "We are strengthening manufacturing, sales, technology, customer engagement, distribution and product development to prepare Mahek Marketing India for the next stage of structured growth."
+    }
+  ],
+  "pages": {
+    "home": {
+      "hero.badge": "QUALITY STANDS FIRST",
+      "hero.titleLead": "Premium Industrial",
+      "hero.titleHighlight": "Thinners",
+      "hero.titleTail": "& Solvent Solutions",
+      "hero.description": "Trusted by dealers, distributors and industries across India. Manufactured for consistency, delivered at scale.",
+      "products.title": "Engineered thinner & solvent solutions for every application",
+      "products.description": "Formulated for Performance. Built for Consistency. Trusted Across Industries.",
+      "industries.title": "Serving the industries that build India",
+      "industries.description": "Our products are formulated for the specific demands of eight core industries.",
+      "why.title": "Built on consistency, chosen for reliability",
+      "why.intro": "Thirty-one years of manufacturing discipline, distilled into every batch that leaves our Ambernath facility.",
+      "facility.title": "Inside our Ambernath MIDC manufacturing plant",
+      "testimonials.title": "What dealers & partners say",
+      "dealers.title": "100+ dealers strong, and growing every quarter",
+      "dealers.text": "Join a distributor network built on consistent supply, transparent margins and dedicated territory support across India.",
+      "gallery.title": "A look inside Mahek",
+      "enquiry.title": "Send us an enquiry",
+      "enquiry.description": "Product questions, dealer enquiries or bulk orders — our sales team responds within 24 hours."
+    },
+    "about": {
+      "hero.eyebrow": "About",
+      "hero.title": "About Mahek Marketing India",
+      "hero.description": "30+ years of manufacturing discipline behind every material we dispatch.",
+      "story.title": "From a small blending unit to a nationwide manufacturer",
+      "story.paragraph1": "Mahek Marketing India began as a small thinner blending operation in Mumbai, built on a simple premise: dealers and industrial buyers deserve consistent quality at a fair price, every single time.",
+      "story.paragraph2": "Today, our Ambernath MIDC facility manufactures 15 tons of industrial thinners and specialty solvents daily, serving 1190+ customers across more than 8 Indian states — without ever compromising on the batch-to-batch consistency that built our reputation.",
+      "mission.title": "Our Mission",
+      "mission.text": "Our mission is to deliver high-quality products and continuously introduce new offerings under our white-label brand. We are building a strong national presence with regional depots across East, West, North, South, and Central India. Through excellent service, transparency, and a customer-first approach, we aim to ensure satisfaction and foster long-term relationships with every customer we serve.",
+      "vision.title": "Our Vision",
+      "vision.text": "Our vision is to become the top leader and the largest supply chain partner in India’s For paints and coatings industry — supported by a strong nationwide network of salesmen, dealers, and distributors. We are committed to making Mahek Marketing India’s products available in every district of the country, for a lifetime, by offering great value, innovative solutions, and building a ₹10,000 crore business through trusted, long-term relationships.",
+      "values.title": "What guides every batch we manufacture",
+      "timeline.title": "Our journey so far",
+      "cta.title": "Want to see our facility in person?",
+      "cta.text": "Schedule a plant visit or explore our manufacturing process online."
+    },
+    "manufacturing": {
+      "hero.eyebrow": "Manufacturing",
+      "hero.title": "Manufacturing Facility",
+      "hero.description": "A look inside our Ambernath MIDC plant — from raw material intake to final dispatch.",
+      "process.title": "From raw material to dispatch",
+      "tour.title": "Watch our drone tour of the Ambernath plant",
+      "tour.text": "See our production lines, laboratory, warehouse and dispatch bay from above — a complete view of how consistency is engineered at scale."
+    },
+    "quality": {
+      "hero.eyebrow": "Quality",
+      "hero.title": "Manufacturing & Quality Assurance",
+      "hero.description": "Every batch passes through a multi-stage inspection process before it reaches your business.",
+      "certifications.title": "Backed by recognised quality standards",
+      "certifications.items": [
+        "ISO 9001:2015 Certified",
+        "Fire & Safety Compliance",
+        "Pollution Control Board Approved"
+      ]
+    },
+    "distributor": {
+      "hero.eyebrow": "Distributor",
+      "hero.title": "Become a Distributor",
+      "hero.description": "Join a growing network of 100+ dealers across India — consistent supply, transparent margins.",
+      "support.title": "What you get as a Mahek distributor",
+      "support.items": [
+        "Structured onboarding & product training",
+        "Marketing material and POS branding kits",
+        "Access to annual dealer meets & painter training",
+        "Dedicated sales team point of contact",
+        "Flexible order quantities to match demand"
+      ],
+      "documents.title": "Required Documents",
+      "documents.items": [
+        "GST Registration Certificate",
+        "Business PAN Card",
+        "Firm Registration / Shop Act",
+        "Bank Account Details"
+      ],
+      "apply.title": "Apply to Become a Distributor",
+      "apply.text": "Share your business details and our sales team will review your application and get back to you.",
+      "faq.title": "Common Questions"
+    },
+    "contact": {
+      "hero.eyebrow": "Contact",
+      "hero.title": "Contact Us",
+      "hero.description": "Reach our sales team, visit our office or plant, or send a direct enquiry.",
+      "map.title": "Find Our Office",
+      "address.office": "C/602, Sai Srishti, LBS Marg, Bhandup West, Mumbai 78, Maharashtra, India",
+      "address.plant": "Plot No. M30, Pale MIDC, Ambernath East - 421506, Maharashtra, India",
+      "persons.title": "Contact Persons"
+    },
+    "career": {
+      "hero.eyebrow": "Career",
+      "hero.title": "Careers at Mahek",
+      "hero.description": "Join a manufacturing team building one of India’s most trusted thinner brands.",
+      "openings.title": "Current Openings",
+      "resume.title": "Don't see a role that fits?",
+      "resume.text": "Send us your resume — we're always looking to hear from good people.",
+      "email.title": "Prefer to apply by email?",
+      "email.text": "Send your resume and application details to"
+    },
+    "gallery": {
+      "hero.eyebrow": "Gallery",
+      "hero.title": "Gallery",
+      "hero.description": "Factory, products, dealer meets and training — a visual look inside Mahek."
+    },
+    "products": {
+      "hero.eyebrow": "Products",
+      "hero.title": "Our Product Range",
+      "hero.description": "Nine thinner and solvent product lines, engineered for consistency and manufactured at scale.",
+      "cta.title": "Not sure which product fits your process?",
+      "cta.text": "Talk to our technical team for a formulation-matched recommendation."
+    },
+    "industries": {
+      "hero.eyebrow": "Industries",
+      "hero.title": "Industries We Serve",
+      "hero.description": "Formulated solutions for eight core industries that depend on consistent solvent chemistry."
+    }
+  },
+  "seo": {
+    "/": {
+      "description": "Manufacturer of premium industrial thinners, solvents, paint removers and specialty chemical products. 15 TPD manufacturing capacity, 1190+ customers across 8+ Indian states."
+    },
+    "/about": {
+      "title": "About Us",
+      "description": "30+ years of manufacturing discipline behind every material we dispatch — the story, mission, values and milestones of Mahek Marketing India's Ambernath MIDC facility."
+    },
+    "/products": {
+      "title": "Our Product Range",
+      "description": "Nine thinner and solvent product lines, engineered for consistency and manufactured at scale."
+    },
+    "/industries": {
+      "title": "Industries We Serve",
+      "description": "Formulated solutions for eight core industries that depend on consistent solvent chemistry."
+    },
+    "/manufacturing": {
+      "title": "Manufacturing Facility",
+      "description": "A look inside our Ambernath MIDC plant — from raw material intake to final dispatch."
+    },
+    "/quality": {
+      "title": "Manufacturing & Quality Assurance",
+      "description": "Every batch passes through a multi-stage inspection process before it reaches your business."
+    },
+    "/gallery": {
+      "title": "Gallery",
+      "description": "Factory, products, dealer meets and training — a visual look inside Mahek."
+    },
+    "/distributor": {
+      "title": "Become a Distributor",
+      "description": "Join a growing network of 100+ dealers across India — consistent supply, transparent margins."
+    },
+    "/career": {
+      "title": "Careers",
+      "description": "Join a manufacturing team building one of India's most trusted thinner brands."
+    },
+    "/contact": {
+      "title": "Contact Us",
+      "description": "Reach our sales team, visit our office or plant, or send a direct enquiry."
+    },
+    "/privacy-policy": {
+      "title": "Privacy Policy",
+      "description": "How Mahek Marketing India collects, uses, and protects information shared through this website."
+    },
+    "/terms-and-conditions": {
+      "title": "Terms & Conditions",
+      "description": "Terms governing the use of the Mahek Marketing India website."
+    },
+    "/refund-policy": {
+      "title": "Refund Policy",
+      "description": "Mahek Marketing India's policy on refunds for confirmed orders."
+    },
+    "/shipping-policy": {
+      "title": "Shipping Policy",
+      "description": "Mahek Marketing India's approach to shipping and delivery for confirmed orders."
+    },
+    "/products/universal-thinner": {
+      "title": "Mahek Universal Thinner",
+      "description": "One Thinner for all your painting needs"
+    },
+    "/products/nc-thinner": {
+      "title": "Mahek NC Thinner",
+      "description": "Precision Formulated for Perfect Flow & Finish."
+    },
+    "/products/pu-thinner": {
+      "title": "Mahek PU Thinner",
+      "description": "Premium Polyurethane Thinner for Professional Finishes."
+    },
+    "/products/nano-thinner": {
+      "title": "Mahek Nano Thinner",
+      "description": "Premium Quality, Multipurpose Performance."
+    },
+    "/products/mylac-135-melamine-thinner": {
+      "title": "Mylac-135 Melamine Thinner",
+      "description": "Delivers smooth flow, excellent leveling, and lasting gloss at cost-effective pricing."
+    },
+    "/products/mahek-epoxy-thinner": {
+      "title": "Mahek Epoxy Thinner",
+      "description": "Engineered for Superior Finish & Durability."
+    },
+    "/products/mahek-polish-thinner-m1433": {
+      "title": "Mahek Polish Thinner M1433",
+      "description": "Crystal-Clean Performance for Every Polish"
+    },
+    "/products/mahek-mild-cleaner-m164": {
+      "title": "Mahek Mild Cleaner M164",
+      "description": "Bringing Natural Beauty Back to Wood & Metal."
+    },
+    "/products/enamel-gp-thinner": {
+      "title": "Mahek Enamel / G.P. Thinner",
+      "description": "Rich Oil-Base Reducing Agent for Premium Enamel & Oil Paint Systems"
+    },
+    "/industries/paint-industry": {
+      "title": "Paint Industry",
+      "description": "Thinning & reduction solvents for paint manufacturers and formulators."
+    },
+    "/industries/furniture": {
+      "title": "Furniture Manufacturing",
+      "description": "Fast-drying, high-gloss finishing solvents for wood and furniture coating lines."
+    },
+    "/industries/automobile": {
+      "title": "Automobile Industry",
+      "description": "Precision thinners for OEM and refinish automotive coating systems."
+    },
+    "/industries/cleaning-industry": {
+      "title": "Cleaning Industry",
+      "description": "Multi-purpose cleaning solvents for degreasing, surface preparation and equipment maintenance."
+    },
+    "/industries/general-purpose-thinner": {
+      "title": "General Purpose Thinner",
+      "description": "General-purpose thinning solutions for everyday industrial and commercial applications."
+    },
+    "/industries/industrial-manufacturing": {
+      "title": "Industrial Manufacturing",
+      "description": "Reliable bulk-grade solvents for degreasing, cleaning and processing lines."
+    },
+    "/industries/marine": {
+      "title": "Marine Coatings",
+      "description": "Durable coating-grade thinners built for marine-grade PU and protective systems."
+    },
+    "/industries/wood-coating": {
+      "title": "Wood Cleaning",
+      "description": "Specialty NC and PU thinners for fine wood coating and polishing applications."
+    }
+  },
+  "blockDefinitions": {
+    "home": {
+      "title": "Home page",
+      "path": "/",
+      "blocks": [
+        {
+          "key": "hero.badge",
+          "label": "Hero badge",
+          "type": "text"
+        },
+        {
+          "key": "hero.titleLead",
+          "label": "Hero headline - first part",
+          "type": "text"
+        },
+        {
+          "key": "hero.titleHighlight",
+          "label": "Hero headline - highlighted word",
+          "type": "text"
+        },
+        {
+          "key": "hero.titleTail",
+          "label": "Hero headline - last part",
+          "type": "text"
+        },
+        {
+          "key": "hero.description",
+          "label": "Hero sub-headline",
+          "type": "paragraph"
+        },
+        {
+          "key": "products.title",
+          "label": "Product range - heading",
+          "type": "text"
+        },
+        {
+          "key": "products.description",
+          "label": "Product range - intro",
+          "type": "paragraph"
+        },
+        {
+          "key": "industries.title",
+          "label": "Industries - heading",
+          "type": "text"
+        },
+        {
+          "key": "industries.description",
+          "label": "Industries - intro",
+          "type": "paragraph"
+        },
+        {
+          "key": "why.title",
+          "label": "Why Mahek - heading",
+          "type": "text"
+        },
+        {
+          "key": "why.intro",
+          "label": "Why Mahek - intro",
+          "type": "paragraph"
+        },
+        {
+          "key": "facility.title",
+          "label": "Facility - heading",
+          "type": "text"
+        },
+        {
+          "key": "testimonials.title",
+          "label": "Testimonials - heading",
+          "type": "text"
+        },
+        {
+          "key": "dealers.title",
+          "label": "Dealer network - heading",
+          "type": "text"
+        },
+        {
+          "key": "dealers.text",
+          "label": "Dealer network - text",
+          "type": "paragraph"
+        },
+        {
+          "key": "gallery.title",
+          "label": "Gallery preview - heading",
+          "type": "text"
+        },
+        {
+          "key": "enquiry.title",
+          "label": "Enquiry form - heading",
+          "type": "text"
+        },
+        {
+          "key": "enquiry.description",
+          "label": "Enquiry form - intro",
+          "type": "paragraph"
+        }
+      ]
+    },
+    "about": {
+      "title": "About page",
+      "path": "/about",
+      "blocks": [
+        {
+          "key": "hero.eyebrow",
+          "label": "Hero breadcrumb label",
+          "type": "text"
+        },
+        {
+          "key": "hero.title",
+          "label": "Hero title",
+          "type": "text"
+        },
+        {
+          "key": "hero.description",
+          "label": "Hero intro text",
+          "type": "paragraph"
+        },
+        {
+          "key": "story.title",
+          "label": "Story - heading",
+          "type": "text"
+        },
+        {
+          "key": "story.paragraph1",
+          "label": "Story - first paragraph",
+          "type": "paragraph"
+        },
+        {
+          "key": "story.paragraph2",
+          "label": "Story - second paragraph",
+          "type": "paragraph"
+        },
+        {
+          "key": "mission.title",
+          "label": "Mission - title",
+          "type": "text"
+        },
+        {
+          "key": "mission.text",
+          "label": "Mission - text",
+          "type": "paragraph"
+        },
+        {
+          "key": "vision.title",
+          "label": "Vision - title",
+          "type": "text"
+        },
+        {
+          "key": "vision.text",
+          "label": "Vision - text",
+          "type": "paragraph"
+        },
+        {
+          "key": "values.title",
+          "label": "Core values - heading",
+          "type": "text"
+        },
+        {
+          "key": "timeline.title",
+          "label": "Timeline - heading",
+          "type": "text"
+        },
+        {
+          "key": "cta.title",
+          "label": "Closing call-to-action - heading",
+          "type": "text"
+        },
+        {
+          "key": "cta.text",
+          "label": "Closing call-to-action - text",
+          "type": "paragraph"
+        }
+      ]
+    },
+    "manufacturing": {
+      "title": "Manufacturing page",
+      "path": "/manufacturing",
+      "blocks": [
+        {
+          "key": "hero.eyebrow",
+          "label": "Hero breadcrumb label",
+          "type": "text"
+        },
+        {
+          "key": "hero.title",
+          "label": "Hero title",
+          "type": "text"
+        },
+        {
+          "key": "hero.description",
+          "label": "Hero intro text",
+          "type": "paragraph"
+        },
+        {
+          "key": "process.title",
+          "label": "Process flow - heading",
+          "type": "text"
+        },
+        {
+          "key": "tour.title",
+          "label": "Facility tour - heading",
+          "type": "text"
+        },
+        {
+          "key": "tour.text",
+          "label": "Facility tour - text",
+          "type": "paragraph"
+        }
+      ]
+    },
+    "quality": {
+      "title": "Quality page",
+      "path": "/quality",
+      "blocks": [
+        {
+          "key": "hero.eyebrow",
+          "label": "Hero breadcrumb label",
+          "type": "text"
+        },
+        {
+          "key": "hero.title",
+          "label": "Hero title",
+          "type": "text"
+        },
+        {
+          "key": "hero.description",
+          "label": "Hero intro text",
+          "type": "paragraph"
+        },
+        {
+          "key": "certifications.title",
+          "label": "Certifications - heading",
+          "type": "text"
+        },
+        {
+          "key": "certifications.items",
+          "label": "Certifications - list",
+          "type": "list"
+        }
+      ]
+    },
+    "distributor": {
+      "title": "Distributor page",
+      "path": "/distributor",
+      "blocks": [
+        {
+          "key": "hero.eyebrow",
+          "label": "Hero breadcrumb label",
+          "type": "text"
+        },
+        {
+          "key": "hero.title",
+          "label": "Hero title",
+          "type": "text"
+        },
+        {
+          "key": "hero.description",
+          "label": "Hero intro text",
+          "type": "paragraph"
+        },
+        {
+          "key": "support.title",
+          "label": "Support - heading",
+          "type": "text"
+        },
+        {
+          "key": "support.items",
+          "label": "Support - list",
+          "type": "list"
+        },
+        {
+          "key": "documents.title",
+          "label": "Required documents - heading",
+          "type": "text"
+        },
+        {
+          "key": "documents.items",
+          "label": "Required documents - list",
+          "type": "list"
+        },
+        {
+          "key": "apply.title",
+          "label": "Application - heading",
+          "type": "text"
+        },
+        {
+          "key": "apply.text",
+          "label": "Application - text",
+          "type": "paragraph"
+        },
+        {
+          "key": "faq.title",
+          "label": "FAQ - heading",
+          "type": "text"
+        }
+      ]
+    },
+    "contact": {
+      "title": "Contact page",
+      "path": "/contact",
+      "blocks": [
+        {
+          "key": "hero.eyebrow",
+          "label": "Hero breadcrumb label",
+          "type": "text"
+        },
+        {
+          "key": "hero.title",
+          "label": "Hero title",
+          "type": "text"
+        },
+        {
+          "key": "hero.description",
+          "label": "Hero intro text",
+          "type": "paragraph"
+        },
+        {
+          "key": "map.title",
+          "label": "Map card - heading",
+          "type": "text"
+        },
+        {
+          "key": "address.office",
+          "label": "Registered office - full address",
+          "type": "text"
+        },
+        {
+          "key": "address.plant",
+          "label": "Manufacturing plant - full address",
+          "type": "text"
+        },
+        {
+          "key": "persons.title",
+          "label": "Contact persons - heading",
+          "type": "text"
+        }
+      ]
+    },
+    "career": {
+      "title": "Career page",
+      "path": "/career",
+      "blocks": [
+        {
+          "key": "hero.eyebrow",
+          "label": "Hero breadcrumb label",
+          "type": "text"
+        },
+        {
+          "key": "hero.title",
+          "label": "Hero title",
+          "type": "text"
+        },
+        {
+          "key": "hero.description",
+          "label": "Hero intro text",
+          "type": "paragraph"
+        },
+        {
+          "key": "openings.title",
+          "label": "Openings - heading",
+          "type": "text"
+        },
+        {
+          "key": "resume.title",
+          "label": "Resume call-to-action - heading",
+          "type": "text"
+        },
+        {
+          "key": "resume.text",
+          "label": "Resume call-to-action - text",
+          "type": "paragraph"
+        },
+        {
+          "key": "email.title",
+          "label": "Apply by email - heading",
+          "type": "text"
+        },
+        {
+          "key": "email.text",
+          "label": "Apply by email - text (the address follows it)",
+          "type": "paragraph"
+        }
+      ]
+    },
+    "gallery": {
+      "title": "Gallery page",
+      "path": "/gallery",
+      "blocks": [
+        {
+          "key": "hero.eyebrow",
+          "label": "Hero breadcrumb label",
+          "type": "text"
+        },
+        {
+          "key": "hero.title",
+          "label": "Hero title",
+          "type": "text"
+        },
+        {
+          "key": "hero.description",
+          "label": "Hero intro text",
+          "type": "paragraph"
+        }
+      ]
+    },
+    "products": {
+      "title": "Products page",
+      "path": "/products",
+      "blocks": [
+        {
+          "key": "hero.eyebrow",
+          "label": "Hero breadcrumb label",
+          "type": "text"
+        },
+        {
+          "key": "hero.title",
+          "label": "Hero title",
+          "type": "text"
+        },
+        {
+          "key": "hero.description",
+          "label": "Hero intro text",
+          "type": "paragraph"
+        },
+        {
+          "key": "cta.title",
+          "label": "Closing call-to-action - heading",
+          "type": "text"
+        },
+        {
+          "key": "cta.text",
+          "label": "Closing call-to-action - text",
+          "type": "paragraph"
+        }
+      ]
+    },
+    "industries": {
+      "title": "Industries page",
+      "path": "/industries",
+      "blocks": [
+        {
+          "key": "hero.eyebrow",
+          "label": "Hero breadcrumb label",
+          "type": "text"
+        },
+        {
+          "key": "hero.title",
+          "label": "Hero title",
+          "type": "text"
+        },
+        {
+          "key": "hero.description",
+          "label": "Hero intro text",
+          "type": "paragraph"
+        }
+      ]
+    }
+  },
+  "staticMedia": [
+    {
+      "path": "/Mahek%20Universal%20Thinner/Mahek%20Universal%20Thinner%20Combo.webp",
+      "label": "Mahek Universal Thinner (main image)"
+    },
+    {
+      "path": "/Mahek%20Universal%20Thinner/Mahek%20Universal%20Thinner%20500ml.webp",
+      "label": "Mahek Universal Thinner - 500ml"
+    },
+    {
+      "path": "/Mahek%20Universal%20Thinner/Mahek%20Universal%20Thinner%201L.webp",
+      "label": "Mahek Universal Thinner - 1L"
+    },
+    {
+      "path": "/Mahek%20Universal%20Thinner/Mahek%20Universal%20Thinner%205L.webp",
+      "label": "Mahek Universal Thinner - 5L"
+    },
+    {
+      "path": "/Mahek%20Universal%20Thinner/Mahek%20Universal%20Thinner%2020L.webp",
+      "label": "Mahek Universal Thinner - 20L"
+    },
+    {
+      "path": "/Mahek%20Universal%20Thinner/Mahek%20Universal%20Thinner%2020L%20tin.webp",
+      "label": "Mahek Universal Thinner - 20L Tin"
+    },
+    {
+      "path": "/Mahek%20NC%20Thinner/Mahek%20N.C%20Thinner%20Combo.webp",
+      "label": "Mahek NC Thinner (main image)"
+    },
+    {
+      "path": "/Mahek%20NC%20Thinner/Mahek%20NC%20Thinner%20500ml.webp",
+      "label": "Mahek NC Thinner - 500ml"
+    },
+    {
+      "path": "/Mahek%20NC%20Thinner/Mahek%20NC%20Thinner%201L.webp",
+      "label": "Mahek NC Thinner - 1L"
+    },
+    {
+      "path": "/Mahek%20NC%20Thinner/Mahek%20NC%20Thinner%205L.webp",
+      "label": "Mahek NC Thinner - 5L"
+    },
+    {
+      "path": "/Mahek%20NC%20Thinner/Mahek%20NC%20Thinner%2010L.webp",
+      "label": "Mahek NC Thinner - 10L"
+    },
+    {
+      "path": "/Mahek%20NC%20Thinner/Mahek%20NC%20Thinner%2020L.webp",
+      "label": "Mahek NC Thinner - 20L"
+    },
+    {
+      "path": "/Mahek%20PU%20Thinner/P.U%20Thinner%20Combo.webp",
+      "label": "Mahek PU Thinner (main image)"
+    },
+    {
+      "path": "/Mahek%20PU%20Thinner/Mahek%20PU%20Thinner%201L.webp",
+      "label": "Mahek PU Thinner - 1L"
+    },
+    {
+      "path": "/Mahek%20PU%20Thinner/Mahek%20PU%20Thinner%201L%20tin.webp",
+      "label": "Mahek PU Thinner - 1L Tin"
+    },
+    {
+      "path": "/Mahek%20PU%20Thinner/Mahek%20PU%20Thinner%205L.webp",
+      "label": "Mahek PU Thinner - 5L"
+    },
+    {
+      "path": "/Mahek%20PU%20Thinner/Mahek%20PU%20Thinner%2020L.webp",
+      "label": "Mahek PU Thinner - 20L"
+    },
+    {
+      "path": "/Mahek%20PU%20Thinner/Mahek%20PU%20Thinner%2020L%20tin.webp",
+      "label": "Mahek PU Thinner - 20L Tin"
+    },
+    {
+      "path": "/Mahek%20Nano%20Thinner/Maruti%20Nano%20Thinner%20Combo.webp",
+      "label": "Mahek Nano Thinner (main image)"
+    },
+    {
+      "path": "/Mahek%20Nano%20Thinner/Mahek%20Nano%20Thinner%20500ml.webp",
+      "label": "Mahek Nano Thinner - 500ml"
+    },
+    {
+      "path": "/Mahek%20Nano%20Thinner/Mahek%20Nano%20Thinner%201L.webp",
+      "label": "Mahek Nano Thinner - 1L"
+    },
+    {
+      "path": "/Mahek%20Nano%20Thinner/Mahek%20Nano%20Thinner%2010L.webp",
+      "label": "Mahek Nano Thinner - 10L"
+    },
+    {
+      "path": "/Mahek%20Nano%20Thinner/Mahek%20Nano%20Thinner%2020L.webp",
+      "label": "Mahek Nano Thinner - 20L"
+    },
+    {
+      "path": "/Mylac-135%20Melamine%20Thinner/Mylac-135%20Melamine%20Thinner%20Combo.webp",
+      "label": "Mylac-135 Melamine Thinner (main image)"
+    },
+    {
+      "path": "/Mylac-135%20Melamine%20Thinner/Mylac-135%20Melamine%20Thinner%201L.webp",
+      "label": "Mylac-135 Melamine Thinner - 1L"
+    },
+    {
+      "path": "/Mylac-135%20Melamine%20Thinner/Mylac-135%20Melamine%20Thinner%205L.webp",
+      "label": "Mylac-135 Melamine Thinner - 5L"
+    },
+    {
+      "path": "/Mylac-135%20Melamine%20Thinner/Mylac-135%20Melamine%20Thinner%2020L.webp",
+      "label": "Mylac-135 Melamine Thinner - 20L"
+    },
+    {
+      "path": "/Mahek%20Epoxy%20Thinner/Mahek%20Epoxy%20Thinner%20Combo.webp",
+      "label": "Mahek Epoxy Thinner (main image)"
+    },
+    {
+      "path": "/Mahek%20Epoxy%20Thinner/Mahek%20Epoxy%20Thinner%201L.webp",
+      "label": "Mahek Epoxy Thinner - 1L"
+    },
+    {
+      "path": "/Mahek%20Epoxy%20Thinner/Mahek%20Epoxy%20Thinner%205L.webp",
+      "label": "Mahek Epoxy Thinner - 5L"
+    },
+    {
+      "path": "/Mahek%20Epoxy%20Thinner/Mahek%20Epoxy%20Thinner%2020L.webp",
+      "label": "Mahek Epoxy Thinner - 20L"
+    },
+    {
+      "path": "/images/1433.webp",
+      "label": "Mahek Polish Thinner M1433 (main image)"
+    },
+    {
+      "path": "/images/164.webp",
+      "label": "Mahek Mild Cleaner M164 (main image)"
+    },
+    {
+      "path": "/images/Mahek_Enamel/GP__Thinner.webp",
+      "label": "Mahek Enamel / G.P. Thinner (main image)"
+    },
+    {
+      "path": "/images/industries/Paint%20Industry.webp",
+      "label": "Paint Industry (industry)"
+    },
+    {
+      "path": "/images/industries/Furniture%20Manufacturing.webp",
+      "label": "Furniture Manufacturing (industry)"
+    },
+    {
+      "path": "/images/industries/Automobile%20Industry.webp",
+      "label": "Automobile Industry (industry)"
+    },
+    {
+      "path": "/images/Mahek_Enamel/Cleaning%20Industry.webp",
+      "label": "Cleaning Industry (industry)"
+    },
+    {
+      "path": "/images/industries/General%20purpose%20thinner.webp",
+      "label": "General Purpose Thinner (industry)"
+    },
+    {
+      "path": "/images/industries/Industrial%20Manufacturing.webp",
+      "label": "Industrial Manufacturing (industry)"
+    },
+    {
+      "path": "/images/industries/Marine%20Coatings.webp",
+      "label": "Marine Coatings (industry)"
+    },
+    {
+      "path": "/images/industries/Wood%20Cleaning.webp",
+      "label": "Wood Cleaning (industry)"
+    },
+    {
+      "path": "/images/factor/Ambernath%20MIDC%20Plant%20%E2%80%94%20Exterio.jpg",
+      "label": "Gallery: Ambernath MIDC Plant — Exterior"
+    },
+    {
+      "path": "/images/factor/manufacturing.jpg",
+      "label": "Gallery: Production Line 1"
+    },
+    {
+      "path": "/images/factor/raw%20matarial.jpg",
+      "label": "Gallery: Raw Material Storage Yard"
+    },
+    {
+      "path": "/images/factor/Dispatch1.jpg",
+      "label": "Gallery: Dispatch Bay"
+    },
+    {
+      "path": "/images/dealer%20meeting/dealers%20first.jpg",
+      "label": "Gallery: Annual Dealer Meet 2025"
+    },
+    {
+      "path": "/images/dealer%20meeting/dealers.jpg",
+      "label": "Gallery: Dealer Network Visit"
+    },
+    {
+      "path": "/images/dealer%20meeting/distributors.jpg",
+      "label": "Gallery: Regional Dealer Conference"
+    },
+    {
+      "path": "/images/dealer%20meeting/distributor2.webp",
+      "label": "Gallery: Dealer Meet — Store Launch"
+    },
+    {
+      "path": "/images/dealer%20meeting/distributor3.webp",
+      "label": "Gallery: Distributor Visit"
+    },
+    {
+      "path": "/images/dealer%20meeting/distributor4.webp",
+      "label": "Gallery: Distributor Store Visit"
+    },
+    {
+      "path": "/images/dealer%20meeting/distributor5.webp",
+      "label": "Gallery: Dealer Outlet Visit"
+    },
+    {
+      "path": "/images/painter%20meeting/painters%20meeting.jpg",
+      "label": "Gallery: Painter Training Workshop"
+    },
+    {
+      "path": "/og-image.jpg",
+      "label": "Default social sharing image (Open Graph)"
+    }
+  ]
+}

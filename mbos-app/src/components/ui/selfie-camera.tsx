@@ -1,11 +1,15 @@
 import React from 'react';
+import { useModalOpen } from '../../state/push-banner';
 import { Image, Modal, Pressable, View } from 'react-native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { CameraView } from 'expo-camera';
+import { CameraRefusal, shutterWhy, useCameraAccess } from './camera-access';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { color as C, HIT, radius, weight } from '../../theme/tokens';
+import { HIT, radius, weight } from '../../theme/tokens';
 import { Icon } from './Icon';
 import { PrimaryButton, SecondaryButton, T } from './primitives';
+import { Appear, DUR } from './motion';
+import { feedback } from './feedback';
 import { getConfig } from '../../data/config';
 import { hoursInWords } from '../../lib/format';
 
@@ -89,7 +93,7 @@ export function SelfieCamera({
   onDone: (result: SelfieResult) => void;
 }) {
   const insets = useSafeAreaInsets();
-  const [permission, requestPermission] = useCameraPermissions();
+  const { access, ask } = useCameraAccess(open);
   const camera = React.useRef<CameraView>(null);
   const [ready, setReady] = React.useState(false);
   const [shooting, setShooting] = React.useState(false);
@@ -122,16 +126,13 @@ export function SelfieCamera({
     }
   }, [open]);
 
-  /* Asked when the sheet opens rather than on the first launch: unlike
-     location, there is no work riding on this being answered early, and a
-     camera dialog on the very first open — before anybody has seen a screen —
-     is a dialog people dismiss. */
-  React.useEffect(() => {
-    if (open && permission && !permission.granted && permission.canAskAgain) void requestPermission();
-  }, [open, permission, requestPermission]);
 
   const take = async () => {
     if (!ready || shooting) return;
+    /* The shutter is a physical moment, and the camera gives no sound of its
+       own here — the tap is the only sign the press was taken. Fired as the
+       press is accepted, not when the file lands, which can be a second later. */
+    feedback('tap');
     setShooting(true);
     try {
       const picture = await camera.current?.takePictureAsync({ quality: 1 });
@@ -146,7 +147,8 @@ export function SelfieCamera({
     }
   };
 
-  const denied = permission != null && !permission.granted && !permission.canAskAgain;
+  /* Its own window over the app — see `useModalOpen`. */
+  useModalOpen(open);
 
   return (
     <Modal visible={open} animationType="slide" onRequestClose={() => onDone(null)} statusBarTranslucent>
@@ -180,12 +182,11 @@ export function SelfieCamera({
         {/* ---- the viewfinder, or what is standing in its way ---- */}
         <View style={{ flex: 1, overflow: 'hidden', borderRadius: radius.card, marginHorizontal: 12 }}>
           {shot ? (
-            <Image source={{ uri: shot }} style={{ flex: 1 }} resizeMode="cover" />
-          ) : denied ? (
-            <Refusal
-              body="Camera permission is off for MBOS. Attendance needs the photo, so turn the camera on in your phone’s Settings and try again. Tell your manager if you cannot."
-            />
-          ) : permission?.granted ? (
+            /* The frozen frame fades up rather than snapping over the live one. */
+            <Appear distance={0} duration={DUR.quick} style={{ flex: 1 }}>
+              <Image source={{ uri: shot }} style={{ flex: 1 }} resizeMode="cover" />
+            </Appear>
+          ) : access === 'granted' ? (
             <CameraView
               ref={camera}
               style={{ flex: 1 }}
@@ -196,7 +197,7 @@ export function SelfieCamera({
               onCameraReady={() => setReady(true)}
             />
           ) : (
-            <Refusal body="Asking for the camera…" />
+            <CameraRefusal access={access} needs="Attendance needs a selfie." onAsk={ask} />
           )}
         </View>
 
@@ -227,19 +228,15 @@ export function SelfieCamera({
           {shot ? (
             <>
               <PrimaryButton label="Use this photo" onPress={() => onDone({ uri: shot })} />
-              <SecondaryButton label="Take it again" onPress={() => setShot(null)} />
+              <SecondaryButton label="Take again" onPress={() => setShot(null)} />
             </>
           ) : (
             <>
               <PrimaryButton
-                label={shooting ? 'Taking…' : 'Take the photo'}
+                label={shooting ? 'Taking…' : 'Take photo'}
                 onPress={() => void take()}
-                disabled={!permission?.granted || !ready || shooting}
-                whyDisabled={
-                  denied
-                    ? 'Camera permission is off for MBOS.'
-                    : 'The camera is still starting up.'
-                }
+                disabled={access !== 'granted' || !ready || shooting}
+                whyDisabled={shutterWhy(access)}
               />
               {/*
                 This was "Start the day without a photo" — see the note at the
@@ -265,13 +262,3 @@ export function SelfieCamera({
   );
 }
 
-function Refusal({ body }: { body: string }) {
-  return (
-    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: C.ink }}>
-      <Icon name="camera" size={32} color="rgba(255,255,255,0.5)" strokeWidth={1.5} />
-      <T style={{ fontSize: 15, lineHeight: 22, color: 'rgba(255,255,255,0.8)', textAlign: 'center', marginTop: 12 }}>
-        {body}
-      </T>
-    </View>
-  );
-}

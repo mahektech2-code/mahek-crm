@@ -1,0 +1,52 @@
+One pure engine, one service that both the ERP screens and the factory phone call, one screen module with fourteen lists, and a `scrap` drawer panel. Stock and receivables are counts and sums over records — there is no balance column to keep right.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Rules (pure) | `src/lib/erp/engines/drums.ts` | `ownershipOf`, `statusOnEmpty`, `tareVariance`, `varianceIsHigh`, `weightRefusal`, `nextDrumSeq`, `fifoPick`, `outstanding`, `paymentState`, `receivableBucket`, `returnBucket`, `allocationRefusal`, `suggestAllocation`, the labels |
+| Service | `src/lib/erp/drums.ts` | `findDrumLot`, `recordEmptyDrum`, `classifyDrum`, `correctDrumWeight`, `cancelDrumEntry`, `requestDrumAdjustment`, `decideDrumAdjustment`, `sellScrap`, `cancelScrapSale`, `returnDrums`, `cancelDrumReturn`, `recordReceipt`, `allocateReceipt`, `voidAllocation`, `voidReceipt`, the reads |
+| Screens | `src/lib/erp/screens/scrap.ts` | `emptyDrums`, `drumReturnable`, `drumReview`, `drumVariance`, `drumAdjustments`, `drumRegister`, `drumReturns`, `drumPending`, `scrapSales`, `scrapReceivables`, `scrapStock`, `scrapEntries`, `scrapBuyers`, `cashReceipts` |
+| Drawer | `src/app/erp/_ui/panels/scrap.tsx` | the `scrap` panel |
+| Phone | `src/lib/actions/factory.ts`, `src/app/factory/_ui/factory-app.tsx`, `factory-mobile/src/factory-app.tsx` | ops `drumLookup` and `emptyDrum`; the `drum` route |
+| GRN and supplier | `src/lib/erp/screens/purchase.ts`, `src/lib/erp/screens/masters.ts` | `erp_inward.drum_ownership`, `erp_suppliers.drum_ownership` |
+| Alert | `src/lib/erp/engines/alerts.ts` | `drumVariances` |
+| Powers | `src/lib/erp/powers.ts` | `scrapSale`, `scrapAccounts`, `scrapApprove` |
+
+<ModuleRef k="erp.emptyDrums" />
+
+<ModuleRef k="erp.drumReturns" />
+
+<ModuleRef k="erp.scrapSales" />
+
+## Oldest first
+
+<Code file="src/lib/erp/engines/drums.ts" symbol="fifoPick" />
+
+Every consuming write selects its pool `for update`, ordered the same way, inside the transaction that marks the drums — two sales at once cannot take the same drum.
+
+<Code file="src/lib/erp/drums.ts" symbol="sellScrap" collapsed />
+
+## Registering a drum
+
+<Code file="src/lib/erp/drums.ts" symbol="recordEmptyDrum" collapsed />
+
+The lot is locked with an advisory lock while its next drum number is read, and a partial unique index on `(purchase_id, seq)` holds it at the database. The phone sends a `DRM-…` key minted when the drum is scanned; a resend is answered from `client_key`.
+
+## Matching money
+
+<Code file="src/lib/erp/drums.ts" symbol="allocateReceipt" collapsed />
+
+## Tables
+
+<DbTable name="erp_empty_drums" />
+
+<DbTable name="erp_drum_events" />
+
+<DbTable name="erp_scrap_sales" />
+
+<DbTable name="erp_scrap_allocations" />
+
+<DbTable name="erp_cash_receipts" />
+
+Settings: <SettingsTable prefix="erp.drums." />

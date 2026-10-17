@@ -1,13 +1,15 @@
 import React from 'react';
-import { AppState, type AppStateStatus, View } from 'react-native';
+import { Animated, AppState, type AppStateStatus, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { color as C, radius } from '../../theme/tokens';
 import { Icon } from '../ui/Icon';
 import { PrimaryButton, T } from '../ui/primitives';
+import { DUR, EASE, Presence, useReduceMotion, useShake } from '../ui/motion';
 import { forgetUnlock, markLeft, markUnlocked, shouldLock } from '../../data/app-lock';
 import { capability, prompt } from '../../native/biometrics';
 import { useBoot } from '../../state/boot';
+import { setAppLocked } from '../../state/push-banner';
 
 /**
  * The lock screen.
@@ -157,10 +159,67 @@ export function AppLock({ children }: { children: React.ReactNode }) {
     }
   }, [signedIn]);
 
+  /*
+   * THE COVER LEAVES; IT DOES NOT ARRIVE.
+   *
+   * Unlocking lifts it away — a fade with a slight swell, `DUR.quick` — so the
+   * app underneath reads as uncovered rather than as a different screen
+   * snapping in. Locking has no animation at all, and that asymmetry is the
+   * point: a cover that faded IN would show the customer list through it for
+   * the length of the fade, which is the preview `raise` already refuses to
+   * give. So while `locked` the opacity is a plain 1, not the animated value,
+   * and there is no frame in which the cover is up but see-through.
+   *
+   * Kept mounted while it leaves, and touch-transparent while it does: the
+   * person is in, and a tap on the app in those 180 ms must land on the app.
+   */
+  /* The push banner reads this: while the cover is up it draws nothing, and
+     the system shows the push instead — see `state/push-banner.ts`. */
+  React.useEffect(() => {
+    setAppLocked(locked);
+  }, [locked]);
+
+  const reduce = useReduceMotion();
+  const fade = React.useRef(new Animated.Value(1)).current;
+  const [coverMounted, setCoverMounted] = React.useState(locked);
+  if (locked && !coverMounted) setCoverMounted(true);
+
+  React.useEffect(() => {
+    if (locked || !coverMounted) return;
+    if (reduce) {
+      setCoverMounted(false);
+      return;
+    }
+    fade.setValue(1);
+    const anim = Animated.timing(fade, { toValue: 0, duration: DUR.quick, easing: EASE, useNativeDriver: true });
+    anim.start(({ finished }) => {
+      if (finished) setCoverMounted(false);
+    });
+    return () => anim.stop();
+  }, [locked, coverMounted, reduce, fade]);
+
   return (
     <View style={{ flex: 1 }}>
       {children}
-      {locked ? <Cover asking={asking} why={why} label={label} onUnlock={() => void ask()} /> : null}
+      {coverMounted ? (
+        <Animated.View
+          pointerEvents={locked ? 'auto' : 'none'}
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            /* Above everything drawn in the app's window, whatever its order:
+               Android stacks by elevation, and the push banner has some. */
+            zIndex: 1000,
+            elevation: 24,
+            opacity: locked ? 1 : fade,
+            transform: [{ scale: locked ? 1 : fade.interpolate({ inputRange: [0, 1], outputRange: [1.04, 1] }) }],
+          }}>
+          <Cover asking={asking} why={why} label={label} onUnlock={() => void ask()} />
+        </Animated.View>
+      ) : null}
     </View>
   );
 }
@@ -186,6 +245,23 @@ function Cover({
   const insets = useSafeAreaInsets();
   const finger = label === 'Fingerprint';
 
+  /*
+   * A LOCKOUT SHAKES, AND ONLY A LOCKOUT.
+   *
+   * It is the one refusal this screen can tell apart: `prompt` folds a finger
+   * that did not read into `cancelled`, because the OS's own dialog has
+   * already said so to the person's face, and shaking the cover behind that
+   * dialog for a cancel he chose would read as the app scolding him. A
+   * lockout is different — the sensor has stopped answering and the sentence
+   * explaining why has just appeared — so it moves and buzzes `warning`.
+   * Keyed on the sentence arriving: `ask` clears it first, so a second
+   * lockout in a row shakes again.
+   */
+  const { shake, style: shakeStyle } = useShake('warning');
+  React.useEffect(() => {
+    if (why) shake();
+  }, [why, shake]);
+
   return (
     <View
       style={{
@@ -201,6 +277,7 @@ function Cover({
         alignItems: 'center',
         justifyContent: 'center',
       }}>
+      <Animated.View style={[{ alignSelf: 'stretch', alignItems: 'center' }, shakeStyle]}>
       <View
         style={{
           width: 64,
@@ -217,10 +294,10 @@ function Cover({
         MBOS is locked
       </T>
       <T s="body" style={{ color: C.muted, marginTop: 6, textAlign: 'center' }}>
-        {finger ? 'Touch the sensor to open your day.' : `Use ${label.toLowerCase()} to open your day.`}
+        {finger ? 'Touch the fingerprint sensor to open the app.' : `Use ${label.toLowerCase()} to open the app.`}
       </T>
 
-      {why ? (
+      <Presence show={!!why} style={{ alignSelf: 'stretch' }}>
         <View
           style={{
             backgroundColor: C.dangerBg,
@@ -230,17 +307,17 @@ function Cover({
             paddingVertical: 12,
             paddingHorizontal: 14,
             marginTop: 20,
-            alignSelf: 'stretch',
           }}>
           <T style={{ fontSize: 14, lineHeight: 20, color: C.ink }}>{why}</T>
         </View>
-      ) : null}
+      </Presence>
+      </Animated.View>
 
       <PrimaryButton
         label={asking ? 'Waiting for your finger…' : 'Unlock'}
         onPress={onUnlock}
         disabled={asking}
-        whyDisabled="The fingerprint prompt is already open."
+        whyDisabled="The fingerprint box is already open."
         style={{ marginTop: 24, alignSelf: 'stretch' }}
       />
 
@@ -248,7 +325,7 @@ function Cover({
           own prompt carries the PIN. Saying so is what stops somebody with a
           wet thumb concluding they are shut out of their own day. */}
       <T s="caption" style={{ marginTop: 12, textAlign: 'center' }}>
-        If your finger will not read, your phone offers its PIN on the same prompt.
+        If your finger does not work, use your phone PIN in the same box.
       </T>
     </View>
   );

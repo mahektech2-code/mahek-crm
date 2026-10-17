@@ -1,0 +1,13 @@
+-- WHO A FIELD DOCUMENT IS FOR, BY NAME (0232) — ADDITIVE ONLY.
+--
+-- The Sales Dashboard could say a document was for a ROLE and nothing
+-- narrower, so a price list meant for the three men working Vidarbha went to
+-- every handset in the company. `visible_to_user_ids` is the people it is
+-- tagged to, as user ids — the principal a handset signs in as. Empty means
+-- everybody in the field, which is what every row that exists today means, so
+-- the default moves nothing on any phone.
+--
+-- It is NOT `audience_employee_ids`: that one holds HRMS employee ids carried
+-- over from Mahek EMP 2.0 and is read, never written. A handset knows its user,
+-- not its employee row.
+ALTER TABLE "mbos_documents" ADD COLUMN "visible_to_user_ids" jsonb DEFAULT '[]'::jsonb NOT NULL;

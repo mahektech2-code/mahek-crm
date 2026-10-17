@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { orderCountsSql, orderValueSql } from "./order-status";
+import { billedInMonthSql, orderCountsSql } from "./order-status";
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -41,7 +41,6 @@ import {
   calendarDate,
   monthKey,
   addMonths,
-  monthWindowSql,
   type BusinessDate,
 } from "./business-date";
 import { CANCELLED_STATUS } from "./taken-order-parse";
@@ -129,7 +128,11 @@ const placedDateSql = (alias: string) => sql`
        from orders o
       where (o.customer_id = ${sql.raw(alias)}.id
              or o.delivery_customer_id = ${sql.raw(alias)}.id)
-        and o.status in ('captured', 'pending_approval', 'confirmed', 'dispatched')),
+        -- Goods on the road or delivered were still ORDERED on that date. Leaving
+        -- in_transit and delivered out made an order stop counting the moment
+        -- somebody recorded that it had moved, and the customer's last order
+        -- date stepped backwards.
+        and o.status in ('captured', 'pending_approval', 'confirmed', 'dispatched', 'in_transit', 'delivered')),
     (select max(t.order_date)::text
        from sheet_taken_order_rows t
       where t.matched_customer_id = ${sql.raw(alias)}.id
@@ -693,6 +696,12 @@ export type OrderSystemHolds = {
  * reason it should not be written anywhere else.
  */
 export async function recomputeOrderSystemHolds(): Promise<OrderSystemHolds> {
+  /* With the ERP taking the orders, the Taken Order tab is no longer where an
+     order lands first; the ERP's own open lines are. Same flag, one owner. */
+  if ((await getConfig())["erp.orders.live"]) {
+    const { recomputeErpOrderHolds } = await import("@/lib/erp/book");
+    return recomputeErpOrderHolds();
+  }
   // Never synced, or synced and the table is empty. Either way the sheet has
   // told us nothing, and "nothing" must not be read as "every order in the
   // company is dispatched" — which is what releasing the whole book on an
@@ -1052,7 +1061,11 @@ export async function seedMonthlyTargets(forMonth?: string): Promise<number> {
   const have = new Set(existing.map((e) => e.customerId));
 
   const priorManual = await db
-    .select({ customerId: monthlyTargets.customerId, targetAmount: monthlyTargets.targetAmount })
+    .select({
+      customerId: monthlyTargets.customerId,
+      targetAmount: monthlyTargets.targetAmount,
+      billTarget: monthlyTargets.billTarget,
+    })
     .from(monthlyTargets)
     .where(
       and(
@@ -1061,7 +1074,10 @@ export async function seedMonthlyTargets(forMonth?: string): Promise<number> {
         eq(monthlyTargets.isDefault, false),
       ),
     );
-  const carryFrom = new Map(priorManual.map((r) => [r.customerId, r.targetAmount]));
+  // The bill count travels with the rupees: both are what somebody asked of
+  // the account last month, and carrying one without the other would quietly
+  // drop half a target on the 1st.
+  const carryFrom = new Map(priorManual.map((r) => [r.customerId, r]));
 
   let created = 0;
   for (const c of active) {
@@ -1074,7 +1090,8 @@ export async function seedMonthlyTargets(forMonth?: string): Promise<number> {
         customerId: c.id,
         year,
         month,
-        targetAmount: carried,
+        targetAmount: carried.targetAmount,
+        billTarget: carried.billTarget,
         isDefault: false,
         carriedForward: true,
       });
@@ -1092,18 +1109,13 @@ export async function seedMonthlyTargets(forMonth?: string): Promise<number> {
        * 18% above the month it was derived from, and nothing on the screen
        * says the number came from a different question.
        */
-      const window = monthWindowSql(key);
+      // By BILL DATE, the figure a target is measured against — a default
+      // derived from order dates would be proposed from a different month
+      // to the one the screen then scores it on. See `billedInMonthSql`.
       const [row] = await db
-        .select({ total: sql<number>`coalesce(sum(${orderValueSql("orders")}),0)::bigint` })
-        .from(orders)
-        .where(
-          and(
-            eq(orders.customerId, c.id),
-            sql`${orders.orderedAt} >= ${sql.raw(window.start)}`,
-            sql`${orders.orderedAt} < ${sql.raw(window.end)}`,
-            orderCountsSql("orders"),
-          ),
-        );
+        .select({ total: billedInMonthSql("customers.id", key) })
+        .from(customers)
+        .where(eq(customers.id, c.id));
       trailing.push(Number(row?.total ?? 0));
     }
 
@@ -1342,10 +1354,18 @@ export async function recomputeSalesPeople(): Promise<number> {
 export async function recomputeSalesManagers(): Promise<number> {
   const managerNameOf = await managerNameByEmployeeName();
 
+  /* THE FIELD VERIFIER'S LEADS: a lead a Salesman raised or holds is seated under
+     the person set to verify those (`leads.fieldVerifierEmail`), not under
+     whoever the org chart names — rule 3 and rule 4. Off, and nothing about this
+     pass changes. See `services/lead-verifier`. */
+  const { fieldRoutingOn, orgModeOn } = await import("./services/lead-verifier");
+  const fieldOn = await fieldRoutingOn();
+  const orgOn = await orgModeOn();
+
   // Nothing on the org chart yet is not the same as nobody having a sales
   // manager. A pass with an empty map would blank every undecided customer's
   // seat rather than leave it as it was.
-  if (!managerNameOf.size) return 0;
+  if (!managerNameOf.size && !fieldOn) return 0;
 
   const [rows, activeUsers] = await Promise.all([
     db
@@ -1357,6 +1377,7 @@ export async function recomputeSalesManagers(): Promise<number> {
         ownerId: customers.ownerId,
         salesManagerId: customers.salesManagerId,
         salesManagerPersonName: customers.salesManagerPersonName,
+        leadManagerId: customers.leadManagerId,
       })
       .from(customers)
       .where(isNull(customers.salesManagerDecidedAt)),
@@ -1368,19 +1389,67 @@ export async function recomputeSalesManagers(): Promise<number> {
   const userNameById = new Map(activeUsers.map((u) => [u.id, u.name]));
   const userIdByName = new Map(activeUsers.map((u) => [u.name.trim().toLowerCase(), u.id]));
 
+  /* Which leads are the field verifier's — two queries for the whole book, never
+     one per lead. */
+  const fieldSeats = fieldOn
+    ? await (await import("./services/lead-verifier")).fieldSeatFor(
+        rows.filter((r) => r.kind === "lead").map((r) => ({ id: r.id, ownerId: r.ownerId })),
+      )
+    : {
+        approvers: new Map<string, string>(),
+        unresolved: new Map<string, string>(),
+      };
+
+  /* Customers (not leads): the chart manager of their sales account, by id. */
+  const customerChartSeats = orgOn
+    ? await (await import("./services/lead-verifier")).chartManagersOfUsers(
+        rows.filter((r) => r.kind !== "lead" && r.salesAmId).map((r) => r.salesAmId as string),
+      )
+    : new Map<string, string>();
+
+  const touched: string[] = [];
   let changed = 0;
   for (const c of rows) {
-    const assignedName =
-      c.kind === "lead"
-        ? (c.ownerId ? (userNameById.get(c.ownerId) ?? null) : null)
-        : (c.salesPersonName ?? (c.salesAmId ? (userNameById.get(c.salesAmId) ?? null) : null));
+    let nextId: string | null;
+    let nextName: string | null;
 
-    const managerName = assignedName
-      ? (managerNameOf.get(assignedName.trim().toLowerCase()) ?? null)
-      : null;
+    const approver = fieldSeats.approvers.get(c.id);
+    if (approver) {
+      nextId = approver;
+      nextName = null;
+    } else if (fieldSeats.unresolved.has(c.id)) {
+      /* The org chart cannot name a verifier for this Salesman's lead. The seat
+         is LEFT as it is: a name-matched manager would be exactly the quiet
+         substitution the rule exists to stop. */
+      continue;
+    } else if (orgOn) {
+      /* ORG-CHART MODE: no display name is an identity. A lead nobody holds and
+         nobody is known to have raised is left exactly as it is. A customer is
+         seated from its sales ACCOUNT, by employee id; a sheet's salesperson
+         NAME with no account behind it cannot be mapped, so its seat is left
+         alone rather than guessed. */
+      if (c.kind === "lead" || !c.salesAmId) continue;
+      const chartMgr = customerChartSeats.get(c.salesAmId);
+      if (!chartMgr) continue;
+      nextId = chartMgr;
+      nextName = null;
+    } else {
+      /* An empty org chart must not blank a seat — see the guard above, which
+         is only lifted for the field verifier's own leads. */
+      if (!managerNameOf.size) continue;
 
-    const nextId = managerName ? (userIdByName.get(managerName.trim().toLowerCase()) ?? null) : null;
-    const nextName = managerName && !nextId ? managerName : null;
+      const assignedName =
+        c.kind === "lead"
+          ? (c.ownerId ? (userNameById.get(c.ownerId) ?? null) : null)
+          : (c.salesPersonName ?? (c.salesAmId ? (userNameById.get(c.salesAmId) ?? null) : null));
+
+      const managerName = assignedName
+        ? (managerNameOf.get(assignedName.trim().toLowerCase()) ?? null)
+        : null;
+
+      nextId = managerName ? (userIdByName.get(managerName.trim().toLowerCase()) ?? null) : null;
+      nextName = managerName && !nextId ? managerName : null;
+    }
 
     if (nextId === c.salesManagerId && nextName === c.salesManagerPersonName) continue;
 
@@ -1389,10 +1458,94 @@ export async function recomputeSalesManagers(): Promise<number> {
       .set({ salesManagerId: nextId, salesManagerPersonName: nextName })
       .where(eq(customers.id, c.id));
     changed++;
+    touched.push(c.id);
+  }
+
+  /* THE COORDINATING SEAT AND THE OPEN CALL FOLLOW THE CHART TOO. The org chart
+     is edited in HRMS, which is not an owner change, so nothing else would move a
+     lead whose chart was just fixed - or just broken - until somebody touched it.
+     Only leads whose coordinating seat disagrees with the chart's answer are
+     handed over, and a failure here never fails the pass. */
+  if (orgOn) {
+    try {
+      const { realignVerifierSeats } = await import("./services/lead-verifier");
+      /* EVERY unverified lead, because what decides the coordinating seat and the
+         open call is the route the gate asks - which moves when the chart, an
+         account or a setting changes, with no ownership change to announce it.
+         That is what re-opens a held call the night something is fixed, and what
+         closes one the night something breaks. The scheduled pass never clears a
+         Sales Manager's sight of a lead; only an explicit move does. */
+      const ids = [...new Set([...touched, ...rows.filter((r) => r.kind === "lead").map((r) => r.id)])];
+      for (let i = 0; i < ids.length; i += 100) {
+        await realignVerifierSeats(ids.slice(i, i + 100), null, null, { tx: db, scheduled: true });
+      }
+    } catch {
+      /* the seat pass above already stands; the next pass tries again */
+    }
   }
   return changed;
 }
 
+
+/**
+ * THE SALES MANAGER A LEAD IS UNDER AT THE MOMENT IT IS RAISED — the same
+ * org-chart relationship `recomputeSalesManagers` applies nightly, asked about
+ * one owner, so the seat a salesman's new lead is born with and the seat the
+ * nightly pass would write for it cannot disagree about who reports to whom.
+ *
+ * Without it a lead raised on a handset had no Sales Manager until the next
+ * night, and nobody could verify it in the meantime. It is a FILL and not a
+ * decision: nothing here sets `sales_manager_decided_at`, so the nightly pass
+ * goes on owning the seat and an org-chart change still moves it. Null — no
+ * org chart yet, no manager named, or a manager with no login — leaves the
+ * lead exactly as it was before this existed.
+ */
+export async function salesManagerForOwner(
+  ownerUserId: string,
+): Promise<{ id: string | null; personName: string | null } | null> {
+  /* A lead a Salesman holds is born under the field verifier, the same answer the
+     nightly pass writes for it — see `recomputeSalesManagers`. */
+  const { fieldApprover, fieldRoutingOn, fieldSeatFor, orgModeOn, salesmenAmong } = await import(
+    "./services/lead-verifier"
+  );
+  if (await orgModeOn()) {
+    /* Through the org chart, by employee id: the manager the chart names for a
+       Salesman who holds the lead, otherwise the nearest manager above whoever
+       does. Not resolvable means NO seat is written - null, and the lead is born
+       unseated and reported - never a name-matched guess. */
+    const key = `__new__${ownerUserId}`;
+    const s = await fieldSeatFor([{ id: key, ownerId: ownerUserId }]);
+    const approved = s.approvers.get(key);
+    return approved ? { id: approved, personName: null } : null;
+  } else if (await fieldRoutingOn()) {
+    const field = await fieldApprover();
+    if (field && field.id !== ownerUserId && (await salesmenAmong([ownerUserId])).has(ownerUserId)) {
+      return { id: field.id, personName: null };
+    }
+  }
+
+  /* Switch off only: the name-based answer this has always given. In org-chart
+     mode every owner was answered above, by id. */
+  const managerNameOf = await managerNameByEmployeeName();
+  if (!managerNameOf.size) return null;
+
+  const [owner] = await db
+    .select({ name: users.name })
+    .from(users)
+    .where(eq(users.id, ownerUserId))
+    .limit(1);
+  if (!owner) return null;
+
+  const managerName = managerNameOf.get(owner.name.trim().toLowerCase()) ?? null;
+  if (!managerName) return null;
+
+  const [manager] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(eq(users.active, true), sql`lower(trim(${users.name})) = ${managerName.trim().toLowerCase()}`))
+    .limit(1);
+  return manager ? { id: manager.id, personName: null } : { id: null, personName: managerName };
+}
 /* ----------------------------------------------------------- full rebuild */
 
 /** Everything, in dependency order. Used after a migration or a config change. */

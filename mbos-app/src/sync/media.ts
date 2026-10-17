@@ -78,6 +78,28 @@ export async function captureImage(args: {
   return id;
 }
 
+/**
+ * A document queued as it is — a PDF bill is not an image to be resized, and
+ * re-encoding it would either fail or flatten the text an accountant reads.
+ * The server sniffs the bytes and refuses anything that is not a type it
+ * accepts, so the declared type here is a courtesy, not the check.
+ */
+export async function queueFile(args: {
+  uri: string;
+  mimeType: string;
+  parentType: string;
+  parentId: string;
+  kind: MediaKind;
+}): Promise<string> {
+  const id = newId('media');
+  await run(
+    `INSERT INTO media_queue (id, parentType, parentId, kind, localUri, mimeType, bytes, state, nextAttemptAt, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?)`,
+    [id, args.parentType, args.parentId, args.kind, args.uri, args.mimeType, byteSize(args.uri), Date.now()],
+  );
+  return id;
+}
+
 /** Audio is queued as-is; re-encoding speech to save bytes loses the words. */
 export async function queueAudio(args: { uri: string; parentType: string; parentId: string }): Promise<string> {
   const id = newId('media');
@@ -127,7 +149,36 @@ type MediaRow = {
  * payment to reach the office; what waits for Wi-Fi is the photograph of the
  * cheque, not the fact that the cheque exists.
  */
+let uploading = false;
+
+/**
+ * HOW LONG A FILE WAITS FOR ITS RECORD before it goes up regardless.
+ *
+ * A photograph is taken before the visit it belongs to is saved, so it is
+ * queued naming `parentId: 'pending'` — and uploaded like that on the next
+ * tick, minutes before the visit existed. The server took it as unparented,
+ * nothing ever went back to say whose it was, and `canRead` then looked for a
+ * visit called "pending" and refused it to everybody. Held here until the save
+ * re-parents it, the file goes up already naming its record. A file whose
+ * record never comes (a visit abandoned half way) goes up after this long, as
+ * it always did, and the office's nightly sweep is what deals with it.
+ */
+export const PENDING_PARENT_HOLD_MS = 6 * 60 * 60 * 1000;
+
 export async function runMediaQueue(): Promise<{ uploaded: number; failed: number }> {
+  /* ONE DRAIN AT A TIME. A photo on 2G outlasts the three-second push tick,
+     and every pass ends by calling this — so a second drain picked up the
+     same file while the first was still sending it. */
+  if (uploading) return { uploaded: 0, failed: 0 };
+  uploading = true;
+  try {
+    return await drain();
+  } finally {
+    uploading = false;
+  }
+}
+
+async function drain(): Promise<{ uploaded: number; failed: number }> {
   const wifiOnly = await getConfig<boolean>('mbos.sync.mediaWifiOnly', false);
   if (wifiOnly) {
     const NetInfo = (await import('@react-native-community/netinfo')).default;
@@ -137,8 +188,11 @@ export async function runMediaQueue(): Promise<{ uploaded: number; failed: numbe
 
   const now = Date.now();
   const rows = await all<MediaRow>(
-    `SELECT * FROM media_queue WHERE state = 'queued' AND nextAttemptAt <= ? ORDER BY createdAt ASC LIMIT 5`,
-    [now],
+    `SELECT * FROM media_queue
+      WHERE state = 'queued' AND nextAttemptAt <= ?
+        AND (parentId <> 'pending' OR createdAt < ?)
+      ORDER BY createdAt ASC LIMIT 5`,
+    [now, now - PENDING_PARENT_HOLD_MS],
   );
 
   let uploaded = 0;
@@ -155,7 +209,10 @@ export async function runMediaQueue(): Promise<{ uploaded: number; failed: numbe
         uri: row.localUri,
         mimeType: row.mimeType,
       });
-      await run(`UPDATE media_queue SET state = 'synced', remoteRef = ? WHERE id = ?`, [remoteRef, row.id]);
+      /* `?? null`: the server answers `attachmentId`, not `remoteRef`, and an
+         undefined bound into SQLite is not a value — the upload had worked and
+         the write recording it could throw it back into the retry path. */
+      await run(`UPDATE media_queue SET state = 'synced', remoteRef = ? WHERE id = ?`, [remoteRef ?? null, row.id]);
       uploaded += 1;
       await afterUpload(row);
     } catch (e) {

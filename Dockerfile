@@ -12,7 +12,14 @@
 # see the note beside that line.
 
 # --------------------------------------------------------------- dependencies
-FROM node:24-alpine AS deps
+# Docker's official images, pulled through AWS's public mirror of them rather
+# than Docker Hub: GitHub's runners share IPs, and Docker Hub's anonymous pull
+# limit failed every CI job and deploy that landed on a throttled one. Same
+# image, same tags — only where it is fetched from. CI and the deploy pass
+# NODE_IMAGE when the mirror is refusing (.github/actions/node-image), and
+# Docker Hub's copy of the same image stands in for it.
+ARG NODE_IMAGE=public.ecr.aws/docker/library/node:24-alpine
+FROM ${NODE_IMAGE} AS deps
 WORKDIR /app
 
 # Only the manifests, so this layer is cached until a dependency actually
@@ -21,7 +28,7 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 # --------------------------------------------------------------------- build
-FROM node:24-alpine AS builder
+FROM ${NODE_IMAGE} AS builder
 WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
@@ -60,10 +67,13 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # connection attempt, it must fail loudly instead of quietly finding something.
 ENV DATABASE_URL=postgres://build:build@build-time-no-database.invalid:5432/build
 
-RUN npx next build
+# The docs index is built, not committed (see .gitignore): it cuts the code the
+# documentation quotes out of THIS source. `npx next build` skips npm's
+# `prebuild` hook, so it is run by name rather than relied on.
+RUN node scripts/docs-index.mjs && npx next build
 
 # ------------------------------------------------------------------- runtime
-FROM node:24-alpine AS runner
+FROM ${NODE_IMAGE} AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production

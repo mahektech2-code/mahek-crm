@@ -1,6 +1,7 @@
 import "server-only";
+import { whatsappNumberFor, type MessagePurpose } from "@/lib/customer-contacts";
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
@@ -8,6 +9,7 @@ import {
   bills,
   customers,
   followUpAttempts,
+  followUpStates,
   waMessages,
   waReplies,
   waRuns,
@@ -17,13 +19,41 @@ import {
   assertCustomerInScope,
   requireCapability,
   resolveScope,
-  scopedUserIds, scopedToUsers,} from "../access-control";
+  scopedUserIds, scopedToUsers,
+  canFor,
+  NotPermittedError,
+} from "../access-control";
+import { requireUser } from "../auth";
 import { getConfig } from "../config/store";
 import { longDate } from "../format";
 import { recomputeLastContact, today } from "../recompute";
 import { err, ok, okVoid, type Result } from "../result";
 import { effectiveDueDate } from "../engines/escalation";
 import { billCreditDaysSql } from "../bill-terms";
+import { asDate } from "../business-date";
+import {
+  advancedStatus,
+  deliveryRoute,
+  mediaKind,
+  replyMedia,
+  replyText,
+  resolveWatiParams,
+  waNumber,
+  type WatiEvent,
+} from "../whatsapp-delivery";
+import { isApproved, listWatiTemplates, sendWatiTemplate, watiConfig, watiHistoryPage } from "../wati";
+import { announceWa } from "../wa-live";
+import { whatsappServiceState } from "./whatsapp-switch-service";
+import { factsFor } from "./wati-facts-service";
+import {
+  fillBody,
+  manualText,
+  renderSpec,
+  SPEC_KEYS,
+  specKey,
+  specFor,
+  type RenderResult,
+} from "../wati-templates";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -179,9 +209,35 @@ export type PreparedMessage = {
   body: string;
   resolvedDestination: string;
   destKind: "personal" | "group";
+  /**
+   * How THIS leg can leave: `automatic` means it may be sent through Wati right
+   * now, `manual` means copy, paste and confirm — with `manualWhy` saying why.
+   * Worked out per leg, because a both-ways customer's personal leg can go
+   * through the API while the group leg never can.
+   */
   mode: "manual" | "automatic";
+  manualWhy: string | null;
   edited: boolean;
 };
+
+/**
+ * The two facts every route decision needs that are not about the message:
+ * is the founder's switch on, and is there a key. Read once per request.
+ */
+export async function deliveryContext(): Promise<{ serviceOn: boolean; hasToken: boolean }> {
+  const [state, cfg] = await Promise.all([whatsappServiceState(), watiConfig()]);
+  return { serviceOn: state.active, hasToken: Boolean(cfg) };
+}
+
+function routeFor(
+  ctx: { serviceOn: boolean; hasToken: boolean },
+  leg: { destKind: "personal" | "group"; watiTemplateName: string | null; edited: boolean },
+) {
+  const route = deliveryRoute({ ...ctx, ...leg });
+  return route.via === "api"
+    ? { mode: "automatic" as const, manualWhy: null }
+    : { mode: "manual" as const, manualWhy: route.why };
+}
 
 /**
  * Renders the template, validates every merge field, and creates the record in
@@ -200,20 +256,30 @@ export async function prepareMessage(
   }
   const input = parsed.data;
   const ctx = await resolveScope();
-  const config = await getConfig();
+  const delivery = await deliveryContext();
 
   const [existing] = await db
     .select()
     .from(waMessages)
     .where(eq(waMessages.idempotencyKey, input.idempotencyKey));
   if (existing) {
+    const [linked] = existing.templateId
+      ? await db
+          .select({ wati: waTemplates.watiTemplateName })
+          .from(waTemplates)
+          .where(eq(waTemplates.id, existing.templateId))
+      : [];
     return ok({
       messageId: existing.id,
       body: existing.body,
       resolvedDestination: existing.resolvedDestination,
       // Stored rows are always one leg; "both" never reaches this column.
       destKind: existing.destKind as "personal" | "group",
-      mode: existing.mode,
+      ...routeFor(delivery, {
+        destKind: existing.destKind as "personal" | "group",
+        watiTemplateName: linked?.wati ?? null,
+        edited: existing.edited,
+      }),
       edited: existing.edited,
     });
   }
@@ -228,6 +294,7 @@ export async function prepareMessage(
   if (customer.doNotContact) {
     return err(`${customer.name} is marked do not contact.`, "rule_violation");
   }
+  if (customer.whatsappDnd) return err(`${customer.name} is on WhatsApp DND${customer.whatsappDndReason ? ` — ${customer.whatsappDndReason}` : ""}.`, "rule_violation");
 
   const [template] = await db
     .select()
@@ -235,11 +302,25 @@ export async function prepareMessage(
     .where(eq(waTemplates.id, input.templateId));
   if (!template) return err("That template no longer exists.", "not_found");
 
-  const values = await mergeValuesFor(input.customerId);
+  // A template with a rule set (`wati_spec`) is filled by those rules and
+  // nothing else — on the manual route as much as the API one — so a copy
+  // pasted by hand says exactly what the API would have sent, and is refused
+  // for exactly the same reasons.
+  const spec = specOf(template);
+  let specFilled: string | null = null;
+  if (spec) {
+    const rendered = await renderForCustomer(spec, input.customerId);
+    if (!rendered.ok) {
+      return err(`Not sent to ${customer.name}: ${rendered.reasons.join(" ")}`, "rule_violation");
+    }
+    specFilled = fillBody(template.body, rendered.params);
+  }
+
+  const values = spec ? {} : await mergeValuesFor(input.customerId);
   const sourceBody = input.bodyOverride ?? template.body;
 
   // Validate BEFORE rendering, and name the specific field.
-  const missing = usedFields(template.body).filter((f) => !values[f]);
+  const missing = spec ? [] : usedFields(template.body).filter((f) => !values[f]);
   if (missing.length && !input.bodyOverride) {
     return err(
       `This message cannot be built for ${customer.name}: ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} empty. Fill it on the customer record first.`,
@@ -257,7 +338,7 @@ export async function prepareMessage(
   const resolvedDestination =
     destKind === "group"
       ? (customer.whatsappGroupName ?? "")
-      : (customer.whatsappPhone ?? customer.phone);
+      : whatsappNumberFor(customer, purposeOf(template));
 
   if (!resolvedDestination) {
     return err(
@@ -268,7 +349,24 @@ export async function prepareMessage(
   }
 
   const messageId = id("wam");
-  const body = applyMerge(sourceBody, values);
+  const edited = Boolean(
+    input.bodyOverride && input.bodyOverride !== (specFilled ?? template.body),
+  );
+  const route = routeFor(delivery, { destKind, watiTemplateName: template.watiTemplateName, edited });
+
+  let body: string;
+  if (specFilled !== null && !edited) {
+    // The API sends the approved wording with its buttons; a pasted copy has
+    // no buttons, so it gets the wording that asks for a reply instead.
+    if (route.mode === "automatic") body = specFilled;
+    else {
+      const manual = manualText(specFilled);
+      if (!manual.ok) return err(manual.reason, "rule_violation");
+      body = manual.text;
+    }
+  } else {
+    body = spec ? (input.bodyOverride ?? specFilled ?? "") : applyMerge(sourceBody, values);
+  }
 
   await db.insert(waMessages).values({
     id: messageId,
@@ -276,11 +374,13 @@ export async function prepareMessage(
     templateId: template.id,
     templateName: template.name,
     userId: ctx.user.id,
-    mode: config["whatsapp.mode"],
+    // `automatic` is written only when the API actually sends it — see
+    // `sendAutomatic`. A prepared row is a manual message until then.
+    mode: "manual",
     destKind,
     resolvedDestination,
     body,
-    edited: Boolean(input.bodyOverride && input.bodyOverride !== template.body),
+    edited,
     status: "prepared",
     runId: input.runId ?? null,
     idempotencyKey: input.idempotencyKey,
@@ -293,9 +393,86 @@ export async function prepareMessage(
     body,
     resolvedDestination,
     destKind,
-    mode: config["whatsapp.mode"],
-    edited: Boolean(input.bodyOverride && input.bodyOverride !== template.body),
+    ...route,
+    edited,
   });
+}
+
+/* ---------------------------------------------------------- rule-set rendering */
+
+/** Which rule set fills this template: its own, or the one its Wati link names. */
+export function specOf(template: { watiSpec: string | null; watiTemplateName: string | null }): string | null {
+  return template.watiSpec ?? specKey(template.watiTemplateName);
+}
+
+/**
+ * WHAT A TEMPLATE IS ABOUT, as far as choosing a number goes. A payment
+ * reminder goes to the contact marked for payment reminders — the accounts
+ * person at a shop is routinely not the person who orders — and everything
+ * else to the WhatsApp number. `whatsappNumberFor` is the rule.
+ */
+export function purposeOf(template: {
+  category: string;
+  watiSpec: string | null;
+  watiTemplateName: string | null;
+}): MessagePurpose {
+  if (template.category === "payment_reminder") return "payment";
+  return specFor(specOf(template))?.kind === "payment" ? "payment" : "general";
+}
+
+/** Fresh facts, then the rules. `watiParams` is what Wati's approved copy asks for. */
+async function renderForCustomer(
+  spec: string,
+  customerId: string,
+  watiParams?: readonly string[],
+): Promise<RenderResult> {
+  const facts = await factsFor(customerId);
+  if (!facts) return { ok: false, reasons: ["That customer no longer exists."] };
+  return renderSpec(spec, facts, watiParams);
+}
+
+export type MessagePreview =
+  | { ok: true; body: string; route: "automatic" | "manual"; manualWhy: string | null }
+  | { ok: false; reasons: string[] };
+
+/**
+ * Exactly what this customer would receive from this template right now, on
+ * the route it would take — or every reason it would be refused. Nothing is
+ * written. The send screen, the payment panel and the founder's preview all
+ * read this, so what somebody sees before pressing Send is what goes.
+ */
+export async function previewMessage(
+  customerId: string,
+  templateId: string,
+  destKind: "personal" | "group" = "personal",
+  /** Only for a caller that has already checked the founder's desk. */
+  opts: { skipScope?: boolean } = {},
+): Promise<MessagePreview> {
+  const [customer] = await db.select().from(customers).where(eq(customers.id, customerId));
+  if (!customer) return { ok: false, reasons: ["That customer no longer exists."] };
+  if (!opts.skipScope) await assertCustomerInScope(customer);
+  const [template] = await db.select().from(waTemplates).where(eq(waTemplates.id, templateId));
+  if (!template) return { ok: false, reasons: ["That template no longer exists."] };
+  if (customer.doNotContact) return { ok: false, reasons: [`${customer.name} is marked do not contact.`] };
+  if (customer.whatsappDnd) return { ok: false, reasons: [`${customer.name} is on WhatsApp DND${customer.whatsappDndReason ? ` — ${customer.whatsappDndReason}` : ""}.`] };
+
+  const delivery = await deliveryContext();
+  const route = routeFor(delivery, { destKind, watiTemplateName: template.watiTemplateName, edited: false });
+  const spec = specOf(template);
+  if (!spec) {
+    const values = await mergeValuesFor(customerId);
+    const missing = usedFields(template.body).filter((f) => !values[f]);
+    if (missing.length) return { ok: false, reasons: [`${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} empty for this customer.`] };
+    return { ok: true, body: applyMerge(template.body, values), route: route.mode, manualWhy: route.manualWhy };
+  }
+  const rendered = await renderForCustomer(spec, customerId);
+  if (!rendered.ok) return { ok: false, reasons: rendered.reasons };
+  const filled = fillBody(template.body, rendered.params);
+  if (route.mode === "automatic") return { ok: true, body: filled, route: "automatic", manualWhy: null };
+  const manual = manualText(filled);
+  return manual.ok
+    ? { ok: true, body: manual.text, route: "manual", manualWhy: route.manualWhy }
+    : { ok: false, reasons: [manual.reason, route.manualWhy ?? ""].filter(Boolean) };
 }
 
 /**
@@ -370,6 +547,56 @@ export async function markCopied(messageId: string): Promise<Result> {
 }
 
 /**
+ * A PAYMENT REMINDER THAT WENT IS A FOLLOW-UP ATTEMPT, and nothing recorded one.
+ *
+ * The collections plan dates the next stage-1 nudge from the newest
+ * `follow_up_attempts` row on the WhatsApp channel ("every four days, counted
+ * from the last one actually sent"), and no path that sends a reminder ever
+ * wrote that row — so a customer at stage 1 came back due every single day. It
+ * is written here, once a message is actually sent (confirmed by hand or
+ * accepted by Wati), keyed on the message so a repeat confirmation adds
+ * nothing. Only for a payment reminder, and only for a customer who is on the
+ * collections worklist at all; anything else is not a collections attempt.
+ */
+async function recordReminderAttempt(messageId: string, userId: string): Promise<void> {
+  const [row] = await db
+    .select({ customerId: waMessages.customerId, category: waTemplates.category })
+    .from(waMessages)
+    .innerJoin(waTemplates, eq(waTemplates.id, waMessages.templateId))
+    .where(eq(waMessages.id, messageId));
+  if (!row || row.category !== "payment_reminder") return;
+
+  const [state] = await db
+    .select({ stage: followUpStates.stage })
+    .from(followUpStates)
+    .where(eq(followUpStates.customerId, row.customerId));
+  if (!state) return;
+
+  const now = new Date();
+  const inserted = await db
+    .insert(followUpAttempts)
+    .values({
+      id: id("fua"),
+      customerId: row.customerId,
+      stage: state.stage,
+      channel: "whatsapp",
+      attemptedAt: now,
+      userId,
+      outcome: "Payment reminder sent on WhatsApp",
+      idempotencyKey: `wa:${messageId}`,
+      createdById: userId,
+    })
+    .onConflictDoNothing()
+    .returning({ id: followUpAttempts.id });
+  if (!inserted.length) return;
+
+  await db
+    .update(followUpStates)
+    .set({ lastChannel: "whatsapp", lastFollowUpAt: now, updatedAt: now })
+    .where(eq(followUpStates.customerId, row.customerId));
+}
+
+/**
  * The only place a manual message becomes real. Sets the customer's
  * last-WhatsApp date, which is what suppresses them from the call log.
  */
@@ -418,6 +645,7 @@ export async function confirmSent(messageId: string): Promise<Result> {
   });
 
   await recomputeLastContact(message.customerId);
+  await recordReminderAttempt(messageId, ctx.user.id);
   return okVoid("Marked as sent");
 }
 
@@ -435,43 +663,420 @@ export async function cancelMessage(messageId: string): Promise<Result> {
 }
 
 /**
- * Automatic mode. Behind the same interface as manual, so turning the
- * integration on is a configuration change plus credentials — no code change.
+ * SENDS ONE PREPARED MESSAGE THROUGH WATI — and refuses, saying why, whenever
+ * any condition for that is not met.
+ *
+ * This used to be a stub that marked the message `sent` and stamped the
+ * customer as messaged WITHOUT CALLING ANYTHING, so switching the mode to
+ * automatic would have silently taken customers off the Call Log on the
+ * strength of messages that never left. It now sends, or it says no.
+ *
+ * In order, every one a refusal that sends nothing:
+ *   the founder's switch is on · a key is configured · the message is still
+ *   unsent · it is the personal leg, unedited, of a template linked to an
+ *   APPROVED Wati template · the customer is not do-not-contact · the number is
+ *   a real Indian mobile and not a Mahek staff member's own number · the
+ *   weekly limit is not reached · every variable the template needs has a value.
+ *
+ * The customer is stamped as messaged only when Wati ACCEPTS the message. A
+ * failure reported later by webhook takes the stamp back (`applyWatiEvent`).
  */
 export async function sendAutomatic(messageId: string): Promise<Result> {
+  const ctx = await resolveScope();
+  return sendAutomaticAs(messageId, { id: ctx.user.id, checkScope: true });
+}
+
+/**
+ * The send itself, for whoever is sending: a person (whose book the customer
+ * must be in) or an automation rule (acting for the founder who set it live,
+ * with no request and so no book to check). Every other check is identical.
+ */
+async function sendAutomaticAs(
+  messageId: string,
+  actor: { id: string; checkScope: boolean },
+): Promise<Result> {
+  const ctx = { user: { id: actor.id } };
   const config = await getConfig();
-  if (config["whatsapp.mode"] !== "automatic") {
+  const delivery = await deliveryContext();
+
+  const [message] = await db.select().from(waMessages).where(eq(waMessages.id, messageId));
+  if (!message) return err("That message no longer exists.", "not_found");
+  if (!["prepared", "copied", "failed"].includes(message.status)) {
+    return err(`This message is already ${message.status.replace("_", " ")}.`, "conflict");
+  }
+
+  const [customer] = await db.select().from(customers).where(eq(customers.id, message.customerId));
+  if (!customer) return err("That customer no longer exists.", "not_found");
+  if (actor.checkScope) await assertCustomerInScope(customer);
+  if (customer.doNotContact) return err(`${customer.name} is marked do not contact.`, "rule_violation");
+  if (customer.deletedAt) return err(`${customer.name} is in the lead trash.`, "rule_violation");
+  if (customer.whatsappDnd) return err(`${customer.name} is on WhatsApp DND${customer.whatsappDndReason ? ` — ${customer.whatsappDndReason}` : ""}.`, "rule_violation");
+
+  const [template] = message.templateId
+    ? await db.select().from(waTemplates).where(eq(waTemplates.id, message.templateId))
+    : [];
+  const route = deliveryRoute({
+    ...delivery,
+    destKind: message.destKind as "personal" | "group",
+    watiTemplateName: template?.watiTemplateName ?? null,
+    edited: message.edited,
+  });
+  if (route.via !== "api") return err(route.why, "rule_violation");
+  const watiName = template!.watiTemplateName!;
+
+  const phone = waNumber(message.resolvedDestination);
+  if (!phone) {
     return err(
-      "Automatic sending is off. Switch the WhatsApp mode in configuration first.",
+      `${message.resolvedDestination || "The number on file"} is not a mobile WhatsApp can reach. Fix it on the customer record.`,
+      "validation",
+    );
+  }
+
+  /*
+   * ONE NUMBER, SEVERAL COMPANIES: EACH GETS ITS OWN MESSAGE. This used to
+   * refuse any number on three or more customers as a likely placeholder. On
+   * this book that is mostly one owner with several shops or branches — the
+   * same person, rightly told about each company they run — and Mahek asked for
+   * every company's reminder to go to the shared number.
+   *
+   * What still stops it is a fact rather than a count: the number belongs to
+   * somebody who WORKS here. A salesman's mobile typed onto a shop (one is on
+   * ninety-six records) means the shop has no number of its own, and the
+   * reminder would go to our own staff instead of the customer.
+   */
+  const last10 = phone.slice(-10);
+  const [staff] = await db.execute<{ name: string }>(sql`
+    select u.name from users u
+     where right(regexp_replace(coalesce(u.phone, ''), '[^0-9]', '', 'g'), 10) = ${last10}
+     limit 1
+  `);
+  if (staff) {
+    return err(
+      `That number is ${staff.name}'s, who works at Mahek — not ${customer.name}'s. Put the shop's own number on the record first.`,
       "rule_violation",
     );
   }
 
-  const [message] = await db.select().from(waMessages).where(eq(waMessages.id, messageId));
-  if (!message) return err("That message no longer exists.", "not_found");
+  // `whatsapp.contactsPerWeekLimit` was configurable for a long time and read
+  // by nothing. Enforced here, on the API route: a person pasting by hand is
+  // exercising judgement, a button that sends is not. Zero means no limit.
+  const limit = config["whatsapp.contactsPerWeekLimit"];
+  if (limit > 0) {
+    const [week] = await db.execute<{ n: number }>(sql`
+      select count(*)::int as n from wa_messages m
+      where m.customer_id = ${message.customerId}
+        and m.status in ('sent_manually','sent','delivered','read')
+        and coalesce(m.confirmed_sent_at, m.sent_at) > now() - interval '7 days'
+    `);
+    if (Number(week?.n ?? 0) >= limit) {
+      return err(
+        `${customer.name} has already had ${week!.n} WhatsApp message${Number(week!.n) === 1 ? "" : "s"} this week — the limit is ${limit}.`,
+        "rule_violation",
+      );
+    }
+  }
+
+  const listed = await listWatiTemplates();
+  if (!listed.ok) return err(`Could not reach Wati: ${listed.error}`, "rule_violation");
+  const wati = listed.templates.find((t) => t.name === watiName);
+  if (!wati || !isApproved(wati)) {
+    return err(
+      `The Wati template "${watiName}" is ${wati ? wati.status.toLowerCase() : "missing"} — it can only go the manual way until it is approved again.`,
+      "rule_violation",
+    );
+  }
+  // The variables are rebuilt HERE, from facts read now — not taken from
+  // whatever was true when the message was prepared. A payment confirmed in
+  // between changes the bill list, and the customer must see today's.
+  let params: Array<{ name: string; value: string }>;
+  let sentBody: string | null = null;
+  const spec = specOf(template!);
+  if (spec) {
+    const rendered = await renderForCustomer(spec, message.customerId, wati.params);
+    if (!rendered.ok) return err(`Not sent: ${rendered.reasons.join(" ")}`, "rule_violation");
+    params = rendered.params;
+    sentBody = fillBody(wati.body || template!.body, params);
+  } else {
+    const values = await mergeValuesFor(message.customerId);
+    const resolved = resolveWatiParams(wati.params, values, MERGE_FIELDS);
+    if (resolved.unknown.length) {
+      return err(
+        `The Wati template uses ${resolved.unknown.map((n) => `{{${n}}}`).join(", ")}, which MahekOne has no field for. Rename ${resolved.unknown.length === 1 ? "it" : "them"} in Wati to one of: ${MERGE_FIELDS.join(", ")}.`,
+        "validation",
+      );
+    }
+    if (resolved.missing.length) {
+      return err(
+        `This message cannot be built for ${customer.name}: ${resolved.missing.join(", ")} ${resolved.missing.length === 1 ? "is" : "are"} empty.`,
+        "validation",
+      );
+    }
+    params = resolved.params;
+  }
+
+  // CLAIM it before calling out. Two clicks, or a click racing a bulk run,
+  // must not send one message twice: only the request that moves it to
+  // `queued` goes on to call Wati.
+  const claimed = await db
+    .update(waMessages)
+    .set({ status: "queued", failureReason: null, updatedAt: new Date(), updatedById: ctx.user.id })
+    .where(and(eq(waMessages.id, messageId), inArray(waMessages.status, ["prepared", "copied", "failed"])))
+    .returning({ id: waMessages.id });
+  if (!claimed.length) return err("This message is already being sent.", "conflict");
 
   const day = await today();
+  const sent = await sendWatiTemplate({
+    templateName: watiName,
+    phone,
+    params,
+    localMessageId: messageId,
+    broadcastName: `mahekone_${watiName}_${day}`,
+  });
+
+  if (!sent.ok) {
+    const reason = sent.uncertain
+      ? `${sent.error} It may or may not have gone — check the chat in Wati before sending again.`
+      : sent.error;
+    await db
+      .update(waMessages)
+      .set({ status: "failed", mode: "automatic", failureReason: reason, updatedAt: new Date() })
+      .where(eq(waMessages.id, messageId));
+    return err(`Not sent: ${reason}`, "rule_violation");
+  }
+
+  const now = new Date();
   await db.transaction(async (tx) => {
     await tx
       .update(waMessages)
-      .set({ status: "queued", updatedAt: new Date() })
+      .set({
+        status: "sent",
+        mode: "automatic",
+        // The log shows what the customer actually received.
+        ...(sentBody ? { body: sentBody } : {}),
+        sentAt: now,
+        // Last contact reads this column; an API send IS a confirmed send.
+        confirmedSentAt: now,
+        updatedAt: now,
+      })
       .where(eq(waMessages.id, messageId));
-
-    // The provider call goes here. Until credentials exist it resolves
-    // optimistically to `sent`, and delivery callbacks move it onward.
-    await tx
-      .update(waMessages)
-      .set({ status: "sent", sentAt: new Date(), updatedAt: new Date() })
-      .where(eq(waMessages.id, messageId));
-
     await tx
       .update(customers)
-      .set({ lastConfirmedWhatsappDate: day, updatedAt: new Date() })
+      .set({ lastConfirmedWhatsappDate: day, updatedAt: now })
       .where(eq(customers.id, message.customerId));
+    await tx
+      .update(waTemplates)
+      .set({ usageCount: sql`${waTemplates.usageCount} + 1` })
+      .where(eq(waTemplates.id, template!.id));
+    await tx.insert(auditLog).values({
+      id: id("aud"),
+      actorId: ctx.user.id,
+      action: "whatsapp.sent_api",
+      entityType: "wa_message",
+      entityId: messageId,
+      afterState: { customerId: message.customerId, watiTemplate: watiName, broadcastId: sent.broadcastId } as never,
+    });
   });
 
   await recomputeLastContact(message.customerId);
-  return okVoid("Message sent");
+  await recordReminderAttempt(messageId, ctx.user.id);
+  await announceWa({ customerId: message.customerId, number: null });
+  return okVoid(`Sent to ${customer.name} on WhatsApp`);
+}
+
+/**
+ * Prepare and send in one step — the button a telecaller presses when the
+ * message can go through the API. One personal leg only: a group leg can never
+ * go this way, and a both-ways customer is worked leg by leg on the send screen.
+ */
+export async function sendNow(input: {
+  customerId: string;
+  templateId: string;
+  idempotencyKey: string;
+}): Promise<Result<{ messageId: string }>> {
+  const prepared = await prepareMessage({ ...input, destKind: "personal" });
+  if (!prepared.ok) return prepared;
+  if (prepared.data.mode !== "automatic") {
+    return err(prepared.data.manualWhy ?? "This message has to be sent the manual way.", "rule_violation");
+  }
+  const sent = await sendAutomatic(prepared.data.messageId);
+  if (!sent.ok) return sent;
+  return ok({ messageId: prepared.data.messageId }, sent.message);
+}
+
+/**
+ * Sends every personal message still waiting in a run through the API, one at
+ * a time, and leaves the rest — groups, and anything refused — for the manual
+ * run exactly as before. Refusals are counted and the first few are named,
+ * because "12 not sent" with no reason is a number nobody can act on.
+ */
+export async function sendRunViaApi(
+  runId: string,
+): Promise<Result<{ sent: number; left: number; problems: string[] }>> {
+  await requireCapability("whatsapp.bulk");
+  const delivery = await deliveryContext();
+  if (!delivery.serviceOn) return err("WhatsApp sending is switched off in the Founder Command Centre.", "rule_violation");
+  if (!delivery.hasToken) return err("No Wati key is configured.", "rule_violation");
+
+  const waiting = await db
+    .select({ id: waMessages.id, customerName: customers.name })
+    .from(waMessages)
+    .innerJoin(customers, eq(customers.id, waMessages.customerId))
+    .where(
+      and(
+        eq(waMessages.runId, runId),
+        eq(waMessages.destKind, "personal"),
+        inArray(waMessages.status, ["prepared", "copied"]),
+      ),
+    )
+    .orderBy(asc(waMessages.preparedAt));
+
+  let sent = 0;
+  const problems: string[] = [];
+  for (const m of waiting) {
+    const r = await sendAutomatic(m.id);
+    if (r.ok) sent++;
+    else problems.push(`${m.customerName}: ${r.error}`);
+  }
+
+  const state = await getRun(runId);
+  if (state) {
+    await db
+      .update(waRuns)
+      .set({
+        sentCount: state.sent,
+        skippedCount: state.skipped,
+        ...(state.current ? {} : { status: "completed" as const, completedAt: new Date() }),
+      })
+      .where(eq(waRuns.id, runId));
+  }
+
+  const left = state?.recipients.filter((r) => !r.done).length ?? 0;
+  return ok(
+    { sent, left, problems },
+    `${sent} sent through WhatsApp${left ? ` · ${left} left for the manual run` : ""}`,
+  );
+}
+
+/* ------------------------------------------------------------ webhooks in */
+
+/**
+ * The customer's last-WhatsApp date, rebuilt from the messages that actually
+ * went. Needed the moment a send can be taken back — a message Wati accepted
+ * and WhatsApp then failed to deliver must stop holding the customer off the
+ * Call Log.
+ */
+export async function recomputeLastWhatsapp(customerId: string): Promise<void> {
+  await db.execute(sql`
+    update customers c set last_confirmed_whatsapp_date = (
+      select max((coalesce(m.confirmed_sent_at, m.sent_at) at time zone 'Asia/Kolkata')::date)
+      from wa_messages m
+      where m.customer_id = c.id
+        and m.status in ('sent_manually','sent','delivered','read')
+    ), updated_at = now()
+    where c.id = ${customerId}
+  `);
+  await recomputeLastContact(customerId);
+}
+
+/**
+ * WHOSE NUMBER THIS IS — the one rule, read by the webhook and by the import
+ * of replies from before it. Either the WhatsApp number or the phone on the
+ * record; a customer over a lead where both carry it; the most recently
+ * touched where several do. A lead in the trash is filed against nobody: the
+ * message is kept as an unknown number's, where an administrator sees it.
+ */
+export async function customerIdForNumber(last10: string): Promise<string | null> {
+  const [match] = await db.execute<{ id: string }>(sql`
+      select c.id from customers c
+      where (right(regexp_replace(coalesce(c.whatsapp_phone, ''), '[^0-9]', '', 'g'), 10) = ${last10}
+         or right(regexp_replace(coalesce(c.phone, ''), '[^0-9]', '', 'g'), 10) = ${last10}
+         -- Any number on the contacts list: a reply from the accounts person
+         -- the payment reminder went to is that customer's reply.
+         or exists (
+           select 1 from customer_contacts cc
+           where cc.customer_id = c.id
+             and right(regexp_replace(cc.phone, '[^0-9]', '', 'g'), 10) = ${last10}
+         ))
+        -- A lead in the trash is filed against nobody: the message is kept as
+        -- an unknown number's, where an administrator will see it.
+        and c.deleted_at is null
+      order by (c.kind = 'customer') desc, c.updated_at desc
+      limit 1
+    `);
+  return match?.id ?? null;
+}
+
+/**
+ * One webhook event from Wati, applied. Idempotent: Wati retries, and every
+ * status only moves forward (`advancedStatus`), so a repeat changes nothing.
+ * Returns what it did, for the route's log line.
+ */
+export async function applyWatiEvent(event: WatiEvent): Promise<string> {
+  if (event.kind === "ignored") return `ignored: ${event.why}`;
+
+  if (event.kind === "reply") {
+    const last10 = event.waId.replace(/\D/g, "").slice(-10);
+    const matchId = await customerIdForNumber(last10);
+    const match = matchId ? { id: matchId } : undefined;
+    const inserted = await db
+      .insert(waReplies)
+      .values({
+        id: id("war"),
+        customerId: match?.id ?? null,
+        message: event.text.slice(0, 4000),
+        waId: event.waId,
+        senderName: event.senderName,
+        providerMessageId: event.providerMessageId,
+        mediaType: event.media?.type ?? null,
+        mediaPath: event.media?.path ?? null,
+      })
+      .onConflictDoNothing()
+      .returning({ id: waReplies.id });
+    // Every open chat screen that may see this customer hears about it now.
+    if (inserted.length) await announceWa({ customerId: match?.id ?? null, number: last10 });
+    return inserted.length ? `reply stored${match ? "" : " (no matching customer)"}` : "reply already stored";
+  }
+
+  // Ours by id when we sent a template; by WhatsApp's id when it was a
+  // free-text reply, whose events carry no id of ours.
+  const [message] = await db
+    .select()
+    .from(waMessages)
+    .where(
+      event.localMessageId
+        ? eq(waMessages.id, event.localMessageId)
+        : eq(waMessages.providerRef, event.providerRef as string),
+    )
+    .limit(1);
+  if (!message) {
+    /* A logistics message to a customer (ERP → Logistics) carries its own id. */
+    if (event.localMessageId?.startsWith("etmsg_")) {
+      const { applyLogisticsWatiEvent } = await import("@/lib/erp/logistics");
+      const done = await applyLogisticsWatiEvent(event.localMessageId, event.kind, event.kind === "failed" ? event.reason : null);
+      if (done) return done;
+    }
+    return `no message ${event.localMessageId ?? event.providerRef}`;
+  }
+
+  const next = advancedStatus(message.status, event.kind);
+  if (!next) return `${event.kind} ignored at ${message.status}`;
+
+  const now = new Date();
+  await db
+    .update(waMessages)
+    .set({
+      status: next as never,
+      providerRef: event.providerRef ?? message.providerRef,
+      ...(next === "delivered" ? { deliveredAt: now } : {}),
+      ...(next === "read" ? { readAt: now, deliveredAt: message.deliveredAt ?? now } : {}),
+      ...(event.kind === "failed" ? { failureReason: event.reason } : {}),
+      updatedAt: now,
+    })
+    .where(eq(waMessages.id, message.id));
+
+  if (next === "failed") await recomputeLastWhatsapp(message.customerId);
+  await announceWa({ customerId: message.customerId, number: null });
+  return `${message.status} -> ${next}`;
 }
 
 /* ------------------------------------------------------------------- lists */
@@ -487,10 +1092,21 @@ export const WA_MESSAGE_LIMIT = 300;
 
 type MessageFilters = { status?: string; mode?: string; customerId?: string };
 
-/** The scope and the filters, once, so the list and the count cannot disagree. */
+/**
+ * The scope and the filters, once, so the list and the count cannot disagree.
+ *
+ * WHOSE CUSTOMER, OR WHO SENT IT — not only who sent it. This read
+ * `waMessages.userId` alone, and every message an automatic rule sends is
+ * stored under whoever set the rule up. So a telecaller's Log never showed a
+ * single reminder their own customers had received: Poonam's book of 349 had
+ * 22 in a month and her Log was empty. The customer's book is the CRM's rule
+ * for every other list (`scopedToUsers`); the sender half stays so a message
+ * somebody sent to an account since moved out of their book is still theirs
+ * to see. Needs `customers` joined — both callers do.
+ */
 function messageWhere(ids: string[] | null, filters?: MessageFilters) {
   return and(
-    ids ? inArray(waMessages.userId, ids) : undefined,
+    ids ? or(scopedToUsers(ids), inArray(waMessages.userId, ids)) : undefined,
     filters?.status ? eq(waMessages.status, filters.status as never) : undefined,
     filters?.mode ? eq(waMessages.mode, filters.mode as never) : undefined,
     filters?.customerId ? eq(waMessages.customerId, filters.customerId) : undefined,
@@ -513,6 +1129,7 @@ export async function messageCount(filters?: MessageFilters): Promise<number> {
   const [row] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(waMessages)
+    .innerJoin(customers, eq(customers.id, waMessages.customerId))
     .where(messageWhere(ids, filters));
 
   return Number(row?.n ?? 0);
@@ -538,6 +1155,13 @@ export async function listMessages(filters?: MessageFilters) {
     ...message,
     customerName,
     userName,
+    /**
+     * Sent by this person (or, for a manager, their team) — what the Log
+     * showed before it widened to the customer's book. The "awaiting
+     * confirmation" banner reads this: confirming a copy is the word of the
+     * person who pasted it, never of whoever owns the customer.
+     */
+    sentInScope: ids === null || ids.includes(message.userId),
   }));
 }
 
@@ -545,7 +1169,18 @@ export async function listMessages(filters?: MessageFilters) {
  * The manager's watch metric: copied, never confirmed, older than the expiry.
  * Each one is a customer who may or may not have been contacted.
  */
+/**
+ * Copied and never confirmed, past the expiry — the manager's sweep list.
+ *
+ * SCOPED LIKE EVERY OTHER LIST OF MESSAGES. It read the whole company's
+ * unconfirmed copies for anybody the page let through, so a manager of one
+ * team read (and was invited to confirm) another team's sends. It narrows
+ * through `scopedToUsers` on the customer, exactly as `listReplies` beside it
+ * does, which also keeps a trashed lead's messages off it.
+ */
 export async function listUnconfirmedCopies() {
+  const ctx = await resolveScope();
+  const ids = scopedUserIds(ctx.scope);
   const config = await getConfig();
   const cutoff = new Date(
     Date.now() - config["whatsapp.unconfirmedExpiryHours"] * 3_600_000,
@@ -555,7 +1190,13 @@ export async function listUnconfirmedCopies() {
     .select({ message: waMessages, customerName: customers.name })
     .from(waMessages)
     .innerJoin(customers, eq(customers.id, waMessages.customerId))
-    .where(and(eq(waMessages.status, "copied"), lt(waMessages.copiedAt, cutoff)))
+    .where(
+      and(
+        eq(waMessages.status, "copied"),
+        lt(waMessages.copiedAt, cutoff),
+        scopedToUsers(ids),
+      ),
+    )
     .orderBy(asc(waMessages.copiedAt));
 
   return rows.map(({ message, customerName }) => ({ ...message, customerName }));
@@ -570,12 +1211,136 @@ export async function listReplies() {
     .innerJoin(customers, eq(customers.id, waReplies.customerId))
     .where(and(eq(waReplies.actioned, false), scopedToUsers(ids)))
     .orderBy(desc(waReplies.receivedAt));
-  return rows.map(({ reply, customerName }) => ({ ...reply, customerName }));
+  // The inner join already drops replies from numbers the book does not know;
+  // those are listed on the Founder Dashboard's WhatsApp screen instead.
+  return rows.map(({ reply, customerName }) => ({
+    ...reply,
+    message: replyText(reply.message, reply.mediaType),
+    customerId: reply.customerId as string,
+    customerName,
+  }));
 }
 
-export async function actionReply(replyId: string): Promise<Result> {
-  await db.update(waReplies).set({ actioned: true }).where(eq(waReplies.id, replyId));
-  return okVoid("Reply actioned");
+/**
+ * FILES THAT ARRIVED BEFORE THEY WERE KEPT, found again in Wati's history.
+ *
+ * Until the webhook kept `data`, a photograph arrived as the row "[image]" with
+ * nothing pointing at the file. Wati still holds it, in the contact's history —
+ * but that history carries Wati's own ids and not WhatsApp's, so a row is
+ * matched on what both sides do know: the same number, the same kind of file,
+ * received within a couple of minutes, nearest first, each history message
+ * used once. Three photographs sent in one second are matched in order, which
+ * is the order they were stored in.
+ *
+ * Idempotent — only rows with no file are looked at — so it is safe by hand and
+ * on the hourly pass, where it catches any file the webhook ever arrives
+ * without. `sinceDays` bounds that pass; by hand it reads everything.
+ */
+export async function backfillReplyMedia(sinceDays?: number): Promise<{ found: number; looked: number; numbers: number }> {
+  const rows = await db.execute<{ id: string; wa_id: string; message: string; received_at: unknown }>(sql`
+    select r.id, r.wa_id, r.message, r.received_at from wa_replies r
+     where r.media_path is null and r.wa_id is not null
+       and r.message ~* '^\\[(image|document|video|audio|voice|ptt|sticker)\\]$'
+       ${sinceDays ? sql`and r.received_at > now() - make_interval(days => ${sinceDays}::int)` : sql``}
+     order by r.received_at asc, r.id asc
+  `);
+  const byNumber = new Map<string, Array<(typeof rows)[number]>>();
+  for (const r of rows) byNumber.set(r.wa_id, [...(byNumber.get(r.wa_id) ?? []), r]);
+
+  const WINDOW_MS = 2 * 60_000;
+  let found = 0;
+  for (const [waId, mine] of byNumber) {
+    const items = [];
+    for (let page = 1; page <= 3; page++) {
+      const r = await watiHistoryPage(waId, page);
+      if (!r.ok) break;
+      items.push(...r.items);
+      if (r.items.length < 100) break;
+    }
+    const files = items
+      .filter((h) => h.owner === false && !Number.isNaN(Date.parse(h.created)))
+      .map((h) => ({ id: h.id, at: new Date(h.created), media: replyMedia(h.type, h.data) }))
+      .filter((h) => h.media)
+      .sort((a, b) => a.at.getTime() - b.at.getTime());
+    const used = new Set<string>();
+    for (const r of mine) {
+      const kind = mediaKind(r.message.slice(1, -1));
+      const at = asDate(r.received_at)?.getTime();
+      if (!kind || at === undefined) continue;
+      const match = files
+        .filter((f) => !used.has(f.id) && f.media!.type === kind && Math.abs(f.at.getTime() - at) <= WINDOW_MS)
+        .sort((a, b) => Math.abs(a.at.getTime() - at) - Math.abs(b.at.getTime() - at) || a.at.getTime() - b.at.getTime())[0];
+      if (!match) continue;
+      used.add(match.id);
+      await db
+        .update(waReplies)
+        .set({ mediaType: match.media!.type, mediaPath: match.media!.path, message: replyText(r.message, match.media!.type) })
+        .where(and(eq(waReplies.id, r.id), isNull(waReplies.mediaPath)));
+      found++;
+    }
+  }
+  return { found, looked: rows.length, numbers: byNumber.size };
+}
+
+/** Replies from numbers matching no customer — kept, and shown, never dropped. */
+export async function listUnmatchedReplies(limit = 50) {
+  return db
+    .select()
+    .from(waReplies)
+    .where(isNull(waReplies.customerId))
+    .orderBy(desc(waReplies.receivedAt))
+    .limit(limit);
+}
+
+/** What the API has sent in the last N days, by where it has got to. */
+export async function apiSendCounts(days = 7): Promise<Record<string, number>> {
+  const rows = await db.execute<{ status: string; n: number }>(sql`
+    select m.status, count(*)::int as n from wa_messages m
+    where m.mode = 'automatic' and m.updated_at > now() - make_interval(days => ${days}::int)
+    group by m.status
+  `);
+  return Object.fromEntries(rows.map((r) => [r.status, Number(r.n)]));
+}
+
+/**
+ * The one rule for who may act on a reply: its customer in your scope, or —
+ * for a number on nobody's book — your scope is the whole book. Throws on a
+ * customer out of scope, exactly as every other customer check does.
+ */
+async function replyOutOfScope(customer: typeof customers.$inferSelect | null): Promise<Result | null> {
+  if (customer) {
+    await assertCustomerInScope(customer);
+    return null;
+  }
+  if (scopedUserIds((await resolveScope()).scope) !== null) {
+    return err("A reply from an unknown number is handled by somebody who sees the whole book.", "not_permitted");
+  }
+  return null;
+}
+
+export async function actionReply(replyId: string, handled = true): Promise<Result> {
+  const user = await requireUser();
+  const [row] = await db
+    .select({ reply: waReplies, customer: customers })
+    .from(waReplies)
+    .leftJoin(customers, eq(customers.id, waReplies.customerId))
+    .where(eq(waReplies.id, replyId));
+  if (!row) return err("That reply no longer exists.", "not_found");
+  const refused = await replyOutOfScope(row.customer);
+  if (refused) return refused;
+  await db
+    .update(waReplies)
+    .set(
+      handled
+        ? { actioned: true, actionedAt: new Date(), actionedById: user.id }
+        : { actioned: false, actionedAt: null, actionedById: null },
+    )
+    .where(eq(waReplies.id, replyId));
+  await announceWa({
+    customerId: row.customer?.id ?? null,
+    number: row.reply.waId ? row.reply.waId.replace(/\D/g, "").slice(-10) : null,
+  });
+  return okVoid(handled ? "Marked handled" : "Back in Needs reply");
 }
 
 /* -------------------------------------------------------------- templates */
@@ -643,7 +1408,8 @@ export async function createRun(input: {
   filterKey: string;
 }): Promise<Result<{ runId: string; total: number; skipped: string[] }>> {
   const ctx = await requireCapability("whatsapp.bulk");
-  const config = await getConfig();
+  const delivery = await deliveryContext();
+  const [template] = await db.select().from(waTemplates).where(eq(waTemplates.id, input.templateId));
 
   if (!input.customerIds.length) {
     return err("Nobody matches that filter today.", "validation");
@@ -654,7 +1420,13 @@ export async function createRun(input: {
     id: runId,
     userId: ctx.user.id,
     templateId: input.templateId,
-    mode: config["whatsapp.mode"],
+    // What the run CAN do when it starts: its personal legs through the API.
+    // Groups in it are still worked by hand either way.
+    mode: routeFor(delivery, {
+      destKind: "personal",
+      watiTemplateName: template?.watiTemplateName ?? null,
+      edited: false,
+    }).mode,
     filterKey: input.filterKey,
     totalCount: 0,
     createdById: ctx.user.id,
@@ -724,11 +1496,40 @@ export async function findResumableRun(userId: string) {
   return run ? getRun(run.id) : null;
 }
 
+/**
+ * A RUN IS ITS STARTER'S TO DRIVE.
+ *
+ * Pausing, finishing and stepping a run took a run id and nothing else, so any
+ * signed-in person could stop — or mark as completed — somebody else's batch
+ * half way through, and step its messages on. A run is one person working down
+ * a list; the person who started it drives it, and beyond them only somebody
+ * who holds `whatsapp.bulk` — the capability that starts runs at all — may
+ * step in on one, which is a manager clearing a run its owner abandoned.
+ */
+async function requireRunDriver(runId: string) {
+  const user = await requireUser();
+  const [run] = await db.select().from(waRuns).where(eq(waRuns.id, runId));
+  if (!run) return null;
+  if (run.userId !== user.id && !(await canFor(user, "whatsapp.bulk"))) {
+    throw new NotPermittedError("whatsapp.bulk");
+  }
+  return run;
+}
+
 export async function advanceRun(
   runId: string,
   messageId: string,
   outcome: "sent" | "skipped",
 ): Promise<Result> {
+  if (!(await requireRunDriver(runId))) return err("That run no longer exists.", "not_found");
+  /* And the message has to be one of this run's — otherwise stepping a run you
+     drive is a way to confirm or cancel anybody's message by id. */
+  const [msg] = await db
+    .select({ runId: waMessages.runId })
+    .from(waMessages)
+    .where(eq(waMessages.id, messageId));
+  if (!msg || msg.runId !== runId) return err("That message is not part of this run.", "not_found");
+
   const result =
     outcome === "sent" ? await confirmSent(messageId) : await cancelMessage(messageId);
   if (!result.ok) return result;
@@ -758,6 +1559,7 @@ export async function setRunStatus(
   runId: string,
   status: "active" | "paused" | "cancelled" | "completed",
 ): Promise<Result> {
+  if (!(await requireRunDriver(runId))) return err("That run no longer exists.", "not_found");
   await db
     .update(waRuns)
     .set({
@@ -818,6 +1620,8 @@ export type ReminderPreview = {
   destKind: "personal" | "group";
   body: string;
   mode: "manual" | "automatic";
+  /** Why it cannot go through the API, when `mode` is manual. */
+  manualWhy: string | null;
   /** Every merge field the template uses, and whether this customer has it. */
   fields: Array<{ label: string; value: string; ok: boolean }>;
   /** True when a field is empty, so the message would read badly. */
@@ -834,23 +1638,93 @@ export async function previewPaymentReminder(
   customerId: string,
   stage: number,
 ): Promise<ReminderPreview | null> {
-  const config = await getConfig();
+  const all = await previewPaymentReminders(customerId, stage);
+  return all.options.find((o) => o.templateId === all.defaultTemplateId) ?? null;
+}
+
+/**
+ * EVERY PAYMENT REMINDER THE TEAM MAY SEND THIS CUSTOMER, each rendered as it
+ * would actually go — the approved Wati wording, filled by the template's own
+ * rule set, on the route it would take.
+ *
+ * It used to be ONE template: the stage's own, else `templates[0]`. The eight
+ * Wati templates carry no escalation stage (0165 left that to Mahek), so the
+ * fallback was taken every time, and `templates[0]` of an unordered select is
+ * whichever row the planner returned first — a stage 3 debt could be offered
+ * the gentle first reminder, and a different one tomorrow. The person sending
+ * it now sees the approved templates in their fixed order and picks; the
+ * stage's own, where one is set, is picked for them.
+ *
+ * Only rule-set templates are offered while any exist: WhatsApp goes out as
+ * one of the approved Wati templates, and a free-text one left active by hand
+ * would be the copy route saying something Wati never approved.
+ */
+export async function previewPaymentReminders(
+  customerId: string,
+  stage: number,
+): Promise<{ options: ReminderPreview[]; defaultTemplateId: string | null }> {
+  const delivery = await deliveryContext();
   const [customer] = await db
     .select()
     .from(customers)
     .where(eq(customers.id, customerId));
-  if (!customer) return null;
+  if (!customer) return { options: [], defaultTemplateId: null };
   await assertCustomerInScope(customer);
 
-  // The stage's own template, falling back to any active payment reminder —
-  // a missing stage-3 template must not leave the telecaller with no message.
-  const templates = await db
+  const active = await db
     .select()
     .from(waTemplates)
     .where(and(eq(waTemplates.category, "payment_reminder"), eq(waTemplates.active, true)));
-  const template =
-    templates.find((t) => t.escalationStage === stage) ?? templates[0];
-  if (!template) return null;
+  const specd = active.filter((t) => specOf(t));
+  const rank = (t: (typeof active)[number]) => {
+    const i = SPEC_KEYS.indexOf(specOf(t) ?? "");
+    return i < 0 ? SPEC_KEYS.length : i;
+  };
+  const templates = (specd.length ? specd : active).sort(
+    (x, y) => rank(x) - rank(y) || x.name.localeCompare(y.name),
+  );
+  if (!templates.length) return { options: [], defaultTemplateId: null };
+
+  const options: ReminderPreview[] = [];
+  for (const template of templates) {
+    options.push(await previewOne(customer, template, delivery));
+  }
+  // The stage's own template where somebody set one; otherwise the first
+  // that can actually go, so the panel does not open on a refusal.
+  const chosen =
+    templates.find((t) => t.escalationStage === stage) ??
+    templates[options.findIndex((o) => !o.blocked)] ??
+    templates[0];
+  return { options, defaultTemplateId: chosen.id };
+}
+
+async function previewOne(
+  customer: typeof customers.$inferSelect,
+  template: typeof waTemplates.$inferSelect,
+  delivery: Awaited<ReturnType<typeof deliveryContext>>,
+): Promise<ReminderPreview> {
+  const customerId = customer.id;
+  // A rule-set template is previewed by the same rules that will send it. Its
+  // "fields" are the reasons it cannot go, if any — there is nothing for a
+  // telecaller to fill in, and a list of merge fields would suggest otherwise.
+  const standingLeg = customer.whatsappGroupName ? customer.whatsappDest : "personal";
+  const legKind: "personal" | "group" = standingLeg === "both" ? "personal" : standingLeg;
+  if (specOf(template)) {
+    const p = await previewMessage(customerId, template.id, legKind);
+    const route = routeFor(delivery, { destKind: legKind, watiTemplateName: template.watiTemplateName, edited: false });
+    return {
+      templateId: template.id,
+      templateName: template.name,
+      destination:
+        legKind === "group" ? (customer.whatsappGroupName ?? "") : whatsappNumberFor(customer, "payment"),
+      destKind: legKind,
+      body: p.ok ? p.body : "",
+      ...route,
+      fields: [],
+      blocked: !p.ok,
+      blockedReason: p.ok ? null : p.reasons.join(" "),
+    };
+  }
 
   const values = await mergeValuesFor(customerId);
   const fields = usedFields(template.body).map((f) => ({
@@ -863,24 +1737,165 @@ export async function previewPaymentReminder(
   // The preview describes the first leg. A both-ways customer still starts at
   // their own number; the second leg is spelled out on the send screen, which
   // is the only place it can actually be worked.
-  const standing = customer.whatsappGroupName ? customer.whatsappDest : "personal";
-  const destKind: "personal" | "group" = standing === "both" ? "personal" : standing;
   const destination =
-    destKind === "group"
+    legKind === "group"
       ? (customer.whatsappGroupName ?? "")
-      : (customer.whatsappPhone ?? customer.phone);
+      : whatsappNumberFor(customer, "payment");
 
   return {
     templateId: template.id,
     templateName: template.name,
     destination,
-    destKind,
+    destKind: legKind,
     body: applyMerge(template.body, values),
-    mode: config["whatsapp.mode"],
+    ...routeFor(delivery, { destKind: legKind, watiTemplateName: template.watiTemplateName, edited: false }),
     fields,
     blocked: missing.length > 0,
     blockedReason: missing.length
       ? `${missing.map((f) => f.label).join(", ")} ${missing.length === 1 ? "is" : "are"} empty for this customer, so the message would read badly. Log a call instead, or fill it on the customer record first.`
       : null,
   };
+}
+
+/* ------------------------------------------------------------ test sends */
+
+/**
+ * The real template, filled from a real customer's facts, sent to a number
+ * that is NOT the customer's — the founder's own phone, to see exactly what a
+ * customer would receive before anything is switched on.
+ *
+ * Deliberately NOT gated by the service switch: the switch is about messages
+ * to customers, and this is how somebody decides whether to flip it. Nothing
+ * is written against the customer — no message row, no contact date — and the
+ * send is audited with the number it went to.
+ */
+export async function sendTestMessage(input: {
+  customerId: string;
+  templateId: string;
+  phone: string;
+  userId: string;
+}): Promise<Result<{ body: string }>> {
+  const phone = waNumber(input.phone);
+  if (!phone) return err("That is not a mobile number WhatsApp can reach.", "validation");
+
+  const [template] = await db.select().from(waTemplates).where(eq(waTemplates.id, input.templateId));
+  if (!template) return err("That template no longer exists.", "not_found");
+  if (!template.watiTemplateName) {
+    return err("Link this template to an approved Wati template first.", "rule_violation");
+  }
+  const listed = await listWatiTemplates({ fresh: true });
+  if (!listed.ok) return err(`Could not reach Wati: ${listed.error}`, "rule_violation");
+  const wati = listed.templates.find((t) => t.name === template.watiTemplateName);
+  if (!wati || !isApproved(wati)) {
+    return err(`"${template.watiTemplateName}" is not approved in Wati yet.`, "rule_violation");
+  }
+
+  const spec = specOf(template);
+  if (!spec) return err("Test sends are for the templates that follow a rule set.", "rule_violation");
+  const rendered = await renderForCustomer(spec, input.customerId, wati.params);
+  if (!rendered.ok) return err(`This customer would not be sent it: ${rendered.reasons.join(" ")}`, "rule_violation");
+
+  const sent = await sendWatiTemplate({
+    templateName: wati.name,
+    phone,
+    params: rendered.params,
+    localMessageId: id("test"),
+    broadcastName: `mahekone_test_${wati.name}`,
+  });
+  await db.insert(auditLog).values({
+    id: id("aud"),
+    actorId: input.userId,
+    action: "whatsapp.test_send",
+    entityType: "wa_template",
+    entityId: template.id,
+    afterState: { customerId: input.customerId, to: phone, ok: sent.ok, error: sent.ok ? null : sent.error } as never,
+  });
+  if (!sent.ok) return err(`Wati did not send it: ${sent.error}`, "rule_violation");
+  return ok({ body: fillBody(wati.body || template.body, rendered.params) }, `Test sent to +${phone}`);
+}
+
+/** Customers by name, for the founder's preview box. */
+export async function findCustomersByName(q: string) {
+  const term = q.trim();
+  if (term.length < 2) return [];
+  return db
+    .select({ id: customers.id, name: customers.name, city: customers.city })
+    .from(customers)
+    .where(sql`${customers.name} ilike ${"%" + term.replace(/[%_]/g, "") + "%"} and customers.deleted_at is null`)
+    .orderBy(asc(customers.name))
+    .limit(10);
+}
+
+/* --------------------------------------------------------- rule-driven sends */
+
+/**
+ * One message for one automation rule: prepared and, unless `dry`, sent.
+ *
+ * The idempotency key is rule + customer + DAY, so two runs of the scheduler
+ * that overlap — or the same hour run twice — can only ever produce one row,
+ * and a second attempt finds it and stops. Everything about whether the
+ * message is TRUE is still the template's rule set, rendered from fresh facts.
+ * The personal number only: a group cannot be reached through the API.
+ */
+export async function sendForRule(input: {
+  customerId: string;
+  templateId: string;
+  triggerId: string;
+  actorId: string;
+  day: string;
+}): Promise<Result<{ messageId: string }>> {
+  const idempotencyKey = `auto:${input.triggerId}:${input.customerId}:${input.day}`;
+  const [existing] = await db
+    .select({ id: waMessages.id })
+    .from(waMessages)
+    .where(eq(waMessages.idempotencyKey, idempotencyKey));
+  if (existing) return err("Already handled today by this rule.", "conflict");
+
+  const [customer] = await db.select().from(customers).where(eq(customers.id, input.customerId));
+  if (!customer) return err("That customer no longer exists.", "not_found");
+  const [template] = await db.select().from(waTemplates).where(eq(waTemplates.id, input.templateId));
+  if (!template) return err("That template no longer exists.", "not_found");
+  const spec = specOf(template);
+  if (!spec) return err("Only a template with a rule set can be sent automatically.", "rule_violation");
+
+  const rendered = await renderForCustomer(spec, input.customerId);
+  if (!rendered.ok) return err(rendered.reasons.join(" "), "rule_violation");
+  const destination = whatsappNumberFor(customer, purposeOf(template));
+  if (!destination) return err("No number on record.", "validation");
+
+  const messageId = id("wam");
+  const inserted = await db
+    .insert(waMessages)
+    .values({
+      id: messageId,
+      customerId: input.customerId,
+      templateId: template.id,
+      templateName: template.name,
+      userId: input.actorId,
+      mode: "manual",
+      destKind: "personal",
+      resolvedDestination: destination,
+      body: fillBody(template.body, rendered.params),
+      status: "prepared",
+      triggerId: input.triggerId,
+      idempotencyKey,
+      createdById: input.actorId,
+      updatedById: input.actorId,
+    })
+    .onConflictDoNothing()
+    .returning({ id: waMessages.id });
+  if (!inserted.length) return err("Already handled today by this rule.", "conflict");
+
+  const sent = await sendAutomaticAs(messageId, { id: input.actorId, checkScope: false });
+  if (!sent.ok) {
+    // A refusal before anything left leaves a row nobody will work — mark it
+    // cancelled with the reason, so the log says why and the key still stops
+    // a second attempt today.
+    await db
+      .update(waMessages)
+      .set({ status: "cancelled", failureReason: sent.error, updatedAt: new Date() })
+      .where(and(eq(waMessages.id, messageId), eq(waMessages.status, "prepared")));
+    return sent;
+  }
+  return ok({ messageId }, sent.message);
 }

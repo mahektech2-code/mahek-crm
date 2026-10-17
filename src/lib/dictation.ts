@@ -103,6 +103,12 @@ export async function refinementConfigured(): Promise<boolean> {
   return writingConfigured();
 }
 
+export type OnHeard = (heard: {
+  spoken: string;
+  draft: string;
+  language: string | null;
+}) => void;
+
 export type DictationOutcome =
   /** Speech was heard. `spoken` is the original language, `english` the note. */
   | {
@@ -222,7 +228,29 @@ const fenced = (text: string) => `${FENCE}\n${text}\n${FENCE}`;
  * it was mangled from. Both are fenced: they are somebody's speech, not
  * instructions.
  */
-function renderPrompt({ spoken, draft }: { spoken: string; draft?: string }): string {
+/*
+ * A long dictation arrives in pieces, cut at pauses while the person is still
+ * talking, and each piece is written as it lands. Told so, the model writes
+ * the piece as a continuation — no heading, no "In summary", no greeting —
+ * and the pieces join into one note rather than a stack of little ones.
+ */
+const PIECE_NOTE =
+  "This is one piece of a longer dictation, cut at a pause while the person was still speaking. Write just this piece, as a plain continuation: no heading, no greeting, no closing line, and do not complete a sentence the speaker had not finished.";
+
+function renderPrompt({
+  spoken,
+  draft,
+  piece,
+}: {
+  spoken: string;
+  draft?: string;
+  piece?: boolean;
+}): string {
+  const body = renderBody({ spoken, draft });
+  return piece ? `${PIECE_NOTE}\n\n${body}` : body;
+}
+
+function renderBody({ spoken, draft }: { spoken: string; draft?: string }): string {
   if (!draft || !spoken || draft === spoken) return fenced(spoken || draft || "");
   return [
     "What was said, in the language it was said in:",
@@ -246,6 +274,8 @@ export async function transcribeSpeech({
   sarvamModel,
   openaiTranscriptionModel,
   languageModel,
+  onHeard,
+  piece = false,
 }: {
   /*
    * Raw bytes. For OpenAI the container is detected from the signature by the
@@ -262,6 +292,15 @@ export async function transcribeSpeech({
   sarvamModel: string;
   openaiTranscriptionModel: string;
   languageModel: string;
+  /**
+   * Called the moment the words exist — BEFORE the written English pass. The
+   * call assistant starts reading the call here, so the reading and the
+   * writing run side by side rather than one after the other. `draft` is the
+   * rough English where a provider gave one (Sarvam's translate), else empty.
+   */
+  onHeard?: OnHeard;
+  /** One piece of a longer dictation — see `PIECE_NOTE`. */
+  piece?: boolean;
 }): Promise<DictationOutcome> {
   const [sarvamKey, openaiKey] = await Promise.all([
     readSecret("sarvam.apiKey"),
@@ -283,6 +322,8 @@ export async function transcribeSpeech({
       mediaType,
       model: sarvamModel,
       languageModel,
+      onHeard,
+      piece,
     });
     if (outcome) return outcome;
     /* Fell through: Sarvam failed and OpenAI is the second answer. */
@@ -343,6 +384,8 @@ export async function transcribeSpeech({
     audio,
     openaiTranscriptionModel,
     languageModel,
+    onHeard,
+    piece,
   });
 
   /*
@@ -367,6 +410,8 @@ export async function transcribeSpeech({
       mediaType,
       model: sarvamModel,
       languageModel,
+      onHeard,
+      piece,
     });
     if (rescued) return rescued;
   }
@@ -387,6 +432,8 @@ async function viaSarvam({
   mediaType,
   model,
   languageModel,
+  onHeard,
+  piece,
 }: {
   apiKey: string;
   audio: Uint8Array;
@@ -394,6 +441,8 @@ async function viaSarvam({
   model: string;
   /** The OpenAI model for the written pass, where OpenAI can serve it. */
   languageModel: string;
+  onHeard?: OnHeard;
+  piece?: boolean;
 }): Promise<DictationOutcome | null> {
   const signal = AbortSignal.timeout(60_000);
   const [heard, englished] = await Promise.all([
@@ -416,6 +465,12 @@ async function viaSarvam({
    */
   if (!spoken && !english) return { ok: false, reason: "no_speech" };
 
+  onHeard?.({
+    spoken,
+    draft: englished.ok ? englished.text : "",
+    language: (heard.ok ? heard.language : englished.ok ? englished.language : null) ?? null,
+  });
+
   /*
    * The written pass, which this path did not have. Sarvam's `translate` is a
    * translation and reads like one — correct in substance, rough in grammar,
@@ -431,7 +486,7 @@ async function viaSarvam({
    */
   const written = await write({
     system: RENDER_SYSTEM,
-    prompt: renderPrompt({ spoken, draft: english }),
+    prompt: renderPrompt({ spoken, draft: english, piece }),
     openaiModel: languageModel,
   });
 
@@ -452,10 +507,14 @@ async function viaOpenai({
   audio,
   openaiTranscriptionModel,
   languageModel,
+  onHeard,
+  piece,
 }: {
   audio: Uint8Array;
   openaiTranscriptionModel: string;
   languageModel: string;
+  onHeard?: OnHeard;
+  piece?: boolean;
 }): Promise<DictationOutcome> {
   /* Hearing is OpenAI's own job here; only the WRITING is allowed to fall
    * through to another provider, because nothing else has these bytes. */
@@ -470,6 +529,9 @@ async function viaOpenai({
     const heard = await transcribe({
       model: provider.transcription(openaiTranscriptionModel),
       audio,
+      /* One retry, not the SDK's two: somebody is waiting, and a refusal like
+         an empty credit balance will not change on a retry. */
+      maxRetries: 1,
       abortSignal: AbortSignal.timeout(90_000),
     });
     spoken = heard.text.trim();
@@ -489,6 +551,8 @@ async function viaOpenai({
    */
   if (!spoken) return { ok: false, reason: "no_speech" };
 
+  onHeard?.({ spoken, draft: "", language });
+
   /*
    * Through the resolver rather than straight at OpenAI: if this account has
    * stopped paying its bills the note is still written, by Sarvam, and the
@@ -496,7 +560,7 @@ async function viaOpenai({
    */
   const written = await write({
     system: RENDER_SYSTEM,
-    prompt: renderPrompt({ spoken }),
+    prompt: renderPrompt({ spoken, piece }),
     openaiModel: languageModel,
   });
 

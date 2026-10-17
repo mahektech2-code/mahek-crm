@@ -1,15 +1,19 @@
 import Link from "next/link";
 import { stamp } from "@/lib/format";
 import { fieldTeam, knownPlaces, knownRegions, managers } from "@/lib/services/sales-service";
-import { getCurrentUser, isManager } from "@/lib/auth";
+import { getCurrentUser } from "@/lib/auth";
+import { isPlatformAdmin } from "@/lib/access-control";
 import { Credentials } from "./credentials";
 import { Managers } from "./managers";
 import { Territories, WorksCell } from "./territories";
+import { HometownPicker } from "@/components/expenses/hometown-picker";
+import { hometownTree } from "@/lib/services/hometown-service";
 import {
   Banner,
   Cell,
   Empty,
   EntityLink,
+  FilterChips,
   HeadCell,
   Pill,
   Row,
@@ -37,38 +41,57 @@ export const metadata = { title: "The team — Sales Dashboard — MahekOne" };
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ sort?: string; dir?: string }>;
+  searchParams: Promise<{ sort?: string; dir?: string; hometown?: string }>;
 }) {
   const params = await searchParams;
-  const [team, managerRows, regions, places, me] = await Promise.all([
+  const [team, managerRows, regions, places, towns, me] = await Promise.all([
     fieldTeam(),
     managers(),
     knownRegions(),
     knownPlaces(),
+    hometownTree(),
     getCurrentUser(),
   ]);
 
-  /* Handing out credentials is guarded by `isManager` in `people.ts`, not by
-     holding the Sales Dashboard, and that boundary is deliberate: a sign-in is
-     an account decision rather than a sales one. Resolved here so the control
-     can be drawn disabled with the reason on it, rather than as a button that
-     fails when it is pressed. */
-  const canManageAccounts = !!me && isManager(me);
+  /* Handing out credentials is a PLATFORM ADMINISTRATOR's, checked in
+     `people.ts` by `requirePlatformAdminUser`, not by holding the Sales
+     Dashboard and no longer by `isManager` either: a sign-in is an account
+     decision rather than a sales one, and the actions refuse everybody else.
+     Resolved here so the two controls are not drawn at all for somebody who
+     could only ever be refused by them — the handset release beside them is
+     the Sales Dashboard's own act and stays. */
+  const canManageAccounts = !!me && (await isPlatformAdmin(me));
 
   /* A CLOSED account is left out: its handset is not showing an empty book,
      it is not signing in at all, and naming a leaver in a banner about work
      going undone sends somebody to fix the wrong thing. */
   const unallocated = team.filter((t) => t.active && !(t.territories ?? []).length);
 
+  /* WHERE THEY LIVE, with the backlog counted and one click from being the
+     whole list. A typed town is counted with the unset ones: it was never
+     picked from the tree, so it may match no shop's town. He is set once at
+     least one of his hometowns was picked. */
+  const homeless = (t: (typeof team)[number]) => !t.hometowns.some((h) => h.placeId);
+  const hometownFilter = params.hometown === "unset" || params.hometown === "set" ? params.hometown : "all";
+  const unsetCount = team.filter((t) => t.active && homeless(t)).length;
+  const shown =
+    hometownFilter === "unset"
+      ? team.filter((t) => t.active && homeless(t))
+      : hometownFilter === "set"
+        ? team.filter((t) => !homeless(t))
+        : team;
+  const keep = hometownFilter === "all" ? "" : `hometown=${hometownFilter}`;
+  const sortKeep = params.sort ? `&sort=${encodeURIComponent(params.sort)}&dir=${params.dir === "asc" ? "asc" : "desc"}` : "";
+
   /* Sorted for display only. The banner above counts the whole team, because
      re-ordering a list must not change what it says about itself. */
   const sort = readSort(params, COLUMNS);
-  const sorted = sortRows(team, sort, COLUMNS);
+  const sorted = sortRows(shown, sort, COLUMNS);
   const head = (key: string, label: string, width?: number, align?: "left" | "right") => (
     <SortHead
       width={width}
       align={align}
-      href={sortHref("/sales/people", sort, key)}
+      href={sortHref("/sales/people", sort, key, keep)}
       active={sort.key === key}
       dir={sort.dir}
     >
@@ -111,6 +134,35 @@ export default async function Page({
         </div>
       ) : null}
 
+      {unsetCount && hometownFilter !== "unset" ? (
+        <Banner
+          tone="warn"
+          title={`${plural(unsetCount, "salesman", "salesmen")} with no hometown`}
+          body="Meals are paid only on days away from home. Until a hometown is picked, every day they record as away is paid as away."
+          action={
+            <Link href="/sales/people?hometown=unset" className="text-[13px] text-[#5223E0] no-underline">
+              Show only them
+            </Link>
+          }
+        />
+      ) : null}
+
+      {team.length ? (
+        <FilterChips
+          current={hometownFilter}
+          options={[
+            { key: "all", label: "Everybody", href: `/sales/people${sortKeep ? `?${sortKeep.slice(1)}` : ""}`, count: team.length },
+            { key: "unset", label: "Hometown not set", href: `/sales/people?hometown=unset${sortKeep}`, count: unsetCount },
+            {
+              key: "set",
+              label: "Hometown set",
+              href: `/sales/people?hometown=set${sortKeep}`,
+              count: team.filter((t) => !homeless(t)).length,
+            },
+          ]}
+        />
+      ) : null}
+
       {team.length === 0 ? (
         <Empty
           title="Nobody holds the Salesman App"
@@ -118,15 +170,16 @@ export default async function Page({
         />
       ) : (
         <Table
-          minWidth={1180}
+          minWidth={1260}
           head={
             <>
-              {head("name", "Name", 220)}
-              <HeadCell width={190}>Work number</HeadCell>
+              {head("name", "Name", 190)}
+              <HeadCell width={140}>Work number</HeadCell>
               {head("customers", "Customers", 110, "right")}
-              {head("synced", "Handset", 190)}
+              {head("synced", "Handset", 180)}
               <HeadCell width={190}>Works</HeadCell>
-              {head("login", "Last signed in", 170)}
+              {head("hometown", "Hometowns", 180)}
+              {head("login", "Last signed in", 150)}
               <HeadCell />
             </>
           }
@@ -175,6 +228,15 @@ export default async function Page({
                 <WorksCell salesman={t} />
               </Cell>
               <Cell>
+                <HometownPicker
+                  compact
+                  door="sales"
+                  salesman={{ id: t.id, name: t.name }}
+                  hometowns={t.hometowns}
+                  tree={towns}
+                />
+              </Cell>
+              <Cell>
                 {t.lastLoginAt ? (
                   stamp(t.lastLoginAt)
                 ) : (
@@ -213,6 +275,7 @@ const COLUMNS: SortColumns<{
   customerCount: number;
   lastSeenAt: Date | null;
   lastLoginAt: Date | null;
+  hometowns: { city: string }[];
 }> = {
   name: (t) => t.name,
   customers: (t) => t.customerCount,
@@ -220,4 +283,6 @@ const COLUMNS: SortColumns<{
      it is the row the banner above already names. */
   synced: (t) => (t.lastSeenAt ? new Date(t.lastSeenAt).getTime() : null),
   login: (t) => (t.lastLoginAt ? new Date(t.lastLoginAt).getTime() : null),
+  /* Unset sorts last, so the backlog is at one end of the list. */
+  hometown: (t) => t.hometowns[0]?.city ?? null,
 };

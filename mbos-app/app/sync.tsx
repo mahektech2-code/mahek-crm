@@ -4,15 +4,18 @@ import { router, useFocusEffect } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, ListCard, PrimaryButton, T } from '../src/components/ui/primitives';
 import { Icon } from '../src/components/ui/Icon';
+import { Pop, Pulse, Stagger, animateLayoutFor } from '../src/components/ui/motion';
 import type { UpdateVerdict } from '../src/engines/app-update';
-import { checkForUpdate, openDownload } from '../src/native/update-check';
+import { checkForUpdate } from '../src/native/update-check';
 import { backgroundStartFailure, stalledAt as trackerStalledAt } from '../src/sync/trail';
 import { batteryExemption } from '../src/native/phone-setup';
 import { trackerNotice, type StartFailure } from '../src/engines/tracker-notice';
 import type { BatteryExemption } from '../src/engines/phone-readiness';
 import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
 import { isoDate, plural, pretty } from '../src/lib/format';
-import { conflictCount, listQueue, queueCounts, queueDepth, retryItem, type QueueItem } from '../src/sync/queue';
+import { listQueue, queueCounts, queueDepth, retryItem, type QueueItem } from '../src/sync/queue';
+import { describePayload, entityLabel } from '../src/sync/labels';
+import { pullProblems, type PullProblems } from '../src/sync/pull';
 import { mediaCounts, retryFailedMedia } from '../src/sync/media';
 import { syncNow } from '../src/sync/engine';
 import { useStore } from '../src/state/store';
@@ -49,11 +52,11 @@ function stateLabel(q: QueueItem): string {
     : q.state === 'syncing'
       ? 'Sending'
       : q.state === 'rejected'
-        ? 'Refused'
+        ? 'Not accepted'
         : q.state === 'blocked'
-          ? 'Held back'
+          ? 'On hold'
           : q.attempts > 0
-            ? 'Retrying'
+            ? 'Trying again'
             : 'Waiting';
 }
 
@@ -78,25 +81,28 @@ function stateTone(s: string): BadgeTone {
   return s === 'failed' || s === 'rejected' ? 'danger' : s === 'syncing' ? 'info' : 'amber';
 }
 
-/** What a queued record is, in the words the salesman would use for it. */
-const KIND: Record<string, string> = {
-  visit: 'Visit',
-  order: 'Order',
-  payment: 'Payment',
-  attendance: 'Attendance',
-  task: 'Task',
-  sample: 'Sample',
-  complaint: 'Complaint',
-  expense: 'Expense',
-  leave: 'Leave',
-  lead: 'Lead',
-  approval: 'Approval',
-  competitor: 'Competitor note',
-};
-
 function describe(item: QueueItem): string {
-  const p = JSON.parse(item.payload) as { customerName?: string; title?: string; reason?: string };
-  return p.customerName ?? p.title ?? p.reason ?? item.entityId.slice(-6).toUpperCase();
+  return describePayload(item.payload, item.entityId);
+}
+
+/**
+ * WHAT A HELD ROW IS WAITING ON. "Try again" on it did nothing — the record it
+ * depends on is still refused, so the next pass blocked it again at once. It
+ * names that record instead, which is the one he can actually do something
+ * about.
+ */
+function heldBehind(q: QueueItem, all: QueueItem[]): string | null {
+  if (q.state !== 'blocked') return null;
+  let deps: string[] = [];
+  try {
+    deps = JSON.parse(q.dependsOn) as string[];
+  } catch {
+    return null;
+  }
+  const parent = all.find((r) => deps.includes(r.entityId) && r.state !== 'blocked');
+  return parent
+    ? `Waiting on the ${entityLabel(parent.entityType).toLowerCase()} for ${describe(parent)}. Sort that one out first.`
+    : null;
 }
 
 /**
@@ -119,6 +125,7 @@ function when(ms: number, today: string): string {
 export default function SyncScreen() {
   const back = useCameFrom('more');
   const notify = useStore((s) => s.notify);
+  const offerUpdate = useStore((s) => s.offerUpdate);
 
   const [rows, setRows] = React.useState<QueueItem[]>([]);
 
@@ -143,7 +150,8 @@ export default function SyncScreen() {
      so being told is the only way a handset ever finds out — see
      `engines/app-update.ts`. */
   const [update, setUpdate] = React.useState<UpdateVerdict>({ kind: 'current' });
-  const [conflicts, setConflicts] = React.useState(0);
+  /* What the last pull could not save on this phone. See `applyPull`. */
+  const [problems, setProblems] = React.useState<PullProblems | null>(null);
   /* A pass is in flight. The button used to stay live throughout, so he could
      fire it six times and be told six times that everything was sending. */
   const [sending, setSending] = React.useState(false);
@@ -162,7 +170,7 @@ export default function SyncScreen() {
       listQueue(),
       queueCounts(),
       mediaCounts(),
-      conflictCount(),
+      pullProblems().catch(() => null),
       queueDepth(),
       trackerStalledAt(),
       /* Read fresh on every focus rather than once: the whole shape of this
@@ -172,10 +180,14 @@ export default function SyncScreen() {
       batteryExemption().catch<BatteryExemption>(() => 'unknown'),
     ]).then(([q, c, m, k, d, s, x]) => {
       if (!live) return;
+      /* After a pass, the rows that went up leave and the rest close the gap —
+         which is the screen SHOWING his work going, rather than a list that is
+         simply shorter. `listQueue` caps at fifty, under the layout limit. */
+      animateLayoutFor(q.length);
       setRows(q);
       setCounts(c);
       setMedia(m);
-      setConflicts(k);
+      setProblems(k);
       setDepth(d);
       setStalled(s);
       setExemption(x);
@@ -218,18 +230,40 @@ export default function SyncScreen() {
   const sendNow = React.useCallback(async () => {
     setSending(true);
     try {
-      const outcome = await syncNow({ manual: true });
+      const outcome = await syncNow({ manual: true }).catch((e: unknown) => ({
+        ran: false,
+        pushed: 0,
+        accepted: 0,
+        rejected: 0,
+        failed: 0,
+        pulled: 0,
+        reason: e instanceof Error ? e.message : 'Could not send now. Try again in a minute.',
+      }));
       load();
       notify(
         !outcome.ran
-          ? (outcome.reason ?? 'Nothing could be sent just now')
-          : outcome.pushed === 0
-            ? 'Nothing was waiting to go up'
+          ? (outcome.reason ?? 'Could not send now. Try again in a minute.')
+          : outcome.reason && outcome.accepted === 0
+            ? /* A pass that ran and failed — signed out, no answer, a book that
+                 would not save — says so. It used to read "Nothing was waiting
+                 to send" whenever nothing had been pushed, whatever went wrong. */
+              outcome.reason
+            : outcome.pushed === 0
+              ? 'Nothing was waiting to send. Your book is up to date.'
             : outcome.accepted > 0
-              ? plural(outcome.accepted, 'record') + ' sent'
+              ? plural(outcome.accepted, 'entry', 'entries') + ' sent to the office'
               : outcome.rejected > 0
-                ? plural(outcome.rejected, 'record') + ' the office would not accept'
-                : (outcome.reason ?? 'Nothing went up — your work is still safe on this phone'),
+                ? plural(outcome.rejected, 'entry', 'entries') + ' not accepted by the office'
+                : (outcome.reason ?? 'Nothing was sent. Your work is still safe on this phone.'),
+        !outcome.ran || (outcome.reason && outcome.accepted === 0)
+          ? 'error'
+          : outcome.pushed === 0
+            ? 'info'
+            : outcome.accepted > 0
+              ? 'success'
+              : outcome.rejected > 0
+                ? 'error'
+                : 'warn',
       );
     } finally {
       setSending(false);
@@ -253,11 +287,19 @@ export default function SyncScreen() {
       <BackLink label={back.label} onPress={back.go} />
 
       <Card>
-        <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
-          {waiting ? plural(waiting, 'thing') + ' waiting' : 'Everything has gone up'}
-        </T>
+        {/* The count pops when a pass changes it — "4 waiting" becoming "1
+            waiting" is the outcome he pressed the button for, and a digit
+            changing in place is easy to miss. It breathes while a pass is in
+            flight, so the headline itself says something is happening. */}
+        <Pulse active={sending} style={{ alignSelf: 'flex-start' }}>
+          <Pop trigger={waiting} from={0.9}>
+            <T style={[{ fontSize: 15, color: C.ink }, weight(600)]}>
+              {waiting ? plural(waiting, 'thing') + ' waiting to send' : 'All sent to the office'}
+            </T>
+          </Pop>
+        </Pulse>
         <T s="small" style={{ color: C.muted, marginTop: 4 }}>
-          Everything you save works offline. It goes out on its own when you have signal.
+          You can save without signal. It sends by itself when you have signal.
         </T>
         <PrimaryButton
           label={sending ? 'Sending…' : 'Send now'}
@@ -272,7 +314,7 @@ export default function SyncScreen() {
           {/* The plural form is given rather than derived: appending an `s` to
               the whole phrase reads "2 photo or recordings". */}
           {plural(media.pending, 'photo or recording', 'photos and recordings') +
-            ' uploading separately — records always go first.'}
+            ' sending. Your entries go first.'}
         </T>
       ) : null}
 
@@ -302,7 +344,7 @@ export default function SyncScreen() {
             <T style={[{ fontSize: 15, color: C.danger }, weight(600)]}>Could not be sent</T>
             <T s="caption" style={{ color: C.danger }}>
               {plural(media.failed, 'photo or recording', 'photos and recordings') +
-                ' gave up — they are still on this phone.'}
+                ' did not send. They are still on this phone.'}
             </T>
           </View>
           <Pressable
@@ -311,8 +353,9 @@ export default function SyncScreen() {
                 load();
                 notify(
                   n === 0
-                    ? 'Nothing left to try again'
-                    : plural(n, 'photo or recording', 'photos and recordings') + ' back in the queue',
+                    ? 'Nothing to try again'
+                    : plural(n, 'photo or recording', 'photos and recordings') + ' waiting to send again',
+                  n === 0 ? 'info' : 'success',
                 );
                 /* Media rides out on the back of a pass — see the `finally` in
                    `syncNow`. Queuing them and never asking for one would leave
@@ -330,7 +373,7 @@ export default function SyncScreen() {
               alignItems: 'center',
               justifyContent: 'center',
             }}>
-            <T style={{ fontSize: 15, color: C.danger }}>Retry</T>
+            <T style={{ fontSize: 15, color: C.danger }}>Try again</T>
           </Pressable>
         </View>
       ) : null}
@@ -348,12 +391,13 @@ export default function SyncScreen() {
                 the headline above and called out in their own line, and a
                 second unqualified number on one screen is how this screen came
                 to disagree with itself three ways in the first place. */}
-            {`Showing the ${rows.length} most urgent of ${plural(depth, 'record')} waiting.`}
+            {`Showing the ${rows.length} most urgent of ${plural(depth, 'entry', 'entries')} waiting.`}
           </T>
         ) : null}
         {rows.map((q, i) => (
-          <View
+          <Stagger
             key={q.id}
+            index={i}
             style={{
               flexDirection: 'row',
               alignItems: 'center',
@@ -364,18 +408,18 @@ export default function SyncScreen() {
               borderTopColor: C.wash,
             }}>
             <View style={{ flex: 1, minWidth: 0 }}>
-              <T style={{ fontSize: 15, color: C.ink }}>{KIND[q.entityType] ?? q.entityType}</T>
+              <T style={{ fontSize: 15, color: C.ink }}>{entityLabel(q.entityType)}</T>
               <T s="caption">{describe(q) + ' · ' + when(q.createdAt, today)}</T>
               {/* Coloured to match the badge beside it — an item still
                   retrying is amber, not red. */}
-              {whyStuck(q) ? (
+              {heldBehind(q, rows) ?? whyStuck(q) ? (
                 <T s="caption" style={{ color: stateTone(q.state) === 'danger' ? C.danger : C.warnInk, marginTop: 2 }}>
-                  {whyStuck(q)}
+                  {heldBehind(q, rows) ?? whyStuck(q)}
                 </T>
               ) : null}
             </View>
             <Badge tone={stateTone(q.state)}>{stateLabel(q)}</Badge>
-            {q.state === 'failed' || q.state === 'blocked' ? (
+            {q.state === 'failed' || (q.state === 'blocked' && !heldBehind(q, rows)) ? (
               <Pressable
                 onPress={async () => {
                   await retryItem(q.id);
@@ -396,25 +440,27 @@ export default function SyncScreen() {
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}>
-                <T style={{ fontSize: 15, color: C.body }}>Retry</T>
+                <T style={{ fontSize: 15, color: C.body }}>Try again</T>
               </Pressable>
             ) : null}
-          </View>
+          </Stagger>
         ))}
       </ListCard>
       ) : null}
 
-      {/* A NEWER BUILD EXISTS AND THIS PHONE CANNOT FETCH IT ITSELF.
-      
-          Android refuses an unattended install without device-owner enrolment
-          nobody here has, so the honest most this can do is say so and hand
-          the file to the browser. That is still the difference between one tap
-          and a fortnight: the field ran 1.0.0 and 1.1.0 while 1.4.0 had been
-          published for hours, and three bugs were diagnosed against builds
-          that did not contain their own fixes. */}
+      {/* A NEWER BUILD EXISTS.
+
+          The tap opens the same Update now / Update later modal the refresh
+          button raises, so there is one install path in the app — downloaded
+          in-app where the build allows it, through the browser where it does
+          not. Android still asks to confirm the install either way: an
+          unattended one needs device-owner enrolment nobody here has. It is
+          the difference between one tap and a fortnight: the field ran 1.0.0
+          and 1.1.0 while 1.4.0 had been published for hours, and three bugs
+          were diagnosed against builds that did not contain their own fixes. */}
       {update.kind === 'available' ? (
         <Pressable
-          onPress={() => void openDownload(update.url)}
+          onPress={() => offerUpdate({ kind: 'install', version: update.version, url: update.url })}
           accessibilityRole="button"
           style={{
             marginTop: 14,
@@ -428,8 +474,8 @@ export default function SyncScreen() {
             {'Update to ' + update.version}
           </T>
           <T style={{ fontSize: 13, lineHeight: 19, color: C.body, marginTop: 4 }}>
-            A newer MahekOne has been released. Tap to download it, then open the file to install —
-            nothing on this phone is lost and you stay signed in.
+            A new version of the app is out. Tap to update.
+            Nothing on this phone is lost. You stay signed in.
           </T>
         </Pressable>
       ) : null}
@@ -478,14 +524,17 @@ export default function SyncScreen() {
           <View style={{ flex: 1, minWidth: 0 }}>
             <T style={[{ fontSize: 15, color: C.danger }, weight(600)]}>Not accepted</T>
             <T s="caption" style={{ color: C.danger }}>
-              {plural(rejected, 'record') + ' the office refused — nothing has been thrown away.'}
+              {plural(rejected, 'entry', 'entries') + ' not accepted by the office. Nothing is lost.'}
             </T>
           </View>
           <Icon name="forward" size={20} color={C.danger} strokeWidth={1.5} />
         </Pressable>
       ) : null}
 
-      {conflicts > 0 ? (
+      {/* WHAT THE OFFICE SENT AND THIS PHONE COULD NOT SAVE. One bad row
+          used to stop every update; now it costs that row, and this is where
+          that is said rather than the book quietly missing something. */}
+      {problems ? (
         <View
           style={{
             borderWidth: 1,
@@ -495,15 +544,11 @@ export default function SyncScreen() {
             padding: 16,
             marginTop: 12,
           }}>
-          <T
-            style={[
-              { fontSize: 12, lineHeight: 16, letterSpacing: 0.48, textTransform: 'uppercase', color: C.warnInk },
-              weight(500),
-            ]}>
-            One thing changed under you
+          <T style={[{ fontSize: 15, color: C.warnInk }, weight(600)]}>
+            {plural(problems.count, 'update', 'updates') + ' from the office could not be saved'}
           </T>
           <T s="small" style={{ color: C.ink, marginTop: 6 }}>
-            Your edit was replaced by a newer one from the desk team. Your manager can see both.
+            Everything else came through. Tell your manager if this stays here after the next send.
           </T>
         </View>
       ) : null}
@@ -516,8 +561,8 @@ export default function SyncScreen() {
         {(() => {
           const b = runningBuild();
           return b.embedded
-            ? 'Running the build that was installed'
-            : `Running update ${b.id.slice(0, 8)}${b.channel ? ' · ' + b.channel : ''}`;
+            ? 'App version: as installed'
+            : `App update ${b.id.slice(0, 8)}${b.channel ? ' · ' + b.channel : ''}`;
         })()}
       </T>
     </AppFrame>

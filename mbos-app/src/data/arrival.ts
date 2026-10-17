@@ -1,4 +1,4 @@
-import { getKv, setKv } from '../db';
+import { getKv, newId, setKv } from '../db';
 import { isoDate } from '../lib/format';
 import { arrivalIsCurrent, withCheckIn } from '../lib/visit';
 
@@ -46,6 +46,64 @@ export type Arrival = {
   checkedInAt: number | null;
   /** The business day it belongs to, so a stale one can be told from today's. */
   day: string;
+  /**
+   * The reading the check-in gate accepted. Kept so that checking out never
+   * re-measures him against the shop — the gate is at the door, and a fresh
+   * fix taken after he has walked away would refuse a check-out for a visit
+   * that verified perfectly well. Also what `leftShopVerdict` measures from.
+   * Absent on arrivals written before this existed.
+   */
+  checkInFix?: { lat: number; lng: number; accuracyM: number | null } | null;
+  /**
+   * When the trail first proved he had walked away without checking out. Set
+   * once, and it is what closes the visit — the time he left, not the time he
+   * finally remembered to press the button.
+   */
+  leftShopAt?: number | null;
+  /** How far away he was when that was noticed, for the sentence that says so. */
+  leftShopMetres?: number | null;
+  /**
+   * THE VISIT'S ID, MINTED AT THE DOOR rather than at the save.
+   *
+   * An order, a payment and every photograph are taken from INSIDE a visit
+   * that does not exist yet — and the outbox sends them within a second of
+   * being written, long before the visit is saved. Minted at the save, the id
+   * reached the office on nothing: the order arrived naming no visit, the
+   * shop photograph arrived parented to the literal string `pending` and
+   * nobody could ever open it. Minted here, everything punched inside the
+   * visit can carry the id it will have, from the moment it is created.
+   *
+   * Absent on arrivals written before this existed; the save mints one then,
+   * exactly as it always did.
+   */
+  visitId?: string;
+  /**
+   * PAST THE CHECK-IN GATE, and the question asked after it.
+   *
+   * Both were screen state, so "Not yet" on the Arrived card, a tab tap or
+   * Android reaping the app took them with it: the visit then saved with no
+   * override reason, the office recorded "no reason was given", and the pin
+   * correction he asked for never reached his manager. They are part of the
+   * arrival — the refusal, the sentence and the request all happened at the
+   * door — so they are written down with it.
+   *
+   * `pinAsked` is whether the pin question has been answered at all, so a
+   * restored visit asks it again only when it never was.
+   */
+  overrideReason?: string | null;
+  pinCorrectionRequested?: boolean;
+  pinAsked?: boolean;
+  /**
+   * EVERYTHING TYPED INSIDE THE VISIT, so a reap does not take it.
+   *
+   * The store is memory, and Android takes this app apart on the road. The
+   * clock already came back from the arrival; the note, the outcome, the
+   * photographs, the records raised inside the visit and the cart did not —
+   * so a complaint raised in the visit lost its link, a photograph sat in the
+   * queue for a visit that would never name it, and the note he had dictated
+   * was gone. See `VisitDraft` in `state/store.ts`, which is what writes it.
+   */
+  draft?: Record<string, unknown> | null;
 };
 
 function parse(raw: string | null): Arrival | null {
@@ -83,11 +141,23 @@ export async function recordArrival(args: {
   customerName: string;
   legId: string | null;
   arrivedAt: number;
+  checkInFix?: Arrival['checkInFix'];
+  /** His sentence, where the gate refused him on distance and he said why. */
+  overrideReason?: string | null;
+  /** Set where there was no journey: arriving and walking in are one act. */
+  checkedInAt?: number | null;
 }): Promise<Arrival> {
   const value: Arrival = {
     ...args,
-    checkedInAt: null,
+    checkedInAt: args.checkedInAt ?? null,
+    leftShopAt: null,
+    leftShopMetres: null,
     day: isoDate(new Date(args.arrivedAt)),
+    visitId: newId('visit'),
+    overrideReason: args.overrideReason ?? null,
+    pinCorrectionRequested: false,
+    pinAsked: false,
+    draft: null,
   };
   await setKv(KEY, JSON.stringify(value));
   return value;
@@ -108,6 +178,36 @@ export async function checkInAtShop(now: number): Promise<Arrival | null> {
   /* Unchanged means it was already stamped, so there is nothing to write and
      no reason to touch the disk over a double tap. */
   if (next === value) return value;
+  await setKv(KEY, JSON.stringify(next));
+  return next;
+}
+
+/**
+ * He walked away without checking out. Written once — a second call returns
+ * what is already there, so the instant he left is the FIRST one noticed.
+ * Returns null where there is no checked-in arrival to mark.
+ */
+export async function markLeftShop(at: number, metres: number): Promise<Arrival | null> {
+  const value = await readArrival();
+  if (!value || value.checkedInAt == null) return null;
+  if (value.leftShopAt != null) return value;
+  const next: Arrival = { ...value, leftShopAt: at, leftShopMetres: metres };
+  await setKv(KEY, JSON.stringify(next));
+  return next;
+}
+
+/**
+ * Amend the arrival in place — the pin answer, the draft.
+ *
+ * Read and written in one place so the fields the caller did not name survive:
+ * the draft is written every few hundred milliseconds while he types, and a
+ * writer that rebuilt the record from a stale copy would undo his check-in.
+ * Returns null, and writes nothing, where there is no arrival to amend.
+ */
+export async function patchArrival(patch: Partial<Arrival>): Promise<Arrival | null> {
+  const value = await readArrival();
+  if (!value) return null;
+  const next: Arrival = { ...value, ...patch };
   await setKv(KEY, JSON.stringify(next));
   return next;
 }

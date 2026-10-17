@@ -15,7 +15,7 @@
 export type Serialiser = {
   /** Run `fn` with exclusive use of the connection, queued behind any others. */
   run<T>(fn: () => Promise<T>, wrap: (body: () => Promise<void>) => Promise<void>): Promise<T>;
-  /** True while a transaction is open. Callers use it to avoid nesting. */
+  /** True while a transaction is open. Read by tests; nothing joins on it. */
   readonly busy: boolean;
 };
 
@@ -29,11 +29,21 @@ export function createSerialiser(): Serialiser {
     },
 
     run<T>(fn: () => Promise<T>, wrap: (body: () => Promise<void>) => Promise<void>): Promise<T> {
-      /* Already inside one: join it rather than opening a second. A nested
-         transaction is almost always a helper that wants its caller's
-         atomicity anyway, and committing early would break it. */
-      if (busy) return fn();
-
+      /*
+       * NO JOINING. This used to say "already inside one: join it", and the
+       * test for being inside one was a flag — `busy` — that is true while ANY
+       * transaction is open, not while THIS caller's is. JavaScript has no way
+       * to tell the two apart here. So an unrelated save that arrived during
+       * the pull's long transaction (an order edit, a payment) ran its body
+       * straight inside the pull's: if it threw half way, the half it had
+       * written committed with the pull; if the pull rolled back, the save went
+       * with it, on a screen that had already said "saved".
+       *
+       * Nothing in this app nests a transaction — every `tx()` call site was
+       * checked when this changed — so the join was only ever reached by the
+       * case that is wrong. Everything queues. A transaction that called
+       * `tx()` from inside itself would now wait on itself; do not write one.
+       */
       const task = chain.then(async () => {
         busy = true;
         try {

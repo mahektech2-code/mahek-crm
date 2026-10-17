@@ -225,8 +225,8 @@ function benefitFor(scheme: Scheme, valuePaise: number | null, cans: number): Ap
         freeCans: 0,
         sentence:
           discount == null
-            ? `${scheme.name} — ${pct}% off, worth working out once this line has a price.`
-            : `${scheme.name} — ${pct}% off.`,
+            ? `${scheme.name}: ${pct}% off. The amount shows once this line has a price.`
+            : `${scheme.name}: ${pct}% off.`,
       };
     }
     case 'flat_discount':
@@ -235,7 +235,7 @@ function benefitFor(scheme: Scheme, valuePaise: number | null, cans: number): Ap
         name: scheme.name,
         discountPaise: scheme.benefit.amountPaise,
         freeCans: 0,
-        sentence: `${scheme.name} — flat discount.`,
+        sentence: `${scheme.name}: flat discount.`,
       };
     case 'free_quantity': {
       const { perCans, freeCans } = scheme.benefit;
@@ -249,8 +249,8 @@ function benefitFor(scheme: Scheme, valuePaise: number | null, cans: number): Ap
         freeCans: free,
         sentence:
           free > 0
-            ? `${scheme.name} — ${free} free with ${cans}.`
-            : `${scheme.name} — ${perCans} needed before the free ${freeCans} applies.`,
+            ? `${scheme.name}: ${free} free with ${cans}.`
+            : `${scheme.name}: order ${perCans} to get ${freeCans} free.`,
       };
     }
     default:

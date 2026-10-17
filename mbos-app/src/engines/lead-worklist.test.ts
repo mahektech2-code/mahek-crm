@@ -148,8 +148,8 @@ test('what is missing is named, not counted', () => {
   assert.deepEqual(missingAnswers(lead()), [
     'what will be done',
     'the day',
-    'who is doing it',
-    'what they come back with',
+    'who will do it',
+    'what result to bring back',
   ]);
   assert.deepEqual(
     missingAnswers(

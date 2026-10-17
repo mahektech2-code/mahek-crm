@@ -1,10 +1,11 @@
 import { redirect } from "next/navigation";
-import { isManager, requireUser } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
+import { canFor } from "@/lib/access-control";
 import { listUserApps, listUserModules } from "@/lib/access";
 import { navForModules, pinnedForModules } from "@/components/shell/nav";
 import { webApps } from "@/lib/apps";
 import { hatForHeader } from "@/lib/hat-for-header";
-import { getScope } from "@/lib/scope";
+import { getScope, managesHere } from "@/lib/scope";
 import { crmBadgeCounts, customerStatusRequestCount, listNotifications } from "@/lib/queries";
 import { leadSidebarCounts } from "@/lib/services/lead-sidebar-service";
 import { today } from "@/lib/recompute";
@@ -20,11 +21,16 @@ export default async function AppLayout({
 
   // One wait, not four. Every one of these is a round trip to a database in
   // another continent, so they run together rather than one after another.
-  const [apps, scope, notifications, badges] = await Promise.all([
+  const [apps, scope, notifications, badges, managerHere, decidesStatus] = await Promise.all([
     listUserApps(user.id),
-    getScope(user),
+    getScope(user, "crm"),
     listNotifications(user.id),
     sidebarBadges(),
+    /* A manager OF THE CRM — not of something somewhere. `isManager` is the
+       widest level held in any app, and it drew the My book / Team switch for
+       a telecaller who happened to manage Reports. */
+    managesHere(user, "crm"),
+    canFor(user, "customer.deactivate"),
   ]);
 
   // Access is checked here, not just hidden on the launcher — a bookmarked
@@ -45,15 +51,16 @@ export default async function AppLayout({
     <AppShell
       user={user}
       hat={hat}
-      isManager={isManager(user)}
+      isManager={managerHere}
       scope={scope}
       notifications={notifications}
       badges={badges}
       apps={webApps(apps)}
-      // The role goes in too, because `managerOnly` is the second filter:
-      // an ungranted module is a HELD module, so role is the only thing that
-      // keeps an approval queue away from the people it answers.
-      nav={navForModules(modules.map((m) => m.href), isManager(user))}
+      // The capability goes in too, because `managerOnly` is the second
+      // filter: an ungranted module is a HELD module, so this is the only
+      // thing that keeps an approval queue away from the people it answers.
+      // It is the capability the queue's own actions ask, not a level.
+      nav={navForModules(modules.map((m) => m.href), decidesStatus)}
       pinnedNav={pinnedForModules(modules.map((m) => m.href))}
     >
       {children}

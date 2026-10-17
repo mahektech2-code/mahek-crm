@@ -1,5 +1,5 @@
 import React from 'react';
-import { View } from 'react-native';
+import { Animated, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Card, Choice, Divider, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
@@ -18,6 +18,8 @@ import { VERIFICATION_SECTIONS } from '../src/engines/funnel/lead-labels';
 import { getLead, type Lead } from '../src/data/leads';
 import { callNumber } from '../src/lib/messaging';
 import { useStore } from '../src/state/store';
+import { Presence, useShake } from '../src/components/ui/motion';
+import { feedback } from '../src/components/ui/feedback';
 
 /**
  * §E — the Prospect validation call.
@@ -83,6 +85,15 @@ export default function ValidateLead() {
   const [err, setErr] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
   const inFlight = React.useRef(false);
+  /* The box under the verdict shakes when it speaks, and the buzz says which
+     kind of no: `warning` for a call refused before it was written (something
+     is missing he can supply), `error` for a write that failed. */
+  const errShake = useShake(null);
+  const refuse = (message: string, kind: 'warning' | 'error') => {
+    setErr(message);
+    feedback(kind);
+    errShake.shake();
+  };
 
   React.useEffect(() => {
     if (!id) return;
@@ -109,9 +120,9 @@ export default function ValidateLead() {
   const leave = () => {
     if (!dirty) return back.go();
     askConfirm({
-      title: 'Leave without recording the call?',
-      body: 'Nothing you have written down here is saved yet, and none of it is kept.',
-      confirmLabel: 'Discard it',
+      title: 'Leave without saving the call?',
+      body: 'What you wrote here is not saved. It will be lost.',
+      confirmLabel: 'Delete it',
       run: () => back.go(),
     });
   };
@@ -124,7 +135,7 @@ export default function ValidateLead() {
        sentence he had in mind while the customer's words were fresh is not
        lost to a round trip that comes back with a refusal. */
     const refusal = validationRefusal({ customerId: id, reached, verdict, verdictReason: why.trim() || null });
-    if (refusal) return setErr(refusal);
+    if (refusal) return refuse(refusal, 'warning');
     inFlight.current = true;
     setSaving(true);
 
@@ -149,18 +160,18 @@ export default function ValidateLead() {
       taskId: params.taskId ?? null,
     });
     if (!result.ok) {
-      setErr(result.message ?? 'That could not be saved.');
+      refuse(result.message ?? 'Could not save. Try again.', 'error');
       inFlight.current = false;
       setSaving(false);
       return;
     }
-    notify('Validation call recorded · ' + (lead?.company?.trim() || lead?.name || 'lead'));
+    notify('Check call saved · ' + (lead?.company?.trim() || lead?.name || 'lead'));
     router.back();
   };
 
   return (
     <AppFrame
-      title="Validation call"
+      title="Check call"
       activeTab={null}
       onBack={leave}
       contentStyle={{ padding: 16, paddingBottom: 32 }}>
@@ -187,7 +198,7 @@ export default function ValidateLead() {
             fullWidth={false}
             onPress={() => {
               void callNumber(lead.mobile ?? '').then((out) => {
-                if (out.status === 'failed') notify(out.reason);
+                if (out.status === 'failed') notify(out.reason, 'error');
               });
             }}
           />
@@ -212,9 +223,9 @@ export default function ValidateLead() {
           call with no idea that questions he was meant to read out existed. */}
       {script.length === 0 ? (
         <Card style={{ marginTop: 12 }}>
-          <T style={[{ fontSize: 14, color: C.ink }, weight(600)]}>The script has not reached this phone yet</T>
+          <T style={[{ fontSize: 14, color: C.ink }, weight(600)]}>The call script is not on this phone yet</T>
           <T s="caption" style={{ marginTop: 4 }}>
-            It arrives with the next sync. Make the call from what you know and record the answers below.
+            It will come next time the app sends to office. Make the call anyway. Write the answers below.
           </T>
         </Card>
       ) : null}
@@ -229,12 +240,14 @@ export default function ValidateLead() {
         </View>
       </Card>
 
-      {reached ? (
+      {/* The questions go and come back with "No answer" — in place, so
+          the verdict below slides up to meet his thumb rather than jumping. */}
+      <Presence show={reached}>
         <>
           <Card style={{ marginTop: 12 }}>
             <SectionLabel>What they said</SectionLabel>
             <T s="caption" style={{ marginTop: 4 }}>
-              Nothing here is required. Write down what they actually said, not a summary.
+              Nothing here is a must. Write what they said, in their words.
             </T>
             {/* THE BLANK AND THE "NO" ARE DIFFERENT FACTS, and the column
                 cannot tell them apart unless the caller does. An empty box
@@ -245,8 +258,8 @@ export default function ValidateLead() {
                 doors are one table, and a rule stated at one of them is a rule
                 half the answers were never written under. */}
             <T s="caption" style={{ marginTop: 6 }}>
-              If the answer was no, write that down rather than leaving the box empty. A blank
-              says nobody asked, which is a different thing.
+              If the answer was no, write no. Do not leave the box empty. An empty box
+              means nobody asked.
             </T>
           </Card>
 
@@ -278,15 +291,15 @@ export default function ValidateLead() {
                   <SectionLabel style={{ marginBottom: 6 }}>Monthly volume</SectionLabel>
                   <Input value={litres} onChangeText={setLitres} placeholder="200" keyboardType="number-pad" />
                   <T s="caption" style={{ marginTop: 6 }}>
-                    In litres, only if they gave a figure. Recorded beside what the salesman
-                    reported, never over it.
+                    In litres. Only if they said a number. It is saved next to the salesman&apos;s
+                    number. It does not replace it.
                   </T>
                 </View>
               ) : null}
             </Card>
           ))}
         </>
-      ) : null}
+      </Presence>
 
       <Card style={{ marginTop: 12 }}>
         <SectionLabel>Your call</SectionLabel>
@@ -305,7 +318,7 @@ export default function ValidateLead() {
           ))}
         </View>
 
-        {verdict === 'not_qualified' || verdict === 'on_hold' ? (
+        <Presence show={verdict === 'not_qualified' || verdict === 'on_hold'}>
           <View style={{ marginTop: 12 }}>
             <SectionLabel style={{ marginBottom: 6 }}>Why</SectionLabel>
             <Input
@@ -317,26 +330,27 @@ export default function ValidateLead() {
               placeholder={verdict === 'on_hold' ? 'What we are waiting for' : 'What was wrong'}
             />
           </View>
-        ) : null}
+        </Presence>
 
-        {verdict === 'confirmed' ? (
+        <Presence show={verdict === 'confirmed'}>
           <T s="caption" style={{ marginTop: 10 }}>
-            A requirement visit lands on the salesman&apos;s list when you save this.
+            When you save, a visit to find their need goes on the salesman&apos;s list.
           </T>
-        ) : null}
+        </Presence>
 
-        {err ? (
-          <View style={{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 12 }}>
+        <Presence show={!!err}>
+          <Animated.View
+            style={[{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 12 }, errShake.style]}>
             <T style={[{ fontSize: 14, lineHeight: 20, color: C.danger }, weight(500)]}>{err}</T>
-          </View>
-        ) : null}
+          </Animated.View>
+        </Presence>
       </Card>
 
       <Divider style={{ marginTop: 20 }} />
       <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
-        <SecondaryButton label="Cancel" onPress={back.go} style={{ flex: 1, borderRadius: radius.xl }} />
+        <SecondaryButton label="Cancel" onPress={leave} style={{ flex: 1, borderRadius: radius.xl }} />
         <PrimaryButton
-          label={saving ? 'Saving…' : 'Record the call'}
+          label={saving ? 'Saving…' : 'Save call'}
           onPress={save}
           style={{ flex: 1, borderRadius: radius.xl }}
         />

@@ -20,8 +20,10 @@
  *   route that answered `no-session-yet` to everything would be perfectly safe
  *   and would never store a fix again.
  *
- *   A DAY CLOSED EARLY, AND NOTHING ELSE IN THE BATCH. `markMissedCheckouts`
- *   closes a forgotten day at the last fix it can SEE, so a handset that lost
+ *   A DAY CLOSED EARLY, AND NOTHING ELSE IN THE BATCH. The old nightly
+ *   auto punch-out (`markMissedCheckouts`, removed in October 2026) closed a
+ *   forgotten day at the last fix it could SEE, and days it closed are still
+ *   in the book, so a handset that lost
  *   signal at two and worked until six has its day closed at two, and every
  *   later fix falls outside the window. This one was ALREADY safe, and by
  *   accident rather than by intent: the sessions query asks for days that
@@ -48,7 +50,7 @@
 import { after, before, beforeEach, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
@@ -60,7 +62,6 @@ import {
 } from "@/db/schema";
 import { invalidateConfig, seedConfig, updateSettings } from "@/lib/config/store";
 import { issueToken } from "@/lib/mbos/token";
-import { markMissedCheckouts } from "@/lib/mbos-jobs";
 import { POST } from "@/app/api/mbos/positions/route";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -76,9 +77,8 @@ let token: string;
 /**
  * Yesterday, in the working zone.
  *
- * `markMissedCheckouts` only touches days strictly before today — a day still
- * being worked is not one somebody forgot to close — so every day here has to
- * be yesterday's for the close to be reachable at all.
+ * Yesterday, so a day closed early (`closeYesterdayAt`) and a day still open
+ * across midnight can both be built.
  */
 const YESTERDAY = new Date(Date.now() - 86_400_000).toLocaleDateString("en-CA", {
   timeZone: "Asia/Kolkata",
@@ -130,6 +130,17 @@ function post(fixes: { at: Date; lat?: number; lng?: number }[]) {
       }),
     }),
   );
+}
+
+/**
+ * Yesterday's day closed early, at `when`: the shape the old nightly
+ * auto punch-out left behind, which days already in the book still carry.
+ */
+async function closeYesterdayAt(when: Date): Promise<void> {
+  await db
+    .update(mbosAttendanceDays)
+    .set({ checkOutAt: when, autoCheckedOut: true })
+    .where(and(eq(mbosAttendanceDays.userId, salesman.id), eq(mbosAttendanceDays.day, YESTERDAY)));
 }
 
 async function storedCount(): Promise<number> {
@@ -266,8 +277,7 @@ describe("A batch the server cannot file is never acknowledged as stored", () =>
       at: at(14),
     });
 
-    const closed = await markMissedCheckouts();
-    assert.equal(closed.recordsAffected, 1, "the day was not closed, so this proves nothing");
+    await closeYesterdayAt(at(14));
 
     const todayFix = await openToday();
 
@@ -313,7 +323,7 @@ describe("A batch the server cannot file is never acknowledged as stored", () =>
       accuracyM: 12,
       at: at(14),
     });
-    await markMissedCheckouts();
+    await closeYesterdayAt(at(14));
 
     const answer = await post([{ at: at(15) }, { at: at(16) }, { at: at(17, 30) }]);
     const body = (await answer.json()) as Record<string, unknown>;
@@ -334,7 +344,7 @@ describe("A batch the server cannot file is never acknowledged as stored", () =>
       accuracyM: 12,
       at: at(14),
     });
-    await markMissedCheckouts();
+    await closeYesterdayAt(at(14));
 
     // Two inside the closed window, two past it. The two inside are real work
     // and there is no reason to make the phone send them twice; the two past
@@ -386,8 +396,9 @@ describe("A batch the server cannot file is never acknowledged as stored", () =>
             { id: fixIdOf(at(11)), at: at(11).getTime(), ...HERE, accuracyM: 12 },
             { id: "junk-2", at: at(12).getTime(), lat: 999, lng: 999 },
             /* BEFORE the check-in, so outside the day — an open day runs to
-               now, so nothing after it can be outside. This is the real
-               straddle and the only row that may still be held. */
+               the end of its own day, so nothing later that day can be
+               outside. This is the real straddle and the only row that may
+               still be held. */
             { id: fixIdOf(at(6)), at: at(6).getTime(), ...HERE, accuracyM: 12 },
           ],
         }),
@@ -413,6 +424,58 @@ describe("A batch the server cannot file is never acknowledged as stored", () =>
 
     assert.equal(body.tracking, "no-session-yet");
     assert.equal(await storedCount(), 0);
+  });
+
+  test("a day nobody ever closed does not file fixes from the days after it", async () => {
+    /*
+     * PRODUCTION'S SHAPE. Two test check-ins from August had no evidence
+     * behind them, so `markMissedCheckouts` marked them `auto_checked_out` and
+     * left the check-out null — correctly, since nobody knows when they ended —
+     * and never looked at them again. An open day ran to infinity, so a month
+     * later they filed a salesman's whole night and a day he never checked in
+     * for. Nothing today is open here: the fixes have no session to belong to.
+     */
+    const longAgo = new Date(Date.now() - 30 * 86_400_000).toLocaleDateString("en-CA", {
+      timeZone: "Asia/Kolkata",
+    });
+    await db.insert(mbosAttendanceDays).values({
+      id: id("att"),
+      userId: salesman.id,
+      day: longAgo,
+      checkInAt: new Date(Date.parse(`${longAgo}T08:00:00+05:30`)),
+      autoCheckedOut: true,
+    });
+
+    const answer = await post([{ at: at(10) }, { at: at(23, 30) }]);
+    const body = (await answer.json()) as Record<string, unknown>;
+
+    assert.equal(
+      body.tracking,
+      "no-session-yet",
+      "an abandoned day from last month was treated as still running",
+    );
+    assert.equal(await storedCount(), 0, "the privacy rule leaked through a day nobody closed");
+  });
+
+  test("a day left open runs past midnight, up to the tracker's ceiling and no further", async () => {
+    // Nothing punches a salesman out but the salesman, and a night shift that
+    // starts at ten crosses midnight. Yesterday's day opened at nine and is
+    // still open: its fixes count for `mbos.location.serviceMaxDayHours` (16)
+    // from the punch-in, so 00:30 today is his and 02:00 is not.
+    await openDay();
+    const pastMidnight = at(24, 30);
+    const pastCeiling = at(26);
+
+    const answer = await post([{ at: at(22) }, { at: pastMidnight }, { at: pastCeiling }]);
+    const body = (await answer.json()) as Record<string, unknown>;
+
+    assert.equal(body.stored, 2, JSON.stringify(body));
+    assert.equal(body.tracking, "partial");
+    assert.deepEqual(
+      (body.filed as string[]).slice().sort(),
+      [fixIdOf(at(22)), fixIdOf(pastMidnight)].sort(),
+      "the after-midnight fix was refused, or the one past the ceiling was filed",
+    );
   });
 
   test("tracking switched off in the office still says so before anything else", async () => {

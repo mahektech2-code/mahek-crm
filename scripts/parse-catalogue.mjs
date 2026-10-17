@@ -69,19 +69,56 @@ const millilitres = (size) => Math.round(Number(size.replace(/[^0-9.]/g, "")) * 
 
 /* ------------------------------------------------------------ level 1–3 */
 
-const formulations = section("## 1. Base formulations").map((c) => ({
+/* ---------------------------------------------------------------------------
+ * ADDED AFTER THE DOCUMENT, from the Mahek Plus Master workbook's "My
+ * Products" tab (read 2026-10-06), in the document's own column layout so they
+ * go through exactly the placement and checks below. Each is a Product ID the
+ * document either did not have, or held back:
+ *
+ *   234–236  newer than the document, and already on order lines.
+ *   76, 77   held for having no sellable name; named "Plain Can" by the owner,
+ *            after the "PU Thinner M16 Plain Can" lines beside them.
+ *   152      the Empty Drum, excluded as packaging — but customers buy empty
+ *            drums (43 order lines), so it is a SKU under its own Packaging
+ *            formulation. It holds no thinner, so its size is 0 L.
+ *
+ * Kept OUT of the document's declared-count checks: the document never
+ * claimed them, so they must not be reported as it contradicting itself.
+ * Delete an entry here once a new revision of the document carries it.
+ * ------------------------------------------------------------------------- */
+const ADDED = {
+  formulations: [["+", "Packaging", "1", "1"]],
+  brands: [["+", "Packaging", "Packaging", "", "1"]],
+  goods: [
+    ["+", "PU Thinner M16 - 10 Liter", "PU Thinner M16", "10 L"],
+    ["+", "M245 Thinner - 1 Liter", "M245", "1 L"],
+    ["+", "Empty Drum", "Packaging", "0 L"],
+  ],
+  // name · formulation · size · cans per box · box/drum cost · weight · Product IDs
+  skus: [
+    ["+", "Epoxy Thinner (FD) Plain Can - 1 Liter (32 Can/Box)", "Epoxy Thinner (FD)", "1 L", "32", "₹34", "32 kg", "76"],
+    ["+", "Epoxy Thinner (FD) Plain Can - 5 Liter (06 Can/Box)", "Epoxy Thinner (FD)", "5 L", "6", "₹46", "25 kg", "77"],
+    ["+", "Empty Drum", "Packaging", "0 L", "1", "₹700", "—", "152"],
+    ["+", "PU Thinner M16 Plain Can - 20 Liter (02 Can/Box)", "PU Thinner M16", "20 L", "2", "₹54", "35 kg", "234"],
+    ["+", "M245 Thinner 1 Liter Jerry Can (32 Can/Box)", "M245", "1 L", "32", "₹50", "25 kg", "235"],
+    ["+", "PU Thinner M16 Plain Can - 10 Liter (Loose)", "PU Thinner M16", "10 L", "1", "—", "9 kg", "236"],
+  ],
+};
+const ADDED_IDS = new Set(ADDED.skus.flatMap((c) => c[7].split(",").map((x) => Number(x.trim()))));
+
+const formulations = [...section("## 1. Base formulations"), ...ADDED.formulations].map((c) => ({
   name: c[1],
   declaredBrands: Number(c[2]),
   declaredSkus: Number(c[3]),
 }));
 
-const brands = section("## 2. Brand lines").map((c) => ({
+const brands = [...section("## 2. Brand lines"), ...ADDED.brands].map((c) => ({
   name: c[1],
   formulation: c[2],
   declaredSkus: Number(c[4]),
 }));
 
-const goods = section("## 3. Finished goods").map((c) => ({
+const goods = [...section("## 3. Finished goods"), ...ADDED.goods].map((c) => ({
   name: canonical(c[1]),
   formulation: c[2],
   millilitres: millilitres(c[3]),
@@ -107,7 +144,7 @@ function derivePacking(cansPerBox, hasContainerCost) {
   return hasContainerCost ? "Drum" : "Loose";
 }
 
-const skus = section("## 4. Sellable SKUs").map((c) => {
+const skus = [...section("## 4. Sellable SKUs"), ...ADDED.skus].map((c) => {
   const rawName = c[1].replace(/\s*⚠\s*$/, "").trim();
   const { good, packing } = splitPacking(rawName);
   const cansPerBox = Number(c[4]);
@@ -132,6 +169,7 @@ const skus = section("## 4. Sellable SKUs").map((c) => {
     externalIds: c[7].split(",").map((s) => Number(s.trim())),
     // Point 4: flagged, never auto-resolved.
     duplicated: c[1].includes("⚠"),
+    added: c[0] === "+",
   };
 });
 
@@ -225,16 +263,26 @@ if (fatal.length) {
 const perBrand = new Map();
 const perFormulation = new Map();
 for (const s of skus) {
+  if (s.added) continue;
   perBrand.set(s.brand, (perBrand.get(s.brand) ?? 0) + 1);
   perFormulation.set(s.formulation, (perFormulation.get(s.formulation) ?? 0) + 1);
 }
 const discrepancies = [
   ...brands
-    .filter((b) => (perBrand.get(b.name) ?? 0) !== b.declaredSkus)
+    .filter((b) => b.name !== "Packaging" && (perBrand.get(b.name) ?? 0) !== b.declaredSkus)
     .map((b) => `brand "${b.name}": document says ${b.declaredSkus} SKUs, the rows give ${perBrand.get(b.name) ?? 0}`),
   ...formulations
-    .filter((f) => (perFormulation.get(f.name) ?? 0) !== f.declaredSkus)
+    .filter((f) => f.name !== "Packaging" && (perFormulation.get(f.name) ?? 0) !== f.declaredSkus)
     .map((f) => `formulation "${f.name}": document says ${f.declaredSkus} SKUs, the rows give ${perFormulation.get(f.name) ?? 0}`),
+];
+
+/* ------------------------------------------------- held and excluded rows */
+
+/** The document's own lists, before anything above named or sold them. */
+const EXCLUSIONS = [{ externalId: 152, name: "Empty Drum", reason: "Packaging material, not a sellable product" }];
+const EXCEPTIONS = [
+  { externalId: 76, formulation: "Epoxy Thinner (FD)", millilitresPerCan: 1000, reason: "No sellable name in the source" },
+  { externalId: 77, formulation: "Epoxy Thinner (FD)", millilitresPerCan: 5000, reason: "No sellable name in the source" },
 ];
 
 /* ----------------------------------------------------------------- emit */
@@ -340,15 +388,18 @@ ${skus
   .join("\n")}
 ];
 
-/** Point 8: packaging material, not something anybody can order. */
-export const EXCLUSIONS: SeedExclusion[] = [
-  { externalId: 152, name: "Empty Drum", reason: "Packaging material, not a sellable product" },
+/**
+ * Point 8: packaging material, not something anybody can order. The one row
+ * the document excluded — #152, the Empty Drum — is sold, and is a SKU now.
+ */
+export const EXCLUSIONS: SeedExclusion[] = [${EXCLUSIONS.some((e) => !ADDED_IDS.has(e.externalId)) ? "\n" : ""}${EXCLUSIONS.filter((e) => !ADDED_IDS.has(e.externalId)).map((e) => `  { externalId: ${e.externalId}, name: ${q(e.name)}, reason: ${q(e.reason)} },`).join("\n")}
 ];
 
-/** Point 9: packing configuration but no sellable name. Held, not imported. */
-export const EXCEPTIONS: SeedException[] = [
-  { externalId: 76, formulation: "Epoxy Thinner (FD)", millilitresPerCan: 1000, reason: "No sellable name in the source" },
-  { externalId: 77, formulation: "Epoxy Thinner (FD)", millilitresPerCan: 5000, reason: "No sellable name in the source" },
+/**
+ * Point 9: packing configuration but no sellable name. Held, not imported.
+ * The document's two — #76 and #77 — have been named, and are SKUs now.
+ */
+export const EXCEPTIONS: SeedException[] = [${EXCEPTIONS.some((e) => !ADDED_IDS.has(e.externalId)) ? "\n" : ""}${EXCEPTIONS.filter((e) => !ADDED_IDS.has(e.externalId)).map((e) => `  { externalId: ${e.externalId}, formulation: ${q(e.formulation)}, millilitresPerCan: ${e.millilitresPerCan}, reason: ${q(e.reason)} },`).join("\n")}
 ];
 
 /**

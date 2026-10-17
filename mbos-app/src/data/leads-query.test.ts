@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { MIGRATIONS } from '../db/schema';
-import { leadBookQuery, rungCountsQuery } from './lead-query';
+import { CONVERTED_LEAD, leadBookQuery, rungCountsQuery } from './lead-query';
 
 /**
  * The lead book's reads, against a REAL SQLite carrying the REAL schema.
@@ -60,7 +60,7 @@ function seed(db: DatabaseSync, rows: Row[]) {
   }
 }
 
-function ids(db: DatabaseSync, q: { sql: string; params: string[] }): string[] {
+function ids(db: DatabaseSync, q: { sql: string; params: (string | number)[] }): string[] {
   return (db.prepare(q.sql).all(...q.params) as { id: string }[]).map((r) => r.id);
 }
 
@@ -213,3 +213,34 @@ test('the search runs in SQLite and stacks with both chip rows', () => {
     ['Patil Hardware'],
   );
 });
+
+test('a lead that has become a customer is recognised by every one of the four facts', () => {
+  /* The office stops sending a converted lead, so the phone's row is frozen at
+     its last rung: the customer row, which the office keeps current, has to be
+     able to answer on its own. A lead still being worked must never match —
+     a sync deleting live work would be the worst way for this to be wrong. */
+  const db = handset();
+  seed(db, [
+    { id: 'working', funnelStage: 'negotiation' },
+    { id: 'archived-by-hand', archived: 1 },
+    { id: 'kind-moved', funnelStage: 'negotiation' },
+    { id: 'won', funnelStage: 'won' },
+    { id: 'appointed', funnelStage: 'active_distributor' },
+    { id: 'legacy', stage: 'Converted' },
+    { id: 'marked-here' },
+    { id: 'marked-there' },
+  ]);
+  db.exec(`UPDATE leads SET thirdParty = 1 WHERE id = 'marked-here'`);
+  const shop = db.prepare('INSERT INTO customers (id, name, kind, thirdParty) VALUES (?, ?, ?, ?)');
+  shop.run('working', 'working', 'lead', 0);
+  shop.run('archived-by-hand', 'archived-by-hand', 'lead', 0);
+  shop.run('kind-moved', 'kind-moved', 'customer', 0);
+  shop.run('marked-there', 'marked-there', 'lead', 1);
+
+  const hits = db
+    .prepare(`SELECT id FROM leads WHERE ${CONVERTED_LEAD} ORDER BY id`)
+    .all()
+    .map((r) => (r as { id: string }).id);
+  assert.deepEqual(hits, ['appointed', 'kind-moved', 'legacy', 'marked-here', 'marked-there', 'won']);
+});
+

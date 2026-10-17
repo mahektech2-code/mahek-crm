@@ -35,10 +35,43 @@ import {
   policyReadiness,
 } from "@/lib/actions/expense-policy";
 import { policyForDate, readPolicy } from "@/lib/services/expense-policy-service";
+import {
+  STANDARD_DEFAULTS_VERSION,
+  STANDARD_POLICY,
+  STANDARD_POLICY_ID,
+  STANDARD_POLICY_TITLE,
+} from "@/lib/expense-policy-standard";
+import type { PolicyRule } from "@/lib/engines/expense-policy";
+
+/* The issued policy pays own vehicles nothing, and these tests are about how a
+   kilometre allowance is written, edited and re-worked — so the standard row
+   is seeded as the document's rules with own bike at ₹3.50 a km. Seeded at the
+   current defaults edition, so `ensureStandardSet` leaves it as it is. */
+const TEST_RULES: PolicyRule[] = STANDARD_POLICY.rules.map((r) =>
+  r.kind === "zero_rated" && r.modeKey === "own_bike"
+    ? { kind: "per_km", grade: null, cityClass: null, modeKey: "own_bike", paisePerKm: 350, dailyKmCap: null }
+    : r,
+);
+import {
+  assignPolicySet,
+  createPolicySet,
+  deletePolicySet,
+  duplicatePolicySet,
+  restorePolicyRevision,
+  savePolicySet,
+  setPolicySetActive,
+  setExpenseHometowns,
+} from "@/lib/actions/expense-policy-sets";
+import { policyPeople, policySetRevisions, readPolicySet } from "@/lib/services/expense-policy-set-service";
+import { hometownTree } from "@/lib/services/hometown-service";
+import { fieldTeam } from "@/lib/services/sales-service";
+import { ruleToDraft } from "@/lib/expense-policy-sets";
 import { priceDay } from "@/lib/services/expense-service";
-import { submitDay, reopenDay } from "@/lib/services/expense-submit-service";
-import { claimDays } from "@/lib/services/expense-claims-service";
-import { resolveException, decideExpenseDay } from "@/lib/actions/expenses";
+import { refreshDayMoney } from "@/lib/services/expense-submit-service";
+import { expenseLines } from "@/lib/services/expense-claims-service";
+import { resolveException } from "@/lib/actions/expenses";
+import { decideExpense, setSalesmanHometowns } from "@/lib/actions/sales";
+import { expenseStateSql, paidPaiseSql } from "@/lib/expense-money-sql";
 import { duplicateWarnings } from "@/lib/services/expense-service";
 import { simulatePolicy } from "@/lib/services/expense-simulator-service";
 import { expenseTrend, snapshotExpenseMonth } from "@/lib/services/expense-roi-service";
@@ -227,8 +260,17 @@ beforeEach(async () => {
   `);
   invalidateConfig();
   await seedConfig();
+  await db.execute(sql`
+    insert into expense_policy_sets (id, name, is_standard, active, rules, revision, defaults_version)
+    values (${STANDARD_POLICY_ID}, ${STANDARD_POLICY_TITLE}, true, true, ${JSON.stringify(TEST_RULES)}::jsonb, 1,
+            ${STANDARD_DEFAULTS_VERSION})
+  `);
 
   admin = await makeUser("Asha", "admin");
+  /* The PLATFORM administrator: the Admin Console at the admin level. Admin of
+     the CRM alone is admin of the CRM, and would see only her own (empty)
+     book of expense days. */
+  await db.insert(appAccess).values({ id: id("aa"), userId: admin.id, app: "admin", role: "admin" });
   salesman = await makeUser("Mahesh", "associate");
   await db.insert(appAccess).values({
     id: id("aa"),
@@ -247,13 +289,9 @@ after(async () => {
 /* ------------------------------------------------------- §A authoring */
 
 describe("authoring a policy", () => {
-  test("a draft becomes the version in force, and reads back as sentences", async () => {
-    await publishPolicyV("2026-04-01", 350);
-    const policy = await policyForDate("2026-06-15");
-    assert.ok(policy, "a policy should cover a date inside its range");
-    assert.equal(policy!.versionNo, 1);
-
-    const detail = await readPolicy(policy!.id, "2026-06-15");
+  test("a published draft reads back as sentences", async () => {
+    const policyId = await publishPolicyV("2026-04-01", 350);
+    const detail = await readPolicy(policyId, "2026-06-15");
     assert.ok(detail);
     assert.equal(detail!.unreadableCount, 0, "every rule should be readable");
     const sentences = detail!.rules.map((r) => r.sentence).join(" ");
@@ -316,44 +354,25 @@ describe("authoring a policy", () => {
 
 /* ------------------------------------- §A6 the policy of the expense's date */
 
-describe("requirement 6 — an old expense keeps its old policy", () => {
-  test("a rate rise does not restate what last quarter's day was worth", async () => {
-    await publishPolicyV("2026-04-01", 350);
-
-    const oldDay = "2026-06-15";
-    const oldDayId = await openDay(oldDay);
-    await addBikeLeg(oldDayId, oldDay, 40);
-    setTestUser(salesman);
-    const first = await submitDay(salesman.id, oldDay);
-    assert.ok(first.ok);
-
-    const beforeRise = await priceDay(salesman.id, oldDay);
-    assert.equal(beforeRise!.computation!.travelPaise, 14000, "40 km × ₹3.50");
-
-    /* The rate goes up. A new VERSION, which is the only way it can go up. */
-    setTestUser(admin);
-    await publishPolicyV("2026-09-01", 500);
-
-    const afterRise = await priceDay(salesman.id, oldDay);
-    assert.equal(
-      afterRise!.computation!.travelPaise,
-      14000,
-      "June is still worked out on June's policy",
-    );
-
-    const newDay = "2026-09-10";
-    const newDayId = await openDay(newDay);
-    await addBikeLeg(newDayId, newDay, 40);
-    const priced = await priceDay(salesman.id, newDay);
-    assert.equal(priced!.computation!.travelPaise, 20000, "September gets the new rate");
+describe("the hard-coded standard policy", () => {
+  test("it is the policy in force on every date, whatever the table holds", async () => {
+    await publishPolicyV("2026-04-01", 500);
+    assert.equal((await policyForDate("2026-06-15"))!.id, STANDARD_POLICY_ID);
+    assert.equal((await policyForDate("2001-01-01"))!.id, STANDARD_POLICY_ID);
   });
 
-  test("the version in force ends the day before the next one starts", async () => {
-    await publishPolicyV("2026-04-01", 350);
-    await publishPolicyV("2026-09-01", 500);
-
-    assert.equal((await policyForDate("2026-08-31"))!.versionNo, 1);
-    assert.equal((await policyForDate("2026-09-01"))!.versionNo, 2);
+  test("a day is priced and stamped with it, at ₹3.50 a km on a bike", async () => {
+    const day = "2026-06-15";
+    const dayId = await openDay(day);
+    await addBikeLeg(dayId, day, 40);
+    await refreshDayMoney(salesman.id, day);
+    const priced = await priceDay(salesman.id, day);
+    assert.equal(priced!.computation!.travelPaise, 14000, "40 km × ₹3.50");
+    const [row] = await db
+      .select({ policyId: mbosExpenseDays.policyId })
+      .from(mbosExpenseDays)
+      .where(eq(mbosExpenseDays.id, dayId));
+    assert.equal(row!.policyId, STANDARD_POLICY_ID);
   });
 });
 
@@ -361,228 +380,249 @@ describe("requirement 6 — an old expense keeps its old policy", () => {
 
 describe("a day, priced", () => {
   test("food is worked out from the times, never claimed", async () => {
-    await publishPolicyV("2026-04-01", 350);
     const day = "2026-06-15";
     await openDay(day);
 
     const priced = await priceDay(salesman.id, day);
-    /* Out at 07:00, back at 20:00 — all three meals. */
-    assert.equal(priced!.computation!.foodPaise, 45000);
+    /* Out at 07:00, back at 20:00 — breakfast and lunch; dinner needs him
+       back after 22:30. */
+    assert.equal(priced!.computation!.foodPaise, 25000);
   });
 
-  test("requirement 28 — leaving after eight drops breakfast and nothing else", async () => {
-    await publishPolicyV("2026-04-01", 350);
+  test("the policy document — leaving after eight earns no meal at all", async () => {
     const day = "2026-06-16";
-    await openDay(day, { departedAt: at(day, hhmm(8, 30)), returnedAt: at(day, hhmm(21)) });
+    await openDay(day, { departedAt: at(day, hhmm(8, 30)), returnedAt: at(day, hhmm(23)) });
 
     const priced = await priceDay(salesman.id, day);
-    assert.equal(priced!.computation!.foodPaise, 35000, "lunch and dinner only");
+    assert.equal(priced!.computation!.foodPaise, 0);
     const breakfast = priced!.computation!.meals.find((m) => m.meal === "breakfast")!;
     assert.equal(breakfast.earned, false);
-    assert.match(breakfast.withheldReason!, /left at 08:30/);
+    assert.match(breakfast.withheldReason!, /08:30/);
   });
 
-  test("submitting writes the eligible figures, and they equal the derived ones", async () => {
-    await publishPolicyV("2026-04-01", 350);
+  test("a day in his hometown earns no meal, once his hometown is set", async () => {
+    const day = "2026-06-21";
+    const dayId = await openDay(day, { departedAt: at(day, hhmm(6)), returnedAt: at(day, hhmm(23)) });
+    await refreshDayMoney(salesman.id, day);
+    assert.equal((await priceDay(salesman.id, day))!.computation!.foodPaise, 45000, "no hometown set: as recorded");
+
+    await db.execute(sql`insert into expense_hometowns (user_id, city) values (${salesman.id}, 'Nagpur')`);
+    await refreshDayMoney(salesman.id, day);
+    const [row] = await db
+      .select({ away: mbosExpenseDays.departedFromHometown })
+      .from(mbosExpenseDays)
+      .where(eq(mbosExpenseDays.id, dayId));
+    assert.equal(row!.away, false, "no shop elsewhere and no trip named");
+    assert.equal((await priceDay(salesman.id, day))!.computation!.foodPaise, 0);
+
+    await db.update(mbosExpenseDays).set({ destinationCity: "Wardha" }).where(eq(mbosExpenseDays.id, dayId));
+    await refreshDayMoney(salesman.id, day);
+    assert.equal((await priceDay(salesman.id, day))!.computation!.foodPaise, 45000, "a trip to Wardha is away");
+  });
+
+  test("the allowances are written with no day closed, and equal the derived figures", async () => {
     const day = "2026-06-17";
     const dayId = await openDay(day);
     await addBikeLeg(dayId, day, 30);
 
-    const outcome = await submitDay(salesman.id, day);
-    assert.ok(outcome.ok);
+    await refreshDayMoney(salesman.id, day);
 
     const priced = await priceDay(salesman.id, day);
-    const storedTravel = await db.execute<{ eligible: number }>(sql`
-      select coalesce(sum(eligible_paise), 0) as eligible
-        from mbos_expenses where expense_day_id = ${dayId} and kind = 'travel'
+    const stored = await db.execute<{ kind: string; amount: number; eligible: number }>(sql`
+      select kind, sum(amount_paise)::int as amount, sum(eligible_paise)::int as eligible
+        from mbos_expenses where expense_day_id = ${dayId} group by kind
     `);
-    assert.equal(
-      Number(storedTravel[0]!.eligible),
-      priced!.computation!.travelPaise,
-      "the stored figure is a cache of the derived one and must never diverge from it",
-    );
+    const travel = stored.find((r) => r.kind === "travel")!;
+    const food = stored.find((r) => r.kind === "food")!;
+    assert.equal(Number(travel.amount), priced!.computation!.travelPaise, "the kilometre allowance");
+    assert.equal(Number(travel.eligible), Number(travel.amount), "an allowance is what the policy pays");
+    assert.equal(Number(food.amount), priced!.computation!.foodPaise, "the meal allowance");
 
-    const storedFood = await db.execute<{ eligible: number }>(sql`
-      select coalesce(sum(eligible_paise), 0) as eligible
-        from mbos_expenses where expense_day_id = ${dayId} and kind = 'food'
-    `);
-    assert.equal(Number(storedFood[0]!.eligible), priced!.computation!.foodPaise);
+    const [day_] = await db
+      .select({ submittedAt: mbosExpenseDays.submittedAt, lockedAt: mbosExpenseDays.lockedAt })
+      .from(mbosExpenseDays)
+      .where(eq(mbosExpenseDays.id, dayId));
+    assert.equal(day_!.submittedAt, null, "nothing is submitted");
+    assert.equal(day_!.lockedAt, null, "and nothing locks");
+    const approvals = await db.select().from(mbosApprovals).where(eq(mbosApprovals.subjectId, dayId));
+    assert.equal(approvals.length, 0, "an allowance asks nobody's approval");
   });
 
-  test("re-submitting a day does not double its lines", async () => {
-    await publishPolicyV("2026-04-01", 350);
+  test("refreshing again does not double its lines", async () => {
     const day = "2026-06-18";
     const dayId = await openDay(day);
     await addBikeLeg(dayId, day, 20);
 
-    await submitDay(salesman.id, day);
-    const again = await submitDay(salesman.id, day);
-    assert.equal(again.ok, false, "a locked day cannot be submitted twice");
+    await refreshDayMoney(salesman.id, day);
+    await refreshDayMoney(salesman.id, day);
 
     const [count] = await db.execute<{ n: number }>(sql`
       select count(*)::int as n from mbos_expenses where expense_day_id = ${dayId}
     `);
-    assert.equal(count!.n, 2, "one travel line and one food line");
+    assert.equal(count!.n, 2, "one kilometre allowance and one meal allowance");
   });
-});
 
-/* ---------------------------------------------------- §H routing, §J locking */
-
-describe("where a day goes, and what locks", () => {
-  test("a clean day under the limit approves itself", async () => {
-    await publishPolicyV("2026-04-01", 350);
+  test("a walk, or a trip that stops earning, leaves no ₹0 line behind", async () => {
     const day = "2026-06-19";
-    const dayId = await openDay(day);
-    await addBikeLeg(dayId, day, 20);
+    const dayId = await openDay(day, { departedAt: null, returnedAt: null });
+    const legId = await addBikeLeg(dayId, day, 25);
 
-    const outcome = await submitDay(salesman.id, day);
-    assert.ok(outcome.ok);
-    const raised = await db.execute<{ kind: string; severity: string; message: string }>(sql`
-      select kind, severity, message from mbos_expense_exceptions where expense_day_id = ${dayId}
+    await refreshDayMoney(salesman.id, day);
+    const [before_] = await db.execute<{ n: number }>(sql`
+      select count(*)::int as n from mbos_expenses where source_id = ${legId}
     `);
-    assert.equal(
-      outcome.autoApproved,
-      true,
-      `expected a clean day to approve itself; exceptions raised: ${JSON.stringify(raised)}`,
-    );
+    assert.equal(before_!.n, 1, "a bike trip earns its kilometres");
 
-    const approvals = await db
-      .select()
-      .from(mbosApprovals)
-      .where(eq(mbosApprovals.subjectId, dayId));
-    assert.equal(approvals.length, 1);
-    assert.equal(approvals[0]!.state, "approved");
-    assert.equal(approvals[0]!.routeReason, "auto");
+    await db.update(mbosTravelLegs).set({ modeKey: "walking" }).where(eq(mbosTravelLegs.id, legId));
+    await refreshDayMoney(salesman.id, day);
+
+    const [lines] = await db.execute<{ n: number; zero: number }>(sql`
+      select count(*)::int as n, count(*) filter (where amount_paise <= 0)::int as zero
+        from mbos_expenses where expense_day_id = ${dayId}
+    `);
+    assert.equal(lines!.zero, 0, "nothing is ever written at ₹0");
+    assert.equal(lines!.n, 0, "a walk pays nothing, so its allowance is taken away");
   });
 
-  test("a hotel bill over the ceiling is flagged, still recorded, and waits for a person", async () => {
-    await publishPolicyV("2026-04-01", 350);
+  test("a deleted trip takes its allowance with it", async () => {
     const day = "2026-06-20";
-    const dayId = await openDay(day, { overnight: true, stayedInHotel: true });
-    await db.insert(mbosExpenses).values({
-      id: id("mbos_exp"),
-      userId: salesman.id,
-      expenseDate: day,
-      category: "lodging",
-      kind: "lodging",
-      sourceType: "manual",
-      expenseDayId: dayId,
-      amountPaise: 220000,
-      billPhotoId: null,
-      createdById: salesman.id,
-      updatedById: salesman.id,
-    });
+    const dayId = await openDay(day, { departedAt: null, returnedAt: null });
+    const legId = await addBikeLeg(dayId, day, 25);
+    await refreshDayMoney(salesman.id, day);
 
-    const outcome = await submitDay(salesman.id, day);
-    assert.ok(outcome.ok);
-    assert.equal(outcome.autoApproved, false, "over policy has to reach a person");
+    await db.delete(mbosTravelLegs).where(eq(mbosTravelLegs.id, legId));
+    await refreshDayMoney(salesman.id, day);
 
-    const priced = await priceDay(salesman.id, day);
-    assert.equal(priced!.computation!.lodgingClaimedPaise, 220000, "still recorded in full");
-    assert.equal(priced!.computation!.lodgingEligiblePaise, 150000);
-    assert.ok(priced!.computation!.exceptions.some((e) => e.kind === "over_cap"));
-  });
-
-  test("the day is locked on submission and reopening takes a reason", async () => {
-    await publishPolicyV("2026-04-01", 350);
-    const day = "2026-06-21";
-    const dayId = await openDay(day);
-    await addBikeLeg(dayId, day, 10);
-    await submitDay(salesman.id, day);
-
-    const [row] = await db
-      .select({ lockedAt: mbosExpenseDays.lockedAt })
-      .from(mbosExpenseDays)
-      .where(eq(mbosExpenseDays.id, dayId));
-    assert.ok(row!.lockedAt, "submitting locks the day");
-
-    const reopened = await reopenDay(dayId, admin.id, "He photographed the wrong bill.", day);
-    assert.equal(reopened.ok, true);
-
-    const [after_] = await db
-      .select({ lockedAt: mbosExpenseDays.lockedAt, reason: mbosExpenseDays.reopenReason })
-      .from(mbosExpenseDays)
-      .where(eq(mbosExpenseDays.id, dayId));
-    assert.equal(after_!.lockedAt, null);
-    assert.match(after_!.reason!, /wrong bill/);
-  });
-
-  test("reopening far outside the window is refused, with the window named", async () => {
-    await publishPolicyV("2026-04-01", 350);
-    const day = "2026-06-22";
-    const dayId = await openDay(day);
-    await addBikeLeg(dayId, day, 10);
-    await submitDay(salesman.id, day);
-
-    const refused = await reopenDay(dayId, admin.id, "Too late.", "2026-08-01");
-    assert.equal(refused.ok, false);
-    assert.match(refused.reason, /days old/);
+    const [lines] = await db.execute<{ n: number }>(sql`
+      select count(*)::int as n from mbos_expenses where expense_day_id = ${dayId}
+    `);
+    assert.equal(lines!.n, 0);
   });
 });
 
-/* -------------------------------------------------------- §G41 three figures */
+/* ------------------------------------------------- one expense, one decision */
 
-describe("the manager's list", () => {
-  test("claimed, eligible and approved are three separate figures", async () => {
-    await publishPolicyV("2026-04-01", 350);
+async function logExpense(day: string, dayId: string, amountPaise: number, kind = "lodging") {
+  const expenseId = id("mbos_expense");
+  await db.insert(mbosExpenses).values({
+    id: expenseId,
+    userId: salesman.id,
+    expenseDate: day,
+    category: kind === "local_transport" ? "travel" : (kind as "lodging" | "food" | "travel" | "other"),
+    kind,
+    sourceType: "manual",
+    expenseDayId: dayId,
+    amountPaise,
+    billPhotoId: await makeBill(),
+    createdById: salesman.id,
+    updatedById: salesman.id,
+  });
+  return expenseId;
+}
+
+/** Somebody who decides expenses: a manager of the Sales Dashboard. */
+async function salesManager() {
+  const m = await makeUser("Ravi", "manager");
+  await db.insert(appAccess).values({ id: id("aa"), userId: m.id, app: "sales", role: "manager" });
+  return m;
+}
+
+describe("an expense he logs", () => {
+  test("is on the Expenses desk at once, waiting, with the policy figure beside it", async () => {
     const day = "2026-06-23";
     const dayId = await openDay(day, { overnight: true, stayedInHotel: true });
-    await db.insert(mbosExpenses).values({
-      id: id("mbos_exp"),
-      userId: salesman.id,
-      expenseDate: day,
-      category: "lodging",
-      kind: "lodging",
-      sourceType: "manual",
-      expenseDayId: dayId,
-      amountPaise: 220000,
-      billPhotoId: await makeBill(),
-      createdById: salesman.id,
-      updatedById: salesman.id,
-    });
-    await submitDay(salesman.id, day);
+    const expenseId = await logExpense(day, dayId, 220000);
+    await refreshDayMoney(salesman.id, day);
 
-    const rows = await claimDays({ from: day, to: day });
-    assert.equal(rows.length, 1);
-    const row = rows[0]!;
-    assert.equal(Number(row.claimedPaise) > Number(row.eligiblePaise), true);
-    assert.equal(Number(row.excessPaise), 70000);
-    assert.equal(row.approvedAmountPaise, null, "nobody has decided yet");
+    setTestUser(await salesManager());
+    const rows = await expenseLines({ from: day, to: day });
+    const row = rows.find((r) => r.id === expenseId)!;
+    assert.ok(row, "no day was closed and it is listed anyway");
+    assert.equal(row.state, "pending");
+    assert.equal(row.allowance, false);
+    assert.equal(row.claimedPaise, 220000, "recorded in full, however far over");
+    assert.equal(row.eligiblePaise, 45000, "the fixed hotel rate");
+    assert.equal(row.excessPaise, 175000);
+    assert.equal(row.files.length, 1, "the bill is in front of whoever decides it");
+    assert.ok(
+      rows.some((r) => r.allowance && r.kind === "food" && r.state === "allowance"),
+      "the day's meal allowance is listed beside it, already his",
+    );
+  });
 
-    const decided = await decideExpenseDay({
-      dayId,
+  test("is part-approved on its own, and only that amount counts as paid", async () => {
+    const day = "2026-06-24";
+    const dayId = await openDay(day, { overnight: true, stayedInHotel: true });
+    const expenseId = await logExpense(day, dayId, 220000);
+    await refreshDayMoney(salesman.id, day);
+
+    setTestUser(await salesManager());
+    const decided = await decideExpense({
+      expenseId,
       decision: "partially_approved",
-      approvedAmountPaise: Number(row.eligiblePaise),
+      approvedAmountPaise: 150000,
       note: "Allowed at the policy figure.",
     });
     assert.ok(decided.ok, decided.ok ? "" : decided.error);
 
-    const after_ = await claimDays({ from: day, to: day });
-    assert.equal(after_[0]!.approvalState, "partially_approved");
-    assert.equal(Number(after_[0]!.approvedAmountPaise), Number(row.eligiblePaise));
+    const [row] = await db.execute<{ state: string; paid: number }>(sql`
+      select ${expenseStateSql("e")} as state, ${paidPaiseSql("e")}::int as paid
+        from mbos_expenses e where e.id = ${expenseId}
+    `);
+    assert.equal(row!.state, "partially_approved");
+    assert.equal(Number(row!.paid), 150000);
   });
 
-  test("a refusal without a reason is refused", async () => {
-    await publishPolicyV("2026-04-01", 350);
-    const day = "2026-06-24";
-    const dayId = await openDay(day, { overnight: true, stayedInHotel: true });
-    await db.insert(mbosExpenses).values({
-      id: id("mbos_exp"),
-      userId: salesman.id,
-      expenseDate: day,
-      category: "other",
-      kind: "other",
-      sourceType: "manual",
-      expenseDayId: dayId,
-      amountPaise: 900000,
-      createdById: salesman.id,
-      updatedById: salesman.id,
-    });
-    await submitDay(salesman.id, day);
+  test("a 'part' at or above what he logged is recorded as a yes", async () => {
+    const day = "2026-06-25";
+    const dayId = await openDay(day);
+    const expenseId = await logExpense(day, dayId, 30000, "other");
 
-    const refused = await decideExpenseDay({ dayId, decision: "rejected", note: "  " });
+    setTestUser(await salesManager());
+    const decided = await decideExpense({
+      expenseId,
+      decision: "partially_approved",
+      approvedAmountPaise: 30000,
+      note: "Fine.",
+    });
+    assert.ok(decided.ok, decided.ok ? "" : decided.error);
+    const [row] = await db.execute<{ state: string }>(sql`
+      select ${expenseStateSql("e")} as state from mbos_expenses e where e.id = ${expenseId}
+    `);
+    assert.equal(row!.state, "approved");
+  });
+
+  test("a refusal without a reason is refused, and an allowance cannot be decided", async () => {
+    const day = "2026-06-26";
+    const dayId = await openDay(day);
+    const expenseId = await logExpense(day, dayId, 90000, "other");
+    await refreshDayMoney(salesman.id, day);
+
+    setTestUser(await salesManager());
+    const refused = await decideExpense({ expenseId, decision: "rejected", note: "  " });
     assert.equal(refused.ok, false);
-    assert.match(refused.ok ? "" : refused.error, /say why/);
+    assert.match(refused.ok ? "" : refused.error, /Say why/);
+
+    const [meal] = await db.execute<{ id: string }>(sql`
+      select id from mbos_expenses where expense_day_id = ${dayId} and source_type = 'expense_day'
+    `);
+    const onAllowance = await decideExpense({ expenseId: meal!.id, decision: "approved" });
+    assert.equal(onAllowance.ok, false);
+    assert.match(onAllowance.ok ? "" : onAllowance.error, /allowance/);
+  });
+
+  test("an expense whose approval has not arrived yet can still be decided", async () => {
+    const day = "2026-06-27";
+    const dayId = await openDay(day);
+    const expenseId = await logExpense(day, dayId, 12050, "local_transport");
+
+    setTestUser(await salesManager());
+    const decided = await decideExpense({ expenseId, decision: "approved" });
+    assert.ok(decided.ok, decided.ok ? "" : decided.error);
+    const [row] = await db.execute<{ paid: number }>(sql`
+      select ${paidPaiseSql("e")}::int as paid from mbos_expenses e where e.id = ${expenseId}
+    `);
+    assert.equal(Number(row!.paid), 12050, "to the paisa");
   });
 });
 
@@ -590,23 +630,10 @@ describe("the manager's list", () => {
 
 describe("exceptions", () => {
   test("an answered exception survives the day being priced again", async () => {
-    await publishPolicyV("2026-04-01", 350);
-    const day = "2026-06-25";
+    const day = "2026-06-28";
     const dayId = await openDay(day, { overnight: true, stayedInHotel: true });
-    await db.insert(mbosExpenses).values({
-      id: id("mbos_exp"),
-      userId: salesman.id,
-      expenseDate: day,
-      category: "lodging",
-      kind: "lodging",
-      sourceType: "manual",
-      expenseDayId: dayId,
-      amountPaise: 220000,
-      billPhotoId: await makeBill(),
-      createdById: salesman.id,
-      updatedById: salesman.id,
-    });
-    await submitDay(salesman.id, day);
+    await logExpense(day, dayId, 220000);
+    await refreshDayMoney(salesman.id, day);
 
     const [raised] = await db.execute<{ id: string }>(sql`
       select id from mbos_expense_exceptions
@@ -621,9 +648,8 @@ describe("exceptions", () => {
     });
     assert.ok(answered.ok, answered.ok ? "" : answered.error);
 
-    /* Price it again — which is what reopening and re-submitting does. */
-    await reopenDay(dayId, admin.id, "Checking something.", day);
-    await submitDay(salesman.id, day);
+    /* Price it again — which every sync and the nightly pass do. */
+    await refreshDayMoney(salesman.id, day);
 
     const [after_] = await db.execute<{ resolution: string | null; note: string | null }>(sql`
       select resolution, resolution_note as note
@@ -783,7 +809,7 @@ describe("a claim written down twice", () => {
     assert.deepEqual(warnings, []);
   });
 
-  test("a certain duplicate blocks the day to a person on submission", async () => {
+  test("a certain duplicate is raised for whoever decides it", async () => {
     await publishPolicyV("2026-04-01", 350);
     const day = "2026-07-04";
     const dayId = await openDay(day);
@@ -802,9 +828,7 @@ describe("a claim written down twice", () => {
         updatedById: salesman.id,
       });
     }
-    const outcome = await submitDay(salesman.id, day);
-    assert.ok(outcome.ok);
-    assert.equal(outcome.autoApproved, false);
+    await refreshDayMoney(salesman.id, day);
 
     const [raised] = await db.execute<{ n: number }>(sql`
       select count(*)::int as n from mbos_expense_exceptions
@@ -818,11 +842,13 @@ describe("a claim written down twice", () => {
 
 describe("what a draft would have cost", () => {
   test("a rate rise is priced against days that really happened", async () => {
-    await publishPolicyV("2026-04-01", 350);
+    const publishedId = await publishPolicyV("2026-04-01", 350);
     const day = "2026-06-15";
-    const dayId = await openDay(day);
+    /* Out early and back late, so every meal is earned under either policy and
+       the only difference is the kilometres. */
+    const dayId = await openDay(day, { departedAt: at(day, hhmm(6)), returnedAt: at(day, hhmm(23)) });
     await addBikeLeg(dayId, day, 40);
-    await submitDay(salesman.id, day);
+    await refreshDayMoney(salesman.id, day);
 
     /* A draft at a higher rate — not published, so nothing in force moves. */
     setTestUser(admin);
@@ -830,7 +856,7 @@ describe("what a draft would have cost", () => {
       title: "Proposed rise",
       effectiveFrom: "2027-01-01",
       notes: null,
-      copyFromPolicyId: (await policyForDate(day))!.id,
+      copyFromPolicyId: publishedId,
     });
     assert.ok(draft.ok);
 
@@ -861,15 +887,15 @@ describe("what a draft would have cost", () => {
     assert.equal(sim.byCategory.actualTravelPaise, 14000);
     assert.equal(sim.byCategory.travelPaise, 20000);
     assert.equal(sim.differencePaise, 6000);
-    assert.match(sim.caveats[0]!, /Replayed 1 submitted day/);
+    assert.match(sim.caveats[0]!, /Replayed 1 recorded day/);
   });
 
   test("it writes nothing — the day is worth what it was worth afterwards", async () => {
-    await publishPolicyV("2026-04-01", 350);
+    const publishedId = await publishPolicyV("2026-04-01", 350);
     const day = "2026-06-16";
     const dayId = await openDay(day);
     await addBikeLeg(dayId, day, 40);
-    await submitDay(salesman.id, day);
+    await refreshDayMoney(salesman.id, day);
 
     const before = await priceDay(salesman.id, day);
     setTestUser(admin);
@@ -877,7 +903,7 @@ describe("what a draft would have cost", () => {
       title: "Much higher",
       effectiveFrom: "2027-01-01",
       notes: null,
-      copyFromPolicyId: (await policyForDate(day))!.id,
+      copyFromPolicyId: publishedId,
     });
     assert.ok(draft.ok);
     const copied = (await readPolicy(draft.data.id, day))!.rules.find(
@@ -907,7 +933,7 @@ describe("what a draft would have cost", () => {
     const day = "2026-06-17";
     const dayId = await openDay(day);
     await addBikeLeg(dayId, day, 40);
-    await submitDay(salesman.id, day);
+    await refreshDayMoney(salesman.id, day);
 
     /* A draft with no travel rate at all. */
     setTestUser(admin);
@@ -948,8 +974,7 @@ describe("the monthly trend", () => {
     const day = "2026-06-18";
     const dayId = await openDay(day);
     await addBikeLeg(dayId, day, 40);
-    await submitDay(salesman.id, day);
-    await decideExpenseDay({ dayId, decision: "approved", approvedAmountPaise: 0, note: null });
+    await refreshDayMoney(salesman.id, day);
 
     const rows = await snapshotExpenseMonth("2026-06");
     assert.ok(rows >= 1, "at least the company row");
@@ -965,8 +990,7 @@ describe("the monthly trend", () => {
     const day = "2026-06-19";
     const dayId = await openDay(day);
     await addBikeLeg(dayId, day, 40);
-    await submitDay(salesman.id, day);
-    await decideExpenseDay({ dayId, decision: "approved", approvedAmountPaise: 0, note: null });
+    await refreshDayMoney(salesman.id, day);
 
     await snapshotExpenseMonth("2026-06");
     const once = (await expenseTrend(12))[0]!.totalPaise;
@@ -979,5 +1003,274 @@ describe("the monthly trend", () => {
   test("a month with no snapshot is absent, never drawn as zero", async () => {
     const trend = await expenseTrend(12);
     assert.deepEqual(trend, [], "nothing snapshotted means nothing to show, not a flat line");
+  });
+});
+
+/* ------------------------------------------------- named, editable policies */
+
+describe("named policies", () => {
+  const bikeRate = async (setId: string, paisePerKm: number) => {
+    const set = await readPolicySet(setId);
+    const drafts = set!.rules.map(ruleToDraft).map((d) =>
+      d.kind === "per_km" && d.scopeKey === "own_bike" ? { ...d, value: { ...d.value, paisePerKm } } : d,
+    );
+    return savePolicySet({ id: setId, name: set!.name, description: set!.description, rules: drafts, expectedRevision: set!.revision });
+  };
+
+  test("editing the standard policy changes what a day is paid", async () => {
+    const saved = await bikeRate(STANDARD_POLICY_ID, 500);
+    assert.ok(saved.ok, saved.ok ? "" : saved.error);
+    const day = "2026-06-15";
+    const dayId = await openDay(day);
+    await addBikeLeg(dayId, day, 40);
+    await refreshDayMoney(salesman.id, day);
+    assert.equal((await priceDay(salesman.id, day))!.computation!.travelPaise, 20000, "40 km × ₹5");
+    assert.equal((await policySetRevisions(STANDARD_POLICY_ID)).length, 2, "the seed and the edit");
+  });
+
+  test("a copy, given to one salesman, prices only his days — and its id is a key his day can carry", async () => {
+    const copy = await createPolicySet({ name: "Outstation", description: null });
+    assert.ok(copy.ok, copy.ok ? "" : copy.error);
+    assert.ok((await bikeRate(copy.data.id, 1000)).ok);
+    const moved = await assignPolicySet({ userIds: [salesman.id], setId: copy.data.id, notify: false });
+    assert.ok(moved.ok && moved.data.moved === 1);
+
+    const day = "2026-06-16";
+    const dayId = await openDay(day);
+    await addBikeLeg(dayId, day, 40);
+    await refreshDayMoney(salesman.id, day);
+    assert.equal((await priceDay(salesman.id, day))!.computation!.travelPaise, 40000, "40 km × ₹10");
+    const [row] = await db.select({ policyId: mbosExpenseDays.policyId }).from(mbosExpenseDays).where(eq(mbosExpenseDays.id, dayId));
+    assert.equal(row!.policyId, copy.data.id);
+    assert.equal((await policyForDate(day, admin.id))!.id, STANDARD_POLICY_ID, "everybody else stays on standard");
+
+    /* Switched off, he is paid on standard again; deleting it is refused because it priced a day. */
+    assert.ok((await setPolicySetActive({ id: copy.data.id, active: false })).ok);
+    assert.equal((await policyForDate(day, salesman.id))!.id, STANDARD_POLICY_ID);
+    const del = await deletePolicySet({ id: copy.data.id });
+    assert.equal(del.ok, false);
+    assert.match(del.ok ? "" : del.error, /switch it off instead/i);
+  });
+
+  test("a stale save is refused rather than overwriting somebody else's", async () => {
+    const set = (await readPolicySet(STANDARD_POLICY_ID))!;
+    assert.ok((await bikeRate(STANDARD_POLICY_ID, 400)).ok);
+    const late = await savePolicySet({
+      id: set.id,
+      name: set.name,
+      description: set.description,
+      rules: set.rules.map(ruleToDraft),
+      expectedRevision: set.revision,
+    });
+    assert.equal(late.ok, false);
+    assert.equal(late.ok ? "" : late.code, "conflict");
+  });
+
+  test("a broken rule is refused with its field named, and an old revision can be restored", async () => {
+    const set = (await readPolicySet(STANDARD_POLICY_ID))!;
+    const drafts = set.rules.map(ruleToDraft);
+    const k = drafts.findIndex((d) => d.kind === "per_km");
+    drafts[k] = { ...drafts[k]!, value: { paisePerKm: -5, dailyKmCap: null } };
+    const bad = await savePolicySet({ id: set.id, name: set.name, description: null, rules: drafts, expectedRevision: set.revision });
+    assert.equal(bad.ok, false);
+    assert.ok(!bad.ok && bad.fieldErrors?.some((f) => f.field === `rules.${k}.paisePerKm`));
+
+    assert.ok((await bikeRate(STANDARD_POLICY_ID, 777)).ok);
+    const restored = await restorePolicyRevision({ id: STANDARD_POLICY_ID, revision: 1 });
+    assert.ok(restored.ok, restored.ok ? "" : restored.error);
+    const back = (await readPolicySet(STANDARD_POLICY_ID))!;
+    assert.deepEqual(back.rules, TEST_RULES);
+  });
+
+  test("a duplicate is a full copy nobody is on, and an unused one can be deleted", async () => {
+    const dup = await duplicatePolicySet({ id: STANDARD_POLICY_ID });
+    assert.ok(dup.ok);
+    const copy = (await readPolicySet(dup.data.id))!;
+    assert.match(copy.name, /^Copy of /);
+    assert.deepEqual(copy.rules, (await readPolicySet(STANDARD_POLICY_ID))!.rules);
+    assert.equal(copy.memberCount, 0);
+    assert.ok((await deletePolicySet({ id: copy.id })).ok);
+    assert.equal(await readPolicySet(copy.id), null);
+  });
+
+  test("guidelines are saved with the rules, copied with a duplicate, and kept in the history", async () => {
+    const set = (await readPolicySet(STANDARD_POLICY_ID))!;
+    const saved = await savePolicySet({
+      id: set.id,
+      name: set.name,
+      description: null,
+      rules: set.rules.map(ruleToDraft),
+      guidelines: ["  Bills with every claim. ", "", "Paid with salary."],
+      expectedRevision: set.revision,
+    });
+    assert.ok(saved.ok, saved.ok ? "" : saved.error);
+    assert.deepEqual((await readPolicySet(STANDARD_POLICY_ID))!.guidelines, ["Bills with every claim.", "Paid with salary."]);
+    const dup = await duplicatePolicySet({ id: STANDARD_POLICY_ID });
+    assert.ok(dup.ok);
+    assert.deepEqual((await readPolicySet(dup.data.id))!.guidelines, ["Bills with every claim.", "Paid with salary."]);
+    const restored = await restorePolicyRevision({ id: STANDARD_POLICY_ID, revision: 1 });
+    assert.ok(restored.ok);
+    assert.deepEqual((await readPolicySet(STANDARD_POLICY_ID))!.guidelines, []);
+  });
+
+  test("an untouched standard policy moves onto the document's figures; an edited one does not", async () => {
+    await db.execute(sql`update expense_policy_sets set defaults_version = 1 where id = ${STANDARD_POLICY_ID}`);
+    const moved = (await readPolicySet(STANDARD_POLICY_ID))!;
+    assert.deepEqual(moved.rules, STANDARD_POLICY.rules);
+    assert.ok(moved.guidelines.length > 0);
+    assert.equal(moved.revision, 2);
+    assert.match((await policySetRevisions(STANDARD_POLICY_ID))[0]!.note ?? "", /Expense Policy document/);
+
+    const edited = await savePolicySet({
+      id: moved.id,
+      name: moved.name,
+      description: null,
+      rules: TEST_RULES.map(ruleToDraft),
+      expectedRevision: moved.revision,
+    });
+    assert.ok(edited.ok, edited.ok ? "" : edited.error);
+    await db.execute(sql`update expense_policy_sets set defaults_version = 1 where id = ${STANDARD_POLICY_ID}`);
+    const kept = (await readPolicySet(STANDARD_POLICY_ID))!;
+    assert.deepEqual(kept.rules, TEST_RULES, "a person's edit stands");
+  });
+
+  test("the standard policy cannot be switched off or deleted", async () => {
+    assert.equal((await setPolicySetActive({ id: STANDARD_POLICY_ID, active: false })).ok, false);
+    assert.equal((await deletePolicySet({ id: STANDARD_POLICY_ID })).ok, false);
+  });
+});
+
+/* ------------------------------------------------------- hometowns */
+
+describe("a hometown", () => {
+  /** A state › district › city branch, under a name no other run shares. */
+  async function branch() {
+    const tag = randomUUID().slice(0, 6);
+    const state = { id: id("pl"), name: `Statia ${tag}` };
+    const district = { id: id("pl"), name: `Nagpur ${tag}` };
+    const city = { id: id("pl"), name: `Kamptee ${tag}` };
+    await db.execute(sql`
+      insert into places (id, kind, name, key, parent_id) values
+        (${state.id}, 'state', ${state.name}, ${`statia${tag}`}, null),
+        (${district.id}, 'district', ${district.name}, ${`nagpur${tag}`}, ${state.id}),
+        (${city.id}, 'city', ${city.name}, ${`kamptee${tag}`}, ${district.id})
+    `);
+    return { state, district, city };
+  }
+
+  test("is picked from the tree, read back with its state, and audited", async () => {
+    const { state, district, city } = await branch();
+    const tree = await hometownTree();
+    const node = tree.find((s) => s.id === state.id);
+    assert.ok(node, "the state is offered");
+    assert.deepEqual(
+      node!.cities.map((c) => ({ id: c.id, district: c.district })),
+      [{ id: city.id, district: district.name }],
+    );
+
+    const set = await setExpenseHometowns({ userId: salesman.id, placeIds: [city.id] });
+    assert.ok(set.ok, set.ok ? "" : set.error);
+    const [row] = await db.execute<{ city: string; state: string; placeId: string }>(sql`
+      select city, state, place_id as "placeId" from expense_hometowns where user_id = ${salesman.id}
+    `);
+    assert.deepEqual(row, { city: city.name, state: state.name, placeId: city.id });
+
+    const again = await setExpenseHometowns({ userId: salesman.id, placeIds: [city.id] });
+    assert.ok(again.ok);
+    assert.equal(again.message, "Nothing changed.");
+
+    const people = await policyPeople();
+    assert.deepEqual(people.find((p) => p.userId === salesman.id)!.hometowns, [
+      { city: city.name, state: state.name, placeId: city.id },
+    ]);
+    const [audited] = await db.execute<{ n: number }>(sql`
+      select count(*)::int as n from audit_log where action = 'expense_policy.hometown' and entity_id = ${salesman.id}
+    `);
+    assert.equal(audited!.n, 1, "a no-op is not audited");
+
+    assert.ok((await setExpenseHometowns({ userId: salesman.id, placeIds: [] })).ok);
+    const [gone] = await db.execute<{ n: number }>(sql`
+      select count(*)::int as n from expense_hometowns where user_id = ${salesman.id}
+    `);
+    assert.equal(gone!.n, 0);
+  });
+
+  test("a place that is not a city is refused, and so is anybody without the policy capability", async () => {
+    const { district, city } = await branch();
+    const wrong = await setExpenseHometowns({ userId: salesman.id, placeIds: [district.id] });
+    assert.equal(wrong.ok, false, "a district is not a town");
+
+    setTestUser(salesman);
+    await assert.rejects(() => setExpenseHometowns({ userId: salesman.id, placeIds: [city.id] }));
+  });
+
+  test("a salesman's own manager sets it from the Salesmen screen, through the same writer", async () => {
+    const { city } = await branch();
+    setTestUser(await salesManager());
+    const set = await setSalesmanHometowns({ salesmanId: salesman.id, placeIds: [city.id] });
+    assert.ok(set.ok, set.ok ? "" : set.error);
+    const team = await fieldTeam();
+    assert.deepEqual(team.find((t) => t.id === salesman.id)!.hometowns.map((h) => h.placeId), [city.id]);
+  });
+
+  test("a hometown picked from the tree is what the meal rule compares the day against", async () => {
+    const { city } = await branch();
+    const day = "2026-06-24";
+    const dayId = await openDay(day, { departedAt: at(day, hhmm(6)), returnedAt: at(day, hhmm(23)) });
+    assert.ok((await setExpenseHometowns({ userId: salesman.id, placeIds: [city.id] })).ok);
+    await refreshDayMoney(salesman.id, day);
+    assert.equal((await priceDay(salesman.id, day))!.computation!.foodPaise, 0, "a day at home");
+
+    await db.update(mbosExpenseDays).set({ destinationCity: "Wardha" }).where(eq(mbosExpenseDays.id, dayId));
+    await refreshDayMoney(salesman.id, day);
+    assert.equal((await priceDay(salesman.id, day))!.computation!.foodPaise, 45000, "a trip elsewhere");
+  });
+
+  test("he may have several, and a day in any of them is a day at home", async () => {
+    const { state, city } = await branch();
+    const second = { id: id("pl"), name: `Wardha ${randomUUID().slice(0, 6)}` };
+    await db.execute(sql`
+      insert into places (id, kind, name, key, parent_id)
+      values (${second.id}, 'city', ${second.name}, ${second.id}, ${state.id})
+    `);
+    const day = "2026-06-25";
+    const dayId = await openDay(day, { departedAt: at(day, hhmm(6)), returnedAt: at(day, hhmm(23)) });
+
+    const both = await setExpenseHometowns({ userId: salesman.id, placeIds: [city.id, second.id] });
+    assert.ok(both.ok, both.ok ? "" : both.error);
+    assert.match(both.message ?? "", /Hometowns set to/);
+    const people = await policyPeople();
+    assert.deepEqual(
+      people.find((p) => p.userId === salesman.id)!.hometowns.map((h) => h.placeId).sort(),
+      [city.id, second.id].sort(),
+    );
+
+    await db.update(mbosExpenseDays).set({ destinationCity: second.name }).where(eq(mbosExpenseDays.id, dayId));
+    await refreshDayMoney(salesman.id, day);
+    assert.equal((await priceDay(salesman.id, day))!.computation!.foodPaise, 0, "the second hometown is home too");
+
+    /* The whole set is saved: leaving a town out takes it off. */
+    assert.ok((await setExpenseHometowns({ userId: salesman.id, placeIds: [city.id] })).ok);
+    await refreshDayMoney(salesman.id, day);
+    assert.equal((await priceDay(salesman.id, day))!.computation!.foodPaise, 45000, "no longer home");
+  });
+
+  test("a town typed before the picker stays until it is removed, and cannot be typed in new", async () => {
+    const { city } = await branch();
+    await db.execute(sql`insert into expense_hometowns (user_id, city) values (${salesman.id}, 'Old Typed Town')`);
+
+    assert.ok(
+      (await setExpenseHometowns({ userId: salesman.id, placeIds: [city.id], keepTyped: ["Old Typed Town", "Invented"] })).ok,
+    );
+    const rows = await db.execute<{ city: string }>(sql`
+      select city from expense_hometowns where user_id = ${salesman.id} order by city
+    `);
+    assert.deepEqual(rows.map((r) => r.city).sort(), [city.name, "Old Typed Town"].sort(), "kept, and nothing new typed in");
+
+    assert.ok((await setExpenseHometowns({ userId: salesman.id, placeIds: [city.id] })).ok);
+    const [left] = await db.execute<{ n: number }>(sql`
+      select count(*)::int as n from expense_hometowns where user_id = ${salesman.id}
+    `);
+    assert.equal(left!.n, 1, "the typed town is gone once it is not kept");
   });
 });

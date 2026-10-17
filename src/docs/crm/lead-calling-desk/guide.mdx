@@ -1,0 +1,200 @@
+The Calling desk is where a telecaller works **online leads by phone** — enquiries that arrived from the website, WhatsApp, a portal or a marketplace, and that nobody is going to visit. Each lead gets **at most three qualification calls**. Inside those three you collect what a Prospect needs; the moment it is all in, the lead is **Ready for Prospect** and you convert it. If the calls run out first, the lead is closed or left for you to finish on the record.
+
+<Callout kind="note">
+The desk is granted to you personally. If you can open the CRM but not the Calling desk, nobody has given it to you yet — ask whoever manages access. Every other Lead Management screen works without it.
+</Callout>
+
+## The screen at a glance
+
+<Wireframe url="/crm/leads/calling-desk" nav={["Dashboard", "Call Log", "#Lead Management", "All Leads", "Calling desk", "Intake"]} active="Calling desk" caption="The Calling desk, opened on today's work queue">
+  <WfBar>
+    <WfTitle sub="Online leads, handled entirely by phone and message — at most three calls each.">Good morning, telecaller</WfTitle>
+    <WfSpacer />
+    <WfButton>View pipeline</WfButton>
+    <WfButton primary>New lead</WfButton>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfBar><WfInput placeholder="Search your leads by business name, contact or phone…" wide /><Hotspot n={2} /></WfBar>
+  <WfBar>
+    <WfCard title="Total leads"><WfText>64</WfText></WfCard>
+    <WfCard title="New online leads"><WfText>6</WfText></WfCard>
+    <WfCard title="Calls due today"><WfText>9</WfText></WfCard>
+    <WfCard title="Follow-ups due"><WfText>2</WfText></WfCard>
+    <WfCard title="Overdue"><WfText>3</WfText></WfCard>
+    <Hotspot n={3} />
+  </WfBar>
+  <WfText muted>THE 3-CALL RULE — WHERE EVERY LEAD STANDS</WfText>
+  <WfBar>
+    <WfPill>Call 1 pending 6</WfPill><WfPill tone="warn">Call 2 pending 4</WfPill><WfPill tone="danger">Call 3 pending 2</WfPill><WfPill tone="success">Ready for Prospect 3</WfPill><WfPill tone="warn">Awaiting verification 1</WfPill><WfPill tone="danger">Returned 1</WfPill><WfPill>With Sales Manager 5</WfPill><WfPill>Lost 7</WfPill>
+    <Hotspot n={4} />
+  </WfBar>
+  <WfBar>
+    <WfPill>1. Suspect 18</WfPill><WfPill>2. Prospect 4</WfPill><WfPill>3. Qualification 2</WfPill><WfPill>4. Sample / Trial 1</WfPill><WfText muted>… 12. Customer</WfText>
+    <Hotspot n={5} />
+  </WfBar>
+  <WfBar>
+    <WfCard title="Today's work queue">
+      <WfTable
+        highlight={0}
+        columns={["Lead", "Stage", "Due", "Next action"]}
+        rows={[
+          [<span key="a"><b>Customer A</b> <WfPill tone="success">Ready for Prospect</WfPill></span>, "Suspect", "Today", "Request Prospect"],
+          [<span key="b"><b>Customer B</b> <WfPill tone="brand">Created today</WfPill></span>, "Suspect", "Today", <span key="c">Call 1 <Hotspot n={6} /></span>],
+          [<span key="d"><b>Customer C</b> <WfPill tone="warn">Call 2 pending</WfPill></span>, "Suspect", "2 days late", "Call 2 — price and credit"],
+        ]}
+      />
+    </WfCard>
+    <WfCard title="Ready for Prospect"><WfText>Customer A · 2 calls used</WfText><Hotspot n={7} /></WfCard>
+  </WfBar>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Header.</b> <i>View pipeline</i> shows every lead in your book; <i>New lead</i> opens Intake to raise one by hand.</span>,
+  <span key="2"><b>Search.</b> Finds any lead in your book by business name, contact person or the digits of a phone number, whichever tile is selected.</span>,
+  <span key="3"><b>Today's strip.</b> Every lead, new online leads nobody has rung, calls due today, message follow-ups due today, and anything overdue.</span>,
+  <span key="4"><b>The 3-call rule.</b> Where every lead stands against the three calls, and what has happened to the ones you put forward.</span>,
+  <span key="5"><b>Lifecycle.</b> All twelve rungs, from Suspect to Customer. Leads waiting on the Sales Manager are shown on the Prospect rung as "+N awaiting verification".</span>,
+  <span key="6"><b>The list.</b> Opens on <i>Today's work queue</i>. Click any lead to open its desk record.</span>,
+  <span key="7"><b>Side cards.</b> <i>Ready for Prospect</i> and <i>Prospect requests with the Sales Manager</i> — always shown, whatever tile is pressed.</span>,
+]} />
+
+Pressing any figure **filters the list on the same screen** — nothing navigates. The address bar remembers the filter, so a link to "Call 2 pending" can be sent to a colleague. **Back to today's work queue** returns to the default list.
+
+### What is on today's work queue
+
+The queue holds three kinds of lead, in this order:
+
+1. **Ready for Prospect** — everything a Prospect needs is in. Convert it.
+2. **Returned** — the Sales Manager sent a request back. Read their note.
+3. **Due** — a call or message due today or earlier, soonest first. A brand-new lead nobody has scheduled counts as **Call 1 due today**.
+
+A lead with the Sales Manager, or with a next step scheduled for a later day, is **not** on the queue.
+
+## Working a lead, step by step
+
+<Steps>
+<Step title="Open the lead from the list">
+The desk record opens. The header shows the reference (for example `TC-1042`), when it was created and its source. Read **What the enquiry said** — the customer's own words, if the lead came from the website.
+</Step>
+<Step title="Press Start call N / 3">
+The call window shows which questions are **worth asking on this call** and which are better left to later. Anything already on file is listed as answered and is **never asked again**.
+</Step>
+<Step title="Choose what happened">
+Pick one of the five outcomes (table below). If it was **No answer**, say which kind — no response, busy, switched off, out of network, call rejected or disconnected.
+</Step>
+<Step title="Fill in what they told you">
+Only if you spoke to them. Leave anything they did not know blank — a blank is "Not yet captured", never an error.
+</Step>
+<Step title="Say what happens next">
+Choose **Call** or **Message first**, write a line, and pick a follow-up date. The date is suggested two working days out and cannot be in the past.
+</Step>
+<Step title="Save">
+The button tells you what will happen: <i>Save call</i>, <i>Save call — Ready for Prospect</i>, or <i>Save call and mark Lost</i>. Read it before you press it.
+</Step>
+</Steps>
+
+### The five call outcomes
+
+| Outcome | When to use it | What it does |
+|---|---|---|
+| **Spoke — information collected** | They answered and you captured at least one new answer. | Uses a call. If you did not fill in anything new it is refused — use *asked to call back*. |
+| **Spoke — asked to call back** | Reached, but a bad time or only partly answered. | Uses a call. |
+| **No answer** | Rang, nobody spoke. | Uses a call. You must say which kind of no answer. Answers cannot be saved with it. |
+| **Wrong or invalid number** | Not the business, or the number does not work. | **Closes the lead as Lost** at once. |
+| **Not interested** | They said no. | **Closes the lead as Lost** at once. |
+
+<Callout kind="warn" title="A no-answer still uses a call">
+All five outcomes count against the three. Three unanswered calls, with the competitor never captured, close the lead as *No response after 3 attempts*. If you only need to send something, use **Message** instead — a message uses no call.
+</Callout>
+
+### The eleven answers
+
+| Answer | Needed for a Prospect? | Best asked on |
+|---|---|---|
+| **Competitor** (which brand they use now) | **Yes — compulsory**. Missing after Call 3 closes the lead. | Call 1 |
+| **Product** (which of ours they need) | Yes | Call 1 |
+| **Monthly requirement** (litres a month) | Yes | Call 1 |
+| Customer type (dealer, manufacturer, distributor, retailer, private limited user) | No — asked when you convert, if still blank | Call 1 |
+| Application (what they will use it on) | No | Call 1 |
+| Decision maker | No — "ask if known" | Call 2 |
+| GST | No | Call 2 |
+| Buyer | No | Call 3 |
+| Credit days | No | Call 3 |
+| Address | No | Call 3 |
+| Email | No | Call 3 |
+
+On **Call 3** every answer a Prospect still needs is asked, whatever call it was suggested for.
+
+## When a lead is Ready for Prospect
+
+As soon as the competitor, the product and the monthly requirement are all on the record, the lead turns **Ready for Prospect** — even if that happens on Call 1. No further call is offered.
+
+<Steps>
+<Step title="Press Convert to Prospect">
+On the green banner, or in the **Move this lead forward** card.
+</Step>
+<Step title="Say why it is worth pursuing">
+Pick one of the listed reasons — for example *They need it regularly (confirmed)* or *Wants to switch from another brand*. Add what the customer said if it helps.
+</Step>
+<Step title="Answer what the record is missing">
+If nobody has said how the lead will be sold, choose **Direct customer** or **Third Party Customer** — it is never chosen for you. If the kind of business or the contact person is still blank, you are asked for them here.
+</Step>
+<Step title="Confirm">
+The lead becomes a **Prospect** and the Sales Manager is told. You see: *Prospect created. Waiting for Sales Manager verification.* Qualification opens once they verify it, and then it is yours to complete.
+</Step>
+</Steps>
+
+<Callout kind="note">
+If your manager has switched off direct conversion, the same button instead **requests** the Prospect: the lead stays a Suspect, shows *Awaiting verification*, and becomes a Prospect only when the Sales Manager confirms it on their verification call. You will see *Prospect requested* in place of *Prospect created*.
+</Callout>
+
+## What each status means
+
+| Status on the lead | Means | What you do |
+|---|---|---|
+| **Call 1 / 2 / 3 pending** | That call is owed. | Make it. |
+| **Ready for Prospect** | Everything a Prospect needs is in. | Convert it. |
+| **Three calls used** | Three calls made; the competitor is in but the product or monthly requirement is not. The lead is **not** lost. | Close it, or ask the Sales Manager to fill in the rest (see the FAQ). |
+| **Awaiting verification** | You requested a Prospect; it is with the Sales Manager. | Nothing. Do not ring the customer again. |
+| **Manager follow-up** | The Sales Manager is holding the request while they follow up. | Nothing until they decide. |
+| **Returned by Manager** | The Sales Manager sent it back with a note. | Read the note. Resubmit, or mark it Lost. |
+| **Prospect** and beyond | It has left the desk's calling. | The record is read-only except where Qualification is yours. |
+| **Lost** | Closed, with the reason. | Reverse it if the customer comes back. |
+
+## Messages, next actions, closing and reopening
+
+- **Message** — log a company profile, product image, brochure, video, price list or WhatsApp follow-up you sent. It uses **no call**. If the next step was waiting on that message, it becomes the next call, one day out.
+- **Next action** — change what happens next and when, as a call or a message. It can only be changed while the lead is a Suspect.
+- **Mark Lost** — pick one of six reasons: *No response after 3 attempts*, *Required information not obtained*, *Customer not interested*, *Requirement not genuine*, *Wrong lead — should not have been raised*, or *Other*. You cannot close a lead while the Sales Manager has it.
+- **Reverse Lead** — reopens a Lost lead with a reason. It goes back to the rung it was lost from, and if that was Suspect the **three calls start again**. Earlier calls stay on the record. A lead closed because the Sales Manager's verification failed can only be reversed by them.
+
+## Leads with no owner
+
+A lead nobody owns is on **nobody's** desk. If you can hand leads out, a banner tells you how many there are, and **Show them** lists them. Open one and press **Assign** to give it to somebody who holds the Calling desk. People who cannot open the desk are shown greyed out in the list, with the reason.
+
+## Questions people ask
+
+<Faq q="I pressed Start call but it says the three calls are over.">
+The lead has moved on from Suspect, or the Sales Manager has it, or three calls have already been made this round. There is no Call 4.
+</Faq>
+<Faq q="It says 'Everything a Prospect needs is already in, so no further call is needed.'">
+The lead is Ready for Prospect. Convert it instead of calling again.
+</Faq>
+<Faq q="I typed an answer that was already on file and it was not saved.">
+Answers already on the record are never overwritten by a call — the message says which ones were left unchanged. This protects the figure the Sales Manager checks on their verification call.
+</Faq>
+<Faq q="The lead says Three calls used. Is it lost?">
+No. The competitor is in, but the product or the monthly requirement is not. It stays a Suspect. The desk's own **Edit** button is not built yet, so the remaining answers cannot be typed in here — close the lead, or ask the Sales Manager to complete it from the main lead record.
+</Faq>
+<Faq q="My request was Returned. Can I ring the customer to fix it?">
+No — a returned lead cannot be rung again from the desk. Read the manager's note, then **Resubmit for verification** or **Mark Lost**.
+</Faq>
+<Faq q="Why can I not convert even though it says Ready?">
+The conversion also checks the Prospect gate: a reason, a kind of business, a contact person, a next action, and a Sales Manager who can verify it. The refusal names what is missing. If it says no Sales Manager covers the lead's region, ask an administrator.
+</Faq>
+<Faq q="A lead I expected is not on today's queue.">
+It is scheduled for a later day, it is with the Sales Manager, or it belongs to another telecaller. Try the search box, or press **Total leads**.
+</Faq>
+<Faq q="Did the call close my reminder?">
+Yes, if somebody answered. A reminder due on the lead is closed by an answered call, the same as on the Call Log; a no-answer or a dead number closes nothing.
+</Faq>

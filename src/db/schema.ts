@@ -2,7 +2,10 @@ import {
   pgTable,
   text,
   integer,
+  smallint,
   bigint,
+  bigserial,
+  numeric,
   boolean,
   doublePrecision,
   timestamp,
@@ -216,7 +219,11 @@ export const sourceModuleEnum = pgEnum("source_module", [
  * one that already means something else. A source that lies is a source no
  * report can be built on.
  */
-export const orderSourceEnum = pgEnum("order_source", ["crm", "external", "mbos"]);
+/**
+ * `erp`: taken in the ERP and written into the book by `lib/erp/book.ts` once
+ * the ERP is where orders are taken (`erp.orders.live`).
+ */
+export const orderSourceEnum = pgEnum("order_source", ["crm", "external", "mbos", "erp"]);
 /**
  * An order taken on a call is not yet an order the business has agreed to:
  * accounts check the customer first. New CRM orders start at
@@ -613,6 +620,50 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
    * lists at all, asked in `canRead` under its own branch.
    */
   "price_list_document",
+  /* ERP parents (docs/erp). Each is read under the ERP screen it belongs to —
+     see `canReadErpAttachment` — never under a customer's scope. */
+  /** Evidence on a purchase test: the pH, colour, paint and density photos and the video. */
+  "erp_test",
+  /** A supplier bill photographed onto a purchase (AI-1). */
+  "erp_purchase",
+  /** A complaint photograph, or the issued credit-note file. */
+  "erp_request",
+  /** The lorry receipt, photographed (AI-8). */
+  "erp_transport",
+  /** An uploaded help video. */
+  "erp_video",
+  /** A vendor's quotation, photographed or as its PDF. */
+  "erp_quotation",
+  /** A lorry receipt the dispatch team uploaded to the Logistics LR desk (0250). */
+  "erp_lr",
+  /** Retired with the petty cash module (0249). Postgres cannot drop an enum
+      value, so it stays declared; nothing writes it. */
+  "erp_petty",
+  /** A vendor return's photographs and documents, a return outward's (0258). */
+  "erp_vendor_return",
+  /** A customer return's photographs and transport papers (0258). */
+  "erp_customer_return",
+  /** A waste disposal's certificate or receipt (0258). */
+  "erp_waste",
+  /** A can's own photographs, up to three (0263). */
+  "erp_raw_material",
+  /** A can group's photographs, up to three (0263). */
+  "erp_material_group",
+  /** An SFG lot's QC evidence photographs and video, keyed by lot code (0265). */
+  "erp_sfg_qc",
+  /* HRMS parents: read under the HRMS screen the record lives on (see
+     lib/hrms/attachments.ts), never under a customer's scope. */
+  "hrms_attendance",
+  "hrms_employee",
+  "hrms_office",
+  "hrms_asset",
+  "hrms_document",
+  "hrms_journey",
+  /** A vendor's invoice (proforma, tax invoice, debit note…) on a payout. Read
+      by whoever holds Accounts → Vendor payouts. */
+  "vendor_payout_invoice",
+  /** The photograph of a loaded truck the dispatch team takes as proof (factory app). */
+  "factory_task",
 ]);
 
 /**
@@ -641,6 +692,16 @@ export const appIdEnum = pgEnum("app_id", [
   "founder",
   /** Website Enquiries — its own app, granted separately from CRM/Accounts/HRMS. */
   "enquiries",
+  /** The factory, the godowns and fulfilment: purchase to dispatch. */
+  "erp",
+  /** The CMS for mahek-website — its own app, granted separately like `enquiries`. */
+  "website",
+  /** Hiring and onboarding — the pipeline that ends in a provisioned account. */
+  "hire",
+  /** The factory floor's phone app: mixing, filling, packing, dispatch. */
+  "factory",
+  /** Documentation — every app's guide, rules and developer reference, in one place. */
+  "docs",
 ]);
 
 /* --------------------------------------------------------- §2 configuration */
@@ -957,8 +1018,33 @@ export const sessions = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * When this session last proved its password. The Admin Console opens only
+     * for a session confirmed within `auth.console.confirmMinutes`; null is a
+     * session that has to confirm first. See `lib/console-confirm.ts`.
+     */
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
   },
   (t) => [index("sessions_user_idx").on(t.userId)],
+);
+
+/**
+ * One wrong password. `account` is the user id where the name typed matched
+ * somebody, otherwise the name as normalised; `address` is the client IP.
+ * Read by `lib/services/sign-in-throttle.ts` and nothing else.
+ */
+export const signInFailures = pgTable(
+  "sign_in_failures",
+  {
+    id: text("id").primaryKey(),
+    account: text("account").notNull(),
+    address: text("address"),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("sign_in_failures_account_idx").on(t.account, t.at),
+    index("sign_in_failures_address_idx").on(t.address, t.at),
+  ],
 );
 
 /**
@@ -1121,6 +1207,7 @@ export const customerTypeEnum = pgEnum("customer_type", [
   "manufacturer",
   "distributor",
   "retailer",
+  "private_limited_user",
 ]);
 
 /** How much this account could be worth, in a salesman's judgement. */
@@ -1316,6 +1403,18 @@ export const customers = pgTable(
     whatsappDest: destKindEnum("whatsapp_dest").notNull().default("personal"),
     whatsappGroupName: text("whatsapp_group_name"),
     altPhone: text("alt_phone"),
+    /**
+     * WHERE A PAYMENT REMINDER GOES, when it is not where everything else goes.
+     *
+     * A MIRROR of the `customer_contacts` row marked `for_payment_reminders`,
+     * written by `syncContactMirrors` and by nothing else — the same way
+     * `phone` mirrors the primary contact and `whatsapp_phone` the WhatsApp
+     * one. The accounts person at a shop is routinely not the person who
+     * orders, and a reminder about money sent to the counter is read by
+     * whoever happens to be holding the phone. Null means "the WhatsApp
+     * number", which is what every customer meant before contacts existed.
+     */
+    paymentWhatsappPhone: text("payment_whatsapp_phone"),
     address: text("address"),
     city: text("city").notNull(),
     region: text("region"),
@@ -1953,6 +2052,30 @@ export const customers = pgTable(
      */
     leadHoldResumeDate: date("lead_hold_resume_date"),
     /**
+     * A REQUEST TO BE PUT FORWARD AS A PROSPECT IS NOT A PROSPECT, and this is
+     * where the request lives.
+     *
+     * The calling desk qualifies an online lead by phone and then ASKS for it to
+     * become a Prospect; the sales manager verifies it, and only a successful
+     * verification moves the rung. Between the ask and the answer the lead stays
+     * a Suspect — there is no stage for "requested", and adding one to the enum
+     * would put a rung on every ladder and on every handset that knows none of
+     * it — so the pending question is a fact beside the stage rather than a
+     * value of it.
+     *
+     * NULL is no live request: never asked, or asked and answered. `awaiting` is
+     * with the manager; `followup` is the manager holding it; `returned` is the
+     * manager sending it back to the desk. The who, when, why and words stay
+     * after the answer, so the columns after it are history once this is null.
+     */
+    prospectRequestState: text("prospect_request_state"),
+    prospectRequestedAt: timestamp("prospect_requested_at", { withTimezone: true }),
+    prospectRequestedById: text("prospect_requested_by_id").references(() => users.id),
+    /** A code from `leads.prospectReasons`, never a label. */
+    prospectRequestReason: text("prospect_request_reason"),
+    /** What the customer said, in the desk's words. */
+    prospectRequestNote: text("prospect_request_note"),
+    /**
      * §4.2 — the contact's own address, and it had nowhere to live.
      *
      * `users.email` is a MahekOne account; this is the customer's. Nothing on
@@ -2021,6 +2144,32 @@ export const customers = pgTable(
 
     /* flags */
     doNotContact: boolean("do_not_contact").notNull().default(false),
+
+    /*
+     * WhatsApp DND — no WhatsApp message goes to this customer, by any path,
+     * automatic or by hand. Deliberately NOT `do_not_contact`: that one takes
+     * the customer off the calling list as well, and a shop that asked us to
+     * stop messaging it has not asked us to stop ringing. Set and cleared on
+     * the Founder desk's Contacts tab, always with a remark; the history is
+     * `whatsapp_dnd_events`, and these four columns are its newest row.
+     */
+    whatsappDnd: boolean("whatsapp_dnd").notNull().default(false),
+    whatsappDndReason: text("whatsapp_dnd_reason"),
+    whatsappDndAt: timestamp("whatsapp_dnd_at", { withTimezone: true }),
+    whatsappDndByName: text("whatsapp_dnd_by_name"),
+
+    /*
+     * THE LEAD TRASH. Set means this lead is in the trash: every list, count,
+     * search, queue, message and handset sync leaves it out, and the Admin
+     * Console's Trash is the one place it is listed, and restored from. The
+     * row and everything pointing at it stay, so a restore brings back the
+     * whole lead. Only a lead (`kind = 'lead'`) may be trashed. The history of
+     * moves in and out is `lead_trash_events`.
+     */
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedById: text("deleted_by_id"),
+    deletedByName: text("deleted_by_name"),
+    deletedReason: text("deleted_reason"),
 
     /* ------------------------------------------------------------------
      * MBOS — field sales.
@@ -2190,6 +2339,13 @@ export const customers = pgTable(
     freightTerm: text("freight_term"),
     /** "Door Delivery" or "Godown Delivery", as the party sheet spells it. Mirrored, never typed. */
     deliveryType: text("delivery_type"),
+    /* The HRMS Sales desk's own fields for a customer (spec §14.1): how
+       valuable the back office rates it, its segment, what to remember when
+       calling, and the salesman tagged to it beside the one who sells. */
+    rating: text("rating"),
+    segmentation: text("segmentation"),
+    specialInstructions: text("special_instructions"),
+    taggedEmployeeName: text("tagged_employee_name"),
 
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -2247,6 +2403,18 @@ export const customers = pgTable(
     index("customers_lead_manager_seat_idx")
       .on(t.leadManagerId)
       .where(sql`lead_manager_id is not null`),
+    /* A pending request to be put forward as a Prospect — see the column. */
+    index("customers_prospect_request_idx")
+      .on(t.prospectRequestState)
+      .where(sql`prospect_request_state is not null`),
+    check(
+      "customers_prospect_request_state_check",
+      sql`prospect_request_state is null or prospect_request_state in ('awaiting', 'followup', 'returned')`,
+    ),
+    check(
+      "customers_prospect_request_has_when",
+      sql`prospect_request_state is null or prospect_requested_at is not null`,
+    ),
     /*
      * Also in 0138 and also inexpressible here, for the reason drizzle/0008 and
      * drizzle/0013 already give -- Drizzle has no way to name an operator
@@ -2369,6 +2537,32 @@ export const calls = pgTable(
      */
     callAttempt: integer("call_attempt"),
 
+    /**
+     * WAS A SALES OPPORTUNITY ASKED ABOUT, AND WHAT WAS THE ANSWER — 'yes',
+     * 'no', or null.
+     *
+     * Null is the answer for every call logged before this column existed and
+     * for every call that never asked (outbound, Order Received): nobody was
+     * asked. 'no' is somebody being asked and saying no, which used to leave no
+     * trace at all and so was indistinguishable from silence. 'yes' is the
+     * answer that also writes a `call_opportunities` row. Nothing backfills it:
+     * an old call with no opportunity row might have been a No or might have
+     * been skipped, and nothing on the row says which.
+     */
+    opportunityAnswer: text("opportunity_answer"),
+    /**
+     * WHAT THE SCREEN SHOWED, as the server read it when the call was saved.
+     *
+     * The live ledger, the ERP's transport record and the stock figure all move
+     * after the call, so a call record read next quarter would describe a world
+     * that no longer exists. This is the SNAPSHOT of the figures behind the
+     * conversation — read by the server inside the save, never taken from the
+     * browser — and it is a record of what was true on the day, so it is never
+     * recomputed. Null on every call that predates it and on every reason that
+     * has nothing to snapshot. `lib/call-detail.ts` owns the shape.
+     */
+    contextSnapshot: jsonb("context_snapshot").$type<Record<string, unknown>>(),
+
     nextActions: jsonb("next_actions").$type<string[]>().notNull().default([]),
     /**
      * The day it was undertaken FOR. Where one is given it becomes a reminder
@@ -2487,6 +2681,28 @@ export const callOpportunities = pgTable(
     estimatedValuePaise: bigint("estimated_value_paise", { mode: "number" }),
     expectedOrderDate: date("expected_order_date"),
 
+    /**
+     * WHERE IT STANDS, so it can be WORKED and not only read.
+     *
+     * `open → in_progress → won | lost`. The row used to be write-once: it
+     * landed on the customer's timeline and nobody was told, so the only way
+     * anything came of it was somebody happening to read that account. The
+     * default is `open`, which is what every row that already exists is.
+     * `won` is a person saying it turned into business — never derived from an
+     * order, because an order on the same customer a week later does not prove
+     * it was this opportunity.
+     */
+    status: text("status").notNull().default("open"),
+    /**
+     * WHO IS EXPECTED TO WORK IT. Null on every row written before this
+     * existed, which the worklist reads as "whoever logged the call".
+     */
+    assignedUserId: text("assigned_user_id").references(() => users.id),
+    /** What came of working it — the sentence somebody reads next. */
+    workedNote: text("worked_note"),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    closedById: text("closed_by_id"),
+
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id"),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -2495,7 +2711,103 @@ export const callOpportunities = pgTable(
   (t) => [
     index("call_opportunities_customer_idx").on(t.customerId),
     index("call_opportunities_call_idx").on(t.callId),
+    index("call_opportunities_assignee_idx").on(t.assignedUserId, t.status),
   ],
+);
+
+/* ---------------------------------------------------------------------------
+ * WHAT THE CALL ASSISTANT HEARD, WHAT IT PROPOSED, AND WHAT WAS SAVED.
+ *
+ * One row per time a telecaller asked the assistant to read a call. It keeps
+ * three things, and each is there for a reason:
+ *
+ *   THE TRANSCRIPT, in the language it was spoken and in English. The client
+ *   asked for the original to be kept "for future checking", and it is the
+ *   only way anybody can later tell whether a wrong suggestion was the model
+ *   mishearing or the customer changing their mind. The AUDIO is still never
+ *   stored — `lib/dictation.ts` says why, and nothing here reverses it.
+ *
+ *   THE PROPOSAL, exactly as the card drew it. A suggestion is a claim about
+ *   what the call was, and a claim nobody can read back later cannot be
+ *   checked.
+ *
+ *   THE ANSWER — the outcome the call was actually saved as, written by
+ *   `saveInteraction` in the call's own transaction. The difference between
+ *   `suggested_outcome` and `saved_outcome` is the assistant's report card,
+ *   and it is also the next training example: nothing labels data better
+ *   than a telecaller correcting a suggestion.
+ *
+ * `call_id` is null until the call is saved, and stays null for a reading that
+ * was abandoned — that is a fact worth counting too.
+ * ------------------------------------------------------------------------- */
+export const callAiDrafts = pgTable(
+  "call_ai_drafts",
+  {
+    id: text("id").primaryKey(),
+    /**
+     * `call` — the CRM's call assistant; `visit` — the handset's visit
+     * assistant. One table because both are the same record: what was heard,
+     * what was proposed, and what it was finally saved as.
+     */
+    channel: text("channel").notNull().default("call"),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    callId: text("call_id"),
+    /** The visit a `visit` draft was saved as, written by the sync handler. */
+    visitId: text("visit_id"),
+    /** What was said, in the language it was said in. */
+    spoken: text("spoken").notNull().default(""),
+    /** The English the telecaller was shown. */
+    english: text("english").notNull().default(""),
+    language: text("language"),
+    /** `sarvam`, `openai`, or `typed` where the note was typed rather than spoken. */
+    heardBy: text("heard_by"),
+    /** The model's structured reading, as it came back. Null where no model answered. */
+    reading: jsonb("reading"),
+    /** The card as drawn: every suggestion, question and duplicate. */
+    analysis: jsonb("analysis").notNull(),
+    /** Which model read it, e.g. `openai:gpt-5-mini`. Null where none did. */
+    model: text("model"),
+    classifierLabel: text("classifier_label"),
+    classifierProbability: doublePrecision("classifier_probability"),
+    suggestedOutcome: text("suggested_outcome"),
+    /** The outcome of the suggestion the telecaller applied, if any. */
+    appliedOutcome: text("applied_outcome"),
+    savedOutcome: text("saved_outcome"),
+    savedDetail: jsonb("saved_detail").$type<Record<string, unknown>>(),
+    latencyMs: integer("latency_ms"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    savedAt: timestamp("saved_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("call_ai_drafts_customer_idx").on(t.customerId, t.createdAt.desc()),
+    index("call_ai_drafts_user_idx").on(t.userId, t.createdAt.desc()),
+    index("call_ai_drafts_call_idx").on(t.callId),
+    index("call_ai_drafts_visit_idx").on(t.visitId),
+  ],
+);
+
+/**
+ * The classifier the assistant votes with, trained nightly from our own logged
+ * calls. A row per training run rather than one overwritten row, so a model
+ * that got worse can be seen getting worse — `evaluation` carries its
+ * cross-validated accuracy from the night it was made.
+ */
+export const callIntelModels = pgTable(
+  "call_intel_models",
+  {
+    id: text("id").primaryKey(),
+    kind: text("kind").notNull(),
+    model: jsonb("model").notNull(),
+    trainedOn: integer("trained_on").notNull(),
+    evaluation: jsonb("evaluation"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("call_intel_models_kind_idx").on(t.kind, t.createdAt.desc())],
 );
 
 /* ----------------------------------------------------------------- §3.5 order */
@@ -2609,6 +2921,36 @@ export const productFormulations = pgTable(
      */
     isResidual: boolean("is_residual").notNull().default(false),
     active: boolean("active").notNull().default(true),
+    /**
+     * MAY A MIX TARGET BE AIMED AT THIS LIQUID — which is not `active`.
+     *
+     * `active` answers whether the liquid is in the catalogue: retire it and its
+     * SKUs stop being offered on orders. This answers the other question, and the
+     * two are routinely different — a liquid can be very much on sale and still be
+     * nothing to aim a salesman's month at. `mixCategories()` offered every active
+     * one, so on this book a manager picked three bands out of nineteen
+     * alphabetical rows every month with nothing marking the three that matter.
+     *
+     * TRUE by default, so nothing moved on the day it landed, and no stored band is
+     * read through it: the bands on a target are read by id and never ask, because a
+     * target somebody typed is a decision and taking a liquid off the offer list
+     * mid-month must not silently drop a share out of a score. That is the
+     * discipline `active` already keeps one line up.
+     *
+     * The residual may never be withheld — value from a product naming no
+     * formulation has to land somewhere or the shares stop adding up — and that is a
+     * CHECK constraint as well as a guard in the action, because a constraint is the
+     * half that survives somebody writing SQL by hand.
+     */
+    offerForMix: boolean("offer_for_mix").notNull().default(true),
+    /**
+     * Where it sits in the offer list, smallest first.
+     *
+     * It has been on this table since it was created and was read by NOTHING:
+     * `mixCategories()` ordered by name, so the column was a promise the one list
+     * that needed it never kept. It is read now, which is what makes the three
+     * liquids a manager actually aims at reachable without hunting an alphabet.
+     */
     displayOrder: integer("display_order").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -2619,6 +2961,9 @@ export const productFormulations = pgTable(
     uniqueIndex("product_formulations_residual_key")
       .on(t.isResidual)
       .where(sql`is_residual`),
+    /* The residual is where unclassified value lands, so it can no more be taken
+       off the offer list than it can be retired. See `offerForMix`. */
+    check("product_formulations_residual_offered", sql`not is_residual or offer_for_mix`),
   ],
 );
 
@@ -2969,6 +3314,16 @@ export const orders = pgTable(
     status: orderStatusEnum("status").notNull().default("captured"),
     callId: text("call_id"),
     lineItems: jsonb("line_items").$type<OrderLine[]>(),
+    /*
+     * THE VISIT THIS WAS TAKEN ON, where the handset says so.
+     *
+     * Not a foreign key, on purpose: the handset mints the visit's id at the
+     * shop door and the order often reaches the office BEFORE the visit that
+     * produced it — a key would refuse the order for the crime of arriving
+     * first. `handleVisit` reads this column to fill the visit's own
+     * `linked_*` once it lands, so the link is made whichever arrives first.
+     */
+    visitId: text("visit_id"),
     /**
      * WHICH PRICE LIST PRICED THIS ORDER, resolved for the customer on the day
      * it was taken and written once. The same discipline as
@@ -3017,6 +3372,54 @@ export const orders = pgTable(
      */
     uniqueIndex("orders_external_ref_key").on(t.externalRef),
     uniqueIndex("orders_order_no_key").on(t.orderNo),
+  ],
+);
+
+/**
+ * A CHANGE TO AN ORDER ACCOUNTS HAS ALREADY APPROVED, asked for rather than made.
+ *
+ * Until accounts decide an order its author edits it directly — nothing has
+ * been promised against it yet. Once approved it is the office's commitment:
+ * stock is allotted, the credit check passed on THAT value, and a salesman
+ * rewriting it from a handset would move a figure somebody signed off without
+ * them knowing. So the change becomes a request, accounts accept or decline it
+ * with a reason, and the request's own row is how anybody follows it.
+ *
+ * `previous_*` is the order as it stood when the change was asked for, so a
+ * decision is read against what the salesman saw — and so the history still
+ * says what the order was after it has been changed. At most one request per
+ * order is pending, held by a partial unique index rather than by a check a
+ * second writer would not know about.
+ */
+export const orderChangeStatusEnum = pgEnum("order_change_status", ["pending", "accepted", "declined"]);
+
+export const orderChangeRequests = pgTable(
+  "order_change_requests",
+  {
+    id: text("id").primaryKey(),
+    orderId: text("order_id").notNull().references(() => orders.id),
+    customerId: text("customer_id").notNull().references(() => customers.id),
+    requestedById: text("requested_by_id").notNull().references(() => users.id),
+    /** What the order should become. */
+    lineItems: jsonb("line_items").$type<OrderLine[]>().notNull(),
+    totalAmountPaise: bigint("total_amount_paise", { mode: "number" }).notNull(),
+    /** What it was when the change was asked for. */
+    previousLineItems: jsonb("previous_line_items").$type<OrderLine[]>(),
+    previousTotalPaise: bigint("previous_total_paise", { mode: "number" }),
+    /** Why — required: accounts decide on the reason as much as the lines. */
+    note: text("note").notNull(),
+    status: orderChangeStatusEnum("status").notNull().default("pending"),
+    decidedById: text("decided_by_id").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    /** Required on a decline; the salesman has to tell the shop something. */
+    decisionNote: text("decision_note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("order_change_requests_one_pending").on(t.orderId).where(sql`${t.status} = 'pending'`),
+    index("order_change_requests_status_idx").on(t.status, t.createdAt),
+    index("order_change_requests_requester_idx").on(t.requestedById, t.updatedAt),
   ],
 );
 
@@ -3145,6 +3548,16 @@ export const paymentReceipts = pgTable(
     mode: text("mode").notNull().default("Bank transfer"),
     /** UTR, cheque number, or whatever names this money in the bank. */
     reference: text("reference"),
+    /*
+     * THE VISIT THIS WAS TAKEN ON, where the handset says so.
+     *
+     * Not a foreign key, on purpose: the handset mints the visit's id at the
+     * shop door and the receipt often reaches the office BEFORE the visit that
+     * produced it — a key would refuse the receipt for the crime of arriving
+     * first. `handleVisit` reads this column to fill the visit's own
+     * `linked_*` once it lands, so the link is made whichever arrives first.
+     */
+    visitId: text("visit_id"),
 
     /**
      * The date written ON the instrument, where the instrument carries one.
@@ -3479,6 +3892,14 @@ export const complaints = pgTable(
     cnReference: text("cn_reference"),
     /** Whoever actually reported it — not always the customer's main number. */
     mobileNumber: text("mobile_number"),
+    /**
+     * The salesman a complaint was raised FOR, where somebody in the office
+     * wrote it down on his behalf — the ERP's "Name of salesman". Null means
+     * whoever logged it raised it.
+     */
+    salesmanName: text("salesman_name"),
+    /** The date printed on the credit note, where it differs from the day it was recorded. */
+    cnDate: date("cn_date"),
 
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -3589,6 +4010,20 @@ export const waTemplates = pgTable("wa_templates", {
   appliesTo: destKindEnum("applies_to").notNull().default("personal"),
   active: boolean("active").notNull().default(true),
   usageCount: integer("usage_count").notNull().default(0),
+  /**
+   * The Meta-approved template in Wati this one is sent as. Null means it is
+   * never sent through the API — WhatsApp refuses a business-initiated message
+   * that is not an approved template, so an unlinked template can only ever go
+   * out the manual way. Set from the Founder Dashboard, beside the switch.
+   */
+  watiTemplateName: text("wati_template_name"),
+  /**
+   * The rule set in `lib/wati-templates.ts` that fills this template's
+   * variables — and refuses it, with reasons, when any of them would be
+   * untrue. Null for the older free-text templates, which keep the merge
+   * fields in `whatsapp-service.ts`.
+   */
+  watiSpec: text("wati_spec"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   createdById: text("created_by_id"),
@@ -3643,6 +4078,16 @@ export const waMessages = pgTable(
     deliveredAt: timestamp("delivered_at", { withTimezone: true }),
     readAt: timestamp("read_at", { withTimezone: true }),
     failureReason: text("failure_reason"),
+    /** WhatsApp's own id for a message the API sent (wamid…), for tracing one in Wati. Our id travels to Wati as its local_message_id, which is what the webhooks are matched on. */
+    providerRef: text("provider_ref"),
+    /** The founder-configured rule that sent this, when a rule did. Null for a message a person sent. */
+    triggerId: text("trigger_id"),
+    /**
+     * The customer's message this one answers, when it is a free-text reply
+     * typed in the Replies tab. Declared without a reference here because
+     * `wa_replies` is defined further down; the migration carries the key.
+     */
+    inReplyToId: text("in_reply_to_id"),
 
     idempotencyKey: text("idempotency_key"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -3660,19 +4105,230 @@ export const waMessages = pgTable(
       t.id.desc(),
     ),
     index("wa_messages_run_idx").on(t.runId),
+    index("wa_messages_provider_ref_idx").on(t.providerRef),
     uniqueIndex("wa_messages_idempotency_key").on(t.idempotencyKey),
   ],
 );
 
-export const waReplies = pgTable("wa_replies", {
+export const waReplies = pgTable(
+  "wa_replies",
+  {
+    id: text("id").primaryKey(),
+    /**
+     * Null when the number matches no customer. A reply from a number the book
+     * does not know is still a reply somebody sent us, and dropping it because
+     * nobody could file it is how a customer's message goes unanswered.
+     */
+    customerId: text("customer_id").references(() => customers.id, { onDelete: "cascade" }),
+    message: text("message").notNull(),
+    actioned: boolean("actioned").notNull().default(false),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    /** The sender's WhatsApp number as Wati reports it — country code, no +. */
+    waId: text("wa_id"),
+    senderName: text("sender_name"),
+    /** WhatsApp's id for the incoming message. Unique, so a webhook Wati retries lands once. */
+    providerMessageId: text("provider_message_id"),
+    /**
+     * Who marked it handled, and when. Null on a reply actioned before these
+     * existed — handled by somebody nobody recorded, never a guess.
+     */
+    actionedAt: timestamp("actioned_at", { withTimezone: true }),
+    actionedById: text("actioned_by_id").references(() => users.id, { onDelete: "set null" }),
+    /**
+     * What we said back, from the Replies tab, as a WhatsApp session message
+     * from the business number. One answer per incoming message; `answerStatus`
+     * is `sent` or `failed`, and a failed one keeps its words and its reason.
+     */
+    /**
+     * What they sent when it was not words: `image`, `document`, `video`,
+     * `audio` or `sticker`, and Wati's path to the file (`data/images/….jpg`).
+     * Null for a text message. The bytes stay with Wati and are read through
+     * `/api/whatsapp/media/<id>`, behind the same gate as the conversation.
+     */
+    mediaType: text("media_type"),
+    mediaPath: text("media_path"),
+    answerBody: text("answer_body"),
+    answeredAt: timestamp("answered_at", { withTimezone: true }),
+    answeredById: text("answered_by_id").references(() => users.id, { onDelete: "set null" }),
+    answerStatus: text("answer_status"),
+    answerFailure: text("answer_failure"),
+  },
+  (t) => [
+    uniqueIndex("wa_replies_provider_message_id_key").on(t.providerMessageId),
+    index("wa_replies_customer_received_idx").on(t.customerId, t.receivedAt.desc()),
+  ],
+);
+
+/**
+ * ONE-TIME SIGN-IN CODES, sent on WhatsApp to the work number on the account.
+ *
+ * Only a hash of the code is stored (`sha256("<id>:<code>")`, salted by the
+ * row's own id), so a database dump holds nothing anybody can type. A code
+ * works once, for one purpose, until it expires or runs out of attempts —
+ * all three limits are `auth.otp.*` settings. Rows are never reused: asking
+ * again writes a new one, which is what makes the resend cooldown and the
+ * per-window cap countable.
+ */
+export const authOtps = pgTable(
+  "auth_otps",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** `login` (web or handset), `password_change`, `password_reset`. */
+    purpose: text("purpose").notNull(),
+    channel: otpChannelEnum("channel").notNull().default("whatsapp"),
+    /** The number it went to, as WhatsApp wants it (91XXXXXXXXXX). */
+    destination: text("destination").notNull(),
+    codeHash: text("code_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    /** Null until Wati accepted it; a code that never left is never valid. */
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    failureReason: text("failure_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+
+    /* ---- THE HISTORY: what the Admin Console's OTP screen reads ----
+     *
+     * Every one of these is null on rows written before `0221`, and the screen
+     * says "not recorded" rather than guessing. None is read by sending or
+     * checking a code — they describe a request, they do not decide one. */
+
+    /** `minimoth` or `wati` — which service carried it. */
+    provider: text("provider"),
+    /** Where it was asked for: `web` sign-in or reset, `handset`, `settings` (password change). */
+    surface: text("surface"),
+    /** Exactly what was typed at the screen — an email, a work number, a personal mobile. */
+    requestedWith: text("requested_with"),
+    requestIp: text("request_ip"),
+    userAgent: text("user_agent"),
+    /** MiniMoth's own otp id, or Wati's local message id — what their dashboards search by. */
+    providerRef: text("provider_ref"),
+    /** The provider's answer to the send, as it came back. Never holds the digits. */
+    providerResponse: jsonb("provider_response"),
+    /**
+     * Set when the request was turned down BEFORE anything was sent — the
+     * cooldown, the window cap, no HRMS mobile. Such a row is history and
+     * nothing else: it never counts towards a limit and can never verify.
+     */
+    refusedReason: text("refused_reason"),
+    lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+    /** `ok`, `wrong`, `expired`, `too_many`, `unavailable`, or the provider's own code. */
+    lastAttemptResult: text("last_attempt_result"),
+  },
+  (t) => [
+    index("auth_otps_user_purpose_idx").on(t.userId, t.purpose, t.createdAt.desc()),
+    index("auth_otps_created_idx").on(t.createdAt.desc()),
+  ],
+);
+
+/**
+ * A RULE THAT SENDS ONE TEMPLATE AUTOMATICALLY — configured on the Founder
+ * Dashboard. Several rules may point at one template ("multiple logics"): a
+ * gentle reminder at 1–15 days and again, differently spaced, later on.
+ *
+ * `from_day`/`to_day` are measured on the template's own clock — days OVERDUE
+ * (oldest bill past its due date) for a payment template, days PAST THE
+ * EXPECTED ORDER DATE for an order one (negative = before it). Null `to_day`
+ * means no upper end. `status` is off / preview (worked out and logged, never
+ * sent) / live. Whether each message is TRUE is not decided here — that is
+ * the template's rule set in `lib/wati-templates.ts`, which every automated
+ * send still passes through.
+ */
+export const waTriggers = pgTable("wa_triggers", {
   id: text("id").primaryKey(),
-  customerId: text("customer_id")
+  templateId: text("template_id")
     .notNull()
-    .references(() => customers.id, { onDelete: "cascade" }),
-  message: text("message").notNull(),
-  actioned: boolean("actioned").notNull().default(false),
-  receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    .references(() => waTemplates.id, { onDelete: "cascade" }),
+  status: text("status").notNull().default("off"),
+  fromDay: integer("from_day").notNull(),
+  toDay: integer("to_day"),
+  repeatEveryDays: integer("repeat_every_days").notNull(),
+  maxSends: integer("max_sends"),
+  minAmountPaise: bigint("min_amount_paise", { mode: "number" }),
+  priority: integer("priority").notNull().default(100),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedById: text("updated_by_id").references(() => users.id),
+  updatedByName: text("updated_by_name"),
 });
+
+/** When automated WhatsApp may go out at all. One row, id `default`. */
+export const waAutomationSettings = pgTable("wa_automation_settings", {
+  id: text("id").primaryKey(),
+  windowStartHour: integer("window_start_hour").notNull().default(10),
+  windowEndHour: integer("window_end_hour").notNull().default(13),
+  /** ISO weekdays, 1 = Monday … 7 = Sunday. */
+  weekdays: integer("weekdays").array().notNull(),
+  dailyCap: integer("daily_cap").notNull().default(300),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedById: text("updated_by_id").references(() => users.id),
+  updatedByName: text("updated_by_name"),
+});
+
+/** One automation pass, and what each rule did — or would have done. */
+export const waAutomationRuns = pgTable(
+  "wa_automation_runs",
+  {
+    id: text("id").primaryKey(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    /** True when nothing was sent — a preview, or live rules held back. */
+    dry: boolean("dry").notNull(),
+    trigger: text("trigger").notNull(),
+    note: text("note"),
+    summary: jsonb("summary").notNull(),
+  },
+  (t) => [index("wa_automation_runs_started_idx").on(t.startedAt.desc())],
+);
+
+/**
+ * THE FOUNDER'S SWITCH for sending WhatsApp through the API. One row per
+ * decision and never an update: the switch's state is the newest row, and the
+ * rows beneath it are the record of who turned it on or off, when, and why.
+ *
+ * Deliberately NOT an `app_settings` key. Settings are edited on the Settings
+ * screen by anybody holding `config.write`, and this is the one decision about
+ * messaging that Mahek said belongs to the founder alone. No row at all means
+ * OFF — a deployment that has never been switched on sends nothing.
+ */
+export const whatsappServiceEvents = pgTable(
+  "whatsapp_service_events",
+  {
+    id: text("id").primaryKey(),
+    active: boolean("active").notNull(),
+    note: text("note"),
+    changedById: text("changed_by_id").references(() => users.id),
+    /** Stored beside the id so the history still reads after somebody leaves. */
+    changedByName: text("changed_by_name").notNull(),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("whatsapp_service_events_at_idx").on(t.at.desc())],
+);
+
+/**
+ * Every time a customer was put on WhatsApp DND or taken off it, with the
+ * remark. Append-only: the customer row carries only the current answer, and
+ * "who stopped messages to this shop, and why" is asked months later.
+ */
+export const whatsappDndEvents = pgTable(
+  "whatsapp_dnd_events",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    dnd: boolean("dnd").notNull(),
+    reason: text("reason").notNull(),
+    changedById: text("changed_by_id").references(() => users.id),
+    /** Stored beside the id so the history still reads after somebody leaves. */
+    changedByName: text("changed_by_name").notNull(),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("whatsapp_dnd_events_customer_idx").on(t.customerId, t.at.desc())],
+);
 
 /* -------------------------------------------------------- §3.11 monthly target */
 
@@ -3697,6 +4353,15 @@ export const monthlyTargets = pgTable(
      * it is still somebody's decision, just not one made for this month.
      */
     carriedForward: boolean("carried_forward").notNull().default(false),
+    /**
+     * HOW MANY SALES BILLS the month should carry, beside the rupees. Null
+     * means nobody asked for a number of bills — not a target of zero. A
+     * customer billed four times a month for about a lakh is asked for five:
+     * the count is what a telecaller or a salesman can actually move on a
+     * call, and the rupees follow it. Measured off the bills ledger by
+     * `bill_date`, the same count the Top customers report prints.
+     */
+    billTarget: integer("bill_target"),
     setById: text("set_by_id").references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -3835,10 +4500,49 @@ export const notifications = pgTable(
     body: text("body").notNull(),
     kind: text("kind").notNull().default("info"),
     href: text("href"),
+    /**
+     * Where the same notification goes on the HANDSET — an MBOS route, which
+     * is a different set of screens from `href`. It used to travel on the push
+     * alone, so the bell list on the phone was handed the web route and a tap
+     * on `/crm/performance` landed on the router's "Unmatched Route" page.
+     * Null means "no particular screen", and the phone opens nothing.
+     */
+    mbosHref: text("mbos_href"),
     read: boolean("read").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("notifications_user_idx").on(t.userId, t.read)],
+  (t) => [
+    index("notifications_user_idx").on(t.userId, t.read),
+    // The live bell's read: one person's newest, every few seconds.
+    index("notifications_user_created_idx").on(t.userId, t.createdAt.desc()),
+  ],
+);
+
+/* ------------------------------------------------- founder inbox marks */
+
+/**
+ * The human half of the Founder Command Centre's "Needs you" inbox. Items
+ * themselves are derived from live rules and never stored; a hand-off and a
+ * snooze are decisions somebody made, and a rebuild must not forget them.
+ * One row per viewer per item — see drizzle/0172.
+ */
+export const founderInboxMarks = pgTable(
+  "founder_inbox_marks",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    itemKey: text("item_key").notNull(),
+    /** `handed` or `snoozed`. */
+    kind: text("kind").notNull(),
+    toUserId: text("to_user_id").references(() => users.id, { onDelete: "set null" }),
+    note: text("note"),
+    untilDate: date("until_date"),
+    why: text("why"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("founder_inbox_marks_user_item_key").on(t.userId, t.itemKey)],
 );
 
 /* ------------------------------------------------------------------ feedback */
@@ -4229,6 +4933,23 @@ export const customerDistributors = pgTable(
   ],
 );
 
+/** Every move of a lead into and out of the trash — who, when, why. */
+export const leadTrashEvents = pgTable(
+  "lead_trash_events",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    action: text("action").notNull(),
+    reason: text("reason"),
+    actorId: text("actor_id").references(() => users.id, { onDelete: "set null" }),
+    actorName: text("actor_name"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("lead_trash_events_customer_idx").on(t.customerId, t.createdAt.desc())],
+);
+
 export const customerAmChanges = pgTable(
   "customer_am_changes",
   {
@@ -4584,7 +5305,8 @@ export const employees = pgTable(
     conveyancePaise: bigint("conveyance_paise", { mode: "number" }),
     otherSalaryPaise: bigint("other_salary_paise", { mode: "number" }),
 
-    monthlyPaidLeave: integer("monthly_paid_leave"),
+    /** Days a month, credited on the 1st by HRMS. Decimal: 1.5 is ordinary. */
+    monthlyPaidLeave: numeric("monthly_paid_leave", { precision: 5, scale: 2, mode: "number" }),
     yearlyMaximumLeave: integer("yearly_maximum_leave"),
 
     pfEsicApplicable: boolean("pf_esic_applicable"),
@@ -4609,6 +5331,32 @@ export const employees = pgTable(
 
     /** The sheet's own path into its images folder. Not a URL we can serve. */
     photoPath: text("photo_path"),
+
+    /* --------------------------------------------------------------------
+     * HRMS AUTHORSHIP. The table began as a mirror of the Employee Details
+     * tab; HRMS now signs people up and edits them. `source` says who created
+     * the row, and `hrmsDecidedAt` is the mark of a person having changed it
+     * in HRMS — the sync keeps its hands off a row carrying it, the same
+     * discipline `customers.amDecidedAt` keeps for the sales seats.
+     * ------------------------------------------------------------------ */
+    source: text("source").notNull().default("sheet"),
+    hrmsDecidedAt: timestamp("hrms_decided_at", { withTimezone: true }),
+    /** The profile photo and the ID card, as attachments. */
+    photoAttachmentId: text("photo_attachment_id"),
+    idCardAttachmentId: text("id_card_attachment_id"),
+    /**
+     * The full numbers, for HRMS-authored rows only. Read by payroll (bank
+     * details on a payslip) and by holders of the Aadhaar power; every other
+     * screen shows the last four digits. The sheet's rows keep theirs in `raw`.
+     */
+    accountNumber: text("account_number"),
+    aadhaarNumber: text("aadhaar_number"),
+    /** Monthly sales targets (sales staff only). */
+    targetVisits: integer("target_visits"),
+    targetKm: integer("target_km"),
+    targetLitres: integer("target_litres"),
+    targetHours: integer("target_hours"),
+    targetAmountPaise: bigint("target_amount_paise", { mode: "number" }),
 
     /**
      * Every column exactly as the sheet gave it, keyed by header — minus the
@@ -5098,6 +5846,28 @@ export const sheetFieldActivityRows = pgTable(
 );
 
 /**
+ * WHICH ACCOUNT AN OLD-APP SHOP NAME IS, as a person decided it.
+ *
+ * The old field app (EMP 2.0) named a shop in free text and nothing else, so
+ * a sheet row reaches a customer only by its name. The importer links a name
+ * on its own only where exactly one account on the book carries that name,
+ * spelled the same; everything else is a question for a person. This is the
+ * answer, keyed on the FOLDED name (`foldShopName`) because the old app was
+ * keyed on the name too — one decision covers every row typed under it, and
+ * no sync or re-match overrides it.
+ *
+ * `customer_id` null is a real answer: "this shop is not on MahekOne".
+ */
+export const fieldActivityCustomerDecisions = pgTable("field_activity_customer_decisions", {
+  nameKey: text("name_key").primaryKey(),
+  /** The name as somebody saw it when deciding, for reading back. */
+  shownName: text("shown_name").notNull(),
+  customerId: text("customer_id").references(() => customers.id, { onDelete: "cascade" }),
+  decidedById: text("decided_by_id").references(() => users.id, { onDelete: "set null" }),
+  decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
  * One row per pin from a third-party field-tracking app the salesmen used to
  * drop a shop's location before MBOS existed — a one-time CSV export, not a
  * live sheet, so this carries none of `sheet_sync_runs`' watermark machinery.
@@ -5364,7 +6134,7 @@ function mbosColumns() {
 /* ------------------------------------------------------- the shared stream */
 
 /** Which app wrote the event. Deliberately not a role — apps write, people act. */
-export const timelineSourceAppEnum = pgEnum("timeline_source_app", ["crm", "mbos"]);
+export const timelineSourceAppEnum = pgEnum("timeline_source_app", ["crm", "mbos", "hrms"]);
 
 /**
  * One chronological stream per customer, written by BOTH apps (brief §1.1).
@@ -5495,6 +6265,12 @@ export const mbosDevices = pgTable(
     model: text("model"),
     platform: text("platform"),
     appVersion: text("app_version"),
+    /** Any authenticated MBOS request from this device — the handset's heartbeat. */
+    lastRequestAt: timestamp("last_request_at", { withTimezone: true }),
+    /** The last request that carried `x-mbos-app-version`. Null: this build never says. */
+    appVersionReportedAt: timestamp("app_version_reported_at", { withTimezone: true }),
+    /** When `appVersion` last moved to a new value — an upgrade landing. */
+    appVersionChangedAt: timestamp("app_version_changed_at", { withTimezone: true }),
     boundAt: timestamp("bound_at", { withTimezone: true }).notNull().defaultNow(),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
     active: boolean("active").notNull().default(true),
@@ -5774,6 +6550,46 @@ export const mbosDevices = pgTable(
       "mbos_devices_queue_depth_dated",
       sql`${t.queuedPositions} is null or ${t.queuedPositionsAt} is not null`,
     ),
+  ],
+);
+
+/**
+ * WHAT WENT WRONG ON A HANDSET, sent up by the handset itself.
+ *
+ * MBOS recorded no error anywhere. A screen that crashed drew its message on
+ * the phone and kept it there; a fatal error outside a render, or one in a
+ * background task, left no trace at all. The only report path was a salesman
+ * photographing his screen for his manager — which is to say most were never
+ * reported, and the ones that were arrived without a build, a screen or a
+ * stack. The handset keeps a short list of what it caught and sends it on the
+ * next sync; this is where it lands.
+ *
+ * Append-only, and deliberately not an `mbos*` synced record: nothing goes
+ * back down to a phone, and a row is never edited. `client_id` is minted on
+ * the handset, so a list sent twice — the request timed out after the insert —
+ * is stored once.
+ */
+export const mbosClientErrors = pgTable(
+  "mbos_client_errors",
+  {
+    id: text("id").primaryKey(),
+    clientId: text("client_id").notNull(),
+    userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
+    deviceId: text("device_id").notNull(),
+    appVersion: text("app_version"),
+    /** `render` (caught by the error boundary), `fatal` or `error` (the global handler). */
+    kind: text("kind").notNull(),
+    message: text("message").notNull(),
+    stack: text("stack"),
+    /** The screen on top when it happened, as the phone's router named it. */
+    screen: text("screen"),
+    /** The phone's clock. Believed for display only, like every client time. */
+    occurredAt: timestamp("occurred_at", { withTimezone: true }),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("mbos_client_errors_client_key").on(t.deviceId, t.clientId),
+    index("mbos_client_errors_received_idx").on(t.receivedAt),
   ],
 );
 
@@ -6594,6 +7410,43 @@ export const mbosExpenses = pgTable(
   ],
 );
 
+/**
+ * A REIMBURSEMENT HANDED OVER — the money that settles what the expense
+ * ledger says a salesman is owed.
+ *
+ * It is paid against his BALANCE, never against one expense: one transfer at
+ * the end of the week covers a dozen fares and a hotel, and pinning it to
+ * lines would make the ordinary case a chore. Which lines it covered is worked
+ * out oldest first by `lib/engines/expense-ledger.ts` on every read, so the
+ * per-line "paid" is a reading of this table and never a second copy of it.
+ *
+ * A wrong entry is VOIDED with a reason, never deleted or edited: "we paid
+ * ₹4,000 and then took it back" is a fact about his money that the statement
+ * must go on showing.
+ */
+export const mbosExpensePayouts = pgTable(
+  "mbos_expense_payouts",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    paidOn: date("paid_on").notNull(),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    /** Bank transfer, UPI, cash, with salary … — free text, offered as chips. */
+    mode: text("mode"),
+    /** UTR, cheque number, payroll month — what finds it in a statement. */
+    reference: text("reference"),
+    note: text("note"),
+    recordedById: text("recorded_by_id").references(() => users.id),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+    voidedAt: timestamp("voided_at", { withTimezone: true }),
+    voidedById: text("voided_by_id").references(() => users.id),
+    voidReason: text("void_reason"),
+  },
+  (t) => [index("mbos_expense_payouts_user_idx").on(t.userId, t.paidOn)],
+);
+
 /* ------------------------------------------------- the expense POLICY */
 
 /**
@@ -6705,6 +7558,106 @@ export const expensePolicyRules = pgTable(
       t.sequence,
     ),
   ],
+);
+
+/**
+ * A NAMED expense policy — the standard one, or one a salesman is put on
+ * instead.
+ *
+ * `rules` is the engine's own `PolicyRule[]`, saved whole by the editor and
+ * read whole by the engine: one list, so what the screen shows and what a day
+ * is priced with are the same JSON. Validated on the way in by
+ * `checkRules` in `lib/expense-policy-sets.ts`, the same per-kind checks the
+ * old builder ran. `revision` moves on every save and is what the editor's
+ * "somebody else saved this" check compares.
+ *
+ * The id doubles as an archived anchor row in `expense_policies`, because
+ * `mbos_expense_days.policy_id` references that table (see `ensurePolicyRow`).
+ * Exactly one row is `is_standard` (a partial unique index in 0241), and the
+ * name is unique case-insensitively (a functional index, so only in SQL).
+ */
+export const expensePolicySets = pgTable("expense_policy_sets", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description"),
+  isStandard: boolean("is_standard").notNull().default(false),
+  active: boolean("active").notNull().default(true),
+  rules: jsonb("rules").$type<unknown[]>().notNull().default([]),
+  revision: integer("revision").notNull().default(1),
+  clonedFromId: text("cloned_from_id"),
+  /** The policy's own written lines, beside the rules. A list of strings. */
+  guidelines: jsonb("guidelines").$type<unknown[]>().notNull().default([]),
+  /** Which edition of the shipped figures an untouched standard row holds. */
+  defaultsVersion: integer("defaults_version").notNull().default(1),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  createdById: text("created_by_id").references(() => users.id),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedById: text("updated_by_id").references(() => users.id),
+});
+
+/** Every saved state of a policy — read back on its History tab, restorable. */
+export const expensePolicySetRevisions = pgTable(
+  "expense_policy_set_revisions",
+  {
+    id: text("id").primaryKey(),
+    setId: text("set_id")
+      .notNull()
+      .references(() => expensePolicySets.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    rules: jsonb("rules").$type<unknown[]>().notNull(),
+    guidelines: jsonb("guidelines").$type<unknown[]>().notNull().default([]),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [uniqueIndex("expense_policy_set_revisions_key").on(t.setId, t.revision)],
+);
+
+/**
+ * Who is NOT on the standard policy. No row means standard — so adding a
+ * policy moves nobody until somebody is deliberately put on it, and deleting
+ * one returns its people to standard by the cascade.
+ */
+export const expensePolicyAssignments = pgTable(
+  "expense_policy_assignments",
+  {
+    userId: text("user_id")
+      .primaryKey()
+      .references(() => users.id, { onDelete: "cascade" }),
+    setId: text("set_id")
+      .notNull()
+      .references(() => expensePolicySets.id, { onDelete: "cascade" }),
+    assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
+    assignedById: text("assigned_by_id").references(() => users.id),
+  },
+  (t) => [index("expense_policy_assignments_set_idx").on(t.setId)],
+);
+
+/**
+ * Where a salesman lives, for the expense policy's "away from his hometown".
+ * One row per town: a salesman may have SEVERAL hometowns (he lives in one
+ * and his family in another, or two towns run into each other), and a day in
+ * any of them is a day at home. No row means not set, and the day keeps what
+ * the handset recorded.
+ */
+export const expenseHometowns = pgTable(
+  "expense_hometowns",
+  {
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  /** The town's name — what the pay rule compares the visited shops' towns against. */
+  city: text("city").notNull(),
+  /** The city node it was picked as. Null on a town typed before the picker. */
+  placeId: text("place_id").references(() => places.id, { onDelete: "set null" }),
+  /** The state it was picked under, for drawing the path. */
+  state: text("state"),
+  setAt: timestamp("set_at", { withTimezone: true }).notNull().defaultNow(),
+  setById: text("set_by_id").references(() => users.id),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.city] })],
 );
 
 /**
@@ -7185,12 +8138,16 @@ export const mbosAttendanceDays = pgTable(
           outAt: number | null;
           inSelfieId?: string | null;
           outSelfieId?: string | null;
+          /** Closed by `markMissedCheckouts`, not by somebody punching out. */
+          autoClosed?: boolean;
         }[]
       >()
       .notNull()
       .default([]),
     /** True where the day closed itself because nobody checked out. */
     autoCheckedOut: boolean("auto_checked_out").notNull().default(false),
+    /** Server-sent punch-out reminders this day has had — see drizzle/0200. */
+    punchOutReminders: smallint("punch_out_reminders").notNull().default(0),
 
     /** Derived cache: seconds between the two marks. Rebuilt, never typed. */
     workedSeconds: integer("worked_seconds"),
@@ -7493,13 +8450,89 @@ export const mbosHolidays = pgTable(
     id: text("id").primaryKey(),
     onDate: date("on_date").notNull(),
     name: text("name").notNull(),
+    /**
+     * The free-text "where" this table used to carry. Kept, read by nothing
+     * that decides who is off: a row from before levels existed shows it as
+     * "typed as …" so somebody can choose properly. New rows leave it null.
+     */
     scope: text("scope"),
+    /**
+     * WHO IT IS FOR — company · state · district · city · area · people
+     * (`HOLIDAY_LEVELS` in `lib/engines/holiday-audience.ts`). Text, not an
+     * enum, for the reason `places.kind` gives. `company` is the default so
+     * every row that existed went on meaning what the server read it as.
+     */
+    level: text("level").notNull().default("company"),
+    /** National · Festival · Regional · Weekly off · Special. A label only. */
+    category: text("category").notNull().default("Festival"),
+    /** The `places` ids it covers, for the four place levels. */
+    placeIds: jsonb("place_ids").$type<string[]>().notNull().default([]),
+    /**
+     * "Odisha", "Cuttack, Puri", "3 named people" — written on every save and
+     * every rebuild, and what the handset is sent as `scope`. Null is
+     * company-wide.
+     */
+    audienceLabel: text("audience_label"),
+    note: text("note"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id"),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     updatedById: text("updated_by_id"),
   },
   (t) => [index("mbos_holidays_date_idx").on(t.onDate)],
+);
+
+/**
+ * A holiday given to, or taken from, ONE person — the allocate and deallocate
+ * on the Holidays screen. A decision, so it is a row somebody wrote and never
+ * a cache. `exclude` wins over everything (see `holiday-audience.ts`).
+ */
+export const mbosHolidayAssignments = pgTable(
+  "mbos_holiday_assignments",
+  {
+    id: text("id").primaryKey(),
+    holidayId: text("holiday_id")
+      .notNull()
+      .references(() => mbosHolidays.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** include · exclude */
+    mode: text("mode").notNull(),
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+  },
+  (t) => [
+    uniqueIndex("mbos_holiday_assignments_key").on(t.holidayId, t.userId),
+    index("mbos_holiday_assignments_user_idx").on(t.userId),
+  ],
+);
+
+/**
+ * WHO A NON-COMPANY HOLIDAY REACHES, resolved. A CACHE, rebuilt by
+ * `rebuildHolidayMembers` after every holiday, assignment or territory write
+ * and hourly — so the attendance verdict, leave and the handset can ask "is
+ * this his day off" with a join instead of re-deriving place matching in SQL.
+ * Company-wide holidays are not listed here: they reach everybody not
+ * excluded, which `holidayAppliesSql` says directly.
+ */
+export const mbosHolidayMembers = pgTable(
+  "mbos_holiday_members",
+  {
+    holidayId: text("holiday_id")
+      .notNull()
+      .references(() => mbosHolidays.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** "Odisha", "Named" — why, joined with " · ". */
+    reason: text("reason").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.holidayId, t.userId] }),
+    index("mbos_holiday_members_user_idx").on(t.userId),
+  ],
 );
 
 export const mbosTours = pgTable(
@@ -7521,6 +8554,36 @@ export const mbosTours = pgTable(
   (t) => [index("mbos_tours_user_idx").on(t.userId, t.startDate)],
 );
 
+/**
+ * WHAT A SALESMAN SAID ABOUT WHERE HE WORKS.
+ *
+ * The office allocates his cities and areas in `mbos_user_territories`; this
+ * is his answer, from the handset. `accept` takes the allocation as it stands
+ * and `change` asks for different cities — decided on the Approvals queue as
+ * type `territory`, never by the handset itself.
+ *
+ * `signature` is the allocation he was looking at, so an acceptance stops
+ * counting the moment the allocation changes rather than vouching for cities
+ * he never saw. `currentPlaces` keeps it in words for a reader who comes to
+ * the request after it has moved on.
+ */
+export const mbosTerritoryRequests = pgTable(
+  "mbos_territory_requests",
+  {
+    ...mbosColumns(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** `accept` | `change` — text with a check constraint, never an enum. */
+    kind: text("kind").notNull(),
+    currentPlaces: jsonb("current_places").$type<string[]>().notNull().default([]),
+    requestedPlaces: jsonb("requested_places").$type<string[]>().notNull().default([]),
+    reason: text("reason"),
+    signature: text("signature").notNull(),
+  },
+  (t) => [index("mbos_territory_requests_user_idx").on(t.userId, t.serverCreatedAt)],
+);
+
 /* ----------------------------------------------------------------- tasks */
 
 export const mbosTaskPriorityEnum = pgEnum("mbos_task_priority", [
@@ -7535,6 +8598,52 @@ export const mbosTaskStatusEnum = pgEnum("mbos_task_status", [
   "done",
   "cancelled",
 ]);
+
+/**
+ * One ASSIGNMENT from the Sales Dashboard — the thing a manager sets once and
+ * the field answers many times.
+ *
+ * A manager who asks twenty salesmen for a photo of each of their shops writes
+ * one of these and gets one `mbos_tasks` row per (salesman, shop) pair, each
+ * pointing back here. The FORM lives here and nowhere else: what was asked is
+ * one fact, and a copy on each task would be two hundred copies to disagree.
+ * The results screen reads the tasks through this row, so "what did everybody
+ * say" is one query rather than a search for tasks that happen to share a
+ * title.
+ *
+ * The form is a `TaskField[]` (`lib/task-form.ts`) and is never edited after
+ * it is assigned — answers are keyed by field id, and changing a question
+ * under an answer already given would make the answer mean something nobody
+ * said. `audience` is what the manager picked, kept so the header can say it
+ * back; it is not re-run.
+ */
+export const mbosTaskCampaigns = pgTable(
+  "mbos_task_campaigns",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull(),
+    description: text("description"),
+    form: jsonb("form").notNull().default([]),
+    audience: jsonb("audience"),
+    audienceSentence: text("audience_sentence"),
+    priority: mbosTaskPriorityEnum("priority").notNull().default("medium"),
+    dueDate: date("due_date"),
+    taskCount: integer("task_count").notNull().default(0),
+    createdById: text("created_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    /** Set when the manager withdrew what was still open. */
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    /** The plain-words description the AI drafted the form from, if it did. */
+    aiBrief: text("ai_brief"),
+    /** The last AI reading of the answers, and when it was taken. */
+    aiSummary: text("ai_summary"),
+    aiSummaryAt: timestamp("ai_summary_at", { withTimezone: true }),
+    /** Shops left out because their record already had everything asked. */
+    skippedComplete: integer("skipped_complete").notNull().default(0),
+  },
+  (t) => [index("mbos_task_campaigns_created_idx").on(t.createdAt)],
+);
 
 /**
  * §2.11 — an action item with somebody's name and a date on it.
@@ -7571,8 +8680,24 @@ export const mbosTasks = pgTable(
     /** Where the system raised it itself: `rejected_order`, `sample`, `visit`. */
     sourceType: text("source_type"),
     sourceId: text("source_id"),
+    /** The assignment this task is one row of. Null for a task the salesman
+        raised himself or the app raised on its own. */
+    campaignId: text("campaign_id").references(() => mbosTaskCampaigns.id, {
+      onDelete: "set null",
+    }),
+    /** The answers to the assignment's form, keyed by field id — see
+        `lib/task-form.ts`. Cleaned on arrival; never typed by the office. */
+    responses: jsonb("responses"),
+    respondedAt: timestamp("responded_at", { withTimezone: true }),
+    /** What became of each linked answer on the record, keyed like `responses`:
+        `saved`, `same`, `kept` (fill mode, record already had one) or a reason. */
+    linkResults: jsonb("link_results"),
+    /** `answer` — the salesman submitted it; `record` — the record already said
+        everything it asked, so it completed itself. */
+    completedVia: text("completed_via"),
   },
   (t) => [
+    index("mbos_tasks_campaign_idx").on(t.campaignId),
     index("mbos_tasks_assignee_idx").on(t.assignedToUserId, t.status, t.dueDate),
     index("mbos_tasks_customer_idx").on(t.customerId),
     index("mbos_tasks_overdue_idx").on(t.status, t.dueDate),
@@ -7954,7 +9079,33 @@ export const mbosDocuments = pgTable(
       onDelete: "cascade",
     }),
     visibleToRoles: jsonb("visible_to_roles").$type<string[]>().notNull().default([]),
+    /**
+     * The people it is tagged to, as USER ids — what a handset signs in as.
+     * Empty means everybody in the field. Narrows `visibleToRoles`, never
+     * widens it. Tagging somebody off writes them a tombstone, because a pull
+     * says what exists and only a tombstone says what stopped (drizzle/0232).
+     */
+    visibleToUserIds: jsonb("visible_to_user_ids").$type<string[]>().notNull().default([]),
     active: boolean("active").notNull().default(true),
+    /**
+     * ONE LIBRARY FOR THE COMPANY. HRMS kept its own documents table beside
+     * this one — two places for the leave policy to live, and the field team
+     * reading one while the office updated the other. HR's documents are rows
+     * here now (drizzle/0203), and these five columns are what HR's needed
+     * that the field library did not have.
+     *
+     * `audience` is who in HRMS a document is for: "All employees", "Field
+     * staff" or an office's name. Null means it was published to the field
+     * team only, from the Sales Dashboard, and HRMS does not list it.
+     */
+    audience: text("audience"),
+    /** Named people, from Mahek EMP 2.0's tagging; read, never written now. */
+    audienceEmployeeIds: jsonb("audience_employee_ids").$type<string[]>().notNull().default([]),
+    /** PDF & audio · Image · Video · Link — how HRMS opens it. */
+    media: text("media"),
+    /** A Link document's address. A link has no attachment, so it never reaches a handset. */
+    linkUrl: text("link_url"),
+    description: text("description"),
   },
   (t) => [
     index("mbos_documents_category_idx").on(t.category, t.active),
@@ -8030,6 +9181,13 @@ export const mbosApprovalTypeEnum = pgEnum("mbos_approval_type", [
    * step, and `routeReason` says which.
    */
   "distributor_appointment",
+  /**
+   * A salesman asking to work different cities from the ones allocated to
+   * him. The subject is an `mbos_territory_requests` row of kind `change`;
+   * approving says yes, and the allocation itself is still changed by a
+   * person on the Territory screen.
+   */
+  "territory",
 ]);
 
 export const mbosApprovalStateEnum = pgEnum("mbos_approval_state", [
@@ -8875,6 +10033,163 @@ export const customerHealthSnapshots = pgTable(
   (t) => [
     uniqueIndex("customer_health_snapshots_key").on(t.customerId, t.period),
     index("customer_health_snapshots_period_idx").on(t.period, t.band),
+  ],
+);
+
+/* --------------------------------------------------------- top customers */
+
+/**
+ * The Top customers report, as it was generated on the 1st of a month.
+ *
+ * One row per (month, span): on 1 October at 10:00 IST the 3-month report
+ * covers July to September, the 6-month April to September and the 1-year
+ * October to September — whole calendar months, ending with the last one
+ * that has finished. It is GENERATED rather than read live because it is a
+ * report somebody works from for a month: a sheet reconcile editing an old
+ * order must not move a figure that was read out in a review last week.
+ *
+ * A SNAPSHOT, NOT A CACHE, like `customer_health_snapshots`: nothing rebuilds
+ * a past month. Who may SEE a row is still decided at read time, from the
+ * seats as they stand today — the report freezes the figures, not the book.
+ */
+export const topCustomerReports = pgTable(
+  "top_customer_reports",
+  {
+    id: text("id").primaryKey(),
+    /** `YYYY-MM` — the month the report was generated in, not one it covers. */
+    month: text("month").notNull(),
+    /** 3, 6 or 12. */
+    spanMonths: integer("span_months").notNull(),
+    /** First and last month covered, `YYYY-MM`, inclusive. */
+    fromMonth: text("from_month").notNull(),
+    toMonth: text("to_month").notNull(),
+    /** Every approved order in the window, the denominator of "contribution". */
+    totalPaise: bigint("total_paise", { mode: "number" }).notNull(),
+    generatedAt: timestamp("generated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("top_customer_reports_key").on(t.month, t.spanMonths)],
+);
+
+/**
+ * Every customer who bought anything in a report's window — not only the
+ * top sixty — so the list can be ranked by sales or by order count, and its
+ * length changed in settings, without regenerating anything.
+ */
+export const topCustomerReportRows = pgTable(
+  "top_customer_report_rows",
+  {
+    id: text("id").primaryKey(),
+    reportId: text("report_id")
+      .notNull()
+      .references(() => topCustomerReports.id, { onDelete: "cascade" }),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    orders: integer("orders").notNull(),
+    valuePaise: bigint("value_paise", { mode: "number" }).notNull(),
+    /** Sales bills dated in the window — from the bills ledger, not the orders. */
+    bills: integer("bills").notNull().default(0),
+    /** One entry per month of the window, in order, zeros included. */
+    months: jsonb("months")
+      .$type<{ month: string; valuePaise: number; orders: number; bills?: number }[]>()
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("top_customer_report_rows_key").on(t.reportId, t.customerId),
+    index("top_customer_report_rows_value_idx").on(t.reportId, t.valuePaise),
+  ],
+);
+
+/**
+ * Customers somebody has said need attention to grow into top customers —
+ * the Focus customers tab of Monthly targets.
+ *
+ * ONE ROW PER CUSTOMER, shared rather than a list per person: a shop worked by
+ * a salesperson and a back office telecaller is one account, and two private
+ * lists would let each assume the other was on it. Who sees an entry is the
+ * customer's own scope, decided when it is read. Removing one deletes the row;
+ * the audit log is where "who took it off, and when" is kept.
+ */
+export const focusCustomers = pgTable(
+  "focus_customers",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    addedById: text("added_by_id").references(() => users.id, { onDelete: "set null" }),
+    /** Why it needs attention, in the words of whoever added it. Optional. */
+    note: text("note"),
+    addedAt: timestamp("added_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("focus_customers_customer_key").on(t.customerId)],
+);
+
+/**
+ * THE PEOPLE AT A CUSTOMER, AND THEIR NUMBERS.
+ *
+ * A shop is not one phone. The owner decides, somebody else places the orders,
+ * the accountant answers for the money and the godown man for the delivery —
+ * and the CRM held one `phone`, one `alt_phone` and one `whatsapp_phone`, so a
+ * payment reminder went to whichever number happened to be typed first.
+ *
+ * Three DESIGNATIONS, each held by at most one row per customer (partial
+ * unique indexes, not a rule in a service the next writer will not know):
+ *
+ *   - `is_primary` — who we ring. Mirrors onto `customers.phone` and
+ *     `contact_person`, which forty readers already use.
+ *   - `for_whatsapp` — where WhatsApp goes by default. Mirrors onto
+ *     `customers.whatsapp_phone`.
+ *   - `for_payment_reminders` — where a reminder about money goes. Mirrors
+ *     onto `customers.payment_whatsapp_phone`; unset falls back to WhatsApp.
+ *
+ * The mirrors are written in ONE place, `syncContactMirrors`, inside the same
+ * transaction as every contact write, so the columns and this table cannot
+ * disagree. A writer that still sets the columns directly (the sheet filling a
+ * blank, the handset's customer edit) is folded back in by
+ * `reconcileContacts`, which adds the number it finds rather than losing it.
+ *
+ * `role` is a code from `CONTACT_ROLES` in `lib/customer-contacts.ts`, never a
+ * label, so a reworded role keeps resolving.
+ */
+export const customerContacts = pgTable(
+  "customer_contacts",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    name: text("name"),
+    role: text("role").notNull().default("other"),
+    /** Stored as typed digits: ten for a mobile, more for a landline. */
+    phone: text("phone").notNull(),
+    email: text("email"),
+    note: text("note"),
+    /**
+     * The birthday, as a day and a month and never a year — nobody at a
+     * counter is asked their age. Both or neither (a check constraint), and
+     * null is "nobody asked", which is every contact that existed before.
+     */
+    birthDay: smallint("birth_day"),
+    birthMonth: smallint("birth_month"),
+    isPrimary: boolean("is_primary").notNull().default(false),
+    forWhatsapp: boolean("for_whatsapp").notNull().default(false),
+    forPaymentReminders: boolean("for_payment_reminders").notNull().default(false),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id, { onDelete: "set null" }),
+    updatedById: text("updated_by_id").references(() => users.id, { onDelete: "set null" }),
+  },
+  (t) => [
+    index("customer_contacts_customer_idx").on(t.customerId),
+    uniqueIndex("customer_contacts_one_primary").on(t.customerId).where(sql`${t.isPrimary}`),
+    uniqueIndex("customer_contacts_one_whatsapp").on(t.customerId).where(sql`${t.forWhatsapp}`),
+    uniqueIndex("customer_contacts_one_payment").on(t.customerId).where(sql`${t.forPaymentReminders}`),
+    check(
+      "customer_contacts_birthday_check",
+      sql`(${t.birthDay} is null and ${t.birthMonth} is null) or (${t.birthDay} is not null and ${t.birthMonth} is not null and ${t.birthMonth} between 1 and 12 and ${t.birthDay} between 1 and 31)`,
+    ),
   ],
 );
 
@@ -9798,3 +11113,4453 @@ export type PriceListScope = typeof priceListScopes.$inferSelect;
 export type PriceListDiscountTerm = typeof priceListDiscountTerms.$inferSelect;
 export type PriceListParseRow = typeof priceListParseRows.$inferSelect;
 export type PriceRequest = typeof priceRequests.$inferSelect;
+
+
+/* ===========================================================================
+ * ERP — the operations app (purchase → stock → production → dispatch).
+ *
+ * Scope and every rule below come from docs/erp/02-ERP-FUNCTIONAL-SPEC.md,
+ * which is itself a line-by-line rebuild of the client's AppSheet "Mahek Plus".
+ * Where the ERP already has a MahekOne record for the same real thing — a
+ * customer, a product, an employee, a price list — it extends that record
+ * rather than keeping a second copy (PRD §8), so the tables here are only the
+ * things MahekOne never held.
+ * ======================================================================== */
+
+/**
+ * A godown. `reserved` marks the one pseudo-godown, "Item Lost Record", that
+ * stock is written off INTO: it is a real location in every ledger so a loss
+ * is recorded rather than simply absent, and only the lost-stock power may
+ * pick it (spec §10.1).
+ */
+export const erpGodowns = pgTable(
+  "erp_godowns",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    city: text("city"),
+    state: text("state"),
+    region: text("region"),
+    address: text("address"),
+    phone: text("phone"),
+    gstin: text("gstin"),
+    email: text("email"),
+    /** `active` | `inactive`. */
+    status: text("status").notNull().default("active"),
+    remark: text("remark"),
+    lat: doublePrecision("lat"),
+    lng: doublePrecision("lng"),
+    reserved: boolean("reserved").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [
+    uniqueIndex("erp_godowns_name_key").on(t.name),
+    check("erp_godowns_status_check", sql`${t.status} in ('active', 'inactive')`),
+  ],
+);
+
+/** Who is assigned to a godown — the list a working location is chosen from. */
+export const erpGodownStaff = pgTable(
+  "erp_godown_staff",
+  {
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.godownId, t.userId] })],
+);
+
+/** A person's ERP preferences. Only the working location today (spec §2.2). */
+export const erpUserSettings = pgTable("erp_user_settings", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  workingGodownId: text("working_godown_id").references(() => erpGodowns.id, {
+    onDelete: "set null",
+  }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * THE ERP'S SPECIAL POWERS, granted to a person rather than to a level.
+ *
+ * The source ties them to the AppSheet admin role and to three email
+ * addresses — the CEO verifies a test, the office sees purchase money. They
+ * are facts about particular people, which a hat (app, level) cannot say
+ * without making every ERP manager the CEO. An ERP administrator holds every
+ * power without a row. See `lib/erp/powers.ts`.
+ */
+export const erpUserPowers = pgTable(
+  "erp_user_powers",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    power: text("power").notNull(),
+    grantedById: text("granted_by_id").references(() => users.id),
+    grantedAt: timestamp("granted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.power] })],
+);
+
+/**
+ * A DESIGNATION IS A NAMED SHAPE OF ERP ACCESS — Quality tester, Godown /
+ * dispatch, Order desk — and it is LINKED, not stamped. It holds a level, the
+ * screens and the powers that job needs; a person given one holds exactly
+ * that, and editing the designation moves everybody who still matches it. A
+ * person changed by hand afterwards is CUSTOMISED, which is derived (their
+ * access no longer equals the designation's) and never stored, so an edit
+ * leaves them alone rather than overwriting the exception somebody made on
+ * purpose. See `lib/erp/designations.ts`.
+ */
+export const erpDesignations = pgTable(
+  "erp_designations",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    description: text("description"),
+    /** The level on the `erp` grant: `associate` | `manager` | `admin`. */
+    level: text("level").notNull().default("associate"),
+    /**
+     * Every screen, including ones built after today — the "no module rows is
+     * the whole app" rule, said once for the designation. Its module rows are
+     * then ignored.
+     */
+    allScreens: boolean("all_screens").notNull().default(false),
+    /**
+     * The production department this job works in — `mixing`, `refilling`,
+     * `packing`, or `head` for all three (`lib/erp/departments.ts`). It
+     * decides which categories its holders may raise a purchase requirement
+     * for and which requirements they see. Null: not a departmental job, and
+     * nothing is narrowed.
+     */
+    department: text("department"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id, { onDelete: "set null" }),
+  },
+  (t) => [
+    uniqueIndex("erp_designations_name_key").on(t.name),
+    check("erp_designations_level_check", sql`${t.level} in ('associate', 'manager', 'admin')`),
+    check("erp_designations_department_check", sql`${t.department} is null or ${t.department} in ('mixing', 'refilling', 'packing', 'head')`),
+  ],
+);
+
+/** The screens a designation opens, as `erp.<key>` module keys. Dashboard and settings are always open and never stored. */
+export const erpDesignationModules = pgTable(
+  "erp_designation_modules",
+  {
+    designationId: text("designation_id")
+      .notNull()
+      .references(() => erpDesignations.id, { onDelete: "cascade" }),
+    module: text("module").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.designationId, t.module] })],
+);
+
+/** The ERP powers a designation carries (`lib/erp/powers.ts`). */
+export const erpDesignationPowers = pgTable(
+  "erp_designation_powers",
+  {
+    designationId: text("designation_id")
+      .notNull()
+      .references(() => erpDesignations.id, { onDelete: "cascade" }),
+    power: text("power").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.designationId, t.power] })],
+);
+
+/** Who holds which designation — at most one each, and only while they hold the ERP. */
+export const erpUserDesignations = pgTable("erp_user_designations", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  /** Restrict: a designation somebody holds cannot be deleted out from under them. */
+  designationId: text("designation_id")
+    .notNull()
+    .references(() => erpDesignations.id, { onDelete: "restrict" }),
+  assignedById: text("assigned_by_id").references(() => users.id, { onDelete: "set null" }),
+  assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * The editable value lists every ERP form picks from (spec §3): material
+ * types, areas, transporters, complaint types and the rest. A list is keyed
+ * by `list_key`; a retired value is deactivated, never deleted, because
+ * records already carry it.
+ */
+export const erpRefValues = pgTable(
+  "erp_ref_values",
+  {
+    id: text("id").primaryKey(),
+    listKey: text("list_key").notNull(),
+    value: text("value").notNull(),
+    sortOrder: integer("sort_order").notNull().default(0),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+  },
+  (t) => [uniqueIndex("erp_ref_values_list_value_key").on(t.listKey, t.value)],
+);
+
+/**
+ * Everything the business buys: chemicals, cans, drums, boxes, stationery.
+ * A chemical carries a density (kg → litre) and the tests every lot must pass;
+ * both are required for chemicals and meaningless otherwise (spec §4.1).
+ */
+/**
+ * A group of look-alike cans (0263): "Mahek Yellow", "Plain", "Naked" — one
+ * print in several sizes, so the floor can recognise a can by its group's
+ * photographs. A name somebody can change, up to three photos of its own
+ * (attachments under `erp_material_group`), and its members are the raw
+ * materials whose `group_id` names it.
+ */
+export const erpMaterialGroups = pgTable(
+  "erp_material_groups",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    materialType: text("material_type").notNull().default("Can"),
+    remark: text("remark"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [uniqueIndex("erp_material_groups_name_key").on(t.materialType, sql`lower(${t.name})`)],
+);
+
+export const erpRawMaterials = pgTable(
+  "erp_raw_materials",
+  {
+    id: text("id").primaryKey(),
+    serialNo: integer("serial_no").notNull(),
+    name: text("name").notNull(),
+    code: text("code"),
+    /** `Kg` | `Litre` | `Unit`. */
+    unit: text("unit").notNull(),
+    materialType: text("material_type").notNull(),
+    density: numeric("density", { precision: 8, scale: 3, mode: "number" }),
+    testingList: text("testing_list").array().notNull().default(sql`'{}'::text[]`),
+    pricePaise: bigint("price_paise", { mode: "number" }),
+    /**
+     * THE PURCHASE RULE: how a requirement for this item is bought.
+     * `direct` — a vendor is chosen and the PO raised (boxes, cans,
+     * stationery, the routine chemicals); `quotation` — quotations are
+     * collected and compared before a vendor is chosen; `buyer` — the buyer
+     * decides, per requirement, which of the two it is. Read when a
+     * requirement is raised and COPIED onto it, so changing the rule later
+     * never re-routes a requirement already in flight.
+     */
+    purchaseMethod: text("purchase_method").notNull().default("direct"),
+    /** The vendor a direct purchase is offered first. A suggestion, never a lock. */
+    preferredSupplierId: text("preferred_supplier_id").references(() => erpSuppliers.id),
+    /**
+     * How far a physical count may sit from the book before it is a red flag,
+     * as a percentage of the book. Null: `erp.stockCheck.tolerancePercent`.
+     */
+    countTolerancePercent: numeric("count_tolerance_percent", { precision: 6, scale: 2, mode: "number" }),
+    remark: text("remark"),
+    /**
+     * The look-alike group a can belongs to (0263). Filled by "Group by name"
+     * only where it is empty, so a can somebody moved stays where they put it.
+     */
+    groupId: text("group_id").references(() => erpMaterialGroups.id, { onDelete: "set null" }),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [
+    uniqueIndex("erp_raw_materials_name_key").on(t.name),
+    index("erp_raw_materials_group_idx").on(t.groupId),
+    check("erp_raw_materials_purchase_method_check", sql`${t.purchaseMethod} in ('direct', 'quotation', 'buyer')`),
+    uniqueIndex("erp_raw_materials_serial_key").on(t.serialNo),
+    check("erp_raw_materials_unit_check", sql`${t.unit} in ('Kg', 'Litre', 'Unit')`),
+  ],
+);
+
+/**
+ * A supplier ("Purchase Party"). NOT a `customers` row: a supplier in the
+ * customer table would land on the Call Log. `party_code` is part of every
+ * raw-material lot number bought from them, so it is required to be stable.
+ */
+export const erpSuppliers = pgTable(
+  "erp_suppliers",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    partyCode: text("party_code"),
+    area: text("area"),
+    location: text("location"),
+    state: text("state"),
+    creditDays: integer("credit_days"),
+    mobile: text("mobile"),
+    whatsapp: text("whatsapp"),
+    broker: text("broker"),
+    grade: text("grade"),
+    email: text("email"),
+    gstin: text("gstin"),
+    /**
+     * Who owns the drums this supplier sends: `mahek` (they become our scrap)
+     * or `returnable` (they go back to the supplier). Null is unknown. Copied
+     * onto each GRN line as it is saved; a drum whose answer is unknown on
+     * both waits for the Production Head rather than being guessed.
+     */
+    drumOwnership: text("drum_ownership"),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [uniqueIndex("erp_suppliers_name_key").on(t.name)],
+);
+
+/**
+ * The packing half of a SKU that the catalogue never held (spec §4.3): which
+ * can or drum it is filled into, how many empty boxes a box of it takes, the
+ * box type and the box's rate. Cans per box, litres per can and weight are
+ * already on `products` and are read from there.
+ *
+ * A LOOSE SKU is one with cans_per_box = 1 AND empty_boxes_required = 0 — it
+ * is sold as cans from finished-goods stock; every other SKU is sold in boxes
+ * from packing stock (spec §1.2).
+ */
+export const erpProductPacking = pgTable("erp_product_packing", {
+  productId: text("product_id")
+    .primaryKey()
+    .references(() => products.id, { onDelete: "cascade" }),
+  canUseMaterialId: text("can_use_material_id").references(() => erpRawMaterials.id),
+  emptyBoxesRequired: integer("empty_boxes_required").notNull().default(0),
+  /** One of the box types in spec §3, or null for a loose can. */
+  boxType: text("box_type"),
+  boxRatePaise: bigint("box_rate_paise", { mode: "number" }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedById: text("updated_by_id"),
+});
+
+/**
+ * The Sales Party fields a MahekOne customer does not carry (spec §4.4).
+ *
+ * One row per customer, seeded from `sheet_party_rows` by name and edited in
+ * the ERP from then on. `pending_activation` is the source's "Pending" party
+ * status — a party an admin has not yet verified, whose orders wait for
+ * "Approved By Admin". Deactivation is NOT here: it is the customer's own
+ * `status = deactivated`, the one value MahekOne never derives, so the CRM and
+ * the ERP cannot disagree about whether a customer is closed.
+ */
+export const erpCustomerProfiles = pgTable("erp_customer_profiles", {
+  customerId: text("customer_id")
+    .primaryKey()
+    .references(() => customers.id, { onDelete: "cascade" }),
+  state: text("state"),
+  transporter: text("transporter"),
+  weightType: text("weight_type"),
+  segment: text("segment"),
+  counterTypes: text("counter_types").array().notNull().default(sql`'{}'::text[]`),
+  grade: text("grade"),
+  standingInstructions: text("standing_instructions"),
+  allocateEmail: text("allocate_email"),
+  pendingActivation: boolean("pending_activation").notNull().default(false),
+  activatedAt: timestamp("activated_at", { withTimezone: true }),
+  activatedById: text("activated_by_id").references(() => users.id),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedById: text("updated_by_id"),
+});
+
+export type ErpGodown = typeof erpGodowns.$inferSelect;
+export type ErpRawMaterial = typeof erpRawMaterials.$inferSelect;
+export type ErpSupplier = typeof erpSuppliers.$inferSelect;
+export type ErpRefValue = typeof erpRefValues.$inferSelect;
+
+
+/* ---------------------------------------------------------------- ERP phase 2 */
+
+/**
+ * The ERP's sequential numbers: PR number, SFG No, FG Num, packing batch
+ * serial, order number (spec §1.3). One row per series, allocated under a row
+ * lock inside the document's own transaction — the source's "max + 1" read
+ * twice at once is how two deliveries end up with one PR number.
+ */
+export const erpSeries = pgTable("erp_series", {
+  key: text("key").primaryKey(),
+  last: integer("last").notNull().default(0),
+});
+
+/** A godown's need, raised to purchase (spec §5.2, source "Purchase Order"). */
+export const erpRequisitions = pgTable(
+  "erp_requisitions",
+  {
+    id: text("id").primaryKey(),
+    /**
+     * The requirement number every item raised together shares (series
+     * `requirement`). One row is one item; null on rows from before a
+     * requirement could carry several.
+     */
+    reqNo: integer("req_no"),
+    reqDate: date("req_date").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    /** Chemical | Can | Box | Stationary | Finish Good. */
+    materialType: text("material_type").notNull(),
+    rawMaterialId: text("raw_material_id").references(() => erpRawMaterials.id),
+    productId: text("product_id").references(() => products.id),
+    unit: text("unit").notNull(),
+    requiredQty: numeric("required_qty", { precision: 14, scale: 3, mode: "number" }).notNull(),
+    /** Urgent | Medium | For Stock. */
+    priority: text("priority").notNull(),
+    /**
+     * Pending | Order Placed | Booked | Received | Cancelled — WRITTEN BY THE
+     * FLOW, never typed: Pending until its PO is approved, Order Placed while
+     * the PO is out, Received once the goods are in (or the PO is closed
+     * short), Cancelled with a reason. Booked is a value only older rows carry.
+     */
+    status: text("status").notNull().default("Pending"),
+    remarks: text("remarks"),
+    /** Who needs it (a reference list: Production, Quality…). */
+    department: text("department"),
+    /** The date the department needs the goods by. */
+    requiredBy: date("required_by"),
+    /** The item's purchase rule when this was raised: direct | quotation | buyer. Null on rows from before the rule. */
+    purchaseRule: text("purchase_rule"),
+    /** How it is being bought: direct | quotation. The rule's answer, or the buyer's; null while the buyer has not decided. */
+    method: text("method"),
+    methodDecidedById: text("method_decided_by_id").references(() => users.id),
+    methodDecidedAt: timestamp("method_decided_at", { withTimezone: true }),
+    methodNote: text("method_note"),
+    /** The vendor chosen — directly, or by selecting a quotation. */
+    supplierId: text("supplier_id").references(() => erpSuppliers.id),
+    /** The quotation selected, where the method is quotation. */
+    quotationId: text("quotation_id"),
+    vendorSelectedById: text("vendor_selected_by_id").references(() => users.id),
+    vendorSelectedAt: timestamp("vendor_selected_at", { withTimezone: true }),
+    /** Why a quotation that was not the cheapest landed cost was chosen. */
+    selectionNote: text("selection_note"),
+    cancelReason: text("cancel_reason"),
+    /**
+     * INVENTORY ACCURACY CONTROL: whether this requirement waits for a blind
+     * physical count before it is bought. COPIED on raise from
+     * `erp.stockCheck.onRequirement`, so a requirement in flight when the
+     * rule changes is never re-routed — and every row from before it reads
+     * false.
+     */
+    stockCheckRequired: boolean("stock_check_required").notNull().default(false),
+    /** The urgent-purchase exception: requested | approved | rejected. */
+    stockExceptionStatus: text("stock_exception_status"),
+    stockExceptionReason: text("stock_exception_reason"),
+    stockExceptionRequestedById: text("stock_exception_requested_by_id").references(() => users.id),
+    stockExceptionDecidedById: text("stock_exception_decided_by_id").references(() => users.id),
+    stockExceptionDecidedAt: timestamp("stock_exception_decided_at", { withTimezone: true }),
+    stockExceptionNote: text("stock_exception_note"),
+    /** A quantity well above what the count justifies, confirmed by a person, with why. */
+    qtyConfirmNote: text("qty_confirm_note"),
+    qtyConfirmedById: text("qty_confirmed_by_id").references(() => users.id),
+    qtyConfirmedAt: timestamp("qty_confirmed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [
+    check("erp_requisitions_stock_exception_check", sql`${t.stockExceptionStatus} is null or ${t.stockExceptionStatus} in ('requested', 'approved', 'rejected')`),
+    index("erp_requisitions_status_idx").on(t.status, t.reqDate),
+    index("erp_requisitions_req_no_idx").on(t.reqNo),
+    check("erp_requisitions_priority_check", sql`${t.priority} in ('Urgent', 'Medium', 'For Stock')`),
+    check("erp_requisitions_status_check", sql`${t.status} in ('Pending', 'Order Placed', 'Booked', 'Received', 'Cancelled')`),
+    check("erp_requisitions_rule_check", sql`${t.purchaseRule} is null or ${t.purchaseRule} in ('direct', 'quotation', 'buyer')`),
+    check("erp_requisitions_method_check", sql`${t.method} is null or ${t.method} in ('direct', 'quotation')`),
+    check("erp_requisitions_item_check", sql`num_nonnulls(${t.rawMaterialId}, ${t.productId}) = 1`),
+  ],
+);
+
+/**
+ * Goods at the gate against a PR (spec §5.3). Each line is sent ONCE, either
+ * to testing or straight to the purchase register — `routed` says which, and
+ * it is set in the same transaction as the row it creates, so a line can never
+ * be sent twice by two people pressing at once.
+ */
+export const erpInward = pgTable(
+  "erp_inward",
+  {
+    id: text("id").primaryKey(),
+    prNumber: integer("pr_number").notNull(),
+    receivedDate: date("received_date").notNull(),
+    supplierId: text("supplier_id")
+      .notNull()
+      .references(() => erpSuppliers.id),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    /** Chemical | Can | Box. */
+    materialType: text("material_type").notNull(),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    drums: integer("drums"),
+    weightWithDrum: numeric("weight_with_drum", { precision: 14, scale: 3, mode: "number" }),
+    /** Per drum, as weighed or read at the gate. A kg line's quantity is weight with drum − drums × this. */
+    emptyDrumWeight: numeric("empty_drum_weight", { precision: 10, scale: 3, mode: "number" }),
+    quantity: numeric("quantity", { precision: 14, scale: 3, mode: "number" }).notNull(),
+    unit: text("unit").notNull(),
+    remark: text("remark"),
+    /** mahek | returnable | null — who owns these drums, copied from the supplier at save and editable on the line. */
+    drumOwnership: text("drum_ownership"),
+    /** Decided at save from the item's testing list; kept because the list can change later. */
+    testingRequired: boolean("testing_required").notNull(),
+    /** The PO this delivery was received against. Null only on lines from before POs were compulsory. */
+    poId: text("po_id").references(() => erpPurchaseOrders.id),
+    poLineId: text("po_line_id").references(() => erpPoLines.id),
+    /** null | Testing | Purchase. */
+    routed: text("routed"),
+    routedAt: timestamp("routed_at", { withTimezone: true }),
+    routedById: text("routed_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [
+    index("erp_inward_pr_idx").on(t.prNumber),
+    index("erp_inward_po_line_idx").on(t.poLineId),
+    check("erp_inward_routed_check", sql`${t.routed} is null or ${t.routed} in ('Testing', 'Purchase')`),
+  ],
+);
+
+/**
+ * WHAT IT COST TO GET A PR TO THE GATE, beyond the goods — once per PR,
+ * because a delivery is one vehicle however many items ride on it. Landing
+ * cost is material + transport + other direct inward cost, and each lot's
+ * share of the last two is worked out on read, by value, by
+ * `shareInwardCost` — never stored, so a rate entered on the register a week
+ * later moves the split with nothing to rebuild.
+ *
+ * `rate_per_km_paise` is the approved rate COPIED at save: changing the
+ * setting next month must not reprice a journey already made.
+ */
+export const erpPrCosts = pgTable(
+  "erp_pr_costs",
+  {
+    prNumber: integer("pr_number").primaryKey(),
+    /** supplier | own_vehicle | third_party | none. */
+    transportMode: text("transport_mode").notNull(),
+    /** What it came to: the bill for supplier/third-party, km × rate for own vehicle, 0 for none. */
+    transportCostPaise: bigint("transport_cost_paise", { mode: "number" }).notNull().default(0),
+    km: numeric("km", { precision: 10, scale: 1, mode: "number" }),
+    ratePerKmPaise: bigint("rate_per_km_paise", { mode: "number" }),
+    tempoNumber: text("tempo_number"),
+    otherCostPaise: bigint("other_cost_paise", { mode: "number" }).notNull().default(0),
+    otherCostNote: text("other_cost_note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [
+    check("erp_pr_costs_mode_check", sql`${t.transportMode} in ('supplier', 'own_vehicle', 'third_party', 'none')`),
+    check("erp_pr_costs_amounts_check", sql`${t.transportCostPaise} >= 0 and ${t.otherCostPaise} >= 0`),
+    check("erp_pr_costs_own_vehicle_check", sql`${t.transportMode} <> 'own_vehicle' or (${t.km} is not null and ${t.ratePerKmPaise} is not null)`),
+    check("erp_pr_costs_none_check", sql`${t.transportMode} <> 'none' or ${t.transportCostPaise} = 0`),
+  ],
+);
+
+/**
+ * A purchase quality test (spec §5.4). The evidence columns hold attachment
+ * ids (bound to this row as parent `erp_test`). Only the verifier decides it,
+ * and verifying creates the purchase register row in the same transaction.
+ */
+export const erpTests = pgTable(
+  "erp_tests",
+  {
+    id: text("id").primaryKey(),
+    inwardId: text("inward_id").references(() => erpInward.id),
+    prNumber: integer("pr_number").notNull(),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    supplierId: text("supplier_id").references(() => erpSuppliers.id),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    unit: text("unit"),
+    quantity: numeric("quantity", { precision: 14, scale: 3, mode: "number" }),
+    drums: integer("drums"),
+    weightWithDrum: numeric("weight_with_drum", { precision: 14, scale: 3, mode: "number" }),
+    /** The item's testing list when the test was recorded. */
+    tests: text("tests").array().notNull().default(sql`'{}'::text[]`),
+    phPhotoId: text("ph_photo_id"),
+    /** AI-8's reading of the pH photo, confirmed by a person. */
+    phValue: numeric("ph_value", { precision: 6, scale: 2, mode: "number" }),
+    /** Good | Moderate | Bad. */
+    smell: text("smell"),
+    colorPhotoId: text("color_photo_id"),
+    oilPhotoId: text("oil_photo_id"),
+    fastPhotoId: text("fast_photo_id"),
+    ncPhotoId: text("nc_photo_id"),
+    primerPhotoId: text("primer_photo_id"),
+    density: numeric("density", { precision: 8, scale: 3, mode: "number" }),
+    densityPhotoId: text("density_photo_id"),
+    thermocolPhotoId: text("thermocol_photo_id"),
+    videoId: text("video_id"),
+    testerId: text("tester_id").references(() => users.id),
+    testingDate: date("testing_date").notNull(),
+    /** Verified | Not Verified. */
+    status: text("status").notNull().default("Not Verified"),
+    remark: text("remark"),
+    decidedById: text("decided_by_id").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [
+    index("erp_tests_status_idx").on(t.status, t.testingDate),
+    check("erp_tests_status_check", sql`${t.status} in ('Verified', 'Not Verified')`),
+  ],
+);
+
+/**
+ * The purchase register (spec §5.5). One row per purchased lot. Litres,
+ * amounts and the lot number are derived by `engines/purchase.ts`; the
+ * available litres are CACHED here because the raw-material ledger posts them,
+ * and they are rewritten on every save of the row, never by hand.
+ */
+export const erpPurchases = pgTable(
+  "erp_purchases",
+  {
+    id: text("id").primaryKey(),
+    prNumber: integer("pr_number").notNull(),
+    purchaseDate: date("purchase_date").notNull(),
+    poNumber: text("po_number"),
+    supplierId: text("supplier_id")
+      .notNull()
+      .references(() => erpSuppliers.id),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    /** Party code & item code & PR number — the identity of this lot everywhere. */
+    lotNo: text("lot_no").notNull(),
+    quantity: numeric("quantity", { precision: 14, scale: 3, mode: "number" }).notNull(),
+    /** Kg | Litre | Pcs. */
+    unit: text("unit").notNull(),
+    ratePaise: bigint("rate_paise", { mode: "number" }),
+    density: numeric("density", { precision: 8, scale: 3, mode: "number" }),
+    drums: integer("drums"),
+    weightWithDrum: numeric("weight_with_drum", { precision: 14, scale: 3, mode: "number" }),
+    feedAdjustedLitre: numeric("feed_adjusted_litre", { precision: 14, scale: 3, mode: "number" }).notNull().default(0),
+    feedAdjustedAmountPaise: bigint("feed_adjusted_amount_paise", { mode: "number" }).notNull().default(0),
+    /** 1800 = 18%. */
+    gstBp: integer("gst_bp").notNull().default(1800),
+    /** Cache: what the ledger posts. Rewritten on every save. */
+    availableLitres: numeric("available_litres", { precision: 14, scale: 3, mode: "number" }).notNull().default(0),
+    /** Mahek Marketing India | MYLAC. */
+    company: text("company").notNull().default("Mahek Marketing India"),
+    /** Pending | Invoice Received | Purchase Matched | Purchase Verified. */
+    status: text("status").notNull().default("Pending"),
+    /** null | Received | Bill Not Received. */
+    billReceived: text("bill_received"),
+    billNumber: text("bill_number"),
+    notes: text("notes"),
+    remark: text("remark"),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    testId: text("test_id").references(() => erpTests.id),
+    inwardId: text("inward_id").references(() => erpInward.id),
+    /** The PO line this lot was bought on — the rate and GST it started from. */
+    poId: text("po_id").references(() => erpPurchaseOrders.id),
+    poLineId: text("po_line_id").references(() => erpPoLines.id),
+    /** inward | test | manual. */
+    source: text("source").notNull(),
+    /** AI-1: the values were read off a supplier bill and accepted by a person. */
+    aiFilled: boolean("ai_filled").notNull().default(false),
+    /**
+     * Who owns this lot's drums, where a person decided it for the lot (the
+     * first version of the empty-drum module, 0256). Wins over the GRN line
+     * and the supplier when a drum is recorded empty. `mahek` | `returnable`.
+     */
+    drumOwnership: text("drum_ownership"),
+    drumOwnershipSetById: text("drum_ownership_set_by_id").references(() => users.id),
+    drumOwnershipSetAt: timestamp("drum_ownership_set_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [
+    uniqueIndex("erp_purchases_lot_key").on(t.lotNo),
+    index("erp_purchases_pr_idx").on(t.prNumber),
+    uniqueIndex("erp_purchases_test_key").on(t.testId),
+    uniqueIndex("erp_purchases_inward_key").on(t.inwardId),
+    check("erp_purchases_status_check", sql`${t.status} in ('Pending', 'Invoice Received', 'Purchase Matched', 'Purchase Verified')`),
+    check("erp_purchases_unit_check", sql`${t.unit} in ('Kg', 'Litre', 'Pcs')`),
+  ],
+);
+
+/**
+ * A vendor's quotation against one requirement — the QUOTATION method's step
+ * between the requirement and the PO. Collected until there are enough to
+ * compare (`erp.purchase.minQuotations`), compared on LANDED cost (rate ×
+ * quantity, its GST and the freight), and exactly one is Selected: that
+ * choice is the requirement's vendor, and its rate is the PO's rate.
+ */
+export const erpQuotations = pgTable(
+  "erp_quotations",
+  {
+    id: text("id").primaryKey(),
+    requisitionId: text("requisition_id")
+      .notNull()
+      .references(() => erpRequisitions.id, { onDelete: "cascade" }),
+    supplierId: text("supplier_id")
+      .notNull()
+      .references(() => erpSuppliers.id),
+    quoteDate: date("quote_date").notNull(),
+    /** The vendor's own quotation number, if they gave one. */
+    reference: text("reference"),
+    /** Per unit of the requirement (Kg, Litre or Pcs), before GST. */
+    ratePaise: bigint("rate_paise", { mode: "number" }).notNull(),
+    gstBp: integer("gst_bp").notNull().default(1800),
+    /** Freight the vendor charges on top, for the whole quantity. */
+    freightPaise: bigint("freight_paise", { mode: "number" }).notNull().default(0),
+    /** Days from the PO to delivery. */
+    deliveryDays: integer("delivery_days"),
+    paymentTerms: text("payment_terms"),
+    validUntil: date("valid_until"),
+    /** The quotation itself — a photograph or PDF (attachment parent `erp_quotation`). */
+    documentId: text("document_id"),
+    remarks: text("remarks"),
+    /** Received | Selected | Not selected. */
+    status: text("status").notNull().default("Received"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [
+    uniqueIndex("erp_quotations_vendor_key").on(t.requisitionId, t.supplierId),
+    uniqueIndex("erp_quotations_selected_key").on(t.requisitionId).where(sql`${t.status} = 'Selected'`),
+    check("erp_quotations_status_check", sql`${t.status} in ('Received', 'Selected', 'Not selected')`),
+    check("erp_quotations_amounts_check", sql`${t.ratePaise} > 0 and ${t.freightPaise} >= 0 and ${t.gstBp} >= 0`),
+  ],
+);
+
+/**
+ * THE PURCHASE ORDER. No purchase is completed without one: goods inward and
+ * a hand-entered register row both name a PO line, and the PO must be
+ * approved first. Raised from requirements whose vendor is chosen; approved
+ * by somebody holding `approvePurchaseOrder`; sent to the vendor; received
+ * against, line by line. `status` past Sent is rewritten from what has been
+ * received (`refreshPurchaseOrder`), never typed.
+ */
+export const erpPurchaseOrders = pgTable(
+  "erp_purchase_orders",
+  {
+    id: text("id").primaryKey(),
+    poNumber: integer("po_number").notNull(),
+    poDate: date("po_date").notNull(),
+    supplierId: text("supplier_id")
+      .notNull()
+      .references(() => erpSuppliers.id),
+    /** Where the goods are to be delivered. */
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    deliveryDate: date("delivery_date").notNull(),
+    paymentTerms: text("payment_terms").notNull(),
+    /** Freight on the whole PO, beyond the lines. */
+    freightPaise: bigint("freight_paise", { mode: "number" }).notNull().default(0),
+    remarks: text("remarks"),
+    /** Pending approval | Approved | Sent | Partly received | Received | Closed | Cancelled | Rejected. */
+    status: text("status").notNull().default("Pending approval"),
+    approvedById: text("approved_by_id").references(() => users.id),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    /** The approver's note, or why it was sent back. */
+    decisionNote: text("decision_note"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    sentById: text("sent_by_id").references(() => users.id),
+    /** WhatsApp | Email | Printed copy | Phone. */
+    sentVia: text("sent_via"),
+    /** Why it was closed short or cancelled. */
+    closeReason: text("close_reason"),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    closedById: text("closed_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [
+    uniqueIndex("erp_purchase_orders_number_key").on(t.poNumber),
+    index("erp_purchase_orders_status_idx").on(t.status, t.poDate),
+    check(
+      "erp_purchase_orders_status_check",
+      sql`${t.status} in ('Pending approval', 'Approved', 'Sent', 'Partly received', 'Received', 'Closed', 'Cancelled', 'Rejected')`,
+    ),
+    check("erp_purchase_orders_freight_check", sql`${t.freightPaise} >= 0`),
+  ],
+);
+
+/** One item on a PO, always for one requirement. What arrived against it is read from inward, never stored here. */
+export const erpPoLines = pgTable(
+  "erp_po_lines",
+  {
+    id: text("id").primaryKey(),
+    poId: text("po_id")
+      .notNull()
+      .references(() => erpPurchaseOrders.id, { onDelete: "cascade" }),
+    requisitionId: text("requisition_id")
+      .notNull()
+      .references(() => erpRequisitions.id),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    quantity: numeric("quantity", { precision: 14, scale: 3, mode: "number" }).notNull(),
+    /** Kg | Litre | Pcs — the item's own purchase unit. */
+    unit: text("unit").notNull(),
+    ratePaise: bigint("rate_paise", { mode: "number" }).notNull(),
+    gstBp: integer("gst_bp").notNull().default(1800),
+    sortOrder: integer("sort_order").notNull().default(0),
+  },
+  (t) => [
+    index("erp_po_lines_po_idx").on(t.poId),
+    index("erp_po_lines_requisition_idx").on(t.requisitionId),
+    check("erp_po_lines_amounts_check", sql`${t.quantity} > 0 and ${t.ratePaise} > 0 and ${t.gstBp} >= 0`),
+    check("erp_po_lines_unit_check", sql`${t.unit} in ('Kg', 'Litre', 'Pcs')`),
+  ],
+);
+
+/**
+ * The raw-material inventory LOG (spec §6): one inflow entry per source
+ * document — a purchase that has a rate, or a transfer into a godown. Outflows
+ * are never entries; they are read from the documents that consume stock.
+ * `source_id` is deliberately NOT a foreign key: an entry whose source was
+ * deleted stays, and is flagged "Source deleted" rather than vanishing.
+ */
+export const erpRmEntries = pgTable(
+  "erp_rm_entries",
+  {
+    id: text("id").primaryKey(),
+    /** purchase | transfer | adjustment (an approved stock adjustment's surplus — Inventory Accuracy Control). */
+    sourceType: text("source_type").notNull(),
+    sourceId: text("source_id").notNull(),
+    entryDate: date("entry_date").notNull(),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    lotNo: text("lot_no").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    quantity: numeric("quantity", { precision: 14, scale: 3, mode: "number" }).notNull(),
+    postedAt: timestamp("posted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("erp_rm_entries_source_key").on(t.sourceType, t.sourceId),
+    index("erp_rm_entries_lot_idx").on(t.lotNo, t.godownId),
+  ],
+);
+
+/* ---- ERP phase 3: production, transfers and re-order levels (spec §7–§10) ---- */
+
+const erpQty = (name: string) => numeric(name, { precision: 14, scale: 3, mode: "number" });
+
+export const erpTransfers = pgTable(
+  "erp_transfers",
+  {
+    id: text("id").primaryKey(),
+    transferDate: date("transfer_date").notNull(),
+    /** Purchase | Semi Finished | Finish Goods | FG Packing. */
+    itemType: text("item_type").notNull(),
+    fromGodownId: text("from_godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    toGodownId: text("to_godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    /** A raw material, a formulation, a finished good or an SKU, by item type. */
+    itemId: text("item_id").notNull(),
+    itemName: text("item_name").notNull(),
+    lotNo: text("lot_no").notNull(),
+    quantity: erpQty("quantity").notNull(),
+    remark: text("remark"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [index("erp_transfers_out_idx").on(t.itemType, t.lotNo, t.fromGodownId)],
+);
+
+export const erpSfgLines = pgTable(
+  "erp_sfg_lines",
+  {
+    id: text("id").primaryKey(),
+    sfgNo: integer("sfg_no").notNull(),
+    batchDate: date("batch_date").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    formulationId: text("formulation_id")
+      .notNull()
+      .references(() => productFormulations.id),
+    batches: numeric("batches", { precision: 10, scale: 2, mode: "number" }).notNull(),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    rmLotNo: text("rm_lot_no").notNull(),
+    qtyPerBatch: erpQty("qty_per_batch").notNull(),
+    /** batches × qty per batch, written with the line and never on its own. */
+    totalUse: erpQty("total_use").notNull(),
+    litresAdjusted: erpQty("litres_adjusted").notNull().default(0),
+    lotCode: text("lot_code").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [index("erp_sfg_lines_rm_idx").on(t.rmLotNo, t.godownId), index("erp_sfg_lines_no_idx").on(t.sfgNo)],
+);
+
+export const erpSfgEntries = pgTable(
+  "erp_sfg_entries",
+  {
+    id: text("id").primaryKey(),
+    /** sfg | transfer. */
+    sourceType: text("source_type").notNull(),
+    sourceId: text("source_id").notNull(),
+    entryDate: date("entry_date").notNull(),
+    formulationId: text("formulation_id")
+      .notNull()
+      .references(() => productFormulations.id),
+    lotCode: text("lot_code").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    quantity: erpQty("quantity").notNull(),
+    batches: numeric("batches", { precision: 10, scale: 2, mode: "number" }),
+    remark: text("remark"),
+    postedAt: timestamp("posted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("erp_sfg_entries_source_key").on(t.sourceType, t.sourceId),
+    index("erp_sfg_entries_lot_idx").on(t.lotCode, t.godownId),
+  ],
+);
+
+/**
+ * A STANDARD RECIPE: how much of each raw material one batch of an SFG product
+ * takes. New, not in Mahek Plus — there every batch was typed from scratch,
+ * so nothing could say a batch had used more than it should. It prefills a
+ * new batch ("Start a batch" on the Recipes screen) and flags a batch line
+ * that used more than the recipe allows (`erp.production.recipeTolerancePercent`).
+ * It never refuses a batch: a recipe is what is expected, not a gate.
+ */
+export const erpRecipes = pgTable(
+  "erp_recipes",
+  {
+    id: text("id").primaryKey(),
+    formulationId: text("formulation_id")
+      .notNull()
+      .references(() => productFormulations.id),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    qtyPerBatch: erpQty("qty_per_batch").notNull(),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [uniqueIndex("erp_recipes_key").on(t.formulationId, t.rawMaterialId)],
+);
+
+export const erpFgFills = pgTable(
+  "erp_fg_fills",
+  {
+    id: text("id").primaryKey(),
+    fgNum: integer("fg_num").notNull(),
+    fillDate: date("fill_date").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    formulationId: text("formulation_id")
+      .notNull()
+      .references(() => productFormulations.id),
+    sfgLotCode: text("sfg_lot_code").notNull(),
+    finishedGoodId: text("finished_good_id")
+      .notNull()
+      .references(() => finishedGoods.id),
+    /** Litres per can or drum. */
+    canSize: numeric("can_size", { precision: 8, scale: 3, mode: "number" }).notNull(),
+    canUseId: text("can_use_id").references(() => erpRawMaterials.id),
+    /** Can | Drum | Naket. */
+    packingType: text("packing_type").notNull(),
+    cans: integer("cans").notNull(),
+    canAdjusted: integer("can_adjusted").notNull().default(0),
+    lotCode: text("lot_code").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [index("erp_fg_fills_sfg_idx").on(t.sfgLotCode, t.godownId)],
+);
+
+export const erpFgEntries = pgTable(
+  "erp_fg_entries",
+  {
+    id: text("id").primaryKey(),
+    /** fill | transfer. */
+    sourceType: text("source_type").notNull(),
+    sourceId: text("source_id").notNull(),
+    entryDate: date("entry_date").notNull(),
+    finishedGoodId: text("finished_good_id")
+      .notNull()
+      .references(() => finishedGoods.id),
+    lotCode: text("lot_code").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    /** Cans. */
+    quantity: erpQty("quantity").notNull(),
+    canUseId: text("can_use_id").references(() => erpRawMaterials.id),
+    packingType: text("packing_type"),
+    /** The loose SKU these cans sell as (spec §8.2 "Description Of Goods"). */
+    skuId: text("sku_id").references(() => products.id),
+    postedAt: timestamp("posted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("erp_fg_entries_source_key").on(t.sourceType, t.sourceId),
+    index("erp_fg_entries_lot_idx").on(t.lotCode, t.godownId),
+  ],
+);
+
+export const erpPackLines = pgTable(
+  "erp_pack_lines",
+  {
+    id: text("id").primaryKey(),
+    batchSerial: integer("batch_serial").notNull(),
+    batchNo: text("batch_no").notNull(),
+    packDate: date("pack_date").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    finishedGoodId: text("finished_good_id")
+      .notNull()
+      .references(() => finishedGoods.id),
+    skuId: text("sku_id")
+      .notNull()
+      .references(() => products.id),
+    /** Boxes in the WHOLE batch, carried on every line (spec §9.1). */
+    boxes: integer("boxes").notNull(),
+    fgLotCode: text("fg_lot_code").notNull(),
+    /** Cans taken from this line's FG lot. */
+    cans: integer("cans").notNull(),
+    remarks: text("remarks"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [index("erp_pack_lines_batch_idx").on(t.batchNo), index("erp_pack_lines_fg_idx").on(t.fgLotCode, t.godownId)],
+);
+
+/** One entry per COMPLETE batch (spec §14 A-15), never one per line. */
+export const erpPackEntries = pgTable(
+  "erp_pack_entries",
+  {
+    id: text("id").primaryKey(),
+    /** batch | transfer. */
+    sourceType: text("source_type").notNull(),
+    sourceId: text("source_id").notNull(),
+    entryDate: date("entry_date").notNull(),
+    skuId: text("sku_id")
+      .notNull()
+      .references(() => products.id),
+    batchNo: text("batch_no").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    boxes: erpQty("boxes").notNull(),
+    postedAt: timestamp("posted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("erp_pack_entries_source_key").on(t.sourceType, t.sourceId),
+    index("erp_pack_entries_batch_idx").on(t.batchNo, t.godownId),
+  ],
+);
+
+export const erpRmLevels = pgTable(
+  "erp_rm_levels",
+  {
+    id: text("id").primaryKey(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    materialType: text("material_type").notNull(),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    minQty: erpQty("min_qty").notNull(),
+    maxQty: erpQty("max_qty").notNull(),
+    /** Follow | UnFollow. */
+    status: text("status").notNull().default("Follow"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [uniqueIndex("erp_rm_levels_key").on(t.godownId, t.rawMaterialId)],
+);
+
+export const erpFgLevels = pgTable(
+  "erp_fg_levels",
+  {
+    id: text("id").primaryKey(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    productId: text("product_id")
+      .notNull()
+      .references(() => products.id),
+    minQty: erpQty("min_qty").notNull(),
+    status: text("status").notNull().default("Follow"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [uniqueIndex("erp_fg_levels_key").on(t.godownId, t.productId)],
+);
+
+/* ---- ERP phase 4: sales orders, lot allocations and order details (spec §11) ---- */
+
+export const erpOrders = pgTable(
+  "erp_orders",
+  {
+    id: text("id").primaryKey(),
+    orderNo: integer("order_no").notNull(),
+    orderDate: date("order_date").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    billingCustomerId: text("billing_customer_id")
+      .notNull()
+      .references(() => customers.id),
+    deliveryCustomerId: text("delivery_customer_id")
+      .notNull()
+      .references(() => customers.id),
+    transporter: text("transporter"),
+    skuId: text("sku_id")
+      .notNull()
+      .references(() => products.id),
+    qtyCans: integer("qty_cans").notNull(),
+    /**
+     * Under Process | Ready | Hold From Office | Cancel.
+     *
+     * Mahek Plus also had Today, Tomorrow and Delay, which are dates written as
+     * statuses: "Tomorrow" is wrong the day after somebody sets it, and only a
+     * person remembering fixes it. They are `dispatch_on` now, and the screens
+     * say today / tomorrow / late from the date (0183 moved every old value).
+     */
+    status: text("status").notNull().default("Under Process"),
+    /** The day this line is planned to leave the godown. Null: not planned yet. */
+    dispatchOn: date("dispatch_on"),
+    ratePaise: bigint("rate_paise", { mode: "number" }),
+    /** 1000 = 10%. */
+    discountBp: integer("discount_bp"),
+    tallyBillNo: text("tally_bill_no"),
+    transportCostPaise: bigint("transport_cost_paise", { mode: "number" }).notNull().default(0),
+    remark: text("remark"),
+    /**
+     * Done | Not Done — whether the line is BILLED. Done and "Add to order
+     * details" were two presses for one fact in Mahek Plus (the office has
+     * entered the bill); "Bill it" sets this and writes the line's
+     * `erp_order_details` row in one transaction.
+     */
+    entryStatus: text("entry_status").notNull().default("Not Done"),
+    /** "Pending" when the billing party was pending on entry; "Approved By Admin" once approved. */
+    partyStatus: text("party_status"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [index("erp_orders_no_idx").on(t.orderNo), index("erp_orders_billing_idx").on(t.billingCustomerId)],
+);
+
+/** A lot allocated to an order line: it takes the stock the moment it is written (spec §11.4). */
+export const erpBatchCodes = pgTable(
+  "erp_batch_codes",
+  {
+    id: text("id").primaryKey(),
+    orderId: text("order_id")
+      .notNull()
+      .references(() => erpOrders.id),
+    /** fg (cans from an FG lot) | pack (boxes from a packing batch). */
+    lotFrom: text("lot_from").notNull(),
+    lotCode: text("lot_code").notNull(),
+    finishedGoodId: text("finished_good_id").references(() => finishedGoods.id),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    quantity: erpQty("quantity").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [index("erp_batch_codes_order_idx").on(t.orderId), index("erp_batch_codes_lot_idx").on(t.lotFrom, t.lotCode, t.godownId)],
+);
+
+/** One per order line, created only by "Add To Order Details"; everything else is read live from the line. */
+export const erpOrderDetails = pgTable("erp_order_details", {
+  orderId: text("order_id")
+    .primaryKey()
+    .references(() => erpOrders.id),
+  gstBp: integer("gst_bp").notNull().default(1800),
+  extraExpensesPaise: bigint("extra_expenses_paise", { mode: "number" }),
+  /** Pending | Dispatched. */
+  dispatchStatus: text("dispatch_status").notNull().default("Pending"),
+  dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+  dispatchDate: date("dispatch_date"),
+  /** Verified | Not Verify | Pending, or null (not yet looked at). */
+  verification: text("verification"),
+  withoutGstPaise: bigint("without_gst_paise", { mode: "number" }),
+  transportFollowUp: text("transport_follow_up"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  createdById: text("created_by_id").references(() => users.id),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedById: text("updated_by_id"),
+});
+
+/* ---- ERP traceability: SFG QC, box ids, dispatch scanning (0237) ---- */
+
+/**
+ * The QC verdict on an SFG lot. No row reads as Pending, and only an Approved
+ * lot can be filled (`saveFill`). Keyed on the LOT CODE rather than the batch
+ * line, because a lot is what moves — a transfer carries the code to another
+ * godown and the verdict goes with it.
+ */
+export const erpSfgQc = pgTable(
+  "erp_sfg_qc",
+  {
+    lotCode: text("lot_code").primaryKey(),
+    /** Pending | Approved | Rejected. */
+    status: text("status").notNull().default("Pending"),
+    note: text("note"),
+    /**
+     * The Testing list's checks as answered at this decision: test name →
+     * Pass | Fail. Keyed by name so a test renamed or switched off later still
+     * reads back as what was checked. Empty for a decision made before the
+     * checks were asked, and for a reject that stopped at the first failure.
+     */
+    tests: jsonb("tests").$type<Record<string, "Pass" | "Fail">>().notNull().default(sql`'{}'::jsonb`),
+    /**
+     * The evidence the ERP's approve and reject prompts record, the same as a
+     * purchase test's: a photograph per test, the smell, the pH and density
+     * readings and a video (`QcEvidence` in `lib/erp/engines/sfg-tests.ts`).
+     * None of it is required. Empty for a decision made before it was asked.
+     */
+    evidence: jsonb("evidence").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+    decidedById: text("decided_by_id").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check("erp_sfg_qc_status_check", sql`${t.status} in ('Pending', 'Approved', 'Rejected')`)],
+);
+
+/**
+ * ONE PHYSICAL UNIT: a box from a packing batch (`kind = box`, minted when the
+ * batch completes) or a labelled loose can or drum from an FG lot
+ * (`kind = loose`, minted when its labels are asked for). The id is what the
+ * QR carries; the lot it came from is linked data, so one lot can make many
+ * boxes and one dispatch can carry boxes of several lots.
+ *
+ * The status is the unit's place in the lifecycle; HOW it got there is
+ * `erp_unit_events`, appended and never edited.
+ */
+export const erpUnits = pgTable(
+  "erp_units",
+  {
+    id: text("id").primaryKey(),
+    /** box | loose. */
+    kind: text("kind").notNull(),
+    skuId: text("sku_id")
+      .notNull()
+      .references(() => products.id),
+    /** pack (a packing batch) | fg (an FG lot) — the same words `erp_batch_codes` uses. */
+    lotFrom: text("lot_from").notNull(),
+    lotCode: text("lot_code").notNull(),
+    finishedGoodId: text("finished_good_id").references(() => finishedGoods.id),
+    /** Box number within its batch (1…boxes), or label number within its lot. */
+    seq: integer("seq").notNull(),
+    /** Cans in the unit: the SKU's cans per box, or 1. */
+    cans: integer("cans").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    /** available | scanned | dispatched | hold | rejected | returned | lost | cancelled. */
+    status: text("status").notNull().default("available"),
+    statusNote: text("status_note"),
+    /** The order line it is scanned against (scanned) or left on (dispatched). */
+    orderId: text("order_id").references(() => erpOrders.id),
+    scannedAt: timestamp("scanned_at", { withTimezone: true }),
+    scannedById: text("scanned_by_id").references(() => users.id),
+    dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+    labelPrintedAt: timestamp("label_printed_at", { withTimezone: true }),
+    labelPrints: integer("label_prints").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("erp_units_lot_idx").on(t.lotFrom, t.lotCode, t.godownId),
+    index("erp_units_order_idx").on(t.orderId),
+    index("erp_units_status_idx").on(t.status),
+    uniqueIndex("erp_units_seq_key").on(t.lotFrom, t.lotCode, t.seq),
+    check("erp_units_kind_check", sql`${t.kind} in ('box', 'loose')`),
+    check(
+      "erp_units_status_check",
+      sql`${t.status} in ('available', 'scanned', 'dispatched', 'hold', 'rejected', 'returned', 'lost', 'cancelled')`,
+    ),
+  ],
+);
+
+/** Every change of a unit, appended. A correction is a further event, never an edit. */
+export const erpUnitEvents = pgTable(
+  "erp_unit_events",
+  {
+    id: text("id").primaryKey(),
+    unitId: text("unit_id")
+      .notNull()
+      .references(() => erpUnits.id),
+    /** created | labelled | scanned | unscanned | dispatched | transfer | hold | release | reject | return | cancel | lost | override. */
+    event: text("event").notNull(),
+    fromStatus: text("from_status"),
+    toStatus: text("to_status"),
+    orderId: text("order_id"),
+    godownId: text("godown_id"),
+    note: text("note"),
+    byId: text("by_id").references(() => users.id),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("erp_unit_events_unit_idx").on(t.unitId, t.at)],
+);
+
+/** Every scan at the dispatch desk, refused ones included. */
+export const erpDispatchScans = pgTable(
+  "erp_dispatch_scans",
+  {
+    id: text("id").primaryKey(),
+    code: text("code").notNull(),
+    orderNo: integer("order_no"),
+    /** ok | duplicate | mismatch | blocked | unknown. */
+    result: text("result").notNull(),
+    message: text("message").notNull(),
+    unitId: text("unit_id"),
+    orderId: text("order_id"),
+    byId: text("by_id").references(() => users.id),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("erp_dispatch_scans_at_idx").on(t.at), index("erp_dispatch_scans_order_idx").on(t.orderNo, t.at)],
+);
+
+/** A mismatched scan asked to go anyway: who asked, why, and who decided. */
+export const erpDispatchOverrides = pgTable(
+  "erp_dispatch_overrides",
+  {
+    id: text("id").primaryKey(),
+    unitId: text("unit_id")
+      .notNull()
+      .references(() => erpUnits.id),
+    orderId: text("order_id")
+      .notNull()
+      .references(() => erpOrders.id),
+    orderedSkuId: text("ordered_sku_id")
+      .notNull()
+      .references(() => products.id),
+    scannedSkuId: text("scanned_sku_id")
+      .notNull()
+      .references(() => products.id),
+    /** product | size. */
+    mismatch: text("mismatch").notNull(),
+    reason: text("reason").notNull(),
+    /** Pending | Approved | Declined | Used. */
+    status: text("status").notNull().default("Pending"),
+    requestedById: text("requested_by_id").references(() => users.id),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+    decidedById: text("decided_by_id").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decisionNote: text("decision_note"),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("erp_dispatch_overrides_open_key").on(t.unitId, t.orderId).where(sql`${t.status} in ('Pending', 'Approved')`),
+    check("erp_dispatch_overrides_status_check", sql`${t.status} in ('Pending', 'Approved', 'Declined', 'Used')`),
+  ],
+);
+
+/* ---- ERP phase 5: logistics, requests, follow-up, petty cash, videos (spec §12–§13) ---- */
+
+/** One per bill (order number), written when its first detail line is dispatch-verified. */
+export const erpTransports = pgTable(
+  "erp_transports",
+  {
+    id: text("id").primaryKey(),
+    orderNo: integer("order_no").notNull(),
+    billDate: date("bill_date"),
+    billingCustomerId: text("billing_customer_id")
+      .notNull()
+      .references(() => customers.id),
+    billNo: text("bill_no"),
+    lrNo: text("lr_no"),
+    transporter: text("transporter"),
+    area: text("area"),
+    note: text("note"),
+    paymentType: text("payment_type"),
+    extraExpensePaise: bigint("extra_expense_paise", { mode: "number" }),
+    /** Track | Don't Track. */
+    trackStatus: text("track_status").notNull().default("Don't Track"),
+    materialStage: text("material_stage").notNull().default("Dispatched"),
+    /** The next call to the transporter about this consignment. */
+    reminderDate: date("reminder_date"),
+    /* ---- 0250: the logistics flow. See "## Logistics" in AGENTS.md. ---- */
+    /** Boxes (packages) the bill left the factory as — read off its lines when it opened, corrected by logistics. */
+    packages: integer("packages"),
+    /** Litres on the bill, read off its lines when it opened. */
+    litres: numeric("litres", { precision: 12, scale: 2, mode: "number" }),
+    /** The day the material is expected to reach the transporter's godown. */
+    transportDueOn: date("transport_due_on"),
+    /** When logistics confirmed the transporter has it. */
+    atTransportAt: timestamp("at_transport_at", { withTimezone: true }),
+    /** The uploaded LR this bill travels under; `lr_no` mirrors its number. */
+    lrId: text("lr_id"),
+    /** The day the transporter expects it to reach the party. */
+    expectedDeliveryOn: date("expected_delivery_on"),
+    /** Closed: the day the party received it, and who signed for it. */
+    deliveredOn: date("delivered_on"),
+    receivedBy: text("received_by"),
+    /** An open problem on the road — Delayed, Damaged, Short, Held at transport, Wrong address, Other — and what was said. */
+    issue: text("issue"),
+    issueNote: text("issue_note"),
+    issueAt: timestamp("issue_at", { withTimezone: true }),
+    /** The unguessable part of the customer's tracking link (/track/<token>). */
+    trackToken: text("track_token"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_transports_order_key").on(t.orderNo),
+    uniqueIndex("erp_transports_track_token_key").on(t.trackToken),
+    index("erp_transports_lr_idx").on(t.lrId),
+  ],
+);
+
+/**
+ * A lorry receipt as the dispatch team uploads it, BEFORE anybody has said
+ * which bills it carries. Logistics then attaches it to the bills on the LR
+ * desk (status `assigned`); a wrong upload is voided, never deleted. One LR is
+ * one physical consignment to one consignee, so it may carry several bills.
+ */
+export const erpLrs = pgTable(
+  "erp_lrs",
+  {
+    id: text("id").primaryKey(),
+    /** Optional at upload — logistics may read it off the photo — and required before the LR is attached. */
+    lrNo: text("lr_no"),
+    lrDate: date("lr_date"),
+    transporter: text("transporter"),
+    /** The destination printed on the LR. */
+    destination: text("destination"),
+    /** Articles / packages printed on the LR. */
+    packages: integer("packages"),
+    weightKg: numeric("weight_kg", { precision: 10, scale: 2, mode: "number" }),
+    freightPaise: bigint("freight_paise", { mode: "number" }),
+    /** Paid | To pay | TBB. */
+    freightTerm: text("freight_term"),
+    /** The photograph or PDF of the receipt (attachment parent `erp_lr`). */
+    fileId: text("file_id"),
+    godownId: text("godown_id").references(() => erpGodowns.id),
+    note: text("note"),
+    /** unassigned | assigned | void. */
+    status: text("status").notNull().default("unassigned"),
+    voidReason: text("void_reason"),
+    uploadedById: text("uploaded_by_id").references(() => users.id),
+    uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
+    assignedById: text("assigned_by_id").references(() => users.id),
+    assignedAt: timestamp("assigned_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("erp_lrs_number_key").on(sql`lower(coalesce(${t.transporter}, ''))`, sql`upper(${t.lrNo})`).where(sql`${t.status} <> 'void'`),
+    index("erp_lrs_status_idx").on(t.status),
+    check("erp_lrs_status_check", sql`${t.status} in ('unassigned', 'assigned', 'void')`),
+  ],
+);
+
+/**
+ * Everything that happened to a consignment, append-only: it opened, it is due
+ * at the transporter, it reached them, its LR was attached, a call was made, its
+ * stage moved, a problem was raised or cleared, it was delivered. The customer's
+ * tracking page and the consignment's own page are both read from here.
+ */
+export const erpTransportEvents = pgTable(
+  "erp_transport_events",
+  {
+    id: text("id").primaryKey(),
+    transportId: text("transport_id")
+      .notNull()
+      .references(() => erpTransports.id, { onDelete: "cascade" }),
+    /** opened | due | at_transport | lr | lr_removed | call | stage | issue | issue_cleared | delivered | reopened | note | packages. */
+    kind: text("kind").notNull(),
+    /** The stage the consignment was at after this event. */
+    stage: text("stage"),
+    note: text("note"),
+    /** Shown on the customer's tracking page — a call note about a transporter's excuses is not. */
+    shared: boolean("shared").notNull().default(true),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    byId: text("by_id").references(() => users.id),
+  },
+  (t) => [index("erp_transport_events_transport_idx").on(t.transportId, t.at)],
+);
+
+/**
+ * Every WhatsApp the logistics flow sent a customer, or has ready for a person
+ * to send. Kept apart from `wa_messages` on purpose: a confirmed message there
+ * is CONTACT, and quiets the customer on the Call Log — a note saying the goods
+ * are on a lorry is not a sales conversation and must not cost one.
+ */
+export const erpTransportMessages = pgTable(
+  "erp_transport_messages",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id),
+    /** The bills this message speaks for. */
+    transportIds: text("transport_ids").array().notNull(),
+    lrId: text("lr_id"),
+    eventId: text("event_id"),
+    /** lr | stage | issue | delivered. */
+    kind: text("kind").notNull(),
+    phone: text("phone"),
+    body: text("body").notNull(),
+    /** sent | to_send | sent_by_hand | failed | skipped | delivered | read. */
+    status: text("status").notNull(),
+    /** Why it was not sent through Wati, or why it failed. */
+    why: text("why"),
+    providerRef: text("provider_ref"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    sentById: text("sent_by_id").references(() => users.id),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    readAt: timestamp("read_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    index("erp_transport_messages_status_idx").on(t.status),
+    index("erp_transport_messages_customer_idx").on(t.customerId, t.createdAt),
+    check("erp_transport_messages_status_check", sql`${t.status} in ('sent', 'to_send', 'sent_by_hand', 'failed', 'skipped', 'delivered', 'read')`),
+  ],
+);
+
+/**
+ * The transport companies logistics rings. A name is what bills and LRs carry
+ * as text, so a transporter here is matched to them by name; the row adds the
+ * numbers to call and, where the company has one, its online tracking page.
+ */
+export const erpTransporters = pgTable(
+  "erp_transporters",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    /**
+     * MIRRORS of the first godown's first person — their name and first two
+     * numbers — written by `saveTransporter` so the call buttons on bills and
+     * LRs, which read these, need no join. The godowns are the truth.
+     */
+    phone: text("phone"),
+    altPhone: text("alt_phone"),
+    contactPerson: text("contact_person"),
+    /** Its GST number, upper case, checked against the GSTIN checksum on save. */
+    gstin: text("gstin"),
+    /**
+     * What this company calls its consignment number — "LR Number", "GR
+     * Number", "G.C Number"… A value of the `consignmentLabel` reference list.
+     */
+    consignmentLabel: text("consignment_label"),
+    /** Where its godown was, as typed before godowns were rows. Carried into one by 0255; read by nothing. */
+    address: text("address"),
+    /** Its tracking page, with {lr} where the LR number goes. */
+    trackingUrl: text("tracking_url"),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [uniqueIndex("erp_transporters_name_key").on(sql`lower(${t.name})`)],
+);
+
+/**
+ * A transporter's godown: ONE town on the reviewed place tree, the street
+ * address as typed, and the people there to ring. A company with godowns in
+ * Bhiwandi and Pune is two rows, each in one town — never a state, district,
+ * city and area picked separately.
+ */
+export const erpTransporterGodowns = pgTable(
+  "erp_transporter_godowns",
+  {
+    id: text("id").primaryKey(),
+    transporterId: text("transporter_id")
+      .notNull()
+      .references(() => erpTransporters.id, { onDelete: "cascade" }),
+    /** What they call it — "Main godown", "Booking office". */
+    label: text("label"),
+    /**
+     * The AREA the godown is in, State → District → City → Area all picked (or
+     * added) on the godown dialog. A godown saved before that is filed at a
+     * district and asks for its city and area the next time it is edited.
+     */
+    placeId: text("place_id").references(() => places.id, { onDelete: "set null" }),
+    /** This godown's own GST number — registered per state, so the first two digits name the state it is in. Null only on godowns saved before it was asked. */
+    gstin: text("gstin"),
+    /** Street, landmark. No longer asked for; kept where a godown had one. */
+    address: text("address"),
+    /** Where the godown is, as a map pin: picked on the map, typed, or read off a device standing in it. Both or neither. */
+    lat: doublePrecision("lat"),
+    lng: doublePrecision("lng"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("erp_transporter_godowns_transporter_idx").on(t.transporterId, t.sortOrder),
+    check("erp_transporter_godowns_pin_check", sql`(${t.lat} is null) = (${t.lng} is null)`),
+  ],
+);
+
+/** A person at a transporter's godown, with up to three numbers to ring. */
+export const erpTransporterContacts = pgTable(
+  "erp_transporter_contacts",
+  {
+    id: text("id").primaryKey(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpTransporterGodowns.id, { onDelete: "cascade" }),
+    name: text("name"),
+    /** What they look after — "Booking", "Delivery", "Owner". Free text. */
+    role: text("role"),
+    phones: text("phones").array().notNull().default(sql`'{}'::text[]`),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("erp_transporter_contacts_godown_idx").on(t.godownId, t.sortOrder),
+    check("erp_transporter_contacts_phones_max", sql`cardinality(${t.phones}) <= 3`),
+  ],
+);
+
+/**
+ * RETIRED — the ERP's customer requests are the CRM's `complaints` now (0184
+ * carried every row across under the same id). Nothing reads or writes this
+ * table; it is kept because deleting records somebody typed is a decision
+ * nobody has made.
+ */
+export const erpRequests = pgTable(
+  "erp_requests",
+  {
+    id: text("id").primaryKey(),
+    raisedAt: timestamp("raised_at", { withTimezone: true }).notNull().defaultNow(),
+    salesmanName: text("salesman_name"),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id),
+    mobile: text("mobile"),
+    complaintType: text("complaint_type"),
+    description: text("description"),
+    photoId: text("photo_id"),
+    cnRequired: boolean("cn_required").notNull().default(false),
+    billNo: text("bill_no"),
+    billDate: date("bill_date"),
+    goods: text("goods"),
+    /** Requested | Accepted | Rejected. */
+    status: text("status").notNull().default("Requested"),
+    cnAmountPaise: bigint("cn_amount_paise", { mode: "number" }),
+    cnDate: date("cn_date"),
+    cnNumber: text("cn_number"),
+    remark: text("remark"),
+    cnFileId: text("cn_file_id"),
+    responsible: text("responsible"),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    approvedById: text("approved_by_id").references(() => users.id),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("erp_requests_customer_idx").on(t.customerId)],
+);
+
+/**
+ * RETIRED — nothing writes or reads it. Mahek Plus's order follow-up predicted
+ * each party's next order from its order dates; the CRM does that from the
+ * measured buying cycle and puts the call on a telecaller's list, so the ERP's
+ * screens were removed (0183). The rows are kept rather than dropped: they are
+ * remarks somebody typed, and deleting them is a decision nobody has made.
+ */
+export const erpFollowups = pgTable("erp_followups", {
+  orderId: text("order_id")
+    .primaryKey()
+    .references(() => erpOrders.id),
+  reminderDaysParty: integer("reminder_days_party"),
+  reminderDaysProduct: integer("reminder_days_product"),
+  remark: text("remark"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedById: text("updated_by_id").references(() => users.id),
+});
+
+export const erpCredits = pgTable("erp_credits", {
+  id: text("id").primaryKey(),
+  creditDate: date("credit_date").notNull(),
+  godownId: text("godown_id")
+    .notNull()
+    .references(() => erpGodowns.id),
+  employeeName: text("employee_name").notNull(),
+  /** Bank Cash | Cash | Other. */
+  mode: text("mode").notNull(),
+  amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+  note: text("note"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  createdById: text("created_by_id").references(() => users.id),
+});
+
+export const erpExpenses = pgTable("erp_expenses", {
+  id: text("id").primaryKey(),
+  expenseDate: date("expense_date").notNull(),
+  godownId: text("godown_id")
+    .notNull()
+    .references(() => erpGodowns.id),
+  expenseBy: text("expense_by").notNull(),
+  category: text("category"),
+  mode: text("mode").notNull(),
+  particular: text("particular"),
+  amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+  note: text("note"),
+  /** Verify | Pending. */
+  status: text("status").notNull().default("Pending"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  createdById: text("created_by_id").references(() => users.id),
+  updatedById: text("updated_by_id"),
+});
+
+export const erpVideos = pgTable("erp_videos", {
+  id: text("id").primaryKey(),
+  title: text("title").notNull(),
+  /** youtube | file. */
+  source: text("source").notNull(),
+  fileId: text("file_id"),
+  youtubeUrl: text("youtube_url"),
+  tags: text("tags").array().notNull().default([]),
+  description: text("description"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  createdById: text("created_by_id").references(() => users.id),
+});
+
+/* ---- ERP phase 6: alerts and the AI features' records (AI PRD §5, §10) ---- */
+
+export const erpAlerts = pgTable(
+  "erp_alerts",
+  {
+    id: text("id").primaryKey(),
+    kind: text("kind").notNull(),
+    /** The condition's identity within its kind, e.g. the purchase id. */
+    subject: text("subject").notNull(),
+    screen: text("screen").notNull(),
+    recordIds: text("record_ids").array().notNull().default([]),
+    /** The ERP power needed to see it, where it shows money or cost. */
+    power: text("power"),
+    values: jsonb("values").$type<Record<string, unknown>>().notNull().default({}),
+    explanation: text("explanation").notNull(),
+    /** Open | Acknowledged | Resolved. */
+    status: text("status").notNull().default("Open"),
+    note: text("note"),
+    raisedAt: timestamp("raised_at", { withTimezone: true }).notNull().defaultNow(),
+    acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
+    acknowledgedById: text("acknowledged_by_id").references(() => users.id),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedById: text("resolved_by_id").references(() => users.id),
+    resolveReason: text("resolve_reason"),
+  },
+  (t) => [index("erp_alerts_status_idx").on(t.status, t.raisedAt)],
+);
+
+/* ---- Inventory Accuracy Control (AGENTS.md) ---- */
+
+/**
+ * ONE PHYSICAL COUNT of one raw material at one godown. Counted BLIND: the
+ * book figure is snapshotted at the moment the count is submitted and never
+ * shown to the counter before. A count is never edited after it is
+ * submitted — a doubt is a RECOUNT (`recount_of_id`), by somebody else.
+ */
+export const erpStockCounts = pgTable(
+  "erp_stock_counts",
+  {
+    id: text("id").primaryKey(),
+    countNo: integer("count_no").notNull(),
+    /** reorder | cycle | recount | event | full. */
+    kind: text("kind").notNull(),
+    /** open | matched | flagged | recount | investigating | resolved | cancelled. */
+    status: text("status").notNull().default("open"),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    /** Ltr | Pcs — the unit stock is held in. */
+    unit: text("unit").notNull(),
+    requisitionId: text("requisition_id").references(() => erpRequisitions.id),
+    recountOfId: text("recount_of_id"),
+    reason: text("reason").notNull(),
+    assignedToId: text("assigned_to_id").references(() => users.id),
+    dueDate: date("due_date").notNull(),
+    countedQty: erpQty("counted_qty"),
+    bin: text("bin"),
+    lotNote: text("lot_note"),
+    countNote: text("count_note"),
+    countedById: text("counted_by_id").references(() => users.id),
+    countedAt: timestamp("counted_at", { withTimezone: true }),
+    /** The reconciled book at the moment of the count. A snapshot, never recomputed. */
+    bookQty: erpQty("book_qty"),
+    pendingIn: erpQty("pending_in"),
+    pendingOut: erpQty("pending_out"),
+    /** Counted − book. */
+    difference: erpQty("difference"),
+    tolerance: erpQty("tolerance"),
+    /** The assistant's last reading of the possible causes. A suggestion, never an entry. */
+    aiCauses: jsonb("ai_causes").$type<Record<string, unknown>>(),
+    /** book_confirmed | missing_entry | adjusted | cancelled. */
+    resolution: text("resolution"),
+    resolutionNote: text("resolution_note"),
+    resolvedById: text("resolved_by_id").references(() => users.id),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_stock_counts_no_key").on(t.countNo),
+    index("erp_stock_counts_status_idx").on(t.status, t.dueDate),
+    index("erp_stock_counts_item_idx").on(t.rawMaterialId, t.godownId),
+    index("erp_stock_counts_requisition_idx").on(t.requisitionId),
+    uniqueIndex("erp_stock_counts_one_open_key").on(t.rawMaterialId, t.godownId).where(sql`${t.status} = 'open'`),
+    check("erp_stock_counts_kind_check", sql`${t.kind} in ('reorder', 'cycle', 'recount', 'event', 'full')`),
+    check("erp_stock_counts_status_check", sql`${t.status} in ('open', 'matched', 'flagged', 'recount', 'investigating', 'resolved', 'cancelled')`),
+    check("erp_stock_counts_unit_check", sql`${t.unit} in ('Ltr', 'Pcs')`),
+    check("erp_stock_counts_resolution_check", sql`${t.resolution} is null or ${t.resolution} in ('book_confirmed', 'missing_entry', 'adjusted', 'cancelled')`),
+    check("erp_stock_counts_counted_check", sql`(${t.countedQty} is null) = (${t.countedAt} is null)`),
+  ],
+);
+
+/**
+ * A STOCK CHECK FROM THE FLOOR — anybody, any time, any kind of stock. The
+ * person picks an item at their godown, counts it and sends the figure; the
+ * book is read and snapshotted only then, and a check outside its tolerance is
+ * a MISMATCH the office reviews (ERP → Stock accuracy → Stock checks, and the
+ * dashboard). It moves no stock: a real difference on a raw material becomes a
+ * formal count (`stock_count_id`), whose red flag, recount and approved
+ * adjustment are the only way the book changes.
+ */
+export const erpFloorChecks = pgTable(
+  "erp_floor_checks",
+  {
+    id: text("id").primaryKey(),
+    /** rm | sfg | fg | pack — which ledger the book is read from. */
+    stage: text("stage").notNull(),
+    /** A raw material, a formulation, a finished good or a SKU, by `stage`. */
+    itemId: text("item_id").notNull(),
+    itemName: text("item_name").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    /** Ltr | Pcs | Cans | Boxes. */
+    unit: text("unit").notNull(),
+    countedQty: erpQty("counted_qty").notNull(),
+    /** The book at the moment the figure arrived. A snapshot, never recomputed. */
+    bookQty: erpQty("book_qty").notNull(),
+    /** On the shelf and not yet in the book (raw materials: at the gate, under test, unposted). */
+    pendingIn: erpQty("pending_in").notNull().default(0),
+    /** Counted − (book + pending). */
+    difference: erpQty("difference").notNull(),
+    tolerance: erpQty("tolerance").notNull(),
+    matched: boolean("matched").notNull(),
+    /** Why the counter thinks it differs — optional, asked only on a mismatch. */
+    reason: text("reason"),
+    bin: text("bin"),
+    /** factory | erp — where the check was entered. */
+    source: text("source").notNull().default("factory"),
+    /** The phone's own key: a resend answers with the first save. */
+    clientKey: text("client_key"),
+    countedById: text("counted_by_id")
+      .notNull()
+      .references(() => users.id),
+    countedAt: timestamp("counted_at", { withTimezone: true }).notNull().defaultNow(),
+    reviewedById: text("reviewed_by_id").references(() => users.id),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    reviewNote: text("review_note"),
+    /** The formal count a mismatch was escalated into. */
+    stockCountId: text("stock_count_id").references(() => erpStockCounts.id),
+  },
+  (t) => [
+    uniqueIndex("erp_floor_checks_client_key").on(t.clientKey),
+    index("erp_floor_checks_open_idx").on(t.matched, t.reviewedAt),
+    index("erp_floor_checks_item_idx").on(t.stage, t.itemId, t.godownId, t.countedAt),
+    check("erp_floor_checks_stage_check", sql`${t.stage} in ('rm', 'sfg', 'fg', 'pack')`),
+    check("erp_floor_checks_unit_check", sql`${t.unit} in ('Ltr', 'Pcs', 'Cans', 'Boxes')`),
+    check("erp_floor_checks_source_check", sql`${t.source} in ('factory', 'erp')`),
+  ],
+);
+
+/**
+ * A STOCK ADJUSTMENT, requested from a flagged count and posted only once a
+ * holder of `stockControl` approves it. Never a silent edit: a shortage is
+ * written off to Item Lost Record as transfers, a surplus is an inflow entry
+ * of its own, and `posted` names what was written.
+ */
+export const erpStockAdjustments = pgTable(
+  "erp_stock_adjustments",
+  {
+    id: text("id").primaryKey(),
+    countId: text("count_id")
+      .notNull()
+      .references(() => erpStockCounts.id),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    /** Signed: below zero takes stock off, above zero puts it on. */
+    quantity: erpQty("quantity").notNull(),
+    reasonCode: text("reason_code").notNull(),
+    reason: text("reason").notNull(),
+    /** pending | approved | rejected. */
+    status: text("status").notNull().default("pending"),
+    requestedById: text("requested_by_id").references(() => users.id),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+    decidedById: text("decided_by_id").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decisionNote: text("decision_note"),
+    posted: jsonb("posted").$type<{ transfers?: string[]; entry?: string }>(),
+  },
+  (t) => [
+    uniqueIndex("erp_stock_adjustments_one_pending_key").on(t.countId).where(sql`${t.status} = 'pending'`),
+    index("erp_stock_adjustments_status_idx").on(t.status, t.requestedAt),
+    check("erp_stock_adjustments_status_check", sql`${t.status} in ('pending', 'approved', 'rejected')`),
+    check(
+      "erp_stock_adjustments_reason_check",
+      sql`${t.reasonCode} in ('damage', 'spillage', 'evaporation', 'theft', 'unrecorded_issue', 'unrecorded_receipt', 'measurement', 'other')`,
+    ),
+    check("erp_stock_adjustments_qty_check", sql`${t.quantity} <> 0`),
+    check("erp_stock_adjustments_reason_len_check", sql`length(trim(${t.reason})) >= 10`),
+  ],
+);
+
+/* ---- Empty drums, scrap sale and vendor-returnable drums (0257) ----------
+ * A drum is registered when it becomes EMPTY: scanned off its GRN/lot label
+ * and weighed. The record carries the GRN, supplier, material and lot from
+ * then on, so the label can fall off. Mahek-owned drums are scrap stock sold
+ * by quantity, oldest first; supplier-owned ones are returned to the supplier
+ * by quantity, oldest first, and can never be sold. See AGENTS.md, "## Empty
+ * drums and scrap".
+ * ------------------------------------------------------------------------- */
+
+/** A party scrap is sold to. Not a supplier and not a customer: nobody buys paint from a scrap dealer. */
+export const erpScrapBuyers = pgTable(
+  "erp_scrap_buyers",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    phone: text("phone"),
+    gstin: text("gstin"),
+    address: text("address"),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [uniqueIndex("erp_scrap_buyers_name_key").on(sql`lower(${t.name})`)],
+);
+
+/**
+ * A scrap sale: one category, a quantity, a rate. For empty drums the
+ * quantity is drums, and the drums are allocated oldest first in the same
+ * transaction (`erp_empty_drums.scrap_sale_id`). `ref_kind = 'none'` is a sale
+ * with no external invoice or challan; it carries NO reference, and its
+ * identity is `sale_no`. What is still owed is read from allocations, never
+ * stored.
+ */
+export const erpScrapSales = pgTable(
+  "erp_scrap_sales",
+  {
+    id: text("id").primaryKey(),
+    saleNo: integer("sale_no").notNull(),
+    saleDate: date("sale_date").notNull(),
+    buyerId: text("buyer_id")
+      .notNull()
+      .references(() => erpScrapBuyers.id),
+    /** `drum` for empty metal drums, else a value of the scrapCategory reference list. */
+    category: text("category").notNull(),
+    godownId: text("godown_id").references(() => erpGodowns.id),
+    quantity: numeric("quantity", { precision: 14, scale: 3, mode: "number" }).notNull(),
+    /** Pcs | Kg. */
+    unit: text("unit").notNull(),
+    ratePaise: bigint("rate_paise", { mode: "number" }).notNull(),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    /** invoice | challan | none. */
+    refKind: text("ref_kind").notNull(),
+    externalRef: text("external_ref"),
+    dueDate: date("due_date"),
+    remark: text("remark"),
+    /** confirmed | cancelled. */
+    status: text("status").notNull().default("confirmed"),
+    cancelReason: text("cancel_reason"),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_scrap_sales_no_key").on(t.saleNo),
+    index("erp_scrap_sales_buyer_idx").on(t.buyerId, t.saleDate),
+    check("erp_scrap_sales_status_check", sql`${t.status} in ('confirmed', 'cancelled')`),
+    check("erp_scrap_sales_qty_check", sql`${t.quantity} > 0`),
+    check("erp_scrap_sales_amount_check", sql`${t.ratePaise} >= 0 and ${t.amountPaise} >= 0`),
+    check("erp_scrap_sales_ref_check", sql`(${t.refKind} = 'none') = (${t.externalRef} is null) and ${t.refKind} in ('invoice', 'challan', 'none')`),
+    check("erp_scrap_sales_cancel_check", sql`(${t.status} = 'cancelled') = (${t.cancelledAt} is not null)`),
+  ],
+);
+
+/** Supplier-owned empty drums sent back to the supplier, by quantity; the drums are allocated oldest first. */
+export const erpDrumReturns = pgTable(
+  "erp_drum_returns",
+  {
+    id: text("id").primaryKey(),
+    returnNo: integer("return_no").notNull(),
+    supplierId: text("supplier_id")
+      .notNull()
+      .references(() => erpSuppliers.id),
+    returnDate: date("return_date").notNull(),
+    quantity: integer("quantity").notNull(),
+    challanRef: text("challan_ref"),
+    remark: text("remark"),
+    /** confirmed | cancelled. */
+    status: text("status").notNull().default("confirmed"),
+    cancelReason: text("cancel_reason"),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_drum_returns_no_key").on(t.returnNo),
+    check("erp_drum_returns_status_check", sql`${t.status} in ('confirmed', 'cancelled')`),
+    check("erp_drum_returns_qty_check", sql`${t.quantity} > 0`),
+  ],
+);
+
+/**
+ * The authorised way a drum count or a drum's ownership changes: an opening
+ * stock of drums that predate MahekOne, a write-off of drums that are gone,
+ * or a drum's ownership corrected. Asked for by one person, decided by
+ * another holding `scrapApprove`; only an approved one touches a drum.
+ */
+export const erpDrumAdjustments = pgTable(
+  "erp_drum_adjustments",
+  {
+    id: text("id").primaryKey(),
+    /** opening | write_off | ownership. */
+    kind: text("kind").notNull(),
+    ownership: text("ownership"),
+    supplierId: text("supplier_id").references(() => erpSuppliers.id),
+    godownId: text("godown_id").references(() => erpGodowns.id),
+    quantity: integer("quantity"),
+    drumId: text("drum_id"),
+    newOwnership: text("new_ownership"),
+    reason: text("reason").notNull(),
+    /** pending | approved | rejected. */
+    status: text("status").notNull().default("pending"),
+    requestedById: text("requested_by_id").references(() => users.id),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+    decidedById: text("decided_by_id").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decisionNote: text("decision_note"),
+    posted: jsonb("posted").$type<{ drums?: string[] }>(),
+  },
+  (t) => [
+    index("erp_drum_adjustments_status_idx").on(t.status, t.requestedAt),
+    check("erp_drum_adjustments_kind_check", sql`${t.kind} in ('opening', 'write_off', 'ownership')`),
+    check("erp_drum_adjustments_status_check", sql`${t.status} in ('pending', 'approved', 'rejected')`),
+    check("erp_drum_adjustments_reason_check", sql`length(trim(${t.reason})) >= 10`),
+  ],
+);
+
+/**
+ * One empty drum. `status` is the lifecycle: available (Mahek's, for scrap)
+ * | returnable (the supplier's, awaiting return) | review (ownership unknown
+ * or a source gap — the Production Head decides) | sold | returned |
+ * adjusted (written off) | cancelled (an entry made in error, kept).
+ * The GRN columns are copied when the drum is registered and never edited.
+ */
+export const erpEmptyDrums = pgTable(
+  "erp_empty_drums",
+  {
+    id: text("id").primaryKey(),
+    drumNo: integer("drum_no").notNull(),
+    purchaseId: text("purchase_id").references(() => erpPurchases.id),
+    lotNo: text("lot_no"),
+    inwardId: text("inward_id").references(() => erpInward.id),
+    prNumber: integer("pr_number"),
+    supplierId: text("supplier_id").references(() => erpSuppliers.id),
+    rawMaterialId: text("raw_material_id").references(() => erpRawMaterials.id),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    /** Which drum of its lot: 1..drums on the GRN. */
+    seq: integer("seq"),
+    /** mahek | returnable | null (unknown — never guessed). */
+    ownership: text("ownership"),
+    /** The supplier's empty-drum weight from the GRN, copied. Null where the GRN carried none. */
+    declaredTareKg: numeric("declared_tare_kg", { precision: 10, scale: 3, mode: "number" }),
+    actualKg: numeric("actual_kg", { precision: 10, scale: 3, mode: "number" }),
+    status: text("status").notNull(),
+    /** scan (the factory phone) | desk (the ERP) | opening (an approved opening adjustment). */
+    source: text("source").notNull(),
+    reviewReason: text("review_reason"),
+    /** Why a weight outside the configured limits was accepted, and by whom it was approved. */
+    weightException: text("weight_exception"),
+    scrapSaleId: text("scrap_sale_id").references(() => erpScrapSales.id),
+    returnId: text("return_id").references(() => erpDrumReturns.id),
+    adjustmentId: text("adjustment_id").references(() => erpDrumAdjustments.id),
+    clientKey: text("client_key"),
+    recordedById: text("recorded_by_id").references(() => users.id),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("erp_empty_drums_no_key").on(t.drumNo),
+    uniqueIndex("erp_empty_drums_lot_seq_key").on(t.purchaseId, t.seq).where(sql`${t.status} <> 'cancelled' AND ${t.purchaseId} IS NOT NULL`),
+    uniqueIndex("erp_empty_drums_client_key").on(t.clientKey).where(sql`${t.clientKey} IS NOT NULL`),
+    index("erp_empty_drums_status_idx").on(t.status, t.recordedAt),
+    index("erp_empty_drums_supplier_idx").on(t.supplierId, t.status),
+    check("erp_empty_drums_status_check", sql`${t.status} in ('available', 'returnable', 'review', 'sold', 'returned', 'adjusted', 'cancelled')`),
+    check("erp_empty_drums_ownership_check", sql`${t.ownership} is null or ${t.ownership} in ('mahek', 'returnable')`),
+    check("erp_empty_drums_source_check", sql`${t.source} in ('scan', 'desk', 'opening')`),
+  ],
+);
+
+/** A drum's history, appended to and never rewritten (a trigger refuses UPDATE and DELETE). */
+export const erpDrumEvents = pgTable(
+  "erp_drum_events",
+  {
+    id: text("id").primaryKey(),
+    drumId: text("drum_id")
+      .notNull()
+      .references(() => erpEmptyDrums.id),
+    kind: text("kind").notNull(),
+    fromStatus: text("from_status"),
+    toStatus: text("to_status"),
+    note: text("note"),
+    detail: jsonb("detail"),
+    byId: text("by_id").references(() => users.id),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("erp_drum_events_drum_idx").on(t.drumId, t.at)],
+);
+
+/** Plastic, cardboard and other non-drum scrap, recorded by category a batch at a time. */
+export const erpScrapEntries = pgTable(
+  "erp_scrap_entries",
+  {
+    id: text("id").primaryKey(),
+    entryDate: date("entry_date").notNull(),
+    category: text("category").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    quantity: numeric("quantity", { precision: 14, scale: 3, mode: "number" }).notNull(),
+    /** Kg | Pcs. */
+    unit: text("unit").notNull(),
+    note: text("note"),
+    /** active | cancelled. */
+    status: text("status").notNull().default("active"),
+    cancelReason: text("cancel_reason"),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    check("erp_scrap_entries_qty_check", sql`${t.quantity} > 0`),
+    check("erp_scrap_entries_unit_check", sql`${t.unit} in ('Kg', 'Pcs')`),
+    check("erp_scrap_entries_status_check", sql`${t.status} in ('active', 'cancelled')`),
+  ],
+);
+
+/**
+ * Money that came into Petty Cash/Bank from a scrap buyer. The accountant
+ * records it and matches it to one or more scrap sales; what is left of it is
+ * read from the allocations, never stored. A wrong receipt is voided, never
+ * deleted, and only once nothing is matched to it.
+ */
+export const erpCashReceipts = pgTable(
+  "erp_cash_receipts",
+  {
+    id: text("id").primaryKey(),
+    receiptNo: integer("receipt_no").notNull(),
+    receiptDate: date("receipt_date").notNull(),
+    /** Cash | Bank transfer | UPI | Cheque. */
+    mode: text("mode").notNull(),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    buyerId: text("buyer_id").references(() => erpScrapBuyers.id),
+    /** The name on the bank line, where it is not a buyer we know. */
+    payer: text("payer"),
+    /** UTR, cheque number or the cash slip. */
+    reference: text("reference"),
+    note: text("note"),
+    /** active | void. */
+    status: text("status").notNull().default("active"),
+    voidReason: text("void_reason"),
+    voidedById: text("voided_by_id").references(() => users.id),
+    voidedAt: timestamp("voided_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_cash_receipts_no_key").on(t.receiptNo),
+    check("erp_cash_receipts_amount_check", sql`${t.amountPaise} > 0`),
+    check("erp_cash_receipts_status_check", sql`${t.status} in ('active', 'void')`),
+  ],
+);
+
+/** A receipt matched to a scrap sale. Undone by voiding, with a reason — never deleted. */
+export const erpScrapAllocations = pgTable(
+  "erp_scrap_allocations",
+  {
+    id: text("id").primaryKey(),
+    receiptId: text("receipt_id")
+      .notNull()
+      .references(() => erpCashReceipts.id),
+    saleId: text("sale_id")
+      .notNull()
+      .references(() => erpScrapSales.id),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    byId: text("by_id").references(() => users.id),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    voidedAt: timestamp("voided_at", { withTimezone: true }),
+    voidedById: text("voided_by_id").references(() => users.id),
+    voidReason: text("void_reason"),
+  },
+  (t) => [
+    index("erp_scrap_allocations_sale_idx").on(t.saleId),
+    index("erp_scrap_allocations_receipt_idx").on(t.receiptId),
+    check("erp_scrap_allocations_amount_check", sql`${t.amountPaise} > 0`),
+    check("erp_scrap_allocations_void_check", sql`(${t.voidedAt} is null) = (${t.voidReason} is null)`),
+  ],
+);
+
+export const erpAiSuggestions = pgTable(
+  "erp_ai_suggestions",
+  {
+    id: text("id").primaryKey(),
+    feature: text("feature").notNull(),
+    recordType: text("record_type"),
+    recordId: text("record_id"),
+    inputRef: text("input_ref"),
+    proposed: jsonb("proposed").$type<Record<string, unknown>>().notNull().default({}),
+    confidence: jsonb("confidence").$type<Record<string, string>>().notNull().default({}),
+    /** pending | accepted | edited | rejected. */
+    outcome: text("outcome").notNull().default("pending"),
+    final: jsonb("final").$type<Record<string, unknown>>(),
+    servedBy: text("served_by"),
+    userId: text("user_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+  },
+  (t) => [index("erp_ai_suggestions_feature_idx").on(t.feature, t.createdAt)],
+);
+
+export const erpOrderInbox = pgTable("erp_order_inbox", {
+  id: text("id").primaryKey(),
+  /** paste | voice | whatsapp. */
+  source: text("source").notNull().default("paste"),
+  sender: text("sender"),
+  customerId: text("customer_id").references(() => customers.id),
+  text: text("text").notNull(),
+  draft: jsonb("draft").$type<Record<string, unknown>>(),
+  /** New | Converted | Not an order | Duplicate. */
+  status: text("status").notNull().default("New"),
+  orderNo: integer("order_no"),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  decidedById: text("decided_by_id").references(() => users.id),
+});
+
+export const erpDigests = pgTable("erp_digests", {
+  day: date("day").primaryKey(),
+  text: text("text").notNull(),
+  servedBy: text("served_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type ErpPurchase = typeof erpPurchases.$inferSelect;
+export type ErpInward = typeof erpInward.$inferSelect;
+export type ErpTest = typeof erpTests.$inferSelect;
+
+/* ===================================================================== HRMS
+ * The HRMS app's own records (docs/hrms/02-HRMS-FUNCTIONAL-SPEC.md). Every
+ * row names an EMPLOYEE — `employees.id` — not a MahekOne account, because
+ * most of the company is on the payroll long before (or without ever) having
+ * a login, and the head who marks a godown hand present is doing it FOR them.
+ *
+ * Times of day are "HH:MM" text, dates are ISO dates, durations are minutes
+ * and money is paise, as everywhere else in MahekOne.
+ * ======================================================================= */
+
+const hrmsStamps = () => ({
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  createdById: text("created_by_id"),
+  updatedById: text("updated_by_id"),
+});
+
+/** Where people check in: the pin, the radius and the hours (spec §5.1). */
+export const hrmsOffices = pgTable(
+  "hrms_offices",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    city: text("city"),
+    state: text("state"),
+    region: text("region"),
+    lat: doublePrecision("lat"),
+    lng: doublePrecision("lng"),
+    address: text("address"),
+    radiusM: integer("radius_m").notNull().default(200),
+    openingTime: text("opening_time"),
+    closingTime: text("closing_time"),
+    timingType: text("timing_type").notNull().default("Full Day"),
+    paidLeaveNote: text("paid_leave_note"),
+    imageAttachmentId: text("image_attachment_id"),
+    /** The text the office's printed QR code carries. */
+    qrText: text("qr_text"),
+    active: boolean("active").notNull().default(true),
+    ...hrmsStamps(),
+  },
+  (t) => [uniqueIndex("hrms_offices_name_key").on(t.name), uniqueIndex("hrms_offices_qr_key").on(t.qrText)],
+);
+
+/** Each person's in and out time for a weekday (spec §5.2). */
+export const hrmsStaffTimings = pgTable(
+  "hrms_staff_timings",
+  {
+    id: text("id").primaryKey(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    /** "Monday" … "Sunday". */
+    weekday: text("weekday").notNull(),
+    inTime: text("in_time").notNull(),
+    outTime: text("out_time").notNull(),
+    ...hrmsStamps(),
+  },
+  (t) => [uniqueIndex("hrms_staff_timings_key").on(t.employeeId, t.weekday)],
+);
+
+/**
+ * One attendance day per employee (spec §6). The official in/out time and
+ * the target are STAMPED at check-in from that weekday's timing, the way the
+ * source's app formulas were computed when the row was written: changing a
+ * timing next month must not move last month's late counts or salaries.
+ */
+export const hrmsAttendance = pgTable(
+  "hrms_attendance",
+  {
+    id: text("id").primaryKey(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    officeName: text("office_name"),
+    /** geo · qr · officer · import · admin. */
+    method: text("method").notNull().default("geo"),
+    checkIn: text("check_in").notNull(),
+    checkOut: text("check_out"),
+    stoppageMin: integer("stoppage_min").notNull().default(0),
+    officialIn: text("official_in"),
+    officialOut: text("official_out"),
+    targetMin: integer("target_min"),
+    lat: doublePrecision("lat"),
+    lng: doublePrecision("lng"),
+    accuracyM: integer("accuracy_m"),
+    distanceM: integer("distance_m"),
+    outLat: doublePrecision("out_lat"),
+    outLng: doublePrecision("out_lng"),
+    outDistanceM: integer("out_distance_m"),
+    checkInCode: text("check_in_code"),
+    inPhotoId: text("in_photo_id"),
+    outPhotoId: text("out_photo_id"),
+    remark: text("remark"),
+    /** The account that marked it for somebody else (a head, HR, an import). */
+    markedById: text("marked_by_id"),
+    markedByName: text("marked_by_name"),
+    /** The source's "Report To" column: the position of whoever wrote the row. */
+    reportToStamp: text("report_to_stamp"),
+    /** The QR record's "Edit Help Button" flag. */
+    editHelp: boolean("edit_help").notNull().default(false),
+    ...hrmsStamps(),
+  },
+  (t) => [uniqueIndex("hrms_attendance_day_key").on(t.employeeId, t.date), index("hrms_attendance_date_idx").on(t.date)],
+);
+
+/** A leave or half-day request (spec §7.1). */
+export const hrmsLeaveRequests = pgTable(
+  "hrms_leave_requests",
+  {
+    id: text("id").primaryKey(),
+    reqNo: text("req_no").notNull(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    officeName: text("office_name"),
+    appliedOn: date("applied_on").notNull(),
+    /** "Leave" or "Half Day". */
+    type: text("type").notNull(),
+    startDate: date("start_date").notNull(),
+    endDate: date("end_date").notNull(),
+    days: numeric("days", { precision: 5, scale: 2, mode: "number" }).notNull(),
+    reason: text("reason"),
+    /** Waiting · Approved · Rejected (src/lib/hrms/values.ts). */
+    status: text("status").notNull().default("Waiting"),
+    paid: numeric("paid", { precision: 5, scale: 2, mode: "number" }),
+    unpaid: numeric("unpaid", { precision: 5, scale: 2, mode: "number" }),
+    approvedByName: text("approved_by_name"),
+    approvedById: text("approved_by_id"),
+    approvedOn: date("approved_on"),
+    officerRemark: text("officer_remark"),
+    statusAt: timestamp("status_at", { withTimezone: true }),
+    lat: doublePrecision("lat"),
+    lng: doublePrecision("lng"),
+    ...hrmsStamps(),
+  },
+  (t) => [
+    uniqueIndex("hrms_leave_requests_no_key").on(t.reqNo),
+    index("hrms_leave_requests_emp_idx").on(t.employeeId, t.startDate),
+  ],
+);
+
+/** A paid-leave credit for a month (spec §7.4). One from the job per person per month. */
+export const hrmsLeaveCredits = pgTable(
+  "hrms_leave_credits",
+  {
+    id: text("id").primaryKey(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    /** "YYYY-MM". */
+    month: text("month").notNull(),
+    days: numeric("days", { precision: 5, scale: 2, mode: "number" }).notNull(),
+    /** job · hand. */
+    source: text("source").notNull().default("hand"),
+    ...hrmsStamps(),
+  },
+  (t) => [
+    uniqueIndex("hrms_leave_credits_job_key").on(t.employeeId, t.month).where(sql`${t.source} = 'job'`),
+    index("hrms_leave_credits_emp_idx").on(t.employeeId, t.month),
+  ],
+);
+
+/** A holiday and who it applies to (spec §7.6). */
+export const hrmsHolidays = pgTable(
+  "hrms_holidays",
+  {
+    id: text("id").primaryKey(),
+    date: date("date").notNull(),
+    /** Festival · Weekly · National · Weather (src/lib/hrms/values.ts). */
+    category: text("category").notNull(),
+    name: text("name").notNull(),
+    /** "All employees", or an office name. */
+    tagged: text("tagged").notNull().default("All employees"),
+    /** Named employees, when a holiday was tagged person by person (imports, the source's own rows). */
+    taggedEmployeeIds: jsonb("tagged_employee_ids").$type<string[]>().notNull().default([]),
+    remark: text("remark"),
+    createdByName: text("created_by_name"),
+    ...hrmsStamps(),
+  },
+  (t) => [index("hrms_holidays_date_idx").on(t.date)],
+);
+
+/** Overtime, one per employee per date (spec §8). */
+export const hrmsOvertime = pgTable(
+  "hrms_overtime",
+  {
+    id: text("id").primaryKey(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    /** "Before Duty" or "After Duty". */
+    slot: text("slot").notNull(),
+    startTime: text("start_time").notNull(),
+    endTime: text("end_time").notNull(),
+    minutes: integer("minutes").notNull(),
+    remark: text("remark"),
+    ...hrmsStamps(),
+  },
+  (t) => [uniqueIndex("hrms_overtime_day_key").on(t.employeeId, t.date)],
+);
+
+/** The one stored input on a monthly report (spec §9). */
+export const hrmsMonthlyRemarks = pgTable(
+  "hrms_monthly_remarks",
+  {
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    month: text("month").notNull(),
+    remark: text("remark").notNull(),
+    ...hrmsStamps(),
+  },
+  (t) => [primaryKey({ columns: [t.employeeId, t.month] })],
+);
+
+/** A salary for a month (spec §10). `figures` is the breakdown, frozen at approval. */
+export const hrmsSalaries = pgTable(
+  "hrms_salaries",
+  {
+    id: text("id").primaryKey(),
+    salaryNo: text("salary_no").notNull(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    /** The month it pays for, "YYYY-MM". */
+    month: text("month").notNull(),
+    salaryDate: date("salary_date").notNull(),
+    /** Prepared · Approved · Paid. */
+    status: text("status").notNull().default("Prepared"),
+    compDays: numeric("comp_days", { precision: 5, scale: 2, mode: "number" }).notNull().default(0),
+    incentivePaise: bigint("incentive_paise", { mode: "number" }).notNull().default(0),
+    advanceDeductionPaise: bigint("advance_deduction_paise", { mode: "number" }).notNull().default(0),
+    daysInMonth: integer("days_in_month").notNull(),
+    figures: jsonb("figures").$type<Record<string, number | string>>().notNull(),
+    inHandPaise: bigint("in_hand_paise", { mode: "number" }).notNull(),
+    remark: text("remark"),
+    approvedByName: text("approved_by_name"),
+    approvedById: text("approved_by_id"),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    preparedByName: text("prepared_by_name"),
+    utr: text("utr"),
+    paidOn: date("paid_on"),
+    payslipCode: text("payslip_code"),
+    ...hrmsStamps(),
+  },
+  (t) => [uniqueIndex("hrms_salaries_month_key").on(t.employeeId, t.month), uniqueIndex("hrms_salaries_no_key").on(t.salaryNo)],
+);
+
+/** A salary advance (spec §10.4). What is outstanding is derived. */
+export const hrmsAdvances = pgTable(
+  "hrms_advances",
+  {
+    id: text("id").primaryKey(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    remark: text("remark"),
+    ...hrmsStamps(),
+  },
+  (t) => [index("hrms_advances_emp_idx").on(t.employeeId)],
+);
+
+/** An expense claim or payment (spec §11). */
+export const hrmsExpenses = pgTable(
+  "hrms_expenses",
+  {
+    id: text("id").primaryKey(),
+    serial: text("serial").notNull(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    /** "Claim" or "Payment" (src/lib/hrms/values.ts). */
+    payType: text("pay_type").notNull(),
+    location: text("location"),
+    category: text("category"),
+    particular: text("particular"),
+    claimPaise: bigint("claim_paise", { mode: "number" }),
+    paidPaise: bigint("paid_paise", { mode: "number" }),
+    reason: text("reason"),
+    /** Pending · Verified. */
+    verify: text("verify").notNull().default("Pending"),
+    createdByName: text("created_by_name"),
+    ...hrmsStamps(),
+  },
+  (t) => [uniqueIndex("hrms_expenses_serial_key").on(t.serial), index("hrms_expenses_emp_idx").on(t.employeeId, t.date)],
+);
+
+/** A task template (spec §13.1). */
+export const hrmsTaskTemplates = pgTable(
+  "hrms_task_templates",
+  {
+    id: text("id").primaryKey(),
+    serial: integer("serial").notNull(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    task: text("task").notNull(),
+    /** Daily · Weekly · Monthly. */
+    frequency: text("frequency").notNull(),
+    /** Weekday names, for Daily and Weekly. */
+    weekdays: jsonb("weekdays").$type<string[]>().notNull().default([]),
+    category: text("category"),
+    dayOfMonth: integer("day_of_month"),
+    beforeDay: integer("before_day"),
+    startTime: text("start_time"),
+    endTime: text("end_time"),
+    ...hrmsStamps(),
+  },
+  (t) => [index("hrms_task_templates_emp_idx").on(t.employeeId)],
+);
+
+/** Today's checklist items (spec §13.2). */
+export const hrmsChecklist = pgTable(
+  "hrms_checklist",
+  {
+    id: text("id").primaryKey(),
+    date: date("date").notNull(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    templateId: text("template_id"),
+    task: text("task").notNull(),
+    frequency: text("frequency"),
+    weekday: text("weekday"),
+    startTime: text("start_time"),
+    endTime: text("end_time"),
+    /** "" (not yet) · Done · Not applicable; "Not Done" from the source reads as not yet. */
+    status: text("status").notNull().default(""),
+    workingTime: text("working_time"),
+    remark: text("remark"),
+    naReason: text("na_reason"),
+    stampedAt: timestamp("stamped_at", { withTimezone: true }),
+    ...hrmsStamps(),
+  },
+  (t) => [index("hrms_checklist_day_idx").on(t.employeeId, t.date)],
+);
+
+/** An assigned to-do (spec §13.3). */
+export const hrmsTodos = pgTable(
+  "hrms_todos",
+  {
+    id: text("id").primaryKey(),
+    forDate: date("for_date").notNull(),
+    tillDate: date("till_date"),
+    /** The giver; null for a monthly template's copy. */
+    fromEmployeeId: text("from_employee_id"),
+    /** "Monthly Task" or the giver's name, as it was when given. */
+    fromLabel: text("from_label").notNull(),
+    toEmployeeId: text("to_employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    category: text("category"),
+    task: text("task").notNull(),
+    urgent: boolean("urgent").notNull().default(false),
+    /** Open · Done. */
+    status: text("status").notNull().default("Open"),
+    /** "" · Verified · Pending. */
+    recheck: text("recheck").notNull().default(""),
+    remark: text("remark"),
+    doneAt: timestamp("done_at", { withTimezone: true }),
+    doneOn: date("done_on"),
+    /** "YYYY-MM" for a to-do Take monthly task created — the once-a-month guard. */
+    monthlyKey: text("monthly_key"),
+    templateId: text("template_id"),
+    ...hrmsStamps(),
+  },
+  (t) => [index("hrms_todos_to_idx").on(t.toEmployeeId, t.status), index("hrms_todos_from_idx").on(t.fromEmployeeId)],
+);
+
+/** A task shared with a buddy (spec §13.4). */
+export const hrmsBuddyTasks = pgTable(
+  "hrms_buddy_tasks",
+  {
+    id: text("id").primaryKey(),
+    date: date("date").notNull(),
+    fromEmployeeId: text("from_employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    toEmployeeId: text("to_employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    task: text("task").notNull(),
+    note: text("note"),
+    /** Shared · Accepted · Done. */
+    status: text("status").notNull().default("Shared"),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    doneAt: timestamp("done_at", { withTimezone: true }),
+    ...hrmsStamps(),
+  },
+  (t) => [index("hrms_buddy_tasks_to_idx").on(t.toEmployeeId, t.date)],
+);
+
+/** A salesman's daily KPI entry (spec §12.1). */
+export const hrmsKpi = pgTable(
+  "hrms_kpi",
+  {
+    id: text("id").primaryKey(),
+    date: date("date").notNull(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    area: text("area"),
+    visits: integer("visits").notNull().default(0),
+    productive: integer("productive").notNull().default(0),
+    litres: numeric("litres", { precision: 12, scale: 2, mode: "number" }).notNull().default(0),
+    km: numeric("km", { precision: 10, scale: 2, mode: "number" }).notNull().default(0),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull().default(0),
+    outstandingPaise: bigint("outstanding_paise", { mode: "number" }).notNull().default(0),
+    stoppageMin: integer("stoppage_min").notNull().default(0),
+    /** Minutes spent with customers that day (the source's Activity "time given"). */
+    timeGivenMin: integer("time_given_min").notNull().default(0),
+    notes: text("notes"),
+    /** Which figures were pre-filled, and from where. */
+    prefill: jsonb("prefill").$type<Record<string, string>>().notNull().default({}),
+    ...hrmsStamps(),
+  },
+  (t) => [uniqueIndex("hrms_kpi_day_key").on(t.employeeId, t.date)],
+);
+
+/** The performance review form for a period (spec §12.4, "LION form"). */
+export const hrmsReviews = pgTable(
+  "hrms_reviews",
+  {
+    id: text("id").primaryKey(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    fromDate: date("from_date").notNull(),
+    toDate: date("to_date").notNull(),
+    issues: text("issues"),
+    ideas: text("ideas"),
+    nextPlan: text("next_plan"),
+    actionForSir: text("action_for_sir"),
+    pdfCode: text("pdf_code"),
+    ...hrmsStamps(),
+  },
+  (t) => [uniqueIndex("hrms_reviews_period_key").on(t.employeeId, t.fromDate, t.toDate)],
+);
+
+/** A back-office calling row (spec §14.2). */
+export const hrmsCalling = pgTable(
+  "hrms_calling",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    /** The caller. */
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    status: text("status").notNull().default(""),
+    secondStatus: text("second_status"),
+    note: text("note"),
+    followUp: date("follow_up"),
+    misses: integer("misses").notNull().default(0),
+    ...hrmsStamps(),
+  },
+  (t) => [index("hrms_calling_emp_idx").on(t.employeeId, t.date), index("hrms_calling_customer_idx").on(t.customerId)],
+);
+
+/** A sales activity logged from the web (spec §14.3). */
+export const hrmsActivities = pgTable(
+  "hrms_activities",
+  {
+    id: text("id").primaryKey(),
+    date: date("date").notNull(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    customerId: text("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    customerName: text("customer_name"),
+    note: text("note"),
+    minutes: integer("minutes").notNull().default(0),
+    mood: text("mood"),
+    issue: text("issue"),
+    reminder: date("reminder"),
+    meetType: text("meet_type"),
+    purpose: text("purpose"),
+    area: text("area"),
+    ...hrmsStamps(),
+  },
+  (t) => [index("hrms_activities_emp_idx").on(t.employeeId, t.date)],
+);
+
+/** A journey plan (spec §14.4). */
+export const hrmsJourneys = pgTable(
+  "hrms_journeys",
+  {
+    id: text("id").primaryKey(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    startDate: date("start_date").notNull(),
+    endDate: date("end_date").notNull(),
+    location: text("location"),
+    plan: text("plan"),
+    customerIds: jsonb("customer_ids").$type<string[]>().notNull().default([]),
+    remark: text("remark"),
+    fileAttachmentId: text("file_attachment_id"),
+    ...hrmsStamps(),
+  },
+  (t) => [index("hrms_journeys_emp_idx").on(t.employeeId, t.startDate)],
+);
+
+/** Asset stock-in (spec §15.1). */
+export const hrmsAssetStock = pgTable(
+  "hrms_asset_stock",
+  {
+    id: text("id").primaryKey(),
+    code: text("code").notNull(),
+    purchaseDate: date("purchase_date").notNull(),
+    name: text("name").notNull(),
+    /** Stationery · Equipment · Other. */
+    category: text("category").notNull(),
+    costPaise: bigint("cost_paise", { mode: "number" }).notNull().default(0),
+    qty: integer("qty").notNull(),
+    officeName: text("office_name"),
+    description: text("description"),
+    warrantyTill: date("warranty_till"),
+    invoiceAttachmentId: text("invoice_attachment_id"),
+    imageAttachmentId: text("image_attachment_id"),
+    ...hrmsStamps(),
+  },
+  (t) => [uniqueIndex("hrms_asset_stock_code_key").on(t.code)],
+);
+
+/** An asset handed to somebody, and its return (spec §15.2). */
+export const hrmsAssetAssignments = pgTable(
+  "hrms_asset_assignments",
+  {
+    id: text("id").primaryKey(),
+    stockId: text("stock_id")
+      .notNull()
+      .references(() => hrmsAssetStock.id, { onDelete: "cascade" }),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    fromName: text("from_name"),
+    qty: integer("qty").notNull(),
+    date: date("date").notNull(),
+    responsibility: text("responsibility"),
+    photo1Id: text("photo1_id"),
+    photo2Id: text("photo2_id"),
+    /** Assigned · Restored. */
+    status: text("status").notNull().default("Assigned"),
+    restoredOn: date("restored_on"),
+    restoredBy: text("restored_by"),
+    restoredQty: integer("restored_qty"),
+    restoredRemark: text("restored_remark"),
+    restoredPhotoId: text("restored_photo_id"),
+    ...hrmsStamps(),
+  },
+  (t) => [index("hrms_asset_assignments_emp_idx").on(t.employeeId), index("hrms_asset_assignments_stock_idx").on(t.stockId)],
+);
+
+/** A help request (spec §16.1). */
+export const hrmsHelp = pgTable(
+  "hrms_help",
+  {
+    id: text("id").primaryKey(),
+    date: date("date").notNull(),
+    employeeId: text("employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    type: text("type").notNull(),
+    inTime: text("in_time"),
+    outTime: text("out_time"),
+    text: text("text"),
+    /** Pending · Approved. */
+    status: text("status").notNull().default("Pending"),
+    adminRemark: text("admin_remark"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decidedById: text("decided_by_id"),
+    ...hrmsStamps(),
+  },
+  (t) => [index("hrms_help_emp_idx").on(t.employeeId, t.date)],
+);
+
+/** A grievance (spec §16.2). */
+export const hrmsGrievances = pgTable(
+  "hrms_grievances",
+  {
+    id: text("id").primaryKey(),
+    no: integer("no").notNull(),
+    date: date("date").notNull(),
+    byEmployeeId: text("by_employee_id")
+      .notNull()
+      .references(() => employees.id, { onDelete: "cascade" }),
+    /** "CEO", "HR", "Company", or a person's name. */
+    toLabel: text("to_label").notNull(),
+    toEmployeeId: text("to_employee_id"),
+    issue: text("issue").notNull(),
+    /** Pending · Solve. */
+    status: text("status").notNull().default("Pending"),
+    solution: text("solution"),
+    solvedById: text("solved_by_id"),
+    stars: integer("stars"),
+    feedbackAt: timestamp("feedback_at", { withTimezone: true }),
+    ...hrmsStamps(),
+  },
+  (t) => [uniqueIndex("hrms_grievances_no_key").on(t.no)],
+);
+
+/** A notification written in HRMS (spec §17.2); delivery is MahekOne's bell. */
+export const hrmsNotifications = pgTable("hrms_notifications", {
+  id: text("id").primaryKey(),
+  fromEmployeeId: text("from_employee_id"),
+  fromName: text("from_name").notNull(),
+  /** Null for "All employees". */
+  toEmployeeId: text("to_employee_id"),
+  toLabel: text("to_label").notNull(),
+  text: text("text").notNull(),
+  /** The HRMS screen key the bell opens. */
+  landing: text("landing"),
+  /** Read by nothing since drizzle/0203: whether it was seen is the bell's own read mark. */
+  seenAt: timestamp("seen_at", { withTimezone: true }),
+  /** The `notifications` rows this announcement wrote, so an edit or a delete reaches what people were sent. */
+  bellIds: jsonb("bell_ids").$type<string[]>().notNull().default([]),
+  /** Exactly who was sent it. Empty on rows from before drizzle/0203, which are read by `toEmployeeId`. */
+  recipientUserIds: jsonb("recipient_user_ids").$type<string[]>().notNull().default([]),
+  /** Which screen sent it: `hrms` (Announcements) or `sales` (the Sales Dashboard's Send a notification). */
+  source: text("source").notNull().default("hrms"),
+  /** The bell's title. HRMS titles a bell with the sender; the Sales Dashboard asks for one. */
+  title: text("title"),
+  ...hrmsStamps(),
+});
+
+/** The editable value lists every HRMS form picks from (spec §3). */
+export const hrmsRefLists = pgTable("hrms_ref_lists", {
+  list: text("list").primaryKey(),
+  values: jsonb("values").$type<string[]>().notNull().default([]),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedById: text("updated_by_id"),
+});
+
+/** HRMS special powers granted to a person (PRD §5.3). */
+export const hrmsUserPowers = pgTable(
+  "hrms_user_powers",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    power: text("power").notNull(),
+    grantedById: text("granted_by_id").references(() => users.id),
+    grantedAt: timestamp("granted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.power] })],
+);
+
+/** HRMS numbering series (employee codes, request numbers, serials), one row per series. */
+export const hrmsSeries = pgTable("hrms_series", {
+  key: text("key").primaryKey(),
+  last: integer("last").notNull().default(0),
+});
+
+export type HrmsOffice = typeof hrmsOffices.$inferSelect;
+export type HrmsAttendance = typeof hrmsAttendance.$inferSelect;
+export type HrmsLeaveRequest = typeof hrmsLeaveRequests.$inferSelect;
+export type HrmsSalary = typeof hrmsSalaries.$inferSelect;
+
+/* ===========================================================================
+ * HIRE — AI hiring and onboarding (docs: hire PRD + functional spec).
+ *
+ * Universal rules (spec §1.2) as they land in these tables:
+ *  - Scores, decisions, overrides and transcripts are APPEND-ONLY. A
+ *    correction is a new row whose predecessor carries `superseded_by_id`;
+ *    nothing here has an edit path for a judgement (fixes D3).
+ *  - Money is whole paise, with the currency stated beside it (fixes D11).
+ *  - Aadhaar, PAN and bank numbers live in `hire_vault`, encrypted, and are
+ *    referenced by id; the candidate record never holds one (fixes D2).
+ *  - Every AI call is a `hire_ai_tasks` row: prompt version, model, tokens,
+ *    latency, cost and the full structured output.
+ *  - A candidate is their phone number plus an id, never their typed name
+ *    (fixes D1).
+ * ========================================================================= */
+
+const hireStamps = () => ({
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  createdById: text("created_by_id"),
+  updatedById: text("updated_by_id"),
+});
+
+/** One VERSION of a role blueprint. A published row is never updated again. */
+export const hireBlueprints = pgTable(
+  "hire_blueprints",
+  {
+    id: text("id").primaryKey(),
+    /** Stable across versions — "sales-executive". */
+    key: text("key").notNull(),
+    version: integer("version").notNull(),
+    status: text("status").notNull().default("draft"),
+    title: text("title").notNull(),
+    family: text("family").notNull(),
+    department: text("department").notNull(),
+    level: text("level").notNull().default("Executive"),
+    employmentType: text("employment_type").notNull().default("Full time"),
+    locations: jsonb("locations").$type<string[]>().notNull().default([]),
+    headcount: integer("headcount").notNull().default(1),
+    /** The JD or intake answers it was generated from. */
+    descriptionSource: text("description_source"),
+    aiGenerated: boolean("ai_generated").notNull().default(false),
+    generationPromptVersion: text("generation_prompt_version"),
+    parentId: text("parent_id"),
+    definition: jsonb("definition").$type<import("@/lib/hire/blueprint-types").BlueprintDefinition>().notNull(),
+    /** The rubric critic's findings, kept with the draft they were about. */
+    critic: jsonb("critic").$type<{ where: string; kind: string; message: string; suggestion?: string }[]>(),
+    retentionMonths: integer("retention_months").notNull().default(24),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    publishedById: text("published_by_id").references(() => users.id),
+    retiredAt: timestamp("retired_at", { withTimezone: true }),
+    ...hireStamps(),
+  },
+  (t) => [
+    uniqueIndex("hire_blueprints_key_version").on(t.key, t.version),
+    check("hire_blueprints_status", sql`${t.status} in ('draft','published','retired')`),
+  ],
+);
+
+/** What somebody IS inside Hire (spec §8) — recruiter, interviewer, … */
+export const hireUserRoles = pgTable("hire_user_roles", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  role: text("role").notNull(),
+  grantedById: text("granted_by_id").references(() => users.id),
+  grantedAt: timestamp("granted_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const hireCandidates = pgTable(
+  "hire_candidates",
+  {
+    id: text("id").primaryKey(),
+    /** C-1042 — what people say out loud. */
+    code: text("code").notNull(),
+    /** E.164 — the natural identity key. */
+    primaryPhone: text("primary_phone").notNull(),
+    alternatePhone: text("alternate_phone"),
+    email: text("email"),
+    fullName: text("full_name").notNull(),
+    preferredName: text("preferred_name"),
+    nameVariants: jsonb("name_variants").$type<string[]>().notNull().default([]),
+    /** For AGGREGATE fairness monitoring only. Never shown beside a score. */
+    gender: text("gender"),
+    ageBand: text("age_band"),
+    location: text("location"),
+    preferredLanguage: text("preferred_language").notNull().default("English"),
+    source: text("source"),
+    sourceDetail: text("source_detail"),
+    referredBy: text("referred_by"),
+    consentAt: timestamp("consent_at", { withTimezone: true }),
+    /** "AI assists evaluation" was stated to them at application (PRD §9.1). */
+    aiDisclosedAt: timestamp("ai_disclosed_at", { withTimezone: true }),
+    doNotContact: boolean("do_not_contact").notNull().default(false),
+    dncReason: text("dnc_reason"),
+    talentPoolStatus: text("talent_pool_status").notNull().default("active"),
+    preMigration: boolean("pre_migration").notNull().default(false),
+    ...hireStamps(),
+  },
+  (t) => [
+    uniqueIndex("hire_candidates_code").on(t.code),
+    uniqueIndex("hire_candidates_phone").on(t.primaryPhone),
+    check("hire_candidates_pool", sql`${t.talentPoolStatus} in ('active','silver_medallist','archived','withdrawn')`),
+  ],
+);
+
+export const hireApplications = pgTable(
+  "hire_applications",
+  {
+    id: text("id").primaryKey(),
+    candidateId: text("candidate_id")
+      .notNull()
+      .references(() => hireCandidates.id),
+    /** The VERSION row. Evaluated against it for the whole journey. */
+    blueprintId: text("blueprint_id")
+      .notNull()
+      .references(() => hireBlueprints.id),
+    appliedAt: timestamp("applied_at", { withTimezone: true }).notNull().defaultNow(),
+    location: text("location"),
+    stageKey: text("stage_key").notNull(),
+    stageEnteredAt: timestamp("stage_entered_at", { withTimezone: true }).notNull().defaultNow(),
+    status: text("status").notNull().default("in_progress"),
+    holdReason: text("hold_reason"),
+    recruiterId: text("recruiter_id").references(() => users.id),
+    interviewerId: text("interviewer_id").references(() => users.id),
+    hiringManagerId: text("hiring_manager_id").references(() => users.id),
+    /** Latest AI recommendation, cached for the board; the source is hire_ai_tasks. */
+    aiRecommendation: jsonb("ai_recommendation").$type<{ action: string; confidence: string; why: string; taskId?: string; at?: string }>(),
+    rejectionReasonCode: text("rejection_reason_code"),
+    rejectionStageKey: text("rejection_stage_key"),
+    decisionReason: text("decision_reason"),
+    reapplicationOfId: text("reapplication_of_id"),
+    enteredVia: text("entered_via").notNull().default("hr"),
+    /** A possible duplicate waiting on a person (never auto-merged). */
+    duplicate: jsonb("duplicate").$type<{ candidateId: string; applicationId?: string; confidence: string; why: string; outcome?: string; coolingEnds?: string; status: "open" | "same" | "different" }>(),
+    /** The latest gate override, drawn as a marker on the record. */
+    override: jsonb("override").$type<{ by: string; byName: string; reason: string; at: string; into: string }>(),
+    hiredAt: timestamp("hired_at", { withTimezone: true }),
+    employeeUserId: text("employee_user_id").references(() => users.id),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    ...hireStamps(),
+  },
+  (t) => [
+    index("hire_applications_candidate").on(t.candidateId),
+    index("hire_applications_blueprint").on(t.blueprintId),
+    index("hire_applications_status").on(t.status),
+    check(
+      "hire_applications_status",
+      sql`${t.status} in ('in_progress','on_hold','rejected','withdrawn','offer_declined','hired','archived')`,
+    ),
+  ],
+);
+
+/** One stage, run once (or again — the old run is superseded, never edited). */
+export const hireStageExecutions = pgTable(
+  "hire_stage_executions",
+  {
+    id: text("id").primaryKey(),
+    applicationId: text("application_id")
+      .notNull()
+      .references(() => hireApplications.id),
+    stageKey: text("stage_key").notNull(),
+    status: text("status").notNull().default("not_started"),
+    modality: text("modality"),
+    scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
+    scheduledMinutes: integer("scheduled_minutes"),
+    place: text("place"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    conductedById: text("conducted_by_id").references(() => users.id),
+    earned: doublePrecision("earned"),
+    maxPoints: integer("max_points"),
+    normalised: doublePrecision("normalised"),
+    grace: integer("grace").notNull().default(0),
+    graceReason: text("grace_reason"),
+    finalScore: doublePrecision("final_score"),
+    outcome: text("outcome").notNull().default("pending"),
+    aiRecommendation: text("ai_recommendation"),
+    aiConfidence: doublePrecision("ai_confidence"),
+    aiReasoning: text("ai_reasoning"),
+    entryWasGated: boolean("entry_was_gated").notNull().default(true),
+    gateOverrideById: text("gate_override_by_id").references(() => users.id),
+    gateOverrideReason: text("gate_override_reason"),
+    /** Manual scoring because AI was unavailable — flagged for AI review later. */
+    aiReviewPending: boolean("ai_review_pending").notNull().default(false),
+    supersededById: text("superseded_by_id"),
+    ...hireStamps(),
+  },
+  (t) => [
+    index("hire_exec_app").on(t.applicationId, t.stageKey),
+    index("hire_exec_sched").on(t.scheduledAt),
+    check("hire_exec_status", sql`${t.status} in ('not_started','scheduled','in_progress','completed','skipped','failed')`),
+    check("hire_exec_outcome", sql`${t.outcome} in ('pass','fail','pending','not_applicable')`),
+  ],
+);
+
+export type HireEvidenceSpan = {
+  verbatim: string;
+  start: number;
+  end: number;
+  criterionKey: string | null;
+  criterion: string;
+  tier: string;
+  points: number | null;
+  source: string;
+};
+
+/** A scored answer. APPEND-ONLY — the current one has no `superseded_by_id`. */
+export const hireAnswers = pgTable(
+  "hire_answers",
+  {
+    id: text("id").primaryKey(),
+    executionId: text("execution_id")
+      .notNull()
+      .references(() => hireStageExecutions.id),
+    questionKey: text("question_key").notNull(),
+    responseText: text("response_text"),
+    selected: jsonb("selected").$type<string[]>(),
+    calcInputs: jsonb("calc_inputs").$type<Record<string, number>>(),
+    /** The score that COUNTS — null until a person confirms it. */
+    score: doublePrecision("score"),
+    maxPoints: integer("max_points").notNull(),
+    scoredBy: text("scored_by"),
+    aiScore: doublePrecision("ai_score"),
+    aiReasoning: text("ai_reasoning"),
+    aiConfidence: doublePrecision("ai_confidence"),
+    aiFlags: jsonb("ai_flags").$type<string[]>().notNull().default([]),
+    evidence: jsonb("evidence").$type<HireEvidenceSpan[]>().notNull().default([]),
+    probeSuggestion: text("probe_suggestion"),
+    aiTaskId: text("ai_task_id"),
+    /** accepted | adjusted | scored_myself | manual | calculated | selected */
+    humanAction: text("human_action"),
+    overrideReason: text("override_reason"),
+    confirmedById: text("confirmed_by_id").references(() => users.id),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    notes: text("notes"),
+    supersededById: text("superseded_by_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+  },
+  (t) => [index("hire_answers_exec").on(t.executionId, t.questionKey)],
+);
+
+export const hireBriefingResponses = pgTable(
+  "hire_briefing_responses",
+  {
+    id: text("id").primaryKey(),
+    executionId: text("execution_id")
+      .notNull()
+      .references(() => hireStageExecutions.id),
+    pointKey: text("point_key").notNull(),
+    /** told | agree | disagree | will_try | unclear */
+    response: text("response").notNull(),
+    comment: text("comment"),
+    recordedById: text("recorded_by_id").references(() => users.id),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+    supersededById: text("superseded_by_id"),
+  },
+  (t) => [index("hire_briefing_exec").on(t.executionId)],
+);
+
+/** A named person committing a decision. Append-only; reasoning mandatory. */
+export const hireDecisions = pgTable(
+  "hire_decisions",
+  {
+    id: text("id").primaryKey(),
+    applicationId: text("application_id")
+      .notNull()
+      .references(() => hireApplications.id),
+    executionId: text("execution_id"),
+    decisionPoint: text("decision_point").notNull(),
+    decidedById: text("decided_by_id")
+      .notNull()
+      .references(() => users.id),
+    decidedByRole: text("decided_by_role").notNull(),
+    decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+    decision: text("decision").notNull(),
+    reasoning: text("reasoning").notNull(),
+    reasonCode: text("reason_code"),
+    aiRecommendation: jsonb("ai_recommendation").$type<{ action: string; confidence: string; why: string } | null>(),
+    agreedWithAi: boolean("agreed_with_ai"),
+    evidenceReviewed: jsonb("evidence_reviewed").$type<string[]>().notNull().default([]),
+    supersededById: text("superseded_by_id"),
+  },
+  (t) => [
+    index("hire_decisions_app").on(t.applicationId),
+    check("hire_decisions_decision", sql`${t.decision} in ('advance','reject','hold','hire','revise_offer','resume','withdraw')`),
+    check("hire_decisions_reasoning", sql`length(trim(${t.reasoning})) >= 20`),
+  ],
+);
+
+/** A rejection PROPOSED by a rule, waiting for a named person (spec §6.2). */
+export const hireRejectionProposals = pgTable(
+  "hire_rejection_proposals",
+  {
+    id: text("id").primaryKey(),
+    applicationId: text("application_id")
+      .notNull()
+      .references(() => hireApplications.id),
+    stageKey: text("stage_key").notNull(),
+    score: doublePrecision("score"),
+    reasonCode: text("reason_code").notNull(),
+    note: text("note"),
+    proposedById: text("proposed_by_id").references(() => users.id),
+    proposedAt: timestamp("proposed_at", { withTimezone: true }).notNull().defaultNow(),
+    windowEndsAt: timestamp("window_ends_at", { withTimezone: true }).notNull(),
+    status: text("status").notNull().default("open"),
+    resolvedById: text("resolved_by_id").references(() => users.id),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolution: text("resolution"),
+  },
+  (t) => [
+    index("hire_rejections_open").on(t.status),
+    check("hire_rejections_status", sql`${t.status} in ('open','confirmed','dismissed')`),
+  ],
+);
+
+export type HireSegment = {
+  speaker: "interviewer" | "candidate" | "ai";
+  name?: string;
+  startMs: number;
+  endMs: number;
+  text: string;
+  confidence?: number;
+  language?: string;
+  original?: string;
+  questionKey?: string;
+};
+
+export type HireCopilotEvent = {
+  at: string;
+  kind: "suggestion" | "contradiction" | "coverage" | "time";
+  text: string;
+  why?: string;
+  sources?: { text: string; source: string }[];
+  action: "shown" | "used" | "dismissed";
+};
+
+/** An interview: human, phone, AI voice or async. The transcript is append-only. */
+export const hireSessions = pgTable(
+  "hire_sessions",
+  {
+    id: text("id").primaryKey(),
+    executionId: text("execution_id")
+      .notNull()
+      .references(() => hireStageExecutions.id),
+    modality: text("modality").notNull(),
+    status: text("status").notNull().default("live"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    recordingConsent: boolean("recording_consent").notNull().default(false),
+    consentAt: timestamp("consent_at", { withTimezone: true }),
+    aiDisclosed: boolean("ai_disclosed").notNull().default(false),
+    language: text("language"),
+    languages: jsonb("languages").$type<string[]>().notNull().default([]),
+    segments: jsonb("segments").$type<HireSegment[]>().notNull().default([]),
+    copilot: jsonb("copilot").$type<HireCopilotEvent[]>().notNull().default([]),
+    audioFileId: text("audio_file_id"),
+    candidateTalkRatio: doublePrecision("candidate_talk_ratio"),
+    escalated: text("escalated"),
+    interviewerIds: jsonb("interviewer_ids").$type<string[]>().notNull().default([]),
+    ...hireStamps(),
+  },
+  (t) => [index("hire_sessions_exec").on(t.executionId), check("hire_sessions_status", sql`${t.status} in ('live','ended','abandoned')`)],
+);
+
+/** Files Hire holds: CVs, documents, recordings, letters. Read through /api/hire/files. */
+export const hireFiles = pgTable(
+  "hire_files",
+  {
+    id: text("id").primaryKey(),
+    candidateId: text("candidate_id")
+      .notNull()
+      .references(() => hireCandidates.id),
+    applicationId: text("application_id"),
+    purpose: text("purpose").notNull(),
+    filename: text("filename").notNull(),
+    contentType: text("content_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    storedRef: text("stored_ref").notNull(),
+    uploadedById: text("uploaded_by_id"),
+    uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
+    removedAt: timestamp("removed_at", { withTimezone: true }),
+  },
+  (t) => [index("hire_files_candidate").on(t.candidateId)],
+);
+
+/** Encrypted identity and bank numbers (AES-256-GCM). Only `last4` is ever selected for a list. */
+export const hireVault = pgTable("hire_vault", {
+  id: text("id").primaryKey(),
+  candidateId: text("candidate_id")
+    .notNull()
+    .references(() => hireCandidates.id),
+  kind: text("kind").notNull(),
+  ciphertext: text("ciphertext").notNull(),
+  last4: text("last4").notNull(),
+  createdById: text("created_by_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  purgedAt: timestamp("purged_at", { withTimezone: true }),
+});
+
+export const hireDocuments = pgTable(
+  "hire_documents",
+  {
+    id: text("id").primaryKey(),
+    applicationId: text("application_id")
+      .notNull()
+      .references(() => hireApplications.id),
+    requirementKey: text("requirement_key").notNull(),
+    fileId: text("file_id"),
+    vaultId: text("vault_id"),
+    /** Extracted fields, never containing an identity number (those go to the vault). */
+    extraction: jsonb("extraction").$type<{ fields: { label: string; value: string; confidence: number }[]; signals: string[]; quality: string; aiTaskId?: string } | null>(),
+    extractionConfidence: doublePrecision("extraction_confidence"),
+    verificationStatus: text("verification_status").notNull().default("pending"),
+    verificationNotes: text("verification_notes"),
+    verifiedById: text("verified_by_id").references(() => users.id),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    supersededById: text("superseded_by_id"),
+    ...hireStamps(),
+  },
+  (t) => [
+    index("hire_documents_app").on(t.applicationId),
+    check("hire_documents_status", sql`${t.verificationStatus} in ('pending','verified','failed','manual_review','waived')`),
+  ],
+);
+
+export type HireProfileField = { value: string; source: "ai" | "human"; confidence: number | null };
+export type HireProfileData = {
+  fields: Record<string, HireProfileField>;
+  employers: { name: string; title: string; from: string; to: string; months: number | null }[];
+  education: string[];
+  skills: string[];
+  languages: string[];
+  gaps: { period: string; months: number; explanation?: string }[];
+};
+
+/** CV-extracted profile, human-correctable; corrections are kept, not overwritten. */
+export const hireProfiles = pgTable("hire_profiles", {
+  applicationId: text("application_id")
+    .primaryKey()
+    .references(() => hireApplications.id),
+  data: jsonb("data").$type<HireProfileData>().notNull(),
+  corrections: jsonb("corrections").$type<{ field: string; from: string; to: string; byId: string; byName: string; at: string }[]>().notNull().default([]),
+  sourceFileId: text("source_file_id"),
+  extractionConfidence: doublePrecision("extraction_confidence"),
+  extractedAt: timestamp("extracted_at", { withTimezone: true }),
+  aiTaskId: text("ai_task_id"),
+  ...hireStamps(),
+});
+
+export const hireOffers = pgTable(
+  "hire_offers",
+  {
+    id: text("id").primaryKey(),
+    applicationId: text("application_id")
+      .notNull()
+      .references(() => hireApplications.id),
+    status: text("status").notNull().default("draft"),
+    grade: text("grade").notNull(),
+    gradeLabel: text("grade_label").notNull(),
+    basicPaise: bigint("basic_paise", { mode: "number" }).notNull(),
+    currency: text("currency").notNull().default("INR"),
+    incentive: text("incentive"),
+    ctcPaise: bigint("ctc_paise", { mode: "number" }),
+    /** The growth ladder as it stood — rendered from the blueprint, never typed. */
+    growth: jsonb("growth").$type<import("@/lib/hire/blueprint-types").GrowthStep[]>().notNull().default([]),
+    letter: text("letter"),
+    growthConfirmation: text("growth_confirmation"),
+    letterConfirmation: text("letter_confirmation"),
+    backgroundCheck: text("background_check").notNull().default("needed"),
+    courierStatus: text("courier_status").notNull().default("not_sent"),
+    joiningDate: date("joining_date"),
+    expiryDate: date("expiry_date"),
+    issuedAt: timestamp("issued_at", { withTimezone: true }),
+    issuedById: text("issued_by_id").references(() => users.id),
+    respondedAt: timestamp("responded_at", { withTimezone: true }),
+    response: text("response"),
+    negotiatedFromId: text("negotiated_from_id"),
+    supersededById: text("superseded_by_id"),
+    ...hireStamps(),
+  },
+  (t) => [
+    index("hire_offers_app").on(t.applicationId),
+    check("hire_offers_status", sql`${t.status} in ('draft','issued','accepted','declined','withdrawn')`),
+  ],
+);
+
+/** One tickable thing in onboarding: an asset, a training topic, a setup step. */
+export const hireOnboardingItems = pgTable(
+  "hire_onboarding_items",
+  {
+    id: text("id").primaryKey(),
+    applicationId: text("application_id")
+      .notNull()
+      .references(() => hireApplications.id),
+    kind: text("kind").notNull(),
+    groupKey: text("group_key").notNull(),
+    itemKey: text("item_key").notNull(),
+    done: boolean("done").notNull().default(false),
+    serial: text("serial"),
+    doneById: text("done_by_id").references(() => users.id),
+    doneAt: timestamp("done_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("hire_onboarding_item").on(t.applicationId, t.kind, t.groupKey, t.itemKey),
+    check("hire_onboarding_kind", sql`${t.kind} in ('asset','topic','setup')`),
+  ],
+);
+
+export const hireMessages = pgTable(
+  "hire_messages",
+  {
+    id: text("id").primaryKey(),
+    candidateId: text("candidate_id")
+      .notNull()
+      .references(() => hireCandidates.id),
+    applicationId: text("application_id"),
+    direction: text("direction").notNull(),
+    channel: text("channel").notNull(),
+    language: text("language").notNull().default("English"),
+    subject: text("subject"),
+    body: text("body").notNull(),
+    aiDrafted: boolean("ai_drafted").notNull().default(false),
+    aiTaskId: text("ai_task_id"),
+    /** draft | sent | delivered | read | failed | logged */
+    status: text("status").notNull().default("sent"),
+    sentById: text("sent_by_id").references(() => users.id),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("hire_messages_candidate").on(t.candidateId, t.at)],
+);
+
+/** The AI task ledger (spec §2.11). Every model call, success or not. */
+export const hireAiTasks = pgTable(
+  "hire_ai_tasks",
+  {
+    id: text("id").primaryKey(),
+    taskType: text("task_type").notNull(),
+    promptVersion: text("prompt_version").notNull(),
+    tier: text("tier").notNull(),
+    modelId: text("model_id"),
+    provider: text("provider").notNull().default("openai"),
+    inputHash: text("input_hash"),
+    inputTokens: integer("input_tokens"),
+    output: jsonb("output"),
+    outputTokens: integer("output_tokens"),
+    latencyMs: integer("latency_ms"),
+    costPaise: integer("cost_paise"),
+    /** success | schema_violation | refused | timeout | error | evidence_invalid | prohibited | disabled | cached */
+    status: text("status").notNull(),
+    error: text("error"),
+    retryCount: integer("retry_count").notNull().default(0),
+    fallbackUsed: text("fallback_used"),
+    triggeredById: text("triggered_by_id"),
+    entityType: text("entity_type"),
+    entityId: text("entity_id"),
+    applicationId: text("application_id"),
+    blueprintId: text("blueprint_id"),
+    redactionApplied: boolean("redaction_applied").notNull().default(false),
+    redactedFields: jsonb("redacted_fields").$type<string[]>().notNull().default([]),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("hire_ai_tasks_type_at").on(t.taskType, t.createdAt),
+    index("hire_ai_tasks_app").on(t.applicationId),
+    index("hire_ai_tasks_hash").on(t.taskType, t.inputHash),
+  ],
+);
+
+/** AI outputs kept for a screen: summaries, consistency checks, briefs, rankings. */
+export const hireAiOutputs = pgTable(
+  "hire_ai_outputs",
+  {
+    id: text("id").primaryKey(),
+    kind: text("kind").notNull(),
+    applicationId: text("application_id"),
+    blueprintId: text("blueprint_id"),
+    content: jsonb("content").notNull(),
+    aiTaskId: text("ai_task_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id"),
+  },
+  (t) => [index("hire_ai_outputs_app_kind").on(t.applicationId, t.kind, t.createdAt)],
+);
+
+/** Append-only audit trail (spec §2.10). No edit path, no delete path. */
+export const hireAudit = pgTable(
+  "hire_audit",
+  {
+    id: text("id").primaryKey(),
+    applicationId: text("application_id"),
+    candidateId: text("candidate_id"),
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id"),
+    eventType: text("event_type").notNull(),
+    summary: text("summary").notNull(),
+    actorId: text("actor_id"),
+    actorName: text("actor_name").notNull(),
+    actorRole: text("actor_role"),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    before: jsonb("before"),
+    after: jsonb("after"),
+    isPiiAccess: boolean("is_pii_access").notNull().default(false),
+    piiFields: jsonb("pii_fields").$type<string[]>().notNull().default([]),
+    aiTaskId: text("ai_task_id"),
+  },
+  (t) => [index("hire_audit_candidate").on(t.candidateId, t.at), index("hire_audit_at").on(t.at), index("hire_audit_actor").on(t.actorId, t.at)],
+);
+
+/** What became of a hire — for Quality and the success predictor. */
+export const hireOutcomes = pgTable("hire_outcomes", {
+  applicationId: text("application_id")
+    .primaryKey()
+    .references(() => hireApplications.id),
+  leftAt: date("left_at"),
+  firstTargetAt: date("first_target_at"),
+  performanceScore: doublePrecision("performance_score"),
+  managerSatisfaction: integer("manager_satisfaction"),
+  ...hireStamps(),
+});
+
+export type HireBlueprint = typeof hireBlueprints.$inferSelect;
+export type HireCandidate = typeof hireCandidates.$inferSelect;
+export type HireApplication = typeof hireApplications.$inferSelect;
+export type HireStageExecution = typeof hireStageExecutions.$inferSelect;
+export type HireAnswer = typeof hireAnswers.$inferSelect;
+export type HireSession = typeof hireSessions.$inferSelect;
+export type HireOffer = typeof hireOffers.$inferSelect;
+export type HireDocument = typeof hireDocuments.$inferSelect;
+export type HireMessage = typeof hireMessages.$inferSelect;
+export type HireAiTask = typeof hireAiTasks.$inferSelect;
+
+/* ---------------------------------------------------------------------------
+ * VENDOR PAYOUTS — what Mahek owes its suppliers and the day it will be paid.
+ *
+ * Payments go out on the payment days (`payments.vendorPayoutDays`, Tuesday and
+ * Friday by default, IST). `due_date` is when the money is OWED (purchase date
+ * plus the supplier's credit days); `pay_on` is the payment day it is planned
+ * for. A purchase payout is rebuilt from the ERP purchase register — one per
+ * supplier per PR number, keyed `purchase_key` — and keeps a date a person
+ * chose (`pay_on_decided_at`). A manual payout is anything else accounts pay.
+ * Rules: `lib/engines/vendor-payouts.ts`. Data: `services/vendor-payout-service.ts`.
+ * ------------------------------------------------------------------------- */
+export const vendorPayouts = pgTable(
+  "vendor_payouts",
+  {
+    id: text("id").primaryKey(),
+    /** purchase | manual. */
+    source: text("source").notNull(),
+    /** `<supplier id>|<PR number>` — set exactly when source = purchase. */
+    purchaseKey: text("purchase_key"),
+    prNumber: integer("pr_number"),
+    supplierId: text("supplier_id").references(() => erpSuppliers.id),
+    /** The supplier's name as it stood, or whoever a manual payout is to. */
+    payeeName: text("payee_name").notNull(),
+    description: text("description"),
+    /** The supplier's bill number(s), or a manual payout's reference. */
+    reference: text("reference"),
+    poId: text("po_id").references(() => erpPurchaseOrders.id),
+    purchaseDate: date("purchase_date"),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    dueDate: date("due_date").notNull(),
+    payOn: date("pay_on").notNull(),
+    /** A person chose `pay_on`; the register sync leaves it alone from then on. */
+    payOnDecidedAt: timestamp("pay_on_decided_at", { withTimezone: true }),
+    /** open | on_hold | paid | cancelled. */
+    status: text("status").notNull().default("open"),
+    holdReason: text("hold_reason"),
+    paidOn: date("paid_on"),
+    paidAmountPaise: bigint("paid_amount_paise", { mode: "number" }),
+    paymentMode: text("payment_mode"),
+    paymentReference: text("payment_reference"),
+    paidById: text("paid_by_id").references(() => users.id),
+    cancelReason: text("cancel_reason"),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id"),
+  },
+  (t) => [
+    uniqueIndex("vendor_payouts_purchase_key").on(t.purchaseKey),
+    index("vendor_payouts_pay_on_idx").on(t.status, t.payOn),
+    check("vendor_payouts_source_check", sql`${t.source} in ('purchase', 'manual')`),
+    check("vendor_payouts_status_check", sql`${t.status} in ('open', 'on_hold', 'paid', 'cancelled')`),
+    check(
+      "vendor_payouts_amount_check",
+      sql`${t.amountPaise} >= 0 and (${t.paidAmountPaise} is null or ${t.paidAmountPaise} >= 0)`,
+    ),
+    check("vendor_payouts_purchase_key_check", sql`(${t.source} = 'purchase') = (${t.purchaseKey} is not null)`),
+  ],
+);
+
+/** One invoice on a payout — a proforma, the tax invoice, a debit note — with the file it came as. */
+export const vendorPayoutInvoices = pgTable(
+  "vendor_payout_invoices",
+  {
+    id: text("id").primaryKey(),
+    payoutId: text("payout_id")
+      .notNull()
+      .references(() => vendorPayouts.id, { onDelete: "cascade" }),
+    /** "Proforma invoice", "Tax invoice", … or whatever somebody typed. */
+    kind: text("kind").notNull(),
+    invoiceNo: text("invoice_no"),
+    invoiceDate: date("invoice_date"),
+    amountPaise: bigint("amount_paise", { mode: "number" }),
+    attachmentId: text("attachment_id").references(() => attachments.id),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    index("vendor_payout_invoices_payout_idx").on(t.payoutId),
+    check("vendor_payout_invoices_amount_check", sql`${t.amountPaise} is null or ${t.amountPaise} >= 0`),
+  ],
+);
+
+/* ===================================================== the factory floor app
+ *
+ * The phone app the mixing, filling, packing and dispatch teams work from
+ * (`src/app/factory`). It is NOT a second stock system: every litre, can and
+ * box it records is posted through the ERP's own save handlers, so stock is
+ * still derived from `erp_sfg_lines`, `erp_fg_fills` and `erp_pack_lines`.
+ * What these tables add is what the ERP never had — who was given the work,
+ * who actually did it, why a machine stopped, and what the Production Head
+ * still has to look at.
+ * ========================================================================= */
+
+/**
+ * A person on the floor: which team they work in, what their badge says, and
+ * the four-digit PIN they sign in with. The PIN is hashed like a password; a
+ * badge is only a QR of a code, never a credential on its own — scanning one
+ * still asks for the PIN.
+ */
+export const factoryStaff = pgTable(
+  "factory_staff",
+  {
+    userId: text("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+    /** head | mixing | filling | packing | dispatch | qc */
+    area: text("area").notNull(),
+    /**
+     * Every department they work in — `area` is the first of these, their
+     * home department. A worker may do the jobs of any of them; the phone
+     * switches between them.
+     */
+    areas: text("areas").array().notNull().default(sql`'{}'::text[]`),
+    /** "Machine operator", "Helper" — the words under their name. */
+    roleLabel: text("role_label"),
+    badgeCode: text("badge_code").unique(),
+    pinHash: text("pin_hash"),
+    /** en | hi | mr */
+    lang: text("lang").notNull().default("en"),
+    /** False until HR has confirmed the name and role (PRD §5.1). */
+    hrConfirmed: boolean("hr_confirmed").notNull().default(true),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check("factory_staff_area_check", sql`${t.area} in ('head', 'mixing', 'filling', 'packing', 'dispatch', 'qc')`),
+    check("factory_staff_areas_check", sql`${t.areas} <@ ARRAY['head','mixing','filling','packing','dispatch','qc']::text[] AND cardinality(${t.areas}) > 0 AND ${t.area} = ANY(${t.areas})`),
+    check("factory_staff_lang_check", sql`${t.lang} in ('en', 'hi', 'mr')`),
+  ],
+);
+
+/** The standing team of each process — what a new task starts with, and what the Production Head changes. */
+export const factoryTeamDefaults = pgTable(
+  "factory_team_defaults",
+  {
+    proc: text("proc").notNull(),
+    /** owner | operator | helper | verifier */
+    role: text("role").notNull(),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  },
+  (t) => [
+    primaryKey({ name: "factory_team_defaults_pk", columns: [t.proc, t.role, t.userId] }),
+    check("factory_team_defaults_proc_check", sql`${t.proc} in ('mixing', 'filling', 'packing', 'dispatch')`),
+    check("factory_team_defaults_role_check", sql`${t.role} in ('owner', 'operator', 'helper', 'verifier')`),
+  ],
+);
+
+/**
+ * One piece of assigned work. `item` is what it makes, in the process's own
+ * terms: a formulation id (mixing), `<finished good id>:<litres>` (filling) or
+ * a boxed product id (packing). Dispatch names the ERP order instead.
+ * `out` is what the floor reported once the ERP accepted it — a summary for
+ * the dashboard; the ERP documents named in it are the truth.
+ */
+export const factoryTasks = pgTable(
+  "factory_tasks",
+  {
+    id: text("id").primaryKey(),
+    proc: text("proc").notNull(),
+    godownId: text("godown_id").notNull().references(() => erpGodowns.id),
+    workDate: date("work_date").notNull(),
+    /** "HH:MM", Asia/Kolkata */
+    due: text("due").notNull(),
+    /** ready | done | cancelled — blocked and waiting-to-send are derived. */
+    status: text("status").notNull().default("ready"),
+    item: text("item"),
+    batches: integer("batches"),
+    target: integer("target"),
+    sfgLot: text("sfg_lot"),
+    orderNo: text("order_no"),
+    out: jsonb("out"),
+    doneAt: timestamp("done_at", { withTimezone: true }),
+    createdById: text("created_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("factory_tasks_day_idx").on(t.godownId, t.workDate),
+    uniqueIndex("factory_tasks_order_key").on(t.orderNo).where(sql`${t.proc} = 'dispatch' and ${t.status} <> 'cancelled'`),
+    check("factory_tasks_proc_check", sql`${t.proc} in ('mixing', 'filling', 'packing', 'dispatch')`),
+    check("factory_tasks_status_check", sql`${t.status} in ('ready', 'done', 'cancelled')`),
+  ],
+);
+
+/**
+ * Who is on a job, by role — responsibility kept apart from participation
+ * (PRD §5): one owner, one operator, any number of helpers, an optional
+ * verifier. The person who pressed Send is `factory_submissions.user_id`,
+ * never assumed to be any of these.
+ */
+export const factoryTaskMembers = pgTable(
+  "factory_task_members",
+  {
+    taskId: text("task_id").notNull().references(() => factoryTasks.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => users.id),
+    role: text("role").notNull(),
+    assignedById: text("assigned_by_id").references(() => users.id),
+    assignedAt: timestamp("assigned_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ name: "factory_task_members_pk", columns: [t.taskId, t.userId, t.role] }),
+    check("factory_task_members_role_check", sql`${t.role} in ('owner', 'operator', 'helper', 'verifier')`),
+  ],
+);
+
+/**
+ * THE IDEMPOTENCY LEDGER. The phone mints `key` when a job is started and
+ * sends it with every attempt; the first attempt claims the row and every
+ * later one — a double tap, a retry after a dropped connection, the queue
+ * draining after the app was killed — reads the stored result instead of
+ * posting again. `progress` records each ERP document already written, so a
+ * job that posts several (a packing count spanning two batches) resumes
+ * rather than repeats.
+ */
+export const factorySubmissions = pgTable(
+  "factory_submissions",
+  {
+    key: text("key").primaryKey(),
+    taskId: text("task_id").notNull().references(() => factoryTasks.id),
+    userId: text("user_id").notNull().references(() => users.id),
+    payload: jsonb("payload").notNull(),
+    /**
+     * processing | done | failed | held. HELD is received but not in the ERP:
+     * work sent from a phone's queue that the ERP refused (the stock moved
+     * while the phone was offline, the job was closed meanwhile). The worker
+     * is not handed an error for something that happened hours ago; the
+     * Production Head is handed a review item to post or close.
+     */
+    status: text("status").notNull().default("processing"),
+    progress: jsonb("progress").notNull().default([]),
+    result: jsonb("result"),
+    attempts: integer("attempts").notNull().default(1),
+    /** When the phone saved it — differs from created_at for work sent from the queue. */
+    savedAt: text("saved_at"),
+    /** The build of the page that sent it — old phones keep sending for days after a deploy. */
+    appBuild: text("app_build"),
+    /** The payload's own shape version; `normalizeDraft` reads every one there has been. */
+    schemaVersion: integer("schema_version").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("factory_submissions_task_idx").on(t.taskId),
+    check("factory_submissions_status_check", sql`${t.status} in ('processing', 'done', 'failed', 'held')`),
+  ],
+);
+
+/**
+ * A purchase requirement sent from the factory phone, by the key the phone
+ * minted when it was started. The ERP has no idempotency of its own: a resend
+ * after a dropped answer is answered from `result` rather than raising the
+ * same requirement twice. `processing` holds the key while the first send runs.
+ */
+/**
+ * One row per statement that wrote to a table the stock reads touch, added by
+ * a trigger (`0269_erp_ledger_ticks.sql`) — never by the app. Its count and
+ * highest id are the stamp `lib/erp/ledger-cache.ts` keeps a stock read under,
+ * so a cached read is dropped the moment any committed write could have
+ * changed it. Pruned nightly; pruning changes the stamp, which costs one
+ * re-read and nothing else.
+ */
+export const erpLedgerTicks = pgTable("erp_ledger_ticks", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const factoryRequirementSends = pgTable("factory_requirement_sends", {
+  key: text("key").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id),
+  status: text("status").notNull().default("processing"),
+  result: jsonb("result"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * What the app could not accept on its own: output outside the limit, a lot
+ * picked by photo, a correction asked for, a job saved with nobody helping, a
+ * problem reported before starting. Closed with a decision AND a reason, and
+ * never deleted.
+ */
+export const factoryReviews = pgTable(
+  "factory_reviews",
+  {
+    id: text("id").primaryKey(),
+    /** tolerance | manual | correction | attribution | issue | unposted */
+    kind: text("kind").notNull(),
+    taskId: text("task_id").notNull().references(() => factoryTasks.id),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    meta: text("meta").notNull(),
+    /** For a correction: the change asked for, applied only on approval. */
+    change: jsonb("change"),
+    status: text("status").notNull().default("open"),
+    decision: text("decision"),
+    reason: text("reason"),
+    decidedById: text("decided_by_id").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    createdById: text("created_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("factory_reviews_open_idx").on(t.status),
+    check("factory_reviews_kind_check", sql`${t.kind} in ('tolerance', 'manual', 'correction', 'attribution', 'issue', 'unposted')`),
+    check("factory_reviews_status_check", sql`${t.status} in ('open', 'closed')`),
+  ],
+);
+
+/** A machine stop, with its reason and minutes, as the team recorded it on the job. */
+export const factoryDowntime = pgTable(
+  "factory_downtime",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id").notNull().references(() => factoryTasks.id),
+    godownId: text("godown_id").notNull().references(() => erpGodowns.id),
+    proc: text("proc").notNull(),
+    reason: text("reason").notNull(),
+    minutes: integer("minutes").notNull(),
+    recordedById: text("recorded_by_id").references(() => users.id),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("factory_downtime_at_idx").on(t.godownId, t.recordedAt), check("factory_downtime_minutes_check", sql`${t.minutes} > 0`)],
+);
+
+/* ---- ERP material returns (0258) ------------------------------------------
+ * Financial documents adjust the ledger; physical transactions adjust stock.
+ * A debit note and a credit note move no stock. A confirmed goods return
+ * outward is an OUTFLOW of its raw-material lot (read by `rmLots`), and a
+ * customer return sits in quarantine — on its own record, outside every
+ * saleable stock — until QC disposes of it into the existing FG, SFG and
+ * scrap ledgers or to waste.
+ * ------------------------------------------------------------------------- */
+
+/** A purchase return against one GRN lot of the purchase register. */
+export const erpPurchaseReturns = pgTable(
+  "erp_purchase_returns",
+  {
+    id: text("id").primaryKey(),
+    returnNo: integer("return_no").notNull(),
+    returnDate: date("return_date").notNull(),
+    purchaseId: text("purchase_id")
+      .notNull()
+      .references(() => erpPurchases.id),
+    supplierId: text("supplier_id")
+      .notNull()
+      .references(() => erpSuppliers.id),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    lotNo: text("lot_no").notNull(),
+    prNumber: integer("pr_number").notNull(),
+    /** In the lot's purchase unit (Kg | Litre | Pcs). */
+    quantity: erpQty("quantity").notNull(),
+    unit: text("unit").notNull(),
+    /** The same quantity in the stock ledger's unit (litres or pieces). */
+    stockQty: erpQty("stock_qty").notNull(),
+    ratePaise: bigint("rate_paise", { mode: "number" }),
+    gstBp: integer("gst_bp").notNull().default(1800),
+    amountPaise: bigint("amount_paise", { mode: "number" }),
+    taxPaise: bigint("tax_paise", { mode: "number" }),
+    totalPaise: bigint("total_paise", { mode: "number" }),
+    /** quality_defect | damaged | wrong_material | wrong_spec | other. */
+    reasonCode: text("reason_code").notNull(),
+    remarks: text("remarks"),
+    /** pending | approved | rejected | cancelled. */
+    status: text("status").notNull().default("pending"),
+    /** Above `erp.returns.ownerApprovalPaise`: the owner approves it as well. */
+    needsOwner: boolean("needs_owner").notNull().default(false),
+    approvedById: text("approved_by_id").references(() => users.id),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    ownerApprovedById: text("owner_approved_by_id").references(() => users.id),
+    ownerApprovedAt: timestamp("owner_approved_at", { withTimezone: true }),
+    decisionNote: text("decision_note"),
+    cancelReason: text("cancel_reason"),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("erp_purchase_returns_no_key").on(t.returnNo),
+    index("erp_purchase_returns_lot_idx").on(t.purchaseId),
+    check("erp_purchase_returns_qty_check", sql`${t.quantity} > 0 AND ${t.stockQty} > 0`),
+    check("erp_purchase_returns_status_check", sql`${t.status} in ('pending', 'approved', 'rejected', 'cancelled')`),
+    check("erp_purchase_returns_reason_check", sql`${t.reasonCode} in ('quality_defect', 'damaged', 'wrong_material', 'wrong_spec', 'other')`),
+  ],
+);
+
+/** The debit note an approved purchase return generates. Moves no stock. */
+export const erpDebitNotes = pgTable(
+  "erp_debit_notes",
+  {
+    id: text("id").primaryKey(),
+    noteNo: integer("note_no").notNull(),
+    noteDate: date("note_date").notNull(),
+    purchaseReturnId: text("purchase_return_id")
+      .notNull()
+      .references(() => erpPurchaseReturns.id),
+    supplierId: text("supplier_id")
+      .notNull()
+      .references(() => erpSuppliers.id),
+    purchaseId: text("purchase_id")
+      .notNull()
+      .references(() => erpPurchases.id),
+    prNumber: integer("pr_number").notNull(),
+    /** The supplier's bill (the purchase invoice) the lot came on. */
+    billNumber: text("bill_number"),
+    lotNo: text("lot_no").notNull(),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    quantity: erpQty("quantity").notNull(),
+    unit: text("unit").notNull(),
+    ratePaise: bigint("rate_paise", { mode: "number" }).notNull(),
+    gstBp: integer("gst_bp").notNull(),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    taxPaise: bigint("tax_paise", { mode: "number" }).notNull(),
+    totalPaise: bigint("total_paise", { mode: "number" }).notNull(),
+    reasonCode: text("reason_code").notNull(),
+    /** issued | cancelled. */
+    status: text("status").notNull().default("issued"),
+    cancelReason: text("cancel_reason"),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_debit_notes_no_key").on(t.noteNo),
+    uniqueIndex("erp_debit_notes_live_key").on(t.purchaseReturnId).where(sql`${t.status} = 'issued'`),
+    check("erp_debit_notes_status_check", sql`${t.status} in ('issued', 'cancelled')`),
+    check("erp_debit_notes_total_check", sql`${t.totalPaise} > 0`),
+  ],
+);
+
+/** The physical return to the vendor. Stock leaves only when it is CONFIRMED. */
+export const erpReturnOutwards = pgTable(
+  "erp_return_outwards",
+  {
+    id: text("id").primaryKey(),
+    outwardNo: integer("outward_no").notNull(),
+    purchaseReturnId: text("purchase_return_id")
+      .notNull()
+      .references(() => erpPurchaseReturns.id),
+    supplierId: text("supplier_id")
+      .notNull()
+      .references(() => erpSuppliers.id),
+    rawMaterialId: text("raw_material_id")
+      .notNull()
+      .references(() => erpRawMaterials.id),
+    lotNo: text("lot_no").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    quantity: erpQty("quantity").notNull(),
+    unit: text("unit").notNull(),
+    stockQty: erpQty("stock_qty").notNull(),
+    packing: text("packing"),
+    transporter: text("transporter"),
+    vehicleNo: text("vehicle_no"),
+    lrNo: text("lr_no"),
+    dispatchDate: date("dispatch_date").notNull(),
+    note: text("note"),
+    /** draft | confirmed | cancelled. */
+    status: text("status").notNull().default("draft"),
+    confirmedById: text("confirmed_by_id").references(() => users.id),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    cancelReason: text("cancel_reason"),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_return_outwards_no_key").on(t.outwardNo),
+    uniqueIndex("erp_return_outwards_live_key").on(t.purchaseReturnId).where(sql`${t.status} <> 'cancelled'`),
+    index("erp_return_outwards_lot_idx").on(t.lotNo, t.godownId),
+    check("erp_return_outwards_status_check", sql`${t.status} in ('draft', 'confirmed', 'cancelled')`),
+    check("erp_return_outwards_qty_check", sql`${t.stockQty} > 0`),
+  ],
+);
+
+/** A customer's return against one dispatched order line and the lot that went on it. */
+export const erpCustomerReturns = pgTable(
+  "erp_customer_returns",
+  {
+    id: text("id").primaryKey(),
+    returnNo: integer("return_no").notNull(),
+    returnDate: date("return_date").notNull(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id),
+    orderId: text("order_id")
+      .notNull()
+      .references(() => erpOrders.id),
+    batchCodeId: text("batch_code_id")
+      .notNull()
+      .references(() => erpBatchCodes.id),
+    skuId: text("sku_id")
+      .notNull()
+      .references(() => products.id),
+    finishedGoodId: text("finished_good_id").references(() => finishedGoods.id),
+    /** fg (cans) | pack (boxes) — the unit the lot was allocated in. */
+    lotFrom: text("lot_from").notNull(),
+    lotCode: text("lot_code").notNull(),
+    quantity: erpQty("quantity").notNull(),
+    /** Cans | Boxes. */
+    unit: text("unit").notNull(),
+    litres: erpQty("litres").notNull(),
+    ratePaise: bigint("rate_paise", { mode: "number" }),
+    discountBp: integer("discount_bp"),
+    gstBp: integer("gst_bp").notNull().default(1800),
+    totalPaise: bigint("total_paise", { mode: "number" }),
+    reasonCode: text("reason_code").notNull(),
+    customerRemarks: text("customer_remarks"),
+    transporter: text("transporter"),
+    vehicleNo: text("vehicle_no"),
+    lrNo: text("lr_no"),
+    /** open | rejected | cancelled — the stage is derived from what was received and decided. */
+    status: text("status").notNull().default("open"),
+    receivedQty: erpQty("received_qty"),
+    receivedGodownId: text("received_godown_id").references(() => erpGodowns.id),
+    receivedById: text("received_by_id").references(() => users.id),
+    receivedAt: timestamp("received_at", { withTimezone: true }),
+    needsOwner: boolean("needs_owner").notNull().default(false),
+    approvedById: text("approved_by_id").references(() => users.id),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    ownerApprovedById: text("owner_approved_by_id").references(() => users.id),
+    ownerApprovedAt: timestamp("owner_approved_at", { withTimezone: true }),
+    /** The complaint that carries the credit note to Accounts. */
+    complaintId: text("complaint_id").references(() => complaints.id),
+    decisionNote: text("decision_note"),
+    cancelReason: text("cancel_reason"),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("erp_customer_returns_no_key").on(t.returnNo),
+    index("erp_customer_returns_order_idx").on(t.orderId),
+    index("erp_customer_returns_lot_idx").on(t.lotFrom, t.lotCode),
+    check("erp_customer_returns_qty_check", sql`${t.quantity} > 0`),
+    check("erp_customer_returns_received_check", sql`${t.receivedQty} is null or (${t.receivedQty} > 0 and ${t.receivedQty} <= ${t.quantity})`),
+    check("erp_customer_returns_status_check", sql`${t.status} in ('open', 'rejected', 'cancelled')`),
+    check("erp_customer_returns_lot_check", sql`${t.lotFrom} in ('fg', 'pack')`),
+    check("erp_customer_returns_reason_check", sql`${t.reasonCode} in ('quality_defect', 'damaged', 'wrong_product', 'wrong_spec', 'excess', 'other')`),
+  ],
+);
+
+/** QC's decision on part (or all) of a customer return. Reversed, never deleted. */
+export const erpReturnDispositions = pgTable(
+  "erp_return_dispositions",
+  {
+    id: text("id").primaryKey(),
+    customerReturnId: text("customer_return_id")
+      .notNull()
+      .references(() => erpCustomerReturns.id),
+    /** reuse | rework | scrap | waste. */
+    kind: text("kind").notNull(),
+    /** In the return's unit (cans or boxes). */
+    quantity: erpQty("quantity").notNull(),
+    litres: erpQty("litres").notNull(),
+    godownId: text("godown_id").references(() => erpGodowns.id),
+    scrapKg: erpQty("scrap_kg"),
+    scrapEntryId: text("scrap_entry_id").references(() => erpScrapEntries.id),
+    note: text("note"),
+    /** active | reversed. */
+    status: text("status").notNull().default("active"),
+    decidedById: text("decided_by_id").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+    reverseReason: text("reverse_reason"),
+    reversedById: text("reversed_by_id").references(() => users.id),
+    reversedAt: timestamp("reversed_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("erp_return_dispositions_return_idx").on(t.customerReturnId),
+    check("erp_return_dispositions_kind_check", sql`${t.kind} in ('reuse', 'rework', 'scrap', 'waste')`),
+    check("erp_return_dispositions_status_check", sql`${t.status} in ('active', 'reversed')`),
+    check("erp_return_dispositions_qty_check", sql`${t.quantity} > 0`),
+  ],
+);
+
+/** Returned liquid reworked through the existing SFG process. Completing it posts its own SFG lot. */
+export const erpReworkOrders = pgTable(
+  "erp_rework_orders",
+  {
+    id: text("id").primaryKey(),
+    reworkNo: integer("rework_no").notNull(),
+    dispositionId: text("disposition_id")
+      .notNull()
+      .references(() => erpReturnDispositions.id),
+    customerReturnId: text("customer_return_id")
+      .notNull()
+      .references(() => erpCustomerReturns.id),
+    formulationId: text("formulation_id")
+      .notNull()
+      .references(() => productFormulations.id),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    inputLitres: erpQty("input_litres").notNull(),
+    outputLitres: erpQty("output_litres"),
+    lossLitres: erpQty("loss_litres"),
+    sfgLotCode: text("sfg_lot_code").notNull(),
+    operator: text("operator"),
+    reworkDate: date("rework_date"),
+    note: text("note"),
+    /** open | completed | cancelled. */
+    status: text("status").notNull().default("open"),
+    completedById: text("completed_by_id").references(() => users.id),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    cancelReason: text("cancel_reason"),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_rework_orders_no_key").on(t.reworkNo),
+    uniqueIndex("erp_rework_orders_lot_key").on(t.sfgLotCode),
+    check("erp_rework_orders_status_check", sql`${t.status} in ('open', 'completed', 'cancelled')`),
+    check("erp_rework_orders_output_check", sql`${t.outputLitres} is null or (${t.outputLitres} >= 0 and ${t.outputLitres} <= ${t.inputLitres})`),
+  ],
+);
+
+/** Returned material that can be neither reused nor sold as scrap, and its disposal. */
+export const erpWasteDisposals = pgTable(
+  "erp_waste_disposals",
+  {
+    id: text("id").primaryKey(),
+    wasteNo: integer("waste_no").notNull(),
+    dispositionId: text("disposition_id")
+      .notNull()
+      .references(() => erpReturnDispositions.id),
+    customerReturnId: text("customer_return_id")
+      .notNull()
+      .references(() => erpCustomerReturns.id),
+    litres: erpQty("litres").notNull(),
+    reason: text("reason").notNull(),
+    /** pending | disposed | cancelled. */
+    status: text("status").notNull().default("pending"),
+    disposalDate: date("disposal_date"),
+    method: text("method"),
+    responsible: text("responsible"),
+    agency: text("agency"),
+    costPaise: bigint("cost_paise", { mode: "number" }),
+    note: text("note"),
+    disposedById: text("disposed_by_id").references(() => users.id),
+    disposedAt: timestamp("disposed_at", { withTimezone: true }),
+    cancelReason: text("cancel_reason"),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_waste_disposals_no_key").on(t.wasteNo),
+    check("erp_waste_disposals_status_check", sql`${t.status} in ('pending', 'disposed', 'cancelled')`),
+    check("erp_waste_disposals_cost_check", sql`${t.costPaise} is null or ${t.costPaise} >= 0`),
+  ],
+);
+
+/* ---------------------------------------------------------------------------
+ * THE WEBSITE CMS (migration 0267).
+ *
+ * `website_content` holds every editable piece of mahekindia.com. Two copies
+ * of each: `data`, the working copy the editor shows and a preview renders, and
+ * `published_data`, the snapshot the public site reads — written only by a
+ * publish. `version` counts saves; `published_version` is the save that went
+ * live, so "unpublished changes" is a comparison of two integers.
+ *
+ * Read `lib/website-cms/` for the rules. The schema only enforces what cannot
+ * be allowed to drift: a row is `published` exactly when it has a snapshot.
+ * ------------------------------------------------------------------------- */
+
+export const websiteContentStateEnum = pgEnum("website_content_state", ["draft", "published", "archived"]);
+
+export const websiteContent = pgTable(
+  "website_content",
+  {
+    id: text("id").primaryKey(),
+    /** `product`, `industry`, `gallery`, `job`, `testimonial`, `milestone`, `page`, `seo`, `navigation`, `settings`. */
+    kind: text("kind").notNull(),
+    /** Identity inside the kind: a product's web address, a page key, a path for SEO, `site` for the one-row kinds. */
+    slug: text("slug").notNull(),
+    sort: integer("sort").notNull().default(0),
+    state: websiteContentStateEnum("state").notNull().default("draft"),
+    /** The working copy. Shape per kind is `lib/website-cms/kinds.ts`. */
+    data: jsonb("data").$type<Record<string, unknown>>().notNull(),
+    /** What is live. Non-null exactly when `state = 'published'`. */
+    publishedData: jsonb("published_data").$type<Record<string, unknown>>(),
+    version: integer("version").notNull().default(1),
+    publishedVersion: integer("published_version"),
+    /** The position this row has on the LIVE site. Copied from `sort` when its list is published, so reordering in the editor changes nothing live until then. */
+    publishedSort: integer("published_sort"),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    publishedById: text("published_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("website_content_kind_slug_key").on(t.kind, t.slug),
+    index("website_content_kind_state_sort_idx").on(t.kind, t.state, t.sort),
+    check(
+      "website_content_live_has_snapshot",
+      sql`(${t.state} = 'published') = (${t.publishedData} is not null)`,
+    ),
+  ],
+);
+
+export const websiteMedia = pgTable(
+  "website_media",
+  {
+    id: text("id").primaryKey(),
+    /** `upload` — bytes in the file store, served at `/cms-media/<id>/<filename>`; `site` — a file already inside the website's own image. */
+    source: text("source").notNull(),
+    filename: text("filename").notNull(),
+    contentType: text("content_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull().default(0),
+    contentHash: text("content_hash"),
+    storedRef: text("stored_ref"),
+    sitePath: text("site_path"),
+    alt: text("alt").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    uploadedById: text("uploaded_by_id").references(() => users.id),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedById: text("deleted_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("website_media_site_path_key").on(t.sitePath).where(sql`${t.sitePath} is not null`),
+    index("website_media_created_idx").on(t.createdAt),
+    check("website_media_source_check", sql`${t.source} in ('upload', 'site')`),
+    check(
+      "website_media_where_check",
+      sql`(${t.source} = 'upload' and ${t.storedRef} is not null) or (${t.source} = 'site' and ${t.sitePath} is not null)`,
+    ),
+  ],
+);
+
+export const websitePublishLog = pgTable(
+  "website_publish_log",
+  {
+    id: text("id").primaryKey(),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    actorId: text("actor_id").references(() => users.id),
+    /** `save`, `publish`, `unpublish`, `archive`, `restore`, `discard`, `delete`, `reorder`, `import`, `refresh`, `media-upload`, `media-delete`. */
+    action: text("action").notNull(),
+    kind: text("kind"),
+    slug: text("slug"),
+    contentId: text("content_id"),
+    ok: boolean("ok").notNull().default(true),
+    detail: text("detail"),
+  },
+  (t) => [index("website_publish_log_at_idx").on(t.at)],
+);
+
+export type WebsiteContentRow = typeof websiteContent.$inferSelect;
+export type WebsiteMediaRow = typeof websiteMedia.$inferSelect;
+export type WebsitePublishLogRow = typeof websitePublishLog.$inferSelect;
+
+/* ---------------------------------------------------------------------------
+ * THE QUOTATION MANAGER (ERP → Purchase → Quotation manager).
+ *
+ * The purchase desk's rate sheet, rebuilt as a grid: a ROW is one quotation —
+ * a date and a party — and a COLUMN is one thing quoted for (pack, material,
+ * brand), or a text column such as the broker. Both are rows of their own so
+ * a person adds, renames, reorders and removes them from the screen; nothing
+ * about the sheet's shape is in code. A cell is one value and, like the sheet,
+ * a colour: `po` (PO made in Tally and mailed), `cancel` (PO / order
+ * cancelled), `pickup` (material picked up by the transporter).
+ *
+ * A removed column is ARCHIVED, never dropped, so its cells come back with it;
+ * a removed row is marked deleted for the same reason.
+ * ------------------------------------------------------------------------- */
+export const erpQuoteColumns = pgTable(
+  "erp_quote_columns",
+  {
+    id: text("id").primaryKey(),
+    position: integer("position").notNull(),
+    /** The three header lines, top to bottom: pack, material, brand. */
+    pack: text("pack").notNull().default(""),
+    name: text("name").notNull().default(""),
+    brand: text("brand").notNull().default(""),
+    /** `rate` (a number, right-aligned) or `text`. */
+    kind: text("kind").notNull().default("rate"),
+    rawMaterialId: text("raw_material_id").references(() => erpRawMaterials.id),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("erp_quote_columns_position_idx").on(t.position),
+    check("erp_quote_columns_kind_check", sql`${t.kind} in ('rate', 'text')`),
+  ],
+);
+
+export const erpQuoteRows = pgTable(
+  "erp_quote_rows",
+  {
+    id: text("id").primaryKey(),
+    quoteDate: date("quote_date", { mode: "string" }).notNull(),
+    /** The order rows were entered in: rows pasted together share a timestamp, never this. */
+    seq: bigserial("seq", { mode: "number" }).notNull(),
+    party: text("party").notNull().default(""),
+    /** The purchase party the typed name matches, where one does exactly. */
+    supplierId: text("supplier_id").references(() => erpSuppliers.id),
+    /** The colour on the date and party cells: `po`, `cancel`, `pickup` or null. */
+    status: text("status"),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedById: text("updated_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("erp_quote_rows_date_idx").on(t.quoteDate),
+    check("erp_quote_rows_status_check", sql`${t.status} is null or ${t.status} in ('po', 'cancel', 'pickup')`),
+  ],
+);
+
+export const erpQuoteCells = pgTable(
+  "erp_quote_cells",
+  {
+    rowId: text("row_id").notNull().references(() => erpQuoteRows.id, { onDelete: "cascade" }),
+    columnId: text("column_id").notNull().references(() => erpQuoteColumns.id, { onDelete: "cascade" }),
+    value: text("value").notNull().default(""),
+    status: text("status"),
+    updatedById: text("updated_by_id").references(() => users.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.rowId, t.columnId] }),
+    check("erp_quote_cells_status_check", sql`${t.status} is null or ${t.status} in ('po', 'cancel', 'pickup')`),
+  ],
+);
+
+export type ErpQuoteColumn = typeof erpQuoteColumns.$inferSelect;
+export type ErpQuoteRow = typeof erpQuoteRows.$inferSelect;

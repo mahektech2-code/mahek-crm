@@ -1,0 +1,133 @@
+`lib/erp/stock.ts` is the one statement of "current stock, lot wise" per stage; every list, form, validation and dashboard tile calls it. The Stock screen's eight tabs are screen modules spread over `screens/purchase.ts` (`rmStock`, `rmLog`) and `screens/production.ts` (`sfgStock`, `fgStock`, `packStock` and their logs). Boxes are `screens/units.ts` over the register in `lib/erp/units.ts`; transfers are `screens/movement.ts`; label sheets are the route `app/erp/print-labels`.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Stock reading | `src/lib/erp/stock.ts` | `rmLots`, `packingUse`, `lotLandings`, `sfgLots`, `fgLots`, `packLots`, per-lot `…LotStock`, `rmLevelAvailable`, `fgLevelAvailable`, `lockLot` |
+| Stock tabs | `src/lib/erp/screens/purchase.ts`, `src/lib/erp/screens/production.ts` | `rmStock`/`rmLog`, `sfgStock`, `fgStock` (+ `labelLoose`), `packStock`, `logScreen(…)` |
+| Registry | `src/lib/erp/registry.ts` | Screen `stock`: tabs `rmStock`, `sfgStock`, `fgStock`, `packStock`, each with an `alt` log toggle |
+| Box register | `src/lib/erp/units.ts` | `unitEvent`, `ensureBatchBoxes`, `cancelBatchBoxes`, `mintLooseUnits`, `looseHeadroom`, `trimLooseUnits`, `moveUnitsForTransfer` |
+| Box rules (pure) | `src/lib/erp/engines/trace.ts` | `unitId`, `boxLots`, `UNIT_STATUS`, `UNIT_STATUS_LABEL`, `manualMove` |
+| Boxes screen | `src/lib/erp/screens/units.ts` | `unitScreen("units" \| "allUnits")`, `move` |
+| Labels | `src/app/erp/print-labels/page.tsx`, `src/lib/actions/erp-trace.ts` | `?batch=`, `?lot=`, `?ids=`, `?order=`; `erpMarkLabelsPrinted` |
+| Transfers | `src/lib/erp/screens/movement.ts` | `transferable`, `transferForm`, `postTransferIn`, `transfers` module |
+
+## Reading a stage
+
+<Code file="src/lib/erp/stock.ts" symbol="rmLots" collapsed />
+
+<Code file="src/lib/erp/stock.ts" symbol="packingUse" />
+
+The other stages follow the same shape — an `inflow` CTE over the stage's entries, an `outflow` CTE over the consuming documents:
+
+| Stage | `inflow` | `outflow` |
+|---|---|---|
+| RM | `erp_rm_entries` | `erp_transfers` (Purchase), `erp_sfg_lines.total_use`, then `packingUse` oldest-first |
+| SFG | `erp_sfg_entries` | `erp_transfers` (Semi Finished), `erp_fg_fills` can_size × cans |
+| FG | `erp_fg_entries` | `erp_transfers` (Finish Goods), `erp_pack_lines.cans`, `erp_batch_codes` where lot_from = fg |
+| Pack | `erp_pack_entries` | `erp_transfers` (FG Packing), `erp_batch_codes` where lot_from = pack |
+
+<Code file="src/lib/erp/stock.ts" symbol="lockLot" />
+
+<Code file="src/lib/erp/stock.ts" symbol="rmLevelAvailable" />
+
+## A transfer, end to end
+
+<Flow caption="erpSubmitForm('transfers', 'new', header)" chart={`
+sequenceDiagram
+  autonumber
+  participant T as movement.ts transfers.forms.new
+  participant S as stock.ts
+  participant U as units.ts
+  participant DB as Postgres
+  T->>T: type, from, to (not equal, To active, not from Item Lost Record, lostStock for To = reserved)
+  T->>DB: inTx begin
+  T->>S: lockLot(tx, type, lot, from)
+  T->>S: transferable(tx) - the stage's lots read inside the transaction
+  T->>T: qty above zero and not above the lot's stock
+  T->>DB: insert erp_transfers (the outflow)
+  T->>DB: postTransferIn - the destination stage's entry (the inflow)
+  opt Finish Goods or FG Packing
+    T->>U: moveUnitsForTransfer - lowest-numbered available units, status lost if written off
+    T->>U: trimLooseUnits when fewer labelled cans moved than the quantity
+  end
+  T->>DB: commit, erpAudit erp.transfer.create or erp.transfer.writeOff
+`} />
+
+<Code file="src/lib/erp/screens/movement.ts" symbol="transferable" />
+
+<Code file="src/lib/erp/screens/movement.ts" symbol="postTransferIn" />
+
+<Code file="src/lib/erp/units.ts" symbol="moveUnitsForTransfer" />
+
+<DbTable name="erp_transfers" note={{
+  item_type: "Purchase · Semi Finished · Finish Goods · FG Packing.",
+  from_godown_id: "Never the reserved godown.",
+  to_godown_id: "Item Lost Record makes this a write-off (lostStock power).",
+  item_id: "Raw material, formulation, finished good or SKU, by type.",
+  lot_no: "The lot code, carried to the destination unchanged.",
+}} />
+
+## Boxes
+
+<Code file="src/lib/erp/engines/trace.ts" symbol="unitId" />
+
+<Code file="src/lib/erp/engines/trace.ts" symbol="boxLots" />
+
+<Code file="src/lib/erp/engines/trace.ts" symbol="manualMove" />
+
+<Code file="src/lib/erp/units.ts" symbol="ensureBatchBoxes" />
+
+<Code file="src/lib/erp/units.ts" symbol="trimLooseUnits" />
+
+<DbTable name="erp_units" note={{
+  id: "BX-YYMMDD-NNNNNN or LU-… (series 'unit').",
+  kind: "box · loose.",
+  lot_from: "pack (a packing batch) or fg (an FG lot).",
+  seq: "The box's place in its batch — what boxLots reads.",
+  status: "available · scanned · dispatched · hold · rejected · returned · lost · cancelled.",
+  order_id: "While scanned or dispatched; kept on a return until it is back in stock.",
+  label_printed_at: "Null = 'Label not printed' and the sidebar badge.",
+}} />
+
+<DbTable name="erp_unit_events" note={{ event: "created · labelled · scanned · unscanned · dispatched · transfer · hold · release · reject · return · lost · override. Append-only." }} />
+
+## Permissions
+
+- **Modules:** <ModuleRef k="erp.stock" /> (all eight tabs), <ModuleRef k="erp.units" /> (both tabs), <ModuleRef k="erp.transfers" />.
+- **Powers:** `viewCost` (rate and value columns), `lostStock` (Item Lost Record offered and accepted), `dispatchOverride` (reject, mark returned).
+- **Label printing** (`requireLabelScreen` in `actions/erp-trace.ts`) accepts any of units, dispatch, packBatches, stock or orders.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/erp/engines/trace.test.ts` | Unit ids; boxes filled in draw order, a boundary box names both lots; only the allowed hand moves |
+| `npm run test:integration` | `src/lib/erp/erp-production.test.ts` — "transfers" | Moves boxes between godowns; refuses the same godown or more than the lot holds; write-off needs the lost-stock power |
+| | "what filling and packing use comes out of stock (A-30)" | Cans filled and boxes packed leave their lots; a level does not count them twice |
+| `npm run test:integration` | `src/lib/erp/erp-purchase.test.ts` — "register and stock" | Available stock lists lots above zero with the cost hidden; the log flags an orphaned entry |
+| `npm run test:integration` | `src/lib/erp/erp-traceability.test.ts` | Box ids minted per box; loose labels capped and trimmed |
+| `npm run test:integration` | `src/lib/erp/erp-foundation.test.ts` | The reserved godown cannot be switched off |
+
+## Changing it safely
+
+<Steps>
+<Step title="A new consuming document">
+Add it to the stage's `outflow` CTE in `stock.ts` — never write a negative entry — and take `lockLot` in its save.
+</Step>
+<Step title="A new producing document">
+Write exactly one inflow entry per source (`source_type`, `source_id`) and re-sync it on every edit, like `syncPurchaseEntry` and `syncSfgEntry`. Add the source type to the orphan count in `dashboard.ts` and to the log.
+</Step>
+<Step title="Never change a box's history">
+Append an event with `unitEvent`. A status change outside `manualMove`'s four moves belongs to its own screen (dispatch, transfer, packing).
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| An FG transfer copies SKU and packing from the product's latest FG entry, not from the lot transferred | `screens/movement.ts` `postTransferIn` |
+| The units lists are capped at 5,000 rows with no notice on screen | `screens/units.ts` `unitRows` (`limit 5000`) |
+| SFG and fill deletions leave their output entry in stock while giving the input back | `screens/production.ts` delete actions; `stock.ts` |

@@ -1,4 +1,5 @@
 import { isoDate } from '../lib/format';
+import { autostartWhere, oemOf, oemWords } from './oem-keepalive';
 
 /**
  * Whether this phone can be trusted to record a day before the day is started.
@@ -85,96 +86,30 @@ export type Readiness = {
 /* ------------------------------------------------------------ the words */
 
 /**
- * THE MANUFACTURER CHANGES THE WORDS AND NEVER THE RULE.
+ * THE MANUFACTURER CHANGES THE WORDS AND NEVER THE RULE, and there is ONE
+ * table of those words.
  *
  * Every one of these phones has the same setting and not one of them calls it
  * the same thing. A salesman told to find "Autostart" on a phone whose menu
  * says "Background power consumption" does not conclude that his phone is
- * unusual — he concludes the app is wrong about his phone, and the next thing
- * he does is ring the office to be told to ignore the screen. So the row is
- * titled with HIS phone's own word and the path is the path he will actually
- * walk.
+ * unusual — he concludes the app is wrong about his phone, and rings the office
+ * to be told to ignore the screen.
  *
- * `label` is the setting as the phone spells it; `path` is where it lives;
- * `also` is the second setting on the same phone that undoes the first, which
- * on several of these is the one that actually matters.
+ * WHICH IS EXACTLY WHAT THIS FILE CAUSED, by keeping a second copy of the
+ * table. `engines/oem-keepalive.ts` fed the "Keep tracking on" screen and this
+ * fed the start-of-day gate, and the two had drifted: one vivo handset was sent
+ * to `Settings → Apps → Special app access → Autostart` by this screen and to
+ * `Settings → Battery → Background power consumption` by the other, under two
+ * different names for the app — neither of which was the name Android actually
+ * draws in that list. Two answers for one switch is the app telling somebody it
+ * does not know, and that costs more than either answer alone would have.
  *
- * An unrecognised manufacturer gets honest generic wording. NEVER A GUESS: a
- * confident wrong path is worse than an admitted vague one, because a man who
- * cannot find "Autostart" where we said it was stops believing the rest of the
- * screen too.
+ * So the words live there and are imported here. The GATE stays this file's —
+ * which rung stops a day is a different question from what the switch is called
+ * on a Realme — and that split is the point: one file decides what is demanded,
+ * one decides what it is called.
  */
-type Oem = { label: string; path: string; also: string | null };
-
-const GENERIC: Oem = {
-  label: 'Let MBOS run in the background',
-  path:
-    'Open your phone Settings and look for Battery, then for anything about background apps, ' +
-    'app launch or autostart. Set MBOS so the phone never stops it.',
-  also: null,
-};
-
-function oemWords(manufacturer: string | null): Oem {
-  const m = (manufacturer ?? '').trim().toLowerCase();
-  if (!m) return GENERIC;
-
-  /* vivo and iQOO are one company and one skin, Funtouch. This is the phone
-     the whole gate was built for. */
-  if (m.includes('vivo') || m.includes('iqoo')) {
-    return {
-      label: 'Autostart',
-      path:
-        'Settings → Apps → Special app access → Autostart → switch MBOS on.',
-      also:
-        'Then Settings → Battery → Background power consumption management → MBOS → ' +
-        'Allow high background power consumption.',
-    };
-  }
-
-  if (m.includes('xiaomi') || m.includes('redmi') || m.includes('poco')) {
-    return {
-      label: 'Autostart',
-      path: 'Settings → Apps → Manage apps → MBOS → Autostart → switch it on.',
-      also: 'Then on the same MBOS page: Battery saver → No restrictions.',
-    };
-  }
-
-  /* Realme runs ColorOS too, and both skins call it the same thing. */
-  if (m.includes('oppo') || m.includes('realme')) {
-    return {
-      label: 'Auto-launch',
-      path: 'Settings → Apps → App management → MBOS → Auto-launch → switch it on.',
-      also: 'Then Settings → Battery → App battery management → MBOS → Allow background running.',
-    };
-  }
-
-  if (m.includes('oneplus')) {
-    return {
-      label: 'Battery optimisation',
-      path: 'Settings → Apps → MBOS → Battery usage → Unrestricted.',
-      also: 'Then Settings → Battery → More → Advanced optimisation → switch Deep optimisation off.',
-    };
-  }
-
-  if (m.includes('huawei') || m.includes('honor')) {
-    return {
-      label: 'App launch',
-      path: 'Settings → Battery → App launch → MBOS → Manage manually.',
-      also: 'Switch on all three: Auto-launch, Secondary launch and Run in background.',
-    };
-  }
-
-  if (m.includes('samsung')) {
-    return {
-      label: 'Never sleeping apps',
-      path:
-        'Settings → Battery → Background usage limits → Never sleeping apps → add MBOS.',
-      also: 'Also check MBOS is not in the Sleeping apps or Deep sleeping apps list on the same page.',
-    };
-  }
-
-  return GENERIC;
-}
+/* The import is at the top of the file, beside the other one. */
 
 /* ------------------------------------------------------------ the rules */
 
@@ -236,7 +171,7 @@ function locationServicesItem(i: ReadinessInput): ReadinessItem {
       state: 'unknowable',
       title: 'Could not check location',
       detail:
-        'The phone would not say whether location is on. Open your location settings and make sure it is.',
+        'Your phone did not tell us if location is on. Open location settings and switch it on.',
       action: 'location_settings',
     };
   }
@@ -246,8 +181,8 @@ function locationServicesItem(i: ReadinessInput): ReadinessItem {
     state: 'todo',
     title: 'Location is switched off',
     detail:
-      'Switch on location for the whole phone, not just for MBOS. With it off, nothing you do today ' +
-      'is recorded anywhere.',
+      'Switch on location for the whole phone, not just for MBOS. If it is off, ' +
+      'nothing you do today is saved.',
     action: 'location_settings',
   };
 }
@@ -282,7 +217,7 @@ function permissionItem(
       detail:
         key === 'foreground'
           ? 'Allowed.'
-          : 'Allowed all the time, so the trail keeps running with the phone in your pocket.',
+          : 'Allowed all the time. Your route is saved even with the phone in your pocket.',
       action: null,
     };
   }
@@ -294,10 +229,10 @@ function permissionItem(
       title: key === 'foreground' ? 'Your phone will not ask again' : 'Your phone will not ask again',
       detail:
         (key === 'foreground'
-          ? 'Location was refused for MBOS and your phone has stopped offering to ask. '
-          : 'Following your day was refused and your phone has stopped offering to ask. ') +
-        'Open Settings → Permissions → Location and set it by hand. If you cannot find it, ring the ' +
-        'office — MBOS cannot fix this from here, and the day cannot be started until it is fixed.',
+          ? 'Location was not allowed for MBOS. Your phone will not ask again. '
+          : 'Location all the time was not allowed. Your phone will not ask again. ') +
+        'Open Settings → Permissions → Location and set it yourself. If you cannot find it, ring the ' +
+        'office. MBOS cannot fix this. You cannot start the day until it is fixed.',
       action: 'app_settings',
     };
   }
@@ -309,8 +244,8 @@ function permissionItem(
     detail:
       key === 'foreground'
         ? 'Tap below and choose Allow when your phone asks.'
-        : 'Tap below and choose “Allow all the time”. Anything less and the trail stops the moment ' +
-          'you put the phone away.',
+        : 'Tap below and choose “Allow all the time”. With any other choice, your route stops ' +
+          'when you put the phone away.',
     action: 'ask_permission',
   };
 }
@@ -321,7 +256,7 @@ function batteryItem(i: ReadinessInput): ReadinessItem {
       key: 'battery',
       state: 'ok',
       title: 'The battery saver will leave MBOS alone',
-      detail: 'Your phone will let MBOS keep working while it is in your pocket.',
+      detail: 'MBOS will keep working while the phone is in your pocket.',
       action: null,
     };
   }
@@ -332,8 +267,8 @@ function batteryItem(i: ReadinessInput): ReadinessItem {
       state: 'todo',
       title: 'The battery saver will stop MBOS',
       detail:
-        'Your phone is set to switch MBOS off to save battery. It takes one tap to allow it. Without ' +
-        'it, the office stops seeing you a few minutes after you put the phone away.',
+        'Your phone switches MBOS off to save battery. One tap fixes it. If you do not, ' +
+        'the office stops seeing you a few minutes after you put the phone away.',
       action: 'battery',
     };
   }
@@ -348,7 +283,7 @@ function batteryItem(i: ReadinessInput): ReadinessItem {
     key: 'battery',
     state: 'unknowable',
     title: 'Could not check the battery saver',
-    detail: 'This phone will not tell MBOS what the battery saver is set to. Do the step below as well.',
+    detail: 'This phone does not tell MBOS how the battery saver is set. Do the step below too.',
     action: null,
   };
 }
@@ -376,8 +311,12 @@ function batteryItem(i: ReadinessInput): ReadinessItem {
  * ordering lives on the screen where it can watch him come back.
  */
 function autostartItem(i: ReadinessInput): ReadinessItem {
-  const oem = oemWords(i.manufacturer);
-  const where = oem.path + (oem.also ? ' ' + oem.also : '');
+  /* `oemOf` folds the sub-brands — a Redmi is MIUI, an iQOO is Funtouch — and
+     `oemWords` is the one table. Two steps rather than one function taking a
+     raw manufacturer string, because the fold is what "Keep tracking on" needs
+     on its own to decide which steps to draw. */
+  const oem = oemWords(oemOf(i.manufacturer));
+  const where = autostartWhere(oemOf(i.manufacturer));
   const prev = i.previousWorkedDay;
 
   const blocking =
@@ -389,8 +328,8 @@ function autostartItem(i: ReadinessInput): ReadinessItem {
       state: 'todo',
       title: oem.label,
       detail:
-        'Your last working day recorded no movement at all, which is what this setting does when it ' +
-        'is off — your phone switched MBOS off behind your back. ' +
+        'Your last working day saved no movement at all. This happens when this setting is off. ' +
+        'Your phone switched MBOS off without telling you. ' +
         where +
         ' Then tell us you have done it.',
       action: 'autostart',
@@ -402,8 +341,8 @@ function autostartItem(i: ReadinessInput): ReadinessItem {
     state: 'unknowable',
     title: oem.label,
     detail:
-      'No phone will tell MBOS whether this is switched on, so we cannot tick it for you. It is worth ' +
-      'checking once. ' +
+      'Phones do not tell MBOS if this is on, so we cannot tick it for you. ' +
+      'Check it once. ' +
       where,
     action: 'autostart',
   };
@@ -441,4 +380,15 @@ export function phoneReadiness(i: ReadinessInput): Readiness {
   const mayCheckIn = !items.some((it) => it.state === 'todo' || it.state === 'dead_end');
 
   return { items, mayCheckIn, deadEnd };
+}
+
+/**
+ * Did any recorder leave proof of life on or after this check-in?
+ *
+ * Pure, so the case that broke can be pinned without a phone: a service-mode
+ * day leaves the expo task's mark where yesterday left it and moves only the
+ * shared one, and reading the first alone called that day silent.
+ */
+export function hadTrailSince(checkInAt: number, marks: readonly (number | null)[]): boolean {
+  return marks.some((m) => m != null && Number.isFinite(m) && m >= checkInAt);
 }

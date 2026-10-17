@@ -1,5 +1,5 @@
 import React from 'react';
-import { Image, View, Pressable, ScrollView } from 'react-native';
+import { Animated, Image, View, Pressable, ScrollView } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, Choice, DashedButton, Divider, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
@@ -13,10 +13,8 @@ import { RelationshipChain } from '../src/components/leads/relationship-chain';
 import { ReasonSheet } from '../src/components/leads/reason-sheet';
 import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
 import {
-  convertToCustomer,
   leadThresholds,
   setArchived,
-  setFollowUp,
   touchLead,
   type Lead,
 } from '../src/data/leads';
@@ -47,8 +45,9 @@ import {
   type LeadFunnelView,
 } from '../src/data/lead-funnel';
 import { currentSession } from '../src/data/session';
-import { leadAlert, type LeadThresholds } from '../src/engines/leads';
+import { gateAsRun, leadAlert, type LeadThresholds } from '../src/engines/leads';
 import {
+  bandOf,
   findingLabel,
   gateTo,
   isParked,
@@ -56,6 +55,7 @@ import {
   labelOf,
   ladderFor,
   offeredSalesTypes,
+  PROSPECT_CONDITIONS,
   REASON_CODE_NEEDING_REMARKS,
   salesTypeLabel,
   stageLabel,
@@ -67,6 +67,8 @@ import {
 } from '../src/engines/funnel';
 import { dmy, inrFromPaise, isoDate, plural, pretty } from '../src/lib/format';
 import { useStore } from '../src/state/store';
+import { Appear, FillBar, Pop, Presence, Stagger, useShake } from '../src/components/ui/motion';
+import { feedback } from '../src/components/ui/feedback';
 
 /**
  * One lead, on its own ladder.
@@ -87,14 +89,26 @@ import { useStore } from '../src/state/store';
  * app helping him avoid the decision.
  */
 
-const STAGE_TONE: Record<string, BadgeTone> = {
-  New: 'info',
-  Contacted: 'teal',
-  Qualified: 'amber',
-  Negotiation: 'amber',
-  Converted: 'success',
-  Lost: 'danger',
-};
+/*
+ * The badge's colour comes off the SAME rung its words do. It was keyed on the
+ * six-word column while the text came from the funnel stage, so a lead at
+ * Sample/Trial — stored there as `Qualified` — and one at First order —
+ * stored as `Negotiation` — could read one rung and wear another's colour.
+ * The four funnel bands decide it, and the three places a lead leaves the
+ * funnel are named rather than guessed.
+ */
+function stageTone(stage: LeadStage): BadgeTone {
+  if (stage === 'won' || stage === 'customer' || stage === 'active_distributor') return 'success';
+  if (stage === 'lost') return 'danger';
+  if (isParked(stage)) return 'neutral';
+  switch (bandOf(stage)) {
+    case 'new': return 'info';
+    case 'contacted': return 'teal';
+    case 'qualified':
+    case 'negotiation': return 'amber';
+    default: return 'neutral';
+  }
+}
 
 /**
  * §4.1 — the manager's three, in a colour and a word.
@@ -128,7 +142,6 @@ export default function LeadRecord() {
   const id = params.id ?? '';
   const back = useCameFrom('leads');
   const notify = useStore((s) => s.notify);
-  const askConfirm = useStore((s) => s.askConfirm);
   const set = useStore((s) => s.set);
 
   const [view, setView] = React.useState<LeadFunnelView | null>(null);
@@ -142,7 +155,6 @@ export default function LeadRecord() {
 
   /* the drawers — each keyed so it remounts fresh rather than being reset in
      an effect, which the React Compiler rules forbid */
-  const [cal, setCal] = React.useState(false);
   const [lost, setLost] = React.useState(false);
   const [suspect, setSuspect] = React.useState<'prospect' | 'not' | null>(null);
   const [nextOpen, setNextOpen] = React.useState(false);
@@ -152,6 +164,23 @@ export default function LeadRecord() {
      because a list of twelve rungs on a record that is on hold reads as the
      screen suggesting he move it. */
   const [returning, setReturning] = React.useState(false);
+
+  /*
+   * THE LADDER MOVES WHEN HE MOVES IT, and only then.
+   *
+   * `moves` counts the rungs climbed from THIS screen. The rung he is standing
+   * on is drawn inside a `Pop` that pops on mount only once he has moved —
+   * opening a record half way up a ladder is not news, reaching the rung is.
+   * A counter rather than a "just moved" flag, so nothing has to reset it.
+   */
+  const [moves, setMoves] = React.useState(0);
+  /* The rung above, refused. The buzz is the shake's own: the sentence it
+     answers with is the rung's description, an `info` toast that does not buzz,
+     and the list of what is missing sits directly under the chips. */
+  const rungRefusal = useShake('warning');
+  /* Each refused tap re-pops the "still to do" card, which is what ties a
+     shaking chip to the list that explains it. */
+  const [refusals, setRefusals] = React.useState(0);
 
   /*
    * PARKING IS THREE QUESTIONS AND THEY ARE ASKED ONE AT A TIME.
@@ -239,6 +268,17 @@ export default function LeadRecord() {
 
   useFocusEffect(load);
 
+  /* §4 — the decision screen REPLACES the record, so arriving on it is a
+     refusal of everything else on the lead, said once as a buzz. Fired from an
+     effect on the transition rather than on every render, and only once per
+     time the screen takes over. */
+  const mustDecideNow = Boolean(view?.mustDecide);
+  const buzzedDecide = React.useRef(false);
+  React.useEffect(() => {
+    if (mustDecideNow && !buzzedDecide.current) feedback('warning');
+    buzzedDecide.current = mustDecideNow;
+  }, [mustDecideNow]);
+
   if (!view) {
     return (
       <AppFrame title="Lead" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
@@ -246,7 +286,7 @@ export default function LeadRecord() {
         <Card style={{ paddingVertical: 32 }}>
           <T style={[{ fontSize: 16, color: C.ink, textAlign: 'center' }, weight(600)]}>This lead is not on this phone</T>
           <T s="small" style={{ color: C.muted, textAlign: 'center', marginTop: 4 }}>
-            Go back to the list and open it from there.
+            Go back to the list. Open it from there.
           </T>
         </Card>
       </AppFrame>
@@ -275,7 +315,7 @@ export default function LeadRecord() {
   }
   const litres = lead.monthlyLitres ?? lead.monthlyVolumeLitres;
   if (litres != null) {
-    learned.push({ label: 'Gets through', value: plural(litres, 'litre') + ' a month', finding: 'monthly_litres' });
+    learned.push({ label: 'Uses', value: plural(litres, 'litre') + ' a month', finding: 'monthly_litres' });
   }
   const onNow = lead.competitor?.trim() || lead.competitorName?.trim();
   if (onNow) learned.push({ label: 'Buys from now', value: onNow, finding: 'competitor' });
@@ -299,6 +339,27 @@ export default function LeadRecord() {
     learned.push({ label: findingLabel(field), value: valueFromChecks(rows) ?? '—', finding: field });
   }
 
+  /*
+   * §6 — THE YES IS GATED BEFORE THE SHEET OPENS, not after the reason is
+   * typed. A Prospect is eight answers the office checks, and past the cap
+   * this screen hides every other control — so a shut gate is said here, with
+   * what it wants, and he is taken straight to the screen that asks for it.
+   * The reason he is about to pick counts as given; it is the ninth answer.
+   */
+  const askProspect = () => {
+    const verdict = gateAsRun(
+      gateTo({ ...input, prospectReasonRecorded: true }, 'prospect'),
+      input,
+      config,
+    );
+    if (!verdict.open) {
+      notify('Answer these first: ' + verdict.missing.map((c) => c.says).join('. ') + '.', 'warn');
+      router.push(`/lead-prospect?id=${lead.id}&from=lead`);
+      return;
+    }
+    setSuspect('prospect');
+  };
+
   /* --------------------------------------------------------- §4 the window
    *
    * Past the cap this is the entire screen. Not a banner over the record and
@@ -311,6 +372,7 @@ export default function LeadRecord() {
       <AppFrame title="Lead" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
         <BackLink label={back.label} onPress={back.go} />
 
+        <Appear>
         <Card>
           <T style={[{ fontSize: 19, lineHeight: 25, color: C.ink }, weight(600)]}>{title}</T>
           <T s="caption" style={{ marginTop: 2 }}>
@@ -320,24 +382,25 @@ export default function LeadRecord() {
           <Divider style={{ marginVertical: 14 }} />
 
           <T style={[{ fontSize: 17, lineHeight: 24, color: C.ink }, weight(600)]}>
-            {'You have been ' + plural(visits, 'time') + '. Is this worth pursuing?'}
+            {'You have visited ' + plural(visits, 'time') + '. Should you keep visiting?'}
           </T>
           <T style={{ fontSize: 15, lineHeight: 22, color: C.muted, marginTop: 6 }}>
-            {'A suspect gets ' + config.suspectMaxVisits +
-              ' visits to become something, and this one has had them. Nothing else on this record works until you answer — that is the point of the question, not a fault.'}
+            {'A Suspect gets ' + config.suspectMaxVisits +
+              ' visits. This one has had them all. Answer this first. Nothing else works until you do.'}
           </T>
 
           <PrimaryButton
-            label="Yes — make it a Prospect"
-            onPress={() => setSuspect('prospect')}
+            label="Yes, make it a Prospect"
+            onPress={askProspect}
             style={{ marginTop: 16 }}
           />
           <SecondaryButton
-            label="No — not a prospect"
+            label="No, not a Prospect"
             onPress={() => setSuspect('not')}
             style={{ marginTop: 10 }}
           />
         </Card>
+        </Appear>
 
         {suspectSheet()}
       </AppFrame>
@@ -348,33 +411,21 @@ export default function LeadRecord() {
 
   const move = async (to: LeadStage) => {
     const r = await advanceStage(lead.id, to);
-    if (!r.ok) return notify(r.message);
+    if (!r.ok) return notify(r.message, 'warn');
+    /* Counted before the reload lands, so the rung that mounts under the new
+       stage pops. The `success` toast below is the buzz; none is added. */
+    setMoves((m) => m + 1);
     load();
     notify(stageLabel(to));
   };
 
   const saveNote = async () => {
     const r = await addLeadNote(lead.id, note);
-    if (!r.ok) return notify(r.message);
+    if (!r.ok) return notify(r.message, 'warn');
     setNote('');
     load();
     notify('Noted');
   };
-
-  const convert = () =>
-    askConfirm({
-      title: 'Make them a customer?',
-      body: title + ' becomes an account you can order against. The lead stays, linked to it, and this cannot be undone.',
-      confirmLabel: 'Convert',
-      run: () => {
-        void convertToCustomer(lead, today).then((r) => {
-          if (!r.ok) return notify(r.message);
-          notify('Customer created · ' + title);
-          set({ custId: r.value, pTab: 0 });
-          router.push('/customer');
-        });
-      },
-    });
 
   /* §9 §10 — the sample is gated on the twelve, same as everything else. */
   const sampleGate = gateTo(input, 'sample_trial');
@@ -384,6 +435,25 @@ export default function LeadRecord() {
   return (
     <AppFrame title="Lead" activeTab={null} onBack={back.go} contentStyle={{ padding: 16, paddingBottom: 24 }}>
       <BackLink label={back.label} onPress={back.go} />
+
+      {/* Refused by the office — most often because the shop was already on
+          the book. Said at the top, because a note or a visit added below a
+          record the office never took goes nowhere. */}
+      {lead.syncState === 'rejected' || lead.syncState === 'blocked' ? (
+        <Card style={{ marginBottom: 12, borderColor: C.warnInk }}>
+          <T style={[{ fontSize: 15, lineHeight: 21, color: C.warnInk }, weight(600)]}>
+            The office did not accept this lead
+          </T>
+          <T style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 4 }}>
+            Anything you add here will not reach them. See why on Not accepted.
+          </T>
+          <SecondaryButton
+            label="Open Not accepted"
+            onPress={() => router.push('/rejections?from=leads')}
+            style={{ marginTop: 10 }}
+          />
+        </Card>
+      ) : null}
 
       {/* ---------------------------------------------------------- who */}
       <Card>
@@ -395,7 +465,7 @@ export default function LeadRecord() {
             </T>
           </View>
           <View style={{ alignItems: 'flex-end', gap: 6 }}>
-            <Badge tone={STAGE_TONE[lead.stage] ?? 'neutral'}>{stageLabel(stage)}</Badge>
+            <Badge tone={stageTone(stage)}>{stageLabel(stage)}</Badge>
             {/* §4.1 — HOW HARD TO PUSH, and it is READ-ONLY on this phone.
                 It is the manager's judgement about the WORK — which of forty
                 leads to get to first — as against the potential below, which is
@@ -442,10 +512,10 @@ export default function LeadRecord() {
             {lead.mobile ? (
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={'Ring ' + title}
+                accessibilityLabel={'Call ' + title}
                 onPress={() => {
                   void callNumber(lead.mobile!).then((out) => {
-                    if (out.status === 'failed') return notify(out.reason);
+                    if (out.status === 'failed') return notify(out.reason, 'warn');
                     /* The clock moves on the ATTEMPT, not on a connected call:
                        the handset cannot tell us whether they picked up, and
                        treating an unanswered ring as no work would age exactly
@@ -465,12 +535,12 @@ export default function LeadRecord() {
                   backgroundColor: pressed ? C.wash : C.primaryTint,
                 })}>
                 <Icon name="call" size={16} color={C.primaryDeep} />
-                <T style={[{ fontSize: 14, color: C.primaryDeep }, weight(500)]}>Ring</T>
+                <T style={[{ fontSize: 14, color: C.primaryDeep }, weight(500)]}>Call</T>
               </Pressable>
             ) : null}
           </View>
           <Line
-            label="Might buy"
+            label="Can buy"
             value={lead.estimatedPotentialPaise ? inrFromPaise(lead.estimatedPotentialPaise) + ' a month' : 'Not estimated'}
           />
           {/* Where it actually came from, in more words than "manual". The
@@ -491,7 +561,7 @@ export default function LeadRecord() {
         ) : null}
 
         {stage === 'lost' && lead.lostReason ? (
-          <T style={{ fontSize: 14, lineHeight: 20, marginTop: 10, color: C.danger }}>{'Lost — ' + lead.lostReason}</T>
+          <T style={{ fontSize: 14, lineHeight: 20, marginTop: 10, color: C.danger }}>{'Lost: ' + lead.lostReason}</T>
         ) : null}
 
         {/* Why it is not moving. It was on the list card and nowhere on the
@@ -510,7 +580,7 @@ export default function LeadRecord() {
         {stage === 'suspect' && !lead.suspectDecidedAt ? (
           <T style={{ fontSize: 14, lineHeight: 20, marginTop: 10, color: C.muted }}>
             {'Visit ' + Math.max(1, visits) + ' of ' + config.suspectMaxVisits +
-              ' — decide by then whether this is a prospect.'}
+              '. Decide by then if this is a Prospect.'}
           </T>
         ) : null}
 
@@ -535,7 +605,7 @@ export default function LeadRecord() {
           started from nothing and he stopped filling them in. */}
       {learned.length > 0 || lead.shopPhotoId ? (
         <View style={{ marginTop: 20 }}>
-          <SectionLabel style={{ marginBottom: 10 }}>What you learned in the shop</SectionLabel>
+          <SectionLabel style={{ marginBottom: 10 }}>What you found in the shop</SectionLabel>
           <Card>
             {learned.length > 0 ? (
               <View style={{ gap: 8 }}>
@@ -568,8 +638,7 @@ export default function LeadRecord() {
                      that no longer exists is a grey rectangle that explains
                      nothing. */
                   <T s="caption">
-                    The shop front was photographed. The picture has gone up to the office and is not on this
-                    phone any more.
+                    Shop photo taken. It was sent to the office. It is not on this phone now.
                   </T>
                 )}
               </View>
@@ -581,7 +650,7 @@ export default function LeadRecord() {
       {/* ------------------------------------------------- §3 the ladder */}
       {settled ? null : (
         <View style={{ marginTop: 20 }}>
-          <SectionLabel style={{ marginBottom: 10 }}>The climb</SectionLabel>
+          <SectionLabel style={{ marginBottom: 10 }}>Lead stage</SectionLabel>
           {/* Every rung of THIS lead's ladder, not a hardcoded six. A salesman
               learns the process from seeing what is above him, which is why
               the whole ladder is drawn rather than only the next step. */}
@@ -590,16 +659,59 @@ export default function LeadRecord() {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={{ gap: 8, paddingVertical: 2, paddingRight: 8 }}
             style={{ marginHorizontal: -16, paddingHorizontal: 16 }}>
-            {ladder.map((rung) => (
-              <Choice
-                key={rung}
-                label={stageLabel(rung)}
-                selected={rung === stage}
-                onPress={() => notify(stageSentence(rung))}
-                style={{ paddingHorizontal: 14 }}
-              />
-            ))}
+            {ladder.map((rung) => {
+              const chip = (
+                <Choice
+                  label={stageLabel(rung)}
+                  selected={rung === stage}
+                  onPress={() => {
+                    /* The rung above, shut: the chip shakes its head and the
+                       list under the button pops, so "why not" is answered
+                       where he is looking. The sentence is the same one any
+                       other rung gives, as a note rather than a tick. */
+                    if (rung === next && !gate.open) {
+                      rungRefusal.shake();
+                      setRefusals((n) => n + 1);
+                    }
+                    notify(stageSentence(rung), 'info');
+                  }}
+                  style={{ paddingHorizontal: 14 }}
+                />
+              );
+              /* Three shapes for three facts, keyed by rung so swapping the
+                 wrapper is a remount: the rung he is on pops when he has just
+                 reached it, the shut rung above can shake, every other rung
+                 is plain. */
+              if (rung === stage) {
+                return (
+                  <Pop key={rung + ':here'} trigger={stage} popOnMount={moves > 0} from={0.8}>
+                    {chip}
+                  </Pop>
+                );
+              }
+              if (rung === next && !gate.open) {
+                return (
+                  <Animated.View key={rung + ':shut'} style={rungRefusal.style}>
+                    {chip}
+                  </Animated.View>
+                );
+              }
+              return <View key={rung}>{chip}</View>;
+            })}
           </ScrollView>
+          {/* How far up the ladder, as a line rather than a number: the fill
+              eases to the new rung when he climbs one, which is the movement
+              between two chips that the chips alone cannot draw. */}
+          {ladder.indexOf(stage) >= 0 ? (
+            <View style={{ flexDirection: 'row', marginTop: 10 }}>
+              <FillBar
+                pct={((ladder.indexOf(stage) + 1) / ladder.length) * 100}
+                fill={C.primary}
+                track={C.hairline}
+                height={4}
+              />
+            </View>
+          ) : null}
 
           {/* ------------------------------------------------- §28 the gate */}
           <View style={{ marginTop: 14 }}>
@@ -611,16 +723,23 @@ export default function LeadRecord() {
                   whyDisabled={
                     gate.open
                       ? undefined
-                      : 'Still to do: ' + gate.missing.map((c) => c.says.toLowerCase()).join('; ')
+                      : 'Still to do: ' + gate.missing.map((c) => c.says.toLowerCase()).join(', ')
                   }
                   onPress={() => {
                     if (!gate.open) {
-                      return notify(gate.missing[0]?.says ?? 'Something is still missing.');
+                      /* The button shakes and buzzes itself; the toast's own
+                         `warning` lands inside the same debounce. */
+                      setRefusals((n) => n + 1);
+                      return notify(gate.missing[0]?.says ?? 'Something is still missing.', 'warn');
                     }
                     void move(next);
                   }}
                 />
-                {gate.open ? null : (
+                {/* In and out rather than snapping: the list goes the moment
+                    the last condition is answered, and the button above it
+                    should not jump while his thumb is on its way to it. */}
+                <Presence show={!gate.open}>
+                  <Pop trigger={refusals} from={0.94}>
                   <View
                     style={{
                       marginTop: 10,
@@ -632,13 +751,16 @@ export default function LeadRecord() {
                       gap: 6,
                     }}>
                     <T s="caption">{'Before ' + stageLabel(next) + ', still to do'}</T>
-                    {gate.missing.map((c) => (
-                      <T key={c.id} style={{ fontSize: 15, lineHeight: 21, color: C.ink }}>
-                        {'· ' + c.says}
-                      </T>
+                    {gate.missing.map((c, i) => (
+                      <Stagger key={c.id} index={i}>
+                        <T style={{ fontSize: 15, lineHeight: 21, color: C.ink }}>
+                          {'· ' + c.says}
+                        </T>
+                      </Stagger>
                     ))}
                   </View>
-                )}
+                  </Pop>
+                </Presence>
               </>
             ) : parked ? (
               /* ON HOLD — NOT LOST, AND NOT FINISHED.
@@ -659,7 +781,7 @@ export default function LeadRecord() {
                     ? 'Waiting: ' + lead.holdReason
                     : lead.holdReasonCode
                       ? 'Waiting: ' + labelOf(config.holdReasons, lead.holdReasonCode)
-                      : 'Nobody wrote down what it is waiting for.'}
+                      : 'No reason was written for the hold.'}
                 </T>
                 {/* THE CODE AS WELL AS THE SENTENCE, where there are both.
                     `holdReason` is what somebody typed and this is the coded
@@ -697,22 +819,21 @@ export default function LeadRecord() {
                 {lead.holdResumeDate ?? lead.nextFollowUpDate ? (
                   <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink, marginTop: 6 }, weight(500)]}>
                     {(lead.holdResumeDate ?? lead.nextFollowUpDate!) <= today
-                      ? 'It was due back on ' + dmy(lead.holdResumeDate ?? lead.nextFollowUpDate!) + ' — pick it up'
+                      ? 'It was due back on ' + dmy(lead.holdResumeDate ?? lead.nextFollowUpDate!) + '. Work on it now.'
                       : 'Comes back on ' + dmy(lead.holdResumeDate ?? lead.nextFollowUpDate!)}
                   </T>
                 ) : (
                   <T style={{ fontSize: 15, lineHeight: 21, color: C.warnInk, marginTop: 6 }}>
-                    No day was set for it to come back. Nothing will bring it back to you.
+                    No return day was set. It will not come back by itself.
                   </T>
                 )}
                 <T style={{ fontSize: 14, lineHeight: 20, color: C.muted, marginTop: 6 }}>
-                  It is not lost and nothing about it has been given up on. Nothing climbs until somebody says
-                  which rung it comes back to.
+                  It is not lost. To work on it again, choose the stage it goes back to.
                 </T>
 
                 {returning ? (
                   <>
-                    <T s="caption" style={{ marginTop: 12 }}>Bring it back to</T>
+                    <T s="caption" style={{ marginTop: 12 }}>Bring it back to this stage</T>
                     {/* The rungs it can be WORKED at. The end of the ladder is
                         left off: coming back off a hold is picking up where it
                         stopped, and a one-tap jump to Converted on a record
@@ -751,7 +872,7 @@ export default function LeadRecord() {
             ) : (
               <Card>
                 <T style={{ fontSize: 15, lineHeight: 21, color: C.muted }}>
-                  Top of the ladder — there is no rung above this one.
+                  This is the last stage. There is no stage after this.
                 </T>
               </Card>
             )}
@@ -781,11 +902,11 @@ export default function LeadRecord() {
               </>
             ) : (
               <T style={{ fontSize: 15, lineHeight: 21, color: C.muted }}>
-                Nothing is owed on this lead by anybody. That is how one sits for six weeks.
+                No action is pending on this lead. Set one, or it will be forgotten.
               </T>
             )}
             <SecondaryButton
-              label={lead.nextAction ? 'Change it' : 'Say what happens next'}
+              label={lead.nextAction ? 'Change it' : 'Set next action'}
               onPress={() => setNextOpen(true)}
               style={{ marginTop: 12 }}
             />
@@ -800,7 +921,7 @@ export default function LeadRecord() {
           and why the sentence about commercial authority sits under them. */}
       {lead.thirdParty ? (
         <View style={{ marginTop: 20 }}>
-          <SectionLabel style={{ marginBottom: 10 }}>Who this shop goes through</SectionLabel>
+          <SectionLabel style={{ marginBottom: 10 }}>Who sells to this shop</SectionLabel>
           <RelationshipChain
             shopName={title}
             distributorSalesmanName={lead.distributorSalesmanName}
@@ -819,7 +940,7 @@ export default function LeadRecord() {
       {/* -------------------------------------------------------- the forms */}
       {settled ? null : (
         <View style={{ marginTop: 20, gap: 10 }}>
-          <SectionLabel style={{ marginBottom: 0 }}>The work</SectionLabel>
+          <SectionLabel style={{ marginBottom: 0 }}>Work to do</SectionLabel>
 
           {/* §5.5 — THE COMMITMENT, and it sits at the TOP of the work.
               It is the one condition in front of `first_order` that is this
@@ -843,11 +964,11 @@ export default function LeadRecord() {
           ) : null}
 
           <SecondaryButton
-            label="Prospect details — the eight answers"
+            label={'Prospect details (' + plural(PROSPECT_CONDITIONS.length, 'question') + ')'}
             onPress={() => router.push(`/lead-prospect?id=${lead.id}&from=lead`)}
           />
           <SecondaryButton
-            label={salesType === 'distributor' ? 'Distributor qualification — thirty questions' : 'Qualification checklist'}
+            label={salesType === 'distributor' ? 'Distributor qualification (30 questions)' : 'Qualification checklist'}
             onPress={() => router.push(`/lead-qualify?id=${lead.id}&from=lead`)}
           />
 
@@ -855,37 +976,44 @@ export default function LeadRecord() {
               outstanding. A sample given to a shop whose application nobody
               understands cannot be reviewed, because nobody knows what a good
               result would look like. */}
+          {/* A distributor's ladder has no sample rung, so there is no button
+              to draw — a disabled one would wait for a condition that can never
+              be met. `sampleAsk` refuses the same case wherever it is asked. */}
+          {ladder.includes('sample_trial') ? (
+          <>
           <PrimaryButton
             label="Request a sample"
             disabled={!sampleGate.open}
             whyDisabled={
               sampleGate.open
                 ? undefined
-                : 'Outstanding: ' + sampleGate.missing.map((c) => c.says.toLowerCase()).join('; ')
+                : 'Still to do: ' + sampleGate.missing.map((c) => c.says.toLowerCase()).join(', ')
             }
             onPress={() => {
               if (!sampleGate.open) {
-                return notify(sampleGate.missing[0]?.says ?? 'Not yet.');
+                return notify(sampleGate.missing[0]?.says ?? 'Not yet.', 'warn');
               }
               router.push(`/samples?lead=${lead.id}&ask=1&from=lead`);
             }}
           />
           {sampleGate.open ? null : (
             <T s="caption">
-              {plural(sampleGate.missing.length, 'thing') + ' still to answer before a sample can go out.'}
+              {plural(sampleGate.missing.length, 'thing') + ' to answer before a sample can go.'}
             </T>
           )}
+          </>
+          ) : null}
 
           <SecondaryButton
             label={
               lead.thirdParty
                 ? 'Billed by ' + (lead.distributorName ?? 'a distributor')
-                : 'Who invoices this shop'
+                : 'Who bills this shop'
             }
             onPress={() => setParties(true)}
           />
           <DashedButton
-            label={'Kind of sale: ' + salesTypeLabel(salesType) + ' — change it'}
+            label={'Kind of sale: ' + salesTypeLabel(salesType) + '. Change it'}
             onPress={() => setLadderOpen(true)}
           />
         </View>
@@ -908,14 +1036,14 @@ export default function LeadRecord() {
             lead.mobile
               ? () => {
                   void callNumber(lead.mobile!).then((out) => {
-                    if (out.status === 'failed') notify(out.reason);
+                    if (out.status === 'failed') notify(out.reason, 'warn');
                   });
                 }
               : undefined
           }
           onRecord={(args) => {
             void recordCommunication({ customerId: lead.id, ...args }).then((r) => {
-              if (!r.ok) return notify(r.message);
+              if (!r.ok) return notify(r.message, 'warn');
               /* The clock moves on this exactly as it does on a ring from the
                  header: reaching out IS work on the lead, and a record that
                  aged while somebody was working it is how a live shop reaches
@@ -926,28 +1054,11 @@ export default function LeadRecord() {
         />
       )}
 
-      {/* --------------------------------------------------- follow-up */}
-      {settled ? null : (
-        <View style={{ marginTop: 20 }}>
-          <SectionLabel style={{ marginBottom: 10 }}>Go back to them on</SectionLabel>
-          <Pressable
-            onPress={() => setCal(true)}
-            accessibilityRole="button"
-            style={{
-              minHeight: 52,
-              borderWidth: 1,
-              borderColor: C.border,
-              borderRadius: radius.lg,
-              backgroundColor: C.surface,
-              justifyContent: 'center',
-              paddingHorizontal: 14,
-            }}>
-            <T style={{ fontSize: 16, color: lead.nextFollowUpDate ? C.ink : C.faint }}>
-              {lead.nextFollowUpDate ? dmy(lead.nextFollowUpDate) : 'Pick a day'}
-            </T>
-          </Pressable>
-        </View>
-      )}
+      {/* The separate "Next follow-up on" picker that was here is gone.
+          `setNextAction` already makes the next action's day the follow-up
+          day, so the two were the same date set from two controls — and the
+          picker set one without the other, which is how they came apart. One
+          question, asked once, on the card above. */}
 
       {/* ---------------------------------------------- §E validation calls --
 
@@ -978,7 +1089,7 @@ export default function LeadRecord() {
           leaves the reader to notice is a screen that produces it for nobody. */}
       {checks.length ? (
         <View style={{ marginTop: 20 }}>
-          <SectionLabel style={{ marginBottom: 10 }}>The office rang them</SectionLabel>
+          <SectionLabel style={{ marginBottom: 10 }}>The office called them</SectionLabel>
           <View style={{ gap: 10 }}>
             {checks.map((v) => {
               const tone: BadgeTone =
@@ -1067,12 +1178,12 @@ export default function LeadRecord() {
 
       {/* ------------------------------------------------- §25 the timeline */}
       <View style={{ marginTop: 20 }}>
-        <SectionLabel style={{ marginBottom: 10 }}>What has happened</SectionLabel>
+        <SectionLabel style={{ marginBottom: 10 }}>History</SectionLabel>
 
         {events.length === 0 ? (
           <Card style={{ paddingVertical: 24 }}>
             <T s="small" style={{ color: C.muted, textAlign: 'center' }}>
-              Nothing recorded yet. What they buy now, and from whom, is the useful part.
+              Nothing here yet. Add a note. Write what they buy now, and from whom.
             </T>
           </Card>
         ) : (
@@ -1103,7 +1214,7 @@ export default function LeadRecord() {
             onChangeText={setNote}
             placeholder="Buys 20 cans a month from Asian, wants 45 days credit"
           />
-          <PrimaryButton label="Add the note" onPress={saveNote} style={{ marginTop: 10 }} />
+          <PrimaryButton label="Add note" onPress={saveNote} style={{ marginTop: 10 }} />
         </View>
       </View>
 
@@ -1111,7 +1222,6 @@ export default function LeadRecord() {
       <View style={{ marginTop: 24, gap: 10 }}>
         {settled ? null : (
           <>
-            <PrimaryButton label="Convert to customer" onPress={convert} />
             {/* ON HOLD SITS BESIDE LOST, AND THAT PLACEMENT IS THE POINT.
                 This is the moment a salesman is standing in front of the two
                 answers — the plant is shut for two months, or they are never
@@ -1128,33 +1238,17 @@ export default function LeadRecord() {
           </>
         )}
         <DashedButton
-          label={lead.archived ? 'Bring it back to the list' : 'Archive it — kept, just out of the way'}
+          label={lead.archived ? 'Bring it back to the list' : 'Close it (hide from list)'}
           onPress={() => {
             void setArchived(lead.id, !lead.archived, today).then(() => {
               load();
-              notify(lead.archived ? 'Back on the list' : 'Archived — find it under Archived');
+              notify(lead.archived ? 'Back on the list' : 'Closed. Find it under Archived.');
             });
           }}
         />
       </View>
 
       {/* ---------------------------------------------------------- sheets */}
-      <BottomSheet open={cal} onClose={() => setCal(false)}>
-        <Calendar
-          key={cal ? 'open' : 'shut'}
-          selected={lead.nextFollowUpDate ?? ''}
-          disabledReason={(iso) => (iso < today ? 'That day has gone.' : null)}
-          onPick={(iso) => {
-            setCal(false);
-            void setFollowUp(lead.id, iso, today).then((r) => {
-              if (!r.ok) return notify(r.message);
-              load();
-              notify('Back to them on ' + dmy(iso));
-            });
-          }}
-        />
-        <SecondaryButton label="Close" onPress={() => setCal(false)} style={{ minHeight: 48, height: 48, marginTop: 10 }} />
-      </BottomSheet>
 
       {/* §26 — ten reasons, and a sentence beside whichever one it was. */}
       <ReasonSheet
@@ -1162,14 +1256,14 @@ export default function LeadRecord() {
         open={lost}
         onClose={() => setLost(false)}
         title="Mark this lead lost?"
-        body={title + ' stays on the list under Lost, with the reason on it. Nobody rings this shop again after this.'}
+        body={title + ' moves to Lost, with the reason. Nobody will call this shop again.'}
         options={config.lostReasons}
         confirmLabel="Mark it lost"
         noteLabel="What they actually said"
         onConfirm={(code, said) => {
           setLost(false);
           void markLost(lead.id, code, said).then((r) => {
-            if (!r.ok) return notify(r.message);
+            if (!r.ok) return notify(r.message, 'warn');
             load();
             notify('Lost');
           });
@@ -1195,10 +1289,10 @@ export default function LeadRecord() {
         title="Put this lead on hold?"
         body={
           title +
-          ' stops being chased until the day you name. It is not lost, it stays on your list, and nothing about it is given up on.'
+          ' will not be followed up until the day you choose. It is not lost. It stays on your list.'
         }
         options={config.holdReasons}
-        confirmLabel="Next — when does it come back?"
+        confirmLabel="Next: choose return day"
         noteLabel="What they actually said"
         /* Only "Other" costs a sentence. A code meaning "something else" with
            nothing behind it is the one row nobody can act on afterwards, and
@@ -1215,7 +1309,7 @@ export default function LeadRecord() {
           {/* The sentence says what the date DOES, because a date on a screen
               that does nothing is how "back after Diwali" became a lead nobody
               looked at for six months. */}
-          On this day it returns to your list with the action you set next.
+          On this day it comes back to your list, with the next action you set.
         </T>
         <View style={{ marginTop: 14 }}>
           <Calendar
@@ -1225,7 +1319,7 @@ export default function LeadRecord() {
                on the day it is made is not a hold, and the screen saying so is
                kinder than a park that quietly means nothing. */
             disabledReason={(iso) =>
-              iso <= today ? 'A hold has to end after today, or it is not a hold.' : null
+              iso <= today ? 'Choose a day after today.' : null
             }
             onPick={(iso) =>
               setHold((h) => (h?.step === 'until' ? { step: 'next', code: h.code, note: h.note, until: iso } : h))
@@ -1269,7 +1363,7 @@ export default function LeadRecord() {
             next: n,
           })
             .then((r) => {
-              if (!r.ok) return notify(r.message);
+              if (!r.ok) return notify(r.message, 'warn');
               load();
               notify('On hold until ' + dmy(until));
             })
@@ -1285,11 +1379,16 @@ export default function LeadRecord() {
         onClose={() => setNextOpen(false)}
         meId={me?.id ?? ''}
         meName={me?.name ?? 'You'}
+        /* The lead manager can be named as the owner here too, as the hold
+           flow already allowed — "the manager rings them on Friday" is an
+           ordinary next action, not only a parked one. */
+        managerId={lead.leadManagerId}
+        managerName={lead.leadManagerName}
         current={{ action: lead.nextAction, date: lead.nextActionDate, ownerId: lead.nextActionOwnerId }}
         onSave={(n) => {
           setNextOpen(false);
           void setNextAction(lead.id, n).then((r) => {
-            if (!r.ok) return notify(r.message);
+            if (!r.ok) return notify(r.message, 'warn');
             load();
             notify('Next: ' + n.action);
           });
@@ -1304,9 +1403,9 @@ export default function LeadRecord() {
         onPick={(t, reason) => {
           setLadderOpen(false);
           void setSalesType(lead.id, t, reason).then((r) => {
-            if (!r.ok) return notify(r.message);
+            if (!r.ok) return notify(r.message, 'warn');
             load();
-            notify(salesTypeLabel(t) + ' — back to the foot of that ladder');
+            notify(salesTypeLabel(t) + '. Lead goes back to the first stage.');
           });
         }}
       />
@@ -1319,6 +1418,7 @@ export default function LeadRecord() {
         open={commitOpen}
         today={today}
         productName={lead.requiredProductName}
+        productId={lead.requiredProductId}
         blockers={config.orderBlockers}
         current={{
           date: lead.expectedOrderDate,
@@ -1338,12 +1438,12 @@ export default function LeadRecord() {
             blockerCode: c.blockerCode,
           })
             .then((r) => {
-              if (!r.ok) return notify(r.message);
+              if (!r.ok) return notify(r.message, 'warn');
               load();
               /* The confirmation says what it DID and, in the same breath, what
                  it did not: a salesman who has just written down a promise will
                  reasonably look for the ladder to have moved. */
-              notify(plural(c.quantityCans, 'can') + ' expected ' + dmy(c.date) + ' — noted, not ordered');
+              notify(plural(c.quantityCans, 'can') + ' expected ' + dmy(c.date) + '. Saved. This is not an order.');
             })
             .finally(() => {
               committing.current = false;
@@ -1359,7 +1459,7 @@ export default function LeadRecord() {
         onSave={(p) => {
           setParties(false);
           void setLeadParties(lead.id, p).then((r) => {
-            if (!r.ok) return notify(r.message);
+            if (!r.ok) return notify(r.message, 'warn');
             load();
             notify('Saved');
           });
@@ -1381,8 +1481,8 @@ export default function LeadRecord() {
         title={asking === 'not' ? 'Not a prospect?' : 'Make this a Prospect?'}
         body={
           asking === 'not'
-            ? 'It closes with the reason on it, and stays on the list under Lost.'
-            : 'Your sales manager comes onto it from here, and rings the customer to check.'
+            ? 'It closes with the reason. It stays on the list under Lost.'
+            : 'Your sales manager will now work on it too. They will call the customer to check.'
         }
         options={asking === 'not' ? view.config.lostReasons : view.config.prospectReasons}
         confirmLabel={asking === 'not' ? 'Close it' : 'Make it a Prospect'}
@@ -1391,7 +1491,12 @@ export default function LeadRecord() {
           const wanted = asking === 'prospect';
           setSuspect(null);
           void decideSuspect(view.lead.id, { prospect: wanted, reasonCode: code, note: said }).then((r) => {
-            if (!r.ok) return notify(r.message);
+            if (!r.ok) {
+              notify(r.message, 'warn');
+              /* A shut gate is answered on Prospect details, not here. */
+              if (r.missing?.length) router.push(`/lead-prospect?id=${view.lead.id}&from=lead`);
+              return;
+            }
             load();
             notify(wanted ? 'Now a Prospect' : 'Closed');
           });
@@ -1440,7 +1545,7 @@ function LadderSheet({
         What kind of sale is this?
       </T>
       <T s="caption" style={{ marginTop: 2 }}>
-        It decides which questions the rest of the funnel asks. Changing it starts the climb again at the foot.
+        This decides which questions come next. If you change it, the lead goes back to the first stage.
       </T>
 
       {/* The same withdrawal as the raise screen, and it bites hardest here:
@@ -1465,7 +1570,7 @@ function LadderSheet({
 
       <View style={{ marginTop: 12 }}>
         <SectionLabel style={{ marginBottom: 6 }}>Why it is changing</SectionLabel>
-        <Input value={reason} onChangeText={setReason} placeholder="Optional — he sells on rather than uses it" />
+        <Input value={reason} onChangeText={setReason} placeholder="Optional. Example: he sells it, does not use it" />
       </View>
 
       <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
@@ -1473,7 +1578,7 @@ function LadderSheet({
         <PrimaryButton
           label="Change it"
           disabled={!picked || picked === current}
-          whyDisabled={!picked ? 'Pick one first.' : 'That is what it is already.'}
+          whyDisabled={!picked ? 'Choose one first.' : 'It is already this.'}
           onPress={() => picked && picked !== current && onPick(picked, reason)}
           style={{ flex: 1, borderRadius: radius.xl }}
         />
@@ -1532,15 +1637,15 @@ function PartiesSheet({
   return (
     <BottomSheet open={open} onClose={onClose} scroll>
       <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>
-        Who invoices this shop?
+        Who bills this shop?
       </T>
       <T s="caption" style={{ marginTop: 2 }}>
-        A shop we deliver to and do not bill is a third-party customer, and it has to say who does.
+        If we deliver but do not bill the shop, it is a third-party customer. Say who bills it.
       </T>
 
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
         <Choice label="We do" selected={!thirdParty} onPress={() => setThirdParty(false)} style={{ paddingHorizontal: 16 }} />
-        <Choice label="A distributor does" selected={thirdParty} onPress={() => setThirdParty(true)} style={{ paddingHorizontal: 16 }} />
+        <Choice label="A distributor" selected={thirdParty} onPress={() => setThirdParty(true)} style={{ paddingHorizontal: 16 }} />
       </View>
 
       {thirdParty ? (
@@ -1560,14 +1665,14 @@ function PartiesSheet({
                 />
               ))}
               {hits.length === 0 ? (
-                <T s="caption">Nothing matched. Only accounts we invoice can be named here.</T>
+                <T s="caption">No match. You can only choose shops we bill.</T>
               ) : null}
             </View>
           </View>
 
           <View style={{ marginTop: 12 }}>
             <SectionLabel style={{ marginBottom: 6 }}>Their salesman for this shop</SectionLabel>
-            <Input value={salesman} onChangeText={setSalesman} placeholder="Rahul — the man who actually calls on them" />
+            <Input value={salesman} onChangeText={setSalesman} placeholder="Example: Rahul, who visits this shop" />
             <T s="caption" style={{ marginTop: 6 }}>
               A name is enough. He has no login here and does not need one.
             </T>
@@ -1580,7 +1685,7 @@ function PartiesSheet({
         <PrimaryButton
           label="Save"
           disabled={thirdParty && !chosen}
-          whyDisabled="Say which distributor invoices this shop — a marked shop with nobody billing it is a record nobody can ask about."
+          whyDisabled="Choose the distributor who bills this shop."
           onPress={() => {
             if (thirdParty && !chosen) return;
             onSave({
@@ -1597,13 +1702,6 @@ function PartiesSheet({
   );
 }
 
-/**
- * The stored verdict, in words somebody would say.
- *
- * `not_qualified` on a badge is the database talking. Anything unrecognised
- * falls through to "Waiting" rather than being printed raw — a verdict added
- * at a desk should read as pending on an older handset, not as an enum.
- */
 /**
  * §8 — WHAT THE SHOP TOLD THE OFFICE, beside what it told him.
  *
@@ -1647,7 +1745,7 @@ function told(
   if (v.confirmedMonthlyVolumeLitres != null) {
     const mine = lead.monthlyLitres ?? lead.monthlyVolumeLitres;
     rows.push({
-      label: 'Gets through',
+      label: 'Uses',
       said: plural(v.confirmedMonthlyVolumeLitres, 'litre') + ' a month',
       differsFrom:
         mine != null && mine !== v.confirmedMonthlyVolumeLitres ? plural(mine, 'litre') + ' a month' : null,
@@ -1663,7 +1761,7 @@ function told(
   if (v.confirmedPotentialPaise != null) {
     const mine = lead.estimatedPotentialPaise;
     rows.push({
-      label: 'Could be worth',
+      label: 'Can buy',
       said: inrFromPaise(v.confirmedPotentialPaise) + ' a month',
       differsFrom: mine != null && mine !== v.confirmedPotentialPaise ? inrFromPaise(mine) + ' a month' : null,
     });
@@ -1708,6 +1806,13 @@ function alsoSaid(
   });
 }
 
+/**
+ * The stored verdict, in words somebody would say.
+ *
+ * `not_qualified` on a badge is the database talking. Anything unrecognised
+ * falls through to "Waiting" rather than being printed raw — a verdict added
+ * at a desk should read as pending on an older handset, not as an enum.
+ */
 function verdictWord(v: string): string {
   switch (v) {
     case 'confirmed': return 'Confirmed';

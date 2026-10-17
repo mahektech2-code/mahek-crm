@@ -8,7 +8,8 @@
  * underline on the one you are reading.
  *
  * It takes `basePath` rather than reading the URL, because the same five
- * screens are mounted under `/crm/price-lists` and `/sales/price-lists` and a
+ * screens are mounted under `/crm/price-lists`, `/accounts/price-lists` and
+ * `/founder/price-lists`, and a
  * component that worked out which app it was in would be a second answer to a
  * question the page already knows. Links rather than buttons, and no hooks at
  * all, so a server page can render it without shipping a byte of JavaScript.

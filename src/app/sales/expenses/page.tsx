@@ -1,13 +1,27 @@
 import Link from "next/link";
-import { money, shortDate, stamp } from "@/lib/format";
+import { shortDate, shortDateWithYear } from "@/lib/format";
 import { today } from "@/lib/recompute";
-import { endOfMonth } from "@/lib/business-date";
-import { MonthNav } from "@/components/ui/month-nav";
-import { claimDays } from "@/lib/services/expense-claims-service";
-import { canDecideExpenses } from "@/lib/actions/expenses";
-import { DecideDay } from "./decide-day";
+import { readPeriod } from "@/lib/expense-period";
+import { expenseClaimants, expensePayees } from "@/lib/services/expense-ledger-service";
 import {
-  Banner,
+  expenseLines,
+  type ExpenseLineRow,
+} from "@/lib/services/expense-claims-service";
+import { canDecideExpenseLines, canRecordExpensePayouts } from "@/lib/actions/sales";
+import { AddExpense } from "./add-expense";
+import { DecideExpense } from "./decide-expense";
+import { ExpenseTabs } from "./tabs";
+import { FilterRow, PeriodPicker } from "./filters";
+import { hrefWith, keepString, queryOf } from "./query";
+import {
+  BILL_OPTIONS,
+  POLICY_OPTIONS,
+  kindOptions,
+  matchesLine,
+  type LineFilters,
+} from "./line-filters";
+import { expenseKindLabel, inrExact } from "./labels";
+import {
   Cell,
   Empty,
   EntityLink,
@@ -20,292 +34,465 @@ import {
   SortHead,
   Table,
 } from "@/components/console/parts";
-import { readSort, sortHref, sortRows, type SortColumns } from "@/components/console/sort";
+import {
+  readSort,
+  sortHref,
+  sortRows,
+  type SortColumns,
+} from "@/components/console/sort";
 import { plural } from "@/components/console/words";
 
-export const metadata = { title: "Expenses & claims — Sales Dashboard — MahekOne" };
-
-const km = (metres: number) => `${(metres / 1000).toFixed(0)} km`;
+export const metadata = { title: "Expenses — Sales Dashboard — MahekOne" };
 
 /**
- * What the field spent, and what it is owed back.
+ * What the field spent, ONE ROW PER EXPENSE.
  *
- * **Claimed, Eligible and Approved are three columns, always** — requirement
- * 41 — because they are three different numbers and a screen showing one of
- * them makes the other two unanswerable. Claimed is what the salesman asked
- * for; Eligible is what the policy in force on that date allows; Approved is
- * what a person decided. Where they differ, the difference is the whole story.
- *
- * **The unit is a DAY, not a line.** A day is what is submitted, what is
- * locked, and what `mbos_approvals` names. Deciding line by line is exactly
- * what requirement 45 exists to prevent — a manager asked to approve forty ₹40
- * fares reads none of them, and then the one that mattered goes through with
- * the rest.
- *
- * **Exceeding policy does not block a claim** and never did on the handset
- * either. The salesman spent the money; refusing to record it does not unspend
- * it, it only means nobody finds out. What being over does is put the day in
- * front of somebody.
+ * Every expense a salesman logs on his phone is here the moment it syncs,
+ * waiting for a decision of its own — there is no day to close and nothing
+ * holds it. Allowances (the meal allowance from his punch times, the kilometre
+ * allowance on his own bike or car) are worked out from the day's records and
+ * listed on their own tab: they are his by the work log and need no approval.
  */
+const KEYS = [
+  "period",
+  "on",
+  "from",
+  "to",
+  "month",
+  "show",
+  "who",
+  "kind",
+  "bill",
+  "policy",
+  "q",
+  "sort",
+  "dir",
+];
+
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ show?: string; month?: string; sort?: string; dir?: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const params = await searchParams;
+  const query = queryOf(await searchParams, KEYS);
   const now = await today();
-  const month = /^\d{4}-\d{2}$/.test(params.month ?? "") ? params.month! : now.slice(0, 7);
-  const from = `${month}-01`;
-  const to = endOfMonth(month);
+  const period = readPeriod(query, now);
 
-  const [all, canDecide] = await Promise.all([
-    claimDays({ from, to }),
-    canDecideExpenses(),
+  const [inPeriodRows, claimants, canDecide, canAdd, payees] = await Promise.all([
+    expenseLines({
+      from: period.from ?? undefined,
+      to: period.to ?? undefined,
+    }),
+    expenseClaimants(),
+    canDecideExpenseLines(),
+    canRecordExpensePayouts(),
+    expensePayees(),
   ]);
 
-  const show = ["all", "waiting", "decided"].includes(params.show ?? "")
-    ? params.show!
+  const filters: LineFilters = {
+    who: query.who,
+    kind: query.kind,
+    bill: query.bill,
+    policy: query.policy,
+    q: query.q,
+  };
+  /* Every figure and every chip count reads the FILTERED rows, so picking a
+     salesman makes the whole screen his — the chips then cut by status. */
+  const all = inPeriodRows.filter((r) => matchesLine(r, filters));
+
+  const show = [
+    "waiting",
+    "approved",
+    "refused",
+    "decided",
+    "allowances",
+    "all",
+  ].includes(query.show ?? "")
+    ? query.show!
     : "waiting";
 
-  const waiting = all.filter((d) => !d.approvalState || d.approvalState === "pending");
-  const decided = all.filter((d) => d.approvalState && d.approvalState !== "pending");
-  const rows = show === "all" ? all : show === "decided" ? decided : waiting;
+  const logged = all.filter((r) => !r.allowance);
+  const waiting = logged.filter((r) => r.state === "pending");
+  const approved = logged.filter(
+    (r) => r.state === "approved" || r.state === "partially_approved",
+  );
+  const refused = logged.filter((r) => r.state === "rejected");
+  const allowances = all.filter((r) => r.allowance);
+  const rows =
+    show === "all"
+      ? all
+      : show === "approved"
+        ? approved
+        : show === "refused"
+          ? refused
+          : show === "decided"
+            ? [...approved, ...refused]
+            : show === "allowances"
+              ? allowances
+              : waiting;
 
-  const owed = waiting.reduce((n, d) => n + Number(d.eligiblePaise), 0);
-  const overPolicy = all.filter((d) => Number(d.excessPaise) > 0);
-  const autoApproved = decided.filter((d) => d.routeReason === "auto");
-  const escalated = all.filter((d) => d.stepCount > 1);
+  const sum = (list: ExpenseLineRow[], pick: (r: ExpenseLineRow) => number) =>
+    list.reduce((n, r) => n + pick(r), 0);
+  const claimedPaise = sum(logged, (r) => r.claimedPaise);
+  const waitingPaise = sum(waiting, (r) => r.claimedPaise);
+  const approvedPaise = sum(approved, paidOn);
+  const refusedPaise = sum(refused, (r) => r.claimedPaise);
+  const allowancePaise = sum(allowances, (r) => r.claimedPaise);
 
-  /* Sorting is DISPLAY ONLY, over the rows the chip has already cut. The four
-     figures above are counted over the whole month the query returned — what
-     is waiting, what it is eligible for, what is over policy — and not one of
-     them may move when somebody clicks a column: a manager who sorted by
-     Claimed and watched "Eligible, waiting" change would have no way to know
-     which of the two figures to believe.
-
-     BOTH the chip and the month ride on every header link. The month is the
-     more dangerous of the two to drop, because a sort that silently returned
-     him to the current month would look like the claims for March having
-     vanished rather than like a filter having been reset. */
-  const sort = readSort(params, COLUMNS);
+  /* Sorting is DISPLAY ONLY, over the rows the chip has already cut, so the
+     figures above never move when somebody clicks a column. The period, the
+     chip and every filter ride on each header link. */
+  const sort = readSort(query, COLUMNS);
   const sorted = sortRows(rows, sort, COLUMNS);
-  const head = (key: string, text: string, width?: number, align?: "left" | "right") => (
+  const keep = keepString(query, ["sort", "dir"]);
+  const head = (
+    key: string,
+    text: string,
+    width?: number,
+    align?: "left" | "right",
+  ) => (
     <SortHead
       width={width}
       align={align}
-      href={sortHref("/sales/expenses", sort, key, `show=${show}&month=${month}`)}
+      href={sortHref("/sales/expenses", sort, key, keep)}
       active={sort.key === key}
       dir={sort.dir}
     >
       {text}
     </SortHead>
   );
+  const chip = (key: string) =>
+    hrefWith("/sales/expenses", query, { show: key });
+  const ledgerQuery = hrefWith("", {
+    ...query,
+    show: undefined,
+    kind: undefined,
+    bill: undefined,
+    policy: undefined,
+    q: undefined,
+    sort: undefined,
+    dir: undefined,
+    who: undefined,
+  });
+  const when = period.kind === "all" ? "" : ` ${period.noun}`;
 
   return (
     <div className="p-6">
       <ScreenHeader
-        title="Expenses and claims"
-        subtitle="Claimed is what he asked for, Eligible is what the policy in force that day allows, Approved is what you decided. Being over policy never stopped a claim being recorded — the money was already spent, and refusing to write it down would only mean nobody found out."
-        actions={<MonthNav month={month} basePath="/sales/expenses" />}
+        title="Expenses"
+        subtitle="Every expense a salesman logs arrives here straight away for you to approve. Allowances are worked out from his punch times and trips."
+        actions={
+          <div className="flex items-start gap-4">
+            <Link
+              href="/sales/expense-policy"
+              className="mt-1.5 text-sm font-medium"
+            >
+              The policy
+            </Link>
+            <PeriodPicker
+              key={period.label}
+              period={period}
+              today={now}
+              basePath="/sales/expenses"
+              query={query}
+            />
+            {canAdd ? (
+              <AddExpense people={payees} defaultUserId={query.who} today={now} canApprove={canDecide} />
+            ) : null}
+          </div>
+        }
       />
-
-      {escalated.length ? (
-        <Banner
-          tone="warn"
-          title={`${plural(escalated.length, "day")} escalated to the owner as well as to you`}
-          body="An escalation is in addition to your decision, never instead of it — you are the person who knows whether that salesman was where he says he was."
-        />
-      ) : null}
+      <ExpenseTabs current="claims" query={query} />
 
       <MetricRow
         metrics={[
-          { label: "Waiting", value: String(waiting.length), tone: waiting.length ? "warn" : undefined },
-          { label: "Eligible, waiting", value: money(owed) },
           {
-            label: "Over policy",
-            value: String(overPolicy.length),
-            sub: overPolicy.length ? money(overPolicy.reduce((n, d) => n + Number(d.excessPaise), 0)) + " above" : undefined,
-            tone: overPolicy.length ? "warn" : undefined,
+            label: "To approve",
+            value: String(waiting.length),
+            sub: waiting.length ? inrExact(waitingPaise) : undefined,
+            tone: waiting.length ? "warn" : undefined,
           },
           {
-            label: "Approved automatically",
-            value: String(autoApproved.length),
-            sub: "clean, and under the limit",
+            label: `Claimed${when}`,
+            value: inrExact(claimedPaise),
+            sub: plural(logged.length, "expense"),
+          },
+          {
+            label: "Approved",
+            value: inrExact(approvedPaise),
+            sub: "at the amount allowed",
+            tone: approvedPaise ? "success" : undefined,
+          },
+          {
+            label: "Refused",
+            value: inrExact(refusedPaise),
+            sub: plural(refused.length, "expense"),
+            tone: refused.length ? "danger" : undefined,
+          },
+          {
+            label: "Allowances",
+            value: inrExact(allowancePaise),
+            sub: "automatic — meals and kilometres",
           },
         ]}
       />
 
+      <FilterRow
+        basePath="/sales/expenses"
+        query={query}
+        search="Search"
+        filters={[
+          {
+            param: "who",
+            all: "All salesmen",
+            label: "Salesman",
+            value: query.who ?? "",
+            options: claimants.map((c) => ({ value: c.id, label: c.name })),
+          },
+          {
+            param: "kind",
+            all: "All types",
+            label: "Type",
+            value: query.kind ?? "",
+            options: kindOptions(inPeriodRows),
+          },
+          {
+            param: "policy",
+            all: "Any policy result",
+            label: "Policy",
+            value: query.policy ?? "",
+            options: POLICY_OPTIONS,
+          },
+          {
+            param: "bill",
+            all: "Bill or not",
+            label: "Bill",
+            value: query.bill ?? "",
+            options: BILL_OPTIONS,
+          },
+        ]}
+      >
+        {query.who ? (
+          <Link
+            href={`/sales/expenses/ledger/${query.who}${ledgerQuery}`}
+            className="text-[13px] font-medium"
+          >
+            Open his ledger →
+          </Link>
+        ) : null}
+      </FilterRow>
+
       <FilterChips
-        current={show}
+        current={show === "decided" ? "approved" : show}
         options={[
-          { key: "waiting", href: `/sales/expenses?show=waiting&month=${month}`, label: "Waiting", count: waiting.length },
-          { key: "decided", href: `/sales/expenses?show=decided&month=${month}`, label: "Decided", count: decided.length },
-          { key: "all", href: `/sales/expenses?show=all&month=${month}`, label: "Everything", count: all.length },
+          {
+            key: "waiting",
+            href: chip("waiting"),
+            label: "To approve",
+            count: waiting.length,
+          },
+          {
+            key: "approved",
+            href: chip("approved"),
+            label: "Approved",
+            count: approved.length,
+          },
+          {
+            key: "refused",
+            href: chip("refused"),
+            label: "Refused",
+            count: refused.length,
+          },
+          {
+            key: "allowances",
+            href: chip("allowances"),
+            label: "Allowances",
+            count: allowances.length,
+          },
+          { key: "all", href: chip("all"), label: "All", count: all.length },
         ]}
       />
 
       {rows.length === 0 ? (
         <Empty
-          title={show === "waiting" ? "Nothing to decide" : "No days submitted"}
-          body="A salesman closes his day on the handset: the meals are worked out from when he left and got back, the travel from the legs he recorded, and the whole day is priced against the policy in force that date before it reaches you."
+          title={
+            show === "waiting"
+              ? "Nothing to approve"
+              : show === "allowances"
+                ? "No allowances"
+                : show === "refused"
+                  ? "Nothing refused"
+                  : show === "approved" || show === "decided"
+                    ? "Nothing approved"
+                    : "No expenses"
+          }
+          body={
+            show === "allowances"
+              ? "Allowances appear as salesmen punch in and out and log trips on their own bike or car."
+              : "An expense appears here the moment a salesman logs it on his phone and it reaches the office."
+          }
         />
       ) : (
         <Table
-          minWidth={1500}
+          minWidth={1080}
           head={
             <>
-              {head("name", "Salesman", 170)}
+              {head("name", "Salesman", 180)}
               {head("day", "Day", 110)}
-              {/* A composed sentence rather than a value — legs, food, hotel
-                  and the rest joined into one line — so there is nothing to
-                  order it by. The state column is the same case one step on:
-                  a set of pills, a decision note and a submission time, whose
-                  one orderable half the chips above already cut. */}
-              <HeadCell width={190}>What it was made of</HeadCell>
-              {/* All THREE money columns sort, because they are three different
-                  numbers and the question is usually about the gap between
-                  them — the biggest claim, the biggest allowance and the
-                  biggest decision are three different days. */}
-              {head("claimed", "Claimed", 120, "right")}
-              {head("eligible", "Eligible", 120, "right")}
-              {head("approved", "Approved", 130, "right")}
-              {head("monthToDate", "This month", 180)}
-              <HeadCell width={190}>State</HeadCell>
-              <HeadCell align="right" width={200} />
+              <HeadCell width={300}>What</HeadCell>
+              {head("amount", "Amount", 130, "right")}
+              <HeadCell width={200}>Status</HeadCell>
+              <HeadCell align="right" width={120} />
             </>
           }
         >
-          {sorted.map((d, i) => {
-            const excess = Number(d.excessPaise);
-            const pending = !d.approvalState || d.approvalState === "pending";
-            return (
-              <Row key={d.dayId} striped={i % 2 === 1}>
-                <Cell truncate={170}>
-                  <EntityLink href={`/sales/people/${d.userId}`}>
-                    {d.userName}
-                  </EntityLink>
-                </Cell>
-                <Cell>
-                  {shortDate(d.day)}
-                  {d.reopenedAt ? (
-                    <span className="block text-[12px] text-warn-ink">reopened</span>
-                  ) : null}
-                </Cell>
-                <Cell>
-                  <span className="text-[12px] text-muted">
-                    {[
-                      d.legCount ? `${d.legCount} leg${d.legCount === 1 ? "" : "s"}, ${km(Number(d.metres))}` : null,
-                      Number(d.foodPaise) ? `food ${money(Number(d.foodPaise))}` : null,
-                      Number(d.lodgingPaise) ? `hotel ${money(Number(d.lodgingPaise))}` : null,
-                      Number(d.otherPaise) ? `other ${money(Number(d.otherPaise))}` : null,
-                    ]
+          {sorted.map((r, i) => (
+            <Row key={r.id} striped={i % 2 === 1}>
+              <Cell truncate={180}>
+                <EntityLink
+                  href={`/sales/expenses/ledger/${r.userId}${ledgerQuery}`}
+                >
+                  {r.userName}
+                </EntityLink>
+              </Cell>
+              <Cell>{shortDateWithYear(r.day, now)}</Cell>
+              <Cell>
+                <span className="block text-[13px] font-medium text-ink">
+                  {expenseKindLabel(r.kind, r.allowance)}
+                </span>
+                {r.remarks || r.vendorName ? (
+                  <span
+                    className="block truncate text-[12px] text-muted"
+                    title={[r.vendorName, r.remarks]
                       .filter(Boolean)
-                      .join(" · ") || "nothing recorded"}
+                      .join(" · ")}
+                  >
+                    {[r.vendorName, r.remarks].filter(Boolean).join(" · ")}
                   </span>
-                </Cell>
-                <Cell align="right">{money(Number(d.claimedPaise))}</Cell>
-                <Cell align="right">
-                  {money(Number(d.eligiblePaise))}
-                  {excess > 0 ? (
-                    <span className="block text-[12px] text-warn-ink">
-                      {money(excess)} over
-                    </span>
-                  ) : null}
-                </Cell>
-                <Cell align="right">
-                  {d.approvedAmountPaise === null ? (
-                    <span className="text-muted">—</span>
-                  ) : (
-                    money(Number(d.approvedAmountPaise))
-                  )}
-                </Cell>
-                <Cell>
-                  {money(Number(d.monthToDatePaise))}
-                  <span className="block text-[12px] text-muted">claimed to date</span>
-                </Cell>
-                <Cell>
-                  {d.approvalState === "approved" ? (
-                    <Pill tone="success">Approved</Pill>
-                  ) : d.approvalState === "rejected" ? (
-                    <Pill tone="danger">Refused</Pill>
-                  ) : d.approvalState === "partially_approved" ? (
-                    <Pill tone="warn">Part allowed</Pill>
-                  ) : (
-                    <Pill tone="warn">Waiting</Pill>
-                  )}
-                  {d.openExceptions > 0 ? (
-                    <Link href="/sales/exceptions" className="ml-1.5 no-underline">
-                      <Pill tone={d.worstSeverity === "block_route" ? "danger" : "warn"}>
-                        {d.openExceptions} flagged
-                      </Pill>
-                    </Link>
-                  ) : null}
-                  {d.routeReason === "auto" ? (
-                    <span className="block text-[12px] text-muted">
-                      approved on submission — within policy and under the limit
-                    </span>
-                  ) : null}
-                  {d.decisionNote ? (
-                    <span className="block truncate text-[12px] text-muted" title={d.decisionNote}>
-                      “{d.decisionNote}” {d.decidedByName ? `— ${d.decidedByName}` : ""}
-                    </span>
-                  ) : null}
-                  {d.submittedAt ? (
-                    <span className="block text-[12px] text-muted">
-                      submitted {stamp(d.submittedAt)}
-                    </span>
-                  ) : null}
-                </Cell>
-                <Cell align="right">
-                  {canDecide && (pending || d.lockedAt) ? (
-                    <DecideDay
-                      dayId={d.dayId}
-                      who={d.userName}
-                      what={shortDate(d.day)}
-                      claimedPaise={Number(d.claimedPaise)}
-                      eligiblePaise={Number(d.eligiblePaise)}
-                      locked={d.lockedAt !== null}
-                    />
-                  ) : null}
-                </Cell>
-              </Row>
-            );
-          })}
+                ) : null}
+                {!r.allowance ? (
+                  <span
+                    className={`block text-[12px] ${r.files.length ? "text-muted" : "text-warn-ink"}`}
+                  >
+                    {r.files.length
+                      ? plural(r.files.length, "bill") + " attached"
+                      : "No bill attached"}
+                  </span>
+                ) : null}
+                {r.enteredByName ? (
+                  <span className="block text-[12px] text-muted">Entered by {r.enteredByName}</span>
+                ) : null}
+              </Cell>
+              <Cell align="right">
+                {inrExact(r.claimedPaise)}
+                {!r.allowance && r.excessPaise > 0 ? (
+                  <span className="block text-[12px] text-warn-ink">
+                    {inrExact(r.excessPaise)} over policy
+                  </span>
+                ) : null}
+              </Cell>
+              <Cell>
+                <Status row={r} />
+                {r.state === "pending" && r.openFlags > 0 ? (
+                  <Link
+                    href="/sales/exceptions"
+                    className="mt-1 block text-[12px] text-warn-ink"
+                  >
+                    {plural(r.openFlags, "thing")} to check
+                  </Link>
+                ) : null}
+              </Cell>
+              <Cell align="right">
+                {canDecide && r.state === "pending" ? (
+                  <DecideExpense
+                    expenseId={r.id}
+                    who={r.userName}
+                    what={`${expenseKindLabel(r.kind, false)} · ${shortDate(r.day)}`}
+                    claimedPaise={r.claimedPaise}
+                    eligiblePaise={r.eligiblePaise}
+                    remarks={r.remarks}
+                    vendorName={r.vendorName}
+                    billNumber={r.billNumber}
+                    files={r.files}
+                  />
+                ) : null}
+              </Cell>
+            </Row>
+          ))}
         </Table>
       )}
     </div>
   );
 }
 
+/** What a decided line pays: the amount allowed, the whole of it, or nothing. */
+function paidOn(r: ExpenseLineRow): number {
+  if (r.state === "partially_approved") return r.approvedAmountPaise ?? 0;
+  if (r.state === "approved") return r.approvedAmountPaise ?? r.claimedPaise;
+  return 0;
+}
+
+function Status({ row }: { row: ExpenseLineRow }) {
+  if (row.state === "allowance") {
+    return (
+      <>
+        <Pill tone="neutral">Automatic</Pill>
+        <span className="block text-[12px] text-muted">From his work log</span>
+      </>
+    );
+  }
+  const by = row.decidedByName ? ` · ${row.decidedByName}` : "";
+  const note = row.decisionNote ? (
+    <span
+      className="block truncate text-[12px] text-muted"
+      title={row.decisionNote}
+    >
+      “{row.decisionNote}”
+    </span>
+  ) : null;
+  if (row.state === "approved") {
+    return (
+      <>
+        <Pill tone="success">Approved</Pill>
+        <span className="block text-[12px] text-muted">
+          {inrExact(paidOn(row)) + by}
+        </span>
+        {note}
+      </>
+    );
+  }
+  if (row.state === "partially_approved") {
+    return (
+      <>
+        <Pill tone="warn">Part approved</Pill>
+        <span className="block text-[12px] text-muted">
+          {inrExact(paidOn(row)) + by}
+        </span>
+        {note}
+      </>
+    );
+  }
+  if (row.state === "rejected") {
+    return (
+      <>
+        <Pill tone="danger">Refused</Pill>
+        {by ? (
+          <span className="block text-[12px] text-muted">{by.slice(3)}</span>
+        ) : null}
+        {note}
+      </>
+    );
+  }
+  return <Pill tone="warn">To approve</Pill>;
+}
+
 /**
- * What each sortable column is worth.
- *
- * Every money figure is read through `Number` for the reason the cells are:
- * these come off a raw `db.execute`, so a paise column arrives as a string
- * whatever the row type says, and comparing "9000" against "10000" as text
- * would put the larger claim underneath the smaller one.
- *
- * APPROVED is null until somebody has decided, and a day nobody has decided is
- * not a day approved for nothing — so it answers null and sorts last in either
- * direction rather than sitting at the bottom of the descending pass as a
- * zero. The two columns beside it are what a waiting day is read by.
- *
- * The day is compared as its own `YYYY-MM-DD` text rather than parsed: the
- * spelling sorts correctly on its own and every row here is inside one month,
- * so there is nothing a timestamp would settle that the string does not.
+ * What each sortable column is worth. The day is compared as its own
+ * `YYYY-MM-DD` text: the spelling sorts correctly on its own and every row is
+ * text across any period.
  */
-const COLUMNS: SortColumns<{
-  userName: string;
-  day: string;
-  claimedPaise: number;
-  eligiblePaise: number;
-  approvedAmountPaise: number | null;
-  monthToDatePaise: number;
-}> = {
-  name: (d) => d.userName,
-  day: (d) => d.day,
-  claimed: (d) => Number(d.claimedPaise),
-  eligible: (d) => Number(d.eligiblePaise),
-  approved: (d) => (d.approvedAmountPaise === null ? null : Number(d.approvedAmountPaise)),
-  monthToDate: (d) => Number(d.monthToDatePaise),
+const COLUMNS: SortColumns<ExpenseLineRow> = {
+  name: (r) => r.userName,
+  day: (r) => r.day,
+  amount: (r) => r.claimedPaise,
 };

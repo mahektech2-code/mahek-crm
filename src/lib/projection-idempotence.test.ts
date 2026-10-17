@@ -35,6 +35,7 @@ import { appAccess, orders, sheetOrderRows, sheetSyncRuns, syncConflicts, users 
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { recomputeAllBuyingCycles } from "@/lib/recompute";
+import { updateCustomer } from "@/lib/actions/crm";
 import {
   projectBillsFromOrders,
   projectCustomers,
@@ -364,4 +365,52 @@ test("a second pass over the same rows rewrites nothing, net included", async ()
   const before = await tupleVersions("orders");
   await project();
   assertNoRowRewritten(before, await tupleVersions("orders"));
+});
+
+/*
+ * CREDIT DAYS CHANGED IN THE CRM STAY CHANGED.
+ *
+ * The customer projection used to write the sheet's credit days over every
+ * customer whose figure differed, on every half-hourly pass, so a term a
+ * telecaller edited was back to the sheet's within thirty minutes. The sheet
+ * now fills an EMPTY term and leaves a stated one alone.
+ */
+async function creditOf(name: string) {
+  const [row] = await db.execute<{ creditTermDays: number; creditDays: number | null; id: string }>(sql`
+    select customers.id as id,
+           customers.credit_term_days as "creditTermDays",
+           customers.credit_days as "creditDays"
+      from customers where customers.name = ${name}
+  `);
+  return row;
+}
+
+test("credit days changed in the CRM survive the next sheet pass", async () => {
+  await project();
+  const before = await creditOf("Deep Paints");
+  assert.equal(Number(before.creditDays), 30, "the sheet filled the term on the first pass");
+
+  const saved = await updateCustomer(before.id, { creditTermDays: 60 });
+  assert.ok(saved.ok, JSON.stringify(saved));
+
+  await project();
+  await project();
+  const after = await creditOf("Deep Paints");
+  assert.equal(Number(after.creditTermDays), 60, "the sheet must not put its 30 back");
+  assert.equal(Number(after.creditDays), 60);
+});
+
+test("a credit term nobody has stated is still filled from the sheet", async () => {
+  await project();
+  const row = await creditOf("Shree Hardware");
+  await db.execute(sql`update customers set credit_days = null where customers.id = ${row.id}`);
+  await db
+    .update(sheetOrderRows)
+    .set({ creditDays: 45 })
+    .where(sql`sheet_order_rows.billing_party_name = 'Shree Hardware'`);
+
+  await project();
+  const after = await creditOf("Shree Hardware");
+  assert.equal(Number(after.creditDays), 45);
+  assert.equal(Number(after.creditTermDays), 45);
 });

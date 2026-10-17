@@ -1,0 +1,123 @@
+The WhatsApp screen is where customers' messages arrive and where payment reminders and other template messages go out. It opens on the **chats**, the way WhatsApp itself does. Sending a message, running a batch of reminders, editing templates and reading the message log are tools you open from the same screen.
+
+What you can do here depends on what you were given: **read** the chats, or **reply and send** as well.
+
+## The screen at a glance
+
+<Wireframe url="/crm/whatsapp" nav={["Dashboard", "#Collections", "Payment Follow-up", "WhatsApp", "Outstanding", "Sales Bills"]} active="WhatsApp" caption="WhatsApp, with a chat open">
+  <WfBar>
+    <WfCard title="Sent today"><WfText>14</WfText></WfCard>
+    <WfCard title="Copied, never confirmed"><WfText>2</WfText></WfCard>
+    <WfCard title="Replies to action"><WfText>5</WfText></WfCard>
+    <WfCard title="Templates live"><WfText>9</WfText></WfCard>
+    <WfCard title="Messages logged"><WfText>300</WfText></WfCard>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfBar>
+    <WfPanel title="Chats">
+      <WfInput placeholder="Search chats" wide />
+      <WfTable columns={["", ""]} highlight={0} rows={[["Customer A — Will pay Friday", "10:12"], ["Customer B — Photo", "Yesterday"], ["Customer C — Received, thanks", "Mon"]]} />
+      <Hotspot n={2} />
+    </WfPanel>
+    <WfPanel title="Customer A">
+      <WfBlock h={90} label="The conversation: their messages, our messages with ✓ / ✓✓ ticks" />
+      <WfBar><WfInput placeholder="Reply…" wide /><WfButton primary>Send</WfButton><Hotspot n={3} /></WfBar>
+      <WfBar><WfButton>New message</WfButton><WfButton>Send run</WfButton><WfButton>Templates</WfButton><WfButton>Message log</WfButton><Hotspot n={4} /></WfBar>
+    </WfPanel>
+  </WfBar>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Today at a glance.</b> Messages sent today, copies nobody confirmed, replies still to deal with, live templates, and how many messages the log holds.</span>,
+  <span key="2"><b>Chats.</b> Every customer conversation in your book, newest first. Open ones by default.</span>,
+  <span key="3"><b>Reply.</b> Only drawn if you were given <i>reply and send</i>. With read-only access you can read every chat but not answer.</span>,
+  <span key="4"><b>Tools.</b> Send one customer a template, work through a batch, manage templates, or read the message log. With read-only access only the message log is offered.</span>,
+]} />
+
+## Two ways a message goes out
+
+<Cards cols={2}>
+<Card title="Automatic" tone="brand">Sent straight through WhatsApp's business service. You see ✓ when WhatsApp accepts it, ✓✓ when it reaches the phone, and **Read** when they open it.</Card>
+<Card title="Manual: copy, send, confirm">You copy the message, paste it into WhatsApp yourself, and press **Confirm** once it has gone. WhatsApp gives no ticks for a pasted message, so your confirmation is the record.</Card>
+</Cards>
+
+A message goes the manual way when sending is switched off, when no key is set up, when it is going to a **customer group**, when the template is not linked to an approved WhatsApp template yet, or when you edited the words. The screen tells you which.
+
+## Sending a payment reminder or a template
+
+<Steps>
+<Step title="Open New message">
+Pick the customer and the template. Templates are grouped by purpose: payment reminder, order confirmation, reactivation, routine check-in, other.
+</Step>
+<Step title="Check the preview">
+The message is filled in from the customer's record — their name, what they owe, their open bills, the latest promise. If a field is empty the message is refused rather than sent as "Dear ,". You can edit the words; an edited message always goes the manual way.
+</Step>
+<Step title="Send it">
+**Automatic**: press send; the ticks appear in the chat. **Manual**: press **Copy**, paste it into WhatsApp, send it there, then come back and press **Confirm**.
+</Step>
+</Steps>
+
+<Callout kind="warn" title="Copied is not sent">
+Until you press **Confirm**, a copied message is *Copied, not confirmed* — the customer may or may not have heard from us. It does **not** hold the customer back from the Call Log, and it does not count as a reminder sent. A manager sees every unconfirmed copy in the top card.
+</Callout>
+
+## Customers reached two ways
+
+A customer can be set up to receive messages on their **own number**, in their **WhatsApp group**, or **both**.
+
+- **Both** makes **two** messages — the personal one first, then the group one. Work them one at a time: each has its own copy and confirm.
+- Confirming either one counts as the customer having heard from us. The other is still shown as waiting until you confirm it too.
+- If **both** is set but nobody recorded the group's name, only the personal message is made, and the screen says why.
+
+## Working a batch: Send run
+
+<Steps>
+<Step title="Set up a send run">
+Choose who: *Stage 1 reminder due*, *Slow payers with a balance* or *Overdue more than 60 days*, and the template.
+</Step>
+<Step title="Work down the list">
+For each customer: **Copy the message**, **Send it from WhatsApp**, **Confirm and move on**. Messages that can go automatically go in one press.
+</Step>
+<Step title="Pause and come back">
+A run you leave is offered again the next time you open the screen.
+</Step>
+</Steps>
+
+## Replies
+
+A customer's reply arrives in their chat. **Replies to action** counts the ones nobody has dealt with. Reply in the chat, or mark the reply handled. Photographs and documents the customer sends open in the chat.
+
+## Message statuses
+
+| You see | It means |
+|---|---|
+| Prepared | Written, not sent |
+| Copied, not confirmed | Copied to paste, nobody confirmed it went |
+| Confirmed sent | A person pasted it and confirmed |
+| Sending | Handed to WhatsApp a moment ago |
+| Sent ✓ | WhatsApp accepted it |
+| Delivered ✓✓ | It reached their phone |
+| Read ✓✓ | They opened it (only if they have read receipts on) |
+| Failed | It did not go — the log says why |
+| Not sent | Discarded before it went |
+
+## Questions people ask
+
+<Faq q="I sent it from my phone but the customer is still on my Call Log.">
+You did not press **Confirm**. A copied message is not treated as sent until somebody confirms it.
+</Faq>
+<Faq q="Why can I read the chats but not reply?">
+Your access is read-only. Replying and sending are given separately, on the Access screen.
+</Faq>
+<Faq q="Why did my message go the manual way?">
+The screen names the reason: sending is switched off, no key is set up, it is going to a group, the template is not approved, or you edited it.
+</Faq>
+<Faq q="It says this customer has already had several messages this week.">
+There is a weekly limit per customer on messages sent automatically, currently <Setting k="whatsapp.contactsPerWeekLimit" />. Pasting by hand is your judgement and is not limited.
+</Faq>
+<Faq q="A number is listed as undeliverable.">
+WhatsApp says that number cannot receive messages. Automatic rules stop trying it. Put a working number on the customer's record.
+</Faq>
+<Faq q="Does a WhatsApp reminder stop the Call Log ringing them?">
+A **confirmed** message does, for a few days. A reminder falling due still brings them back.
+</Faq>

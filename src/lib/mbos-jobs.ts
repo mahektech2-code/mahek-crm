@@ -80,76 +80,18 @@ export async function closeOpenVisits(): Promise<Counted> {
   return { recordsAffected: rows.length, detail: `${rows.length} visits closed without a check-out` };
 }
 
-/**
- * A day with a check-in and no check-out — closed at the last thing they did.
+/*
+ * NOTHING PUNCHES A SALESMAN OUT BUT THE SALESMAN.
  *
- * This used to set `autoCheckedOut` and nothing else, which flagged the day
- * for regularisation and left `check_out_at` null for ever. Every query that
- * asks "who is still out" reads that column, so a salesman who forgot to press
- * the button on Tuesday was still out on Friday, and the Live map, the
- * attendance screen and the day counts all believed it.
- *
- * **THE CLOSING TIME IS EVIDENCE, NEVER A GUESS.** It is the latest moment
- * MahekOne can show he was working: his last reported position, the last
- * activity he filed, or the last visit he closed. Picking an hour instead —
- * six o'clock, or the end of the configured day — would be inventing
- * attendance, and attendance is the one place in this app where an invented
- * figure is least forgivable: somebody is paid against it.
- *
- * **A day with no evidence at all keeps its null**, and keeps the flag. That
- * is a real state — checked in, did nothing the app saw, never checked out —
- * and the honest answer is that we do not know when he stopped, not a
- * plausible time that would be believed.
- *
- * `auto_checked_out` still marks every one of them, so no closed day is ever
- * mistaken for one somebody pressed the button on, and the regularisation
- * path is untouched.
+ * `markMissedCheckouts` used to close every day still open after midnight at
+ * the last thing the app saw him do. Field salesmen who start at ten at night
+ * to travel between cities were punched out in the small hours while still on
+ * the road, so it is gone (October 2026). A day with no punch-out stays open;
+ * it carries no verdict (`worked_seconds` stays null and the screens say "not
+ * measured"), and the trail behind it stops at `mbos.location.serviceMaxDayHours`
+ * after the stretch began, on the phone and in the positions route alike.
+ * A forgotten punch-out is corrected through regularisation, by a person.
  */
-export async function markMissedCheckouts(): Promise<Counted> {
-  /* Raw, because the closing time is the greatest of three subqueries and
-     Drizzle's builder cannot say that without three round trips. No JS Date
-     is bound anywhere here — every timestamp is a column or `now()`. */
-  const closed = await db.execute<{ id: string; closed: boolean }>(sql`
-    update mbos_attendance_days d
-       set check_out_at = ev.last_seen,
-           auto_checked_out = true,
-           updated_at = now()
-      from (
-        select a.id,
-               greatest(
-                 (select max(p.at) from mbos_positions p
-                   where p.user_id = a.user_id
-                     and (p.at at time zone ${APP_TIMEZONE})::date = a.day),
-                 (select max(l.captured_at) from mbos_activity_locations l
-                   where l.user_id = a.user_id
-                     and (l.captured_at at time zone ${APP_TIMEZONE})::date = a.day),
-                 (select max(coalesce(v.check_out_at, v.check_in_at)) from mbos_visits v
-                   where v.salesman_id = a.user_id
-                     and (v.check_in_at at time zone ${APP_TIMEZONE})::date = a.day)
-               ) as last_seen
-          from mbos_attendance_days a
-         where a.check_in_at is not null
-           and a.check_out_at is null
-           and a.auto_checked_out = false
-           and a.day < ${TODAY}
-      ) ev
-     where d.id = ev.id
-    returning d.id, (d.check_out_at is not null) as closed
-  `);
-
-  const withTime = closed.filter((r) => r.closed).length;
-  const blind = closed.length - withTime;
-
-  return {
-    recordsAffected: closed.length,
-    detail:
-      `${closed.length} days missing a check-out` +
-      (closed.length
-        ? ` — ${withTime} closed at the last thing they did` +
-          (blind ? `, ${blind} left open because nothing was recorded` : "")
-        : ""),
-  };
-}
 
 /**
  * WHAT EACH DAY WAS, and how long it was worked.
@@ -168,11 +110,8 @@ export async function markMissedCheckouts(): Promise<Counted> {
  * them. It costs a read and almost no writes: both columns are compared
  * against what is stored, so a converged table is rewritten nowhere.
  *
- * **It runs after `markMissedCheckouts` on purpose.** That job is what closes
- * yesterday's forgotten days at the last evidence there is of somebody
- * working, and a day it has not closed yet has an open session — which this
- * one refuses to judge. Run first, every forgotten day would wait a further
- * twenty-four hours for a verdict it could have had tonight.
+ * A day nobody punched out of keeps an open session and is not judged; it is
+ * judged the night after a regularisation closes it.
  */
 export async function rebuildAttendanceVerdicts(): Promise<Counted> {
   const { written, read, unjudged } = await recomputeAttendanceVerdicts();
@@ -208,6 +147,7 @@ export async function ageLeads(): Promise<Counted> {
     .where(
       and(
         eq(customers.kind, "lead"),
+        isNull(customers.deletedAt),
         isNotNull(customers.leadStage),
         eq(customers.leadArchived, false),
         lt(customers.leadLastActivityDate, sql`${TODAY} - ${archiveDays}::int`),
@@ -224,6 +164,7 @@ export async function ageLeads(): Promise<Counted> {
     .where(
       and(
         eq(customers.kind, "lead"),
+        isNull(customers.deletedAt),
         isNotNull(customers.leadStage),
         eq(customers.leadArchived, false),
         lt(customers.leadLastActivityDate, sql`${TODAY} - ${staleDays}::int`),
@@ -298,7 +239,7 @@ export async function escalateOverdueTasks(): Promise<Counted> {
         userId: t.assignedToUserId,
         title: "Task overdue",
         body: `${t.title} is past its date and your manager has been told.`,
-        kind: "warning",
+        kind: "warn",
         href: "/field/tasks",
         // The handset's own task list. `/field/tasks` is a MahekOne route the
         // salesman this is addressed to has no app to open.
@@ -471,17 +412,52 @@ async function sweepPushFailures(): Promise<Counted> {
   return { recordsAffected: gone, detail: `${gone} old push failures cleared` };
 }
 
+/**
+ * Every recent day's allowances, worked out again.
+ *
+ * The sync refreshes a day the moment its records land; this is the net under
+ * it. The trail that measures a trip arrives in batches, a punch-out can reach
+ * the office after the batch that carried the trip, and a refresh that failed
+ * in the sync is retried nowhere else. Idempotent — a day whose records have
+ * not moved is rewritten to exactly what it already says.
+ *
+ * Hourly over the last two days, which is where the trail is still arriving;
+ * nightly back as far as an expense may still be logged, which is also what
+ * fills in the days nobody ever closed under the old Send day.
+ */
+async function refreshRecentAllowances(windowDays: number): Promise<Counted> {
+  const { refreshDayMoney } = await import("./services/expense-submit-service");
+  const day = await today();
+  const days = await db.execute<{ userId: string; day: string }>(sql`
+    select d.user_id as "userId", d.day::text as day
+      from mbos_expense_days d
+     where d.day between ${addDays(day, -windowDays)}::date and ${day}::date
+  `);
+  let done = 0;
+  for (const d of days) {
+    try {
+      await refreshDayMoney(d.userId, d.day);
+      done++;
+    } catch {
+      /* One day that cannot be priced must not stop the rest. */
+    }
+  }
+  return { recordsAffected: done, detail: `${done} of ${days.length} recent days' allowances refreshed` };
+}
+
 export async function mbosNightly(): Promise<Counted> {
   const parts = [
     await sweepPushFailures(),
     await closeOpenVisits(),
-    await markMissedCheckouts(),
-    /* AFTER the two closers above, so a day they just closed is judged tonight
-       rather than tomorrow night. */
+    /* Who each holiday reaches, before anything is judged against it. */
+    await rebuildHolidays(),
+    /* AFTER the visit closer above, so what it closed is judged tonight. */
     await rebuildAttendanceVerdicts(),
     await ageLeads(),
     await raiseReorderFollowUps(),
     await countCustomersWithoutGps(),
+    /* AFTER the closers, so a day closed tonight is priced tonight. */
+    await refreshRecentAllowances((await getConfig())["mbos.expenses.backdatedDaysAllowed"]),
     /* §13 — the sequence, once a day. Its longest interval is four days, so a
        nightly pass is ample and an hourly one would re-derive the same events
        twenty-four times to raise nothing twenty-three of them. */
@@ -521,6 +497,21 @@ async function refreshPerformance(): Promise<Counted> {
  * setting says and what it does is exactly the kind of thing nobody notices
  * until it is the subject of an argument about somebody's pay.
  */
+/**
+ * Field tasks that collect customer data and whose shop's record now has it,
+ * whoever put it there — the CRM, the sheet, another salesman — complete
+ * themselves. Hourly is the net under the contact screens, which settle at
+ * once.
+ */
+async function settleTasksFromRecords(): Promise<Counted> {
+  const { settleLinkedTasks } = await import("./services/task-link-service");
+  const { completed } = await settleLinkedTasks();
+  return {
+    recordsAffected: completed,
+    detail: completed ? `${completed} field tasks completed from the customer record` : "no field task completed from the record",
+  };
+}
+
 async function sweepSelfies(): Promise<Counted> {
   const { sweepAttendanceSelfies } = await import("./services/attachment-service");
   const { swept } = await sweepAttendanceSelfies();
@@ -541,9 +532,9 @@ async function sweepSelfies(): Promise<Counted> {
  * read as absent at three.
  *
  * Two days rather than one because a day closes late: a handset that was out
- * of signal at six posts its check-out at nine, `markMissedCheckouts` closes
- * yesterday's forgotten days at midnight, and both land on a date that is no
- * longer today. Anything older than that is the nightly's, which takes no
+ * of signal at six posts its check-out at nine, and a night shift punched in
+ * at ten is punched out after midnight — both land on a date that is no longer
+ * today. Anything older than that is the nightly's, which takes no
  * window at all.
  */
 async function judgeRecentDays(): Promise<Counted> {
@@ -553,6 +544,18 @@ async function judgeRecentDays(): Promise<Counted> {
     to: day,
   });
   return { recordsAffected: written, detail: `${written} of ${read} recent days re-judged` };
+}
+
+/**
+ * Who each state, district, city, area and named holiday reaches, resolved
+ * again. Every write that can move the answer already rebuilds it; this is the
+ * net under all of them — a salesman granted the field app, or a place tree
+ * re-imported, moves it without passing through a holiday screen.
+ */
+async function rebuildHolidays(): Promise<Counted> {
+  const { rebuildHolidayMembers } = await import("./services/holiday-service");
+  const { holidays, changed } = await rebuildHolidayMembers();
+  return { recordsAffected: changed, detail: `${changed} of ${holidays} holidays re-resolved` };
 }
 
 export async function mbosHourly(): Promise<Counted> {
@@ -567,9 +570,12 @@ export async function mbosHourly(): Promise<Counted> {
     await chaseSampleReviews(),
     await flagSamplesPastDelivery(),
     await refreshPerformance(),
+    await rebuildHolidays(),
     await judgeRecentDays(),
     await readPushReceipts(),
     await sweepSelfies(),
+    await settleTasksFromRecords(),
+    await refreshRecentAllowances(1),
   ];
   return {
     recordsAffected: parts.reduce((a, p) => a + p.recordsAffected, 0),
@@ -1054,6 +1060,8 @@ export async function runNurturePass(): Promise<Counted> {
       and(
         isNotNull(customers.leadStage),
         isNotNull(customers.leadManagerId),
+        // Nobody is nurtured from the trash.
+        isNull(customers.deletedAt),
         isNotNull(customers.lastOrderDate),
         eq(customers.cycleIsDefault, false),
       ),

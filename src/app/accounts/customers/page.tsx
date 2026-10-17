@@ -5,7 +5,7 @@ import { canFor } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import {
   listAmFilterOptions,
-  listCityFilterOptions,
+  listPlaceFilterOptions,
   listAssignableUsers,
   listBackOfficeCandidates,
   listCustomersPage,
@@ -13,6 +13,7 @@ import {
   today,
 } from "@/lib/queries";
 import { accountTypeParam } from "@/lib/account-types";
+import { placeFilterParams } from "@/lib/place-filters";
 import { CustomersScreen } from "@/components/customers/customers-screen";
 
 export const metadata = { title: "Customers — Accounts — MahekOne" };
@@ -55,7 +56,7 @@ export default async function Page({
   const day = await today();
   const perPage = Number(one("per") ?? 25);
 
-  const [page, team, config, backOfficePeople, amOptions, cityOptions, salesManagerSuggested] =
+  const [page, team, config, backOfficePeople, amOptions, placeOptions, salesManagerSuggested] =
     await Promise.all([
       listCustomersPage({
         query: one("q"),
@@ -63,7 +64,7 @@ export default async function Page({
         salesAm: one("sales"),
         salesManager: one("salesmanager"),
         backOfficeAm: one("backoffice"),
-        city: one("city"),
+        places: placeFilterParams(one),
         // "yes" / "no" / "delivered" — the third is the evidence filter, and
         // the one the conversion work is actually done from. Validated rather
         // than cast: `?party=nonsense` is a typed value the query would carry
@@ -81,7 +82,7 @@ export default async function Page({
       // Read here rather than cached anywhere: shops arrive from the sheet
       // with new spellings constantly, so the list has to be as fresh as the
       // page it is drawn on.
-      listCityFilterOptions(),
+      listPlaceFilterOptions(placeFilterParams(one)),
       salesManagerSuggestions(),
     ]);
 
@@ -99,10 +100,12 @@ export default async function Page({
       // seat drives no queue, no scope and no target, so a manager may set it
       // while the two beside it stay accounts' and admin's.
       canAssignSalesManager={await canFor(user, "customer.assignSalesManager")}
+      // Setting a credit limit on a new account — the ledger desk's money call.
+      canDecideCredit={await canFor(user, "payment.confirm")}
       amReasons={config["people.amChangeReasons"]}
       amSearchThreshold={config["people.pickerSearchThreshold"]}
       amOptions={amOptions}
-      cityOptions={cityOptions}
+      placeOptions={placeOptions}
       team={team.map((t) => ({ id: t.id, name: t.name, role: t.role }))}
       backOfficePeople={backOfficePeople}
       // The same list — this seat needs no login either, and several of the
@@ -115,7 +118,7 @@ export default async function Page({
         salesAm: one("sales") ?? "",
         salesManager: one("salesmanager") ?? "",
         backOfficeAm: one("backoffice") ?? "",
-        city: one("city") ?? "",
+        places: placeFilterParams(one),
         // The validated codes straight through — `,`-separated for more than
         // one. The screen turns codes back into the control's own words.
         accountType: accountTypeParam(one("party")) ?? "",
@@ -136,6 +139,7 @@ export default async function Page({
         contactPerson: c.contactPerson,
         phone: c.phone,
         city: c.city,
+        place: c.place ?? null,
         ownerId: c.ownerId,
         // Whose book it is, which is not the owner — the shared screen binds
         // its sales field to this.
@@ -166,6 +170,7 @@ export default async function Page({
         nextStep: c.nextStep,
         reactivationRequested: c.reactivationRequested,
         reactivationReason: c.reactivationReason,
+        birthdays: c.birthdays ?? [],
       }))}
     />
   );

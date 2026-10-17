@@ -14,6 +14,9 @@ import {
   type OrderLine,
 } from "@/db/schema";
 import { isReceived, netOfTaxPaise } from "@/lib/sheet-parse";
+import { calendarDate } from "@/lib/business-date";
+import { conversionColumns, recordConversion } from "./lead-conversion-service";
+import { getConfig } from "@/lib/config/store";
 import {
   recomputeAllBillPaid,
   recomputeAllBuyingCycles,
@@ -92,6 +95,11 @@ export type ProjectionReport = {
   customers: {
     created: number;
     updated: number;
+    /**
+     * Leads the field had already raised for a party, taken over and made the
+     * customer rather than given a twin. See `projectCustomers`.
+     */
+    adoptedLeads: number;
     withoutPhone: number;
     /** Created in nobody's book, so visible on no list. */
     unassigned: number;
@@ -261,7 +269,63 @@ export async function projectCustomers(
     : [];
   const byCode = new Map(existing.map((c) => [c.externalCode!, c]));
 
+  /*
+   * A PARTY THE FIELD ALREADY RAISED AS A LEAD IS THAT LEAD, NOT A NEW ROW.
+   *
+   * This projection knows a customer by its external code and nothing else,
+   * and a lead raised on a handset, at a desk or from a website form has none.
+   * So the day such a shop's first order reached the sheet, a SECOND row was
+   * written beside the lead — a customer with the orders and the bills, and a
+   * lead with the visits, the calls and the stage, both carrying one name. A
+   * customer only ever comes from a lead, so a lead sharing a customer's name
+   * is that customer's own past sitting on the calling list, and the office
+   * rang shops it was already billing to ask for a first order.
+   *
+   * Matched on the same fold `partyKey` uses — case and spacing, nothing
+   * looser — and ONLY where exactly one live lead carries the name. Two leads
+   * called "Shree Paints" in two towns are two shops, and guessing which one
+   * the sheet means would put one shop's orders on the other's record; that
+   * party is created as before and the pair is left to the duplicates screen.
+   * A lead already holding a code belongs to some other party and is never
+   * taken.
+   *
+   * Adopting CONVERTS, through the one conversion the rest of the app uses:
+   * every party this sheet names is billed, which is why a party it creates is
+   * a customer from its first row, and a lead it adopts must not be the one
+   * billed account still reading as a prospect.
+   */
+  const nameOf = (party: PartyRow) => partyKey(party.name).slice("SHEET:".length);
+  const unmatchedNames = [
+    ...new Set(parties.filter((p) => !byCode.has(partyKey(p.name))).map(nameOf)),
+  ];
+  const leadRows = unmatchedNames.length
+    ? ((await db.execute(sql`
+        select c.id, c.owner_id as "ownerId", c.sales_am_id as "salesAmId",
+               c.lead_source as "leadSource", c.phone, c.customer_since as "customerSince",
+               upper(btrim(regexp_replace(c.name, '\\s+', ' ', 'g'))) as key
+          from customers c
+         where c.kind = 'lead'
+           and c.deleted_at is null
+           and c.external_code is null
+           and upper(btrim(regexp_replace(c.name, '\\s+', ' ', 'g'))) in (${sql.join(
+             unmatchedNames.map((n) => sql`${n}`),
+             sql`, `,
+           )})
+      `)) as unknown as Array<{
+        id: string;
+        ownerId: string | null;
+        salesAmId: string | null;
+        leadSource: string | null;
+        phone: string;
+        customerSince: string | null;
+        key: string;
+      }>)
+    : [];
+  const leadsByName = new Map<string, typeof leadRows>();
+  for (const l of leadRows) leadsByName.set(l.key, [...(leadsByName.get(l.key) ?? []), l]);
+
   let created = 0;
+  let adoptedLeads = 0;
   let updated = 0;
   let withoutPhone = 0;
   let unassigned = 0;
@@ -301,8 +365,21 @@ export async function projectCustomers(
           : {};
       const name = party.name;
       const city = party.area ?? "";
-      const creditTermDays = party.creditDays ?? 30;
-      const creditDays = party.creditDays ?? null;
+      /*
+       * CREDIT DAYS ARE FILLED, NEVER RESTATED.
+       *
+       * This loop wrote the sheet's credit days over every customer whose
+       * figure differed, every thirty minutes — so a term a telecaller changed
+       * in the CRM was put back within the half hour, and reported as "it goes
+       * back to the old number". The Sales Party projection already treats the
+       * field as a person's once anybody has stated it (`creditDays` non-null,
+       * which the CRM edit writes alongside `creditTermDays` for exactly this
+       * reason); this one did not. Now it does the same: the sheet fills an
+       * EMPTY credit term and leaves a stated one alone.
+       */
+      const stated = known.creditDays !== null;
+      const creditTermDays = stated ? known.creditTermDays : party.creditDays ?? 30;
+      const creditDays = stated ? known.creditDays : party.creditDays ?? null;
 
       /*
        * A ROW THE SHEET STILL AGREES WITH IS NOT REWRITTEN.
@@ -349,6 +426,47 @@ export async function projectCustomers(
         },
       });
       updated++;
+    } else if (leadsByName.get(nameOf(party))?.length === 1) {
+      const lead = leadsByName.get(nameOf(party))![0];
+      // Taken once: a party spelled twice in one pass must not adopt it twice.
+      leadsByName.delete(nameOf(party));
+      if (!lead.phone.trim()) withoutPhone++;
+      adoptedLeads++;
+      if (options.dryRun) continue;
+
+      const orderedOn = party.firstOrder ?? calendarDate(new Date());
+      const convertible = {
+        id: lead.id,
+        kind: "lead" as const,
+        ownerId: lead.ownerId,
+        salesAmId: lead.salesAmId,
+        leadSource: lead.leadSource,
+      };
+      const columns = conversionColumns(convertible, orderedOn);
+      await db.transaction(async (tx) => {
+        const moved = await tx
+          .update(customers)
+          .set({
+            ...columns,
+            externalCode: partyKey(party.name),
+            customerSince: lead.customerSince ?? orderedOn,
+            creditTermDays: party.creditDays ?? 30,
+            creditDays: party.creditDays,
+            updatedAt: new Date(),
+          })
+          // Guarded, so a lead an order converted between the read and this
+          // write is not recorded as converted a second time.
+          .where(and(eq(customers.id, lead.id), eq(customers.kind, "lead")))
+          .returning({ id: customers.id });
+        if (!moved.length) return;
+        await recordConversion(
+          tx,
+          convertible,
+          options.assignToUserId ?? null,
+          columns.salesAmId ?? null,
+          "its first order reached the order sheet",
+        );
+      });
     } else {
       toInsert.push({
         id: newId("cus"),
@@ -392,7 +510,7 @@ export async function projectCustomers(
     }
   }
 
-  return { created, updated, withoutPhone, unassigned };
+  return { created, updated, adoptedLeads, withoutPhone, unassigned };
 }
 
 /* ---------------------------------------------------------------- orders */
@@ -755,6 +873,38 @@ export async function unpaidPerPaymentTab(): Promise<Set<string>> {
 
 
 /**
+ * The orders the Payment Status tab says were RECEIVED — the one case a newly
+ * imported bill is not counted as owed. See `positionFor`.
+ */
+export async function receivedPerPaymentTab(): Promise<Set<string>> {
+  const rows = await db
+    .select({
+      orderNumber: sheetPaymentRows.orderNumber,
+      paymentStatus: sheetPaymentRows.paymentStatus,
+    })
+    .from(sheetPaymentRows)
+    .where(eq(sheetPaymentRows.status, "present"));
+  return new Set(rows.filter((r) => isReceived(r.paymentStatus)).map((r) => r.orderNumber));
+}
+
+/**
+ * WHERE NOBODY HAS SAID, A BILL PAST ITS DUE DATE IS OWED. Mahek's decision,
+ * October 2026, and a reversal: a sheet bill used to land `unstated` and count
+ * as neither paid nor owed until a person spoke, which kept a month of real
+ * credit sales off Outstanding and off every collections screen. Now it lands
+ * `stated` with its whole amount open, ages from its credit-term due date like
+ * any other bill, and a receipt is what reduces it.
+ *
+ * The one exception is the Payment Status tab saying Received. That is not
+ * silence — the office has written down that the money came — so the bill is
+ * held `unstated` rather than chased for money we have a record of receiving.
+ * The tab still writes no receipt: confirming it is accounts' job.
+ */
+function positionFor(received: boolean): "stated" | "unstated" {
+  return received ? "unstated" : "stated";
+}
+
+/**
  * Bills from the ORDER history, one per order, every one marked paid.
  *
  * A sales bill in this business IS the order — the Order Details tab carries a
@@ -779,18 +929,17 @@ export async function unpaidPerPaymentTab(): Promise<Set<string>> {
  * August receivables report marked 395 bills owed and a scheduled pass settled
  * 348 of them again, Rs 1.18 crore, fourteen hours later.
  *
- * So the third answer is the true one: nobody has said. A bill lands
- * `payment_position = 'unstated'` and counts as NEITHER paid nor owed — held
- * out of outstanding, aging, the collections worklist and the slow-payer flag
- * until the app or the Tally receivables report speaks. Nothing chases a debt
- * nobody has vouched for, and nothing is written off either.
+ * That was followed by a third answer — `unstated`, neither paid nor owed —
+ * and Mahek has since overruled it: a bill nobody has spoken for is OWED, from
+ * its credit-term due date, unless the Payment Status tab says Received. See
+ * `positionFor`. What survives from all of this is the rule below.
  *
  * THE SHEET NEVER WRITES MONEY. Not a receipt, not `paid_amount`, not
  * `status`, not `outstanding`. Those are the app's, and only the app's. What
  * this function writes is what the tab actually knows: which bill exists,
- * against which order and customer, for how much, on what date. `unstated` is
- * written on INSERT and never on UPDATE, because a bill somebody has since
- * spoken for must not be returned to silence by the next scheduled pass.
+ * against which order and customer, for how much, on what date. The payment
+ * position is written on INSERT and never on UPDATE, because a bill somebody
+ * has since spoken for must not have that undone by the next scheduled pass.
  */
 /**
  * What the sheet states about a bill, as stored.
@@ -879,6 +1028,8 @@ export async function projectBillsFromOrders(
    * the read is gone with it. `unpaidPerPaymentTab()` remains, because the
    * revert that undoes the receipts this path once wrote still needs it.
    */
+
+  const received = await receivedPerPaymentTab();
 
   const refs = [...grouped.keys()].map((n) => `SHEET-${n}`);
   const orderRows = refs.length
@@ -1024,15 +1175,12 @@ export async function projectBillsFromOrders(
       }
     } else {
       billId = newId("bil");
-      /*
-       * Nobody has said what this bill's payment position is, and this tab
-       * cannot say: it records what was billed and never what was received.
-       * So it is written down as unsaid rather than assumed either way, and
-       * counts as neither paid nor owed until somebody speaks.
-       */
-      await db.insert(bills).values({ id: billId, ...values, paymentPosition: "unstated" });
+      // This tab records what was billed and never what was received, so the
+      // bill is owed unless the Payment Status tab says otherwise.
+      const position = positionFor(received.has(orderNumber));
+      await db.insert(bills).values({ id: billId, ...values, paymentPosition: position });
       created++;
-      unstated++;
+      if (position === "unstated") unstated++;
     }
     // So the next order in this same pass sees the number as taken. A bill
     // this pass just wrote carries no decision — the projection never makes
@@ -1204,25 +1352,12 @@ export async function projectBills(
         updated++;
       }
     } else {
-      /*
-       * `unstated` even here, where the tab DOES carry a received flag.
-       *
-       * This is the harder call of the two, because this tab genuinely knows
-       * something — 8,277 of its rows say received or not received, and that
-       * is real evidence rather than the order tab's silence. It is still a
-       * spreadsheet cell, and a receipt is the assertion that money reached
-       * the bank. Writing one from a cell puts a confirmed receipt in the
-       * ledger with no person behind it, which is the thing we are removing,
-       * and it does not become acceptable because this cell is better
-       * informed than that one.
-       *
-       * The evidence is not thrown away: the tab is read every pass and
-       * `paidWithoutDate` and `blankStatus` still count what it says, so
-       * accounts can act on it. What changes is that a person does the acting.
-       */
-      await db.insert(bills).values({ id: newId("bil"), ...values, paymentPosition: "unstated" });
+      // Owed unless this row says Received. Even then no receipt is written —
+      // a cell is not somebody confirming money reached the bank.
+      const position = positionFor(received);
+      await db.insert(bills).values({ id: newId("bil"), ...values, paymentPosition: position });
       created++;
-      unstated++;
+      if (position === "unstated") unstated++;
     }
   }
 
@@ -1255,6 +1390,23 @@ export async function projectSheet(
   options: ProjectionOptions = {},
 ): Promise<ProjectionReport> {
   const customerResult = await projectCustomers(options);
+
+  /*
+   * THE ERP TAKES THE ORDERS once `erp.orders.live` is on, and from then the
+   * sheet is history rather than a source: it writes no order and no bill. Two
+   * authors of one book is every order counted twice. Customers still come
+   * from the party tab — the sheet is simply right about those.
+   */
+  if ((await getConfig())["erp.orders.live"]) {
+    const none = { created: 0, updated: 0, payments: 0, paidWithoutDate: 0, blankStatus: 0, clashed: 0, unstated: 0, skipped: true };
+    return {
+      customers: customerResult,
+      orders: { created: 0, updated: 0, lines: 0 },
+      bills: none,
+      skipped: [{ reason: "the ERP takes the orders (erp.orders.live), so the sheet writes no orders or bills", count: 0 }],
+    };
+  }
+
   const { orders: orderResult, skipped } = await projectOrders(options);
 
   // A sales bill is the order, so bills come from the order history by
@@ -1286,8 +1438,8 @@ export async function projectSheet(
      * records or confirms something, which is now the only way they change.
      *
      * Outstanding IS still rebuilt, because bills arriving changes it: a new
-     * `unstated` bill contributes nothing, but a bill whose AMOUNT the sheet
-     * corrected changes what a stated bill is worth. The follow-up stage and
+     * bill is owed from the day it lands, and a bill whose AMOUNT the sheet
+     * corrected changes what it is worth. The follow-up stage and
      * the slow-payer flag follow outstanding, so they come after it, in that
      * order.
      */

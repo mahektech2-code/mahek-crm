@@ -87,7 +87,7 @@ test('NO COUNT is not a count of zero', () => {
   assert.equal(s.nextAsk, null);
   assert.equal(s.nextAskDueOn, null);
   for (const r of s.rungs) assert.equal(r.asked, null, 'no rung claims to have gone or not gone');
-  assert.equal(chaseCountSentence(null), 'This phone has not been told how many times the office has asked');
+  assert.equal(chaseCountSentence(null), 'This phone does not know how many times the office has asked');
   assert.notEqual(chaseCountSentence(null), chaseCountSentence(0));
 });
 

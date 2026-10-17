@@ -17,6 +17,11 @@ export const APP_IDS = [
   "admin",
   "founder",
   "enquiries",
+  "erp",
+  "website",
+  "hire",
+  "docs",
+  "factory",
 ] as const;
 
 export type AppId = (typeof APP_IDS)[number];
@@ -43,6 +48,12 @@ export type AppDefinition = {
    * to offer it, and `app_access` still needs the id.
    */
   mobileOnly?: boolean;
+  /**
+   * An app whose work another app now does. Its id stays, so a grant made
+   * before the retirement still resolves, but nothing draws it — two tiles
+   * for one job is how people end up keeping two records of it.
+   */
+  retiredInto?: AppId;
 };
 
 export const APPS: AppDefinition[] = [
@@ -112,27 +123,32 @@ export const APPS: AppDefinition[] = [
     id: "people",
     name: "Attendance & People",
     initials: "AP",
-    description: "Hours, leave and the team roster.",
-    href: "/people",
+    description: "Hours, leave and the team roster — now HRMS.",
+    href: "/hrms",
     tone: "neutral",
     built: false,
+    retiredInto: "hrms",
   },
   {
     id: "reports",
+    // Retired. Its screens are gone; the owner's figures it drew are read by
+    // the Founder Command Centre from the same service. The id stays so a
+    // grant made before the retirement still resolves to something.
     name: "Reports",
     initials: "RP",
-    description: "New business, what it is worth, and whether customers are still buying.",
-    href: "/reports",
+    description: "Retired — the owner's figures are in the Founder Command Centre.",
+    href: "/founder",
     tone: "neutral",
-    built: true,
+    built: false,
+    retiredInto: "founder",
   },
   {
     id: "hrms",
     name: "HRMS",
     initials: "HR",
     description:
-      "The employee master — who works here, where, since when and on what.",
-    href: "/hrms/employees",
+      "Check in and out, leave, payroll, tasks, performance, the sales desk and the employee master.",
+    href: "/hrms",
     tone: "neutral",
     built: true,
   },
@@ -149,17 +165,14 @@ export const APPS: AppDefinition[] = [
     id: "founder",
     /*
      * Performance across every app, on one screen — a pure composition layer
-     * over what Reports, the Sales Dashboard, Accounts and HRMS already
-     * compute. No new derived numbers live here; this reads and rolls up.
-     *
-     * A standalone app rather than a tab on Reports, deliberately: Reports is
-     * the CRM's order-book economics, and this is meant as the founder's own
-     * front door onto the whole company, granted separately from it.
+     * over what the owner's KPIs, the Sales Dashboard, Accounts and HRMS
+     * already compute. No new derived numbers live here; this reads and
+     * rolls up. It is also where the retired Reports app's figures now live.
      */
-    name: "Founder Dashboard",
-    initials: "FD",
+    name: "Founder Command Centre",
+    initials: "FC",
     description:
-      "Company revenue, the whole team scored, money owed and the roster — one screen.",
+      "Every record and every decision in the company, in one place — and what needs you today.",
     href: "/founder",
     tone: "neutral",
     built: true,
@@ -182,88 +195,99 @@ export const APPS: AppDefinition[] = [
     tone: "neutral",
     built: true,
   },
+  {
+    id: "erp",
+    /*
+     * The factory and the godowns: purchase, testing, stock, batching,
+     * filling, packing, transfers, orders, dispatch and transport — the
+     * client's AppSheet "Mahek Plus", rebuilt (docs/erp/). One app narrowed by
+     * module rather than five: "where is this lot" is one question whoever
+     * asks it, and each screen is its own module because the source granted
+     * screens one at a time.
+     */
+    name: "ERP",
+    initials: "ERP",
+    description:
+      "Purchase, quality tests, stock, production, orders, dispatch and transport — from the godown to the lorry.",
+    href: "/erp",
+    tone: "neutral",
+    built: true,
+  },
+  {
+    id: "website",
+    /*
+     * The CMS for mahek-website — its own app for the same reason Website
+     * Enquiries is one: it is work nobody already granted Sales, Accounts or
+     * HRMS does, so a separate grant is what lets somebody hold it without
+     * also holding whichever of those happens to be nearby. This PR wires up
+     * the app, its access and its 12 module screens over mock data only;
+     * reading and writing the live site is a later PR.
+     */
+    name: "Website",
+    initials: "WA",
+    description:
+      "Products, pages, gallery, careers and the rest of what the public site shows — content, not the calling book.",
+    href: "/website",
+    tone: "neutral",
+    built: true,
+  },
+  {
+    id: "hire",
+    /*
+     * Hiring and onboarding. It ends where the other apps begin: the last act
+     * of the pipeline is provisioning the new employee's MahekOne account with
+     * the apps their role blueprint names, which is also what makes a
+     * candidate `hired` (Hire PRD §1.1, P8). What somebody may do inside it is
+     * their Hire ROLE — recruiter, interviewer, hiring manager, onboarding,
+     * HR head, admin — set on the Access screen beside the grant (`lib/hire/roles.ts`).
+     */
+    name: "Hire",
+    initials: "HI",
+    description:
+      "Role blueprints, the hiring pipeline, AI-assisted interviews with evidence, decisions, offers and onboarding — ending in a working account.",
+    href: "/hire",
+    tone: "neutral",
+    built: true,
+  },
+  {
+    id: "docs",
+    /*
+     * Documentation for every app in MahekOne, read in MahekOne. Each page has
+     * three tabs for three readers — the person doing the work, the owner who
+     * wants the rule behind it, and the developer changing it — and every
+     * figure on a page that comes from configuration is read live from the
+     * database this deployment is connected to, so the docs on prod quote
+     * prod's settings rather than a copy typed into the page.
+     */
+    name: "Documentation",
+    initials: "DO",
+    description:
+      "How every MahekOne app works — step-by-step guides, the rules behind each screen, and the developer reference.",
+    href: "/docs",
+    tone: "neutral",
+    built: true,
+  },
+  {
+    id: "factory",
+    /*
+     * The factory floor's phone app — scan a label, see the picture, enter
+     * the count, send. A web app sized for a phone, also shipped as a thin
+     * Android wrapper (factory-android/) so it has a home-screen icon; every
+     * screen still comes from the server. Every stock movement it makes is an
+     * ERP document, posted through the ERP's own handlers (`lib/factory/post.ts`).
+     *
+     * Associate is a worker on the floor; manager supervises a department, or
+     * the whole floor as the Production Head (`lib/factory/departments.ts`).
+     */
+    name: "Factory",
+    initials: "FA",
+    description:
+      "The floor's phone app: mixing, filling, packing and dispatch, by scanning — with the Production Head's live view.",
+    href: "/factory",
+    tone: "neutral",
+    built: true,
+  },
 ];
-
-/* ---------------------------------------------------------------------------
- * Registering an app.
- *
- * An app's id is its slug, and it is load-bearing in three places at once: the
- * row in `app_access` that grants somebody the app, the URL segment they land
- * on, and the key every console screen joins against. That is why it is
- * validated here rather than in the console — the rule belongs to the registry,
- * not to whichever screen happens to be collecting the value.
- * ------------------------------------------------------------------------- */
-
-/**
- * Slugs the platform reserves.
- *
- * The console addresses an app at /admin/<slug> and its own sections at
- * /admin/people, /admin/audit and so on — one namespace. An app allowed to call
- * itself "people" would shadow the People section, so the platform's segments
- * are reserved alongside its routes.
- */
-const RESERVED = new Set([
-  // Top-level routes.
-  "api", "admin", "login", "apps", "assets", "static", "_next",
-  // Sections inside the console.
-  "overview", "people", "data", "notifications", "audit",
-]);
-
-export function validateAppSlug(
-  slug: string,
-  taken: readonly string[],
-  /** The entry being edited, so it does not collide with itself. */
-  currentId?: string,
-): string | null {
-  const value = slug.trim();
-  if (!value) return "An app needs a slug — it is how access is granted and where the app lives.";
-  if (!/^[a-z][a-z0-9-]*$/.test(value)) {
-    return "Lowercase letters, digits and hyphens, starting with a letter. This becomes a URL.";
-  }
-  if (value.length > 24) return "Keep it under 24 characters.";
-  if (value.endsWith("-")) return "It cannot end with a hyphen.";
-  if (value.includes("--")) return "No double hyphens.";
-  if (RESERVED.has(value)) return `"${value}" is a platform route and cannot be an app slug.`;
-  if (taken.some((t) => t === value && t !== currentId)) {
-    return `Another app already uses "${value}". Two apps sharing a slug would share their access grants.`;
-  }
-  return null;
-}
-
-/** "—" and empty both mean "not deployed", which is legitimate before launch. */
-function unset(value: string): boolean {
-  const v = value.trim();
-  return v === "" || v === "—" || v === "-";
-}
-
-export function validateAppRoute(route: string, slug: string, live: boolean): string | null {
-  if (unset(route)) {
-    return live ? "A live app needs a route, or the launcher has nowhere to send people." : null;
-  }
-  const value = route.trim();
-  if (!value.startsWith("/")) return "A route is a path on this site, so it starts with a slash.";
-  if (/\s/.test(value)) return "No spaces in a route.";
-  if (/[A-Z]/.test(value)) return "Routes are lowercase.";
-  if (/\.[a-z0-9]+$/i.test(value)) return "That looks like a file, not a route. Point at the app's first screen.";
-  if (slug && !(value === `/${slug}` || value.startsWith(`/${slug}/`))) {
-    return `A route must sit under /${slug}, or the launcher sends people somewhere that is not this app.`;
-  }
-  return null;
-}
-
-/**
- * An endpoint is optional — an app can be live and simply have no settings, and
- * one that publishes no summary just contributes nothing to the launcher's
- * count. What is checked here is the SHAPE. Whether a declared endpoint
- * actually answers is a different question, and Contract validation asks it.
- */
-export function validateAppEndpoint(value: string): string | null {
-  if (unset(value)) return null;
-  const v = value.trim();
-  if (!v.startsWith("/api/")) return "An endpoint is a path under /api/.";
-  if (/\s/.test(v)) return "No spaces in an endpoint.";
-  return null;
-}
 
 export function getApp(id: string): AppDefinition | undefined {
   return APPS.find((a) => a.id === id);
@@ -277,7 +301,7 @@ export function getApp(id: string): AppDefinition | undefined {
  * others: the exclusion has to live in one place to be certain it is everywhere.
  */
 export function webApps(ids: readonly AppId[]): AppDefinition[] {
-  return APPS.filter((a) => ids.includes(a.id) && !a.mobileOnly);
+  return APPS.filter((a) => ids.includes(a.id) && !a.mobileOnly && !a.retiredInto);
 }
 
 /** "MAHEK CRM" for the CRM, "MAHEK OM" and so on for the rest. */

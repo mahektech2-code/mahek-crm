@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { getConfig } from "@/lib/config/store";
-import { searchProducts } from "@/lib/services/product-service";
+import { listActiveProducts, searchProducts } from "@/lib/services/product-service";
 
 /**
  * §2.2 — catalogue search, called while a telecaller is mid-call, so it has
@@ -22,6 +22,12 @@ export async function GET(request: Request) {
   const customerId = params.get("customerId") ?? undefined;
 
   try {
+    /* `?all=1` is the whole active catalogue, for the lead-intake picker that
+       offers every product and narrows as somebody types. Behind the same login
+       and the same switch as the search. */
+    if (params.get("all") === "1") {
+      return NextResponse.json({ products: await listActiveProducts() });
+    }
     return NextResponse.json({
       products: await searchProducts(query, customerId),
     });

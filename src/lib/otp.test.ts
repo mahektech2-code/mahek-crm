@@ -1,0 +1,380 @@
+/**
+ * WhatsApp sign-in codes, end to end against a real database — Wati stubbed,
+ * so the "sent" code is read off the stub instead of a phone.
+ *
+ * Pins: nothing is offered until an approved template is named · every code,
+ * whatever it is for, goes to the PERSONAL MOBILE in HRMS through the
+ * account's employee link, and never to the work number · that number signs
+ * in too, and is the ONLY number a code can be asked for by · only a hash is stored · one use · wrong
+ * guesses run out · it expires · resend cooldown · the handset signs in with a
+ * code in place of the password · change and reset a password with a code.
+ *
+ * They need mahekone_test, which `npm run test:db` creates.
+ */
+import { after, before, beforeEach, test } from "node:test";
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { eq, sql } from "drizzle-orm";
+
+import { db } from "@/db";
+import { appAccess, authOtps, employees, sessions, users } from "@/db/schema";
+import { setTestUser } from "@/lib/auth";
+import { verifyPassword } from "@/lib/password";
+import { invalidateConfig, seedConfig, updateSetting } from "@/lib/config/store";
+import {
+  forgetOtpAvailability,
+  otpAvailability,
+  findAccount,
+  findAccountForCode,
+  resetPasswordWithOtp,
+  sendOtp,
+  verifyOtp,
+} from "@/lib/services/otp-service";
+import { runLoginChecks } from "@/lib/services/mbos-service";
+
+const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
+const TEMPLATE = "mahekone_login_code";
+
+let lastCode: string | null = null;
+let lastPhone: string | null = null;
+const realFetch = globalThis.fetch;
+
+before(() => {
+  assert.match(process.env.DATABASE_URL ?? "", /mahekone_test/, "Run against mahekone_test.");
+  process.env.WATI_API_TOKEN = "wati_test_token";
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (!url.startsWith("https://live-mt-server.wati.io/")) return realFetch(input, init);
+    const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "content-type": "application/json" } });
+    if (url.includes("/messageTemplates/send")) {
+      const body = JSON.parse(String(init?.body));
+      lastPhone = body.recipients[0].phone_number;
+      lastCode = body.recipients[0].custom_params[0].value;
+      return json({ success: true, recipients: [{ errors: [] }] });
+    }
+    if (url.includes("/messageTemplates")) {
+      return json({
+        templates: [{ name: TEMPLATE, status: "APPROVED", category: "AUTHENTICATION", body: "*{{1}}* is your verification code.", custom_params: [{ name: "1" }] }],
+        total: 1,
+      });
+    }
+    return json({});
+  }) as typeof fetch;
+});
+
+after(async () => {
+  globalThis.fetch = realFetch;
+  setTestUser(null);
+  await db.$client.end();
+});
+
+let priya: typeof users.$inferSelect;
+
+beforeEach(async () => {
+  await db.execute(sql`truncate table auth_otps, sessions, app_access, audit_log, users, employees, app_settings restart identity cascade`);
+  invalidateConfig();
+  await seedConfig();
+  forgetOtpAvailability();
+  lastCode = null;
+  lastPhone = null;
+  [priya] = await db
+    .insert(users)
+    .values({ id: id("usr"), name: "Priya", email: "priya@t.local", phone: "9820011001", passwordHash: "scrypt$00$00", role: "associate", initials: "PR" })
+    .returning();
+  await db.insert(appAccess).values({ id: id("aca"), userId: priya.id, app: "field", role: "associate" });
+  /* Her own phone, as HR keeps it — a different number from the work one, so
+     every test below can tell which of the two a code went to. */
+  const [emp] = await db
+    .insert(employees)
+    .values({
+      id: id("emp"),
+      rowNumber: 2,
+      employeeCode: "E001",
+      name: "Priya",
+      status: "active",
+      personalMobile: PERSONAL,
+      raw: {},
+      rowHash: randomUUID(),
+    })
+    .returning();
+  await db.update(users).set({ employeeId: emp.id }).where(eq(users.id, priya.id));
+  [priya] = await db.select().from(users).where(eq(users.id, priya.id));
+});
+
+const PERSONAL = "9876500002";
+
+async function configure() {
+  await updateSetting("auth.otp.whatsappTemplateName", TEMPLATE, priya.id);
+  invalidateConfig();
+  forgetOtpAvailability();
+}
+
+test("nothing is offered until an approved template is named", async () => {
+  assert.equal((await otpAvailability()).available, false);
+  const r = await sendOtp(priya.id, "login");
+  assert.equal(r.ok, false);
+  assert.equal(lastCode, null, "Wati was never asked to send");
+});
+
+test("a code goes to the personal mobile in HRMS, and only its hash is stored", async () => {
+  await configure();
+  const r = await sendOtp(priya.id, "login");
+  assert.equal(r.ok, true, r.ok ? "" : r.error);
+  assert.equal(lastPhone, "919876500002", "the personal mobile, not the work number");
+  assert.match(lastCode ?? "", /^\d{6}$/);
+  if (r.ok) assert.equal(r.sentTo, "+91 98•••••002");
+  const [row] = await db.select().from(authOtps).where(eq(authOtps.userId, priya.id));
+  assert.notEqual(row.codeHash, lastCode, "the code itself is never stored");
+  assert.ok(row.sentAt);
+});
+
+test("the right code works once; the same code a second time does not", async () => {
+  await configure();
+  await sendOtp(priya.id, "login");
+  assert.deepEqual(await verifyOtp(priya.id, "login", lastCode!), { ok: true });
+  const again = await verifyOtp(priya.id, "login", lastCode!);
+  assert.equal(again.ok, false);
+});
+
+test("a code for one purpose does not unlock another", async () => {
+  await configure();
+  await sendOtp(priya.id, "login");
+  assert.equal((await verifyOtp(priya.id, "password_change", lastCode!)).ok, false);
+});
+
+test("wrong guesses run out, and then even the right code is refused", async () => {
+  await configure();
+  await sendOtp(priya.id, "login");
+  const wrong = lastCode === "000000" ? "111111" : "000000";
+  for (let i = 0; i < 5; i++) await verifyOtp(priya.id, "login", wrong);
+  const r = await verifyOtp(priya.id, "login", lastCode!);
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.match(r.error, /Too many wrong tries/);
+});
+
+test("an expired code is refused and says to ask again", async () => {
+  await configure();
+  await sendOtp(priya.id, "login");
+  await db.update(authOtps).set({ expiresAt: new Date(Date.now() - 1000) });
+  const r = await verifyOtp(priya.id, "login", lastCode!);
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.match(r.error, /expired/);
+});
+
+test("asking again straight away is refused with how long to wait", async () => {
+  await configure();
+  await sendOtp(priya.id, "login");
+  const r = await sendOtp(priya.id, "login");
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.ok((r.retryInSeconds ?? 0) > 0);
+});
+
+test("an account not linked to HRMS gets no code, whatever its work number", async () => {
+  await configure();
+  await db.update(users).set({ employeeId: null }).where(eq(users.id, priya.id));
+  const r = await sendOtp(priya.id, "login");
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.match(r.error, /not linked to an HRMS record/);
+  assert.equal(lastPhone, null, "nothing went to the work number instead");
+});
+
+test("a linked employee with no personal mobile gets no code either", async () => {
+  await configure();
+  await db.update(employees).set({ personalMobile: null });
+  const r = await sendOtp(priya.id, "login");
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.match(r.error, /there is none on your HRMS record/);
+  assert.equal(lastPhone, null);
+});
+
+test("password change and reset codes go to the personal mobile too", async () => {
+  await configure();
+  for (const purpose of ["password_change", "password_reset"] as const) {
+    lastPhone = null;
+    await db.execute(sql`truncate table auth_otps`);
+    const r = await sendOtp(priya.id, purpose);
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.equal(lastPhone, "919876500002", purpose);
+  }
+});
+
+test("the personal mobile signs in, and the work number still does", async () => {
+  assert.equal((await findAccount(PERSONAL))?.id, priya.id);
+  assert.equal((await findAccount(`+91 ${PERSONAL}`))?.id, priya.id);
+  assert.equal((await findAccount("9820011001"))?.id, priya.id);
+});
+
+test("a personal mobile that is somebody else's work number means the work number", async () => {
+  const [other] = await db
+    .insert(users)
+    .values({ id: id("usr"), name: "Rakesh", email: "rakesh@t.local", phone: PERSONAL, passwordHash: "x", role: "associate", initials: "RA" })
+    .returning();
+  assert.equal((await findAccount(PERSONAL))?.id, other.id);
+});
+
+test("a personal mobile on two linked accounts signs in nobody", async () => {
+  const [emp2] = await db
+    .insert(employees)
+    .values({ id: id("emp"), rowNumber: 3, employeeCode: "E002", name: "Twin", status: "active", personalMobile: PERSONAL, raw: {}, rowHash: randomUUID() })
+    .returning();
+  await db.insert(users).values({ id: id("usr"), name: "Twin", email: "twin@t.local", passwordHash: "x", role: "associate", initials: "TW", employeeId: emp2.id });
+  assert.equal(await findAccount(PERSONAL), null);
+});
+
+/* ---------------------------------------- a code is asked for by ONE number */
+
+test("a code is asked for by the personal mobile only — never the work number or the email", async () => {
+  assert.equal((await findAccountForCode(PERSONAL))?.id, priya.id);
+  assert.equal((await findAccountForCode(`+91 ${PERSONAL}`))?.id, priya.id);
+  assert.equal(await findAccountForCode("9820011001"), null, "the work number finds nobody");
+  assert.equal(await findAccountForCode("priya@t.local"), null, "the email finds nobody");
+  // The password lookup is untouched: work number and email still sign in.
+  assert.equal((await findAccount("9820011001"))?.id, priya.id);
+  assert.equal((await findAccount("priya@t.local"))?.id, priya.id);
+});
+
+test("a personal mobile that is somebody else's work number still means the personal mobile for a code", async () => {
+  /* The case this exists for: an account carrying another person's phone as
+     its work number. The code goes to whoever HR says owns the number typed. */
+  await db.insert(users).values({ id: id("usr"), name: "Rakesh", email: "rakesh@t.local", phone: PERSONAL, passwordHash: "x", role: "associate", initials: "RA" });
+  assert.equal((await findAccountForCode(PERSONAL))?.id, priya.id);
+});
+
+test("the handset accepts a code only with the personal mobile", async () => {
+  await configure();
+  await sendOtp(priya.id, "login");
+  const viaWork = await runLoginChecks({ mobile: "9820011001", otp: lastCode! });
+  assert.equal(viaWork.ok, false, "the right code with the work number is refused");
+  const viaPersonal = await runLoginChecks({ mobile: PERSONAL, otp: lastCode! });
+  assert.equal(viaPersonal.ok, true);
+});
+
+test("the handset signs in with a code in place of the password, and a wrong one is refused", async () => {
+  await configure();
+  await sendOtp(priya.id, "login");
+  const bad = await runLoginChecks({ mobile: PERSONAL, otp: "000001" === lastCode ? "000002" : "000001" });
+  assert.equal(bad.ok, false);
+  if (!bad.ok) assert.equal(bad.step, "bad_otp");
+  const good = await runLoginChecks({ mobile: PERSONAL, otp: lastCode! });
+  assert.equal(good.ok, true);
+});
+
+test("changing a password takes a WhatsApp code once codes are set up", async () => {
+  const { changePassword, sendPasswordChangeCode } = await import("@/lib/actions/account");
+  await configure();
+  setTestUser(priya);
+  const sent = await sendPasswordChangeCode();
+  assert.equal(sent.ok, true, sent.ok ? "" : sent.error);
+
+  const noCode = new FormData();
+  noCode.set("password", "newpass123");
+  noCode.set("confirm", "newpass123");
+  assert.equal((await changePassword(null, noCode)).ok, false, "no code, no change");
+
+  const withCode = new FormData();
+  withCode.set("code", lastCode!);
+  withCode.set("password", "newpass123");
+  withCode.set("confirm", "newpass123");
+  const r = await changePassword(null, withCode);
+  assert.equal(r.ok, true, r.ok ? "" : r.error);
+  const [row] = await db.select().from(users).where(eq(users.id, priya.id));
+  assert.equal(await verifyPassword("newpass123", row.passwordHash), true);
+});
+
+test("a forgotten password is reset with a code, and every session ends", async () => {
+  await configure();
+  await db.insert(sessions).values({ id: "sess_x", userId: priya.id, expiresAt: new Date(Date.now() + 3_600_000) });
+  await sendOtp(priya.id, "password_reset");
+  assert.equal((await resetPasswordWithOtp(priya.id, "000000" === lastCode ? "111111" : "000000", "x".repeat(9))).ok, false);
+  const r = await resetPasswordWithOtp(priya.id, lastCode!, "brandnew99");
+  assert.equal(r.ok, true, r.ok ? "" : r.error);
+  assert.equal((await db.select().from(sessions).where(eq(sessions.userId, priya.id))).length, 0);
+  const [row] = await db.select().from(users).where(eq(users.id, priya.id));
+  assert.equal(await verifyPassword("brandnew99", row.passwordHash), true);
+});
+
+/* ------------------------------------------------------------ the history */
+
+test("a sent code records where it was asked from, what was typed and who carried it", async () => {
+  await configure();
+  const r = await sendOtp(priya.id, "login", { surface: "web", requestedWith: "priya@t.local" });
+  assert.equal(r.ok, true);
+  const [row] = await db.select().from(authOtps).where(eq(authOtps.userId, priya.id));
+  assert.equal(row.provider, "wati");
+  assert.equal(row.surface, "web");
+  assert.equal(row.requestedWith, "priya@t.local");
+  assert.equal(row.providerRef, row.id, "Wati's local message id is the row id");
+  assert.equal(row.refusedReason, null);
+});
+
+test("a refused request is recorded, and neither extends the cooldown nor hides the live code", async () => {
+  await configure();
+  await sendOtp(priya.id, "login", { surface: "handset" });
+  const code = lastCode!;
+  const refused = await sendOtp(priya.id, "login", { surface: "handset" });
+  assert.equal(refused.ok, false);
+  const rows = await db.select().from(authOtps).where(eq(authOtps.userId, priya.id));
+  assert.equal(rows.length, 2);
+  const refusal = rows.find((x) => x.refusedReason)!;
+  assert.equal(refusal.refusedReason, "cooldown");
+  assert.equal(refusal.sentAt, null);
+  // The code sent first still verifies: the refusal is newer and must not shadow it.
+  assert.deepEqual(await verifyOtp(priya.id, "login", code), { ok: true });
+});
+
+test("refusals do not use up the window's allowance", async () => {
+  await configure();
+  await updateSetting("auth.otp.maxRequestsPerWindow", 1, priya.id);
+  await updateSetting("auth.otp.resendCooldownSeconds", 0, priya.id);
+  invalidateConfig();
+  // Three refusals for want of an HRMS mobile, then the link is restored.
+  const empId = priya.employeeId!;
+  await db.update(users).set({ employeeId: null }).where(eq(users.id, priya.id));
+  for (let i = 0; i < 3; i++) assert.equal((await sendOtp(priya.id, "login")).ok, false);
+  await db.update(users).set({ employeeId: empId }).where(eq(users.id, priya.id));
+  const r = await sendOtp(priya.id, "login");
+  assert.equal(r.ok, true, r.ok ? "" : r.error);
+  const reasons = (await db.select().from(authOtps).where(eq(authOtps.userId, priya.id))).map((x) => x.refusedReason);
+  assert.equal(reasons.filter((x) => x === "no_hrms_mobile").length, 3);
+});
+
+test("every check of a code is recorded with its result", async () => {
+  await configure();
+  await sendOtp(priya.id, "login");
+  const wrong = lastCode === "000000" ? "111111" : "000000";
+  await verifyOtp(priya.id, "login", wrong);
+  let [row] = await db.select().from(authOtps).where(eq(authOtps.userId, priya.id));
+  assert.equal(row.lastAttemptResult, "wrong");
+  assert.equal(row.attempts, 1);
+  assert.ok(row.lastAttemptAt);
+  await verifyOtp(priya.id, "login", lastCode!);
+  [row] = await db.select().from(authOtps).where(eq(authOtps.userId, priya.id));
+  assert.equal(row.lastAttemptResult, "ok");
+  assert.ok(row.consumedAt);
+});
+
+test("the history lists, counts and narrows what was recorded", async () => {
+  await configure();
+  const { otpHistory, otpByPerson } = await import("@/lib/services/otp-history-service");
+  await sendOtp(priya.id, "login", { surface: "web", requestedWith: "9820011001" });
+  await verifyOtp(priya.id, "login", lastCode!);
+  await sendOtp(priya.id, "login", { surface: "web" }); // refused: cooldown
+
+  const all = await otpHistory({});
+  assert.equal(all.total, 2);
+  assert.equal(all.summary.verified, 1);
+  assert.equal(all.summary.refused, 1);
+  assert.deepEqual(all.rows.map((r) => r.status).sort(), ["refused", "verified"]);
+  assert.equal(all.rows.find((r) => r.status === "verified")!.employeeCode, "E001");
+
+  assert.equal((await otpHistory({ status: "refused" })).total, 1);
+  assert.equal((await otpHistory({ q: "98765" })).total, 2, "found by the number it went to");
+  assert.equal((await otpHistory({ q: "E001" })).total, 2, "found by employee code");
+  assert.equal((await otpHistory({ purpose: "password_reset" })).total, 0);
+
+  const [person] = await otpByPerson({});
+  assert.equal(person.requests, 2);
+  assert.equal(person.verified, 1);
+  assert.equal(person.refused, 1);
+  assert.deepEqual(person.numbers, ["919876500002"]);
+});

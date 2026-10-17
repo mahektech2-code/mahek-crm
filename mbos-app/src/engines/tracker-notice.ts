@@ -70,10 +70,10 @@ export function trackerNotice(i: {
       title: 'Your phone stopped the tracker',
       detail:
         i.exemption === 'optimised'
-          ? 'Your route stopped being recorded while the app was in your pocket, and battery saving is ' +
-            'still switched on for MahekOne. Two settings stop it happening again.'
-          : 'Your route stopped being recorded while the app was in your pocket. Two settings stop it ' +
-            'happening again.',
+          ? 'Your route stopped saving while the phone was in your pocket. Battery saving is ' +
+            'still switched on for Mahek MBOS. Change two settings to stop this.'
+          : 'Your route stopped saving while the phone was in your pocket. Change two settings to stop ' +
+            'this.',
     };
   }
 
@@ -83,26 +83,26 @@ export function trackerNotice(i: {
       tone: 'danger',
       title: 'Your phone will stop the tracker',
       detail:
-        'Battery saving is switched on for MahekOne, so your phone is free to stop it the moment it ' +
-        'goes in your pocket. It takes one tap to allow it.',
+        'Battery saving is on for Mahek MBOS. Your phone can stop it when the phone ' +
+        'goes in your pocket. One tap fixes it.',
     };
   }
 
   if (i.failure === 'no_foreground_permission') {
     return {
       tone: 'danger',
-      title: 'MahekOne cannot see where you are',
-      detail: 'Location is not allowed for MahekOne, so nothing you do today is recorded anywhere.',
+      title: 'Mahek MBOS cannot see where you are',
+      detail: 'Location is not allowed for Mahek MBOS. Nothing you do today is saved.',
     };
   }
 
   if (i.failure === 'no_background_permission') {
     return {
       tone: 'danger',
-      title: 'MahekOne can only see you while it is open',
+      title: 'Mahek MBOS can only see you while it is open',
       detail:
-        'Following your day needs “Allow all the time”. Anything less and the trail stops the moment ' +
-        'you put the phone away.',
+        'Choose “Allow all the time” for location. With any other choice, your route stops ' +
+        'when you put the phone away.',
     };
   }
 
@@ -120,8 +120,8 @@ export function trackerNotice(i: {
       tone: 'danger',
       title: 'This phone would not start the tracker',
       detail:
-        'Your phone refused to start route recording, and this is not a setting you can change. Ring ' +
-        'the office and tell them — your work is still being saved.',
+        'Your phone did not start saving your route. This is not a setting you can change. Ring ' +
+        'the office and tell them. Your work is still being saved.',
     };
   }
 
@@ -130,8 +130,8 @@ export function trackerNotice(i: {
       tone: 'danger',
       title: 'This app cannot follow your route on this phone',
       detail:
-        'Background route recording is not available on this handset. Your visits and orders are still ' +
-        'recorded — the line on the map is what is missing. Tell the office.',
+        'This phone cannot save your route when the app is closed. Your visits and orders are still ' +
+        'saved. Only the line on the map is missing. Tell the office.',
     };
   }
 
@@ -148,7 +148,7 @@ export function trackerNotice(i: {
     tone: 'plain',
     title: 'Keep tracking on',
     detail:
-      'If your route has holes in it, your phone is stopping MahekOne to save battery. Two settings ' +
-      'fix it.',
+      'If your route has gaps, your phone is stopping Mahek MBOS to save battery. Change two settings ' +
+      'to fix it.',
   };
 }

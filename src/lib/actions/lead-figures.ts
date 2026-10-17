@@ -1,14 +1,17 @@
 "use server";
 
+import { assertLeadInScope } from "@/lib/services/lead-scope";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
 import { auditLog, customers } from "@/db/schema";
-import { assertCustomerInScope, requireCapability } from "@/lib/access-control";
+import { requireCapability } from "@/lib/access-control";
 import { requireUser } from "@/lib/auth";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
+import { qualificationAccess } from "@/lib/lead-qualification-access";
+import { settleQualificationState } from "@/lib/services/lead-qualification-flow-service";
 
 /* ---------------------------------------------------------------------------
  * §5.3 — SOMEBODY SAYS THE FOUR CONVERSION FIGURES STILL HOLD.
@@ -99,7 +102,7 @@ export async function confirmLeadFigures(
     /* Seeing it at all is the ordinary scope question, asked before the
        capability so a refusal cannot be used to find out whether a row
        exists. */
-    await assertCustomerInScope(row);
+    await assertLeadInScope(customerId, row);
 
     /*
      * THERE HAS TO BE A LEAD TO CONFIRM FIGURES ON.
@@ -121,6 +124,11 @@ export async function confirmLeadFigures(
        audited write here records one — with several hats per person, "was he
        allowed to do this" is not answerable from the person alone. */
     const { authorisedBy, authorisedIn } = await requireCapability("lead.work");
+
+    /* Standing behind the figures is a Qualification act, so it waits for the
+       Sales Manager to have verified the Prospect like every other one. */
+    const access = qualificationAccess(row.leadStage);
+    if (!access.writable) return err(access.reason, "rule_violation");
 
     /*
      * A CONFIRMATION THAT NOTHING IS STILL TRUE IS A LIE, so an empty lead is
@@ -190,8 +198,13 @@ export async function confirmLeadFigures(
      * date itself is drawn on the lead record where the figures are.
      */
 
-    revalidatePath(`/sales/leads/${customerId}`);
-    revalidatePath(`/crm/leads/${customerId}`);
+    await settleQualificationState(customerId, user.id);
+    try {
+      revalidatePath(`/sales/leads/${customerId}`);
+      revalidatePath(`/crm/leads/${customerId}`);
+    } catch {
+      /* no request context - a job or a test, where nothing is cached */
+    }
     return ok(
       null,
       `Noted — the figures on ${row.name} stand as they are, as of today.`,

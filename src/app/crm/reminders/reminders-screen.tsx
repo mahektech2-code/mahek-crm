@@ -12,10 +12,13 @@ import {
   Input,
   MetricStrip,
   PageHeader,
-  Select,
   cx,
 } from "@/components/ui/primitives";
 import { Modal, RowMenu, Tabs } from "@/components/ui/overlays";
+import {
+  CustomerSearchField,
+  type PickedCustomer,
+} from "@/components/crm/customer-search-field";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
 import {
@@ -40,8 +43,14 @@ const TYPE_LABEL: Record<string, string> = {
 
 type Tab = "due" | "today" | "overdue" | "upcoming" | "done" | "all";
 
+/** Rows drawn before "Show more". */
+const PAGE = 100;
+
 function overdueByPerson(overdue: Row[]) {
-  const map = new Map<string, { name: string; overdue: number; oldest: number }>();
+  const map = new Map<
+    string,
+    { name: string; overdue: number; oldest: number }
+  >();
   for (const r of overdue) {
     const entry = map.get(r.assignedUserName) ?? {
       name: r.assignedUserName,
@@ -81,12 +90,24 @@ function closureLine(r: Row): string {
   }
 }
 
+/**
+ * The sentence under an open reminder somebody has already rung about. Only
+ * two cases can produce one, because an answered call on or after the due
+ * date closes the reminder by itself.
+ */
+function stillOpenLine(r: Row, call: NonNullable<Row["lastCall"]>): string {
+  const by = call.byName ? ` by ${call.byName}` : "";
+  return call.answered
+    ? `Spoke to them on ${shortDate(call.on)}${by}, before this was due - it closes with the next call that gets through.`
+    : `Rang on ${shortDate(call.on)}${by} - no answer, so this is still owed. It closes by itself when a call gets through.`;
+}
+
 export function RemindersScreen({
   scopeLabel,
   isTeamView,
   canClose,
   rows,
-  customers,
+  closedWithinDays,
 }: {
   scopeLabel: string;
   isTeamView: boolean;
@@ -99,7 +120,8 @@ export function RemindersScreen({
    */
   canClose: boolean;
   rows: Row[];
-  customers: Array<{ id: string; name: string }>;
+  /** How far back closed reminders were read — the Done tab says so. */
+  closedWithinDays: number;
 }) {
   const router = useRouter();
   const { run } = useToast();
@@ -153,6 +175,15 @@ export function RemindersScreen({
     };
   }, [rows]);
   const visible = buckets[tab];
+  /* THE LIST IS DRAWN A PAGE AT A TIME. A team's pending book runs to
+     thousands, and drawing every row up front was tens of thousands of
+     elements before anybody could click; nobody reads past the first page
+     without asking for the next. Changing tab starts again at one page. */
+  const [shown, setShown] = React.useState<{ tab: Tab; n: number }>({
+    tab,
+    n: PAGE,
+  });
+  const limit = shown.tab === tab ? shown.n : PAGE;
 
   const oldest = buckets.overdue.reduce(
     (a, r) => Math.max(a, r.overdueDays),
@@ -230,198 +261,249 @@ export function RemindersScreen({
             { key: "due", label: "Needs action", count: buckets.due.length },
             { key: "today", label: "Due today", count: buckets.today.length },
             { key: "overdue", label: "Overdue", count: buckets.overdue.length },
-            { key: "upcoming", label: "Upcoming", count: buckets.upcoming.length },
+            {
+              key: "upcoming",
+              label: "Upcoming",
+              count: buckets.upcoming.length,
+            },
             { key: "done", label: "Closed", count: buckets.done.length },
             { key: "all", label: "All", count: rows.length },
           ]}
         />
 
         {/*
-          * SAID ONCE, at the top, to whoever no longer has the button.
-          *
-          * A control that disappears with no explanation reads as a fault in
-          * the screen, and the person it disappeared for is the person who
-          * most needs to know what replaced it. It is not drawn for somebody
-          * who still has the button: they can see what they can do.
-          */}
+         * SAID ONCE, at the top, to whoever no longer has the button.
+         *
+         * A control that disappears with no explanation reads as a fault in
+         * the screen, and the person it disappeared for is the person who
+         * most needs to know what replaced it. It is not drawn for somebody
+         * who still has the button: they can see what they can do.
+         */}
         {!canClose ? (
           <div className="border-b border-divider bg-canvas px-5 py-2.5 text-[13px] text-muted">
-            These close themselves. Press Call, and saving the call closes the
-            reminder behind it — so this list is a record of calls actually
-            made rather than of boxes ticked.
+            These close themselves. Press Call — or call them from the Call Log
+            or the Calling desk — and once a call that gets through is saved,
+            every reminder due for that customer closes on its own. A no-answer
+            keeps it open, because the conversation is still owed.
           </div>
         ) : null}
 
         {visible.length ? (
-          visible.map((r) => (
-            <div
-              key={r.id}
-              className="flex items-center gap-4 border-b border-divider px-5 py-3.5 last:border-0 hover:bg-canvas"
-            >
-              <div className="w-[110px] flex-none">
-                <div
-                  className={cx(
-                    "text-sm font-medium",
-                    r.status !== "pending"
-                      ? "text-muted"
-                      : r.displayStatus === "overdue"
-                        ? "text-danger"
-                        : r.displayStatus === "due_today"
-                          ? "text-ink"
-                          : "text-body",
-                  )}
-                >
-                  {shortDate(r.dueDate)}
-                </div>
-                {r.status === "pending" && r.overdueDays > 0 ? (
-                  <div className="mt-0.5 text-[11px] text-danger">
-                    {ageLabel(r.overdueDays)} late
+          <>
+            {visible.slice(0, limit).map((r) => (
+              <div
+                key={r.id}
+                className="flex items-center gap-4 border-b border-divider px-5 py-3.5 last:border-0 hover:bg-canvas"
+              >
+                <div className="w-[110px] flex-none">
+                  <div
+                    className={cx(
+                      "text-sm font-medium",
+                      r.status !== "pending"
+                        ? "text-muted"
+                        : r.displayStatus === "overdue"
+                          ? "text-danger"
+                          : r.displayStatus === "due_today"
+                            ? "text-ink"
+                            : "text-body",
+                    )}
+                  >
+                    {shortDate(r.dueDate)}
                   </div>
-                ) : null}
-              </div>
-
-              <div className="min-w-0 flex-1">
-                <div
-                  className={cx(
-                    "text-[15px] leading-[21px]",
-                    r.status === "pending" ? "text-ink" : "text-muted line-through",
-                  )}
-                >
-                  {r.note}
-                </div>
-                <div className="mt-1 text-[13px] text-muted">
-                  <Link
-                    href={`/crm/customers/${r.customerId}`}
-                    // Every row on the list is visible at once, so the
-                    // default prefetch renders every customer's page on the
-                    // one shared vCPU this app runs on.
-                    prefetch={false}
-                    className="no-underline"
-                  >
-                    {r.customerName}
-                  </Link>
-                  {isTeamView ? ` · ${r.assignedUserName}` : ""} ·{" "}
-                  {TYPE_LABEL[r.type] ?? r.type}
-                  {r.systemGenerated ? " · set by the system" : ""}
-                  {r.rescheduledOften
-                    ? ` · moved ${r.rescheduleCount} times`
-                    : ""}
-                </div>
-                {/*
-                 * The same conflict the confirmation dialog offers to hold,
-                 * read the same live way — see `hasConflictToday` on
-                 * `listReminders`. A manager working this list needs to see
-                 * it without opening every customer.
-                 */}
-                {r.holdOtherReasonsUntilDue ? (
-                  <Badge tone="success" className="mt-1.5">
-                    Holding other calls until this date
-                  </Badge>
-                ) : r.hasConflictToday ? (
-                  <Badge tone="warn" className="mt-1.5">
-                    An earlier reason would call this customer sooner
-                  </Badge>
-                ) : null}
-              </div>
-
-              {r.status === "pending" ? (
-                <div className="flex flex-none items-center gap-2">
-                  {/*
-                   * THE ACTION IS THE CALL, not a tick.
-                   *
-                   * This list used to offer one button and it recorded that a
-                   * button had been pressed — which is the one thing nobody
-                   * needed to know. The promise is closed by making the call,
-                   * so the button that closes it is the one that makes it:
-                   * straight into the Call Log with this customer's panel
-                   * open, and the reminder closes itself when the call is
-                   * saved. See `lib/engines/reminder-closure.ts`.
-                   */}
-                  <Link
-                    href={`/crm/call-log?customer=${r.customerId}`}
-                    prefetch={false}
-                    className="inline-flex h-8 items-center rounded-[4px] border border-brand bg-brand px-3 text-[13px] font-medium text-white no-underline hover:bg-brand-hover hover:no-underline"
-                  >
-                    Call
-                  </Link>
-                  {canClose ? (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      title="Close it without a call behind it - for the cases a call cannot reach. It is recorded as your decision."
-                      onClick={async () => {
-                        await run(completeReminder(r.id));
-                        router.refresh();
-                      }}
-                    >
-                      Mark done
-                    </Button>
+                  {r.status === "pending" && r.overdueDays > 0 ? (
+                    <div className="mt-0.5 text-[11px] text-danger">
+                      {ageLabel(r.overdueDays)} late
+                    </div>
                   ) : null}
-                  <RowMenu
-                    items={[
-                      ...(r.hasConflictToday && !r.holdOtherReasonsUntilDue
-                        ? [
-                            {
-                              label: `Hold other calls until ${shortDate(r.dueDate)}`,
-                              onSelect: async () => {
-                                await run(holdOtherReasonsUntilReminder(r.id));
-                                router.refresh();
-                              },
-                            },
-                          ]
-                        : []),
-                      {
-                        label: "Reschedule",
-                        onSelect: () => setRescheduling(r),
-                      },
-                      {
-                        label: "Carry forward to tomorrow",
-                        onSelect: async () => {
-                          await run(rescheduleReminder(r.id, addDays(t, 1)));
-                          router.refresh();
-                        },
-                      },
-                      {
-                        label: "Open customer record",
-                        onSelect: () => router.push(`/crm/customers/${r.customerId}`),
-                      },
-                      /*
-                       * Dismissing sits behind the SAME capability as marking
-                       * done. A reason typed into a dismissal clears the
-                       * overdue pile exactly as effectively as a tick does, so
-                       * gating one and leaving the other would rename the
-                       * escape rather than close it.
-                       */
-                      ...(canClose
-                        ? [
-                            {
-                              label: "Dismiss reminder",
-                              destructive: true,
-                              onSelect: () => setDismissing(r),
-                            },
-                          ]
-                        : []),
-                    ]}
-                  />
                 </div>
-              ) : (
-                <div className="flex-none text-right">
-                  <Badge tone={r.status === "completed" ? "success" : "muted"}>
-                    {r.status === "completed" ? "Done" : "Dismissed"}
-                  </Badge>
-                  {/*
-                   * WHAT closed it, beside the fact that something did. "Done"
-                   * on its own is the state this screen was in: a promise kept
-                   * and a promise tidied away read identically, which is what
-                   * made the whole list unreadable as a record of work.
-                   */}
-                  <div className="mt-1 max-w-[220px] text-[11px] leading-[15px] text-muted">
-                    {closureLine(r)}
+
+                <div className="min-w-0 flex-1">
+                  <div
+                    className={cx(
+                      "text-[15px] leading-[21px]",
+                      r.status === "pending"
+                        ? "text-ink"
+                        : "text-muted line-through",
+                    )}
+                  >
+                    {r.note}
                   </div>
+                  <div className="mt-1 text-[13px] text-muted">
+                    <Link
+                      href={`/crm/customers/${r.customerId}`}
+                      // Every row on the list is visible at once, so the
+                      // default prefetch renders every customer's page on the
+                      // one shared vCPU this app runs on.
+                      prefetch={false}
+                      className="no-underline"
+                    >
+                      {r.customerName}
+                    </Link>
+                    {isTeamView ? ` · ${r.assignedUserName}` : ""} ·{" "}
+                    {TYPE_LABEL[r.type] ?? r.type}
+                    {r.systemGenerated ? " · set by the system" : ""}
+                    {r.rescheduledOften
+                      ? ` · moved ${r.rescheduleCount} times`
+                      : ""}
+                  </div>
+                  {/*
+                   * WHY IT IS STILL OPEN after somebody rang. A saved call closes
+                   * a due reminder by itself, so one still standing after a call
+                   * is open for a reason — nobody answered, or they were rung
+                   * before it fell due — and the row says which rather than
+                   * leaving the telecaller to wonder whether the call reached it.
+                   */}
+                  {r.status === "pending" && r.lastCall ? (
+                    <div
+                      className={cx(
+                        "mt-1 text-[13px]",
+                        r.lastCall.answered ? "text-muted" : "text-warn-ink",
+                      )}
+                    >
+                      {stillOpenLine(r, r.lastCall)}
+                    </div>
+                  ) : null}
+                  {/*
+                   * The same conflict the confirmation dialog offers to hold,
+                   * read the same live way — see `hasConflictToday` on
+                   * `listReminders`. A manager working this list needs to see
+                   * it without opening every customer.
+                   */}
+                  {r.holdOtherReasonsUntilDue ? (
+                    <Badge tone="success" className="mt-1.5">
+                      Holding other calls until this date
+                    </Badge>
+                  ) : r.hasConflictToday ? (
+                    <Badge tone="warn" className="mt-1.5">
+                      An earlier reason would call this customer sooner
+                    </Badge>
+                  ) : null}
                 </div>
-              )}
-            </div>
-          ))
+
+                {r.status === "pending" ? (
+                  <div className="flex flex-none items-center gap-2">
+                    {/*
+                     * THE ACTION IS THE CALL, not a tick.
+                     *
+                     * This list used to offer one button and it recorded that a
+                     * button had been pressed — which is the one thing nobody
+                     * needed to know. The promise is closed by making the call,
+                     * so the button that closes it is the one that makes it:
+                     * straight into the Call Log with this customer's panel
+                     * open, and the reminder closes itself when the call is
+                     * saved. See `lib/engines/reminder-closure.ts`.
+                     */}
+                    <Link
+                      href={`/crm/call-log?customer=${r.customerId}`}
+                      prefetch={false}
+                      className="inline-flex h-8 items-center rounded-[4px] border border-brand bg-brand px-3 text-[13px] font-medium text-white no-underline hover:bg-brand-hover hover:no-underline"
+                    >
+                      Call
+                    </Link>
+                    {canClose ? (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        title="Close it without a call behind it - for the cases a call cannot reach. It is recorded as your decision."
+                        onClick={async () => {
+                          await run(completeReminder(r.id));
+                          router.refresh();
+                        }}
+                      >
+                        Mark done
+                      </Button>
+                    ) : null}
+                    <RowMenu
+                      items={[
+                        ...(r.hasConflictToday && !r.holdOtherReasonsUntilDue
+                          ? [
+                              {
+                                label: `Hold other calls until ${shortDate(r.dueDate)}`,
+                                onSelect: async () => {
+                                  await run(
+                                    holdOtherReasonsUntilReminder(r.id),
+                                  );
+                                  router.refresh();
+                                },
+                              },
+                            ]
+                          : []),
+                        {
+                          label: "Reschedule",
+                          onSelect: () => setRescheduling(r),
+                        },
+                        {
+                          label: "Carry forward to tomorrow",
+                          onSelect: async () => {
+                            await run(rescheduleReminder(r.id, addDays(t, 1)));
+                            router.refresh();
+                          },
+                        },
+                        {
+                          label: "Open customer record",
+                          onSelect: () =>
+                            router.push(`/crm/customers/${r.customerId}`),
+                        },
+                        /*
+                         * Dismissing sits behind the SAME capability as marking
+                         * done. A reason typed into a dismissal clears the
+                         * overdue pile exactly as effectively as a tick does, so
+                         * gating one and leaving the other would rename the
+                         * escape rather than close it.
+                         */
+                        ...(canClose
+                          ? [
+                              {
+                                label: "Dismiss reminder",
+                                destructive: true,
+                                onSelect: () => setDismissing(r),
+                              },
+                            ]
+                          : []),
+                      ]}
+                    />
+                  </div>
+                ) : (
+                  <div className="flex-none text-right">
+                    <Badge
+                      tone={r.status === "completed" ? "success" : "muted"}
+                    >
+                      {r.status === "completed" ? "Done" : "Dismissed"}
+                    </Badge>
+                    {/*
+                     * WHAT closed it, beside the fact that something did. "Done"
+                     * on its own is the state this screen was in: a promise kept
+                     * and a promise tidied away read identically, which is what
+                     * made the whole list unreadable as a record of work.
+                     */}
+                    <div className="mt-1 max-w-[220px] text-[11px] leading-[15px] text-muted">
+                      {closureLine(r)}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+            {visible.length > limit ? (
+              <div className="flex items-center justify-between gap-3 border-t border-divider px-4 py-3 text-[13px] text-muted">
+                <span>
+                  Showing {limit} of {visible.length}
+                </span>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setShown({ tab, n: limit + PAGE })}
+                >
+                  Show {Math.min(PAGE, visible.length - limit)} more
+                </Button>
+              </div>
+            ) : null}
+            {tab === "done" || tab === "all" ? (
+              <div className="border-t border-divider px-4 py-2.5 text-[12px] text-muted">
+                Closed reminders from the last {closedWithinDays} days. Older
+                ones are on each customer&apos;s timeline.
+              </div>
+            ) : null}
+          </>
         ) : (
           <EmptyState
             title="Nothing here"
@@ -436,11 +518,13 @@ export function RemindersScreen({
       </Card>
 
       <NewReminderModal
+        key={newOpen ? "open" : "closed"}
         open={newOpen}
-        customers={customers}
         onClose={() => setNewOpen(false)}
         onSubmit={async (customerId, dueDate, note) => {
-          const result = await run(createReminder({ customerId, dueDate, note }));
+          const result = await run(
+            createReminder({ customerId, dueDate, note }),
+          );
           if (result.ok) {
             setNewOpen(false);
             router.refresh();
@@ -453,7 +537,9 @@ export function RemindersScreen({
         onClose={() => setRescheduling(null)}
         onSubmit={async (dueDate, note) => {
           if (!rescheduling) return;
-          const result = await run(rescheduleReminder(rescheduling.id, dueDate, note));
+          const result = await run(
+            rescheduleReminder(rescheduling.id, dueDate, note),
+          );
           if (result.ok) {
             setRescheduling(null);
             router.refresh();
@@ -530,7 +616,9 @@ function DismissModal({
       <div className="mb-3 text-sm text-muted">{reminder?.note}</div>
       <Field
         label="Why is this no longer needed?"
-        error={error ? "Give a reason - this stays on the customer record." : null}
+        error={
+          error ? "Give a reason - this stays on the customer record." : null
+        }
       >
         <VoiceTextarea
           value={reason}
@@ -552,16 +640,18 @@ function DismissModal({
 
 function NewReminderModal({
   open,
-  customers,
   onClose,
   onSubmit,
 }: {
   open: boolean;
-  customers: Array<{ id: string; name: string }>;
   onClose: () => void;
-  onSubmit: (customerId: string, dueDate: string, note: string) => Promise<void>;
+  onSubmit: (
+    customerId: string,
+    dueDate: string,
+    note: string,
+  ) => Promise<void>;
 }) {
-  const [customerId, setCustomerId] = React.useState(customers[0]?.id ?? "");
+  const [customer, setCustomer] = React.useState<PickedCustomer | null>(null);
   const [dueDate, setDueDate] = React.useState(today());
   const [note, setNote] = React.useState("");
   const [busy, setBusy] = React.useState(false);
@@ -578,11 +668,13 @@ function NewReminderModal({
           </Button>
           <Button
             variant="primary"
-            disabled={busy}
+            disabled={busy || !customer}
+            title={customer ? undefined : "Pick the customer first"}
             onClick={async () => {
+              if (!customer) return;
               setBusy(true);
               try {
-                await onSubmit(customerId, dueDate, note);
+                await onSubmit(customer.id, dueDate, note);
               } finally {
                 setBusy(false);
               }
@@ -595,13 +687,11 @@ function NewReminderModal({
     >
       <div className="grid gap-3">
         <Field label="Customer">
-          <Select value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </Select>
+          <CustomerSearchField
+            value={customer}
+            onChange={setCustomer}
+            autoFocus
+          />
         </Field>
         <Field label="Due date · required">
           <Input

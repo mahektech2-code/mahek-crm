@@ -262,6 +262,14 @@ export function ImportScreen({
             </Link>
           </div>
 
+          {summary.notes.length ? (
+            <ul className="border-b border-divider bg-canvas px-5 py-2.5 text-[13px] text-body">
+              {summary.notes.map((n) => (
+                <li key={n}>{n}</li>
+              ))}
+            </ul>
+          ) : null}
+
           {summary.skipped.length ? (
             <>
               <div className="bg-warn-soft px-5 py-2.5 text-[13px] text-warn-ink">

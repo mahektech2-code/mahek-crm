@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { releaseDevice } from "@/lib/actions/sales";
+import type { Result } from "@/lib/result";
 import { Button } from "@/components/console/parts";
 
 /**
@@ -24,11 +25,19 @@ export function ReleaseButton({
   deviceId,
   salesmanName,
   handset,
+  release = releaseDevice,
+  onReleased,
 }: {
   deviceId: string;
   salesmanName: string;
   /** "Xiaomi Redmi Note 12" — what he will recognise as the phone. */
   handset: string;
+  /** Which door this is. The Sales Dashboard's by default; the Admin
+      Console passes its own, which asks for a platform administrator. */
+  release?: (input: { deviceId: string; reason: string }) => Promise<Result>;
+  /** For a screen that is not re-rendered by `router.refresh` — the
+      console's table polls an endpoint, and re-reads it now instead. */
+  onReleased?: () => void;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -43,7 +52,7 @@ export function ReleaseButton({
     setError(null);
     let result;
     try {
-      result = await releaseDevice({ deviceId, reason });
+      result = await release({ deviceId, reason });
     } finally {
       // Cleared whatever happened — an action that throws rather than
       // returning a Result would otherwise leave the button dead.
@@ -57,6 +66,7 @@ export function ReleaseButton({
     setReason("");
     toast.push(result.message ?? "Released.");
     router.refresh();
+    onReleased?.();
   }
 
   return (

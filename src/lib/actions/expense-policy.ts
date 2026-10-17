@@ -24,6 +24,7 @@ import {
 } from "@/lib/services/expense-policy-service";
 import { today } from "@/lib/recompute";
 import { err as fail, ok, okVoid, type Result } from "@/lib/result";
+import { ADMIN } from "@/lib/admin-routes";
 
 /* ---------------------------------------------------------------------------
  * Writing the expense policy.
@@ -71,7 +72,7 @@ async function audit(
 
 function refresh() {
   try {
-    revalidatePath("/admin/expense-policy");
+    revalidatePath(ADMIN.home, "layout");
     revalidatePath("/sales/expense-policy");
   } catch {
     /* No request scope — nothing cached to drop. */

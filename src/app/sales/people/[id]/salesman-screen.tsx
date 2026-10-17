@@ -7,6 +7,9 @@ import { readAttendanceVerdict } from "@/lib/attendance-labels";
 import type { PerformanceRow, SalesmanRecord } from "@/lib/services/sales-service";
 import type { DayEvidence as DayEvidenceType } from "@/lib/services/day-evidence-service";
 import { DayCheck } from "./day-check";
+import type { HometownState } from "@/lib/services/hometown-service";
+import { HometownPicker } from "@/components/expenses/hometown-picker";
+import { ExportMenu } from "@/components/ui/export-menu";
 import { CustomerName } from "@/components/console/customer-name";
 import {
   Cell,
@@ -70,6 +73,7 @@ export function SalesmanScreen({
   dayEvidence,
   selfieRetentionHours,
   openDayCheck,
+  towns,
 }: {
   record: SalesmanRecord;
   month: string;
@@ -89,6 +93,8 @@ export function SalesmanScreen({
    * would navigate and drop the reader back on Visits.
    */
   openDayCheck: boolean;
+  /** The reviewed place tree, for picking where he lives. */
+  towns: HometownState[];
 }) {
   const [tab, setTab] = React.useState<Tab>(openDayCheck ? "Day check" : "Visits");
   const { salesman: s } = record;
@@ -128,14 +134,57 @@ export function SalesmanScreen({
           </>
         }
         actions={
-          <Link
-            href={`/sales/journeys?salesman=${s.id}`}
-            className="inline-flex h-8.5 items-center rounded-[4px] border border-line bg-surface px-3 text-sm font-medium text-body no-underline hover:bg-canvas hover:no-underline"
-          >
-            Plan a route
-          </Link>
+          <>
+            <ExportMenu
+              name={`${s.name}, ${month}`}
+              csv={() => [
+                ["Figure", month, "Last month"],
+                ["Orders taken", thisMonth?.orders ?? 0, lastMonth?.orders ?? ""],
+                [
+                  "Order value (Rs)",
+                  Math.round((thisMonth?.orderValuePaise ?? 0) / 100),
+                  lastMonth ? Math.round(lastMonth.orderValuePaise / 100) : "",
+                ],
+                [
+                  "Collected (Rs)",
+                  Math.round((thisMonth?.collectedPaise ?? 0) / 100),
+                  lastMonth ? Math.round(lastMonth.collectedPaise / 100) : "",
+                ],
+                ["Visits", thisMonth?.visits ?? 0, lastMonth?.visits ?? ""],
+                ["Verified visits", thisMonth?.verifiedVisits ?? 0, lastMonth?.verifiedVisits ?? ""],
+                ["New shops", thisMonth?.newCustomers ?? 0, lastMonth?.newCustomers ?? ""],
+                ["Days worked", thisMonth?.daysWorked ?? 0, lastMonth?.daysWorked ?? ""],
+              ]}
+            />
+            <Link
+              href={`/sales/journeys?salesman=${s.id}`}
+              className="inline-flex h-8.5 items-center rounded-[4px] border border-line bg-surface px-3 text-sm font-medium text-body no-underline hover:bg-canvas hover:no-underline"
+            >
+              Plan a route
+            </Link>
+          </>
         }
       />
+
+      {/* WHERE HE WORKS AND WHERE HE LIVES, side by side as on the team table.
+          The hometown decides which of his days pay a meal allowance, so it is
+          set here as well as on the list — the same record, the same writer. */}
+      <div className="mb-4 flex flex-wrap items-center gap-x-8 gap-y-2 rounded-[6px] border border-line bg-surface px-4 py-3 text-[13px]">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="text-muted">Works</span>
+          <span className="min-w-0 truncate text-ink">
+            {(s.territories ?? []).length ? (
+              (s.territories ?? []).map((t) => t.value).join(", ")
+            ) : (
+              <Pill tone="danger">No area · empty handset</Pill>
+            )}
+          </span>
+        </div>
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="text-muted">{s.hometowns.length > 1 ? "Hometowns" : "Hometown"}</span>
+          <HometownPicker door="sales" salesman={{ id: s.id, name: s.name }} hometowns={s.hometowns} tree={towns} />
+        </div>
+      </div>
 
       {/*
         WHAT HE HAS ACTUALLY DONE THIS MONTH, above the tabs.
@@ -518,7 +567,9 @@ export function SalesmanScreen({
                 <Cell align="right">{money(e.amountPaise)}</Cell>
                 <Cell truncate={340}>{e.remarks ?? <span className="text-muted">—</span>}</Cell>
                 <Cell>
-                  {e.state === "approved" ? (
+                  {e.state === "allowance" ? (
+                    <Pill tone="neutral">Allowance</Pill>
+                  ) : e.state === "approved" ? (
                     <Pill tone="success">Approved</Pill>
                   ) : e.state === "rejected" ? (
                     <Pill tone="danger">Refused</Pill>

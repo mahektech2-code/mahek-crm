@@ -56,8 +56,9 @@ export type NotifyEntry = {
   mbosHref?: string | null;
 };
 
-export async function notifyUsers(entries: readonly NotifyEntry[]): Promise<void> {
-  if (!entries.length) return;
+/** Writes the bell rows and pushes them; answers the ids written, in the order given. */
+export async function notifyUsers(entries: readonly NotifyEntry[]): Promise<string[]> {
+  if (!entries.length) return [];
 
   const rows = entries.map((e) => ({
     id: id("ntf"),
@@ -66,6 +67,9 @@ export async function notifyUsers(entries: readonly NotifyEntry[]): Promise<void
     body: e.body,
     kind: e.kind ?? "info",
     href: e.href ?? null,
+    /* Stored, not only pushed: the handset's bell list reads this row on the
+       next pull, and without it the phone was handed the WEB route. */
+    mbosHref: e.mbosHref ?? null,
   }));
 
   await db.insert(notifications).values(rows);
@@ -82,11 +86,13 @@ export async function notifyUsers(entries: readonly NotifyEntry[]): Promise<void
       body: e.body,
       href: e.mbosHref ?? null,
       notificationId: rows[i].id,
+      kind: rows[i].kind,
     })),
   );
+  return rows.map((r) => r.id);
 }
 
 /** One person, which is most callers. */
 export async function notifyUser(entry: NotifyEntry): Promise<void> {
-  return notifyUsers([entry]);
+  await notifyUsers([entry]);
 }

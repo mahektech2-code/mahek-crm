@@ -1,8 +1,9 @@
 import React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 
 import { T } from './primitives';
 import { Icon } from './Icon';
+import { PressableScale } from './motion';
 import { color as C, HIT, radius, weight } from '../../theme/tokens';
 import type { TravelMode } from '../../data/travel';
 
@@ -33,14 +34,14 @@ import type { TravelMode } from '../../data/travel';
 export function modeHint(m: TravelMode, where: 'day' | 'leg'): string {
   if (m.requiresOdometer) {
     return where === 'day'
-      ? 'Photograph the meter now and again when you punch out'
-      : 'Photograph the meter now and again when you get there';
+      ? 'Take a meter photo now, and again when you punch out'
+      : 'Take a meter photo now, and again when you reach the shop';
   }
-  if (m.requiresTicket) return 'Add the ticket when you save the visit, if you keep it';
+  if (m.requiresTicket) return 'Add the ticket photo when you save the visit, if you have it';
   /* Public transport is the one day-level answer that leaves a question open,
      and saying so here is what stops the journey's own sheet reading as the
      app having forgotten what he already told it. */
-  if (m.key === 'public_transport') return 'You will be asked bus, train or auto at each shop';
+  if (m.key === 'public_transport') return 'At each shop, you will pick bus, train or auto';
   return 'Nothing to record';
 }
 
@@ -57,9 +58,13 @@ export function TravelModeList({
 }) {
   return (
     <View style={{ marginTop: 14, gap: 8 }}>
+      {/* A pick is a choice that moved, so it ticks `select` — and for the
+          two modes that open a camera, the tick is the moment he can feel
+          that the tap landed before the camera takes over the screen. */}
       {modes.map((mode) => (
-        <Pressable
+        <PressableScale
           key={mode.key}
+          feedbackKind="select"
           accessibilityRole="button"
           accessibilityLabel={`${mode.label} — ${modeHint(mode, where)}`}
           disabled={busy}
@@ -83,7 +88,7 @@ export function TravelModeList({
             </T>
           </View>
           <Icon name="forward" size={18} color={C.muted} strokeWidth={1.6} />
-        </Pressable>
+        </PressableScale>
       ))}
     </View>
   );

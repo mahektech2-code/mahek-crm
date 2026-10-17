@@ -72,7 +72,10 @@ const WORTH = {
   notSeenLately: 10,
 } as const;
 
-/** Rupees owed above which the debt is worth a detour on its own. */
+/** Paise owed above which the debt is worth a detour on its own — ₹100.
+    A courtesy floor that keeps a few rupees of rounding off the list, not a
+    business threshold: what counts as worth chasing is the office's
+    `mbos.*` collections settings, which decide who is called. */
 const DEBT_FLOOR_PAISE = 100_00;
 
 /**
@@ -105,7 +108,7 @@ export function nearby<T extends NearbyInput>(
     let worth = 0;
 
     if (shop.hasOpenTask) {
-      reasons.push('Something is waiting on your list');
+      reasons.push('You have a task for this shop');
       worth += WORTH.openTask;
     }
 
@@ -119,13 +122,16 @@ export function nearby<T extends NearbyInput>(
     }
 
     if (shop.outstandingPaise >= DEBT_FLOOR_PAISE) {
-      reasons.push('Money outstanding');
+      reasons.push('Payment pending');
       worth += WORTH.owesMoney;
     }
 
     /* A lead still being worked is worth a knock; one that is won, lost or on
        hold is not — those are settled, and turning up would be a wasted stop. */
-    if (shop.leadStage && ['new', 'contacted', 'qualified', 'negotiation'].includes(shop.leadStage)) {
+    /* Compared without case: the handset's `leads.stage` is the wire's own
+       word — "Contacted", "Negotiation" — and a lower-case list matched none
+       of them, so no open lead ever counted as a reason to stop. */
+    if (shop.leadStage && ['new', 'contacted', 'qualified', 'negotiation'].includes(shop.leadStage.toLowerCase())) {
       reasons.push('An open lead');
       worth += WORTH.openLead;
     }

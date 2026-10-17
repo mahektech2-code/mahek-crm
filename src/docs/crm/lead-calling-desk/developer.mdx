@@ -1,0 +1,118 @@
+The Calling desk is a **pure engine** (`engines/lead-calling-desk.ts`) that decides where a lead stands from the desk's side, a **read service** that narrows and summarises, and a **write module** whose every action asks the desk's own module grant before it does anything. It writes no stage directly: qualification calls are `calls` rows, and every stage change — Prospect, Lost, reopen — goes through `advanceLeadStage`, the same gated move documented on [All Leads](/docs/crm/leads/developer).
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route guard | `src/app/crm/leads/calling-desk/layout.tsx` | `requireModule(user.id, "crm.lead-calling-desk")` |
+| Pages | `src/app/crm/leads/calling-desk/page.tsx`, `[id]/page.tsx` → `src/components/leads/pages/leads-calling-desk.tsx`, `leads-calling-desk-record.tsx` | The desk and one lead's desk record |
+| Engine (pure) | `src/lib/engines/lead-calling-desk.ts` | `DESK_FIELDS`, `phaseOf`, `afterCall`, `questionsForCall`, `DESK_VIEW_LABEL`, `inView` |
+| Labels | `src/lib/calling-desk-labels.ts`, `src/lib/calling-desk-summary.ts` | Phase words and tones, due labels, `deskSummary` |
+| Reads | `src/lib/services/lead-calling-desk-service.ts` | `callingDesk`, `deskLeadRecord`, `inDeskScope` |
+| Writes | `src/lib/actions/lead-calling-desk.ts` | `logQualificationCall`, `requestProspect`, `convertLeadToProspect`, `logDeskMessage`, `setDeskNextAction`, `markDeskLost`, `reopenDeskLead`, `returnProspectRequest` |
+| Request settlement | `src/lib/services/lead-prospect-request-service.ts` | `settleProspectRequest` — called after a sales manager's verification |
+| Assignment | `src/lib/services/lead-desk-assignment-service.ts`, `src/lib/actions/lead-desk-assignment.ts` | Who holds the desk, who may hand leads out, assigning unowned leads |
+
+## A qualification call, end to end
+
+<Flow caption="logQualificationCall" chart={`
+sequenceDiagram
+  autonumber
+  participant UI as Desk record
+  participant A as actions/lead-calling-desk.ts
+  participant E as engines/lead-calling-desk.ts
+  participant L as advanceLeadStage
+  participant DB as Postgres
+  UI->>A: outcome, answers, next action
+  A->>A: requireCapability("lead.work"), deskRefusal (module), reachable (scope)
+  A->>DB: callsMade(customerId) — rows with outcome_detail.qualCall
+  A->>E: afterCall(callNumber, outcome, merged answers, prior outcomes)
+  E-->>A: ready · next · exhausted · lost(cause)
+  A->>DB: transaction — INSERT calls (marked qualCall), UPDATE the answered customer columns, next action
+  opt lost
+    A->>L: advanceLeadStage(to "lost", coded reason, lostNote)
+  end
+  A-->>UI: "Save call" / "Ready for Prospect" / "mark Lost" result
+`} />
+
+A qualification call is **a row in `calls`**, distinguished only by the `CALL_MARK` key in `outcome_detail`. A separate table would have put half a lead's calls where the record history, EOD counts and the customer timeline do not read.
+
+## The engine
+
+<Code file="src/lib/engines/lead-calling-desk.ts" symbol="MAX_QUALIFICATION_CALLS" />
+
+<Code file="src/lib/engines/lead-calling-desk.ts" symbol="DESK_FIELDS" collapsed />
+
+`required` means "closes the lead if still missing after Call 3" (only `competitor`). `prospect` means "needed before *Ready for Prospect*" (competitor, product, monthly litres). `suggestCall` is a hint about order, never a rule.
+
+<Code file="src/lib/engines/lead-calling-desk.ts" symbol="prospectProgress" />
+
+<Code file="src/lib/engines/lead-calling-desk.ts" symbol="phaseOf" />
+
+<Code file="src/lib/engines/lead-calling-desk.ts" symbol="afterCall" />
+
+<Code file="src/lib/engines/lead-calling-desk.ts" symbol="DeskView" collapsed />
+
+## Becoming a Prospect
+
+Both buttons share one preparation step, so neither can accept a lead the other would refuse:
+
+- `preparePromotion` — the lead is a working Suspect, the readiness test passes, a sales type is set (or chosen now), a coded reason from `leads.prospectReasons`, a dry run of the Prospect gate, and the verifier is resolved (self-raised verifier → telecaller verifier → sales manager seat → lead manager seat → org-chart candidate → refuse).
+- `convertLeadToProspect` — when `leads.callingDeskDirectPromotion` is on, moves the lead with `advanceLeadStage({ to: "prospect" })` and gives the verifier a next action `leads.verificationDueDays` out. When off, it delegates to `requestProspect` unchanged.
+- `requestProspect` — leaves the stage alone, writes the `prospect_request_*` columns with state `awaiting`, dates the verification the next working day and notifies the verifier.
+- `settleProspectRequest` — after a verification, re-reads the latest verification row itself and, on *verified*, promotes through `advanceLeadStage` under the manager's hat; on *follow up* sets `followup`.
+
+<Code file="src/lib/services/lead-prospect-request-service.ts" symbol="settleProspectRequest" collapsed />
+
+<DbTable name="customers" only={["prospect_request_state", "prospect_requested_at", "prospect_requested_by_id", "prospect_request_reason", "prospect_request_note"]} note={{
+  prospect_request_state: "Null, awaiting, followup or returned — enforced by a check constraint. The lead stays a Suspect throughout.",
+  prospect_requested_at: "Required whenever a state is set (check constraint).",
+  prospect_request_reason: "The coded Prospect reason carried to the move when it is verified.",
+}} />
+
+## Reads and scope
+
+<Code file="src/lib/services/lead-calling-desk-service.ts" symbol="callingDesk" />
+
+The desk narrows with `resolveScope` → `scopedToUsers`, **not** `managerScope`: the latter answers "everybody" for anyone without a territory row, which would make one telecaller's desk count the country's leads. Converted leads and archived leads are left out; the query is capped at `DESK_LEAD_CAP` and the list paged at `DESK_PAGE`, while the tiles are counted over the whole capped set.
+
+## Permissions
+
+- <ModuleRef k="crm.lead-calling-desk" /> — off by default. The layout checks it, and **every write** checks it again through `deskRefusal`, because `lead.work` alone is held by every associate.
+
+<Code file="src/lib/actions/lead-calling-desk.ts" symbol="deskRefusal" />
+
+<CapabilityGrid names={["lead.work", "lead.verify"]} />
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/engines/lead-calling-desk.test.ts` | Phases, the three-call disposition, views, lost causes |
+| `npm run test:integration` | `src/lib/lead-calling-desk.test.ts` | Logging calls, readiness, request vs direct promotion, lost and reopen |
+| `npm run test:integration` | `src/lib/telecaller-verifier-routing.test.ts`, `src/lib/self-raised-approver.test.ts` | Who the verification is owed to |
+| `npm run test:integration` | `src/lib/telecaller-qualification.test.ts` | The telecaller completing qualification after verification |
+
+## Changing it safely
+
+<Steps>
+<Step title="Change the rule in the engine">
+Which answers are compulsory or needed for a Prospect is a flag on `DESK_FIELDS`. The phase, the ready banner and the button's enabled state all read `prospectProgress`, so one edit moves all three.
+</Step>
+<Step title="Keep stage writes on advanceLeadStage">
+A desk action that set `lead_stage` itself would skip the gate, the transition row and the timeline.
+</Step>
+<Step title="Every new write asks deskRefusal">
+Put it immediately after `requireCapability("lead.work")`.
+</Step>
+<Step title="Do not store derived state">
+"Ready" and "which call" are derived on every read. Only the request is stored, because asking is not being.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| Engine header and `leads.callingDeskDirectPromotion` description say "five required answers"; `prospectProgress` needs three | `engines/lead-calling-desk.ts` header and `DESK_FIELDS`; `config/registry.ts` |
+| Direct promotion dates the verification by `leads.verificationDueDays`; a request uses the next working day | `actions/lead-calling-desk.ts` `convertLeadToProspect`, `requestProspect` |

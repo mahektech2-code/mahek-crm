@@ -1121,6 +1121,769 @@
       "when": 1789936589226,
       "tag": "0160_a_price_list_is_the_whole_company_s",
       "breakpoints": true
+    },
+    {
+      "idx": 161,
+      "version": "7",
+      "when": 1789936649226,
+      "tag": "0161_a_mix_target_is_aimed_at_a_shortlist",
+      "breakpoints": true
+    },
+    {
+      "idx": 162,
+      "version": "7",
+      "when": 1789936709226,
+      "tag": "0162_whatsapp_goes_through_wati",
+      "breakpoints": true
+    },
+    {
+      "idx": 163,
+      "version": "7",
+      "when": 1790271314741,
+      "tag": "0164_the_call_assistant_keeps_what_it_heard",
+      "breakpoints": true
+    },
+    {
+      "idx": 164,
+      "version": "7",
+      "when": 1790283118688,
+      "tag": "0165_whatsapp_templates_follow_their_rules",
+      "breakpoints": true
+    },
+    {
+      "idx": 165,
+      "version": "7",
+      "when": 1790283178688,
+      "tag": "0166_whatsapp_rules_the_founder_sets",
+      "breakpoints": true
+    },
+    {
+      "idx": 166,
+      "version": "7",
+      "when": 1790283238688,
+      "tag": "0167_the_visit_assistant_shares_the_drafts",
+      "breakpoints": true
+    },
+    {
+      "idx": 167,
+      "version": "7",
+      "when": 1790283298688,
+      "tag": "0168_sign_in_with_a_whatsapp_code",
+      "breakpoints": true
+    },
+    {
+      "idx": 168,
+      "version": "7",
+      "when": 1790283358688,
+      "tag": "0169_a_prospect_request_is_not_a_prospect",
+      "breakpoints": true
+    },
+    {
+      "idx": 169,
+      "version": "7",
+      "when": 1790283418688,
+      "tag": "0170_the_calling_desk_is_granted_not_inherited",
+      "breakpoints": true
+    },
+    {
+      "idx": 170,
+      "version": "7",
+      "when": 1790369818688,
+      "tag": "0171_a_dictated_note_is_not_cut_short",
+      "breakpoints": true
+    },
+    {
+      "idx": 171,
+      "version": "7",
+      "when": 1790369878688,
+      "tag": "0172_the_founder_inbox_remembers_hand_offs",
+      "breakpoints": true
+    },
+    {
+      "idx": 172,
+      "version": "7",
+      "when": 1790369938688,
+      "tag": "0173_the_erp_is_an_app",
+      "breakpoints": true
+    },
+    {
+      "idx": 173,
+      "version": "7",
+      "when": 1790369998688,
+      "tag": "0174_erp_masters_and_godowns",
+      "breakpoints": true
+    },
+    {
+      "idx": 174,
+      "version": "7",
+      "when": 1790370058688,
+      "tag": "0175_erp_attachment_parents",
+      "breakpoints": true
+    },
+    {
+      "idx": 175,
+      "version": "7",
+      "when": 1790370118688,
+      "tag": "0176_erp_purchase_and_raw_stock",
+      "breakpoints": true
+    },
+    {
+      "idx": 176,
+      "version": "7",
+      "when": 1790370178688,
+      "tag": "0177_erp_production_transfers_levels",
+      "breakpoints": true
+    },
+    {
+      "idx": 177,
+      "version": "7",
+      "when": 1790370238688,
+      "tag": "0178_erp_sales_orders",
+      "breakpoints": true
+    },
+    {
+      "idx": 178,
+      "version": "7",
+      "when": 1790370298688,
+      "tag": "0179_erp_logistics_requests_followup_expenses",
+      "breakpoints": true
+    },
+    {
+      "idx": 179,
+      "version": "7",
+      "when": 1790370358688,
+      "tag": "0180_erp_alerts_and_ai",
+      "breakpoints": true
+    },
+    {
+      "idx": 180,
+      "version": "7",
+      "when": 1790370418688,
+      "tag": "0181_whatsapp_dnd",
+      "breakpoints": true
+    },
+    {
+      "idx": 181,
+      "version": "7",
+      "when": 1790370518688,
+      "tag": "0182_erp_screens_merged",
+      "breakpoints": true
+    },
+    {
+      "idx": 182,
+      "version": "7",
+      "when": 1790370618688,
+      "tag": "0183_erp_one_order",
+      "breakpoints": true
+    },
+    {
+      "idx": 183,
+      "version": "7",
+      "when": 1790370718688,
+      "tag": "0184_erp_complaints_are_crm_complaints",
+      "breakpoints": true
+    },
+    {
+      "idx": 184,
+      "version": "7",
+      "when": 1790370818688,
+      "tag": "0185_erp_one_purchase_screen",
+      "breakpoints": true
+    },
+    {
+      "idx": 185,
+      "version": "7",
+      "when": 1790370918688,
+      "tag": "0186_erp_recipes",
+      "breakpoints": true
+    },
+    {
+      "idx": 186,
+      "version": "7",
+      "when": 1790371018688,
+      "tag": "0187_hrms",
+      "breakpoints": true
+    },
+    {
+      "idx": 187,
+      "version": "7",
+      "when": 1790371118688,
+      "tag": "0188_timeline_hrms_source",
+      "breakpoints": true
+    },
+    {
+      "idx": 188,
+      "version": "7",
+      "when": 1790879084702,
+      "tag": "0189_order_change_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 189,
+      "version": "7",
+      "when": 1790931036139,
+      "tag": "0190_punch_in_survives_visits",
+      "breakpoints": true
+    },
+    {
+      "idx": 190,
+      "version": "7",
+      "when": 1790942923944,
+      "tag": "0191_wa_reply_handled",
+      "breakpoints": true
+    },
+    {
+      "idx": 191,
+      "version": "7",
+      "when": 1790942983944,
+      "tag": "0192_territory_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 192,
+      "version": "7",
+      "when": 1790974199215,
+      "tag": "0193_wa_reply_answers",
+      "breakpoints": true
+    },
+    {
+      "idx": 193,
+      "version": "7",
+      "when": 1790977080608,
+      "tag": "0194_lead_trash",
+      "breakpoints": true
+    },
+    {
+      "idx": 194,
+      "version": "7",
+      "when": 1791008254000,
+      "tag": "0195_handset_heartbeat",
+      "breakpoints": true
+    },
+    {
+      "idx": 195,
+      "version": "7",
+      "when": 1791015323845,
+      "tag": "0196_wa_reply_media",
+      "breakpoints": true
+    },
+    {
+      "idx": 196,
+      "version": "7",
+      "when": 1791015423845,
+      "tag": "0197_admin_is_per_app",
+      "breakpoints": true
+    },
+    {
+      "idx": 197,
+      "version": "7",
+      "when": 1791015523845,
+      "tag": "0198_admin_console_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 198,
+      "version": "7",
+      "when": 1791015623845,
+      "tag": "0199_console_password_off",
+      "breakpoints": true
+    },
+    {
+      "idx": 199,
+      "version": "7",
+      "when": 1791015683845,
+      "tag": "0200_punch_out_reminders",
+      "breakpoints": true
+    },
+    {
+      "idx": 200,
+      "version": "7",
+      "when": 1791062447442,
+      "tag": "0201_hrms_screens_merged",
+      "breakpoints": true
+    },
+    {
+      "idx": 201,
+      "version": "7",
+      "when": 1791062448442,
+      "tag": "0202_hrms_plain_values",
+      "breakpoints": true
+    },
+    {
+      "idx": 202,
+      "version": "7",
+      "when": 1791062449442,
+      "tag": "0203_hrms_shared_records",
+      "breakpoints": true
+    },
+    {
+      "idx": 203,
+      "version": "7",
+      "when": 1791062450442,
+      "tag": "0204_one_holiday_calendar",
+      "breakpoints": true
+    },
+    {
+      "idx": 204,
+      "version": "7",
+      "when": 1791062510442,
+      "tag": "0205_unstated_bills_are_owed",
+      "breakpoints": true
+    },
+    {
+      "idx": 205,
+      "version": "7",
+      "when": 1791062511442,
+      "tag": "0206_mbos_audit_server_fixes",
+      "breakpoints": true
+    },
+    {
+      "idx": 206,
+      "version": "7",
+      "when": 1791062512442,
+      "tag": "0207_mbos_client_errors",
+      "breakpoints": true
+    },
+    {
+      "idx": 207,
+      "version": "7",
+      "when": 1791062513442,
+      "tag": "0208_order_receipt_visit_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 208,
+      "version": "7",
+      "when": 1791062573442,
+      "tag": "0209_top_customer_reports",
+      "breakpoints": true
+    },
+    {
+      "idx": 209,
+      "version": "7",
+      "when": 1791062633442,
+      "tag": "0210_focus_customers",
+      "breakpoints": true
+    },
+    {
+      "idx": 210,
+      "version": "7",
+      "when": 1791062693442,
+      "tag": "0211_top_customer_report_bills",
+      "breakpoints": true
+    },
+    {
+      "idx": 211,
+      "version": "7",
+      "when": 1791062753442,
+      "tag": "0212_monthly_target_bills",
+      "breakpoints": true
+    },
+    {
+      "idx": 212,
+      "version": "7",
+      "when": 1791062813442,
+      "tag": "0213_sales_visits_into_journeys",
+      "breakpoints": true
+    },
+    {
+      "idx": 213,
+      "version": "7",
+      "when": 1791149213442,
+      "tag": "0214_whatsapp_read_write",
+      "breakpoints": true
+    },
+    {
+      "idx": 214,
+      "version": "7",
+      "when": 1791235613442,
+      "tag": "0215_converted_leads_leave_handsets",
+      "breakpoints": true
+    },
+    {
+      "idx": 215,
+      "version": "7",
+      "when": 1791408413442,
+      "tag": "0217_erp_pr_costs",
+      "breakpoints": true
+    },
+    {
+      "idx": 215,
+      "version": "7",
+      "when": 1791494813442,
+      "tag": "0218_erp_designations",
+      "breakpoints": true
+    },
+    {
+      "idx": 216,
+      "version": "7",
+      "when": 1791581213442,
+      "tag": "0219_website_app",
+      "breakpoints": true
+    },
+    {
+      "idx": 217,
+      "version": "7",
+      "when": 1791667613442,
+      "tag": "0220_customer_contacts",
+      "breakpoints": true
+    },
+    {
+      "idx": 218,
+      "version": "7",
+      "when": 1791754013442,
+      "tag": "0221_otp_history",
+      "breakpoints": true
+    },
+    {
+      "idx": 219,
+      "version": "7",
+      "when": 1791840413442,
+      "tag": "0222_erp_purchase_flow",
+      "breakpoints": true
+    },
+    {
+      "idx": 220,
+      "version": "7",
+      "when": 1791840473442,
+      "tag": "0223_notifications_feed_idx",
+      "breakpoints": true
+    },
+    {
+      "idx": 221,
+      "version": "7",
+      "when": 1791840573442,
+      "tag": "0224_they_called_us_completeness",
+      "breakpoints": true
+    },
+    {
+      "idx": 222,
+      "version": "7",
+      "when": 1791926873442,
+      "tag": "0225_hire",
+      "breakpoints": true
+    },
+    {
+      "idx": 223,
+      "version": "7",
+      "when": 1791926973442,
+      "tag": "0226_erp_departments",
+      "breakpoints": true
+    },
+    {
+      "idx": 224,
+      "version": "7",
+      "when": 1792013273442,
+      "tag": "0227_contact_birthdays",
+      "breakpoints": true
+    },
+    {
+      "idx": 225,
+      "version": "7",
+      "when": 1792099673442,
+      "tag": "0228_standard_expense_policy",
+      "breakpoints": true
+    },
+    {
+      "idx": 226,
+      "version": "7",
+      "when": 1792186073442,
+      "tag": "0229_task_forms",
+      "breakpoints": true
+    },
+    {
+      "idx": 227,
+      "version": "7",
+      "when": 1792272473442,
+      "tag": "0230_task_links",
+      "breakpoints": true
+    },
+    {
+      "idx": 228,
+      "version": "7",
+      "when": 1792272474442,
+      "tag": "0231_holiday_levels",
+      "breakpoints": true
+    },
+    {
+      "idx": 229,
+      "version": "7",
+      "when": 1792272574442,
+      "tag": "0232_document_tagged_people",
+      "breakpoints": true
+    },
+    {
+      "idx": 230,
+      "version": "7",
+      "when": 1792272634442,
+      "tag": "0233_erp_requirement_departments",
+      "breakpoints": true
+    },
+    {
+      "idx": 231,
+      "version": "7",
+      "when": 1792272734442,
+      "tag": "0234_customer_type_private_limited_user",
+      "breakpoints": true
+    },
+    {
+      "idx": 232,
+      "version": "7",
+      "when": 1792272735442,
+      "tag": "0235_material_duties",
+      "breakpoints": true
+    },
+    {
+      "idx": 233,
+      "version": "7",
+      "when": 1792358974442,
+      "tag": "0236_requirement_numbers",
+      "breakpoints": true
+    },
+    {
+      "idx": 234,
+      "version": "7",
+      "when": 1792445374442,
+      "tag": "0237_erp_traceability",
+      "breakpoints": true
+    },
+    {
+      "idx": 235,
+      "version": "7",
+      "when": 1792531774442,
+      "tag": "0238_vendor_payouts",
+      "breakpoints": true
+    },
+    {
+      "idx": 236,
+      "version": "7",
+      "when": 1792531775442,
+      "tag": "0239_vendor_payout_days_tue_fri",
+      "breakpoints": true
+    },
+    {
+      "idx": 237,
+      "version": "7",
+      "when": 1792531776442,
+      "tag": "0240_expenses_logged_not_sent",
+      "breakpoints": true
+    },
+    {
+      "idx": 238,
+      "version": "7",
+      "when": 1792531777442,
+      "tag": "0241_expense_policy_sets",
+      "breakpoints": true
+    },
+    {
+      "idx": 239,
+      "version": "7",
+      "when": 1792531778442,
+      "tag": "0242_expense_policy_matches_document",
+      "breakpoints": true
+    },
+    {
+      "idx": 240,
+      "version": "7",
+      "when": 1792531779442,
+      "tag": "0243_field_activity_shop_decisions",
+      "breakpoints": true
+    },
+    {
+      "idx": 241,
+      "version": "7",
+      "when": 1792531780442,
+      "tag": "0244_docs_app",
+      "breakpoints": true
+    },
+    {
+      "idx": 242,
+      "version": "7",
+      "when": 1792531840442,
+      "tag": "0245_factory_app",
+      "breakpoints": true
+    },
+    {
+      "idx": 243,
+      "version": "7",
+      "when": 1792531900442,
+      "tag": "0246_hometown_is_a_place",
+      "breakpoints": true
+    },
+    {
+      "idx": 244,
+      "version": "7",
+      "when": 1792531960442,
+      "tag": "0247_expense_payouts",
+      "breakpoints": true
+    },
+    {
+      "idx": 245,
+      "version": "7",
+      "when": 1792531961442,
+      "tag": "0248_petty_cash_funds_control",
+      "breakpoints": true
+    },
+    {
+      "idx": 246,
+      "version": "7",
+      "when": 1792531962442,
+      "tag": "0249_revert_petty_cash",
+      "breakpoints": true
+    },
+    {
+      "idx": 247,
+      "version": "7",
+      "when": 1792531963442,
+      "tag": "0250_erp_logistics_flow",
+      "breakpoints": true
+    },
+    {
+      "idx": 248,
+      "version": "7",
+      "when": 1792532023442,
+      "tag": "0251_lr_number_optional",
+      "breakpoints": true
+    },
+    {
+      "idx": 249,
+      "version": "7",
+      "when": 1792532024442,
+      "tag": "0252_many_hometowns",
+      "breakpoints": true
+    },
+    {
+      "idx": 250,
+      "version": "7",
+      "when": 1792532143442,
+      "tag": "0253_transporter_gst_and_godowns",
+      "breakpoints": true
+    },
+    {
+      "idx": 251,
+      "version": "7",
+      "when": 1792532144442,
+      "tag": "0254_erp_inventory_accuracy",
+      "breakpoints": true
+    },
+    {
+      "idx": 252,
+      "version": "7",
+      "when": 1792532263442,
+      "tag": "0255_transporter_godown_contacts",
+      "breakpoints": true
+    },
+    {
+      "idx": 253,
+      "version": "7",
+      "when": 1792532323442,
+      "tag": "0256_erp_scrap_and_empty_drums",
+      "breakpoints": true
+    },
+    {
+      "idx": 254,
+      "version": "7",
+      "when": 1792532383442,
+      "tag": "0257_erp_empty_drums_and_scrap",
+      "breakpoints": true
+    },
+    {
+      "idx": 255,
+      "version": "7",
+      "when": 1792532384442,
+      "tag": "0258_erp_material_returns",
+      "breakpoints": true
+    },
+    {
+      "idx": 256,
+      "version": "7",
+      "when": 1792532484442,
+      "tag": "0259_transporter_godown_pin",
+      "breakpoints": true
+    },
+    {
+      "idx": 257,
+      "version": "7",
+      "when": 1792532584442,
+      "tag": "0260_erp_floor_checks",
+      "breakpoints": true
+    },
+    {
+      "idx": 258,
+      "version": "7",
+      "when": 1792532684442,
+      "tag": "0261_factory_multi_department",
+      "breakpoints": true
+    },
+    {
+      "idx": 259,
+      "version": "7",
+      "when": 1792532744442,
+      "tag": "0262_transporter_godown_gstin",
+      "breakpoints": true
+    },
+    {
+      "idx": 260,
+      "version": "7",
+      "when": 1792532844442,
+      "tag": "0263_erp_can_groups_photos",
+      "breakpoints": true
+    },
+    {
+      "idx": 261,
+      "version": "7",
+      "when": 1792532944442,
+      "tag": "0264_erp_sfg_qc_tests",
+      "breakpoints": true
+    },
+    {
+      "idx": 262,
+      "version": "7",
+      "when": 1792533044442,
+      "tag": "0265_erp_sfg_qc_evidence",
+      "breakpoints": true
+    },
+    {
+      "idx": 263,
+      "version": "7",
+      "when": 1792533144442,
+      "tag": "0266_factory_requirement_sends",
+      "breakpoints": true
+    },
+    {
+      "idx": 264,
+      "version": "7",
+      "when": 1792619544442,
+      "tag": "0267_website_cms",
+      "breakpoints": true
+    },
+    {
+      "idx": 265,
+      "version": "7",
+      "when": 1792619644442,
+      "tag": "0268_erp_masters_screens_removed",
+      "breakpoints": true
+    },
+    {
+      "idx": 266,
+      "version": "7",
+      "when": 1792619744442,
+      "tag": "0269_erp_ledger_ticks",
+      "breakpoints": true
+    },
+    {
+      "idx": 267,
+      "version": "7",
+      "when": 1792619844442,
+      "tag": "0270_erp_quotation_manager",
+      "breakpoints": true
+    },
+    {
+      "idx": 268,
+      "version": "7",
+      "when": 1792620044442,
+      "tag": "0271_material_duties_removed",
+      "breakpoints": true
     }
   ]
 }

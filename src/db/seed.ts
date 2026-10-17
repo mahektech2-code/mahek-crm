@@ -1,7 +1,13 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
 import { db, sql as client } from "./index";
 import {
+  waAutomationRuns,
+  waAutomationSettings,
+  waTriggers,
+  whatsappServiceEvents,
   appAccess,
   appSettings,
   attendance,
@@ -71,6 +77,13 @@ import {
   mbosUserTerritories,
   mbosPositions,
   mbosPriceList,
+  priceRequests,
+  priceListParseRows,
+  priceListRates,
+  priceListScopes,
+  priceListDiscountTerms,
+  priceLists,
+  priceListDocuments,
   mbosSamples,
   mbosSchemes,
   mbosSyncReceipts,
@@ -80,10 +93,13 @@ import {
 } from "./schema";
 import { hashPassword } from "../lib/password";
 import { initialsOf } from "../lib/format";
+import { widestRole } from "../lib/capability-matrix";
+import type { AppId } from "../lib/apps";
 import { SETTINGS } from "../lib/config/registry";
 import { storedSettingValue } from "@/lib/config/storage";
 import { eq, inArray } from "drizzle-orm";
 import { seedCatalogue } from "./seed-catalogue";
+import { starterStatements, WHATSAPP_STARTER_MIGRATIONS } from "../lib/whatsapp-starter";
 
 /* ---------------------------------------------------------------------------
  * Seed: around fifty realistic customers with six months of orders, bills and
@@ -126,59 +142,91 @@ const between = (lo: number, hi: number) =>
 /** The one account the reporting line is built around. */
 const MANAGER_EMAIL = "vikram@mahek.in";
 
-const TEAM = [
+type SeedLevel = "associate" | "manager" | "admin";
+
+/*
+ * EVERY GRANT CARRIES ITS LEVEL, and the account level is worked out from
+ * them below rather than typed beside them.
+ *
+ * Each person used to carry a `role` and a list of apps, and the grants were
+ * written with a null level that meant "the account's" — so the seed asserted
+ * the same fact twice and the two could disagree. The levels are now the only
+ * statement, per app, and `widestRole` derives `users.role` exactly the way
+ * `setAccess` does: admin only for a platform administrator (Admin on the
+ * Admin Console), manager for anybody managing any app, otherwise associate.
+ */
+const TEAM: Array<{
+  name: string;
+  email: string;
+  phone: string;
+  apps: Record<string, SeedLevel>;
+}> = [
   {
     name: "Priya Sharma",
     email: "priya@mahek.in",
     phone: "9820011001",
-    role: "associate" as const,
-    apps: ["crm"],
+    apps: { crm: "associate" },
   },
   {
     name: "Rakesh Yadav",
     email: "rakesh@mahek.in",
     phone: "9820011002",
-    role: "associate" as const,
-    apps: ["crm"],
+    apps: { crm: "associate" },
   },
   {
     name: "Anjali Patel",
     email: "anjali@mahek.in",
     phone: "9820011003",
-    role: "associate" as const,
-    apps: ["crm"],
+    apps: { crm: "associate" },
   },
   {
     name: "Suresh Kumar",
     email: "suresh@mahek.in",
     phone: "9820011004",
-    role: "associate" as const,
-    apps: ["crm"],
+    apps: { crm: "associate" },
   },
   {
     name: "Neha Joshi",
     email: "neha@mahek.in",
     phone: "9820011005",
-    role: "associate" as const,
-    apps: ["crm", "reports"],
+    apps: { crm: "associate" },
   },
   {
     name: "Vikram Rao",
     email: "vikram@mahek.in",
     phone: "9820011006",
-    // The admin ROLE, not merely the Admin app. Holding the app is what opens
-    // the console; the role is what `can()` reads, and the two were different
-    // things — he ran every screen in the product and still could not change
-    // an account manager, because that capability is accounts-and-admin only.
-    role: "admin" as const,
-    apps: ["crm", "accounts", "reports", "people", "hrms", "admin", "founder"],
+    /*
+     * THE PLATFORM ADMINISTRATOR, and that is ONE grant: Admin on the Admin
+     * Console. It is what makes him an administrator of everything — every
+     * capability in every app, whatever his level there reads — and it is
+     * the only thing that can, since an admin hat on any other app is admin
+     * of that app alone.
+     *
+     * The rest say what he does day to day. He manages the calling team, so
+     * he is a CRM manager. He holds Accounts to SEE the approvals queue and is
+     * an associate there — opens the app, decides nothing as a matter of his
+     * Accounts grant — which is the rule the matrix exists to keep (the person
+     * chasing a target does not sign off the orders that hit it). His
+     * platform hat would let him anyway, and the header on Accounts says
+     * "Associate" because that is what he was given there.
+     *
+     * `people` is retired into HRMS and stays only because the demo has
+     * always carried it; it counts towards nothing.
+     */
+    apps: {
+      crm: "manager",
+      accounts: "associate",
+      people: "associate",
+      hrms: "admin",
+      admin: "admin",
+      founder: "manager",
+    },
   },
   {
     name: "Mahesh Parab",
     email: "mahesh@mahek.in",
     phone: "9820011007",
-    role: "associate" as const,
-    apps: ["field"],
+    apps: { field: "associate" },
   },
   {
     // Accounts accept orders and do nothing else. Deliberately without the
@@ -187,13 +235,16 @@ const TEAM = [
     name: "Deepa Nair",
     email: "deepa@mahek.in",
     phone: "9820011008",
-    /* The ledger desk is a MANAGER of the Accounts app now, not a role called
-       "accounts". Approving an order and confirming a payment are the Accounts
-       manager's; an associate at that desk records and reads. */
-    role: "manager" as const,
-    apps: ["accounts"],
+    /* The ledger desk is a MANAGER of the Accounts app, not a role called
+       "accounts". Approving an order and confirming a payment are the
+       Accounts manager's; an associate at that desk records and reads. */
+    apps: { accounts: "manager" },
   },
 ];
+
+/** The account level, derived from the grants — never stated beside them. */
+const accountLevelOf = (t: (typeof TEAM)[number]) =>
+  widestRole(Object.entries(t.apps).map(([app, role]) => ({ app: app as AppId, role })));
 
 const CITIES: Array<[string, string]> = [
   ["Nashik", "Nashik City"],
@@ -523,6 +574,16 @@ async function main() {
     mbosPriceList,
     mbosSchemes,
     mbosDevices,
+    /* --- price lists: they point at products, customers, attachments and
+       users, all further down. Rates, scopes and terms before their list;
+       the list before the document it names. --- */
+    priceRequests,
+    priceListParseRows,
+    priceListRates,
+    priceListScopes,
+    priceListDiscountTerms,
+    priceLists,
+    priceListDocuments,
     /* --- the rest of what points at users, customers or complaints --- */
     queueSnapshots,
     timelineEvents,
@@ -538,6 +599,12 @@ async function main() {
     bugReports,
     feedback,
     attendance,
+    // WhatsApp automation and the founder's switch point at users and at
+    // templates; the automation rules cascade from their template anyway.
+    waAutomationRuns,
+    waTriggers,
+    waAutomationSettings,
+    whatsappServiceEvents,
     waReplies,
     waMessages,
     waRuns,
@@ -626,7 +693,7 @@ async function main() {
     email: t.email,
     phone: t.phone,
     passwordHash,
-    role: t.role,
+    role: accountLevelOf(t),
     initials: initialsOf(t.name),
     reportsToId: null as string | null,
   }));
@@ -636,25 +703,16 @@ async function main() {
 
   await db.insert(appAccess).values(
     TEAM.flatMap((t, i) =>
-      t.apps.map((app) => ({
+      Object.entries(t.apps).map(([app, role]) => ({
         id: id("acc"),
         userId: userRows[i].id,
         app: app as never,
-        /*
-         * The level is the account's own unless the app needs it said.
-         *
-         * Accounts is the one that does. A grant with no level falls back to
-         * the account's, so Vikram — a `manager` who holds Accounts to SEE the
-         * queue — would resolve to manager-in-Accounts and be able to approve
-         * the orders that hit his own target, which is the single rule the
-         * matrix exists to enforce. He is an associate there: opens the app,
-         * decides nothing. Deepa's own level is manager and she holds nothing
-         * else, so hers needs no saying.
-         */
-        role:
-          app === "accounts" && t.email !== "deepa@mahek.in"
-            ? ("associate" as const)
-            : null,
+        /* ALWAYS SAID. A null level used to mean "the account's", which made
+           Vikram — then a `manager` holding Accounts only to see the queue —
+           an Accounts manager able to approve the orders that hit his own
+           target. A null now reads as associate, and the seed does not lean
+           on that either. */
+        role,
         grantedById: managerId,
       })),
     ),
@@ -1069,6 +1127,15 @@ async function main() {
   }));
   await db.insert(waTemplates).values(templateRows);
 
+  /* The eight approved templates and their starter rules, which the truncate
+     above removed. Replayed from the migrations that state them — see
+     `lib/whatsapp-starter.ts` for why this is not a second copy. This also
+     archives the ten demo templates, exactly as production has them. */
+  for (const tag of WHATSAPP_STARTER_MIGRATIONS) {
+    const text = readFileSync(join(process.cwd(), "drizzle", `${tag}.sql`), "utf8");
+    for (const stmt of starterStatements(text)) await client.unsafe(stmt);
+  }
+
   // A spread of states, including copies never confirmed — the watch metric.
   const messageRows: Array<typeof waMessages.$inferInsert> = [];
   customerRows.slice(0, 22).forEach((c, i) => {
@@ -1208,7 +1275,9 @@ async function main() {
   console.log("\nSign in with the email or the work number:");
   for (const u of TEAM) {
     console.log(
-      `  ${u.email.padEnd(20)} ${u.phone}  ${u.role.padEnd(11)} ${u.apps.join(", ")}`,
+      `  ${u.email.padEnd(20)} ${u.phone}  ${accountLevelOf(u).padEnd(11)} ${Object.entries(u.apps)
+        .map(([app, level]) => `${app} (${level})`)
+        .join(", ")}`,
     );
   }
   console.log("\nPassword for every seeded account: mahek1234\n");

@@ -1,6 +1,6 @@
-import { isManager, requireUser } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { canFor } from "@/lib/access-control";
-import { getScope, scopeLabel } from "@/lib/scope";
+import { getScope, managesHere, scopeLabel } from "@/lib/scope";
 import { today } from "@/lib/queries";
 import { getConfig } from "@/lib/config/store";
 import {
@@ -27,7 +27,19 @@ export default async function EodPage({
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
   const user = await requireUser();
-  const scope = await getScope(user);
+  const scope = await getScope(user, "crm");
+  /*
+   * THE TEAM TABLE IS `team.report`, not "a manager of something". It was
+   * `isManager` — the widest level held in any app — so a telecaller who was
+   * made a manager of HRMS got the team EOD drawn, and `teamEod` then refused
+   * them with a throw that took the whole page down. The capability is what
+   * `teamEod` itself asks, so the page asks it first and draws nothing rather
+   * than crashing. The manager-only controls follow the CRM level.
+   */
+  const [seesTeam, managerHere] = await Promise.all([
+    canFor(user, "team.report"),
+    managesHere(user, "crm"),
+  ]);
   const day = await today();
   const config = await getConfig();
   const workingDay = {
@@ -67,7 +79,10 @@ export default async function EodPage({
     isToday ? eodFor(user.id, day) : null,
     eodPreflightFor(user.id, day),
     storedEodReport(user.id, day),
-    isManager(user) ? teamEod(range) : Promise.resolve(null),
+    /* Both: the capability `teamEod` asks, and a CRM manager — `team.report`
+       is a union over hats, and a CRM associate holding it through Reports
+       would otherwise be drawn a "team" of one. */
+    seesTeam && managerHere ? teamEod(range) : Promise.resolve(null),
     isToday ? null : eodMetricsForRange(user.id, range),
   ]);
 
@@ -82,7 +97,7 @@ export default async function EodPage({
       period={period}
       rangeFrom={range.from}
       rangeTo={range.to}
-      isManager={isManager(user)}
+      isManager={managerHere}
       // The same capability the Reminders screen reads, for the same control.
       // The gate is cleared by making the call or by carrying the promise
       // forward; closing one where neither happened is the escape hatch.

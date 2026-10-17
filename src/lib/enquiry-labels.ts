@@ -296,4 +296,49 @@ export const ACTIVITY_LABEL: Record<string, string> = {
   order_linked: "Order linked",
   order_unlinked: "Order unlinked",
   reminder_created: "Follow-up scheduled",
+  lead_created: "Lead created",
 };
+
+/* ---------------------------------------------------------------------------
+ * WHICH ENQUIRIES A TELECALLER MAY TURN INTO A LEAD.
+ *
+ * Four of the website's eight forms are somebody asking to buy or to sell for
+ * us: a quote, a product enquiry, a quick enquiry and a distributor enquiry.
+ * The rest are not a sales lead — a career application is a person applying
+ * for a job and must never reach the calling desk, and Contact, Technical and
+ * Sample are handled where they already are.
+ *
+ * The values are the website's own `formType` spellings, typed against the
+ * ingest list rather than retyped, so a rename there is a compile error here
+ * and not a button that quietly stops appearing. Website is the only source
+ * that exists; every other channel is future scope, so `source` is part of the
+ * rule and not an afterthought.
+ * ------------------------------------------------------------------------- */
+export const LEAD_CONVERTIBLE_FORMS = [
+  "QUOTE",
+  "PRODUCT_ENQUIRY",
+  "QUICK_ENQUIRY",
+  "DISTRIBUTOR",
+] as const satisfies readonly (typeof ENQUIRY_SOURCE_FORM_TYPES)[number][];
+
+export type LeadConvertibility = { ok: true } | { ok: false; reason: string };
+
+export function leadConvertibility(e: {
+  source: string;
+  sourceForm: string | null;
+  category: string | null;
+}): LeadConvertibility {
+  if (e.source !== "website") {
+    return { ok: false, reason: "Only website enquiries can be turned into a lead so far." };
+  }
+  if (e.category === "CAREER" || e.sourceForm === "CAREER") {
+    return { ok: false, reason: "A career application is not a sales lead." };
+  }
+  if (!e.sourceForm || !(LEAD_CONVERTIBLE_FORMS as readonly string[]).includes(e.sourceForm)) {
+    return {
+      ok: false,
+      reason: `${sourceFormLabel(e.sourceForm) ?? "This"} enquiry is not one that becomes a lead — only a quote, product, quick or distributor enquiry does.`,
+    };
+  }
+  return { ok: true };
+}

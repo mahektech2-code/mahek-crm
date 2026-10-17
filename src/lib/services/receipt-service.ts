@@ -22,7 +22,7 @@ import {
 } from "../engines/receipt-match";
 import { effectiveDueDate } from "../engines/escalation";
 import { billCreditDaysSql } from "../bill-terms";
-import { addDays, daysBetween } from "../business-date";
+import { addDays, daysBetween, type BusinessDate } from "../business-date";
 import {
   recomputeBillPaid,
   recomputeBillStatuses,
@@ -1395,6 +1395,37 @@ export const reportedQuietByCustomer = cache(async function reportedQuietByCusto
   );
 });
 
+/**
+ * The latest day each customer paid us anything, for the cooling quiet a
+ * payment buys (`payments.paidCoolingDays`).
+ *
+ * Reported, held and confirmed all count — a customer who paid today has paid
+ * today whether or not accounts have found it yet, and a reported payment's
+ * own quiet ends the moment it is confirmed, which is exactly when this one
+ * has to carry on. Rejected and reversed money never arrived as far as anybody
+ * can stand behind. A credit note or an adjustment is not the customer paying,
+ * so it buys nothing. A received date in the future is a typo, not a payment.
+ *
+ * Only the recent past is read: nothing older than the longest cooling the
+ * setting allows can hold anybody back. Memoized per request for the same
+ * reason `reportedQuietByCustomer` is.
+ */
+export const lastPaidOnByCustomer = cache(async function lastPaidOnByCustomer(
+  day: BusinessDate,
+): Promise<Map<string, string>> {
+  const rows = await db.execute<{ customer_id: string; paid_on: string }>(sql`
+    select r.customer_id, max(r.received_at)::text as paid_on
+      from payment_receipts r
+     where r.status in ('reported', 'held', 'confirmed')
+       and r.received_at <= ${day}::date
+       and r.received_at >= ${day}::date - 31
+       and coalesce(r.idempotency_key, '') not like 'creditnote:%'
+       and r.mode not in ('Credit note', 'Adjustment')
+     group by r.customer_id
+  `);
+  return new Map(rows.map((r) => [r.customer_id, r.paid_on]));
+});
+
 /* ------------------------------------------- money we already know about */
 
 /**
@@ -1667,14 +1698,68 @@ export type LedgerEntry = {
   claimed?: number;
   /** Set on receipt lines only — what a reversal acts on. */
   receiptId?: string;
+  /** Set on bill lines only. */
+  billId?: string;
+  /**
+   * Bill lines: confirmed money that has landed on this bill
+   * (`bills.paidAmount`). Receipt lines: unset.
+   */
+  paid?: number;
+  /** Bill lines: nobody has stated whether this bill was paid. */
+  unstated?: boolean;
+  /**
+   * WHICH MONEY WENT WHERE, on the row itself. A receipt line lists the bills
+   * it was allocated to; a bill line lists the receipts allocated to it. One
+   * read of `payments`, folded both ways, so the two sides cannot disagree.
+   * Every allocation is listed whatever the receipt's status — a rejected
+   * receipt's lines are drawn struck through rather than hidden, for the same
+   * reason the receipt itself stays on the statement.
+   */
+  links?: LedgerLink[];
+  /** Receipt lines: the part of the receipt not against any bill. */
+  onAccount?: number;
   /** Running balance after this entry. Confirmed money only. */
   balance: number;
+};
+
+export type LedgerLink = {
+  /** The bill's id on a receipt line, the receipt's id on a bill line. */
+  id: string;
+  /** Bill number, or the receipt's reference (falling back to its mode). */
+  label: string;
+  /** Receipt lines: the receipt's mode. Bill lines: unset. */
+  mode?: string;
+  at: string;
+  /** Paise of this allocation. */
+  amount: number;
+  /** The RECEIPT's status — what decides whether this allocation counts. */
+  status: string;
+  /**
+   * Receipt lines only: the bill's full amount and what is still due on it
+   * today (confirmed money only), so a payment can say whether it CLEARED a
+   * bill or paid PART of one.
+   */
+  billAmount?: number;
+  billDue?: number;
+  /**
+   * Bill lines only: the whole receipt and how many bills it was split
+   * across, so a bill can say it got ₹20,000 OF a ₹70,000 payment.
+   */
+  receiptAmount?: number;
+  receiptBills?: number;
 };
 
 export type CustomerLedger = {
   customerId: string;
   customerName: string;
+  /** What was owed before the range opened (confirmed money only). */
   openingBalance: number;
+  /**
+   * What was owed at the end of the range — the opening balance plus what was
+   * billed less what was received inside it. With no range it is the balance
+   * after the last entry on the account.
+   */
+  closingBalance: number;
   entries: LedgerEntry[];
   totals: { billed: number; received: number; outstanding: number; onAccount: number };
   /** Reported but undecided — shown apart, because it is not money yet. */
@@ -1705,7 +1790,7 @@ export type CustomerLedger = {
  * is `updated_by_id`, which only that script writes; the eighteen reversals a
  * person made by hand carry somebody's user id instead and still print.
  */
-const NOT_ON_STATEMENT = sql`not (
+export const NOT_ON_STATEMENT = sql`not (
   ${paymentReceipts.source} = 'sheet_import'
   and ${paymentReceipts.status} = 'reversed'
   and ${paymentReceipts.updatedById} = 'system:tally-records'
@@ -1764,6 +1849,27 @@ export async function customerLedger(
   const [customer] = await db.select().from(customers).where(eq(customers.id, customerId));
   if (!customer) return null;
   await assertCustomerInScope(customer);
+  return ledgerForCustomer(customer, range);
+}
+
+/**
+ * The statement itself, for a customer whose scope the CALLER has already
+ * established.
+ *
+ * Split out of `customerLedger` for the handset: MBOS authenticates a device
+ * token rather than a browser session, so `assertCustomerInScope` — which asks
+ * the session — cannot answer for it, and `scopedCustomer` asks the same
+ * question of the principal instead. What must NOT be split is the arithmetic:
+ * a salesman reading a shopkeeper his balance and an accounts clerk reading the
+ * same account have to be reading one function, or they quote two debts.
+ * Exported only for callers that have already checked; anything reached from a
+ * session goes through `customerLedger`.
+ */
+export async function ledgerForCustomer(
+  customer: { id: string; name: string; outstanding: number | null },
+  range?: { from?: string; to?: string },
+): Promise<CustomerLedger> {
+  const customerId = customer.id;
 
   const billRows = await db
     .select()
@@ -1785,6 +1891,48 @@ export async function customerLedger(
 
   type Row = Omit<LedgerEntry, "balance"> & { sort: string };
   const rows: Row[] = [];
+
+  /* Every allocation line on the account, folded both ways. */
+  const billById = new Map(billRows.map((b) => [b.id, b]));
+  const receiptById = new Map(receiptRows.map(({ receipt }) => [receipt.id, receipt]));
+  const linksByBill = new Map<string, LedgerLink[]>();
+  const linksByReceipt = new Map<string, LedgerLink[]>();
+  for (const a of await db
+    .select({
+      receiptId: payments.receiptId,
+      billId: payments.billId,
+      amount: payments.amount,
+    })
+    .from(payments)
+    .where(and(eq(payments.customerId, customerId), isNotNull(payments.billId)))
+    .orderBy(asc(payments.paidAt))) {
+    if (!a.billId || !a.receiptId) continue;
+    const r = receiptById.get(a.receiptId);
+    const b = billById.get(a.billId);
+    if (!r || !b) continue;
+    const amount = Number(a.amount);
+    const onBill = linksByBill.get(b.id) ?? [];
+    onBill.push({
+      id: r.id,
+      label: r.reference ?? r.mode,
+      mode: r.mode,
+      at: r.receivedAt,
+      amount,
+      status: r.status,
+    });
+    linksByBill.set(b.id, onBill);
+    const onReceipt = linksByReceipt.get(r.id) ?? [];
+    onReceipt.push({
+      id: b.id,
+      label: b.billNo,
+      at: b.billDate,
+      amount,
+      status: r.status,
+      billAmount: Number(b.amount),
+      billDue: Math.max(0, Number(b.amount) - Number(b.paidAmount)),
+    });
+    linksByReceipt.set(r.id, onReceipt);
+  }
 
   /*
    * What is CLAIMED against each bill and not yet confirmed, so the bill line
@@ -1823,6 +1971,10 @@ export async function customerLedger(
       credit: 0,
       status: b.status,
       claimed: claimedByBill.get(b.id) ?? 0,
+      billId: b.id,
+      paid: Number(b.paidAmount),
+      unstated: b.paymentPosition === "unstated",
+      links: linksByBill.get(b.id) ?? [],
     });
   }
 
@@ -1853,8 +2005,20 @@ export async function customerLedger(
       // Reversing a payment starts with finding it, and this is where anybody
       // looking for one already is.
       receiptId: r.id,
+      links: linksByReceipt.get(r.id) ?? [],
+      onAccount: Math.max(0, Number(r.amount) - Number(allocated)),
     });
   }
+
+  for (const list of linksByBill.values()) {
+    for (const l of list) {
+      l.receiptAmount = Number(receiptById.get(l.id)?.amount ?? 0);
+      l.receiptBills = linksByReceipt.get(l.id)?.length ?? 1;
+    }
+  }
+  // A split payment lists its bills oldest first, which is how allocation
+  // spends money and how anybody reads a run of bills.
+  for (const list of linksByReceipt.values()) list.sort((a, b) => a.at.localeCompare(b.at));
 
   rows.sort((a, b) => a.sort.localeCompare(b.sort));
 
@@ -1864,13 +2028,16 @@ export async function customerLedger(
   const entries: LedgerEntry[] = [];
   let balance = 0;
 
+  let closing = 0;
   for (const r of rows) {
     balance += r.debit - r.credit;
     if (from && r.at < from) {
       opening = balance;
+      closing = balance;
       continue;
     }
     if (to && r.at > to) continue;
+    closing = balance;
     const { sort: _sort, ...entry } = r;
     void _sort;
     entries.push({ ...entry, balance });
@@ -1894,6 +2061,7 @@ export async function customerLedger(
     customerId,
     customerName: customer.name,
     openingBalance: opening,
+    closingBalance: closing,
     entries: shown,
     totals: {
       billed,
@@ -1906,6 +2074,20 @@ export async function customerLedger(
       amount: awaitingRows.reduce((s, r) => s + Number(r.receipt.amount), 0),
     },
   };
+}
+
+/**
+ * The first date anything happened on an account — its oldest bill or
+ * receipt — so the statement offers only years the account has entries in.
+ */
+export async function earliestLedgerDate(customerId: string): Promise<string | null> {
+  const [row] = await db.execute<{ d: string | null }>(sql`
+    select least(
+      (select min(bill_date) from bills where customer_id = ${customerId}),
+      (select min(received_at) from payment_receipts where customer_id = ${customerId})
+    )::text as d
+  `);
+  return row?.d ?? null;
 }
 
 /** Money received and not yet spent against a bill. */

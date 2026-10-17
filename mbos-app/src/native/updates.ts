@@ -1,4 +1,5 @@
 import * as Updates from 'expo-updates';
+import { reloadIsSafe } from './reload-guard';
 import * as Application from 'expo-application';
 
 /**
@@ -40,7 +41,26 @@ import * as Application from 'expo-application';
  * this returns immediately. An update channel pointed at nothing is worse than
  * no update channel — it fails on every launch, in the background, silently.
  */
-export async function fetchUpdateInBackground(): Promise<'none' | 'ready' | 'off' | 'failed'> {
+/**
+ * When this JavaScript started running — the cold start, in effect. Read at
+ * module load, so it answers "how long has this process been alive" rather
+ * than "how long has some screen been open".
+ */
+const LOADED_AT = Date.now();
+
+/**
+ * How long after a cold start an update may still be applied on the spot.
+ *
+ * Inside this window he is looking at the home screen the app has just drawn
+ * and has not typed anything, so reloading onto the new bundle costs him a
+ * blink. Past it he may be half-way through an order, and the update waits for
+ * the next launch exactly as it always did. Without this every fix took TWO
+ * launches to arrive — one to download, one to run — and on Android, where
+ * "opening the app" is usually resuming it, that was days.
+ */
+const APPLY_WINDOW_MS = 10_000;
+
+export async function fetchUpdateInBackground(): Promise<'none' | 'ready' | 'applied' | 'off' | 'failed'> {
   /* False in development, and false in a build made before `eas init`. */
   if (!Updates.isEnabled) return 'off';
 
@@ -49,16 +69,104 @@ export async function fetchUpdateInBackground(): Promise<'none' | 'ready' | 'off
     if (!check.isAvailable) return 'none';
 
     await Updates.fetchUpdateAsync();
-    /* Deliberately NOT `reloadAsync()`. Restarting the app under somebody
-       mid-visit — with a half-filled order form on screen — would lose work to
-       deliver a cosmetic change. It is already downloaded; the next time he
-       opens the app it is what runs. */
+    /* Applied NOW only while the app has barely opened — see APPLY_WINDOW_MS.
+       Any later and it is deliberately not `reloadAsync()`: restarting the app
+       under somebody mid-visit, with a half-filled order form on screen, would
+       lose work to deliver the change. It is already downloaded; the next time
+       he opens the app it is what runs. Every saved record is in SQLite, so a
+       reload inside the window loses nothing — and `reloadIsSafe` is what
+       makes that true rather than assumed: an open camera or sheet, or any
+       screen past Home, holds it off. See `reload-guard.ts`. */
+    if (Date.now() - LOADED_AT <= APPLY_WINDOW_MS && reloadIsSafe()) {
+      await Updates.reloadAsync();
+      return 'applied';
+    }
     return 'ready';
   } catch {
     /* No signal, the update server down, a bundle that will not verify. The
        app is running perfectly on the bundle it has, and there is nothing for
        the salesman to do about any of it. */
     return 'failed';
+  }
+}
+
+/**
+ * FETCH A NEW BUNDLE BECAUSE HE ASKED, and never apply it under him.
+ *
+ * The refresh button's half of `fetchUpdateInBackground`. That one may reload
+ * inside the first seconds of a cold start; this one never reloads at all,
+ * because it runs on a press from whatever screen he is on — possibly with an
+ * order half typed. `ready` means a bundle newer than the one running is on the
+ * phone, and the caller offers a restart that `restartApp` performs only when
+ * he says yes.
+ *
+ * `checkForUpdateAsync` compares against the RUNNING bundle, so a bundle the
+ * background check already downloaded still answers available here — and the
+ * fetch then costs nothing, because it is already on disk. That is the case the
+ * button exists for: downloaded days ago, never launched.
+ */
+export async function downloadUpdate(): Promise<'none' | 'ready' | 'off' | 'failed'> {
+  if (!Updates.isEnabled) return 'off';
+  try {
+    const check = await Updates.checkForUpdateAsync();
+    if (!check.isAvailable) return 'none';
+    await Updates.fetchUpdateAsync();
+    return 'ready';
+  } catch {
+    return 'failed';
+  }
+}
+
+/**
+ * CAN THIS BUILD RESTART ITSELF? Asked before a button is drawn, never after
+ * it is pressed.
+ *
+ * `reloadAsync` REJECTS in development, in Expo Go, and on any build where
+ * `updates.enabled` is false — which is every build made before `eas init`
+ * wrote the URL. A restart button drawn on one of those is a button that
+ * appears to do nothing, which is the mistake the microphone made and
+ * AGENTS.md records: a control that fails when pressed is worse than one never
+ * offered. So the screen asks this first and prints the manual instruction
+ * instead where the answer is no — closing the app by hand reaches the same
+ * place, it just takes a sentence to say.
+ */
+export function canRestart(): boolean {
+  return Updates.isEnabled;
+}
+
+/**
+ * Restart MahekOne, because a setting the phone reads at startup has changed.
+ *
+ * THE ONE PLACE THIS IS A REMEDY is a day recording at the foreground floor
+ * after the OEM switches have been changed under it —
+ * `engines/oem-keepalive.ts` holds that rule and the reason. Everywhere else a
+ * restart costs somebody a half-typed order and buys nothing.
+ *
+ * It is NOT the same act as `fetchUpdateInBackground`, which deliberately does
+ * not reload: that one would restart the app under somebody mid-visit to
+ * deliver a cosmetic change. This one is a button he pressed, on a screen that
+ * says what it does, with nothing else on it to lose — and it picks up any
+ * bundle already downloaded as a side effect rather than as its purpose.
+ *
+ * NOTHING IS LOST BY IT. Every record on this handset is in SQLite and the
+ * outbox survives a restart by design, which is the whole reason the app can
+ * be reaped on the road. The screen says so, because "restart" is a word people
+ * have learned to be frightened of.
+ *
+ * `false` means it did not happen and the caller must say so. The promise
+ * resolves immediately BEFORE the reload is posted to the main thread, so
+ * `true` means the instruction went in — there is nothing after it to observe,
+ * and no code here may assume it runs.
+ */
+export async function restartApp(): Promise<boolean> {
+  if (!canRestart()) return false;
+  try {
+    await Updates.reloadAsync();
+    return true;
+  } catch {
+    /* A module installed wrongly, or a runtime that has no reference to reload.
+       Either way the honest answer is the manual one, and the screen has it. */
+    return false;
   }
 }
 

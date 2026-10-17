@@ -1,0 +1,91 @@
+Everything MahekOne knows lives in one database on one server. This page explains how that database is protected: what is copied, how often, where the copies go, how long they are kept, how anybody knows the copies actually work, and what is *not* covered. The [developer tab](/docs/platform/backups/developer) has the exact commands.
+
+## Two kinds of backup, doing two different jobs
+
+| | Server snapshot | Database backup |
+|---|---|---|
+| What it copies | The **whole machine** — operating system, configuration, the database files | The **data** — every table, as a file that can be loaded into any database |
+| Who makes it | DigitalOcean, once a day | MahekOne's own backup script, four times a day |
+| Good for | "The server is gone" | "Somebody deleted the wrong thing", "a bad update damaged records", "the disk failed" |
+| Where it is kept | DigitalOcean | On the server **and** in Cloudflare R2, a separate company's storage |
+| Encrypted | DigitalOcean's own | Yes — before it leaves the server |
+
+<Callout kind="why">
+A machine snapshot restores everything to how it was, including the mistake you want to undo, and it is at best a day old. A data backup can be restored on its own, onto any machine, from any point in the last thirteen months. Having both means losing the server and losing a record are two different, survivable problems.
+</Callout>
+
+## What is protected
+
+- **The MahekOne database** — customers, orders, bills, payments, calls, the field team's visits and attendance, HR, the ERP, settings, credentials set on screens, and every photograph that is stored in the database (the default — see [Storage](/docs/platform/storage-r2)).
+- **Every other database on the same server** — today that is the public website's enquiries and applications — copied alongside, each in its own file.
+
+## How often, and how far back
+
+| Copy | When (India time) | Kept on the server | Kept in R2 |
+|---|---|---|---|
+| Nightly | 02:15, after the night's sync and rebuild have finished | 7 days | 30 days |
+| Daytime | 08:15, 14:15, 20:15 | 2 days | 7 days |
+| Monthly | The nightly copy taken in the early hours of the 2nd of each month | — | about 13 months |
+
+So:
+
+- **A disk failure loses at most about six working hours** — the gap between two daytime copies.
+- **A mistake noticed a week later** can be undone from a nightly copy.
+- **A mistake noticed months later** still has a monthly copy to go back to.
+
+## Encryption
+
+Every copy sent to R2 is **encrypted on the server before it leaves**, with a key whose private half is held **only by people**, in a password manager — never on the server. Anybody who broke into the server, or into the R2 account, would find copies they cannot read.
+
+<Callout kind="money" title="Losing the private key loses every offsite copy">
+The private key and its passphrase are the only way to read an R2 copy. If both are lost, every offsite backup is unreadable for ever — that is the price of an intruder not being able to read them either. Keep them in the password manager, and make sure a second person can reach them.
+</Callout>
+
+## How anybody knows the backups work
+
+An untested backup is a belief. Three things check them:
+
+1. **Every run checks its own file** — big enough to be the real database, and a complete, uncorrupted file — before calling itself done.
+2. **Every Monday at 04:00** the newest copy is **restored into a scratch database** and compared, table by table, with the live one. If any key table comes back with noticeably fewer rows than live, the check fails. It also confirms a nightly copy reached R2 in the last 36 hours.
+3. **An outside alert** (a free healthchecks.io check) is pinged at the start and end of every run. It emails two people when a run **fails** — and, just as important, when **no run arrives at all**, which is the failure a log file can never report.
+
+There is also a ten-minute **restore drill** to do by hand before relying on any of this (on the [developer tab](/docs/platform/backups/developer#the-restore-drill)): take a backup, create a throwaway table, restore, and check the table has gone.
+
+## Protection against deleting the backups themselves
+
+The credential the server uses to upload copies can also delete them — the script tidies old copies with it. So anybody who got onto the server could, in principle, delete the database and every backup in one sitting. The answer is a **bucket lock** in Cloudflare: each folder of copies is locked for as long as it is meant to be kept, and a locked copy cannot be deleted or overwritten by anybody, the server included, until it reaches that age.
+
+## Restoring
+
+Restoring **replaces the whole database** with the chosen copy. It is done by somebody with access to the server, the app is stopped while it happens, and the script will not proceed until the operator types the word `replace`. Anything written between the copy and the restore is lost, which is why restores are planned for the evening.
+
+| Situation | What to restore from |
+|---|---|
+| A mistake noticed today | The newest daytime copy on the server — no key needed |
+| A mistake noticed this month | A nightly copy from R2 — needs the private key |
+| A mistake noticed months ago | A monthly copy from R2 — needs the private key |
+| The server is gone | Rebuild from the DigitalOcean snapshot, or a fresh server plus the newest R2 copy |
+
+## What is *not* covered
+
+- **The server's own settings file** (`/opt/mahekone/.env` — database password, cron secret, R2 credentials, service account key). Only the DigitalOcean snapshot holds it. **Keep a copy in the password manager.**
+- **Photographs stored in an R2 attachments bucket**, if that has been switched on. Those live in their own bucket, not in the database backup.
+- **The spreadsheets** the team types into — they are Google's, and MahekOne only reads them.
+- **The APK download** on the server — every release is archived in R2 separately.
+- **Anything written since the last copy.**
+
+## One-time setup — checklist
+
+These four steps are done once. Until each is done, the protection it adds is missing; the backup script itself warns in its log when the first is missing.
+
+| Step | What it gives | How to tell it is done |
+|---|---|---|
+| Create the encryption key on a personal machine, store the private half and passphrase in the password manager, put only the public half on the server | Offsite copies an intruder cannot read | The R2 file names end in `.gpg`; the log no longer says "the R2 copy is NOT encrypted" |
+| Create the healthchecks.io check (every 6 hours, 1 hour grace, two email recipients) and give the server its ping address | An email when a backup fails or does not happen | The check shows pings from both a daytime run and the Monday verify |
+| Add a bucket lock rule per folder (`daily/` 30 days, `intraday/` 7 days, `monthly/` 365 days) and matching lifecycle rules | Backups the server cannot delete | Visible in Cloudflare under the bucket's settings |
+| Run a daytime backup and a verify by hand, then the restore drill | Proof, rather than belief | The verify lists every table `ok`; the drill's throwaway table is gone after restore |
+
+## Where the code and the intent disagree today
+
+- **The verify step skips the offsite check if R2 is not configured.** On a server with no R2 credentials the Monday verify passes on the local copy alone, and the only warning is a line in the backup log (`deploy/backup.sh`, verify mode).
+- **Old copies are deleted by the script by age only.** The intended protection against deleting backups is the bucket lock, which is a manual setup step; until it is set, the server's credential can delete any copy.

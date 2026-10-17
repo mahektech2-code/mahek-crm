@@ -1,0 +1,163 @@
+The handset (Expo SDK 57, React Native, SQLite via `mbos-app/src/db`) is offline-first. Every write goes through `enqueue` into `sync_queue`; `syncNow` runs one pass that `POST`s a batch to `/api/mbos/sync` with the pull cursor; the server's `ingestSyncBatch` answers each item and `buildPull` returns the delta in the same response; `applyPull` merges it. Media and the location trail have their own queues, drained after records. Sign-in and upgrades take a full snapshot from `/api/mbos/bootstrap` (`buildBootstrap`).
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Screens | `mbos-app/app/sync.tsx`, `rejections.tsx`, `saved.tsx` | Outbox, *Not accepted*, the visit receipt |
+| Outbox | `mbos-app/src/sync/queue.ts` | `enqueue`, `readyItems`, `markSynced`/`markRejected`/`markFailure`/`markUnsent`, `blockDependents`, `retryItem`, `autoRetryStuck`, `pruneSynced` |
+| Ordering (pure) | `mbos-app/src/sync/ordering.ts` | `partition` (dependencies), `BACKOFF_MS`, `backoffFor` |
+| Engine | `mbos-app/src/sync/engine.ts` | `syncNow`, `onePass`, `isOwnDuplicate`, `onRejection`, `refreshBookIfBuildChanged`, `startBackgroundSync` |
+| Pull | `mbos-app/src/sync/pull.ts` | `applyPull`, `upsert`, `noPending`, per-channel upserts, tombstones, `pullProblems` |
+| API client | `mbos-app/src/sync/api.ts` | Tokens, `postSync`, `bootstrap`, `uploadMedia`, `postPositions`, `ApiError`/`AuthLostError` |
+| Media | `mbos-app/src/sync/media.ts` | `runMediaQueue`, `PENDING_PARENT_HOLD_MS`, `retryFailedMedia` |
+| Location of acts | `mbos-app/src/native/where.ts` | `whereNow` — freshest known fix with its age |
+| Device state | `mbos-app/src/sync/device-state.ts` | `readDeviceState` — permission, services, battery, exemption |
+| Upgrade rule (pure) | `mbos-app/src/engines/rebootstrap.ts` | `needsRebootstrap` |
+| Route | `src/app/api/mbos/sync/route.ts` | Auth, device match, batch ceiling, ingest then pull |
+| Ingest | `src/lib/actions/mbos.ts` | `ingestSyncBatch`, `missingDependencies`, `storeReceipt`, `toResult`, `dispatchItem`, `recordActivityLocation` |
+| Pull | `src/lib/services/mbos-service.ts` | `buildBootstrap`, `buildPull`, `customersForDevice`, `changedCustomersForDevice`, `deletionsSince` |
+| Wire contract | `src/lib/mbos-wire.test.ts` | Server payloads against the handset's schema, both directions |
+
+## One pass, end to end
+
+<Flow caption="Save → push → ingest → pull → apply → media" chart={`
+sequenceDiagram
+  autonumber
+  participant UI as a screen
+  participant Q as sync/queue.ts
+  participant E as sync/engine.ts
+  participant API as /api/mbos/sync
+  participant I as ingestSyncBatch
+  participant H as dispatchItem → handle*
+  participant P as buildPull
+  participant A as applyPull
+  participant M as media queue
+  UI->>Q: enqueue(entity, op, payload, dependsOn)<br/>key = id:op:hash, location = whereNow()
+  Q-->>E: onQueued — push within seconds
+  E->>E: recoverInterrupted, autoRetryStuck, pruneSynced
+  E->>Q: readyItems(batchLimit) — deps satisfied, backoff due
+  E->>E: refreshBookIfBuildChanged (snapshot on upgrade)
+  E->>API: postSync(cursor, items, missingIds)
+  API->>API: authenticate, device id must match token, item ceiling
+  loop each item in order
+    API->>I: item
+    I->>I: receipt for this key? accepted/conflict = replay
+    I->>I: missingDependencies — refused here = block, absent = retry
+    I->>H: handler (zod parse, scope, rules, transaction)
+    H-->>I: accepted / rejected / conflict / retry (throw = retry)
+    I->>I: accepted: recordActivityLocation
+    I->>I: storeReceipt (not for retry)
+  end
+  API->>P: buildPull(principal, cursor) — after the ingest
+  P-->>E: results + delta + next cursor
+  E->>Q: markSynced / markRejected + blockDependents / markFailure
+  E->>A: applyPull — per channel, per row, unknown columns dropped
+  E->>E: setKv pullCursor, lastPullAt
+  E->>M: runMediaQueue (after records), then flushTrail
+`} />
+
+## The outbox
+
+<Code file="mbos-app/src/sync/queue.ts" symbol="enqueue" collapsed />
+
+The key is `entityId:op:hash(payload)`. A **create** keeps the bare key, so a create sent twice is caught. An **update** repeated after the original landed gets `#n` appended — otherwise archive, unarchive, archive would return the first, long-synced item and never be sent, and the server's ledger would replay the first answer.
+
+<Code file="mbos-app/src/sync/ordering.ts" symbol="BACKOFF_MS" />
+
+<Code file="mbos-app/src/sync/queue.ts" symbol="autoRetryStuck" />
+
+## The engine
+
+<Code file="mbos-app/src/sync/engine.ts" symbol="onePass" collapsed />
+
+<Code file="mbos-app/src/sync/engine.ts" symbol="isOwnDuplicate" />
+
+An auth failure marks the batch **unsent** without spending an attempt — a lapsed refresh token is not the items' fault, and burning six attempts on it once blocked a whole day's orders.
+
+<Code file="mbos-app/src/engines/rebootstrap.ts" symbol="needsRebootstrap" />
+
+## The server
+
+<Code file="src/lib/actions/mbos.ts" symbol="ingestSyncBatch" collapsed />
+
+<Code file="src/lib/actions/mbos.ts" symbol="missingDependencies" />
+
+<Code file="src/lib/actions/mbos.ts" symbol="storeReceipt" />
+
+`storeReceipt` lets a stored **rejection** be overwritten by a later answer; an accepted one stands for ever. A `retry` is never stored.
+
+<DbTable name="mbos_sync_receipts" only={["idempotency_key", "device_id", "user_id", "entity_type", "entity_id", "result_json", "created_at"]} note={{
+  result_json: "The whole SyncResult, including serverNumber, so a resend receives exactly what the first send did.",
+}} />
+
+## The pull
+
+<Code file="src/lib/services/mbos-service.ts" symbol="changedCustomersForDevice" collapsed />
+
+<Code file="src/lib/services/mbos-service.ts" symbol="deletionsSince" collapsed />
+
+<DbTable name="mbos_deletions" note={{
+  user_id: "Null means every handset (a withdrawn product); otherwise one person's.",
+  reason: "Why it left — reassigned, territory changed, withdrawn.",
+}} />
+
+<Code file="mbos-app/src/sync/pull.ts" symbol="upsert" />
+
+`applyPull` runs every channel under `channel()` and every row under `eachRow()`, so a row this build cannot hold costs that row and is written to `pullProblems` (shown on the Sync screen) rather than rolling back the whole pull and freezing the cursor.
+
+## Media
+
+<Code file="mbos-app/src/sync/media.ts" symbol="PENDING_PARENT_HOLD_MS" />
+
+The server binds each upload to its parent with `bindMbosMedia` when the parent is written, and again when the file arrives naming it — whichever comes second. An unbound file past `attachments.orphanCleanupHours` is removed by the nightly sweep.
+
+## Where it was done, and the phone itself
+
+<DbTable name="mbos_activity_locations" only={["entity_type", "entity_id", "user_id", "lat", "lng", "accuracy_m", "captured_at", "age_seconds", "source", "reason"]} note={{
+  reason: "Why there is no fix, when there is none. A row with null coordinates is a recorded fact, not a missing row.",
+  age_seconds: "How old the fix was when the act was saved.",
+}} />
+
+<DbTable name="mbos_devices" only={["user_id", "device_id", "app_version", "last_seen_at", "location_permission", "background_location_granted", "location_services_enabled", "connection_type", "battery_percent", "battery_charging", "battery_exemption", "device_state_at", "tracker_stalled_at", "push_token"]} note={{
+  location_permission: "always / while_using / denied / undetermined. Null is 'never reported', not a refusal.",
+  background_location_granted: "Kept and still written for old builds; its false renders as restricted.",
+  device_state_at: "When the readings were taken. A check constraint refuses readings without it.",
+}} />
+
+Device state rides the **position batch** (`/api/mbos/positions`) as a sibling of the positions array, written only after the session check — so a phone that keeps reporting after check-out is not a beacon on somebody's evening. A partial report updates only the fields it carries.
+
+## Tests that pin it
+
+| Test | Pins |
+|---|---|
+| `src/lib/mbos-wire.test.ts` | Every pulled column has a handset column; every handset write has a dispatcher case and vice versa; the funnel mirror |
+| `src/lib/activity-location.test.ts` | Runs `buildPull` with a cursor; real visit, order and payment payloads through the endpoint |
+| `mbos-app/src/sync/ordering.test.ts` | Dependency partition and back-off |
+| `mbos-app/src/sync/deletable.test.ts` | Which local rows a tombstone may remove |
+| `mbos-app/src/engines/rebootstrap.test.ts` | When an upgrade takes a snapshot |
+| `mbos-app/src/data/reachable.test.ts` | Every `data/` export has a caller |
+
+## Changing it safely
+
+<Steps>
+<Step title="Add a pulled column">
+Add it to the handset's schema migration **and** the server's channel function. The bootstrap and delta must call the same function — never a second query. Older handsets drop it harmlessly.
+</Step>
+<Step title="Add a new kind of write">
+Add the `entityType` to `SYNC_ENTITY_TYPES`, a `case` in `dispatchItem`, a handler with a zod schema, and the handset `enqueue` call. The wire test fails if either half is missing.
+</Step>
+<Step title="Never bind a JavaScript Date in raw SQL">
+Pass `.toISOString()`, and type a number subtracted from a date (`::int`). Both have taken the whole delta down before; only a test that runs the query finds them.
+</Step>
+<Step title="Never refuse what can be retried">
+A handler that throws answers retry. Return `rejected` only for a decision the salesman can act on, with a sentence that says how.
+</Step>
+</Steps>
+
+## Known gaps
+
+| Gap | Where |
+|---|---|
+| `mbos.sync.retryBackoffSeconds` is read by nothing; the ladder is a constant | `mbos-app/src/sync/ordering.ts` |
+| A lowered `mbos.sync.maxItemsPerRequest` refuses whole batches from phones that have not pulled it, and the refusal also stops the pull that would deliver it | `batchLimit` in `queue.ts`; `src/app/api/mbos/sync/route.ts` |

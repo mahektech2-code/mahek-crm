@@ -8,12 +8,48 @@ type Article = {
   id: string;
   title: string;
   category: string;
-  role: string;
+  /** The audience as stored: levels, and on older rows the job words. */
+  roles: string[];
   isScript: boolean;
   scriptBody: string | null;
   body: string;
   updatedOn: string;
 };
+
+/*
+ * WHO AN ARTICLE IS FOR, said in the words the filter offers.
+ *
+ * The filter compared its own label — "Telecaller" — against the article's
+ * roles JOINED INTO ONE STRING, "associate, manager", so no article ever
+ * matched any choice but "All roles". It now asks whether the article's list
+ * CONTAINS the level the label stands for. The legacy spellings are kept in
+ * the sets because rows written before roles became levels still carry them,
+ * and an article that drops out of its own audience is an SOP nobody finds.
+ */
+const AUDIENCE: Record<string, readonly string[]> = {
+  // role-name-ok — the article AUDIENCE, tagged by the job.
+  Telecaller: ["associate", "telecaller"],
+  Manager: ["manager", "admin"],
+};
+
+const AUDIENCE_WORD: Record<string, string> = {
+  // role-name-ok — an associate's articles are the telecallers' here.
+  associate: "Telecaller",
+  // role-name-ok — the legacy spelling still on older rows.
+  telecaller: "Telecaller",
+  manager: "Manager",
+  admin: "Admin",
+};
+
+function forAudience(a: Article, filter: string): boolean {
+  if (filter === "All roles") return true;
+  const levels = AUDIENCE[filter] ?? [];
+  return a.roles.some((r) => levels.includes(r));
+}
+
+function audienceLabel(a: Article): string {
+  return [...new Set(a.roles.map((r) => AUDIENCE_WORD[r] ?? r))].join(", ");
+}
 
 export function HelpScreen({
   role,
@@ -39,7 +75,7 @@ export function HelpScreen({
   const matching = React.useMemo(() => {
     const q = query.trim().toLowerCase();
     return articles.filter((a) => {
-      if (roleFilter !== "All roles" && a.role !== roleFilter) return false;
+      if (!forAudience(a, roleFilter)) return false;
       if (!q && category !== "All" && a.category !== category) return false;
       if (!q) return true;
       return (
@@ -100,13 +136,10 @@ export function HelpScreen({
           {categories.map((c) => {
             const count =
               c === "All"
-                ? articles.filter(
-                    (a) => roleFilter === "All roles" || a.role === roleFilter,
-                  ).length
+                ? articles.filter((a) => forAudience(a, roleFilter)).length
                 : articles.filter(
                     (a) =>
-                      a.category === c &&
-                      (roleFilter === "All roles" || a.role === roleFilter),
+                      a.category === c && forAudience(a, roleFilter),
                   ).length;
             return (
               <button
@@ -147,7 +180,7 @@ export function HelpScreen({
               >
                 <span className="block text-sm font-medium text-ink">{a.title}</span>
                 <span className="mt-0.5 block text-[13px] text-muted">
-                  {a.role} · {a.category}
+                  {audienceLabel(a)} · {a.category}
                 </span>
               </button>
             ))
@@ -165,7 +198,7 @@ export function HelpScreen({
                 {active.title}
               </h2>
               <div className="mt-1 mb-5 text-[13px] text-muted">
-                {active.role} · {active.category} · updated {longDate(active.updatedOn)}
+                {audienceLabel(active)} · {active.category} · updated {longDate(active.updatedOn)}
               </div>
 
               {active.isScript && active.scriptBody ? (

@@ -7,12 +7,19 @@
 # moment to find out. The drill is in DEPLOY.md and takes about ten minutes.
 #
 #   bash restore.sh backups/mahekone_2026-08-14_0115.sql.gz
-#   bash restore.sh --from-r2 mahekone_2026-08-14_0115.sql.gz
 #   bash restore.sh --list-r2
+#   bash restore.sh --from-r2 daily/mahekone_2026-10-06_2045.sql.gz.gpg --key ~/backup-private.asc
 #
 # This DESTROYS the current contents of the database, which is the point: the
 # dump was taken with --clean --if-exists, so it drops what it is replacing.
 # It asks first.
+#
+# R2 copies end in .gpg once BACKUP_GPG_RECIPIENT_FILE is set, and decrypting
+# one needs the PRIVATE key, which by design does not live on this box. Bring
+# it for the restore with `--key` — scp it to /tmp, or better, decrypt on your
+# own machine and scp the plain .sql.gz across instead — and delete it after.
+# The local copies in backups/ are never encrypted, so a restore from the box
+# itself needs no key at all.
 
 set -euo pipefail
 
@@ -35,21 +42,48 @@ r2() {
     rclone/rclone:latest "$@"
 }
 
-if [ "${1:-}" = "--list-r2" ]; then
-  r2 lsl "R2:${R2_BUCKET}/" --s3-no-check-bucket
-  exit 0
-fi
+USAGE='usage: restore.sh <file.sql.gz[.gpg]> | --from-r2 <prefix/name> | --list-r2   [--key <private key>]'
+FROM_R2=""
+DUMP=""
+KEY=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --list-r2)
+      # daily/, intraday/ and monthly/ — and, until they age out, the files
+      # from before the prefixes, at the top.
+      r2 lsl "R2:${R2_BUCKET}/" --s3-no-check-bucket | sort -k2,3
+      exit 0 ;;
+    --from-r2) FROM_R2="${2:?which file — run --list-r2}"; shift 2 ;;
+    --key) KEY="${2:?--key needs the private key file}"; shift 2 ;;
+    -*) echo "$USAGE" >&2; exit 2 ;;
+    *) DUMP="$1"; shift ;;
+  esac
+done
 
-if [ "${1:-}" = "--from-r2" ]; then
-  NAME="${2:?which file — run --list-r2}"
-  echo "==> Fetching ${NAME} from R2"
-  r2 copy "R2:${R2_BUCKET}/${NAME}" /backups/ --s3-no-check-bucket
-  DUMP="${APP_DIR}/backups/${NAME}"
-else
-  DUMP="${1:?usage: restore.sh <file.sql.gz> | --from-r2 <name> | --list-r2}"
+if [ -n "$FROM_R2" ]; then
+  echo "==> Fetching ${FROM_R2} from R2"
+  r2 copy "R2:${R2_BUCKET}/${FROM_R2}" /backups/ --s3-no-check-bucket
+  DUMP="${APP_DIR}/backups/$(basename "$FROM_R2")"
 fi
-
+[ -n "$DUMP" ] || { echo "$USAGE" >&2; exit 2; }
 [ -f "$DUMP" ] || { echo "No such file: ${DUMP}" >&2; exit 1; }
+
+if [ "${DUMP%.gpg}" != "$DUMP" ]; then
+  [ -n "$KEY" ] || { echo "${DUMP} is encrypted — pass --key <private key file>" >&2; exit 1; }
+  echo "==> Decrypting"
+  # A throwaway keyring, deleted on the way out, so the private key is never
+  # left imported on the box once the restore is done.
+  GNUPGHOME=$(mktemp -d)
+  export GNUPGHOME
+  trap 'rm -rf "$GNUPGHOME"' EXIT
+  gpg --batch --quiet --import "$KEY"
+  read -rsp 'Passphrase for the backup key (Enter if it has none): ' PASS; echo
+  printf '%s' "$PASS" | gpg --batch --yes --quiet --pinentry-mode loopback \
+    --passphrase-fd 0 --output "${DUMP%.gpg}" --decrypt "$DUMP"
+  unset PASS
+  DUMP="${DUMP%.gpg}"
+  echo "    decrypted to ${DUMP} — now delete ${KEY} from this box"
+fi
 
 echo
 echo "About to REPLACE the contents of mahekone with:"

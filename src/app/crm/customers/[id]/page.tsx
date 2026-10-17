@@ -1,10 +1,11 @@
+import { priceListDoorCanManage } from "@/lib/price-list-door";
 import { notFound } from "next/navigation";
 import { customerRecordDetail } from "@/lib/services/customer-record-service";
 import { orderCountsSql } from "@/lib/order-status";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { orders, payments } from "@/db/schema";
-import { isManager, requireUser } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import {
   assertCustomerInScope,
   NotPermittedError,
@@ -25,7 +26,7 @@ import {
   distributorsFor,
   suggestedDistributors,
 } from "@/lib/services/distributor-service";
-import { canFor } from "@/lib/access-control";
+import { canFor, levelInApp } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import { popularProducts } from "@/lib/services/product-service";
 import {
@@ -33,7 +34,7 @@ import {
   pricingOptions,
 } from "@/lib/services/price-list-service";
 import { quickNotes as quickNotesTable } from "@/db/schema";
-import { targetFor } from "@/lib/services/worklist-services";
+import { customerAchievedFor, targetFor } from "@/lib/services/worklist-services";
 import { customerStatusLabel, daysBetween } from "@/lib/format";
 import { categoryLabel, categoryValue } from "@/lib/complaint-labels";
 // How much of the timeline the page arrives with — see `TIMELINE_PAGE`. The
@@ -43,6 +44,7 @@ import { categoryLabel, categoryValue } from "@/lib/complaint-labels";
 import { TIMELINE_PAGE } from "@/lib/timeline-kinds";
 import { addDays, calendarDate } from "@/lib/business-date";
 import { RecordScreen } from "./record-screen";
+import { listCustomerContacts } from "@/lib/services/customer-contact-service";
 
 export async function generateMetadata({
   params,
@@ -103,6 +105,7 @@ export default async function CustomerRecordPage({
      */
     pricing,
     pricingLists,
+    achievedThisMonth,
   ] = await Promise.all([
     getConfig(),
     // The FIRST PAGE of it, not the history. See `customerTimeline`.
@@ -113,7 +116,7 @@ export default async function CustomerRecordPage({
     // whole targets list read to `.find` one row out of it. See `targetFor`.
     targetFor(id, period),
     getFollowUpDetail(id),
-    // Order count, month-to-date value and how long they actually take to pay,
+    // Order count and how long they actually take to pay,
     // in one round trip.
     db
       .select({
@@ -134,11 +137,6 @@ export default async function CustomerRecordPage({
            where o.customer_id = ${id} and ${orderCountsSql("o")}
              and o.ordered_at >= now() - interval '6 months'
         )`,
-        thisMonth: sql<number>`coalesce((
-          select sum(o.total_amount) from ${orders} o
-           where o.customer_id = ${id} and ${orderCountsSql("o")}
-             and o.ordered_at >= date_trunc('month', current_date)
-        ), 0)`,
         /*
          * HOW LONG THEY ACTUALLY TAKE TO PAY, over money that actually arrived.
          *
@@ -167,6 +165,9 @@ export default async function CustomerRecordPage({
       .then((r) => r[0]),
     customerPricing(id, day),
     pricingOptions(),
+    // What the target card measures, by bill date — the same figure the
+    // Monthly Targets list prints for this shop. See `customerAchievedFor`.
+    customerAchievedFor(id, period),
   ]);
 
   const [quickNoteRows, productRows, amChanges, backOfficePeople] = await Promise.all([
@@ -192,7 +193,8 @@ export default async function CustomerRecordPage({
    * lead nobody has converted yet, whose order history already shows goods
    * arriving on somebody's bill.
    */
-  const [distributors, deliveryAddresses, suggestions] = await Promise.all([
+  const [contacts, distributors, deliveryAddresses, suggestions] = await Promise.all([
+    listCustomerContacts(id),
     distributorsFor(id),
     deliveryAddressesFor(id),
     customer.kind === "lead" && !customer.thirdParty
@@ -233,7 +235,13 @@ export default async function CustomerRecordPage({
         name: customer.name,
         contactPerson: customer.contactPerson,
         phone: customer.phone,
+        // What the contacts list does not hold: where the shop is, the
+        // WhatsApp group its staff read, and on a lead who signs.
+        address: customer.address,
+        whatsappGroupName: customer.whatsappGroupName,
+        decisionMaker: customer.leadDecisionMaker,
         city: customer.city,
+        place: customer.place ?? null,
         ownerName: customer.ownerName,
         kind: customer.kind,
         leadSource: customer.leadSource,
@@ -279,18 +287,24 @@ export default async function CustomerRecordPage({
         paysInDays: Number(stats?.paysInDays ?? 0),
         creditTermDays: customer.creditTermDays,
         gstin: customer.gstin,
+        grade: customer.grade,
         route: customer.route,
         area: customer.area,
         territoryRegion: customer.territoryRegion,
         dealerCode: customer.dealerCode,
         thirdParty: customer.thirdParty,
         doNotContact: customer.doNotContact,
+        whatsappDnd: customer.whatsappDnd,
+        whatsappDndReason: customer.whatsappDndReason,
         customerSince: customer.customerSince,
         deactivationRequested: customer.deactivationRequested,
         reactivationRequested: customer.reactivationRequested,
         reactivationReason: customer.reactivationReason,
         deactivationReason: customer.deactivationReason,
       }}
+      contacts={contacts}
+      businessDay={day}
+      birthdayHeadsUpDays={config["customers.birthdayHeadsUpDays"]}
       distributors={distributors}
       deliveryAddresses={deliveryAddresses}
       distributorSuggestions={suggestions}
@@ -309,13 +323,14 @@ export default async function CustomerRecordPage({
       pricing={pricing}
       pricingLists={pricingLists.lists}
       gstBp={config["pricing.gstBp"]}
-      canManagePrices={await canFor(user, "pricelist.manage")}
+      canManagePrices={await priceListDoorCanManage(user, "crm")}
       /* What this caller may take off a price on their own. Resolved here
          because a ceiling that only exists in a browser is not a ceiling; the
          save re-checks it against the same two settings. */
       discountAuthority={{
-        level:
-          user.role === "admin" ? "admin" : isManager(user) ? "manager" : "associate",
+        /* The CRM level, the same function the save asks — not the widest
+           level held anywhere. See `interaction-service.ts`. */
+        level: (await levelInApp(user, "crm")) ?? "associate",
         associateMaxBp: config["pricing.associateMaxDiscountBp"],
         managerMaxBp: config["pricing.managerMaxDiscountBp"],
       }}
@@ -349,9 +364,11 @@ export default async function CustomerRecordPage({
          * delivery shop with a month of real orders behind it.
          */
         amount: target?.amount ?? null,
-        achieved: Number(stats?.thisMonth ?? 0),
+        achieved: achievedThisMonth,
         isDefault: target?.isDefault ?? true,
         shareOfBook: target?.shareOfBookPercent ?? null,
+        billTarget: target?.billTarget ?? null,
+        billsAchieved: target?.billsAchieved ?? 0,
       }}
       openComplaint={
         openComplaint
@@ -410,6 +427,7 @@ export default async function CustomerRecordPage({
         actor: t.actor,
         content: t.content,
         meta: t.meta ?? null,
+        detail: t.detail ?? null,
       }))}
       timelineCursor={timeline.cursor}
       timelineMore={timeline.more}
@@ -426,6 +444,8 @@ export default async function CustomerRecordPage({
         templateName: m.templateName,
         body: m.body,
         edited: m.edited,
+        receipts: m.receipts,
+        viaRule: m.viaRule,
       }))}
     />
   );

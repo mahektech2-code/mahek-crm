@@ -6,9 +6,12 @@ import {
   CALL_REASON_CODES,
   CALL_REASON_LABEL,
   DELIVERY_ISSUES,
+  ALL_NEXT_ACTION_CODES,
   NEXT_ACTION_LABEL,
+  nextActionCoveredByOutcome,
   nextActionsFor,
   reasonFieldsFor,
+  reconcileNextActions,
   reminderTypeFor,
   showsLedger,
   unbackedBy,
@@ -177,4 +180,222 @@ test("delivery issues are codes, and unique", () => {
   const codes = DELIVERY_ISSUES.map((i) => i.code);
   assert.equal(new Set(codes).size, codes.length);
   assert.ok(codes.includes("other"));
+});
+
+/* ----------------------------------------------- the model's closed list */
+
+test("the model may name every code the form can draw, and no other", () => {
+  assert.deepEqual(
+    [...ALL_NEXT_ACTION_CODES].sort(),
+    Object.keys(NEXT_ACTION_LABEL).sort(),
+  );
+  for (const r of CALL_REASONS) {
+    for (const a of nextActionsFor(r.code)) {
+      assert.ok(ALL_NEXT_ACTION_CODES.includes(a.code), a.code);
+    }
+  }
+});
+
+/* ------------------------------------------- stale state, and the proposal
+ *
+ * `reconcileNextActions` is what the panel runs when an outcome changes and
+ * when the assistant proposes — pure, so the rule is pinned without a browser.
+ * ------------------------------------------------------------------------- */
+
+const TODAY = "2026-09-24";
+const base = {
+  current: [] as string[],
+  currentDate: "",
+  reason: null as string | null,
+  outcome: null as string | null,
+  today: TODAY,
+};
+
+test("changing the outcome drops what the new outcome no longer offers, and its day", () => {
+  /* Order taken chased for payment, then the outcome becomes No Order. */
+  const r = reconcileNextActions({
+    ...base,
+    current: ["follow_up_payment"],
+    currentDate: "2026-09-30",
+    outcome: "no_order",
+  });
+  assert.deepEqual(r.actions, []);
+  assert.equal(r.date, "", "a day with nothing dated left goes with it");
+  assert.equal(r.dropped, true);
+});
+
+test("changing the outcome keeps what is still offered, and its day", () => {
+  /* "Call again" is on both No Order and Follow-up. */
+  const r = reconcileNextActions({
+    ...base,
+    current: ["call_back", "follow_up_payment"],
+    currentDate: "2026-09-30",
+    outcome: "follow_up",
+  });
+  assert.deepEqual(r.actions, ["call_back"]);
+  assert.equal(r.date, "2026-09-30");
+  assert.equal(r.dropped, true);
+});
+
+test("changing the reason drops codes the new reason does not list", () => {
+  /* Inbound: a price enquiry's "send price", then the reason is a complaint. */
+  const r = reconcileNextActions({
+    ...base,
+    current: ["send_price"],
+    currentDate: "2026-09-30",
+    reason: "complaint",
+    outcome: null,
+  });
+  assert.deepEqual(r.actions, []);
+  assert.equal(r.date, "");
+});
+
+test("nothing stale is reported when nothing is stale", () => {
+  const r = reconcileNextActions({
+    ...base,
+    current: ["call_back"],
+    currentDate: "2026-09-30",
+    outcome: "follow_up",
+  });
+  assert.equal(r.dropped, false);
+  assert.equal(r.filled, false);
+  assert.deepEqual(r.actions, ["call_back"]);
+});
+
+test("a proposal is checked against the INCOMING outcome and reason", () => {
+  /* Valid for the outcome the assistant is about to set… */
+  const ok = reconcileNextActions({
+    ...base,
+    outcome: "follow_up",
+    proposed: ["call_back"],
+    proposedDate: "2026-09-25",
+  });
+  assert.deepEqual(ok.actions, ["call_back"]);
+  assert.equal(ok.date, "2026-09-25");
+  assert.equal(ok.filled, true);
+  /* …and refused for one whose list does not have it. */
+  const no = reconcileNextActions({
+    ...base,
+    outcome: "no_answer",
+    proposed: ["call_back"],
+    proposedDate: "2026-09-25",
+  });
+  assert.deepEqual(no.actions, []);
+  assert.equal(no.filled, false);
+  /* Inbound reason lists apply only when a reason is given. */
+  const inbound = reconcileNextActions({
+    ...base,
+    reason: "price_quotation",
+    outcome: "no_answer",
+    proposed: ["send_price"],
+    proposedDate: "2026-09-25",
+  });
+  assert.deepEqual(inbound.actions, ["send_price"]);
+});
+
+test("a proposal never replaces what the telecaller already chose", () => {
+  const r = reconcileNextActions({
+    ...base,
+    current: ["salesman_visit"],
+    currentDate: "2026-09-29",
+    outcome: "follow_up",
+    proposed: ["call_back"],
+    proposedDate: "2026-09-25",
+  });
+  assert.deepEqual(r.actions, ["salesman_visit"]);
+  assert.equal(r.date, "2026-09-29");
+  assert.equal(r.filled, false);
+});
+
+test("no_follow_up is exclusive: beside another action the proposal is refused whole", () => {
+  const r = reconcileNextActions({
+    ...base,
+    outcome: "no_order",
+    proposed: ["no_follow_up", "call_back"],
+  });
+  assert.deepEqual(r.actions, []);
+  assert.equal(r.filled, false);
+  const alone = reconcileNextActions({
+    ...base,
+    outcome: "no_order",
+    proposed: ["no_follow_up"],
+    proposedDate: "2026-09-25",
+  });
+  assert.deepEqual(alone.actions, ["no_follow_up"]);
+  assert.equal(alone.date, "", "an undated action takes no day");
+});
+
+test("a proposed day that is past, or for an undated action, is not set", () => {
+  const past = reconcileNextActions({
+    ...base,
+    outcome: "follow_up",
+    proposed: ["call_back"],
+    proposedDate: "2026-09-01",
+  });
+  assert.deepEqual(past.actions, ["call_back"]);
+  assert.equal(past.date, "");
+  const undated = reconcileNextActions({
+    ...base,
+    reason: "payment_outstanding",
+    outcome: null,
+    proposed: ["payment_already_made"],
+    proposedDate: "2026-09-25",
+  });
+  assert.deepEqual(undated.actions, ["payment_already_made"]);
+  assert.equal(undated.date, "");
+});
+
+/* --------------------------------------------- one promise, one reminder */
+
+test("a Next Action the outcome already wrote a reminder for is covered", () => {
+  const follow = [{ type: "call_back", day: "2026-09-25" }];
+  assert.equal(nextActionCoveredByOutcome(["call_back"], "2026-09-25", follow), true);
+  /* The payment chase on the promised day is the promise's own reminder. */
+  assert.equal(
+    nextActionCoveredByOutcome(
+      ["follow_up_on_promise"],
+      "2026-09-25",
+      [{ type: "payment_promise", day: "2026-09-25" }],
+    ),
+    true,
+  );
+});
+
+test("a different day, a different errand or a different type is NOT covered", () => {
+  const follow = [{ type: "call_back", day: "2026-09-25" }];
+  /* Two promises on two days both stand. */
+  assert.equal(nextActionCoveredByOutcome(["call_back"], "2026-09-29", follow), false);
+  /* "Send the price" is an errand a call-back reminder does not mean — and a
+     set holding it is never covered, even beside a covered call-back. */
+  assert.equal(nextActionCoveredByOutcome(["send_price"], "2026-09-25", follow), false);
+  assert.equal(
+    nextActionCoveredByOutcome(["call_back", "salesman_visit"], "2026-09-25", follow),
+    false,
+  );
+  /* A promise reminder does not cover a plain call-back, nor the reverse. */
+  assert.equal(
+    nextActionCoveredByOutcome(
+      ["call_back"],
+      "2026-09-25",
+      [{ type: "payment_promise", day: "2026-09-25" }],
+    ),
+    false,
+  );
+  /* "Before the promised date" is earlier by definition, so a different day. */
+  assert.equal(
+    nextActionCoveredByOutcome(
+      ["follow_up_before_promise"],
+      "2026-09-25",
+      [{ type: "payment_promise", day: "2026-09-25" }],
+    ),
+    false,
+  );
+});
+
+test("with no outcome reminder, or no action, nothing is covered", () => {
+  assert.equal(nextActionCoveredByOutcome(["call_back"], "2026-09-25", []), false);
+  assert.equal(
+    nextActionCoveredByOutcome([], "2026-09-25", [{ type: "call_back", day: "2026-09-25" }]),
+    false,
+  );
 });

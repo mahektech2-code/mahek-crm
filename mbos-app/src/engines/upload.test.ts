@@ -31,6 +31,92 @@ test('a build with no recorder in it is the app, exactly as it always was', () =
   assert.equal(chooseSender({ serviceAvailable: false, nativeUploads: false }), 'js');
 });
 
+/* A recorder that BELIEVES it is sending and is not. See `chooseSender`. */
+
+test('a wedged recorder loses the queue, however firmly it says it is sending', () => {
+  /* Four in the afternoon until eleven at night, on a handset in constant
+     contact with the office. Every other reading on this phone was healthy. */
+  assert.equal(
+    chooseSender({
+      serviceAvailable: true,
+      nativeUploads: true,
+      lastUploadAgoSeconds: 7 * 3_600,
+      buffered: 4_200,
+    }),
+    'js',
+  );
+});
+
+test('a recorder holding fixes it has NEVER got accepted is the worst case, not the innocent one', () => {
+  assert.equal(
+    chooseSender({
+      serviceAvailable: true,
+      nativeUploads: true,
+      lastUploadAgoSeconds: null,
+      buffered: 300,
+    }),
+    'js',
+  );
+});
+
+test('an empty buffer is never an accusation, however long the silence', () => {
+  /* A recorder that has sent nothing because it had nothing to send is every
+     phone on a quiet afternoon. Reading an absence as a fault is the one
+     thing this file is written against. */
+  assert.equal(
+    chooseSender({
+      serviceAvailable: true,
+      nativeUploads: true,
+      lastUploadAgoSeconds: 9 * 3_600,
+      buffered: 0,
+    }),
+    'native',
+  );
+});
+
+test('a buffer this build cannot report leaves the recorder alone', () => {
+  /* Null is not zero and it is not "something is stuck" either. */
+  assert.equal(
+    chooseSender({
+      serviceAvailable: true,
+      nativeUploads: true,
+      lastUploadAgoSeconds: 9 * 3_600,
+      buffered: null,
+    }),
+    'native',
+  );
+});
+
+test('an ordinary bad patch of signal is not a wedge', () => {
+  /* The recorder's own retry curve tops out at five minutes, so a few
+     ceiling-length waits is it working. Handing the queue back and forth
+     across those would be two owners and no draining. */
+  assert.equal(
+    chooseSender({
+      serviceAvailable: true,
+      nativeUploads: true,
+      lastUploadAgoSeconds: 14 * 60,
+      buffered: 800,
+    }),
+    'native',
+  );
+  assert.equal(
+    chooseSender({
+      serviceAvailable: true,
+      nativeUploads: true,
+      lastUploadAgoSeconds: 16 * 60,
+      buffered: 800,
+    }),
+    'js',
+  );
+});
+
+test('a caller that says nothing about either reading behaves exactly as before', () => {
+  /* An APK cannot be recalled and neither can a caller that has not been
+     updated: an answer nobody passed is an answer nobody has. */
+  assert.equal(chooseSender({ serviceAvailable: true, nativeUploads: true }), 'native');
+});
+
 /* ----------------------------------------------------------------- backoff */
 
 test('a successful send waits exactly the configured cadence', () => {

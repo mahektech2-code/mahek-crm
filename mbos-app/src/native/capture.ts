@@ -6,7 +6,7 @@ import {
   useAudioRecorder,
   type RecordingOptions,
 } from 'expo-audio';
-import { captureImage, queueAudio, type MediaKind } from '../sync/media';
+import { captureImage, queueAudio, queueFile, type MediaKind } from '../sync/media';
 
 /**
  * Camera and microphone.
@@ -48,6 +48,125 @@ export async function takePhoto(args: {
   });
 
   return { ok: true, mediaId, uri: asset.uri };
+}
+
+export type Picked = { mediaId: string; label: string; isPdf: boolean };
+
+/**
+ * Several bills from the gallery at once.
+ *
+ * A two-page bill and the payment screenshot beside it are three photographs
+ * he already has, and making him open the gallery three times — once per
+ * file — is the kind of friction that ends with one of them not attached.
+ * Each is compressed exactly as a camera shot is.
+ */
+export async function pickPhotos(args: {
+  parentType: string;
+  parentId: string;
+  kind: MediaKind;
+  max: number;
+}): Promise<{ ok: true; picked: Picked[] } | { ok: false; reason: string }> {
+  if (args.max <= 0) return { ok: false, reason: 'You cannot add more files to this claim.' };
+  const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (!perm.granted) return { ok: false, reason: 'Photo library permission is off.' };
+  const result = await ImagePicker.launchImageLibraryAsync({
+    quality: 1,
+    mediaTypes: ['images'],
+    allowsMultipleSelection: true,
+    selectionLimit: args.max,
+  });
+  if (result.canceled || !result.assets?.length) return { ok: false, reason: 'cancelled' };
+  const picked: Picked[] = [];
+  for (const asset of result.assets.slice(0, args.max)) {
+    const mediaId = await captureImage({
+      uri: asset.uri,
+      parentType: args.parentType,
+      parentId: args.parentId,
+      kind: args.kind,
+    });
+    picked.push({ mediaId, label: 'Photo', isPdf: false });
+  }
+  return { ok: true, picked };
+}
+
+/**
+ * A PDF bill — the e-invoice a fuel pump or a hotel mails him, which is not a
+ * photograph and never was. Images picked here go through the same compression
+ * a camera shot does; a PDF is queued as it is, after its size is checked
+ * against the office's own upload limit, so a file the server would refuse is
+ * refused here while he is looking rather than in the queue hours later.
+ */
+export async function pickDocuments(args: {
+  parentType: string;
+  parentId: string;
+  kind: MediaKind;
+  max: number;
+  maxSizeMb: number;
+}): Promise<{ ok: true; picked: Picked[]; refused: string[] } | { ok: false; reason: string }> {
+  if (args.max <= 0) return { ok: false, reason: 'You cannot add more files to this claim.' };
+  /*
+   * LOADED HERE, NOT AT THE TOP OF THE FILE, and that is what lets this
+   * JavaScript run on an older APK.
+   *
+   * `expo-document-picker` is a native module that arrived with 1.12.0. Its
+   * package calls `requireNativeModule` the moment it is imported, which throws
+   * on a build without it — and this file is imported by nearly every screen,
+   * so a top-level import would stop the app opening at all on the 1.9–1.11
+   * phones that receive this code over the air. Loaded on the press, a missing
+   * module costs exactly this one button, and says so.
+   */
+  let DocumentPicker: typeof import('expo-document-picker');
+  try {
+    DocumentPicker = await import('expo-document-picker');
+  } catch {
+    return {
+      ok: false,
+      reason: 'To add PDFs, you need the latest MBOS app. Take a photo of the bill instead, or ask for the update.',
+    };
+  }
+  const result = await DocumentPicker.getDocumentAsync({
+    type: ['application/pdf', 'image/jpeg', 'image/png'],
+    multiple: true,
+    copyToCacheDirectory: true,
+  });
+  if (result.canceled || !result.assets?.length) return { ok: false, reason: 'cancelled' };
+  const picked: Picked[] = [];
+  const refused: string[] = [];
+  for (const asset of result.assets) {
+    if (picked.length >= args.max) {
+      refused.push(`${asset.name}: this claim already has the most files it can take`);
+      continue;
+    }
+    const mime = asset.mimeType ?? '';
+    if (mime.startsWith('image/')) {
+      const mediaId = await captureImage({
+        uri: asset.uri,
+        parentType: args.parentType,
+        parentId: args.parentId,
+        kind: args.kind,
+      });
+      picked.push({ mediaId, label: asset.name || 'Photo', isPdf: false });
+      continue;
+    }
+    if (mime !== 'application/pdf') {
+      refused.push(`${asset.name}: you can add only PDFs and photos`);
+      continue;
+    }
+    const mb = (asset.size ?? 0) / (1024 * 1024);
+    if (mb > args.maxSizeMb) {
+      refused.push(`${asset.name} is ${mb.toFixed(1)} MB. The limit is ${args.maxSizeMb} MB`);
+      continue;
+    }
+    const mediaId = await queueFile({
+      uri: asset.uri,
+      mimeType: 'application/pdf',
+      parentType: args.parentType,
+      parentId: args.parentId,
+      kind: args.kind,
+    });
+    picked.push({ mediaId, label: asset.name || 'PDF', isPdf: true });
+  }
+  return { ok: true, picked, refused };
 }
 
 /**
@@ -129,17 +248,6 @@ export async function prepareMicrophone(): Promise<
   }
 
   return { ok: true };
-}
-
-/**
- * The recorder hook the visit screen uses.
- *
- * `expo-audio` owns the recorder object; this only wraps the queueing, so
- * stopping a recording writes it to the media queue and hands back an id the
- * visit can hold on to.
- */
-export function useVoiceRecorder() {
-  return useAudioRecorder(DICTATION);
 }
 
 export async function queueRecording(uri: string, parentType: string, parentId: string): Promise<string> {

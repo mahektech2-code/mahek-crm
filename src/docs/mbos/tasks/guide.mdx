@@ -1,0 +1,94 @@
+**Tasks** are jobs with a date: ring a shop, visit about a sample, collect a form, answer a few questions for the office. Some you add yourself; most come **from the office** or are raised by the app (a bounced cheque, a sample to chase). The **bell** is where the office tells you what it decided — an order approved, a leave answered, a target set.
+
+## Your tasks
+
+<Wireframe url="MBOS · Tasks" caption="Tasks, grouped by when they are due">
+<div className="mx-auto max-w-[300px] space-y-3">
+  <WfBar><WfTitle>Tasks</WfTitle><WfSpacer /><WfButton>+ New task</WfButton><Hotspot n={1} /></WfBar>
+  <WfCard tone="warn" title="Overdue">
+    <WfText>Call Customer A. The cheque bounced</WfText>
+    <WfText muted>Customer A · Overdue by 1 day</WfText>
+    <WfBar><WfButton primary>Mark as done</WfButton><WfButton>Move it</WfButton><Hotspot n={2} /></WfBar>
+  </WfCard>
+  <WfCard title="Today">
+    <WfText>Shop survey — 6 questions</WfText>
+    <WfText muted>Customer B · From the office</WfText>
+    <WfBar><WfButton primary>Answer and finish</WfButton><Hotspot n={3} /></WfBar>
+  </WfCard>
+  <WfCard title="Tomorrow"><WfText>Validation call</WfText><WfBar><WfButton>Call now</WfButton><Hotspot n={4} /></WfBar></WfCard>
+</div>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>New task.</b> A reminder for yourself — against a shop, or <i>No customer. General work</i>.</span>,
+  <span key="2"><b>Done or move.</b> <i>Mark as done</i> asks what you did. <i>Move it</i> asks for a new day and why.</span>,
+  <span key="3"><b>A task with questions.</b> The office has attached a form. Answer it and the task is done.</span>,
+  <span key="4"><b>Shortcuts.</b> A validation call offers <i>Call now</i>; a requirement visit offers <i>Open shop</i>.</span>,
+]} />
+
+Tasks are grouped **Overdue**, **Today**, **Tomorrow**, **This week** and **Later**. The group is worked out from the due date every time you look, so yesterday's *Today* is this morning's *Overdue*.
+
+### Finishing a task
+
+<Steps>
+<Step title="Press Mark as done">
+A box opens: **What you did · needed**. Write one line — *Gave them the new rate list. They will order next week.* Your manager reads this.
+</Step>
+<Step title="Add a photo if it helps">
+**Add a photo (optional)**. A photo never stops the task being saved.
+</Step>
+<Step title="Save">
+The task leaves your list. It goes to the office on your next sync.
+</Step>
+</Steps>
+
+For a task with questions, press **Answer and finish**. Each question must be answered (the screen says *One answer is still needed* until it is). **Anything else (optional)** is for what the questions did not ask. Some questions update the shop's record directly — the task says so.
+
+### Moving a task
+
+**Move it** offers **Next day**, **A week later**, or a day you pick — never earlier than the day it is already due. You must say why. *Three moves is a story your manager needs.*
+
+<Callout kind="warn">
+If a task stays overdue for <Setting k="mbos.tasks.escalationHours" /> hours past its date, your manager is told and you get a *Task overdue* message.
+</Callout>
+
+## Notifications
+
+Tap the **bell** at the top of any screen.
+
+<Wireframe url="MBOS · Notifications" caption="Notifications, newest first">
+<div className="mx-auto max-w-[300px] space-y-3">
+  <WfTitle>Notifications</WfTitle>
+  <WfCard title="Order approved"><WfText muted>Customer A · 2 min ago</WfText><Hotspot n={1} /></WfCard>
+  <WfCard tone="warn" title="Leave request answered"><WfText muted>Yesterday</WfText><WfButton>Open leave</WfButton><Hotspot n={2} /></WfCard>
+  <WfCard title="Cheque bounced"><WfText muted>The office is told.</WfText></WfCard>
+</div>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Each message</b> says what happened and to whom. Unread ones are marked.</span>,
+  <span key="2"><b>The button</b> names where it goes: <i>Open tasks</i>, <i>See the route</i>, <i>Open expenses</i>, <i>Open leave</i>, <i>Not accepted</i>.</span>,
+]} />
+
+### When the app is closed
+
+The office can reach your phone even when MBOS is not open — a **push notification** on your lock screen. **Tap it and the app opens straight on the thing it is about**, after you unlock. If the app is open, a banner drops from the top of the screen instead.
+
+At night (quiet hours) messages still arrive, but **silently** — no sound.
+
+If you never get push messages, open **More → Phone setup** and check notifications are allowed for MBOS.
+
+## Questions people ask
+
+<Faq q="I marked a task done but it came back.">
+The office refused it — usually because it needed a note saying what you did. Check **Not accepted**, then finish it again with a line of what you did.
+</Faq>
+<Faq q="A notification opened the list instead of a screen.">
+The message is about something this phone has no screen for. The message itself is in the list.
+</Faq>
+<Faq q="Can I delete a task from the office?">
+No. Finish it with a note, or move it with a reason. If it is wrong, say so in the note.
+</Faq>
+<Faq q="I got no push but the message is in the bell.">
+The bell is the record — it fills on every sync. Push is a courtesy on top and can fail (notifications off, battery saver, phone off). Check the bell when you start the day.
+</Faq>

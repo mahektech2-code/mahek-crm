@@ -1,0 +1,111 @@
+Tasks is **what your salesmen have been asked to do**, by you or by MahekOne itself, and whether it got done. You can give one salesman one job, or send the same job — with a short form to fill in — to many salesmen at many shops at once, and read the answers as they come back.
+
+## The screen at a glance
+
+<Wireframe url="/sales/tasks" nav={["Today", "#Field work", "Tasks", "Journeys & visits", "Field reports", "Travel ledger", "Activity history"]} active="Tasks" caption="Tasks, on the Open list">
+  <WfBar>
+    <WfTitle sub="What you have asked each salesman to do. A task raised by the office and a task the app raised itself both land here.">Tasks</WfTitle>
+    <WfSpacer />
+    <WfButton primary>Assign a task</WfButton>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfBar>
+    <WfCard title="Open"><WfText>34</WfText></WfCard>
+    <WfCard title="Overdue"><WfText>6 · oldest 4 days late</WfText></WfCard>
+    <WfCard title="Done"><WfText>58</WfText></WfCard>
+    <WfCard title="On nobody"><WfText>3 · not against a shop</WfText></WfCard>
+    <Hotspot n={2} />
+  </WfBar>
+  <WfBar><WfPill>Assignments 4</WfPill><WfPill tone="brand">Open 34</WfPill><WfPill>Overdue 6</WfPill><WfPill>Done 58</WfPill><WfPill>Everything 98</WfPill><Hotspot n={3} /></WfBar>
+  <WfTable columns={["Task", "Salesman", "Customer", "Due", "Priority", "State", "Raised by"]} rows={[
+    [<span key="a">Collect the payment promised on the 5th <Hotspot n={4} /></span>, "Salesman A", "Customer A", "10 Oct · 2 days late", <WfPill key="b" tone="danger">high</WfPill>, <WfPill key="c" tone="danger">Open</WfPill>, "Manager"],
+    ["Order refused — explain to the shop", "Salesman B", "Customer B", "12 Oct", <WfPill key="d" tone="warn">medium</WfPill>, <WfPill key="e">Open</WfPill>, "—"],
+    [<span key="f">Shelf check — our products <i>“Stocks two of ours”</i></span>, "Salesman C", "Customer C", "9 Oct", <WfPill key="g">low</WfPill>, <WfPill key="h" tone="success">Done</WfPill>, "Manager"],
+  ]} />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Assign a task.</b> One job to one person, or one job to many people at many shops, with an optional form.</span>,
+  <span key="2"><b>The numbers.</b> Open, overdue (and the oldest), done, and tasks not against any shop.</span>,
+  <span key="3"><b>Lists.</b> <i>Assignments</i> groups everything sent together as one job. The others list single tasks.</span>,
+  <span key="4"><b>A task.</b> A task that belongs to an assignment links to its answers. A completion note shows under the title.</span>,
+]} />
+
+## Where tasks come from
+
+| Raised by | When |
+|---|---|
+| **You**, or another manager | You assign it here. Even a single task is sent as an assignment of one. |
+| **MahekOne — refused order** | Accounts refused an order the salesman took. He stood in the shop and said it was placed, so he is the one to go back. |
+| **MahekOne — reorder due** | A customer is past their own measured reorder date. Raised once, until somebody deals with it. |
+| **MahekOne — lead work** | Steps on the lead ladder: a validation call, a sample in transit, a sample review, a negotiation visit, nurture follow-ups. |
+| **The salesman** | He can add a task for himself on his phone. |
+
+*Raised by* shows a person's name for a task somebody assigned, and is blank for one MahekOne raised.
+
+## Assigning a task
+
+<Steps>
+<Step title="Press Assign a task">
+Give it a title, a due date and a priority. Instructions are optional.
+</Step>
+<Step title="Choose who and where">
+**No shop — just the salesmen**: pick the people. **Shops I pick**: search and tick shops. **Shops in an area / matching a filter**: pick places and kinds of account.
+</Step>
+<Step title="Choose who does each shop">
+*Carried by* — each shop goes to the salesman who carries it. Or pick salesmen yourself: *Each of them gets one task for every shop.*
+</Step>
+<Step title="See who this reaches, then assign">
+The preview counts exactly how many tasks will be created. If the book changes before you press assign, you are asked to check again rather than sending a different number.
+</Step>
+</Steps>
+
+He is told *"A task was assigned to you"* with the title and due date.
+
+## Tasks with a form
+
+Add questions to a task and each salesman fills them in at the shop. A task with no questions is *done with a note*.
+
+| Question type | Asks for |
+|---|---|
+| Short text / Long text | A line, or a paragraph in his own words |
+| Number | A count, litres, an amount — with a unit and range |
+| Yes / No | One tap |
+| Pick one / Pick several | From your list |
+| Photos | From the camera or gallery |
+| Date / Birthday | A day; a birthday is day and month, never a year |
+| Phone number | A ten-digit mobile |
+| Rating | One to five |
+| Location | Where he is standing |
+| Instruction | Text he reads; asks nothing |
+
+A question can be shown **only if** an earlier answer was something. Up to 40 questions.
+
+<Callout kind="note" title="Answers that belong on the customer record">
+When a question looks like customer data — an owner's birthday, a phone number — the dialog offers to **link** it to the record. *Collect where missing* skips shops that already have it and completes itself if somebody fills it in elsewhere. *Check and correct* shows the phone what the record holds and writes back whatever he confirms or corrects.
+</Callout>
+
+If an AI provider is configured, you can describe what you need in plain words and the dialog drafts the form; you still review every question.
+
+## Reading an assignment
+
+Open an assignment from the **Assignments** list. It shows how far through it the field is, every answer by shop and salesman, totals for numbers and counts for choices, and photos. From there you can **remind** everybody still open, **export answers**, or **withdraw the open tasks** — finished ones are kept.
+
+## Overdue and escalation
+
+A task becomes **overdue** the day after its due date. Once <Setting k="mbos.tasks.escalationHours" /> hours have passed from the start of its due date and it is still open, the salesman is told *"… is past its date and your manager has been told."* It escalates once.
+
+## Questions people ask
+
+<Faq q="A salesman marked a task done with no note.">
+Whether a note is required to close a task is a setting (currently <Setting k="mbos.tasks.requireCompletionNote" />).
+</Faq>
+<Faq q="I assigned to a whole area and fewer tasks were created than shops.">
+Shops nobody carries cannot go to "the shop's salesman", and shops whose record already holds every linked answer are skipped. The preview says how many of each.
+</Faq>
+<Faq q="Can I take back an assignment?">
+Withdraw it from the assignment page. Open tasks are cancelled; done ones stay.
+</Faq>
+<Faq q="Why is a task 'On nobody'?">
+It is not against any shop — a job for the salesman himself, like a training to finish.
+</Faq>

@@ -282,6 +282,7 @@ async function cohortLeads(range: DateRange): Promise<CohortLead[]> {
            to_char(c.created_at at time zone ${APP_TIMEZONE}, 'YYYY-MM-DD') as "createdOn"
       from customers c
      where (c.kind = 'lead' or c.lead_stage is not null)
+       and c.deleted_at is null
        and c.created_at >= ${w.start}
        and c.created_at < ${w.end}
        ${leadsVisible(scope)}
@@ -557,6 +558,7 @@ export async function allLeadSources(): Promise<Array<{ source: string; leads: n
      where c.lead_source is not null
        and btrim(c.lead_source) <> ''
        and (c.kind = 'lead' or c.lead_stage is not null)
+       and c.deleted_at is null
        ${leadsVisible(scope)}
      group by 1
      order by 2 desc, 1 asc

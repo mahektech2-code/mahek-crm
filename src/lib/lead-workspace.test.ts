@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { APP_MODULES, modulesForApp } from "./modules";
 import {
@@ -10,6 +10,7 @@ import {
   sectionForPath,
   type LeadWorkspace,
 } from "./lead-workspace";
+import { pipelineLinks } from "./sales-lead-pipeline/workspace";
 
 /* ---------------------------------------------------------------------------
  * The Lead Management workspace has TWO lists of where you can go, and they
@@ -34,6 +35,46 @@ import {
  * server's payload against the handset's schema: two lists in two files,
  * joined by a spelling, and getting it wrong fails silently.
  * ------------------------------------------------------------------------- */
+
+/**
+ * LEAD MODULES THAT ARE NOT A SECTION OF THE SHARED WORKSPACE.
+ *
+ * `LEAD_SECTIONS` is the list both apps mount, one sidebar row each, so every
+ * assertion below reads "every module is a section, in both workspaces". The
+ * calling desk is the exception and is named here rather than quietly passing:
+ * it is the CRM's alone (the Sales Dashboard's people walk a beat), it is drawn
+ * from the CRM's own sidebar in `components/shell/nav.ts`, and it is a module
+ * of its own so that it can be GRANTED to particular people — a tab of All
+ * Leads could not be, and the desk was open to every CRM user. The last test in
+ * this file pins the exception itself, so it cannot grow unnoticed.
+ *
+ * Sales Manager is the mirror exception on the OTHER side: `sales.lead-pipeline`
+ * is the Sales Dashboard's alone (the CRM's people work the phones, not the
+ * funnel from a manager's chair), drawn from `app/sales/nav.ts`, and — like
+ * the desk — a module of its own so it can be granted or withheld from
+ * particular people rather than riding on the whole app.
+ *
+ * `crm.sales-manager` is a THIRD exception, and a different shape from either:
+ * it names the same job title as the Sales Dashboard's seat but is its own
+ * module, its own route and its own grant, in the CRM. Nothing reads it
+ * against `sales.lead-pipeline` and nothing should — a person can hold one,
+ * both, or neither.
+ *
+ * `crm.lead-lost` is a FOURTH exception, and the same shape as the calling
+ * desk: a lead can be lost from any rung of any ladder, so it is a question
+ * asked of the whole book rather than a cut of one stage's worklist, and a tab
+ * of All Leads could not be withheld from anybody who can open that screen.
+ * There is no Sales Dashboard counterpart yet — the field funnel is walked
+ * through MBOS, and a lost lead there is read off the same rows.
+ */
+const CRM_ONLY_LEAD_MODULES = ["lead-calling-desk", "sales-manager", "lead-lost"];
+const SALES_ONLY_LEAD_MODULES = ["lead-pipeline"];
+const isSharedLeadModule = (workspace: string, key: string) => {
+  const slug = key.slice(workspace.length + 1);
+  if (workspace === "crm") return !CRM_ONLY_LEAD_MODULES.includes(slug);
+  if (workspace === "sales") return !SALES_ONLY_LEAD_MODULES.includes(slug);
+  return true;
+};
 
 describe("the Lead Management nav and the module registry agree", () => {
   it("every section names a real module in every workspace", () => {
@@ -61,7 +102,7 @@ describe("the Lead Management nav and the module registry agree", () => {
     // join, and renaming one silently revokes it from everybody.
     for (const workspace of LEAD_WORKSPACES) {
       const leadModules = modulesForApp(workspace).filter(
-        (m) => m.group === "Lead Management",
+        (m) => m.group === "Lead Management" && isSharedLeadModule(workspace, m.key),
       );
 
       for (const m of leadModules) {
@@ -98,7 +139,7 @@ describe("the Lead Management nav and the module registry agree", () => {
   it("both workspaces carry the same Lead Management modules", () => {
     const slugsFor = (workspace: LeadWorkspace) =>
       modulesForApp(workspace)
-        .filter((m) => m.group === "Lead Management")
+        .filter((m) => m.group === "Lead Management" && isSharedLeadModule(workspace, m.key))
         .map((m) => m.key.slice(workspace.length + 1))
         .sort();
     assert.deepEqual(slugsFor("crm"), slugsFor("sales"));
@@ -119,6 +160,69 @@ describe("the Lead Management nav and the module registry agree", () => {
       `Lead Management has ${LEAD_SECTIONS.length} sidebar rows. Ten is the cap — ` +
         `add a tab to an existing section instead, or make the case for widening it.`,
     );
+  });
+
+  it("the CRM-only exceptions are exactly the calling desk, Sales Manager and Lost: their own modules, off by default, drawn in the CRM sidebar", () => {
+    assert.deepEqual(CRM_ONLY_LEAD_MODULES, ["lead-calling-desk", "sales-manager", "lead-lost"]);
+    for (const slug of CRM_ONLY_LEAD_MODULES) {
+      const mod = APP_MODULES.find((m) => m.key === `crm.${slug}`);
+      assert.ok(mod, `crm.${slug} is not a module`);
+      assert.equal(mod?.group, "Lead Management");
+      assert.equal(
+        mod?.offByDefault,
+        true,
+        `crm.${slug} is not offByDefault, so a grant of the whole CRM would carry it — which is every CRM user.`,
+      );
+      assert.equal(
+        APP_MODULES.find((m) => m.key === `sales.${slug}`),
+        undefined,
+        `sales.${slug} exists: the exception is the CRM's alone.`,
+      );
+      assert.ok(
+        !LEAD_SECTIONS.some((s) => s.slug === slug),
+        `${slug} is a section as well as an exception — pick one.`,
+      );
+    }
+  });
+
+  it("crm.sales-manager and sales.lead-pipeline are two independent modules sharing a job title, not one permission", () => {
+    const crmSeat = APP_MODULES.find((m) => m.key === "crm.sales-manager");
+    const salesSeat = APP_MODULES.find((m) => m.key === "sales.lead-pipeline");
+    assert.ok(crmSeat && salesSeat, "both Sales Manager modules must exist");
+    assert.equal(crmSeat?.label, "Sales Manager");
+    assert.equal(salesSeat?.label, "Sales Manager");
+    assert.notEqual(crmSeat?.key, salesSeat?.key);
+    assert.notEqual(crmSeat?.href, salesSeat?.href);
+    assert.equal(crmSeat?.app, "crm");
+    assert.equal(salesSeat?.app, "sales");
+  });
+
+  it("the Sales-only exception is exactly the Sales Manager workspace: its own module, off by default, explicit-only", () => {
+    assert.deepEqual(SALES_ONLY_LEAD_MODULES, ["lead-pipeline"]);
+    for (const slug of SALES_ONLY_LEAD_MODULES) {
+      const mod = APP_MODULES.find((m) => m.key === `sales.${slug}`);
+      assert.ok(mod, `sales.${slug} is not a module`);
+      assert.equal(mod?.group, "Lead Management");
+      assert.equal(
+        mod?.offByDefault,
+        true,
+        `sales.${slug} is not offByDefault, so a grant of the whole Sales Dashboard would carry it.`,
+      );
+      assert.equal(
+        mod?.explicitOnly,
+        true,
+        `sales.${slug} is not explicitOnly, so an administrator or a whole-app grant would carry it regardless.`,
+      );
+      assert.equal(
+        APP_MODULES.find((m) => m.key === `crm.${slug}`),
+        undefined,
+        `crm.${slug} exists: the exception is the Sales Dashboard's alone.`,
+      );
+      assert.ok(
+        !LEAD_SECTIONS.some((s) => s.slug === slug),
+        `${slug} is a section as well as an exception — pick one.`,
+      );
+    }
   });
 
   it("a section's own path is its first tab, so the sidebar never redirects", () => {
@@ -252,4 +356,113 @@ describe("the workspace's own folder guards nothing", () => {
       );
     });
   }
+});
+
+/* ---------------------------------------------------------------------------
+ * The Sales Manager screens are mounted twice as well — on the Sales Dashboard
+ * at /sales-lead-pipeline and in the CRM at /crm/leads/sales-manager — and the
+ * only thing that differs is where a link leads.
+ * ------------------------------------------------------------------------- */
+describe("the Sales Manager screens are workspace-aware", () => {
+  it("defaults to the Sales Dashboard, exactly the routes they had before the CRM mounted them", () => {
+    const sales = pipelineLinks();
+    assert.equal(sales.base, "/sales-lead-pipeline");
+    assert.equal(sales.intake, "/sales/leads/intake");
+    assert.equal(sales.qualify, "/sales/leads/qualify");
+    assert.equal(sales.record("cus_1"), "/sales/leads/cus_1");
+    assert.equal(pipelineLinks("sales").base, sales.base, "naming the default is the same as omitting it");
+    assert.equal(pipelineLinks("sales").record("x"), sales.record("x"));
+  });
+
+  it("the CRM sends a manager to the CRM's own intake, qualification and record", () => {
+    const crm = pipelineLinks("crm");
+    assert.equal(crm.base, "/crm/leads/sales-manager");
+    assert.equal(crm.intake, "/crm/leads/intake");
+    assert.equal(crm.qualify, "/crm/leads/qualify");
+    assert.equal(crm.record("cus_1"), "/crm/leads/cus_1");
+  });
+
+  it("every route either workspace links to exists", () => {
+    for (const ws of ["sales", "crm"] as const) {
+      const l = pipelineLinks(ws);
+      const dir = (route: string) => "src/app" + route.replace("cus_1", "[id]");
+      for (const route of [l.intake, l.qualify, l.record("cus_1")]) {
+        assert.ok(existsSync(dir(route) + "/page.tsx"), `${ws}: ${route} has no page`);
+      }
+      for (const sub of ["", "/pipeline", "/list", "/[id]"]) {
+        assert.ok(existsSync(`src/app${l.base}${sub}/page.tsx`), `${ws}: ${l.base}${sub} has no page`);
+      }
+    }
+  });
+
+  it("the CRM workspace has the states a screen owes: loading, failure and not found", () => {
+    for (const file of ["loading.tsx", "error.tsx", "not-found.tsx", "layout.tsx"]) {
+      assert.ok(existsSync(`src/app/crm/leads/sales-manager/${file}`), `missing ${file}`);
+    }
+  });
+
+  it("no shared component spells a workspace's route — they ask pipelineLinks", () => {
+    const dir = "src/components/sales-lead-pipeline";
+    for (const file of readdirSync(dir).filter((f) => f.endsWith(".tsx"))) {
+      const code = readFileSync(`${dir}/${file}`, "utf8").replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+      assert.equal(/["'`]\/sales-lead-pipeline|["'`]\/sales\/leads/.test(code), false, `${file} hard-codes a Sales route`);
+      assert.equal(/["'`]\/crm\/leads/.test(code), false, `${file} hard-codes a CRM route`);
+    }
+  });
+
+  it("the CRM pages draw the Sales Manager desk, and the record is handed the CRM workspace", () => {
+    const at = (page: string) => readFileSync(`src/app/crm/leads/sales-manager/${page}`, "utf8");
+    assert.match(at("page.tsx"), /pipelineDesk/);
+    assert.match(at("page.tsx"), /<Dashboard/);
+    assert.match(at("[id]/page.tsx"), /SalesManagerRecordScreen/);
+    assert.match(at("[id]/page.tsx"), /workspace="crm"/, "the record must be handed the CRM workspace");
+    /* The old separate views are redirects into the desk, never a second screen. */
+    for (const view of ["list", "mine", "today", "overdue", "distributors", "pipeline"]) {
+      assert.match(at(`${view}/page.tsx`), /redirect\("\/crm\/leads\/sales-manager/,`${view} must redirect into the desk`);
+    }
+  });
+
+  it("the Sales Dashboard's pages still draw the shared screens, untouched", () => {
+    for (const page of ["page.tsx", "pipeline/page.tsx", "list/page.tsx"]) {
+      const src = readFileSync(`src/app/sales-lead-pipeline/${page}`, "utf8");
+      assert.doesNotMatch(src, /Proto/, `${page} must not draw the CRM prototype`);
+    }
+  });
+
+  it("the workspace draws NO bar of its own: the CRM's header and sidebar are the only chrome", () => {
+    const crmLayout = readFileSync("src/app/crm/layout.tsx", "utf8");
+    assert.match(crmLayout, /<AppShell/, "the CRM shell frames this route like every other");
+    assert.doesNotMatch(crmLayout, /ownFrame|inCrmSalesManagerWorkspace/, "no workspace branch around the CRM shell");
+
+    /* The module layout is a guard and nothing else. */
+    const layout = readFileSync("src/app/crm/leads/sales-manager/layout.tsx", "utf8");
+    assert.match(layout, /requireModule\(user\.id, "crm\.sales-manager"\)/);
+    assert.doesNotMatch(layout, /Shell|NotificationBell|AccountMenu|<aside/);
+    assert.equal(existsSync("src/components/sales-lead-pipeline/desk/shell.tsx"), false, "the duplicate bar is gone");
+    /* Nothing under this route draws a shell of its own. */
+    for (const page of ["page.tsx", "pipeline/page.tsx", "[id]/page.tsx"]) {
+      assert.doesNotMatch(readFileSync(`src/app/crm/leads/sales-manager/${page}`, "utf8"), /SalesManagerShell|AppShell|<Header/, page);
+    }
+  });
+
+  it("the Sales Manager record's Edit stays inside the workspace, and is not a route another module guards", () => {
+    const record = readFileSync("src/components/sales-lead-pipeline/desk/record-screen.tsx", "utf8");
+    assert.match(record, /editHref=\{`\$\{links\.base\}\/\$\{lead\.id\}\/edit`\}/, "Edit points at the workspace's own edit page");
+    assert.doesNotMatch(record, /editHref=\{links\.record/, "not at /crm/leads/<id>, which crm.leads guards and redirects away from");
+
+    assert.ok(existsSync("src/app/crm/leads/sales-manager/[id]/edit/page.tsx"), "the edit page exists");
+    /* No layout of its own: the module guard one folder up is what applies, and a second guard here
+       could only be a different module. */
+    assert.equal(existsSync("src/app/crm/leads/sales-manager/[id]/edit/layout.tsx"), false);
+    const page = readFileSync("src/app/crm/leads/sales-manager/[id]/edit/page.tsx", "utf8");
+    assert.match(page, /pipelineLead\(id/, "the lead is read through the seat scope");
+    assert.match(page, /notFound\(\)/, "outside the book is a 404");
+    assert.doesNotMatch(page, /requireModule\(.*"crm\.leads"/);
+  });
+
+  it("every old view address still has a page, so no link the shared dialogs draw is dead", () => {
+    for (const view of ["pipeline", "list", "today", "overdue", "mine", "distributors"]) {
+      assert.ok(existsSync(`src/app/crm/leads/sales-manager/${view}/page.tsx`), `${view} has no page`);
+    }
+  });
 });

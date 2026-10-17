@@ -43,7 +43,12 @@ export const color = {
   infoBg: '#EDF2FC',
 
   /* scrims */
-  scrim: 'rgba(16,18,24,0.52)',
+  /* Behind every bottom sheet, the + menu's included. Light enough that the
+     screen he was on stays readable behind the sheet — at 0.52 it went nearly
+     black and the sheet read as a different screen rather than as something
+     opened over this one. A real blur needs a native module (expo-blur), so it
+     waits for an APK rather than riding an over-the-air update. */
+  scrim: 'rgba(16,18,24,0.28)',
   scrimLight: 'rgba(22,22,22,0.45)',
 } as const;
 

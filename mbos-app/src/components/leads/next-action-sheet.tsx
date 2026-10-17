@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Pressable } from 'react-native';
+import { Animated, View, Pressable } from 'react-native';
+import { Presence, useShake } from '../ui/motion';
 import { Choice, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../ui/primitives';
 import { BottomSheet, Calendar } from '../ui/overlays';
 import { color as C, radius, weight } from '../../theme/tokens';
@@ -46,28 +47,35 @@ export function NextActionSheet({
   const [err, setErr] = React.useState<string | null>(null);
   const [today] = React.useState(() => isoDate(new Date()));
 
+  /* A refusal shakes the box that says it, and buzzes `warning`. */
+  const refusal = useShake('warning');
+  const refuse = (message: string) => {
+    setErr(message);
+    refusal.shake();
+  };
+
   const save = () => {
-    if (!action.trim()) return setErr('Say what happens next — "ring him about the trial", not "follow up".');
-    if (!date) return setErr('Pick the day it happens on.');
-    if (!ownerId) return setErr('Say who is doing it.');
+    if (!action.trim()) return refuse('Write the next action. Example: "call him about the sample".');
+    if (!date) return refuse('Choose the day.');
+    if (!ownerId) return refuse('Choose who will do it.');
     onSave({ action: action.trim(), date, ownerId, outcome: outcome.trim() || undefined });
   };
 
   return (
     <BottomSheet open={open} onClose={onClose} scroll>
       <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>
-        What happens next
+        Next action
       </T>
       <T s="caption" style={{ marginTop: 2 }}>
-        Every lead being worked owes one. Nothing moves up a rung without it.
+        Every open lead needs one. The stage cannot move without it.
       </T>
 
       <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>The action</SectionLabel>
+        <SectionLabel style={{ marginBottom: 6 }}>Action</SectionLabel>
         <Input
           value={action}
           onChangeText={(v) => { setAction(v); setErr(null); }}
-          placeholder="Take the sample round and show him the finish"
+          placeholder="Take the sample and show him the finish"
           multiline
         />
       </View>
@@ -92,19 +100,19 @@ export function NextActionSheet({
         {/* Opened IN the sheet rather than in a second one on top of it. A
             modal over a modal is a stack somebody has to dismiss twice, and
             the one underneath is the form they were half way through. */}
-        {cal ? (
+        <Presence show={cal}>
           <View style={{ marginTop: 10 }}>
             <Calendar
               selected={date ?? ''}
-              disabledReason={(iso) => (iso < today ? 'That day has gone.' : null)}
+              disabledReason={(iso) => (iso < today ? 'That day has passed.' : null)}
               onPick={(iso) => { setDate(iso); setErr(null); setCal(false); }}
             />
           </View>
-        ) : null}
+        </Presence>
       </View>
 
       <View style={{ marginTop: 12 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Who is doing it</SectionLabel>
+        <SectionLabel style={{ marginBottom: 6 }}>Who will do it</SectionLabel>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
           <Choice
             label={meName}
@@ -126,23 +134,24 @@ export function NextActionSheet({
       </View>
 
       <View style={{ marginTop: 12 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>What you expect to come back with</SectionLabel>
+        <SectionLabel style={{ marginBottom: 6 }}>What result you expect</SectionLabel>
         <Input
           value={outcome}
           onChangeText={setOutcome}
-          placeholder="Optional — a quantity, a date, a yes or a no"
+          placeholder="Optional. A quantity, a date, a yes or no"
         />
       </View>
 
-      {err ? (
-        <View style={{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 12 }}>
+      <Presence show={!!err}>
+        <Animated.View
+          style={[{ marginTop: 12, backgroundColor: C.dangerBg, borderRadius: radius.lg, padding: 12 }, refusal.style]}>
           <T style={[{ fontSize: 14, lineHeight: 20, color: C.danger }, weight(500)]}>{err}</T>
-        </View>
-      ) : null}
+        </Animated.View>
+      </Presence>
 
       <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
         <SecondaryButton label="Cancel" onPress={onClose} style={{ flex: 1, borderRadius: radius.xl }} />
-        <PrimaryButton label="Save it" onPress={save} style={{ flex: 1, borderRadius: radius.xl }} />
+        <PrimaryButton label="Save" onPress={save} style={{ flex: 1, borderRadius: radius.xl }} />
       </View>
     </BottomSheet>
   );

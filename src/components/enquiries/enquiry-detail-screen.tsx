@@ -51,6 +51,7 @@ import {
 } from "@/lib/actions/enquiries";
 import type { CustomerMatch } from "@/lib/services/enquiry-service";
 import type { Result } from "@/lib/result";
+import { CreateLeadCard } from "@/components/enquiries/create-lead-card";
 
 type Tab = "overview" | "timeline" | "followup" | "orders";
 
@@ -60,12 +61,15 @@ export function EnquiryDetailScreen({
   team,
   duplicates,
   orderCandidates,
+  deskAccess,
 }: {
   enquiry: EnquiryDetail;
   submission: EnquirySubmissionFields;
   team: AssignableUser[];
   duplicates: PossibleDuplicate[];
   orderCandidates: OrderCandidate[];
+  /** Whether this person holds the Calling desk, so a lead's link is drawn only where it opens. */
+  deskAccess: boolean;
 }) {
   const [tab, setTab] = React.useState<Tab>("overview");
   const router = useRouter();
@@ -154,6 +158,10 @@ export function EnquiryDetailScreen({
         <div className="flex flex-col gap-4">
           <AssignmentCard enquiry={enquiry} team={team} onAfter={after} />
           <StageCard enquiry={enquiry} onAfter={after} />
+          <CreateLeadCard
+            enquiry={enquiry}
+            deskHref={deskAccess && enquiry.customerId ? `/crm/leads/calling-desk/${enquiry.customerId}` : null}
+          />
           {!enquiry.customerId ? <CustomerMatchCard enquiry={enquiry} phone={displayPhone} onAfter={after} /> : (
             <Card className="p-5">
               <div className="text-xs font-medium tracking-[0.04em] text-muted uppercase">Customer</div>

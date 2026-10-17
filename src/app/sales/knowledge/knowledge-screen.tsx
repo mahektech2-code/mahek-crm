@@ -7,8 +7,9 @@ import { shortDate } from "@/lib/format";
 import {
   publishCourse,
   setCoursePublished,
-  uploadPublishFile,
 } from "@/lib/actions/sales";
+import { uploadPublishFile, type Uploaded, type UploadStage } from "../publish-upload";
+import { megabytes, PUBLISH_MAX_MB } from "@/lib/publish-limits";
 import type { CourseRow } from "@/lib/services/sales-service";
 import {
   Banner,
@@ -52,8 +53,9 @@ export function KnowledgeScreen({ rows }: { rows: CourseRow[] }) {
   const [minutes, setMinutes] = React.useState("");
   const [mandatory, setMandatory] = React.useState(false);
   const [dueDate, setDueDate] = React.useState("");
-  const [file, setFile] = React.useState<{ id: string; filename: string } | null>(null);
+  const [file, setFile] = React.useState<Uploaded | null>(null);
   const [uploading, setUploading] = React.useState(false);
+  const [stage, setStage] = React.useState<UploadStage>("sending");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [pickerKey, setPickerKey] = React.useState(0);
@@ -62,17 +64,10 @@ export function KnowledgeScreen({ rows }: { rows: CourseRow[] }) {
     if (!chosen) return;
     setUploading(true);
     setError(null);
-    const form = new FormData();
-    form.set("file", chosen);
-    let result;
-    try {
-      result = await uploadPublishFile(form);
-    } finally {
-      // Cleared whatever happened: an action that rejects rather
-      // than returning a Result would otherwise leave this button
-      // disabled until the page was reloaded.
-      setUploading(false);
-    }
+    // Never rejects — every failure, the network's included, is a Result.
+    setStage("sending");
+    const result = await uploadPublishFile(chosen, setStage);
+    setUploading(false);
     if (!result.ok) {
       setError(result.error);
       setPickerKey((k) => k + 1);
@@ -243,9 +238,15 @@ export function KnowledgeScreen({ rows }: { rows: CourseRow[] }) {
 
         <p className="mt-2 text-[13px] text-pretty text-muted">
           {uploading
-            ? "Storing the material…"
+            ? stage === "compressing"
+              ? `It is over ${PUBLISH_MAX_MB} MB — compressing the photographs in it. Text and drawings are left exactly as they are.`
+              : "Storing the material…"
             : file
-              ? `${file.filename} is stored and will be attached when you publish.`
+              ? `${file.filename} is stored and will be attached when you publish.${
+                  file.compressedFrom
+                    ? ` It was compressed from ${megabytes(file.compressedFrom)} to ${megabytes(file.sizeBytes)} to fit.`
+                    : ""
+                }`
               : "Material is optional — a briefing somebody delivers in a meeting is still a course to record and tick off."}
         </p>
       </div>

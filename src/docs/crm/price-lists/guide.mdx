@@ -1,0 +1,208 @@
+Price lists tell you **what each shop pays**. In the CRM you can open every list, see which one applies to a customer and why, print or export it, and ask for a special price when a customer wants to pay less. You cannot change a list here — the Accounts desk and the Founder Dashboard make, publish and retire them.
+
+<Callout kind="live">
+Figures on this page that come from settings — the GST rate, how long a list stays valid, how much discount you may give — are the values your CRM is using right now.
+</Callout>
+
+## The screen at a glance
+
+<Wireframe url="/crm/price-lists" nav={["#Customer records", "Customers", "Complaints", "Price lists", "Close / Reopen"]} active="Price lists" caption="Price lists in the CRM — read-only">
+  <WfBar>
+    <WfTitle sub="What each shop pays, so a figure quoted on a call is one somebody can stand behind.">Price lists</WfTitle>
+    <WfSpacer />
+    <WfButton>Which list applies?</WfButton>
+    <WfButton>Export</WfButton>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfBar>
+    <WfCard title="In force"><WfText>12</WfText></WfCard>
+    <WfCard title="Drafts"><WfText>3</WfText></WfCard>
+    <WfCard title="Expiring in a week"><WfText>2</WfText></WfCard>
+    <WfCard title="Files waiting"><WfText>1</WfText></WfCard>
+    <WfCard title="Price requests"><WfText>4</WfText></WfCard>
+    <Hotspot n={2} />
+  </WfBar>
+  <WfTabs items={["Lists", "Documents", "Requests", "Coverage", "Variance"]} active="Lists" />
+  <WfCard>
+    <WfBar><WfText muted>Read-only here. Every list can be opened, compared, printed and exported; the Accounts desk and the Founder Dashboard make and change them.</WfText><Hotspot n={3} /></WfBar>
+  </WfCard>
+  <WfBar>
+    <WfPill tone="brand">All 19</WfPill><WfPill>In force 12</WfPill><WfPill>Drafts 3</WfPill><WfPill>Needs attention 3</WfPill><WfPill>Superseded 3</WfPill><WfPill>Withdrawn 1</WfPill>
+    <Hotspot n={4} />
+  </WfBar>
+  <WfTable
+    columns={["Name", "Status", "Transport", "Applies to", "In force"]}
+    rows={[
+      [<span key="a"><b>Region A price list</b> <Hotspot n={5} /></span>, <WfPill key="b" tone="success">Published</WfPill>, "To Pay", "State A · To Pay", "from 1 Sep"],
+      [<span key="c"><b>Region A — freight paid</b></span>, <span key="d"><WfPill tone="success">Published</WfPill> <WfPill tone="warn">expires in 4d</WfPill></span>, "Paid", "State A · Paid", "from 1 Sep"],
+      [<span key="e"><b>Everybody else</b></span>, <WfPill key="f" tone="success">Published</WfPill>, "Not stated", "Everybody", "from 15 Aug"],
+      [<span key="g"><b>Customer A — agreed prices</b></span>, <WfPill key="h" tone="success">Published</WfPill>, "Not stated", "Customer A", <span key="i">from 2 Oct <Hotspot n={6} /></span>],
+    ]}
+  />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Which list applies?</b> Pick any customer and see the list that prices them today, and the steps that led there. <b>Export</b> gives a spreadsheet or a PDF of the lists shown.</span>,
+  <span key="2"><b>Counts.</b> Lists in force, drafts being prepared, lists about to run out, price-list files still being read, and special price requests waiting for a decision.</span>,
+  <span key="3"><b>Read-only.</b> The CRM never draws the buttons that change a list — even for somebody who also works the Accounts desk.</span>,
+  <span key="4"><b>Filters.</b> <i>Needs attention</i> collects lists that have expired, expire within a week, are published but name nobody, or are drafts with no prices yet.</span>,
+  <span key="5"><b>A list.</b> Open it to see every price, who it applies to, its discounts, its versions and the document it came from.</span>,
+  <span key="6"><b>A shop's own list.</b> Created automatically when a special price is approved for one customer.</span>,
+]} />
+
+### The five tabs
+
+| Tab | What it answers |
+|---|---|
+| **Lists** | Every price list and its status. |
+| **Documents** | Price-list files (PDFs and photos) that have arrived and are being read into lists. Waiting files show first. |
+| **Requests** | Special prices that have been asked for, what the shop pays now, and what was decided. You see the ones **you** asked for; managers see everybody's. |
+| **Coverage** | Which shops a published list names — and which shops no list names at all. |
+| **Variance** | For a chosen month, every billed order line from the order sheet beside what the list says that shop should have paid. |
+
+## What a list's status means
+
+| Status | Meaning |
+|---|---|
+| <Pill>Draft</Pill> | Being prepared. Prices nobody. |
+| <Pill tone="success">Published</Pill> | In force from its start date. Shops it names are priced from it. |
+| <Pill>Superseded</Pill> | Replaced by a newer version. Kept so old orders can still be explained. |
+| <Pill tone="danger">Withdrawn</Pill> | Taken out of force, with a reason. |
+| <Pill tone="danger">Expired</Pill> | A published list past its validity — <Setting k="pricing.defaultValidityDays" /> days from its start unless the list says otherwise. Nobody has replaced it yet, so the office may not honour its rates. |
+| <Pill tone="warn">expires in Nd</Pill> | Runs out within a week. |
+
+The **Transport** column says who pays freight: **To Pay** (the shop pays the transporter on delivery, prices are ex-freight), **Paid** (we pay transport, built into the price up to the transporter's godown) or **Not stated**.
+
+**Applies to** lists who the list is for — a state, a city, a salesman, one customer, or *Everybody*. A published list that names nobody says **Nobody — prices no shop** in amber.
+
+## Opening a list
+
+<Wireframe url="/crm/price-lists/…" caption="One price list">
+  <WfBar><WfTitle sub="Published · v2 · To Pay · from 1 Sep">Region A price list</WfTitle><WfSpacer /><WfButton>PDF / Export / Print</WfButton><Hotspot n={1} /></WfBar>
+  <WfCard title="Rates">
+    <WfTabs items={["Grid", "Table"]} active="Grid" />
+    <WfTable columns={["Product", "1 L", "4 L", "20 L"]} rows={[["Nano Thinner", "₹…", "₹…", "₹…"], ["PU Sealer", "₹…", "₹…", "—"]]} />
+    <Hotspot n={2} />
+  </WfCard>
+  <WfCard title="Who it applies to">
+    <WfTable columns={["Named by", "Which one", "Under", "Freight", "Priority", "Shops"]} rows={[["State", "State A", "", "To Pay", "0", "412"]]} />
+    <Hotspot n={3} />
+  </WfCard>
+  <WfCard title="Discounts on this list"><WfText muted>2% for advance payment · 3% above a quantity</WfText><Hotspot n={4} /></WfCard>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Document actions.</b> Open or download the PDF in Mahek's own layout, export a spreadsheet, or print.</span>,
+  <span key="2"><b>Rates.</b> Every product by pack size. A dash means the pack is listed but not for sale. Some products have quantity slabs.</span>,
+  <span key="3"><b>Who it applies to.</b> Each rule that names shops, and how many shops it currently reaches.</span>,
+  <span key="4"><b>Discounts printed on the list.</b> These are terms written on the list — not what you may knock off on your own.</span>,
+]} />
+
+Below these are **Where it came from** (the original file), **Versions**, **Lists built on this one** and **Terms and notes**.
+
+## Finding the price for one customer
+
+The quickest way is the customer's record:
+
+<Steps>
+<Step title="Open the customer">
+From the Call Log, the customer list or search.
+</Step>
+<Step title="Open the Prices tab">
+It shows the list that applies to this shop today, every rate **including GST** (switch to **Ex GST** if you need it), the price per litre, and the discounts printed on that list.
+</Step>
+<Step title="Check the badges">
+<Pill tone="danger">Expired</Pill> means nobody has replaced the list yet — check before you promise a figure. <Pill tone="warn">Changed since their last order</Pill> means their last order was priced from a different list: say so before they read it off the invoice.
+</Step>
+<Step title="Press Why this price? if the customer asks">
+It walks you through how the list was chosen — no list for them by name, no list for their salesman, matched on their state, freight to pay — in order.
+</Step>
+<Step title="Copy price list to send it on WhatsApp">
+It copies the customer's name, the list, every rate (incl and ex GST) and the discount terms, ready to paste.
+</Step>
+</Steps>
+
+If no list applies you see: *No price list applies to this shop.* That means no list in force today names their city, state, salesman, or everybody. Tell a manager — the Coverage tab lists every shop in this state.
+
+## Prices on a call
+
+When you log an order on a call, each product you add shows **the rate per can and the name of the list it came from**. The rates are the same ones on the customer's Prices tab.
+
+- If the order form is set to price orders from the list (currently <Setting k="pricing.useListForOrderValue" />), each line shows what it comes to, and the order shows **Ex-GST**, **GST** and **Total**. A line whose product is not on the shop's list is left out, and the form says *N lines are not on this shop's list, so the total is short by them*.
+- If it is not, you see *Rates are from …, shown for reference — an order is still worth what accounts bill for it.*
+- If no list applies, the form shows quantities and no money.
+
+### Giving a discount
+
+A **%** box appears on each priced line only if you are allowed to give a discount at all.
+
+| Your level in the CRM | You may give on your own |
+|---|---|
+| Telecaller (associate) | Up to <Setting k="pricing.associateMaxDiscountBp" /> basis points (100 = 1%) |
+| Manager | Up to <Setting k="pricing.managerMaxDiscountBp" /> basis points |
+| Admin | Any discount |
+
+The discount is taken **before** GST. If you type more than you are allowed, the save is refused with a sentence like *You may give up to 3% on your own. Above that a manager has to authorise it.* — or, when your limit is zero, *You cannot give a discount on your own. Ask a manager to authorise it.* Save the order without the discount and ask, or ask for a special price.
+
+## Asking for a special price
+
+When a customer wants to pay less than their list for a product:
+
+<Steps>
+<Step title="Open the customer's Prices tab">
+Press **Ask for a special price**. It is greyed out if the shop has no rates to ask against.
+</Step>
+<Step title="Pick the product and type the price they want">
+Type the price **including GST** — the figure the shopkeeper says out loud. The form shows the ex-GST figure underneath and how far it is from today's rate in percent.
+</Step>
+<Step title="Say why">
+The reason is required. Whoever decides is not on the call and has nothing else to weigh it on.
+</Step>
+<Step title="Send it">
+You see *Asked. Whoever decides prices has been told.* The request appears under **Asked for** on the Prices tab with the status <Pill tone="warn">Waiting</Pill>.
+</Step>
+</Steps>
+
+### What happens next
+
+<Flow caption="A special price request" chart={`
+flowchart TD
+  A["Telecaller asks<br/>(price incl GST + reason)"] --> B["Request waiting<br/>deciders get a notification"]
+  B --> C{"Accounts or Founder desk decides"}
+  C -- "Approved" --> D["The shop gets its own<br/>'agreed prices' list with that rate"]
+  C -- "Refused" --> E["Shop stays on its list"]
+  B -- "You withdraw it" --> W["Withdrawn"]
+  D --> N["You are notified<br/>with any note"]
+  E --> N
+`} />
+
+- **Approved** — the customer now has a list of their own (named *Customer A — agreed prices*) and that rate is what the order form uses from then on. A second approved special price for the same shop is added to the same list.
+- **Refused** — nothing changes. You get a notification with the decider's note so you can ring the customer back.
+- **Withdraw** — only you, and only while it is still waiting. Use it from the row menu on the Requests tab.
+
+## Coverage and variance
+
+**Coverage** shows how many shops are on a list, how many are on **no** list, and how many have no freight term recorded (a list of either term can still name them). The *On no list* table shows up to 200 of those shops with their region, freight term and salesman — these are shops being priced from memory.
+
+**Variance** shows, month by month, every priced line billed on the order sheet beside the list price for that shop. The figures at the top count lines **at**, **below** and **above** the list, lines where **no list resolved**, and the total **given away below the list**. Sort is biggest discount first.
+
+## Questions people ask
+
+<Faq q="Why can't I edit a price here?">
+Prices are set by the Accounts desk and the Founder Dashboard only. The CRM and the Sales Dashboard quote prices; the person chasing a number must not also set the price it is measured in.
+</Faq>
+<Faq q="The customer says they were quoted a different price.">
+Open their Prices tab. If it says *Changed since their last order*, their last order came from a different list — tell them. If the list is *Expired*, check with accounts before confirming.
+</Faq>
+<Faq q="Are the prices including GST?">
+The Prices tab shows **Incl GST** by default with the ex-GST figure beneath. Lists are stored ex-GST and printed inclusive at the list's own GST rate; where a list does not say, <Setting k="pricing.gstBp" /> basis points (1800 = 18%). Inclusive figures are rounded to the rupee, as the office prints them.
+</Faq>
+<Faq q="Two lists seem to cover the same shop. Which wins?">
+The narrowest one: a list for the customer by name, then their salesman, beat, area, city, district, state, customer type, and finally everybody. Press **Why this price?** to see it.
+</Faq>
+<Faq q="I asked for a special price and heard nothing.">
+Check the Requests tab. A request stays <i>Waiting</i> until somebody at the Accounts desk or the Founder Dashboard decides it; you are notified either way.
+</Faq>
+<Faq q="The discount box is missing on my order lines.">
+Your discount limit is zero, so the box is not drawn. Ask a manager, or ask for a special price.
+</Faq>

@@ -1,0 +1,193 @@
+A price list answers one question for every shop: **what does this customer pay for this can, today?** The CRM is where that answer is *quoted* — on a call, on the customer's record, in a message. It is deliberately not where the answer is *set*. This tab explains how a list is chosen for a shop, how GST and discounts are worked out, how a special price becomes a shop's own list, and who may do what.
+
+Every value quoted from a setting is the one your CRM is using right now.
+
+## Two jobs, two desks
+
+<Cards cols={2}>
+<Card title="Reading a price" tone="brand">Every signed-in person who opens the CRM's Price lists. A telecaller pricing an order and a salesman standing in a shop both need the customer's list in front of them — a price they cannot see is a price they guess.</Card>
+<Card title="Setting a price" tone="warn">The **Accounts desk** (both levels) and the **Founder Dashboard** (both levels), plus administrators. Importing, editing, publishing, scoping, duplicating, assigning a list to a shop and deciding a special price.</Card>
+</Cards>
+
+<Callout kind="why" title="Why the CRM is read-only for everybody">
+The person chasing a number must not also set the price that number is measured in — the same reasoning that keeps order approval away from managers. Setting prices was first given to CRM and Sales Dashboard managers too; Mahek's instruction was that lists are added, changed and deleted by the accounts team or from the founder's desk only. So the CRM's Price lists screens draw **no control that writes**, even for somebody who also holds the Accounts desk and could change the list from there. A control drawn on a telecaller's screen because the person happens to wear a second hat is a control a telecaller's screen should not have.
+</Callout>
+
+| Who | In the CRM they can |
+|---|---|
+| Telecaller (CRM associate) | Read every list, see which list applies to a shop and why, export and print, ask for a special price, withdraw their own request, give a discount up to the associate ceiling |
+| CRM manager | All of that, see everybody's special price requests, give a discount up to the manager ceiling |
+| Admin | Any discount; but the CRM screens still draw no editing controls |
+| Accounts desk / Founder Dashboard | Make and change lists — on their own Price lists screens, not the CRM's |
+
+## Which list applies to a shop
+
+A list says who it is for through **scope rules**. A rule names one of nine kinds of thing: a single customer, a salesman, a beat, an area, a city, a district, a state, a customer type, or *everybody*. A shop usually matches several — it is in a state, in a city, on a beat, and its salesman may have a list of his own.
+
+<Rule title="Narrowest wins">
+The kinds are tried **narrowest first**, and the first kind with any match decides:
+
+customer → salesman → beat → area → city → district → state → customer type → everybody.
+
+Inside one kind, three things break a tie, in order: the **freight term** that fits the shop exactly, then the rule's **priority**, then the list with the **newest start date**.
+</Rule>
+
+<Flow caption="Resolving a shop's list" chart={`
+flowchart TD
+  A["The shop: who sells to it, beat, area, city,<br/>district, state, customer type, freight term"] --> K["Take the next kind,<br/>narrowest first"]
+  K --> M{"Any rule of this kind<br/>names the shop, is in its dates,<br/>on a published list in force,<br/>and its freight term agrees?"}
+  M -- "No" --> N["Note why: 'No list is set for their city'"]
+  N --> L{"More kinds?"}
+  L -- "Yes" --> K
+  L -- "No" --> X["No price list applies"]
+  M -- "Yes" --> T["Tie-break: exact freight term,<br/>then priority, then newest start date"]
+  T --> W["This list — with the chain of reasons"]
+`} />
+
+<Callout kind="why" title="Why the answer carries its reasons">
+A price a telecaller cannot explain is a price the customer argues with. So the answer is never just a list name: it is the ladder that was walked — *no list for this customer by name, no list for their salesman, matched on the city Thane under Maharashtra, freight to pay*. That ladder is what **Why this price?** and **Which list applies?** draw. The handset compiles the same rule, so a salesman standing in the shop and the office get one answer.
+</Callout>
+
+### What counts as "in force"
+
+- The list is **published**, its start date has arrived, and its end date (if any) has not passed.
+- The scope rule's own *valid from / valid to* dates include today.
+- Drafts, superseded and withdrawn lists price nobody.
+
+### A shop is known by several spellings
+
+The book's city and state columns hold whatever the order sheet typed; the place master holds what was made of it. A shop is matched on **both** — the resolved place and the folded raw text — so a book whose places have never been resolved still matches on what the sheet said. A city rule picked *under* its state does not reach a city of the same name in another state; a rule with no parent matches the place wherever it is.
+
+### Freight: To Pay and Paid
+
+One region often has two lists — one where the shop pays the transporter (**To Pay**) and one where transport is built into the price (**Paid**). The shop's own freight term picks between them. A shop whose freight term was never recorded is not left with nothing: a list of either term may name it, and the exact match only wins a tie.
+
+## Lists in force, versions and validity
+
+<Rule title="A published list is never edited — it is superseded">
+An order taken in August has to stay explainable in December. So when prices move, a **new version** is published. Publishing it marks the old one *superseded*, ends it the day before the new one starts, and — if the new version names nobody — carries the old version's scope rules across, so "publish next month's list" is one act rather than two. What may still change on a published list is what a reader sees: the name, the reference, notes and terms.
+</Rule>
+
+<Rule title="Nothing is deleted">
+Superseded and withdrawn are states; the rows stay. Withdrawing needs a reason. The only deletes are a draft nobody published and a document that never became a list.
+</Rule>
+
+<Rule title="Validity">
+A list is valid for its own validity period from the day it takes effect — <Setting k="pricing.defaultValidityDays" /> days where the list does not say, matching Mahek's printed terms (30 days or until the next revision, whichever is earlier). A published list past that is drawn **Expired** on every screen, and the list index counts lists expiring within a week.
+</Rule>
+
+<Rule title="Publishing checks">
+A list with no prices is refused. A list that names nobody is published with the warning *Nobody is on this list yet, so no shop will be priced from it.* A list **derived** from a parent by a rule (for example "the To Pay list plus a rupee amount per litre") is checked against that rule; cells more than <Setting k="pricing.derivationTolerancePaise" /> paise per can away are counted in a warning rather than refused, because the office overrides a cell deliberately often enough that a block would be worked around.
+</Rule>
+
+### Where lists come from
+
+Most lists start as a **file somebody was sent** — a PDF in Mahek's own layout, or a photograph. The Documents tab shows each file being read: the layout found, prices turned into paise, every row and pack-size column matched to a SKU in the catalogue, GST and the derivation checked. A document the reader is less than <Setting k="pricing.parseConfidenceFloor" />% sure of is marked **Needs a person**; none is ever published without somebody opening it. Lists can also be built from scratch, from every active product, copied, derived from another list by a rule, or imported from a spreadsheet — all on the Accounts and Founder desks.
+
+## GST
+
+<Callout kind="money" title="Stored ex-GST, printed inclusive">
+Every rate is stored **ex-GST in paise**, which is what the order sheet bills. The inclusive figure is ex-GST times (1 + the list's GST rate), **rounded to the rupee** — what the office prints and the shop is told. Going back from a printed inclusive figure keeps its paise rather than rounding, so a printed ₹2,281 does not turn into the wrong rupee on every billed line for a month.
+</Callout>
+
+- Each list carries its own GST rate. Where a document does not state one, <Setting k="pricing.gstBp" /> basis points is used (1800 = 18%).
+- A line's worth is worked out as: cans × rate ex-GST, **minus the discount**, **then** GST on what is left.
+- A special price is typed **inclusive** — the figure the shopkeeper quotes — and stored ex-GST.
+
+## Prices on the order form
+
+When a telecaller adds products to an order on a call, the rate is looked up **on the server** for the customer being **billed** (a shop's distributor where the goods are invoiced to one), as of today's business date. A rate that arrived from the screen would be a price the caller chose, which is the whole thing price lists exist to stop.
+
+<SettingsTable keys={["pricing.useListForOrderValue"]} />
+
+- **On**: each line shows its worth and the order shows ex-GST, GST and total. Lines not on the shop's list are left out of the total and the form says how many.
+- **Off**: the rates are shown for reference only.
+- Either way, each order line **records the list rate it was quoted at and the discount given**, and the order records **which list priced it** — written once, so a revision next month does not rewrite what was quoted today.
+
+## Discount authority
+
+What somebody may take off a list price on a call depends on their level **in the CRM** — not the widest level they hold anywhere. A telecaller who is also a manager of Reports does not get the manager's discount on a call.
+
+<SettingsTable keys={["pricing.associateMaxDiscountBp", "pricing.managerMaxDiscountBp"]} />
+
+| CRM level | Ceiling |
+|---|---|
+| Associate (telecaller) | <Setting k="pricing.associateMaxDiscountBp" /> bp |
+| Manager | <Setting k="pricing.managerMaxDiscountBp" /> bp |
+| Admin | No ceiling |
+
+<Rule title="Above the ceiling, the save is refused">
+Not flagged — refused, with a sentence naming the way forward. The order has not happened yet, so nothing is lost by saying no; the alternative is a rate given away with nobody's name against it, which is what the order sheet already shows happening at 10%. Where somebody's ceiling is zero, the discount box is not drawn at all — a box that refuses every number teaches people the form is broken.
+</Rule>
+
+<Callout kind="why" title="Why the associate ceiling ships at zero">
+The sample lists state 3% and 2% under named conditions and nothing else, while the order sheet shows 10% being given with nobody's name against it. Zero means every discount is somebody senior's decision until a manager deliberately raises it. The manager ceiling must sit at or above the associate one, or an associate could give what a manager could not sign off.
+</Callout>
+
+A discount above the associate ceiling records **who allowed it** — the person saving, whose authority it was. A discount inside the associate ceiling records nobody, because nobody's permission was needed.
+
+The **discount terms printed on a list** (advance payment, quantity, prompt payment) are a different thing: they are part of the list the customer reads, not what a telecaller may knock off.
+
+## Special price requests
+
+<Flow caption="From a call to a shop's own price" chart={`
+sequenceDiagram
+  autonumber
+  actor T as Telecaller
+  participant R as Customer record — Prices
+  participant S as Server
+  actor D as Price desk
+  T->>R: Ask for a special price (incl GST, reason)
+  R->>S: request
+  S->>S: customer in your scope? reason given?
+  S->>S: today's list and rate for that product
+  S-->>D: notification — "A special price has been asked for"
+  D->>S: Approve (or refuse) with a note
+  alt approved
+    S->>S: add the rate to the shop's own list,<br/>or create "Customer — agreed prices"
+  end
+  S-->>T: notification — approved / refused, with the note
+`} />
+
+<Rule title="One special list per shop">
+An approved request puts the shop on a list named for it, scoped to that customer by name — which beats every other scope. A second approved price for the same shop joins the same list rather than creating another. The request records what the shop paid at the time, the list it was on, who asked, who decided and when, and the resulting list.
+</Rule>
+
+<Rule title="The reason is required, and travels in the message">
+Whoever decides is not on the call. The person who asked is told the decision with the note in the message, not behind a link, because they have to ring the shop back and say something.
+</Rule>
+
+Only the person who asked may **withdraw** a request, and only while it is waiting. A telecaller sees their own requests; a manager sees everybody's.
+
+## Coverage and variance
+
+- **Coverage** resolves every active customer in your book today and counts who is on which list, who is on **no** list (up to 200 listed), and who has no freight term. A published list nobody resolves to is called out. A shop on no list is being priced from memory.
+- **Variance** takes every priced line on the order sheet's Order Details tab for a month (up to 2,000) and compares the billed ex-GST rate with what the list says for that shop on that order date — **at**, **below**, **above**, or **no list resolved** — and totals what was given away below the list.
+
+## Every setting that shapes pricing
+
+<SettingsTable keys={[
+  "pricing.gstBp",
+  "pricing.defaultValidityDays",
+  "pricing.associateMaxDiscountBp",
+  "pricing.managerMaxDiscountBp",
+  "pricing.parseConfidenceFloor",
+  "pricing.derivationTolerancePaise",
+  "pricing.useListForOrderValue",
+]} />
+
+## Where the code and the intent disagree today
+
+<Callout kind="warn" title="An expired list still prices shops">
+The setting says a list past its validity is "drawn as expired on every screen rather than silently used". It is drawn as expired — but the resolver only checks status and the start/end dates, not validity, so an expired list keeps resolving for shops and pricing order lines until somebody replaces it.
+</Callout>
+
+- **Superseding ends the old list at once, not on the new list's start date.** Publishing a version that starts next month marks the old one superseded immediately, and a superseded list prices nobody — shops on it have no list until the new one starts.
+- **A shop's "agreed prices" list does not fall through.** Its note says everything not listed falls through to the ordinary list, but a customer-named list wins the whole resolution: products not on it have no rate on the order form.
+- **"Above the ceiling a manager authorises it" has no flow.** The setting describes the order form asking for a manager to authorise; the code refuses the save. Nothing lets a manager authorise a telecaller's discount.
+- **CRM managers are notified of special price requests they cannot decide.** Deciding needs the price desk; the notification sends CRM managers to the CRM's Requests tab, which is read-only.
+- **Variance resolves past months against today's lists.** Superseded lists are excluded, so last month's lines are compared with this month's prices, despite the stated aim of resolving each row as of its own date.
+- **Variance is not narrowed to your book.** Every CRM user sees every billed line for the month.
+- **The "saved order value" is still zero.** With `pricing.useListForOrderValue` on, the form shows a total, but the order is saved with a value of zero and the "rates not held yet" warning; the list rate lives on each line instead.
+- **Slabbed rates are not used on the order form or in variance** — only a product's flat (no quantity band) rate is looked up.
+- **The derivation check skips per-litre rules**, so a derived "plus so much per litre" list is never warned about drift.

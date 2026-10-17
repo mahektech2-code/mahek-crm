@@ -53,7 +53,7 @@ export async function openWhatsApp(phone: string, message: string): Promise<Send
     return { status: 'handed_off', channel: 'whatsapp' };
   } catch {
     await Clipboard.setStringAsync(message);
-    return { status: 'copied', reason: 'WhatsApp would not open. The message is copied — paste it there.' };
+    return { status: 'copied', reason: 'WhatsApp did not open. The message is copied. Paste it there.' };
   }
 }
 
@@ -93,7 +93,7 @@ export async function openMaps(args: {
   if (!query) {
     return {
       status: 'failed',
-      reason: 'No location and no name to search for on this customer.',
+      reason: 'This customer has no location and no name to search.',
     };
   }
 
@@ -111,7 +111,7 @@ export async function openMaps(args: {
     await Linking.openURL(web);
     return { status: 'opened' };
   } catch {
-    return { status: 'failed', reason: 'No maps app would open on this handset.' };
+    return { status: 'failed', reason: 'No maps app opened on this phone.' };
   }
 }
 
@@ -149,7 +149,7 @@ export async function openRoute(
   if (pinned.length === 0) {
     return {
       status: 'failed',
-      reason: 'None of today’s stops has a location saved, so there is no route to open.',
+      reason: 'None of today’s stops has a saved location. There is no route to open.',
     };
   }
   if (pinned.length === 1) {
@@ -175,21 +175,7 @@ export async function openRoute(
     await Linking.openURL(url);
     return { status: 'opened', used: used.length + 1, dropped };
   } catch {
-    return { status: 'failed', reason: 'No maps app would open on this handset.' };
-  }
-}
-
-export async function openSms(phone: string, message: string): Promise<SendOutcome> {
-  /* iOS wants `&` for the body, Android wants `?`. Getting it wrong opens the
-     composer with an empty message, which reads as the app losing the text. */
-  const sep = Platform.OS === 'ios' ? '&' : '?';
-  const url = `sms:${phone.replace(/[^0-9+]/g, '')}${sep}body=${encodeURIComponent(message)}`;
-  try {
-    await Linking.openURL(url);
-    return { status: 'handed_off', channel: 'sms' };
-  } catch {
-    await Clipboard.setStringAsync(message);
-    return { status: 'copied', reason: 'The messaging app would not open. The message is copied.' };
+    return { status: 'failed', reason: 'No maps app opened on this phone.' };
   }
 }
 
@@ -212,7 +198,7 @@ export async function shareText(message: string, title?: string): Promise<SendOu
     await Share.share({ message, title });
     return { status: 'handed_off', channel: 'copy' };
   } catch {
-    return { status: 'failed', reason: 'Nothing could open to share that.' };
+    return { status: 'failed', reason: 'No app opened to share this.' };
   }
 }
 
@@ -221,7 +207,7 @@ export async function callNumber(phone: string): Promise<SendOutcome> {
     await Linking.openURL(`tel:${phone.replace(/[^0-9+]/g, '')}`);
     return { status: 'handed_off', channel: 'sms' };
   } catch {
-    return { status: 'failed', reason: 'The phone app would not open.' };
+    return { status: 'failed', reason: 'The phone app did not open.' };
   }
 }
 
@@ -260,99 +246,15 @@ export function receiptMessage(args: {
     '',
     args.confirmed
       ? `Receipt no: ${args.reference}`
-      : `Reference: ${args.reference} — the office will confirm the receipt number.`,
+      : `Reference: ${args.reference}. The office will send the receipt number.`,
   ];
 
   if (!args.confirmed) {
     /* Said plainly, because a cheque can bounce and cash can fail to arrive.
        A receipt that implies the business has the money when it has not seen
        it yet is the one sentence on this slip that could be untrue. */
-    lines.push('', 'This is your salesman’s record of the payment, not a bank confirmation.');
+    lines.push('', 'This is the salesman’s note of your payment. It is not a bank receipt.');
   }
 
   return lines.join('\n');
-}
-
-/** An order, written out, for a customer who wants it in writing. */
-export function orderMessage(args: {
-  customerName: string;
-  reference: string;
-  confirmed: boolean;
-  lines: { name: string; cans: number }[];
-  valueRupees: string | null;
-  when: string;
-}): string {
-  const out = [
-    `Order — ${args.customerName}`,
-    `Date: ${args.when}`,
-    args.confirmed ? `Order no: ${args.reference}` : `Reference: ${args.reference} — number to follow.`,
-    '',
-    ...args.lines.map((l) => `${l.name} — ${l.cans} ${l.cans === 1 ? 'can' : 'cans'}`),
-  ];
-
-  /* No value where the price source is unset. A total of ₹0 on a message the
-     customer keeps is worse than no total at all. */
-  if (args.valueRupees) out.push('', `Value: ${args.valueRupees}`);
-
-  return out.join('\n');
-}
-
-/* ------------------------------------------------------------- navigation */
-
-/**
- * Hand the shop to whatever maps app the phone has.
- *
- * §G and 2-§D ask for a Navigate button, and this is the whole of it: a deep
- * link, no dependency, no key, no bill, and no tile ever fetched. Android takes
- * `google.navigation:` straight into turn-by-turn; everything else gets the
- * platform's `geo:` or, failing that, a maps URL the browser will pick up.
- *
- * Deliberately NOT a route we compute. `engines/route.ts` orders a day's stops
- * by straight-line distance and says in its own header that it is not a routing
- * service — real turn-by-turn needs a road network, a directions API and a
- * connection, and the phone that most needs directions is the one with one bar
- * in a market lane. Handing off to an app that has already downloaded the roads
- * is better than any of that, and free.
- *
- * The name rides along so the destination reads as a shop rather than a pair of
- * numbers when the maps app shows it back.
- */
-export async function navigateTo(
-  coords: { lat: number; lng: number },
-  label?: string | null,
-): Promise<SendOutcome> {
-  const point = coords.lat + ',' + coords.lng;
-  const name = label?.trim() ? encodeURIComponent(label.trim()) : null;
-
-  const candidates =
-    Platform.OS === 'android'
-      ? [
-          'google.navigation:q=' + point,
-          'geo:' + point + '?q=' + point + (name ? '(' + name + ')' : ''),
-        ]
-      : [
-          /* Apple Maps takes a label directly; `geo:` is the generic fallback. */
-          'maps://?daddr=' + point + (name ? '&q=' + name : ''),
-          'geo:' + point,
-        ];
-  candidates.push('https://www.google.com/maps/dir/?api=1&destination=' + point);
-
-  for (const url of candidates) {
-    try {
-      if (await Linking.canOpenURL(url)) {
-        await Linking.openURL(url);
-        return { status: 'handed_off', channel: 'copy' };
-      }
-    } catch {
-      /* Try the next one. A phone with no maps app at all is rare and is
-         handled by the fallback below rather than by an error nobody can act
-         on. */
-    }
-  }
-
-  /* Nothing would open it. The coordinates go on the clipboard, because a
-     salesman standing outside with a number he can paste is better off than one
-     told "navigation is unavailable". */
-  await Clipboard.setStringAsync(point);
-  return { status: 'copied', reason: 'No maps app would open — the location is on your clipboard.' };
 }

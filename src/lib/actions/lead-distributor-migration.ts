@@ -1,12 +1,13 @@
 "use server";
 
+import { assertLeadInScope } from "@/lib/services/lead-scope";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
 import { auditLog, customers, leadStageTransitions } from "@/db/schema";
-import { assertCustomerInScope, requireCapability } from "@/lib/access-control";
+import { requireCapability } from "@/lib/access-control";
 import { ladderFor, isTerminal } from "@/lib/engines/lead-ladder";
 import { salesTypeLabel, stageLabel, type LeadSalesType, type LeadStage } from "@/lib/lead-labels";
 import { today } from "@/lib/recompute";
@@ -112,7 +113,7 @@ export async function migrateProspectiveDistributor(
     if (!lead) return err("That lead is not on MahekOne.", "not_found");
     /* Seeing it is the ordinary scope question, asked before anything is
        decided so a refusal cannot be used to find out a row exists. */
-    await assertCustomerInScope({
+    await assertLeadInScope(customerId, {
       kind: lead.kind,
       ownerId: lead.ownerId,
       salesAmId: lead.salesAmId,

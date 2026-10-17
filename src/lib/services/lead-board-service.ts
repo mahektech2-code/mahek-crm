@@ -1,4 +1,5 @@
 import "server-only";
+import { notConverted } from "../lead-action-window";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { APP_TIMEZONE, asDate } from "../business-date";
@@ -141,6 +142,7 @@ export async function leadBoard(
   const where = sql`
      where c.lead_stage is not null
        and c.lead_archived = false
+       and ${notConverted()}
        ${ofType}
        ${leadsVisible(scope)}`;
   const narrowed = leadFilterClause(filters, day, options.health);

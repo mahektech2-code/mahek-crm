@@ -44,11 +44,6 @@ export type VoiceData = {
   canWrite: boolean;
 };
 
-export const VOICE_SUBTITLE =
-  "The keys dictation calls out with. Which provider hears the speech, and which models are used, are settings — they live under CRM → Voice.";
-
-export const VOICE_TABS = [{ slug: "credentials", label: "Credentials" }];
-
 const META: Record<string, SecretMeta> = {
   "sarvam.apiKey": {
     label: "Sarvam",
@@ -166,7 +161,7 @@ function Wiring({ data }: { data: VoiceData }) {
       </CardGrid>
       {!data.enabled ? (
         <div className="border-t border-divider px-4 py-3 text-[13px] text-muted">
-          Dictation is switched off in CRM → Voice, so no microphone appears
+          Dictation is switched off in Settings → Voice & AI, so no microphone appears
           whatever is set here.
         </div>
       ) : null}

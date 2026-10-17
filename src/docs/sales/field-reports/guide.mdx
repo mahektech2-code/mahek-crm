@@ -1,0 +1,93 @@
+Two screens hold what the field team has **reported** rather than sold. **Field reports** is what salesmen file from shops — complaints, notes on the competition, internal notes, tours and order changes. **Activity history** is every visit the field team has ever logged: MBOS visits, and before the switch-over date, the old field app's log (EMP 2.0) beside them — including the shop names that still need matching to a real account.
+
+## Field reports at a glance
+
+<Wireframe url="/sales/field-reports" nav={["Today", "#Field work", "Tasks", "Journeys & visits", "Field reports", "Travel ledger", "Activity history"]} active="Field reports" caption="Field reports, on the Competition tab">
+  <WfTitle sub="The last 90 days">Field reports</WfTitle>
+  <WfBar><WfPill>Complaints 4</WfPill><WfPill tone="brand">Competition 12</WfPill><WfPill>Internal notes 7</WfPill><WfPill>Tours 2</WfPill><WfPill>Order changes 1</WfPill><Hotspot n={1} /></WfBar>
+  <WfTable columns={["When", "Salesman", "Shop", "Competitor", "Their rate", "Credit", "Photo"]} rows={[
+    ["8 Oct", "Salesman A", "Customer A", "Brand X thinner", "₹210 / L", "30 days", <span key="a">▣ <Hotspot n={2} /></span>],
+    ["6 Oct", "Salesman B", "Customer B", "Brand Y sealer", "₹340 / L", "45 days", "—"],
+  ]} />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Five tabs.</b> Each count is the same set the tab lists, so a count never disagrees with its table.</span>,
+  <span key="2"><b>Photographs.</b> Click to open the full photograph.</span>,
+]} />
+
+| Tab | What lands here | Where it is acted on |
+|---|---|---|
+| **Complaints** | Complaints a salesman raised on his phone | The CRM's [complaint desk](/docs/crm/complaints). This tab is where his manager sees that he raised them. |
+| **Competition** | A competitor seen at a shop — their product, their rate, their credit terms | Read-only. |
+| **Internal notes** | A note about a shop for the office, never shown to the customer | Read-only. A note restricted to certain roles shows its body only to those roles and to its author. |
+| **Tours** | Requests to work away from base for some days, and where their approval stands | [Approvals](/docs/sales/approvals) |
+| **Order changes** | Requests to change an order already sent to accounts, and accounts' answer | Accounts decide them. |
+
+Field reports covers the **last 90 days**. A tour that has not happened yet is shown however long ago it was asked for.
+
+## Activity history at a glance
+
+<Wireframe url="/sales/activity-history" caption="Activity history across the switch-over date">
+  <WfTitle sub="Every visit the field team logged. MBOS is the record; before the switch-over date the old field app (EMP 2.0) is shown beside it, marked 'Old app'.">Activity history</WfTitle>
+  <WfBar>
+    <WfButton>1 Sep – 8 Oct</WfButton><WfButton>Salesman ▾</WfButton>
+    <WfPill tone="brand">All</WfPill><WfPill>MBOS</WfPill><WfPill>Old app</WfPill>
+    <WfPill tone="brand">Any</WfPill><WfPill>Matched</WfPill><WfPill>Needs review</WfPill><WfPill>No match</WfPill>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfTable columns={["Day", "Salesman", "Shop", "Source", "Match", "What was said"]} rows={[
+    ["8 Oct 10:12", "Salesman A", "Customer A", <WfPill key="a" tone="brand">MBOS</WfPill>, "—", "Order taken"],
+    ["28 Aug", "Old salesman name", <span key="b">SHREE PAINTS <Hotspot n={2} /></span>, <WfPill key="c">Old app</WfPill>, <WfPill key="d" tone="warn">Needs review</WfPill>, "Met owner, asked for rates"],
+    ["27 Aug", "Old salesman name", "Customer B", <WfPill key="e">Old app</WfPill>, <WfPill key="f" tone="success">Matched</WfPill>, "Payment collection"],
+  ]} />
+  <WfPanel title="Which shop is this?" side>
+    <WfText>Exactly this name: Customer C (City 1), Customer D (City 2)</WfText>
+    <WfText>Close names — check the town</WfText>
+    <WfInput placeholder="Search the book for the right shop" wide />
+    <WfBar><WfButton primary>This is the shop</WfButton><WfButton>Not on MahekOne</WfButton><Hotspot n={3} /></WfBar>
+  </WfPanel>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Filters.</b> Dates, one salesman, which app it came from, and how well the old app's shop name matched an account.</span>,
+  <span key="2"><b>A shop name to review.</b> The old app stored shops as typed names. One with no single exact match is held for a person.</span>,
+  <span key="3"><b>Decide.</b> Pick the right account, or say it is not on MahekOne. Every row typed under that name moves together.</span>,
+]} />
+
+### What the match means
+
+| Match | Means |
+|---|---|
+| <Pill tone="success">Matched</Pill> | Exactly one account carries that name, or a person linked it. The visit is on that customer's history. |
+| <Pill tone="warn">Needs review</Pill> | Several accounts carry the name, or only close names exist. Nothing is linked until somebody decides. |
+| <Pill>No match</Pill> | Nothing close on the book, or a person decided the shop is not on MahekOne. |
+
+MBOS visits always carry their account, so the match filter only applies to the old app's rows.
+
+<Steps>
+<Step title="Find the names to review">
+Pick **Old app** and **Needs review**.
+</Step>
+<Step title="Open a name and decide">
+The panel lists accounts with exactly that name, then close names with their towns. Press **This is the shop** on the right one, or search the book. If it is not a MahekOne account at all, say so.
+</Step>
+<Step title="Check the customer's history">
+A linked visit appears on that customer's timeline in the CRM and on the salesman's phone as history. A decision can be undone from the same panel.
+</Step>
+</Steps>
+
+## Questions people ask
+
+<Faq q="The old app's salesman has no MahekOne account.">
+Most of them never will. Their rows show the name as typed and belong to nobody, so every manager can see them.
+</Faq>
+<Faq q="A visit from the old app is on the wrong customer's timeline.">
+Open the row, decide the right shop. The old link is taken back and the right one written.
+</Faq>
+<Faq q="Why is a complaint here and in the CRM?">
+It is the same complaint. The CRM's complaint desk works it; here a manager sees which of their salesmen raised it.
+</Faq>
+<Faq q="An internal note shows no text.">
+It is restricted to roles you do not hold. You can see that it exists and who wrote it.
+</Faq>

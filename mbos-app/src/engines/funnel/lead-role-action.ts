@@ -132,6 +132,21 @@ export type LeadActionFacts = {
   stage: LeadStage;
   salesType: LeadSalesType | null;
   /**
+   * The Sales Manager has verified this Prospect (`lead_verified_at`). Optional
+   * because most surfaces that draw a role's sentence hold a list row rather
+   * than the whole record; where it is absent the Prospect reads as still
+   * waiting, which is the honest default.
+   */
+  verified?: boolean;
+  /**
+   * The manager's verdict on the Telecaller's Qualification, and whether the
+   * Telecaller has finished it (`qualificationComplete`, derived from the gate).
+   * Optional for the same reason: a list row does not carry the gate, and an
+   * unknown reads as "still being completed".
+   */
+  qualificationReview?: "verified" | "incomplete" | "clarification" | null;
+  qualificationComplete?: boolean;
+  /**
    * §3.4 — a forecast somebody recorded, NOT a sale. Its presence is what
    * escalates the sales manager's verb in Negotiation from supporting the
    * conversation to closing it, and it is the whole reason that stage forks.
@@ -172,13 +187,13 @@ export type LeadActionFacts = {
 };
 
 const NOTHING_OPERATIONAL: LeadAction = {
-  label: "Nothing operational pending",
+  label: "Nothing pending for you",
   tone: "muted",
   actionable: false,
 };
 
 const NO_CALLING_DESK_ACTION: LeadAction = {
-  label: "No calling-desk action",
+  label: "Nothing for the calling desk",
   tone: "muted",
   actionable: false,
 };
@@ -207,7 +222,7 @@ const NO_APPROVAL_PENDING: LeadAction = {
  * saying so.
  */
 const MONITOR_DISTRIBUTOR: LeadAction = {
-  label: "Monitor distributor track",
+  label: "Watch the distributor steps",
   tone: "muted",
   actionable: false,
 };
@@ -218,13 +233,13 @@ function managementQuiet(facts: LeadActionFacts): LeadAction {
 }
 
 const NOT_YOUR_LADDER: LeadAction = {
-  label: "No action for you on this lead",
+  label: "Nothing for you on this lead",
   tone: "muted",
   actionable: false,
 };
 
 /** Every vantage reads the same sentence on a lost lead. */
-const LOST: LeadAction = { label: "Lost — no action", tone: "muted", actionable: false };
+const LOST: LeadAction = { label: "Lost. Nothing to do", tone: "muted", actionable: false };
 
 /**
  * §—: parked is not lost, and the sentence has to say so.
@@ -234,7 +249,7 @@ const LOST: LeadAction = { label: "Lost — no action", tone: "muted", actionabl
  * needs to know is that somebody paused it and it will come back.
  */
 const PARKED: LeadAction = {
-  label: "On hold — parked, not lost",
+  label: "On hold. Paused, not lost",
   tone: "muted",
   actionable: false,
 };
@@ -262,13 +277,13 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
   ) {
     switch (vantage) {
       case "management":
-        return { label: "Approval required", tone: "danger", actionable: true };
+        return { label: "Approval needed", tone: "danger", actionable: true };
       case "sales_manager":
         return stage === "management_review"
           ? { label: "Prepare for management review", tone: "warn", actionable: true }
-          : { label: "Awaiting management decision", tone: "warn", actionable: false };
+          : { label: "Waiting for management to decide", tone: "warn", actionable: false };
       case "salesman":
-        return { label: "Awaiting management", tone: "muted", actionable: false };
+        return { label: "Waiting for management", tone: "muted", actionable: false };
       case "calling_desk":
         return NO_CALLING_DESK_ACTION;
       case "back_office":
@@ -284,7 +299,7 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
   ) {
     if (vantage === "management") {
       return stage === "active_distributor"
-        ? { label: "Appointed — nothing pending", tone: "muted", actionable: false }
+        ? { label: "Appointed. Nothing pending", tone: "muted", actionable: false }
         : MONITOR_DISTRIBUTOR;
     }
     if (vantage === "sales_manager") {
@@ -292,13 +307,13 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
         case "distributor_agreement":
           return { label: "Confirm agreement signed", tone: "brand", actionable: true };
         case "initial_stock_order":
-          return { label: "Record initial stock order", tone: "brand", actionable: true };
+          return { label: "Write down first stock order", tone: "brand", actionable: true };
         default:
-          return { label: "Active distributor — bills directly", tone: "muted", actionable: false };
+          return { label: "Active distributor. We bill them directly", tone: "muted", actionable: false };
       }
     }
     if (vantage === "back_office" && stage === "initial_stock_order") {
-      return { label: "Process initial stock order", tone: "warn", actionable: true };
+      return { label: "Process first stock order", tone: "warn", actionable: true };
     }
     return vantage === "calling_desk" ? NO_CALLING_DESK_ACTION : NOT_YOUR_LADDER;
   }
@@ -311,12 +326,12 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
           return { label: "Visit customer", tone: "brand", actionable: true };
         case "calling_desk":
           return {
-            label: "Call to qualify basic requirement",
+            label: "Call to check what they need",
             tone: "brand",
             actionable: true,
           };
         case "sales_manager":
-          return { label: "Suspect — no manager action yet", tone: "muted", actionable: false };
+          return { label: "Suspect. Nothing for the manager yet", tone: "muted", actionable: false };
         case "management":
           return managementQuiet(facts);
         case "back_office":
@@ -328,30 +343,79 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
     case "contacted":
       switch (vantage) {
         case "salesman":
-          return { label: "Awaiting manager verification", tone: "warn", actionable: false };
+          /* THERE IS NO SALESMAN IN THIS WORKFLOW. The Telecaller creates the
+             Prospect, the Sales Manager verifies it and the Telecaller then
+             qualifies it. A salesman's sentence here would be an instruction
+             nobody in that seat can act on. */
+          return NOT_YOUR_LADDER;
         case "calling_desk":
-          return { label: "Verification call support", tone: "brand", actionable: true };
+          /* NOT "verification call support", which read as though the Telecaller
+             had a part in the verification. Only a Sales Manager can verify. A
+             Prospect that is verified but still standing here is the recovery
+             case (the opening failed), and opening it is the Telecaller's. */
+          return facts.verified
+            ? { label: "Open qualification", tone: "brand", actionable: true }
+            : { label: "Waiting for Sales Manager to check", tone: "warn", actionable: false };
         case "sales_manager":
-          return { label: "Verify prospect", tone: "danger", actionable: true };
+          return facts.verified
+            ? { label: "Open qualification", tone: "brand", actionable: true }
+            : { label: "Make the check call", tone: "danger", actionable: true };
         case "management":
           return managementQuiet(facts);
         case "back_office":
           /* §11.6 — GST is collected once and validated once, and the back
            * office is who validates it. It is the earliest thing they own on
            * the ladder, which is why this rung is not "nothing operational". */
-          return { label: "Validate GST number", tone: "warn", actionable: true };
+          return { label: "Check GST number", tone: "warn", actionable: true };
       }
       break;
 
     case "qualification":
     case "qualified":
       switch (vantage) {
-        case "salesman":
-          return { label: "Complete qualification visit", tone: "brand", actionable: true };
-        case "calling_desk":
-          return NO_CALLING_DESK_ACTION;
-        case "sales_manager":
-          return { label: "Review qualification", tone: "warn", actionable: true };
+        case "salesman": {
+          /* QUALIFICATION IS THE SALESMAN'S, collected on the shop floor and
+             approved by the Sales Manager the lead is under. He sees a
+             counted-down job until it is complete, then a wait for the review,
+             and his own next step once the manager has spoken. */
+          const review = facts.qualificationReview ?? null;
+          if (review === "verified") {
+            return { label: "Request the sample", tone: "brand", actionable: true };
+          }
+          if (review === "incomplete" || review === "clarification") {
+            return { label: "Answer the Sales Manager's note", tone: "warn", actionable: true };
+          }
+          if (facts.qualificationComplete) {
+            return { label: "Waiting for Sales Manager review", tone: "warn", actionable: false };
+          }
+          return { label: "Complete qualification", tone: "brand", actionable: true };
+        }
+        case "calling_desk": {
+          /* The calling desk's own wording, unchanged. QUALIFICATION WAS THE TELECALLER'S. What they see is a counted-down
+             job until it is complete, then a wait for the manager, and their own
+             next step once the manager has spoken. */
+          const review = facts.qualificationReview ?? null;
+          if (review === "verified") {
+            return { label: "Request the sample", tone: "brand", actionable: true };
+          }
+          if (review === "incomplete" || review === "clarification") {
+            return { label: "Answer the Sales Manager's note", tone: "warn", actionable: true };
+          }
+          if (facts.qualificationComplete) {
+            return { label: "Waiting for Sales Manager review", tone: "warn", actionable: false };
+          }
+          return { label: "Complete qualification", tone: "brand", actionable: true };
+        }
+        case "sales_manager": {
+          const review = facts.qualificationReview ?? null;
+          if (review === "verified") {
+            return { label: "Checked. Waiting for the sample request", tone: "muted", actionable: false };
+          }
+          if (facts.qualificationComplete) {
+            return { label: "Review qualification", tone: "warn", actionable: true };
+          }
+          return { label: "Qualification in progress", tone: "muted", actionable: false };
+        }
         case "management":
           return managementQuiet(facts);
         case "back_office":
@@ -363,14 +427,14 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
       switch (vantage) {
         case "salesman":
           return {
-            label: "Deliver / confirm sample dispatch",
+            label: "Deliver the sample, or confirm it was sent",
             tone: "brand",
             actionable: true,
           };
         case "calling_desk":
           return NO_CALLING_DESK_ACTION;
         case "sales_manager":
-          return { label: "Sample out — awaiting receipt", tone: "muted", actionable: false };
+          return { label: "Sample sent. Waiting for it to arrive", tone: "muted", actionable: false };
         case "management":
           return managementQuiet(facts);
         case "back_office":
@@ -384,7 +448,7 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
            */
           return facts.sampleAwaitingDispatch
             ? { label: "Dispatch sample", tone: "danger", actionable: true }
-            : { label: "Sample dispatched — track it", tone: "warn", actionable: true };
+            : { label: "Sample sent. Track it", tone: "warn", actionable: true };
       }
       break;
 
@@ -392,7 +456,7 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
     case "sample_review":
       switch (vantage) {
         case "salesman":
-          return { label: "Visit — discuss trial result", tone: "brand", actionable: true };
+          return { label: "Visit to discuss the trial result", tone: "brand", actionable: true };
         case "calling_desk":
           return NO_CALLING_DESK_ACTION;
         case "sales_manager":
@@ -433,7 +497,7 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
         case "calling_desk":
           return NO_CALLING_DESK_ACTION;
         case "sales_manager":
-          return { label: "Monitor delivery", tone: "muted", actionable: false };
+          return { label: "Watch the delivery", tone: "muted", actionable: false };
         case "management":
           return managementQuiet(facts);
         case "back_office":
@@ -448,7 +512,7 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
         case "calling_desk":
           return NO_CALLING_DESK_ACTION;
         case "sales_manager":
-          return { label: "Monitor payment follow-up", tone: "muted", actionable: false };
+          return { label: "Watch the payment follow-up", tone: "muted", actionable: false };
         case "management":
           return managementQuiet(facts);
         case "back_office":
@@ -463,7 +527,7 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
         case "calling_desk":
           return NO_CALLING_DESK_ACTION;
         case "sales_manager":
-          return { label: "Monitor payment follow-up", tone: "warn", actionable: true };
+          return { label: "Watch the payment follow-up", tone: "warn", actionable: true };
         case "management":
           return managementQuiet(facts);
         case "back_office":
@@ -508,12 +572,12 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
      * the Call Log from now on. Nobody is given a verb. */
     case "customer":
       return {
-        label: "Converted — now on the regular Call Log",
+        label: "Converted. Now on the regular Call Log",
         tone: "muted",
         actionable: false,
       };
     case "won":
-      return { label: "Won — no action", tone: "muted", actionable: false };
+      return { label: "Won. Nothing to do", tone: "muted", actionable: false };
   }
 
   return NOT_YOUR_LADDER;

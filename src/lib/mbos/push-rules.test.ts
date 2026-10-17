@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import {
+  CHANNEL,
+  channelFor,
+  SOUND_CHANNELS_FROM,
+  toneOfKind,
   chunk,
   looksLikeExpoPushToken,
   withinQuietHours,
@@ -109,4 +115,50 @@ test("a raw FCM token is refused rather than sent", () => {
     false,
     "anchored — a token with something in front of it is not one",
   );
+});
+
+/* ---------------------------------------------------------------- channels */
+
+test("a build without the sounds keeps the channel it has always had", () => {
+  for (const appVersion of ["1.15.0 (21) · 449c6734", "1.10.0", null, "", "garbage"]) {
+    assert.equal(channelFor({ quiet: false, kind: "warn", appVersion }), CHANNEL.legacy, String(appVersion));
+  }
+});
+
+test("from the sound build on, a decision and an update sound different", () => {
+  const appVersion = `${SOUND_CHANNELS_FROM} (22) · embedded`;
+  for (const kind of ["warn", "warning", "danger", "success"]) {
+    assert.equal(channelFor({ quiet: false, kind, appVersion }), CHANNEL.decisions, kind);
+  }
+  for (const kind of ["info", "lead", null, undefined]) {
+    assert.equal(channelFor({ quiet: false, kind, appVersion }), CHANNEL.updates, String(kind));
+  }
+  assert.equal(channelFor({ quiet: false, kind: "info", appVersion: "2.0.0" }), CHANNEL.updates);
+});
+
+test("quiet hours silence every build, whatever the message", () => {
+  for (const appVersion of ["1.15.0", SOUND_CHANNELS_FROM, "3.1.0"]) {
+    assert.equal(channelFor({ quiet: true, kind: "warn", appVersion }), CHANNEL.quiet);
+  }
+});
+
+test("the banner's tone folds every spelling the server writes", () => {
+  assert.equal(toneOfKind("WARNING"), "warn");
+  assert.equal(toneOfKind("danger"), "warn");
+  assert.equal(toneOfKind("success"), "success");
+  assert.equal(toneOfKind("info"), "info");
+  assert.equal(toneOfKind(null), "info");
+});
+
+/**
+ * The handset creates these channels by name and the server sends to them by
+ * name, in two projects joined only by a string. A typo on either side does
+ * not fail: the push falls back to Expo's generic channel and simply loses its
+ * sound and its banner. So the names are pinned against the handset's source.
+ */
+test("the channel names match the ones the handset creates", () => {
+  const handset = readFileSync(join(import.meta.dirname, "..", "..", "..", "mbos-app", "src", "native", "push.ts"), "utf8");
+  for (const id of [CHANNEL.decisions, CHANNEL.updates, CHANNEL.quiet, CHANNEL.legacy]) {
+    assert.ok(handset.includes(`'${id}'`), `the handset never creates a channel called ${id}`);
+  }
 });

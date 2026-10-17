@@ -1,14 +1,20 @@
 "use server";
 
+import { assertLeadInScope } from "@/lib/services/lead-scope";
+import { requireQualificationApprover } from "@/lib/services/lead-verifier";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
 import { auditLog, customers } from "@/db/schema";
-import { assertCustomerInScope, requireCapability } from "@/lib/access-control";
+import { requireCapability } from "@/lib/access-control";
 import { notifyUser } from "@/lib/notify";
 import { MBOS_EVENT, writeTimelineEvent } from "@/lib/timeline";
+import { qualificationAccess } from "@/lib/lead-qualification-access";
+import { handBackAfterReview, settleQualificationState } from "@/lib/services/lead-qualification-flow-service";
+import { leadGateInput, leadRow } from "@/lib/services/lead-service";
+import { gateTo, qualificationComplete, qualificationReadyForReview } from "@/lib/engines/lead-gates";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
 
 /* ---------------------------------------------------------------------------
@@ -112,6 +118,7 @@ export async function reviewLeadQualification(
         ownerId: true,
         salesAmId: true,
         backOfficeAmId: true,
+        salesManagerId: true,
         leadStage: true,
         leadManagerId: true,
         leadQualificationReview: true,
@@ -123,7 +130,7 @@ export async function reviewLeadQualification(
     /* Seeing it at all is the ordinary scope question, asked before the
        capability so a refusal cannot be used to find out whether a row
        exists. */
-    await assertCustomerInScope(row);
+    await assertLeadInScope(customerId, row);
 
     /*
      * A CHECKLIST IS A THING A LEAD HAS, so there has to be a lead.
@@ -140,6 +147,17 @@ export async function reviewLeadQualification(
         "validation",
       );
     }
+
+    /*
+     * A REVIEW IS OF A QUALIFICATION, so there has to be one to review. The
+     * Sales Manager verifies the Prospect first (which opens Qualification) and
+     * reviews the Telecaller's completed Qualification second; a verdict typed
+     * against a Prospect would be a judgement of answers nobody has been asked
+     * for yet, and one against a lead already past Qualification would rewrite
+     * the ground a sample was approved on.
+     */
+    const access = qualificationAccess(row.leadStage);
+    if (!access.writable) return err(access.reason, "rule_violation");
 
     /*
      * The sentence is demanded HERE rather than by a required field on the
@@ -162,7 +180,38 @@ export async function reviewLeadQualification(
     /* The hat that allowed it, recorded on the audit row exactly as every other
        audited write here records one — with several hats per person, "was he
        allowed to do this" is not answerable from the person alone. */
-    const ctx = await requireCapability("lead.verify");
+    const approver = await requireQualificationApprover(customerId);
+    if (!approver.ok) return err(approver.message, "not_permitted");
+    const ctx = approver.ctx;
+
+    /*
+     * VERIFIED MEANS THE EIGHT ANSWERS ARE IN AND THE GST NUMBER IS VALIDATED.
+     *
+     * The Sample/Trial gate already refuses a lead on these, but a verdict that
+     * could be recorded first would read on the record as "approved" over a
+     * checklist with holes in it, and the sample is then refused by a gate the
+     * manager never saw fail. So the verdict itself refuses, and names what is
+     * missing. The manager's own two review conditions and the next action are
+     * not asked of the answers — they are the review, and the next action is
+     * the review's own.
+     */
+    if (verdict === "verified") {
+      const gate = await leadGateInput(customerId);
+      if (!gate || !qualificationComplete(gate)) {
+        const missing = gate
+          ? gateTo(gate, "sample_trial").missing.filter(
+              (c) => !c.id.startsWith("manager_review") && c.id !== "next_action",
+            )
+          : [];
+        return err(
+          missing.length
+            ? `Not ready to verify: ${missing.map((c) => c.says).join("; ")}.`
+            : "Not ready to verify: the Qualification is not complete.",
+          "rule_violation",
+          missing.map((c) => ({ field: c.id, message: c.says })),
+        );
+      }
+    }
 
     const before = row.leadQualificationReview ?? null;
     /*
@@ -280,17 +329,21 @@ export async function reviewLeadQualification(
        already promoted and being reviewed again. Never the lead manager, who
        is usually the person pressing the button. */
     const salesman = row.ownerId ?? row.salesAmId;
-    if (salesman && salesman !== ctx.user.id && (blockedNow || blockedBefore)) {
+    /* THE TELECALLER IS TOLD OF EVERY VERDICT NOW, the approval included: it is
+       the moment their next action becomes "Request the sample", and a next
+       action nobody is told about is a list nobody opens. */
+    await handBackAfterReview(customerId, verdict, note, ctx.user.id);
+    if (salesman && salesman !== ctx.user.id) {
       await notifyUser({
         userId: salesman,
         title: blockedNow
           ? verdict === "incomplete"
             ? `${row.name}: qualification marked incomplete`
             : `${row.name}: a clarification is wanted`
-          : `${row.name}: qualification checklist verified`,
+          : `${row.name}: qualification verified`,
         body: blockedNow
           ? `${note} — the lead is held at qualification until your sales manager looks again.`
-          : "Your sales manager has verified the checklist. The lead can move on.",
+          : "Your sales manager has verified the qualification. You can request the sample.",
         kind: blockedNow ? "warn" : "info",
         /* The CHECKLIST rather than the record, which is the convention's
            `/crm/customers/<id>` one rung less precise. The note is the point of
@@ -310,10 +363,14 @@ export async function reviewLeadQualification(
       });
     }
 
-    revalidatePath("/sales/leads");
-    revalidatePath(`/sales/leads/${customerId}`);
-    revalidatePath("/crm/leads");
-    revalidatePath(`/crm/leads/${customerId}`);
+    try {
+      revalidatePath("/sales/leads");
+      revalidatePath(`/sales/leads/${customerId}`);
+      revalidatePath("/crm/leads");
+      revalidatePath(`/crm/leads/${customerId}`);
+    } catch {
+      /* no request context - a job or a test, where nothing is cached */
+    }
 
     return ok(
       null,
@@ -322,9 +379,112 @@ export async function reviewLeadQualification(
           ? `Verified — ${row.name} is no longer held at qualification.`
           : "Verified."
         : verdict === "incomplete"
-          ? `Marked incomplete. ${row.name} is held at qualification and the salesman has been told why.`
-          : `Sent back for clarification. ${row.name} is held at qualification and the salesman has been told what is wanted.`,
+          ? `Marked incomplete. ${row.name} is held at qualification and the Salesman has been told why.`
+          : `Sent back for clarification. ${row.name} is held at qualification and the Salesman has been told what is wanted.`,
     );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * "I have addressed the note" — put a sent-back Qualification in front of the
+ * manager again WITHOUT changing a field.
+ *
+ * A negative verdict is answered by changing the answers, and a material change
+ * voids it on its own (`reviewVoidPatch`) and asks the manager again. But a
+ * clarification is sometimes answered on the phone, not in a field — "which
+ * buyer?" — and then nothing on the record changes. Without a way to say so the
+ * lead would sit held for ever, because a save that changes nothing (rightly)
+ * does NOT re-ask the manager while his note is outstanding: that would make
+ * every stray click a new review request.
+ *
+ * So this is the deliberate version of it. It is the Telecaller's act (`lead.work`,
+ * the lead in scope, at Qualification), only for a lead that IS sent back, and only
+ * once everything the Telecaller owns is answered. The manager's note and verdict
+ * are cleared from the columns — the gate then reads "no review" and the review is
+ * asked for — and kept, with the reviewer and the date, in the audit log and on the
+ * timeline.
+ */
+export async function resubmitForReview(customerId: string): Promise<Result<null>> {
+  try {
+    const ctx = await requireCapability("lead.work");
+    const lead = await leadRow(customerId);
+    if (!lead || !lead.leadStage) return err("That lead is not on MahekOne.", "not_found");
+    await assertLeadInScope(customerId, {
+      kind: lead.kind,
+      ownerId: lead.ownerId,
+      salesAmId: lead.salesAmId,
+      backOfficeAmId: lead.backOfficeAmId,
+      leadManagerId: lead.leadManagerId,
+    });
+
+    // Only the lead's current owner answers a note addressed to the owner — not a
+    // manager, and not another Telecaller who merely has the lead in scope.
+    if (lead.ownerId !== ctx.user.id) {
+      return err("Only the Salesman who owns this lead can send it back for review.", "not_permitted");
+    }
+
+    const access = qualificationAccess(lead.leadStage);
+    if (!access.writable) return err(access.reason, "rule_violation");
+    if (lead.leadQualificationReview !== "incomplete" && lead.leadQualificationReview !== "clarification") {
+      return err("Nothing has been sent back on this lead, so there is nothing to resubmit.", "rule_violation");
+    }
+    const gate = await leadGateInput(customerId);
+    if (!gate || !qualificationReadyForReview(gate)) {
+      return err(
+        "Answer every question first — it can only go back to the Sales Manager once it is complete.",
+        "rule_violation",
+      );
+    }
+
+    const now = new Date();
+    await db.transaction(async (tx) => {
+      await tx
+        .update(customers)
+        .set({
+          leadQualificationReview: null,
+          leadQualificationReviewNote: null,
+          leadQualificationReviewedAt: null,
+          leadQualificationReviewedById: null,
+          updatedAt: now,
+        })
+        .where(eq(customers.id, customerId));
+      await writeTimelineEvent(tx, {
+        customerId,
+        eventType: MBOS_EVENT.qualificationReview,
+        sourceApp: "crm",
+        sourceRecordId: `${customerId}:review-resubmit:${now.toISOString()}`,
+        occurredAt: now,
+        actorUserId: ctx.user.id,
+        summary: `${ctx.user.name} says the sales manager's note on ${lead.name}'s qualification is addressed — sent back for review.`,
+      });
+      await tx.insert(auditLog).values({
+        id: gen("aud"),
+        actorId: ctx.user.id,
+        action: "lead.qualificationReview.resubmit",
+        entityType: "customer",
+        entityId: customerId,
+        actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
+        beforeState: {
+          leadQualificationReview: lead.leadQualificationReview,
+          leadQualificationReviewNote: lead.leadQualificationReviewNote,
+          leadQualificationReviewedById: lead.leadQualificationReviewedById,
+        },
+        afterState: { leadQualificationReview: null },
+      });
+    });
+
+    await settleQualificationState(customerId, ctx.user.id, { voided: true });
+    try {
+      revalidatePath(`/crm/leads/${customerId}`);
+      revalidatePath(`/crm/leads/${customerId}/qualify`);
+      revalidatePath(`/sales/leads/${customerId}`);
+    } catch {
+      /* no request context - a job or a test, where nothing is cached */
+    }
+    return ok(null, "Sent back to the Sales Manager for review.");
   } catch (e) {
     return fromThrown(e);
   }

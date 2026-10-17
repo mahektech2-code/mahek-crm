@@ -1,0 +1,101 @@
+Today is a server page that makes two reads — `teamDay(day)` and `consoleCounts(day, tomorrow)` — both in `src/lib/services/sales-service.ts` and both narrowed by `managerScope()`. The client component renders, filters and sorts; it never fetches. `consoleCounts` is the same function the layout calls for the sidebar badges, so the card and the badge for one kind cannot disagree.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Module guard | `src/app/sales/page.tsx` | `requireModule(user.id, "sales.today")` — the app root has no folder layout of its own |
+| Page (server) | `src/app/sales/page.tsx` | Parses `?day=`, builds the greeting and the six `waiting` cards |
+| Screen (client) | `src/app/sales/today-screen.tsx` | Day switcher, four `Stat` cards, waiting cards, `TeamTable` with filters, search and sort |
+| Reads | `src/lib/services/sales-service.ts` | `teamDay`, `consoleCounts` |
+| Day link | `today-screen.tsx` `dayHref` | Opens the salesman's day (`/sales/live/[id]`) in a new tab |
+
+## A request, end to end
+
+<Flow caption="GET /sales?day=YYYY-MM-DD" chart={`
+sequenceDiagram
+  autonumber
+  participant P as sales/page.tsx
+  participant S as sales-service.ts
+  participant DB as Postgres
+  P->>P: requireModule('sales.today')
+  P->>P: day = ?day if it is a date, else today()
+  par
+    P->>S: teamDay(day)
+    S->>DB: one row per field-app holder in scope, with correlated counts
+  and
+    P->>S: consoleCounts(day, day + 1)
+    S->>DB: one SELECT of scalar subqueries
+  end
+  P-->>P: greeting by the hour in Asia/Kolkata
+  P->>P: TodayScreen(data, waiting)`} />
+
+## `teamDay`
+
+One row per person holding the `field` app, left-joined to that day's `mbos_attendance_days` row, with correlated subqueries for visits, unverified visits, orders and value (`source = 'mbos'`), collected (`source = 'mbos'`, not rejected) and planned/walked stops. Every timestamp is cast to a date with the zone named — never a bare `::date`.
+
+<Code file="src/lib/services/sales-service.ts" symbol="SalesmanDay" />
+
+<Code file="src/lib/services/sales-service.ts" symbol="teamDay" collapsed />
+
+<Callout kind="rule">
+Orders are counted by `created_by_id` — the salesman who took them — not by whose book the customer is in. Today answers "what did each person do", not "whose revenue is it". Attribution for revenue is `lib/sales-attribution.ts`; see [Performance](/docs/sales/performance/developer).
+</Callout>
+
+## `consoleCounts`
+
+One statement of scalar subqueries, each narrowed by `onlyMine(scope, …)` on the column that names the person. It also produces the header's `teamLine`, `scopeDetail` and `liveLine`.
+
+<Code file="src/lib/services/sales-service.ts" symbol="ConsoleCounts" />
+
+<Code file="src/lib/services/sales-service.ts" symbol="consoleCounts" collapsed />
+
+`NOT_WITHDRAWN` drops leave approvals whose request carries `cancelled_at` — withdrawing leaves the approval `pending`, so without it a withdrawn request would read as waiting.
+
+## Tables read
+
+<DbTable name="mbos_attendance_days" only={["user_id", "day", "check_in_at", "check_out_at", "within_geofence", "regularisation_requested"]} note={{
+  within_geofence: "False draws 'Punched in off site'. Null means it was not measured.",
+  regularisation_requested: "Read into the row; not drawn on Today.",
+}} />
+
+<DbTable name="mbos_journey_plans" only={["user_id", "plan_date", "day_state", "city"]} note={{
+  day_state: "Refused days from the day shown onwards feed 'Days he will not walk'.",
+}} />
+
+## Access
+
+- **Module:** <ModuleRef k="sales.today" />, checked in `page.tsx`.
+- **Scope:** both reads call `managerScope()`; it is cached per request, so the layout's call and the page's call cost one resolution.
+- **No writes.**
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/sales-gate.test.ts` | The scope standing every read here depends on |
+| `npm run test` | `src/lib/sales-sort.test.ts` | Sorting rules shared by the team tables |
+| `npm run test:integration` | `src/lib/salesman-day.test.ts` | A salesman's day as the row link opens it |
+
+## Changing Today safely
+
+<Steps>
+<Step title="Add a waiting card in two places">
+Count it in `consoleCounts` (so the sidebar badge and the card read one number) and add the card to the `waiting` array in `page.tsx` with the screen that decides it.
+</Step>
+<Step title="Narrow every new count">
+Use `onlyMine(scope, column)` on the column that names the salesman. A count that skips it shows a regional manager the whole company.
+</Step>
+<Step title="Name the zone">
+Any timestamp turned into a day uses the `IST_DAY` fragment. Two grep tests fail the build on a bare cast.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| "Orders over the credit limit" counts every `pending_approval` field order, with no credit-limit test | `consoleCounts`, the `orders` subquery; label in `src/app/sales/page.tsx` |
+| Review totals every card (including refused days, unplanned, orders, samples) but links to Approvals, which lists `mbos_approvals` only | `today-screen.tsx` `totalWaiting` |
+| Orders, leave and expenses are counted "now" while refused/unplanned/samples follow `?day=` | `consoleCounts` |
+| Collected compares `received_at = day` (a date) while orders use the IST timestamp | `teamDay` |

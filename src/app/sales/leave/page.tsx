@@ -1,8 +1,6 @@
-import { shortDate } from "@/lib/format";
-import { leaveEntitlements, leaveRequests } from "@/lib/services/sales-service";
-import { getConfig } from "@/lib/config/store";
+import { shortDate, stampDate } from "@/lib/format";
+import { leaveRequests, leaveTakenByPerson } from "@/lib/services/sales-service";
 import { today } from "@/lib/recompute";
-import { Entitlements } from "./entitlements";
 import { Decide } from "@/components/console/decide";
 import {
   Banner,
@@ -36,9 +34,15 @@ export const metadata = { title: "Leave — Sales Dashboard — MahekOne" };
  * It is computed at read time, because it is a question about the state of the
  * calendar at the moment somebody looks at it.
  *
- * Deciding happens in the approvals queue, which is where every kind of
- * request is answered with the same rules — a refusal needs a reason, and a
- * decision is made once. This screen is the calendar around that decision.
+ * Requests are answered HERE as well as in the approvals queue, through the
+ * same `Decide` and the same `decideApproval`, so the rules are one set — a
+ * refusal needs a reason, a decision is made once, and whoever answered is
+ * named on the row afterwards.
+ *
+ * NO ALLOWANCE IS SHOWN. How many days somebody gets is HRMS's, and this screen
+ * used to draw a second copy of it ("12 of 12, company default") with its own
+ * door to set per-person terms that HRMS never read. What is shown instead is
+ * what was TAKEN, and who has not asked at all.
  */
 export default async function Page({
   searchParams,
@@ -48,12 +52,8 @@ export default async function Page({
   const params = await searchParams;
   const now = await today();
   const year = Number(now.slice(0, 4));
-  const [all, entitlements, config] = await Promise.all([
-    leaveRequests(),
-    leaveEntitlements(year),
-    getConfig(),
-  ]);
-  const defaults = config["mbos.leave.annualEntitlementDays"] ?? {};
+  const [all, team] = await Promise.all([leaveRequests(), leaveTakenByPerson(year)]);
+  const neverAsked = team.filter((p) => p.requested === 0);
 
   const show = ["all", "waiting", "approved"].includes(params.show ?? "")
     ? params.show!
@@ -100,7 +100,7 @@ export default async function Page({
     <div className="p-6">
       <ScreenHeader
         title="Leave"
-        subtitle="Who has asked for time off, and who else is already off on those days. Two salesmen away in one week leaves those shops unworked — that is the thing a calendar can tell you and a queue cannot."
+        subtitle="Leave the field team has asked for on the handset. Approve or refuse it here — the answer reaches their phone on the next sync. How many days somebody is allowed is kept in HRMS, not here."
       />
 
       {clashes.length ? (
@@ -123,6 +123,7 @@ export default async function Page({
             tone: clashes.length ? "warn" : undefined,
           },
           { label: "Approved", value: String(all.approved), tone: "success" },
+          { label: "Not asked this year", value: String(neverAsked.length) },
         ]}
       />
 
@@ -135,31 +136,10 @@ export default async function Page({
         ]}
       />
 
-      {/*
-        WHAT EACH PERSON IS ALLOWED, under the requests rather than on a page
-        of its own, because "how much has he got left" is the question somebody
-        is already holding while deciding one.
-
-        The entitlement is configuration with a per-person override, and the
-        override had no door: nothing in MahekOne ever wrote one of those rows,
-        so a salesman on different terms could not be given them anywhere.
-      */}
-      <div className="mt-8">
-        <h2 className="text-[15px] font-medium text-ink">Days a year</h2>
-        <p className="mt-1 max-w-[70ch] text-[13px] leading-[20px] text-muted">
-          What each salesman may take, and what is left of it. Everybody gets
-          the company figure until somebody is given terms of their own here.
-        </p>
-        <div className="mt-3">
-          <Entitlements year={year} rows={entitlements} defaults={defaults} />
-        </div>
-      </div>
-
-
       {rows.length === 0 ? (
         <Empty
           title={show === "waiting" ? "Nothing to decide" : "No leave recorded"}
-          body="Leave is asked for on the handset. A request reaches the office on the next sync, and the balance the salesman was shown when he asked is stored on the request so a later recompute cannot rewrite what he was told."
+          body="A salesman asks for leave on the handset: More → Leave → Apply for leave, with the kind, the days and the reason. It reaches this screen on the next sync, and you answer it here."
         />
       ) : (
         <>
@@ -170,7 +150,7 @@ export default async function Page({
             </p>
           ) : null}
         <Table
-          minWidth={1210}
+          minWidth={1230}
           head={
             <>
               {head("name", "Salesman", 190)}
@@ -184,7 +164,7 @@ export default async function Page({
               {head("days", "Days", 90, "right")}
               <HeadCell>Why</HeadCell>
               {head("clash", "Also off", 200)}
-              <HeadCell width={150}>State</HeadCell>
+              <HeadCell width={170}>State</HeadCell>
               <HeadCell align="right" width={230} />
             </>
           }
@@ -232,6 +212,13 @@ export default async function Page({
                 ) : (
                   <Pill tone="warn">Waiting</Pill>
                 )}
+                {!l.cancelledAt && l.approvalState && l.approvalState !== "pending" ? (
+                  <span className="mt-0.5 block truncate text-[12px] text-muted">
+                    {[l.approverName ? `by ${l.approverName}` : null, l.decidedAt ? stampDate(l.decidedAt) : null]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
+                ) : null}
               </Cell>
               <Cell align="right">
                 {!l.cancelledAt && (!l.approvalState || l.approvalState === "pending") ? (
@@ -249,6 +236,74 @@ export default async function Page({
         </Table>
         </>
       )}
+
+      {/*
+        THE TEAM, under the requests, because "has he had any time off this
+        year" is the question somebody is already holding while answering one.
+        Days TAKEN, never days left — the allowance is HRMS's.
+      */}
+      <div className="mt-8">
+        <h2 className="text-[15px] font-medium text-ink">The team in {year}</h2>
+        <p className="mt-1 max-w-[70ch] text-[13px] leading-[20px] text-muted">
+          Who has taken leave this year, and who has not asked for any. Approved
+          days only — a request still waiting counts once it is approved.
+        </p>
+        <div className="mt-3">
+          {team.length === 0 ? (
+            <Empty
+              title="Nobody in the field team"
+              body="Leave is asked for by people who hold the Salesman App."
+            />
+          ) : (
+            <Table
+              minWidth={760}
+              head={
+                <>
+                  <HeadCell width={240}>Salesman</HeadCell>
+                  <HeadCell width={120} align="right">
+                    Days taken
+                  </HeadCell>
+                  <HeadCell>Kind</HeadCell>
+                  <HeadCell width={220}>Requests</HeadCell>
+                </>
+              }
+            >
+              {team.map((p, i) => (
+                <Row key={p.userId} striped={i % 2 === 1}>
+                  <Cell truncate={240}>
+                    <EntityLink href={`/sales/people/${p.userId}`}>{p.name}</EntityLink>
+                  </Cell>
+                  <Cell align="right">
+                    {p.takenTotal ? (
+                      p.takenTotal
+                    ) : (
+                      <span className="text-muted">0</span>
+                    )}
+                  </Cell>
+                  <Cell truncate={320}>
+                    {Object.keys(p.taken).length ? (
+                      Object.entries(p.taken)
+                        .map(([kind, d]) => `${label(LEAVE_LABEL, kind)} ${d}`)
+                        .join(" · ")
+                    ) : (
+                      <span className="text-muted">None taken</span>
+                    )}
+                  </Cell>
+                  <Cell>
+                    {p.waiting ? (
+                      <Pill tone="warn">{plural(p.waiting, "request")} waiting</Pill>
+                    ) : p.requested ? (
+                      <span>{plural(p.requested, "request")} this year</span>
+                    ) : (
+                      <span className="text-muted">Has not asked for leave</span>
+                    )}
+                  </Cell>
+                </Row>
+              ))}
+            </Table>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

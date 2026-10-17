@@ -64,6 +64,8 @@ function destinationFor(
       return { href: `${base}/verify`, where: "the verification call" };
     case "request_sample":
       return { href: `${base}?tab=samples`, where: "the Samples tab" };
+    case "qualify":
+      return { href: `${base}/qualify`, where: "the Qualification screen" };
     case "sample_desk":
       return { href: leadHref(workspace, "samples/desk"), where: "the sample desk" };
     case "record_commitment":

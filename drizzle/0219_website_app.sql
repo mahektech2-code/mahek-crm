@@ -1,0 +1,15 @@
+-- Website becomes its own app, granted the same way every other one is — a
+-- row in `app_access`, not a screen borrowed from the CRM.
+--
+-- Its own app rather than a CRM/Accounts/HRMS screen, for the same reason
+-- Website Enquiries is one (see 0134_enquiries_app.sql): the content desk is
+-- work nobody who already holds Sales, Accounts or HRMS does, and a shared
+-- workspace granted separately is what lets somebody hold it without also
+-- holding whichever of those happens to be nearby.
+--
+-- No table in this migration — this PR's app and its 12 module screens run
+-- on mock data only. Reading and writing the live site's real content is a
+-- later PR, and its tables will get their own migration after this value
+-- exists, the same way `enquiries`' did: a value added to an enum cannot be
+-- USED in the same transaction that adds it.
+alter type "public"."app_id" add value 'website';

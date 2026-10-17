@@ -1,23 +1,38 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { placeShopsNow } from "@/lib/services/place-tree-service";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { auditLog, customers, notifications, users } from "@/db/schema";
-import { requireCapability } from "@/lib/access-control";
+import { auditLog, customerDistributors, customers, notifications, products, users } from "@/db/schema";
+import { canFor, requireCapability } from "@/lib/access-control";
+import { canOpenModule } from "@/lib/access";
+import { approverFor, deskVerifierForCreator, orgModeOn, seatForNewLead } from "@/lib/services/lead-verifier";
+import { LEAD_PRIORITIES } from "@/lib/lead-priority";
+import { sourcesFor } from "@/lib/lead-source-scope";
+import { isSalesManagerSeat } from "@/lib/services/lead-source-access";
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
 import { MBOS_EVENT, writeTimelineEvent } from "@/lib/timeline";
 import { err, fromThrown, ok, type Err, type FieldError, type Result } from "@/lib/result";
 import { salesTypeIsOffered, salesTypeLabel, type LeadSalesType } from "@/lib/lead-labels";
 import {
+  enquiryForLeadConversion,
+  EnquiryLeadConflict,
+  linkEnquiryToNewLead,
+} from "@/lib/services/enquiry-service";
+import { DESK_MODULE, notifyDeskAssigners } from "@/lib/services/lead-desk-assignment-service";
+import {
   DUPLICATE_DISMISSED_ACTION,
   phoneAlreadyOnTheBook,
   phonesOnTheBook,
   type ExistingAccount,
 } from "@/lib/services/lead-intake-service";
+
+/** The module `/crm/leads/sales-manager` is guarded on — holding it is what makes somebody a Sales Manager here. */
+const SALES_MANAGER_MODULE = "crm.sales-manager";
 
 /* ---------------------------------------------------------------------------
  * The office's own way of raising a lead — screens 5, 34 and the one write
@@ -41,12 +56,16 @@ import {
  * time, and the ladder decides which GATES apply, so a wrong guess does not
  * mislabel a lead: it blocks the person working it.
  *
- * **§24 is satisfied in the same write, or not at all.** A lead raised with
- * nothing owed by anybody is precisely the state the rule exists to prevent,
- * and the four next-action columns live on `customers` — so they go in the
- * INSERT rather than through a second call to `setLeadNextAction`, which would
- * be a separate transaction and would leave a lead with no action behind it
- * whenever the second write failed.
+ * **§24 IS NO LONGER ASKED AT SCREEN 5, and that is deliberate.** A telecaller
+ * capturing a call has no diary to promise a day from, and demanding one here
+ * was the field this form lost people on. §24 still holds — the gate engine
+ * refuses to move a lead off Suspect with nothing owed by anybody, exactly as
+ * it already does for a lead this screen raises with no owner at all — so a
+ * lead captured here is unowed until somebody at the desk or in the field
+ * picks it up, the same as any other channel that does not know the answer
+ * yet. Screen 34's bulk import kept its own copy of the question, because a
+ * spreadsheet of a hundred rows is filled in by somebody who DOES have that
+ * answer for each one.
  *
  * **`owner_id` is never the person doing the capturing.** A telecaller taking
  * a call is not the person who will walk to the shop, and on a file of a
@@ -72,6 +91,16 @@ function refresh(customerId?: string) {
     revalidatePath("/sales/leads/intake");
     revalidatePath("/sales/leads/intake/duplicates");
     if (customerId) revalidatePath(`/sales/leads/${customerId}`);
+    /* This writer is shared with the CRM's own intake screen (see
+       `lib/lead-workspace.ts`), and the CRM's Calling Desk is a different
+       route tree entirely — named explicitly rather than assumed covered,
+       since a Server Action's `revalidatePath` is documented (as of the
+       installed Next version) to also refresh every other previously-visited
+       page on next navigation, which likely already reaches this route today.
+       That behaviour is called out in Next's own docs as temporary; naming
+       the path here costs nothing and stops this from depending on it. */
+    revalidatePath("/crm/leads/calling-desk");
+    if (customerId) revalidatePath(`/crm/leads/calling-desk/${customerId}`);
   } catch {
     /* no request context — a job or a test, where nothing is cached */
   }
@@ -95,7 +124,7 @@ function zodErr(error: z.ZodError): Err {
  * `captureLead`.
  */
 const SALES_TYPES = ["direct", "distributor", "third_party"] as const;
-const CUSTOMER_TYPES = ["dealer", "manufacturer", "distributor", "retailer"] as const;
+const CUSTOMER_TYPES = ["dealer", "manufacturer", "distributor", "retailer", "private_limited_user"] as const;
 
 /**
  * §24's four answers. A DATE STRING, never a JS `Date`: `lead_next_action_date`
@@ -120,6 +149,8 @@ const captureSchema = z.object({
   name: z.string().trim().min(2, "The shop needs a name.").max(200),
   companyName: z.string().trim().max(200).optional(),
   contactPerson: z.string().trim().max(120).optional(),
+  /** The customer's own address, where they gave one. Optional: a phone call often has none. */
+  email: z.string().trim().max(200).email("That is not an email address.").optional().or(z.literal("")),
   phone: z
     .string()
     .trim()
@@ -152,12 +183,38 @@ const captureSchema = z.object({
    * nothing saying so. `leadRequirement` is the column for this.
    */
   requirement: z.string().trim().max(500).optional(),
+  /**
+   * A product the person CHOSE from the catalogue to say what they want, rather
+   * than typing it. It changes nothing about where the answer lives: the server
+   * checks the product is real and active and writes ITS NAME into
+   * `leadRequirement` — the browser's own spelling is never trusted — and it
+   * is never written to `lead_required_product_id`, which is the Calling Desk's
+   * and Qualification's own Product answer and has to stay independent of it.
+   * Where this is sent it replaces any `requirement` text on the same request.
+   */
+  requirementProductId: z.string().min(1).nullable().optional(),
   application: z.string().trim().max(200).optional(),
 
   /** Who it belongs to. Absent means UNASSIGNED, which is a real answer. */
   ownerId: z.string().min(1).nullable().optional(),
 
+  /**
+   * §24's four answers, still accepted here because `captureLeadBatch`
+   * (screen 34) reuses this same writer for every row of a file, with one
+   * batch-wide answer. Screen 5's own form no longer asks for it — see the
+   * file header — so a desk capture simply never sends one.
+   */
   nextAction: nextActionSchema.optional(),
+
+  /**
+   * §23 — WHO BILLS THIS SHOP, asked at capture rather than reconstructed at
+   * conversion. Meaningful only on the third-party ladder; the action ignores
+   * it for anything else, because the picker itself only draws it there.
+   * Validated against the same rule `convertToThirdParty` enforces — a direct
+   * customer, not itself marked third-party — so a stale tab cannot name an
+   * account that could never actually bill a shop.
+   */
+  distributorCustomerId: z.string().min(1).nullable().optional(),
 
   /**
    * Set only after the person has been shown the account this telephone number
@@ -168,6 +225,38 @@ const captureSchema = z.object({
   allowDuplicate: z.boolean().optional(),
 
   notes: z.string().trim().max(2000).optional(),
+
+  /**
+   * RAISED FROM A WEBSITE ENQUIRY. Set only by the enquiry screen's Create lead,
+   * and it changes three things and nothing else: the source is the enquiry's
+   * own (the client's `source` and `sourceDetail` are ignored, so a stale tab
+   * cannot claim a channel the enquiry did not come from), the enquiry must be
+   * one that may become a lead and must not already have one, and the enquiry
+   * is pointed at the new lead in the SAME transaction. Everything else — the
+   * duplicate guard, the Suspect rung, the audit, the timeline — is this
+   * function's own, which is the point: there is one way to raise a lead.
+   */
+  fromEnquiry: z.object({ enquiryId: z.string().min(1) }).optional(),
+
+  /**
+   * How hard the team should push this one — the MANAGER'S judgement, and
+   * `setLeadPriority` holds it to `lead.verify`. Accepted here only from
+   * somebody who holds that too (checked below, not just by hiding the field),
+   * because otherwise raising a lead would be a way round the one capability
+   * that decides who may say it.
+   */
+  priority: z.enum(LEAD_PRIORITIES).nullable().optional(),
+
+  /**
+   * Which app raised this — never asked of the person filling in the form,
+   * read off the page the same way `IntakeForm` already reads it (see
+   * `lib/lead-workspace.ts`). Its only job is choosing where the owner
+   * notification below opens: the CRM's own Calling Desk record for a lead
+   * raised there, or the shared lead record for everything else, exactly as
+   * it already did before this field existed. Absent means "sales", which is
+   * the answer every caller predating this field already got.
+   */
+  workspace: z.enum(["crm", "sales"]).optional(),
 });
 
 export type CaptureLeadInput = z.input<typeof captureSchema>;
@@ -193,10 +282,17 @@ export async function captureLead(
   try {
     const parsed = captureSchema.safeParse(input);
     if (!parsed.success) return zodErr(parsed.error);
-    const v = parsed.data;
+    let v = parsed.data;
 
     const ctx = await requireCapability("lead.work");
     const config = await getConfig();
+
+    /* An enquiry's own facts win over what the form sent for them. */
+    if (v.fromEnquiry) {
+      const found = await enquiryForLeadConversion(v.fromEnquiry.enquiryId);
+      if (!found.ok) return found;
+      v = { ...v, source: found.data.leadSource, sourceDetail: found.data.sourceDetail };
+    }
 
     /*
      * THE SOURCE IS ONE OF THE CONFIGURED TEN, AND "OTHER" HAS TO SAY WHAT.
@@ -215,7 +311,55 @@ export async function captureLead(
      * A sentence is what makes it get picked when it is true, and the sentences
      * are what tell Mahek which eleventh source is worth adding to the list.
      */
-    const sources = config["leads.sources"];
+    /*
+     * THE PERSON WHO CAPTURES A LEAD IS ITS INITIAL OWNER — where they are the
+     * sort of person who works one.
+     *
+     * The old rule was the opposite ("`owner_id` is never the person doing the
+     * capturing"), and its reason was a salesman: a telecaller taking a call is
+     * not the one who walks to the shop. There is no salesman in this workflow —
+     * the Telecaller who raises the lead is the one who calls it, promotes it
+     * and completes its Qualification — so the reason has gone, and the owner
+     * defaults to the creator.
+     *
+     * TWO EXCEPTIONS keep "owner" from meaning something it should not:
+     *   • a creator who does not hold the Calling desk. A lead owned by somebody
+     *     who cannot open the desk vanishes into a book they cannot read — the
+     *     failure `assignDeskLead` refuses on the way in.
+     *   • a manager (`lead.verify`). A manager raising a lead is handing it to
+     *     the desk, not taking it; making them its owner would put the whole
+     *     desk's book on the person who verifies it.
+     * Both stay unassigned, and the desk assigners are told, exactly as before.
+     *
+     * Only when the caller SAID NOTHING. `ownerId: null` is a deliberate
+     * "unassigned" and is respected, and a named owner is used as named. The
+     * bulk importer takes its own path and its own explicit owner — a defaulted
+     * owner on a thousand-row file reads as one person's book on every list.
+     * Who raised the lead is not stored here at all: it is the actor on the
+     * append-only `lead_created` event, and no reassignment can edit that.
+     */
+    if (v.ownerId === undefined) {
+      const holdsDesk = await canOpenModule(ctx.user.id, DESK_MODULE);
+      const isManager = await canFor(ctx.user, "lead.verify");
+      v = { ...v, ownerId: holdsDesk && !isManager ? ctx.user.id : null };
+    }
+
+    if (v.priority && !(await canFor(ctx.user, "lead.verify"))) {
+      return err(
+        "Priority is set by a manager. Raise the lead without it and ask them to set it.",
+        "not_permitted",
+        [{ field: "priority", message: "Set by a manager." }],
+      );
+    }
+
+    /* A source only the Sales Manager intake offers (`lead-source-scope.ts`) is
+       accepted from somebody explicitly granted that module and from nobody else — the
+       form's `workspace` field is the browser's claim and is not consulted. An
+       enquiry conversion sets its own source and gets no extras. */
+    const sources = sourcesFor(
+      config["leads.sources"],
+      !v.fromEnquiry && (await isSalesManagerSeat(ctx.user.id)),
+    );
     if (!sources.some((o) => o.code === v.source)) {
       return err(
         `"${v.source}" is not one of the sources we record. Pick one from the list.`,
@@ -249,25 +393,10 @@ export async function captureLead(
       );
     }
 
-    /*
-     * §24, read from configuration rather than from a required field on this
-     * form. A team that has turned the rule off is a team this screen must not
-     * enforce it on anyway — and one that has it on must not be able to raise a
-     * lead here that the funnel will immediately flag as unowed.
-     */
-    if (config["leads.requireNextAction"] && !v.nextAction) {
-      return err(
-        "An active lead may not sit with nothing owed by anybody. Say what happens next, on what day, and who is doing it.",
-        "rule_violation",
-        [{ field: "nextAction.action", message: "Required." }],
-      );
-    }
-
-    /* The picker is not a permission: the person a next action is owed by has
-       to be somebody who can sign in and see it. Same check as the owner of
-       the lead itself, for the same reason — a book on a disabled account is a
-       book nobody is working. */
-    const idsToCheck = [v.nextAction?.ownerId, v.ownerId].filter(
+    /* The picker is not a permission: the owner, and whoever a next action is
+       owed by (screen 34's batch-wide answer, riding through per row), both
+       have to be somebody who can sign in and see it. */
+    const idsToCheck = [v.ownerId, v.nextAction?.ownerId].filter(
       (id): id is string => Boolean(id),
     );
     for (const id of Array.from(new Set(idsToCheck))) {
@@ -283,6 +412,78 @@ export async function captureLead(
           [{ field: id === v.ownerId ? "ownerId" : "nextAction.ownerId", message: "Not an active account." }],
         );
       }
+    }
+
+    /*
+     * "UNDER" IS THE THIRD-PARTY LADDER'S OWN QUESTION, so it is validated only
+     * there — the picker offers nothing on the other two ladders, and a stray
+     * value from a stale tab is ignored rather than refused. Where it is
+     * meaningful the rule is `convertToThirdParty`'s own: an account we bill
+     * ourselves, `kind = 'customer'`, not itself marked third-party, and not
+     * deactivated — the same three sentences, so a distributor good enough to
+     * be named here is good enough to survive conversion.
+     */
+    const distributorId =
+      v.salesType === "third_party" ? (v.distributorCustomerId ?? null) : null;
+    if (distributorId) {
+      const [d] = await db
+        .select({
+          id: customers.id,
+          name: customers.name,
+          kind: customers.kind,
+          thirdParty: customers.thirdParty,
+          status: customers.status,
+        })
+        .from(customers)
+        .where(eq(customers.id, distributorId))
+        .limit(1);
+      if (!d) {
+        return err(
+          "That account no longer exists.",
+          "validation",
+          [{ field: "distributorCustomerId", message: "Not found." }],
+        );
+      }
+      if (d.kind !== "customer" || d.thirdParty) {
+        return err(
+          `${d.name} cannot bill a shop — a distributor is an account we invoice directly.`,
+          "rule_violation",
+          [{ field: "distributorCustomerId", message: "Not a direct customer." }],
+        );
+      }
+      if (d.status === "deactivated") {
+        return err(
+          `${d.name} is deactivated, so it cannot be named as who bills this shop.`,
+          "rule_violation",
+          [{ field: "distributorCustomerId", message: "Deactivated." }],
+        );
+      }
+    }
+
+    /*
+     * A CATALOGUE CHOICE IS CHECKED, AND ITS NAME COMES FROM THE CATALOGUE.
+     * The picker only ever offers active products, but a server action is a
+     * URL — a stale tab or a hand-built request can name a retired SKU or one
+     * that never existed — so the product is read here and refused if it is not
+     * a live one. What is stored is `products.name`, the same text a
+     * telecaller would have typed, in the same `lead_requirement` column; no id
+     * is kept, which is what stops this answering the Calling Desk's Product
+     * question on that desk's behalf.
+     */
+    if (v.requirementProductId) {
+      const [p] = await db
+        .select({ id: products.id, name: products.name, active: products.active })
+        .from(products)
+        .where(eq(products.id, v.requirementProductId))
+        .limit(1);
+      if (!p || !p.active) {
+        return err(
+          "That product is not in the active catalogue. Pick another, or type what they want in your own words.",
+          "validation",
+          [{ field: "requirementProductId", message: "Not in the active catalogue." }],
+        );
+      }
+      v = { ...v, requirement: p.name };
     }
 
     let existing: ExistingAccount | null = null;
@@ -301,12 +502,62 @@ export async function captureLead(
     const customerId = gen("cus");
     const foot: "suspect" | "new" = v.salesType ? "suspect" : "new";
 
+    /*
+     * A SALES MANAGER WHO RAISES A LEAD IS ITS SALES MANAGER, in the same write.
+     *
+     * The Sales Manager workspace's whole scope is `sales_manager_id = me` (see
+     * `crm-sales-manager-scope.ts`), and a lead raised here carried no seat — a
+     * manager has no owner by default either — so it was created and then
+     * appeared in nobody's book, theirs included. Nothing derived one later:
+     * `recomputeSalesManagers` resolves a lead's seat through its OWNER, so an
+     * owner-less lead stays null and a lead with an owner is only seated after
+     * the nightly pass, if the org chart names that owner's manager.
+     *
+     * `sales_manager_decided_at` is the half that makes it stick. That mark is
+     * what the nightly pass skips; without it the same job would blank this
+     * seat back to null the first night the owner is missing from the org chart.
+     * It is a person choosing — the manager raising it for their own book — so
+     * stamping it is true, unlike the qualification flow where the org chart,
+     * not a person, fills the seat.
+     *
+     * WHO COUNTS is whoever holds the Sales Manager module, which is what the
+     * workspace route is guarded on — not `lead.verify`: the account in
+     * production holds the module at the ASSOCIATE level, which does not carry
+     * that capability. An administrator is excluded: they are not narrowed by a
+     * seat, and naming one as the seat would take the lead out of the org
+     * chart's reach for nothing. Anybody else keeps exactly what they had.
+     */
+    const seatsCreator =
+      ctx.user.role !== "admin" && (await canOpenModule(ctx.user.id, SALES_MANAGER_MODULE));
+
+    /* A LEAD SHE RAISES HERSELF IS APPROVED BY THE PERSON MAHEK DESIGNATES (`leads.
+       selfRaisedVerifierEmail`), so that person is seated on it at once: the
+       coordinating seat is what lets them see and act on it. Only where she is
+       its owner or nobody is — a lead she raises FOR a Salesman is the Salesman's
+       and follows the ordinary rule. Nobody designated, nothing seated. */
+    /* Org-chart mode: a Sales Manager's own lead is the DESK verifier's, one rule
+       with the Telecaller's - the self-raised setting does not get a say. */
+    const selfRaisedApprover = seatsCreator
+      ? (await orgModeOn())
+        ? await deskVerifierForCreator(ctx.user.id)
+        : await approverFor({ ownerId: v.ownerId ?? null, salesManagerId: ctx.user.id })
+      : null;
+
+    /* ORG-CHART MODE: the lead is on the right Sales Manager's screen from the
+       moment it exists, instead of after the nightly pass. Not written as a
+       DECISION - the chart still owns the seat - and null where the chart cannot
+       say, which leaves it exactly where it was and reported. */
+    const chartSeat = seatsCreator
+      ? null
+      : await seatForNewLead({ ownerId: v.ownerId ?? null, creatorId: ctx.user.id });
+
     await db.transaction(async (tx) => {
       await tx.insert(customers).values({
         id: customerId,
         name: v.name,
         companyName: v.companyName || null,
         contactPerson: v.contactPerson || null,
+        email: v.email || null,
         phone: v.phone,
         city: v.city,
         address: v.address || null,
@@ -319,6 +570,10 @@ export async function captureLead(
         /* Absent means unassigned, and unassigned is said in words on every
            team list. It is NEVER `ctx.user.id` — see the file header. */
         ownerId: v.ownerId ?? null,
+
+        ...(seatsCreator ? { salesManagerId: ctx.user.id, salesManagerDecidedAt: new Date() } : {}),
+        ...(chartSeat ? { salesManagerId: chartSeat } : {}),
+        ...(selfRaisedApprover ? { leadManagerId: selfRaisedApprover.id } : {}),
 
         leadSalesType: v.salesType ?? null,
         leadStage: foot,
@@ -333,13 +588,36 @@ export async function captureLead(
         leadCompetitor: v.competitor || null,
         leadRequirement: v.requirement || null,
         leadApplication: v.application || null,
+        leadPriority: v.priority ?? null,
 
-        /* §24 in the same statement as the lead. Not a second write. */
+        /* §24, where somebody answered it — screen 34's batch-wide next
+           action, riding through this shared writer one row at a time. */
         leadNextAction: v.nextAction?.action ?? null,
         leadNextActionDate: v.nextAction?.date ?? null,
         leadNextActionOwnerId: v.nextAction?.ownerId ?? null,
         leadNextActionOutcome: v.nextAction?.outcome || null,
       });
+
+      /*
+       * §23 — WHO BILLS THIS SHOP, in the same transaction as the lead it
+       * describes. Validated above; `distributorId` is already narrowed to the
+       * third-party ladder and to an eligible account. `isPrimary` is true
+       * because this is the only distributor named for a lead this new — there
+       * is nothing yet for it to conflict with.
+       */
+      if (distributorId) {
+        await tx.insert(customerDistributors).values({
+          id: gen("cd"),
+          customerId,
+          distributorCustomerId: distributorId,
+          isPrimary: true,
+          /* Said the way the handset's own write says it, so the panel on the
+             record shows where the arrangement came from. */
+          note: "Named when the lead was raised",
+          createdById: ctx.user.id,
+          updatedById: ctx.user.id,
+        });
+      }
 
       /*
        * §R — where the account began, on the shared stream, in the SAME
@@ -379,10 +657,24 @@ export async function captureLead(
           salesType: v.salesType ?? null,
           stage: foot,
           ownerId: v.ownerId ?? null,
+          salesManagerId: seatsCreator ? ctx.user.id : null,
           nextActionOwnerId: v.nextAction?.ownerId ?? null,
+          distributorCustomerId: distributorId,
           duplicateAllowed: Boolean(v.allowDuplicate),
+          fromEnquiryId: v.fromEnquiry?.enquiryId ?? null,
         },
       });
+
+      /* Last, inside the same transaction: if the enquiry already has a lead
+         this throws, and the lead above is undone with it. */
+      if (v.fromEnquiry) {
+        await linkEnquiryToNewLead(tx, {
+          enquiryId: v.fromEnquiry.enquiryId,
+          customerId,
+          leadName: v.name,
+          actorId: ctx.user.id,
+        });
+      }
     });
 
     /*
@@ -415,19 +707,47 @@ export async function captureLead(
           title,
           body,
           kind: "info",
-          href: `/sales/leads/${customerId}`,
+          /* A lead raised from the CRM is worked from the Calling Desk's own
+             record — the screen with Call 1/2/3 and the Prospect gate on it —
+             not the shared lead record `/sales/leads/[id]` answers to.
+             Sending a CRM-only telecaller there would land on a screen behind
+             an app grant they may not hold, or the wrong record entirely.
+             Every other caller of this function (sales' own intake, bulk
+             import, an enquiry conversion) sends no `workspace` and keeps
+             exactly the link it always got. */
+          href:
+            v.workspace === "crm"
+              ? `/crm/leads/calling-desk/${customerId}`
+              : `/sales/leads/${customerId}`,
         })
         .catch(() => {});
     }
 
+    if (v.fromEnquiry) {
+      try {
+        revalidatePath("/enquiries");
+        revalidatePath(`/enquiries/list/${v.fromEnquiry.enquiryId}`);
+      } catch {
+        /* no request context */
+      }
+      /* An unowned lead is on nobody's desk, so whoever assigns is told it is waiting. */
+      if (!v.ownerId) {
+        await notifyDeskAssigners({ customerId, leadName: v.name, byUserId: ctx.user.id }).catch(() => {});
+      }
+    }
+
+    await placeShopsNow([customerId]);
     refresh(customerId);
     return ok(
       { customerId, stage: foot },
-      v.salesType
+      v.fromEnquiry && !v.ownerId
+        ? "Lead created from the enquiry. It has no owner yet, so it is not on anybody's calling desk until it is assigned."
+        : v.salesType
         ? "Lead raised as a Suspect."
         : "Lead raised. No sales type was chosen, so it climbs the original six rungs until somebody sets one.",
     );
   } catch (e) {
+    if (e instanceof EnquiryLeadConflict) return err(e.message, "conflict");
     return fromThrown(e);
   }
 }
@@ -721,6 +1041,7 @@ export async function captureLeadBatch(
         });
     }
 
+    if (summary.created) await placeShopsNow();
     refresh();
     return ok(
       summary,

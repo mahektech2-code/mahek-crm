@@ -70,6 +70,7 @@ export function LogComplaintDialog({
   categories,
   maxImages,
   customer,
+  defaults,
   onSubmit,
 }: {
   open: boolean;
@@ -78,6 +79,12 @@ export function LogComplaintDialog({
   maxImages: number;
   /** Given from a customer record; omitted where the dialog has to ask. */
   customer?: ComplaintCustomer;
+  /**
+   * What the call assistant heard, to open the form holding it. A category
+   * the configured list does not carry is ignored rather than added — the
+   * list is what the save validates against.
+   */
+  defaults?: { category?: string | null; description?: string | null; requestCn?: boolean };
   onSubmit: (input: LogComplaintInput) => Promise<void>;
 }) {
   if (!open) return null;
@@ -90,6 +97,7 @@ export function LogComplaintDialog({
       categories={categories}
       maxImages={maxImages}
       customer={customer}
+      defaults={defaults}
       onClose={onClose}
       onSubmit={onSubmit}
     />
@@ -100,25 +108,31 @@ function LogComplaintDialogBody({
   categories,
   maxImages,
   customer: fixedCustomer,
+  defaults,
   onClose,
   onSubmit,
 }: {
   categories: string[];
   maxImages: number;
   customer?: ComplaintCustomer;
+  defaults?: { category?: string | null; description?: string | null; requestCn?: boolean };
   onClose: () => void;
   onSubmit: (input: LogComplaintInput) => Promise<void>;
 }) {
   const [customerQuery, setCustomerQuery] = React.useState("");
   const [customerHits, setCustomerHits] = React.useState<CustomerHit[]>([]);
   const [picked, setPicked] = React.useState<ComplaintCustomer | null>(null);
-  const [category, setCategory] = React.useState<string>(categories[0] ?? "Other");
+  const [category, setCategory] = React.useState<string>(
+    defaults?.category && categories.includes(defaults.category)
+      ? defaults.category
+      : (categories[0] ?? "Other"),
+  );
   const [priority, setPriority] = React.useState<string>(
     DEFAULT_COMPLAINT_PRIORITY,
   );
-  const [description, setDescription] = React.useState("");
+  const [description, setDescription] = React.useState(defaults?.description ?? "");
   const [images, setImages] = React.useState<File[]>([]);
-  const [requestCn, setRequestCn] = React.useState(false);
+  const [requestCn, setRequestCn] = React.useState(Boolean(defaults?.requestCn));
   const [busy, setBusy] = React.useState(false);
   const [errors, setErrors] = React.useState<{
     customer?: string;

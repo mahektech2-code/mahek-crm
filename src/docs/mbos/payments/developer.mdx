@@ -1,0 +1,133 @@
+A field collection is written **locally first** — a `payments` row in the handset's SQLite, a timeline row, and an outbox item — inside one SQLite transaction. The outbox carries it to `POST /api/mbos/sync`, where `dispatchItem` routes `entityType: "payment"` to `handlePayment`, which writes a `payment_receipts` row at status `reported` plus its allocation lines in `payments`. Deposits and bounces are `op: "update"` items on the same entity, handled by `handlePaymentUpdate`.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Screen | `mbos-app/app/pay.tsx` | The three-step form, the confirm, the WhatsApp receipt offer |
+| Screen | `mbos-app/app/collections.tsx` | *Money you collected*: cash on you, bank-all, per-row deposit and bounce |
+| Data | `mbos-app/src/data/payments.ts` | `collectPayment`, `cashInHand`, `markDeposited`, `markBounced`, `listPayments` |
+| Data | `mbos-app/src/data/customers.ts` | `openCustomerBills` — the picker's bills, balance above zero |
+| Engine (pure) | `mbos-app/src/engines/cash.ts` | `cashPosition`, `collectionMode` — what is carried and what is late |
+| Engine (pure) | `mbos-app/src/engines/payment-modes.ts` | `fieldModes` — the office's list minus the desk-only two |
+| Statement | `mbos-app/src/engines/statement.ts` | The Account tab's running balance from synced bills and receipts |
+| Wire | `src/app/api/mbos/sync/route.ts` | Authenticates the device, hands each item to `dispatchItem` |
+| Handler | `src/lib/actions/mbos.ts` | `handlePayment`, `handlePaymentUpdate`, `paymentSchema`, `paymentUpdateSchema` |
+| Allocation (pure) | `src/lib/engines/allocation.ts` | `allocate` — the same function the Accounts record form runs |
+
+## A collection, end to end
+
+<Flow caption="Collect → sync → reported receipt" chart={`
+sequenceDiagram
+  autonumber
+  participant UI as pay.tsx
+  participant Data as data/payments.ts
+  participant DB as SQLite
+  participant Q as sync/queue.ts
+  participant API as /api/mbos/sync
+  participant H as handlePayment
+  participant PG as Postgres
+  UI->>Data: collectPayment(mode, amount, billRefs, cheque...)
+  Data->>DB: tx: INSERT payments (TMP- ref, depositSlaDueAt if Cash)<br/>claim cheque photo in media_queue<br/>INSERT timeline_events
+  Data->>Q: enqueue payment create (no dependsOn)
+  Q->>API: push batch
+  API->>H: dispatchItem
+  H->>PG: scopedCustomer, check id already present
+  H->>H: billIds settled? reject bill_settled
+  H->>H: allocate(openBills, settle or auto)
+  H->>PG: tx: allocateNumber, INSERT payment_receipts (reported)<br/>INSERT payments lines + on-account line<br/>writeTimeline, link visit
+  H->>PG: bindMbosMedia(chequePhotoId)
+  H-->>Q: accepted, serverNumber
+`} />
+
+## The handset side
+
+<Code file="mbos-app/src/data/payments.ts" symbol="collectPayment" collapsed />
+
+Two wire names matter more than they look. The handset sends `billIds` (it once sent `billRefs`, which the server did not read, so every collection was spread oldest-first) and `reference` (the cheque number or UTR — what accounts match the statement against). The cheque's written date goes as `instrumentDate`.
+
+The payment is **not** queued behind the visit. A visit failing must not strand the money behind it.
+
+<Code file="mbos-app/src/engines/payment-modes.ts" symbol="fieldModes" />
+
+<Code file="mbos-app/src/engines/cash.ts" symbol="collectionMode" />
+
+<Code file="mbos-app/src/engines/cash.ts" symbol="cashPosition" collapsed />
+
+`cashInHand` reads the stored mode through `collectionMode`. It used to pass the literal `'cash'` for every row, so a UPI receipt counted as notes in a pocket.
+
+<Code file="mbos-app/src/data/payments.ts" symbol="markDeposited" />
+
+<Code file="mbos-app/src/data/payments.ts" symbol="markBounced" collapsed />
+
+## The server side
+
+<Code file="src/lib/actions/mbos.ts" symbol="paymentSchema" />
+
+<Code file="src/lib/actions/mbos.ts" symbol="handlePayment" collapsed />
+
+Three branches before anything is written:
+
+| Case | Answer | Why |
+|---|---|---|
+| Customer not in the device user's scope | `rejected` | `scopedCustomer` — same rule as every MBOS write |
+| Same id already present, reported by this user | `accepted` with the stored number | A resend after a lost answer, not a duplicate |
+| Same id, someone else | `rejected` `duplicate` | Nothing written twice |
+| A named bill missing or fully paid | `rejected` `bill_settled` | Money is never re-pointed silently |
+
+<Code file="src/lib/actions/mbos.ts" symbol="handlePaymentUpdate" collapsed />
+
+An update for a receipt that has not landed yet is a **retry**, not a rejection — the create is still in flight.
+
+<DbTable name="payment_receipts" only={["id", "customer_id", "amount", "received_at", "mode", "reference", "instrument_date", "receipt_no", "note", "status", "source", "reported_by_id", "visit_id", "deposited_at", "deposited_by_id", "deposit_proof_id", "idempotency_key"]} note={{
+  id: "Minted on the handset (the outbox entityId), so a resend finds itself.",
+  status: "Always 'reported' from MBOS. Accounts move it on.",
+  source: "'mbos'.",
+  receipt_no: "From mbos.payments.receiptSeriesPrefix and the financial year, via allocateNumber.",
+  instrument_date: "The date written on a cheque.",
+  deposited_at: "Set by a deposit update from the field — the salesman's word, not the bank's.",
+}} />
+
+<DbTable name="payments" only={["id", "receipt_id", "bill_id", "customer_id", "amount", "external_ref"]} note={{
+  bill_id: "Null is money on account.",
+  external_ref: "The server receipt number.",
+}} />
+
+<DbEnum name="receipt_status" />
+
+## Tests that pin it
+
+| Test | Pins |
+|---|---|
+| `mbos-app/src/engines/engines.test.ts` | `cashPosition`: per-collection SLA, cash only |
+| `mbos-app/src/engines/payment-modes.test.ts` | Desk-only modes removed, fallback list |
+| `mbos-app/src/data/statement-reads.test.ts` | Open-bills picker and the statement window |
+| `mbos-app/src/data/reachable.test.ts` | `markDeposited` and `markBounced` have a caller (they once had none) |
+| `src/lib/activity-location.test.ts` | Real payment payloads through the dispatcher |
+| `src/lib/mbos-wire.test.ts` | Payment payload names against the handset's writes |
+
+## Changing it safely
+
+<Steps>
+<Step title="Add a field to a collection">
+Add it to `collectPayment`'s payload **and** `paymentSchema`. A key the schema does not name is dropped by the parse in silence — the bounce reason is the standing example.
+</Step>
+<Step title="Never bind a Date">
+`receivedAt` is a date string; pass `.toISOString()` for any instant in raw SQL.
+</Step>
+<Step title="Keep allocation in one place">
+Use `allocate` from `src/lib/engines/allocation.ts`; do not re-spread money in the handler.
+</Step>
+<Step title="Run the suites">
+`npm run test` (mbos-app engines) and `npm run test:integration` for the dispatcher.
+</Step>
+</Steps>
+
+## Known gaps
+
+| Gap | Where |
+|---|---|
+| Bounce reason is not on the wire and not stored at the office | `markBounced` / `paymentUpdateSchema` |
+| Handset fallback SLA (36 h) differs from the registry default | `collectPayment`, `cashInHand` |
+| Manager-notify threshold 0 means "off" on the phone, "always" on the server | `collectPayment` vs `handlePayment` |
+| A deposit or bounce update is accepted against a receipt in any status, including one accounts have already rejected | `handlePaymentUpdate` |

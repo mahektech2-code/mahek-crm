@@ -1,6 +1,6 @@
+import { priceListDoorCanManage } from "@/lib/price-list-door";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { canFor } from "@/lib/access-control";
 import { today } from "@/lib/recompute";
 import { priceListDetail, pricingOptions } from "@/lib/services/price-list-service";
 import { PriceListDetailScreen } from "@/components/pricing/price-list-detail";
@@ -13,7 +13,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   const [detail, options, canManage, todayIso] = await Promise.all([
     priceListDetail(id),
     pricingOptions(),
-    canFor(user, "pricelist.manage"),
+    priceListDoorCanManage(user, "crm"),
     today(),
   ]);
   if (!detail) notFound();

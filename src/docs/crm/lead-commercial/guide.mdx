@@ -1,0 +1,134 @@
+The commercial end of the funnel is where a lead that liked its trial is turned into an order — and, for the few leads still on the distributor ladder, where a distributor is appointed. It is two modules: **Commercial**, which follows every lead from negotiation to its second order, and **Distributor appointments**, which carries a distributor candidate through two approvals.
+
+<Callout kind="live">
+Thresholds on this page are your CRM's current settings.
+</Callout>
+
+## Commercial: three tabs, one arc
+
+| Tab | Question it answers |
+|---|---|
+| **Negotiation** | Who is being negotiated with now, for how long, and is anybody holding them? |
+| **Commitments** | What has a customer **promised** — a day and a size — and did it happen? |
+| **First orders** | Leads past their first order: delivery, payment and the second order that makes them a customer. |
+
+### The Negotiation desk at a glance
+
+<Wireframe url="/crm/leads/commercial" nav={["#Lead Management", "All Leads", "Samples & trials", "Commercial", "Next actions & nurture"]} active="Commercial" caption="Negotiation desk">
+  <WfTabs items={["Negotiation", "Commitments", "First orders"]} active="Negotiation" />
+  <WfTitle sub="Leads on the Negotiation rung, longest here first">Negotiation desk</WfTitle>
+  <WfBar>
+    <WfCard title="In negotiation"><WfText>14</WfText></WfCard>
+    <WfCard title="No commitment"><WfText>6</WfText></WfCard>
+    <WfCard title="Longest here"><WfText>38 days</WfText></WfCard>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfTable
+    highlight={0}
+    columns={["Lead", "Days here", "Who owes it", "What is blocking it", "Commitment", ""]}
+    rows={[
+      [<b key="a">Customer A</b>, "21", "The lead manager", <span key="b">Price <Hotspot n={2} /></span>, <WfPill key="c" tone="warn">Day but no size</WfPill>, <WfButton key="d">Ask for the first order</WfButton>],
+      [<b key="e">Customer B</b>, "9", "Nobody holding it", "—", <span key="f"><WfPill>No commitment</WfPill> <Hotspot n={3} /></span>, <WfButton key="g">Ask for the first order</WfButton>],
+    ]}
+  />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>The headline.</b> How many leads are in negotiation, how many have nothing promised, and the longest anybody has sat here.</span>,
+  <span key="2"><b>What is blocking it.</b> The answer to "what is stopping it today" from the last first-order call — price, credit, another brand, delivery.</span>,
+  <span key="3"><b>Commitment.</b> Whether the customer has promised a day <i>and</i> a size. A day on its own is marked <i>Day but no size</i> and is not counted.</span>,
+]} />
+
+## Asking for the first order
+
+<Steps>
+<Step title="Open the lead and press Ask for the first order">
+You get eight questions: how much, which product, when they will place it, what is stopping it today, and whether price, credit, another brand or delivery is in the way.
+</Step>
+<Step title="Write down the day, and a size if they gave one">
+The day is required. The size is the number of **cans** or a **value** — either one. If they could not say how much, save the day anyway: it is kept as a follow-up and simply not counted as a promise.
+</Step>
+<Step title="Save">
+You are told which you recorded: a commitment (day and size), or a follow-up (day only). A size with no day is refused — nobody can chase "two hundred cans" with no date.
+</Step>
+</Steps>
+
+## Confirming the actual order
+
+When the customer places the order, press **Confirm the actual order** on the lead and give the **day they placed it**, the **value**, their **reference** (PO or confirmation number) and, if you have it, the cans.
+
+| Rule | Why |
+|---|---|
+| There must be a commitment first | Confirming an order against nothing is a sale with no forecast behind it |
+| The value must be more than zero | An order nobody can value reads as zero on every target and report |
+| The day cannot be in the future | It is the day they placed it |
+| If a live order already exists you are told | So the same order is not taken twice |
+
+The order goes to accounts as **waiting for approval**, like every order. The lead does **not** move to *1st order* when you save — it moves when accounts accept the order. The card says so before you press the button.
+
+### Commitments tab
+
+| View | Lists |
+|---|---|
+| **Open** | A day promised that has not come round yet |
+| **Due this week** | Promised inside the next seven days |
+| **Slipped** | The day came and went with no order — the view that earns the screen |
+| **Converted** | A real order arrived on the account |
+
+Forecast figures and real orders are totalled separately on this screen and are never added together.
+
+### First orders tab
+
+Leads on **1st order**, **Delivery**, **Payment** and **2nd order**. Delivery and payment are read from the ledger — what the sheet and accounts recorded — never typed here. When a **second** counting order lands, the lead becomes a **customer** and leaves the funnel.
+
+## Distributor appointments
+
+New distributor leads can no longer be raised; this tab finishes the appointments already started.
+
+<Steps>
+<Step title="Fill the distributor profile">
+About thirty questions about the business: GST and PAN, address checked, business type and years, decision maker, dealer network, territory and cities, sales team, delivery, warehouse and storage, product portfolio, competitor brands, potential and commitments, credit wanted, proposed territory, whether an existing distributor was checked and any conflict, exclusivity requested, initial stock and monthly commitment.
+</Step>
+<Step title="Submit for management review">
+The sales manager is asked to recommend the candidate. Until they do, it waits on the sales manager.
+</Step>
+<Step title="Record the commercial terms">
+The special discount, the credit limit and whether territory exclusivity is granted. Recording terms needs the distributor-terms permission (a manager).
+</Step>
+<Step title="Management decides">
+Every appointment then goes to **management** for the final approval. The record says why: *exclusivity*, *over the discount threshold*, *over the credit-limit threshold*, or *standard review*.
+</Step>
+<Step title="Record the signed agreement, then the stock order">
+The lead climbs to Distributor agreement and Initial stock order, then Active distributor.
+</Step>
+</Steps>
+
+| Over the threshold when | Threshold now |
+|---|---|
+| Special discount is more than | <Setting k="leads.distributorDiscountApprovalPercent" /> % |
+| Agreed credit limit is more than | <Setting k="leads.distributorCreditLimitApprovalPaise" /> paise (₹1 = 100 paise) |
+| Territory exclusivity is **granted** (asking for it does not count) | always |
+
+A step can be **sent back for correction** with a note, rather than refused. The candidate is corrected and resubmitted; the note clears once it is answered.
+
+### The distributor's own salesmen
+
+A distributor's salesman — the person who actually visits the shops for them — is recorded by **name, mobile and territory** on the distributor. He has no MahekOne login and never will, so he never appears in any person picker.
+
+## Questions people ask
+
+<Faq q="I recorded a date but the lead is not on the forecast.">
+A date alone is a follow-up. Add how many cans or roughly what value and it becomes a commitment.
+</Faq>
+<Faq q="I confirmed the order but the lead is still on Negotiation.">
+It moves to 1st order when accounts approve the order.
+</Faq>
+<Faq q="The customer ordered once. Why are they still a lead?">
+The first order is the end of the trial. The account becomes a customer on its second order.
+</Faq>
+<Faq q="Why does an ordinary distributor still need management?">
+Every appointment is approved by management. The thresholds only change the reason written on the request.
+</Faq>
+<Faq q="Can a manager approve an appointment on their own?">
+No. A manager can recommend and agree terms; only management (the distributor-approval permission) appoints.
+</Faq>

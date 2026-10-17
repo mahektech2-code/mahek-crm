@@ -1208,6 +1208,7 @@ export async function searchCustomers(q: string, limit = 10): Promise<CustomerHi
       from customers c
      where (c.name ilike ${like} or c.city ilike ${like} or c.dealer_code ilike ${like})
        and ${bookClause(ids)}
+       and c.deleted_at is null
      order by c.name asc
      limit ${limit}
   `);

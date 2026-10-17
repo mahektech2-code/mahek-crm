@@ -1,0 +1,97 @@
+A salesman standing in a shop can take an order and collect money. Neither of those is the business agreeing to anything: an order is the **customer saying yes**, and a collection is the **salesman saying he was paid**. The office decides both — accounts approve the order and find the money in the bank. These three screens exist so a sales manager can see where his team's commercial work stands without being the one who decides it.
+
+## Who decides what
+
+<Cards cols={3}>
+<Card title="The salesman" tone="brand">Takes the order, collects the money, photographs the cheque and the deposit slip, reports a bounced cheque, records what the shop said on delivery.</Card>
+<Card title="Accounts">Approves or declines the order. Confirms, holds, rejects or reverses the money. Sets credit limits and credit blocks.</Card>
+<Card title="The sales manager">Reads. Chases the stuck order and the cash nobody has banked.</Card>
+</Cards>
+
+<Callout kind="why">
+**The person chasing the target must not sign off the orders that hit it.** That is why approving an order is the accounts desk's job and not a manager's by seniority. A manager who also holds the Accounts app can approve, and the audit records which hat he did it under — see [Architecture](/docs/platform/architecture) for how combined hats are handled.
+</Callout>
+
+## An order from the field
+
+<Flow caption="An order taken on a handset" chart={`
+flowchart TD
+  A["Salesman takes the order<br/>(no signal needed)"] --> B["Next sync"]
+  B --> C{"Checks made again<br/>at the office"}
+  C -- "Customer credit-blocked" --> R1["Not accepted: credit_blocked"]
+  C -- "Price list rate changed" --> R2["Not accepted: price_changed"]
+  C -- "Over the credit limit<br/>(when the setting is on)" --> R3["Not accepted: credit_exceeded<br/>or outstanding_stale"]
+  C -- "Passes" --> D["Order stored: pending approval<br/>a lead becomes a customer"]
+  D --> E{"Accounts decide"}
+  E -- "Approve" --> F["Counts as a sale<br/>dispatch, in transit, delivered"]
+  E -- "Decline, with a reason" --> G["Salesman notified<br/>reason on the timeline"]
+  F --> H["Shop confirms the order,<br/>confirms delivery or reports a problem"]
+`} />
+
+<Rule title="The office re-checks what the handset already checked">
+The handset checks the credit limit before the order is taken, but it does so against an outstanding figure that may be hours old. The office checks again against what the customer owes **now**. If the handset's figure was older than <Setting k="mbos.credit.outstandingStaleHours" /> hours and is the reason the order now fails, the salesman is told the balance moved under him rather than that he went over the limit — the two send him to different people.
+</Rule>
+
+<Rule title="Over the limit: refuse, or accept and flag">
+With <Setting k="mbos.credit.blockOnLimitExceeded" /> on, an order that would take the customer past their limit is refused at sync. Off, it is accepted and shows on the Orders screen as **Above limit** for accounts to decide. Refusing is the safer default and the more painful one — the salesman was standing in the shop when he promised it.
+</Rule>
+
+<Rule title="A credit block is a decision, not a calculation">
+A customer accounts have credit-blocked cannot be ordered for at all, whatever the limit says. The salesman is told the reason accounts gave.
+</Rule>
+
+<Rule title="An order on a lead converts it">
+A shop that is ready to buy is a customer, whatever rung of the lead ladder it was filed under. The order is accepted and the lead is converted by the same function the CRM uses. See [Lead commercial](/docs/crm/lead-commercial/how-it-works).
+</Rule>
+
+<Rule title="Three parties' words on one order">
+The order's **state** is the office's — accepted, dispatched, on the lorry. **Shop agreed the order** is the customer confirming what was written down. **Shop confirmed delivery** is the customer saying the goods came. They are routinely days apart and either confirmation can come first. A reported mismatch notifies the office; it does **not** raise a complaint on the customer's behalf.
+</Rule>
+
+A declined order cannot be marked delivered, whatever a handset that has not yet heard about the decline believes.
+
+## Money from the field
+
+<Rule title="Reported is not received">
+Every collection arrives as **reported**. It moves nothing in the ledger — no bill is reduced, no outstanding changes — until accounts confirm it against the bank. What a reported payment does do is stop the customer being chased for it for a few days. The full rules are on [Payment Follow-up](/docs/crm/payments/how-it-works).
+</Rule>
+
+<Rule title="Cash is the salesman's liability until it is banked">
+A transfer is already in the bank and a cheque is banked by the office, but **cash** is in somebody's pocket. So only cash is counted against the deposit window of <Setting k="mbos.payments.cashDepositSlaHours" /> hours. The cash list is never capped and is ordered oldest first, because the oldest unbanked note is the one the screen exists to chase.
+</Rule>
+
+<Rule title="Depositing and bouncing are reported from the handset">
+The salesman marks cash deposited (with the slip photographed) or a cheque returned unpaid. A bounce adds a dated note to the receipt and notifies his manager. If accounts had already confirmed the receipt, the message says it must be reversed — until it is, the money is still counting against the customer's balance.
+</Rule>
+
+A collection of <Setting k="mbos.payments.managerNotifyThresholdPaise" /> paise or more notifies the salesman's manager as soon as it syncs.
+
+## Bills
+
+Invoices lists bills raised against the accounts the field works, with the open balance **after confirmed money only**. A bill can be **unspoken for**: imported from the order sheet with nobody having said whether it was paid. It counts as neither paid nor owed, has its own chip, and is kept out of the ageing strip. The full reasoning is on [Bills](/docs/crm/bills/how-it-works).
+
+## What a manager sees
+
+All three screens are narrowed to the manager's team: a manager with regions allocated sees the salesmen whose books lie in those regions (plus anybody not yet given a book); a manager with no regions, an app administrator with none, and a platform administrator see everybody. An associate given the dashboard sees only his own.
+
+| Screen | Narrowed by | Default view | Capped? |
+|---|---|---|---|
+| Orders | Who took the order | Everything | The newest 300 rows; every figure is counted over the whole book |
+| Payments | Who reported it | Cash in hand | Log capped at 300; cash never capped |
+| Invoices | Whose book the customer is in | Open | Paged; figures over the whole book |
+
+<Callout kind="why">
+**The figures above every table are counted in SQL, over everything.** These screens once worked out their headline numbers from the newest 300 rows, so "Taken in the field" read 300 for ever and an order stuck in approval longer than 300 orders ago vanished from the waiting count. A queue that loses its oldest item is the worst possible direction for that mistake.
+</Callout>
+
+## Settings that change this
+
+<SettingsTable keys={["mbos.credit.blockOnLimitExceeded", "mbos.credit.outstandingStaleHours", "mbos.credit.overdueDaysBlockOrders", "mbos.orders.minimumQuantityCans", "mbos.orders.approvalThresholdPaise", "mbos.orders.secondTierThresholdPaise", "mbos.payments.cashDepositSlaHours", "mbos.payments.managerNotifyThresholdPaise"]} />
+
+## Where the code and the intent disagree today
+
+- **"Order value needing approval" is not an office approval.** The setting says an order at or above it "waits for a manager before dispatch". The office never reads it; only the handset's credit check uses it, and every field order goes to accounts regardless.
+- **The overdue-days order block is handset-only.** <Setting k="mbos.credit.overdueDaysBlockOrders" /> stops the handset offering new orders, but the office does not re-check it on sync.
+- **The deposit window is called working days but counted in calendar days.** The subtitle says "working day"; the hours are divided by 24 and compared with calendar days since collection.
+- **Invoices narrows on the sales seat, falling back to the owner** — not on the shared "whose book" rule the CRM uses, so an account whose seat was deliberately emptied falls to whoever owns the row.
+- **AGENTS.md says an order on a lead below negotiation is refused.** The code now accepts it and converts the lead.

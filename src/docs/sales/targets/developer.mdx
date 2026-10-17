@@ -1,0 +1,112 @@
+Sales Targets is `src/app/sales/targets/` reading `src/lib/services/sales-target-service.ts` and writing through `saveSalesTarget` and `publishSalesTarget` in `src/lib/actions/sales-targets.ts`, every one of which opens with `requireCapability("target.set")`. The rows live in `sales_targets`, the mix bands in `sales_target_categories` and the revision trail in `sales_target_revisions`. `copyForwardSalesTargets` in `src/lib/recompute.ts` carries published targets into a new month. The Accounts door at `/accounts/targets` calls the same functions and adds a revision history drawer.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Module guard | `src/app/sales/targets/layout.tsx` | `requireModule(user.id, "sales.targets")` |
+| Page (server) | `src/app/sales/targets/page.tsx` | `requireCapability("target.set")`, candidates, mix options, baselines, existing customer-target totals |
+| Screen (client) | `src/app/sales/targets/targets-screen.tsx` | The table, Add someone, the target drawer |
+| Accounts door | `src/app/accounts/targets/` | The same reads and writes, plus `RevisionHistoryDrawer` |
+| Reads | `src/lib/services/sales-target-service.ts` | `targetableCandidates`, `mixCategories`, `baselineFor`, `existingCustomerTargetTotals`, `revisionsFor` |
+| Writes | `src/lib/actions/sales-targets.ts` | `saveSalesTarget`, `publishSalesTarget`, `targetRevisionHistory` |
+| Copy-forward | `src/lib/recompute.ts`, `src/lib/jobs.ts` | `copyForwardSalesTargets`, run in the nightly pass as `copy-forward-sales-targets` |
+| Score | `src/lib/services/performance-service.ts` | Reads published targets only |
+
+## Saving and publishing
+
+<Flow caption="Save and publish from the drawer" chart={`
+sequenceDiagram
+  autonumber
+  participant UI as targets-screen.tsx
+  participant A as actions/sales-targets.ts
+  participant DB as Postgres
+  participant N as notify
+  UI->>A: saveSalesTarget(figures, bands, reason if published)
+  A->>A: requireCapability('target.set')
+  A->>A: validate figures and bands, reason required and listed if published
+  A->>DB: ONE transaction — sales_targets, sales_target_categories,<br/>sales_target_revisions per moved figure, audit_log
+  opt published and something moved
+    A->>N: 'Your target for this month has changed'
+  end
+  UI->>A: publishSalesTarget(targetId) when 'Save and publish'
+  A->>A: refuse if none of the five figures is set
+  A->>DB: status = published, audit target.publish
+  A->>N: 'Your target for … is set'`} />
+
+<Code file="src/lib/actions/sales-targets.ts" symbol="saveSalesTarget" collapsed />
+
+<Code file="src/lib/actions/sales-targets.ts" symbol="publishSalesTarget" collapsed />
+
+## Who is listed
+
+<Code file="src/lib/services/sales-target-service.ts" symbol="TargetRow" />
+
+<Code file="src/lib/services/sales-target-service.ts" symbol="targetableCandidates" collapsed />
+
+<Code file="src/lib/services/sales-target-service.ts" symbol="mixCategories" collapsed />
+
+## Carried forward
+
+<Code file="src/lib/recompute.ts" symbol="copyForwardSalesTargets" collapsed />
+
+Idempotent: it only creates a row where the period has none, so a hand-triggered re-run touches nothing already there. `saveSalesTarget` clears `carried_forward` on any real save.
+
+## Tables
+
+<DbTable name="sales_targets" note={{
+  status: "draft · published.",
+  collection_target_bp: "Basis points of what was overdue at the start of the month.",
+  activity_target: "Retired in place — superseded by activity_target_bp and never reread.",
+  carried_forward: "Written by copyForwardSalesTargets; cleared by any real save.",
+}} />
+
+<DbTable name="sales_target_categories" note={{
+  category_id: "Set on bands typed against a broad category before formulations. Kept and scored as categories.",
+  formulation_id: "Set on bands typed against a formulation. A check constraint demands exactly one of the two keys.",
+  minimum_bp: "A band that does not increase (minimum, target, stretch) is refused by a check constraint.",
+}} />
+
+<DbTable name="sales_target_revisions" note={{
+  field: "Which figure moved — one row per figure.",
+  old_value: "In words, e.g. '₹13,00,000'.",
+  reason: "A code from performance.revisionReasons.",
+  changed_by_name: "Stored on the row so the history reads after the person leaves.",
+}} />
+
+## Access
+
+<CapabilityGrid names={["target.set"]} />
+
+- **Module:** <ModuleRef k="sales.targets" /> on the Sales Dashboard; the Accounts door has its own module.
+- **Capability:** `target.set` on the page and in every action. Not tied to the patch — a manager with the capability can set a target for anybody listed.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/engines/performance.test.ts` | Dropped components, band weighting, residual |
+| `npm run test:integration` | `src/lib/performance.test.ts` | Drafts unscored, publish, revision rows, a formulation target through the handset bootstrap |
+| `npm run test:integration` | `src/lib/monthly-targets.test.ts` | The customer-target totals the drawer cross-checks |
+
+## Changing it safely
+
+<Steps>
+<Step title="Keep the whole target one write">
+Figures and bands are one decision. Splitting them lets a revenue target publish with its mix missing.
+</Step>
+<Step title="Check target.set in the action">
+A server action is a URL; the screen hiding a button is not a permission.
+</Step>
+<Step title="Read both band keys everywhere">
+Any new reader of `sales_target_categories` must handle a category key and a formulation key. The handset wire once dropped formulation rows with an inner join and sent an empty mix.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| `revisionsFor` / `targetRevisionHistory` are drawn only on the Accounts door | `src/app/accounts/targets/targets-screen.tsx` vs `src/app/sales/targets/targets-screen.tsx` |
+| The activity figure is labelled "Tasks target" in the drawer | `src/app/sales/targets/targets-screen.tsx` |
+| Setting a target is not narrowed to the manager's patch | `saveSalesTarget` |

@@ -11,6 +11,7 @@ import {
 import { Icon } from "@/components/shell/icons";
 import { longDate, today } from "@/lib/format";
 import { LoginForm } from "./login-form";
+import { codesOffered } from "@/lib/actions/auth";
 
 export const metadata = { title: "Sign in - MahekOne" };
 
@@ -48,7 +49,7 @@ export default async function LoginPage({
       <BrandPanel
         footer={
           <div className="flex flex-wrap gap-2">
-            {APPS.map((app, i) => (
+            {APPS.filter((a) => !a.retiredInto).map((app, i) => (
               <span
                 key={app.id}
                 style={{ animationDelay: `${1600 + i * 90}ms` }}
@@ -106,18 +107,18 @@ export default async function LoginPage({
             Welcome back
           </h1>
           <p className="mt-1 text-[15px] leading-[23px] text-muted">
-            Your work number or work email, and your password. One sign-in
+            Your mobile number or work email, and your password. One sign-in
             opens every app on your account.
           </p>
 
           {justReset ? (
             <div className="mt-4 rounded-[4px] border border-success-soft border-l-[3px] border-l-success bg-success-soft px-3 py-2.5 text-sm text-ink">
               Your password is set. It signs you in here and on the field
-              salesman app, with your work number either way.
+              salesman app, with your mobile number either way.
             </div>
           ) : null}
 
-          <LoginForm />
+          <LoginForm codesOffered={await codesOffered()} />
 
           <div className="mt-5 flex items-center gap-2.5">
             <span className="h-px flex-1 bg-line" />

@@ -1,0 +1,109 @@
+MBOS is the app on your phone. It is called **Mahek MBOS** in your phone's settings. You use it to start your working day, go to shops, take orders, collect money and add new shops — and it works **even when there is no signal**. Everything you do is saved on the phone first and sent to the office when the phone can reach it.
+
+This page is the map: who the app is for, what a working day looks like, and where everything is. Each part of the app has its own page — follow the links.
+
+## Who uses it
+
+<Cards cols={2}>
+<Card title="Field salesman" tone="brand">You work a city or an area the office gives you. You visit shops, take orders, collect payments and find new shops. Your phone holds **your** customers and nobody else's.</Card>
+<Card title="Manager on a phone">A sales manager can also sign in to MBOS. A manager sees their team's book, and is never left with an empty phone for want of an area.</Card>
+</Cards>
+
+The office does not use MBOS. They see your work on the Sales Dashboard — see [Sales Dashboard overview](/docs/sales/overview).
+
+## The app at a glance
+
+<Wireframe url="MBOS · Home" caption="Home, after punching in">
+  <WfBar><WfTitle sub="Field salesman · Your area: Nagpur">Home</WfTitle><Hotspot n={1} /></WfBar>
+  <WfCard title="Your day">
+    <WfBar><WfText>Punched in 9:12 · 3h 05m</WfText><WfSpacer /><WfButton>Punch out</WfButton><Hotspot n={2} /></WfBar>
+  </WfCard>
+  <WfCard title="Today's route">
+    <WfBar><WfText>8 shops · 3 done</WfText><WfSpacer /><WfButton primary>Today’s route</WfButton><Hotspot n={3} /></WfBar>
+  </WfCard>
+  <WfCard title="Your leads"><WfBar><WfPill tone="warn">Due today 2</WfPill><WfPill>My leads 14</WfPill><Hotspot n={4} /></WfBar></WfCard>
+  <WfCard title="Your target"><WfText muted>62% of the month · on track</WfText></WfCard>
+  <WfBar><WfPill tone="brand">Home</WfPill><WfPill>Journey</WfPill><WfButton primary>+</WfButton><WfPill>Customers</WfPill><WfPill>More</WfPill><Hotspot n={5} /></WfBar>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Who you are and where you work.</b> Your role and the area the office has given you.</span>,
+  <span key="2"><b>Your day.</b> Punch in when you start, punch out when you stop. It shows how long you have worked today.</span>,
+  <span key="3"><b>Today's route.</b> The shops you picked for today, in a walking order. Tap to open the list.</span>,
+  <span key="4"><b>Your leads.</b> New shops you are working on, and how many need something today.</span>,
+  <span key="5"><b>The bar at the bottom.</b> Four tabs and the <b>+</b> button. The + button is how you start anything new.</span>,
+]} />
+
+### The four tabs and the + button
+
+| Tab | What is there |
+|---|---|
+| **Home** | Your day, today's route, your leads, your target, and anything the office needs from you. |
+| **Journey** | The days the office has proposed to you, the days you have agreed, and the shops you picked for each. See [Journeys](/docs/mbos/journeys). |
+| **Customers** | Your book — every shop you work — and your leads. See [Customers](/docs/mbos/customers). |
+| **More** | Everything else, in four groups: Work, Me, Resources, Settings. |
+| **+** | Start visit, Punch order, Collect payment, Add lead, Add expense, Create task, Request sample. |
+
+### What is under More
+
+| Group | Items |
+|---|---|
+| **Work** | Near me, Tasks, Leads, Pending actions, Orders, Payments, Customer accounts, Samples, Reports |
+| **Me** | Attendance, Leave, Holidays, Salary, Today's travel, Expenses, What you are allowed, Performance |
+| **Resources** | Product catalogue, Documents, Offline maps |
+| **Settings** | Profile and preferences, Send to office, Set up your phone, Not accepted, Sign out |
+
+A small number beside an item means something is waiting there — for example *2 overdue* beside Tasks, or *5 to send* beside Send to office.
+
+## Your day, step by step
+
+<Steps>
+<Step title="Punch in">
+On Home, press **Punch in**. The phone checks that it can record your route, then asks for a selfie. Your day starts when the photo is taken. See [Starting and ending the day](/docs/mbos/attendance).
+</Step>
+<Step title="Open today's route">
+Press **Today’s route**. It lists the shops you picked for today, in an order that saves walking. See [Journeys](/docs/mbos/journeys).
+</Step>
+<Step title="Visit a shop">
+Press **Start visit** on the next shop. When you reach the shop, press **I am at the shop**, then check in. Fill in what happened, take an order or a payment if there is one, and check out. See [Visiting a shop](/docs/mbos/visit).
+</Step>
+<Step title="Take orders and money as they come">
+From the visit, or from the **+** button. See [Orders](/docs/mbos/orders) and [Collecting payments](/docs/mbos/payments).
+</Step>
+<Step title="Punch out">
+When your day ends, press **Punch out** and take a selfie. If you are not on a metered vehicle, the app reminds you to add today's fares in Expenses.
+</Step>
+</Steps>
+
+## No signal? Keep working
+
+You do not need signal to work. Every order, payment, visit and note is saved on the phone straight away, then sent when the phone finds signal — on its own, every minute or so.
+
+| You see | It means |
+|---|---|
+| *Order saved · sending to the office now* | It is saved on the phone and going now. |
+| *Order saved · will send when you have signal* | It is saved on the phone. Nothing is lost. It will go by itself. |
+| A number beside **Send to office** | That many things are still waiting to go. Open it to see each one. |
+| A number beside **Not accepted** | The office could not accept something, and says why. Open it and fix it. |
+
+<Callout kind="warn">
+Do not uninstall the app or clear its storage while anything is waiting to send. What has not reached the office is only on your phone.
+</Callout>
+
+## Questions people ask
+
+<Faq q="Can I sign in on a friend's phone?">
+No. Your account is tied to one phone. If your phone breaks or you get a new one, ask your manager to release the old one, then sign in on the new one.
+</Faq>
+
+<Faq q="Why is my customer list empty?">
+If it says **No area set for you yet**, the office has not given you an area. Ask your manager. If it says **No customers yet**, you have an area but no shops in it yet.
+</Faq>
+
+<Faq q="Can somebody else use my phone after me?">
+Only once everything you did on it has reached the office. Until then the phone refuses anybody else and says how many entries are still waiting.
+</Faq>
+
+<Faq q="The office says they cannot see my order.">
+Open **More → Send to office**. If the order is still there, it has not been sent yet — find signal and press **Send now**. If it is under **Not accepted**, the office refused it and the reason is written there.
+</Faq>

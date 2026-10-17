@@ -118,8 +118,8 @@ beforeEach(async () => {
 
   await db.insert(appAccess).values([
     { id: id("aa"), userId: salesman.id, app: "field" },
-    { id: id("aa"), userId: manager.id, app: "sales" },
-    { id: id("aa"), userId: outsider.id, app: "sales" },
+    { id: id("aa"), userId: manager.id, app: "sales", role: "manager" },
+    { id: id("aa"), userId: outsider.id, app: "sales", role: "manager" },
   ]);
 
   await db.insert(customers).values({

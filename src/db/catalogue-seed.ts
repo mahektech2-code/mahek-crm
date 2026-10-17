@@ -75,6 +75,7 @@ export const FORMULATIONS: SeedFormulation[] = [
   { name: "Epoxy Thinner (No. 4)" },
   { name: "P U Thinner (NB)" },
   { name: "Special Mahek" },
+  { name: "Packaging" },
 ];
 
 export const BRANDS: SeedBrand[] = [
@@ -110,6 +111,7 @@ export const BRANDS: SeedBrand[] = [
   { name: "Melody Epoxy Thinner (FD)", formulation: "Epoxy Thinner (FD)" },
   { name: "Melody Green Thinner Tin Can", formulation: "Mahek Universal" },
   { name: "Special Mahek Thinner", formulation: "Special Mahek" },
+  { name: "Packaging", formulation: "Packaging" },
 ];
 
 export const FINISHED_GOODS: SeedFinishedGood[] = [
@@ -220,6 +222,9 @@ export const FINISHED_GOODS: SeedFinishedGood[] = [
   { name: "Thinner - 5 Liter", brand: "Thinner", formulation: "Thinner", millilitres: 5000 },
   { name: "Thinner - 20 Liter", brand: "Thinner", formulation: "Thinner", millilitres: 20000 },
   { name: "Thinner - 50 Liter", brand: "Thinner", formulation: "Thinner", millilitres: 50000 },
+  { name: "PU Thinner M16 - 10 Liter", brand: "PU Thinner M16", formulation: "PU Thinner M16", millilitres: 10000 },
+  { name: "M245 Thinner - 1 Liter", brand: "M245 Thinner", formulation: "M245", millilitres: 1000 },
+  { name: "Empty Drum", brand: "Packaging", formulation: "Packaging", millilitres: 0 },
 ];
 
 export const SKUS: SeedSku[] = [
@@ -3631,17 +3636,116 @@ export const SKUS: SeedSku[] = [
     externalIds: [201],
     duplicated: false,
   },
+  {
+    rawName: "Epoxy Thinner (FD) Plain Can - 1 Liter (32 Can/Box)",
+    name: "Epoxy Thinner (FD) Plain Can - 1 Liter (32 Can/Box)",
+    finishedGood: "Epoxy Thinner (FD) - 1 Liter",
+    brand: "Epoxy Thinner (FD)",
+    formulation: "Epoxy Thinner (FD)",
+    millilitresPerCan: 1000,
+    cansPerBox: 32,
+    packing: "32 Can/Box",
+    loose: false,
+    packingCostPaise: 3400,
+    weightGrams: 32000,
+    weightBasis: "box",
+    externalIds: [76],
+    duplicated: false,
+  },
+  {
+    rawName: "Epoxy Thinner (FD) Plain Can - 5 Liter (06 Can/Box)",
+    name: "Epoxy Thinner (FD) Plain Can - 5 Liter (06 Can/Box)",
+    finishedGood: "Epoxy Thinner (FD) - 5 Liter",
+    brand: "Epoxy Thinner (FD)",
+    formulation: "Epoxy Thinner (FD)",
+    millilitresPerCan: 5000,
+    cansPerBox: 6,
+    packing: "06 Can/Box",
+    loose: false,
+    packingCostPaise: 4600,
+    weightGrams: 25000,
+    weightBasis: "box",
+    externalIds: [77],
+    duplicated: false,
+  },
+  {
+    rawName: "Empty Drum",
+    name: "Empty Drum",
+    finishedGood: "Empty Drum",
+    brand: "Packaging",
+    formulation: "Packaging",
+    millilitresPerCan: 0,
+    cansPerBox: 1,
+    packing: "Drum",
+    loose: false,
+    packingCostPaise: 70000,
+    weightGrams: null,
+    weightBasis: "can",
+    externalIds: [152],
+    duplicated: false,
+  },
+  {
+    rawName: "PU Thinner M16 Plain Can - 20 Liter (02 Can/Box)",
+    name: "PU Thinner M16 Plain Can - 20 Liter (02 Can/Box)",
+    finishedGood: "PU Thinner M16 - 20 Liter",
+    brand: "PU Thinner M16",
+    formulation: "PU Thinner M16",
+    millilitresPerCan: 20000,
+    cansPerBox: 2,
+    packing: "02 Can/Box",
+    loose: false,
+    packingCostPaise: 5400,
+    weightGrams: 35000,
+    weightBasis: "box",
+    externalIds: [234],
+    duplicated: false,
+  },
+  {
+    rawName: "M245 Thinner 1 Liter Jerry Can (32 Can/Box)",
+    name: "M245 Thinner 1 Liter Jerry Can (32 Can/Box)",
+    finishedGood: "M245 Thinner - 1 Liter",
+    brand: "M245 Thinner",
+    formulation: "M245",
+    millilitresPerCan: 1000,
+    cansPerBox: 32,
+    packing: "32 Can/Box",
+    loose: false,
+    packingCostPaise: 5000,
+    weightGrams: 25000,
+    weightBasis: "box",
+    externalIds: [235],
+    duplicated: false,
+  },
+  {
+    rawName: "PU Thinner M16 Plain Can - 10 Liter (Loose)",
+    name: "PU Thinner M16 Plain Can - 10 Liter (Loose)",
+    finishedGood: "PU Thinner M16 - 10 Liter",
+    brand: "PU Thinner M16",
+    formulation: "PU Thinner M16",
+    millilitresPerCan: 10000,
+    cansPerBox: 1,
+    packing: "Loose",
+    loose: true,
+    packingCostPaise: null,
+    weightGrams: 9000,
+    weightBasis: "can",
+    externalIds: [236],
+    duplicated: false,
+  },
 ];
 
-/** Point 8: packaging material, not something anybody can order. */
+/**
+ * Point 8: packaging material, not something anybody can order. The one row
+ * the document excluded — #152, the Empty Drum — is sold, and is a SKU now.
+ */
 export const EXCLUSIONS: SeedExclusion[] = [
-  { externalId: 152, name: "Empty Drum", reason: "Packaging material, not a sellable product" },
 ];
 
-/** Point 9: packing configuration but no sellable name. Held, not imported. */
+/**
+ * Point 9: packing configuration but no sellable name. Held, not imported.
+ * The document's two — #76 and #77 — have been named, and are SKUs now.
+ */
 export const EXCEPTIONS: SeedException[] = [
-  { externalId: 76, formulation: "Epoxy Thinner (FD)", millilitresPerCan: 1000, reason: "No sellable name in the source" },
-  { externalId: 77, formulation: "Epoxy Thinner (FD)", millilitresPerCan: 5000, reason: "No sellable name in the source" },
 ];
 
 /**

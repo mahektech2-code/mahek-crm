@@ -1,5 +1,6 @@
 "use server";
 
+import { assertLeadInScope } from "@/lib/services/lead-scope";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
@@ -7,8 +8,8 @@ import { z } from "zod";
 import { db } from "@/db";
 import { auditLog, customers } from "@/db/schema";
 import {
-  assertCustomerInScope,
   hatsFor,
+  levelInApp,
   requireCapability,
   type Role,
 } from "@/lib/access-control";
@@ -16,6 +17,14 @@ import type { AppId } from "@/lib/apps";
 import { requireUser } from "@/lib/auth";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
 import { writeTimelineEvent, MBOS_EVENT } from "@/lib/timeline";
+import { reviewVoidPatch } from "@/lib/lead-review-void";
+import { leadRow } from "@/lib/services/lead-service";
+import {
+  handBackAfterGstRefusal,
+  recordReviewVoid,
+  settleQualificationState,
+} from "@/lib/services/lead-qualification-flow-service";
+import { gstValidatorRefusal } from "@/lib/services/lead-verifier";
 
 /* ---------------------------------------------------------------------------
  * §11.6 — GST IS COLLECTED ONCE AND VALIDATED ONCE, BY TWO DIFFERENT PEOPLE.
@@ -114,7 +123,7 @@ export async function validateGstin(
 
     if (!valid && !note?.trim()) {
       return err(
-        "A refused GST number has to say what is wrong with it — the salesman has to go back and ask, and he cannot ask better without knowing what failed.",
+        "A refused GST number has to say what is wrong with it — the Salesman has to go back and ask, and cannot ask better without knowing what failed.",
         "validation",
         [{ field: "note", message: "What is wrong with it?" }],
       );
@@ -130,6 +139,8 @@ export async function validateGstin(
         ownerId: true,
         salesAmId: true,
         backOfficeAmId: true,
+        salesManagerId: true,
+        leadManagerId: true,
         gstin: true,
         gstVerified: true,
       },
@@ -138,48 +149,96 @@ export async function validateGstin(
 
     /* Seeing it at all is the ordinary scope question, asked before anything
        else so a refusal cannot be used to find out whether a row exists. */
-    await assertCustomerInScope(row);
+    await assertLeadInScope(customerId, row);
 
     if (!row.gstin?.trim()) {
       return err(
-        "There is no GST number on this lead yet. The salesman records it; this screen only says whether it checks out.",
+        "There is no GST number on this lead yet. Enter it first; this only says whether it checks out.",
         "validation",
       );
     }
 
-    /* The seat holder, or the capability. Asked in that order because the seat
-       is what the specification names and the capability is the fall-through
-       for a team with nobody sitting in it. */
-    const isSeatHolder = row.backOfficeAmId === user.id;
-    /* The hat that allowed it, recorded on the audit row exactly as every
-       other audited write here records one — with several hats per person,
-       "was he allowed to do this" is not answerable from the person alone. */
+    /*
+     * THE RESPONSIBLE SALES MANAGER VALIDATES, for a lead on the funnel.
+     *
+     * This used to be anybody holding `lead.gstValidate` (the Sales Dashboard,
+     * the CRM or the Accounts desk) or the back-office seat. Mahek's decision is
+     * that the Sales Manager the lead is under validates the number, as part of
+     * her review of the Qualification — so for a lead that is on the funnel the
+     * rule is `gstValidatorRefusal`: the seat holder, an administrator, or, where
+     * nobody holds the seat, a `lead.verify` holder; and never the lead's owner,
+     * who entered the number. `lead.gstValidate` and the back-office seat are
+     * not removed — they are simply no longer how a funnel lead's GST is
+     * validated, and an account that was never a lead keeps exactly the old rule
+     * below. Validations already on record are untouched.
+     */
+    const lead = await leadRow(customerId);
     let authorisedBy: Role | null = null;
     let authorisedIn: AppId | null = null;
-    if (!isSeatHolder) {
-      const ctx = await requireCapability("lead.gstValidate");
-      authorisedBy = ctx.authorisedBy;
-      authorisedIn = ctx.authorisedIn;
+    if (lead?.leadStage) {
+      const refusal = await gstValidatorRefusal(user, {
+        ownerId: row.ownerId,
+        salesManagerId: lead.salesManagerId,
+      });
+      if (refusal) return err(refusal, "not_permitted");
+      const level = await levelInApp(user, "crm");
+      if (level) {
+        authorisedBy = level;
+        authorisedIn = "crm";
+      } else {
+        const hats = await hatsFor(user);
+        authorisedBy = hats[0]?.role ?? null;
+        authorisedIn = hats[0]?.app ?? null;
+      }
     } else {
-      const hats = await hatsFor(user);
-      authorisedBy = hats[0]?.role ?? null;
-      authorisedIn = hats[0]?.app ?? null;
+      /* The seat holder, or the capability. Asked in that order because the seat
+         is what the specification names and the capability is the fall-through
+         for a team with nobody sitting in it. */
+      const isSeatHolder = row.backOfficeAmId === user.id;
+      if (!isSeatHolder) {
+        const ctx = await requireCapability("lead.gstValidate");
+        authorisedBy = ctx.authorisedBy;
+        authorisedIn = ctx.authorisedIn;
+      } else {
+        const hats = await hatsFor(user);
+        authorisedBy = hats[0]?.role ?? null;
+        authorisedIn = hats[0]?.app ?? null;
+      }
     }
 
     /*
-     * THE COLLECTOR MAY NOT BE THE CHECKER, and this is the whole point.
+     * THE TELECALLER WHO ENTERED THE NUMBER MAY ALSO VALIDATE IT.
      *
-     * A lead's owner is the salesman who wrote the number down. Letting him
-     * validate it reproduces exactly the state this column was added to end,
-     * only with a timestamp and his name on it, which is worse: the record
-     * would then assert that somebody checked.
+     * This used to refuse the lead's owner ("a check somebody performs on their
+     * own work is not a check"), on the reasoning that the person who typed the
+     * number in must not be the person who certifies it. Mahek's answer is that
+     * in this workflow the Telecaller owns GST end to end — enters it and checks
+     * it — and the capability that carries it, `lead.gstValidate`, is unchanged
+     * and still asked above. What the record keeps is WHO did it and when
+     * (`gst_verified_by_id`, the timeline row and the audit row), so it still
+     * says which person asserted the number checks out.
+     *
+     * What makes that safe is the other half of the same discipline: a
+     * validation belongs to the number it was made against. Changing the GSTIN
+     * clears it (`gstinChangeClear`), so a validation cannot outlive the number
+     * it certified.
      */
-    if (row.ownerId === user.id || row.salesAmId === user.id) {
+    /* GST is a QUALIFICATION answer, so it is validated at Qualification — not
+       against a Prospect nobody has verified yet. A customer that was never a
+       lead has no such rung and is unaffected. */
+    if (lead?.leadStage && ["suspect", "new", "prospect", "contacted"].includes(lead.leadStage)) {
       return err(
-        "You recorded this number, so you cannot be the one who checks it. Ask the back office or accounts to validate it — a check somebody performs on their own work is not a check.",
-        "not_permitted",
+        "Waiting for the Sales Manager to verify this Prospect. GST is validated once Qualification opens.",
+        "rule_violation",
       );
     }
+
+    /* A validation that CHANGES the stored answer takes a manager's earlier
+       `verified` away when a Telecaller makes it (not when a manager validates it
+       himself); an identical re-validation changes nothing. */
+    const voided = lead
+      ? reviewVoidPatch(lead, { gstVerified: valid }, { reviewer: false })
+      : null;
 
     const now = new Date();
     await db.transaction(async (tx) => {
@@ -197,8 +256,18 @@ export async function validateGstin(
           gstVerifiedAt: now,
           gstVerifiedById: user.id,
           updatedAt: now,
+          ...(voided?.set ?? {}),
         })
         .where(eq(customers.id, customerId));
+      if (voided && lead) {
+        await recordReviewVoid(tx, {
+          lead,
+          voided,
+          actorId: user.id,
+          actorRole: authorisedBy,
+          actorApp: authorisedIn,
+        });
+      }
 
       await writeTimelineEvent(tx, {
         customerId,
@@ -228,13 +297,21 @@ export async function validateGstin(
       });
     });
 
-    revalidatePath(`/crm/leads/${customerId}`);
-    revalidatePath(`/sales/leads/${customerId}`);
+    if (voided) await settleQualificationState(customerId, user.id, { voided: true });
+    else await settleQualificationState(customerId, user.id);
+    /* A refused number goes straight back to the Salesman with the reason in it. */
+    if (!valid && lead?.leadStage) await handBackAfterGstRefusal(customerId, note?.trim() ?? "", user.id);
+    try {
+      revalidatePath(`/crm/leads/${customerId}`);
+      revalidatePath(`/sales/leads/${customerId}`);
+    } catch {
+      /* no request context - a job or a test, where nothing is cached */
+    }
     return ok(
       null,
       valid
         ? "Validated. Qualification can go ahead."
-        : "Refused, and the salesman has been told why.",
+        : "Refused — the Salesman has been told what to correct.",
     );
   } catch (e) {
     return fromThrown(e);

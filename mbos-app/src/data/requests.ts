@@ -1,6 +1,6 @@
 import { all, newId, one, run } from '../db';
 import { insertAndQueue, stamp, updateAndQueue } from './write';
-import { leaveDays, overlaps, balanceAfter } from '../engines/leave';
+import { leaveDays, overlaps, balanceAfter, type LeaveCalendar } from '../engines/leave';
 import { isoDate } from '../lib/format';
 import { wireComplaintCategory } from '../lib/wire';
 import type { ClaimedLine } from './travel';
@@ -18,7 +18,8 @@ import type { ExpenseKind } from '../engines/generated/expense-policy';
 
 export type ApprovalType =
   | 'order_over_credit' | 'order_over_threshold' | 'expense_claim'
-  | 'leave' | 'tour' | 'sample' | 'attendance_regularisation' | 'out_of_territory';
+  | 'leave' | 'tour' | 'sample' | 'attendance_regularisation' | 'out_of_territory'
+  | 'territory';
 
 /**
  * Ask somebody in the office to say yes.
@@ -75,6 +76,14 @@ export type Expense = {
   kind: string | null;
   billPhotoId: string | null; remarks: string | null; state: string;
   approvedAmountPaise: number | null; rejectionReason: string | null; syncState: string;
+  /**
+   * 1 where the OFFICE wrote this line from his punches and trips — the meal
+   * and kilometre allowances. He never logged it, so it is never offered back
+   * to him to fix, and it never waits for anybody: it is his by the work log.
+   */
+  allowance: number;
+  /** What his manager said on the decision — a part approval has a reason too. */
+  decisionNote: string | null;
 };
 
 /**
@@ -103,20 +112,41 @@ export async function listExpenses(limit?: number): Promise<Expense[]> {
 }
 
 /**
- * The two figures a capped list cannot answer for itself.
+ * The figures a capped list cannot answer for itself.
  *
  * "₹4,200 waiting on your manager" is a statement about the whole book, and
- * reading it off the rows the screen happens to be holding would drop a claim
- * that has been pending for two months — the one most worth chasing — out of
- * the total the moment it fell past the window.
+ * reading it off the rows the screen happens to be holding would drop an
+ * expense that has been waiting for two months — the one most worth chasing —
+ * out of the total the moment it fell past the window.
+ *
+ * `month` is `YYYY-MM`, the screen's own month, so the clock is read once by
+ * the caller rather than here.
  */
-export async function expenseTotals(): Promise<{ count: number; pendingPaise: number }> {
-  const row = await one<{ n: number; pending: number }>(
+export async function expenseTotals(month: string): Promise<{
+  count: number;
+  pendingCount: number;
+  pendingPaise: number;
+  approvedMonthPaise: number;
+  allowanceMonthPaise: number;
+}> {
+  const row = await one<{ n: number; pn: number; pending: number; approved: number; allowances: number }>(
     `SELECT count(*) AS n,
-            COALESCE(SUM(CASE WHEN state = 'Pending' THEN amountPaise ELSE 0 END), 0) AS pending
+            COALESCE(SUM(CASE WHEN allowance = 0 AND state = 'Pending' THEN 1 ELSE 0 END), 0) AS pn,
+            COALESCE(SUM(CASE WHEN allowance = 0 AND state = 'Pending' THEN amountPaise ELSE 0 END), 0) AS pending,
+            COALESCE(SUM(CASE WHEN allowance = 0 AND state = 'Approved' AND substr(spentOn, 1, 7) = ?
+                              THEN COALESCE(approvedAmountPaise, amountPaise) ELSE 0 END), 0) AS approved,
+            COALESCE(SUM(CASE WHEN allowance = 1 AND substr(spentOn, 1, 7) = ?
+                              THEN amountPaise ELSE 0 END), 0) AS allowances
        FROM expenses`,
+    [month, month],
   );
-  return { count: row?.n ?? 0, pendingPaise: row?.pending ?? 0 };
+  return {
+    count: row?.n ?? 0,
+    pendingCount: row?.pn ?? 0,
+    pendingPaise: row?.pending ?? 0,
+    approvedMonthPaise: row?.approved ?? 0,
+    allowanceMonthPaise: row?.allowances ?? 0,
+  };
 }
 
 /**
@@ -145,8 +175,11 @@ export async function expensesOn(spentOn: string): Promise<ClaimedLine[]> {
     amountPaise: number;
     billPhotoId: string | null;
   }>(
+    /* What HE logged. An allowance is not a claim against a cap: the meal
+       allowance is `food` too, and counting it would tell him his food bills
+       had no room left on a day the policy pays both. */
     `SELECT id, kind, category, amountPaise, billPhotoId FROM expenses
-      WHERE spentOn = ? AND state <> 'Rejected'`,
+      WHERE spentOn = ? AND state <> 'Rejected' AND allowance = 0`,
     [spentOn],
   );
   return rows.map((r) => ({
@@ -188,6 +221,11 @@ export async function claimExpense(args: {
   kind?: string;
   amountPaise: number;
   billPhotoId: string | null;
+  /**
+   * Every file behind the claim, the bill first. `billPhotoId` is kept as the
+   * first of them for the local row and for an office that reads one column.
+   */
+  attachmentIds?: string[];
   remarks: string;
   /** Who it was paid to, and the bill number. What a duplicate is caught on. */
   vendorName?: string | null;
@@ -234,13 +272,20 @@ export async function claimExpense(args: {
       vendorName: args.vendorName ?? undefined,
       billNumber: args.billNumber ?? undefined,
       exceptionReason: args.exceptionReason ?? undefined,
+      attachmentIds: args.attachmentIds?.length ? args.attachmentIds : undefined,
     },
     /* The day has to reach the office first, or the line arrives naming a day
        that is not there yet. PROTOCOL.md §3. */
     dependsOn: [expenseDayId],
   });
 
-  if (args.billPhotoId) await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [id, args.billPhotoId]);
+  /* Every file, not only the first: each was queued as `pending` when it was
+     picked, and one left behind uploads parented to nothing. The server binds
+     them too, for the ones that went up before this claim existed. */
+  const files = [...new Set([...(args.billPhotoId ? [args.billPhotoId] : []), ...(args.attachmentIds ?? [])])];
+  for (const mediaId of files) {
+    await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [id, mediaId]);
+  }
   await raiseApproval({
     type: 'expense_claim',
     subjectType: 'expense',
@@ -257,14 +302,50 @@ export async function claimExpense(args: {
 export type LeaveRequest = {
   id: string; kind: string; fromDate: string; toDate: string; halfDay: string | null;
   days: number; reason: string; state: string; lossOfPay: number; syncState: string;
+  clientCreatedAt: number;
+  /** Who decided it, when, and what they said — off the approval, once there is one. */
+  approverName: string | null; decidedAt: number | null; decisionNote: string | null;
 };
 
+const DECIDED = `approvals a WHERE a.subjectType = 'leave' AND a.subjectId = l.id AND a.state <> 'pending' ORDER BY a.decidedAt DESC`;
+
+/** His requests, newest first, each with the decision on it where one has been made. */
 export async function listLeave(): Promise<LeaveRequest[]> {
-  return all<LeaveRequest>('SELECT * FROM leave_requests ORDER BY fromDate DESC');
+  return all<LeaveRequest>(
+    /* Subqueries rather than a join: a request can carry more than one
+       approval row, and a join would list it once per row. */
+    `SELECT l.*,
+            (SELECT a.approverName FROM ${DECIDED} LIMIT 1) AS approverName,
+            (SELECT a.decidedAt FROM ${DECIDED} LIMIT 1) AS decidedAt,
+            (SELECT a.decisionNote FROM ${DECIDED} LIMIT 1) AS decisionNote
+       FROM leave_requests l
+      ORDER BY l.clientCreatedAt DESC`,
+  );
 }
 
 export async function leaveBalances() {
   return all<{ kind: string; entitled: number; used: number; available: number }>('SELECT * FROM leave_balances');
+}
+
+/**
+ * THE OFFICE'S WORKING WEEK AND ITS HOLIDAYS, for counting leave the way the
+ * office debits it.
+ *
+ * HIS holidays only — the rows the office marks `universal`, which since
+ * holidays carry a level means "this one reaches you": company-wide, his
+ * state, district, city or area, or given to him by name. It is the reading
+ * `leaveCalendarFor` takes on the server, so the count on the form is the
+ * count the office debits. `workingDay.workingDays` rides down on the pull;
+ * Monday to Saturday is the company default if it has not arrived yet.
+ */
+export async function leaveCalendar(): Promise<LeaveCalendar> {
+  const { getConfig } = await import('./config');
+  const workingDays = await getConfig<number[]>('workingDay.workingDays', [1, 2, 3, 4, 5, 6]);
+  const rows = await all<{ onDate: string }>('SELECT onDate FROM holidays WHERE universal = 1');
+  return {
+    workingDays: Array.isArray(workingDays) && workingDays.length ? workingDays : [1, 2, 3, 4, 5, 6],
+    holidays: new Set(rows.map((r) => r.onDate)),
+  };
 }
 
 /**
@@ -294,7 +375,11 @@ export async function applyForLeave(args: {
     half: args.half ? (args.half === 'Morning' ? ('first_half' as const) : ('second_half' as const)) : null,
   };
 
-  const { days } = leaveDays(span);
+  const counted = leaveDays(span, await leaveCalendar());
+  /* NOTHING TO TAKE is refused here, in the office's own words, rather than
+     queued for the office to refuse an hour later. */
+  if (counted.days <= 0) return { ok: false, message: `${counted.sentence} Nothing was saved.` };
+  const { days } = counted;
 
   /* Pending counts as well as approved — two requests for the same week sit in
      the same inbox and get approved separately by somebody reading them one at
@@ -370,7 +455,7 @@ export async function requestTour(args: {
   notes?: string;
 }): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
   if (args.endDate < args.startDate) {
-    return { ok: false, message: 'That tour ends before it starts.' };
+    return { ok: false, message: 'The end date is before the start date.' };
   }
 
   const base = await stamp('tour');
@@ -501,6 +586,8 @@ export async function complaintsFor(customerId: string): Promise<Complaint[]> {
 
 export type Sample = {
   id: string; customerId: string; productName: string | null; state: string;
+  /** The SKU code, joined off the catalogue on the phone. */
+  sku?: string | null;
   requestedAt: number; followUpDate: string | null; trialOutcome: string | null; syncState: string;
   /* The three assertions, in the order they happen. See `SampleProgress`. */
   dispatchedAt: number | null;
@@ -532,13 +619,13 @@ export type Sample = {
  */
 export async function customerSamples(customerId: string): Promise<Sample[]> {
   return all<Sample>(
-    'SELECT * FROM samples WHERE customerId = ? ORDER BY requestedAt DESC, id DESC',
+    'SELECT s.*, p.sku AS sku FROM samples s LEFT JOIN products p ON p.id = s.productId WHERE s.customerId = ? ORDER BY s.requestedAt DESC, s.id DESC',
     [customerId],
   );
 }
 
 export async function listSamples(): Promise<Sample[]> {
-  return all<Sample>('SELECT * FROM samples ORDER BY requestedAt DESC');
+  return all<Sample>('SELECT s.*, p.sku AS sku FROM samples s LEFT JOIN products p ON p.id = s.productId ORDER BY s.requestedAt DESC');
 }
 
 /**

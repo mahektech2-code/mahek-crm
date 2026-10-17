@@ -84,6 +84,31 @@ jobs:
         working-directory: mbos-app
         run: npm ci
 
+      # PUSH NEEDS FIREBASE ON ANDROID, and nothing gave it any. Without
+      # google-services.json in the build, `getExpoPushTokenAsync` fails on
+      # every handset, no phone holds a token, and every notification the office
+      # sends — an order declined, a task escalated, the punch-out reminder —
+      # reaches the bell and never the lock screen. The file comes from the
+      # Firebase project (Project settings → Your apps → Android, package
+      # in.mahek.mbos) and is stored as a repository secret, then named in
+      # app.json for this build only. Missing, the build still succeeds and
+      # says plainly that push will not work: refusing would stop every release
+      # until somebody with the Google account has done the setup.
+      - name: Give the build Firebase, so push can get a token
+        working-directory: mbos-app
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.MBOS_GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then
+            echo "::warning::MBOS_GOOGLE_SERVICES_JSON is not set. This APK cannot receive push notifications — notifications still land on the in-app bell. See DEPLOY.md, 'Push notifications'."
+            exit 0
+          fi
+          printf '%s' "$GOOGLE_SERVICES_JSON" > google-services.json
+          node -e "JSON.parse(require('fs').readFileSync('google-services.json','utf8'))" \
+            || { echo "::error::MBOS_GOOGLE_SERVICES_JSON is not valid JSON."; exit 1; }
+          node -e "const f='app.json',fs=require('fs'),j=JSON.parse(fs.readFileSync(f,'utf8'));j.expo.android.googleServicesFile='./google-services.json';fs.writeFileSync(f,JSON.stringify(j,null,2)+'\n')"
+          echo "Firebase configured for this build."
+
       # `android/` is gitignored and regenerated every time. The signing plugin
       # runs as part of this and re-applies the release signing config to the
       # freshly generated build.gradle — see plugins/withReleaseSigning.js.
@@ -142,6 +167,21 @@ jobs:
           EXPO_PUBLIC_API_BASE: ${{ inputs.api_base }}
         run: ./gradlew assembleRelease --no-daemon
 
+      # TWO APKs, ONE PER PROCESSOR (plugins/withLeanAndroid.js). The 64-bit
+      # one keeps the name every link already uses; the 32-bit one is for the
+      # cheap "Android Go" phones that told salesmen "App not installed".
+      # Copied to fixed names here so every later step names a file, not a
+      # Gradle output path.
+      - name: Name the two APKs
+        working-directory: mbos-app
+        run: |
+          OUT=android/app/build/outputs/apk/release
+          ls -l "$OUT"
+          mkdir -p dist
+          cp "$OUT/app-arm64-v8a-release.apk" dist/mbos.apk
+          cp "$OUT/app-armeabi-v7a-release.apk" dist/mbos-32bit.apk
+          ls -lh dist
+
       # Proof the signature is the committed key and not a debug fallback. A
       # wrong signature builds and installs perfectly on a clean phone; it only
       # fails on the salesman who already has the app, which is the worst place
@@ -157,7 +197,7 @@ jobs:
           STORE_PASSWORD: ${{ secrets.MBOS_KEYSTORE_STORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.MBOS_KEYSTORE_KEY_ALIAS }}
         run: |
-          APK=android/app/build/outputs/apk/release/app-release.apk
+          for APK in dist/mbos.apk dist/mbos-32bit.apk; do
           test -f "$APK" || { echo "::error::No APK at $APK"; exit 1; }
 
           APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)
@@ -193,8 +233,9 @@ jobs:
             echo "::error::This APK is NOT signed with the committed release key. Android would treat it as a different app: every salesman would have to uninstall — losing anything unsynced — before they could update. Do not publish it."
             exit 1
           fi
-          echo "Signature matches the committed release key."
+          echo "$APK: signature matches the committed release key."
           ls -lh "$APK"
+          done
 
       - name: Name it
         id: name
@@ -203,13 +244,16 @@ jobs:
           VERSION=$(node -p "require('./app.json').expo.version")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "file=mbos-$VERSION-${GITHUB_SHA::7}.apk" >> "$GITHUB_OUTPUT"
+          echo "file32=mbos-$VERSION-${GITHUB_SHA::7}-32bit.apk" >> "$GITHUB_OUTPUT"
 
       # Always attached to the run, published or not — so a build can be
       # inspected and installed by hand before anybody decides to publish it.
       - uses: actions/upload-artifact@v4
         with:
           name: mbos-apk
-          path: mbos-app/android/app/build/outputs/apk/release/app-release.apk
+          path: |
+            mbos-app/dist/mbos.apk
+            mbos-app/dist/mbos-32bit.apk
           retention-days: 30
 
       # R2, where the backups already go. NOT the container image: it is 89 MB
@@ -231,12 +275,15 @@ jobs:
             exit 1
           fi
           curl -fsSL https://rclone.org/install.sh | sudo bash
-          APK=mbos-app/android/app/build/outputs/apk/release/app-release.apk
+          APK=mbos-app/dist/mbos.apk
+          APK32=mbos-app/dist/mbos-32bit.apk
           # Both names: the versioned one is the record, `mbos.apk` is the
-          # stable link people are given and bookmark.
+          # stable link people are given and bookmark. The same for 32-bit.
           rclone copyto "$APK" "R2:${BUCKET}/${{ steps.name.outputs.file }}" --s3-no-check-bucket
           rclone copyto "$APK" "R2:${BUCKET}/mbos.apk" --s3-no-check-bucket
-          echo "Published ${{ steps.name.outputs.file }} and mbos.apk"
+          rclone copyto "$APK32" "R2:${BUCKET}/${{ steps.name.outputs.file32 }}" --s3-no-check-bucket
+          rclone copyto "$APK32" "R2:${BUCKET}/mbos-32bit.apk" --s3-no-check-bucket
+          echo "Published ${{ steps.name.outputs.file }}, ${{ steps.name.outputs.file32 }}, mbos.apk and mbos-32bit.apk"
 
       # R2 IS THE RECORD; THE DROPLET IS WHAT SERVES.
       #
@@ -280,7 +327,8 @@ jobs:
           mkdir -p ~/.ssh
           echo "${KEY}" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
           echo "${HOSTS}" > ~/.ssh/known_hosts
-          APK=mbos-app/android/app/build/outputs/apk/release/app-release.apk
+          APK=mbos-app/dist/mbos.apk
+          APK32=mbos-app/dist/mbos-32bit.apk
           # Nothing provisions this directory — not bootstrap.sh, not the
           # deploy job. It exists on the live droplet only because somebody
           # made it by hand for the first release, and docker compose would
@@ -291,7 +339,10 @@ jobs:
           scp -o BatchMode=yes "$APK" "deploy@${HOST}:/opt/mahekone/downloads/.mbos.apk.incoming"
           ssh -o BatchMode=yes "deploy@${HOST}" \
             'mv /opt/mahekone/downloads/.mbos.apk.incoming /opt/mahekone/downloads/mbos.apk && ls -l /opt/mahekone/downloads/mbos.apk'
-          echo "Serving from the droplet at /downloads/mbos.apk"
+          scp -o BatchMode=yes "$APK32" "deploy@${HOST}:/opt/mahekone/downloads/.mbos-32bit.apk.incoming"
+          ssh -o BatchMode=yes "deploy@${HOST}" \
+            'mv /opt/mahekone/downloads/.mbos-32bit.apk.incoming /opt/mahekone/downloads/mbos-32bit.apk && ls -l /opt/mahekone/downloads/mbos-32bit.apk'
+          echo "Serving from the droplet at /downloads/mbos.apk and /downloads/mbos-32bit.apk"
 
           # THE RELEASE STATES ITS OWN VERSION, beside the file it describes.
           #
@@ -306,7 +357,8 @@ jobs:
           # cannot describe a build that was never made.
           VERSION=$(node -p "require('./mbos-app/app.json').expo.version")
           CODE=$(node -p "require('./mbos-app/app.json').expo.android.versionCode")
-          printf '{"version":"%s","versionCode":%s,"url":"https://one.mahekindia.com/downloads/mbos.apk"}\n' \
+          # `url32` is where a 32-bit-only phone is sent (engines/app-update.ts).
+          printf '{"version":"%s","versionCode":%s,"url":"https://one.mahekindia.com/downloads/mbos.apk","url32":"https://one.mahekindia.com/downloads/mbos-32bit.apk"}\n' \
             "$VERSION" "$CODE" > /tmp/mbos.json
           # Same atomic move as the APK: a handset reading a half-written
           # manifest would get a parse error, which reads as "no update" and
@@ -322,14 +374,15 @@ jobs:
       - name: Check the live download is this build
         if: ${{ inputs.publish }}
         run: |
-          APK=mbos-app/android/app/build/outputs/apk/release/app-release.apk
-          BUILT=$(sha256sum "$APK" | cut -d' ' -f1)
-          LIVE=$(curl -fsSL "${{ inputs.api_base }}/downloads/mbos.apk" | sha256sum | cut -d' ' -f1)
-          if [ "$BUILT" != "$LIVE" ]; then
-            echo "::error::${{ inputs.api_base }}/downloads/mbos.apk is NOT this build. Built ${BUILT}, serving ${LIVE}."
-            exit 1
-          fi
-          echo "Live download matches this build (${BUILT})."
+          for NAME in mbos.apk mbos-32bit.apk; do
+            BUILT=$(sha256sum "mbos-app/dist/$NAME" | cut -d' ' -f1)
+            LIVE=$(curl -fsSL "${{ inputs.api_base }}/downloads/$NAME" | sha256sum | cut -d' ' -f1)
+            if [ "$BUILT" != "$LIVE" ]; then
+              echo "::error::${{ inputs.api_base }}/downloads/$NAME is NOT this build. Built ${BUILT}, serving ${LIVE}."
+              exit 1
+            fi
+            echo "Live $NAME matches this build (${BUILT})."
+          done
 
       - name: Say what happened
         run: |
@@ -339,7 +392,7 @@ jobs:
             echo "- Built against \`${{ inputs.api_base }}\` — baked in, not changeable afterwards."
             echo "- Signed with the committed release key, so this updates in place over an existing install."
             if [ "${{ inputs.publish }}" = "true" ]; then
-              echo "- Archived in R2 as \`${{ steps.name.outputs.file }}\`, and serving at \`${{ inputs.api_base }}/downloads/mbos.apk\` — verified byte-for-byte against this build."
+              echo "- Archived in R2 as \`${{ steps.name.outputs.file }}\` and \`${{ steps.name.outputs.file32 }}\`, and serving at \`${{ inputs.api_base }}/downloads/mbos.apk\` (64-bit) and \`/downloads/mbos-32bit.apk\` (32-bit) — verified byte-for-byte against this build."
             else
               echo "- **Not published.** Attached to this run only — download it from the Artifacts section above."
             fi

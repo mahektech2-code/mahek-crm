@@ -1,12 +1,15 @@
+import { canValidateGstById, canVerifyLeadById, qualificationCollectorRefusalById } from "@/lib/services/lead-verifier";
 import { type LeadWorkspace } from "@/lib/lead-workspace";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
-import { checklistFor, gateTo } from "@/lib/engines/lead-gates";
+import { checklistFor, gateTo, qualificationReadyForReview } from "@/lib/engines/lead-gates";
 import { nextStage } from "@/lib/engines/lead-ladder";
 import { canLead, gateInputFor, leadRecord } from "@/lib/services/lead-console-service";
 import { distributorProfileFor } from "@/lib/services/lead-record-service";
+import { distributorOptions } from "@/lib/services/distributor-service";
+import { qualificationAccess } from "@/lib/lead-qualification-access";
 import { QualifyScreen, type QualifyValues } from "@/components/leads/record/qualify/qualify-screen";
 
 
@@ -74,9 +77,22 @@ export async function Body({
     competitor: record.competitor,
     creditDaysWanted: record.creditDaysWanted,
     decisionMaker: record.decisionMaker,
+    buyer: record.buyer,
     application: record.application,
     ...(record.qualification ?? {}),
   };
+
+  /* WHETHER IT CAN BE WRITTEN AT ALL is the rung's answer, in the same sentence
+     the actions refuse with — a Prospect nobody has verified yet has nothing to
+     qualify, and the screen says so rather than letting the Telecaller type into
+     boxes the server will then turn down. */
+  const access = qualificationAccess(record.stage);
+
+  /* GST: the capability OR the named back-office seat. There is no self-check any
+     more — the Telecaller who entered the number validates it. */
+  const canValidateGst = await canValidateGstById(user, id);
+
+  const isThirdParty = record.salesType === "third_party";
 
   const detail =
     [record.companyName, record.city].filter(Boolean).join(" · ") || record.mobile || "";
@@ -99,6 +115,31 @@ export async function Body({
       profile={profile}
       requiredProductName={record.requiredProductName}
       canWork={await canLead(user, "lead.work")}
+      access={access}
+      complete={qualificationReadyForReview(gateInputFor(record, config["leads.figuresFreshDays"]))}
+      collectorBarred={await qualificationCollectorRefusalById(user, id)}
+      decisionMaker={record.decisionMaker}
+      gst={{
+        hasNumber: Boolean(record.gstin?.trim()),
+        verified: record.gstVerified,
+        at: record.gstVerifiedAt,
+        byName: record.gstVerifiedByName,
+      }}
+      canValidateGst={canValidateGst}
+      figures={{
+        litres: record.monthlyLitres,
+        potentialPaise: record.potentialPaise,
+        productName: record.requiredProductName,
+        competitor: record.competitor,
+        confirmedAt: record.figuresConfirmedAt,
+        confirmedByName: record.figuresConfirmedByName,
+        stale: Boolean(gateInputFor(record, config["leads.figuresFreshDays"]).figuresStale),
+      }}
+      thirdParty={{
+        applies: isThirdParty,
+        distributors: record.distributorNames ? record.distributorNames.split(", ") : [],
+        options: isThirdParty ? await distributorOptions() : [],
+      }}
       /*
        * §5.3 — the manager's standing verdict, passed whole rather than as four
        * props. Drawn for everybody, because a salesman blocked by something he
@@ -117,7 +158,7 @@ export async function Body({
        * `reviewLeadQualification`: a server action is a URL and an undrawn
        * button is a fact about a component.
        */
-      canReview={await canLead(user, "lead.verify")}
+      canReview={await canVerifyLeadById(user, id)}
     />
   );
 }

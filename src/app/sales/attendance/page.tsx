@@ -52,13 +52,14 @@ export default async function Page({
   const now = await today();
   const day = /^\d{4}-\d{2}-\d{2}$/.test(params.day ?? "") ? params.day! : now;
 
-  const [rows, outstanding, retentionHours] = await Promise.all([
+  const [rows, outstanding, retentionHours, windowDays] = await Promise.all([
     attendanceForDay(day),
     /* What each person's day still has unanswered, so the roll-call can carry
        the work rather than making somebody open eleven people to find the two
        who need him. */
     unreviewedCounts(day),
     getSetting("mbos.attendance.selfieRetentionHours"),
+    getSetting("mbos.attendance.missedPunchOutWindowDays"),
   ]);
 
   /* The sort is read off the URL and the DAY is carried through it, because the
@@ -92,6 +93,8 @@ export default async function Page({
   const corrections = rows.filter((r) => r.regularisationRequested);
   const openDays = rows.filter((r) => r.checkInAt && !r.checkOutAt);
   const toCheck = rows.filter((r) => (outstanding.get(r.salesmanId) ?? 0) > 0);
+  const missedTotal = rows.reduce((n, r) => n + r.missedPunchOuts, 0);
+  const punchedTotal = rows.reduce((n, r) => n + r.punchedDays, 0);
 
   return (
     <div className="p-6">
@@ -144,6 +147,16 @@ export default async function Page({
             sub: "no punch-out yet",
           },
           {
+            /* The habit behind "closed for them", across the team. One day
+               closed by the sweep is a man who forgot; most of his days is a
+               man who does not know the button is there, and that is a
+               conversation rather than a correction. */
+            label: "Missed punch-outs",
+            value: punchedTotal ? `${missedTotal} of ${punchedTotal}` : "—",
+            sub: `days, last ${windowDays}`,
+            tone: punchedTotal && missedTotal * 2 >= punchedTotal ? "warn" : undefined,
+          },
+          {
             label: "Corrections asked for",
             value: String(corrections.length),
             tone: corrections.length ? "warn" : undefined,
@@ -166,12 +179,13 @@ export default async function Page({
         />
       ) : (
         <Table
-          minWidth={1530}
+          minWidth={1660}
           head={
             <>
               {head("name", "Salesman", 200)}
               {head("in", "In", 130)}
               {head("out", "Out", 130)}
+              {head("missed", `Missed, ${windowDays}d`, 130, "right")}
               {head("worked", "Worked", 130)}
               {head("visits", "Visits", 100, "right")}
               {head("verdict", "Verdict", 150)}
@@ -221,6 +235,18 @@ export default async function Page({
                   </>
                 ) : r.checkInAt ? (
                   <span className="text-muted">Still open</span>
+                ) : (
+                  <span className="text-muted">—</span>
+                )}
+              </Cell>
+              <Cell align="right">
+                {r.punchedDays ? (
+                  <span
+                    className={r.missedPunchOuts * 2 >= r.punchedDays ? "text-warn-ink" : undefined}
+                    title={`Of the ${plural(r.punchedDays, "day")} ${r.salesmanName} punched in over the last ${windowDays} days, ${r.missedPunchOuts} ${r.missedPunchOuts === 1 ? "was" : "were"} never punched out of.`}
+                  >
+                    {r.missedPunchOuts} of {r.punchedDays}
+                  </span>
                 ) : (
                   <span className="text-muted">—</span>
                 )}
@@ -373,6 +399,8 @@ const COLUMNS: SortColumns<{
   workedSeconds: number | null;
   visits: number;
   status: string;
+  missedPunchOuts: number;
+  punchedDays: number;
 }> = {
   name: (r) => r.salesmanName,
   in: (r) => (r.checkInAt ? new Date(r.checkInAt).getTime() : null),
@@ -380,4 +408,8 @@ const COLUMNS: SortColumns<{
   worked: (r) => r.workedSeconds,
   visits: (r) => r.visits,
   verdict: (r) => r.status,
+  /* By the SHARE, not the count: three of four days missed is a worse habit
+     than four of twenty, and a manager sorting this is looking for habits.
+     Nobody punched in over the window sorts last. */
+  missed: (r) => (r.punchedDays ? r.missedPunchOuts / r.punchedDays : null),
 };

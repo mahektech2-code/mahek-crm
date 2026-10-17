@@ -62,6 +62,14 @@ export function AppFrame({
   fade = true,
   /** Escape hatch for a screen that manages its own scrolling. */
   scroll = true,
+  /**
+   * `floor={false}` drops the desktop floor, for the one app that is used on a
+   * tablet at the godown gate as much as at a desk: the ERP. Its screens are
+   * built to reflow down to phone width (its design carries a narrow layout
+   * with a drawer for navigation), so a sideways scroll would be the wrong
+   * answer there. Every other app keeps the floor.
+   */
+  floor = true,
 }: {
   header: React.ReactNode;
   /** Omitted by the apps whose navigation is in the header. */
@@ -70,15 +78,22 @@ export function AppFrame({
   bleed?: boolean;
   fade?: boolean;
   scroll?: boolean;
+  floor?: boolean;
 }) {
   return (
-    <div className="flex h-screen min-w-shell-floor flex-col overflow-hidden bg-canvas">
-      {header}
-      <div className="flex min-h-0 flex-1">
-        {sidebar}
+    <div
+      className={cx(
+        "flex h-screen flex-col overflow-hidden bg-canvas print:block print:h-auto print:min-w-0 print:overflow-visible print:bg-white",
+        floor && "min-w-shell-floor",
+      )}
+    >
+      {/* Off the paper: an exported PDF is the screen, not the app around it. */}
+      <div className="contents print:hidden">{header}</div>
+      <div className="flex min-h-0 flex-1 print:block">
+        <div className="contents print:hidden">{sidebar}</div>
         <main
           className={cx(
-            "relative min-w-0 flex-1",
+            "relative min-w-0 flex-1 print:block",
             scroll && "overflow-y-auto",
             fade && "animate-fade-in",
           )}
@@ -86,7 +101,7 @@ export function AppFrame({
           {bleed ? (
             children
           ) : (
-            <div className="mx-auto w-full max-w-measure">{children}</div>
+            <div className="mx-auto w-full max-w-measure print:max-w-none">{children}</div>
           )}
         </main>
       </div>

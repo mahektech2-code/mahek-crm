@@ -125,6 +125,13 @@ const MAX_BATCH = 500;
  */
 const EDGE_GRACE_MS = 2 * 60_000;
 
+/** When the stretch still open began: the last session's `inAt`, else the day's check-in. */
+function openStretchStart(sessions: unknown, checkInAt: number): number {
+  if (!Array.isArray(sessions)) return checkInAt;
+  const last = sessions[sessions.length - 1] as { inAt?: unknown; outAt?: unknown } | undefined;
+  return last && last.outAt == null && typeof last.inAt === "number" ? last.inAt : checkInAt;
+}
+
 /**
  * The id a fix would have if the handset had minted one.
  *
@@ -232,7 +239,12 @@ export async function POST(request: Request) {
   const newest = new Date(Math.max(...times) + EDGE_GRACE_MS);
 
   const sessions = await db
-    .select({ checkInAt: mbosAttendanceDays.checkInAt, checkOutAt: mbosAttendanceDays.checkOutAt })
+    .select({
+      day: mbosAttendanceDays.day,
+      checkInAt: mbosAttendanceDays.checkInAt,
+      checkOutAt: mbosAttendanceDays.checkOutAt,
+      sessions: mbosAttendanceDays.sessions,
+    })
     .from(mbosAttendanceDays)
     .where(
       and(
@@ -250,10 +262,26 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, stored: 0, tracking: "no-session-yet" });
   }
 
+  /*
+   * AN OPEN DAY ENDS AT THE TRACKER'S OWN CEILING, not at midnight and not
+   * never.
+   *
+   * Never was wrong: a test check-in nobody closed became a session with no
+   * end, and a month later it authorised a salesman's whole night. Midnight
+   * was wrong the other way: a salesman who punches in at ten at night to
+   * travel between cities works through it, and every fix after twelve was
+   * refused while he was plainly on duty. Nothing closes a day automatically
+   * any more — only a punch-out does — so the end of an open day is the same
+   * ceiling the handset's recorder keeps, `mbos.location.serviceMaxDayHours`,
+   * counted from the start of the stretch still open. One number on both
+   * ends, so the phone never records what the office would refuse.
+   */
+  const maxDayMs = Math.max(1, config["mbos.location.serviceMaxDayHours"]) * 3_600_000;
   const windows = sessions.map((s) => ({
     from: s.checkInAt!.getTime() - EDGE_GRACE_MS,
-    /* An open day runs to now, which is to say it has no end yet. */
-    to: s.checkOutAt ? s.checkOutAt.getTime() + EDGE_GRACE_MS : Number.POSITIVE_INFINITY,
+    to: s.checkOutAt
+      ? s.checkOutAt.getTime() + EDGE_GRACE_MS
+      : openStretchStart(s.sessions, s.checkInAt!.getTime()) + maxDayMs,
   }));
 
   const inside = values.filter((v) => {

@@ -45,11 +45,56 @@ import { TERMINAL_STAGES } from "./engines/lead-ladder";
 export const STILL_WORKING: SQL = sql`
   c.lead_stage is not null
     and c.lead_archived = false
+    and c.deleted_at is null
     and c.lead_stage::text not in (${sql.join(
       TERMINAL_STAGES.map((s) => sql`${s}`),
       sql`, `,
     )})
 `;
+
+/**
+ * A LEAD THAT HAS BECOME A CUSTOMER IS NO LONGER ON A LEADS LIST.
+ *
+ * Mahek's own rule, and a reversal: the lists used to show anything that had
+ * ever been a lead, on the reasoning that the won band is the one a manager
+ * most wants to see. The office's answer is that a converted shop is worked
+ * as a customer from then on, and a Leads list still carrying it — badge or
+ * no badge — is a list of work that is not lead work. The FUNNEL and the
+ * reports still count it, which is where "how were leads won" is asked; the
+ * Handovers view still lists it, because a handover exists only once a lead
+ * has converted.
+ *
+ * Converted is any of four facts, because there is more than one way to stop
+ * being a lead: the ledger calling the account a customer (`kind`, which an
+ * order flips — including the first-order conversions made before the rule
+ * moved to the second), a conversion stamped by an order (`lead_converted_at`),
+ * a ladder that ended on a winning rung (every terminal one except `lost`,
+ * from the engine rather than typed out), and a shop marked as one somebody
+ * else bills — a third-party shop is a customer, which is also why the
+ * handset's leads channel stopped sending them. The handset applies the same
+ * four in `releaseConvertedLeads`, so a phone and a desk agree.
+ *
+ * A FUNCTION OF THE ALIAS, because the calling desk reads `customers` bare.
+ * Parenthesised, because it is spliced after an `and`.
+ */
+export function notConverted(alias = "c"): SQL {
+  const t = sql.raw(alias);
+  return sql`(${t}.kind <> 'customer'
+    and ${t}.lead_converted_at is null
+    and not ${t}.third_party
+    and ${t}.lead_stage::text not in (${sql.join(
+      TERMINAL_STAGES.filter((s) => s !== "lost").map((s) => sql`${s}`),
+      sql`, `,
+    )}))`;
+}
+
+/**
+ * The same, for a list read through a VIEW: the one view that exists to show
+ * converted leads is Handovers, and it keeps them.
+ */
+export function convertedOff(view: string | undefined): SQL {
+  return view === "handover" ? sql`` : sql`and ${notConverted()}`;
+}
 
 /**
  * A park read back — the other half of "owed", and the reason neither window
@@ -100,5 +145,25 @@ export function overdueWindow(day: string): SQL {
   return sql`(
     c.lead_next_action_date < ${day}::date
     or ${parkComesBack(sql`< ${day}::date`)}
+  )`;
+}
+
+/**
+ * §24's exception, as a window: an active lead with nothing owed by anybody.
+ *
+ * Two shapes, one population, because "what is nobody working" means both. NO
+ * PLAN AT ALL — no action, no day or nobody named — and a plan whose day has
+ * gone with no answer written beside it. It is spelled here, beside the two
+ * windows it is the complement of, so the Lead Management list's `unworked`
+ * view and the screen that has always listed these (`leadsWithoutNextAction`)
+ * read ONE definition: a count on one and a list on the other that disagreed
+ * about it is the exact failure the views exist to rule out.
+ */
+export function unworkedWindow(day: string): SQL {
+  return sql`(
+    c.lead_next_action is null
+    or c.lead_next_action_date is null
+    or c.lead_next_action_owner_id is null
+    or (c.lead_next_action_date < ${day}::date and c.lead_next_action_outcome is null)
   )`;
 }

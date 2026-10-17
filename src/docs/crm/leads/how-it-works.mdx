@@ -1,0 +1,235 @@
+Lead Management answers one question for the business: **is this shop worth more of our time, and what has to be true before it gets it?** Every lead stands on one rung of a ladder, and it climbs only when the work behind the next rung has actually been done. This tab explains the ladders, the gates between the rungs, who may pass a shut gate, and why each rule is the shape it is.
+
+The screens are **shared** between the CRM (`/crm/leads`) and the Sales Dashboard (`/sales/leads`). They are one set of screens mounted twice, with the same rules on both. What differs is **whose leads you see**, explained in [Who sees which leads](#who-sees-which-leads).
+
+<Callout kind="live">
+Every value quoted on this page is the one your CRM is using right now. Amber means a manager has changed it from the shipped default.
+</Callout>
+
+## Three ways to sell, three ladders
+
+Mahek sells three ways, and they are not the same job. A **direct customer** is worked towards a first order we invoice. A **third-party customer** is worked towards an order a distributor invoices. A **distributor** is worked towards an appointment. So every lead carries a **sales type**, and the sales type picks the ladder.
+
+<Callout kind="why">
+One list of rungs for all three would put "Distributor agreement" on a paint shop's funnel and "Sample review" on a distributor's, and every screen would need its own idea of which rungs to hide. Three ladders means each lead only ever sees rungs that mean something for it.
+</Callout>
+
+<Flow caption="Direct customer — Mahek to the shop" chart={`
+flowchart TD
+  A["Suspect"] --> B["Prospect"]
+  B --> C["Qualification"]
+  C --> D["Sample / trial"]
+  D --> E["Sample received"]
+  E --> F["Sample review"]
+  F --> G["Negotiation"]
+  G --> H["1st order"]
+  H --> I["Delivery"]
+  I --> J["Payment"]
+  J --> K["2nd order<br/>(the account becomes a customer)"]
+  K --> L["Customer"]
+`} />
+
+<Flow caption="Third-party customer — the same climb, minus Sample received" chart={`
+flowchart TD
+  A["Suspect"] --> B["Prospect"]
+  B --> C["Qualification<br/>(must name the distributor who bills them)"]
+  C --> D["Sample / trial"]
+  D --> F["Sample review"]
+  F --> G["Negotiation"]
+  G --> H["1st order"]
+  H --> I["Delivery"]
+  I --> J["Payment"]
+  J --> K["2nd order<br/>(becomes a customer)"]
+  K --> L["Customer"]
+`} />
+
+The third-party ladder drops **Sample received** because the sample goes through the distributor: the date we can stand behind is the review, not the arrival.
+
+<Flow caption="Distributor — appointing one (no longer offered for new leads)" chart={`
+flowchart TD
+  A["Suspect"] --> B["Prospect"]
+  B --> C["Qualification"]
+  C --> D["Management review"]
+  D --> E["Commercial discussion"]
+  E --> F["Distributor approval<br/>(invoiced from here)"]
+  F --> G["Distributor agreement"]
+  G --> H["Initial stock order"]
+  H --> I["Active distributor"]
+`} />
+
+The distributor ladder has no sample rungs at all. What replaces the trial is two approvals — a sales manager may recommend a distributor and may not appoint one. See [Commercial and distributor appointments](/docs/crm/lead-commercial/how-it-works). New leads can no longer be raised on this ladder; leads already on it keep climbing.
+
+### Leads with no sales type climb the original six rungs
+
+<Flow caption="The legacy ladder — a lead with no sales type" chart={`
+flowchart LR
+  A["New"] --> B["Contacted"]
+  B --> C["Qualified"]
+  C --> D["Negotiation"]
+  D --> E["Won"]
+`} />
+
+<Rule title="Nothing backfills a sales type">
+A lead raised before the funnel existed has no sales type, and it carries on climbing the six rungs it was always on. Nobody guessed which of the three ladders each one "really" belonged to.
+</Rule>
+
+<Callout kind="why">
+The ladder decides which **gates** apply. A wrong guess would not just mislabel a record — it would block the person working it behind conditions that were never asked of that lead. Leaving the old book alone is the only reason the funnel could ship without moving a single row.
+</Callout>
+
+### Two states that are not rungs
+
+- **Lost** is reachable from every rung of every ladder, and always needs a coded reason.
+- **On hold** is a pause. It takes the place of the rung while the lead is parked, so the rung it was parked *from* is remembered in the stage history. Coming back is a move to a **named** rung, through that rung's gate as normal.
+
+<Callout kind="why" title="Why On hold is not Lost">
+Folding a stalled lead into Lost made every lead that was waiting for a plant shutdown or a budget quarter look dead, and the staleness sweep then archived real prospects. A parked lead is alive, so it keeps its place and says when it comes back.
+</Callout>
+
+## The four funnel bands
+
+Owner reports and the funnel screen do not count leads rung by rung. They count four **bands**, and every rung on every ladder maps onto one:
+
+| Band | Rungs that fall in it |
+|---|---|
+| **New** | New, Suspect |
+| **Contacted** | Contacted, Prospect |
+| **Qualified** | Qualified, Qualification, Sample / trial, Sample received, Sample review, Management review |
+| **Negotiation** | Negotiation, Commercial discussion, Distributor approval, Distributor agreement, 1st order, Delivery, Payment, 2nd order, Initial stock order |
+| *(no band)* | Won, Lost, Customer, Active distributor — they have left the funnel. On hold — it cannot be placed without reading its history |
+
+<Callout kind="why">
+When seventeen new rungs arrived, a funnel counting by rung would have dropped every lead on a new rung out of every report — a pipeline that silently shrinks as the team works it. The band map is why adding rungs moved no figure. A parked lead has no band because its band is genuinely unknown; screens count parked leads separately rather than guess.
+</Callout>
+
+## The gates: no lead moves because somebody pressed a button
+
+Every rung has **conditions to enter it**. A move is allowed when all of them are met; otherwise the screen lists exactly what is missing, written as instructions (*"How many litres a month do they use?"*, *"Your sales manager must check this customer first"*).
+
+<Callout kind="why">
+A refusal that does not say what is missing teaches somebody to press the button again rather than to do the work. And a checklist that can be completed without answering anything is a checklist people learn to complete — so where a condition has a real field (litres, product, competitor, GST), the gate reads the **value**, never a tick beside it.
+</Callout>
+
+The same rules run in three places: the handset draws the next rung disabled with the missing list underneath, the server refuses on the same rules before it writes, and the console shows a manager what a lead is stuck behind. They are one piece of code, so they cannot disagree.
+
+| To enter | What has to be true |
+|---|---|
+| **Prospect** | What kind of business; litres a month; the brand they use now; which of our products they need; who to ask for; a next action; and a **coded reason** it is worth pursuing |
+| **Qualification** | The sales manager's verification has been made |
+| **Sample / trial** | The eight qualification answers (GST validated by the sales manager, application, trial plan, who decides / orders / pays, price and credit, delivery, still willing to test, a dated next step); the figures confirmed recently; the sales manager's qualification review marked verified; for a third-party shop, the distributor who bills it |
+| **Sample received** | The sample has been sent |
+| **Sample review** | The shop has confirmed it arrived |
+| **Negotiation** | A sample was sent, feedback was written down, and the trial was approved |
+| **1st order** | An expected order date, and an order placed |
+| **Delivery** | The goods reached them |
+| **Payment** | Accounts confirmed the money in the bank |
+| **2nd order** / **Customer** | A second order |
+| **Management review** (distributor) | The distributor profile: GST, PAN, address, network, territory, warehouse, commitments and the rest |
+| **Commercial discussion** | The sales manager recommended them |
+| **Distributor approval** | Discount, credit limit and area agreed; management approved |
+| **Distributor agreement** | The signed agreement is on file |
+| **Initial stock order** | The stock order they promised has been placed |
+
+The intake and qualification rungs are detailed on [Intake and qualification](/docs/crm/lead-intake-and-qualification/how-it-works); the sample rungs on [Samples](/docs/crm/samples/how-it-works).
+
+<Rule title="A next action is owed on every upward move (§24)">
+On any lead with a sales type, every move up — except into a closing rung — needs **what happens next, on which day, and who will do it**. A date alone is how a lead sits for six weeks with everybody assuming somebody else is holding it. The rule is switched by <Setting k="leads.requireNextAction" />.
+
+Legacy leads (no sales type) are exempt: demanding a next action to move a four-year-old lead would freeze the book the rule exists to unstick.
+</Rule>
+
+<Rule title="Moves are one rung at a time, and downwards is a manager's">
+A lead moves up exactly one rung. Moving a lead **down** its ladder undoes recorded work, so it needs the override permission and a reason. A move to a rung that is not on the lead's own ladder is refused with *"… is not a rung on this lead's ladder. Change the sales type first if that is what you meant."*
+</Rule>
+
+## Passing a shut gate: the manager's override
+
+A manager may move a lead even though conditions are missing. They must pick a **reason** from a coded list, and the move is recorded as *overridden* together with **exactly which conditions were still missing**.
+
+<SettingsTable keys={["leads.allowManagerOverride", "leads.overrideReasons"]} />
+
+<Callout kind="why">
+A system that refuses everything is defeated in a week by people recording work after the event — and then the record says the process was followed when it was not, which is worse than an open gate. So the gate can be passed, but never silently: the [Oversight](/docs/crm/lead-oversight) screen lists every override with its reason and its missing list. A team that would rather be stuck can switch overrides off.
+</Callout>
+
+## Every move is a row, and rows are never edited
+
+Each stage change writes one row to the **stage history**: from, to, the ladder, whether it passed, was overridden or was reverted, the reason code, the note, the missing conditions, who did it and under which app and level.
+
+<Rule title="Append-only">
+A move recorded wrongly is corrected by a **further** move, never by editing the old one. The history records what somebody decided on a day; rewriting it destroys the question rather than answering it. The record's timeline and the customer's shared history are drawn from these rows.
+</Rule>
+
+A move also stamps the lead's *stage since* and *last activity* dates, writes any next action it carried, and — for **Lost** — clears the next action and cancels the open follow-up tasks chasing the lead (a closed lead owes nobody anything further).
+
+## Reasons are codes, never labels
+
+Why a Suspect became a Prospect, why the customer wants a trial, why a lead was lost, why it is on hold, why a manager overrode a gate — each is picked from a coded list in configuration:
+
+<SettingsTable keys={["leads.prospectReasons", "leads.sampleReasons", "leads.lostReasons", "leads.holdReasons", "leads.reopenReasons", "leads.overrideReasons"]} />
+
+<Callout kind="why">
+The lists are configuration so a manager can reword one without a deploy, and **codes** are stored so a reworded label never breaks an old row. It is also what makes "how many did we lose on credit terms this quarter" a question somebody can ask rather than a search through free text. Where the code is *Other*, words are required.
+</Callout>
+
+## Moving many leads at once
+
+The bulk bar on All Leads moves a selection to one rung — up to the same cap the screen offers for *Select all*. There is **no second path**: each lead is sent through the same gate, one at a time, exactly as if it had been moved from its own record.
+
+- Leads whose gate is shut **do not move**, and come back named with the gate's own sentence (*"3 did not move: Customer A — …"*).
+- A move to **Lost** asks for one reason for the whole selection.
+- A lead you cannot reach is never named in the refusal.
+
+<Callout kind="why">
+A bulk button is the most tempting place in a product to quietly skip the checklist on twenty leads at once. Running each lead through its own gate means the rule holds even here. The moves run one after another rather than together so a busy database cannot leave half a batch written with nobody able to say which half.
+</Callout>
+
+## Lead and customer: when the word changes
+
+An account is either a **lead** or a **customer** (`kind`). The code converts a lead to a customer on its **second counting order** — an order that is not declined or cancelled, judged by the same definition every money report uses.
+
+<Rule title="The second order converts — on every path">
+1. **A call logged in the CRM** with an order, when the account has ordered before.
+2. **Accounts approving an order**, when the account has ordered before — so a shop whose first order was still waiting for approval is not left a lead until a third.
+3. **An order from the handset**, by the same rule.
+4. **A stage move** to 2nd order (or, for a distributor, to Distributor approval), through the gate.
+</Rule>
+
+On conversion the account becomes a customer, its converted date is set, and the person who owned the lead becomes its **sales account manager**. The back-office seat is left for somebody to decide.
+
+<Callout kind="why">
+A first order from a shop that has just finished a trial is a few cans to try in their own booth — the tail of the trial, not the start of a relationship, and it often does not repeat. Counting it as a customer inflated every conversion figure with shops that ordered once and were never heard from again. A distributor is not held to this: there is no trial order in an appointment, and they are invoiced from approval.
+</Callout>
+
+## Working leads are held back from the Call Log
+
+A lead that has a sales type is being worked on the funnel. The Call Log does **not** prospect it for a first order or chase a reorder, because that would be two people chasing one shop with neither knowing about the other. It is not dropped silently: it appears in the Call Log's held-back strip with the sentence *"On the sales team's lead funnel (Direct customer) - they are asking for the order, so the Call Log does not"*. Reminders, money owed and order-status calls still come through. A lead with **no** sales type is prospected as before. See [the Call Log](/docs/crm/call-log/how-it-works).
+
+## Who sees which leads
+
+| Where | What a telecaller sees | What a manager sees |
+|---|---|---|
+| **CRM** `/crm/leads` | Leads they own, plus leads nobody owns that no sales manager has taken | Their team's leads, plus every unowned lead — managers assign, so they must see what nobody holds |
+| **Sales Dashboard** `/sales/leads` | — (telecallers are redirected out of `/sales`) | Leads in their territory, plus every unowned lead |
+| **CRM Sales Manager desk** | — | Only leads where they are the named sales manager |
+
+Leads in the trash are on nobody's list. Who may **act** on a lead follows the same rule as who sees it: if it is on your list, you may work it. Every write still needs the `lead.work` permission, which every associate holds — a funnel only a manager can advance is a funnel nobody updates.
+
+## Settings that shape the ladder
+
+<SettingsTable keys={[
+  "leads.requireNextAction",
+  "leads.allowManagerOverride",
+  "leads.figuresFreshDays",
+  "mbos.leads.visitsBeforeDecision",
+  "mbos.leads.maxSuspectVisits",
+  "mbos.leads.staleDays",
+  "mbos.leads.archiveDays",
+  "mbos.leads.escalateAfterDays",
+]} />
+
+## Where the code and the intent disagree today
+
+- **AGENTS.md still says a lead becomes a customer on the first order.** Its "§22" section describes `kind` flipping at the first order. The code converts on the second, everywhere (`lead-ladder.ts` `promotesToCustomerAt`, `lead-conversion-service.ts`). This page documents the code.
+- **The conversion service names two callers; there are four paths.** Its header says "the CRM's interaction save and the handset's order handler", but order approval (`order-approval-service.ts`) and the stage move (`lead-service.ts` `applyLeadStageMove`) also convert, and the interaction save spreads `conversionColumns` rather than calling the shared function.
+- **Two settings for the Suspect visit cap.** `leads.suspectMaxVisits` is retired and no longer read; the live cap is `mbos.leads.maxSuspectVisits`. The old key still appears on the settings list.

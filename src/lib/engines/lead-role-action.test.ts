@@ -73,7 +73,7 @@ describe("no rung on any ladder falls through", () => {
   for (const stage of everyRung) {
     test(stage, () => {
       const answered = VANTAGES.map((v) => roleAction(facts(stage), v).label);
-      const unwritten = answered.filter((l) => l === "No action for you on this lead");
+      const unwritten = answered.filter((l) => l === "Nothing for you on this lead");
       assert.notEqual(
         unwritten.length,
         VANTAGES.length,
@@ -125,15 +125,97 @@ describe("scope of each vantage, as §7 states it", () => {
 
   test("the calling desk never reaches past the early rungs", () => {
     const acting = ALL_LEAD_STAGES.filter((s) => roleAction(facts(s), "calling_desk").actionable);
-    /* Suspect, its legacy twin, Prospect and its legacy twin, and nothing
-     * else: §7 scopes the desk to intake. `second_order` used to be on this
-     * list and is the cell the engine file argues about at length. */
-    assert.deepEqual(acting.sort(), ["contacted", "new", "prospect", "suspect"]);
+    /* Suspect and its legacy twin (the calls), and Qualification and its legacy
+     * twin — which is the Telecaller's to complete once the Sales Manager has
+     * verified the Prospect. NOT Prospect: the desk waits there. `second_order`
+     * used to be on this list and is the cell the engine file argues about at
+     * length. */
+    assert.deepEqual(acting.sort(), ["new", "qualification", "qualified", "suspect"]);
+  });
+
+  describe("Prospect → Qualification, with the Telecaller as owner", () => {
+    test("at Prospect the Telecaller WAITS and the Sales Manager makes the call", () => {
+      for (const stage of ["prospect", "contacted"] as LeadStage[]) {
+        const desk = roleAction(facts(stage), "calling_desk");
+        assert.equal(desk.label, "Waiting for Sales Manager to check", stage);
+        assert.equal(desk.actionable, false, stage);
+        const manager = roleAction(facts(stage), "sales_manager");
+        assert.equal(manager.label, "Make the check call", stage);
+        assert.equal(manager.actionable, true, stage);
+      }
+    });
+
+    test("nothing offers the Telecaller a verification — the misleading label is gone", () => {
+      for (const stage of ALL_LEAD_STAGES) {
+        for (const v of [undefined, true]) {
+          assert.doesNotMatch(
+            roleAction(facts(stage, { verified: v }), "calling_desk").label,
+            /verification call support/i,
+            stage,
+          );
+        }
+      }
+    });
+
+    test("at Prospect the Salesman has no action — the Sales Manager makes the check call", () => {
+      for (const stage of ["prospect", "contacted"] as LeadStage[]) {
+        const a = roleAction(facts(stage), "salesman");
+        assert.equal(a.actionable, false, stage);
+        assert.equal(a.label, "Nothing for you on this lead", stage);
+      }
+    });
+
+    test("at Qualification the SALESMAN has a job, then a wait, then the manager's word", () => {
+      /* Qualification is the Salesman's: he collects the eight answers, the Sales
+         Manager the lead is under validates the GST number and reviews. The same
+         counted-down job, wait and hand-back the calling desk's wording has. */
+      for (const stage of ["qualification", "qualified"] as LeadStage[]) {
+        const job = roleAction(facts(stage), "salesman");
+        assert.deepEqual([job.label, job.actionable], ["Complete qualification", true], stage);
+
+        const waiting = roleAction(facts(stage, { qualificationComplete: true }), "salesman");
+        assert.deepEqual([waiting.label, waiting.actionable], ["Waiting for Sales Manager review", false], stage);
+
+        for (const review of ["incomplete", "clarification"] as const) {
+          const back = roleAction(facts(stage, { qualificationComplete: true, qualificationReview: review }), "salesman");
+          assert.deepEqual([back.label, back.actionable], ["Answer the Sales Manager's note", true], review);
+        }
+
+        const done = roleAction(facts(stage, { qualificationComplete: true, qualificationReview: "verified" }), "salesman");
+        assert.deepEqual([done.label, done.actionable], ["Request the sample", true], stage);
+      }
+    });
+
+    test("at Qualification the Telecaller has a job, then a wait, then the manager's word", () => {
+      const stage = "qualification" as LeadStage;
+      const job = roleAction(facts(stage), "calling_desk");
+      assert.deepEqual([job.label, job.actionable], ["Complete qualification", true]);
+
+      const waiting = roleAction(facts(stage, { qualificationComplete: true }), "calling_desk");
+      assert.deepEqual([waiting.label, waiting.actionable], ["Waiting for Sales Manager review", false]);
+
+      for (const review of ["incomplete", "clarification"] as const) {
+        const back = roleAction(facts(stage, { qualificationComplete: true, qualificationReview: review }), "calling_desk");
+        assert.deepEqual([back.label, back.actionable], ["Answer the Sales Manager's note", true], review);
+      }
+
+      const done = roleAction(facts(stage, { qualificationComplete: true, qualificationReview: "verified" }), "calling_desk");
+      assert.deepEqual([done.label, done.actionable], ["Request the sample", true]);
+    });
+
+    test("the manager reviews only a qualification the Telecaller has finished", () => {
+      const stage = "qualification" as LeadStage;
+      assert.equal(roleAction(facts(stage), "sales_manager").actionable, false);
+      const ready = roleAction(facts(stage, { qualificationComplete: true }), "sales_manager");
+      assert.deepEqual([ready.label, ready.actionable], ["Review qualification", true]);
+      const verified = roleAction(facts(stage, { qualificationComplete: true, qualificationReview: "verified" }), "sales_manager");
+      assert.equal(verified.actionable, false);
+    });
   });
 
   test("the repeat-order rung is not the calling desk's", () => {
     const a = roleAction(facts("second_order"), "calling_desk");
-    assert.equal(a.label, "No calling-desk action");
+    assert.equal(a.label, "Nothing for the calling desk");
     assert.equal(a.actionable, false);
     /* And the manager's verb on that rung is untouched, because the two cells
      * carried the same words and only one of them was wrong. */
@@ -144,7 +226,7 @@ describe("scope of each vantage, as §7 states it", () => {
     for (const stage of ["suspect", "qualification", "negotiation"] as LeadStage[]) {
       assert.equal(
         roleAction(facts(stage), "back_office").label,
-        "Nothing operational pending",
+        "Nothing pending for you",
         stage,
       );
     }
@@ -158,7 +240,7 @@ describe("scope of each vantage, as §7 states it", () => {
      * decision somebody makes here, having read why. */
     for (const stage of ["prospect", "contacted"] as LeadStage[]) {
       const a = roleAction(facts(stage), "back_office");
-      assert.equal(a.label, "Validate GST number", stage);
+      assert.equal(a.label, "Check GST number", stage);
       assert.equal(a.actionable, true, stage);
     }
   });
@@ -168,7 +250,7 @@ describe("scope of each vantage, as §7 states it", () => {
     for (const stage of ["suspect", "prospect", "qualification"] as LeadStage[]) {
       assert.equal(
         roleAction(facts(stage, { salesType: "distributor" }), "management").label,
-        "Monitor distributor track",
+        "Watch the distributor steps",
         stage,
       );
       assert.equal(
@@ -201,7 +283,7 @@ describe("closure reads the same to everybody", () => {
   test("lost", () => {
     for (const v of VANTAGES) {
       const a = roleAction(facts("lost"), v);
-      assert.equal(a.label, "Lost — no action");
+      assert.equal(a.label, "Lost. Nothing to do");
       assert.equal(a.actionable, false);
     }
   });
@@ -209,7 +291,7 @@ describe("closure reads the same to everybody", () => {
   test("on hold says parked rather than lost", () => {
     for (const v of VANTAGES) {
       const a = roleAction(facts("on_hold"), v);
-      assert.match(a.label, /parked, not lost/);
+      assert.match(a.label, /Paused, not lost/);
       assert.equal(a.actionable, false);
     }
   });

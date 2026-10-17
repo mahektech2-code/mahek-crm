@@ -52,7 +52,8 @@ export function stateKey(raw: string | null | undefined): string {
  * follows. Nothing here is a permission and nothing filters by it: it decides
  * how a place is WRITTEN, and which spellings count as the same place.
  */
-const CANONICAL = [
+/** Every state and union territory, as the book should spell it — what a picker offers. */
+export const INDIA_STATES = [
   "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh",
   "Goa", "Gujarat", "Haryana", "Himachal Pradesh", "Jharkhand", "Karnataka",
   "Kerala", "Madhya Pradesh", "Maharashtra", "Manipur", "Meghalaya", "Mizoram",
@@ -86,7 +87,7 @@ const ALIASES: Record<string, string> = {
 };
 
 const BY_KEY = new Map<string, string>();
-for (const name of CANONICAL) BY_KEY.set(stateKey(name), name);
+for (const name of INDIA_STATES) BY_KEY.set(stateKey(name), name);
 for (const [key, name] of Object.entries(ALIASES)) BY_KEY.set(key, name);
 
 /** Trim and collapse the whitespace. Nothing else — the words are kept. */

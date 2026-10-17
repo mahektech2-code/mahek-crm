@@ -1,0 +1,114 @@
+Stock in the ERP is never a number somebody types. It is read, every time, from the documents that put material in and the documents that took it out — so the list a storekeeper reads, the form that consumes a lot and the dashboard tile that counts it are the same reading and cannot disagree. This page explains that reading, how boxes get identities of their own, and how stock moves between godowns or is written off.
+
+## Stock is read off ledgers
+
+<Rule title="Current stock = everything in − everything out, per lot, per godown">
+Each stage has one ledger of **inflows**, and each entry in it was written by exactly one document and follows that document through every edit. **Outflows are never entries**: they are read straight from the documents that consume stock. Delete or edit a consuming document and the stock moves back on its own.
+</Rule>
+
+| Stage | Inflows (entries) | Outflows (read from documents) |
+|---|---|---|
+| **Raw material** (litres or pieces) | A rated purchase; a transfer in | Transfers out; SFG batch lines; cans filled and empty boxes packed |
+| **Semi-finished** (litres) | An SFG batch line's yield; a transfer in | Transfers out; FG fills |
+| **Finished goods** (cans) | A fill, net of cans lost; a transfer in | Transfers out; packing lines; lots allocated to orders |
+| **Packed** (boxes) | A complete packing batch; a transfer in | Transfers out; batches allocated to orders |
+
+<Callout kind="why">
+A stored "current stock" column needs every document to remember to update it, and the one that forgets is invisible. Reading it from the documents means there is nothing to forget: the figure can only ever say what the documents say.
+</Callout>
+
+<Rule title="Finished and packed stock leave when they are allocated, not when they are dispatched">
+An FG lot or a packing batch allocated to an order line is no longer available, so the same cans cannot be promised to two customers. Dispatch then confirms what was already set aside.
+</Rule>
+
+### Cans and boxes are used up
+
+<Rule title="What filling and packing use comes out of stock">
+A fill uses empty cans and a packing batch uses empty boxes, but neither document names a lot of them. So what they used is taken from the item's lots at that godown **oldest first** — the order a storekeeper uses them — and anything used beyond the lots is left on the newest lot as a **negative**, not hidden. A shortfall is a fact to see.
+</Rule>
+
+<Callout kind="why">
+Mahek Plus subtracted empty cans and boxes only on its re-order screen, so the stock screen went on counting every can ever bought — and said there were cans on the shelf that had long been filled.
+</Callout>
+
+### What stock is worth
+
+| Stage | Rate |
+|---|---|
+| Raw material | The **landed** rate — the purchase rate plus the lot's share of its PR's transport and other inward cost — turned into a litre rate by density for a kg purchase |
+| Semi-finished | The SFG rate: a weighted average of its raw-material lots' rates over the litres each line used |
+| Finished goods | The fill costing ÷ cans (per can), or ÷ litres for drum and Naket fills |
+| Packed | Its FG lots' per-can rates plus the batch's box cost, per box |
+
+Rate and value columns, and the dashboard's stock value tiles, need the **cost and margin** power and are withheld on the server otherwise. A lot with an unknown rate is counted, and the dashboard says how many lots are "without a cost" rather than valuing them at nothing.
+
+## Boxes have identities
+
+<Rule title="A box id is what the QR carries; the lot is linked data">
+When a packing batch completes, every box gets its own id, `BX-` with the day and a six-digit serial. Loose cans or drums are labelled on asking, `LU-…`, from the same series. The lot a box came from is recorded beside the id, never inside it: one lot makes many boxes, and one dispatch carries boxes of several lots.
+</Rule>
+
+<Rule title="Which lots a box holds is worked out, not stored">
+A packing batch draws its cans from one or more FG lots, and boxes are filled in that order — so box n holds cans (n−1) × cans-per-box onwards. A box that falls on a boundary holds cans of **both** lots, and says so. Inventing a single lot for it would make a recall miss half of it.
+</Rule>
+
+<Rule title="A lot never carries more labels than cans">
+Loose labels are limited to the cans a lot still holds. Packing cans out of a lot, correcting cans lost or transferring them cancels the newest loose labels the lot can no longer carry.
+</Rule>
+
+<Rule title="Every change of a box is an event, appended">
+Created, labelled, scanned, unscanned, dispatched, transfer, hold, release, reject, return, lost, override. Nothing rewrites a box's history; a correction is a further event.
+</Rule>
+
+### What a person may do to a box by hand
+
+| From | May become | Needs |
+|---|---|---|
+| In stock | On hold (with a reason) | The screen |
+| On hold, Returned | In stock | The screen |
+| In stock, On hold, Returned | Rejected (with a reason) | Dispatch-override power |
+| Dispatched | Returned (with a reason) | Dispatch-override power |
+
+Everything else — scanning, dispatch, transfers, write-offs, minting and cancelling — happens through its own screen, never by hand. A box on hold cannot be scanned for dispatch. A returned box goes back to the godown it left from, and leaves its order when it is put back into stock.
+
+## Transfers
+
+<Rule title="A transfer is one document that is both the outflow and the inflow">
+It takes the quantity out of a lot at one godown (read as an outflow) and posts the inflow at the destination in the same save. The lot code travels with it: the SFG lot keeps its QC verdict, and a finished-goods lot keeps its SKU and packing.
+</Rule>
+
+- From and To must differ; To must be active; the quantity must be above zero and no more than the lot holds — read inside the save, with the lot locked.
+- Boxes and labelled cans move with the stock: the **lowest-numbered** still on the shelf of that lot.
+- A transfer is never edited or deleted. A mistake is corrected by a transfer back.
+
+### Item Lost Record: a write-off is a movement
+
+<Rule title="Stock is written off into a real, reserved godown">
+**Item Lost Record** is a godown in every ledger, so a loss is recorded as stock that moved there rather than stock that simply vanished. Only somebody with the **write-off** power is offered it, and only as a destination; stock is never moved out of it. Boxes transferred there are marked **Written off**.
+</Rule>
+
+<Callout kind="why">
+A loss nobody can see is a loss nobody asks about. Because a write-off is a transfer with a date, a lot, a quantity, a person and a remark, "what did we lose this month, and of what" is a list — the dashboard counts it by item type — and the unusual-activity alerts can notice a run of them.
+</Callout>
+
+## Who can do what
+
+| Act | Needs |
+|---|---|
+| See stock and the logs | The Stock screen (all four stages and their logs come with it) |
+| See rate and value | Cost and margin |
+| Label loose units, print labels | The Stock or Boxes & labels screen (labels: whoever works boxes, packing, dispatch or orders) |
+| Hold and release boxes | Boxes & labels |
+| Reject or mark returned | Dispatch-override power |
+| Transfer | Item transfers |
+| Write off to Item Lost Record | Write off to Item Lost Record |
+
+## Settings
+
+No setting changes how stock is read. The unusual-activity alert for repeated write-offs is tuned by <Setting k="erp.ai.alerts.writeOffCount" /> write-offs in <Setting k="erp.ai.alerts.writeOffDays" /> days — see [Alerts and AI](/docs/erp/alerts-and-ai).
+
+## Where the code and the intent disagree today
+
+- A finished-goods transfer is meant to carry the SKU and packing of the lot it came from; it takes them from the **latest** finished-goods entry of that product instead, which can be a different lot's.
+- The Boxes & labels lists read at most the newest five thousand boxes, and nothing on the screen says the list is cut.
+- Deleting an SFG line or a filling gives the input back while its output entry stays in stock, flagged — see [Production](/docs/erp/production/how-it-works).

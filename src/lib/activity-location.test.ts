@@ -42,8 +42,7 @@ import {
 import { invalidateConfig, seedConfig, updateSettings } from "@/lib/config/store";
 import { setTestUser } from "@/lib/auth";
 import { releaseDevice } from "@/lib/actions/sales";
-import { markMissedCheckouts } from "@/lib/mbos-jobs";
-import { mbosAttendanceDays, mbosPositions } from "@/db/schema";
+import { mbosAttendanceDays } from "@/db/schema";
 import { auditLog, notifications as notificationsTable } from "@/db/schema";
 import { ingestSyncBatch, storeMbosMedia } from "@/lib/actions/mbos";
 import {
@@ -685,7 +684,7 @@ describe("An attendance photograph survives the night and can be opened", () => 
         initials: "VS",
       })
       .returning();
-    await db.insert(appAccess).values({ id: id("acc"), userId: manager.id, app: "sales" });
+    await db.insert(appAccess).values({ id: id("acc"), userId: manager.id, app: "sales", role: "manager" });
     setTestUser(manager);
     assert.equal(await canRead(clientId), true, "the manager the photograph exists for cannot see it");
   });
@@ -1021,7 +1020,7 @@ describe("The pull delta runs — with a cursor, which is every pull after sign-
     for (const channel of [
       "customers", "products", "timeline", "notifications", "transcripts",
       "journeyStops", "planDays", "priceList", "schemes", "documents",
-      "courses", "approvals", "performance", "tasks", "leads", "samples",
+      "courses", "approvals", "performance", "customerTargets", "tasks", "leads", "samples",
       "leaveBalances", "holidays", "salary", "deletions",
       /* The three customer-history channels. `applyPull` walks all three and
          none of them was asserted here — `customerBills` is new, and the two
@@ -1111,18 +1110,34 @@ describe("The pull delta runs — with a cursor, which is every pull after sign-
     /*
      * And on the delta, which is every pull after sign-in.
      *
-     * ORDERS COME EVERY TIME and the two money channels do NOT, and the
-     * difference is worth asserting rather than assuming. Orders are capped at
-     * ten a customer, so an eleventh does not change a row — it displaces one,
-     * and nothing carries an `updated_at` that says so. Bills and receipts are
-     * a WINDOW with no cap, so a row inside it is either already on the phone
-     * or has a moved `updated_at`; sending a salesman's share of thirteen
-     * months on every pull all day is what this stops.
+     * ALL THREE CHANNELS ARE SINCE-GATED NOW, orders included. Orders used to
+     * come every time — ten a customer for the whole book, about 26,000 rows a
+     * minute on a big beat — and the phone now keeps its own newest ten per
+     * shop, so only a shop whose orders moved is sent again.
+     *
+     * The cursor deliberately looks back two minutes (`CURSOR_OVERLAP_MS`), so
+     * an office write committed just before it is not lost. The rows this file
+     * just wrote fall inside that overlap, so they are stepped back out of it
+     * first: what is being asserted is "unchanged rows are not resent", and a
+     * row written four seconds ago is, correctly, resent.
      */
+    await db.execute(sql`
+      update payment_receipts set updated_at = now() - interval '10 minutes'
+       where customer_id = ${shop.id}
+    `);
+    await db.execute(sql`
+      update bills set updated_at = now() - interval '10 minutes'
+       where customer_id = ${shop.id}
+    `);
+    await db.execute(sql`
+      update orders set updated_at = now() - interval '10 minutes'
+       where customer_id = ${shop.id}
+    `);
     const delta = await buildPull(principal, boot.cursor);
-    assert.ok(
-      (delta.customerOrders as unknown[]).length > 0,
-      "the delta carried no order history",
+    assert.equal(
+      (delta.customerOrders as unknown[]).length,
+      0,
+      "nothing changed since the cursor, so the order history must not be resent",
     );
     assert.equal(
       (delta.customerPayments as unknown[]).length,
@@ -1868,7 +1883,7 @@ describe("How many handsets one person may hold", () => {
     assert.equal(outcome.ok, false);
     assert.match(
       outcome.ok === false ? outcome.error : "",
-      /already signed in on another handset/i,
+      /already signed in on another (phone|handset)/i,
       "the refusal does not say what is wrong",
     );
   });
@@ -1946,7 +1961,7 @@ describe("Releasing a handset", () => {
         initials: "VR",
       })
       .returning();
-    await db.insert(appAccess).values({ id: id("acc"), userId: office.id, app: "sales" });
+    await db.insert(appAccess).values({ id: id("acc"), userId: office.id, app: "sales", role: "manager" });
     setTestUser(office);
     return office;
   }
@@ -2177,121 +2192,5 @@ describe("Starting the day again after checking out", () => {
       null,
       "a second resume the same day did not reopen the row",
     );
-  });
-});
-
-describe("A day nobody checked out of", () => {
-  /*
-   * The nightly pass used to flag these and leave `check_out_at` null for
-   * ever, so every query asking "who is still out" believed a salesman who
-   * forgot the button on Tuesday was still out on Friday.
-   */
-  const YESTERDAY = new Date(Date.now() - 86_400_000)
-    .toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
-
-  async function openDay() {
-    const [row] = await db
-      .insert(mbosAttendanceDays)
-      .values({
-        id: id("att"),
-        userId: salesman.id,
-        day: YESTERDAY,
-        checkInAt: new Date(`${YESTERDAY}T03:30:00Z`), // 9am IST
-      })
-      .returning();
-    return row;
-  }
-
-  test("it closes at the last position he reported", async () => {
-    const day = await openDay();
-    const last = new Date(`${YESTERDAY}T11:00:00Z`); // 4:30pm IST
-    for (const at of [new Date(`${YESTERDAY}T05:00:00Z`), last]) {
-      await db.insert(mbosPositions).values({
-        id: id("pos"),
-        userId: salesman.id,
-        deviceId: "probe-device",
-        lat: 21.1458,
-        lng: 79.0882,
-        accuracyM: 18,
-        at,
-      });
-    }
-
-    const out = await markMissedCheckouts();
-    assert.equal(out.recordsAffected, 1);
-
-    const [after] = await db
-      .select()
-      .from(mbosAttendanceDays)
-      .where(eq(mbosAttendanceDays.id, day.id));
-    assert.equal(after.autoCheckedOut, true, "the day was not flagged");
-    assert.ok(after.checkOutAt, "the day was left open despite a trail to close it at");
-    assert.equal(
-      after.checkOutAt.toISOString(),
-      last.toISOString(),
-      "closed at something other than the last position",
-    );
-  });
-
-  test("with nothing recorded it stays open rather than inventing an hour", async () => {
-    // Attendance is what somebody is paid against. "We do not know when he
-    // stopped" is a real answer; a plausible six o'clock would be believed.
-    const day = await openDay();
-
-    const out = await markMissedCheckouts();
-    assert.equal(out.recordsAffected, 1);
-
-    const [after] = await db
-      .select()
-      .from(mbosAttendanceDays)
-      .where(eq(mbosAttendanceDays.id, day.id));
-    assert.equal(after.checkOutAt, null, "a check-out time was invented");
-    assert.equal(after.autoCheckedOut, true, "it was not flagged for regularisation");
-  });
-
-  test("today is left alone — the day is not over", async () => {
-    const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
-    const [day] = await db
-      .insert(mbosAttendanceDays)
-      .values({
-        id: id("att"),
-        userId: salesman.id,
-        day: today,
-        checkInAt: new Date(Date.now() - 3_600_000),
-      })
-      .returning();
-
-    await markMissedCheckouts();
-
-    const [after] = await db
-      .select()
-      .from(mbosAttendanceDays)
-      .where(eq(mbosAttendanceDays.id, day.id));
-    assert.equal(after.checkOutAt, null, "somebody still working was checked out");
-    assert.equal(after.autoCheckedOut, false);
-  });
-
-  test("running it twice does not move a closing time", async () => {
-    const day = await openDay();
-    const last = new Date(`${YESTERDAY}T11:00:00Z`);
-    await db.insert(mbosPositions).values({
-      id: id("pos"),
-      userId: salesman.id,
-      deviceId: "probe-device",
-      lat: 21.1458,
-      lng: 79.0882,
-      accuracyM: 18,
-      at: last,
-    });
-
-    await markMissedCheckouts();
-    const second = await markMissedCheckouts();
-    assert.equal(second.recordsAffected, 0, "an already-closed day was closed again");
-
-    const [after] = await db
-      .select()
-      .from(mbosAttendanceDays)
-      .where(eq(mbosAttendanceDays.id, day.id));
-    assert.equal(after.checkOutAt?.toISOString(), last.toISOString());
   });
 });

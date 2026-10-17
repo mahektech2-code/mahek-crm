@@ -2,8 +2,9 @@ import { canFor, requireCapability } from "@/lib/access-control";
 import { getScope, scopeLabel } from "@/lib/scope";
 import { requireUser } from "@/lib/auth";
 import { currentPeriod, listAmFilterOptions } from "@/lib/queries";
-import { listTargetsPage, shortfallAnalysis } from "@/lib/services/worklist-services";
+import { listTargetsPage } from "@/lib/services/worklist-services";
 import { MonthlyTargetsScreen } from "@/components/customers/monthly-targets-screen";
+import { readTopCustomersTab } from "@/components/customers/top-customers-tab";
 
 export const metadata = { title: "Customer targets — Accounts — MahekOne" };
 
@@ -11,7 +12,7 @@ export const metadata = { title: "Customer targets — Accounts — MahekOne" };
  * Monthly targets, on the Accounts side.
  *
  * The SAME reads and the SAME actions the CRM's own targets screen uses —
- * `listTargets`, `setTarget`, `setTargetsBulk`, `shortfallAnalysis` — because
+ * `listTargets`, `setTarget` and `setTargetsBulk` — because
  * this is not a second target system, it is `/crm/targets` reached from a
  * second door. Accounts hold `apps: ["accounts"]` and are redirected out of
  * the CRM before they reach it, the same way `src/app/crm/layout.tsx`
@@ -58,28 +59,19 @@ export default async function Page({
       salesAm: one("sales"),
       salesManager: one("salesmanager"),
       backOfficeAm: one("backoffice"),
+      source: one("source"),
+      progress: one("progress"),
       sort: one("sort"),
       page: Number(one("page") ?? 1) || 1,
       perPage: [25, 50, 100].includes(perPage) ? perPage : 25,
     }),
     listAmFilterOptions(),
   ]);
-  const shortfall = await canFor(user, "target.shortfall")
-    ? await shortfallAnalysis(activePeriod, {
-        // The SAME four answers the table above is narrowed by, and the same
-        // search box. Read from the URL once and handed to both, so the tab a
-        // manager switches to cannot be describing a different set of people
-        // from the one they were just looking at.
-        query: one("q"),
-        status: one("status"),
-        salesAm: one("sales"),
-        salesManager: one("salesmanager"),
-        backOfficeAm: one("backoffice"),
-      })
-    : null;
-
+  const top = await readTopCustomersTab(one, "/accounts/customer-targets", "/accounts/ledger?customer={id}");
   return (
     <MonthlyTargetsScreen
+      view={top.view}
+      topContent={top.topContent}
       app="accounts"
       basePath="/accounts/customer-targets"
       customerHrefTemplate="/accounts/ledger?customer={id}"
@@ -87,13 +79,14 @@ export default async function Page({
       canSet={canSet}
       period={activePeriod}
       rows={page.rows}
-      shortfall={shortfall}
       filters={{
         query: one("q") ?? "",
         status: one("status") ?? "",
         salesAm: one("sales") ?? "",
         salesManager: one("salesmanager") ?? "",
         backOfficeAm: one("backoffice") ?? "",
+        source: one("source") ?? "",
+        progress: one("progress") ?? "",
         sort: one("sort") ?? "",
         perPage: [25, 50, 100].includes(perPage) ? perPage : 25,
       }}
@@ -104,6 +97,7 @@ export default async function Page({
         bookTotal: page.bookTotal,
       }}
       totals={page.totals}
+      allocation={page.allocation}
       amOptions={amOptions}
     />
   );

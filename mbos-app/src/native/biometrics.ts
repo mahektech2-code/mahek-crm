@@ -108,7 +108,7 @@ export async function prompt(message: string): Promise<PromptOutcome> {
         return {
           ok: false,
           kind: 'lockout',
-          message: 'Too many tries. Your phone has paused the fingerprint for a moment — wait, then try again.',
+          message: 'Too many tries. Your phone has stopped the fingerprint for a short time. Wait, then try again.',
         };
       case 'not_enrolled':
       case 'not_available':
@@ -124,6 +124,6 @@ export async function prompt(message: string): Promise<PromptOutcome> {
   } catch {
     /* The module itself failed. Treating that as "unavailable" rather than as
        a refusal is what stops a broken sensor from becoming a bricked app. */
-    return { ok: false, kind: 'unavailable', message: 'The fingerprint reader could not be used.' };
+    return { ok: false, kind: 'unavailable', message: 'The fingerprint reader did not work. Try again.' };
   }
 }

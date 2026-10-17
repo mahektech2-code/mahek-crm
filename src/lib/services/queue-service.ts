@@ -21,10 +21,9 @@ import {
 } from "../engines/queue";
 import { nextStep, type NextStep } from "../engines/next-step";
 import { today } from "../recompute";
-import { orderCountsSql, orderValueSql } from "../order-status";
-import { getPaymentFollowUpPlan, paymentCadenceFor } from "./payment-service";
+import { billedValueSql } from "../order-status";
+import { getPaymentFollowUpPlan, paymentCadencesFor, type PaymentCadence } from "./payment-service";
 import {
-  APP_TIMEZONE,
   businessDate,
   dayBoundaryWindow,
   type BusinessDate,
@@ -100,8 +99,8 @@ export type QueueView = Omit<QueueResult, "entries"> & {
 async function queueInputs(
   ids: string[] | null,
   day: string,
-  /** One customer only, for the forward "what happens next" question. */
-  onlyCustomerId?: string,
+  /** Only these customers, for the forward "what happens next" question. */
+  onlyCustomerIds?: string[],
 ) {
   const config = await getConfig();
   const window = dayBoundaryWindow(day, {
@@ -285,9 +284,10 @@ async function queueInputs(
          order by o.ordered_at desc limit 1
       )`,
       /*
-       * The gap this customer's month still has to make up — the SAME three
-       * rules the Monthly Targets screen reads, so the reason a telecaller is
-       * given and the figure their manager is looking at cannot differ.
+       * The gap this customer's month still has to make up — the SAME
+       * achieved figure the Monthly Targets screen reads, bills by bill date
+       * (`billedValueSql`), so the reason a telecaller is given and the figure
+       * their manager is looking at cannot differ.
        *
        * It used to spell out three of `PURCHASE_STATUSES`' five, so a delivered
        * order stopped counting and the gap grew back; it read `total_amount`,
@@ -297,14 +297,11 @@ async function queueInputs(
        * than passed in.
        */
       targetGap: sql<number>`coalesce((
-        select greatest(0, t.target_amount - coalesce((
-          select sum(${orderValueSql("o")}) from ${orders} o
-           where o.customer_id = customers.id
-             and ${orderCountsSql("o")}
-             and o.ordered_at >= make_timestamptz(t.year, t.month, 1, 0, 0, 0, ${APP_TIMEZONE})
-             and o.ordered_at <  make_timestamptz(t.year, t.month, 1, 0, 0, 0, ${APP_TIMEZONE})
-                                 + interval '1 month'
-        ), 0))
+        select greatest(0, t.target_amount - ${billedValueSql(
+          "customers.id",
+          "make_date(t.year, t.month, 1)",
+          "(make_date(t.year, t.month, 1) + interval '1 month')::date",
+        )})
         from ${monthlyTargets} t
         where t.customer_id = customers.id
           and t.year = ${Number(monthKey(day).slice(0, 4))}
@@ -324,7 +321,7 @@ async function queueInputs(
         // scope-checked — and an owner filter here would answer "no such
         // customer" instead. `ids` still governs which REMINDERS count, which
         // is right: a callback belongs to whoever promised it.
-        onlyCustomerId ? eq(customers.id, onlyCustomerId) : ownerFilter,
+        onlyCustomerIds ? inArray(customers.id, onlyCustomerIds) : ownerFilter,
       ),
     );
 
@@ -694,19 +691,36 @@ export function consecutiveNoAnswerSql(customerId: SQL | string) {
 export async function nextStepForCustomer(
   customerId: string,
 ): Promise<NextStep | null> {
+  return (await nextStepsForCustomers([customerId])).get(customerId) ?? null;
+}
+
+/**
+ * `nextStepForCustomer` for many customers in ONE pass: the queue's inputs and
+ * the collections cadence are read once for all of them, and the pure engine
+ * then runs per customer. Asked one at a time, the Reminders screen paid a
+ * full queue read per upcoming reminder — thousands of round trips for one
+ * page. The answers are the same; only the number of reads changed.
+ */
+export async function nextStepsForCustomers(
+  customerIds: string[],
+): Promise<Map<string, NextStep | null>> {
+  const out = new Map<string, NextStep | null>();
+  const ids = [...new Set(customerIds)];
+  if (!ids.length) return out;
   const ctx = await resolveScope();
   const day = await today();
-  const { config, candidates } = await queueInputs([ctx.user.id], day, customerId);
+  const { config, candidates } = await queueInputs([ctx.user.id], day, ids);
+  const cadences = config["queue.includePaymentDue"]
+    ? await paymentCadencesFor(candidates.map((c) => c.customerId))
+    : new Map<string, PaymentCadence>();
+  const now = Date.now();
 
-  const candidate = candidates[0];
-  if (!candidate) return null;
-
-  // The collections engine's own conclusion, folded in exactly as the queue
-  // folds it in — the verdict for today, and the date behind it so the search
-  // can roll forward.
-  let paymentNextCallOn: string | null = null;
-  if (config["queue.includePaymentDue"]) {
-    const cadence = await paymentCadenceFor(customerId);
+  for (const candidate of candidates) {
+    // The collections engine's own conclusion, folded in exactly as the queue
+    // folds it in — the verdict for today, and the date behind it so the search
+    // can roll forward.
+    let paymentNextCallOn: string | null = null;
+    const cadence = cadences.get(candidate.customerId);
     if (cadence) {
       paymentNextCallOn = cadence.nextCallOn;
       if (cadence.nextCallOn <= day) {
@@ -716,9 +730,9 @@ export async function nextStepForCustomer(
         };
       }
     }
+    out.set(candidate.customerId, nextStep({ candidate, paymentNextCallOn }, day, config, now));
   }
-
-  return nextStep({ candidate, paymentNextCallOn }, day, config, Date.now());
+  return out;
 }
 
 /** The snapshot job's view: one telecaller's list, ranked as they would see it. */

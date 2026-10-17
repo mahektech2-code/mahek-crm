@@ -1,3 +1,4 @@
+import { priceListDoorCanManage } from "@/lib/price-list-door";
 /* ---------------------------------------------------------------------------
  * WHO IS ON A LIST AND WHO IS ON NONE — the Sales Dashboard's door onto the coverage
  * report.
@@ -7,7 +8,6 @@
  * come to disagree about one book.
  * ------------------------------------------------------------------------- */
 import { requireUser } from "@/lib/auth";
-import { canFor } from "@/lib/access-control";
 import { today } from "@/lib/recompute";
 import { coverageReport, pricingOptions } from "@/lib/services/price-list-service";
 import { PageHeader } from "@/components/ui/primitives";
@@ -20,7 +20,7 @@ export default async function Page() {
   const user = await requireUser();
   const day = await today();
   const [canManage, report, options] = await Promise.all([
-    canFor(user, "pricelist.manage"),
+    priceListDoorCanManage(user, "accounts"),
     coverageReport(day),
     pricingOptions(),
   ]);

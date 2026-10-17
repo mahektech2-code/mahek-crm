@@ -1,11 +1,14 @@
 "use server";
 
+import { assertLeadInScope } from "@/lib/services/lead-scope";
+import { qualificationCollectorRefusal, requireLeadVerifier } from "@/lib/services/lead-verifier";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
-import { and, eq, notInArray } from "drizzle-orm";
+import { and, eq, inArray, notInArray } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
+  appAccess,
   auditLog,
   customers,
   mbosDocuments,
@@ -17,7 +20,6 @@ import {
   users,
 } from "@/db/schema";
 import {
-  assertCustomerInScope,
   canAny,
   requireCapability,
   hatsFor,
@@ -43,7 +45,7 @@ import {
   VERIFICATION_FAILED_CODE,
   type LeadStage,
 } from "@/lib/lead-labels";
-import { checklistFor } from "@/lib/engines/lead-gates";
+import { checklistFor, QUALIFICATION_ANSWER_KEYS, qualificationAnswerFault } from "@/lib/engines/lead-gates";
 import { commitmentGap, commitmentState, isConfirmedCommitment } from "@/lib/lead-commitment";
 import { addDays, money } from "@/lib/format";
 import { isParked, ladderFor, rungOf } from "@/lib/engines/lead-ladder";
@@ -51,11 +53,19 @@ import {
   applyLeadStageMove,
   evaluateLeadStageMove,
   leadGateInput,
-  leadManagerCandidates,
+  leadManagerCandidatesFor,
   leadRow,
   type LeadRow,
 } from "@/lib/services/lead-service";
 import { LEAD_BULK_CAP } from "@/lib/services/sales-service";
+import {
+  isReviewer,
+  openQualificationAfterVerification,
+  recordReviewVoid,
+  settleQualificationState,
+} from "@/lib/services/lead-qualification-flow-service";
+import { gstinChangeClear, materialOf, reviewVoidPatch } from "@/lib/lead-review-void";
+import { qualificationAccess, QUALIFICATION_ONLY_FIELDS } from "@/lib/lead-qualification-access";
 
 /* ---------------------------------------------------------------------------
  * Every write the lead funnel makes from a browser.
@@ -109,11 +119,17 @@ async function reachableLead(
   if (!lead) {
     return { ok: false, refusal: err("That lead is not on MahekOne.", "not_found") };
   }
-  await assertCustomerInScope({
+  await assertLeadInScope(customerId, {
     kind: lead.kind,
     ownerId: lead.ownerId,
     salesAmId: lead.salesAmId,
     backOfficeAmId: lead.backOfficeAmId,
+    /* The coordinating seat reads too. `scopedToUsers` already lists a lead for
+       whoever holds it, and a read that does not is the row on your screen
+       whose opening throws — which is exactly what the calling desk's requests
+       would do to the sales manager they are addressed to. */
+    leadManagerId: lead.leadManagerId,
+    salesManagerId: lead.salesManagerId,
   });
   return { ok: true, lead };
 }
@@ -417,7 +433,22 @@ export async function bulkAdvanceLeadStage(input: {
   to: LeadStage;
   reasonCode?: string;
   note?: string;
-}): Promise<Result<{ done: number; failed: Array<{ id: string; name: string; why: string }> }>> {
+  /**
+   * What a PARK demands, asked once for the whole batch: when it comes back, and
+   * what happens then. Meaningless on any other move. The next action carries NO
+   * owner - each lead's own owner holds it (see the loop), so one press cannot
+   * hand twenty people's leads to one person.
+   */
+  hold?: { reason?: string; resumeDate: string };
+  nextAction?: { action: string; date: string; outcome?: string };
+}): Promise<
+  Result<{
+    done: number;
+    failed: Array<{ id: string; name: string; why: string }>;
+    /** Already where the batch was sending them - left as they were, not a failure. */
+    unchanged: Array<{ id: string; name: string }>;
+  }>
+> {
   try {
     /* The cap is the SELECTION'S own, read from the same place the screen
        reads it. Two different numbers means "Select all 200" is followed by a
@@ -433,14 +464,88 @@ export async function bulkAdvanceLeadStage(input: {
        working. */
     await requireCapability("lead.work");
 
+    /* A PARK IS REFUSED WHOLE, BEFORE ANYTHING IS ATTEMPTED, when what it demands
+       is missing. The same answers `advanceLeadStage` asks of the record's own
+       control, on the same configured list - and said once, because the
+       alternative is one identical refusal per lead. */
+    const parking = input.to === "on_hold";
+    if (parking) {
+      const missing: FieldError[] = [];
+      const holdCodes = (await getConfig())["leads.holdReasons"];
+      const code = input.reasonCode ?? "";
+      if (!code || !holdCodes.some((r) => r.code === code)) {
+        missing.push({ field: "reasonCode", message: "Why is it stopping?" });
+      }
+      if (code === REASON_CODE_NEEDING_REMARKS && !input.hold?.reason?.trim()) {
+        missing.push({ field: "holdReason", message: "You picked Other - say in words what it actually is." });
+      }
+      if (!input.hold?.resumeDate) {
+        missing.push({ field: "holdResumeDate", message: "When should it come back?" });
+      }
+      if (!input.nextAction?.action?.trim() || !input.nextAction?.date) {
+        missing.push({ field: "nextAction", message: "What happens when it does?" });
+      }
+      if (missing.length) {
+        return {
+          ok: false,
+          error:
+            "On hold is a pause, not a quiet death. Pick why it stopped, name the day it comes back, and say what happens when it does — otherwise it comes back to nobody.",
+          code: "validation",
+          fieldErrors: missing,
+        };
+      }
+    }
+
     let done = 0;
     const failed: Array<{ id: string; name: string; why: string }> = [];
+    const unchanged: Array<{ id: string; name: string }> = [];
     for (const id of ids) {
+      /* PER LEAD, FOR A PARK: where it stands, and who owes the next action.
+         The owner is the lead's OWN owner - `customers.owner_id`, which is what
+         every list reads as whose lead it is - and where there is none, or the
+         account cannot sign in, the lead is refused with that said, rather than
+         the action being handed to somebody the batch happened to have in hand. */
+      let nextAction: { action: string; date: string; ownerId: string; outcome?: string } | undefined;
+      if (parking && input.nextAction) {
+        let lead: LeadRow;
+        try {
+          const reach = await reachableLead(id);
+          if (!reach.ok) {
+            failed.push({ id, name: "A lead", why: reach.refusal.error });
+            continue;
+          }
+          lead = reach.lead;
+        } catch {
+          failed.push({ id, name: "A lead", why: "not in your book" });
+          continue;
+        }
+        if (lead.leadStage === "on_hold") {
+          unchanged.push({ id, name: lead.name });
+          continue;
+        }
+        const ownerId = lead.ownerId;
+        const [owner] = ownerId
+          ? await db.select({ active: users.active }).from(users).where(eq(users.id, ownerId)).limit(1)
+          : [];
+        if (!ownerId || !owner?.active) {
+          failed.push({
+            id,
+            name: lead.name,
+            why: ownerId
+              ? "its owner can no longer sign in, so nobody can be given the next action - reassign it first"
+              : "nobody owns it, so there is nobody to be given the next action - assign an owner first",
+          });
+          continue;
+        }
+        nextAction = { ...input.nextAction, ownerId };
+      }
+
       const result = await advanceLeadStage({
         customerId: id,
         to: input.to,
         reasonCode: input.reasonCode,
         note: input.note,
+        ...(parking ? { hold: input.hold, nextAction } : {}),
       });
       if (result.ok) {
         done += 1;
@@ -459,14 +564,18 @@ export async function bulkAdvanceLeadStage(input: {
       failed.push({ id, name, why: result.error });
     }
 
-    const head = `${done} ${done === 1 ? "lead" : "leads"} moved to ${stageLabel(input.to)}.`;
-    if (!failed.length) return ok({ done, failed }, head);
+    const head =
+      `${done} ${done === 1 ? "lead" : "leads"} moved to ${stageLabel(input.to)}.` +
+      (unchanged.length
+        ? ` ${unchanged.length} already ${unchanged.length === 1 ? "was" : "were"} at ${stageLabel(input.to)} - left as ${unchanged.length === 1 ? "it was" : "they were"}.`
+        : "");
+    if (!failed.length) return ok({ done, failed, unchanged }, head);
     const shown = failed
       .slice(0, 3)
       .map((f) => `${f.name} — ${f.why}`)
       .join("; ");
     const more = failed.length > 3 ? ` and ${failed.length - 3} more` : "";
-    return ok({ done, failed }, `${head} ${failed.length} did not move: ${shown}${more}`);
+    return ok({ done, failed, unchanged }, `${head} ${failed.length} did not move: ${shown}${more}`);
   } catch (e) {
     return fromThrown(e);
   }
@@ -562,11 +671,30 @@ export async function setLeadSalesType(
       }
     }
 
+    /* A CHANGE OF SALES TYPE VOIDS A MANAGER'S REVIEW WHOEVER MAKES IT. It is the
+       one structural edit: it changes which conditions exist at all, so the
+       verdict was about a different set. (An ordinary manager edit does not void
+       his own review; this does, and `reviewVoidPatch` says so.) */
+    const voided = reviewVoidPatch(
+      lead,
+      { leadSalesType: salesType },
+      { reviewer: await isReviewer(ctx.user) },
+    );
+
     await db.transaction(async (tx) => {
       await tx
         .update(customers)
-        .set({ leadSalesType: salesType, updatedAt: new Date() })
+        .set({ leadSalesType: salesType, updatedAt: new Date(), ...(voided?.set ?? {}) })
         .where(eq(customers.id, customerId));
+      if (voided) {
+        await recordReviewVoid(tx, {
+          lead,
+          voided,
+          actorId: ctx.user.id,
+          actorRole: ctx.authorisedBy,
+          actorApp: ctx.authorisedIn,
+        });
+      }
 
       await tx.insert(auditLog).values({
         id: gen("aud"),
@@ -581,6 +709,7 @@ export async function setLeadSalesType(
       });
     });
 
+    if (voided) await settleQualificationState(customerId, ctx.user.id, { voided: true });
     refresh(customerId);
     return ok(null, "Sales type changed.");
   } catch (e) {
@@ -613,24 +742,69 @@ export async function saveLeadQualification(
     if (!found.ok) return found.refusal;
     const lead = found.lead;
 
-    const known = new Set(
-      checklistFor(lead.leadSalesType as LeadSalesType | null, "qualification").map((c) => c.id),
-    );
+    /* QUALIFICATION IS WRITTEN AT QUALIFICATION. A Prospect the Sales Manager has
+       not verified yet has no Qualification to answer, and a tick saved against
+       it would be counted the moment the rung opens — as work somebody did
+       before anybody had checked there was a lead. Refused here, on the server,
+       and drawn as disabled on the screen from the same sentence. */
+    const access = qualificationAccess(lead.leadStage);
+    if (!access.writable) return err(access.reason, "rule_violation");
+
+    /* The Sales Manager the lead is under reviews it; she does not fill it in. */
+    const barred = await qualificationCollectorRefusal(ctx.user, lead);
+    if (barred) return err(barred, "rule_violation");
+
+    /* The condition ids, and the stored answers the eight questions keep in this
+       jsonb. Anything else a stale screen sends is dropped rather than stored. */
+    const known = new Set<string>([
+      ...checklistFor(lead.leadSalesType as LeadSalesType | null, "qualification").map((c) => c.id),
+      ...QUALIFICATION_ANSWER_KEYS,
+    ]);
+    const answerKeys = new Set<string>(QUALIFICATION_ANSWER_KEYS);
     const kept: Record<string, boolean | string> = {};
     const dropped: string[] = [];
     for (const [id, value] of Object.entries(answers ?? {})) {
-      if (!known.has(id)) dropped.push(id);
-      else if (typeof value === "boolean" || typeof value === "string") kept[id] = value;
+      if (!known.has(id)) {
+        dropped.push(id);
+        continue;
+      }
+      if (answerKeys.has(id)) {
+        if (typeof value !== "string") continue;
+        const fault = qualificationAnswerFault(id, value);
+        if (fault) return err(fault, "validation", [{ field: id, message: fault }]);
+        kept[id] = value.trim();
+      } else if (typeof value === "boolean" || typeof value === "string") {
+        kept[id] = value;
+      }
     }
 
     const merged = { ...(lead.leadQualification ?? {}), ...kept };
     const day = await today();
+    const voided = reviewVoidPatch(
+      lead,
+      { leadQualification: merged },
+      { reviewer: await isReviewer(ctx.user) },
+    );
 
     await db.transaction(async (tx) => {
       await tx
         .update(customers)
-        .set({ leadQualification: merged, leadLastActivityDate: day, updatedAt: new Date() })
+        .set({
+          leadQualification: merged,
+          leadLastActivityDate: day,
+          updatedAt: new Date(),
+          ...(voided?.set ?? {}),
+        })
         .where(eq(customers.id, customerId));
+      if (voided) {
+        await recordReviewVoid(tx, {
+          lead,
+          voided,
+          actorId: ctx.user.id,
+          actorRole: ctx.authorisedBy,
+          actorApp: ctx.authorisedIn,
+        });
+      }
 
       await tx.insert(auditLog).values({
         id: gen("aud"),
@@ -645,6 +819,7 @@ export async function saveLeadQualification(
       });
     });
 
+    await settleQualificationState(customerId, ctx.user.id, { voided: Boolean(voided) });
     refresh(customerId);
     return {
       ok: true,
@@ -667,7 +842,7 @@ export async function saveLeadQualification(
 
 const prospectFieldsSchema = z.object({
   customerType: z
-    .enum(["dealer", "manufacturer", "distributor", "retailer"])
+    .enum(["dealer", "manufacturer", "distributor", "retailer", "private_limited_user"])
     .nullish(),
   monthlyLitres: z.number().int().nonnegative().nullish(),
   potentialPaise: z.number().int().nonnegative().nullish(),
@@ -677,6 +852,10 @@ const prospectFieldsSchema = z.object({
   decisionMaker: z.string().trim().max(200).nullish(),
   creditDaysWanted: z.number().int().min(0).max(365).nullish(),
   application: z.string().trim().max(500).nullish(),
+  /* Who PLACES the order, where that is not who decides. The gate has read it
+     since the qualification checklist was cut to eight and the Calling Desk has
+     written it; the Qualification screen had nowhere to. */
+  buyer: z.string().trim().max(200).nullish(),
   gstin: z.string().trim().max(20).nullish(),
   companyName: z.string().trim().max(200).nullish(),
 });
@@ -705,6 +884,23 @@ export async function saveProspectFields(
     const ctx = await requireCapability("lead.work");
     const found = await reachableLead(customerId);
     if (!found.ok) return found.refusal;
+    const lead = found.lead;
+
+    /* THE QUALIFICATION-ONLY ANSWERS ARE WRITTEN AT QUALIFICATION. The other
+       answers this action takes — the kind of business, the figures, the contact
+       — are the Prospect's own and stay writable, because the Calling Desk and
+       the Sales Manager pipeline both send them. It is the four that belong to
+       the Telecaller's Qualification (GST number, application, credit days,
+       buyer) that wait for the Sales Manager to open it. */
+    const asked = QUALIFICATION_ONLY_FIELDS.filter((k) => f[k] !== undefined);
+    if (asked.length) {
+      const access = qualificationAccess(lead.leadStage);
+      if (!access.writable) return err(access.reason, "rule_violation");
+      /* The Sales Manager the lead is under reviews it; she does not fill in
+         its GST number, application, credit or buyer. */
+      const barred = await qualificationCollectorRefusal(ctx.user, lead);
+      if (barred) return err(barred, "rule_violation");
+    }
 
     const set: Partial<typeof customers.$inferInsert> = {
       leadLastActivityDate: await today(),
@@ -719,11 +915,32 @@ export async function saveProspectFields(
     if (f.decisionMaker !== undefined) set.leadDecisionMaker = f.decisionMaker;
     if (f.creditDaysWanted !== undefined) set.leadCreditDaysWanted = f.creditDaysWanted;
     if (f.application !== undefined) set.leadApplication = f.application;
+    if (f.buyer !== undefined) set.leadBuyer = f.buyer;
     if (f.gstin !== undefined) set.gstin = f.gstin;
     if (f.companyName !== undefined) set.companyName = f.companyName;
 
+    /* A CHANGED NUMBER IS NOT THE NUMBER SOMEBODY VALIDATED. Clearing is by value,
+       so re-saving the same GSTIN leaves the validation alone. */
+    const gstClear = f.gstin !== undefined ? gstinChangeClear(lead, f.gstin) : null;
+    if (gstClear) Object.assign(set, gstClear);
+
+    /* Only the columns this call is actually setting are offered to the rule — read
+       straight off `set`, so an identical re-save is recognised as no change at
+       all and a column this action never writes can never be missed. */
+    const voided = reviewVoidPatch(lead, materialOf(set), { reviewer: await isReviewer(ctx.user) });
+    if (voided) Object.assign(set, voided.set);
+
     await db.transaction(async (tx) => {
       await tx.update(customers).set(set).where(eq(customers.id, customerId));
+      if (voided) {
+        await recordReviewVoid(tx, {
+          lead,
+          voided,
+          actorId: ctx.user.id,
+          actorRole: ctx.authorisedBy,
+          actorApp: ctx.authorisedIn,
+        });
+      }
       await tx.insert(auditLog).values({
         id: gen("aud"),
         actorId: ctx.user.id,
@@ -736,6 +953,7 @@ export async function saveProspectFields(
       });
     });
 
+    await settleQualificationState(customerId, ctx.user.id, { voided: Boolean(voided) });
     refresh(customerId);
     return ok(null, "Saved.");
   } catch (e) {
@@ -996,7 +1214,7 @@ export async function assignLeadManager(
 
     let chosen = managerId ?? null;
     if (!chosen) {
-      const candidates = await leadManagerCandidates(lead.territoryRegion);
+      const candidates = await leadManagerCandidatesFor(customerId);
       chosen = candidates[0]?.id ?? null;
       if (!chosen) {
         return err(
@@ -1005,12 +1223,33 @@ export async function assignLeadManager(
         );
       }
     } else {
+      /*
+       * A MANAGER OF THE BOOK THIS LEAD IS WORKED IN — the CRM or the Sales
+       * Dashboard, at manager or admin level on THAT grant. It read
+       * `users.role`, the widest level held anywhere, so a telecaller who
+       * managed HRMS passed as a sales manager and was handed a lead to
+       * verify, while the check said nothing about whether they could open a
+       * lead screen at all.
+       */
       const [m] = await db
-        .select({ id: users.id, role: users.role, active: users.active })
+        .select({ id: users.id, active: users.active })
         .from(users)
         .where(eq(users.id, chosen))
         .limit(1);
-      if (!m || !m.active || m.role === "associate") {
+      const seat = m
+        ? await db
+            .select({ id: appAccess.id })
+            .from(appAccess)
+            .where(
+              and(
+                eq(appAccess.userId, chosen),
+                inArray(appAccess.app, ["crm", "sales"]),
+                inArray(appAccess.role, ["manager", "admin"]),
+              ),
+            )
+            .limit(1)
+        : [];
+      if (!m || !m.active || seat.length === 0) {
         return err(
           "A lead manager has to be a sales manager who can sign in and work the list.",
           "validation",
@@ -1191,7 +1430,7 @@ export async function recordLeadValidationCall(
     if (!parsed.success) return zodErr(parsed.error);
     const c = parsed.data;
 
-    const ctx = await requireCapability("lead.verify");
+    const ctx = await requireLeadVerifier(customerId, { designated: true });
     const found = await reachableLead(customerId);
     if (!found.ok) return found.refusal;
     const lead = found.lead;
@@ -1548,13 +1787,59 @@ export async function recordLeadValidationCall(
 
     refresh(customerId);
 
-    if (c.outcome !== "not_qualified") {
+    /*
+     * A DESK REQUEST THIS CALL WAS ABOUT IS SETTLED HERE, and only here.
+     *
+     * The calling desk asks for a lead to be put forward as a Prospect and the
+     * lead stays a Suspect until a verification succeeds — so the verdict that
+     * says "verified" is what promotes it, and "follow_up" is what puts it on
+     * hold. A lead with no pending request (every lead the salesman path
+     * raises) is returned untouched by the settle, so this changes nothing for
+     * it. Loaded lazily: that service imports this file for the move it makes, and
+     * a static import back would be a cycle.
+     */
+    const { settleProspectRequest } = await import("../services/lead-prospect-request-service");
+    const settled = await settleProspectRequest(customerId, c.outcome);
+    if (!settled.ok) {
+      return ok(null, `Recorded. ${settled.error}`);
+    }
+
+    /*
+     * A SUCCESSFUL VERIFICATION OPENS QUALIFICATION, on every door.
+     *
+     * The helper is shared with the Sales Manager pipeline (which reaches it
+     * through this action) and with the handset, and it does not authorise — this
+     * action already asked for `lead.verify` above. It runs AFTER the desk
+     * request is settled, so a request that has just been promoted to Prospect is
+     * opened in the same act. It cannot fail the call: the call is evidence, and
+     * a refusal comes back in words.
+     */
+    if (c.outcome === "verified") {
+      const opened = await openQualificationAfterVerification(
+        { userId: ctx.user.id, hat: { app: ctx.authorisedIn, role: ctx.authorisedBy }, sourceApp: "crm" },
+        customerId,
+      ).catch(() => null);
+      refresh(customerId);
+      if (opened?.opened) {
+        return ok(
+          null,
+          settled.data.promoted
+            ? "Verified — the lead is now a confirmed Prospect and Qualification is open."
+            : `Verified — ${opened.message.replace(/^Verified — /, "")}`,
+        );
+      }
       return ok(
         null,
-        c.outcome === "verified"
-          ? "Verified."
-          : "Recorded, and the follow-up is on the salesman's list.",
+        settled.data.promoted
+          ? "Verified — the lead is now a confirmed Prospect."
+          : opened && opened.reason !== "not_prospect" && opened.reason !== "already_open"
+            ? `Verified. Qualification did not open yet: ${opened.message}`
+            : "Verified.",
       );
+    }
+
+    if (c.outcome !== "not_qualified") {
+      return ok(null, "Recorded, and the follow-up is on the owner's list.");
     }
 
     /*

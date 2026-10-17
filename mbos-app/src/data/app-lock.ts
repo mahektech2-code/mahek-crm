@@ -142,7 +142,7 @@ export async function canOffer(): Promise<{ ok: boolean; why: string; label: str
   if (!can.enrolled) {
     return {
       ok: false,
-      why: 'Add a fingerprint in your phone’s own Settings first, then come back.',
+      why: 'First add a fingerprint in your phone Settings. Then come back.',
       label: can.label,
     };
   }

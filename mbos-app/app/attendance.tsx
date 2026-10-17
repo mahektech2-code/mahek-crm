@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
@@ -9,12 +9,16 @@ import {
   recentDays,
   requestRegularisation,
   sessionsOf,
+  today as todayIso,
   todayRow,
   workedLabel,
   workedMs,
   type AttendanceDay,
 } from '../src/data/attendance';
 import { useTicker } from '../src/components/ui/use-ticker';
+import { PressableScale, Pulse, Stagger, Swap } from '../src/components/ui/motion';
+import { missedPunchOuts } from '../src/engines/punch-out';
+import { getConfig } from '../src/data/config';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { dmy, hhmm } from '../src/lib/format';
@@ -69,11 +73,16 @@ export default function AttendanceScreen() {
      sentence here is one about somebody's pay. */
   const [loaded, setLoaded] = React.useState(false);
   const [readFailed, setReadFailed] = React.useState(false);
+  const [windowDays, setWindowDays] = React.useState(30);
 
   const load = React.useCallback(() => {
     if (!userId) return;
-    void Promise.all([recentDays(userId), todayRow(userId)])
-      .then(([rows, t]) => {
+    void getConfig<number>('mbos.attendance.missedPunchOutWindowDays', 30)
+      /* One more row than the window, so a window longer than the old fixed
+         thirty is not silently cut short by the read under it. */
+      .then((w) => Promise.all([w, recentDays(userId, Math.max(30, w + 1)), todayRow(userId)]))
+      .then(([w, rows, t]) => {
+        setWindowDays(w);
         setDays(rows);
         setToday(t);
         setReadFailed(false);
@@ -97,7 +106,7 @@ export default function AttendanceScreen() {
    */
   const askCorrection = (d: AttendanceDay) => {
     if (d.regularizationId) {
-      notify('Your manager already has a correction for ' + dmy(d.day) + '. Nothing changes until they answer it.');
+      notify('You already asked your manager to fix ' + dmy(d.day) + '. Wait for their answer.', 'info');
       return;
     }
     askConfirm({
@@ -105,13 +114,13 @@ export default function AttendanceScreen() {
       body:
         'Your manager sees ' +
         dmy(d.day) +
-        ', what the app recorded, and your reason. Nothing changes until they approve it.',
-      reasonLabel: 'What happened · required',
+        ', what the app saved, and your reason. Nothing changes until they approve it.',
+      reasonLabel: 'What happened · needed',
       confirmLabel: 'Send to manager',
       run: async (r) => {
         await requestRegularisation(d.id, r);
         load();
-        notify('Sent to your manager · ' + dmy(d.day) + ' · nothing changes until they approve it');
+        notify('Sent to your manager · ' + dmy(d.day) + ' · nothing changes until they approve');
       },
     });
   };
@@ -130,8 +139,11 @@ export default function AttendanceScreen() {
   const workedSoFar = todaySessions.length ? workedMs(todaySessions, now) : null;
 
   const present = days.filter((d) => d.status === 'Present').length;
-  const onLeave = days.filter((d) => d.status === 'On Leave').length;
   const overrides = days.filter((d) => d.fieldVisitOverride === 1).length;
+  /* His own count of the habit his manager now sees as a column. Told to him
+     first, on his own screen, because a man who does not know the button is
+     there should find out from the app before he finds out from a review. */
+  const missed = missedPunchOuts(days, todayIso(), windowDays);
 
   /* "of N working days" was a count of the days this phone happens to hold a
      row for, so the ratio read N of N by construction and a fresh handset read
@@ -140,7 +152,12 @@ export default function AttendanceScreen() {
   const stats: { l: string; v: string; s: string; tone?: 'amber' }[] = [
     { l: 'Present', v: String(present), s: 'of ' + days.length + ' days on this phone' },
     { l: 'Away from base', v: String(overrides), s: 'Field visit', tone: 'amber' },
-    { l: 'On leave', v: String(onLeave), s: 'Approved' },
+    {
+      l: 'No punch-out',
+      v: String(missed.missed),
+      s: missed.punched ? 'of ' + missed.punched + ' days, last ' + windowDays : 'last ' + windowDays + ' days',
+      tone: missed.missed ? 'amber' : undefined,
+    },
   ];
 
   return (
@@ -150,12 +167,18 @@ export default function AttendanceScreen() {
 
       <Card style={{ marginTop: 12 }}>
         <T s="label">Today</T>
-        <T s="h3" style={{ marginTop: 4 }}>
-          {today?.checkInAt != null ? 'Punched in ' + hhmm(today.checkInAt) : 'Not punched in'}
-        </T>
-        <T s="small" style={{ color: C.muted, marginTop: 2 }}>
-          {workedSoFar != null ? workedLabel(workedSoFar, running) + ' so far' : 'Punch in from Home.'}
-        </T>
+        {/* Punched in, on a break, or not yet — three states of one day, and
+            the screen is often open on Home's way back from changing it. Keyed
+            on the state, never on the ticking figure, so the clock counting
+            does not re-settle the card every second. */}
+        <Swap id={today?.checkInAt == null ? 'out' : running ? 'on' : 'break'}>
+          <T s="h3" style={{ marginTop: 4 }}>
+            {today?.checkInAt != null ? 'Punched in ' + hhmm(today.checkInAt) : 'Not punched in'}
+          </T>
+          <T s="small" style={{ color: C.muted, marginTop: 2 }}>
+            {workedSoFar != null ? workedLabel(workedSoFar, running) + ' so far' : 'Punch in from Home.'}
+          </T>
+        </Swap>
 
         {/*
           Each stretch of work, named. A day is not one check-in and one
@@ -165,12 +188,18 @@ export default function AttendanceScreen() {
         {todaySessions.length > 0 ? (
           <View style={{ marginTop: 10, borderTopWidth: 1, borderTopColor: C.wash, paddingTop: 8 }}>
             {todaySessions.map((x, i) => (
-              <View key={i} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 }}>
-                <T s="caption">{'Session ' + (i + 1)}</T>
-                <T style={[{ fontSize: 14, color: x.outAt == null ? C.primaryDeep : C.body }, tabular]}>
-                  {hhmm(x.inAt) + ' – ' + (x.outAt == null ? 'running' : hhmm(x.outAt))}
-                </T>
-              </View>
+              <Stagger key={i} index={i}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 }}>
+                  <T s="caption">{'Check-in ' + (i + 1)}</T>
+                  {/* The open stretch breathes: it is the one line on this
+                      screen that is still being written. */}
+                  <Pulse active={x.outAt == null}>
+                    <T style={[{ fontSize: 14, color: x.outAt == null ? C.primaryDeep : C.body }, tabular]}>
+                      {hhmm(x.inAt) + ' – ' + (x.outAt == null ? 'still on' : hhmm(x.outAt))}
+                    </T>
+                  </Pulse>
+                </View>
+              </Stagger>
             ))}
           </View>
         ) : null}
@@ -193,21 +222,28 @@ export default function AttendanceScreen() {
         ))}
       </Card>
 
+      {missed.missed ? (
+        <T s="caption" style={{ marginTop: 8, color: C.warnInk }}>
+          {(missed.missed === 1 ? 'One day was' : missed.missed + ' days were') +
+            ' closed by the system because you did not punch out. Your manager has to fix each one. Punch out from Home at the end of the day.'}
+        </T>
+      ) : null}
+
       <T s="label" style={{ marginTop: 18, marginBottom: 8 }}>
-        Days recorded on this phone
+        Days saved on this phone
       </T>
 
       <ListCard>
         {!loaded ? (
           <View style={{ paddingHorizontal: 16, paddingVertical: 20 }}>
             <T s="small" style={{ color: C.muted }}>
-              Reading this phone&apos;s record…
+              Loading…
             </T>
           </View>
         ) : readFailed ? (
           <View style={{ paddingHorizontal: 16, paddingVertical: 20 }}>
             <T s="small" style={{ color: C.ink }}>
-              This phone&apos;s record could not be read. Open the screen again.
+              Could not load. Open this screen again.
             </T>
           </View>
         ) : days.length === 0 ? (
@@ -215,22 +251,29 @@ export default function AttendanceScreen() {
              the screen a salesman opens to check his own pay. */
           <View style={{ paddingHorizontal: 16, paddingVertical: 20 }}>
             <T style={[{ fontSize: 16, lineHeight: 22, color: C.ink }, weight(600)]}>
-              Nothing recorded on this phone yet
+              Nothing saved on this phone yet
             </T>
             <T s="small" style={{ color: C.muted, marginTop: 4 }}>
-              This list is only what this handset marked, and a new or reinstalled phone starts empty. It is
-              not your attendance — the office holds that, and it is what your pay is read against. Ask your
-              manager if a day looks missing there.
+              This list shows only what this phone saved. A new or reset phone starts empty. This is
+              not your full attendance. The office keeps that, and your pay is based on it. Ask your
+              manager if a day is missing.
             </T>
           </View>
         ) : null}
         {days.map((d, i) => {
-          const state = d.status ?? 'Absent';
-          const isPresent = state === 'Present' || state === 'Half Day';
+          /* A day punched in to and never out of has NO status — the verdict
+             is written by the punch-out, and there was none — so it fell
+             through to "Absent" on a day he plainly worked. It is its own
+             answer, and today's open session is not one of them. */
+          const noPunchOut = d.checkInAt != null && d.checkOutAt == null && d.day < todayIso();
+          const state = d.status ?? (noPunchOut ? 'No punch-out' : 'Absent');
+          const isPresent = state === 'Present' || state === 'Half Day' || noPunchOut;
           /* An override is not lateness — it is a day that started away from
              base, which is what a field salesman's day usually is. */
           const flagged = d.fieldVisitOverride === 1;
-          const tone: BadgeTone = isPresent
+          const tone: BadgeTone = noPunchOut
+            ? 'amber'
+            : isPresent
             ? flagged
               ? 'amber'
               : 'success'
@@ -241,45 +284,59 @@ export default function AttendanceScreen() {
           return (
             /* The ASK is on the row, because the row is the only thing that
                knows which day it is. */
-            <Pressable
-              key={d.id}
-              accessibilityRole="button"
-              accessibilityLabel={'Ask about ' + dmy(d.day)}
-              accessibilityHint={
-                asked ? 'A correction for this day is already with your manager' : 'Ask your manager to correct this day'
-              }
-              onPress={() => askCorrection(d)}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 12,
-                minHeight: 48,
-                paddingHorizontal: 16,
-                paddingVertical: 12,
-                borderTopWidth: i ? 1 : 0,
-                borderTopColor: C.wash,
-              }}>
-              <View style={{ width: 58 }}>
-                <T style={[{ fontSize: 15, lineHeight: 20, color: C.ink }, weight(500)]}>{dmy(d.day)}</T>
-                <T s="micro">{DAY_NAMES[new Date(d.day + 'T00:00:00').getDay()]}</T>
-              </View>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <T style={[{ fontSize: 15, lineHeight: 20, color: C.ink }, tabular]}>
-                  {isPresent ? hhmm(d.checkInAt) + ' – ' + hhmm(d.checkOutAt) : '—'}
-                </T>
-                <T s="caption">
-                  {isPresent
-                    ? hoursLabel(d.workedMinutes) + (sessionsOf(d).length > 1 ? ` · ${sessionsOf(d).length} sessions` : '')
-                    : state}
-                </T>
-                {asked ? (
-                  <T s="caption" style={{ color: C.warnInk, marginTop: 1 }}>
-                    Correction asked — with your manager
+            <Stagger key={d.id} index={i}>
+              <PressableScale
+                scaleTo={0.99}
+                accessibilityRole="button"
+                accessibilityLabel={'Ask about ' + dmy(d.day)}
+                accessibilityHint={
+                  asked ? 'You already asked your manager to fix this day' : 'Ask your manager to fix this day'
+                }
+                onPress={() => askCorrection(d)}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 12,
+                  minHeight: 48,
+                  paddingHorizontal: 16,
+                  paddingVertical: 12,
+                  borderTopWidth: i ? 1 : 0,
+                  borderTopColor: C.wash,
+                }}>
+                <View style={{ width: 58 }}>
+                  <T style={[{ fontSize: 15, lineHeight: 20, color: C.ink }, weight(500)]}>{dmy(d.day)}</T>
+                  <T s="micro">{DAY_NAMES[new Date(d.day + 'T00:00:00').getDay()]}</T>
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <T style={[{ fontSize: 15, lineHeight: 20, color: C.ink }, tabular]}>
+                    {isPresent ? hhmm(d.checkInAt) + ' – ' + (noPunchOut ? 'no punch-out' : hhmm(d.checkOutAt)) : '—'}
                   </T>
-                ) : null}
-              </View>
-              <Badge tone={tone}>{flagged && isPresent ? 'Field' : state}</Badge>
-            </Pressable>
+                  {/* No hours on a day nobody closed: there is no end to count to,
+                      and the line below says why. */}
+                  {noPunchOut ? null : (
+                    <T s="caption">
+                      {isPresent
+                        ? hoursLabel(d.workedMinutes) + (sessionsOf(d).length > 1 ? ` · punched in ${sessionsOf(d).length} times` : '')
+                        : state}
+                    </T>
+                  )}
+                  {/* Said in words rather than left as "09:12 – —", which reads as
+                      a time nobody filled in rather than a punch-out that never
+                      happened. Not today's open session: that is still running. */}
+                  {noPunchOut ? (
+                    <T s="caption" style={{ color: C.warnInk, marginTop: 1 }}>
+                      Closed by the system. Tap to ask your manager to fix it.
+                    </T>
+                  ) : null}
+                  {asked ? (
+                    <T s="caption" style={{ color: C.warnInk, marginTop: 1 }}>
+                      Fix asked. Waiting for your manager.
+                    </T>
+                  ) : null}
+                </View>
+                <Badge tone={tone}>{noPunchOut ? 'No punch-out' : flagged && isPresent ? 'Field' : state}</Badge>
+              </PressableScale>
+            </Stagger>
           );
         })}
       </ListCard>

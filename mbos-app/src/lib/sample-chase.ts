@@ -235,7 +235,7 @@ function daysBetween(from: string, to: string): number {
  * meant to be mistaken for one another at arm's length in a market.
  */
 export function chaseCountSentence(asked: ChaseCount): string {
-  if (asked == null) return 'This phone has not been told how many times the office has asked';
+  if (asked == null) return 'This phone does not know how many times the office has asked';
   if (asked === 0) return 'Not asked yet';
   if (asked === 1) return 'Asked once';
   if (asked === 2) return 'Asked twice';
@@ -259,10 +259,10 @@ export function nextChaseSentence(s: ChaseSchedule, fmt: (iso: string) => string
   if (!s.startedOn) return null;
   const every = s.repeatEveryDays === 1 ? 'every day' : `every ${s.repeatEveryDays} days`;
   if (s.nextAsk != null && s.nextAskDueOn) {
-    return `Ask ${s.nextAsk} falls on ${fmt(s.nextAskDueOn)}, then ${every} until they answer.`;
+    return `Ask ${s.nextAsk} is on ${fmt(s.nextAskDueOn)}, then ${every} until they answer.`;
   }
   if (s.nextDayOn) {
-    return `The next ask falls on ${fmt(s.nextDayOn)}, then ${every} until they answer.`;
+    return `The next ask is on ${fmt(s.nextDayOn)}, then ${every} until they answer.`;
   }
   return null;
 }

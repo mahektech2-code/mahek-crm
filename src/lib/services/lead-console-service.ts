@@ -11,10 +11,12 @@ import {
   type LeadStage,
 } from "../lead-labels";
 import type { LeadPriority } from "../lead-priority";
-import { asDate } from "../business-date";
+import { unworkedWindow } from "../lead-action-window";
+import { APP_TIMEZONE, asDate } from "../business-date";
 import { orderCountsSql } from "../order-status";
 import { MBOS_EVENT, sourceIdField } from "../timeline";
 import { leadsVisible, managerScope, onlyMine } from "./sales-service";
+import { inSalesManagersBook } from "./crm-sales-manager-scope";
 /* §5.3 — ONE definition of "are these figures old enough to need standing
    behind", shared with the server action's own assembler rather than restated
    here. `lead-service.ts` does not import this file, so there is no cycle. */
@@ -60,6 +62,7 @@ import { figuresAreStale } from "./lead-service";
 const STILL_WORKING = sql.raw(
   `c.lead_stage is not null
      and c.lead_archived = false
+     and c.deleted_at is null
      and c.lead_stage not in ('lost', 'won', 'customer', 'active_distributor')`,
 );
 
@@ -139,6 +142,19 @@ export type VerificationRow = {
   competitor: string | null;
   requiredProductName: string | null;
   potentialPaise: number | null;
+  /**
+   * TRUE where this is the calling desk's REQUEST to be put forward as a
+   * Prospect rather than a Prospect already. It is still a Suspect, and a
+   * verification that succeeds is what promotes it.
+   */
+  requested: boolean;
+  /**
+   * WHY NOBODY HOLDS IT, where verification is held because nobody can be named
+   * (the org chart, an account or the desk verifier cannot be used). Null for a
+   * lead that is simply waiting. It is the sentence the realignment wrote, with
+   * what has to be fixed in it.
+   */
+  heldReason: string | null;
   /** A follow-up call already recorded — verified false is not a closed lead. */
   attempts: number;
   lastAttemptAt: Date | null;
@@ -173,8 +189,11 @@ export async function verificationQueue(
 
   const where = sql`
      where ${STILL_WORKING}
-       and c.lead_stage = 'prospect'
-       and c.lead_verified_at is null
+       and ((c.lead_stage = 'prospect' and c.lead_verified_at is null)
+         /* A calling-desk REQUEST waits here too: it is still a Suspect, and the
+            manager's verification is what makes it a Prospect. */
+         or (c.prospect_request_state in ('awaiting', 'followup')
+             and c.lead_stage::text in ('new', 'suspect', 'contacted')))
        ${leadsVisible(scope)}
   `;
 
@@ -186,8 +205,18 @@ export async function verificationQueue(
              c.lead_stage::text as stage,
              c.owner_id as "salesmanId", u.name as "salesmanName",
              c.lead_manager_id as "leadManagerId", m.name as "leadManagerName",
-             c.lead_stage_since::text as "prospectSince",
-             coalesce(${day}::date - c.lead_stage_since, 0)::int as "waitingDays",
+             /* What the wait is measured from: the day it reached Prospect, or the
+                day the desk asked where it is a request. */
+             (case when c.prospect_request_state is not null
+                   then (c.prospect_requested_at at time zone ${APP_TIMEZONE})::date
+                   else c.lead_stage_since end)::text as "prospectSince",
+             coalesce(${day}::date - (case when c.prospect_request_state is not null
+                   then (c.prospect_requested_at at time zone ${APP_TIMEZONE})::date
+                   else c.lead_stage_since end), 0)::int as "waitingDays",
+             (c.prospect_request_state is not null) as requested,
+             (case when c.lead_manager_id is null
+                    and c.lead_next_action_outcome like 'Verification is blocked:%'
+                   then c.lead_next_action_outcome end) as "heldReason",
              (c.lead_manager_id = ${me}) as mine,
              c.lead_monthly_volume_litres as "monthlyLitres",
              c.lead_competitor as competitor,
@@ -370,12 +399,7 @@ export async function leadsWithoutNextAction(
 
   const where = sql`
      where ${STILL_WORKING}
-       and (
-         c.lead_next_action is null
-         or c.lead_next_action_date is null
-         or c.lead_next_action_owner_id is null
-         or (c.lead_next_action_date < ${day}::date and c.lead_next_action_outcome is null)
-       )
+       and ${unworkedWindow(day)}
        ${leadsVisible(scope)}
   `;
 
@@ -717,6 +741,7 @@ export async function sampleDesk(
              on a.subject_id = s.id and a.type = 'sample'
      where s.state <> 'cancelled'
        ${onlyMine(scope, "s.salesman_id")}
+       ${inSalesManagersBook(scope)}
      order by
        /* Worst first: a request nobody has answered stops a salesman dead;
           a delivery past its promised date is a courier to ring; everything
@@ -808,6 +833,7 @@ export async function nurtureSchedule(
        and c.lead_archived = false
        ${only}
        ${onlyMine(scope, "t.assigned_to_user_id")}
+       ${inSalesManagersBook(scope)}
      order by
        case when t.status in ('done', 'cancelled') then 1 else 0 end,
        t.due_date asc nulls last, t.id asc
@@ -837,6 +863,7 @@ export async function nurtureSchedule(
        and c.lead_archived = false
        ${only}
        ${onlyMine(scope, "t.assigned_to_user_id")}
+       ${inSalesManagersBook(scope)}
   `);
 
   const open = rows.filter((r) => r.status !== "done" && r.status !== "cancelled");
@@ -1086,6 +1113,16 @@ export type LeadRecord = {
   /* ---- §7 §8 the verification ---- */
   verifiedAt: Date | null;
   verifiedByName: string | null;
+  /**
+   * WHO RAISED THE LEAD AND WHEN — read from the append-only `lead_created`
+   * timeline event, not from a column. `customers` has no created-by column and
+   * none is added: the creator is a fact about the past that the history already
+   * records permanently, and a reassignment (which moves `owner_id`) cannot
+   * touch it because nothing edits that history. Null for a lead nobody raised
+   * through MahekOne — a row the sheet projected, or one older than the event.
+   */
+  createdByName: string | null;
+  createdAt: Date | string | null;
 
   /* ---- §5.3 the manager's verdict on the checklist ----
    *
@@ -1284,6 +1321,13 @@ export async function leadRecord(customerId: string, day: string): Promise<LeadR
            c.handed_over_at as "handedOverAt",
 
            c.lead_verified_at as "verifiedAt", v.name as "verifiedByName",
+           (select te.occurred_at from timeline_events te
+             where te.customer_id = c.id and te.event_type = 'lead_created'
+             order by te.occurred_at asc limit 1) as "createdAt",
+           (select cu.name from timeline_events te
+              join users cu on cu.id = te.actor_user_id
+             where te.customer_id = c.id and te.event_type = 'lead_created'
+             order by te.occurred_at asc limit 1) as "createdByName",
 
            c.lead_qualification_review::text as "qualificationReview",
            c.lead_qualification_review_note as "qualificationReviewNote",
@@ -1533,6 +1577,7 @@ export function gateInputFor(record: LeadRecord, freshDays: number): LeadGateInp
     gstin: record.gstin,
     /* §11.6 — somebody else's check, not the salesman's tick. */
     gstVerified: record.gstVerified,
+    gstRefused: record.gstVerified === false && record.gstVerifiedAt != null,
     /* §5.3 — computed through the ONE definition of staleness, which lives in
        `lead-service.ts` beside the column it reads. The record page and the
        server action have to agree about the same lead on the same afternoon,

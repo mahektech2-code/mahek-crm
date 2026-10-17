@@ -9,13 +9,10 @@ import { parseWholeNumber } from "@/lib/sheet-parse";
  * plus an issue naming the column and quoting what was there, and the row
  * still imports.
  *
- * Its own date parser, not `sheet-parse.ts`'s. That one is hard-coded to the
- * order sheet's day-first convention; this tab is the opposite. Checked
- * across every non-blank date in the export: 20,099 rows have a SECOND
- * numeric component over 12 (only possible if it is the day) and ZERO have a
- * FIRST component over 12 (impossible if the first were ever the day) — so
- * this column is uniformly month/day/year, a machine export in one locale
- * rather than the mixed hand-typed dates the HR sheet has to guess between.
+ * Its own date parser, not `sheet-parse.ts`'s. The CSV export the backfill
+ * started from was uniformly month/day/year; the live sheet is read in the
+ * workbook's own locale, which need not agree. So the order is DETECTED per
+ * read (`detectDateOrder`) rather than assumed — see that function.
  * ------------------------------------------------------------------------- */
 
 /** The sheet's own human header row, verbatim. */
@@ -38,26 +35,88 @@ export const FIELD_ACTIVITY_COL = {
 const REAL_MOODS = new Set(["normal", "happy", "angry"]);
 
 /**
- * This tab's date, and only this tab's: strict `M/D/Y`, no named-month
- * variant, no ambiguous fallback. Anything that does not match is
- * unreadable rather than guessed at.
+ * Which way round this tab writes a date. Two answers and no third: an
+ * ambiguous cell is read the way the rest of its column is written.
  */
-export function parseFieldActivityDate(raw: string): string | null {
-  const value = raw.trim();
-  if (!value) return null;
+export type DateOrder = "mdy" | "dmy";
 
-  const m = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (!m) return null;
+const MONTHS: Record<string, number> = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+};
 
-  const month = Number(m[1]);
-  const day = Number(m[2]);
-  const year = Number(m[3]);
+function isoOf(year: number, month: number, day: number): string | null {
   if (month < 1 || month > 12 || day < 1 || day > 31) return null;
   if (year < 1900 || year > 2100) return null;
   const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
   if (day > daysInMonth) return null;
-
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+/** The two numbers in front of the year, or null where the cell is not N/N/YYYY. */
+function numericParts(raw: string): { first: number; second: number; year: number } | null {
+  // A trailing clock time ("10/7/2026 14:22:05", "10/7/2026, 2:22 PM") is the
+  // same date — the time is dropped, not used to refuse the cell.
+  const m = raw.trim().match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})(?:[ ,T]+\d{1,2}:\d{2}.*)?$/);
+  if (!m) return null;
+  return { first: Number(m[1]), second: Number(m[2]), year: Number(m[3]) };
+}
+
+/**
+ * WHICH WAY ROUND A COLUMN IS WRITTEN, decided from the column and never from
+ * one cell.
+ *
+ * The rule this replaced — "this tab is month/day/year" — was measured on a
+ * CSV export, and an export is a file somebody saved on a machine with its own
+ * locale. The live read is Google's FORMATTED_VALUE, which follows the
+ * WORKBOOK's locale, and an Indian workbook writes day first. Read month-first,
+ * every day-first date with a day of 12 or less came out as a different,
+ * perfectly valid date — 10 June stored as 6 October — and every one with a
+ * day over 12 came out as nothing at all. Both are silent: the first puts a
+ * visit on a day nobody made it, the second drops it out of every date range.
+ *
+ * A first number over 12 can only be a day and a second over 12 can only be a
+ * day, so any column of real dates settles itself within a fortnight of rows.
+ * Null is "this column says nothing either way" — every value 12 or under —
+ * and the caller falls back on what it knows about the sheet already.
+ */
+export function detectDateOrder(values: Iterable<string | null | undefined>): DateOrder | null {
+  let dayFirst = 0;
+  let monthFirst = 0;
+  for (const v of values) {
+    if (!v) continue;
+    const p = numericParts(v);
+    if (!p) continue;
+    if (p.first > 12 && p.second <= 12) dayFirst++;
+    else if (p.second > 12 && p.first <= 12) monthFirst++;
+  }
+  if (dayFirst === 0 && monthFirst === 0) return null;
+  return dayFirst > monthFirst ? "dmy" : "mdy";
+}
+
+/**
+ * This tab's date. Numeric dates are read in the column's own `order` — the
+ * caller decides it with `detectDateOrder` — and a cell that contradicts that
+ * order is unreadable rather than quietly flipped. ISO (`2026-10-07`) and
+ * named-month (`7-Oct-2026`) cells say which number is which and are read
+ * whatever the order.
+ */
+export function parseFieldActivityDate(raw: string, order: DateOrder = "mdy"): string | null {
+  const value = raw.trim();
+  if (!value) return null;
+
+  const iso = value.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T].*)?$/);
+  if (iso) return isoOf(Number(iso[1]), Number(iso[2]), Number(iso[3]));
+
+  const named = value.match(/^(\d{1,2})[ -]([A-Za-z]{3,9})[\s,-]*(\d{4})(?:[ ,T]+\d{1,2}:\d{2}.*)?$/);
+  if (named) {
+    const month = MONTHS[named[2].slice(0, 3).toLowerCase()];
+    return month ? isoOf(Number(named[3]), month, Number(named[1])) : null;
+  }
+
+  const p = numericParts(value);
+  if (!p) return null;
+  return order === "dmy" ? isoOf(p.year, p.second, p.first) : isoOf(p.year, p.first, p.second);
 }
 
 /**
@@ -107,14 +166,17 @@ const text = (cells: Record<string, string>, column: string): string | null => {
   return v === "" ? null : v;
 };
 
-export function parseFieldActivityRow(cells: Record<string, string>): ParsedFieldActivityRow {
+export function parseFieldActivityRow(
+  cells: Record<string, string>,
+  order: DateOrder = "mdy",
+): ParsedFieldActivityRow {
   const issues: SheetRowIssue[] = [];
   const COL = FIELD_ACTIVITY_COL;
 
   const date = (column: string, label: string): string | null => {
     const raw = (cells[column] ?? "").trim();
     if (!raw) return null;
-    const iso = parseFieldActivityDate(raw);
+    const iso = parseFieldActivityDate(raw, order);
     if (iso === null) {
       issues.push({
         column,

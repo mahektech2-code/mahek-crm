@@ -50,10 +50,10 @@ export function correctionRefusal(
     if (a.verdict !== 'corrected') continue;
     const what = labels[field] ?? findingLabel(field);
     if (!a.corrected.trim()) {
-      return `Say what ${what.toLowerCase()} actually is — or go back to Confirm if it was right.`;
+      return `Say what ${what.toLowerCase()} really is. Or go back to Confirm if it was right.`;
     }
     if (!a.reason.trim()) {
-      return `Say why ${what.toLowerCase()} has changed. A correction with no reason reads later as somebody having written it down wrong.`;
+      return `Say why ${what.toLowerCase()} has changed. Without a reason, it looks like a mistake later.`;
     }
   }
   return null;

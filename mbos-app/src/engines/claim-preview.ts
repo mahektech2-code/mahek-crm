@@ -161,7 +161,7 @@ export function previewClaim(args: {
       proofRequired: false,
       remainingBeforePaise: null,
       remainingAfterPaise: null,
-      line: 'This phone has no policy yet — the office will work out what this is worth.',
+      line: 'This phone has no policy yet. The office will work out how much you get.',
     };
   }
 
@@ -255,7 +255,7 @@ export function previewClaim(args: {
           ? ''
           : remainingBefore > 0
             ? `${inrFromPaise(remainingBefore)} left for ${what} today.`
-            : `Nothing left for ${what} today — anything you claim now needs your manager to agree it.`,
+            : `Nothing left for ${what} today. Anything you claim now needs your manager to agree it.`,
     };
   }
 
@@ -275,7 +275,7 @@ export function previewClaim(args: {
       proofRequired,
       remainingBeforePaise: remainingBefore,
       remainingAfterPaise: remainingAfter,
-      line: `The policy allows ${inrFromPaise(eligible)} of this. The other ${inrFromPaise(excess)} needs your manager to agree it — send it anyway and say why.`,
+      line: `The policy allows ${inrFromPaise(eligible)} of this. The other ${inrFromPaise(excess)} needs your manager to agree it. You can still send it. Say why.`,
     };
   }
   if (proofRequired && !hasBill) {
@@ -286,7 +286,7 @@ export function previewClaim(args: {
       proofRequired,
       remainingBeforePaise: remainingBefore,
       remainingAfterPaise: remainingAfter,
-      line: 'This much needs the bill photographed before it can be settled.',
+      line: 'For this amount, take a photo of the bill. Then it can be paid back to you.',
     };
   }
   return {
@@ -298,10 +298,10 @@ export function previewClaim(args: {
     remainingAfterPaise: remainingAfter,
     line:
       remainingAfter === null
-        ? `Within policy — ${inrFromPaise(eligible)}.`
+        ? `Within policy: ${inrFromPaise(eligible)}.`
         : remainingAfter > 0
-          ? `Within policy — ${inrFromPaise(eligible)}. ${inrFromPaise(remainingAfter)} left for ${what} today.`
-          : `Within policy — ${inrFromPaise(eligible)}. Nothing left for ${what} today.`,
+          ? `Within policy: ${inrFromPaise(eligible)}. ${inrFromPaise(remainingAfter)} left for ${what} today.`
+          : `Within policy: ${inrFromPaise(eligible)}. Nothing left for ${what} today.`,
   };
 }
 
@@ -318,6 +318,10 @@ export function previewClaim(args: {
 export const CLAIM_KINDS: { key: ExpenseKind; category: string; label: string }[] = [
   { key: 'food', category: 'food', label: 'Food' },
   { key: 'lodging', category: 'lodging', label: 'Hotel' },
+  /* A fare between towns — bus, train. Logged like any other bill now that
+     there is no day to close: the trip itself only earns kilometres on his own
+     bike or car, so a fare nobody logs is a fare nobody pays. */
+  { key: 'travel', category: 'travel', label: 'Bus or train' },
   { key: 'local_transport', category: 'travel', label: 'Local transport' },
   { key: 'other', category: 'other', label: 'Other' },
 ];

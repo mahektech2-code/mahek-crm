@@ -1,11 +1,14 @@
-import { all, newId, one } from '../db';
+import { all, newId, one, run } from '../db';
 import {
   CUSTOMER_PAGE,
   cityOriginsQuery,
   customerCountQuery,
+  customerFilterCountsQuery,
   customerPageQuery,
   customerTimelineQuery,
   type BookView,
+  type CustomerFilter,
+  type CustomerSort,
   type Origin,
 } from './customer-query';
 import { enqueue } from '../sync/queue';
@@ -140,14 +143,27 @@ export async function listCustomersPage(args: {
   origin?: Origin;
   /** Customers, leads, or the whole book. See `BookView`. */
   view?: BookView;
+  filter?: CustomerFilter;
+  sort?: CustomerSort;
+  /** The caller's business date — what "due" is measured against. */
+  today?: string;
   offset?: number;
   limit?: number;
+  /** Skip the COUNT where the caller already has it — every page after the first. */
+  knownTotal?: number;
 } = {}): Promise<CustomerPage> {
   const offset = args.offset ?? 0;
 
-  /* The SAME view goes to both, or the screen prints a total over a list that
-     does not match it. */
-  const count = customerCountQuery(args.query, args.view);
+  /* The SAME view and filter go to both, or the screen prints a total over a
+     list that does not match it. A later page reuses the first page's total:
+     counting ten thousand rows again to append thirty is the one cost here that
+     grows with the book and buys nothing. */
+  if (args.knownTotal != null) {
+    const page = customerPageQuery({ ...args, offset });
+    const rows = await all<Customer>(page.sql, page.params);
+    return { rows, total: args.knownTotal, hasMore: offset + rows.length < args.knownTotal };
+  }
+  const count = customerCountQuery(args.query, args.view, args.filter, args.today);
   const totalRow = await one<{ n: number }>(count.sql, count.params);
   const total = totalRow?.n ?? 0;
 
@@ -155,6 +171,28 @@ export async function listCustomersPage(args: {
   const rows = await all<Customer>(page.sql, page.params);
 
   return { rows, total, hasMore: offset + rows.length < total };
+}
+
+/** How many shops each chip on the Customers tab would show. See the query. */
+export type CustomerFilterCounts = Record<CustomerFilter, number>;
+
+export async function customerFilterCounts(args: {
+  query?: string;
+  view?: BookView;
+  today?: string;
+}): Promise<CustomerFilterCounts> {
+  const q = customerFilterCountsQuery(args.query, args.view, args.today);
+  const row = await one<Record<string, number | null>>(q.sql, q.params);
+  const n = (k: string) => Number(row?.[k] ?? 0);
+  return {
+    all: n('all'),
+    owing: n('owing'),
+    followUp: n('followUp'),
+    reorder: n('reorder'),
+    visitDue: n('visitDue'),
+    neverVisited: n('neverVisited'),
+    unpinned: n('unpinned'),
+  };
 }
 
 /**
@@ -323,6 +361,21 @@ export async function customerBills(id: string): Promise<CustomerBill[]> {
  * word for the bill and the balance is the arithmetic, and it is the
  * arithmetic the server validates the allocation against.
  */
+/**
+ * Who owes money, most first — what the payment screen offers before anything
+ * is typed. A salesman opening "Collect payment" from the + button is almost
+ * always standing in front of one of these, and a blank list waiting for a
+ * name is a list he has to fill from memory. The office's own outstanding
+ * figure, never one worked out on the phone.
+ */
+export async function customersOwing(limit = 20): Promise<Customer[]> {
+  return all<Customer>(
+    `SELECT * FROM customers WHERE coalesce(outstandingPaise, 0) > 0
+      ORDER BY outstandingPaise DESC, name ASC LIMIT ?`,
+    [limit],
+  );
+}
+
 export async function openCustomerBills(id: string): Promise<CustomerBill[]> {
   return all<CustomerBill>(
     `SELECT * FROM customer_bills
@@ -392,6 +445,30 @@ export async function customersWithoutGps(): Promise<{ rows: Customer[]; total: 
       ORDER BY name LIMIT ${CUSTOMER_PAGE}`,
   );
   return { rows, total: counted?.n ?? rows.length };
+}
+
+/**
+ * FOLLOW-UPS OWED, counted by SHOP and from the latest visit only.
+ *
+ * The Home figure counted visits with a date of today or later — so a promise
+ * one day late dropped out of it, which is the opposite of what a reminder is
+ * for, and two visits to one shop counted twice. It also opened Tasks, which
+ * does not list visit follow-ups at all, so the number could not be traced.
+ * This counts shops whose latest visit set a date that is due or missed, and
+ * the tile opens the Customers list on exactly that filter.
+ */
+export async function followUpsOwed(today: string): Promise<{ owed: number; missed: number; dueToday: number }> {
+  const row = await one<{ owed: number; missed: number; dueToday: number }>(
+    `SELECT COUNT(*) AS owed,
+            COALESCE(SUM(CASE WHEN d < ? THEN 1 ELSE 0 END), 0) AS missed,
+            COALESCE(SUM(CASE WHEN d = ? THEN 1 ELSE 0 END), 0) AS dueToday
+       FROM (SELECT (SELECT v.nextFollowUpDate FROM visits v WHERE v.customerId = c.id
+                      ORDER BY v.checkInAt DESC LIMIT 1) AS d
+               FROM customers c)
+      WHERE d IS NOT NULL AND d <= ?`,
+    [today, today, today],
+  );
+  return { owed: row?.owed ?? 0, missed: row?.missed ?? 0, dueToday: row?.dueToday ?? 0 };
 }
 
 /**
@@ -485,28 +562,18 @@ export async function recordCompetitor(args: {
   });
 }
 
-/** Products this customer has actually bought, most-ordered first. */
-export async function frequentProducts(customerId: string, limit = 6) {
-  return all<{ id: string; name: string; packSize: string | null; cansPerBox: number | null; sellingPricePaise: number | null; n: number }>(
-    `SELECT p.*, COUNT(ol.id) AS n
-       FROM order_lines ol
-       JOIN orders o ON o.id = ol.orderId
-       JOIN products p ON p.id = ol.productId
-      WHERE o.customerId = ? AND p.active = 1
-      GROUP BY p.id
-      ORDER BY n DESC, p.name
-      LIMIT ?`,
-    [customerId, limit],
-  );
-}
 
 export async function searchProducts(query: string, limit = 20) {
   const like = `%${query.trim().toLowerCase()}%`;
-  return all<{ id: string; name: string; packSize: string | null; cansPerBox: number | null; millilitresPerCan: number | null; sellingPricePaise: number | null; formulation: string | null; brand: string | null }>(
+  /* The SKU code is searched too, and an exact code comes first: "216" typed
+     at a counter means Product 216, not every name with a 216 in it. */
+  const code = query.trim().toLowerCase();
+  return all<{ id: string; name: string; sku: string | null; packSize: string | null; cansPerBox: number | null; millilitresPerCan: number | null; sellingPricePaise: number | null; formulation: string | null; brand: string | null }>(
     `SELECT * FROM products
-      WHERE active = 1 AND (lower(name) LIKE ? OR lower(COALESCE(formulation,'')) LIKE ? OR lower(COALESCE(brand,'')) LIKE ?)
-      ORDER BY name LIMIT ?`,
-    [like, like, like, limit],
+      WHERE active = 1 AND (lower(name) LIKE ? OR lower(COALESCE(formulation,'')) LIKE ? OR lower(COALESCE(brand,'')) LIKE ?
+                            OR lower(COALESCE(sku,'')) LIKE ? OR lower(COALESCE(packSize,'')) LIKE ?)
+      ORDER BY lower(COALESCE(sku,'')) = ? DESC, name LIMIT ?`,
+    [like, like, like, like, like, code, limit],
   );
 }
 
@@ -515,23 +582,30 @@ export async function searchProducts(query: string, limit = 20) {
  * `order_lines` keeps only a name and a quantity, never the packing a fresh
  * line needs to derive boxes and litres from.
  */
+/**
+ * The SKU code for each product id, from the catalogue on the phone. Includes
+ * retired products: an order line or a sample from last year still names the
+ * product it was, and its code is still how somebody finds it.
+ */
+export async function skusFor(ids: string[]): Promise<Map<string, string>> {
+  if (!ids.length) return new Map();
+  const rows = await all<{ id: string; sku: string | null }>(
+    `SELECT id, sku FROM products WHERE id IN (${ids.map(() => '?').join(',')})`,
+    ids,
+  );
+  return new Map(rows.filter((r) => r.sku).map((r) => [r.id, r.sku as string]));
+}
+
 export async function productsByIds(ids: string[]) {
   if (!ids.length) return [];
   const marks = ids.map(() => '?').join(',');
-  return all<{ id: string; name: string; packSize: string | null; cansPerBox: number | null; millilitresPerCan: number | null; sellingPricePaise: number | null; formulation: string | null; brand: string | null }>(
+  return all<{ id: string; name: string; sku: string | null; packSize: string | null; cansPerBox: number | null; millilitresPerCan: number | null; sellingPricePaise: number | null; formulation: string | null; brand: string | null }>(
     // Retired since the last order is not re-offered silently.
     `SELECT * FROM products WHERE active = 1 AND id IN (${marks})`,
     ids,
   );
 }
 
-/** A short starter list, so an order form is not an empty search box mid-call. */
-export async function starterProducts(limit = 8) {
-  return all<{ id: string; name: string; packSize: string | null; cansPerBox: number | null; millilitresPerCan: number | null; sellingPricePaise: number | null }>(
-    'SELECT * FROM products WHERE active = 1 ORDER BY displayOrder, name LIMIT ?'.replace('displayOrder, ', ''),
-    [limit],
-  );
-}
 
 
 /* ------------------------------------------------- who we bill for a shop */
@@ -618,15 +692,25 @@ export async function billingChoicesFor(customer: Customer): Promise<BillingChoi
  * bill cannot be the one billed for another. Same rule the console's picker
  * enforces and the server checks again on the way in.
  */
+/*
+ * AND NOT A LEAD. A lead has never ordered and cannot hold anybody's invoice —
+ * the server refuses a biller that is not `kind = 'customer'` — so offering
+ * one here let a salesman pick it, take the order, and have both the shop and
+ * the order refused hours later.
+ */
+const BILLABLE = `thirdParty = 0 AND COALESCE(kind, 'customer') = 'customer'
+  AND NOT EXISTS (SELECT 1 FROM leads l WHERE l.id = customers.id AND l.archived = 0
+    AND COALESCE(l.funnelStage, '') <> 'won' AND COALESCE(l.stage, '') <> 'Converted')`;
+
 export async function billableCustomers(q?: string): Promise<Customer[]> {
   const term = (q ?? '').trim();
   if (!term) {
-    return all<Customer>('SELECT * FROM customers WHERE thirdParty = 0 ORDER BY name LIMIT 50');
+    return all<Customer>(`SELECT * FROM customers WHERE ${BILLABLE} ORDER BY name LIMIT 50`);
   }
   const like = `%${term}%`;
   return all<Customer>(
     `SELECT * FROM customers
-      WHERE thirdParty = 0 AND (name LIKE ? OR city LIKE ? OR phone LIKE ?)
+      WHERE ${BILLABLE} AND (name LIKE ? OR city LIKE ? OR phone LIKE ?)
       ORDER BY name LIMIT 50`,
     [like, like, like],
   );
@@ -681,7 +765,7 @@ export async function addFieldShop(args: {
      field he was never asked for is the worst way to find that out. */
   if (!city) return { ok: false, message: 'Which town is it in?' };
   if (phone.replace(/\D/g, '').length < 6) {
-    return { ok: false, message: 'A working phone number, so the office can reach them.' };
+    return { ok: false, message: 'Add a working phone number, so the office can call them.' };
   }
   if (!args.distributorCustomerId) {
     return { ok: false, message: 'Say who is billed for this shop.' };
@@ -691,7 +775,9 @@ export async function addFieldShop(args: {
   const row = {
     id: customerId,
     name,
-    contactPerson: args.contactPerson?.trim() || name,
+    /* Nobody named is nobody named. Filling the shop's own name in made every
+       such row read "Sai Paints · Sai Paints · Nashik". */
+    contactPerson: args.contactPerson?.trim() || null,
     phone,
     city,
     /* Marked and arranged in the same breath. A shop flagged as one we do not
@@ -726,4 +812,67 @@ export async function addFieldShop(args: {
   });
 
   return { ok: true, customerId };
+}
+
+/* ------------------------------------------------------- correcting a shop */
+
+export type ShopEdit = {
+  contactPerson?: string;
+  phone?: string;
+  /** Only for a shop with NO pin — see `editShop`. */
+  pin?: { lat: number; lng: number; accuracyM: number };
+};
+
+/**
+ * WHAT HE KNOWS BETTER THAN THE BOOK: who runs the shop, the number that
+ * answers, and — where the shop has never been pinned — where it is.
+ *
+ * The office has accepted these on the wire all along (`handleCustomerEdit`);
+ * nothing on the phone ever sent one, while two screens told him to "save a
+ * location" he had no way to save.
+ *
+ * A PIN IS SET, NEVER MOVED, from here. A pinned shop's pin decides the
+ * check-in radius, and letting the salesman move it from wherever he stands
+ * would be the override AGENTS.md refuses — one edit and the radius never
+ * refuses him there again. Moving a wrong pin is the request a refused
+ * check-in already offers, answered by a manager. An unpinned shop is pinned
+ * by the first check-in anyway; this is the same act without a visit.
+ */
+export async function editShop(customerId: string, edit: ShopEdit): Promise<{ ok: true } | { ok: false; message: string }> {
+  const current = await one<{ gpsLat: number | null; gpsLng: number | null }>(
+    'SELECT gpsLat, gpsLng FROM customers WHERE id = ?',
+    [customerId],
+  );
+  if (!current) return { ok: false, message: 'That shop is not on this phone.' };
+
+  const payload: Record<string, unknown> = { customerId };
+  const local: [string, unknown][] = [];
+  if (edit.contactPerson !== undefined) {
+    const v = edit.contactPerson.trim();
+    payload.contactPerson = v;
+    local.push(['contactPerson', v || null]);
+  }
+  if (edit.phone !== undefined) {
+    const v = edit.phone.trim();
+    if (v && v.replace(/\D/g, '').length < 6) return { ok: false, message: 'That phone number is too short.' };
+    payload.phone = v;
+    local.push(['phone', v || null]);
+  }
+  if (edit.pin) {
+    if (current.gpsLat != null && current.gpsLng != null) {
+      return { ok: false, message: 'This shop already has a pin. If it is wrong, say so when you check in.' };
+    }
+    payload.gpsLat = edit.pin.lat;
+    payload.gpsLng = edit.pin.lng;
+    payload.gpsAccuracyM = Math.round(edit.pin.accuracyM);
+    local.push(['gpsLat', edit.pin.lat], ['gpsLng', edit.pin.lng], ['gpsAccuracyM', Math.round(edit.pin.accuracyM)]);
+  }
+  if (!local.length) return { ok: false, message: 'Nothing has changed.' };
+
+  await run(
+    `UPDATE customers SET ${local.map(([c]) => c + ' = ?').join(', ')} WHERE id = ?`,
+    [...local.map(([, v]) => v as string | number | null), customerId],
+  );
+  await enqueue({ entityType: 'customer', entityId: customerId, op: 'update', payload });
+  return { ok: true };
 }

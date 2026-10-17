@@ -1,0 +1,165 @@
+Close/Reopen is where requests to **close** a customer account, or to **bring a closed one back**, wait for a manager's answer. A telecaller asks; a manager decides. Nothing on this list has changed a customer's status yet — a request only changes something when a manager approves it.
+
+There are two halves to this page. If you are a **telecaller**, you only ever ask — from the Call Log or from the customer list — and you never see the Close/Reopen screen itself. If you are a **manager**, Close/Reopen is your queue: one list for both directions, oldest first.
+
+## Asking for an account to be closed
+
+You find out a shop has shut, a record is a duplicate, or somebody on the list is not a customer at all. You cannot close the account yourself — you ask, with a reason.
+
+<Steps>
+<Step title="Open the row menu (⋯)">
+On the **Call Log**, open the menu on the customer's row and choose **Request deactivation**. On the **Customers** list, open the row menu and choose **Request deactivation**, or tick several customers and press **Request deactivation** in the bar that appears at the bottom.
+</Step>
+<Step title="Say why">
+A window asks *Request deactivation for Customer A?* and will not let you continue without a reason. Write what a manager needs to decide: "Shop closed in August — owner confirmed on the phone", "Duplicate of Customer B". The manager decides on your words, so make them specific.
+</Step>
+<Step title="Press Request deactivation">
+You see *Deactivation requested - a manager decides*. Every manager is told.
+</Step>
+<Step title="Carry on as normal">
+The customer **stays visible and stays on your list** until a manager approves. The menu item now reads **Deactivation already requested** and is greyed out — hovering it says *Asked for already - a manager has yet to decide*. On the Customers list the row carries a <Pill tone="warn">Deactivation asked</Pill> badge.
+</Step>
+</Steps>
+
+<Callout kind="warn" title="Ticking several customers at once">
+A bulk request goes through only if **every** ticked customer is in your book. If even one belongs to somebody else, the whole request is refused with *Some of those customers are not in your book.* — nothing is flagged. Untick the ones that are not yours and try again.
+</Callout>
+
+## Asking for a closed account to be reopened
+
+A closed customer is off every calling list, and an order from them does **not** reopen the account by itself. Somebody has to ask.
+
+<Steps>
+<Step title="Find them on the Customers list">
+Filter the status to **Deactivated** to see closed accounts.
+</Step>
+<Step title="Choose Request reactivation">
+From the row menu, or tick the customers and press **Request reactivation** in the bottom bar. The bar only offers *reactivation* when **every** ticked customer is deactivated; a mixed selection offers *Request deactivation* instead.
+</Step>
+<Step title="Say what has changed">
+The window reads *Ask to bring back Customer A?* — "The reason is what the manager decides on, so say what has changed." Then press **Request reactivation**.
+</Step>
+<Step title="Wait for the decision">
+The row shows <Pill tone="brand">Reactivation asked</Pill> and the menu item reads **Reactivation already asked for**. The customer stays off every list until a manager approves.
+</Step>
+</Steps>
+
+## The Close/Reopen screen (managers)
+
+<Wireframe url="/crm/status-requests" nav={["Dashboard", "#Daily calling", "Call Log", "Reminders", "#Customer records", "Customers", "Complaints", "Price lists", "Close/Reopen"]} active="Close/Reopen" caption="The queue, with one request in each direction">
+  <WfBar>
+    <WfTitle sub="Asked for by whoever works the account, closed or reopened here. Nothing on this list has changed a customer's status yet.">Customer status requests</WfTitle>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfBar>
+    <WfCard title="Waiting"><WfText>3</WfText></WfCard>
+    <WfCard title="To close"><WfText>2</WfText></WfCard>
+    <WfCard title="To reopen"><WfText>1</WfText></WfCard>
+    <WfCard title="Owing money"><WfText>1</WfText></WfCard>
+    <Hotspot n={2} />
+  </WfBar>
+  <WfCard title="Waiting to be closed or reopened">
+    <WfTable
+      columns={["Customer", "Asked for", "Reason", "Asked by", "Outstanding", "Last order", ""]}
+      rows={[
+        [<span key="a"><b>Customer A</b><br />A telecaller</span>, <span key="b"><WfPill tone="danger">Close the account</WfPill> <Hotspot n={3} /></span>, "Shop closed — owner confirmed", <span key="c">A telecaller<br />2 Oct 2026</span>, <span key="d">₹12,400 <Hotspot n={4} /></span>, "14 Jun 2026", <span key="e"><WfButton primary>Approve</WfButton> <WfButton>Reject</WfButton> <Hotspot n={5} /></span>],
+        [<span key="f"><b>Customer B</b><br />Nobody assigned</span>, <WfPill key="g" tone="danger">Close the account</WfPill>, "Duplicate of Customer C", <span key="h">Not recorded<br />date not recorded</span>, "—", "never", <span key="i"><WfButton primary>Approve</WfButton> <WfButton>Reject</WfButton></span>],
+        [<span key="j"><b>Customer D</b><br />A telecaller</span>, <WfPill key="k" tone="success">Bring it back</WfPill>, "Reopened their shop, wants to order", <span key="l">A telecaller<br />6 Oct 2026</span>, "—", "3 Jan 2026", <span key="m"><WfButton primary>Approve</WfButton> <WfButton>Reject</WfButton></span>],
+      ]}
+    />
+  </WfCard>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>The heading.</b> A reminder that a request is only an ask. Until you press Approve, the customer is exactly as they were.</span>,
+  <span key="2"><b>The counts.</b> How many are waiting, in each direction, and how many of the accounts to be closed still <b>owe money</b> — shown in red when there are any. Read those rows carefully.</span>,
+  <span key="3"><b>Which way.</b> <i>Close the account</i> or <i>Bring it back</i>. Both directions are on one list so the quieter one is not forgotten.</span>,
+  <span key="4"><b>Outstanding and last order.</b> The two facts that most often change the answer. A dash means nothing is owed; <i>never</i> means they have never ordered.</span>,
+  <span key="5"><b>Decide.</b> Approve or Reject opens a confirmation that says what will happen before it happens.</span>,
+]} />
+
+### Reading a row
+
+| Column | What it shows |
+|---|---|
+| **Customer** | The account name (click it to open the record), and underneath, whose book it is in — or *Nobody assigned*. |
+| **Asked for** | <Pill tone="danger">Close the account</Pill> or <Pill tone="success">Bring it back</Pill>. |
+| **Reason** | What the person who asked wrote. *No reason recorded* on very old requests. |
+| **Asked by** | Who asked, and the day. *Not recorded* / *date not recorded* on requests raised before the system stored the asker. |
+| **Outstanding** | What they still owe, highlighted when it is more than zero. |
+| **Last order** | The date of their last order, or *never*. |
+
+The list is sorted **oldest first** — the longest wait is the one somebody has been waiting on. Requests with no recorded date sit at the bottom.
+
+### Deciding a request
+
+<Steps>
+<Step title="Press Approve or Reject">
+A confirmation opens. Its wording depends on what you are doing.
+</Step>
+<Step title="Read what it says will happen">
+**Approving a close:** *Customer A is marked deactivated. Nothing is deleted — every call, order and bill stays queryable — but they leave the calling queue, the collections worklist and the inactive watch.* If they owe money, it adds that the debt is **not written off** but nobody will be prompted to chase it. If they ordered in the last month, it says so.
+
+**Approving a reopen:** *Customer D goes back to active and returns to the calling queue on their own buying cycle. The deactivation reason on the record is cleared.*
+
+**Rejecting either:** *Nothing changes about Customer A. The request leaves this list, and whoever asked will need to be told why.*
+</Step>
+<Step title="Confirm">
+Press **Yes, do it** (or **Reject the request**). You see *Customer deactivated*, *Customer brought back* or *Request rejected*, and the row leaves the list.
+</Step>
+<Step title="Tell the person who asked">
+The system does **not** notify them of your decision. If you rejected it, ring or message them.
+</Step>
+</Steps>
+
+<Callout kind="note">
+You can also decide from the **Customers** list: on a row with a pending request, a manager's menu shows **Approve deactivation** / **Reject the request** (or **Approve reactivation** / **Reject the request**) instead of the request item. It is the same decision.
+</Callout>
+
+## What closing an account does — and does not do
+
+<Cards cols={2}>
+<Card title="It does" tone="warn">
+- Marks the customer **Deactivated**.
+- Takes them off the **Call Log**, the **Payment Follow-up** worklist and the **inactive watch**.
+- Records who closed it, when, and why.
+- Stops the order sheet changing this account's status from now on.
+</Card>
+<Card title="It does not" tone="success">
+- Delete anything. Every call, order, bill and payment stays on the record.
+- Write off what they owe. The bills and the balance stay.
+- Reopen itself if they order again — only a manager approving a reopen does that.
+</Card>
+</Cards>
+
+## Statuses you will see
+
+| Status | Who sets it | Means |
+|---|---|---|
+| <Pill tone="success">Active</Pill> | The system | Buying, or not yet quiet for long enough to worry about. |
+| <Pill tone="warn">Inactive</Pill> | The system, every night | Gone quiet for <Setting k="inactive.cycleMultiplier" />× their own buying cycle. An order puts them back to Active on its own. |
+| <Pill>Deactivated</Pill> | **A manager**, here | Closed on purpose. Nothing automatic ever sets or clears it. |
+
+## Questions people ask
+
+<Faq q="I asked for a customer to be closed. Why are they still on my Call Log?">
+Asking does not close anything. They stay on your list until a manager approves. If you do not want to ring them today, use **Skip for today** with a reason.
+</Faq>
+<Faq q="The Request deactivation item is greyed out.">
+Somebody — maybe you — has already asked, and no manager has decided yet. Hover it to see *Asked for already - a manager has yet to decide*.
+</Faq>
+<Faq q="A closed customer has just placed an order. Are they back?">
+No. An order never reopens a deactivated account; that was somebody's decision. Ask for **Request reactivation** on the Customers list and a manager will decide.
+</Faq>
+<Faq q="I can't see Close/Reopen in my sidebar.">
+Only people who can decide requests see it — CRM and Sales managers and administrators. A telecaller asks from the Call Log or Customers list and never needs the screen.
+</Faq>
+<Faq q="My request disappeared from the list but the customer is not closed.">
+A manager rejected it. The reason you wrote was cleared with it, and you are not notified — ask your manager why.
+</Faq>
+<Faq q="The customer owes money. Should I still ask for them to be closed?">
+You can, but say so in the reason. The manager sees the balance on the screen, and closing the account means nobody will be prompted to chase it.
+</Faq>
+<Faq q="Will the spreadsheet reopen a customer I closed?">
+No. Once a manager has decided a customer's status here — either way — the order sheet's customer master stops speaking for that account's status.
+</Faq>

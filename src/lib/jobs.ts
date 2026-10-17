@@ -27,7 +27,7 @@ import {
   seedMonthlyTargets,
   today,
 } from "./recompute";
-import { sweepUnconfirmed } from "./services/whatsapp-service";
+import { backfillReplyMedia, sweepUnconfirmed } from "./services/whatsapp-service";
 import { sweepOrphans } from "./services/attachment-service";
 import { autoGenerateEodReports } from "./services/eod-service";
 import {
@@ -52,6 +52,7 @@ import {
 import { syncPartySheet } from "./services/party-sync-service";
 import { syncTakenOrderSheet } from "./services/taken-order-sync-service";
 import { projectSheet, revertSheetSettledBills } from "./services/sheet-projection-service";
+import { trashLeadTwins, type LeadTwin } from "./services/lead-twin-service";
 import { projectParties } from "./services/party-projection-service";
 import { provisionBackOffice } from "./services/team-service";
 import {
@@ -61,7 +62,9 @@ import {
 import {
   fieldActivitySheetId,
   FIELD_ACTIVITY_TAB,
+  rematchFieldActivityCustomers,
   rematchFieldActivitySalesmen,
+  reparseFieldActivityDates,
   syncFieldActivitySheet,
 } from "./services/field-activity-sync-service";
 import { projectFieldActivityTimeline } from "./services/field-activity-projection-service";
@@ -71,6 +74,11 @@ import {
   proposePlaces,
   resolvePlaces,
 } from "./services/place-service";
+import {
+  importPlaceTree,
+  refreshPlaceCounts,
+  resolveTypedPlaces,
+} from "./services/place-tree-service";
 import { syncCustomerMasterSheet } from "./services/customer-master-sync-service";
 import { projectCustomerMaster } from "./services/customer-master-projection-service";
 import { notifyUsers } from "./notify";
@@ -90,6 +98,7 @@ export type JobName =
   | "day-boundary"
   | "recompute-cycles"
   | "recompute-sales-managers"
+  | "self-raised-verifier-seats"
   | "recompute-inactivity"
   | "recompute-followups"
   | "recompute-slow-payers"
@@ -103,8 +112,14 @@ export type JobName =
   | "recompute-performance"
   | "snapshot-customer-health"
   | "sweep-unconfirmed"
+  | "whatsapp-automation"
+  | "whatsapp-receipts"
   | "escalate-complaint-sla"
   | "auto-eod"
+  /** Tell anybody still punched in at the end of the day. Half-hourly. */
+  | "punch-out-reminders"
+  /** The monthly Top customers report — the 1st at 10:00 IST, and caught up hourly. */
+  | "top-customers-report"
   | "roll-reminders"
   | "sweep-orphan-attachments"
   | "sheet-append"
@@ -116,6 +131,8 @@ export type JobName =
   | "field-activity-sync"
   | "field-activity-project"
   | "field-activity-rematch"
+  | "field-activity-reparse"
+  | "field-activity-shops"
   | "customer-master-sync"
   | "customer-master-project"
   /** Address to a coordinate, for the shops nobody has stood in. */
@@ -124,16 +141,47 @@ export type JobName =
   | "resolve-places-lookup"
   /** Build the master and point every shop at its leaf, from what is stored. */
   | "resolve-places"
+  /** The team's reviewed state › district › city › area file, onto every customer. */
+  | "place-tree-import"
+  /** Shops the review never saw, placed from their sheet text — runs nightly. */
+  | "resolve-typed-places"
   | "sheet-payments"
   | "taken-order-sync"
   | "taken-order-reparse"
+  /** The ERP customer profile from the Sales Party sheet — fills blanks only. */
+  | "erp-seed-profiles"
+  /** The Mahek Plus "My Products" tab's Can Use and boxes onto ERP packing. `--dry-run` to look first. */
+  | "erp-packing-import"
+  | "erp-alerts"
+  /** HRMS: this month's paid-leave credit for every active employee — idempotent. */
+  | "hrms-leave-credit"
+  | "erp-digest"
+  /** The stock-read cache's stamp table, kept short: ticks older than two days go. */
+  | "erp-ledger-ticks"
+  | "erp-inbox"
+  /** Inventory Accuracy Control: today's cycle counts, by ABC class — idempotent, runs hourly. */
+  | "erp-cycle-counts"
+  /**
+   * The ERP's orders into MahekOne's order book, all of them, and the Call
+   * Log's hold rebuilt from the ERP's open lines. The step to run the day
+   * `erp.orders.live` is turned on; it writes nothing while it is off.
+   */
+  | "erp-book-sync"
   | "party-sync"
   | "project-sheet"
   | "revert-sheet-paid"
+  /** Leads sharing a live customer's name, to the Lead Trash. `--dry-run` first. */
+  | "trash-lead-twins"
   | "provision-team"
   | "backfill-timeline"
+  /** Find the photographs and PDFs customers sent before the webhook kept them. */
+  | "wa-reply-media"
   | "mbos-nightly"
-  | "mbos-hourly";
+  | "mbos-hourly"
+  /** Relearn the office's shorthand from logged calls, for the call assistant. */
+  | "call-intel-train"
+  /** Run the call assistant over logged calls and report how often it agrees. */
+  | "call-intel-eval";
 
 export type JobResult = { job: JobName; recordsAffected: number; detail: string };
 
@@ -177,6 +225,37 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
      One cron, one place to look when something did not run. */
   results.push(await run("mbos-nightly", mbosNightly, triggeredById));
 
+  /* HRMS's monthly paid-leave credit. Nightly rather than on the 1st: the
+     partial unique index makes every run after the first a no-op, and a
+     night the cron missed is caught the next night. */
+  results.push(
+    await run("hrms-leave-credit", async () => {
+      const { runMonthlyLeaveCredit } = await import("./hrms/jobs");
+      const r = await runMonthlyLeaveCredit();
+      return { recordsAffected: r.created, detail: `${r.created} credit${r.created === 1 ? "" : "s"} written` };
+    }, triggeredById),
+  );
+
+  /* The stock-read cache's stamp is a count over this table, so it is kept
+     to the last two days. Pruning moves the stamp, which costs every kept
+     stock read one re-read and is never wrong (`lib/erp/ledger-cache.ts`). */
+  results.push(
+    await run("erp-ledger-ticks", async () => {
+      const gone = (await db.execute(sql`delete from erp_ledger_ticks where at < now() - interval '2 days' returning id`)) as unknown as unknown[];
+      return { recordsAffected: gone.length, detail: `${gone.length} old ticks removed` };
+    }, triggeredById),
+  );
+
+  /* The ERP's alert pass, and the owner's paragraph built from it (AI-4). */
+  results.push(await run("erp-alerts", erpAlertsStep, triggeredById));
+  results.push(
+    await run("erp-digest", async () => {
+      const { writeErpDigest } = await import("./erp/digest");
+      const r = await writeErpDigest();
+      return { recordsAffected: 1, detail: `${r.day} · written by ${r.servedBy}` };
+    }, triggeredById),
+  );
+
   /* This month's expense figures, frozen.
      Requirement 72's trend reads the snapshot rather than the ledger, so that
      a closed month reads the same on every load and correcting an old claim
@@ -213,6 +292,20 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
     }, triggeredById),
   );
 
+  /* Which shop each old-app row is, re-judged against today's book and the
+     names people have decided — so a shop added since is linked, and nothing
+     is ever linked on a close name. Cheap: an exact name is a map lookup. */
+  results.push(
+    await run("field-activity-shops", async () => {
+      const c = await rematchFieldActivityCustomers();
+      const p = await projectFieldActivityTimeline();
+      return {
+        recordsAffected: c.moved,
+        detail: `${c.moved} rows changed · ${c.timelineRemoved} timeline entries removed · ${p.written} written`,
+      };
+    }, triggeredById),
+  );
+
   results.push(
     await run("recompute-cycles", async () => {
       const n = await recomputeAllBuyingCycles();
@@ -233,6 +326,34 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
     await run("recompute-sales-managers", async () => {
       const n = await recomputeSalesManagers();
       return { recordsAffected: n, detail: `${n} customers updated` };
+    }, triggeredById),
+  );
+
+  /*
+   * The person Mahek designates to approve a lead its Sales Manager raised
+   * herself, seated on each one so they can see it. After the pass above, which
+   * may have just seated the Sales Manager. Does nothing until somebody is
+   * designated on the Settings screen.
+   */
+  results.push(
+    await run("self-raised-verifier-seats", async () => {
+      const { ensureSelfRaisedVerifierSeats } = await import("./services/self-raised-verifier-service");
+      const n = await ensureSelfRaisedVerifierSeats();
+      return { recordsAffected: n, detail: `${n} leads seated` };
+    }, triggeredById),
+  );
+
+  /*
+   * Where each shop is, for every account the location review never saw —
+   * matched from the sheet's own text against the reviewed tree, so a shop
+   * created today can be filtered by state, district, city and area tomorrow.
+   * A reviewed or hand-picked place is never touched.
+   */
+  results.push(
+    await run("resolve-typed-places", async () => {
+      const out = await resolveTypedPlaces();
+      await refreshPlaceCounts();
+      return { recordsAffected: out.considered, detail: out.detail };
     }, triggeredById),
   );
 
@@ -365,7 +486,41 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
     }, triggeredById),
   );
 
+  /* The call assistant's classifier, relearned from today's logged calls.
+     Last, and allowed to fail on its own: a vote the assistant can do without
+     for a day must never cost the caches above it. */
+  try {
+    results.push(await runCallIntelTraining(triggeredById));
+  } catch (e) {
+    console.error("Nightly: call assistant training failed:", e instanceof Error ? e.message : e);
+  }
+
   return results;
+}
+
+async function runCallIntelTraining(triggeredById?: string): Promise<JobResult> {
+  return run(
+    "call-intel-train",
+    async () => {
+      const { trainCallClassifier } = await import("@/lib/services/call-intel-service");
+      const r = await trainCallClassifier();
+      if (!r.evaluation) {
+        return {
+          recordsAffected: 0,
+          detail: `Only ${r.trainedOn} logged calls with notes — not enough to learn from yet.`,
+        };
+      }
+      const pct = (n: number) => `${Math.round(n * 100)}%`;
+      return {
+        recordsAffected: r.trainedOn,
+        detail:
+          `Learned from ${r.trainedOn} calls (${r.vocabulary} words and pairs). ` +
+          `Cross-validated: ${pct(r.evaluation.accuracy)} right overall; ` +
+          `${pct(r.evaluation.confidentAccuracy)} right on the ${pct(r.evaluation.coverage)} it was sure of.`,
+      };
+    },
+    triggeredById,
+  );
 }
 
 /* -------------------------------------------------------- queue snapshot */
@@ -486,10 +641,70 @@ export async function resettleQueues(
 
 /* ----------------------------------------------------------------- hourly */
 
+/** AI-4: the ERP's unusual-activity checks. Raises what is new, resolves what has cleared. */
+async function erpAlertsStep() {
+  const { runErpAlerts } = await import("./erp/alerts");
+  const r = await runErpAlerts();
+  return { recordsAffected: r.raised + r.resolved, detail: r.skipped ? `skipped: ${r.skipped}` : `${r.raised} raised · ${r.resolved} resolved · ${r.open} open` };
+}
+
+/**
+ * Inventory Accuracy Control: opens today's cycle counts. Hourly rather than
+ * nightly so a new day has its counts by the first shift whenever the night
+ * pass runs; a day's allowance is opened once, however often this fires.
+ */
+async function erpCycleCountStep() {
+  const { planCycleCounts } = await import("./erp/stock-check");
+  const r = await planCycleCounts(null);
+  return { recordsAffected: r.opened, detail: r.skipped ? `skipped: ${r.skipped}` : `${r.opened} cycle count${r.opened === 1 ? "" : "s"} opened` };
+}
+
+/** AI-2: new WhatsApp replies screened into the ERP's order inbox, as drafts nobody has accepted. */
+async function erpInboxStep() {
+  const { screenWhatsApp } = await import("./erp/ai-orders");
+  const r = await screenWhatsApp(null);
+  return { recordsAffected: r.drafted, detail: r.skipped ? `skipped: ${r.skipped}` : `${r.screened} screened · ${r.drafted} drafted` };
+}
+
+async function topCustomersReportStep() {
+  const { ensureCurrentTopCustomerReports } = await import("./services/top-customers-service");
+  const { generated } = await ensureCurrentTopCustomerReports();
+  return {
+    recordsAffected: generated.length,
+    detail: generated.length
+      ? `generated the ${generated.join(", ")}-month reports`
+      : "this month's reports already exist",
+  };
+}
+
 export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
   const results: JobResult[] = [];
 
+  results.push(await run("erp-alerts", erpAlertsStep, triggeredById));
+  results.push(await run("erp-inbox", erpInboxStep, triggeredById));
+  results.push(await run("erp-cycle-counts", erpCycleCountStep, triggeredById));
+
   results.push(await run("mbos-hourly", mbosHourly, triggeredById));
+
+  // The Top customers report has its own 10:00 IST cron line on the 1st. This
+  // is the net under it: a droplet whose crontab predates that line still
+  // gets the month's report within the hour, and on every other hour it is
+  // one indexed lookup that finds the report already there.
+  results.push(await run("top-customers-report", topCustomersReportStep, triggeredById));
+
+  // The founder's WhatsApp rules. The pass checks the sending window itself
+  // (10 am–1 pm IST unless the founder changed it) and returns at once
+  // outside it, so running every hour costs nothing between checks.
+  results.push(
+    await run("whatsapp-automation", async () => {
+      const { runAutomation } = await import("./services/whatsapp-automation-service");
+      const r = await runAutomation({ source: "schedule" });
+      return {
+        recordsAffected: r.sent,
+        detail: `${r.sent} sent, ${r.wouldSend} would send — ${r.note}`,
+      };
+    }, triggeredById),
+  );
 
   results.push(
     await run("sweep-unconfirmed", async () => {
@@ -500,6 +715,23 @@ export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
       };
     }, triggeredById),
   );
+
+  // Delivered and read, read back from Wati's history for the last week —
+  // the webhook has not been bringing them (see lib/wati-receipts.ts).
+  results.push(
+    await run("whatsapp-receipts", async () => {
+      const { refreshReceipts } = await import("./services/whatsapp-receipts-service");
+      const r = await refreshReceipts({ days: 7 });
+      return {
+        recordsAffected: r.updated,
+        detail: `${r.updated} ticks moved across ${r.numbers} numbers${r.errors ? `, ${r.errors} numbers Wati did not answer for` : ""}`,
+      };
+    }, triggeredById),
+  );
+
+  // A file a customer sent that arrived without its path — found in Wati's
+  // history, so the chat can show it. Two days back; by hand reads everything.
+  results.push(await runReplyMedia(triggeredById, 2));
 
   results.push(
     await run("escalate-complaint-sla", async () => {
@@ -652,6 +884,8 @@ export type JobOptions = {
    * run gets.
    */
   dryRun?: boolean;
+  /** How many rows a sampling job reads — `call-intel-eval`. */
+  limit?: string;
 };
 
 export async function runJob(
@@ -666,6 +900,22 @@ export async function runJob(
       return runHourly(triggeredById);
     case "day-boundary":
       return runDayBoundary(triggeredById);
+    case "top-customers-report":
+      return [await run("top-customers-report", topCustomersReportStep, triggeredById)];
+    case "punch-out-reminders":
+      /* Its own mode rather than a step of `hourly`: that one runs at :52 IST
+         on the droplet's clock, which would land a six o'clock reminder at
+         ten to seven. The half-hourly cycle runs at :07 and :37. */
+      return [
+        await run(
+          "punch-out-reminders",
+          async () => {
+            const { sendPunchOutReminders } = await import("./services/punch-out-reminder-service");
+            return sendPunchOutReminders();
+          },
+          triggeredById,
+        ),
+      ];
     case "build-queues":
       /*
        * Build every telecaller's list for today, before the shift.
@@ -779,6 +1029,47 @@ export async function runJob(
           triggeredById,
         ),
       ];
+    case "place-tree-import":
+      /*
+       * `data/places/customer-places.csv`, the reviewed tree. Idempotent and
+       * re-runnable; `--dry-run` reports what it would create and writes
+       * nothing. Each row it writes is marked decided, so no unattended pass
+       * moves a shop a person checked.
+       */
+      return [
+        await run(
+          "place-tree-import",
+          async () => {
+            const out = await importPlaceTree({ dryRun: options.dryRun });
+            return { recordsAffected: out.customersSet, detail: out.detail };
+          },
+          triggeredById,
+        ),
+      ];
+    case "resolve-typed-places":
+      return [
+        await run(
+          "resolve-typed-places",
+          async () => {
+            const out = await resolveTypedPlaces();
+            await refreshPlaceCounts();
+            return { recordsAffected: out.considered, detail: out.detail };
+          },
+          triggeredById,
+        ),
+      ];
+    case "self-raised-verifier-seats":
+      return [
+        await run(
+          "self-raised-verifier-seats",
+          async () => {
+            const { ensureSelfRaisedVerifierSeats } = await import("./services/self-raised-verifier-service");
+            const n = await ensureSelfRaisedVerifierSeats();
+            return { recordsAffected: n, detail: `${n} leads seated` };
+          },
+          triggeredById,
+        ),
+      ];
     case "recompute-sales-managers":
       /*
        * Hand-triggerable on its own, not only bundled in the nightly — the
@@ -811,14 +1102,92 @@ export async function runJob(
       return [await runTakenOrderSync(job, triggeredById)];
     case "party-sync":
       return [await runPartySync(triggeredById)];
+    case "erp-alerts":
+      return [await run("erp-alerts", erpAlertsStep, triggeredById)];
+    case "hrms-leave-credit":
+      return [
+        await run("hrms-leave-credit", async () => {
+          const { runMonthlyLeaveCredit } = await import("./hrms/jobs");
+          const r = await runMonthlyLeaveCredit();
+          return { recordsAffected: r.created, detail: `${r.created} credits written` };
+        }, triggeredById),
+      ];
+    case "erp-inbox":
+      return [await run("erp-inbox", erpInboxStep, triggeredById)];
+    case "erp-cycle-counts":
+      return [await run("erp-cycle-counts", erpCycleCountStep, triggeredById)];
+    case "erp-book-sync":
+      return [
+        await run(
+          "erp-book-sync",
+          async () => {
+            const { erpOrdersLive, syncAllBookOrders } = await import("./erp/book");
+            if (!(await erpOrdersLive())) return { recordsAffected: 0, detail: "the ERP does not take the orders yet (erp.orders.live is off) — nothing written" };
+            const n = await syncAllBookOrders();
+            const holds = await (await import("./recompute")).recomputeOrderSystemHolds();
+            return { recordsAffected: n, detail: `${n} ERP orders in the book · ${holds.held} customers held off the Call Log` };
+          },
+          triggeredById,
+        ),
+      ];
+    case "erp-digest":
+      return [
+        await run(
+          "erp-digest",
+          async () => {
+            const { writeErpDigest } = await import("./erp/digest");
+            const r = await writeErpDigest();
+            return { recordsAffected: 1, detail: `${r.day} · written by ${r.servedBy}` };
+          },
+          triggeredById,
+        ),
+      ];
+    case "erp-seed-profiles":
+      return [
+        await run(
+          "erp-seed-profiles",
+          async () => {
+            const { seedErpCustomerProfiles } = await import("./erp/profile-seed");
+            const r = await seedErpCustomerProfiles();
+            return {
+              recordsAffected: r.created + r.filled,
+              detail: `${r.matched} sheet parties matched · ${r.created} profiles created · ${r.filled} filled · ${r.refAdded} reference values added`,
+            };
+          },
+          triggeredById,
+        ),
+      ];
+    case "erp-packing-import":
+      return [
+        await run(
+          "erp-packing-import",
+          async () => {
+            const { importPackingFromMahekPlus, packingImportSummary } = await import("./erp/packing-import");
+            const r = await importPackingFromMahekPlus({ dryRun: !!options.dryRun, userId: triggeredById });
+            const lines = [
+              packingImportSummary(r),
+              ...r.noSku.map((x) => `  no SKU: Product ID ${x.productIdOnSheet} (${x.name}) — row ${x.row}`),
+              ...r.unknownCan.map((x) => `  unknown Can Use: "${x.canUse}" on ${x.sku} — row ${x.row}`),
+              ...r.unknownBoxType.map((x) => `  unknown Box Type: "${x.boxType}" on ${x.sku} — row ${x.row}`),
+              ...r.conflicting.map((x) => `  disagrees: Product ID ${x.productIdOnSheet} on ${x.sku}, Product ID ${x.keptFrom} used — row ${x.row}`),
+            ];
+            return { recordsAffected: r.applied ? r.materialsCreated.length + r.packingSet.length : 0, detail: lines.join("\n") };
+          },
+          triggeredById,
+        ),
+      ];
     case "project-sheet":
       return [await runProjection(triggeredById, options)];
     case "revert-sheet-paid":
       return [await runRevertSheetPaid(triggeredById, options)];
+    case "trash-lead-twins":
+      return [await runTrashLeadTwins(triggeredById, options)];
     case "provision-team":
       return [await runTeamProvision(triggeredById, options)];
     case "backfill-timeline":
       return [await runBackfillTimeline(triggeredById)];
+    case "wa-reply-media":
+      return [await runReplyMedia(triggeredById)];
     case "hrms-sync":
     case "hrms-reparse":
       return [await runEmployeeSync(job, triggeredById)];
@@ -830,10 +1199,37 @@ export async function runJob(
       return [await runFieldActivityProjection(triggeredById)];
     case "field-activity-rematch":
       return [await runFieldActivityRematch(triggeredById)];
+    case "field-activity-reparse":
+      return [await runFieldActivityReparse(triggeredById)];
     case "customer-master-sync":
       return [await runCustomerMasterSync(triggeredById)];
     case "customer-master-project":
       return [await runCustomerMasterProjection(options)];
+    case "call-intel-train":
+      return [await runCallIntelTraining(triggeredById)];
+    case "call-intel-eval":
+      return [
+        await run(
+          "call-intel-eval",
+          async () => {
+            const { evaluateCallAssistant } = await import("@/lib/services/call-intel-service");
+            const limit = Math.min(500, Math.max(1, Number(options.limit ?? 80) || 80));
+            const r = await evaluateCallAssistant({ limit });
+            const pct = (n: number) => `${Math.round(n * 100)}%`;
+            const lines = [
+              `${r.calls} logged calls read; the model answered on ${r.readByModel}.`,
+              `Suggested outcome matched what was logged: ${pct(r.outcomeAgreement)}.`,
+              `Filled with confidence on ${r.confident} — right on ${pct(r.confidentAgreement)} of those. Asked the telecaller on ${r.asked}.`,
+              `Sure of the outcome on ${r.outcomeSure} — right on ${r.outcomeSure ? pct(r.outcomeSureRight / r.outcomeSure) : "-"}. Asked which outcome on ${r.askedWhich}.`,
+              `The logged outcome was the suggestion or one of the offered choices on ${pct(r.calls ? r.inChoices / r.calls : 0)}.`,
+              ...Object.entries(r.byOutcome).map(([o, v]) => `  ${o}: ${v.agreed}/${v.calls}`),
+              ...r.misses.slice(0, 15).map((m) => `  miss — logged ${m.logged}, suggested ${m.suggested ?? "nothing"} (${m.state ?? "-"}): ${m.note}`),
+            ];
+            return { recordsAffected: r.calls, detail: lines.join("\n") };
+          },
+          triggeredById,
+        ),
+      ];
     default:
       throw new Error(`Unknown job "${job}".`);
   }
@@ -983,9 +1379,35 @@ async function runFieldActivitySync(
         mode,
         triggeredById,
       });
+      /* The daily full read also re-reads every stored DATE, because the hash
+         compare above rewrites only rows whose cells changed and a row read
+         the wrong way round is otherwise wrong for ever. Cheap: no Google,
+         and it writes only rows whose answer moved. */
+      const dates = mode === "reconcile" ? await reparseFieldActivityDates() : null;
       return {
-        recordsAffected: outcome.rowsCreated + outcome.rowsUpdated,
-        detail: outcome.detail,
+        recordsAffected: outcome.rowsCreated + outcome.rowsUpdated + (dates?.moved ?? 0),
+        detail: outcome.detail + (dates?.moved ? `; ${dates.moved} stored dates re-read` : ""),
+      };
+    },
+    triggeredById,
+  );
+}
+
+/**
+ * Re-read every stored activity date in the order its own read was written —
+ * see `reparseFieldActivityDates`. The one to run when the READING of a date
+ * changed rather than the sheet.
+ */
+async function runFieldActivityReparse(triggeredById?: string): Promise<JobResult> {
+  return run(
+    "field-activity-reparse",
+    async () => {
+      const r = await reparseFieldActivityDates();
+      return {
+        recordsAffected: r.moved,
+        detail:
+          `${r.scanned} rows re-read (${r.orders.dmy} day-first, ${r.orders.mdy} month-first) · ` +
+          `${r.moved} dates corrected · ${r.nowUnreadable} unreadable · ${r.timelineMoved} timeline entries moved`,
       };
     },
     triggeredById,
@@ -1038,9 +1460,13 @@ async function runFieldActivityRematch(triggeredById?: string): Promise<JobResul
     "field-activity-rematch",
     async () => {
       const r = await rematchFieldActivitySalesmen();
+      const c = await rematchFieldActivityCustomers();
+      const p = await projectFieldActivityTimeline();
       return {
-        recordsAffected: r.matched,
-        detail: `${r.scanned} rows re-read · ${r.matched} matched to a salesman · ${r.ambiguous} ambiguous · ${r.stillUnmatched} belong to nobody with an account`,
+        recordsAffected: r.matched + c.moved,
+        detail:
+          `${r.scanned} rows re-read · ${r.matched} matched to a salesman · ${r.ambiguous} ambiguous · ${r.stillUnmatched} belong to nobody with an account · ` +
+          `shops: ${c.matched} linked, ${c.ambiguous} need review, ${c.unmatched} not on MahekOne, ${c.moved} changed, ${c.timelineRemoved} wrong timeline entries removed, ${p.written} written`,
       };
     },
     triggeredById,
@@ -1164,7 +1590,10 @@ async function runProjection(
       });
 
       const detail =
-        `customers ${orders.customers.created} new / ${orders.customers.updated} updated, ` +
+        `customers ${orders.customers.created} new / ${orders.customers.updated} updated` +
+        (orders.customers.adoptedLeads
+          ? ` / ${orders.customers.adoptedLeads} leads converted rather than duplicated`
+          : "") + ", " +
         `orders ${orders.orders.created} new (${orders.orders.lines} lines), ` +
         `bills ${orders.bills.skipped ? "skipped" : orders.bills.created}` +
         (orders.bills.clashed ? ` (${orders.bills.clashed} bill numbers already taken)` : "") +
@@ -1200,6 +1629,37 @@ async function runProjection(
  * longer settles a bill the Payment Status tab calls unpaid, so this cleans up
  * what the old behaviour left behind rather than holding a line against it.
  */
+/**
+ * Leads that share a live customer's name, moved to the Lead Trash.
+ *
+ * BY HAND, NEVER SCHEDULED, like the revert above it: it takes leads off every
+ * list, and the dry run — which names every pair — is the only review it gets.
+ * Restorable from Admin Console → Trash. See `lead-twin-service.ts`.
+ */
+async function runTrashLeadTwins(
+  triggeredById?: string,
+  options: JobOptions = {},
+): Promise<JobResult> {
+  return run(
+    "trash-lead-twins",
+    async () => {
+      const report = await trashLeadTwins({ dryRun: options.dryRun });
+      const line = (t: LeadTwin) =>
+        `  ${t.leadName} (${t.leadCity || "no town"}) → ${t.customerName} (${t.customerCity || "no town"})` +
+        (t.leadOrders ? ` — lead has ${t.leadOrders} orders, LEFT` : "");
+      const movable = report.twins.length - report.keptWithOrders.length;
+      const head = report.dryRun
+        ? `dry run — ${report.twins.length} leads share a customer's name; ${movable} would go to the trash, ` +
+          `${report.keptWithOrders.length} carry orders of their own and would be left.`
+        : `${report.trashed} leads moved to the trash as twins of a customer; ` +
+          `${report.keptWithOrders.length} carrying orders of their own were left.`;
+      const detail = [head, ...report.twins.map(line)].join("\n");
+      return { recordsAffected: report.dryRun ? 0 : report.trashed, detail };
+    },
+    triggeredById,
+  );
+}
+
 async function runRevertSheetPaid(
   triggeredById?: string,
   options: JobOptions = {},
@@ -1274,6 +1734,25 @@ async function runTeamProvision(
  * By hand, not scheduled. Once it has run there is nothing left for it to do,
  * and the going-forward writes are in the transactions that log the calls.
  */
+/**
+ * Files customers sent on WhatsApp that MahekOne holds no path to, found in
+ * Wati's history. By hand it reads every such row; the hourly pass reads the
+ * last two days, for a file the webhook ever delivers without its path.
+ */
+async function runReplyMedia(triggeredById?: string, sinceDays?: number): Promise<JobResult> {
+  return run(
+    "wa-reply-media",
+    async () => {
+      const r = await backfillReplyMedia(sinceDays);
+      return {
+        recordsAffected: r.found,
+        detail: `${r.found} of ${r.looked} files found again, across ${r.numbers} ${r.numbers === 1 ? "number" : "numbers"}.`,
+      };
+    },
+    triggeredById,
+  );
+}
+
 async function runBackfillTimeline(triggeredById?: string): Promise<JobResult> {
   return run(
     "backfill-timeline",

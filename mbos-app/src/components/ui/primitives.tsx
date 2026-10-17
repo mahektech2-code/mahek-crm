@@ -11,7 +11,8 @@ import {
   type StyleProp,
 } from 'react-native';
 import { BADGE, color as C, HIT, radius, shadow, type, weight, tabular, type BadgeTone } from '../../theme/tokens';
-import { usePressScale } from './motion';
+import { FillBar, Presence, useReduceMotion, usePressScale, useShake, EASE } from './motion';
+import { feedback } from './feedback';
 import type { HealthBandValue } from '../../data/customers';
 
 /**
@@ -196,7 +197,7 @@ export function HealthPill({
       {band ? (
         <View
           style={{
-            height: large ? 32 : 28,
+            minHeight: large ? 32 : 28,
             paddingHorizontal: 10,
             borderRadius: 14,
             backgroundColor: tone!.bg,
@@ -209,7 +210,10 @@ export function HealthPill({
         </View>
       ) : null}
       {value !== null ? (
-        <Text style={[{ fontSize: large ? 14 : 13, color: scoreFg }, weight(600), tabular]}>
+        /* "Black circle 72" was what a screen reader made of the dot. */
+        <Text
+          accessibilityLabel={'Health score ' + value}
+          style={[{ fontSize: large ? 14 : 13, color: scoreFg }, weight(600), tabular]}>
           {'● ' + value}
         </Text>
       ) : null}
@@ -251,12 +255,16 @@ export function PrimaryButton({
   const bg = disabled ? C.hairline : tone === 'warn' ? C.warn : C.primary;
   const fg = disabled ? C.faint : '#FFFFFF';
   const press = usePressScale();
+  /* A disabled button that still answers (it has a `whyDisabled`) shakes and
+     buzzes as it answers: the reason arrives as a toast at the bottom of the
+     screen, and the shake is what ties that sentence to THIS button. */
+  const refusal = useShake('warning');
   const { outer, inner } = splitStyle(style);
 
   return (
     <Animated.View
       style={[
-        !disabled && press.style,
+        { transform: [...(disabled ? [] : press.style.transform), ...refusal.style.transform] },
         { alignSelf: fullWidth ? 'stretch' : 'center' },
         outer,
       ]}>
@@ -265,7 +273,16 @@ export function PrimaryButton({
            the handler, which already refuses with that reason in words — see
            `collect()` in pay.tsx. A button that swallows the tap teaches
            people it is broken; one that answers teaches them what is missing. */
-        onPress={disabled && !whyDisabled ? undefined : onPress}
+        onPress={
+          disabled && !whyDisabled
+            ? undefined
+            : disabled
+              ? () => {
+                  refusal.shake();
+                  onPress?.();
+                }
+              : onPress
+        }
         onPressIn={disabled ? undefined : press.onPressIn}
         onPressOut={disabled ? undefined : press.onPressOut}
         disabled={disabled && !whyDisabled}
@@ -279,7 +296,7 @@ export function PrimaryButton({
           !disabled && { boxShadow: shadow.primary },
           inner,
         ]}>
-        <Text style={[{ fontSize: 16, color: fg }, weight(600)]}>{label}</Text>
+        <Text style={[{ fontSize: 16, lineHeight: 21, color: fg, textAlign: 'center' }, weight(600)]}>{label}</Text>
       </Pressable>
     </Animated.View>
   );
@@ -312,7 +329,7 @@ export function SecondaryButton({
           pressed && { backgroundColor: C.wash },
           inner,
         ]}>
-        <Text style={[{ fontSize: 16, color: C.body }, weight(500)]}>{label}</Text>
+        <Text style={[{ fontSize: 16, lineHeight: 21, color: C.body, textAlign: 'center' }, weight(500)]}>{label}</Text>
       </Pressable>
     </Animated.View>
   );
@@ -382,7 +399,18 @@ export function Choice({
 }) {
   return (
     <Pressable
-      onPress={onPress}
+      onPress={
+        onPress
+          ? () => {
+              /* A choice moving is felt as a tick — the same one a tab and a
+                 switch give — so a chip pressed with the phone held low is
+                 known to have taken. Only when it is a CHANGE: tapping the
+                 chip already chosen is not news. */
+              if (!selected) feedback('select');
+              onPress();
+            }
+          : undefined
+      }
       accessibilityRole="radio"
       accessibilityState={{ selected }}
       style={[
@@ -411,6 +439,16 @@ export function Choice({
 
 /* ----------------------------------------------------------------- input */
 
+/**
+ * The label a `Field` draws, handed to the `Input` inside it.
+ *
+ * The label is a separate Text above the box, so a screen reader landing on the
+ * box heard "edit box" and nothing about what to type. Every form in the app is
+ * built from `Field` around `Input`, so passing it down here names all of them
+ * at once; an `accessibilityLabel` given to the Input itself still wins.
+ */
+const FieldLabel = React.createContext<string | undefined>(undefined);
+
 export function Field({
   label,
   hint,
@@ -425,8 +463,13 @@ export function Field({
   return (
     <View>
       {label ? <SectionLabel style={{ marginBottom: 6 }}>{label}</SectionLabel> : null}
-      {children}
-      {error ? <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>{error}</Text> : null}
+      <FieldLabel.Provider value={label}>{children}</FieldLabel.Provider>
+      {/* The error drops in under the field rather than shoving the form down a
+          line in one frame — which is exactly when the thumb is on its way to
+          the button below it. */}
+      <Presence show={!!error}>
+        <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>{error}</Text>
+      </Presence>
       {!error && hint ? <Text style={[type.caption, { marginTop: 6 }]}>{hint}</Text> : null}
     </View>
   );
@@ -444,8 +487,10 @@ export function Input({
   ...rest
 }: React.ComponentProps<typeof TextInput> & { invalid?: boolean }) {
   const [focused, setFocused] = React.useState(false);
+  const fieldLabel = React.useContext(FieldLabel);
   return (
     <TextInput
+      accessibilityLabel={fieldLabel ?? placeholder}
       value={value}
       onChangeText={onChangeText}
       placeholder={placeholder}
@@ -487,33 +532,71 @@ export function Toggle({
   on,
   onPress,
   size = 'lg',
+  label,
 }: {
   on: boolean;
   onPress?: () => void;
   size?: 'lg' | 'sm';
+  /** What the switch turns on. Without it TalkBack reads "switch, on" and nothing else. */
+  label?: string;
 }) {
   const w = size === 'lg' ? 52 : 48;
   const h = size === 'lg' ? 32 : 28;
   const knob = h - 6;
+  const reduce = useReduceMotion();
+  /* The knob SLIDES and the track fills behind it. A switch that jumped read
+     as a redraw; one that travels reads as a thing you moved. Two values
+     because the knob's travel runs on the native driver and a colour cannot. */
+  const travel = React.useRef(new Animated.Value(on ? 1 : 0)).current;
+  const tint = React.useRef(new Animated.Value(on ? 1 : 0)).current;
+  React.useEffect(() => {
+    if (reduce) {
+      travel.setValue(on ? 1 : 0);
+      tint.setValue(on ? 1 : 0);
+      return;
+    }
+    const a = Animated.parallel([
+      Animated.timing(travel, { toValue: on ? 1 : 0, duration: 180, easing: EASE, useNativeDriver: true }),
+      Animated.timing(tint, { toValue: on ? 1 : 0, duration: 180, easing: EASE, useNativeDriver: false }),
+    ]);
+    a.start();
+    return () => a.stop();
+  }, [on, reduce, travel, tint]);
+
   return (
     <Pressable
-      onPress={onPress}
+      onPress={
+        onPress
+          ? () => {
+              feedback('select');
+              onPress();
+            }
+          : undefined
+      }
       accessibilityRole="switch"
-      accessibilityState={{ checked: on }}
+      accessibilityLabel={label}
+      accessibilityState={{ checked: on, disabled: !onPress }}
       style={{ width: Math.max(w, HIT), height: HIT, justifyContent: 'center' }}>
-      <View style={{ width: w, height: h, borderRadius: h / 2, backgroundColor: on ? C.primary : C.border }}>
-        <View
+      <Animated.View
+        style={{
+          width: w,
+          height: h,
+          borderRadius: h / 2,
+          backgroundColor: tint.interpolate({ inputRange: [0, 1], outputRange: [C.border, C.primary] }),
+        }}>
+        <Animated.View
           style={{
             position: 'absolute',
             top: 3,
-            left: on ? w - knob - 3 : 3,
+            left: 3,
             width: knob,
             height: knob,
             borderRadius: knob / 2,
             backgroundColor: '#FFFFFF',
+            transform: [{ translateX: travel.interpolate({ inputRange: [0, 1], outputRange: [0, w - knob - 6] }) }],
           }}
         />
-      </View>
+      </Animated.View>
     </Pressable>
   );
 }
@@ -522,11 +605,9 @@ export function Toggle({
 
 /** The thin progress track used by targets, credit and the period card. */
 export function Bar({ pct, fill }: { pct: number; fill: string }) {
-  return (
-    <View style={{ flex: 1, height: 8, borderRadius: 4, backgroundColor: C.hairline, overflow: 'hidden' }}>
-      <View style={{ width: `${Math.min(100, Math.max(0, pct))}%`, height: '100%', borderRadius: 4, backgroundColor: fill }} />
-    </View>
-  );
+  /* It FILLS to its value rather than appearing at it — a target bar that
+     grows says "this far", one that is simply drawn says only "this". */
+  return <FillBar pct={pct} fill={fill} track={C.hairline} />;
 }
 
 export function Divider({ style }: { style?: StyleProp<ViewStyle> }) {
@@ -564,7 +645,10 @@ export function Row({
   );
   if (!onPress) return body;
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => (pressed ? { backgroundColor: C.wash } : null)}>
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      style={({ pressed }) => (pressed ? { backgroundColor: C.wash } : null)}>
       {body}
     </Pressable>
   );
@@ -592,7 +676,14 @@ const s = StyleSheet.create({
   },
   primaryBtn: {
     width: '100%',
-    height: 52,
+    /* A MINIMUM, not a height. Two of these side by side get half the row
+       each, and a label like "Ask for different cities" does not fit half a
+       phone: at a fixed 52 it wrapped onto two left-aligned lines that ran
+       out through the border. The label is centred and the button grows to
+       hold it; 52 is still the floor for the touch target. */
+    minHeight: 52,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderRadius: radius.lg,
     alignItems: 'center',
     justifyContent: 'center',
@@ -606,7 +697,14 @@ const s = StyleSheet.create({
   },
   secondaryBtn: {
     width: '100%',
-    height: 52,
+    /* A MINIMUM, not a height. Two of these side by side get half the row
+       each, and a label like "Ask for different cities" does not fit half a
+       phone: at a fixed 52 it wrapped onto two left-aligned lines that ran
+       out through the border. The label is centred and the button grows to
+       hold it; 52 is still the floor for the touch target. */
+    minHeight: 52,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: C.border,

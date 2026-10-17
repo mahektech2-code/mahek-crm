@@ -1,5 +1,5 @@
-import { isManager, requireUser } from "@/lib/auth";
-import { getScope, scopeLabel } from "@/lib/scope";
+import { requireUser } from "@/lib/auth";
+import { getScope, scopeLabel, managesHere } from "@/lib/scope";
 import { getCustomer } from "@/lib/queries";
 import {
   billLedgerPage,
@@ -12,7 +12,7 @@ import {
 import { bucketise } from "@/lib/services/accounts-home-service";
 import { today } from "@/lib/queries";
 import { getConfig } from "@/lib/config/store";
-import { financialYearOf, financialYearsBetween } from "@/lib/financial-year";
+import { pickYear, yearOptions } from "@/lib/year-period";
 import { BillsScreen } from "./bills-screen";
 
 export const metadata = { title: "Sales bills - MahekOne CRM" };
@@ -35,6 +35,7 @@ export default async function BillsPage({
   searchParams,
 }: {
   searchParams: Promise<{
+    year?: string;
     customer?: string;
     fy?: string;
     status?: string;
@@ -48,6 +49,8 @@ export default async function BillsPage({
   const params = await searchParams;
   const customerId = params.customer;
   const user = await requireUser();
+  /* A manager OF THE CRM — `isManager` was the widest level held in any app. */
+  const managerHere = await managesHere(user, "crm");
   const scope = await getScope(user);
 
   // The ledger is ten thousand bills across three years. A year is the cut a
@@ -58,8 +61,10 @@ export default async function BillsPage({
     earliestBillDate(),
     getConfig(),
   ]);
-  const years = financialYearsBetween(earliest, day);
-  const financialYear = params.fy && years.includes(params.fy) ? params.fy : financialYearOf(day);
+  // Financial or calendar year, defaulting to the current financial year.
+  // `?fy=` is the older link shape and still opens the year it named.
+  const years = yearOptions(earliest, day);
+  const year = pickYear(params.year ?? params.fy, years, day);
 
   /*
    * THE FILTERS, THE SORT AND THE PAGE ARE IN THE URL, and the query is what
@@ -94,7 +99,7 @@ export default async function BillsPage({
    * by id rather than re-derived in SQL. A few hundred rows of six small
    * values on this book, never the ledger.
    */
-  const ages = await openBillAges({ financialYear, customerId });
+  const ages = await openBillAges({ year, customerId });
   const aging = bucketise(ages, config["bills.agingBuckets"]);
   /* Checked against the BANDS the strip draws rather than against the bills
      that happen to be in them: a band with nothing in it is a real answer —
@@ -104,7 +109,7 @@ export default async function BillsPage({
     ? params.bucket
     : undefined;
 
-  const scopedFilters = { financialYear, customerId };
+  const scopedFilters = { year, customerId };
   const filters = {
     ...scopedFilters,
     status,
@@ -127,7 +132,7 @@ export default async function BillsPage({
       datedModes={config["payments.datedModes"]}
       today={day}
       scopeLabel={scopeLabel(scope, user)}
-      isManager={isManager(user)}
+      isManager={managerHere}
       rows={ledger.rows}
       total={ledger.total}
       page={ledger.total ? Math.min(page, Math.max(1, Math.ceil(ledger.total / perPage))) : 1}
@@ -140,8 +145,8 @@ export default async function BillsPage({
       filteredTotals={filteredTotals}
       yearTotals={yearTotals}
       customerFilter={customer ? { id: customer.id, name: customer.name } : null}
-      financialYear={financialYear}
-      financialYears={years}
+      year={year}
+      years={years}
     />
   );
 }

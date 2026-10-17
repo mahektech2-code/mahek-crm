@@ -26,7 +26,7 @@ export async function notify(args: {
   body: string;
   kind?: Notification['kind'];
   href?: string;
-  /** 1 means it repeats until acted on. See `unacknowledgedPriority`. */
+  /** Stored for the office; nothing on the phone repeats on it yet. */
   priority?: number;
 }): Promise<string> {
   const id = newId('notif');
@@ -37,8 +37,25 @@ export async function notify(args: {
   return id;
 }
 
+/*
+ * ONE CLOCK FOR BOTH KINDS OF ROW.
+ *
+ * The office's rows have arrived with `createdAt` as an ISO string and the
+ * phone's own as epoch milliseconds, and SQLite sorts every TEXT value above
+ * every INTEGER — so every office row sat above every local one whatever its
+ * time, and a fresh "Order not accepted" could fall past the hundred-row cap.
+ * The pull now writes milliseconds; this reads either, so rows already on a
+ * phone sort correctly too.
+ */
+const CREATED_MS = `CASE WHEN typeof(createdAt) = 'text'
+       THEN CAST(ROUND((julianday(createdAt) - 2440587.5) * 86400000) AS INTEGER)
+       ELSE createdAt END`;
+
 export async function listNotifications(): Promise<Notification[]> {
-  return all<Notification>('SELECT * FROM notifications ORDER BY createdAt DESC LIMIT 100');
+  return all<Notification>(
+    `SELECT id, title, body, kind, href, priority, acknowledged, readAt, ${CREATED_MS} AS createdAt
+       FROM notifications ORDER BY ${CREATED_MS} DESC LIMIT 100`,
+  );
 }
 
 export async function unreadCount(): Promise<number> {
@@ -52,20 +69,4 @@ export async function markRead(id: string): Promise<void> {
 
 export async function markAllRead(): Promise<void> {
   await run('UPDATE notifications SET readAt = ? WHERE readAt IS NULL', [Date.now()]);
-}
-
-/**
- * A priority notification is cleared by ACTING on it, not by looking at it.
- *
- * Reading is not acknowledging — the brief is explicit — so these keep coming
- * back until the thing they are about has actually been dealt with. That is
- * what `acknowledge` is for, and it is called from the screen that resolves
- * the underlying problem, never from the notification list.
- */
-export async function acknowledge(id: string): Promise<void> {
-  await run('UPDATE notifications SET acknowledged = 1, readAt = COALESCE(readAt, ?) WHERE id = ?', [Date.now(), id]);
-}
-
-export async function unacknowledgedPriority(): Promise<Notification[]> {
-  return all<Notification>('SELECT * FROM notifications WHERE priority > 0 AND acknowledged = 0 ORDER BY createdAt DESC');
 }

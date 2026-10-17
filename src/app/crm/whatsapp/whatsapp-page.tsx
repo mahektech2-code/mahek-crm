@@ -1,0 +1,295 @@
+import { requireUser } from "@/lib/auth";
+import { canOpenModule } from "@/lib/access";
+import { getScope, managesHere, scopeLabel } from "@/lib/scope";
+import { dayActivity, listCustomers, today } from "@/lib/queries";
+import { getFollowUpWorklist, listBills } from "@/lib/services/payment-service";
+import {
+  WA_MESSAGE_LIMIT,
+  deliveryContext,
+  findResumableRun,
+  listMessages,
+  messageCount,
+  listReplies,
+  listTemplates,
+  listUnconfirmedCopies,
+} from "@/lib/services/whatsapp-service";
+import { clock, longDate, nowMs } from "@/lib/format";
+import { WhatsappScreen } from "./whatsapp-screen";
+import { listConversations } from "@/lib/services/whatsapp-chat-service";
+import { specKey } from "@/lib/wati-templates";
+import { writingConfigured } from "@/lib/writing-model";
+import { isUndeliverableNumber } from "@/lib/whatsapp-undeliverable";
+import { listUndeliverable } from "@/lib/services/whatsapp-undeliverable-service";
+
+/** Whole minutes a run took, floored at one so "0 min" never shows. */
+function runMinutes(from: Date, to: Date | null): number {
+  if (!to) return 1;
+  return Math.max(1, Math.round((to.getTime() - from.getTime()) / 60000));
+}
+
+/**
+ * THE WHATSAPP SCREEN, for whichever app is drawing it.
+ *
+ * The CRM and Accounts open the same screen over the same conversations, and
+ * what differs is only which scope reads them — the request's app, which the
+ * proxy names from the URL, so Accounts reads every book without being told —
+ * and whether this person holds the Write level in THIS app. That last one is
+ * per app on purpose: the screen draws what the grant here says, while the
+ * actions behind it answer the union (`whatsappLevel`), the way every other
+ * capability does.
+ */
+export async function WhatsappPage({
+  app,
+  searchParams,
+}: {
+  app: "crm" | "accounts";
+  /*
+   * The Replies tab's two filters ride on the URL like every list's: "these
+   * three, nobody has answered them" is a link one person sends another.
+   */
+  searchParams: Promise<{ customer?: string; tab?: string; chat?: string }>;
+}) {
+  const { customer, tab, chat } = await searchParams;
+  const user = await requireUser();
+  const scope = await getScope(user, app);
+  /* A manager of THIS app, not of any app — see `managesHere`. */
+  const managerHere = await managesHere(user, app);
+  const canWrite = await canOpenModule(user.id, `${app}.whatsapp-reply`);
+  // Whether the review step can offer help with the words — a key, nothing more.
+  const canPolish = canWrite && (await writingConfigured());
+  const now = nowMs();
+  const day = await today();
+
+  const [
+    customers,
+    templates,
+    messages,
+    replies,
+    activeRun,
+    activity,
+    followUps,
+    bills,
+    unconfirmed,
+    messageTotal,
+    delivery,
+    undeliverable,
+  ] = await Promise.all([
+    listCustomers(),
+    listTemplates(),
+    listMessages(),
+    listReplies(),
+    findResumableRun(user.id),
+    dayActivity(user.id, day),
+    getFollowUpWorklist(),
+    /*
+     * OPEN BILLS ONLY. This asked for every bill ever raised — 10,815 rows,
+     * 1.98 MB — and then threw 10,405 of them away in the loop below, which
+     * keeps a bill only while `balance > 0`. `openOnly` is the same condition
+     * in SQL (`amount > paid_amount`), so the loop's own filter stays exactly
+     * as it was and is still the authority on what a statement may quote.
+     */
+    listBills({ openOnly: true }),
+    managerHere ? listUnconfirmedCopies() : Promise.resolve([]),
+    /*
+     * The log read is capped at 300 and this is not. Two questions: what the
+     * screen can draw, and what that is a slice of. The Log tab used to count
+     * what it happened to hold and print it as the total, which on a busy book
+     * reads as a message log that stopped growing months ago.
+     */
+    messageCount(),
+    deliveryContext(),
+    listUndeliverable(),
+  ]);
+
+  // Read on every load, not only on the Chats tab: its count is on the tab
+  // itself, and a tab whose badge is only right once you are already on it
+  // tells nobody to go there. A conversation named in the URL opens on the
+  // "last 30 days" list, so it is on the list it is opened from.
+  const chats = await listConversations({ show: chat ? "all" : "open" });
+
+  // Whether ANY message can go through the API right now. Per template it is
+  // narrower still — an unlinked template is manual whatever this says — and
+  // the send tab works that out from `watiTemplateName` on each template.
+  const apiOn = delivery.serviceOn && delivery.hasToken;
+
+  // Every STATED open bill per customer, oldest first — feeds {{bill_no}},
+  // {{bill_due}} and the full {{bills_list}} a statement actually needs. An
+  // `unstated` bill is left out here exactly as `mergeValuesFor` leaves it out
+  // server-side: an unverified balance is not something to compose an
+  // outgoing message about, and the two must agree on that filter.
+  const openBillsByCustomer = new Map<
+    string,
+    Array<{ billNo: string; billDate: string; dueDate: string; balance: number }>
+  >();
+  for (const b of [...bills].sort((a, z) => a.billDate.localeCompare(z.billDate))) {
+    if (b.balance <= 0 || b.paymentPosition !== "stated") continue;
+    const list = openBillsByCustomer.get(b.customerId) ?? [];
+    list.push({ billNo: b.billNo, billDate: b.billDate, dueDate: b.dueDate, balance: b.balance });
+    openBillsByCustomer.set(b.customerId, list);
+  }
+
+  const asOf = longDate(day);
+  const promiseByCustomer = new Map(followUps.map((f) => [f.customerId, f]));
+
+  const customerPayload = customers.map((c) => ({
+    id: c.id,
+    name: c.name,
+    contactPerson: c.contactPerson,
+    phone: c.phone,
+    city: c.city,
+    outstanding: c.outstanding,
+    lastOrderDate: c.lastOrderDate,
+    lastOrderValue: c.lastOrderValue,
+    ownerName: c.ownerName,
+    groupName: c.whatsappGroupName,
+    destKind: c.whatsappDest,
+    oldestBillNo: openBillsByCustomer.get(c.id)?.[0]?.billNo ?? null,
+    oldestBillDue: openBillsByCustomer.get(c.id)?.[0]?.dueDate ?? null,
+    openBills: openBillsByCustomer.get(c.id) ?? [],
+    asOf,
+    promisedAmount: promiseByCustomer.get(c.id)?.promisedAmount ?? null,
+    promisedDate: promiseByCustomer.get(c.id)?.promisedDate ?? null,
+    slowPayer: c.slowPayer,
+  }));
+
+  return (
+    <WhatsappScreen
+      app={app}
+      canWrite={canWrite}
+      canPolish={canPolish}
+      // The ledger desk reads every book, so naming one would be wrong there.
+      scopeLabel={app === "accounts" ? "Every customer" : scopeLabel(scope, user)}
+      isManager={managerHere}
+      // Manual is the default and stays fully usable — automatic sending is an
+      // addition, never a replacement.
+      mode={apiOn ? "automatic" : "manual"}
+      apiOffReason={
+        apiOn
+          ? null
+          : !delivery.serviceOn
+            ? "The founder has not switched WhatsApp sending on, so every message is copied and pasted."
+            : "WhatsApp sending is on, but no Wati key is configured."
+      }
+      // Automatic sending is configured but the last attempts failed. Derived
+      // from the messages themselves rather than a health-check endpoint we do
+      // not have — a banner that cannot be wrong is better than one that is
+      // green because nothing has been asked of it.
+      undeliverable={undeliverable.map((u) => ({ customerId: u.customerId, name: u.name, number: u.number }))}
+      sendingFailing={
+        apiOn &&
+        messages.some(
+          (m) =>
+            m.status === "failed" &&
+            m.mode === "automatic" &&
+            // A number that cannot receive WhatsApp is not sending failing —
+            // it is listed on its own, below, and the rule stops trying it.
+            !isUndeliverableNumber(m.failureReason) &&
+            now - m.updatedAt.getTime() < 24 * 3_600_000,
+        )
+      }
+      initialCustomerId={customer ?? customerPayload[0]?.id ?? ""}
+      // The screen opens on the chats, as WhatsApp does. A tool opens when the
+      // address names one, and a customer named without a tab is the old
+      // "send this customer a template" link, which is New message.
+      initialTab={
+        tab === "send" || tab === "run" || tab === "templates" || tab === "log"
+          ? tab
+          : customer && !tab
+            ? "send"
+            : "replies"
+      }
+      today={day}
+      now={now}
+      chats={chats}
+      initialChat={chat?.slice(0, 80) ?? null}
+      customers={customerPayload}
+      templates={templates.map((t) => ({
+        id: t.id,
+        name: t.name,
+        category: t.category,
+        body: t.body,
+        appliesTo: t.appliesTo,
+        uses: t.usageCount,
+        watiTemplateName: t.watiTemplateName,
+        spec: t.watiSpec ?? specKey(t.watiTemplateName),
+        archived: !t.active,
+        updatedAt: t.updatedAt.toISOString(),
+      }))}
+      messageTotal={messageTotal}
+      messageLimit={WA_MESSAGE_LIMIT}
+      messages={messages.map((m) => ({
+        id: m.id,
+        customerId: m.customerId,
+        customerName: m.customerName,
+        templateName: m.templateName,
+        destination: m.resolvedDestination,
+        destKind: m.destKind,
+        mode: m.mode,
+        status: m.status,
+        sentByName: m.userName ?? "-",
+        edited: m.edited,
+        createdAt: m.preparedAt.toISOString(),
+        copiedAt: m.copiedAt?.toISOString() ?? null,
+        confirmedSentAt: m.confirmedSentAt?.toISOString() ?? null,
+        failureReason: m.failureReason,
+        sentInScope: m.sentInScope,
+      }))}
+      replies={replies.map((r) => ({
+        id: r.id,
+        customerId: r.customerId,
+        customerName: r.customerName,
+        message: r.message,
+        receivedAt: r.receivedAt.toISOString(),
+      }))}
+      runElapsedMinutes={activeRun ? runMinutes(activeRun.run.startedAt, new Date(now)) : 0}
+      run={
+        activeRun
+          ? {
+              id: activeRun.run.id,
+              templateId: activeRun.run.templateId,
+              paused: activeRun.run.status === "paused",
+              startedAt: activeRun.run.startedAt.toISOString(),
+              sent: activeRun.sent,
+              skipped: activeRun.skipped,
+              total: activeRun.recipients.length,
+              recipients: activeRun.recipients.map((r) => ({
+                messageId: r.id,
+                customerName: r.customerName,
+                status: r.status,
+                done: r.done,
+                destKind: r.destKind as "personal" | "group",
+              })),
+              // The record set is the state, so a refresh resumes exactly here.
+              current: activeRun.current
+                ? {
+                    messageId: activeRun.current.id,
+                    customerId: activeRun.current.customerId,
+                    customerName: activeRun.current.customerName,
+                    destination: activeRun.current.resolvedDestination,
+                    // A prepared row is always one leg, never "both".
+                    destKind: activeRun.current.destKind as "personal" | "group",
+                    body: activeRun.current.body,
+                    status: activeRun.current.status,
+                  }
+                : null,
+            }
+          : null
+      }
+      previewTime={clock(new Date(now))}
+      messagesToday={activity.whatsappSent}
+      // Copied but never confirmed: each one is a customer who may or may not
+      // have been contacted. Managers get the number; nobody gets a guess.
+      unconfirmedCount={unconfirmed.length}
+      followUpCounts={{
+        stage1: followUps.filter((f) => f.stage === 1).length,
+        slow: followUps.filter((f) => f.slowPayer).length,
+        over60: followUps.filter((f) => f.daysOverdue > 60).length,
+      }}
+      followUpIds={{
+        stage1: followUps.filter((f) => f.stage === 1).map((f) => f.customerId),
+        slow: followUps.filter((f) => f.slowPayer).map((f) => f.customerId),
+        over60: followUps.filter((f) => f.daysOverdue > 60).map((f) => f.customerId),
+      }}
+    />
+  );
+}

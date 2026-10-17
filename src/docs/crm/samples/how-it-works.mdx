@@ -1,0 +1,163 @@
+A sample is stock given away in the hope of an order, so the rules around it all serve one purpose: **no sample goes out to a shop nobody has established anything about, and no sample that went out is allowed to go quiet.** This tab explains the sample's journey, the three dates it carries, how the review is chased, what each verdict does to the lead, and why each rule is shaped the way it is.
+
+<Callout kind="live">
+Values shown are read live from your CRM.
+</Callout>
+
+## State and verdict are two questions
+
+A sample carries a **state** — where it has got to — and a **verdict** — what the customer thought.
+
+<Flow caption="The sample's journey (state)" chart={`
+stateDiagram-v2
+  [*] --> requested: asked for
+  requested --> approved: a manager says yes
+  requested --> rejected: a manager says no (reason required)
+  approved --> dispatched: courier, docket, promised date
+  dispatched --> received: the SHOP confirms it is in their hands
+  received --> trial_done: optional — trial finished
+  received --> reviewed: verdict recorded
+  trial_done --> reviewed: verdict recorded
+  requested --> cancelled
+  approved --> cancelled
+  dispatched --> cancelled
+  received --> cancelled
+  trial_done --> cancelled
+  reviewed --> [*]
+  rejected --> [*]
+  cancelled --> [*]
+`} />
+
+The verdict is one of **pending**, **approved**, **rejected** or **more testing**.
+
+<Callout kind="why">
+With one column, a sample approved three weeks ago and never dispatched looked identical to one under evaluation — when it is really stock nobody gave away and an opportunity nobody took. And *more testing* is a real third verdict, not a shrug: "they want to try it again on a different substrate" is neither yes nor no, and recording it as pending would lose the fact that a trial happened.
+</Callout>
+
+<Rule title="A sample never goes back a step">
+"It did not really arrive" is not an edit; it is a fact about the delivery. The honest record is to cancel with the reason and send another. Rewinding would make the timeline read as though the first delivery never happened, on a record somebody has already been told about. Any other move is refused with a sentence naming where the sample actually is — *"This sample is on its way, so it cannot be marked reviewed."*
+</Rule>
+
+## Before a sample can be asked for
+
+On the **direct** and **third-party** ladders a sample can be requested only once **Qualification is complete and verified** — the eight answers, the sales manager's review, the GST validated and the figures fresh (see [Intake and qualification](/docs/crm/lead-intake-and-qualification/how-it-works)). Otherwise nothing is created and the screen lists what is still to do.
+
+For an older lead with no sales type, a sample asked for below the rung where a sample is normally wanted is **allowed but marked** *Lead not qualified — Manager approval required.* A real customer with no lead stage at all is never marked.
+
+<Callout kind="why">
+Before stock leaves the godown, somebody should already know the product, roughly how much they use, what they could be worth and the brand it is up against. A trial aimed at a shop nobody has established anything about has no requirement to measure the result against and no competitor to compare it with — the commonest way a sample becomes stock given away for nothing.
+</Callout>
+
+The request carries a product, a can count, what it will be used on, and a coded reason from <Setting k="leads.sampleReasons" />.
+
+## Approving and dispatching
+
+- **Approving or refusing** needs the sample-approval permission (managers and admins). A refusal must say why, because the salesman cannot work it out from the word alone.
+- **Dispatching** needs a courier, a docket number and the date the courier promised. A docket nobody can chase is a sample nobody will review, and the promised date is what the late flag is measured against.
+
+## The three dates
+
+| Date | Who asserts it | Column |
+|---|---|---|
+| **It left us** | We do | dispatched |
+| **It arrived** | The carrier, or our own man | delivered |
+| **It is in their hands** | **The shop** | received |
+
+<Rule title="The review is counted from confirmed receipt — never from dispatch">
+A review timed from the day we posted it rings a customer still waiting for the parcel, and that call teaches them we do not know where our own stock is. Confirming receipt records **only** the shop's date; it never fills in the carrier's, and the carrier's date never fills in the shop's. A default would assert something nobody asked the customer.
+</Rule>
+
+## Chasing a parcel that has not arrived
+
+<Flow caption="Who chases a sample in transit" chart={`
+flowchart TD
+  D["Dispatched (from the handset)"] --> T["After the transit chase window:<br/>'Where is the sample'"]
+  T --> B{"Back-office person<br/>named on the account?"}
+  B -- "Yes" --> BO["Task to the back-office person"]
+  B -- "No" --> LM["Task to the lead manager,<br/>saying why it came to them"]
+  D --> P{"Past the courier's<br/>promised date?"}
+  P -- "Yes" --> L["'Sample has not arrived' —<br/>raised once"]
+  BO --> R["Receipt confirmed"]
+  LM --> R
+  L --> R
+  R --> C["Chases CLOSED as done — not deleted"]
+`} />
+
+The window is <Setting k="mbos.samples.transitChaseAfterDays" /> days after dispatch.
+
+<Callout kind="why" title="Why the task says why it landed where it did">
+The back-office seat is the brief's "logistics" person. Where nobody holds it, the chase still has to happen — a sample that never arrives is the quietest way a lead dies, because the salesman assumes it is being tried and the shop assumes we forgot. So it falls to the lead manager, and says so: naming the reason turns a silent fallback into a gap somebody can fix.
+</Callout>
+
+A chase is **closed** by the answer, never deleted — "we asked where this parcel was and then it arrived" is the only way anybody finds out a courier is the problem.
+
+## Chasing the review
+
+Once the shop confirms receipt, the review is asked for on the days in <Setting k="leads.sampleReviewChaseDays" />, counted from receipt. After the last of those, **the last gap repeats** — it never stops.
+
+| Ask | Day after receipt (shipped ladder 2, 4, 6) | Task |
+|---|---|---|
+| 1 | 2 | *Sample review call* |
+| 2 | 4 | *Sample review call — ask 2* |
+| 3 | 6 | *… — ask 3*, "Asked 2 times already with no answer. Worth ringing yourself." |
+| 4 | 8 | *… — ask 4* |
+| 5 | 10 | and so on |
+
+Each ask is a task for the lead manager, or the salesman where there is none. The chase runs on the hourly job; two passes on one day raise one ask, and each ask is keyed on its own number, so it is never raised twice. The count of asks is kept on the sample so a screen can say "asked three times" — the number that tells a manager to pick up the phone.
+
+<Callout kind="why">
+A trial nobody reviewed is stock given away for nothing. A ladder that gave up after three asks would quietly turn every hard-to-reach customer into a write-off with no decision recorded. Somebody ends it by getting an answer, or by calling the sample off and saying why.
+</Callout>
+
+Recording the verdict closes every open chase on the sample.
+
+## The verdict: seven answers, not one word
+
+Feedback is seven fields — **quality, performance, application, drying, compared with what they use now, price, and anything else** — because "good" cannot be read back. The whole point of a trial is the comparison, and a note field cannot later be read as "better drying than the incumbent, price is the problem".
+
+- At least one of the seven must be filled.
+- The review is recorded **once**; a second save of the same sample changes nothing. A second opinion is a second sample.
+
+<Rule title="A rejected sample has to say why">
+A rejection is refused unless *anything else*, *price* or *compared with what they use now* is filled — the same three fields the stored rejection reason is drawn from. Without it the next sample goes out exactly the same. The handset checks the same three.
+</Rule>
+
+## What each verdict does
+
+| Verdict | Effect on the trial | Effect on the lead |
+|---|---|---|
+| **Approved** | Closed; chases closed | A *Call about the order* task for the lead manager. From the **handset**, the lead is moved to **Negotiation** through its gate (if the gate refuses, the message says what is missing). From the **CRM**, the lead is not moved — press *Move to Negotiation* on the record; the gate now passes. |
+| **Rejected** | Closed with the reason | Salesman and lead manager told why |
+| **More testing** | Closed as reviewed | No move — the trial has not finished saying anything |
+
+<Callout kind="why" title="Why approval opens Negotiation">
+The sample review is what authorises a commercial conversation — not the salesman deciding he is ready for one. Negotiation's gate requires a sample sent, feedback written and the trial approved, so the gate and the thing that opens it are one mechanism.
+</Callout>
+
+## Calling a sample off
+
+**Call off** is allowed from any state before the review, with a coded reason from <Setting k="leads.sampleCancelReasons" /> (*Other* needs words). Cancelling closes every task raised for the sample. The Trial feedback tab groups cancellations by whose problem they were — supply, customer or sales.
+
+## Who sees and does what
+
+| Action | Who |
+|---|---|
+| Ask for a sample, confirm receipt, record feedback, call it off | Lead work — every associate in scope |
+| Approve or refuse | The sample-approval permission — managers and admins |
+| See samples | The same lead scope as All Leads: your own book in the CRM, your team or territory as a manager |
+
+## Settings
+
+<SettingsTable keys={[
+  "leads.sampleReasons",
+  "leads.sampleCancelReasons",
+  "leads.sampleReviewChaseDays",
+  "mbos.samples.transitChaseAfterDays",
+  "mbos.samples.reviewAfterDays",
+]} />
+
+## Where the code and the intent disagree today
+
+- **An approved verdict opens Negotiation only from the handset.** AGENTS.md says an approved sample opens negotiation; the CRM's `recordSampleFeedback` raises the order-call task and does not move the lead (`actions/lead-samples.ts`), while the handset's `afterSampleVerdict` does (`actions/mbos.ts`).
+- **Two review triggers.** A receipt confirmed on the handset raises one *Sample review* task <Setting k="mbos.samples.reviewAfterDays" /> days out (`actions/mbos.ts`); the hourly chase ladder (`mbos-jobs.ts` `chaseSampleReviews`) also asks from day one of <Setting k="leads.sampleReviewChaseDays" />, so a handset-received sample can carry both.
+- **The handset review task is dated by adding milliseconds to now**, then taking the calendar date, rather than by working days (`actions/mbos.ts`, the sample-review task).

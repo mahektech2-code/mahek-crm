@@ -204,14 +204,14 @@ export async function recordCommunication(args: {
 }): Promise<CommunicationResult> {
   const action = COMMUNICATION_ACTIONS.find((a) => a.code === args.actionCode);
   if (!action) {
-    return { ok: false, message: 'This phone does not know that way of reaching out.' };
+    return { ok: false, message: 'This option is not on this phone.' };
   }
   if (action.kind === 'send' && !args.documentId) {
     return {
       ok: false,
       message:
-        `"${action.label}" has to name the document that went, or the record ` +
-        'cannot say which one a month from now.',
+        `"${action.label}": pick the document you sent. ` +
+        'Otherwise nobody will know later which one it was.',
     };
   }
 

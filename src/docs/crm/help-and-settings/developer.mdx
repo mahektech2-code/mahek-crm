@@ -1,0 +1,127 @@
+Configuration is a **registry** of typed definitions (`lib/config/registry.ts`), **stored values** layered over its defaults (`app_settings`), one **cached read** (`getConfig`), and one **write path** (`updateSettings`) reached from the Admin Console's settings editor through `updateConfigSettings`. Which page, tab and group a setting is drawn on is decided by pure placement rules. The Help Center is a read of `help_articles`; call scripts are the same rows, rendered with placeholders filled in the call panel. Everything below is cut from the source this deployment was built from.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Help route | `src/app/crm/help/layout.tsx`, `page.tsx`, `help-screen.tsx` | `requireModule(user.id, "crm.help")`; `listHelpArticles`; search, audience, categories |
+| Scripts in calls | `src/app/crm/call-log/page.tsx`, `src/components/crm/call-panel.tsx` | `help_articles` of type `call_script`; `scriptBlocks` and the `scriptFill` map |
+| Old settings route | `src/app/crm/settings/page.tsx`, `layout.tsx` | `permanentRedirect("/admin")` behind `requireModule(…, "crm.settings")` |
+| Console pages | `src/app/admin/settings/[page]/[[...tab]]/page.tsx`, `settings-editor.tsx`, `settings-model.ts` | One editor for every page: drafts, consistency, review, undo |
+| Pages | `src/lib/config/settings-pages.ts` | `SETTINGS_PAGES` with their `owners` |
+| Placement | `src/lib/config/settings-placement.ts`, `presentation.ts` | `placeSetting`, `PAGE_TABS`, `RETIRED_SETTINGS`; `PRESENTATION`, `TABS`, `GROUP_NOTES`, `ENTITY_COLLECTIONS` |
+| Registry | `src/lib/config/registry.ts` | `SETTINGS`, `definition`, `validateSetting`, `checkConsistency`, the `Config` type |
+| Store | `src/lib/config/store.ts` | `getConfig` (30-second cache), `invalidateConfig`, `updateSetting`, `updateSettings`, `listSettings` |
+| Write action | `src/lib/actions/crm.ts` | `requireConfigWriteFor`, `updateConfigSettings`, `updateConfigSetting` |
+
+## Saving a tab, end to end
+
+<Flow caption="updateConfigSettings" chart={`
+sequenceDiagram
+  autonumber
+  participant UI as settings-editor.tsx
+  participant A as actions/crm.ts
+  participant S as config/store.ts
+  participant R as config/registry.ts
+  participant DB as Postgres
+  UI->>UI: dirtyFields, introducedProblems (same check, client side), review
+  UI->>A: updateConfigSettings(entries)
+  A->>A: requireConfigWriteFor(keys) — config.write AND an owning app at manager level<br/>(platform admin: console password re-check)
+  A->>S: updateSettings(entries, actor)
+  S->>R: validateSetting each, then checkConsistency(before) vs checkConsistency(after)
+  alt invalid or a NEW inconsistency
+    S-->>A: refused with fields
+  else
+    S->>DB: ONE transaction — upsert app_settings, audit_log config.update per key
+    S->>S: invalidateConfig()
+  end
+  A-->>UI: "N settings saved. They take effect immediately."
+`} />
+
+## Reading configuration
+
+<Code file="src/lib/config/store.ts" symbol="getConfig" />
+
+A key never written falls through to its registry default, so adding a setting needs no migration. `invalidateConfig` clears this process's cache; other readers see a change within `CACHE_MS`.
+
+## Writing configuration
+
+<Code file="src/lib/actions/crm.ts" symbol="requireConfigWriteFor" />
+
+<Code file="src/lib/config/store.ts" symbol="updateSettings" collapsed />
+
+<Code file="src/lib/config/registry.ts" symbol="checkConsistency" collapsed />
+
+<DbTable name="app_settings" note={{
+  value: "jsonb, NOT NULL. Validated against the definition before it is written.",
+  updated_by_id: "Who last changed it. Null means nobody has — the shipped default stands, and migrations that move a default match on this being null.",
+}} />
+
+## Where a setting is drawn
+
+<Code file="src/lib/config/settings-pages.ts" symbol="SettingsPage" />
+
+<Code file="src/lib/config/settings-placement.ts" symbol="placeSetting" collapsed />
+
+Rules are read top to bottom and the first match decides. A setting that matches no rule and has no `PRESENTATION` tab is placed nowhere, and `settings-placement.test.ts` fails the build — a setting nobody can find cannot be changed.
+
+## The Help Center
+
+<DbTable name="help_articles" note={{
+  type: "sop, call_script or system_guide.",
+  roles: "jsonb list of levels (associate, manager, admin) or 'all'. Older rows may carry the job word 'telecaller'.",
+  script_body: "For a call script, the words to say; body then carries the guidance shown under 'Why it is written this way'.",
+  active: "Inactive articles are not listed and not offered as scripts.",
+}} />
+
+<DbEnum name="help_type" />
+
+<Code file="src/lib/queries.ts" symbol="listHelpArticles" />
+
+<Code file="src/components/crm/call-panel.tsx" symbol="scriptBlocks" collapsed />
+
+`scriptFill` (inside the call panel component) maps lower-cased placeholder names to values from the customer being called, the signed-in user and the bill being chased. Unknown placeholders stay in braces and are styled as unresolved.
+
+## Permissions
+
+<CapabilityGrid names={["config.write"]} />
+
+Modules: <ModuleRef k="crm.help" />, <ModuleRef k="crm.settings" /> (guards only a redirect now).
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/config/settings-placement.test.ts` | Every setting is placed on a page and tab |
+| `npm run test` | `src/lib/engines/engines.test.ts` | `checkConsistency` relationships (queue, collections, aging) |
+| `npm run test:integration` | `src/lib/settings-storage.test.ts` | Validation, one-transaction saves, audit rows, cache invalidation |
+
+## Changing it safely
+
+<Steps>
+<Step title="A new setting is three edits">
+A definition in `SETTINGS` (type, default, bounds, description), an entry in the hand-typed `Config` type, and a placement (a `PRESENTATION` entry or a rule). Missing the `Config` entry breaks only the server build.
+</Step>
+<Step title="Never default to null">
+`app_settings.value` is NOT NULL jsonb. A null default breaks every writer and every integration test.
+</Step>
+<Step title="Relationships go in checkConsistency">
+If two settings state one fact, add the check there so the editor flags it and the server refuses a new contradiction.
+</Step>
+<Step title="Moving a shipped default is a migration that respects choices">
+Update only rows where `updated_by_id is null` and the value is still the old default.
+</Step>
+<Step title="A script is an article">
+Write call scripts as `help_articles` of type `call_script`; never put script text in a component.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| No screen writes `help_articles`; only the seed does | `src/db/seed.ts`; `config/presentation.ts` (help collection note) |
+| `crm.settings` note says "reached from the Help Center"; nothing links there and the route redirects to `/admin` | `lib/modules.ts`; `src/app/crm/settings/page.tsx` |
+| `listHelpArticles` filters on the request level; rows tagged with the legacy `telecaller` are never sent though `help-screen.tsx` still maps that word | `lib/queries.ts` `listHelpArticles`; `help-screen.tsx` `AUDIENCE` |
+| The WhatsApp support link is a literal in the component | `src/app/crm/help/help-screen.tsx` |
+| `invalidateConfig` only clears the current process's cache | `config/store.ts` |

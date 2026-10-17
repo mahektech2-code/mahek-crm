@@ -1,0 +1,124 @@
+A reminder is the CRM's record of a **promise somebody made to a customer**. It has a date, a sentence saying what was promised, a type, and a person it is assigned to. It is not a task list: the whole design is aimed at one question a manager needs answered honestly — *are we keeping our promises?*
+
+That is why a reminder is closed by **evidence** that it was kept, and why closing one any other way is a decision somebody senior makes and is recorded against their name.
+
+## Where reminders come from
+
+Almost every reminder is written for the telecaller, inside the same save as the call that produced it.
+
+| Source | Type | Date |
+|---|---|---|
+| Call outcome **Follow-up** | call back | The date chosen, or <Setting k="interactions.followUpDefaultDays" /> day(s) out |
+| Call outcome **Payment Promised** | payment promise | The promised date, or <Setting k="interactions.paymentPromiseDefaultDays" /> days out |
+| A dated **next action** on a call | From the action — payment chases are *payment promise*, dispatch chases *order confirmation*, stock *check stock*, sending material *information to send* | The next-action date |
+| Collections call **Payment promised** | payment promise, set by the system | The working day **after** the promised date — the promise is chased once it has passed |
+| Collections call **Call back later** | call back, set by the system | The date the customer asked for |
+| **Set reminder** on the Reminders screen or a customer record | call back | The date typed |
+
+<Rule title="Non-working days roll forward">
+When <Setting k="reminders.rollForwardOnNonWorkingDays" /> is on, a due date that falls on a non-working day moves to the next working day. **Carry forward** always lands on the next working day.
+</Rule>
+
+## Due, overdue and upcoming are worked out, never stored
+
+A reminder stores its date and whether it is *pending*, *completed* or *dismissed*. Whether it is **overdue**, **due today** or **upcoming** is decided every time it is read, by comparing the date with today's business date.
+
+<Callout kind="why">
+A stored "overdue" flag needs a nightly job to move it, and a job that fails leaves the screen lying. Comparing on read cannot drift.
+</Callout>
+
+## What closes a promise
+
+<Flow caption="Closing on evidence" chart={`
+flowchart TD
+  E{"What happened to<br/>the customer?"} -->|"a call"| A{"Did anybody answer?"}
+  A -- "No" --> K["Nothing closes.<br/>The no-answer ladder brings them back"]
+  A -- "Yes" --> D["Close every pending reminder<br/>due today or earlier"]
+  E -->|"an order taken"| O["Close order confirmation<br/>reminders, any date"]
+  E -->|"money accounts confirmed"| P["Close payment promise<br/>reminders, any date"]
+  E -->|"money the customer reported"| N["Closes nothing by itself"]
+  D --> X["Skip anything this same<br/>save just created"]
+  O --> X
+  P --> X
+`} />
+
+<Rule title="A call closes what was due">
+An answered call closes reminders due **today or earlier** — never one still ahead. A customer rung on Tuesday about something else has not had the conversation promised for the 20th.
+</Rule>
+
+<Rule title="An order or confirmed money closes what was about exactly that">
+An order closes **order confirmation** reminders and confirmed money closes **payment promise** reminders, whatever their date. A payment promised for the 20th that lands on the 15th leaves nothing to ring about on the 20th.
+</Rule>
+
+<Rule title="A ring nobody answered is not a promise kept">
+An unanswered call closes nothing. Otherwise the overdue pile could be cleared by dialling and hanging up — the very escape the manual button used to give.
+</Rule>
+
+<Rule title="Reported money is not evidence">
+Money the customer says has arrived is not money the business has seen. The payment promise closes when accounts confirm the receipt.
+</Rule>
+
+<Rule title="A save never closes what it created">
+A call whose outcome is "follow up tomorrow" writes tomorrow's promise; the same call must not then close it. Every reminder a call writes is stamped with that call, and the closure pass skips it.
+</Rule>
+
+For a call or an order, the closing happens **inside the same transaction** as the save. A reminder closed outside it would survive a rolled-back call — the promise gone and no record of the conversation that supposedly closed it.
+
+### The closed row says what closed it
+
+| Closed by | What the row says | What it means |
+|---|---|---|
+| call | Closed by the call logged on … | There is a call to open |
+| order | Closed by the order taken on … | There is an order |
+| payment | Closed by the payment accounts confirmed on … | There is a confirmed receipt |
+| person | Marked done / dismissed by *name* on … | Somebody stood behind it personally |
+| (nothing recorded) | Closed on … | Closed before this was tracked — nothing is backfilled |
+
+## Closing by hand is a capability
+
+<CapabilityGrid names={["reminder.write", "reminder.close"]} />
+
+**Mark done** and **Dismiss** both need `reminder.close`, which comes with the CRM manager level. Both are checked on the server, both are written to the audit log, and dismissing needs a reason.
+
+<Callout kind="why" title="Why a telecaller cannot tick their own reminder off">
+"Mark done" recorded that a button was pressed and nothing about whether the call was made. The overdue pile could be cleared in a minute by the one person whose work it measured, and no screen could tell a promise kept from a promise tidied away. Dismissing is gated by the same capability because a reason typed into a dismissal clears the pile exactly as well as a tick.
+</Callout>
+
+## Reminders and the Call Log
+
+A pending reminder is one of the Call Log's strongest reasons to ring:
+
+| Reminder is | Call Log reason |
+|---|---|
+| Overdue | *Reminder N days overdue* — ranked above every order reason |
+| Due today | *Reminder due today* |
+
+- A reminder outranks the quiet window after an order, the cooldown after "no order", and the WhatsApp cooldown — a callback the customer asked for is not chasing.
+- It does **not** outrank do-not-contact, a call already made today, or an open order on the sheet.
+- The Call Log is settled once a day, but a reminder that **falls due during the day** is added at the top.
+
+### Holding other calls until the promise
+
+When a telecaller promises a callback for Friday and the rules would otherwise bring the customer back on Tuesday for a stock check, the screen offers **Hold other calls until Friday**. That is the telecaller's own decision, never inferred. While it holds, order and check-in reasons are silenced for that customer; money, reminders and "unreachable" are not. It can only be set on a pending reminder whose date is still ahead.
+
+## Who sees which reminders
+
+A reminder belongs to the person it is **assigned to**. A telecaller sees their own; a manager on team scope sees their team's, with who each is assigned to, and a card ranking who has the most overdue. Reminders for a lead that has been moved to the trash are hidden and come back with it.
+
+## Every setting that shapes reminders
+
+<SettingsTable keys={[
+  "reminders.rollForwardOnNonWorkingDays",
+  "reminders.rescheduleWarningCount",
+  "interactions.followUpDefaultDays",
+  "interactions.paymentPromiseDefaultDays",
+  "dashboard.reminderOverdueFlagDays",
+]} />
+
+## Where the code and the intent disagree today
+
+- **Rescheduling and "Hold other calls" do not check the reminder is in your book.** The actions look the reminder up by its id and change it; nothing confirms the customer or the assignee is in the caller's scope.
+- **A manager's Reminders badge counts every pending reminder in the company**, while the list underneath is narrowed to their team — so the badge and the *Needs action* tab disagree for a manager.
+- **"Upcoming" includes every future reminder**, however far out; nothing groups this week from next quarter.
+- **Confirmed money closes its payment promises just after the confirmation is written**, not inside the same transaction — a failure between the two would leave the money confirmed and the promise open.
+- **Rescheduling is not audited**, unlike closing and dismissing — a reminder moved ten times shows the count but not who moved it or from when.

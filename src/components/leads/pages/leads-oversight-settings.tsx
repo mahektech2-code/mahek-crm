@@ -1,6 +1,7 @@
 import { type LeadWorkspace } from "@/lib/lead-workspace";
 import type { ReactNode } from "react";
 import Link from "next/link";
+import { ADMIN } from "@/lib/admin-routes";
 import { stamp } from "@/lib/format";
 import { leadThresholds, type ThresholdRow } from "@/lib/services/lead-oversight-service";
 import { LeadTabs } from "@/components/leads/lead-tabs";
@@ -166,8 +167,8 @@ export async function Body({
             to store a value the real door would have refused — with nothing on either screen saying
             which was right. Change one there and it is in force here on the next read.
             <span className="block mt-1">
-              <Link href="/admin/crm" className="font-medium text-[#5223E0]">
-                Admin Console → CRM schema
+              <Link href={ADMIN.settingsFor("leads")} className="font-medium text-[#5223E0]">
+                Admin Console → Settings → Lead funnel
               </Link>
             </span>
           </>

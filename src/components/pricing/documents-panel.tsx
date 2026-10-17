@@ -52,11 +52,13 @@ export function DocumentsPanel({
   canManage,
   documents,
   openImport,
+  todayIso,
 }: {
   basePath: string;
   canManage: boolean;
   documents: DocumentView[];
   openImport: boolean;
+  todayIso: string;
 }) {
   const router = useRouter();
   const { run } = useToast();
@@ -121,7 +123,7 @@ export function DocumentsPanel({
               title={canManage ? undefined : "Importing a price list is not something you can do."}
               onClick={openImportModal}
             >
-              Import a price list
+              Import price lists
             </Button>
           }
         />
@@ -133,7 +135,7 @@ export function DocumentsPanel({
             action={
               canManage ? (
                 <Button variant="primary" onClick={openImportModal}>
-                  Import a price list
+                  Import price lists
                 </Button>
               ) : undefined
             }
@@ -243,6 +245,7 @@ export function DocumentsPanel({
         open={importing}
         openKey={importKey}
         basePath={basePath}
+        todayIso={todayIso}
         onClose={() => setImporting(false)}
       />
 

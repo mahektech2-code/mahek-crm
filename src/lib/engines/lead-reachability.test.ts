@@ -88,14 +88,6 @@ const PARKED: Record<string, string> = {
    * are the three that need doors — and this sweep will say so the moment the
    * entries below are removed.
    * ------------------------------------------------------------------- */
-  submitForManagementReview:
-    "§12's 'send this candidate upstairs'. Mahek does not appoint distributors " +
-    "through MahekOne, so there is no management review for a button to feed. " +
-    "Reachable again the day that changes.",
-  recordDistributorAgreement:
-    "Records a signed distributor agreement. Same reason: the appointment " +
-    "happens outside this system, so the signature this would record is not " +
-    "one MahekOne witnesses.",
   createDistributorSalesman:
     "Records a distributor's OWN salesman (§23's Rahul — a name on a row, not " +
     "a MahekOne login). It belongs to the appointment flow that is not run " +

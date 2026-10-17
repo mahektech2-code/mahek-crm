@@ -51,6 +51,7 @@ export function AppShell({
             scope={scope}
             notifications={notifications}
             apps={apps}
+            collapsed={collapsed}
             onToggleSidebar={() => setCollapsed((c) => !c)}
           />
         }

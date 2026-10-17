@@ -321,13 +321,13 @@ export async function listAreas(): Promise<AreaListing> {
 /** Whether a download may start right now, and the sentence if it may not. */
 export async function downloadBlockedBecause(settings: MapSettings): Promise<string | null> {
   if (!settings.enabled) {
-    return 'The office has switched off saving maps to this phone.';
+    return 'The office has turned off saving maps on this phone.';
   }
   /* No key is not a network problem and must not be reported as one. Nothing
      can be downloaded and nobody in the field can fix it — the sentence names
      who can. */
   if (!(await mapKey())) {
-    return 'No map is set up yet. The office adds a maps key in the Admin Console, and this starts working on the next sync.';
+    return 'Maps are not set up yet. The office must add a maps key. Then maps will work after the next send.';
   }
   if (!settings.wifiOnly) return null;
 
@@ -338,10 +338,10 @@ export async function downloadBlockedBecause(settings: MapSettings): Promise<str
      a dead end he cannot get out of; the worst case is a download he can see
      the size of and can cancel. */
   if (state && state.isConnected && state.type !== 'wifi') {
-    return 'Map downloads are set to Wi-Fi only, and this phone is on mobile data.';
+    return 'Maps download on Wi-Fi only. This phone is on mobile data. Connect to Wi-Fi.';
   }
   if (state && state.isConnected === false) {
-    return 'No connection. A map can only be saved while you have one.';
+    return 'No internet. Connect to the internet to save a map.';
   }
   return null;
 }

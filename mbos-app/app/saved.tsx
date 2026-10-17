@@ -2,13 +2,13 @@ import React from 'react';
 import { View, Text, Pressable } from 'react-native';
 import { router } from 'expo-router';
 import { color as C, HIT, radius, type, weight } from '../src/theme/tokens';
-import { Icon } from '../src/components/ui/Icon';
+import { DrawnTick, Stagger } from '../src/components/ui/motion';
 import { Card, PrimaryButton } from '../src/components/ui/primitives';
 import { AppFrame } from '../src/components/shell/AppFrame';
 import { useCustomer, useStore } from '../src/state/store';
 import { plural, pretty } from '../src/lib/format';
-import { OUTCOMES } from '../src/data/fixtures';
-import { pendingCount } from '../src/sync/queue';
+import { FOLLOW_UP_MODES, OUTCOMES } from '../src/data/fixtures';
+import { visitSendState } from '../src/data/visits';
 import { nextStop } from '../src/data/journey';
 
 /**
@@ -28,7 +28,9 @@ export default function Saved() {
   const voice = useStore((s) => s.voice);
   const gps = useStore((s) => s.gps);
   const nextDate = useStore((s) => s.nextDate);
+  const nextMode = useStore((s) => s.nextMode);
   const visitSpent = useStore((s) => s.visitSpent);
+  const saved = useStore((s) => s.visitSaved);
 
   const picked = OUTCOMES.find((o) => o.k === outcome) ?? OUTCOMES[0];
   const shotCount = (shots.shop ? 1 : 0) + (shots.cust ? 1 : 0);
@@ -76,13 +78,19 @@ export default function Saved() {
     };
   }, []);
 
-  const [queued, setQueued] = React.useState(true);
+  /* THIS visit's outbox row, not the whole outbox — see `visitSendState`.
+     "Your manager is told" went green the moment the queue was empty, so a
+     visit the office REFUSED read as told, and one sitting behind somebody's
+     photograph read as unsent. */
+  const [sent, setSent] = React.useState<'sent' | 'waiting' | 'refused'>('waiting');
+  const visitId = saved?.id ?? null;
   React.useEffect(() => {
     let live = true;
+    if (!visitId) return;
     const tick = () => {
-      void pendingCount()
-        .then((n) => {
-          if (live) setQueued(n > 0);
+      void visitSendState(visitId)
+        .then((v) => {
+          if (live) setSent(v);
         })
         .catch(() => undefined);
     };
@@ -92,34 +100,49 @@ export default function Saved() {
       live = false;
       clearInterval(t);
     };
-  }, []);
+  }, [visitId]);
 
   const items = [
     gps === 'locked'
-      ? { l: 'Location and time recorded', ok: true }
-      : { l: 'Saved without a location — flagged for your manager', ok: false },
-    shotCount ? { l: plural(shotCount, 'photo') + ' compressed and queued', ok: false } : null,
+      ? { l: 'Location and time saved', ok: true }
+      : { l: 'Saved without location. Your manager will check it', ok: false },
+    shotCount ? { l: plural(shotCount, 'photo') + ' saved, waiting to send', ok: false } : null,
     /* Two different facts, and the old code could report neither: `done` was
        never set by anything and a successful recording set `failed`, so a
        voice note that had uploaded perfectly said it was waiting for signal. */
     voice === 'dictated'
-      ? { l: 'What you said is in the note, and the recording goes with it', ok: true }
+      ? { l: 'What you said is in the note. The recording goes with it', ok: true }
       : voice === 'queued'
-        ? { l: 'Voice note kept — the office writes it out when you are back on', ok: false }
+        ? { l: 'Voice note kept. The office will type it out when you are online', ok: false }
         : null,
-    { l: 'Follow-up set for ' + pretty(nextDate), ok: true },
-    queued
-      ? { l: 'Your manager sees it the next time this phone sends', ok: false }
-      : { l: 'Your manager notified', ok: true },
+    /* The day the save actually set — none, where he said no follow-up or the
+       shop was shut. It printed the form's date whether or not a task was
+       raised. */
+    saved && saved.followUpDate == null
+      ? { l: 'No follow-up set', ok: true }
+      : {
+          l: (FOLLOW_UP_MODES.find((m) => m.k === nextMode)?.label ?? 'Visit') + ' set for ' + pretty(saved?.followUpDate ?? nextDate),
+          ok: true,
+        },
+    saved?.unverified
+      ? { l: 'Saved as not checked. Your manager will read your reason', ok: false }
+      : null,
+    sent === 'refused'
+      ? { l: 'The office did not accept it. Open Not accepted', ok: false }
+      : sent === 'sent'
+        ? { l: 'Your manager is told', ok: true }
+        : { l: 'Your manager will see it when this phone sends', ok: false },
   ].filter((x): x is { l: string; ok: boolean } => x !== null);
 
   return (
     <AppFrame title="Visit saved" activeTab="customers" contentStyle={{ paddingHorizontal: 16, paddingVertical: 24 }}>
       <Card style={{ padding: 20 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          <View style={{ width: 36, height: 36, borderRadius: radius.sm, backgroundColor: C.successBg, alignItems: 'center', justifyContent: 'center' }}>
-            <Icon name="tick" size={20} color={C.success} strokeWidth={2} />
-          </View>
+          {/* DRAWN, and the one success buzz of the whole save. The visit
+              screen deliberately says nothing as it hands over — no toast, no
+              buzz — so this tick landing is the moment the visit is felt to
+              be done, once. */}
+          <DrawnTick size={36} color={C.success} background={C.successBg} />
           <Text style={[{ fontSize: 15, color: C.ink }, weight(600)]}>Visit saved</Text>
         </View>
 
@@ -128,11 +151,16 @@ export default function Saved() {
         </Text>
 
         <View style={{ marginTop: 14 }}>
-          {items.map((s) => (
-            <View key={s.l} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7, borderTopWidth: 1, borderTopColor: C.wash }}>
-              <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: s.ok ? C.success : C.warn }} />
-              <Text style={{ fontSize: 15, color: C.body, flex: 1 }}>{s.l}</Text>
-            </View>
+          {/* One after another, under the tick. Keyed on the sentence, so the
+              manager line settles in again the moment the outbox drains and it
+              turns from amber to green — that line changing IS news. */}
+          {items.map((s, i) => (
+            <Stagger key={s.l} index={i}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7, borderTopWidth: 1, borderTopColor: C.wash }}>
+                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: s.ok ? C.success : C.warn }} />
+                <Text style={{ fontSize: 15, color: C.body, flex: 1 }}>{s.l}</Text>
+              </View>
+            </Stagger>
           ))}
         </View>
 

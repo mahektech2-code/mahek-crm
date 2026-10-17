@@ -414,6 +414,34 @@ export function leadSection(slug: string): LeadSection | undefined {
 }
 
 /**
+ * THE SEVEN SECTIONS THAT HAVE LEFT THE MAIN NAVIGATION, and are still modules,
+ * routes and grants.
+ *
+ * Both sidebars mark exactly these rows `legacy` (`components/shell/nav.ts` and
+ * `app/sales/nav.ts`), and `lead-nav.test.ts` compares the three lists, so a
+ * section cannot be hidden in one app and drawn in the other — the two-structure
+ * outcome this simplification exists to prevent. Only the NAVIGATION changed:
+ * nothing about a section's route, guard, service or grant did.
+ */
+export const NAV_RETIRED_SLUGS = [
+  "lead-funnel",
+  "lead-qualify",
+  "samples",
+  "lead-commercial",
+  "lead-actions",
+  "lead-handovers",
+  "lead-oversight",
+] as const;
+
+/**
+ * The ones All Leads still LINKS to, under "Other desks", for whoever holds
+ * them. Oversight is not among them: it is the Admin Console's now (Platform →
+ * Lead oversight), and putting it on the operational list would be exactly what
+ * moving it was meant to avoid.
+ */
+export const OTHER_DESK_SLUGS = NAV_RETIRED_SLUGS.filter((s) => s !== "lead-oversight");
+
+/**
  * Which section a path is inside, within one workspace.
  *
  * Longest match wins, the same rule `moduleForPath` follows and for the same

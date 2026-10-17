@@ -1,11 +1,14 @@
 "use client";
 
+import { NotificationBell } from "@/components/shell/notification-bell";
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
 import { AppFrame } from "@/components/shell/app-frame";
+import { HeaderLead } from "@/components/shell/header-lead";
+import type { AppDefinition } from "@/lib/apps";
 import { signOut } from "@/lib/actions/auth";
 import { AccountsIcon, type AccountsIconName } from "./icons";
 import { AccountsSearch } from "./accounts-search";
@@ -43,6 +46,9 @@ export type NavCounts = {
   payments: number;
   paymentsUrgent: boolean;
   credits: number;
+  orderChanges: number;
+  /** Vendor payouts planned for a day that has gone and still not paid. */
+  payoutsOverdue: number;
 };
 
 const SHORTCUTS = [
@@ -58,7 +64,7 @@ export function AccountsShell({
   user,
   counts,
   allowed,
-  switcher,
+  apps,
   feedback,
   children,
 }: {
@@ -72,8 +78,8 @@ export function AccountsShell({
    * link that is not drawn is not the only thing standing in the way.
    */
   allowed: string[];
-  /** The app switcher, rendered on the server — it needs the access list. */
-  switcher: React.ReactNode;
+  /** Every web app this person opens — the switcher in `HeaderLead` lists them. */
+  apps: AppDefinition[];
   /** The Tell us button, which sits in the header of every app. */
   feedback: React.ReactNode;
   children: React.ReactNode;
@@ -114,6 +120,12 @@ export function AccountsShell({
           icon: "approve",
           badge: counts.orders,
           urgent: counts.ordersUrgent,
+        },
+        {
+          href: "/accounts/order-changes",
+          label: "Order changes",
+          icon: "approve",
+          badge: counts.orderChanges,
         },
         {
           href: "/accounts/payments",
@@ -174,6 +186,20 @@ export function AccountsShell({
         { href: "/accounts/payment-history", label: "Payment history", icon: "clock" },
         { href: "/accounts/outstanding", label: "Outstanding", icon: "wallet" },
         { href: "/accounts/bills", label: "Bills", icon: "bill" },
+        /*
+         * Money in AND out, day by day — the one screen in this group that
+         * also carries what Mahek owes its suppliers. The badge is the out
+         * side's overdue: a payout planned for a payment day that has gone
+         * and still not paid.
+         */
+        {
+          href: "/accounts/cash-flow",
+          label: "Cash flow",
+          icon: "payout",
+          badge: counts.payoutsOverdue,
+          urgent: counts.payoutsOverdue > 0,
+        },
+        { href: "/accounts/whatsapp", label: "WhatsApp", icon: "chat" },
         { href: "/accounts/ledger", label: "Customer account", icon: "ledger" },
         { href: "/accounts/on-account", label: "On account", icon: "onaccount" },
       ],
@@ -201,28 +227,14 @@ export function AccountsShell({
       <AppFrame
         header={
           <header className="relative z-30 flex h-14 flex-none items-center gap-5 border-b border-line bg-surface px-4">
-            <div className="flex min-w-0 flex-none items-center gap-2">
-              {switcher}
-              <button
-                onClick={() => setCollapsed((c) => !c)}
-                title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-                aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-                className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-body"
-              >
-                <AccountsIcon name="menu" size={18} />
-              </button>
-              <Link
-                href="/accounts"
-                className="flex items-center gap-2 no-underline hover:no-underline"
-              >
-                <span className="flex h-4 w-4 flex-none items-center justify-center rounded-[3px] bg-brand">
-                  <span className="block h-1.5 w-1.5 rounded-[1px] bg-brand-lime" />
-                </span>
-                <span className="truncate text-[15px] font-semibold tracking-[-0.01em] whitespace-nowrap text-ink">
-                  MAHEK AC
-                </span>
-              </Link>
-            </div>
+            <HeaderLead
+              apps={apps}
+              current="accounts"
+              collapsed={collapsed}
+              onToggleSidebar={() => setCollapsed((c) => !c)}
+              href="/accounts"
+              label="MAHEK AC"
+            />
 
             <AccountsSearch />
 
@@ -230,6 +242,7 @@ export function AccountsShell({
 
             <div className="flex min-w-0 flex-none items-center gap-2">
               {feedback}
+              <NotificationBell />
               <button
                 onClick={() => setShortcutsOpen(true)}
                 title="Keyboard shortcuts"

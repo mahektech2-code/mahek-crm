@@ -1,4 +1,4 @@
-import { all, one, run } from '../db';
+import { all, getKv, one, run, setKv } from '../db';
 import { insertAndQueue, stamp } from './write';
 import {
   computeDay,
@@ -225,7 +225,39 @@ export async function openDay(args: {
   });
 }
 
-/** Change something about the day. Refused once the office has locked it. */
+/**
+ * The day's two clock times, taken from punching in and out.
+ *
+ * The meal allowance is priced from when he left and when he got back, and
+ * those used to be typed on a screen of their own that most salesmen never
+ * opened — a day with no departure pays no meals at all. The punch is the same
+ * fact, recorded with a photograph, so it fills them: the first punch-in is
+ * when he left, the last punch-out is when he got back, and punching in again
+ * after a break clears the return so the day reads as still out.
+ *
+ * Every punch re-works the meal allowance at the office: there is no day to
+ * close, so the return time is all the allowance waits for.
+ */
+export async function stampDayClock(userId: string, day: string, edge: 'in' | 'out', at: number): Promise<void> {
+  const id = await openDay({ userId, day });
+  const row = await one<ExpenseDay>('SELECT * FROM expense_days WHERE id = ?', [id]);
+  if (!row) return;
+  if (edge === 'in') {
+    if (row.departedAt == null) await updateDay(id, { departedAt: at });
+    else if (row.returnedAt != null) await updateDay(id, { returnedAt: null });
+  } else {
+    await updateDay(id, { returnedAt: at });
+  }
+}
+
+/**
+ * Change something about the day.
+ *
+ * NEVER REFUSED FOR BEING "SENT". A day used to lock when he pressed Send day,
+ * and a punch-out or a trip after that was refused on the phone and again at
+ * the office. There is no sending a day now; the office re-works the
+ * allowances from whatever the day says, every time it changes.
+ */
 export async function updateDay(
   dayId: string,
   patch: Partial<{
@@ -243,12 +275,6 @@ export async function updateDay(
 ): Promise<{ ok: boolean; reason?: string }> {
   const row = await one<ExpenseDay>('SELECT * FROM expense_days WHERE id = ?', [dayId]);
   if (!row) return { ok: false, reason: 'That day is not on this phone.' };
-  if (row.lockedAt) {
-    return {
-      ok: false,
-      reason: 'You have already sent this day in. Ask your manager to reopen it — what you sent stays exactly as you sent it.',
-    };
-  }
 
   const cols: string[] = [];
   const args: (string | number | null)[] = [];
@@ -307,28 +333,6 @@ export async function legsFor(dayId: string): Promise<TravelLeg[]> {
     'SELECT * FROM travel_legs WHERE expenseDayId = ? ORDER BY startedAt ASC, clientCreatedAt ASC',
     [dayId],
   );
-}
-
-/**
- * The odometer reading the next leg should start from.
- *
- * Prefilled from the previous leg's end so a day is a CHAIN — and so a gap in
- * the chain is visible rather than being something nobody notices until the
- * month is closed.
- */
-export async function nextOdometerStart(dayId: string): Promise<number | null> {
-  const row = await one<{ odometerEndKm: number | null }>(
-    `SELECT odometerEndKm FROM travel_legs
-      WHERE expenseDayId = ? AND odometerEndKm IS NOT NULL
-      ORDER BY startedAt DESC, clientCreatedAt DESC LIMIT 1`,
-    [dayId],
-  );
-  if (row?.odometerEndKm != null) return row.odometerEndKm;
-  const day = await one<{ openingOdometerKm: number | null }>(
-    'SELECT openingOdometerKm FROM expense_days WHERE id = ?',
-    [dayId],
-  );
-  return day?.openingOdometerKm ?? null;
 }
 
 export async function addLeg(args: {
@@ -413,20 +417,6 @@ export async function addLeg(args: {
   return id;
 }
 
-export async function removeLeg(legId: string): Promise<{ ok: boolean; reason?: string }> {
-  const leg = await one<TravelLeg>('SELECT * FROM travel_legs WHERE id = ?', [legId]);
-  if (!leg) return { ok: false, reason: 'That leg is not on this phone.' };
-  if (leg.syncState === 'synced') {
-    return {
-      ok: false,
-      reason: 'The office already has this leg. Tell your manager rather than deleting it here — a leg that vanishes from one side and not the other is worse than a wrong one.',
-    };
-  }
-  await run('DELETE FROM travel_legs WHERE id = ?', [legId]);
-  await run(`DELETE FROM sync_queue WHERE entityId = ?`, [legId]);
-  return { ok: true };
-}
-
 /* ------------------------------------------------------------ the pricing */
 
 /**
@@ -468,7 +458,7 @@ export async function priceDay(
       computation: null,
       route: null,
       policy: null,
-      reason: 'This phone has no expense policy yet. Everything you record is kept, and the office will work out what it is worth when it arrives.',
+      reason: 'This phone has no expense policy yet. Everything you save is kept. The office will work out how much you get.',
     };
   }
 
@@ -478,7 +468,11 @@ export async function priceDay(
     category: string;
     amountPaise: number;
     billPhotoId: string | null;
-  }>('SELECT id, kind, category, amountPaise, billPhotoId FROM expenses WHERE expenseDayId = ?', [
+    /* What HE logged — the same lines the office prices (`linesForDay`). The
+       allowance lines come down from the office with this day's id on them,
+       and pricing them here would count the meal allowance again as a food
+       bill. */
+  }>('SELECT id, kind, category, amountPaise, billPhotoId FROM expenses WHERE expenseDayId = ? AND allowance = 0', [
     row.id,
   ]);
 
@@ -555,45 +549,6 @@ function minutesSinceMidnight(day: string, at: number | null): number | null {
   return Math.round((at - midnight) / 60_000);
 }
 
-/* -------------------------------------------------------------- sending it */
-
-export async function submitDay(
-  userId: string,
-  day: string,
-  note: string | null,
-): Promise<{ ok: boolean; reason?: string; claimedPaise?: number }> {
-  const priced = await priceDay(userId, day);
-  if (!priced.day) return { ok: false, reason: 'There is nothing recorded for that day.' };
-  if (priced.day.lockedAt) return { ok: false, reason: 'You have already sent this day in.' };
-  if (priced.day.returnedAt == null) {
-    return {
-      ok: false,
-      reason: 'Say what time you got back first — the meal allowance is worked out from when you left and when you returned.',
-    };
-  }
-
-  const claimed = priced.computation?.totalClaimedPaise ?? 0;
-  const base = await stamp('expsubmit');
-  const { enqueue } = await import('../sync/queue');
-  await enqueue({
-    entityType: 'expense_day_submit',
-    entityId: base.id,
-    op: 'create',
-    payload: { day, clientClaimedPaise: claimed, note },
-    dependsOn: [priced.day.id, ...priced.legs.map((l) => l.id)],
-  });
-
-  await run(`UPDATE expense_days SET submittedAt = ?, lockedAt = ? WHERE id = ?`, [
-    Date.now(),
-    Date.now(),
-    priced.day.id,
-  ]);
-
-  return { ok: true, claimedPaise: claimed };
-}
-
-
-
 /* ══════════════════════════════════════ a leg walked, rather than logged */
 
 /**
@@ -632,11 +587,19 @@ export async function submitDay(
  * opening a new one is ANY open leg, whatever day it began. Two open legs is a
  * state nothing in this module can make sense of, and a stale one is exactly
  * the leg that would produce it.
+ *
+ * NEVER THE PUNCH-IN. The session leg stays open from punch-in to punch-out
+ * and every journey of the day runs inside it, so it is not a journey and is
+ * read by `openSessionLeg` alone. Returned here, it was closed by the first
+ * Start visit of the day ("Set off for <shop> instead."), which zeroed the
+ * day's meter and left every later visit with no journey and a dwell clock
+ * stuck at nothing. The server allows the two to be open together since
+ * migration 0190.
  */
 export async function openLegOf(userId: string, startedSince?: number): Promise<TravelLeg | null> {
   return one<TravelLeg>(
     `SELECT * FROM travel_legs
-      WHERE userId = ? AND endedAt IS NULL` +
+      WHERE userId = ? AND endedAt IS NULL AND origin <> 'session'` +
       (startedSince == null ? '' : ' AND startedAt >= ?') +
       ` ORDER BY startedAt DESC, clientCreatedAt DESC LIMIT 1`,
     startedSince == null ? [userId] : [userId, startedSince],
@@ -659,11 +622,14 @@ export async function openLegOf(userId: string, startedSince?: number): Promise<
 export async function closeStaleLegs(userId: string, dayBoundaryMs: number): Promise<number> {
   const open = await all<TravelLeg>(
     `SELECT * FROM travel_legs
-      WHERE userId = ? AND endedAt IS NULL AND startedAt IS NOT NULL AND startedAt < ?`,
+      WHERE userId = ? AND endedAt IS NULL AND origin <> 'session'
+        AND startedAt IS NOT NULL AND startedAt < ?`,
     [userId, dayBoundaryMs],
   );
+  /* Journeys only. A punch-in left open is `closeStaleSessions`' to close,
+     with the sentence that says what was actually missing. */
   for (const leg of open) {
-    await closeAbandoned(leg, 'Closed automatically at the end of the day — no arrival was recorded.');
+    await closeAbandoned(leg, 'Closed by the app at the end of the day. No arrival was saved.');
   }
   return open.length;
 }
@@ -809,26 +775,6 @@ export async function bindLegToVisit(legId: string, visitId: string): Promise<vo
   if (leg) await patchLeg(leg, { visitId });
 }
 
-/** The ticket, on a bus or a train, attached on the way out of the shop. */
-export async function attachTicketToLeg(args: {
-  legId: string;
-  amountPaise: number;
-  photoId: string | null;
-  reference: string | null;
-}): Promise<{ ok: boolean }> {
-  const leg = await one<TravelLeg>('SELECT * FROM travel_legs WHERE id = ?', [args.legId]);
-  if (!leg) return { ok: false };
-  await patchLeg(leg, {
-    ticketAmountPaise: args.amountPaise,
-    ticketPhotoId: args.photoId,
-    ticketReference: args.reference,
-  });
-  if (args.photoId) {
-    await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [leg.id, args.photoId]);
-  }
-  return { ok: true };
-}
-
 /**
  * Change a leg and re-send it WHOLE.
  *
@@ -846,10 +792,7 @@ async function patchLeg(leg: TravelLeg, patch: Record<string, string | number | 
     [...cols.map((c) => patch[c]), leg.id],
   );
 
-  const row = await one<TravelLeg & { odometerEndPhotoId: string | null; origin: string }>(
-    'SELECT * FROM travel_legs WHERE id = ?',
-    [leg.id],
-  );
+  const row = await one<LegRow>('SELECT * FROM travel_legs WHERE id = ?', [leg.id]);
   if (!row) return;
 
   const { enqueue } = await import('../sync/queue');
@@ -863,12 +806,17 @@ async function patchLeg(leg: TravelLeg, patch: Record<string, string | number | 
       modeKey: row.modeKey,
       fromLabel: row.fromLabel,
       toLabel: row.toLabel,
+      fromLat: row.fromLat,
+      fromLng: row.fromLng,
+      toLat: row.toLat,
+      toLng: row.toLng,
       startedAt: row.startedAt,
       endedAt: row.endedAt,
       purpose: row.purpose,
       customerId: row.customerId,
       visitId: row.visitId,
       manualMetres: row.manualMetres,
+      manualReason: row.manualReason ?? null,
       odometerStartKm: row.odometerStartKm,
       odometerEndKm: row.odometerEndKm,
       odometerPhotoId: row.odometerPhotoId,
@@ -878,9 +826,28 @@ async function patchLeg(leg: TravelLeg, patch: Record<string, string | number | 
       ticketReference: row.ticketReference,
       note: row.note,
       origin: row.origin,
+      claimExcluded: row.claimExcluded === 1 || (row.claimExcluded as unknown) === true,
+      claimExcludedReason: row.claimExcludedReason,
     },
   });
 }
+
+type LegRow = TravelLeg & { manualReason?: string | null };
+
+/**
+ * A LEG AS THE WIRE CARRIES IT — the one statement of it, for every update.
+ *
+ * `addLeg` sends the row it inserts, whole. This hand-typed list beside it had
+ * drifted: it left out `claimExcluded`, `claimExcludedReason` and
+ * `manualReason`, and the server's upsert writes every column it is given —
+ * so the arrival at a shop reset a leg the departure had excluded. On a bus
+ * day that turned a leg nobody claims into a claim line; on a bike day the
+ * server re-excluded it with "this journey carried no meter reading", accusing
+ * him of a reading the design never asked for. The coordinates were missing
+ * too, so an update also wrote the journey's ends away. Every column `addLeg`
+ * sends is here, read off the row as it now stands.
+ */
+/* The literal lives in `patchLeg` above, where the payload-contract test can read it field by field. */
 
 /* ═══════════════════════════════════ the session he punched in on */
 
@@ -941,7 +908,7 @@ export async function startSession(args: {
 }): Promise<{ ok: true; legId: string } | { ok: false; reason: string }> {
   const running = await openSessionLeg(args.userId);
   if (running) {
-    await closeAbandoned(running, 'Closed automatically — a new session was started.');
+    await closeAbandoned(running, 'Closed by the app. You punched in again.');
   }
 
   const dayId = await openDay({ userId: args.userId, day: args.day });
@@ -981,7 +948,7 @@ export async function endSession(args: {
   odometer: { km: number; photoId: string } | null;
 }): Promise<{ ok: boolean; reason?: string }> {
   const leg = await one<TravelLeg>('SELECT * FROM travel_legs WHERE id = ?', [args.legId]);
-  if (!leg) return { ok: false, reason: 'That session is not on this phone.' };
+  if (!leg) return { ok: false, reason: 'That check-in is not on this phone.' };
   if (leg.endedAt != null) return { ok: true };
 
   await patchLeg(leg, {
@@ -1013,7 +980,103 @@ export async function closeStaleSessions(userId: string, dayBoundaryMs: number):
     [userId, dayBoundaryMs],
   );
   for (const leg of open) {
-    await closeAbandoned(leg, 'Closed automatically at the end of the day — no punch-out was recorded.');
+    await closeAbandoned(leg, 'Closed by the app at the end of the day. No punch-out was saved.');
+    /* A METERED day closed with no end reading is paid nothing for its
+       kilometres — nothing else on the day claims them, because every visit
+       leg on such a day is excluded in favour of the meter. That was true and
+       said nowhere: he found out when the claim came back. Home says so the
+       next morning and offers the camera — see `addLateClosingReading`. */
+    if (leg.odometerStartKm != null) {
+      await setKv(UNPAID_METER_KEY, JSON.stringify({ day: leg.day, legId: leg.id })).catch(() => {});
+    }
   }
   return open.length;
+}
+
+/** The kv key for the last day closed with no end reading. See `closeStaleSessions`. */
+export const UNPAID_METER_KEY = 'travel.unpaidMeterDay';
+
+/** What the morning card needs: the day, the leg, and the reading it opened on. */
+export type UnpaidMeter = { day: string; legId: string; startKm: number | null };
+
+/** The day whose vehicle km went unpaid for want of a punch-out, until he has answered it. */
+export async function unpaidMeterDay(): Promise<UnpaidMeter | null> {
+  const raw = await getKv(UNPAID_METER_KEY);
+  if (!raw) return null;
+  try {
+    const kept = JSON.parse(raw) as { day?: string; legId?: string };
+    if (!kept.day || !kept.legId) return null;
+    const leg = await one<TravelLeg>('SELECT * FROM travel_legs WHERE id = ?', [kept.legId]);
+    /* A leg already given its reading — on this phone, or a day the office
+       corrected — is not asked about twice. */
+    if (!leg || leg.odometerStartKm == null || leg.odometerEndKm !== leg.odometerStartKm) return null;
+    return { day: kept.day, legId: kept.legId, startKm: leg.odometerStartKm };
+  } catch {
+    return null;
+  }
+}
+
+/** Written on the leg, and shown beside its reading in the office. */
+export const LATE_CLOSING_REASON = 'Closing meter reading entered the next morning. Nobody read the meter at punch-out.';
+
+/**
+ * YESTERDAY'S CLOSING READING, given the next morning.
+ *
+ * The day was closed at its opening reading because he never punched out, so
+ * it measured nothing and paid nothing. The meter has not moved since — he has
+ * not set off yet today — so what it reads now IS where yesterday ended, and a
+ * photograph of it is as good evidence as one taken last night. Better than
+ * the manager typing a figure in, which is the only other way the km come
+ * back.
+ *
+ * It is marked as entered late, on the leg itself, so whoever approves the day
+ * can see nobody read the meter at the time. And it may not run past today's
+ * own opening reading: today's ride starts where yesterday's ended, never
+ * before it.
+ */
+export async function addLateClosingReading(args: {
+  legId: string;
+  km: number;
+  photoId: string;
+  todayOpeningKm: number | null;
+}): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const leg = await one<TravelLeg>('SELECT * FROM travel_legs WHERE id = ?', [args.legId]);
+  if (!leg || leg.origin !== 'session' || leg.endedAt == null) {
+    return { ok: false, reason: 'That day is not on this phone any more.' };
+  }
+  if (leg.odometerStartKm == null || leg.odometerEndKm !== leg.odometerStartKm) {
+    return { ok: false, reason: 'That day already has its closing reading.' };
+  }
+  if (args.km < leg.odometerStartKm) {
+    return { ok: false, reason: `The meter cannot read less than the ${leg.odometerStartKm} km that day started on.` };
+  }
+  if (args.todayOpeningKm != null && args.km > args.todayOpeningKm) {
+    return {
+      ok: false,
+      reason: `Today you started on ${args.todayOpeningKm} km. Yesterday cannot have ended after that.`,
+    };
+  }
+  await patchLeg(leg, {
+    odometerEndKm: args.km,
+    odometerEndPhotoId: args.photoId,
+    manualReason: LATE_CLOSING_REASON,
+  });
+  await run('UPDATE media_queue SET parentId = ? WHERE id = ?', [leg.id, args.photoId]);
+  await setKv(UNPAID_METER_KEY, '');
+  return { ok: true };
+}
+
+/** The session he punched in on today, if it opened on a meter reading. */
+export async function todayOpeningKm(userId: string, dayStartMs: number): Promise<number | null> {
+  const row = await one<{ odometerStartKm: number | null }>(
+    `SELECT odometerStartKm FROM travel_legs
+      WHERE userId = ? AND origin = 'session' AND startedAt >= ? AND odometerStartKm IS NOT NULL
+      ORDER BY startedAt ASC LIMIT 1`,
+    [userId, dayStartMs],
+  );
+  return row?.odometerStartKm ?? null;
+}
+
+export async function dismissUnpaidMeterDay(): Promise<void> {
+  await setKv(UNPAID_METER_KEY, '');
 }

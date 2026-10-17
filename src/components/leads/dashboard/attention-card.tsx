@@ -63,7 +63,11 @@ export function AttentionCard({
           </div>
         </div>
         <Link
-          href={leadHref(workspace, "leads/actions/overdue")}
+          /* The overdue VIEW of the list this card is on: the same window
+             (`overdueWindow`) the card's own total is counted over, in the screen
+             every reader of this card already holds. It used to open the Overdue
+             tab of a section that is leaving the navigation. */
+          href={`${leadHref(workspace, "leads")}?view=overdue`}
           className="flex-none text-[13px] whitespace-nowrap"
         >
           All overdue

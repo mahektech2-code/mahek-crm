@@ -25,6 +25,7 @@ import {
   isParked,
   isUndecidedSuspect,
   ladderFor,
+  type GateVerdict,
   type LeadSalesType,
   /* Aliased, because this file's own `LeadStage` is the six capitalised words
      the legacy column holds and the funnel's is the twenty-three rungs. Two
@@ -135,11 +136,17 @@ export function leadSourceLabel(
  * is a database word and "makes things, buys to use" is what a salesman is
  * actually deciding between outside a shop.
  */
+/*
+ * ONE LIST, read by the New lead form and Prospect details alike. There were
+ * two, and the same code read "Retailer" on the first and "Shop" on the second
+ * — one shop, two words, depending on which screen he had open. The hint is
+ * what Prospect details draws under each chip; the form may ignore it.
+ */
 export const CUSTOMER_TYPES = [
-  { value: 'dealer', label: 'Dealer' },
-  { value: 'retailer', label: 'Retailer' },
-  { value: 'distributor', label: 'Distributor' },
-  { value: 'manufacturer', label: 'Manufacturer' },
+  { value: 'retailer', label: 'Shop', hint: 'Sells over a counter' },
+  { value: 'dealer', label: 'Dealer', hint: 'Sells to other shops, in bulk' },
+  { value: 'manufacturer', label: 'Manufacturer', hint: 'Uses it in what they make' },
+  { value: 'distributor', label: 'Distributor', hint: 'Keeps stock, supplies other shops' },
 ] as const;
 
 /**
@@ -197,13 +204,13 @@ export function matchDuplicate(
 export function stageRefusal(stage: string, reason: string | null | undefined): string | null {
   const said = String(reason ?? '').trim();
   if (stage === 'Lost') {
-    return said ? null : 'Say why it was lost — nobody rings this shop again after this.';
+    return said ? null : 'Say why it was lost. Nobody will call this shop again after this.';
   }
   /* On hold asks too, and for the opposite reason to Lost. Lost wants the
      reason because nobody will ever look again; this one wants it because
      somebody will — "back after Diwali" is what tells them when. */
   if (stage === 'On hold') {
-    return said ? null : 'Say what you are waiting for — that is what tells anybody when to pick it up again.';
+    return said ? null : 'Say what you are waiting for. This tells everyone when to start again.';
   }
   return null;
 }
@@ -259,6 +266,37 @@ function stillASuspect(stage: string): boolean {
   return isUndecidedSuspect(rungOfLegacyWord(stage) ?? stage);
 }
 
+/**
+ * WHICH WORD THE CAP IS ASKED ABOUT, and it is not the six-word column.
+ *
+ * Both callers handed `visitCapState` the legacy `stage`, and a funnel lead at
+ * `prospect` is stored there as `Contacted` — which reads back as an undecided
+ * Suspect. So a shop he had already called a Prospect was refused at its third
+ * visit until he answered the Suspect question again, and its card said
+ * "decide now" about a decision on the record. The office reads `lead_stage`
+ * and asked nothing; the two ends disagreed about one lead.
+ *
+ * The funnel's own rung wins wherever there is one, exactly as the record page
+ * reads it. And the office's two exemptions are honoured here too, because a
+ * rule that fires at the door and not at the desk is the drift this whole
+ * file exists to prevent: a Suspect somebody has already DECIDED about is not
+ * stalling, and a third-party shop is worked through its distributor rather
+ * than by visits that need justifying. Either answers a word no cap reads.
+ */
+export const CAP_EXEMPT = 'decided';
+
+export function capStageOf(lead: {
+  funnelStage: string | null;
+  stage: string | null;
+  suspectDecidedAt?: number | null;
+  thirdParty?: number | boolean | null;
+}): string {
+  if (lead.suspectDecidedAt || lead.thirdParty) return CAP_EXEMPT;
+  const rung = String(lead.funnelStage ?? '').trim().toLowerCase();
+  if (rung && (ALL_RUNGS as readonly string[]).includes(rung)) return rung;
+  return rungOfLegacyWord(lead.stage) ?? 'new';
+}
+
 export function visitCapState(
   stage: string,
   /** Visits already recorded. The one being made is this plus one. */
@@ -293,7 +331,7 @@ export function visitCapLabel(
 /** A follow-up in the past is a follow-up nobody will be reminded about. */
 export function followUpRefusal(iso: string | null | undefined, today: string): string | null {
   if (!iso) return null;
-  return iso < today ? 'That day has gone. Pick today or later.' : null;
+  return iso < today ? 'That day has passed. Pick today or later.' : null;
 }
 
 export type LeadTiming = {
@@ -331,10 +369,10 @@ export function leadAlert(lead: LeadTiming, today: string, cfg: LeadThresholds):
 
   const quiet = daysBetween(lead.lastActivityDate, today);
   if (quiet == null) return null;
-  if (quiet >= cfg.archiveDays) return 'Nothing for ' + quiet + ' days — archive it or ring it';
-  if (quiet >= cfg.staleDays) return 'Gone quiet — ' + quiet + ' days since anything happened';
+  if (quiet >= cfg.archiveDays) return 'Nothing for ' + quiet + ' days. Call them or close it';
+  if (quiet >= cfg.staleDays) return 'Quiet for ' + quiet + ' days. Nothing has happened';
   if (lead.stage === 'New' && quiet >= cfg.escalateAfterDays) {
-    return 'Untouched for ' + quiet + ' days — your manager sees this one';
+    return 'No work for ' + quiet + ' days. Your manager can see this';
   }
   return null;
 }
@@ -393,8 +431,8 @@ export function reorderLabel(
   if (!state) return null;
   const since = daysBetween(lastOrderDate, today) ?? 0;
   return state === 'overdue'
-    ? 'Overdue to reorder — ' + since + ' days, buys every ' + cycleDays
-    : 'Due to reorder — ' + since + ' days, buys every ' + cycleDays;
+    ? 'Late to reorder. ' + since + ' days since last order, buys every ' + cycleDays
+    : 'Due to reorder. ' + since + ' days since last order, buys every ' + cycleDays;
 }
 
 /* ------------------------------------------------- what the book is cut by */
@@ -711,11 +749,11 @@ export function owedLabel(owed: LeadOwed | null, pretty: (iso: string) => string
   if (owed.daysLate > 0) {
     switch (owed.source) {
       case 'action':
-        return 'Late \u2014 this was due on ' + when;
+        return 'Late. This was due on ' + when;
       case 'promise':
-        return 'Late \u2014 you said you would go back on ' + when;
+        return 'Late. You said you would go back on ' + when;
       case 'hold':
-        return 'Late \u2014 back off hold since ' + when;
+        return 'Late. Hold ended on ' + when;
     }
   }
   switch (owed.source) {
@@ -724,7 +762,7 @@ export function owedLabel(owed: LeadOwed | null, pretty: (iso: string) => string
     case 'promise':
       return 'You said you would go back ' + when;
     case 'hold':
-      return 'Comes back off hold ' + when;
+      return 'Hold ends ' + when;
   }
 }
 
@@ -777,4 +815,176 @@ export function leadPriorityLabel(priority: string | null | undefined): string |
          each of them. */
       return null;
   }
+}
+
+/* ------------------------------------------------- the sample's refusal */
+
+/**
+ * WHY A TRIAL WAS TURNED DOWN, in one sentence the office can store.
+ *
+ * The review's three refusal boxes — in their own words, the price, and how it
+ * compares with what they use now — are what a salesman fills in when the
+ * answer is No, and the office refuses a rejected trial that carries no
+ * `rejectionReason`. The handset sent the seven answers as `feedback` and
+ * never this field, on the strength of a comment saying the office derived it
+ * from those three boxes. Nothing did, so EVERY rejected review a salesman
+ * recorded was refused at the far end: the screen said Saved, the record sat
+ * in Not accepted, and the office went on showing the trial as pending.
+ *
+ * Each answer keeps its own label, because "Price: dearer than Asian" and
+ * "dearer than Asian" are not the same sentence to whoever reads it next. Null
+ * where none of the three was answered — the caller refuses that case before
+ * it gets here, and an empty string would read as a person asked who had
+ * nothing to say. Capped at the server's 500 characters rather than refused,
+ * because losing a whole review to a long sentence is worse than trimming it.
+ */
+export const REJECTION_REASON_MAX = 500;
+
+export function rejectionReasonFrom(
+  fields: Partial<Record<'otherComments' | 'priceFeedback' | 'competitorComparison', string | null>>,
+): string | null {
+  const parts = (
+    [
+      ['otherComments', null],
+      ['priceFeedback', 'Price'],
+      ['competitorComparison', 'Compared with what they use now'],
+    ] as const
+  )
+    .map(([id, label]) => {
+      const said = (fields[id] ?? '').trim();
+      if (!said) return null;
+      return label ? `${label}: ${said}` : said;
+    })
+    .filter((p): p is string => p !== null);
+  if (!parts.length) return null;
+  const joined = parts.join('. ');
+  return joined.length > REJECTION_REASON_MAX ? `${joined.slice(0, REJECTION_REASON_MAX - 1)}…` : joined;
+}
+
+/* ------------------------------------------- the gate, as THIS office runs it */
+
+/**
+ * The gate's verdict, with the two things the office applies on top of it.
+ *
+ * `gateTo` is MahekOne's own file and is copied here byte for byte, so it
+ * cannot carry a setting. The office's `evaluateLeadStageMove` applies two
+ * rules around it, and the phone applied neither:
+ *
+ * **`leads.requireNextAction` off lifts §24.** The phone loaded the setting
+ * and never read it, so with it switched off the next-rung button stayed shut
+ * here over a condition the office no longer demanded — a lead the desk would
+ * have moved, stuck on the one screen standing in the shop.
+ *
+ * **A lead with no sales type is refused Qualified without a GST number.** The
+ * old six-rung ladder has no conditions of its own, so the button was open on
+ * the phone; the office then refused the move ("a shop we could not invoice"),
+ * and nothing on the record had asked for the number or said where it goes.
+ * Said here, in the same list as every other thing the gate wants.
+ *
+ * Pure, like the gate, so the record page, the move and the forced Suspect
+ * decision all ask it the same question.
+ */
+export const GSTIN_CONDITION = {
+  id: 'gstin',
+  says: 'Add their GST number in Prospect details. The office cannot qualify a shop it cannot bill',
+} as const;
+
+export function gateAsRun(
+  verdict: GateVerdict,
+  input: { salesType?: string | null; gstin?: string | null },
+  settings: { requireNextAction: boolean },
+): GateVerdict {
+  if (verdict.noNextRung) return verdict;
+  let missing = settings.requireNextAction
+    ? verdict.missing
+    : verdict.missing.filter((c) => c.id !== 'next_action');
+  if (!input.salesType && verdict.to === 'qualified' && !(input.gstin ?? '').trim()) {
+    missing = [...missing, GSTIN_CONDITION];
+  }
+  return { ...verdict, missing, open: missing.length === 0 };
+}
+
+/* ------------------------------------------------- may a sample be asked */
+
+/**
+ * §9 §10 — whether a sample may be asked for, for any shop, from any screen.
+ *
+ * The record page asked the gate; the Samples screen's "+ Request a sample"
+ * asked nothing, so any shop in the book could be picked — a Suspect included
+ * — and "Requested" drawn, until the office refused it. And the lead page drew
+ * the button for a distributor, whose ladder has no sample rung at all.
+ *
+ * Not a lead, or a lead with no sales type (the old six rungs, which predate
+ * the rule): no gate, exactly as the office answers. A lead whose ladder has
+ * no `sample_trial`: refused, with why. A lead already at or past that rung:
+ * open, because the trial is the work of the rung it is standing on. Below
+ * it: the gate's own verdict, passed in by the caller.
+ */
+export type SampleAsk =
+  | { ok: true }
+  | { ok: false; message: string; missing: string[] };
+
+export function sampleAsk(
+  lead: { salesType: string | null; stage: string } | null,
+  verdict: () => GateVerdict,
+): SampleAsk {
+  if (!lead || !lead.salesType) return { ok: true };
+  const ladder = ladderFor(lead.salesType as LeadSalesType);
+  const at = ladder.indexOf('sample_trial' as FunnelRung);
+  if (at < 0) {
+    return {
+      ok: false,
+      message: 'This kind of sale has no sample step. A distributor is appointed, not sampled.',
+      missing: [],
+    };
+  }
+  const here = ladder.indexOf(lead.stage as FunnelRung);
+  if (here >= at) return { ok: true };
+  const v = verdict();
+  if (v.open) return { ok: true };
+  return {
+    ok: false,
+    message: 'Not yet. ' + v.missing.map((c) => c.says).join('. ') + '.',
+    missing: v.missing.map((c) => c.says),
+  };
+}
+
+/* ------------------------------------------------------------- GST number */
+
+/**
+ * Is this a GST number, or a typo of one.
+ *
+ * The new-lead form counted fifteen characters and Prospect details checked
+ * nothing at all, so "27ABCDE1234F1Z" with one character dropped, or any
+ * twenty characters somebody pasted, went up as the number the qualify gate
+ * reads and the office then bills against. The shape and the checksum are
+ * the same arithmetic the office's own scan reader uses
+ * (`src/lib/engines/lead-scan.ts`): fifteen characters, a state code, a PAN,
+ * and a last character the first fourteen decide — so one mistyped character
+ * is caught on the phone, standing in front of the certificate.
+ *
+ * Null for an acceptable answer, including nothing at all (the number is
+ * optional until the gate asks for it); otherwise the sentence to show.
+ */
+const GSTIN_CHARS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const GSTIN_SHAPE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+
+export function normaliseGstin(raw: string | null | undefined): string {
+  return (raw ?? '').toUpperCase().replace(/[^0-9A-Z]/g, '');
+}
+
+export function gstinRefusal(raw: string | null | undefined): string | null {
+  const g = normaliseGstin(raw);
+  if (!g) return null;
+  if (g.length !== 15) return 'A GST number is 15 letters and numbers. Check it, or leave it empty.';
+  if (!GSTIN_SHAPE.test(g)) return 'That is not how a GST number is written. Check it against their certificate.';
+  let sum = 0;
+  for (let i = 0; i < 14; i++) {
+    const product = GSTIN_CHARS.indexOf(g[i]) * (i % 2 === 0 ? 1 : 2);
+    sum += Math.floor(product / 36) + (product % 36);
+  }
+  if (GSTIN_CHARS[(36 - (sum % 36)) % 36] !== g[14]) {
+    return 'One character of that GST number is wrong. Check it against their certificate.';
+  }
+  return null;
 }

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { listUserApps } from "@/lib/access";
+import { canOpenModule } from "@/lib/access";
 import { dayEvidence } from "@/lib/services/day-evidence-service";
 
 /**
@@ -29,8 +29,14 @@ export async function GET(request: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ evidence: null }, { status: 401 });
 
-  const apps = await listUserApps(user.id);
-  if (!apps.includes("sales")) return NextResponse.json({ evidence: null }, { status: 403 });
+  /* The grant AND a screen this evidence is shown on — `canOpenModule` asks
+     the grant first. A manager given the Sales Dashboard with Attendance,
+     Travel and Expenses all withheld has no screen that shows a check-in
+     selfie or a meter, and must not be one URL away from every one of them. */
+  const held = await Promise.all(
+    ["sales.attendance", "sales.travel", "sales.expenses"].map((k) => canOpenModule(user.id, k)),
+  );
+  if (!held.some(Boolean)) return NextResponse.json({ evidence: null }, { status: 403 });
 
   const url = new URL(request.url);
   const salesman = url.searchParams.get("salesman");

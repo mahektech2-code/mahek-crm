@@ -1,12 +1,13 @@
 import { type LeadWorkspace } from "@/lib/lead-workspace";
 import { requireUser } from "@/lib/auth";
 import { getConfig } from "@/lib/config/store";
-import { today } from "@/lib/recompute";
 import { canLead } from "@/lib/services/lead-console-service";
-import {
-  leadSourceOptions,
-  nextActionOwners,
-} from "@/lib/services/lead-intake-service";
+import { nextActionOwners } from "@/lib/services/lead-intake-service";
+import { distributorOptions } from "@/lib/services/distributor-service";
+import { canOpenModule } from "@/lib/access";
+import { sourcesFor } from "@/lib/lead-source-scope";
+import { isSalesManagerSeat } from "@/lib/services/lead-source-access";
+import { DESK_MODULE } from "@/lib/services/lead-desk-assignment-service";
 import { LeadTabs } from "@/components/leads/lead-tabs";
 import { IntakeForm } from "@/components/leads/intake/intake-form";
 
@@ -25,12 +26,10 @@ import { IntakeForm } from "@/components/leads/intake/intake-form";
  * somebody holding Intake on the strength of a module they were deliberately
  * not given.
  *
- * Three things are read, and each of them is a real answer rather than a list
- * typed into a screen: the sources already in use (so screen 6 does not inherit
- * a fourth spelling of "Website"), who a next action may be owed by, and
- * whether `leads.requireNextAction` is in force. The day comes from the server
- * because the React Compiler rules forbid reading the clock during a render,
- * and a default date computed in a browser is the browser's idea of today.
+ * What is read is a real answer rather than a list typed into a screen: who a
+ * lead's Owner may be, and — for the third-party ladder only — the direct
+ * customers `crm/distributor-picker.tsx` already offers as who may bill a
+ * shop, which is what "Under" asks for at capture.
  */
 export async function Body({
   workspace,
@@ -39,24 +38,43 @@ export async function Body({
 }) {
   const user = await requireUser();
 
-  const [sources, owners, config, day, canWork] = await Promise.all([
-    leadSourceOptions(),
+  const [owners, config, canWork, canPrioritise, distributors] = await Promise.all([
     nextActionOwners(),
     getConfig(),
-    today(),
     canLead(user, "lead.work"),
+    /* Priority is the manager's judgement — `setLeadPriority` asks for
+       `lead.verify`, and so does the capture action. */
+    canLead(user, "lead.verify"),
+    /*
+     * §23's "Under" picker — the same eligibility rule `convertToThirdParty`
+     * enforces, read whole rather than capped. See `distributorOptions`.
+     */
+    distributorOptions(),
   ]);
+
+  /* The creator is the initial owner where they work leads — the same rule the
+     server applies when the box is left alone, drawn here so what the form
+     shows is what will be saved. */
+  const creatorWorksLeads =
+    (await canOpenModule(user.id, DESK_MODULE)) && !canPrioritise && owners.some((o) => o.id === user.id);
+
+  /* Sales-Manager-only sources are drawn for whoever holds the Sales Manager
+     seat, in either workspace: that seat lives in the CRM app, so its holder
+     reaches this form as `/crm/...` as often as `/sales/...`. The action
+     re-checks the grant, so this is presentation only. */
+  const isSalesManager = await isSalesManagerSeat(user.id);
 
   return (
     <div className="p-6">
       <LeadTabs workspace={workspace} />
       <IntakeForm workspace={workspace}
-        sources={sources}
-        sourceOptions={config["leads.sources"]}
+        defaultOwnerId={creatorWorksLeads ? user.id : ""}
+        sourceOptions={sourcesFor(config["leads.sources"], isSalesManager)}
         owners={owners}
-        today={day}
-        requireNextAction={config["leads.requireNextAction"]}
         canWork={canWork}
+        canPrioritise={canPrioritise}
+        distributors={distributors}
+        productSearchEnabled={config["products.searchOnOrderForms"]}
       />
     </div>
   );

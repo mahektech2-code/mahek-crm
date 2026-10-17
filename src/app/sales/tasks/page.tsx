@@ -2,11 +2,15 @@ import Link from "next/link";
 import { shortDate, stamp } from "@/lib/format";
 import { today } from "@/lib/recompute";
 import { fieldTeam, tasksList } from "@/lib/services/sales-service";
+import { recentTaskForms, taskCampaigns, taskPlaceOptions } from "@/lib/services/task-campaign-service";
+import { taskAiAvailable } from "@/lib/services/task-ai-service";
 import { AssignTask } from "./assign-task";
+import type { CampaignSummary } from "@/lib/services/task-campaign-service";
 import {
   Cell,
   Empty,
   FilterChips,
+  HeadCell,
   MetricRow,
   Pill,
   Row,
@@ -42,11 +46,22 @@ export default async function Page({
 }) {
   const params = await searchParams;
   const day = await today();
-  const [all, salesmen] = await Promise.all([tasksList(day), fieldTeam()]);
+  const [all, salesmen, campaigns, recentForms, placeOptions, aiAvailable] = await Promise.all([
+    tasksList(day),
+    fieldTeam(),
+    taskCampaigns(day),
+    recentTaskForms(),
+    taskPlaceOptions({}),
+    taskAiAvailable(),
+  ]);
 
-  const show = ["all", "overdue", "open", "done"].includes(params.show ?? "")
+  /* ASSIGNMENTS FIRST, because that is what the office set: one row per thing
+     asked, however many salesmen it went to, with how far through it the field
+     is and a way into everybody's answers. The per-task lists below it are the
+     same work cut the other way — by person and by date. */
+  const show = ["assignments", "all", "overdue", "open", "done"].includes(params.show ?? "")
     ? params.show!
-    : "open";
+    : "assignments";
 
   const overdue = all.filter((t) => t.status !== "done" && t.overdueDays > 0);
   const open = all.filter((t) => t.status !== "done" && t.status !== "cancelled");
@@ -84,7 +99,15 @@ export default async function Page({
       <ScreenHeader
         title="Tasks"
         subtitle="What you have asked each salesman to do. A task raised by the office and a task the app raised itself both land here — a rejected order raises one automatically, because the salesman stood in the shop and said it was placed."
-        actions={<AssignTask salesmen={salesmen.filter((s) => s.active)} />}
+        actions={
+          <AssignTask
+            salesmen={salesmen.filter((s) => s.active).map((s) => ({ id: s.id, name: s.name }))}
+            recentForms={recentForms}
+            placeOptions={placeOptions}
+            aiAvailable={aiAvailable}
+            today={day}
+          />
+        }
       />
 
       <MetricRow
@@ -108,6 +131,7 @@ export default async function Page({
       <FilterChips
         current={show}
                 options={[
+          { key: "assignments", href: `/sales/tasks?show=assignments`, label: "Assignments", count: campaigns.length },
           { key: "open", href: `/sales/tasks?show=open`, label: "Open", count: open.length },
           { key: "overdue", href: `/sales/tasks?show=overdue`, label: "Overdue", count: overdue.length },
           { key: "done", href: `/sales/tasks?show=done`, label: "Done", count: done.length },
@@ -115,7 +139,9 @@ export default async function Page({
         ]}
       />
 
-      {rows.length === 0 ? (
+      {show === "assignments" ? (
+        <Campaigns rows={campaigns} />
+      ) : rows.length === 0 ? (
         <Empty
           title={show === "overdue" ? "Nothing is overdue" : "Nothing outstanding"}
           body={
@@ -142,7 +168,13 @@ export default async function Page({
           {sorted.map((t, i) => (
             <Row key={t.id} striped={i % 2 === 1}>
               <Cell truncate={360} title={t.description ?? undefined}>
-                <span className="font-medium text-ink">{t.title}</span>
+                {t.campaignId ? (
+                  <Link href={`/sales/tasks/${t.campaignId}`} className="font-medium text-ink no-underline hover:underline">
+                    {t.title}
+                  </Link>
+                ) : (
+                  <span className="font-medium text-ink">{t.title}</span>
+                )}
                 {t.completionNote ? (
                   <span className="block truncate text-[12px] text-muted">
                     “{t.completionNote}”
@@ -202,6 +234,72 @@ export default async function Page({
         </Table>
       )}
     </div>
+  );
+}
+
+/**
+ * One row per assignment. The bar is done over everything not withdrawn,
+ * because a task the office cancelled is not one the field failed to do.
+ */
+function Campaigns({ rows }: { rows: CampaignSummary[] }) {
+  if (!rows.length) {
+    return (
+      <Empty
+        title="Nothing assigned yet"
+        body="Assign a task to one salesman or to many, ask them for anything — text, numbers, choices, photos, a birthday, a location — and every answer comes back here."
+      />
+    );
+  }
+  return (
+    <Table
+      minWidth={1080}
+      head={
+        <>
+          <HeadCell>Task</HeadCell>
+          <HeadCell width={140}>Asks</HeadCell>
+          <HeadCell width={230}>Progress</HeadCell>
+          <HeadCell width={120}>Due</HeadCell>
+          <HeadCell width={160}>Set by</HeadCell>
+        </>
+      }
+    >
+      {rows.map((c, i) => {
+        const live = c.total - c.cancelled;
+        const pct = live ? Math.round((c.done / live) * 100) : 0;
+        return (
+          <Row key={c.id} striped={i % 2 === 1}>
+            <Cell truncate={420} title={c.audienceSentence ?? undefined}>
+              <Link href={`/sales/tasks/${c.id}`} className="font-medium text-ink no-underline hover:underline">
+                {c.title}
+              </Link>
+              <span className="block truncate text-[12px] text-muted">
+                {c.audienceSentence ?? `${plural(c.salesmen, "salesman")}`}
+              </span>
+            </Cell>
+            <Cell>{c.questions ? plural(c.questions, "question") : <span className="text-muted">A note</span>}</Cell>
+            <Cell>
+              <div className="flex items-center gap-2">
+                <div className="h-1.5 w-24 overflow-hidden rounded-full bg-divider">
+                  <div className="h-full bg-success" style={{ width: `${pct}%` }} />
+                </div>
+                <span className="text-[13px] text-body">{`${c.done} of ${live}`}</span>
+              </div>
+              <span className="block text-[12px] text-muted">
+                {`${plural(c.salesmen, "salesman", "salesmen")}`}
+                {c.overdue ? <span className="text-danger">{` · ${c.overdue} overdue`}</span> : null}
+                {c.fromRecord ? <span className="text-success">{` · ${c.fromRecord} from the record`}</span> : null}
+                {c.closedAt ? " · withdrawn" : ""}
+              </span>
+            </Cell>
+            <Cell>{c.dueDate ? shortDate(c.dueDate) : <span className="text-muted">No date</span>}</Cell>
+            <Cell truncate={160}>
+              {c.createdBy ?? <span className="text-muted">—</span>}
+              <span className="block text-[12px] text-muted">{stamp(c.createdAt)}</span>
+            </Cell>
+          </Row>
+        );
+      })}
+    </Table>
   );
 }
 

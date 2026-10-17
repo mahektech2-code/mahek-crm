@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, not, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { employees, sheetSyncRuns } from "@/db/schema";
 import { readTab, sheetsConfigured, type SheetTable } from "@/lib/sheets";
@@ -48,7 +48,20 @@ import {
  * THIRD, A PERSON IS NEVER DELETED. A row that leaves the sheet becomes
  * `withdrawn` and stays readable. Payroll history outlives a spreadsheet edit,
  * and somebody removing a leaver from a sheet is not a request to erase them.
+ *
+ * AND A ROW HRMS OWNS IS NOT THE SHEET'S TO CHANGE. HRMS now signs people up
+ * (`source = 'hrms'`) and edits, activates and deactivates them
+ * (`hrms_decided_at`). Such a row is never overwritten, never withdrawn and
+ * never reparsed — the same discipline `customers.am_decided_at` keeps for the
+ * sales seats. Without it, HR deactivating a leaver would be undone half an
+ * hour later by a sheet that still says Active, and an employee signed up in
+ * HRMS would be withdrawn on the first pull because no sheet row names them.
  * ------------------------------------------------------------------------- */
+
+/** A row HRMS has taken over: created there, or changed there since. */
+const HRMS_OWNED = sql`(${employees.source} = 'hrms' or ${employees.hrmsDecidedAt} is not null)`;
+/** The same test inside an upsert's DO UPDATE, where the target row is named by its table. */
+const SHEET_STILL_OWNS = sql`employees.source <> 'hrms' and employees.hrms_decided_at is null`;
 
 /** The sheet and tab this import reads. One source, so one watermark. */
 export const EMPLOYEE_SOURCE = "employee_details";
@@ -128,6 +141,7 @@ async function pullFromSheet(
   let updated = 0;
   let unchanged = 0;
   let withIssues = 0;
+  let kept = 0;
   let highestRow = Math.max(startRow - 1, 1);
 
   /** Every employee key this pass found. A reconcile withdraws what is NOT in
@@ -146,6 +160,7 @@ async function pullFromSheet(
     updated += result.updated;
     unchanged += result.unchanged;
     withIssues += result.withIssues;
+    kept += result.kept;
 
     await db
       .update(sheetSyncRuns)
@@ -162,7 +177,13 @@ async function pullFromSheet(
       .update(employees)
       .set({ sheetStatus: "withdrawn", updatedAt: new Date() })
       .where(
-        and(eq(employees.sheetStatus, "present"), notAmong(employees.employeeCode, seen)),
+        and(
+          eq(employees.sheetStatus, "present"),
+          notAmong(employees.employeeCode, seen),
+          // Nobody signed up in HRMS is in the sheet, and absence from it is
+          // not a decision HR made about them.
+          not(HRMS_OWNED),
+        ),
       )
       .returning({ id: employees.id });
     withdrawn = result.length;
@@ -172,6 +193,7 @@ async function pullFromSheet(
     `${mode} from row ${startRow}: ${created} new, ${updated} changed, ` +
     `${unchanged} unchanged` +
     (withdrawn ? `, ${withdrawn} gone from the sheet` : "") +
+    (kept ? `, ${kept} kept as HRMS has them` : "") +
     (withIssues ? `, ${withIssues} with issues` : "");
 
   return {
@@ -201,6 +223,7 @@ async function writeWindow(syncId: string, window: SheetTable, seen: Set<string>
   let updated = 0;
   let unchanged = 0;
   let withIssues = 0;
+  let kept = 0;
 
   for (let i = 0; i < window.rows.length; i += WRITE_BATCH) {
     const slice = window.rows.slice(i, i + WRITE_BATCH);
@@ -226,11 +249,16 @@ async function writeWindow(syncId: string, window: SheetTable, seen: Set<string>
         code: employees.employeeCode,
         rowHash: employees.rowHash,
         sheetStatus: employees.sheetStatus,
+        source: employees.source,
+        hrmsDecidedAt: employees.hrmsDecidedAt,
       })
       .from(employees)
       .where(inArray(employees.employeeCode, prepared.map((p) => p.code)));
     const hashByCode = new Map(existing.map((e) => [e.code, e.rowHash]));
     const statusByCode = new Map(existing.map((e) => [e.code, e.sheetStatus]));
+    const hrmsOwned = new Set(
+      existing.filter((e) => e.source === "hrms" || e.hrmsDecidedAt != null).map((e) => e.code),
+    );
 
     const changed: (typeof employees.$inferInsert)[] = [];
     /** Somebody who had left the sheet and is back on it unaltered. Normally
@@ -240,6 +268,11 @@ async function writeWindow(syncId: string, window: SheetTable, seen: Set<string>
     for (const { row, parsed, hash, code } of prepared) {
       const known = hashByCode.get(code);
       seen.add(code);
+      if (hrmsOwned.has(code)) {
+        // HR's word stands over the sheet's; the sheet row is read and left.
+        kept++;
+        continue;
+      }
       if (known === hash) {
         unchanged++;
         if (statusByCode.get(code) !== "present") returned.push(code);
@@ -303,7 +336,13 @@ async function writeWindow(syncId: string, window: SheetTable, seen: Set<string>
       await db
         .insert(employees)
         .values(changed)
-        .onConflictDoUpdate({ target: employees.employeeCode, set: upsertColumns() });
+        .onConflictDoUpdate({
+          target: employees.employeeCode,
+          set: upsertColumns(),
+          // Belt and braces: a row HRMS took over between the read above and
+          // this write is still not overwritten.
+          setWhere: SHEET_STILL_OWNS,
+        });
     }
 
     // An unchanged row that is already `present` is written not at all: what
@@ -317,7 +356,7 @@ async function writeWindow(syncId: string, window: SheetTable, seen: Set<string>
     }
   }
 
-  return { created, updated, unchanged, withIssues };
+  return { created, updated, unchanged, withIssues, kept };
 }
 
 /**
@@ -371,7 +410,7 @@ async function reparseStored(syncId: string): Promise<SyncCounts> {
     const page = await db
       .select({ id: employees.id, raw: employees.raw })
       .from(employees)
-      .where(after ? sql`${employees.id} > ${after}` : undefined)
+      .where(and(after ? sql`${employees.id} > ${after}` : undefined, not(HRMS_OWNED)))
       .orderBy(employees.id)
       .limit(WRITE_BATCH);
 

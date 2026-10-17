@@ -139,8 +139,8 @@ test('quiet, then archive-worthy, at the configured thresholds', () => {
   const at = (last: string) =>
     leadAlert({ stage: 'Contacted', archived: 0, nextFollowUpDate: null, lastActivityDate: last }, '2026-08-12', CFG);
   assert.equal(at('2026-08-01'), null, '11 days is not yet quiet');
-  assert.match(String(at('2026-07-01')), /Gone quiet/);
-  assert.match(String(at('2026-01-01')), /archive it or ring it/);
+  assert.match(String(at('2026-07-01')), /Quiet for/);
+  assert.match(String(at('2026-01-01')), /Call them or close it/);
 });
 
 test('a settled lead says nothing, because there is nothing to do about it', () => {
@@ -162,5 +162,5 @@ test('a New lead nobody has touched escalates on its own, shorter clock', () => 
     '2026-08-12',
     CFG,
   );
-  assert.match(String(said), /Untouched for 11 days/);
+  assert.match(String(said), /No work for 11 days/);
 });

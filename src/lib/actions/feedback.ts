@@ -25,6 +25,7 @@ import {
 } from "@/lib/feedback-labels";
 import { err as fail, ok, type Result } from "@/lib/result";
 import { notifyUsers } from "../notify";
+import { ADMIN } from "@/lib/admin-routes";
 
 /* ---------------------------------------------------------------------------
  * Feedback from the people using MahekOne.
@@ -48,7 +49,7 @@ const newId = (p = "fb") => `${p}_${randomUUID().slice(0, 12)}`;
 /** Where the submitter reads their threads. Every notification to them lands here. */
 const THREAD_HREF = "/feedback";
 /** Where triage reads them. */
-const TRIAGE_HREF = "/admin/feedback";
+const TRIAGE_HREF = ADMIN.feedback();
 
 const SubmitSchema = z.object({
   kind: z.enum(FEEDBACK_KINDS),
@@ -457,8 +458,7 @@ async function notifySubmitter(
 
 function refresh() {
   try {
-    revalidatePath("/admin");
-    revalidatePath("/admin/feedback");
+    revalidatePath(ADMIN.home, "layout");
     revalidatePath("/feedback");
   } catch {
     /* outside a request, which is fine */

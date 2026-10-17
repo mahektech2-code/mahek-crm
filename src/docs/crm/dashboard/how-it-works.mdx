@@ -1,0 +1,135 @@
+The Dashboard answers two different questions and keeps them apart. **What is waiting for me right now?** — the day's stages and *Needs you today* — is always about today, because work waiting is a present-tense thing. **How have I been doing?** — calls, orders, missed calls, the team table — can be read over a day, a week or a month, and is always compared with an equally long stretch just before it.
+
+Every figure is read from the same function the EOD report and the other screens read, so the dashboard and the screen a number opens cannot disagree.
+
+## One definition of a day's work
+
+<Rule title="The dashboard and the EOD report share one query">
+Calls, connects, orders, promises, reminders closed, complaints logged and WhatsApp messages sent are all counted by one function over a window of business days. A single day and a one-day range cannot answer differently, and a month costs the database what a day costs: the span is a wider window on the same twenty-odd counts, not a loop over days.
+</Rule>
+
+<Callout kind="why">
+Two copies of those counts is how the dashboard and the EOD report came to disagree about how many calls somebody made. The telecaller submits the EOD report on the same figures they watched all day.
+</Callout>
+
+### What is counted, and what is deliberately not
+
+| Figure | Counts | Does not count |
+|---|---|---|
+| Calls placed | Outbound calls | Inbound calls, and "Order Received" (an order that arrived without a call) |
+| Calls connected | Outbound calls with any outcome other than No answer | Inbound calls — you cannot fail to connect a call that rang your phone |
+| Missed | Outbound calls logged No answer | — |
+| Inbound | Calls that rang the telecaller | — shown on its own line |
+| Orders taken | Every order the telecaller logged, except cancelled ones | — |
+| Orders approved / value | Orders accounts approved | Orders waiting for approval or declined |
+| Queue worked | Distinct customers called from the Call Log | Calls made from other screens |
+
+<Callout kind="why" title="Why inbound is kept out of the connect rate">
+Counting inbound calls as "placed and connected" moves the connect rate towards 100% on a day the telecaller made fewer calls, not more. Placed and connected are both outbound-only; inbound is counted and shown separately.
+</Callout>
+
+<Callout kind="money" title="Taken is not sold">
+*Orders taken* is the telecaller's own work and counts from the moment the customer says yes. The value beside it, *Orders booked* on the team view and the monthly target count **approved** orders only, because only an approved order is money.
+</Callout>
+
+## The period and its comparison
+
+<Flow caption="From the period button to two windows" chart={`
+flowchart TD
+  P["?period= today · yesterday · week · month"] --> R["periodRange<br/>(business dates, ending today)"]
+  R --> C["previousRange<br/>(equally long, immediately before)"]
+  R --> A["Activity over the period"]
+  C --> B["Activity over the comparison"]
+  A --> D["Figures and deltas"]
+  B --> D
+  Q["Today's queue, reminders, payments,<br/>complaints, inactive"] --> N["Day stages and Needs you today<br/>(never follow the period)"]
+`} />
+
+<Rule title="Yesterday means the previous working day">
+The working week is <Setting k="workingDay.workingDays" />. On a Monday, Yesterday is Saturday, and Today is compared with Saturday rather than with a Sunday of zeroes. The screen prints the dates so nobody has to guess.
+</Rule>
+
+<Rule title="A span is compared with an equally long span">
+This week (Monday to today) is compared with the same number of days immediately before; this month (the 1st to today) likewise. Never against a whole previous month.
+</Rule>
+
+<Callout kind="why">
+A month-to-date of twelve days beside a full previous month reads as a collapse every time — on the 1st of the month worst of all. An equal span is the only comparison that is fair on every day of the period.
+</Callout>
+
+<Rule title="The period never runs into the future">
+Week and month end today. A month-to-date figure beside a whole-month target is a comparison somebody can make; a range that is mostly days that have not happened is not.
+</Rule>
+
+Where the day boundary sits is <Setting k="workingDay.dayBoundaryHour" /> o'clock: a call made after midnight but before that hour counts on the previous day, for the dashboard exactly as for every other screen.
+
+### How a change is drawn
+
+- **Counts** move by a number: "+2 vs yesterday". Nothing is drawn when the two periods match, because a change of zero is noise.
+- **Money** moves by a percentage: "+12% vs the previous 5 days". A rupee difference is too big a number to read at a glance. Where the earlier period had nothing, the card says so instead of a percentage.
+- **Missed calls** are better when they fall, so a fall is drawn green.
+
+## Needs you today
+
+These five rows are today's work and do not follow the period:
+
+| Row | Counts | Colour |
+|---|---|---|
+| Reminders due today | Pending reminders due today or overdue, with how many are already overdue | Red if any are overdue, otherwise amber |
+| Payment follow-ups open | Customers on the collections worklist, and the total overdue on it | Amber |
+| Complaints unresolved | Open, in progress or awaiting the customer | Red |
+| Customers gone quiet | Customers the inactivity rule has flagged, and the business at risk | Grey |
+| Queue still to work | Customers on today's Call Log not yet worked | Brand |
+
+<Callout kind="note">
+The reminders and complaints numbers are the same two the sidebar badges show, read from the same function in the same request — a badge and the dashboard row beside it cannot disagree.
+</Callout>
+
+## The monthly target
+
+A target is set for a calendar month, so it is read for the month the period **ends in**, whatever the period. A week's progress against the month's target is the honest reading; a target cut down to the length of the span would be a number nobody set. Working days left are counted on the configured working week.
+
+## The manager's red flags
+
+<Rule title="A red flag is something wrong, so the strip only alarms when there is something">
+Each flag appears only when it is raised. A clean day reads **All clear — Nothing overdue, unresolved or growing.** in plain colours, rather than a yellow band of red zeros.
+</Rule>
+
+<Callout kind="why">
+The strip used to draw every figure in warning colours with a red zero in front of each. An alarm that fires on every good day is one people learn to skim — and then it fires on a bad one and gets skimmed too.
+</Callout>
+
+| Flag | Threshold |
+|---|---|
+| Reminders overdue | More than <Setting k="dashboard.reminderOverdueFlagDays" /> days past their date |
+| Complaints unresolved | Raised more than <Setting k="dashboard.complaintUnresolvedFlagDays" /> days ago and still open |
+| Missed calls | Any, with the change against the comparison period |
+| Overdue balance grew | Only growth is a flag; a shrinking balance is the opposite and is not drawn |
+
+### The comparison table
+
+One row per person on the manager's team, over the same period. **Overdue reminders** are counted as at the end of the period, never summed: a reminder overdue on Monday and still overdue on Friday is one overdue reminder. Connect rates are always computed from summed calls, never averaged, so somebody who made four calls does not weigh the same as somebody who made ninety.
+
+## Who sees what
+
+- A **telecaller** sees their own figures, with the team's connect rate beside theirs for comparison.
+- A **CRM manager** on team scope sees the Team overview. Switching to **My book** shows their own day in the telecaller layout.
+
+## Every setting that shapes the Dashboard
+
+<SettingsTable keys={[
+  "dashboard.reminderOverdueFlagDays",
+  "dashboard.complaintUnresolvedFlagDays",
+  "workingDay.dayBoundaryHour",
+  "workingDay.workingDays",
+  "workingDay.timezone",
+]} />
+
+## Where the code and the intent disagree today
+
+- **"Orders approved" and the value leave out delivered goods.** The dashboard's counts list three approved statuses by hand; the product's one list of "statuses that count as a sale" also includes *in transit* and *delivered*. An order that has been marked delivered stops counting towards the dashboard's value and the monthly target.
+- **"Collected" on the team table counts payments that were only reported.** It adds up every payment line recorded by the person, including money still waiting for accounts and money accounts rejected. Every other money figure counts confirmed receipts only.
+- **The target achieved is counted against the account owner**, not against whose book the account is in.
+- **"Overdue balance grew" always covers the last seven days** and the Outstanding card's "over 60 days" figure is company-wide, whatever period or scope is chosen; both include bills the system treats as not stated.
+- **Red-in-the-table thresholds are fixed numbers** — overdue reminders above 3 and missed calls above 5 — not settings, and the *Missed calls* card's "retry after 4 pm" is fixed text.
+- **The complaints flag and "overdue grew" read the account owner** rather than whose book the account is in.

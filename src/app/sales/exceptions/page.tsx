@@ -15,7 +15,7 @@ import {
 } from "@/components/console/parts";
 import { ResolveException } from "./resolve";
 
-export const metadata = { title: "Expense exceptions — Sales Dashboard — MahekOne" };
+export const metadata = { title: "Flagged expenses — Sales Dashboard — MahekOne" };
 
 /**
  * Requirements 42 to 46, and 69's worklist.
@@ -45,27 +45,27 @@ export default async function Page({
   return (
     <div className="p-6">
       <ScreenHeader
-        title="Expense exceptions"
-        subtitle="Claims outside policy, distances that do not agree, and spending unlike anything this person usually does. None of these refused a claim — the money was already spent. What they do is put it in front of you."
+        title="Flagged expenses"
+        subtitle="Things the policy wants you to check before you approve a day. Nothing here stopped a claim being recorded."
       />
 
       {blocking.length ? (
         <Banner
           tone="danger"
-          title={`${blocking.length} claim${blocking.length === 1 ? "" : "s"} missing proof the policy requires`}
-          body="These cannot be settled on their own. Either the bill arrives, or somebody decides to allow it without one and says so here — which is a decision with a name against it rather than a gap."
+          title={`${blocking.length} claim${blocking.length === 1 ? "" : "s"} missing a bill`}
+          body="Ask for the bill, or allow it without one here."
         />
       ) : null}
 
       <MetricRow
         metrics={[
           {
-            label: "Missing proof",
+            label: "Missing a bill",
             value: String(blocking.length),
             tone: blocking.length ? "danger" : undefined,
           },
           {
-            label: "Questioned",
+            label: "To check",
             value: String(questioned.length),
             tone: questioned.length ? "warn" : undefined,
           },
@@ -84,7 +84,7 @@ export default async function Page({
       {rows.length === 0 ? (
         <Empty
           title="Nothing to look at"
-          body="Exceptions are raised when a day is submitted — a claim over a limit, a distance the odometer and the phone disagree about, or a day unlike this person's own recent ones."
+          body="A day is flagged when it is sent — a claim over the limit, a missing bill, or a distance the meter and the phone disagree about."
         />
       ) : (
         <Table
@@ -94,7 +94,7 @@ export default async function Page({
               <HeadCell width={150}>Salesman</HeadCell>
               <HeadCell width={110}>Day</HeadCell>
               <HeadCell width={140}>What</HeadCell>
-              <HeadCell>Why it was raised</HeadCell>
+              <HeadCell>Why</HeadCell>
               <HeadCell width={160}>Their reason</HeadCell>
               <HeadCell width={150}>State</HeadCell>
               <HeadCell align="right" width={220} />
@@ -109,18 +109,9 @@ export default async function Page({
                 </EntityLink>
               </Cell>
               <Cell>{r.day ?? <span className="text-muted">—</span>}</Cell>
-              <Cell className="capitalize">{r.kind.replace(/_/g, " ")}</Cell>
+              <Cell>{KIND_LABELS[r.kind] ?? r.kind.replace(/_/g, " ")}</Cell>
               <Cell>
                 {r.message}
-                {/* The working, not just the verdict. "Unusually high" is an
-                    accusation nobody can answer; the numbers behind it are a
-                    question somebody can answer in a sentence. */}
-                <span className="block text-[12px] text-muted">
-                  {Object.entries(r.detail ?? {})
-                    .filter(([, v]) => v !== null && v !== undefined)
-                    .map(([k, v]) => `${k}: ${String(v)}`)
-                    .join(" · ")}
-                </span>
               </Cell>
               <Cell truncate={160}>
                 {r.salesmanReason ?? <span className="text-muted">Nothing said</span>}
@@ -146,9 +137,9 @@ export default async function Page({
                     }
                   >
                     {r.severity === "block_route"
-                      ? "Needs proof"
+                      ? "Needs a bill"
                       : r.severity === "warn"
-                        ? "Questioned"
+                        ? "To check"
                         : "Note"}
                   </Pill>
                 )}
@@ -163,3 +154,21 @@ export default async function Page({
     </div>
   );
 }
+
+/** The flag's kind, in a word or two a manager recognises. */
+const KIND_LABELS: Record<string, string> = {
+  over_cap: "Over the limit",
+  over_km_ceiling: "Very long day",
+  missing_proof: "Missing bill",
+  gps_odometer_variance: "Meter vs GPS",
+  manual_km_disagrees: "Km typed by hand",
+  unpriced_mode: "No rate for this",
+  unpriced_lodging: "No hotel limit",
+  day_hotel: "Day-only room",
+  no_policy: "No policy",
+  open_day: "Day not closed",
+  odometer_chain_broken: "Meter reading gap",
+  arrival_time_disagrees: "Arrival time differs",
+  duplicate_suspect: "Looks like a repeat",
+  client_disagreement: "Phone and office differ",
+};

@@ -1,0 +1,143 @@
+My Performance is a server page over **one service read**, `readingsForPeriod`, narrowed to the signed-in user. The arithmetic is a pure engine (`engines/performance.ts`); the actuals and their attribution are SQL in `performance-service.ts` through one crediting rule (`sales-attribution.ts`); the stored score cache (`sales_performance`) is rebuilt hourly and nightly for the handset and the Sales Dashboard. Everything below is cut from the source this deployment was built from.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route guard | `src/app/crm/performance/layout.tsx` | `requireModule` for <ModuleRef k="crm.performance" /> |
+| Page | `src/app/crm/performance/page.tsx` | `readingsForPeriod(period, today, { userIds: [user.id] })`, tiles, *What is short*, mix, export |
+| Engine (pure) | `src/lib/engines/performance.ts` | `COMPONENT_KEYS`, `weightsFrom`, `achievementBp`, `cappedBp`, `scoreMix`, `weightedScore`, `ratingFor`, `forecast`, `alertsFor`, `focusLines`, `rankPerformance` |
+| Service | `src/lib/services/performance-service.ts` | `loadCatalogue`, `actualsForWindow`, `actualsForPeriod`, `unattributedForPeriod`, `workingDaysIn`, `readingsForPeriod`, `bandsForTargets`, `scoreActuals`, `recomputeSalesPerformance` |
+| Attribution | `src/lib/sales-attribution.ts` | `CREDITED_TO_SQL`, `creditedToSql`, `creditedTo` |
+| Labels | `src/lib/performance-labels.ts` | Collection and activity sub-lines |
+| Targets | `src/lib/services/sales-target-service.ts`, `src/lib/actions/sales-targets.ts` | Draft / publish / revise (set from `/sales/targets` or `/accounts/targets`) |
+| Jobs | `src/lib/jobs.ts`, `src/lib/mbos-jobs.ts` | Nightly: this month and last; hourly (`runHourly`, `refreshPerformance`): this month |
+
+## A reading, end to end
+
+<Flow caption="GET /crm/performance" chart={`
+sequenceDiagram
+  autonumber
+  participant P as performance/page.tsx
+  participant S as performance-service.ts
+  participant E as engines/performance.ts
+  participant DB as Postgres
+  P->>S: readingsForPeriod(period, today, userIds [me])
+  S->>DB: actualsForPeriod — orders (approved), lines to SKUs to formulations,<br/>first orders, overdue-at-start and collected, tasks due and done
+  S->>S: workingDaysIn(period, today) — working week + company holidays
+  S->>DB: published sales_targets + their mix bands
+  S->>E: scoreMix, weightedScore, ratingFor, forecast, alertsFor
+  E-->>S: score, components, untargeted, alerts
+  S-->>P: PerformanceReading (or none — no target and no actuals)
+  P->>E: focusLines(score, mix, today)
+`} />
+
+## Attribution
+
+<Code file="src/lib/sales-attribution.ts" symbol="CREDITED_TO_SQL" />
+
+<Code file="src/lib/sales-attribution.ts" symbol="creditedToSql" />
+
+One person per account, never both seats, never `owner_id` for a customer. `unattributedForPeriod` reports what landed on nobody.
+
+## The engine
+
+<Code file="src/lib/engines/performance.ts" symbol="COMPONENT_KEYS" />
+
+<Code file="src/lib/engines/performance.ts" symbol="achievementBp" />
+
+<Code file="src/lib/engines/performance.ts" symbol="weightedScore" />
+
+<Code file="src/lib/engines/performance.ts" symbol="scoreMix" collapsed />
+
+<Code file="src/lib/engines/performance.ts" symbol="mixCategoryScoreBp" collapsed />
+
+<Code file="src/lib/engines/performance.ts" symbol="forecast" />
+
+<Code file="src/lib/engines/performance.ts" symbol="alertsFor" collapsed />
+
+Everything is in **basis points** (`BP = 10_000`) and integers; division happens only on the way to a screen.
+
+## Working days
+
+<Code file="src/lib/services/performance-service.ts" symbol="workingDaysIn" />
+
+## Actuals
+
+<Code file="src/lib/services/performance-service.ts" symbol="actualsForWindow" collapsed />
+
+- Day windows in SQL carry `+05:30`; a bare bound reads in the session zone.
+- Order value is `orderValueSql` (net of GST, after discount) over `orderCountsSql` rows.
+- Litres = cans × `products.millilitres_per_can`; an unmatched product name adds revenue, no litres, and `unmatched_revenue_paise`.
+- Collection reconstructs each bill's balance **as of the window start** from confirmed allocations received before it (`bills.paid_amount` is current, not historical), excludes `unstated` bills, and skips receipts keyed `creditnote:%`.
+- Activity reads tasks by `assigned_to_user_id`, due inside the window.
+
+## Targets and mix bands
+
+<DbTable name="sales_targets" only={["user_id", "period", "revenue_target_paise", "volume_target_ml", "new_customer_target", "collection_target_bp", "activity_target_bp", "activity_target", "status", "published_at", "carried_forward"]} note={{
+  collection_target_bp: "A share of what was overdue at the start of the month.",
+  activity_target_bp: "A share of the tasks due in the month.",
+  activity_target: "Retired count — kept, never reread.",
+  status: "draft or published. readingsForPeriod reads published only.",
+}} />
+
+<DbTable name="sales_target_categories" note={{
+  category_id: "Set on a target written against a broad category. Exactly one of the two keys is set (check constraint).",
+  formulation_id: "Set on a target written against a formulation — the current picker.",
+  minimum_bp: "Bands must not decrease (check constraint).",
+}} />
+
+`bandsForTargets` reads both keys; `isFormulation` (from the target's own bands) picks which **bucket** of actuals is scored, because `scoreMix` totals whatever it is handed and one map holding both would halve every share.
+
+## The cache
+
+<Code file="src/lib/services/performance-service.ts" symbol="recomputeSalesPerformance" collapsed />
+
+<DbTable name="sales_performance" only={["user_id", "period", "revenue_actual_paise", "volume_actual_ml", "mix_achievement_bp", "new_customer_actual", "collection_actual_paise", "collection_base_paise", "activity_actual", "activity_assigned", "total_score_bp", "rating", "untargeted", "unmatched_revenue_paise", "computed_at"]} note={{
+  untargeted: "Component keys dropped from the score — the screens print them.",
+  computed_at: "Printed beside the figures wherever the cache is read, so nobody mistakes it for live.",
+}} />
+
+<Callout kind="rule">
+`sales_performance` is a **cache** — rebuilding it is a correction. It is not the same kind of column as `calls.next_step_*`, which records what somebody was told and must never be rebuilt.
+</Callout>
+
+## Permissions
+
+<CapabilityGrid names={["target.set"]} />
+
+The CRM screen checks no capability: it reads only the signed-in user and has no id parameter. Setting a target needs `target.set` (managers and accounts).
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/engines/performance.test.ts` | Weights redistribute, cap, mix anchors, forecast, divergence alert, ranking |
+| `npm run test` | `src/lib/performance-labels.test.ts`, `src/lib/performance-range.test.ts` | Sub-lines; date ranges |
+| `npm run test:performance` | `src/lib/performance.test.ts` | Actuals, attribution fall-through, formulation targets through `buildBootstrap`, the cache |
+
+## Changing it safely
+
+<Steps>
+<Step title="A seventh component touches four places">
+`COMPONENT_KEYS`, a weight key in the registry (and the total-100 consistency check), the actual in `actualsForWindow`, and a column in `sales_performance`.
+</Step>
+<Step title="Credit through one rule">
+Any new actual is grouped by `creditedToSql`. Never by `ASSIGNED_TO_SQL` (it ends at the importer) or `scopedToUsers` (two people).
+</Step>
+<Step title="Null is not zero">
+Keep `achievementBp` returning null for no target, and keep the dropped component named.
+</Step>
+<Step title="Never reinterpret a stored target">
+New target shapes get new columns; old rows keep scoring the way they were written.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| AGENTS.md describes activity as visits on the server clock; the code measures tasks | `performance-service.ts` activity block |
+| Overall tile colours use literal 8000 / 6000 basis points, not `performance.ratingBands` | `src/app/crm/performance/page.tsx` |
+| Empty state names only the Sales Dashboard as where targets are set | `src/app/crm/performance/page.tsx` |
+| `focusLines` takes `today` and ignores it (`void today`) | `engines/performance.ts` |

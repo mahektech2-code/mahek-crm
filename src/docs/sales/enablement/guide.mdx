@@ -1,0 +1,87 @@
+Two screens put material on your team's phones. **Documents** is the library a salesman can open in front of a customer — price lists, catalogues, policies, agreements, certificates. **Knowledge** is training: the courses a salesman is expected to do, and how many of them he has finished.
+
+Whatever you publish reaches the handsets on their **next sync**, and whatever you withdraw leaves them the same way.
+
+## Documents
+
+<Wireframe url="/sales/documents" nav={["#Enablement", "Documents", "Knowledge"]} active="Documents" caption="The document library">
+  <WfBar><WfTitle sub="Price lists, policies and certificates the handset can open. Publish to everybody in the field, or tag the people a document is for.">Documents</WfTitle><WfSpacer /><WfButton primary>Publish a document</WfButton><Hotspot n={1} /></WfBar>
+  <WfBar>
+    <WfCard title="Published"><WfText>14</WfText></WfCard>
+    <WfCard title="For everybody in the field"><WfText>11</WfText></WfCard>
+    <WfCard title="Tagged to named people"><WfText>3</WfText></WfCard>
+    <WfCard title="Withdrawn"><WfText>5</WfText></WfCard>
+  </WfBar>
+  <WfInput placeholder="Search a title or a person" wide />
+  <WfTable columns={["Title", "Kind", "Who sees it", "State", ""]} rows={[
+    ["Dealer price list — October", "Price list", "Everybody in the field", <WfPill key="a" tone="success">Published</WfPill>, <span key="b">⋯ <Hotspot n={2} /></span>],
+    ["Distributor agreement", "Agreement", <span key="c">Salesman A, Salesman B <Hotspot n={3} /></span>, <WfPill key="d" tone="success">Published</WfPill>, "⋯"],
+    ["HR leave policy", "Policy", <span key="e"><WfText muted>Set in HRMS</WfText> <Hotspot n={4} /></span>, <WfPill key="f" tone="success">Published</WfPill>, "⋯"],
+  ]} />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Publish a document.</b> Choose the file, give it a title (filled in from the file name), pick its kind, and leave it for everybody or tag the people it is for.</span>,
+  <span key="2"><b>Row menu.</b> View details, open the file, withdraw it, or publish it again.</span>,
+  <span key="3"><b>Who sees it.</b> Empty means everybody in the field. A tagged document reaches only the people named, and leaves the phone of anybody untagged.</span>,
+  <span key="4"><b>Set in HRMS.</b> A document published from HRMS — who it is for is changed on HRMS's own Documents screen.</span>,
+]} />
+
+### Publishing
+
+<Steps>
+<Step title="Choose the file first">
+A document **must** have a file. A row the handset lists and cannot open is worse than no row, so publishing is refused without one.
+</Step>
+<Step title="Give it the title a salesman would look for">
+The handset lists documents by title — "Dealer price list — October", not the file's name.
+</Step>
+<Step title="Decide who it is for">
+Leave *Who sees it* empty for the whole field, or tag named salesmen. Tagged people are notified: "A document was shared with you".
+</Step>
+<Step title="Wait for the sync">
+It reaches each phone on its next sync and downloads there.
+</Step>
+</Steps>
+
+### Withdrawing
+
+**Withdraw** takes a document off every phone on its next sync. It is not deleted — a policy a salesman quoted to a customer in March is a fact about March — and **Publish again** puts it back. Untagging somebody takes it off his phone the same way.
+
+### What the salesman sees
+
+On his phone the document opens **inside the app**: a PDF is drawn page by page with zoom buttons and double-tap, a picture as a picture, with no signal needed once it has downloaded. **Open in another app** is always there for sharing or printing.
+
+## Knowledge
+
+<Wireframe url="/sales/knowledge" active="Knowledge" caption="Training and who has done it">
+  <WfBar><WfTitle sub="What the field team is expected to have learnt, and how much of it they have.">Knowledge</WfTitle><WfSpacer /><WfButton primary>Publish a course</WfButton></WfBar>
+  <WfBar>
+    <WfCard title="Courses"><WfText>6</WfText></WfCard>
+    <WfCard title="Compulsory"><WfText>2</WfText></WfCard>
+    <WfCard title="Not everybody has done"><WfText>1</WfText></WfCard>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfTable columns={["Course", "Kind", "Length", "By", "Done", "State", ""]} rows={[
+    ["PU Sealer application", "Product", "20 min", "31 Oct", <span key="b">7 of 11 <Hotspot n={2} /></span>, <WfPill key="a" tone="success">Published</WfPill>, "⋯"],
+  ]} />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Not everybody has done.</b> A compulsory course somebody has not finished is the thing worth seeing here.</span>,
+  <span key="2"><b>Done.</b> How many of the field team have completed it.</span>,
+]} />
+
+A course has a title, a kind you type freely, a length, an optional file, an optional **pass mark**, and whether it is **compulsory**. A deadline can only be set on a compulsory course. Unlike a document, a course **does not need a file** — a briefing given in a meeting is still training worth recording and ticking off. Withdrawing a course takes it off the phones; anybody half way through is not made unfinished.
+
+## Common questions
+
+<Faq q="I published a document but a salesman cannot see it.">
+His phone has not synced yet, or the document is tagged to other people. If he holds no Salesman App grant, he cannot be tagged at all.
+</Faq>
+<Faq q="Can I edit a published document?">
+Yes — open it from the row menu to change its title, its kind, the file behind it, or who it is for. Phones pick up the change on their next sync.
+</Faq>
+<Faq q="Why can I not change who sees an HRMS document?">
+HRMS decides its audience. Change it on HRMS → Documents.
+</Faq>

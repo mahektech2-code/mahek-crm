@@ -14,6 +14,7 @@ import { COMPLAINT_CATEGORIES } from "../constants";
 import {
   LOST_REASONS,
   HOLD_REASONS,
+  REOPEN_REASONS,
   SAMPLE_CANCEL_REASONS,
   VERIFICATION_FAILURE_REASONS,
   OVERRIDE_REASONS,
@@ -84,7 +85,19 @@ export type SettingCategory =
    * The test for which belongs here: would changing it restate what an old
    * claim was worth? If yes it is policy; if no it is a setting.
    */
-  | "expenses";
+  | "expenses"
+  /**
+   * The ERP's AI features (AI-1 to AI-8): one switch per feature, and the
+   * thresholds the deterministic alert rules and suggestions read. AI drafts
+   * and a person decides, so none of these changes a record on its own.
+   */
+  | "erp-ai"
+  /** The ERP as an operations system: whether it is where orders are taken. */
+  | "erp"
+  /** HRMS: attendance, leave, payroll, performance and tasks (docs/hrms spec §24). */
+  | "hrms"
+  /** Hire: the AI layer's models, thresholds and budget, and the pipeline's review windows. */
+  | "hire";
 
 export type SettingDefinition = {
   key: string;
@@ -489,6 +502,20 @@ export const SETTINGS = [
     max: 365,
   },
 
+  /* --------------------------------------------------------- top customers */
+  {
+    key: "topCustomers.count",
+    type: "integer",
+    category: "targets",
+    label: "How many top customers",
+    description:
+      "The length of the Top customers list, ranked across the WHOLE company. A telecaller sees the ones of these that are in their own book, never a top list of their own book - so a name on it means the same thing on every screen it appears on. The report itself is generated on the 1st of every month at 10:00 IST for 3, 6 and 12 whole months; this only decides how many of it are listed.",
+    default: 60,
+    min: 5,
+    max: 500,
+  },
+
+
   /* ------------------------------------------------------------ escalation */
   {
     key: "escalation.stage1Days",
@@ -656,6 +683,17 @@ export const SETTINGS = [
     max: 60,
   },
   {
+    key: "payments.paidCoolingDays",
+    type: "integer",
+    category: "payments",
+    label: "Cooling days after a customer pays",
+    description:
+      "Days after the day a customer pays (any amount, against any bill) on which they get no payment reminder message and no payment call - automated or from the collections list. At 1, somebody who pays on Monday is left alone on Monday and Tuesday and is chased again from Wednesday if anything is still overdue. Counts money reported, held or confirmed by its received date; credit notes and adjustments are not the customer paying and buy nothing. 0 switches it off.",
+    default: 1,
+    min: 0,
+    max: 30,
+  },
+  {
     key: "payments.allowOnAccountRemainder",
     type: "boolean",
     category: "payments",
@@ -702,6 +740,51 @@ export const SETTINGS = [
     max: 100,
   },
   /* -------------------------------------------------------------- sign-in */
+  /*
+   * Passwords and the Admin Console. A password could be guessed as fast as
+   * somebody could post the form; the console, which can sign in as anybody
+   * and grant anybody anything, opened for any session up to thirty days old.
+   */
+  {
+    key: "auth.password.maxFailures",
+    type: "integer",
+    category: "auth",
+    label: "Wrong passwords before an account pauses",
+    description: "How many wrong passwords one account tolerates inside the window below before sign-in is refused for it until the window passes. The pause is on the account, not the person: somebody locked out can still sign in with a WhatsApp code, which has its own limits.",
+    default: 5,
+    min: 3,
+    max: 20,
+  },
+  {
+    key: "auth.password.failureWindowMinutes",
+    type: "integer",
+    category: "auth",
+    label: "Window for counting wrong passwords",
+    description: "Minutes over which wrong passwords are counted, for one account and for one network address. It is also how long a paused account waits.",
+    default: 15,
+    min: 5,
+    max: 240,
+  },
+  {
+    key: "auth.password.maxFailuresPerAddress",
+    type: "integer",
+    category: "auth",
+    label: "Wrong passwords from one address",
+    description: "How many wrong passwords one network address may send across every account inside the window. The per-account limit stops somebody guessing one password; this stops them guessing one common password against everybody. An office shares one address, so it is set well above the per-account figure.",
+    default: 30,
+    min: 10,
+    max: 500,
+  },
+  {
+    key: "auth.console.confirmMinutes",
+    type: "integer",
+    category: "auth",
+    label: "Admin Console: ask for the password again after",
+    description: "Minutes a session may sit idle before the Admin Console asks for the password again. 0 means never: switching to the console from another app opens it straight away, on the strength of the sign-in alone. Every console page opened moves it forward, so somebody working in the console is not interrupted. The rest of MahekOne is unaffected; a session stays signed in for thirty days, and only the console asks.",
+    default: 0,
+    min: 0,
+    max: 240,
+  },
   /*
    * NOTHING READS THESE YET, and a reader should know it before tuning one.
    * They were written for a sign-in where a work number and a code sent to it
@@ -801,7 +884,7 @@ export const SETTINGS = [
     type: "text",
     category: "auth",
     label: "WhatsApp template name",
-    description: "The Meta-approved WhatsApp template the OTP is sent through. WhatsApp Business API refuses a free-form message to somebody who has not messaged first, so an OTP has to ride a template.",
+    description: "The name of the approved AUTHENTICATION template in Wati that sign-in codes are sent with (a copy-code template, one variable: the code). Naming one here is what switches WhatsApp codes on — for signing in on the web and on the MBOS handset, for changing a password and for resetting one. Blank, or not yet approved in Wati, and every screen offers the password alone.",
     default: "",
   },
   {
@@ -898,6 +981,48 @@ export const SETTINGS = [
     default: 2,
     min: 0,
     max: 25,
+  },
+  {
+    key: "payments.vendorPayoutDays",
+    type: "structured",
+    category: "payments",
+    label: "Days vendor payments go out",
+    description:
+      "The weekdays accounts pay suppliers on, in IST. A purchase is planned for the first of these on or after its due date, and the Vendor payouts calendar refuses a payout dragged onto any other day. Tuesday and Friday by default. Changing the days moves every payout planned for a day still to come that is no longer a payment day to the next one that is, unless somebody chose that day by hand.",
+    default: ["Tuesday", "Friday"],
+  },
+  {
+    key: "payments.cashflowLookbackMonths",
+    type: "integer",
+    category: "payments",
+    label: "How far back a customer's paying habit is read",
+    description:
+      "Cash flow predicts when each open bill will be paid from how that customer has actually paid - the average days from bill to confirmed money over this many months - never from the credit term on the bill. Longer is steadier; shorter follows a customer who has changed.",
+    default: 12,
+    min: 1,
+    max: 36,
+  },
+  {
+    key: "payments.cashflowMinPayments",
+    type: "integer",
+    category: "payments",
+    label: "Payments needed before a customer has a habit of their own",
+    description:
+      "Below this many confirmed payments in the window, a customer's bills are predicted from the company's average instead, and every such prediction says so.",
+    default: 3,
+    min: 1,
+    max: 50,
+  },
+  {
+    key: "payments.vendorDefaultCreditDays",
+    type: "integer",
+    category: "payments",
+    label: "Supplier credit days when none is recorded",
+    description:
+      "How many days after the purchase a supplier's bill falls due, where the supplier's own record in the ERP names no credit days. Zero means due on the day of purchase.",
+    default: 30,
+    min: 0,
+    max: 365,
   },
 
   /* --------------------------------------------------------------- targets */
@@ -1295,10 +1420,33 @@ export const SETTINGS = [
     type: "integer",
     category: "complaints",
     label: "Maximum note length",
-    description: "Longest note accepted when logging an interaction.",
-    default: 2000,
+    description:
+      "Longest note accepted when logging an interaction. A dictated note is as long as the call was, so this is set well above anything typed.",
+    default: 20000,
     min: 200,
-    max: 10000,
+    max: 100000,
+  },
+  {
+    key: "interactions.followUpDefaultDays",
+    type: "integer",
+    category: "queue",
+    label: "Follow-up call back after",
+    description:
+      "A Follow-up call no longer asks the telecaller for a date. It becomes a call-back reminder this many days ahead, moved on to the next working day if that lands on a day off - so the customer is never left with a follow-up nobody is reminded of. A date the customer actually named, supplied by the call assistant or the Command Centre, is used as given.",
+    default: 1,
+    min: 0,
+    max: 30,
+  },
+  {
+    key: "interactions.paymentPromiseDefaultDays",
+    type: "integer",
+    category: "queue",
+    label: "Promised payment date when none is given",
+    description:
+      "A Pay Promise no longer asks the telecaller for a payment date. Saved with none, the promise is dated this many days ahead (moved on to the next working day), so it still writes its payment reminder and still holds the customer back from collections until it passes. It is a stand-in, not something the customer said: a date they actually named, supplied by the call assistant or the Command Centre, is used as given.",
+    default: 3,
+    min: 1,
+    max: 30,
   },
   {
     key: "customers.defaultCreditDays",
@@ -1310,6 +1458,17 @@ export const SETTINGS = [
     default: 30,
     min: 0,
     max: 180,
+  },
+  {
+    key: "customers.birthdayHeadsUpDays",
+    type: "integer",
+    category: "interactions",
+    label: "Birthday heads-up",
+    description:
+      "How many days ahead a contact's birthday is called out on the customer record, the call drawer and the customer list. 0 shows it on the day only.",
+    default: 7,
+    min: 0,
+    max: 60,
   },
   {
     key: "dashboard.reminderOverdueFlagDays",
@@ -1577,9 +1736,9 @@ export const SETTINGS = [
     key: "whatsapp.mode",
     type: "text",
     category: "whatsapp",
-    label: "Mode",
+    label: "Mode (retired)",
     description:
-      "Manual means copy-and-confirm. Switching to automatic must need no code change beyond credentials.",
+      "No longer read. Sending through the WhatsApp API is switched on and off by the founder, on the Founder Command Centre's WhatsApp desk — a setting anybody holding the Settings screen could flip was the wrong home for that decision. Kept so a stored value still resolves.",
     default: "manual",
     options: ["manual", "automatic"],
   },
@@ -1725,6 +1884,312 @@ export const SETTINGS = [
     default: "gpt-5-mini",
   },
 
+  /* ------------------------------------------------ the call assistant
+   *
+   * The telecaller speaks about the call and the assistant proposes the form
+   * it would have produced. It never saves anything; these decide how much it
+   * is trusted to fill before it has to ask.
+   */
+  {
+    key: "callIntel.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Understand the call",
+    description:
+      "After a telecaller speaks or types about a call, suggest the outcome, dates, products and reminders it implies. Suggestions fill the call form for the telecaller to check — nothing is saved without them. Off removes the button everywhere immediately.",
+    default: true,
+  },
+  /*
+   * THE VISIT ASSISTANT — the call assistant's counterpart on the handset.
+   * Its own switch, because the two are used by different people on different
+   * devices and a team may want one without the other. It shares the call
+   * assistant's confidence floor: "ask when less sure than" is one judgement
+   * about how often a person should be asked, not two.
+   */
+  /*
+   * THE TASK BRAIN — the Sales Dashboard's AI while a task is being set.
+   * OpenAI only: it drafts a form from a sentence, says which customer field
+   * each question is really asking for, and summarises what came back. Every
+   * suggestion is a suggestion — nothing is assigned or written to a record
+   * until a manager presses the button.
+   */
+  {
+    key: "taskIntel.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "AI on task assignment",
+    description:
+      "On the Sales Dashboard's task builder: draft the questions from a description, suggest which customer field each answer should update, and summarise the answers. Needs an OpenAI key. Off hides every AI button on the Tasks screens.",
+    default: true,
+  },
+  {
+    key: "taskIntel.model",
+    type: "text",
+    category: "voice",
+    label: "Task AI model",
+    description: "The OpenAI model the task builder and the answer summary use.",
+    default: "gpt-5-mini",
+  },
+  {
+    key: "visitIntel.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Understand the visit",
+    description:
+      "On the MBOS handset, after a salesman speaks or types about a visit, suggest the outcome, the day to come back, and the order, payment, complaint or sample the visit implies. Suggestions fill the visit for the salesman to check — nothing is saved without him. Off removes the button from every handset on its next sync.",
+    default: true,
+  },
+  {
+    key: "visitIntel.model",
+    type: "text",
+    category: "voice",
+    label: "Visit assistant model",
+    description:
+      "The OpenAI model that reads a visit. Where OpenAI cannot answer, Sarvam is asked instead; where neither can, the salesman fills the visit as usual.",
+    default: "gpt-5-mini",
+  },
+  /*
+   * READING A VISITING CARD — the New lead form's scan button on the MBOS
+   * handset. OpenAI only: reading a photograph needs a model that can see, so
+   * unlike the assistants above there is no Sarvam fallback, and without an
+   * OpenAI key the button is simply not drawn.
+   */
+  {
+    key: "leadScan.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Read a visiting card",
+    description:
+      "On the MBOS handset's New lead form, let a salesman photograph a visiting card, shop board or bill head and have the shop name, contact person, mobile, town, address and GSTIN filled in for him to check. The photographs are read and discarded, never stored. Off removes the button from every handset on its next sync.",
+    default: true,
+  },
+  {
+    key: "leadScan.model",
+    type: "text",
+    category: "voice",
+    label: "Visiting card model",
+    description:
+      "The OpenAI model that reads the photographs. It must accept images.",
+    default: "gpt-5-mini",
+  },
+  {
+    key: "leadScan.maxImages",
+    type: "integer",
+    category: "voice",
+    label: "Photos per scan",
+    description:
+      "How many photographs a salesman may send in one scan — a card's front and back and the shop board are three views of one business, read together.",
+    default: 3,
+    min: 1,
+    max: 6,
+  },
+  /*
+   * FILLING A LEAD BY VOICE — the New lead form's "Speak about the shop" on
+   * the MBOS handset. Reading words needs no eyes, so unlike the card scan it
+   * takes the OpenAI-then-Sarvam ladder the visit assistant uses. How long a
+   * recording may run is NOT here: it is `voice.maxSeconds`, the one ceiling
+   * every microphone on the handset shares.
+   */
+  {
+    key: "leadVoice.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Fill a lead by voice",
+    description:
+      "On the MBOS handset's New lead form, let a salesman say everything he learned about a shop, in any language, and have every answer on the form filled in for him to check — the shop, the person, the number, the town, what they buy and how much, who they buy from, when to come back. Nothing is saved until he presses Add lead, and what he said is not stored. Off removes the button from every handset on its next sync.",
+    default: true,
+  },
+  {
+    key: "leadVoice.model",
+    type: "text",
+    category: "voice",
+    label: "Lead by voice model",
+    description:
+      "The OpenAI model that reads what the salesman said into the form. Where OpenAI cannot answer, Sarvam is asked instead; where neither can, he fills the form as usual.",
+    default: "gpt-5-mini",
+  },
+  {
+    key: "callIntel.model",
+    type: "text",
+    category: "voice",
+    label: "Call assistant model",
+    description:
+      "The OpenAI model that reads the call. Where OpenAI cannot answer, Sarvam is asked instead, and where neither can, the assistant still points at a form using what it has learned from past calls — and asks rather than fills.",
+    default: "gpt-5-mini",
+  },
+  /*
+   * THE LEAD CALLING DESK'S OWN ASSISTANT — Call 1/2/3's counterpart to the
+   * call assistant above. Its own switch, because a team may want the ordinary
+   * call assistant without this one: this reads a QUALIFICATION conversation
+   * into whichever of the twelve desk answers the current call is asking for,
+   * never an outcome. It shares the call assistant's own confidence floor
+   * (`callIntel.confirmBelowPercent`) rather than a second number — how often
+   * a person should be asked is one judgement, not two per feature.
+   */
+  {
+    key: "leadCallIntel.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Understand the lead calling desk's call",
+    description:
+      "After a telecaller speaks or types about a Call 1/2/3 qualification call, suggest answers for whichever of the twelve desk questions that call is currently asking. Suggestions fill the call's own form for the telecaller to check — nothing is saved without them. Off removes the button everywhere immediately.",
+    default: true,
+  },
+  {
+    key: "leadCallIntel.model",
+    type: "text",
+    category: "voice",
+    label: "Lead calling desk assistant model",
+    description:
+      "The OpenAI model that reads a Call 1/2/3 conversation. Where OpenAI cannot answer, Sarvam is asked instead; where neither can, the telecaller fills the call as usual.",
+    default: "gpt-5-mini",
+  },
+  /*
+   * THE LEAD INTAKE FORM'S OWN ASSISTANT — the Calling Desk assistant's
+   * counterpart for a lead that does not exist yet. Its own switch, because a
+   * team may want one without the other. It reads a call into the Intake form's
+   * boxes and proposes; it saves nothing, and the sales type is never one of
+   * the things it proposes. It shares the call assistant's confidence floor
+   * (`callIntel.confirmBelowPercent`) rather than a third number.
+   */
+  /*
+   * THE MANAGER VERIFICATION DIALOG'S OWN ASSISTANT — the Sales Manager's
+   * counterpart to the Calling Desk's. It reads what the manager says about the
+   * verification call into the dialog's answers and the shop's own figures, and
+   * proposes; it never chooses a verification result, a failure reason, a note
+   * or a correction's reason, and saves nothing. Its own switch, because a team
+   * may want one assistant without the others. It shares the call assistant's
+   * confidence floor (`callIntel.confirmBelowPercent`).
+   */
+  {
+    key: "verifyIntel.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Understand the verification call",
+    description:
+      "After a Sales Manager speaks or types about a verification call in the CRM Sales Manager workspace, suggest answers for the Manager verification dialog and mark where the shop's figures differ from the salesman's. The manager reviews and applies each one and still chooses the result, writes every reason and note, and presses Save verification. Needs a language model key like the other assistants; without one the dialog works as usual.",
+    default: true,
+  },
+  {
+    key: "verifyIntel.model",
+    type: "text",
+    category: "voice",
+    label: "Verification call assistant model",
+    description:
+      "The OpenAI model that reads a verification call. Where OpenAI cannot answer, Sarvam is asked instead; where neither can, the manager fills the dialog in as usual.",
+    default: "gpt-5-mini",
+  },
+  /*
+   * THE CONVERT-TO-PROSPECT DIALOG'S OWN ASSISTANT. It reads what a Sales Manager
+   * says about a shop into the facts the dialog asks, and proposes: it fills
+   * only what the lead has nothing for, flags anything the lead already holds as
+   * a conflict for the manager to resolve, and never chooses the conversion
+   * reason or converts. Its own switch, separate from the verification
+   * assistant's, because the two do different jobs and a team may want one.
+   */
+  {
+    key: "convertIntel.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Understand the Convert to Prospect conversation",
+    description:
+      "After a Sales Manager speaks or types about a shop in the CRM Sales Manager workspace's Convert to Prospect dialog, suggest values for the facts it asks. It fills only what the lead has nothing for, shows anything different from the salesman's entry as a conflict for the manager to resolve, and never replaces his value, chooses the reason or converts. Needs a language model key like the other assistants; without one the dialog works as usual.",
+    default: true,
+  },
+  {
+    key: "convertIntel.model",
+    type: "text",
+    category: "voice",
+    label: "Convert to Prospect assistant model",
+    description:
+      "The OpenAI model that reads a Convert to Prospect conversation. Where OpenAI cannot answer, Sarvam is asked instead; where neither can, the manager fills the dialog in as usual.",
+    default: "gpt-5-mini",
+  },
+  {
+    key: "intakeIntel.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Understand the lead intake call",
+    description:
+      "After a telecaller speaks or types about the call on the Lead Intake form, suggest values for the form's boxes. A person reviews and applies each one, and the existing Raise the lead button is still the only thing that creates a lead. It never suggests or changes the sales type. Needs a language model key like the other assistants; without one the form works as usual.",
+    default: true,
+  },
+  {
+    key: "intakeIntel.model",
+    type: "text",
+    category: "voice",
+    label: "Lead intake assistant model",
+    description:
+      "The OpenAI model that reads a lead intake call. Where OpenAI cannot answer, Sarvam is asked instead; where neither can, the telecaller fills the form in as usual.",
+    default: "gpt-5-mini",
+  },
+  {
+    key: "callIntel.confirmBelowPercent",
+    type: "integer",
+    category: "voice",
+    label: "Ask when less sure than",
+    description:
+      "Below this confidence the assistant does not fill the form — it asks the telecaller which it was. Higher asks more often and guesses less.",
+    default: 70,
+    min: 30,
+    max: 100,
+  },
+  {
+    key: "callIntel.classifierVetoPercent",
+    type: "integer",
+    category: "voice",
+    label: "When past calls disagree",
+    description:
+      "The assistant also checks how calls worded like this one were logged before. When that check is at least this sure of a DIFFERENT outcome, the telecaller is asked instead of the form being filled.",
+    default: 85,
+    min: 50,
+    max: 100,
+  },
+  {
+    key: "callIntel.noAnswerRetryWorkingDays",
+    type: "integer",
+    category: "voice",
+    label: "Try a missed call again after",
+    description:
+      "Working days. On a call nobody answered, the assistant offers a reminder this far ahead. The Call Log's own retry rules are unaffected.",
+    default: 1,
+    min: 1,
+    max: 10,
+  },
+  {
+    key: "callIntel.duplicateWindowDays",
+    type: "integer",
+    category: "voice",
+    label: "Same reminder if within",
+    description:
+      "Days. An open reminder due this close to a new one is treated as the same one — the assistant offers to move it rather than add a second.",
+    default: 7,
+    min: 0,
+    max: 60,
+  },
+  {
+    key: "callIntel.exampleCalls",
+    type: "integer",
+    category: "voice",
+    label: "Past calls shown to the model",
+    description:
+      "How many similar calls from this company's own history the model is shown as examples of how the office logs things. Zero sends none.",
+    default: 6,
+    min: 0,
+    max: 20,
+  },
+  {
+    key: "callIntel.trainingMonths",
+    type: "integer",
+    category: "voice",
+    label: "Learn from calls of the last",
+    description:
+      "Months of logged calls the nightly pass learns the office's shorthand from. Longer is steadier; shorter follows a change in how people write notes sooner.",
+    default: 12,
+    min: 1,
+    max: 60,
+  },
+
   /* ═══════════════════════════════════════════════ MBOS — field sales, §9
    *
    * Every one of these is a number somebody in the field will argue with, and
@@ -1739,7 +2204,7 @@ export const SETTINGS = [
     category: "mbos-location",
     label: "Usable GPS accuracy",
     description:
-      "Metres. A fix the handset itself rates worse than this is not evidence of where anybody was standing — a visit captured on one is still saved, but it is not marked verified and it never counts as a location mismatch. Refusing the check-in instead would lose a real visit to a cloudy afternoon indoors.",
+      "Metres. A fix the handset itself rates worse than this is not evidence of where anybody was standing, so the handset refuses to start a check-in on one — he steps outside and tries again. A visit that arrives from an older handset on such a fix is still saved, but it is not marked verified and it never counts as a location mismatch.",
     default: 50,
     min: 5,
     max: 1000,
@@ -1753,6 +2218,17 @@ export const SETTINGS = [
       "Metres between the salesman and the shop's own pin. Inside it the check-in goes ahead; outside it the handset refuses, and he can only pass by saying in writing that the pin is wrong — which reaches you as an unverified visit. It is ALSO the distance a saved visit is flagged at, because the distance a check-in is refused at and the distance one is questioned at are one fact. Keep it comfortably larger than the accuracy above: a fix that is itself 50 m wide cannot tell a doorway from the tea shop across the road, and every refusal it produces falls on somebody standing in the right place.",
     default: 100,
     min: 20,
+    max: 5000,
+  },
+  {
+    key: "mbos.visit.forgotCheckoutMetres",
+    type: "integer",
+    category: "mbos-location",
+    label: "Remind to check out past",
+    description:
+      "Metres from where he checked in. When the trail shows a salesman this far from a shop he is still checked into, his phone asks — once, with a sound — whether he forgot to check out, and tapping it opens the check-out for that shop with no distance check. The visit closes at the time he was seen leaving. Measured after taking off the reading's own error, so a vague fix never raises it while he is still at the counter.",
+    default: 500,
+    min: 200,
     max: 5000,
   },
   {
@@ -1863,6 +2339,17 @@ export const SETTINGS = [
     default: 30,
     min: 0,
     max: 1440,
+  },
+  {
+    key: "mbos.location.trackingSetupRemindDays",
+    type: "integer",
+    category: "mbos-location",
+    label: "How often a salesman is reminded to set his phone up for tracking",
+    description:
+      "Days. The two OEM switches that decide whether a route is recorded at all — autostart and the battery manager — cannot be set by this app and cannot even be read: no Android has an API for the first, on anybody's phone. So the only thing available is putting the screen that walks somebody through them in front of him, and until now nothing did: the rule for when to offer it was written, tested, and never called, so the sole way to reach that screen was a card on the Sync screen, which people open when they think their WORK is stuck rather than when their location has gone quiet. This is the gap between offers to a handset that has been asked and has not acted on it. Two things override it outright and neither is governed by this number: a handset that has never been asked is asked immediately, and a handset the watchdog has just caught with the tracker silenced is asked whatever it says, because that is evidence the switches are not holding and it is the one moment the steps are worth reading again. Lower it and a salesman who has decided not to bother is nagged; raise it and a phone that quietly lost the setting in an OS update goes a season without being asked. It does not gate the start-of-day screen, which is its own rule.",
+    default: 14,
+    min: 1,
+    max: 365,
   },
   {
     key: "mbos.location.serviceWatchdogMinutes",
@@ -2091,6 +2578,17 @@ export const SETTINGS = [
     max: 120,
   },
   {
+    key: "mbos.location.liveSpeedMinKmh",
+    type: "integer",
+    category: "mbos-location",
+    label: "Slowest speed the Live map prints",
+    description:
+      "km/h. The Live map prints how fast a salesman is moving beside his name, worked out from his last minute of positions \u2014 and prints nothing below this. Walking pace and standing still are where GPS noise lives: a man at a counter drifts tens of metres between fixes, and a figure of 3 km/h about him would be the noise, not the man. Above it the figure is real; below it the row says nothing rather than something false.",
+    default: 5,
+    min: 1,
+    max: 60,
+  },
+  {
     key: "mbos.location.liveTeamSeconds",
     type: "integer",
     category: "mbos-location",
@@ -2307,6 +2805,17 @@ export const SETTINGS = [
     min: 0,
     max: 100000000,
   },
+  {
+    key: "mbos.expenses.maxAttachments",
+    type: "integer",
+    category: "mbos-expenses",
+    label: "Files on one expense",
+    description:
+      "How many photographs or PDFs a salesman may attach to one claim — a long bill, a second page, the payment screenshot. The handset stops offering more at this number.",
+    default: 6,
+    min: 1,
+    max: 20,
+  },
   /*
    * `mbos.expenses.categoryCapsPaise` WAS HERE, and it is retired.
    *
@@ -2504,6 +3013,39 @@ export const SETTINGS = [
     default: 22,
     min: 0,
     max: 23,
+  },
+  {
+    key: "mbos.attendance.punchOutPromptHour",
+    type: "integer",
+    category: "mbos-attendance",
+    label: "Hour the handset asks for a punch-out",
+    description:
+      "From this local hour, a salesman still punched in sees Punch out as the main button on Home and a bar across every other screen asking him to close the day. Before it, Punch out stays a quiet secondary button, because a prompt shown all day stops being read.",
+    default: 18,
+    min: 0,
+    max: 23,
+  },
+  {
+    key: "mbos.attendance.punchOutSecondReminderMinutes",
+    type: "integer",
+    category: "mbos-attendance",
+    label: "Second punch-out reminder, minutes after the first",
+    description:
+      "A salesman still punched in gets a phone notification at the punch-out prompt hour, and a second one this many minutes later. Zero sends only the first. There is no third: a reminder that repeats until midnight gets its notifications switched off.",
+    default: 90,
+    min: 0,
+    max: 360,
+  },
+  {
+    key: "mbos.attendance.missedPunchOutWindowDays",
+    type: "integer",
+    category: "mbos-attendance",
+    label: "Days counted for missed punch-outs",
+    description:
+      "How far back the attendance screen and the salesman's own handset count days he punched in to and never punched out of. One number for both, so the manager and the salesman see the same figure.",
+    default: 30,
+    min: 7,
+    max: 90,
   },
   {
     key: "mbos.attendance.selfieRequired",
@@ -2795,6 +3337,17 @@ export const SETTINGS = [
     max: 365,
   },
   {
+    key: "mbos.leads.recentDays",
+    type: "integer",
+    category: "mbos-leads",
+    label: "A lead is marked Recently for",
+    description:
+      "Calendar days (today counts as the first) a newly raised lead carries the Recently badge on the Sales Manager desk. 7 means a lead raised today or in the six days before it.",
+    default: 7,
+    min: 1,
+    max: 90,
+  },
+  {
     key: "mbos.leads.archiveDays",
     type: "integer",
     category: "mbos-leads",
@@ -3060,9 +3613,9 @@ export const SETTINGS = [
     key: "leads.suspectMaxVisits",
     type: "integer",
     category: "mbos-leads",
-    label: "Visits before a Suspect must be decided",
+    label: "Visits before a Suspect must be decided (retired)",
     description:
-      "§4. A salesman gets this many visits to work out whether there is a genuine opportunity, and then the lead turns into a single question: Prospect or not. The specification's normal target is two and its absolute maximum is three. Nothing is refused when the cap is reached - a decision is DEMANDED, which is the opposite gesture, and the lead cannot be quietly left in the drawer instead.",
+      "No longer read. The cap is \"Suspect decision required at\" (mbos.leads.maxSuspectVisits) — there were two settings for one number, the handset's visit screen and the office's sync read one while the lead record and the command centre read this, and a manager who changed either made the two ends disagree about the same lead. Every reader now uses the other key, and the handset is sent its value under this name too. Kept so a stored value still resolves.",
     default: 3,
     min: 1,
     max: 10,
@@ -3097,6 +3650,15 @@ export const SETTINGS = [
     default: true,
   },
   {
+    key: "leads.callingDeskDirectPromotion",
+    type: "boolean",
+    category: "mbos-leads",
+    label: "The calling desk converts a Suspect to Prospect directly",
+    description:
+      "On, the telecaller's own 'Convert to Prospect' promotes the lead the moment the five required answers are on the record - the same gated move a Sales Manager verification would otherwise make, run under the telecaller's own hat, with no verification call in between. Off, completing the five still only asks for a Prospect: it goes to `prospect_request_state = 'awaiting'` and a Sales Manager's own verification call is what promotes it, exactly as it did before this setting existed. Both paths read the same five-answer readiness and the same §28 gate; this decides only who is trusted to press the button that promotes.",
+    default: true,
+  },
+  {
     key: "leads.prospectReasons",
     type: "structured",
     category: "mbos-leads",
@@ -3122,6 +3684,15 @@ export const SETTINGS = [
     description:
       "§26. A loss nobody explained teaches nothing, which the handset and the server have both refused to accept for as long as the field has existed. What this adds is that the answer is a CODE - so 'how many did we lose on credit terms this quarter' becomes a question somebody can ask, rather than a grep over free text.",
     default: LOST_REASONS.map((r) => ({ ...r })),
+  },
+  {
+    key: "leads.reopenReasons",
+    type: "structured",
+    category: "mbos-leads",
+    label: "Why a lost lead was reopened",
+    description:
+      "Reversing a Lost lead puts the same record back on its ladder and demands a code, for the reason a loss does: 'how many of the leads we closed came back, and what brought them back' is a question somebody can ask of a code and not of a sentence. Picking 'Other' makes the note mandatory.",
+    default: REOPEN_REASONS.map((r) => ({ ...r })),
   },
   {
     key: "leads.verificationFailureReasons",
@@ -3187,6 +3758,42 @@ export const SETTINGS = [
     default: 2,
     min: 1,
     max: 30,
+  },
+  {
+    key: "leads.selfRaisedVerifierEmail",
+    type: "text",
+    category: "mbos-leads",
+    label: "Who approves a lead its own Sales Manager raised",
+    description:
+      "The work email of the person who verifies the Prospect, validates the GST number and reviews the Qualification on a lead a Sales Manager raised herself — one she holds the seat on and owns, or that nobody owns. She still collects its answers; the approvals are theirs, so nobody approves their own work. Blank switches the rule off and the Sales Manager approves her own leads as before. A name that matches no active account does the same, so a typo cannot lock a lead.",
+    default: "",
+  },
+  {
+    key: "leads.telecallerVerifierEmail",
+    type: "text",
+    category: "mbos-leads",
+    label: "Who verifies a lead a Telecaller converts",
+    description:
+      "The work email of the person who verifies the Prospect when a Telecaller converts a lead a Calling-desk worker owns. The Telecaller chooses nobody - it goes to this person, whether or not the org chart has filled the lead's Sales Manager seat, and with no regional coverage needed. A lead a salesman owns, a lead somebody personally set a Sales Manager seat on or chose a lead manager for, and a lead a Sales Manager raised herself (that is the setting above) are not affected. Blank switches the rule off and routing is exactly as before. If a name is set but matches no active account, or that person cannot verify, converting such a lead is refused with a message saying so - it is never quietly routed elsewhere.",
+    default: "",
+  },
+  {
+    key: "leads.fieldVerifierEmail",
+    type: "text",
+    category: "mbos-leads",
+    label: "Who verifies a lead a Salesman raised or holds",
+    description:
+      "The work email of the person who verifies the Prospect on a lead a Salesman raised on the handset, and on ANY lead a Salesman currently holds, whoever raised it — a Telecaller's or a Sales Manager's lead that has been given to a Salesman is theirs. They are seated as that lead's Sales Manager, so the seat-based permission and the Sales Manager workspace already reach it; nothing about their level changes. A lead they raised themselves is never theirs to verify: it stays with the desk verifier. Blank switches the rule off and routing is exactly as before. A name that matches no active account refuses conversion of such a lead in words rather than routing it elsewhere.",
+    default: "",
+  },
+  {
+    key: "leads.fieldVerifierByOrgChart",
+    type: "boolean",
+    category: "mbos-leads",
+    label: "Verify a Salesman's leads through the org chart",
+    description:
+      "On: a lead a Salesman raised on the handset, or any lead a Salesman currently holds, is verified by the nearest manager above THAT Salesman on the HRMS org chart who has an active MahekOne account and can verify. The chain is followed by employee record (an account's linked employee), never by name; a manager who has left, has no account, is inactive or cannot verify is passed over to the next one up. If nobody on the chain can be used the lead is NOT routed anywhere else - it says why and waits for the chart or the accounts to be fixed. The lead's creator never verifies it, and a Telecaller's or Sales Manager's own lead is still the desk verifier's. Off (the default): the person named in 'Who verifies a lead a Salesman raised or holds' is used, exactly as before. Check the org chart and accounts before turning this on.",
+    default: false,
   },
   {
     key: "leads.figuresFreshDays",
@@ -3336,6 +3943,26 @@ export const SETTINGS = [
     max: 3600,
   },
   {
+    key: "mbos.visits.minimumNoteChars",
+    type: "integer",
+    category: "mbos-location",
+    label: "Visit notes must be at least",
+    description:
+      "Characters the salesman writes (or speaks) about a visit before he can check out — what was discussed, what they said, what happens next. It is all the manager and the next visitor get. A shop found closed is exempt. Unlike the dwell floor this is never waived by an unverified save: only he can answer it. 0 turns it off.",
+    default: 20,
+    min: 0,
+    max: 500,
+  },
+  {
+    key: "fieldActivity.cutoverDate",
+    type: "text",
+    category: "mbos-location",
+    label: "First day MBOS is the only record of a visit",
+    description:
+      "A date, YYYY-MM-DD. Before it, the Activity history screen shows the old field app's sheet (the Activity tab of Mahek EMP 2.0) beside MBOS; from it onwards only MBOS. A sheet row dated on or after it is not stored, not put on a customer's timeline and not counted anywhere — the old app is retired and its past stays exactly as it was read. Moving it later lets a straggler's late entries in; moving it earlier hides rows already stored without deleting them.",
+    default: "2026-10-10",
+  },
+  {
     key: "mbos.travel.maxLegKilometres",
     type: "integer",
     category: "mbos-location",
@@ -3365,6 +3992,1478 @@ export const SETTINGS = [
     description:
       "On, voice notes are kept on the handset once transcribed. Off, they are deleted — but only ever after the transcript is confirmed stored, never merely because the upload finished.",
     default: false,
+  },
+  {
+    key: "hrms.attendance.graceMinutes",
+    type: "integer",
+    category: "hrms",
+    label: "Late check-in grace",
+    description:
+      "Minutes after the official in-time that still count as on time for the late / early remark. Past it, an ordinary check-in is refused as too late, and the day counts as unpaid leave (spec §6.2).",
+    default: 30,
+    min: 0,
+    max: 240,
+  },
+  {
+    key: "hrms.attendance.fullDayPercent",
+    type: "integer",
+    category: "hrms",
+    label: "Full day at this share of duty",
+    description:
+      "A checked-out day is a Full Day when the hours worked reach this percentage of the day's duty duration; below it, a Half Day.",
+    default: 60,
+    min: 1,
+    max: 100,
+  },
+  {
+    key: "hrms.attendance.privilegedRangeM",
+    type: "integer",
+    category: "hrms",
+    label: "Office range for HR and admin",
+    description:
+      "How far from the office, in metres, a person holding the attendance-all power may check in or out.",
+    default: 9000,
+    min: 0,
+    max: 50000,
+  },
+  {
+    key: "hrms.attendance.defaultWindowDays",
+    type: "integer",
+    category: "hrms",
+    label: "Attendance lists open on",
+    description:
+      "How many days back the attendance lists show before a date filter is chosen.",
+    default: 400,
+    min: 1,
+    max: 3650,
+  },
+  {
+    key: "hrms.attendance.qrEnabled",
+    type: "boolean",
+    category: "hrms",
+    label: "QR-code check-in",
+    description:
+      "Off in the source for everyone. On, the home card offers scanning the office's QR code instead of the location check.",
+    default: false,
+  },
+  {
+    key: "hrms.attendance.qrGraceMinutes",
+    type: "integer",
+    category: "hrms",
+    label: "QR check-in grace",
+    description:
+      "Grace for QR check-ins (the source's QR rows had none).",
+    default: 0,
+    min: 0,
+    max: 240,
+  },
+  {
+    key: "hrms.attendance.qrFullDayPercent",
+    type: "integer",
+    category: "hrms",
+    label: "QR full day above this share",
+    description:
+      "A QR day is a Full Day above this percentage of duty (the source used more than 70%).",
+    default: 70,
+    min: 1,
+    max: 100,
+  },
+  {
+    key: "hrms.office.maxRangeM",
+    type: "integer",
+    category: "hrms",
+    label: "Largest office radius",
+    description:
+      "The largest check-in radius an office may be given, in metres.",
+    default: 20000,
+    min: 10,
+    max: 50000,
+  },
+  {
+    key: "hrms.ot.enabled",
+    type: "boolean",
+    category: "hrms",
+    label: "Overtime",
+    description:
+      "Off in the source for everyone. On, the Overtime screen appears in HRMS.",
+    default: false,
+  },
+  {
+    key: "hrms.ot.minMinutes",
+    type: "integer",
+    category: "hrms",
+    label: "Shortest overtime",
+    description:
+      "Overtime of this many minutes or fewer is refused as not overtime.",
+    default: 10,
+    min: 0,
+    max: 240,
+  },
+  {
+    key: "hrms.reports.lateOverMinutes",
+    type: "integer",
+    category: "hrms",
+    label: "Late beyond, on monthly reports",
+    description:
+      "Monthly reports count check-ins more than this many minutes after the official in-time separately.",
+    default: 10,
+    min: 0,
+    max: 240,
+  },
+  {
+    key: "hrms.payroll.pfRatePercent",
+    type: "decimal",
+    category: "hrms",
+    label: "Employee PF rate",
+    description:
+      "Percent of half the basic salary deducted as employee PF.",
+    default: 12,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "hrms.payroll.pfCapPaise",
+    type: "integer",
+    category: "hrms",
+    label: "Employee PF cap",
+    description:
+      "The most employee PF deducted in a month, in paise (₹1,800).",
+    default: 180000,
+    min: 0,
+    max: 100000000,
+  },
+  {
+    key: "hrms.payroll.employerPfExtraPercent",
+    type: "decimal",
+    category: "hrms",
+    label: "Employer PF extra",
+    description:
+      "Percent of half the basic added on top of the capped PF for the employer's share (the source's 13% = 12% + 1%).",
+    default: 1,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "hrms.payroll.esicEmployeePercent",
+    type: "decimal",
+    category: "hrms",
+    label: "Employee ESIC rate",
+    description:
+      "Percent of gross deducted as ESIC while gross is under the ceiling.",
+    default: 0.75,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "hrms.payroll.esicEmployerPercent",
+    type: "decimal",
+    category: "hrms",
+    label: "Employer ESIC rate",
+    description:
+      "Percent of gross the employer adds as ESIC while gross is under the ceiling.",
+    default: 3.25,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "hrms.payroll.esicCeilingPaise",
+    type: "integer",
+    category: "hrms",
+    label: "ESIC ceiling",
+    description:
+      "ESIC applies only while gross earning is below this, in paise (₹21,000).",
+    default: 2100000,
+    min: 0,
+    max: 1000000000,
+  },
+  {
+    key: "hrms.payroll.februaryDays",
+    type: "integer",
+    category: "hrms",
+    label: "Days in February",
+    description:
+      "The source always paid February on 28 days.",
+    default: 28,
+    min: 28,
+    max: 29,
+  },
+  {
+    key: "hrms.performance.dailyDivisor",
+    type: "integer",
+    category: "hrms",
+    label: "Working days in a month (daily targets)",
+    description:
+      "Monthly sales targets are divided by this to give a day's target.",
+    default: 25,
+    min: 1,
+    max: 31,
+  },
+  {
+    key: "hrms.performance.periodDivisor",
+    type: "integer",
+    category: "hrms",
+    label: "Days in a month (performance points)",
+    description:
+      "Monthly targets are divided by this and multiplied by the days in the period for performance points.",
+    default: 30,
+    min: 1,
+    max: 31,
+  },
+  {
+    key: "hrms.performance.standardHours",
+    type: "integer",
+    category: "hrms",
+    label: "Standard working hours",
+    description:
+      "Average hours a day that earn a full working-hour point.",
+    default: 8,
+    min: 1,
+    max: 24,
+  },
+  {
+    key: "hrms.performance.financialYearStart",
+    type: "text",
+    category: "hrms",
+    label: "Financial year start",
+    description:
+      "The date sales and payment days are counted from, for the daily sales score and for period review points alike. The source kept two dates for one question (2023-04-01 for the score, 2024-04-01 for the points); there is one now.",
+    default: "2023-04-01",
+  },
+  {
+    key: "hrms.performance.gstPercent",
+    type: "decimal",
+    category: "hrms",
+    label: "GST added to total sale",
+    description:
+      "The daily score adds this percentage of GST to the KPI sales amount (the source's 18%).",
+    default: 18,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "hrms.performance.employeeOfMonthPercent",
+    type: "integer",
+    category: "hrms",
+    label: "Employee of the Month at",
+    description:
+      "Overall monthly performance at or above this percentage.",
+    default: 90,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "hrms.tasks.eodWhatsappNumber",
+    type: "text",
+    category: "hrms",
+    label: "Task EOD goes to",
+    description:
+      "The WhatsApp number Send Task EOD opens, with country code.",
+    default: "919822824973",
+  },
+  {
+    key: "hrms.calling.historyDays",
+    type: "integer",
+    category: "hrms",
+    label: "Calling history",
+    description:
+      "How many days the Calling history tab shows.",
+    default: 10,
+    min: 1,
+    max: 365,
+  },
+  {
+    key: "hrms.calling.suggestionFactor",
+    type: "integer",
+    category: "hrms",
+    label: "Suggestion: calls per order",
+    description:
+      "How many calls one order is worth when deciding whether to keep following a customer up: calls − this × orders.",
+    default: 7,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "hrms.calling.suggestionThreshold",
+    type: "integer",
+    category: "hrms",
+    label: "Suggestion: deactivate above",
+    description:
+      "Where calls − factor × orders is at or below this, the suggestion is “Keep following up”; above it, “Consider deactivating”.",
+    default: 7,
+    min: 0,
+    max: 1000,
+  },
+  {
+    key: "hrms.sales.activityWindowDays",
+    type: "integer",
+    category: "hrms",
+    label: "Sales activity lists open on",
+    description:
+      "How many days back the sales activity list shows by default.",
+    default: 500,
+    min: 1,
+    max: 3650,
+  },
+  {
+    key: "hrms.holidays.editWindowDays",
+    type: "integer",
+    category: "hrms",
+    label: "Holidays editable for",
+    description:
+      "A holiday more than this many days in the past can no longer be edited.",
+    default: 366,
+    min: 1,
+    max: 3650,
+  },
+  {
+    key: "hrms.payroll.ptSlabs",
+    type: "structured",
+    category: "hrms",
+    label: "Professional tax slabs",
+    description:
+      "Maharashtra PT by gender: up to each gross (paise) the tax is the figure beside it; above the last, the rest. February uses the February figure.",
+    default: { female: [{ upToPaise: 2500000, pt: 0 }], male: [{ upToPaise: 750000, pt: 0 }, { upToPaise: 1000000, pt: 17500 }], rest: 20000, february: 30000 },
+  },
+  {
+    key: "hrms.payroll.lateBands",
+    type: "structured",
+    category: "hrms",
+    label: "Late marks to half-days",
+    description:
+      "Late check-ins in a month, and the half-days of salary deducted for them: at least the first number gives the second.",
+    default: [[25, 5], [20, 4], [15, 3], [10, 2], [5, 1]],
+  },
+  {
+    key: "hrms.performance.weights",
+    type: "structured",
+    category: "hrms",
+    label: "Daily score weights",
+    description:
+      "The nine components of the daily sales score and their maximum points (they total 100).",
+    default: { visits: 10, timeCust: 5, noteLen: 5, hours: 10, km: 5, amount: 20, litres: 20, outstanding: 20, tasks: 5 },
+  },
+  {
+    key: "hrms.performance.staffOffices",
+    type: "structured",
+    category: "hrms",
+    label: "Staff performance offices",
+    description:
+      "Monthly staff performance is worked out for active employees of these offices (the source: Mahek Marketing India).",
+    default: ["Mahek Marketing India"],
+  },
+  {
+    key: "hrms.performance.timeGivenBase",
+    type: "integer",
+    category: "hrms",
+    label: "Minutes a visit for full time marks",
+    description: "Time with customers earns its full daily mark at this many minutes per visit.",
+    default: 5,
+    min: 1,
+    max: 240,
+  },
+  {
+    key: "hrms.performance.descriptionBase",
+    type: "integer",
+    category: "hrms",
+    label: "Note characters a visit for full marks",
+    description: "Meeting notes earn their full daily mark at this many characters per visit, not counting spaces and commas.",
+    default: 25,
+    min: 1,
+    max: 1000,
+  },
+  {
+    key: "hrms.performance.outstandingBands",
+    type: "structured",
+    category: "hrms",
+    label: "Average payment days bands",
+    description: "Average payment days under the first earn the full outstanding mark, under the second half, under the third a quarter, beyond it nothing.",
+    default: [15, 30, 45],
+  },
+  {
+    key: "hrms.performance.pointBands",
+    type: "structured",
+    category: "hrms",
+    label: "Performance point bands",
+    description: "Minutes a day with customers and note characters a visit: above the first number a full point, above the second half a point.",
+    default: { time: [180, 90], description: [25, 15] },
+  },
+  {
+    key: "erp.purchase.ownVehicleRatePerKmPaise",
+    type: "integer",
+    category: "erp",
+    label: "Own vehicle rate per km",
+    description:
+      "Paise per kilometre. A purchase inward brought in on Mahek's own vehicle is costed at kilometres × this rate, so nobody prices our own tempo by hand. The rate is copied onto each inward as it is saved, so changing it later never reprices a journey already made. Zero means no rate is approved yet, and an own-vehicle inward is refused until one is.",
+    default: 0,
+    min: 0,
+    max: 100000,
+  },
+  {
+    key: "erp.purchase.minQuotations",
+    type: "integer",
+    category: "erp",
+    label: "Quotations needed before one is selected",
+    description:
+      "For an item whose purchase rule is Quotation (or a requirement the buyer sent for quotations): how many vendors' quotations must be in before one can be selected and the PO raised. One means a single quotation is enough; two or more is a real comparison.",
+    default: 2,
+    min: 1,
+    max: 10,
+  },
+  {
+    key: "erp.returns.ownerApprovalPaise",
+    type: "integer",
+    category: "erp",
+    label: "Material return needing the owner's approval (paise)",
+    description:
+      "A purchase return or customer return worth more than this, with GST, needs the owner (an ERP administrator) to approve it as well, after the ordinary approval. 0 switches the second approval off. In paise: 1,00,00,000 is ₹1,00,000.",
+    default: 10_000_000,
+    min: 0,
+  },
+  {
+    key: "erp.stockCheck.onRequirement",
+    type: "boolean",
+    category: "erp",
+    label: "Count stock before every purchase requirement",
+    description:
+      "Every raw-material requirement raised from now opens a blind physical count of the item at its godown, and waits only until the count is entered before its purchase method, vendor or PO. Whatever the count finds, the purchase carries on: a count that differs from the book beyond its tolerance flags the requirement and notifies stock control, and is recounted, investigated or adjusted on the side. Requirements already raised are not affected.",
+    default: true,
+  },
+  {
+    key: "erp.stockCheck.tolerancePercent",
+    type: "decimal",
+    category: "erp",
+    label: "Count tolerance (% of the book)",
+    description:
+      "How far a physical count may sit from the reconciled book before it is a red flag, as a percentage of the book. An item can carry its own tolerance on its master record.",
+    default: 2,
+    min: 0,
+    max: 50,
+  },
+  {
+    key: "erp.stockCheck.toleranceFloor",
+    type: "decimal",
+    category: "erp",
+    label: "Smallest tolerance (litres or pieces)",
+    description:
+      "A tolerance never smaller than this, so an item whose book is near zero does not flag on a single can or a cupful.",
+    default: 1,
+    min: 0,
+    max: 1000,
+  },
+  {
+    key: "erp.stockCheck.unexpectedQtyPercent",
+    type: "integer",
+    category: "erp",
+    label: "Quantity above what the count justifies",
+    description:
+      "A requirement asking for more than the count justifies (up to the item's maximum level) by more than this percentage is flagged \"More than the shelf needs\" on the requirements list. It is not held.",
+    default: 25,
+    min: 0,
+    max: 1000,
+  },
+  {
+    key: "erp.stockCheck.dailyCount",
+    type: "integer",
+    category: "erp",
+    label: "Cycle counts a day",
+    description:
+      "How many items the daily cycle count picks, ranked by ABC class, how overdue, how much they move and how often they were wrong. Zero stops the daily cycle count.",
+    default: 10,
+    min: 0,
+    max: 500,
+  },
+  {
+    key: "erp.stockCheck.cycleDaysA",
+    type: "integer",
+    category: "erp",
+    label: "Count class A items every (days)",
+    description: "The items making up the first 80% of the value that moved over the last 90 days. Halved while an item has a recent discrepancy.",
+    default: 30,
+    min: 1,
+    max: 365,
+  },
+  {
+    key: "erp.stockCheck.cycleDaysB",
+    type: "integer",
+    category: "erp",
+    label: "Count class B items every (days)",
+    description: "The items making up the next 15% of the value that moved.",
+    default: 60,
+    min: 1,
+    max: 365,
+  },
+  {
+    key: "erp.stockCheck.cycleDaysC",
+    type: "integer",
+    category: "erp",
+    label: "Count class C items every (days)",
+    description: "Everything else, including items that did not move.",
+    default: 90,
+    min: 1,
+    max: 730,
+  },
+  {
+    key: "erp.stockCheck.fullCountDays",
+    type: "integer",
+    category: "erp",
+    label: "Full count every (days)",
+    description:
+      "A comprehensive count of every item with stock is due this often; the dashboard says when it is due. Zero turns the reminder off.",
+    default: 180,
+    min: 0,
+    max: 730,
+  },
+  {
+    key: "erp.purchase.receiptTolerancePercent",
+    type: "integer",
+    category: "erp",
+    label: "Receipt above the PO quantity",
+    description:
+      "How far above a PO line's quantity goods may be received against it, in percent of what was ordered — drums never weigh exactly what was ordered. Beyond it the receipt is refused and a new requirement and PO are needed for the extra.",
+    default: 5,
+    min: 0,
+    max: 50,
+  },
+  {
+    key: "erp.production.recipeTolerancePercent",
+    type: "integer",
+    category: "erp",
+    label: "Recipe tolerance",
+    description:
+      "How far above its product's recipe a batch line may use a raw material before the SFG batches list flags it, in percent. The flag asks somebody to look; it never refuses a batch.",
+    default: 5,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "erp.factory.packBatchBoxes",
+    type: "integer",
+    category: "erp",
+    label: "Factory app · boxes in a packing batch",
+    description:
+      "How many boxes make one packing batch on the factory floor. The factory app opens an ERP packing batch of this many boxes and fills it from what the packers count; a batch short of it stays incomplete and is not packing stock until it is full.",
+    default: 50,
+    min: 1,
+    max: 1000,
+  },
+  {
+    key: "erp.factory.mixTolerancePercent",
+    type: "decimal",
+    category: "erp",
+    label: "Factory app · mixing output limit",
+    description:
+      "How far, in percent either way, the litres a mixing batch made may differ from its batch sheet before the Production Head is asked to check it. It never refuses the batch.",
+    default: 1.5,
+    min: 0,
+    max: 50,
+  },
+  {
+    key: "erp.factory.dispatchDue",
+    type: "text",
+    category: "erp",
+    label: "Factory app · loading due by",
+    description: "The time, as HH:MM, a loading job made from an ERP order is due by on the dispatch team's phones.",
+    default: "17:00",
+  },
+  {
+    key: "erp.drums.minEmptyKg",
+    type: "decimal",
+    category: "erp",
+    label: "Empty drum · lightest weight accepted (kg)",
+    description:
+      "An empty drum weighed below this is not saved: it is weighed again, or saved only with the Production Head's approval written on it. Catches a scale left at zero or a typed 1.8 meant as 18.",
+    default: 2,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "erp.drums.maxEmptyKg",
+    type: "decimal",
+    category: "erp",
+    label: "Empty drum · heaviest weight accepted (kg)",
+    description:
+      "An empty drum weighed above this is not saved: a drum that heavy is usually not empty. Checked again, or saved only with the Production Head's approval written on it.",
+    default: 40,
+    min: 1,
+    max: 500,
+  },
+  {
+    key: "erp.drums.varianceAlertKg",
+    type: "decimal",
+    category: "erp",
+    label: "Empty drum · tare variance worth a look (kg)",
+    description:
+      "An empty drum heavier or lighter than the supplier declared on the GRN by more than this is flagged on the variance report and raises an alert. The GRN's own figure is never changed.",
+    default: 1.5,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "erp.drums.varianceAlertPercent",
+    type: "decimal",
+    category: "erp",
+    label: "Empty drum · tare variance worth a look (%)",
+    description: "The same, as a percentage of the declared tare. Either limit being passed flags the drum.",
+    default: 15,
+    min: 0,
+    max: 500,
+  },
+  {
+    key: "erp.drums.sameLotMinutes",
+    type: "integer",
+    category: "erp",
+    label: "Empty drum · ask \"is this a different drum?\" within (minutes)",
+    description:
+      "A label names a LOT, and a lot can bring several drums. A second drum of the same lot scanned within this many minutes of the last is saved only after the person confirms it is a different drum, so one drum scanned twice is not counted twice.",
+    default: 120,
+    min: 0,
+    max: 10080,
+  },
+  {
+    key: "erp.drums.factoryDepartments",
+    type: "text",
+    category: "erp",
+    label: "Factory app · departments that record empty drums",
+    description:
+      "Comma-separated factory departments whose people see Empty drum entry on the factory phone: mixing, filling, packing, dispatch, qc. A Production Head and any department supervisor always do.",
+    default: "mixing, qc",
+  },
+  {
+    key: "erp.factory.shift",
+    type: "text",
+    category: "erp",
+    label: "Factory app · shift line",
+    description: "The shift the factory app names under each person's work place, e.g. \"Shift A · 06:00–14:00\".",
+    default: "Shift A · 06:00–14:00",
+  },
+  {
+    key: "erp.dispatch.requireScan",
+    type: "boolean",
+    category: "erp",
+    label: "Scan every box before dispatch",
+    description:
+      "On: a billed line whose lots carry box ids cannot be dispatch-verified until every box (or labelled loose unit) on it has been scanned at the Dispatch desk and passed the order check. Stock packed before box ids existed has none and is not held back. Off: scanning is still offered and still checked, but Do Verified no longer waits for it — for a day the scanners are down.",
+    default: true,
+  },
+  {
+    key: "erp.labels.dotsPerMm",
+    type: "integer",
+    category: "erp",
+    label: "Label printer · dots per millimetre",
+    description:
+      "How fine the label printers print: 8 for a 203 dpi printer, which is what most are, and 12 for a 300 dpi one. It is printed on the printer's own self-test label. Labels sent straight to the printer are drawn at exactly this, so the wrong figure prints every label at two thirds or one and a half times its size.",
+    default: 8,
+    min: 6,
+    max: 24,
+  },
+  {
+    key: "erp.labels.gapMm",
+    type: "decimal",
+    category: "erp",
+    label: "Label printer · gap between labels",
+    description:
+      "Millimetres of backing paper between one label and the next on the roll. The printer finds the top of each label from it, so a figure that does not match the roll makes the print creep down the label, a little further each time.",
+    default: 3,
+    min: 0,
+    max: 10,
+  },
+  {
+    key: "erp.labels.shiftMm",
+    type: "decimal",
+    category: "erp",
+    label: "Label printer · move the print up or down",
+    description:
+      "Millimetres to move everything printed on a label, along the roll, for labels sent straight to the printer. Use it when every label comes out the same distance too high or too low — the print running onto the label before or after — once the printer has been calibrated to the roll (hold the feed button until it feeds a few labels and stops). If the print moves the wrong way, use the same figure with a minus sign. 0 sends nothing. It has no effect on the browser's own print dialog.",
+    default: 0,
+    min: -20,
+    max: 20,
+  },
+  {
+    key: "erp.labels.direction",
+    type: "integer",
+    category: "erp",
+    label: "Label printer · which way up",
+    description:
+      "0 or 1: which edge of the label leaves the printer first. If labels sent straight to the printer come out upside down for the way they are peeled and stuck, change this to the other value. It has no effect on the browser's own print dialog.",
+    default: 1,
+    min: 0,
+    max: 1,
+  },
+  {
+    key: "erp.logistics.notifyCustomers",
+    type: "boolean",
+    category: "erp",
+    label: "Tell customers where their goods are",
+    description:
+      "On: attaching an LR to a bill, every status update logistics shares, a problem on the road and the delivery each write a WhatsApp to the party. It goes through Wati where the founder has WhatsApp switched on and a logistics template is named below; otherwise it waits under Logistics → Customer messages for somebody to send it by hand. Off: nothing is written for customers, and the updates stay inside MahekOne.",
+    default: true,
+  },
+  {
+    key: "erp.logistics.watiTemplate",
+    type: "text",
+    category: "erp",
+    label: "Logistics · Wati template",
+    description:
+      "The name of the APPROVED Wati template logistics messages go out as. It may use {{name}}, {{bill_no}}, {{lr_no}}, {{lr_date}}, {{transporter}}, {{boxes}}, {{status}}, {{expected}}, {{track_link}} and {{message}} (the whole update in one line). A template asking for anything else is not sent. Blank: every message is sent by hand.",
+    default: "",
+  },
+  {
+    key: "erp.logistics.signature",
+    type: "text",
+    category: "erp",
+    label: "Logistics · message signature",
+    description: "The line every customer message ends with.",
+    default: "Mahek Marketing India",
+  },
+  {
+    key: "erp.logistics.callEveryDays",
+    type: "integer",
+    category: "erp",
+    label: "Logistics · call the transporter every",
+    description: "Days after an update on the road that the next call to the transporter falls due, unless the person updating picks another day.",
+    default: 2,
+    min: 1,
+    max: 30,
+  },
+  {
+    key: "erp.logistics.lateAfterDays",
+    type: "integer",
+    category: "erp",
+    label: "Logistics · late after",
+    description: "Days on the road, counted from dispatch, after which a consignment with no expected delivery date is flagged as running late. One with an expected date is late the day after it.",
+    default: 7,
+    min: 1,
+    max: 60,
+  },
+  {
+    key: "erp.location.autoDetect",
+    type: "boolean",
+    category: "erp",
+    label: "Find the working godown by location",
+    description:
+      "On: when somebody opens the ERP with location allowed in their browser, and they are standing inside the fence of a godown they are assigned to, it becomes their working location by itself. Only godowns with a map pin can be found, a fix too vague to tell is ignored, and a godown picked by hand stays picked for the rest of that tab. Off: the working location is only ever chosen from the header.",
+    default: true,
+  },
+  {
+    key: "erp.location.godownRadiusM",
+    type: "integer",
+    category: "erp",
+    label: "Godown fence radius",
+    description:
+      "Metres from a godown's map pin within which somebody counts as working there. Wide enough to cover the yard and the gate, narrow enough that two godowns in one industrial estate do not both claim the same person — where fences overlap the nearer pin wins.",
+    default: 300,
+    min: 25,
+    max: 5000,
+  },
+  {
+    key: "erp.orders.live",
+    type: "boolean",
+    category: "erp",
+    label: "The ERP takes the orders",
+    description:
+      "Off: orders still come from the Taken Order and Order Details sheets, and the ERP's own orders stay inside the ERP. On: every ERP order is written into MahekOne's order book and bills (targets, the Call Log, outstanding and reorder predictions read it), the order sheet stops writing orders and bills, orders from a Pending customer go to the Accounts approval queue, and a customer is held off the Call Log while an ERP order of theirs is open. Turn it on the day the team stops typing orders into the sheet — never while both are in use, or every order is counted twice.",
+    default: false,
+  },
+  {
+    key: "erp.ai.voice.enabled",
+    type: "boolean",
+    category: "erp-ai",
+    label: "ERP · voice notes",
+    description:
+      "Puts the dictation microphone on every ERP remark, note and description box. It is the CRM's dictation, with the same providers; off, or with no provider key, the microphone is simply not drawn.",
+    default: true,
+  },
+  {
+    key: "erp.ai.alerts.enabled",
+    type: "boolean",
+    category: "erp-ai",
+    label: "ERP · unusual-activity alerts",
+    description:
+      "Runs the alert rules hourly and nightly. The rules are ordinary code; off, nothing new is raised and the Alerts screen keeps what it already holds.",
+    default: true,
+  },
+  {
+    key: "erp.ai.alerts.rateJumpPct",
+    type: "integer",
+    category: "erp-ai",
+    label: "Purchase rate jump (%)",
+    description:
+      "A purchase whose litre rate differs from the median of this supplier's recent rates for the item by more than this raises an alert.",
+    default: 20,
+    min: 1,
+    max: 500,
+  },
+  {
+    key: "erp.ai.alerts.rateLookback",
+    type: "integer",
+    category: "erp-ai",
+    label: "Purchases the rate is compared with",
+    description:
+      "How many of the supplier's previous purchases of the item make up the median a new rate is compared against.",
+    default: 5,
+    min: 2,
+    max: 50,
+  },
+  {
+    key: "erp.ai.alerts.rateMissingDays",
+    type: "integer",
+    category: "erp-ai",
+    label: "Rate missing for (days)",
+    description:
+      "A register row still without a rate this many days after its purchase date raises an alert — it is not in stock until it has one.",
+    default: 3,
+    min: 1,
+    max: 90,
+  },
+  {
+    key: "erp.ai.alerts.sfgLossPct",
+    type: "integer",
+    category: "erp-ai",
+    label: "High SFG loss (%)",
+    description:
+      "An SFG batch line whose litres adjusted exceed this share of what it consumed raises an alert.",
+    default: 5,
+    min: 1,
+    max: 100,
+  },
+  {
+    key: "erp.ai.alerts.fillLossPct",
+    type: "integer",
+    category: "erp-ai",
+    label: "High filling loss (%)",
+    description:
+      "A filling whose cans adjusted exceed this share of the cans filled raises an alert.",
+    default: 3,
+    min: 1,
+    max: 100,
+  },
+  {
+    key: "erp.ai.alerts.writeOffCount",
+    type: "integer",
+    category: "erp-ai",
+    label: "Repeated write-offs",
+    description:
+      "This many transfers to Item Lost Record by one person, or from one godown, within the window below raises an alert.",
+    default: 3,
+    min: 1,
+    max: 100,
+  },
+  {
+    key: "erp.ai.alerts.writeOffDays",
+    type: "integer",
+    category: "erp-ai",
+    label: "Write-off window (days)",
+    description:
+      "The window the write-off count above is counted in.",
+    default: 30,
+    min: 1,
+    max: 365,
+  },
+  {
+    key: "erp.ai.alerts.marginPct",
+    type: "integer",
+    category: "erp-ai",
+    label: "Thin margin (%)",
+    description:
+      "A dispatched line whose margin is below this share of its amount, or negative, raises an alert.",
+    default: 5,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "erp.ai.alerts.fulfilDays",
+    type: "integer",
+    category: "erp-ai",
+    label: "Slow fulfilment (days)",
+    description:
+      "A line dispatched more than this many days after it was ordered raises an alert.",
+    default: 7,
+    min: 1,
+    max: 90,
+  },
+  {
+    key: "erp.ai.alerts.readyUnbilledHours",
+    type: "integer",
+    category: "erp-ai",
+    label: "Ready but not billed (hours)",
+    description:
+      "A line Ready and fully allocated with no Tally bill number after this many hours raises an alert.",
+    default: 24,
+    min: 1,
+    max: 720,
+  },
+  {
+    key: "erp.ai.alerts.stuckTestHours",
+    type: "integer",
+    category: "erp-ai",
+    label: "Test unverified (hours)",
+    description:
+      "A purchase test still undecided after this many hours raises an alert.",
+    default: 48,
+    min: 1,
+    max: 720,
+  },
+  {
+    key: "erp.ai.alerts.stuckLrDays",
+    type: "integer",
+    category: "erp-ai",
+    label: "LR missing (days)",
+    description:
+      "A dispatched bill still without an LR number this many days after dispatch raises an alert.",
+    default: 3,
+    min: 1,
+    max: 90,
+  },
+  {
+    key: "erp.ai.alerts.stuckCnDays",
+    type: "integer",
+    category: "erp-ai",
+    label: "Credit note not issued (days)",
+    description:
+      "An accepted credit-note request not issued after this many days raises an alert.",
+    default: 7,
+    min: 1,
+    max: 90,
+  },
+  {
+    key: "erp.ai.alerts.stuckPackDays",
+    type: "integer",
+    category: "erp-ai",
+    label: "Packing batch incomplete (days)",
+    description:
+      "A packing batch whose cans still do not match its boxes after this many days raises an alert.",
+    default: 3,
+    min: 1,
+    max: 90,
+  },
+  {
+    key: "erp.ai.alerts.duplicateExpenseDays",
+    type: "integer",
+    category: "erp-ai",
+    label: "Duplicate expense window (days)",
+    description:
+      "The same person, amount and particular twice within this many days raises an alert.",
+    default: 3,
+    min: 1,
+    max: 90,
+  },
+  {
+    key: "erp.ai.complaints.enabled",
+    type: "boolean",
+    category: "erp-ai",
+    label: "ERP · complaint assistant",
+    description:
+      "Shows the batch trace and the possible-batch-problem notice on a customer request.",
+    default: true,
+  },
+  {
+    key: "erp.ai.complaints.clusterThreshold",
+    type: "integer",
+    category: "erp-ai",
+    label: "Complaints that make a batch problem",
+    description:
+      "This many requests touching the same lots within the window below show a possible batch problem.",
+    default: 3,
+    min: 2,
+    max: 50,
+  },
+  {
+    key: "erp.ai.complaints.clusterDays",
+    type: "integer",
+    category: "erp-ai",
+    label: "Batch-problem window (days)",
+    description:
+      "The window the complaint cluster above is counted in.",
+    default: 30,
+    min: 1,
+    max: 365,
+  },
+  {
+    key: "erp.ai.reorder.enabled",
+    type: "boolean",
+    category: "erp-ai",
+    label: "ERP · suggested re-order levels",
+    description:
+      "Shows suggested minimum and maximum levels from recent use. Nothing changes until somebody applies one.",
+    default: true,
+  },
+  {
+    key: "erp.ai.reorder.lookbackDays",
+    type: "integer",
+    category: "erp-ai",
+    label: "Use measured over (days)",
+    description:
+      "How far back average daily use is measured for a suggested level.",
+    default: 90,
+    min: 7,
+    max: 730,
+  },
+  {
+    key: "erp.ai.reorder.minCoverDays",
+    type: "integer",
+    category: "erp-ai",
+    label: "Minimum cover (days)",
+    description:
+      "The suggested minimum is this many days of average use.",
+    default: 7,
+    min: 1,
+    max: 180,
+  },
+  {
+    key: "erp.ai.reorder.maxCoverDays",
+    type: "integer",
+    category: "erp-ai",
+    label: "Maximum cover (days)",
+    description:
+      "The suggested maximum is this many days of average use.",
+    default: 21,
+    min: 1,
+    max: 365,
+  },
+  {
+    key: "erp.ai.bills.enabled",
+    type: "boolean",
+    category: "erp-ai",
+    label: "ERP · supplier bill reading",
+    description:
+      "Reads a photographed or scanned supplier bill and proposes the register's bill number, rate, GST and quantity. A person reviews every value before it is saved.",
+    default: true,
+  },
+  {
+    key: "erp.ai.bills.monthlyCap",
+    type: "integer",
+    category: "erp-ai",
+    label: "Bill readings a month",
+    description:
+      "Past this many readings in a calendar month the feature goes quiet and says so.",
+    default: 500,
+    min: 0,
+    max: 100000,
+  },
+  {
+    key: "erp.ai.bill.qtyTolerancePct",
+    type: "integer",
+    category: "erp-ai",
+    label: "Bill quantity tolerance (%)",
+    description:
+      "A bill quantity further than this from the inward quantity is flagged on the review.",
+    default: 2,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "erp.ai.bill.rateDeviationPct",
+    type: "integer",
+    category: "erp-ai",
+    label: "Bill rate deviation (%)",
+    description:
+      "A bill rate further than this from the supplier's last rate for the item is flagged on the review.",
+    default: 10,
+    min: 0,
+    max: 500,
+  },
+  {
+    key: "erp.ai.orders.enabled",
+    type: "boolean",
+    category: "erp-ai",
+    label: "ERP · orders from messages",
+    description:
+      "Turns a pasted or spoken customer message into draft order lines. Nothing becomes an order until a person accepts the draft.",
+    default: true,
+  },
+  {
+    key: "erp.ai.orders.monthlyCap",
+    type: "integer",
+    category: "erp-ai",
+    label: "Order readings a month",
+    description:
+      "Past this many readings in a calendar month the feature goes quiet and says so.",
+    default: 2000,
+    min: 0,
+    max: 100000,
+  },
+  {
+    key: "erp.ai.ask.enabled",
+    type: "boolean",
+    category: "erp-ai",
+    label: "ERP · ask the ERP",
+    description:
+      "Answers questions from the ERP's own screens and services, scoped to what the person can open. It cannot change anything.",
+    default: true,
+  },
+  {
+    key: "erp.ai.ask.monthlyCap",
+    type: "integer",
+    category: "erp-ai",
+    label: "Questions a month",
+    description:
+      "Past this many questions in a calendar month the feature goes quiet and says so.",
+    default: 3000,
+    min: 0,
+    max: 100000,
+  },
+  {
+    key: "erp.ai.photos.enabled",
+    type: "boolean",
+    category: "erp-ai",
+    label: "ERP · reading LR and test photos",
+    description:
+      "Reads LR numbers and test readings from photographs, as suggestions a person confirms.",
+    default: true,
+  },
+  {
+    key: "erp.ai.photos.monthlyCap",
+    type: "integer",
+    category: "erp-ai",
+    label: "Photo readings a month",
+    description:
+      "Past this many readings in a calendar month the feature goes quiet and says so.",
+    default: 1000,
+    min: 0,
+    max: 100000,
+  },
+  {
+    key: "erp.ai.qc.densityTolerancePct",
+    type: "integer",
+    category: "erp-ai",
+    label: "Density tolerance (%)",
+    description:
+      "A density read from a photo further than this from the raw material's master density is flagged.",
+    default: 3,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "erp.ai.stockCheck.enabled",
+    type: "boolean",
+    category: "erp-ai",
+    label: "ERP · discrepancy assistant",
+    description:
+      "Explains a red-flagged count in words: which pending or missing records could account for the difference, and whether a record or the goods themselves look missing. It ranks the records the rules found and never creates an entry.",
+    default: true,
+  },
+  {
+    key: "erp.ai.stockCheck.monthlyCap",
+    type: "integer",
+    category: "erp-ai",
+    label: "Discrepancy explanations a month",
+    description:
+      "Past this many explanations in a calendar month the assistant goes quiet and says so; the rules' own list of causes still shows.",
+    default: 500,
+    min: 0,
+    max: 100000,
+  },
+  {
+    key: "erp.ai.complaints.monthlyCap",
+    type: "integer",
+    category: "erp-ai",
+    label: "Complaint suggestions a month",
+    description:
+      "Past this many suggestions in a calendar month the feature goes quiet and says so.",
+    default: 1000,
+    min: 0,
+    max: 100000,
+  },
+  {
+    key: "erp.ai.visionModel",
+    type: "text",
+    category: "erp-ai",
+    label: "ERP · vision model",
+    description:
+      "An OpenAI model that reads images: supplier bills, LRs and test photos.",
+    default: "gpt-4o",
+  },
+  {
+    key: "erp.ai.textModel",
+    type: "text",
+    category: "erp-ai",
+    label: "ERP · reading model",
+    description:
+      "An OpenAI text model that reads order messages and complaint descriptions, and answers questions.",
+    default: "gpt-5-mini",
+  },
+  /* ---------------------------------------------- ask about the team
+   *
+   * The Sales Dashboard's "Ask about the team" drawer. OpenAI writes its own
+   * read-only queries against views narrowed to what the asker may see; these
+   * decide which model, how long it may take, and how long answers are
+   * remembered so a repeated question does not touch the database again.
+   */
+  {
+    key: "salesAsk.enabled",
+    type: "boolean",
+    category: "performance",
+    label: "Ask about the team",
+    description:
+      "Let managers ask the Sales Dashboard anything about their team — attendance, leave, visits, routes, orders, collections, targets — and have it answered from the data they are allowed to see. Off hides the answers immediately.",
+    default: true,
+  },
+  {
+    key: "salesAsk.model",
+    type: "text",
+    category: "performance",
+    label: "Ask about the team · model",
+    description:
+      "The OpenAI model that reads the question and writes the queries. A faster model answers sooner; a stronger one handles harder questions.",
+    default: "gpt-5-mini",
+  },
+  {
+    key: "salesAsk.reasoningEffort",
+    type: "text",
+    category: "performance",
+    label: "Ask about the team · thinking effort",
+    description:
+      "How long a reasoning model thinks before answering: minimal, low, medium or high. Lower is faster. Ignored by models that do not reason.",
+    default: "low",
+  },
+  {
+    key: "salesAsk.maxQueries",
+    type: "integer",
+    category: "performance",
+    label: "Ask about the team · queries per question",
+    description: "The most database reads one question may make before it has to answer with what it has.",
+    default: 6,
+    min: 1,
+    max: 15,
+  },
+  {
+    key: "salesAsk.timeoutSeconds",
+    type: "integer",
+    category: "performance",
+    label: "Ask about the team · time limit",
+    description: "Seconds before a question is given up on and the manager is asked to narrow it.",
+    default: 75,
+    min: 10,
+    max: 240,
+  },
+  {
+    key: "salesAsk.queryTimeoutSeconds",
+    type: "integer",
+    category: "performance",
+    label: "Ask about the team · one query's time limit",
+    description: "Seconds a single database read may run. A slower one is stopped and the model is told to ask for less.",
+    default: 8,
+    min: 1,
+    max: 60,
+  },
+  {
+    key: "salesAsk.resultCacheSeconds",
+    type: "integer",
+    category: "performance",
+    label: "Ask about the team · remember a query for",
+    description:
+      "Seconds a query's rows are remembered, for anybody who can see exactly the same rows. The same read inside this window is answered from memory, not the database. 0 turns it off.",
+    default: 60,
+    min: 0,
+    max: 3600,
+  },
+  {
+    key: "salesAsk.answerCacheSeconds",
+    type: "integer",
+    category: "performance",
+    label: "Ask about the team · remember an answer for",
+    description:
+      "Seconds a fresh question's answer is remembered. The same question asked again inside this window — by the same person or anybody who sees the same rows — is answered instantly. Follow-up questions are always worked out again. 0 turns it off.",
+    default: 120,
+    min: 0,
+    max: 3600,
+  },
+  {
+    key: "salesAsk.contextCacheSeconds",
+    type: "integer",
+    category: "performance",
+    label: "Ask about the team · remember a person's access for",
+    description:
+      "Seconds a person's access and territory are remembered between questions. A change on the Access or Territory screen reaches the panel within this window.",
+    default: 300,
+    min: 0,
+    max: 3600,
+  },
+  /* ---------------------------------------------- ask the documentation
+   *
+   * The Documentation app's "Ask the docs" panel. The model searches the
+   * written pages through a tool and answers with links to the sections it
+   * read; it never reads the database except to quote a setting's live value.
+   */
+  /* ------------------------------------------------- ask the CRM
+   *
+   * The Telecaller CRM's Ask AI: the header search box and its drawer. Same
+   * engine as "Ask about the team" — the model writes read-only queries over
+   * views narrowed to the asker's own book — so the time limits and caches
+   * are the salesAsk.* ones; only whether it is on and which model reads are
+   * the CRM's own.
+   */
+  {
+    key: "crmAsk.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Ask the CRM",
+    description:
+      "Let anybody who holds the CRM ask a question in plain words — who owes the most, which customers are due to order, what was promised on a call — and have it answered from their own book. Off hides the answers immediately.",
+    default: true,
+  },
+  {
+    key: "crmAsk.model",
+    type: "text",
+    category: "voice",
+    label: "Ask the CRM · model",
+    description:
+      "The OpenAI model that reads the question and writes the queries. A faster model answers sooner; a stronger one handles harder questions.",
+    default: "gpt-5-mini",
+  },
+  {
+    key: "docsAsk.enabled",
+    type: "boolean",
+    category: "voice",
+    label: "Ask the docs",
+    description:
+      "Let anybody who holds the Documentation app ask a question in plain words and have it answered from the written pages, with links to the sections it came from. Off hides the answers immediately.",
+    default: true,
+  },
+  {
+    key: "docsAsk.model",
+    type: "text",
+    category: "voice",
+    label: "Ask the docs · model",
+    description: "The OpenAI model that searches the documentation and writes the answer.",
+    default: "gpt-5-mini",
+  },
+  {
+    key: "docsAsk.reasoningEffort",
+    type: "text",
+    category: "voice",
+    label: "Ask the docs · thinking effort",
+    description:
+      "How long a reasoning model thinks before answering: minimal, low, medium or high. Lower is faster. Ignored by models that do not reason.",
+    default: "low",
+  },
+  {
+    key: "docsAsk.maxLookups",
+    type: "integer",
+    category: "voice",
+    label: "Ask the docs · lookups per question",
+    description: "The most searches and section reads one question may make before it has to answer with what it has found.",
+    default: 8,
+    min: 1,
+    max: 20,
+  },
+  {
+    key: "docsAsk.timeoutSeconds",
+    type: "integer",
+    category: "voice",
+    label: "Ask the docs · time limit",
+    description: "Seconds before a question is given up on and the reader is asked to narrow it.",
+    default: 60,
+    min: 10,
+    max: 240,
+  },
+  /* ------------------------------------------------------------------ hire */
+  {
+    key: "hire.ai.enabled",
+    type: "boolean",
+    category: "hire",
+    label: "AI assistance in Hire",
+    description:
+      "Off, every AI step in Hire takes its manual path: interviewers score by hand, CVs are typed in, messages go out as templates. The pipeline never stops for want of a model; it runs slower and says so.",
+    default: true,
+  },
+  {
+    key: "hire.ai.reasoningModel",
+    type: "text",
+    category: "hire",
+    label: "Reasoning model",
+    description: "Rubric scoring, consistency checks, ranking, blueprint generation and committee briefs.",
+    default: "gpt-5",
+  },
+  {
+    key: "hire.ai.fastModel",
+    type: "text",
+    category: "hire",
+    label: "Fast model",
+    description: "CV parsing, message drafting, summaries and the copilot's suggestions.",
+    default: "gpt-5-mini",
+  },
+  {
+    key: "hire.ai.visionModel",
+    type: "text",
+    category: "hire",
+    label: "Vision model",
+    description: "Reads identity documents, bank statements, certificates and payslips.",
+    default: "gpt-4o",
+  },
+  {
+    key: "hire.ai.transcriptionModel",
+    type: "text",
+    category: "hire",
+    label: "Transcription model",
+    description: "Interview and voice-screen recordings into text.",
+    default: "gpt-4o-transcribe",
+  },
+  {
+    key: "hire.ai.realtimeModel",
+    type: "text",
+    category: "hire",
+    label: "Realtime speech model",
+    description: "The AI voice screener, speech to speech.",
+    default: "gpt-realtime",
+  },
+  {
+    key: "hire.ai.minConfidence",
+    type: "decimal",
+    category: "hire",
+    label: "Confidence below which a person scores",
+    description:
+      "An AI score below this confidence is shown as Low, greyed, with \"Human scoring recommended\" — it is never accepted by default either way.",
+    default: 0.55,
+    min: 0,
+    max: 1,
+  },
+  {
+    key: "hire.ai.monthlyBudgetPaise",
+    type: "integer",
+    category: "hire",
+    label: "Monthly AI budget (paise)",
+    description: "Past this the AI usage screen and the bell say so. It alerts; it never blocks a hire.",
+    default: 1000000,
+    min: 0,
+    max: 1000000000,
+  },
+  {
+    key: "hire.rejection.reviewDays",
+    type: "integer",
+    category: "hire",
+    label: "Days to confirm a proposed rejection",
+    description:
+      "A score below a stage's floor PROPOSES a rejection. It waits this long in Decisions for a named person to confirm or dismiss it; nothing is rejected by the system alone.",
+    default: 2,
+    min: 1,
+    max: 30,
+  },
+  {
+    key: "hire.languages",
+    type: "text",
+    category: "hire",
+    label: "Candidate languages",
+    description: "Languages messages are drafted in and the voice screen speaks, comma-separated.",
+    default: "English, Hindi, Marathi, Gujarati",
+  },
+  {
+    key: "hire.voice.callWindow",
+    type: "text",
+    category: "hire",
+    label: "Voice screen call window",
+    description: "When the AI screener may call a candidate, in IST.",
+    default: "10:00-19:00",
+  },
+  {
+    key: "hire.voice.maxAttempts",
+    type: "integer",
+    category: "hire",
+    label: "Voice screen attempts",
+    description: "Unanswered after this many, the screen falls back to scheduling a person.",
+    default: 3,
+    min: 1,
+    max: 10,
   },
 ] as const satisfies readonly SettingDefinition[];
 
@@ -3485,6 +5584,34 @@ export function validateSetting(key: string, raw: unknown): ValidationResult {
  */
 export function checkConsistency(config: Config): string[] {
   const problems: string[] = [];
+
+  /* A lightest weight above the heaviest would refuse every empty drum. */
+  if (config["erp.drums.minEmptyKg"] >= config["erp.drums.maxEmptyKg"]) {
+    problems.push("The lightest empty drum weight must be below the heaviest.");
+  }
+
+  /* A cutover nobody can read is a cutover that hides everything or nothing,
+     and which of the two depends on how Postgres happens to parse it. */
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(config["fieldActivity.cutoverDate"]) ||
+      Number.isNaN(Date.parse(`${config["fieldActivity.cutoverDate"]}T00:00:00Z`))) {
+    problems.push(
+      `The MBOS cutover date must be a date written YYYY-MM-DD, not "${config["fieldActivity.cutoverDate"]}".`,
+    );
+  }
+
+  /* The effort is passed to OpenAI as written, and a word it does not know is
+     a refused request on every question rather than a slower answer. */
+  if (!["minimal", "low", "medium", "high"].includes(config["salesAsk.reasoningEffort"])) {
+    problems.push("Ask about the team's thinking effort must be minimal, low, medium or high.");
+  }
+  if (!["minimal", "low", "medium", "high"].includes(config["docsAsk.reasoningEffort"])) {
+    problems.push("Ask the docs' thinking effort must be minimal, low, medium or high.");
+  }
+
+  /* A suggested minimum at or above the suggested maximum is a level nobody can hold. */
+  if (config["erp.ai.reorder.minCoverDays"] >= config["erp.ai.reorder.maxCoverDays"]) {
+    problems.push("The ERP's minimum cover days must be below its maximum cover days.");
+  }
 
   /*
    * A push slower than the full team read is a push that never arrives first.
@@ -3743,6 +5870,19 @@ export function checkConsistency(config: Config): string[] {
     }
   }
 
+  // A payout calendar with no payment day can plan nothing, and a day it does
+  // not recognise is a day nobody can drop a payout on.
+  const payoutDays = config["payments.vendorPayoutDays"];
+  if (!Array.isArray(payoutDays) || payoutDays.length === 0) {
+    problems.push("Vendor payments need at least one weekday to go out on.");
+  } else {
+    const names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+    const unknown = payoutDays.filter((d) => !names.includes(d));
+    if (unknown.length) {
+      problems.push(`These are not weekdays: ${unknown.join(", ")}. Name them in full, as Tuesday or Friday.`);
+    }
+  }
+
   // The quiet a reported payment buys must expire while the customer is still
   // being chased at all. Set beyond the escalation ladder it would silence an
   // account permanently on nothing more than somebody's word.
@@ -3768,6 +5908,15 @@ export function checkConsistency(config: Config): string[] {
   if (mismatch <= accuracy) {
     problems.push(
       `A check-in is refused past ${mismatch}m from the shop, but a fix is trusted down to ${accuracy}m of error. The radius must be comfortably larger than the accuracy threshold, or an honest salesman on a poor signal is refused at the door of the right shop.`,
+    );
+  }
+
+  // A reminder that he has left, raised inside the distance he was allowed to
+  // check in from, would fire at the counter of the shop he is still in.
+  const forgotAt = config["mbos.visit.forgotCheckoutMetres"];
+  if (forgotAt <= mismatch * 2) {
+    problems.push(
+      `The "forgot to check out" reminder fires ${forgotAt}m from the check-in, but a check-in is allowed up to ${mismatch}m from the shop. Keep the reminder at least twice the check-in radius, or somebody still standing in the shop is asked whether he has left.`,
     );
   }
 
@@ -3947,6 +6096,12 @@ export function checkConsistency(config: Config): string[] {
     );
   }
 
+  /* A class counted less often than the class below it inverts ABC: the
+     valuable shelf would be the one nobody looks at. */
+  if (!(config["erp.stockCheck.cycleDaysA"] <= config["erp.stockCheck.cycleDaysB"] && config["erp.stockCheck.cycleDaysB"] <= config["erp.stockCheck.cycleDaysC"])) {
+    problems.push("Class A items must be counted at least as often as class B, and B at least as often as C.");
+  }
+
   return problems;
 }
 
@@ -4005,11 +6160,16 @@ export type Config = {
   "bills.creditDayOptions": number[];
 
   "payments.reportedQuietDays": number;
+  "payments.paidCoolingDays": number;
   "payments.allowOnAccountRemainder": boolean;
   "people.amChangeReasons": string[];
   "people.companyName": string;
   "people.pickerSearchThreshold": number;
 
+  "auth.password.maxFailures": number;
+  "auth.password.failureWindowMinutes": number;
+  "auth.password.maxFailuresPerAddress": number;
+  "auth.console.confirmMinutes": number;
   "auth.otp.codeLength": number;
   "auth.otp.ttlMinutes": number;
   "auth.otp.maxVerifyAttempts": number;
@@ -4030,6 +6190,10 @@ export type Config = {
   "payments.datedModes": string[];
   "payments.holdStaleDays": number;
   "payments.matchWindowDays": number;
+  "payments.vendorPayoutDays": string[];
+  "payments.vendorDefaultCreditDays": number;
+  "payments.cashflowLookbackMonths": number;
+  "payments.cashflowMinPayments": number;
   "payments.matchTolerancePercent": number;
 
   "targets.defaultMethod": "trailing-average" | "last-month" | "fixed";
@@ -4081,7 +6245,10 @@ export type Config = {
   "dashboard.complaintUnresolvedFlagDays": number;
   "complaints.defaultSeverity": "low" | "medium" | "high" | "critical";
   "interactions.maxNotesLength": number;
+  "interactions.followUpDefaultDays": number;
+  "interactions.paymentPromiseDefaultDays": number;
   "customers.defaultCreditDays": number;
+  "customers.birthdayHeadsUpDays": number;
 
   "attachments.maxSizeMb": number;
   "attachments.acceptedTypes": string[];
@@ -4094,6 +6261,7 @@ export type Config = {
   "products.frequentCount": number;
   "products.frequentRanking": "orders" | "recency";
   "products.starterListCount": number;
+  "topCustomers.count": number;
   "products.priceSource": "unset" | "manual" | "product" | "pricelist";
   "products.searchOnOrderForms": boolean;
   "products.searchMinChars": number;
@@ -4111,6 +6279,150 @@ export type Config = {
   "whatsapp.unconfirmedExpiryHours": number;
   "whatsapp.autoConfirmAfterHours": number;
 
+  "hrms.attendance.graceMinutes": number;
+  "hrms.attendance.fullDayPercent": number;
+  "hrms.attendance.privilegedRangeM": number;
+  "hrms.attendance.defaultWindowDays": number;
+  "hrms.attendance.qrEnabled": boolean;
+  "hrms.attendance.qrGraceMinutes": number;
+  "hrms.attendance.qrFullDayPercent": number;
+  "hrms.office.maxRangeM": number;
+  "hrms.ot.enabled": boolean;
+  "hrms.ot.minMinutes": number;
+  "hrms.reports.lateOverMinutes": number;
+  "hrms.payroll.pfRatePercent": number;
+  "hrms.payroll.pfCapPaise": number;
+  "hrms.payroll.employerPfExtraPercent": number;
+  "hrms.payroll.esicEmployeePercent": number;
+  "hrms.payroll.esicEmployerPercent": number;
+  "hrms.payroll.esicCeilingPaise": number;
+  "hrms.payroll.februaryDays": number;
+  "hrms.performance.dailyDivisor": number;
+  "hrms.performance.periodDivisor": number;
+  "hrms.performance.standardHours": number;
+  "hrms.performance.financialYearStart": string;
+  "hrms.performance.gstPercent": number;
+  "hrms.performance.employeeOfMonthPercent": number;
+  "hrms.tasks.eodWhatsappNumber": string;
+  "hrms.calling.historyDays": number;
+  "hrms.calling.suggestionFactor": number;
+  "hrms.calling.suggestionThreshold": number;
+  "hrms.sales.activityWindowDays": number;
+  "hrms.holidays.editWindowDays": number;
+  "hrms.payroll.ptSlabs": { female: { upToPaise: number; pt: number }[]; male: { upToPaise: number; pt: number }[]; rest: number; february: number };
+  "hrms.payroll.lateBands": [number, number][];
+  "hrms.performance.weights": Record<"visits" | "timeCust" | "noteLen" | "hours" | "km" | "amount" | "litres" | "outstanding" | "tasks", number>;
+  "hrms.performance.staffOffices": string[];
+  "hrms.performance.timeGivenBase": number;
+  "hrms.performance.descriptionBase": number;
+  "hrms.performance.outstandingBands": [number, number, number];
+  "hrms.performance.pointBands": { time: [number, number]; description: [number, number] };
+
+  "erp.location.autoDetect": boolean;
+  "erp.location.godownRadiusM": number;
+  "erp.orders.live": boolean;
+  "erp.purchase.ownVehicleRatePerKmPaise": number;
+  "erp.purchase.minQuotations": number;
+  "erp.purchase.receiptTolerancePercent": number;
+  "erp.returns.ownerApprovalPaise": number;
+  "erp.stockCheck.onRequirement": boolean;
+  "erp.stockCheck.tolerancePercent": number;
+  "erp.stockCheck.toleranceFloor": number;
+  "erp.stockCheck.unexpectedQtyPercent": number;
+  "erp.stockCheck.dailyCount": number;
+  "erp.stockCheck.cycleDaysA": number;
+  "erp.stockCheck.cycleDaysB": number;
+  "erp.stockCheck.cycleDaysC": number;
+  "erp.stockCheck.fullCountDays": number;
+  "erp.ai.stockCheck.enabled": boolean;
+  "erp.ai.stockCheck.monthlyCap": number;
+  "erp.production.recipeTolerancePercent": number;
+  "erp.factory.packBatchBoxes": number;
+  "erp.factory.mixTolerancePercent": number;
+  "erp.drums.minEmptyKg": number;
+  "erp.drums.maxEmptyKg": number;
+  "erp.drums.varianceAlertKg": number;
+  "erp.drums.varianceAlertPercent": number;
+  "erp.drums.sameLotMinutes": number;
+  "erp.drums.factoryDepartments": string;
+  "erp.factory.shift": string;
+  "erp.factory.dispatchDue": string;
+  "erp.dispatch.requireScan": boolean;
+  "erp.labels.dotsPerMm": number;
+  "erp.labels.gapMm": number;
+  "erp.labels.shiftMm": number;
+  "erp.labels.direction": number;
+  "erp.logistics.notifyCustomers": boolean;
+  "erp.logistics.watiTemplate": string;
+  "erp.logistics.signature": string;
+  "erp.logistics.callEveryDays": number;
+  "erp.logistics.lateAfterDays": number;
+  "erp.ai.voice.enabled": boolean;
+  "erp.ai.alerts.enabled": boolean;
+  "erp.ai.alerts.rateJumpPct": number;
+  "erp.ai.alerts.rateLookback": number;
+  "erp.ai.alerts.rateMissingDays": number;
+  "erp.ai.alerts.sfgLossPct": number;
+  "erp.ai.alerts.fillLossPct": number;
+  "erp.ai.alerts.writeOffCount": number;
+  "erp.ai.alerts.writeOffDays": number;
+  "erp.ai.alerts.marginPct": number;
+  "erp.ai.alerts.fulfilDays": number;
+  "erp.ai.alerts.readyUnbilledHours": number;
+  "erp.ai.alerts.stuckTestHours": number;
+  "erp.ai.alerts.stuckLrDays": number;
+  "erp.ai.alerts.stuckCnDays": number;
+  "erp.ai.alerts.stuckPackDays": number;
+  "erp.ai.alerts.duplicateExpenseDays": number;
+  "erp.ai.complaints.enabled": boolean;
+  "erp.ai.complaints.clusterThreshold": number;
+  "erp.ai.complaints.clusterDays": number;
+  "erp.ai.reorder.enabled": boolean;
+  "erp.ai.reorder.lookbackDays": number;
+  "erp.ai.reorder.minCoverDays": number;
+  "erp.ai.reorder.maxCoverDays": number;
+  "erp.ai.bills.enabled": boolean;
+  "erp.ai.bills.monthlyCap": number;
+  "erp.ai.bill.qtyTolerancePct": number;
+  "erp.ai.bill.rateDeviationPct": number;
+  "erp.ai.orders.enabled": boolean;
+  "erp.ai.orders.monthlyCap": number;
+  "erp.ai.ask.enabled": boolean;
+  "erp.ai.ask.monthlyCap": number;
+  "erp.ai.photos.enabled": boolean;
+  "erp.ai.photos.monthlyCap": number;
+  "erp.ai.qc.densityTolerancePct": number;
+  "erp.ai.complaints.monthlyCap": number;
+  "erp.ai.visionModel": string;
+  "erp.ai.textModel": string;
+  "salesAsk.enabled": boolean;
+  "salesAsk.model": string;
+  "salesAsk.reasoningEffort": string;
+  "salesAsk.maxQueries": number;
+  "salesAsk.timeoutSeconds": number;
+  "salesAsk.queryTimeoutSeconds": number;
+  "salesAsk.resultCacheSeconds": number;
+  "salesAsk.answerCacheSeconds": number;
+  "salesAsk.contextCacheSeconds": number;
+  "crmAsk.enabled": boolean;
+  "crmAsk.model": string;
+  "docsAsk.enabled": boolean;
+  "docsAsk.model": string;
+  "docsAsk.reasoningEffort": string;
+  "docsAsk.maxLookups": number;
+  "docsAsk.timeoutSeconds": number;
+  "hire.ai.enabled": boolean;
+  "hire.ai.reasoningModel": string;
+  "hire.ai.fastModel": string;
+  "hire.ai.visionModel": string;
+  "hire.ai.transcriptionModel": string;
+  "hire.ai.realtimeModel": string;
+  "hire.ai.minConfidence": number;
+  "hire.ai.monthlyBudgetPaise": number;
+  "hire.rejection.reviewDays": number;
+  "hire.languages": string;
+  "hire.voice.callWindow": string;
+  "hire.voice.maxAttempts": number;
   "voice.enabled": boolean;
   "voice.maxSeconds": number;
   "voice.maxSizeMb": number;
@@ -4122,14 +6434,41 @@ export type Config = {
   "voice.transcriptionModel": string;
   "voice.openaiTranscriptionModel": string;
   "voice.languageModel": string;
+  "callIntel.enabled": boolean;
+  "callIntel.model": string;
+  "callIntel.confirmBelowPercent": number;
+  "callIntel.classifierVetoPercent": number;
+  "callIntel.noAnswerRetryWorkingDays": number;
+  "callIntel.duplicateWindowDays": number;
+  "callIntel.exampleCalls": number;
+  "callIntel.trainingMonths": number;
+  "leadCallIntel.enabled": boolean;
+  "leadCallIntel.model": string;
+  "convertIntel.enabled": boolean;
+  "convertIntel.model": string;
+  "verifyIntel.enabled": boolean;
+  "verifyIntel.model": string;
+  "intakeIntel.enabled": boolean;
+  "intakeIntel.model": string;
+  "taskIntel.enabled": boolean;
+  "taskIntel.model": string;
+  "visitIntel.enabled": boolean;
+  "visitIntel.model": string;
+  "leadScan.enabled": boolean;
+  "leadScan.model": string;
+  "leadScan.maxImages": number;
+  "leadVoice.enabled": boolean;
+  "leadVoice.model": string;
 
   /* ------------------------------------------------- MBOS — field sales */
   "mbos.location.gpsAccuracyThresholdM": number;
   "mbos.location.visitMismatchM": number;
+  "mbos.visit.forgotCheckoutMetres": number;
   "mbos.location.routeDeviationM": number;
   "mbos.location.unplannedVisitsPerDay": number;
   "mbos.location.trackWhileWorking": boolean;
   "mbos.location.trackEverySeconds": number;
+  "mbos.location.serviceMaxDayHours": number;
   "mbos.location.trailKeepEverySeconds": number;
   "mbos.location.trailStalledAfterMisses": number;
   "mbos.location.queueRetentionDays": number;
@@ -4156,6 +6495,7 @@ export type Config = {
   "mbos.location.noTrailMinutes": number;
   "mbos.location.lowBatteryPercent": number;
   "mbos.location.livePushSeconds": number;
+  "mbos.location.liveSpeedMinKmh": number;
   "mbos.location.liveTeamSeconds": number;
   "mbos.location.liveStreamMinutes": number;
   "mbos.location.livePollSeconds": number;
@@ -4179,6 +6519,7 @@ export type Config = {
   "mbos.payments.cashDepositSlaHours": number;
   "mbos.payments.managerNotifyThresholdPaise": number;
   "mbos.payments.receiptSeriesPrefix": string;
+  "mbos.expenses.maxAttachments": number;
 
   "mbos.expenses.billPhotoThresholdPaise": number;
   "mbos.expenses.backdatedDaysAllowed": number;
@@ -4197,6 +6538,9 @@ export type Config = {
   "mbos.attendance.fullDayHours": number;
   "mbos.attendance.halfDayHours": number;
   "mbos.attendance.autoCheckOutHour": number;
+  "mbos.attendance.punchOutPromptHour": number;
+  "mbos.attendance.punchOutSecondReminderMinutes": number;
+  "mbos.attendance.missedPunchOutWindowDays": number;
   "mbos.attendance.selfieRequired": boolean;
   "mbos.attendance.selfieRetentionHours": number;
 
@@ -4226,6 +6570,7 @@ export type Config = {
   "mbos.push.failureRetentionDays": number;
 
   "mbos.leads.staleDays": number;
+  "mbos.leads.recentDays": number;
   "mbos.leads.archiveDays": number;
   "mbos.leads.escalateAfterDays": number;
   "mbos.leads.visitsBeforeDecision": number;
@@ -4255,16 +6600,22 @@ export type Config = {
   "leads.duplicateNameSimilarity": number;
   "leads.requireNextAction": boolean;
   "leads.allowManagerOverride": boolean;
+  "leads.callingDeskDirectPromotion": boolean;
   "leads.prospectReasons": { code: string; label: string }[];
   "leads.sampleReasons": { code: string; label: string }[];
   "leads.lostReasons": { code: string; label: string }[];
   "leads.verificationFailureReasons": { code: string; label: string }[];
   "leads.holdReasons": { code: string; label: string }[];
+  "leads.reopenReasons": { code: string; label: string }[];
   "leads.sampleCancelReasons": { code: string; label: string }[];
   "leads.overrideReasons": { code: string; label: string }[];
   "leads.orderBlockers": { code: string; label: string }[];
   "leads.sampleReviewChaseDays": number[];
   "leads.verificationDueDays": number;
+  "leads.selfRaisedVerifierEmail": string;
+  "leads.telecallerVerifierEmail": string;
+  "leads.fieldVerifierEmail": string;
+  "leads.fieldVerifierByOrgChart": boolean;
   "leads.figuresFreshDays": number;
   "leads.sources": { code: string; label: string }[];
   "leads.distributorDiscountApprovalPercent": number;
@@ -4274,6 +6625,8 @@ export type Config = {
   "mbos.tasks.requireCompletionNote": boolean;
   "mbos.approvals.escalationHours": number;
   "mbos.visits.minimumDwellSeconds": number;
+  "mbos.visits.minimumNoteChars": number;
+  "fieldActivity.cutoverDate": string;
   "mbos.travel.maxLegKilometres": number;
   "mbos.sync.mediaWifiOnly": boolean;
   "mbos.ai.retainAudioAfterTranscription": boolean;

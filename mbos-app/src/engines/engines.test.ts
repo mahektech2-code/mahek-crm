@@ -13,7 +13,7 @@ import { healthScore, type HealthInputs, type HealthThresholds, type HealthWeigh
 import { applySchemes, matches, type Scheme } from './schemes';
 import { cashPosition, collectionMode, type Collection } from './cash';
 import { deriveStatus, workedLabel } from './attendance';
-import { balanceAfter, leaveDays, overlaps } from './leave';
+import { balanceAfter, leaveDays, overlaps, workingDaysIn } from './leave';
 import { canValueOrders, derivedQuantities, lineValuePaise } from './order';
 
 /**
@@ -104,26 +104,35 @@ test('the radius includes its own edge, exactly as the geofence does', () => {
   assert.equal(checkInVerdict(at100, NAGPUR, 99, 50).accepted, false);
 });
 
-test('a fix that cannot prove he is there cannot prove he is not', () => {
+test('without a usable reading, a check-in does not start', () => {
   // No fix at all — a concrete godown in a market lane.
   const blind = checkInVerdict(null, NAGPUR, 100, 50);
-  assert.equal(blind.accepted, true);
+  assert.equal(blind.accepted, false);
   assert.equal(blind.reason, 'unmeasurable');
   assert.equal(blind.metresAway, null, 'zero would read as standing in the doorway');
 
-  // A fix wide enough that the shop is well inside its own error.
-  const wide = { lat: NAGPUR.lat + 300 / 111_320, lng: NAGPUR.lng, accuracyM: 400 };
+  // A fix wide enough that the shop is well inside its own error — even one
+  // that happens to land on the doorway proves nothing.
+  const wide = { lat: NAGPUR.lat, lng: NAGPUR.lng, accuracyM: 400 };
   const vague = checkInVerdict(wide, NAGPUR, 100, 50);
-  assert.equal(vague.accepted, true, 'refusing on a 400 m fix is refusing on nothing');
+  assert.equal(vague.accepted, false, 'a 400 m fix cannot place him within 100 m');
   assert.equal(vague.reason, 'unmeasurable');
+
+  // No accuracy at all is treated exactly like a bad one.
+  const unknown = checkInVerdict({ lat: NAGPUR.lat, lng: NAGPUR.lng, accuracyM: null }, NAGPUR, 100, 50);
+  assert.equal(unknown.accepted, false);
 });
 
-test('a shop with no pin lets the check-in through, and is pinned by it', () => {
+test('a shop with no pin asks him to confirm, and is pinned by the check-in', () => {
   const anywhere = { lat: NAGPUR.lat + 2, lng: NAGPUR.lng, accuracyM: 9 };
   const first = checkInVerdict(anywhere, null, 100, 50);
   assert.equal(first.accepted, true);
+  assert.equal(first.needsConfirmation, true, 'a pin is a claim somebody makes on purpose');
   assert.equal(first.reason, 'unpinned');
   assert.equal(first.pinsTheShop, true);
+
+  // A pinned shop inside the radius asks nothing.
+  assert.equal(checkInVerdict(anywhere, anywhere, 100, 50).needsConfirmation, false);
 });
 
 test('a poor fix never pins an unpinned shop', () => {
@@ -132,7 +141,7 @@ test('a poor fix never pins an unpinned shop', () => {
   // out and every honest visit afterwards is refused against it.
   const poor = { lat: NAGPUR.lat, lng: NAGPUR.lng, accuracyM: 400 };
   const verdict = checkInVerdict(poor, null, 100, 50);
-  assert.equal(verdict.accepted, true);
+  assert.equal(verdict.accepted, false);
   assert.equal(verdict.reason, 'unmeasurable');
   assert.equal(verdict.pinsTheShop, false);
 });
@@ -389,7 +398,7 @@ test('overdue, late-paying and complained-about all pull the score down', () => 
   assert.ok(poorly.score < 40, `${poorly.score}`);
   const recency = poorly.components.find((c) => c.key === 'recency')!;
   assert.equal(recency.score, 0);
-  assert.ok(recency.sentence.includes('overdue'));
+  assert.ok(recency.sentence.includes('Late'));
 });
 
 /* --------------------------------------------------------------- schemes */
@@ -583,7 +592,7 @@ test('a missed check-out is flagged, not guessed at', () => {
   assert.deepEqual(r.openSessionIds, ['s2']);
   assert.equal(r.needsRegularization, true);
   assert.equal(r.status, 'Half Day');
-  assert.ok(r.sentence.includes('regularize'));
+  assert.ok(r.sentence.includes('Ask your manager to fix this day'));
 });
 
 test('leave and non-working days are not absences', () => {
@@ -614,6 +623,18 @@ test('leave days count inclusively, and a half day is half', () => {
   const noted = leaveDays({ span: 'range', from: '2026-08-11', to: '2026-08-13', half: 'first_half' });
   assert.equal(noted.days, 3);
   assert.ok(noted.note, 'a half day on a range is dropped, and the form is told');
+});
+
+test('with the office calendar, leave counts working days the way the office debits them', () => {
+  // Monday to Saturday worked; 2026-08-15 (a Saturday) is a holiday.
+  const calendar = { workingDays: [1, 2, 3, 4, 5, 6], holidays: new Set(['2026-08-15']) };
+  // Friday 14th to Monday 17th: Fri worked, Sat holiday, Sun off, Mon worked.
+  const span = leaveDays({ span: 'range', from: '2026-08-14', to: '2026-08-17', half: null }, calendar);
+  assert.equal(span.days, 2);
+  assert.ok(span.note, 'the days not counted are said');
+  // A Sunday alone is no leave at all, as the office refuses it.
+  assert.equal(leaveDays({ span: 'single', from: '2026-08-16', to: '2026-08-16', half: null }, calendar).days, 0);
+  assert.equal(workingDaysIn('2026-08-16', '2026-08-15', calendar), 0);
 });
 
 test('the balance says in words how much of this goes unpaid', () => {

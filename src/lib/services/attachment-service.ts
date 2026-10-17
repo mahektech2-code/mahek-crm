@@ -11,7 +11,11 @@ import {
   mbosAttendanceDays,
   mbosCourses,
   mbosDocuments,
+  mbosExpenses,
+  mbosSamples,
+  mbosTasks,
   mbosTravelLegs,
+  mbosVisits,
   paymentReceipts,
 } from "@/db/schema";
 import { resolveScope, assertCustomerInScope, canFor } from "../access-control";
@@ -19,6 +23,7 @@ import { canSeeFeedback, feedbackBehindMessage } from "./feedback-access";
 import { getConfig } from "../config/store";
 import { fileStorage } from "../storage";
 import { sniffContentType } from "../file-types";
+import { scopeCovers } from "../sales-gate";
 import { err, ok, okVoid, type Result } from "../result";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -55,7 +60,9 @@ export type ParentType =
   /** Training material — a slide deck, a product sheet, a safety brief. */
   | "mbos_course"
   /** A price list somebody uploaded to be parsed: the PDF, scan or photograph itself. */
-  | "price_list_document";
+  | "price_list_document"
+  /** A supplier's invoice on a vendor payout — one file per invoice row. */
+  | "vendor_payout_invoice";
 
 export type AttachmentView = {
   id: string;
@@ -85,6 +92,7 @@ export async function limitFor(parentType: ParentType): Promise<number> {
     case "mbos_document":
     case "mbos_course":
     case "price_list_document":
+    case "vendor_payout_invoice":
       /* A document IS its file. Two would make "open the price list"
        * ambiguous on a handset, and the row carries one `attachment_id`
        * anyway — a second could never be found. */
@@ -105,23 +113,43 @@ export async function createAttachment(input: {
   bytes: Uint8Array;
   /** What the browser claimed. Recorded nowhere; used only to explain a refusal. */
   declaredType?: string;
+  /**
+   * A caller's own accepted list, checked against the SNIFFED type exactly as
+   * the configured one is. The ERP's test video is the reason: an MP4 is
+   * recognised by its `ftyp` box, which the sniffer names `audio/mp4`, and the
+   * suite-wide list is images and PDFs. Passing it widens this one upload and
+   * nothing else.
+   */
+  accepted?: string[];
+  /** Store an MP4-family container as `video/mp4` rather than `audio/mp4`. */
+  asVideo?: boolean;
+  /**
+   * A caller's own ceiling in megabytes, in place of `attachments.maxSizeMb`.
+   * The Documents library is the reason: a catalogue is thirty megabytes where
+   * a complaint photograph is three, and raising the shared setting for one
+   * would raise it for the other. See `lib/publish-limits.ts`.
+   */
+  maxSizeMb?: number;
 }): Promise<Result<{ id: string }>> {
   const ctx = await resolveScope();
   const config = await getConfig();
 
-  const maxBytes = config["attachments.maxSizeMb"] * 1024 * 1024;
+  const limitMb = input.maxSizeMb ?? config["attachments.maxSizeMb"];
+  const maxBytes = limitMb * 1024 * 1024;
   if (input.bytes.byteLength > maxBytes) {
     const mb = (input.bytes.byteLength / (1024 * 1024)).toFixed(1);
     return err(
-      `${input.filename} is ${mb} MB. The limit is ${config["attachments.maxSizeMb"]} MB.`,
+      `${input.filename} is ${mb} MB. The limit is ${limitMb} MB.`,
       "validation",
       [{ field: "file", message: "Too large." }],
     );
   }
 
-  const actual = sniffContentType(input.bytes);
-  const accepted = config["attachments.acceptedTypes"];
-  if (!actual || !accepted.includes(actual)) {
+  const sniffed = sniffContentType(input.bytes);
+  const accepted = input.accepted ?? config["attachments.acceptedTypes"];
+  const actual =
+    input.asVideo && sniffed === "audio/mp4" ? "video/mp4" : input.asVideo && sniffed === "audio/webm" ? "video/webm" : sniffed;
+  if (!actual || !(accepted.includes(actual) || (sniffed != null && accepted.includes(sniffed)))) {
     // Named precisely, because "invalid file" tells somebody nothing about
     // what to do next — and a renamed file is the interesting case.
     return err(
@@ -312,6 +340,37 @@ export async function canRead(attachmentId: string): Promise<boolean> {
    * price lists may open the file the list was read from, and nobody else.
    * Asked through the capability rather than the app, so the same rule answers
    * under /crm, /sales and the API. */
+  /* ERP files belong to an ERP screen, never to a customer's scope: whoever may
+     open the screen may open its files, and nobody else. */
+  if (row.parentType.startsWith("erp_")) {
+    const ctx = await resolveScope();
+    const { canReadErpAttachment } = await import("@/lib/erp/attachments");
+    return canReadErpAttachment(ctx.user.id, row.parentType, row.parentId);
+  }
+
+  /* HRMS files belong to an HRMS record, read under the screen it lives on. */
+  if (row.parentType.startsWith("hrms_")) {
+    const { canReadHrmsAttachment } = await import("@/lib/hrms/attachments");
+    return canReadHrmsAttachment(row.parentType, row.parentId);
+  }
+
+  /* A factory job's photograph is evidence about the job: anybody holding the
+     Factory app may open it, which is the team that loaded the truck and the
+     Production Head who reviews it. */
+  if (row.parentType === "factory_task") {
+    const { listUserApps } = await import("@/lib/access");
+    const ctx = await resolveScope();
+    return (await listUserApps(ctx.user.id)).includes("factory");
+  }
+
+  /* A vendor's invoice has no customer behind it: whoever holds Accounts →
+     Vendor payouts may open it, and nobody else. */
+  if (row.parentType === "vendor_payout_invoice") {
+    const ctx = await resolveScope();
+    const { canReadPayoutInvoice } = await import("@/lib/services/vendor-payout-service");
+    return canReadPayoutInvoice(ctx.user.id);
+  }
+
   if (row.parentType === "price_list_document") {
     const ctx = await resolveScope();
     return canFor(ctx.user, "pricelist.read");
@@ -396,6 +455,58 @@ export async function canRead(attachmentId: string): Promise<boolean> {
     return canReadTravelLegPhoto(row.parentId);
   }
 
+  if (row.parentType === "mbos_expense") {
+    return canReadExpenseAttachment(row.parentId);
+  }
+
+  /*
+   * A VISIT'S PHOTOGRAPHS AND VOICE NOTE, A SAMPLE'S PROOF, A TASK'S PHOTO —
+   * and every one of them was a 404, to everybody.
+   *
+   * The same fall-through the attendance selfie and the odometer photograph
+   * were rescued from, three parent types over: `customerBehind` looked an
+   * `mbos_visits` id up among `calls`, found nothing, and refused. The handset
+   * has uploaded a shop photo, a customer photo and a voice note on visits
+   * since it shipped, and no manager could ever open one — which is why the
+   * Visits screen could only print how many there were.
+   *
+   * Read as field evidence: the salesman who took it, and whoever holds a
+   * Sales Dashboard screen that shows it with him in scope. Then, failing
+   * that, the customer's own scope for a visit or a sample — a shop photo is
+   * also a fact about the shop, and a CRM user who may open the account may
+   * see what it looks like. A task names no customer, so it stops at the first.
+   */
+  if (row.parentType === "mbos_visit") {
+    const [visit] = await db
+      .select({ salesmanId: mbosVisits.salesmanId, customerId: mbosVisits.customerId })
+      .from(mbosVisits)
+      .where(eq(mbosVisits.id, row.parentId));
+    if (!visit) return false;
+    if (await canReadSalesmansOwnEvidence(visit.salesmanId, ["sales.journeys", "sales.people"])) {
+      return true;
+    }
+    return customerInScope(visit.customerId);
+  }
+  if (row.parentType === "mbos_sample") {
+    const [sample] = await db
+      .select({ salesmanId: mbosSamples.salesmanId, customerId: mbosSamples.customerId })
+      .from(mbosSamples)
+      .where(eq(mbosSamples.id, row.parentId));
+    if (!sample) return false;
+    if (await canReadSalesmansOwnEvidence(sample.salesmanId, ["sales.samples", "sales.leads"])) {
+      return true;
+    }
+    return customerInScope(sample.customerId);
+  }
+  if (row.parentType === "mbos_task") {
+    const [task] = await db
+      .select({ userId: mbosTasks.assignedToUserId })
+      .from(mbosTasks)
+      .where(eq(mbosTasks.id, row.parentId));
+    if (!task) return false;
+    return canReadSalesmansOwnEvidence(task.userId, ["sales.tasks"]);
+  }
+
   const customerId = await customerBehind(row.parentType, row.parentId);
   if (!customerId) return false;
 
@@ -419,6 +530,46 @@ export async function canRead(attachmentId: string): Promise<boolean> {
     await assertCustomerInScope(customer);
     return true;
   } catch {
+    /* A FIELD COLLECTION OR A FIELD COMPLAINT IS ALSO THE SALESMAN'S EVIDENCE.
+       The customer's scope answers for the CRM; a sales manager is scoped by
+       the salesman, not the book, and the Payments and Field reports screens
+       show these photographs to exactly that person. Asked only after the
+       customer's scope has said no, so it can widen and never narrow. */
+    if (row.parentType === "payment_receipt") {
+      const [receipt] = await db
+        .select({ by: paymentReceipts.reportedById })
+        .from(paymentReceipts)
+        .where(eq(paymentReceipts.id, row.parentId));
+      if (receipt?.by && (await canReadSalesmansOwnEvidence(receipt.by, ["sales.payments"]))) {
+        return true;
+      }
+    }
+    if (
+      row.parentType === "mbos_lead" &&
+      row.uploadedById &&
+      (await canReadSalesmansOwnEvidence(row.uploadedById, ["sales.leads"]))
+    ) {
+      return true;
+    }
+    if (row.parentType === "complaint") {
+      const [complaint] = await db
+        .select({ by: complaints.loggedByUserId })
+        .from(complaints)
+        .where(eq(complaints.id, row.parentId));
+      if (complaint?.by && (await canReadSalesmansOwnEvidence(complaint.by, ["sales.field-reports"]))) {
+        return true;
+      }
+    }
+    /* A complaint is also the ERP's "customer request". Whoever may open the
+       ERP's complaints screen decides complaints and may open their
+       photographs and credit notes, whether or not that customer is in a CRM
+       book of theirs — the rule the request's files were read under before
+       they became the complaint's (0184). */
+    if (row.parentType === "complaint") {
+      const ctx = await resolveScope();
+      const { canReadErpAttachment } = await import("@/lib/erp/attachments");
+      return canReadErpAttachment(ctx.user.id, "complaint", row.parentId);
+    }
     return false;
   }
 }
@@ -434,13 +585,25 @@ async function canReadDocument(documentId: string): Promise<boolean> {
       active: mbosDocuments.active,
       customerId: mbosDocuments.customerId,
       visibleToRoles: mbosDocuments.visibleToRoles,
+      visibleToUserIds: mbosDocuments.visibleToUserIds,
     })
     .from(mbosDocuments)
     .where(eq(mbosDocuments.id, documentId));
-  if (!doc?.active) return false;
+  if (!doc) return false;
 
   const ctx = await resolveScope();
+  /* WHOEVER PUBLISHES THE LIBRARY MAY OPEN ANY OF IT, withdrawn included. The
+   * Documents screen links every row to its file, and the rules below are
+   * about who it was published TO — so a manager who tagged three salesmen,
+   * or withdrew a price list, was refused the file on his own screen. */
+  const { canOpenModule } = await import("@/lib/access");
+  if (await canOpenModule(ctx.user.id, "sales.documents")) return true;
+
+  if (!doc.active) return false;
   if (doc.visibleToRoles?.length && !doc.visibleToRoles.includes(ctx.user.role)) {
+    return false;
+  }
+  if (doc.visibleToUserIds?.length && !doc.visibleToUserIds.includes(ctx.user.id)) {
     return false;
   }
   if (!doc.customerId) return true;
@@ -521,17 +684,22 @@ async function canReadAttendanceSelfie(attendanceId: string): Promise<boolean> {
    * `canReadTravelLegPhoto` below is the same rule for the same reason, and
    * these two are the only places in this file that ask.
    */
-  const { listUserApps } = await import("../access");
-  const apps = await listUserApps(ctx.user.id);
-  if (!apps.includes("sales")) return false;
+  /*
+   * AND THE MODULE, not only the app. "Whoever can see his attendance" means
+   * whoever can open `/sales/attendance`, and that layout asks for
+   * `sales.attendance` — so a manager given the Sales Dashboard with Attendance
+   * unticked had no screen showing anybody's check-in and could still fetch
+   * every photograph by id. `canOpenModule` asks the grant first, so this one
+   * call replaces the bare grant check that stood here.
+   */
+  const { canOpenModule } = await import("../access");
+  if (!(await canOpenModule(ctx.user.id, "sales.attendance"))) return false;
 
   const { managerScope } = await import("./sales-service");
-  const scope = await managerScope();
-  /* `null` is a national manager — everybody. See `onlyMine`, which reads the
-     same field to mean the same thing in SQL. Reached only by somebody who
-     already holds the Sales Dashboard. */
-  if (scope.salesmanIds === null) return true;
-  return scope.salesmanIds.includes(day.userId);
+  /* `scopeCovers` rather than reading `salesmanIds === null` here: null is a
+     national manager everywhere EXCEPT the CRM Sales Manager seat, whose null
+     means "no list of people at all", and an associate is now `[self]`. */
+  return scopeCovers(await managerScope(), day.userId);
 }
 
 /**
@@ -552,21 +720,79 @@ async function canReadTravelLegPhoto(legId: string): Promise<boolean> {
     .from(mbosTravelLegs)
     .where(eq(mbosTravelLegs.id, legId));
   if (!leg) return false;
+  /* The Travel ledger shows a leg's meter photographs, and so does the
+     Expenses desk that prices them — either screen is a reason to open one. */
+  return canReadSalesmansOwnEvidence(leg.userId, ["sales.travel", "sales.expenses"]);
+}
 
+/**
+ * An expense claim's bills, photographs and PDFs.
+ *
+ * They had no rule at all: `mbos_expense` fell through to `customerBehind`,
+ * which looks for a customer an expense does not have, and every read was
+ * refused — to the salesman who claimed it and to the manager deciding it.
+ * The claim is evidence about a person's own spending, never about a
+ * customer, so it is read exactly as his mileage evidence is.
+ */
+async function canReadExpenseAttachment(expenseId: string): Promise<boolean> {
+  const [expense] = await db
+    .select({ userId: mbosExpenses.userId })
+    .from(mbosExpenses)
+    .where(eq(mbosExpenses.id, expenseId));
+  if (!expense) return false;
+  /* Decided on Expenses, questioned on Expense exceptions. */
+  return canReadSalesmansOwnEvidence(expense.userId, ["sales.expenses", "sales.exceptions"]);
+}
+
+/**
+ * Evidence a salesman produced about HIMSELF — his meter, his bills: he may
+ * read it, and so may whoever holds the Sales Dashboard with him in scope.
+ *
+ * The grant is asked FIRST and is not optional: `managerScope` answers
+ * "national, sees everybody" for anybody with no region row, which is every
+ * plain salesman, so falling straight through to it would let one salesman
+ * open another's bills by id.
+ */
+async function canReadSalesmansOwnEvidence(
+  ownerId: string,
+  /** The screens that show this evidence — any one of them is a reason to open it. */
+  modules: readonly string[],
+): Promise<boolean> {
   const ctx = await resolveScope();
-  if (leg.userId === ctx.user.id) return true;
+  if (ownerId === ctx.user.id) return true;
 
-  const { listUserApps } = await import("../access");
-  const apps = await listUserApps(ctx.user.id);
-  if (!apps.includes("sales")) return false;
+  /* The MODULE, which asks the grant first. Holding the Sales Dashboard with
+     Travel and Expenses both withheld left no screen that shows a meter
+     photograph or a bill, and the file was still one id away. */
+  const { canOpenModule } = await import("../access");
+  const held = await Promise.all(modules.map((k) => canOpenModule(ctx.user.id, k)));
+  if (!held.some(Boolean)) return false;
 
   const { managerScope } = await import("./sales-service");
-  const scope = await managerScope();
-  /* `null` is a national manager — everybody, the same meaning `onlyMine`
-     reads out of the same field in SQL. Reached only by somebody who already
-     holds the Sales Dashboard. */
-  if (scope.salesmanIds === null) return true;
-  return scope.salesmanIds.includes(leg.userId);
+  /* See `scopeCovers`: a national manager covers everybody, an associate only
+     himself, and the CRM Sales Manager seat's null covers nobody. */
+  return scopeCovers(await managerScope(), ownerId);
+}
+
+/** Whether the signed-in person may see this customer — the scope the
+ * customer-parented files below are read under, asked for a field record that
+ * names a shop. */
+async function customerInScope(customerId: string): Promise<boolean> {
+  const [customer] = await db
+    .select({
+      kind: customers.kind,
+      ownerId: customers.ownerId,
+      salesAmId: customers.salesAmId,
+    })
+    .from(customers)
+    .where(eq(customers.id, customerId));
+  if (!customer) return false;
+  try {
+    await assertCustomerInScope(customer);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function customerBehind(

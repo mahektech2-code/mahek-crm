@@ -1,0 +1,91 @@
+MahekOne talks to a small number of outside services: **Wati** for WhatsApp, **MiniMoth** for sign-in codes, **Ola Maps** for maps, **Resend** for email, **Sarvam** and **OpenAI** for dictation and the AI assistants, a **Google service account** for reading the team's spreadsheets, and **Expo** for push notifications to the field app. This page explains what each one is for, where its key is kept, and — most importantly — what MahekOne does when one is missing or down.
+
+The principle behind every one of them is the same:
+
+<Rule title="A feature that cannot work says so, rather than failing when used">
+Without its key, a feature is not drawn, or it says plainly that it is not set up. A microphone that fails when pressed, a map that draws a grey rectangle, or a "code sent" message for a code that never left are all worse than the feature simply not being offered. And no outside service being down ever stops somebody signing in with a password or saving their work.
+</Rule>
+
+## At a glance
+
+| Service | What it does for MahekOne | Key kept in | If the key is missing | If the service is down |
+|---|---|---|---|---|
+| **Wati** (WhatsApp) | Sends approved templates from the business number; brings back replies and delivery ticks | Admin Console → Integrations | Nothing is sent through WhatsApp's API; copy-and-confirm by hand still works | Sends fail with "Wati could not be reached"; replies arrive late |
+| **MiniMoth** | Sends one-time sign-in codes by WhatsApp, then SMS | Admin Console → Integrations | Codes fall back to a Wati template if one is set up, otherwise only passwords are offered | The code option fails; passwords still work |
+| **Ola Maps** | Street maps on the Live and Territory screens and the handset, snapping trails to roads, finding coordinates for addresses | Admin Console → Platform → Maps (up to five keys) | Each map screen says there is no key; lists beside it still work | The trail stays as recorded; spare keys take over when one runs out |
+| **Resend** | Password-reset email | Server environment | Mail is written to the server log, and the screen says so | The reset screen says the mail could not be sent |
+| **Sarvam** | Hears Indian languages for dictation; also writes notes | Admin Console → Integrations (Voice) | OpenAI does the hearing instead | OpenAI is tried next |
+| **OpenAI** | Dictation, tidying notes, reading price lists and documents, the Hire and ERP assistants | Admin Console → Integrations (Voice) | Sarvam handles short dictation; the AI assistants are not offered | The other provider is tried for writing; assistants report they are unavailable |
+| **Google** | Reads the order, party, employee and field-activity workbooks, read-only | Server environment | The sheet sync reports "not configured" | That sync run fails and the next one tries again |
+| **Expo push** | Lock-screen notifications on the field app | Settings (Expo project id) and the APK's Firebase file | Notifications still land on the in-app bell | Same — the bell always has them |
+
+## WhatsApp, through Wati
+
+Wati is Mahek's WhatsApp Business provider. MahekOne uses it two ways:
+
+- **Sending.** Templates approved in Wati — payment reminders, order follow-ups — sent from the business number. Sending is switched **on and off by the founder** on the Founder Command Centre's WhatsApp desk, read on every send, so "I switched it off" means the next message does not go. Holding the key switches nothing on by itself.
+- **Receiving.** Wati reports each message's delivery and every customer reply back to MahekOne, so replies show in the CRM's WhatsApp screens and a delivered message is marked delivered.
+
+<Callout kind="why" title="Copied is not sent">
+A telecaller can still copy a message and send it from their own WhatsApp. That counts as sent **only when they confirm it** — a copied-but-unconfirmed message is a customer who may or may not have been contacted, and is shown as exactly that.
+</Callout>
+
+The address Wati reports to is worked out from the key itself, so it changes when the key changes. Nobody has to set it up separately, and an old key's address stops working when the key is rotated.
+
+## Sign-in codes, through MiniMoth
+
+When MiniMoth's key is held, the sign-in screen offers a **one-time code** to the person's phone: WhatsApp first, SMS when WhatsApp does not deliver. MiniMoth creates and checks the code itself — MahekOne never sees the digits, it only records that a code was sent.
+
+- The code goes to the **personal mobile HR holds** for the person. An account not linked to an employee gets no code.
+- A **test key** sends nothing and accepts `000000` for any number. It is refused on the live system, because there it would let anybody who knows a colleague's number sign in as them.
+- If MiniMoth is not set up, a WhatsApp authentication template in Wati can carry the code instead, if one is named in <Setting k="auth.otp.whatsappTemplateName" /> and approved in Wati.
+
+<Callout kind="note">
+Whatever happens to codes, the **password** form always works. The sign-in page checks code availability without ever being able to fail because of it.
+</Callout>
+
+## Maps, through Ola Maps
+
+Ola Maps draws the streets under the Sales Dashboard's **Live** and **Territory** maps and the handset's map, snaps a salesman's GPS trail onto the roads he walked, and turns addresses into coordinates.
+
+- **Up to five keys**, from separate Ola accounts, are spent in order. When Ola refuses one for running out of quota, MahekOne moves to the next and remembers the refusal for <Setting k="maps.olaKeyCooldownHours" /> hours, so a restart does not go back to a spent key.
+- **A map key has to reach the browser and the phone**, because they are what ask Ola for map tiles. That makes it the one credential that is not kept on the server. Restrict the browser key to MahekOne's own domain in Ola's console, and give the handset a **separate** key with a spending cap, so a key copied out of the app can be revoked without taking the office's maps down.
+- **Pins and trails come from MahekOne's own data**; Ola is only ever asked for squares of map, never for where anybody is.
+
+## Email, through Resend
+
+Only password-reset links are emailed today. Without Resend set up, the mail is written to the server log instead, and the reset screen says so rather than claiming it was sent. A forgotten password can also be reset with a code to the phone.
+
+## Dictation and AI, through Sarvam and OpenAI
+
+Every prose box in the CRM and the field app carries a microphone when dictation is on (<Setting k="voice.enabled" />):
+
+1. **Hearing** — Sarvam first, because it is built for Indian languages and Hindi with English mixed in; it refuses recordings over 30 seconds, so longer ones (and anything Sarvam fails on) go to OpenAI. Either key alone is enough.
+2. **Writing** — what was heard is turned into faithful English (nothing dropped) by OpenAI, or Sarvam if OpenAI is not available.
+3. **Tighten and Rewrite** are offered only when one of the two can do the writing.
+
+The recording is **never stored** — it is sent, transcribed and dropped. (The one exception is a visit note on the handset, where the recording is kept with the visit as the record of what the customer said.)
+
+The OpenAI key is also used by the assistants that read documents: price-list extraction, the lead business-card scan, the Hire evaluator and the ERP's assistants. Without it, those are not offered.
+
+## The spreadsheets, through Google
+
+A Google **service account** — an identity, not a person — is given **view** access to each workbook. MahekOne asks Google only for read permission, so nothing MahekOne does can change a cell. See [Sheets and jobs](/docs/platform/sheets-and-jobs).
+
+## Push notifications, through Expo
+
+The field app can receive lock-screen notifications once Firebase is built into the app and Expo is allowed to deliver through it — see [Handset release](/docs/platform/handset-release/developer#push-notifications). Until then, and whenever a push fails, the notification is still on the in-app bell. During <Setting k="mbos.push.quietHours" /> a push is delivered silently rather than held.
+
+## The public website
+
+The website's own server forwards each enquiry to MahekOne with a shared secret (kept in Admin Console → Integrations). An enquiry without it is refused, so nobody else can post enquiries into MahekOne.
+
+## Who can set keys
+
+Only **platform administrators** can set or clear a key, on Admin Console → Integrations (and its Voice and Maps sections). A key is shown only by its last four characters; the audit log records that a key changed, never what to. See [Configuration](/docs/platform/configuration).
+
+## Where the code and the intent disagree today
+
+- **An SMS provider key can be set that nothing uses.** The Integrations list includes a MSG91 key, but sign-in codes go through MiniMoth (or a Wati template); no code reads the MSG91 key (`src/lib/secrets.ts`).
+- **Email has no console key.** Every other outside service can be connected from a screen; Resend still needs its key and sender address in the server's environment file (`src/lib/mailer.ts`).
+- **The Google service account cannot be set from a screen either** — it is environment-only (`src/lib/sheets.ts`).

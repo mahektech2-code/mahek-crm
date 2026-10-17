@@ -3,7 +3,7 @@ import Link from "next/link";
 import { DashboardFiguresSkeleton } from "@/components/shell/screen-skeleton";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
-import { isManager, requireUser } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { getScope, scopeLabel } from "@/lib/scope";
 import {
   crmBadgeCounts,
@@ -56,9 +56,11 @@ export default async function DashboardPage({
   searchParams: Promise<{ period?: string }>;
 }) {
   const user = await requireUser();
-  const scope = await getScope(user);
-  const manager = isManager(user);
-  const teamView = manager && scope === "team";
+  /* "Team" only ever comes back for a manager OF THE CRM — `getScope` asks the
+     CRM grant, where `isManager` asked the widest level held anywhere and drew
+     the team overview for a telecaller who managed some other app. */
+  const scope = await getScope(user, "crm");
+  const teamView = scope === "team";
   const day = await today();
   const period = await currentPeriod();
   const config = await getConfig();

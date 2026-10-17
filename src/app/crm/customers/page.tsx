@@ -1,10 +1,10 @@
-import { isManager, requireUser } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { canFor } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
-import { getScope, scopeLabel } from "@/lib/scope";
+import { getScope, scopeLabel, managesHere } from "@/lib/scope";
 import {
   listAmFilterOptions,
-  listCityFilterOptions,
+  listPlaceFilterOptions,
   listAssignableUsers,
   listBackOfficeCandidates,
   listCustomersPage,
@@ -13,6 +13,7 @@ import {
 } from "@/lib/queries";
 import { customerStatusLabel } from "@/lib/format";
 import { accountTypeParam } from "@/lib/account-types";
+import { placeFilterParams } from "@/lib/place-filters";
 import { CustomersScreen } from "@/components/customers/customers-screen";
 
 export const metadata = { title: "Customers - MahekOne CRM" };
@@ -39,6 +40,8 @@ export default async function CustomersPage({
   };
 
   const user = await requireUser();
+  /* A manager OF THE CRM — `isManager` was the widest level held in any app. */
+  const managerHere = await managesHere(user, "crm");
   const scope = await getScope(user);
   // The SERVER's working day, for the Next call column — a client component
   // may not read the clock in render, and a laptop set to the wrong date must
@@ -46,7 +49,7 @@ export default async function CustomersPage({
   const day = await today();
 
   const perPage = Number(one("per") ?? 25);
-  const [page, team, config, backOfficePeople, amOptions, cityOptions, salesManagerSuggested] =
+  const [page, team, config, backOfficePeople, amOptions, placeOptions, salesManagerSuggested] =
     await Promise.all([
       listCustomersPage({
         query: one("q"),
@@ -54,7 +57,7 @@ export default async function CustomersPage({
         salesAm: one("sales"),
         salesManager: one("salesmanager"),
         backOfficeAm: one("backoffice"),
-        city: one("city"),
+        places: placeFilterParams(one),
         // "yes" / "no" / "delivered" — the third is the evidence filter, and
         // the one the conversion work is actually done from. Validated rather
         // than cast: `?party=nonsense` is a typed value the query would carry
@@ -75,7 +78,7 @@ export default async function CustomersPage({
       // Read here rather than cached anywhere: shops arrive from the sheet
       // with new spellings constantly, so the list has to be as fresh as the
       // page it is drawn on.
-      listCityFilterOptions(),
+      listPlaceFilterOptions(placeFilterParams(one)),
       salesManagerSuggestions(),
     ]);
 
@@ -83,7 +86,7 @@ export default async function CustomersPage({
     <CustomersScreen
       app="crm"
       scopeLabel={scopeLabel(scope, user)}
-      isManager={isManager(user)}
+      isManager={managerHere}
       // Asked of the same function the action asks, so a visible button and a
       // permitted action can never disagree. The action checks again anyway —
       // a disabled control is not a permission.
@@ -96,7 +99,7 @@ export default async function CustomersPage({
       amReasons={config["people.amChangeReasons"]}
       amSearchThreshold={config["people.pickerSearchThreshold"]}
       amOptions={amOptions}
-      cityOptions={cityOptions}
+      placeOptions={placeOptions}
       team={team.map((t) => ({ id: t.id, name: t.name, role: t.role }))}
       backOfficePeople={backOfficePeople}
       // The same list — this seat needs no login either, and several of the
@@ -109,7 +112,7 @@ export default async function CustomersPage({
         salesAm: one("sales") ?? "",
         salesManager: one("salesmanager") ?? "",
         backOfficeAm: one("backoffice") ?? "",
-        city: one("city") ?? "",
+        places: placeFilterParams(one),
         // The validated codes straight through — `,`-separated for more than
         // one. The screen turns codes back into the control's own words.
         accountType: accountTypeParam(one("party")) ?? "",
@@ -130,6 +133,7 @@ export default async function CustomersPage({
         contactPerson: c.contactPerson,
         phone: c.phone,
         city: c.city,
+        place: c.place ?? null,
         ownerId: c.ownerId,
         salesAmId: c.salesAmId,
         salesManagerId: c.salesManagerId,
@@ -158,6 +162,7 @@ export default async function CustomersPage({
         nextStep: c.nextStep,
         reactivationRequested: c.reactivationRequested,
         reactivationReason: c.reactivationReason,
+        birthdays: c.birthdays ?? [],
       }))}
     />
   );

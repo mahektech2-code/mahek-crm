@@ -1,0 +1,33 @@
+The Quotation manager is its own route, `app/erp/quotation-manager`, not a generic list screen: it is a grid in which rows, columns and cells are all edited in place.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Rules (pure) | `src/lib/erp/engines/quotes.ts` | `cleanCell`, `cleanRate`, `parseQuoteDate`, `parseTsv`, `columnStats`, `QUOTE_STATUSES` |
+| Grid state (pure) | `src/lib/erp/engines/quote-sheet.ts` | `applySheetOps`, `invertSheetOps` — optimistic display, roll-back and Undo |
+| Reads and the write | `src/lib/erp/quotes.ts` | `quoteSheet`, `applyQuoteOps` |
+| Action | `src/lib/actions/erp-quotes.ts` | `erpQuoteApply` — `requireErpWrite("quoteManager")` |
+| Page | `src/app/erp/quotation-manager/page.tsx` | the period and search from the URL |
+| Grid | `src/app/erp/quotation-manager/grid.tsx` | selection, editing, paste, colours, column dialog |
+| Tests | `src/lib/erp/engines/quotes.test.ts` | parsing, stats, every op undone by its inverse |
+
+## Tables
+
+<DbTable name="erp_quote_columns" />
+
+<DbTable name="erp_quote_rows" />
+
+<DbTable name="erp_quote_cells" />
+
+## One write
+
+<Code file="src/lib/erp/quotes.ts" symbol="applyQuoteOps" />
+
+Ids for new rows and columns are minted on the screen (`newQuoteId`) so a paste can create rows and fill them in one list; the server accepts an id only in that shape. A cell write checks the column's kind on the server, whatever the screen did. One audit row (`erp.quotes.edit`) is written per save, with the count of each kind of change.
+
+## Undo
+
+<Code file="src/lib/erp/engines/quote-sheet.ts" symbol="invertSheetOps" />
+
+The inverse is read off the state before the change and every inverse is an op the server accepts — a created row is undone by deleting it, a created column by archiving it — so Undo is just another save.

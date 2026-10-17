@@ -32,12 +32,5 @@ export type SheetData = {
   canImport: boolean;
 };
 
-export const SHEET_TABS = [
-  { slug: "lines", label: "Order lines" },
-  { slug: "orders", label: "Orders" },
-  { slug: "issues", label: "Needs attention" },
-  { slug: "sync", label: "Sync" },
-] as const;
-
 export const SHEET_SUBTITLE =
-  "Order history imported from the Google Sheet, exactly as the sheet holds it. Read-only — the sheet is the source.";
+  "Order history imported from the Google Sheet, exactly as the sheet holds it, and the record of every sync of every sheet. Read-only — the sheet is the source.";

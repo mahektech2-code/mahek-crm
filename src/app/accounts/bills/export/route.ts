@@ -50,12 +50,13 @@ export async function GET(request: Request) {
    * costs nothing here, because an export reads the whole filtered set anyway.
    */
   const params = new URL(request.url).searchParams;
-  const fy = params.get("fy") ?? undefined;
+  // `year` is financial ("26-27") or calendar ("2026"); `fy` is the older name.
+  const year = params.get("year") ?? params.get("fy") ?? undefined;
   const customerId = params.get("customer") ?? undefined;
   const status = params.get("status") ?? undefined;
   const bucket = params.get("bucket");
 
-  const all = await listBills({ financialYear: fy, customerId, status });
+  const all = await listBills({ year, customerId, status });
   const rows = bucket ? all.filter((r) => r.balance > 0 && r.bucket === bucket) : all;
 
   const csv = toCsv(
@@ -91,7 +92,7 @@ export async function GET(request: Request) {
   return new NextResponse(csv, {
     headers: {
       "content-type": "text/csv; charset=utf-8",
-      "content-disposition": `attachment; filename="mahek-bills-${fy ?? "all"}.csv"`,
+      "content-disposition": `attachment; filename="mahek-bills-${year ?? "all"}.csv"`,
       /* Never cached. A ledger export is a statement about this moment, and a
          stale one is worse than a slow one. */
       "cache-control": "no-store",

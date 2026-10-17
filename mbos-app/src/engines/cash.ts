@@ -117,7 +117,7 @@ export function cashPosition(
       carried.length === 0
         ? 'No cash on you.'
         : pastSla.length > 0
-          ? `${pastSla.length} collection${pastSla.length === 1 ? '' : 's'} past the deposit deadline — bank them today.`
-          : `Carrying cash from ${carried.length} collection${carried.length === 1 ? '' : 's'}.`,
+          ? `${pastSla.length} collection${pastSla.length === 1 ? '' : 's'} past the deposit deadline. Put them in the bank today.`
+          : `You have cash from ${carried.length} collection${carried.length === 1 ? '' : 's'}.`,
   };
 }

@@ -45,7 +45,7 @@ export function CommunicationPanel({
 
   return (
     <View style={{ marginTop: 20 }}>
-      <SectionLabel style={{ marginBottom: 10 }}>Reach out</SectionLabel>
+      <SectionLabel style={{ marginBottom: 10 }}>Contact them</SectionLabel>
 
       <View style={{ gap: 8 }}>
         {log.options.map((option) => (
@@ -56,9 +56,9 @@ export function CommunicationPanel({
       {log.unattributed > 0 ? (
         <T s="caption" style={{ marginTop: 8 }}>
           {plural(log.unattributed, 'earlier contact') +
-            ' on this record ' +
-            (log.unattributed === 1 ? 'names' : 'name') +
-            ' none of these — it was recorded before the app kept which one.'}
+            ' on this lead ' +
+            (log.unattributed === 1 ? 'is' : 'are') +
+            ' not in this list. It was saved before the app kept the type.'}
         </T>
       ) : null}
 
@@ -83,7 +83,7 @@ function ActionRow({ option, onPress }: { option: CommunicationOption; onPress: 
   const send = option.action.kind === 'send';
   const nothing = send && option.documents.length === 0;
   const sub = nothing
-    ? 'Nothing published yet — the office has to publish one'
+    ? 'Nothing here yet. The office must add one'
     : send
       ? option.documents.length === 1
         ? option.documents[0].title
@@ -163,9 +163,9 @@ function RecordSheet({
 
   const nothing = send && option.documents.length === 0;
   const why = nothing
-    ? 'Nothing is published in this category yet, so there is no document to send. Ask the office to publish one.'
+    ? 'No document here yet, so nothing to send. Ask the office to add one.'
     : send && !documentId
-      ? 'Say which document went — the record cannot name it a month from now otherwise.'
+      ? 'Choose which document you sent.'
       : undefined;
 
   return (
@@ -175,18 +175,16 @@ function RecordSheet({
       </T>
       <T s="caption" style={{ marginTop: 2 }}>
         {option.sent === 0
-          ? 'Nothing has gone out under this one yet.'
-          : 'This has gone out ' + plural(option.sent, 'time') + ' already.'}
+          ? 'Not sent yet.'
+          : 'Already sent ' + plural(option.sent, 'time') + '.'}
       </T>
 
       {send ? (
         <View style={{ marginTop: 14 }}>
-          <SectionLabel style={{ marginBottom: 6 }}>What goes</SectionLabel>
+          <SectionLabel style={{ marginBottom: 6 }}>What you send</SectionLabel>
           {nothing ? (
             <T style={{ fontSize: 15, lineHeight: 22, color: C.muted }}>
-              Nothing is published in this category. The office publishes these, and until one is
-              there this cannot be recorded as sent — an empty record of a document nobody can name
-              is worse than no record.
+              No document here yet. The office adds these. Until then you cannot save it as sent.
             </T>
           ) : option.documents.length === 1 ? (
             <T style={{ fontSize: 16, color: C.ink }}>{option.documents[0].title}</T>
@@ -209,11 +207,11 @@ function RecordSheet({
           deep link and nothing else: the phone he is holding already makes
           calls, and the app's job is to remember that he made one. */}
       {!send && onDial ? (
-        <SecondaryButton label="Ring them now" onPress={onDial} style={{ marginTop: 14 }} />
+        <SecondaryButton label="Call now" onPress={onDial} style={{ marginTop: 14 }} />
       ) : null}
 
       <View style={{ marginTop: 14 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Anything worth saying</SectionLabel>
+        <SectionLabel style={{ marginBottom: 6 }}>Note (optional)</SectionLabel>
         <VoiceField
           value={note}
           onChangeText={setNote}
@@ -223,7 +221,7 @@ function RecordSheet({
       </View>
 
       <PrimaryButton
-        label="Record it"
+        label="Save"
         disabled={Boolean(why)}
         whyDisabled={why}
         onPress={() => {

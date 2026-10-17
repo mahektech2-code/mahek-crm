@@ -16,7 +16,7 @@ import type { MbosHealthComponent } from "./config/registry";
  *                 complaints. Five facts, computed on the server.
  *
  *   `/sales/leads` called a customer "At risk" below a SCORE of 40.
- *   `/reports`     called a customer "At risk" at 1.25 CYCLES overdue.
+ *   the old /reports     called a customer "At risk" at 1.25 CYCLES overdue.
  *   the handset    coloured a pill green/amber/red at 70/50, as literals.
  *   the manager's own customer list fetched a score and rendered nothing.
  *

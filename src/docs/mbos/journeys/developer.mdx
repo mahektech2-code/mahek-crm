@@ -1,0 +1,115 @@
+Planning is two outbox entities — `plan_day` (the answer, or a self-planned day) and `plan_stops` (the whole picked list) — handled by `handlePlanDay` and `handlePlanStops` in `src/lib/actions/mbos.ts`. Everything that happens on the day is pure arithmetic on the phone: `engines/route.ts` for the order, `engines/nearby.ts` for Near me, and a deep link for navigation.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Screens | `mbos-app/app/journey.tsx` | The Journey tab: proposed days, today's route, Navigate the whole day, reorder, off-plan stop, tour request |
+| Screens | `mbos-app/app/journeys.tsx` | Past and coming days, list and calendar |
+| Screens | `mbos-app/app/pick.tsx` | Picking shops for an agreed day, list or map |
+| Screens | `mbos-app/app/nearby.tsx` | Near me |
+| Local data | `mbos-app/src/data/journey.ts` | `createDay`, `agreeDay`, `refuseDay`, `pickCandidates`, `pickShops`, `todayStops`, `saveStopOrder`, `JOURNEY_HISTORY_DAYS` |
+| Local data | `mbos-app/src/data/nearby.ts` | `whatIsNearby`, `nearbyRadii` |
+| Engines | `mbos-app/src/engines/route.ts` | `optimiseRoute`, `pickOrigin` |
+| Engines | `mbos-app/src/engines/nearby.ts` | `nearby`, `nextBestVisit` |
+| Navigation | `mbos-app/src/components/ui/navigate.tsx`; `src/lib/messaging.ts` `openMaps`; `src/lib/travel-leg.ts` `navigationLine` | One button, three shapes, one behaviour |
+| Map | `mbos-app/src/components/ui/shop-map.tsx` | MapLibre React Native, Ola Maps style, the four stated states |
+| Server | `src/lib/actions/mbos.ts` | `handlePlanDay`, `handlePlanStops` |
+| Server | `src/lib/services/mbos-service.ts` | Plan days and stops on the bootstrap and every pull (60 days back, 31 forward) |
+
+## Answering and planning a day
+
+<Code file="mbos-app/src/data/journey.ts" symbol="createDay" />
+
+<Code file="mbos-app/src/data/journey.ts" symbol="refuseDay" />
+
+Both write the row locally with `syncState = 'queued'` and enqueue `plan_day` with `location: false` — planning is paperwork done on a sofa as often as anywhere, and where a form was filled in answers no question worth holding a coordinate for.
+
+<Code file="src/lib/actions/mbos.ts" symbol="planDaySchema" />
+
+<Code file="src/lib/actions/mbos.ts" symbol="handlePlanDay" collapsed />
+
+## Picking shops
+
+<Code file="mbos-app/src/data/journey.ts" symbol="pickCandidates" collapsed />
+
+Three corrections live in that query and must stay together:
+
+1. **The city filter is in SQL**, because the read is capped at `PICK_PAGE`. Filtering in JavaScript after a `LIMIT` paged the wrong sixty.
+2. **The origin is the city's centroid**, one `AVG(gpsLat), AVG(gpsLng)` over the city's pinned shops — not over the search result, or typing a letter moved every distance on the screen.
+3. **The `ORDER BY` is distance**, as a flat-earth square (SQLite has no trigonometry); the exact haversine then orders the rows that come back. The cap and the visible order must sort by the same thing.
+
+<Code file="mbos-app/src/engines/route.ts" symbol="pickOrigin" />
+
+<Code file="mbos-app/src/data/journey.ts" symbol="pickShops" />
+
+<Code file="src/lib/actions/mbos.ts" symbol="handlePlanStops" collapsed />
+
+<DbTable name="mbos_journey_plans" only={["user_id", "plan_date", "city", "day_state", "planned", "self_planned", "refusal_reason", "counter_city", "proposed_by_id", "proposed_at", "responded_at"]} note={{
+  day_state: "proposed · refused · agreed · planned. Only plan_stops moves a day to planned.",
+  self_planned: "True where the salesman created the day himself.",
+  counter_city: "Where he would rather go. Optional on a refusal.",
+}} />
+
+<DbTable name="mbos_journey_stops" only={["plan_id", "customer_id", "sequence", "status", "planned", "actual_visit_at", "skip_reason"]} note={{
+  sequence: "The order he picked them in — the number IS the plan.",
+}} />
+
+## The route
+
+<Code file="mbos-app/src/engines/route.ts" symbol="optimiseRoute" collapsed />
+
+`journey.tsx` reads `mbos.route.averageSpeedKmph`, `maxTwoOptPasses`, `maxStopsForTwoOpt` and `minutesPerStop` and passes them in. The engine takes no clock and no store, so the same stops always give the same order. Unpinned stops are appended and flagged.
+
+## Near me
+
+<Code file="mbos-app/src/engines/nearby.ts" symbol="nearby" collapsed />
+
+<Code file="mbos-app/src/engines/nearby.ts" symbol="nextBestVisit" />
+
+`whatIsNearby` takes the freshest fix, reads every pinned shop with its cycle, outstanding, open task and lead stage, and calls the engine with `mbos.location.nearbyPerKilometreCost`. The worth of each reason is a constant in the engine (`WORTH`); only the distance cost is configuration. The lead-stage comparison is case-insensitive because the handset stores the wire's own words ("Contacted", "Negotiation") — a lower-case list once matched none of them.
+
+## Navigate
+
+<Code file="mbos-app/src/components/ui/navigate.tsx" symbol="NavigateButton" collapsed />
+
+<Code file="mbos-app/src/lib/messaging.ts" symbol="openMaps" collapsed />
+
+<Code file="mbos-app/src/lib/travel-leg.ts" symbol="navigationLine" collapsed />
+
+One component in three variants (`row`, `button`, `icon`) — a second inline `openMaps` call site is how the failure message on one screen stops matching the other. A failure is reported, never swallowed: reaching the end of `openMaps` means the handset would open nothing.
+
+## The map
+
+`ShopMap` returns a sentence instead of a map in four cases — loading, no key, no pinned shops, and offline with no saved coverage — and draws with a caption for partial coverage or unpinned shops. Note MapLibre React Native's bounds are `[west, south, east, north]`, GeoJSON's order, not the web's `ne`/`sw` pair; getting it wrong opens on the wrong hemisphere rather than failing. Offline coverage is [Offline maps](/docs/mbos/offline-maps/developer).
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `cd mbos-app && npm test` | `src/engines/engines.test.ts` | Route order, unpinned appended, `pickOrigin` |
+| `cd mbos-app && npm test` | `src/engines/nearby.test.ts` | Reasons, cost of distance, dropped shops, Next Best Visit is the head |
+| `cd mbos-app && npm test` | `src/data/journey-reads.test.ts` | Which stops reopening a day shows (unsent edit vs the office's); every past/planned-day read prepares against the handset schema |
+| `npm run test:integration` | `src/lib/activity-location.test.ts` | Plan days and stops come back on a delta with a cursor |
+
+## Changing it safely
+
+<Steps>
+<Step title="Keep the cap and the order in one query">
+Any new filter on the pick list goes into SQL before the `LIMIT`, and the `ORDER BY` must match what the screen claims.
+</Step>
+<Step title="Never invent an origin">
+Where neither a fix nor a pinned shop exists, return null and keep the query's order.
+</Step>
+<Step title="Never drop an unpinned stop">
+The route appends; only Near me may omit a shop with no coordinate, because it cannot honestly claim one is near.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| `PICK_PAGE`'s header comment says the city narrows rather than filters; the query filters | `mbos-app/src/data/journey.ts` |
+| `mbos.location.routeDeviationM` and `mbos.location.unplannedVisitsPerDay` are never read | `mbos-app/src/data/config.ts` (defaults only) |
+| `WORTH` weights for Near me are constants, not configuration | `mbos-app/src/engines/nearby.ts` |

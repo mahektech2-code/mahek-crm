@@ -12,6 +12,8 @@
  * written inline in the call site needs a device to exercise, so it never is.
  */
 
+import { isoDate } from '../lib/format';
+
 /**
  * A PAGE OF THE BOOK IS FIFTEEN SHOPS, however big the territory is.
  *
@@ -21,10 +23,16 @@
  * rows on a phone, the screen built two thousand cards on the JS thread, and
  * Android offered to close the app.
  *
- * One constant, so the first read, the Load more button and the sentence
- * counting them cannot disagree.
+ * One constant, so the first read, the next page and the sentence counting
+ * them cannot disagree.
+ *
+ * THIRTY, NOT FIFTEEN, because the list now asks for the next page by itself
+ * as he nears the bottom rather than behind a button. A page is what a quick
+ * flick scrolls past; at fifteen the second request fired before the first
+ * screenful had settled, and a cheaper card means thirty is still less work on
+ * the JS thread than fifteen of the old six-button ones were.
  */
-export const CUSTOMER_PAGE = 15;
+export const CUSTOMER_PAGE = 30;
 
 /** Where to measure from: a fix, a city's centre, or nothing. */
 export type Origin = { lat: number; lng: number } | null;
@@ -43,7 +51,19 @@ export type Origin = { lat: number; lng: number } | null;
  */
 export type BookView = 'all' | 'customers' | 'leads';
 
-const IS_LEAD = `EXISTS (SELECT 1 FROM leads l WHERE l.id = customers.id AND l.archived = 0)`;
+/*
+ * AND A LEAD THAT HAS ORDERED IS NOT ONE ANY MORE. The ladder keeps its
+ * `first_order`, `second_order` and `customer` rungs after the office flips
+ * `kind` to `customer`, and a lead the office moved to won stops arriving and
+ * stays frozen here at its last rung. Reading the EXISTS alone listed a billed
+ * customer only under Leads — missing from Customers, its chips and its counts
+ * — with an Account tab saying "nothing billed to a lead". The office's `kind`
+ * is the ledger's statement about the account, so it wins; a null `kind` (an
+ * older payload) keeps the old reading.
+ */
+const IS_LEAD = `(EXISTS (SELECT 1 FROM leads l WHERE l.id = customers.id AND l.archived = 0
+      AND COALESCE(l.funnelStage, '') <> 'won' AND COALESCE(l.stage, '') <> 'Converted')
+    AND COALESCE(customers.kind, 'lead') <> 'customer')`;
 
 /**
  * WHAT THE CARD NEEDS TO SAY WHAT A ROW IS, added to the projection of both
@@ -76,6 +96,22 @@ const LEAD_FACTS = `${IS_LEAD} AS isLead,
     (SELECT l.funnelStage FROM leads l WHERE l.id = customers.id AND l.archived = 0) AS leadFunnelStage,
     (SELECT l.stage FROM leads l WHERE l.id = customers.id AND l.archived = 0) AS leadStage`;
 
+/**
+ * THE SAME THREE COLUMNS, ANSWERED WITHOUT ASKING, on the customer half.
+ *
+ * That half is `NOT IS_LEAD` by construction, so every row's answer to all
+ * three is already known — and asked anyway they are three correlated lookups
+ * per row computed BEFORE the sort, because SQLite fills the sorter with the
+ * whole projection. On a book of ten thousand that is thirty thousand point
+ * lookups to print three constants. The names stay, because the card reads
+ * them and `account-label.test.ts` pins that they are there.
+ */
+const NOT_A_LEAD = `0 AS isLead, NULL AS leadFunnelStage, NULL AS leadStage`;
+
+function leadFacts(view: BookView | undefined): string {
+  return view === 'customers' ? NOT_A_LEAD : LEAD_FACTS;
+}
+
 /** The clause for a view, or null where everything is wanted. */
 function viewClause(view: BookView | undefined): string | null {
   if (view === 'leads') return IS_LEAD;
@@ -93,26 +129,159 @@ export type Query = { sql: string; params: (string | number)[] };
 
 /* Name, contact, city, phone, GST and dealer code — because a salesman looking
    somebody up mid-conversation has whichever of those the customer just said. */
-const SEARCH = `lower(name) LIKE ? OR lower(COALESCE(contactPerson,'')) LIKE ?
-     OR lower(COALESCE(city,'')) LIKE ? OR COALESCE(phone,'') LIKE ?
-     OR lower(COALESCE(gstin,'')) LIKE ? OR lower(COALESCE(dealerCode,'')) LIKE ?`;
+/*
+ * `%` and `_` typed into the box are LITERALS, escaped, so "50%" does not
+ * match every row. The phone is compared on its DIGITS: the book holds
+ * `+91 98220 11002` and `09822011002` side by side, and a number typed with
+ * spaces or a +91 found neither.
+ */
+const SEARCH = `lower(name) LIKE ? ESCAPE '\\' OR lower(COALESCE(contactPerson,'')) LIKE ? ESCAPE '\\'
+     OR lower(COALESCE(city,'')) LIKE ? ESCAPE '\\'
+     OR replace(replace(replace(replace(COALESCE(phone,''),' ',''),'-',''),'+',''),'(','') LIKE ?
+     OR lower(COALESCE(gstin,'')) LIKE ? ESCAPE '\\' OR lower(COALESCE(dealerCode,'')) LIKE ? ESCAPE '\\'`;
+
+function escapeLike(q: string): string {
+  return q.replace(/[\\%_]/g, (ch) => '\\' + ch);
+}
+
+/** The last ten digits of a typed number, or the text itself if it is not one. */
+export function phoneNeedle(q: string): string {
+  const digits = q.replace(/\D/g, '');
+  if (digits.length >= 5 && digits.length >= q.replace(/\s/g, '').length - 1) {
+    return digits.length > 10 ? digits.slice(-10) : digits.replace(/^0+/, '');
+  }
+  return escapeLike(q);
+}
 
 function searchParams(q: string): string[] {
-  const like = `%${q}%`;
-  return [like, like, like, like, like, like];
+  const like = `%${escapeLike(q)}%`;
+  return [like, like, like, `%${phoneNeedle(q)}%`, like, like];
 }
 
 function normalise(query: string | undefined): string {
   return (query ?? '').trim().toLowerCase();
 }
 
+/* ------------------------------------------------ what the book is cut by */
+
+/**
+ * THE QUESTIONS A SALESMAN ASKS OF TEN THOUSAND SHOPS.
+ *
+ * A search finds a shop he can name. These find the ones he cannot: who owes,
+ * who is due to order, who he has not been to. On a book this size the list
+ * without them is a phone directory, and nobody plans a morning from a phone
+ * directory.
+ *
+ * EVERY ONE IS READ OFF A COLUMN THE OFFICE SENT, and none carries a number
+ * typed here. "Reorder due" is the customer's OWN measured cycle — the same
+ * test `reorderState` applies to the card, so the chip and the line under the
+ * name cannot disagree about one shop. "Visit due" is the visit frequency the
+ * office set for that shop, and a shop with no frequency is not due: inventing
+ * a default would be a business rule living in a screen. "Never visited" asks
+ * no threshold at all.
+ *
+ * Day arithmetic is `julianday` on two ISO dates, both midnight, so the
+ * difference is a whole number of days with no zone in it — `today` is the
+ * caller's business date, resolved once on the handset.
+ */
+export type CustomerFilter = 'all' | 'owing' | 'followUp' | 'reorder' | 'visitDue' | 'neverVisited' | 'unpinned';
+
+export const CUSTOMER_FILTERS: { value: CustomerFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'owing', label: 'Owes money' },
+  { value: 'followUp', label: 'Follow-up due' },
+  { value: 'reorder', label: 'Reorder due' },
+  { value: 'visitDue', label: 'Visit due' },
+  { value: 'neverVisited', label: 'Never visited' },
+  { value: 'unpinned', label: 'No map pin' },
+];
+
+const FILTER_SQL: Record<Exclude<CustomerFilter, 'all'>, { sql: string; usesToday: boolean }> = {
+  owing: { sql: 'COALESCE(outstandingPaise, 0) > 0', usesToday: false },
+  /* The date he set on his LATEST visit to the shop, due today or already
+     missed. Missed is the half that matters: a promise one day late is the
+     one most worth keeping, and the Home figure used to drop it. */
+  followUp: {
+    sql: `((SELECT v.nextFollowUpDate FROM visits v WHERE v.customerId = customers.id
+             ORDER BY v.checkInAt DESC LIMIT 1) <= ?)`,
+    usesToday: true,
+  },
+  reorder: {
+    sql: `(lastOrderDate IS NOT NULL AND COALESCE(cycleDays, 0) > 0
+           AND julianday(?) - julianday(lastOrderDate) >= cycleDays)`,
+    usesToday: true,
+  },
+  visitDue: {
+    sql: `(COALESCE(visitFrequencyDays, 0) > 0
+           AND (lastVisitDate IS NULL OR julianday(?) - julianday(lastVisitDate) >= visitFrequencyDays))`,
+    usesToday: true,
+  },
+  neverVisited: { sql: 'lastVisitDate IS NULL', usesToday: false },
+  unpinned: { sql: '(gpsLat IS NULL OR gpsLng IS NULL)', usesToday: false },
+};
+
+function filterOf(filter: CustomerFilter | undefined, today: string): { sql: string | null; params: string[] } {
+  if (!filter || filter === 'all') return { sql: null, params: [] };
+  const f = FILTER_SQL[filter];
+  return { sql: f.sql, params: f.usesToday ? [today] : [] };
+}
+
+/**
+ * The order the book comes back in.
+ *
+ * `near` is distance from whatever origin the screen resolved — and falls back
+ * to A–Z where there is none, because a list sorted around an invented origin
+ * looks right and is wrong. `owed` is the collections morning. `unseen` puts
+ * the shop nobody has ever been to first and then the longest since a visit,
+ * which is the question "who have I been neglecting" asked as a sort.
+ */
+export type CustomerSort = 'near' | 'name' | 'owed' | 'unseen';
+
+/** The caller's business date where it gave one; otherwise the handset's own. */
+function todayOr(today: string | undefined): string {
+  return today ?? isoDate(new Date());
+}
+
 /** How many shops MATCH — the number the screen prints, never a loaded length. */
-export function customerCountQuery(query?: string, view?: BookView): Query {
+export function customerCountQuery(
+  query?: string,
+  view?: BookView,
+  filter?: CustomerFilter,
+  today?: string,
+): Query {
   const q = normalise(query);
-  const where = whereOf([q ? `(${SEARCH})` : null, viewClause(view)]);
+  const f = filterOf(filter, todayOr(today));
+  const where = whereOf([q ? `(${SEARCH})` : null, viewClause(view), f.sql]);
   return {
     sql: `SELECT COUNT(*) AS n FROM customers ${where}`,
-    params: q ? searchParams(q) : [],
+    params: [...(q ? searchParams(q) : []), ...f.params],
+  };
+}
+
+/**
+ * EVERY CHIP'S COUNT IN ONE PASS, over the same search and the same half.
+ *
+ * Six counts asked as six statements is six scans of the book per keystroke;
+ * as one row of `SUM(CASE …)` it is one. The numbers describe the SEARCH, not
+ * the picked chip — picking "Owes money" must not turn every other chip to
+ * zero, or the row stops being a map of where the work is.
+ *
+ * The CASE arms bind `today` in the projection, which comes BEFORE the WHERE in
+ * the statement, so their parameters are listed first.
+ */
+export function customerFilterCountsQuery(query?: string, view?: BookView, today?: string): Query {
+  const q = normalise(query);
+  const day = todayOr(today);
+  const where = whereOf([q ? `(${SEARCH})` : null, viewClause(view)]);
+  const arms: string[] = [];
+  const params: (string | number)[] = [];
+  for (const [key, f] of Object.entries(FILTER_SQL)) {
+    arms.push(`COALESCE(SUM(CASE WHEN ${f.sql} THEN 1 ELSE 0 END), 0) AS ${key}`);
+    if (f.usesToday) params.push(day);
+  }
+  return {
+    sql: `SELECT COUNT(*) AS "all", ${arms.join(', ')} FROM customers ${where}`,
+    params: [...params, ...(q ? searchParams(q) : [])],
   };
 }
 
@@ -143,22 +312,38 @@ export function customerPageQuery(args: {
   query?: string;
   origin?: Origin;
   view?: BookView;
+  filter?: CustomerFilter;
+  /** Omitted is the old behaviour: nearest where there is an origin, else A–Z. */
+  sort?: CustomerSort;
+  today?: string;
   limit?: number;
   offset?: number;
 } = {}): Query {
   const q = normalise(args.query);
   const limit = args.limit ?? CUSTOMER_PAGE;
   const offset = args.offset ?? 0;
-  const origin = args.origin ?? null;
+  const sort = args.sort ?? 'near';
+  /* Distance is measured only where it is the order asked for. Computed under
+     another sort it is arithmetic over every row that nobody reads. */
+  const origin = sort === 'near' ? (args.origin ?? null) : null;
+  const facts = leadFacts(args.view);
 
-  /* The view clause carries no parameters of its own, so the binding order
-     below — projection, then search, then the page — is unchanged by it. */
-  const where = whereOf([q ? `(${SEARCH})` : null, viewClause(args.view)]);
-  const whereParams = q ? searchParams(q) : [];
+  /* The view clause carries no parameters of its own; the filter's follow the
+     search's, in the order the two appear in the WHERE. The binding order
+     below — projection, then where, then the page — is unchanged by either. */
+  const f = filterOf(args.filter, todayOr(args.today));
+  const where = whereOf([q ? `(${SEARCH})` : null, viewClause(args.view), f.sql]);
+  const whereParams = [...(q ? searchParams(q) : []), ...f.params];
 
   if (!origin) {
+    const order =
+      sort === 'owed'
+        ? 'COALESCE(outstandingPaise, 0) DESC, name COLLATE NOCASE, id'
+        : sort === 'unseen'
+          ? '(lastVisitDate IS NOT NULL), lastVisitDate, name COLLATE NOCASE, id'
+          : 'name COLLATE NOCASE, id';
     return {
-      sql: `SELECT *, ${LEAD_FACTS} FROM customers ${where} ORDER BY name COLLATE NOCASE, id LIMIT ? OFFSET ?`,
+      sql: `SELECT *, ${facts} FROM customers ${where} ORDER BY ${order} LIMIT ? OFFSET ?`,
       params: [...whereParams, limit, offset],
     };
   }
@@ -167,7 +352,7 @@ export function customerPageQuery(args: {
   /* The SELECT list is bound BEFORE the WHERE, because that is the order the
      placeholders appear in the statement. Six of them, all in the projection. */
   return {
-    sql: `SELECT *, ${LEAD_FACTS},
+    sql: `SELECT *, ${facts},
             CASE WHEN gpsLat IS NULL OR gpsLng IS NULL THEN NULL
                  ELSE ((gpsLat - ?) * (gpsLat - ?))
                     + (((gpsLng - ?) * ?) * ((gpsLng - ?) * ?))
@@ -272,7 +457,7 @@ export function metresFromDist2(dist2: number | null | undefined): number | null
  * nothing says so. A city with no pinned shop cannot be an origin, so it is not
  * offered as one.
  */
-export function cityOriginsQuery(limit = 40): Query {
+export function cityOriginsQuery(limit = 300): Query {
   return {
     sql: `SELECT city AS city, COUNT(*) AS n,
                  AVG(gpsLat) AS lat, AVG(gpsLng) AS lng
@@ -285,3 +470,80 @@ export function cityOriginsQuery(limit = 40): Query {
     params: [limit],
   };
 }
+
+/* ------------------------------------------------------- customer accounts */
+
+/**
+ * Which accounts the Customer accounts screen lists.
+ *
+ * It is the CUSTOMERS view of the book — the same `NOT IS_LEAD` the chips on
+ * the Customers tab use — because a lead has never been billed and an account
+ * screen full of empty statements is a screen that hides the ones that matter.
+ * The chips narrow by MONEY rather than by place: who owes, who is past the
+ * limit the office set, who the office has stopped supplying, and the shops
+ * somebody else invoices.
+ */
+export type AccountFilter = 'all' | 'owing' | 'over' | 'blocked' | 'third';
+export type AccountSort = 'owed' | 'name';
+
+function accountClause(filter: AccountFilter): string | null {
+  switch (filter) {
+    case 'owing':
+      return 'COALESCE(outstandingPaise, 0) > 0';
+    case 'over':
+      return 'COALESCE(creditLimitPaise, 0) > 0 AND COALESCE(outstandingPaise, 0) > creditLimitPaise';
+    case 'blocked':
+      return 'COALESCE(creditBlocked, 0) = 1';
+    case 'third':
+      return 'COALESCE(thirdParty, 0) = 1';
+    case 'all':
+    default:
+      return null;
+  }
+}
+
+/** How many accounts match — the number the screen prints. */
+export function accountCountQuery(query: string | undefined, filter: AccountFilter): Query {
+  const q = normalise(query);
+  const where = whereOf([`NOT ${IS_LEAD}`, q ? `(${SEARCH})` : null, accountClause(filter)]);
+  return { sql: `SELECT COUNT(*) AS n FROM customers ${where}`, params: q ? searchParams(q) : [] };
+}
+
+/**
+ * One page of accounts. `name, id` breaks every tie, so a page boundary never
+ * shows one shop twice or skips another — the paging rule MahekOne's own lists
+ * learned the hard way.
+ */
+export function accountPageQuery(args: {
+  query?: string;
+  filter: AccountFilter;
+  sort: AccountSort;
+  offset: number;
+  limit: number;
+}): Query {
+  const q = normalise(args.query);
+  const where = whereOf([`NOT ${IS_LEAD}`, q ? `(${SEARCH})` : null, accountClause(args.filter)]);
+  const order =
+    args.sort === 'name'
+      ? 'lower(name) ASC, id ASC'
+      : 'COALESCE(outstandingPaise, 0) DESC, lower(name) ASC, id ASC';
+  return {
+    sql: `SELECT * FROM customers ${where} ORDER BY ${order} LIMIT ? OFFSET ?`,
+    params: [...(q ? searchParams(q) : []), args.limit, args.offset],
+  };
+}
+
+/**
+ * The whole book's money in one row, for the strip above the list. It is the
+ * office's own `outstandingPaise` added up — never a debt worked out on the
+ * phone — and it describes the BOOK, not the filter, so it does not move as
+ * chips are tapped.
+ */
+export const ACCOUNT_SUMMARY_SQL = `SELECT
+    COUNT(*) AS accounts,
+    COALESCE(SUM(CASE WHEN COALESCE(outstandingPaise, 0) > 0 THEN outstandingPaise ELSE 0 END), 0) AS owedPaise,
+    COALESCE(SUM(CASE WHEN COALESCE(outstandingPaise, 0) > 0 THEN 1 ELSE 0 END), 0) AS owing,
+    COALESCE(SUM(CASE WHEN COALESCE(creditLimitPaise, 0) > 0 AND COALESCE(outstandingPaise, 0) > creditLimitPaise THEN 1 ELSE 0 END), 0) AS over,
+    COALESCE(SUM(CASE WHEN COALESCE(creditBlocked, 0) = 1 THEN 1 ELSE 0 END), 0) AS blocked,
+    MAX(lastSyncedAt) AS syncedAt
+  FROM customers WHERE NOT ${IS_LEAD}`;

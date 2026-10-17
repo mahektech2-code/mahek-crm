@@ -35,6 +35,8 @@ export type NativePhoneSetupModule = {
   openAutostartSettings(): Promise<string>;
   openAppSettings(): Promise<boolean>;
   openLocationSettings(): Promise<boolean>;
+  /** 'normal' | 'vibrate' | 'silent' | 'unknown' — see `native/phone-setup.ts`. Absent on builds before 1.16.0. */
+  ringerMode?(): Promise<string>;
 };
 
 /** `null` on iOS, on web, and on any build that predates the module. */

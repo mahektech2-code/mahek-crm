@@ -5,7 +5,15 @@ import { db } from "@/db";
 import { mbosDevices, mbosPushReceipts } from "@/db/schema";
 import { getConfig } from "../config/store";
 import { APP_TIMEZONE } from "../business-date";
-import { chunk, looksLikeExpoPushToken, RECEIPT_CHUNK, SEND_CHUNK, withinQuietHours } from "./push-rules";
+import {
+  channelFor,
+  chunk,
+  looksLikeExpoPushToken,
+  RECEIPT_CHUNK,
+  SEND_CHUNK,
+  toneOfKind,
+  withinQuietHours,
+} from "./push-rules";
 
 export { chunk, looksLikeExpoPushToken, withinQuietHours, SEND_CHUNK } from "./push-rules";
 
@@ -94,6 +102,12 @@ export type PushTarget = {
   href?: string | null;
   /** The notification row it rides on, so a failure traces back to a message. */
   notificationId?: string | null;
+  /**
+   * The notification's `kind` — `warn`, `success`, `info`… It decides the
+   * Android channel (and so the sound) and the colour of the banner the
+   * handset draws when it is open. See `channelFor`.
+   */
+  kind?: string | null;
 };
 
 type Message = {
@@ -139,16 +153,17 @@ export async function pushToUsers(targets: readonly PushTarget[]): Promise<void>
         userId: mbosDevices.userId,
         deviceId: mbosDevices.deviceId,
         pushToken: mbosDevices.pushToken,
+        appVersion: mbosDevices.appVersion,
       })
       .from(mbosDevices)
       .where(and(inArray(mbosDevices.userId, userIds), eq(mbosDevices.active, true)));
 
-    const byUser = new Map<string, { deviceId: string; pushToken: string }[]>();
+    const byUser = new Map<string, { deviceId: string; pushToken: string; appVersion: string | null }[]>();
     for (const d of devices) {
       if (!d.pushToken || !looksLikeExpoPushToken(d.pushToken)) continue;
       byUser.set(d.userId, [
         ...(byUser.get(d.userId) ?? []),
-        { deviceId: d.deviceId, pushToken: d.pushToken },
+        { deviceId: d.deviceId, pushToken: d.pushToken, appVersion: d.appVersion ?? null },
       ]);
     }
     if (!byUser.size) return;
@@ -167,13 +182,18 @@ export async function pushToUsers(targets: readonly PushTarget[]): Promise<void>
           to: d.pushToken,
           title: t.title,
           body: t.body,
-          data: { href: t.href ?? null, notificationId: t.notificationId ?? null },
+          /* `tone` is what the handset's in-app banner colours itself by — a
+             key of its own rather than `kind`, which the handset already reads
+             for its LOCAL reminders (`forgot-checkout`, `punch-out`). */
+          data: { href: t.href ?? null, notificationId: t.notificationId ?? null, tone: toneOfKind(t.kind) },
           sound: quiet ? null : "default",
           priority: quiet ? "normal" : "high",
           /* Android takes its importance from the CHANNEL and from nowhere
              else, so a message naming none lands in the default channel and
-             makes no sound however high its priority claims to be. */
-          channelId: quiet ? "quiet" : "default",
+             makes no sound however high its priority claims to be. Which
+             channel is `channelFor`'s: quiet hours, then the build, then what
+             the message is. */
+          channelId: channelFor({ quiet, kind: t.kind, appVersion: d.appVersion }),
         });
         pending.push({
           deviceId: d.deviceId,

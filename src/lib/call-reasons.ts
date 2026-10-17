@@ -102,6 +102,11 @@ const NEXT_ACTIONS: Record<string, Array<{ code: string; label: string }>> = {
     { code: "send_quotation", label: "Send quotation" },
     { code: "call_back", label: "Call back" },
     { code: "salesman_visit", label: "Salesman visit" },
+    /* "Follow-up Date" in the brief. It is the same machinery as every other
+       dated action — a day is demanded and becomes a reminder — so it is one
+       more code on the list rather than a second date field beside
+       `next_action_date`. */
+    { code: "follow_up_date", label: "Follow-up date" },
   ],
   product_enquiry: [
     { code: "send_brochure", label: "Send brochure" },
@@ -151,28 +156,21 @@ const NEXT_ACTIONS: Record<string, Array<{ code: string; label: string }>> = {
 };
 
 /**
- * WHAT AN ORDER TAKEN NEEDS NEXT, and it comes off the OUTCOME rather than the
+ * WHAT EACH OUTCOME OFFERS NEXT, and it comes off the OUTCOME rather than the
  * reason.
  *
  * The reason is what the customer wanted when they rang; once the call has
- * ended in an order, what happens next is about the order and nothing else —
- * somebody who rang to ask a price and ended up ordering needs chasing for
- * payment or dispatch, not sending a quotation. So this list REPLACES the
- * reason's own rather than adding to it.
- *
- * `no_follow_up` is the first of the four and it is the point of the set: an
- * order that needs nothing is a real answer, and the only way to tell it from
- * a telecaller who skipped the question is to let them say it. The same shape
- * as "they would not commit to a date" on the No Order form, for the same
- * reason — a blank box cannot tell the two apart.
+ * ended in an order or a refusal, what happens next is about that and nothing
+ * else. So an outcome's list REPLACES the reason's own rather than adding to
+ * it. Order Taken's list is deliberately EMPTY (see below): it asks nothing.
  */
 const OUTCOME_ACTIONS: Record<string, Array<{ code: string; label: string }>> = {
-  order_taken: [
-    { code: "no_follow_up", label: "No further follow-up required" },
-    { code: "follow_up_payment", label: "Follow up for payment" },
-    { code: "follow_up_dispatch", label: "Follow up for dispatch" },
-    { code: "follow_up_after_delivery", label: "Follow up after delivery" },
-  ],
+  /* An Order Taken is no longer asked what happens next — the section is gone
+     from the form. An EMPTY list rather than a missing key, because a missing
+     key falls through to the call REASON's own list and would offer an
+     inbound order a quotation to send. The four codes it used to carry are
+     kept below, as labels only. */
+  order_taken: [],
   no_order: [
     { code: "call_back", label: "Call again" },
     { code: "salesman_visit", label: "Visit customer" },
@@ -195,10 +193,27 @@ const OUTCOME_ACTIONS: Record<string, Array<{ code: string; label: string }>> = 
   ],
   payment_promised: [
     { code: "follow_up_on_promise", label: "Follow up on the promised date" },
-    { code: "follow_up_before_promise", label: "Follow up before the promised date" },
     { code: "no_follow_up", label: "No further action" },
   ],
 };
+
+/**
+ * CODES THAT ARE NO LONGER OFFERED and are still STORED. Calls already saved
+ * carry them in `calls.next_actions`, and reminders written from them carry
+ * their label as text — so the label lookup keeps them, and `DATED_ACTIONS` and
+ * `reminderTypeFor` below go on recognising them. Nothing here is a picker
+ * list: `nextActionsFor` never returns these, which is what makes the server
+ * refuse a new save that names one.
+ */
+const RETIRED_ACTIONS: Array<{ code: string; label: string }> = [
+  { code: "no_follow_up", label: "No further follow-up required" },
+  { code: "follow_up_payment", label: "Follow up for payment" },
+  { code: "follow_up_dispatch", label: "Follow up for dispatch" },
+  { code: "follow_up_after_delivery", label: "Follow up after delivery" },
+  /* No longer offered on a Pay Promise, still carried by calls saved while it
+     was — its date rule and its payment_promise reminder type stay below. */
+  { code: "follow_up_before_promise", label: "Follow up before the promised date" },
+];
 
 /*
  * THE CODES ARE SHARED WHERE THE ACT IS THE SAME, and the labels are not.
@@ -250,11 +265,81 @@ export function nextActionsFor(
  */
 export const NEXT_ACTION_LABEL: Record<string, string> = (() => {
   const map: Record<string, string> = {};
-  for (const list of [...Object.values(OUTCOME_ACTIONS), ...Object.values(NEXT_ACTIONS)]) {
+  /* Retired first: `no_follow_up` was defined by Order Taken before any other
+     list, so its stored label is "No further follow-up required" and must stay
+     so for every call that carries it. */
+  for (const list of [
+    RETIRED_ACTIONS,
+    ...Object.values(OUTCOME_ACTIONS),
+    ...Object.values(NEXT_ACTIONS),
+  ]) {
     for (const a of list) if (!(a.code in map)) map[a.code] = a.label;
   }
   return map;
 })();
+
+/**
+ * Every action code that exists anywhere, as the closed list the language
+ * model may name. It is the codes only: which of them is OFFERED for a given
+ * call is still `nextActionsFor`, asked by the decide layer and again by the
+ * form, so the model naming a code never makes it valid.
+ */
+export const ALL_NEXT_ACTION_CODES = Object.keys(NEXT_ACTION_LABEL) as [
+  string,
+  ...string[],
+];
+
+/**
+ * THE REMINDER TYPE THAT ALREADY SAYS WHAT AN ACTION SAYS.
+ *
+ * Only the two actions that are nothing more than "ring them on that day":
+ * `call_back` is the same errand as the call-back an outcome writes from its
+ * own date, and `follow_up_on_promise` is the same errand as the reminder a
+ * payment promise writes. Every other action carries an errand of its own —
+ * "send the price", "arrange a visit" — which a call-back reminder does not
+ * mean, so it is never covered.
+ */
+const COVERED_BY_REMINDER_TYPE: Record<string, string> = {
+  call_back: "call_back",
+  /* "Follow-up date" is a call-back said another way, and covered the same way. */
+  follow_up_date: "call_back",
+  follow_up_on_promise: "payment_promise",
+};
+
+/**
+ * Is the reminder a Next Action would write already written by this call's
+ * outcome?
+ *
+ * ONE PROMISE IS ONE REMINDER. "Follow up on 3 Oct" and "Next action: call
+ * again, by 3 Oct" are a customer asking to be rung once, said in two boxes.
+ *
+ * The condition, exactly — every one must hold:
+ *   1. the call chose at least one action;
+ *   2. EVERY chosen action is in `COVERED_BY_REMINDER_TYPE` — a set that also
+ *      holds "send price" is not covered, because that errand would be lost;
+ *   3. for each action, the outcome wrote a reminder of the type that action
+ *      is covered by, in this same save;
+ *   4. on the same working day as the action's own (both already moved off a
+ *      non-working day by the caller, so a Sunday and the Monday it becomes
+ *      compare equal).
+ *
+ * Two reminders on different days are two promises and both stand — "call
+ * tomorrow, and again on Friday" — as are any two of different errands.
+ */
+export function nextActionCoveredByOutcome(
+  actions: string[],
+  actionDay: string,
+  outcomeReminders: Array<{ type: string; day: string }>,
+): boolean {
+  if (!actions.length) return false;
+  return actions.every((a) => {
+    const type = COVERED_BY_REMINDER_TYPE[a];
+    return (
+      type !== undefined &&
+      outcomeReminders.some((r) => r.type === type && r.day === actionDay)
+    );
+  });
+}
 
 /**
  * The actions that MEAN a date — somebody has undertaken to do a thing, and a
@@ -266,6 +351,7 @@ export const NEXT_ACTION_LABEL: Record<string, string> = (() => {
 const DATED_ACTIONS = new Set([
   "send_price",
   "send_quotation",
+  "follow_up_date",
   "send_brochure",
   "send_technical",
   "send_sample",
@@ -304,6 +390,65 @@ export function wantsDate(actions: string[]): boolean {
 }
 
 /**
+ * WHAT THE NEXT ACTION BOX HOLDS AFTER ANYTHING ABOUT THE CALL CHANGES — a new
+ * outcome, a new reason, or the assistant proposing one.
+ *
+ * Pure, and asked about the INCOMING reason and outcome rather than whatever a
+ * component's state says this render, because React state read inside the
+ * handler that is about to change it is the previous call's answer.
+ *
+ *   1. What the telecaller already chose is kept, minus any code the new
+ *      outcome and reason no longer offer — and minus the day, where nothing
+ *      dated is left. They are never replaced by a proposal.
+ *   2. Only where nothing is chosen does a proposal go in, and only the codes
+ *      `nextActionsFor` offers for THIS call. `no_follow_up` beside another
+ *      code is a contradiction nobody can read back, so such a proposal is
+ *      refused whole rather than trimmed.
+ *   3. A proposed day goes in only for a dated action and only if it is not in
+ *      the past; anything else leaves the day empty for the telecaller.
+ */
+export function reconcileNextActions(args: {
+  current: string[];
+  currentDate: string;
+  reason: string | null;
+  outcome: string | null;
+  proposed?: string[];
+  proposedDate?: string;
+  today: string;
+}): { actions: string[]; date: string; filled: boolean; dropped: boolean } {
+  const offered = new Set(
+    nextActionsFor(args.reason, args.outcome).map((a) => a.code),
+  );
+  const kept = args.current.filter((c) => offered.has(c));
+  const dropped = kept.length !== args.current.length;
+  if (kept.length) {
+    return {
+      actions: kept,
+      date: wantsDate(kept) ? args.currentDate : "",
+      filled: false,
+      dropped,
+    };
+  }
+  const proposed = [...new Set(args.proposed ?? [])].filter((c) =>
+    offered.has(c),
+  );
+  const usable =
+    proposed.length > 0 &&
+    !(proposed.includes(EXCLUSIVE_ACTION) && proposed.length > 1);
+  if (!usable) return { actions: [], date: "", filled: false, dropped };
+  const dateOk =
+    Boolean(args.proposedDate) &&
+    wantsDate(proposed) &&
+    (args.proposedDate as string) >= args.today;
+  return {
+    actions: proposed,
+    date: dateOk ? (args.proposedDate as string) : "",
+    filled: true,
+    dropped,
+  };
+}
+
+/**
  * Which reminder a next action becomes. `send_information` and `check_stock`
  * have been in `reminderTypeEnum` since the CRM shipped with nothing ever
  * writing one; these are what they were for.
@@ -338,7 +483,7 @@ export function reminderTypeFor(
   ) {
     return "send_information";
   }
-  if (actions.includes("call_back")) return "call_back";
+  if (actions.includes("call_back") || actions.includes("follow_up_date")) return "call_back";
   return "other";
 }
 
@@ -357,6 +502,25 @@ export const DELIVERY_ISSUES = [
 export const DELIVERY_ISSUE_LABEL: Record<string, string> = Object.fromEntries(
   DELIVERY_ISSUES.map((i) => [i.code, i.label]),
 );
+
+/* ------------------------------------------------------- payment position */
+
+/**
+ * WHAT THE CUSTOMER SAYS THE POSITION IS, as a code.
+ *
+ * `paymentStatus` stays — free text, exactly as before, because "cheque posted
+ * Tuesday" is the sentence somebody reads back. This is the value a report
+ * counts: how many of the people who rang about money said it was paid, and how
+ * many disputed it. Optional, and a new box beside the old one, so a historical
+ * row's free text is never reinterpreted and nothing is migrated.
+ */
+export const PAYMENT_POSITIONS = [
+  { code: "not_paid", label: "Not paid yet" },
+  { code: "part_paid", label: "Part paid" },
+  { code: "says_paid", label: "Says it is paid" },
+  { code: "disputed", label: "Disputes the amount" },
+  { code: "waiting_on_us", label: "Waiting on a document from us" },
+] as const;
 
 /* ----------------------------------------------------------- what is asked */
 
@@ -380,7 +544,20 @@ export type ReasonField = {
   hint?: string;
   /** `choice` only. */
   options?: ReadonlyArray<{ code: string; label: string }>;
+  /**
+   * A field the SCREEN fills and the person never types — the ERP order the
+   * telecaller tapped, the SKU the stock check was run for. It is stored with
+   * the rest of the reason's answers and validated like them, but the form
+   * does not draw a box for it, and the SERVER re-reads whatever it points at
+   * rather than trusting what the browser says that thing contained.
+   */
+  system?: boolean;
 };
+
+/** The fields a person actually answers — everything but the system ones. */
+export function visibleReasonFields(fields: ReasonField[]): ReasonField[] {
+  return fields.filter((f) => !f.system);
+}
 
 const REASON_FIELDS: Record<string, ReasonField[]> = {
   price_quotation: [
@@ -415,6 +592,9 @@ const REASON_FIELDS: Record<string, ReasonField[]> = {
     { key: "product", label: "Product", kind: "text", required: true },
     { key: "requiredQuantity", label: "Required quantity", kind: "text" },
     { key: "requiredDate", label: "Required by", kind: "date" },
+    /* Set by the stock check, never typed: the SKU the availability figure was
+       read for. The server re-reads the figure from it at save. */
+    { key: "skuId", label: "Product checked", kind: "text", system: true },
   ],
   payment_outstanding: [
     {
@@ -430,14 +610,24 @@ const REASON_FIELDS: Record<string, ReasonField[]> = {
       kind: "text",
       hint: "“Cheque posted Tuesday”, “disputing the last bill”.",
     },
+    {
+      key: "paymentPosition",
+      label: "Payment status",
+      kind: "choice",
+      options: PAYMENT_POSITIONS,
+      hint: "The nearest of these — the sentence above stays as they said it.",
+    },
   ],
   delivery_transport: [
     {
       key: "orderRef",
       label: "Order / invoice number",
       kind: "text",
-      hint: "Whatever they quoted. MahekOne does not hold the transporter or the LR number yet.",
+      hint: "Whatever they quoted. Tap one of their orders above and it fills in, with the dispatch details read from the ERP.",
     },
+    /* Set by tapping an order, never typed: the ERP order number the dispatch
+       details were read for. The server re-reads them at save. */
+    { key: "erpOrderNo", label: "ERP order", kind: "text", system: true },
     {
       key: "issue",
       label: "Issue",
@@ -488,7 +678,7 @@ export function unbackedBy(reason: string | null | undefined): string | null {
     return "MahekOne holds no quotation record yet, so this is captured against the call. Whoever sends the quotation still sends it themselves.";
   }
   if (reason === "stock_availability") {
-    return "There is no stock system connected, so nothing here checks availability. Confirm with the godown before telling the customer.";
+    return "The figure below is an indication read from the ERP's stock ledgers — nothing is reserved. Confirm with the godown before promising it to the customer.";
   }
   return null;
 }

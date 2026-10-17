@@ -1,0 +1,198 @@
+The Call Log is a **pure engine** (`buildQueue`) fed by **one service** (`queue-service.ts`) and **settled once a day** into `queue_snapshots`. The screen renders what the service returns; saving a call goes through `saveInteraction`, which ends by computing and **storing** the next-step sentence on the call. Every code block below is cut from the source this deployment was built from.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Route guard | `src/app/crm/call-log/layout.tsx` | `requireModule(user.id, "crm.call-log")` — a bookmark without the module redirects |
+| Page (server) | `src/app/crm/call-log/page.tsx` | Reads `getQueue()`, `dayActivity()`, config, quick notes, popular products, call scripts; builds `callTargets` and the ad-hoc target for `?customer=` |
+| Screen (client) | `src/app/crm/call-log/queue-screen.tsx` | Header, progress, metrics, filter pills, held-back strip, rows, `j`/`k`/`Enter` |
+| Call panel | `src/components/crm/call-panel.tsx` | The logging form, Save & next, and the `NextStepDialog` |
+| Next-step words | `src/lib/next-step-labels.ts`, `src/components/crm/next-step-dialog.tsx` | Badge vocabulary, long and short |
+| Service | `src/lib/services/queue-service.ts` | `queueInputs`, `settledQueueForRequest`, `settleDayList`, `getQueue`, `nextStepForCustomer` |
+| Engine (pure) | `src/lib/engines/queue.ts` | `buildQueue`, reasons, windows, suppression, ordering, routine day, no-answer ladder |
+| Engine (pure) | `src/lib/engines/next-step.ts` | "When does this customer come back" — `buildQueue` asked once per future day |
+| Engine (pure) | `src/lib/engines/buying-cycle.ts` | Cycle length, confidence, typical order value |
+| Save path | `src/lib/actions/crm.ts` → `src/lib/services/interaction-service.ts` | `saveInteractionAction` → `saveInteraction` (one transaction) |
+| Jobs | `src/lib/jobs.ts` | `snapshotQueue` (warm-up, `npm run jobs -- build-queues`), `resettleQueues` (admin rebuild) |
+| Config | `src/lib/config/registry.ts` | Every `queue.*` key and `DEFAULT_TIER_WEIGHTS` |
+
+<Callout kind="rule">
+`lib/engines/` performs **no I/O**. `buildQueue` takes candidates, the business date, configuration and a clock, and returns a value. Keep it that way — it is what lets `engines.test.ts` pin every rule on this page without a database, and what lets `next-step.ts` call it 120 times per save.
+</Callout>
+
+## A request, end to end
+
+<Flow caption="GET /crm/call-log" chart={`
+sequenceDiagram
+  autonumber
+  participant Page as call-log/page.tsx
+  participant Svc as queue-service.ts
+  participant Eng as engines/queue.ts
+  participant DB as Postgres
+  Page->>Svc: getQueue()
+  Svc->>Svc: settledQueueForRequest() — resolveScope() → user ids
+  Svc->>DB: queueInputs(ids, day) — customers in scope, reminders, today's skips
+  opt queue.includePaymentDue
+    Svc->>Svc: fold in getPaymentFollowUpPlan()
+  end
+  Svc->>Eng: buildQueue(candidates, today, config, now)
+  Eng-->>Svc: { entries, suppressed, totalQualified }
+  Svc->>DB: settleDayList — first read INSERTs queue_snapshots, later reads keep the stored order
+  Svc->>DB: callPanelDetail(survivors) — open complaint, last note
+  Svc-->>Page: QueueView (entries, held back, progress, carriedOver, scopeLabel)
+`} />
+
+## The engine
+
+### `buildQueue`
+
+The whole pipeline: reasons → unreachable short-circuit → four windows → whole-customer suppression → rank → cap.
+
+<Code file="src/lib/engines/queue.ts" symbol="buildQueue" collapsed />
+
+### The reasons and their weights
+
+<Code file="src/lib/config/registry.ts" symbol="QueueReasonKind" />
+
+<Code file="src/lib/config/registry.ts" symbol="DEFAULT_TIER_WEIGHTS" collapsed />
+
+A stored `queue.tierWeights` **replaces** the default object wholesale, so `weightOf` falls back per kind — a blob written before a kind existed would otherwise give it `undefined`, and `undefined` arithmetic does not throw, it silently poisons the sort.
+
+<Code file="src/lib/engines/queue.ts" symbol="weightOf" />
+
+### Ordering
+
+<Code file="src/lib/engines/queue.ts" symbol="compareEntries" />
+
+<Code file="src/lib/engines/queue.ts" symbol="callValuePaise" />
+
+`typicalOrderPaise` is a **cache** on `customers.typical_order_paise`, written by `writeCycle` in `lib/recompute.ts` from approved orders over `queue.orderValueLookbackDays`. Fix a wrong value by re-running the recompute, never by updating the row.
+
+### The stock-check day
+
+<Code file="src/lib/engines/queue.ts" symbol="routineDayFor" />
+
+`routineDayFor` is also read by the lead-nurture engine for the repeat-order call — change it and both move.
+
+### Windows and suppression
+
+The four windows strip reason **kinds**; `suppressionReason` holds the **whole customer**. It is read before the "emptied by a window" sentence on purpose: a do-not-contact customer whose only reason was an order ask must be explained as do-not-contact, not as a cooldown.
+
+<Code file="src/lib/engines/queue.ts" symbol="quietWindow" />
+
+<Code file="src/lib/engines/queue.ts" symbol="quietDaysFor" />
+
+<Code file="src/lib/engines/queue.ts" symbol="suppressionReason" />
+
+The predicates that decide what each window strips:
+
+<Code file="src/lib/engines/queue.ts" symbol="isOrderChasing" />
+<Code file="src/lib/engines/queue.ts" symbol="isOrderAsk" />
+<Code file="src/lib/engines/queue.ts" symbol="isHoldableReason" />
+
+### The no-answer ladder
+
+<Code file="src/lib/engines/queue.ts" symbol="noAnswerState" />
+
+The count is `consecutiveNoAnswerSql` in `queue-service.ts`: outbound `no_answer` calls since the latest call with any other non-null outcome.
+
+## Settling the day
+
+<Code file="src/lib/services/queue-service.ts" symbol="settleDayList" collapsed />
+
+<DbTable name="queue_snapshots" note={{
+  day: "The business date (Asia/Kolkata, after workingDay.dayBoundaryHour).",
+  user_id: "Whose list — the SIGNED-IN user, so a manager's team list is its own snapshot.",
+  customer_id: "The customer on that list.",
+  score: "The top reason's weight at settle time.",
+  reasons: "The reasons as shown that morning.",
+  rank: "Position on the list. A reminder that fell due later in the day is stored at a negative rank, so it sorts first.",
+}} />
+
+## Saving a call
+
+`saveInteraction` (`lib/services/interaction-service.ts`) validates outside the transaction, then writes **everything in one transaction**: the order (`pending_approval`), reminders from the outcome and next actions, the complaint, the `calls` row, opportunities, timeline events, product lines, and the customer's `last_call_date` / `last_contact_date` / `last_order_date` / `do_not_contact`. Recomputes (buying cycle, inactivity, outstanding, follow-up state) run after commit.
+
+An `idempotency_key` that already exists returns the **stored** next step and *Already logged* — a double-click cannot show a second answer.
+
+### The next step is stored, not cached
+
+<Code file="src/lib/services/queue-service.ts" symbol="nextStepForCustomer" />
+
+<Code file="src/lib/engines/next-step.ts" symbol="nextStep" collapsed />
+
+<DbTable name="calls" only={["next_step_kind", "next_step_date", "next_step_reason", "next_step_headline", "next_step_detail", "next_step_held_today"]} note={{
+  next_step_kind: "booked · scheduled · decide · none — what kind of date the telecaller was shown.",
+  next_step_date: "Null for decide and none: there is no date to show.",
+  next_step_reason: "The reason kind that brings them back.",
+  next_step_headline: "The sentence as shown: \"Comes back to your Call Log on …\".",
+  next_step_detail: "What to do and why.",
+  next_step_held_today: "Why they are not on today's list, if they are not.",
+}} />
+
+<Callout kind="warn" title="Never let a recompute touch these">
+`lib/recompute.ts` must not learn to rebuild the `next_step_*` columns. A cache answers "when is the next call" and is rebuilt when the answer changes; these answer "what did we tell the person who logged this call, on that day", and rebuilding them destroys the question. Same kind of mark as `orders.approved_at`.
+</Callout>
+
+<DbEnum name="next_step_kind" />
+
+## Access and scope
+
+- **Module:** <ModuleRef k="crm.call-log" />, enforced by the layout through `requireModule`.
+- **No capability** is checked on the read path; the write path relies on `resolveScope()` + `assertCustomerInScope()` and the discount level for order lines.
+- **Scope** is `scopeForUser` → user ids → `scopedToUsers(ids)`. Whose book is `ASSIGNED_TO_SQL`:
+
+<Code file="src/lib/access-control.ts" symbol="ASSIGNED_TO_SQL" />
+
+## Configuration the engine reads
+
+<Code file="src/lib/engines/queue.ts" symbol="QueueConfig" />
+
+Every key is in `lib/config/registry.ts` and stored in `app_settings`; reads go through `getConfig()` (30-second cache). The [How it works](/docs/crm/call-log/how-it-works) tab shows each one's live value.
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test` | `src/lib/engines/engines.test.ts` — `E2 queue builder` | Reasons, suppression vs omission, WhatsApp copied/confirmed, reminder overrides, quiet window and its cycle cap, routine day and confidence swing, ordering and tie-breaks, the no-answer ladder, money above orders, third-party shops |
+| `npm run test` | `src/lib/engines/next-step.test.ts` — `E10 next step` | booked / scheduled / decide / none, payment cadence, the 120-day horizon, the promise sentence |
+| `npm run test` | `src/lib/engines/lead-ladder.test.ts` | A lead on the funnel is held back, and shown |
+| `npm run test:integration` | `src/lib/journeys.test.ts` | "Who the Call Log puts in front of a telecaller", "the call list is settled once a day", no-answer attempt stamping, imported customers reaching the queue |
+| `npm run test:integration` | `src/lib/queue-progress.test.ts` | Dashboard figures equal `getQueue` |
+
+## Changing the Call Log safely
+
+<Steps>
+<Step title="Put the rule in the engine, and only there">
+A new reason, window or suppression belongs in `engines/queue.ts`. `next-step.ts` re-asks `buildQueue`, so the "comes back on" sentence follows automatically — never re-derive a rule in a second place.
+</Step>
+<Step title="Make every threshold a setting">
+Add the key to `registry.ts` (with a `Config` type entry), read it through `QueueConfig`. No number a manager might change is a constant.
+</Step>
+<Step title="Suppress, never drop">
+Anything that keeps a customer off the list must return a sentence for the held-back strip.
+</Step>
+<Step title="Give a new reason kind everything it needs">
+A weight in `DEFAULT_TIER_WEIGHTS`, a tone in `REASON_TONE` (queue-screen), a short name in `REASON_BADGE` (call panel), wording in `describe()` (next-step), and a filter pill if it is one.
+</Step>
+<Step title="Test it in engines.test.ts first">
+The engine is pure; a rule without a test is a rule nobody can tell has broken.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| `queue.leadPercent`, `leadMinDays`, `leadMaxDays`, `noOrderCooldownDays` are in `QueueConfig` and on the Settings screen but never read | `engines/queue.ts` `QueueConfig`; `config/presentation.ts` |
+| `queue.snapshotHour` is display-only; the list settles on first read | `queue-service.ts` `getQueue`; `queue-screen.tsx` |
+| Unreachable returns before `suppressionReason`, so do-not-contact / called-today / skipped do not hold it | `buildQueue`, unreachable branch |
+| A waiting retry suppresses even with a due reminder | `suppressionReason` |
+| Retry rungs use `daysBetween` (calendar days); the setting's description says working days | `noAnswerState` |
+| Last no-answer day is sliced from a UTC timestamp — a pre-05:30 IST attempt may count as the previous day | `queue-service.ts` `lastNoAnswerAt`; `noAnswerState` |
+| Only outbound answered calls start the outcome cooldown | `queueInputs`, `lastAnsweredOutcome` |
+| `rebuildQueue()` ("Re-prioritise") only refreshes; `rebuildQueues` (admin) re-settles | `actions/crm.ts` |
+| `skipQueueItem` has no scope check | `actions/crm.ts` |
+| The warm-up `writeDayList` omits the payment plan | `jobs.ts` |
+| `orderLongOverdue` has no wording of its own in `describe()` — falls to "Call them" | `engines/next-step.ts` |

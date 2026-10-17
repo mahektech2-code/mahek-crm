@@ -6,9 +6,11 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { appSecrets, auditLog } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
-import { listUserApps } from "@/lib/access";
 import { isSecretName, SECRET_NAMES, type SecretName } from "@/lib/secrets";
 import { err as fail, okVoid, type Result } from "@/lib/result";
+import { isPlatformAdmin } from "@/lib/access-control";
+import { ADMIN } from "@/lib/admin-routes";
+import { ConsoleNotConfirmedError, isConsoleConfirmed } from "@/lib/console-confirm";
 
 /* ---------------------------------------------------------------------------
  * Setting and clearing the credentials MahekOne calls outside services with.
@@ -28,9 +30,11 @@ import { err as fail, okVoid, type Result } from "@/lib/result";
 
 async function requirePlatformAdmin() {
   const user = await requireUser();
-  const apps = await listUserApps(user.id);
-  if (!apps.includes("admin")) {
+  if (!(await isPlatformAdmin(user))) {
     return { user: null, error: fail("Only a platform admin can change credentials.", "not_permitted") };
+  }
+  if (!(await isConsoleConfirmed())) {
+    return { user: null, error: fail(new ConsoleNotConfirmedError().message, "not_permitted") };
   }
   return { user, error: null };
 }
@@ -94,7 +98,7 @@ export async function setSecretAction(name: string, raw: string): Promise<Result
     });
   });
 
-  revalidatePath("/admin");
+  revalidatePath(ADMIN.home, "layout");
   return okVoid(`${LABELS[name]} saved. ${USED_FROM[name]}`);
 }
 
@@ -115,7 +119,7 @@ export async function clearSecretAction(name: string): Promise<Result> {
     });
   });
 
-  revalidatePath("/admin");
+  revalidatePath(ADMIN.home, "layout");
   /*
    * Clearing removes what the console holds. Where the deploy also sets the
    * matching environment variable, that one takes over rather than the
@@ -131,12 +135,16 @@ const LABELS: Record<SecretName, string> = {
   "sarvam.apiKey": "The Sarvam key",
   "openai.apiKey": "The OpenAI key",
   "msg91.authKey": "The MSG91 key",
+  "wati.apiToken": "The Wati key",
+  "minimoth.apiKey": "The MiniMoth key",
   "olamaps.apiKey": "The Ola Maps key",
   "olamaps.apiKey2": "The second Ola Maps key",
   "olamaps.apiKey3": "The third Ola Maps key",
   "olamaps.apiKey4": "The fourth Ola Maps key",
   "olamaps.apiKey5": "The fifth Ola Maps key",
   "enquiries.ingestSecret": "The website enquiry ingest secret",
+  "website.cmsReadSecret": "The website content read secret",
+  "website.cmsPublishSecret": "The website publish secret",
 };
 
 /**
@@ -149,7 +157,11 @@ const LABELS: Record<SecretName, string> = {
 const USED_FROM: Record<SecretName, string> = {
   "sarvam.apiKey": "Dictation uses it from the next recording.",
   "openai.apiKey": "Dictation uses it from the next recording.",
-  "msg91.authKey": "WhatsApp sending uses it from the next message.",
+  "msg91.authKey": "Nothing uses it — WhatsApp goes through Wati.",
+  "wati.apiToken":
+    "WhatsApp sending uses it from the next message — but only while the founder has the service switched on. The webhook address changes with it, so paste the new one into Wati.",
+  "minimoth.apiKey":
+    "Sign-in codes are offered on the web and on the handset within a minute. A test key (mm_test_…) is ignored in production.",
   "olamaps.apiKey":
     "The Live map and Territory's shop map draw their streets from the next time either is opened.",
   /* A spare is INSURANCE and the sentence has to say so, or somebody reads it
@@ -165,4 +177,8 @@ const USED_FROM: Record<SecretName, string> = {
     "Nothing changes today. It is the last of the pool, spent only once Ola refuses all four keys before it for quota.",
   "enquiries.ingestSecret":
     "The website's next enquiry submission is accepted or refused based on this value — it must match what the website itself is configured with.",
+  "website.cmsReadSecret":
+    "The public site's next read of published content or an uploaded image is accepted or refused based on this value — it must match CMS_READ_SECRET on the website.",
+  "website.cmsPublishSecret":
+    "The next publish tells the live site to refresh with this value, and preview links are signed with it — it must match CMS_PUBLISH_SECRET on the website.",
 };

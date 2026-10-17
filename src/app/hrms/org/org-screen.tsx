@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
 import { OrgTree } from "./org-tree";
+import { BodyPortal } from "@/components/ui/body-portal";
 
 /* ---------------------------------------------------------------------------
  * The org chart.
@@ -261,7 +262,7 @@ function Branch({
             {person.status === "inactive" ? <Badge tone="neutral">Left</Badge> : null}
             {person.reports.length ? (
               <span className="text-[11px] text-muted">
-                {person.reports.length} direct
+                {person.reports.length} direct {person.reports.length === 1 ? "report" : "reports"}
               </span>
             ) : null}
           </span>
@@ -274,7 +275,7 @@ function Branch({
                 reporting information HR has had until now, and hiding it would
                 read as data lost rather than superseded. */}
             {person.sheetReportsTo ? (
-              <span className="text-line-strong"> · sheet: {person.sheetReportsTo}</span>
+              <span className="text-line-strong"> · the sheet says {person.sheetReportsTo}</span>
             ) : null}
           </span>
         </span>
@@ -336,87 +337,89 @@ function ManagerDialog({
     .slice(0, 60);
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 p-6 pt-[10vh]"
-      onClick={onClose}
-    >
+    <BodyPortal>
       <div
-        className="w-full max-w-[520px] overflow-hidden rounded-[6px] border border-line bg-surface shadow-lg"
-        onClick={(e) => e.stopPropagation()}
+        className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 p-6 pt-[10vh]"
+        onClick={onClose}
       >
-        <div className="border-b border-divider px-5 py-3.5">
-          <div className="text-[15px] font-semibold text-ink">
-            Who does {person.name} report to?
+        <div
+          className="w-full max-w-[520px] overflow-hidden rounded-[6px] border border-line bg-surface shadow-lg"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="border-b border-divider px-5 py-3.5">
+            <div className="text-[15px] font-semibold text-ink">
+              Who does {person.name} report to?
+            </div>
+            <div className="mt-0.5 text-[13px] text-muted">
+              {person.position ?? "No position recorded"}
+              {person.sheetReportsTo ? ` · the sheet says ${person.sheetReportsTo}` : ""}
+            </div>
           </div>
-          <div className="mt-0.5 text-[13px] text-muted">
-            {person.position ?? "No position recorded"}
-            {person.sheetReportsTo ? ` · the sheet says ${person.sheetReportsTo}` : ""}
+
+          <div className="px-5 py-3">
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search by name, position or department…"
+              className="h-9.5 w-full rounded-[4px] border border-line px-2.5 text-sm focus:border-brand focus:outline-none"
+            />
           </div>
-        </div>
 
-        <div className="px-5 py-3">
-          <input
-            autoFocus
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search by name, position or department…"
-            className="h-9.5 w-full rounded-[4px] border border-line px-2.5 text-sm focus:border-brand focus:outline-none"
-          />
-        </div>
+          <div className="max-h-[46vh] overflow-y-auto border-t border-divider">
+            {options.length === 0 ? (
+              <p className="px-5 py-8 text-center text-[13px] text-muted">
+                Nobody matches that.
+              </p>
+            ) : (
+              options.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => onSave(p.id)}
+                  className={cx(
+                    "flex w-full cursor-pointer items-center gap-3 border-none bg-transparent px-5 py-2 text-left hover:bg-canvas disabled:cursor-not-allowed",
+                    p.id === person.managerId ? "bg-brand-soft" : "",
+                  )}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-medium text-ink">{p.name}</span>
+                    <span className="mt-px block truncate text-[13px] text-muted">
+                      {[p.position, p.department].filter(Boolean).join(" · ") || "—"}
+                    </span>
+                  </span>
+                  {p.id === person.managerId ? (
+                    <span className="flex-none text-[12px] font-medium text-brand">Current manager</span>
+                  ) : null}
+                </button>
+              ))
+            )}
+          </div>
 
-        <div className="max-h-[46vh] overflow-y-auto border-t border-divider">
-          {options.length === 0 ? (
-            <p className="px-5 py-8 text-center text-[13px] text-muted">
-              Nobody matches that.
-            </p>
-          ) : (
-            options.map((p) => (
+          <div className="flex items-center justify-between gap-3 border-t border-divider px-5 py-3">
+            {person.managerId ? (
               <button
-                key={p.id}
                 type="button"
                 disabled={busy}
-                onClick={() => onSave(p.id)}
-                className={cx(
-                  "flex w-full cursor-pointer items-center gap-3 border-none bg-transparent px-5 py-2 text-left hover:bg-canvas disabled:cursor-not-allowed",
-                  p.id === person.managerId ? "bg-brand-soft" : "",
-                )}
+                onClick={() => onSave(null)}
+                className="cursor-pointer border-none bg-transparent p-0 text-[13px] font-medium text-danger hover:bg-danger-soft disabled:cursor-not-allowed"
               >
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-medium text-ink">{p.name}</span>
-                  <span className="mt-px block truncate text-[13px] text-muted">
-                    {[p.position, p.department].filter(Boolean).join(" · ") || "—"}
-                  </span>
-                </span>
-                {p.id === person.managerId ? (
-                  <span className="flex-none text-[12px] font-medium text-brand">current</span>
-                ) : null}
+                Remove the reporting line
               </button>
-            ))
-          )}
-        </div>
-
-        <div className="flex items-center justify-between gap-3 border-t border-divider px-5 py-3">
-          {person.managerId ? (
+            ) : (
+              <span />
+            )}
             <button
               type="button"
-              disabled={busy}
-              onClick={() => onSave(null)}
-              className="cursor-pointer border-none bg-transparent p-0 text-[13px] font-medium text-danger hover:bg-danger-soft disabled:cursor-not-allowed"
+              onClick={onClose}
+              className="h-8 cursor-pointer rounded-[4px] border border-line bg-surface px-3 text-[13px] font-medium text-body hover:bg-canvas"
             >
-              Remove the reporting line
+              Cancel
             </button>
-          ) : (
-            <span />
-          )}
-          <button
-            type="button"
-            onClick={onClose}
-            className="h-8 cursor-pointer rounded-[4px] border border-line bg-surface px-3 text-[13px] font-medium text-body hover:bg-canvas"
-          >
-            Cancel
-          </button>
+          </div>
         </div>
       </div>
-    </div>
+    </BodyPortal>
   );
 }

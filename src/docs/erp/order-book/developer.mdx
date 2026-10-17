@@ -1,0 +1,147 @@
+`lib/erp/book.ts` is the whole bridge. When <Setting k="erp.orders.live" /> is on, `syncBookOrders(orderNos)` rewrites MahekOne's `orders` and `bills` copy of each ERP order number from its `erp_orders` lines, then recomputes the caches that read them. Three other places read the switch: the sheet projection (writes no order or bill), `recomputeOrderSystemHolds` (reads ERP lines instead of the Taken Order tab), and the ERP's own pending-party approval (withdrawn). Off, every function here returns without writing.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| The bridge | `src/lib/erp/book.ts` | `erpOrdersLive`, `bookStatus`, `bookStatusForStage`, `syncBookOrders`, `syncOne`, `freeBillNo`, `afterBookDecision`, `recomputeErpOrderHolds`, `syncAllBookOrders` |
+| Arithmetic (pure) | `src/lib/erp/engines/sales.ts` | `billFigures`, `orderType` — the same figures the ERP's billing screens show |
+| Callers (orders) | `src/lib/erp/screens/sales.ts` | `saveOrder`, `saveEdit`, `setMany` (Ready, Under Process…), `doBill`, `doUnbill`, delete, dispatch `verify`, `notVerify`, `gst` |
+| Callers (dispatch desk) | `src/lib/actions/erp-trace.ts` | `erpDispatchVerify` runs the same `orderDetails` `verify` bulk handler |
+| Callers (transport) | `src/lib/erp/screens/logistics.ts` | Transport `update`, when the material stage changes |
+| Accounts decision | `src/lib/services/order-approval-service.ts` | Calls `afterBookDecision(orderId)` after approve and decline |
+| Sheet projection | `src/lib/services/sheet-projection-service.ts` | `projectSheet` returns after customers when live |
+| Call Log hold | `src/lib/recompute.ts` | `recomputeOrderSystemHolds` delegates to `recomputeErpOrderHolds` when live |
+| Go-live job | `src/lib/jobs.ts` | `erp-book-sync`: `syncAllBookOrders` then `recomputeOrderSystemHolds` |
+| Setting | `src/lib/config/registry.ts` | `erp.orders.live` (boolean, default off) |
+
+## A write, end to end
+
+<Flow caption="An ERP line is dispatch-verified with the switch on" chart={`
+sequenceDiagram
+  autonumber
+  participant UI as Orders / Dispatch desk
+  participant S as screens/sales.ts verify
+  participant B as erp/book.ts
+  participant DB as Postgres
+  participant R as recompute.ts
+  UI->>S: verify(ctx, lineIds, date)
+  S->>DB: erp_order_details.verification = Verified (and transport record opened)
+  S->>B: syncBookOrders(orderNos)
+  B->>B: erpOrdersLive()? else return
+  B->>DB: linesOf(orderNos) - lines + SKU + packing + details + transport stage
+  loop each order number
+    B->>DB: upsert orders (external_ref ERP-n)
+    B->>DB: insert or update bills (external_ref ERPBILL-n), or delete an unpaid one
+  end
+  B->>R: recomputeBuyingCycle, recomputeOutstanding, recomputeFollowUpState per touched customer
+`} />
+
+## The switch
+
+<Code file="src/lib/erp/book.ts" symbol="erpOrdersLive" />
+
+## Status
+
+<Code file="src/lib/erp/book.ts" symbol="bookStatus" />
+
+<Code file="src/lib/erp/book.ts" symbol="bookStatusForStage" />
+
+`decided` is the existing book row: its `status` (so `declined` sticks) and `approved_at` (so an Accounts approval releases a Pending party's order before the ERP lines have learnt it).
+
+## Value
+
+<Code file="src/lib/erp/book.ts" symbol="lineValue" />
+
+<Code file="src/lib/erp/engines/sales.ts" symbol="billFigures" />
+
+`gross` (the bill's final figure: discounted amount plus freight, plus GST) becomes each line item's `amount` and is summed into `orders.total_amount`; `net` (amount less discount) is summed into `orders.net_amount_paise`. A line whose details have no GST yet is valued at 1800 basis points.
+
+## The rewrite
+
+<Code file="src/lib/erp/book.ts" symbol="syncOne" collapsed />
+
+<Code file="src/lib/erp/book.ts" symbol="freeBillNo" />
+
+<Code file="src/lib/erp/book.ts" symbol="syncBookOrders" />
+
+<DbTable name="orders" only={["customer_id", "delivery_customer_id", "user_id", "source", "external_ref", "order_no", "ordered_at", "total_amount", "net_amount_paise", "line_items", "credit_days", "expected_dispatch", "status", "approved_at", "decline_reason"]} note={{
+  source: "erp for every row this file writes.",
+  external_ref: "ERP-<order no>. Never SHEET-…, so the sheet projection cannot overwrite it.",
+  order_no: "Also ERP-<order no>.",
+  ordered_at: "The ERP order date at 10:00 Asia/Kolkata.",
+  total_amount: "Sum of the live lines' gross value (with freight and GST).",
+  net_amount_paise: "Sum of amount less discount.",
+  line_items: "One item per live line: product (SKU name), quantity (cans), unitPrice, amount, netAmount.",
+  status: "bookStatus(): pending_approval · confirmed · dispatched · in_transit · delivered · cancelled · declined.",
+  approved_at: "Written by the Accounts approval service, read back as the decision.",
+}} />
+
+<DbTable name="bills" only={["customer_id", "bill_no", "order_id", "bill_date", "amount", "paid_amount", "payment_position", "external_ref"]} note={{
+  bill_no: "freeBillNo(): the Tally number, then <tally>/ERP<n>, then ERP-<n>, then ERP-<n>-<random>.",
+  bill_date: "Earliest dispatch date among the verified lines.",
+  amount: "Gross value of the verified live lines only.",
+  payment_position: "stated on insert — owed until money is recorded.",
+  external_ref: "ERPBILL-<order no>.",
+}} />
+
+<DbEnum name="order_source" />
+
+## Accounts' decision, back into the ERP
+
+<Code file="src/lib/erp/book.ts" symbol="afterBookDecision" />
+
+Only lines still at `party_status = 'Pending'` are touched, so an approval does not overwrite a line the ERP had already decided. In `screens/sales.ts`, `doApprove` refuses while live and the "Approved By Admin" bulk button is not drawn.
+
+## The Call Log hold
+
+<Code file="src/lib/erp/book.ts" symbol="recomputeErpOrderHolds" />
+
+`customers.active_in_order_system` has one owner, `recomputeOrderSystemHolds`; this is the branch it takes when live. It is a full reconcile — every customer is written — and it holds by the **billing** customer.
+
+## Go-live
+
+<Code file="src/lib/erp/book.ts" symbol="syncAllBookOrders" />
+
+```bash
+npm run jobs -- erp-book-sync
+```
+
+It reports `n ERP orders in the book · m customers held off the Call Log`, or "the ERP does not take the orders yet (erp.orders.live is off) — nothing written".
+
+## Tests that pin this
+
+| Suite | File | What it pins |
+|---|---|---|
+| `npm run test:integration` | `src/lib/erp/erp-book.test.ts` — "the switch" | Off, the ERP writes nothing into the book |
+| | "an ERP order in the book" | One order row per order number, counted as a sale, confirmed and valued; dispatch-verifying writes ONE bill under the Tally number, owed; the transport stage moves the order to in transit then delivered; a bill number the sheet holds falls back |
+| | "a Pending customer goes to the Accounts queue" | Waits as pending_approval and cannot be billed; Accounts approving releases it; declining cancels the ERP lines with the reason |
+| | "the sheet and the Call Log" | Live, the sheet projection writes no orders or bills; a customer is held while an ERP line is open and released when it leaves |
+| | "the arithmetic" | What an order's lines add up to |
+| `npm run test` | `src/lib/erp/engines/sales.test.ts` | `billFigures`, `orderType` |
+
+## Changing it safely
+
+<Steps>
+<Step title="Every new write that changes an order calls syncBookOrders">
+A save that changes an ERP order's lines, status, value, billing or dispatch must end with `syncBookOrders(await orderNosOf(ids))` (or the order numbers it has). A write that forgets leaves the book stale until somebody else touches the order.
+</Step>
+<Step title="Never write the book from anywhere else">
+The rows are a projection; anything written into them by another path is overwritten on the next rewrite.
+</Step>
+<Step title="Keep the keys">
+`ERP-` and `ERPBILL-` are what keep the sheet projection's `SHEET-` / `SHEETPAY-` upserts off these rows. Changing them orphans every row already written.
+</Step>
+<Step title="Test with the switch on">
+`erp-book.test.ts` sets `erp.orders.live` itself; a new case that forgets will pass vacuously, because off the bridge writes nothing.
+</Step>
+</Steps>
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| The Call Log hold is not refreshed by `syncBookOrders`; it waits for the Taken Order sync or the nightly recompute | `book.ts` `syncBookOrders`; `recompute.ts` `recomputeEverything`; `services/taken-order-sync-service.ts` |
+| A line with no details row is valued at a hardcoded 18% GST, not a setting | `book.ts` `lineValue` (`gstBp ?? 1800`) |
+| `erp-book-sync` has no Admin Console button, so go-live needs shell access | `lib/jobs.ts`; `app/admin/platform-real.tsx` (runnable jobs list) |
+| `recomputeErpOrderHolds` always reports `unmatched: 0`, so the shape matches the sheet's report but the figure means nothing | `book.ts` |

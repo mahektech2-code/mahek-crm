@@ -152,3 +152,31 @@ test('this year is the FINANCIAL year, which is what the bill number says', () =
 test('everything here has no bounds of its own', () => {
   assert.deepEqual(periodRange('all', '2026-09-13'), {});
 });
+
+/* The imported book is mostly unstated. Adding those bills as debt put lakhs
+   "outstanding after this" on shops the office says owe nothing. */
+test('an unstated bill is shown but never counted as owed', () => {
+  const s = buildStatement(
+    [bill('b1', '2026-07-01', 100_000, { paymentPosition: 'unstated' }), bill('b2', '2026-07-05', 20_000)],
+    [],
+  );
+  assert.equal(s.entries.length, 2);
+  assert.equal(s.unstatedCount, 1);
+  assert.equal(s.entries[0].balancePaise, 20_000);
+  assert.equal(s.entries[1].balancePaise, 0);
+});
+
+/* The window is thirteen months, so counting forwards from zero leaves out
+   every older open bill. The office's figure pins the newest row. */
+test('the running balance is anchored to the office figure', () => {
+  const s = buildStatement(
+    [bill('b1', '2026-07-01', 100_000)],
+    [receipt('r1', '2026-07-10', 150_000)],
+    undefined,
+    30_000,
+  );
+  /* Newest first: after the receipt the shop owes what the office says. */
+  assert.equal(s.entries[0].balancePaise, 30_000);
+  assert.equal(s.entries[1].balancePaise, 180_000);
+  assert.equal(s.openingPaise, 80_000);
+});

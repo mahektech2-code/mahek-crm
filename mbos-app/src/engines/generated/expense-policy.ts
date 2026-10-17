@@ -144,10 +144,26 @@ export type MealRateRule = Q & { kind: "meal_rate"; meal: Meal; amountPaise: num
 export type MealEntitlementRule = Q & {
   kind: "meal_entitlement";
   meal: Meal;
-  windowFromMinutes: number;
-  windowToMinutes: number;
+  /** Away across this part of the day. Both null: the window does not decide. */
+  windowFromMinutes: number | null;
+  windowToMinutes: number | null;
   /** An additional gate. Null means the window alone decides. */
   minAwayMinutes: number | null;
+  /**
+   * He LEFT inside this window. It may wrap midnight — 23:00 to 08:00 is "left
+   * between eleven at night and eight in the morning", the client's own words —
+   * and a departure is compared on the clock, so 23:30 the night before counts.
+   * Both null: when he left does not decide. Optional on the wire: rules saved
+   * before these conditions existed carry none of them.
+   */
+  leftFromMinutes?: number | null;
+  leftToMinutes?: number | null;
+  /** Earned only if he came back after this — "returns after 10:30 PM". */
+  returnedAfterMinutes?: number | null;
+  /** Earned only if he was back by this. */
+  returnedByMinutes?: number | null;
+  /** Earned only on a day he left his hometown. A day worked at home earns nothing. */
+  awayFromHometownOnly?: boolean;
 };
 
 /** Requirement 28: left home after this, and that meal is not earned. */
@@ -178,6 +194,12 @@ export type LodgingRule = Q & {
   maxPerNightPaise: number;
   /** Requirement 32 — a daytime room with no night in it is worth nothing. */
   dayUseAllowed: boolean;
+  /**
+   * The amount is FIXED per night rather than a ceiling: a ₹300 room is paid
+   * ₹450 and a ₹600 room ₹450 with ₹150 over. Optional on the wire, false for
+   * every rule saved before it existed.
+   */
+  flatPerNight?: boolean;
 };
 
 /** Requirement 37 — at or above this, proof is not optional. */
@@ -186,6 +208,11 @@ export type ProofThresholdRule = Q & {
   /** `category:lodging`, `travel_mode:train`, or `*` for everything. */
   scopeKey: string;
   atPaise: number;
+  /**
+   * For a travel or local-transport bill, a trip the app recorded that day is
+   * proof enough — "bills OR travel logs". Optional, false when absent.
+   */
+  travelLogCounts?: boolean;
 };
 
 /**
@@ -655,15 +682,19 @@ export function computeLeg(
   };
 }
 
+function proofRuleFor(policy: Policy, subject: PolicySubject, scopeKey: string): ProofThresholdRule | null {
+  return (
+    ruleFor(policy, "proof_threshold", subject, (r) => r.scopeKey === scopeKey) ??
+    ruleFor(policy, "proof_threshold", subject, (r) => r.scopeKey === "*")
+  );
+}
+
 function proofThresholdFor(
   policy: Policy,
   subject: PolicySubject,
   scopeKey: string,
 ): number | null {
-  const exact = ruleFor(policy, "proof_threshold", subject, (r) => r.scopeKey === scopeKey);
-  if (exact) return exact.atPaise;
-  const wildcard = ruleFor(policy, "proof_threshold", subject, (r) => r.scopeKey === "*");
-  return wildcard?.atPaise ?? null;
+  return proofRuleFor(policy, subject, scopeKey)?.atPaise ?? null;
 }
 
 /* ------------------------------------------------------- food and lodging */
@@ -732,6 +763,12 @@ export type DayComputation = {
   totalExcessPaise: number;
   totalMetres: number;
   exceptions: PolicyException[];
+  /**
+   * What each logged line (a hotel, a bill) is worth, by its id. Its own
+   * figure, never a share of the day's total: a food bill the policy pays
+   * nothing for must not take part of the bus fare beside it.
+   */
+  lineEligiblePaise: Record<string, number>;
 };
 
 function overlaps(a1: number, a2: number, b1: number, b2: number): boolean {
@@ -762,9 +799,34 @@ export function computeMeals(
     const entitlement = ruleFor(policy, "meal_entitlement", subject, (r) => r.meal === meal);
     if (!entitlement) return none(`This policy says nothing about when ${meal} is earned.`);
 
+    if (entitlement.awayFromHometownOnly && !day.departedFromHometown) {
+      return none(`He worked in his hometown, and ${meal} is paid only on a day away from it.`);
+    }
+
     const awayTo = returnedMinutes ?? 24 * 60;
-    if (!overlaps(departedMinutes, awayTo, entitlement.windowFromMinutes, entitlement.windowToMinutes)) {
+    if (
+      entitlement.windowFromMinutes !== null &&
+      entitlement.windowToMinutes !== null &&
+      !overlaps(departedMinutes, awayTo, entitlement.windowFromMinutes, entitlement.windowToMinutes)
+    ) {
       return none(`He was not away over ${meal}.`);
+    }
+
+    const leftFrom = entitlement.leftFromMinutes ?? null;
+    const leftTo = entitlement.leftToMinutes ?? null;
+    if (leftFrom !== null && leftTo !== null && !onClockBetween(departedMinutes, leftFrom, leftTo)) {
+      return none(
+        `He left at ${clockOf(departedMinutes)}, and ${meal} is paid only to somebody leaving between ${clockOf(leftFrom)} and ${clockOf(leftTo)}.`,
+      );
+    }
+
+    const after = entitlement.returnedAfterMinutes ?? null;
+    if (after !== null && awayTo <= after) {
+      return none(`He was back by ${clockOf(awayTo)}, and ${meal} is paid only to somebody returning after ${clockOf(after)}.`);
+    }
+    const by = entitlement.returnedByMinutes ?? null;
+    if (by !== null && awayTo > by) {
+      return none(`He came back at ${clockOf(awayTo)}, and ${meal} is paid only to somebody back by ${clockOf(by)}.`);
     }
 
     if (entitlement.minAwayMinutes !== null && awayTo - departedMinutes < entitlement.minAwayMinutes) {
@@ -786,6 +848,17 @@ export function computeMeals(
 
     return { meal, earned: true, amountPaise: amount, withheldReason: null };
   });
+}
+
+/**
+ * Whether a clock time falls in a window that may wrap midnight. Both ends
+ * inclusive: "between 11 PM and 8 AM" includes 8:00 exactly.
+ */
+export function onClockBetween(minutes: number, from: number, to: number): boolean {
+  const m = ((minutes % 1440) + 1440) % 1440;
+  const f = ((from % 1440) + 1440) % 1440;
+  const t = ((to % 1440) + 1440) % 1440;
+  return f <= t ? m >= f && m <= t : m >= f || m <= t;
 }
 
 function clockOf(minutes: number): string {
@@ -967,6 +1040,7 @@ export function computeDay(
   /* ---- lodging ---- */
   const lodgingRule = ruleFor(policy, "lodging", subject);
   const lodgingLines = day.lines.filter((l) => l.kind === "lodging");
+  const lineEligiblePaise: Record<string, number> = {};
   let lodgingClaimed = 0;
   let lodgingEligible = 0;
   for (const line of lodgingLines) {
@@ -983,6 +1057,7 @@ export function computeDay(
         detail: { claimedPaise: line.claimedPaise },
         lineId: line.id,
       });
+      lineEligiblePaise[line.id] = 0;
       continue;
     }
     if (!lodgingRule) {
@@ -996,11 +1071,15 @@ export function computeDay(
         detail: { claimedPaise: line.claimedPaise, nights, policyVersion: policy.versionNo },
         lineId: line.id,
       });
+      lineEligiblePaise[line.id] = 0;
       continue;
     }
     const ceiling = lodgingRule.maxPerNightPaise * nights;
-    const eligible = Math.min(line.claimedPaise, ceiling);
+    /* A FIXED allowance pays the figure whatever the bill; a ceiling pays the
+       bill up to it. Either way a bill above it is the excess. */
+    const eligible = lodgingRule.flatPerNight ? ceiling : Math.min(line.claimedPaise, ceiling);
     lodgingEligible += eligible;
+    lineEligiblePaise[line.id] = eligible;
     if (line.claimedPaise > ceiling) {
       exceptions.push({
         kind: "over_cap",
@@ -1073,9 +1152,17 @@ export function computeDay(
       }
     }
     otherEligible += eligible;
+    lineEligiblePaise[line.id] = eligible;
 
-    const proofAt = proofThresholdFor(policy, subject, `category:${line.kind}`);
-    if (proofAt !== null && line.claimedPaise >= proofAt && !line.hasProof) {
+    const proofRule = proofRuleFor(policy, subject, `category:${line.kind}`);
+    const proofAt = proofRule?.atPaise ?? null;
+    /* "Bills OR travel logs": where the policy says so, a trip the app
+       recorded that day stands as the proof for a travel bill. */
+    const loggedTrip =
+      proofRule?.travelLogCounts === true &&
+      (line.kind === "travel" || line.kind === "local_transport") &&
+      day.legs.some((l) => (l.gpsMetres ?? 0) > 0 || (l.odometerMetres ?? 0) > 0 || (l.manualMetres ?? 0) > 0);
+    if (proofAt !== null && line.claimedPaise >= proofAt && !line.hasProof && !loggedTrip) {
       exceptions.push({
         kind: "missing_proof",
         severity: "block_route",
@@ -1108,6 +1195,7 @@ export function computeDay(
     totalExcessPaise: Math.max(0, totalClaimed - totalEligible),
     totalMetres,
     exceptions,
+    lineEligiblePaise,
   };
 }
 

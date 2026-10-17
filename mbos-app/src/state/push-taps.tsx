@@ -3,7 +3,56 @@ import { router } from 'expo-router';
 import * as Notifications from 'expo-notifications';
 
 import { routeForNotification } from '../native/push';
+import { isTabRoot, safeHref } from '../components/shell/routes';
+import { readArrival } from '../data/arrival';
 import { useBoot } from './boot';
+import { useStore } from './store';
+
+/**
+ * Where a tapped notification goes. The check-out reminder names a CUSTOMER as
+ * well as a screen, because `/visit` reads which shop from the store — the same
+ * two steps the in-visit bar takes when it is tapped. The arrival is re-read
+ * from disk first: the background task that raised the reminder may have run
+ * in a context whose writes the screens have not seen yet.
+ */
+export async function openFrom(data: unknown): Promise<void> {
+  const d = data as { kind?: unknown; customerId?: unknown } | undefined;
+  if (d?.kind === 'forgot-checkout' && typeof d.customerId === 'string') {
+    const arrival = await readArrival();
+    useStore.setState({ arrival });
+    if (!arrival || arrival.customerId !== d.customerId || arrival.checkedInAt == null) {
+      /* Already checked out, or the day moved on — nothing left to close. */
+      router.dismissTo('/home');
+      return;
+    }
+    useStore.getState().set({ custId: d.customerId });
+  }
+  /* Home is a tab root: pushed, it would stack a second Home over the first,
+     the defect the status strip and the bell were both rewritten to avoid. */
+  if (d?.kind === 'punch-out') {
+    router.replace('/home?punchOut=1');
+    return;
+  }
+  /*
+   * ONLY A SCREEN THIS PHONE HAS. The office has sent its own web route in
+   * `href` — `/crm/performance`, `/field/tasks` — and pushing that opened
+   * expo-router's developer "Unmatched Route" page. Anything that is not one
+   * of this build's screens opens the notification list instead, where the
+   * message itself is.
+   *
+   * And a TAB ROOT is gone back to rather than stacked: the server's
+   * punch-out reminder names `/home?punchOut=1` with no `kind`, and a Journey
+   * push names `/journey` — pushed, each laid a second copy of a tab over the
+   * first. One that carries a question (`?punchOut=1`) REPLACES, as the
+   * `punch-out` kind always has, so the screen is handed the question fresh;
+   * a bare tab is popped back to.
+   */
+  const href = safeHref(routeForNotification(data));
+  if (isTabRoot(href)) {
+    if (href.includes('?')) router.replace(href as never);
+    else router.dismissTo(href as never);
+  } else router.push(href as never);
+}
 
 /**
  * Tapping a push opens the thing it is about.
@@ -45,7 +94,7 @@ export function PushTaps() {
       try {
         const response = await Notifications.getLastNotificationResponseAsync();
         if (!live || !response) return;
-        router.push(routeForNotification(response.notification.request.content.data));
+        await openFrom(response.notification.request.content.data);
       } catch {
         /* No response to read, or a shape this version does not have. The app
            opens on its own first screen, which is where it would have gone. */
@@ -54,7 +103,7 @@ export function PushTaps() {
 
     const sub = Notifications.addNotificationResponseReceivedListener((response) => {
       try {
-        router.push(routeForNotification(response.notification.request.content.data));
+        void openFrom(response.notification.request.content.data).catch(() => {});
       } catch {
         /* A route that will not push is not worth crashing the app for. */
       }

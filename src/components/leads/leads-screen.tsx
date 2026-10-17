@@ -8,20 +8,27 @@ import Link from "next/link";
 import { money, shortDate, stamp } from "@/lib/format";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
-import { ExportButton } from "@/app/reports/export-button";
+import { ExportButton } from "@/components/ui/export-button";
 import {
   archiveLead,
   bulkArchiveLeads,
   bulkChaseLeadOwners,
-  bulkReassignLeads,
   bulkRestoreLeads,
   chaseLeadOwner,
   exportLeadRows,
   leadIdsForSelection,
-  reassignLead,
   restoreLead,
 } from "@/lib/actions/sales";
+import { assignDeskLead, bulkAssignDeskLeads } from "@/lib/actions/lead-desk-assignment";
 import { bulkAdvanceLeadStage } from "@/lib/actions/leads";
+import { trashLeads } from "@/lib/actions/lead-trash";
+import {
+  EMPTY_BULK_HOLD,
+  bulkStagePayload,
+  bulkStageReady,
+  pickableLostReasons,
+  type BulkHold,
+} from "@/lib/lead-bulk-stage";
 import { healthView } from "@/lib/customer-health";
 import { cx } from "@/components/ui/primitives";
 import { pinnedCell, pinnedHead } from "@/components/ui/pinned";
@@ -39,7 +46,7 @@ import {
   type LeadFilterColumn,
   type LeadFilterOptions,
 } from "@/components/leads/filter-bar";
-import type { PlaceTree } from "@/lib/services/sales-service";
+import type { PlaceFilterOptions } from "@/lib/place-filters";
 import {
   LEAD_PRIORITIES,
   priorityLabel,
@@ -48,9 +55,11 @@ import {
   type LeadPriority,
 } from "@/lib/lead-priority";
 import { setLeadPriority } from "@/lib/actions/lead-priority";
+import { OwnerOptions, UNASSIGNED, firstChoosable, ownerIdFor, type OwnerPerson } from "@/components/leads/owner-options";
 import type { LeadRow } from "@/lib/services/sales-service";
 import {
   ALL_LEAD_STAGES,
+  REASON_CODE_NEEDING_REMARKS,
   SALES_TYPES,
   salesTypeLabel,
   stageLabel,
@@ -109,6 +118,9 @@ type Acting =
   | { kind: "reassign"; lead: LeadRow }
   | { kind: "archive"; lead: LeadRow }
   | { kind: "restore"; lead: LeadRow }
+  /* Deleting: the lead goes to the trash, off every screen, until an
+     administrator brings it back from the Admin Console. */
+  | { kind: "trash"; lead: LeadRow }
   /* §4.1 — setting the priority from the list, which is where a manager is
      actually standing when they form the judgement: fifteen leads in front of
      them, with the potential, the stage and the age of each one on the row.
@@ -116,8 +128,8 @@ type Acting =
      use the field once, which is how a field nobody fills in happens. */
   | { kind: "priority"; lead: LeadRow };
 
-/** The five things a selection can be put through. */
-type Bulk = "reassign" | "stage" | "archive" | "restore" | "chase";
+/** The six things a selection can be put through. */
+type Bulk = "reassign" | "stage" | "archive" | "restore" | "chase" | "trash";
 
 /**
  * The interactive half of the Leads screen: the funnel and the table are
@@ -151,9 +163,18 @@ export function LeadsScreen({
   team,
   desks,
   canPrioritise,
+  canReassign,
+  canTrash,
   viewer,
   places,
+  lostReasons,
+  holdReasons,
 }: {
+  /**
+   * Whether this person may delete leads — move them to the trash. A
+   * manager's or an admin's (`lead.trash`), checked again in the action.
+   */
+  canTrash: boolean;
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
   /**
@@ -190,7 +211,7 @@ export function LeadsScreen({
    * this screen: a dropdown that has to reach a server before it can offer
    * anything is one that offers nothing on the first press.
    */
-  places: PlaceTree;
+  places: PlaceFilterOptions;
   /**
    * §8.4 — WHICH CUT OF THE BOOK THIS IS, off the URL.
    *
@@ -218,13 +239,22 @@ export function LeadsScreen({
   healthAtRiskBelow: number;
   /** At or above this a score reads as strong. */
   healthStrongAtOrAbove: number;
-  team: Array<{ id: string; name: string }>;
-  /** What is waiting on the three desks this screen is the way in to. */
+  /** Everybody the Change owner list shows; `canOwn` false is drawn disabled. See `OwnerOptions`. */
+  team: OwnerPerson[];
+  /** What is waiting on the desks and worklists this screen is the way in to. */
   desks: {
     verification: number;
     verificationMine: number;
     noNextAction: number;
     appointments: number;
+    /** Suspects at or past the visit warning, undecided. Opens `?view=decide`. */
+    suspectDecisions: number;
+    /** Leads on hold. Opens `?view=parked`. */
+    parked: number;
+    /** Converted accounts with nobody named to run them. Opens `?view=handover`. */
+    handovers: number;
+    /** The desks that left the sidebar, only those this person holds. */
+    otherDesks: Array<{ label: string; href: string }>;
   };
   /**
    * §4.1 — whether this person may say how hard to push a lead.
@@ -241,6 +271,8 @@ export function LeadsScreen({
    * disabled menu item is a fact about a component.
    */
   canPrioritise: boolean;
+  /** `lead.verify` and the Calling desk — the same two questions `assignDeskLead` asks. */
+  canReassign: boolean;
   /**
    * §7 — WHOSE JOB THIS READER IS DOING, resolved once on the server and
    * applied here per row.
@@ -253,6 +285,10 @@ export function LeadsScreen({
    * and every action on this screen goes on checking its own capability.
    */
   viewer: VantageViewer;
+  /** `leads.lostReasons`, resolved on the server. Never the literal list. */
+  lostReasons: Array<{ code: string; label: string }>;
+  /** `leads.holdReasons`, resolved on the server — the list a park's code is validated against. */
+  holdReasons: Array<{ code: string; label: string }>;
 }) {
   const router = useRouter();
   const search = useSearchParams();
@@ -369,6 +405,14 @@ export function LeadsScreen({
   const [salesmanId, setSalesmanId] = React.useState("");
   const [stage, setStage] = React.useState<LeadStage>("contacted");
   const [reason, setReason] = React.useState("");
+  /* The bulk Lost picker. Its own state rather than `reason`, which is the
+     archive sentence; nothing is pre-selected, for the reason MarkLost gives. */
+  const [lostCode, setLostCode] = React.useState("");
+  const [lostNote, setLostNote] = React.useState("");
+  /* A park's answers, asked once for the whole selection. */
+  const [holdCode, setHoldCode] = React.useState("");
+  const [hold, setHold] = React.useState<BulkHold>(EMPTY_BULK_HOLD);
+  const offeredLost = React.useMemo(() => pickableLostReasons(lostReasons), [lostReasons]);
   /*
    * §4.1 — what the priority dialog currently has picked, and "" IS an answer.
    *
@@ -442,9 +486,13 @@ export function LeadsScreen({
 
   function beginBulk(kind: Bulk) {
     setBulk(kind);
-    setSalesmanId(team[0]?.id ?? "");
+    setSalesmanId(firstChoosable(team));
     setStage("contacted");
     setReason("");
+    setLostCode("");
+    setLostNote("");
+    setHoldCode("");
+    setHold(EMPTY_BULK_HOLD);
     setError(null);
   }
 
@@ -456,14 +504,18 @@ export function LeadsScreen({
     try {
       const result =
         bulk === "reassign"
-          ? await bulkReassignLeads({ leadIds, salesmanId })
+          ? await bulkAssignDeskLeads({ leadIds, ownerId: ownerIdFor(salesmanId) })
           : bulk === "stage"
-            ? await bulkAdvanceLeadStage({ customerIds: leadIds, to: stage })
+            ? await bulkAdvanceLeadStage(
+                bulkStagePayload(leadIds, stage, stage === "on_hold" ? holdCode : lostCode, lostNote, hold),
+              )
             : bulk === "archive"
               ? await bulkArchiveLeads({ leadIds, reason })
-              : bulk === "restore"
-                ? await bulkRestoreLeads({ leadIds })
-                : await bulkChaseLeadOwners({ leadIds });
+              : bulk === "trash"
+                ? await trashLeads({ ids: leadIds, reason })
+                : bulk === "restore"
+                  ? await bulkRestoreLeads({ leadIds })
+                  : await bulkChaseLeadOwners({ leadIds });
 
       if (!result.ok) {
         setError(result.error);
@@ -487,7 +539,8 @@ export function LeadsScreen({
 
   function begin(lead: LeadRow, kind: Acting["kind"]) {
     setActing({ lead, kind } as Acting);
-    setSalesmanId(team.find((t) => t.id !== lead.salesmanId)?.id ?? "");
+    /* Opened on who has it now (or Unassigned), so the list reads the way the lead stands. */
+    setSalesmanId(lead.salesmanId ?? UNASSIGNED);
     setReason("");
     /* Opened on what the lead ALREADY carries, unlike the lost-reason picker
        beside it which deliberately pre-selects nothing. The difference is what
@@ -515,9 +568,11 @@ export function LeadsScreen({
     try {
       const result =
         acting.kind === "reassign"
-          ? await reassignLead({ leadId: acting.lead.id, salesmanId })
+          ? await assignDeskLead({ customerId: acting.lead.id, ownerId: ownerIdFor(salesmanId) })
           : acting.kind === "archive"
             ? await archiveLead({ leadId: acting.lead.id, reason })
+            : acting.kind === "trash"
+              ? await trashLeads({ ids: [acting.lead.id], reason })
             : acting.kind === "priority"
               ? await setLeadPriority({
                   customerId: acting.lead.id,
@@ -691,6 +746,8 @@ export function LeadsScreen({
               showArchived={showArchived}
               onClear={() => setPicked(new Set())}
               onSelectEverything={() => void selectEverything()}
+              canReassign={canReassign}
+              canTrash={canTrash}
               onAct={beginBulk}
             />
           ) : null}
@@ -943,7 +1000,14 @@ export function LeadsScreen({
                         <RowMenu
                           items={[
                             { label: "Open the record", href: leadHref(workspace, `leads/${l.id}`) },
-                            { label: "Reassign the lead", run: () => begin(l, "reassign") },
+                            {
+                              label: "Reassign the lead",
+                              run: () => begin(l, "reassign"),
+                              disabled: !canReassign,
+                              title: canReassign
+                                ? undefined
+                                : "Handing a lead to another Telecaller is a manager's, on the Calling desk. Yours is not one of the hats that carries it.",
+                            },
                             {
                               /* Named for what it is rather than "Set the
                                  priority", so the menu says which of the two
@@ -967,6 +1031,15 @@ export function LeadsScreen({
                                 : "Nobody is working this lead — reassign it first.",
                             },
                             { label: "Archive it", danger: true, run: () => begin(l, "archive") },
+                            {
+                              label: "Delete — move to trash",
+                              danger: true,
+                              run: () => begin(l, "trash"),
+                              disabled: !canTrash,
+                              title: canTrash
+                                ? "Off every screen until an administrator restores it from the Admin Console's Deleted leads."
+                                : "Deleting a lead is a manager's. Yours is not one of the hats that carries it.",
+                            },
                           ]}
                         />
                       )}
@@ -1012,7 +1085,9 @@ export function LeadsScreen({
               ? "Move the stage"
               : bulk === "archive"
                 ? "Archive these leads"
-                : bulk === "restore"
+                : bulk === "trash"
+                  ? "Delete these leads"
+                  : bulk === "restore"
                   ? "Restore these leads"
                   : "Chase the owners"
         }
@@ -1030,11 +1105,7 @@ export function LeadsScreen({
               onChange={(e) => setSalesmanId(e.target.value)}
               className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
             >
-              {team.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
+              <OwnerOptions people={team} />
             </select>
             <span className="mt-1 block text-[12px] text-muted">
               One message each, naming how many — not one per lead. Anything already theirs, and
@@ -1065,6 +1136,112 @@ export function LeadsScreen({
           </label>
         ) : null}
 
+        {bulk === "stage" && stage === "lost" ? (
+          <div className="mt-3">
+            <div className="mb-1 text-[13px] font-medium text-ink">Why · required</div>
+            <div className="flex flex-col gap-0.5">
+              {offeredLost.map((r) => (
+                <label
+                  key={r.code}
+                  className="flex cursor-pointer items-center gap-2 rounded-[4px] px-1.5 py-1 text-[13px] text-body hover:bg-canvas"
+                >
+                  <input
+                    type="radio"
+                    name="bulk-lost-reason"
+                    value={r.code}
+                    checked={lostCode === r.code}
+                    onChange={() => setLostCode(r.code)}
+                  />
+                  {r.label}
+                </label>
+              ))}
+            </div>
+            <p className="mt-1.5 text-[12px] text-muted">
+              One reason for every lead selected. A code rather than a sentence, so &ldquo;how many
+              did we lose on credit terms this quarter&rdquo; is a question somebody can ask.
+            </p>
+            <label className="mt-3 block">
+              <span className="mb-1 block text-[13px] font-medium text-ink">
+                Anything to add (optional)
+              </span>
+              <textarea
+                value={lostNote}
+                onChange={(e) => setLostNote(e.target.value)}
+                rows={3}
+                className="w-full rounded-[4px] border border-line bg-surface px-2.5 py-2 text-sm text-ink outline-none focus:border-brand"
+              />
+            </label>
+          </div>
+        ) : null}
+
+        {bulk === "stage" && stage === "on_hold" ? (
+          <div className="mt-3">
+            <div className="mb-1 text-[13px] font-medium text-ink">Why it stopped · required</div>
+            <div className="flex flex-col gap-0.5">
+              {holdReasons.map((r) => (
+                <label
+                  key={r.code}
+                  className="flex cursor-pointer items-center gap-2 rounded-[4px] px-1.5 py-1 text-[13px] text-body hover:bg-canvas"
+                >
+                  <input
+                    type="radio"
+                    name="bulk-hold-reason"
+                    value={r.code}
+                    checked={holdCode === r.code}
+                    onChange={() => setHoldCode(r.code)}
+                  />
+                  {r.label}
+                </label>
+              ))}
+            </div>
+            <label className="mt-3 block">
+              <span className="mb-1 block text-[13px] font-medium text-ink">
+                {holdCode === REASON_CODE_NEEDING_REMARKS
+                  ? "In words · required for Other"
+                  : "Anything to add (optional)"}
+              </span>
+              <textarea
+                value={hold.remarks}
+                onChange={(e) => setHold({ ...hold, remarks: e.target.value })}
+                rows={2}
+                className="w-full rounded-[4px] border border-line bg-surface px-2.5 py-2 text-sm text-ink outline-none focus:border-brand"
+              />
+            </label>
+            <label className="mt-3 block">
+              <span className="mb-1 block text-[13px] font-medium text-ink">Comes back on · required</span>
+              <input
+                type="date"
+                value={hold.resumeDate}
+                onChange={(e) => setHold({ ...hold, resumeDate: e.target.value })}
+                className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
+              />
+            </label>
+            <label className="mt-3 block">
+              <span className="mb-1 block text-[13px] font-medium text-ink">What happens then · required</span>
+              <input
+                type="text"
+                value={hold.actionText}
+                onChange={(e) => setHold({ ...hold, actionText: e.target.value })}
+                className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
+              />
+            </label>
+            <label className="mt-3 block">
+              <span className="mb-1 block text-[13px] font-medium text-ink">On · required</span>
+              <input
+                type="date"
+                value={hold.actionDate}
+                onChange={(e) => setHold({ ...hold, actionDate: e.target.value })}
+                className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
+              />
+            </label>
+            <p className="mt-1.5 text-[12px] text-muted">
+              One answer for every lead selected. Each lead&rsquo;s next action is owed by its own
+              owner; a lead nobody owns is named back to you rather than given to someone else, and
+              a lead already on hold, or one that is Lost or already a sale, is left as it is.
+            </p>
+          </div>
+        ) : null}
+
         {bulk === "archive" ? (
           <label className="block">
             <span className="mb-1 block text-[13px] font-medium text-ink">Why · required</span>
@@ -1078,6 +1255,25 @@ export function LeadsScreen({
               The same sentence goes to every owner losing a lead here — a lead vanishing off
               somebody&rsquo;s list with no explanation is the failure this whole app exists to
               avoid.
+            </span>
+          </label>
+        ) : null}
+
+        {bulk === "trash" ? (
+          <label className="block">
+            <span className="mb-1 block text-[13px] font-medium text-ink">Why · required</span>
+            <textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              rows={3}
+              placeholder="e.g. Duplicate of another lead, test entry, not a real business"
+              className="w-full rounded-[4px] border border-line bg-surface px-2.5 py-2 text-sm text-ink outline-none focus:border-brand"
+            />
+            <span className="mt-1 block text-[12px] text-muted">
+              They leave every screen — lists, the calling queue, search, reports and the salesmen&rsquo;s
+              phones. Nothing is lost: an administrator can restore them from the Admin Console&rsquo;s
+              Deleted leads with all their history. Anything that is not a lead, or not in your book, is left
+              alone and named back to you.
             </span>
           </label>
         ) : null}
@@ -1102,9 +1298,18 @@ export function LeadsScreen({
             Cancel
           </Button>
           <Button
-            tone={bulk === "archive" ? "danger" : "primary"}
+            tone={bulk === "archive" || bulk === "trash" ? "danger" : "primary"}
             disabled={
-              busy || (bulk === "reassign" && !salesmanId) || (bulk === "archive" && !reason.trim())
+              busy ||
+              (bulk === "reassign" && !salesmanId) ||
+              ((bulk === "archive" || bulk === "trash") && reason.trim().length < 3) ||
+              (bulk === "stage" &&
+                !bulkStageReady(
+                  stage,
+                  stage === "on_hold" ? holdCode : lostCode,
+                  stage === "on_hold" ? holdReasons : offeredLost,
+                  hold,
+                ))
             }
             onClick={() => void submitBulk()}
           >
@@ -1127,6 +1332,25 @@ export function LeadsScreen({
         reason={reason}
         onReasonChange={setReason}
         confirmLabel="Archive"
+        busy={busy}
+        error={error}
+        onConfirm={() => void submit()}
+      />
+
+      <ReasonModal
+        open={acting?.kind === "trash"}
+        onClose={() => setActing(null)}
+        title="Delete this lead"
+        subject={acting?.lead.name}
+        subjectDetail={
+          acting
+            ? [acting.lead.companyName, acting.lead.city].filter(Boolean).join(" · ") || undefined
+            : undefined
+        }
+        fieldLabel="Why · required — e.g. duplicate, test entry, not a real business"
+        reason={reason}
+        onReasonChange={setReason}
+        confirmLabel="Move to trash"
         busy={busy}
         error={error}
         onConfirm={() => void submit()}
@@ -1159,13 +1383,7 @@ export function LeadsScreen({
                   onChange={(e) => setSalesmanId(e.target.value)}
                   className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
                 >
-                  {team
-                    .filter((t) => t.id !== acting.lead.salesmanId)
-                    .map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name}
-                      </option>
-                    ))}
+                  <OwnerOptions people={team} />
                 </select>
                 <span className="mt-1 block text-[12px] text-muted">
                   Both sides are told — {acting.lead.salesmanName ?? "whoever has it now"} that it
@@ -1186,7 +1404,11 @@ export function LeadsScreen({
               </Button>
               <Button
                 tone="primary"
-                disabled={busy || (acting.kind === "reassign" && !salesmanId)}
+                disabled={
+                  busy ||
+                  (acting.kind === "reassign" &&
+                    (!salesmanId || salesmanId === (acting.lead.salesmanId ?? UNASSIGNED)))
+                }
                 onClick={() => void submit()}
               >
                 {busy ? "Saving…" : acting.kind === "reassign" ? "Reassign" : "Restore"}
@@ -1955,6 +2177,10 @@ function DeskLine({
     verificationMine: number;
     noNextAction: number;
     appointments: number;
+    suspectDecisions: number;
+    parked: number;
+    handovers: number;
+    otherDesks: Array<{ label: string; href: string }>;
   };
 }) {
   const items = [
@@ -1968,10 +2194,28 @@ function DeskLine({
           : `Yours, of ${desks.verification} waiting on anybody.`,
     },
     {
-      href: leadHref(workspace, "leads/actions/none"),
+      href: `${leadHref(workspace, "leads")}?view=unworked`,
       label: "Nobody is working these",
       value: desks.noNextAction,
       title: "No next action, or one whose day has gone.",
+    },
+    {
+      href: `${leadHref(workspace, "leads")}?view=decide`,
+      label: "Suspect decisions",
+      value: desks.suspectDecisions,
+      title: "Suspects visited as often as the warning allows and still undecided.",
+    },
+    {
+      href: `${leadHref(workspace, "leads")}?view=parked`,
+      label: "On hold",
+      value: desks.parked,
+      title: "Paused leads, by the day each comes back.",
+    },
+    {
+      href: `${leadHref(workspace, "leads")}?view=handover`,
+      label: "Handovers",
+      value: desks.handovers,
+      title: "Converted accounts with nobody named to run them.",
     },
     {
       href: leadHref(workspace, "leads/appointments"),
@@ -2011,6 +2255,23 @@ function DeskLine({
           ) : null}
         </Link>
       ))}
+      {desks.otherDesks.length ? (
+        <span
+          className="flex flex-wrap items-center gap-x-3 border-l border-line pl-4"
+          title="Screens that have left the sidebar. Their lists are views above; the rest of each is here."
+        >
+          <span className="text-muted">Other desks</span>
+          {desks.otherDesks.map((d) => (
+            <Link
+              key={d.href}
+              href={d.href}
+              className="text-muted no-underline hover:text-ink hover:underline"
+            >
+              {d.label}
+            </Link>
+          ))}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -2038,6 +2299,8 @@ function BulkBar({
   showArchived,
   onClear,
   onSelectEverything,
+  canReassign,
+  canTrash,
   onAct,
 }: {
   count: number;
@@ -2046,6 +2309,8 @@ function BulkBar({
   showArchived: boolean;
   onClear: () => void;
   onSelectEverything: () => void;
+  canReassign: boolean;
+  canTrash: boolean;
   onAct: (kind: Bulk) => void;
 }) {
   return (
@@ -2090,7 +2355,13 @@ function BulkBar({
           <button
             type="button"
             onClick={() => onAct("reassign")}
-            className="h-8 cursor-pointer rounded-[4px] bg-ink px-3 text-[13px] font-medium text-white hover:opacity-90"
+            disabled={!canReassign}
+            title={
+              canReassign
+                ? undefined
+                : "Handing leads to another Telecaller is a manager's, on the Calling desk. Yours is not one of the hats that carries it."
+            }
+            className="h-8 cursor-pointer rounded-[4px] bg-ink px-3 text-[13px] font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Change owner
           </button>
@@ -2101,6 +2372,13 @@ function BulkBar({
               { label: "Change stage", run: () => onAct("stage") },
               { label: "Chase the owners", run: () => onAct("chase") },
               { label: "Archive them", run: () => onAct("archive"), danger: true },
+              {
+                label: "Delete them — move to trash",
+                run: () => onAct("trash"),
+                danger: true,
+                disabled: !canTrash,
+                title: canTrash ? undefined : "Deleting leads is a manager's. Yours is not one of the hats that carries it.",
+              },
             ]}
           />
         </>

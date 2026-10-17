@@ -13,12 +13,31 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
+/**
+ * A NEGATIVE FIGURE KEEPS ITS SIGN.
+ *
+ * `grouped` drops it — a count is never below zero — and `inr` used to hand
+ * money straight to it, so a shop in credit by ₹5,000 read as OWING ₹5,000,
+ * in red on the record head. Advance and credit are exactly the balances a
+ * salesman must not chase, so the sign is the most important character on the
+ * figure. A true minus sign (U+2212), not a hyphen, so it does not wrap away
+ * from its number.
+ */
 export function inr(n: number): string {
+  const negative = Math.round(n) < 0;
+  return (negative ? '\u2212' : '') + '₹' + grouped(n);
+}
+
+/**
+ * A count, grouped the way it is said — 10,234 shops reads, 10234 does not.
+ * Indian grouping, the same as `inr`, because a lakh of anything is said as one.
+ */
+export function grouped(n: number): string {
   const s = Math.round(Math.abs(n)).toString();
-  if (s.length <= 3) return '₹' + s;
+  if (s.length <= 3) return s;
   const last3 = s.slice(-3);
   const rest = s.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ',');
-  return '₹' + rest + ',' + last3;
+  return rest + ',' + last3;
 }
 
 /**
@@ -29,6 +48,7 @@ export function inr(n: number): string {
  * Takes rupees, like `inr`.
  */
 export function compactInr(rupees: number): string {
+  if (Math.round(rupees) < 0) return '\u2212' + compactInr(-rupees);
   const n = Math.round(Math.abs(rupees));
   const trim = (v: number) => String(Math.round(v * 10) / 10);
   if (n >= 10_000_000) return '₹' + trim(n / 10_000_000) + 'Cr';
@@ -265,15 +285,6 @@ export function shopName(name: string | null | undefined): string {
 
     return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
   });
-}
-
-export function initialsOf(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((p) => p[0]!.toUpperCase())
-    .join('');
 }
 
 /**

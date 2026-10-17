@@ -1184,6 +1184,89 @@ describe("Bills, search and the statement", () => {
     // The last balance agrees with what the customer owes.
     assert.equal(ledger!.entries.at(-1)!.balance, 10_000_00);
   });
+
+  test("a period's opening and closing balance add up across it", async () => {
+    const customer = await makeCustomer();
+    // Before the period, inside it, and after it.
+    await makeBill(customer.id, 5_000_00, { billDate: "2025-12-15" });
+    await makeBill(customer.id, 3_000_00, { billDate: "2026-02-10" });
+    await makeBill(customer.id, 2_000_00, { billDate: "2027-01-05" });
+
+    setTestUser(deepa);
+    const ledger = await customerLedger(customer.id, { from: "2026-01-01", to: "2026-12-31" });
+    assert.equal(ledger!.openingBalance, 5_000_00, "what was owed before 1 January");
+    assert.equal(ledger!.totals.billed, 3_000_00, "only the bill inside the year");
+    assert.equal(ledger!.closingBalance, 8_000_00, "opening + billed − received");
+    assert.equal(
+      ledger!.closingBalance,
+      ledger!.openingBalance + ledger!.totals.billed - ledger!.totals.received,
+    );
+
+    // All time closes after the last entry.
+    const all = await customerLedger(customer.id);
+    assert.equal(all!.openingBalance, 0);
+    assert.equal(all!.closingBalance, 10_000_00);
+  });
+
+  test("bills filter by a calendar year as well as a financial one", async () => {
+    const customer = await makeCustomer();
+    await makeBill(customer.id, 1_000_00, { billDate: "2026-02-10" }); // FY 25-26, CY 2026
+    await makeBill(customer.id, 2_000_00, { billDate: "2026-05-10" }); // FY 26-27, CY 2026
+
+    setTestUser(deepa);
+    const cy = await listBills({ year: "2026", customerId: customer.id });
+    const fy = await listBills({ year: "26-27", customerId: customer.id });
+    assert.equal(cy.length, 2);
+    assert.equal(fy.length, 1);
+  });
+
+  test("the statement says which bills each payment settled, both ways", async () => {
+    const customer = await makeCustomer();
+    const older = await makeBill(customer.id, 4_000_00, { billDate: addDays(TODAY, -20) });
+    const newer = await makeBill(customer.id, 10_000_00, { billDate: addDays(TODAY, -5) });
+
+    setTestUser(deepa);
+    const recorded = await recordReceipt({
+      customerId: customer.id,
+      amount: 6_000_00,
+      receivedAt: TODAY,
+      mode: "Bank transfer",
+      reference: "UTR5150",
+      allocation: "auto",
+      source: "accounts",
+      idempotencyKey: randomUUID(),
+    });
+    assert.equal(recorded.ok, true, recorded.ok ? "" : recorded.error);
+    const waiting = (await pendingReceipts()).find((r) => r.customerId === customer.id);
+    if (waiting) await confirmReceipt(waiting.receiptId);
+
+    const ledger = await customerLedger(customer.id);
+    const receipt = ledger!.entries.find((e) => e.kind === "receipt")!;
+    assert.deepEqual(
+      receipt.links!.map((l) => [l.id, l.label, l.amount]),
+      [
+        [older.id, older.billNo, 4_000_00],
+        [newer.id, newer.billNo, 2_000_00],
+      ],
+      "oldest first, and the amounts add up to the receipt",
+    );
+    assert.equal(receipt.onAccount, 0);
+
+    const olderLine = ledger!.entries.find((e) => e.billId === older.id)!;
+    assert.equal(olderLine.paid, 4_000_00);
+    assert.deepEqual(olderLine.links!.map((l) => [l.label, l.amount]), [["UTR5150", 4_000_00]]);
+    const newerLine = ledger!.entries.find((e) => e.billId === newer.id)!;
+    assert.equal(newerLine.paid, 2_000_00);
+    assert.equal(newerLine.links![0].id, receipt.receiptId);
+
+    // The older bill was cleared; the newer one was only part paid.
+    assert.equal(receipt.links![0].billDue, 0);
+    assert.equal(receipt.links![1].billDue, 8_000_00);
+    assert.equal(receipt.links![1].billAmount, 10_000_00);
+    // And each bill knows the payment was split across two of them.
+    assert.equal(newerLine.links![0].receiptAmount, 6_000_00);
+    assert.equal(newerLine.links![0].receiptBills, 2);
+  });
 });
 
 /* =============================================================== the badges */

@@ -1,0 +1,47 @@
+One pure engine, one service, one screen module with seven lists, and a `returnFlow` drawer panel. Every figure is read off the documents. The only new stock reading is a confirmed return outward, which is an outflow of its raw-material lot.
+
+## Map of the code
+
+| Layer | File | What lives there |
+|---|---|---|
+| Rules (pure) | `src/lib/erp/engines/returns.ts` | reasons, dispositions, `returnValue`, refusals, `approvalSteps`, `approvalRefusal`, the stage machines, `quarantineLeft`, `reworkFigures`, the labels |
+| Service | `src/lib/erp/returns.ts` | `returnableLots`, `returnableLines`, `moveReturnUnits`, `returnsSummary`, `debitNotesByPurchase`, `returnRowsForTrace` |
+| Screens | `src/lib/erp/screens/returns.ts` | `vendorReturns`, `debitNotes`, `returnOutwards`, `customerReturns`, `returnQc`, `reworkOrders`, `wasteDisposals` |
+| Drawer | `src/app/erp/_ui/panels/returns.tsx` | the `returnFlow` panel |
+| Stock | `src/lib/erp/stock.ts` | `rmLots` subtracts confirmed `erp_return_outwards` |
+| Payables | `src/lib/services/vendor-payout-service.ts` | `syncPurchasePayouts` nets issued debit notes off the PR's payout |
+| Powers | `src/lib/erp/powers.ts` | `returnApprove`, `returnQc` |
+
+<ModuleRef k="erp.vendorReturns" />
+
+<ModuleRef k="erp.customerReturns" />
+
+## Approval
+
+<Code file="src/lib/erp/engines/returns.ts" symbol="approvalRefusal" />
+
+## QC decisions
+
+<Code file="src/lib/erp/engines/returns.ts" symbol="dispositionRefusal" />
+
+Reuse writes `erp_fg_entries` / `erp_pack_entries` with `source_type = 'return'`. Rework, once completed, writes `erp_sfg_entries` with `source_type = 'rework'` on lot `RW<n>`, plus an `erp_sfg_qc` row at Pending. Scrap writes `erp_scrap_entries` with category `Chemical Scrap`. A reversal deletes the entry it posted, but only after locking the lot and checking that the stock is still there.
+
+<Code file="src/lib/erp/returns.ts" symbol="moveReturnUnits" collapsed />
+
+## Tables
+
+<DbTable name="erp_purchase_returns" />
+
+<DbTable name="erp_debit_notes" />
+
+<DbTable name="erp_return_outwards" />
+
+<DbTable name="erp_customer_returns" />
+
+<DbTable name="erp_return_dispositions" />
+
+<DbTable name="erp_rework_orders" />
+
+<DbTable name="erp_waste_disposals" />
+
+Settings: <SettingsTable prefix="erp.returns." />

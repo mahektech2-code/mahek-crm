@@ -1,4 +1,18 @@
 import { APPS, type AppId } from "./apps";
+import { ERP_ALWAYS_OPEN, ERP_GROUPS, erpHref } from "./erp/registry";
+import { HRMS_ALWAYS_OPEN, HRMS_GROUPS, hrmsHref } from "./hrms/registry";
+
+/** What withholding an HRMS screen means, where it is not obvious. */
+const HRMS_NOTES: Record<string, string> = {
+  org: "Who reports to whom, and the only screen that can change it. Withholding it leaves the chart readable nowhere rather than read-only — there is no other view of it.",
+  employees: "The directory, ID cards and working hours. Salaries and identity numbers stay behind their own powers.",
+  payroll: "Salaries, advances and expenses. Payroll holders see everyone's; everyone else sees only their own.",
+  home: "Checking in. Everybody who holds HRMS reaches it whatever else they were narrowed to.",
+};
+
+/** A screen's tabs, said on the Access screen so a grant names what it opens. */
+const hrmsTabsNote = (sc: (typeof HRMS_GROUPS)[number]["screens"][number]) =>
+  sc.views && sc.views.length > 1 ? `Tabs: ${sc.views.map((v) => v.label).join(", ")}.` : "";
 
 /* ---------------------------------------------------------------------------
  * What a person can open INSIDE an app.
@@ -43,6 +57,72 @@ export type AppModule = {
   exact?: boolean;
   /** One line on what withholding it actually costs somebody. */
   note?: string;
+  /**
+   * NOT PART OF "THE WHOLE APP" WHEN SOMEBODY IS GIVEN IT.
+   *
+   * Every module of an app is ticked by default and a grant with all of them
+   * ticked stores no rows, which is what makes a new screen reach everybody
+   * who holds the whole app. That is the right default for a screen everybody
+   * in the app works, and the wrong one for a desk that belongs to particular
+   * people: the calling desk is worked by the telecaller and overseen by the
+   * administrator, and every other CRM user reaching it by holding the whole
+   * app would be the accident the module exists to prevent.
+   *
+   * It changes the DEFAULT the Access screen starts from and nothing else —
+   * `moduleAllowed`, the guard and the storage are the same rules they always
+   * were, so this adds no second permission mechanism. Somebody holding the
+   * app with no module rows still holds every module, this one included, which
+   * is what a grant from a terminal has always meant.
+   */
+  offByDefault?: boolean;
+  /**
+   * NEVER IMPLIED — not by a whole-app grant, not by holding the app as an
+   * administrator. `offByDefault` answers "does a blanket grant reach this",
+   * and its own doc above says the honest thing about it: a whole-app grant
+   * with no module rows still holds every module, this one included, and an
+   * administrator holds every `offByDefault` module regardless of rows. Both
+   * are exactly right for a desk like Calling desk, which an administrator
+   * hands out and must therefore be able to see and use without asking anybody.
+   *
+   * Sales Manager is a different shape: it is a SEAT, not a desk somebody
+   * oversees, and it must be answerable on its own — "does this person carry
+   * the Sales Manager view" — without that answer moving the day somebody's
+   * account is made an administrator, or the day a whole-app grant with no
+   * rows is issued from a terminal that has never heard of modules. A module
+   * marked `explicitOnly` is granted if and only if its own key is one of the
+   * rows stored for that person, full stop: no "zero rows means everything",
+   * no administrator bypass. `moduleAllowed` checks this FIRST, ahead of
+   * either of those rules, and every other reader of it — `listUserModules`,
+   * the Access screen's own `buildGrants`, the route guard — inherits it for
+   * free because none of them re-derive the rule, they ask this function.
+   *
+   * Always paired with `offByDefault: true` here: `moduleAllowed` does not
+   * need that flag once `explicitOnly` is set, but `DEFAULT_OF` on the Access
+   * screen — what "grant the whole app" writes when the app's own box is
+   * first ticked — reads `offByDefault` alone, and a module missing it would
+   * be swept into that bulk grant the same way this whole feature exists to
+   * prevent.
+   */
+  explicitOnly?: boolean;
+  /**
+   * NOT A DESTINATION: THE WRITE HALF OF THE MODULE NAMED HERE.
+   *
+   * Some screens are worth handing out to read alone. WhatsApp is the first —
+   * somebody in accounts reading what a customer wrote about a payment is one
+   * job, answering them from the business number is another — so the module
+   * that opens the screen is the READ grant, and this companion is the WRITE
+   * grant beside it: replying, sending, runs, templates, groups.
+   *
+   * It is stored, diffed, audited and defaulted exactly like any other module,
+   * which is the point of making it one: "no rows means every module" makes a
+   * whole-app grant read AND write, so nothing anybody already held moved, and
+   * read-only is a grant somebody narrowed on purpose. It has no route of its
+   * own — `moduleForPath` never answers with it and the sidebar never draws it
+   * (its href is its parent's, so it adds nothing to the set the sidebar
+   * filters by) — and the Access screen draws it as Read / Write on the
+   * parent's row rather than as a checkbox of its own.
+   */
+  writeOf?: string;
 };
 
 const crm = (
@@ -56,20 +136,6 @@ const crm = (
   label,
   group,
   href: `/crm/${slug}`,
-  note,
-});
-
-const reports = (
-  slug: string,
-  label: string,
-  group: string,
-  note?: string,
-): AppModule => ({
-  key: `reports.${slug}`,
-  app: "reports",
-  label,
-  group,
-  href: `/reports/${slug}`,
   note,
 });
 
@@ -115,6 +181,22 @@ const founder = (
   note,
 });
 
+/** A Command Centre section, addressed `/founder?s=<section>`. */
+const cc = (
+  slug: string,
+  section: string,
+  label: string,
+  group: string,
+  note?: string,
+): AppModule => ({
+  key: `founder.${slug}`,
+  app: "founder",
+  label,
+  group,
+  href: `/founder?s=${section}`,
+  note,
+});
+
 const enquiries = (
   slug: string,
   label: string,
@@ -126,6 +208,20 @@ const enquiries = (
   label,
   group,
   href: `/enquiries/${slug}`,
+  note,
+});
+
+const website = (
+  slug: string,
+  label: string,
+  group: string,
+  note?: string,
+): AppModule => ({
+  key: `website.${slug}`,
+  app: "website",
+  label,
+  group,
+  href: `/website/${slug}`,
   note,
 });
 
@@ -145,23 +241,29 @@ export const APP_MODULES: AppModule[] = [
   crm("call-log", "Call Log", "Daily calling", "The calling queue itself. Without it there is no day's work to do."),
   crm("reminders", "Reminders", "Daily calling"),
   crm("history", "Call History", "Daily calling"),
-  /*
-   * DAILY CALLING, and no longer a group of its own.
-   *
-   * "Communication" held exactly this one module, and a heading that opens a
-   * single row spends a row to save none — see the note in
-   * `components/shell/nav.ts`. It belongs here on its own merits rather than
-   * for tidiness: a message to a customer is the same day's work as a call to
-   * one, and the WhatsApp screen is worked from the same queue.
-   *
-   * It has to sit BESIDE its group rather than keep its old position, because
-   * `moduleGroupsForApp` returns runs and the Access screen keys its sections
-   * on the group name — a group appearing twice hands React two children with
-   * the same key and draws the heading twice with something else wedged
-   * between them. There is a test for exactly that.
-   */
-  crm("whatsapp", "WhatsApp", "Daily calling"),
+  crm(
+    "opportunities",
+    "Opportunities",
+    "Daily calling",
+    "What customers' calls turned up that somebody may buy — to be worked, not only read.",
+  ),
   crm("payments", "Payment Follow-up", "Collections", "Chasing money owed. A telecaller who only sells does not need it."),
+  /*
+   * COLLECTIONS, after Payment Follow-up. It sat under Daily calling, on the
+   * reasoning that a message is the same day's work as a call; in practice
+   * almost everything on it is payment reminders and the customers' answers
+   * to them, so it lives with the chasing. The key never moves — a grant
+   * points at `crm.whatsapp` — only the heading it is drawn under.
+   */
+  crm("whatsapp", "WhatsApp", "Collections", "Reading the chats. Replying and sending is the Write level beside it."),
+  {
+    key: "crm.whatsapp-reply",
+    app: "crm",
+    label: "WhatsApp — reply and send",
+    group: "Collections",
+    href: "/crm/whatsapp",
+    writeOf: "crm.whatsapp",
+  },
   crm(
     "outstanding",
     "Outstanding",
@@ -241,6 +343,27 @@ export const APP_MODULES: AppModule[] = [
     note:
       "The book itself — every lead, its rung, what its gate is waiting on, and the record behind each one. Narrowed to this person's own book unless they are a manager.",
   },
+  /*
+   * THE CALLING DESK IS THE CRM'S ALONE — there is no counterpart under the
+   * Sales Dashboard — and it is a module of its own rather than a tab of All
+   * Leads. A tab cannot be withheld, so the desk was open to everybody who
+   * could open the lead list, which is every CRM user. The Access screen is
+   * where it is granted, to a person, and `offByDefault` keeps a grant of the
+   * whole CRM from carrying it along.
+   *
+   * It is not one of `LEAD_SECTIONS`: those are the workspace both apps mount
+   * from one list, and this is drawn from the CRM's own sidebar.
+   */
+  {
+    key: "crm.lead-calling-desk",
+    app: "crm",
+    label: "Calling desk",
+    group: "Lead Management",
+    href: "/crm/leads/calling-desk",
+    offByDefault: true,
+    note:
+      "The telecaller's desk: online leads qualified by phone in up to three calls, then requested as a Prospect. Off by default — grant it to the people who work the desk. Withholding it removes the screen and the actions behind it; the lead list and every other Lead Management screen are unaffected.",
+  },
   {
     key: "crm.lead-funnel",
     app: "crm",
@@ -311,6 +434,58 @@ export const APP_MODULES: AppModule[] = [
     href: "/crm/leads/oversight",
     note: "Every gate somebody passed and what was missing when they did, the funnel's own audit trail, and the thresholds in force. Reading who overrode what is a different job from working the book.",
   },
+  /**
+   * The CRM's OWN Sales Manager seat — a module of its own, named the same as
+   * `sales.lead-pipeline` on the Sales Dashboard on purpose: both answer to
+   * the same job title, held by different people through different apps. This
+   * one carries no Sales Dashboard screen and no read of `sales.lead-pipeline`
+   * — a CRM grant here says nothing about that one, and the reverse.
+   *
+   * `offByDefault` for the reason `crm.lead-calling-desk` is: a manager-tier
+   * seat is granted a person at a time, not handed to every CRM user the
+   * moment the whole app is.
+   */
+  {
+    key: "crm.sales-manager",
+    app: "crm",
+    label: "Sales Manager",
+    group: "Lead Management",
+    href: "/crm/leads/sales-manager",
+    offByDefault: true,
+    /* NOT `explicitOnly`, deliberately, though `sales.lead-pipeline` is. A
+       whole-CRM grant with no rows still reaches this screen — and that is
+       safe because the workspace's own scope is the seat: it shows, and lets
+       somebody act on, only leads whose `sales_manager_id` is them. A
+       telecaller reaching it sees an empty pipeline. Making it explicit would
+       silently take it away from every sales manager on a whole-CRM grant on
+       the day it shipped, with nothing on any screen saying why. */
+    note:
+      "The CRM's own Sales Manager seat. Off by default on a narrowed CRM grant; it only ever shows leads where this person is the named sales manager. Independent of any Sales Dashboard access.",
+  },
+  /**
+   * A CENTRAL RECORD OF EVERY LEAD CLOSED LOST, off `crm.leads` for the same
+   * reason the calling desk sits off it: a lead can be lost from any rung of
+   * any ladder, so this is not a cut of one stage's worklist — it is its own
+   * question ("what did we lose, and why") asked of the whole book, and a tab
+   * of All Leads could not be withheld from anybody who can open that screen.
+   *
+   * `offByDefault` for the reason the desk and the Sales Manager seat both
+   * are: a loss report is not everybody's to read, and a whole-CRM grant must
+   * not carry it to every telecaller by accident. No Sales Dashboard
+   * counterpart — that funnel is walked by field salesmen through MBOS, and a
+   * lead lost there is read from the same `customers`/`lead_stage_transitions`
+   * rows this reads, with no second screen needed yet.
+   */
+  {
+    key: "crm.lead-lost",
+    app: "crm",
+    label: "Lost",
+    group: "Lead Management",
+    href: "/crm/leads/lost",
+    offByDefault: true,
+    note:
+      "Every lead closed lost, whatever rung it was lost from, with the reason and who decided it. Off by default — grant it to whoever reviews what the funnel loses.",
+  },
   crm("targets", "Monthly Targets", "Targets & reporting", "Whose numbers are whose. Usually a manager's screen."),
   /*
    * A person's OWN score, and not a manager's screen.
@@ -346,6 +521,7 @@ export const APP_MODULES: AppModule[] = [
     exact: true,
   },
   accounts("approvals", "Order approvals", "Decisions", "Approving or declining an order somebody took on a call."),
+  accounts("order-changes", "Order changes", "Decisions", "Accepting or declining a change a salesman asked for on an order already approved."),
   accounts("payments", "Payments to confirm", "Decisions", "Confirming that money a telecaller reported actually arrived."),
   accounts("credits", "Credit notes", "Decisions"),
   accounts("customers", "Customers", "Accounts", "Where an account manager is changed. Accounts' and admin's alone."),
@@ -365,7 +541,7 @@ export const APP_MODULES: AppModule[] = [
     "price-lists",
     "Price lists",
     "Accounts",
-    "Mahek's price lists end to end — import a PDF, review what it read, publish, and say who it applies to. THE DESK THAT ISSUES THESE LISTS IS THIS ONE: `pricelist.manage` sits in ACCOUNTS_OR_MANAGER, so an accounts manager has held it since the module shipped and had nowhere to use it, exactly as `target.set` did before `accounts.targets` existed.",
+    "Mahek's price lists end to end — create, duplicate, import PDFs in bulk, review what they read, publish, export, and say who each applies to. THE DESK THAT ISSUES THESE LISTS IS THIS ONE: `pricelist.manage` is the Price Desk's (Accounts and the Founder Command Centre), and the CRM and Sales Dashboard doors are read-only.",
   ),
   accounts("record", "Record a payment", "Money"),
   accounts(
@@ -381,6 +557,32 @@ export const APP_MODULES: AppModule[] = [
     "What each customer still owes, and the bills behind it.",
   ),
   accounts("bills", "Bills", "Money"),
+  accounts(
+    "cash-flow",
+    "Cash flow",
+    "Money",
+    "Money in and money out, day by day. Out: what Mahek owes its suppliers and the payment day each is planned for — the ERP purchase register and anything added by hand, with their invoices. In: when each open bill is expected, from how that customer actually pays.",
+  ),
+  /*
+   * The CRM's WhatsApp screen, opened from the ledger desk. It reads the same
+   * conversations through the Accounts scope, which is every book — a
+   * customer answering a payment reminder is accounts' business whoever's
+   * customer they are.
+   */
+  accounts(
+    "whatsapp",
+    "WhatsApp",
+    "Money",
+    "Every customer's chats. Replying and sending is the Write level beside it.",
+  ),
+  {
+    key: "accounts.whatsapp-reply",
+    app: "accounts",
+    label: "WhatsApp — reply and send",
+    group: "Money",
+    href: "/accounts/whatsapp",
+    writeOf: "accounts.whatsapp",
+  },
   accounts("ledger", "Customer account", "Money"),
   accounts("on-account", "On account", "Money"),
   accounts("import", "Sheet import", "System", "Runs the projection against the live database."),
@@ -428,29 +630,31 @@ export const APP_MODULES: AppModule[] = [
   ),
 
   sales("tasks", "Tasks", "Field work", "What each salesman has been asked to do, and what is overdue."),
+  /* Visits used to be a module of its own. It is a tab of this one now —
+     the plan and the visits it produced are one story, allocated against
+     visited — and `0213_sales_visits_into_journeys` moved every grant that
+     named it here. */
   sales(
     "journeys",
-    "Journey planning",
+    "Journeys & visits",
     "Field work",
-    "Where each salesman walks. Withholding it leaves the handset's route screen empty, because nothing else writes a plan.",
+    "Where each salesman walks and what came of it: proposed, agreed and walked days, the shops allocated against the shops visited, and every visit logged with which could not be verified. Withholding it leaves the handset's route screen empty, because nothing else writes a plan.",
   ),
-  sales("visits", "Visits", "Field work", "Every visit logged, and which of them could not be verified."),
+  sales(
+    "field-reports",
+    "Field reports",
+    "Field work",
+    "Complaints, competitor intelligence, internal notes, tours and order changes salesmen file from the shops.",
+  ),
   sales(
     "activity-history",
     "Activity history",
     "Field work",
-    "Field salesman visits and calls from before this app existed, imported from a prior system's own log — including the shop names that still need matching to a real account.",
+    "Every visit the field team logged on MBOS, newest first, and before the cutover date the old field app's (EMP 2.0) log beside it — including the shop names that still need matching to a real account.",
   ),
   sales("orders", "Orders", "Commercial", "Orders taken in the field, and the ones over a credit limit."),
   sales("payments", "Payments", "Commercial", "Money collected, and cash still in somebody's pocket."),
   sales("invoices", "Invoices", "Commercial", "What has been billed and what is overdue."),
-  sales("catalogue", "Catalogue & rates", "Commercial", "What is sold and at what price."),
-  sales(
-    "price-lists",
-    "Price lists",
-    "Commercial",
-    "Mahek's price lists end to end: import a PDF, review what it read, publish, say who it applies to, compare months, and see who is billed off-list.",
-  ),
 
   /* ------------------------------------------------- Lead Management, the ten
    *
@@ -496,6 +700,44 @@ export const APP_MODULES: AppModule[] = [
     exact: true,
     note:
       "The book itself — every lead, its rung, what its gate is waiting on, and the record behind each one. Without it there is no funnel to work.",
+  },
+  /**
+   * The Sales Manager workspace, `/sales-lead-pipeline` — its own module and
+   * its own lock, deliberately separate from `sales.leads` above it.
+   *
+   * It used to ride on `sales.leads`: the two screens read the same book, so
+   * sharing the key seemed harmless, and the Access screen never grew a
+   * checkbox for it as a result. That made it ungrantable and unrevokable on
+   * its own — an admin wanting to hand somebody the Sales Manager workspace
+   * without also handing them the plain All Leads screen (or the reverse) had
+   * no way to say so, and the screen answered a question nobody could ask it:
+   * why is there no "Sales Manager" box to tick. `crm.lead-calling-desk` is
+   * the model this follows.
+   *
+   * `offByDefault` alone was tried first and is not enough, which is the whole
+   * reason `explicitOnly` exists: without it, an administrator on this app
+   * holds every `offByDefault` module regardless of rows, and a whole-app
+   * grant with no module rows at all — the shape `npm run app:grant` and the
+   * provisioning endpoint both write, knowing nothing of modules — holds every
+   * module whatsoever, `offByDefault` or not. Production carried exactly this
+   * account: an admin-level Sales Dashboard grant with zero module rows, which
+   * `offByDefault` on its own would have opened this workspace to regardless.
+   * `explicitOnly` closes both doors — see its doc on `AppModule` — so this is
+   * the one module on this app answerable to nothing but its own row: an
+   * administrator sees an unticked "Sales Manager" box exactly like anybody
+   * else, and ticks it the same way Poonam is granted Calling desk, a person
+   * at a time, on purpose.
+   */
+  {
+    key: "sales.lead-pipeline",
+    app: "sales",
+    label: "Sales Manager",
+    group: "Lead Management",
+    href: "/sales-lead-pipeline",
+    offByDefault: true,
+    explicitOnly: true,
+    note:
+      "The Sales Manager's own workspace: dashboard, funnel and record in one flow, working the same book All Leads does. Granted one person at a time — holding the whole Sales Dashboard, even as an administrator, does not carry this on its own. Withholding it leaves All Leads and every other Lead Management screen untouched.",
   },
   {
     key: "sales.lead-funnel",
@@ -571,8 +813,7 @@ export const APP_MODULES: AppModule[] = [
   sales("attendance", "Attendance", "People", "Who started the day, when, and from where."),
   sales("leave", "Leave", "People", "Requests waiting on a decision, and the policy behind them."),
   sales("holidays", "Holidays", "People", "The days nobody is expected to work."),
-  sales("salary", "Salary", "People", "Pay, incentive and deductions. Granted deliberately."),
-  sales("expenses", "Expenses & claims", "People", "What the field spent, and what it is owed back."),
+  sales("expenses", "Expenses", "People", "Every expense a salesman logs, to approve, and the ledger of what each was claimed, allowed, refused and paid."),
   sales(
     "travel",
     "Travel ledger",
@@ -581,15 +822,15 @@ export const APP_MODULES: AppModule[] = [
   ),
   sales(
     "exceptions",
-    "Expense exceptions",
+    "Flagged expenses",
     "People",
-    "Claims outside policy, distances that do not agree and spending unlike anything this person usually does. Questions rather than refusals — the money is already spent.",
+    "Claims the policy flagged for a second look — a missing bill, an amount over the limit, distances that do not agree.",
   ),
   sales(
     "expense-policy",
     "Expense policy",
     "People",
-    "Which rules are in force, from when, and who they apply to. Read-only: a policy is authored in the Admin Console, because a manager writing the rules for what their own team's travelling may cost is the conflict order approval exists to avoid.",
+    "What a salesman is paid back for travel, meals, hotels and bills. Read-only.",
   ),
   sales(
     "roi",
@@ -608,23 +849,25 @@ export const APP_MODULES: AppModule[] = [
   sales("notify", "Send a notification", "Administration", "A message to one salesman, a few, or the whole team — in-app and pushed."),
   sales("audit", "Audit trail", "Administration", "Every decision made here, with a name against it."),
 
-  /* -------------------------------------------------------------- the HRMS */
-  {
-    key: "hrms.org",
-    app: "hrms",
-    label: "Org Chart",
-    group: "Employees",
-    href: "/hrms/org",
-    note: "Who reports to whom, and the only screen that can change it. Withholding it leaves the chart readable nowhere rather than read-only — there is no other view of it.",
-  },
-  {
-    key: "hrms.employees",
-    app: "hrms",
-    label: "All Employees",
-    group: "Employees",
-    href: "/hrms/employees",
-    note: "Salaries, home addresses and identity numbers.",
-  },
+  /* -------------------------------------------------------------- the HRMS
+   * One module per HRMS screen, read off its own registry so the sidebar,
+   * this guard and the access screen cannot disagree. Home is the app root
+   * and matched exactly, or it would swallow every /hrms/* path. The two
+   * keys that existed before the rebuild — `hrms.employees` and `hrms.org` —
+   * keep their keys, so every grant that named them means what it meant. */
+  ...HRMS_GROUPS.flatMap((g) =>
+    g.screens.map(
+      (sc): AppModule => ({
+        key: `hrms.${sc.key}`,
+        app: "hrms",
+        label: sc.label,
+        group: `HRMS · ${g.label}`,
+        href: hrmsHref(sc),
+        exact: sc.slug === "",
+        ...(HRMS_NOTES[sc.key] || hrmsTabsNote(sc) ? { note: [HRMS_NOTES[sc.key], hrmsTabsNote(sc)].filter(Boolean).join(" ") } : {}),
+      }),
+    ),
+  ),
 
   /* ------------------------------------------------------------- the admin */
   {
@@ -637,48 +880,52 @@ export const APP_MODULES: AppModule[] = [
     note: "The whole console. Its own sections are not separately grantable yet.",
   },
 
-  /* ---------------------------------------------------- apps not built yet */
-  { key: "field.home", app: "field", label: "Salesman App", group: "App", href: "/field" },
-  { key: "people.home", app: "people", label: "Attendance & People", group: "App", href: "/people" },
-  { key: "reports.home", app: "reports", label: "Reports", group: "App", href: "/reports" },
-  /* ------------------------------------------------------------- Reports */
-  /*
-   * The owner's five, and the three screens behind them.
+  /* ------------------------------------------- apps with no screens of their own
    *
-   * Modules rather than one screen because the four questions are held by
-   * different people in practice: whoever chases lead generation is not always
-   * whoever is answerable for retention, and `app_module_access` is what lets
-   * that be true without a second app. The overview is deliberately its own
-   * module too — somebody can be given the headline figures without the
-   * customer-by-customer lists underneath them.
+   * None of these is an app "not built yet", which is what this heading
+   * used to say. They are the apps that have NO web screen and never
+   * will, and each keeps exactly one module for one reason: an app is granted
+   * if and only if at least one of its modules is ticked, so an app with none
+   * could not be granted, kept or taken away on the Access screen at all.
+   *
+   * `field` is MBOS, the handset. Its one module is the grant itself — "may
+   * this person sign in on the phone" — and it points at NO path: it used to
+   * be `/field`, a route that only ever said "not built yet" and is gone, so
+   * an href there named a page that does not exist. The empty, exact href
+   * matches nothing, which is the honest answer to "which screen is this".
+   *
+   * `people` is retired into HRMS. Its module stays so somebody still holding
+   * the old grant can have it taken away; it is never offered to anybody new.
+   *
+   * `reports.home` is the same as `people.home`: the Reports app was retired
+   * into the Founder Command Centre, and its one module stays for the same
+   * reason.
    */
-  { key: "reports.overview", app: "reports", label: "Overview", group: "The five", href: "/reports", exact: true },
-  reports(
-    "leads",
-    "Leads & conversion",
-    "The five",
-    "Where new business comes from and what became of it, by cohort. Withholding it leaves the overview's first two figures with nowhere to click.",
-  ),
-  reports(
-    "sales",
-    "Bill size & frequency",
-    "The five",
-    "What an average order is worth and how often one comes.",
-  ),
-  reports(
-    "customers",
-    "Customer health",
-    "The five",
-    "Active, at risk, dormant and lost, and who moved between them. The list behind it names customers, their salesperson and what they owe.",
-  ),
-
-  /* ------------------------------------------------------ §M, the field's cost */
-  reports(
-    "expenses",
-    "Field cost & exceptions",
-    "The five",
-    "What the sales team costs a month, broken down, against what it brought in — with only the exceptions that need somebody, and the trend behind both. Revenue rather than margin, because MahekOne holds no product costs.",
-  ),
+  {
+    key: "field.home",
+    app: "field",
+    label: "Mobile sign-in",
+    group: "App",
+    href: "",
+    exact: true,
+    note: "Signing in on the MBOS handset. There is no web screen behind it: granting the Salesman App gives a phone a way in and the browser nothing to show.",
+  },
+  {
+    key: "people.home",
+    app: "people",
+    label: "Attendance & People (retired)",
+    group: "App",
+    href: "/people",
+    note: "Retired into HRMS. Kept only so a grant somebody still holds can be taken away.",
+  },
+  {
+    key: "reports.home",
+    app: "reports",
+    label: "Reports (retired)",
+    group: "App",
+    href: "/reports",
+    note: "Retired into the Founder Command Centre. Kept only so a grant somebody still holds can be taken away.",
+  },
 
   /* --------------------------------------------------- the Founder Dashboard */
   /*
@@ -687,31 +934,38 @@ export const APP_MODULES: AppModule[] = [
    * true without a second app. The overview is its own module too, so the
    * headline can be given without the four screens behind it.
    */
-  { key: "founder.overview", app: "founder", label: "Overview", group: "Company", href: "/founder", exact: true },
+  /*
+   * THE FOUNDER COMMAND CENTRE. One module per section (PRD §5.5). The seven
+   * keys that existed before it are KEPT — a module key is stored in grants and
+   * renaming one silently revokes it — even where the section behind it grew:
+   * `founder.crm` opens Sales & order book. Sections are addressed `?s=` on
+   * `/founder`; Price lists and WhatsApp keep their own desk pages as well.
+   */
+  { key: "founder.overview", app: "founder", label: "Company", group: "Today", href: "/founder", exact: true },
+  cc("inbox", "inbox", "Needs you", "Today", "Every decision waiting on the founder, every alarm, and what was handed on."),
+  cc("crm", "sales", "Sales & order book", "Sell", "Every order from every source, and deciding them."),
+  cc("team", "team", "Targets & performance", "Sell", "Setting and revising targets; everyone scored, ranked and explained."),
+  cc("customers", "customers", "Customers", "Sell", "Every customer and lead, the full record, and every change to an account."),
+  cc("leads", "leads", "Leads, samples & distributors", "Sell", "The three ladders, gates, samples and distributor appointments."),
+  cc("enquiries", "enquiries", "Website enquiries", "Sell", "The enquiries desk end to end."),
+  cc("calling", "calling", "Calling operations", "Operate", "The telecallers' day: queues, calls, reminders, EOD and the call assistant."),
+  cc("field", "field", "Field force", "Operate", "Where they are, attendance, visits, travel, expenses, leave and devices."),
+  cc("service", "service", "Service", "Operate", "Complaints end to end."),
+  cc("money", "money", "Money", "Operate", "Bills, receipts, outstanding, collections and credit notes — the whole accounts desk."),
   founder(
-    "team",
-    "Team performance",
-    "Company",
-    "Everybody scored — telecallers and the field team together, ranked. Withholding it leaves the overview's headline with nowhere to click.",
+    "price-lists",
+    "Price lists",
+    "Founder desks",
+    "Mahek's price lists — create, duplicate, import, publish and export them. The founder's desk is one of the two that may change a price; the CRM and the Sales Dashboard only read them.",
   ),
   founder(
-    "money",
-    "Money",
-    "Company",
-    "What is outstanding, what is waiting on a decision, and what has been collected.",
+    "whatsapp",
+    "WhatsApp",
+    "Founder desks",
+    "The switch that decides whether WhatsApp messages go to customers through the API at all, which approved Wati template each message is sent as, and what has gone out. Nothing is sent through the API unless it is switched on here.",
   ),
-  founder(
-    "people",
-    "People",
-    "Company",
-    "Headcount, by office and department. Not attendance — see HRMS's own note on that.",
-  ),
-  founder(
-    "crm",
-    "CRM",
-    "Company",
-    "The order book's own five, with links into the Reports app for the full breakdown.",
-  ),
+  cc("people", "people", "People & organisation", "Organisation", "Headcount, the employee master, reporting lines and the business calendar."),
+  cc("system", "system", "Data operations & health", "Organisation", "Every sync, import, repair and recompute, and how fresh the data is."),
 
   /* -------------------------------------------------- the Website Enquiries app */
   /*
@@ -728,9 +982,163 @@ export const APP_MODULES: AppModule[] = [
     "Website Enquiries",
     "The worklist itself — every enquiry, who it is assigned to, and what it is waiting on.",
   ),
+  /* -------------------------------------------------------- the Website CMS
+   * One module per screen — the public site's content desk, granted
+   * separately from every other app for the same reason the Website
+   * Enquiries app is: nobody who already holds Sales, Accounts or HRMS does
+   * this work. Mock data only in this PR; a grant here opens the screens and
+   * nothing on the live site yet.
+   */
+  { key: "website.dashboard", app: "website", label: "Dashboard", group: "Website", href: "/website", exact: true },
+  /*
+   * HIRE is one module. What somebody can open inside it is their Hire ROLE
+   * (`lib/hire/roles.ts`), not a tick-list: an interviewer who could be
+   * granted the Decisions screen would be a hiring manager in all but name,
+   * and the scope that keeps interviewers away from earlier scores is not a
+   * screen at all.
+   */
+  {
+    key: "hire.app",
+    app: "hire",
+    label: "Hire",
+    group: "Hire",
+    href: "/hire",
+    note: "What they can do inside Hire is their Hire role — recruiter, interviewer, hiring manager, onboarding, HR head or admin — set below, under Hire.",
+  },
+  /*
+   * DOCUMENTATION is one module. Everybody granted it reads every app's pages
+   * and all three tabs of each — the guide, how it works, and the developer
+   * reference — by decision rather than by omission: a telecaller who wants
+   * to see the rule behind their Call Log is reading the same truth the
+   * developer is, and splitting it would make two versions of one answer.
+   */
+  {
+    key: "docs.app",
+    app: "docs",
+    label: "Documentation",
+    group: "Documentation",
+    href: "/docs",
+  },
+  /*
+   * THE FACTORY app is one module. What somebody can do inside it is their
+   * department and level, set beside the grant in Admin Console → Access.
+   */
+  {
+    key: "factory.app",
+    app: "factory",
+    label: "Factory",
+    group: "Factory",
+    href: "/factory",
+    note: "Associate works their department's jobs; manager supervises their department, or the whole floor as the Production Head. The department is set just below, under Factory.",
+  },
+  website("products", "Products", "Website", "The catalogue shown on the public site."),
+  website("industries", "Industries", "Website", "The industries the public site says Mahek serves."),
+  website("pages", "Pages", "Website", "About, Manufacturing, Distributor and Contact — their sections and copy."),
+  website("gallery", "Gallery", "Website", "Photos shown on the public site."),
+  website("media", "Media", "Website", "The media library behind every image on the site."),
+  website("careers", "Careers", "Website", "Job postings shown on the public site. Applications are managed in Enquiries."),
+  website("testimonials", "Testimonials", "Website", "Customer quotes shown on the public site."),
+  website("milestones", "Milestones", "Website", "The company timeline shown on the public site."),
+  website("navigation", "Navigation", "Website", "The header and footer menus."),
+  website("seo", "SEO", "Website", "Per-page titles, descriptions and metadata."),
+  website("settings", "Settings", "Website", "Company, social, contact and analytics settings for the public site."),
+  /*
+   * PUBLISHING IS NOT EDITING. Every Website screen above lets a person change a
+   * working copy, and nothing they type reaches mahekindia.com. This is the
+   * right to make a change LIVE — publish, unpublish, archive, refresh the site,
+   * import the site's current content — which is outward-facing and not
+   * something a person can take back before a visitor has seen it.
+   *
+   * `explicitOnly`: never implied — not by a whole-app grant, not by holding the
+   * app as an administrator. It is ticked, for a named person, on the Access
+   * screen. That is the whole reason it is a separate key, and the reason no
+   * migration writes it to anybody. `writeOf` so it is a narrowing of the
+   * dashboard (it opens nothing on its own; it is not a destination).
+   */
+  {
+    key: "website.publish",
+    app: "website",
+    label: "Publish to the live site",
+    group: "Website",
+    href: "/website",
+    writeOf: "website.dashboard",
+    explicitOnly: true,
+    offByDefault: true,
+    note: "Making a change live on mahekindia.com, taking it down, archiving, and refreshing the site. Without it a person can still edit and preview, but nothing they do reaches the public.",
+  },
+
+  /*
+   * THE ERP: one module per BUILT screen, read off its own registry so the
+   * sidebar, this guard and the access screen cannot disagree. Each screen is
+   * separately grantable because the source's permission list named screens.
+   * The dashboard is the app root and matched exactly, or it would swallow
+   * every /erp/* path.
+   */
+  ...ERP_GROUPS.flatMap((g) =>
+    g.screens
+      .filter((sc) => sc.built)
+      .map(
+        (sc): AppModule => ({
+          key: `erp.${sc.key}`,
+          app: "erp",
+          label: sc.label,
+          group: `ERP · ${g.label}`,
+          href: erpHref(sc),
+          exact: sc.slug === "",
+        }),
+      ),
+  ),
 ];
 
 const BY_KEY = new Map(APP_MODULES.map((m) => [m.key, m]));
+
+/**
+ * KEYS NO LONGER IN THE REGISTRY, and the live key each one now means.
+ *
+ * A module key is a join key in `app_module_access`, so retiring one has two
+ * failure modes and both are silent. Leave the key out entirely and a stored
+ * row naming it is not "a module of this app" any more — `moduleAllowed`
+ * filters it away, and somebody narrowed to exactly that row is left with NO
+ * rows for the app, which reads as the whole app: a retirement that widens
+ * access. Keep the key in the registry and the Access screen goes on offering
+ * a box that duplicates another.
+ *
+ * So a retired key is translated, here, on the way in, to the module that
+ * replaced it — no migration, nothing rewritten, and the next save on the
+ * Access screen writes the live key because that is the only one it can draw.
+ */
+export const RETIRED_MODULES: Readonly<Record<string, string>> = {};
+
+/**
+ * KEYS REMOVED WITH NOTHING TO REPLACE THEM, and the app each belonged to.
+ *
+ * The same widening trap as above, without a successor to translate to. A
+ * person narrowed to ERP screens that included one of these must stay narrowed
+ * to the rest, not fall through to "no rows, so the whole app" — so a stored
+ * row naming one still counts as a narrowing of its app, and opens nothing.
+ */
+export const REMOVED_MODULES: Readonly<Record<string, AppId>> = {
+  /* Masters → My customers and Price lists, taken out of the ERP on 2026-10-15. */
+  "erp.myCustomers": "erp",
+  "erp.priceLists": "erp",
+};
+
+/**
+ * Modules a holder of the app reaches WHATEVER was ticked — HRMS's check-in
+ * screen, the ERP's dashboard and settings. Their own apps enforce this
+ * (`lib/hrms/access.ts`, `lib/erp/access.ts`); it is read here so the Access
+ * screen can draw them as always on instead of as a checkbox that does
+ * nothing when unticked, which is the one kind of control that teaches people
+ * the screen is lying to them.
+ */
+export const ALWAYS_OPEN_MODULES: ReadonlySet<string> = new Set([
+  ...[...HRMS_ALWAYS_OPEN].map((k) => `hrms.${k}`),
+  ...[...ERP_ALWAYS_OPEN].map((k) => `erp.${k}`),
+]);
+
+export function isAlwaysOpen(key: string): boolean {
+  return ALWAYS_OPEN_MODULES.has(key);
+}
 
 export function getModule(key: string): AppModule | undefined {
   return BY_KEY.get(key);
@@ -742,6 +1150,26 @@ export function modulesForApp(app: AppId): AppModule[] {
 
 export function moduleKeysForApp(app: AppId): string[] {
   return modulesForApp(app).map((m) => m.key);
+}
+
+/**
+ * What a grant with NO module rows stands for: every module a whole-app grant
+ * carries. An `explicitOnly` module is never one of them — it answers to its
+ * own row alone (see `moduleAllowed`), so "no rows" cannot mean it.
+ */
+export function wholeAppKeys(app: AppId): string[] {
+  return modulesForApp(app).filter((m) => !m.explicitOnly).map((m) => m.key);
+}
+
+/**
+ * Whether ticking exactly these modules IS the whole app, so it may be stored
+ * as no rows: every ordinary module ticked and no explicit-only one. Ticking an
+ * explicit-only module is never "the whole app" — storing it as no rows would
+ * silently drop it.
+ */
+export function isWholeApp(app: AppId, modules: readonly string[]): boolean {
+  const ticked = new Set(modules);
+  return modulesForApp(app).every((m) => (m.explicitOnly ? !ticked.has(m.key) : ticked.has(m.key)));
 }
 
 /**
@@ -786,6 +1214,7 @@ export function moduleGroupsForApp(app: AppId): Array<{ group: string; modules: 
 export function moduleForPath(path: string): AppModule | undefined {
   let best: AppModule | undefined;
   for (const m of APP_MODULES) {
+    if (m.writeOf) continue;
     const hit = m.exact ? path === m.href : path === m.href || path.startsWith(m.href + "/");
     if (!hit) continue;
     if (!best || m.href.length > best.href.length) best = m;
@@ -805,10 +1234,38 @@ export function moduleAllowed(
   key: string,
   granted: readonly string[],
   app: AppId,
+  /**
+   * The person holds this app AS AN ADMINISTRATOR. Such a hat holds every
+   * module marked `offByDefault` whatever its rows say: that flag exists so a
+   * grant of the whole app does not carry the module to ordinary users, and an
+   * administrator is the one who hands it out. It reaches ONLY those modules —
+   * an administrator narrowed on purpose stays narrowed everywhere else.
+   */
+  administrator = false,
 ): boolean {
-  const forApp = granted.filter((g) => getModule(g)?.app === app);
-  return forApp.length === 0 || forApp.includes(key);
+  const forApp = granted
+    .map((g) => RETIRED_MODULES[g] ?? g)
+    .filter((g) => getModule(g)?.app === app);
+  /* Checked first, and returns on its own: an explicitOnly module answers to
+     nothing but its own row, not to "no rows means everything" and not to the
+     administrator bypass either. */
+  if (getModule(key)?.explicitOnly) return forApp.includes(key);
+  /* A write level is a narrowing of its screen, never a way onto it: a row
+     for the companion beside no row for the screen opens nothing. */
+  const parent = getModule(key)?.writeOf;
+  if (parent && !moduleAllowed(parent, granted, app, administrator)) return false;
+  if (administrator && getModule(key)?.offByDefault) return true;
+  const narrowed = forApp.length > 0 || granted.some((g) => REMOVED_MODULES[g] === app);
+  return !narrowed || forApp.includes(key);
 }
+
+/** The write companion of a module, where it has one. */
+export function writeModuleOf(key: string): AppModule | undefined {
+  return APP_MODULES.find((m) => m.writeOf === key);
+}
+
+/** The modules that open the WhatsApp screen, one per app that draws it. */
+export const WHATSAPP_MODULES = ["crm.whatsapp", "accounts.whatsapp"] as const;
 
 /** Apps a grant can be made against, in registry order. */
 export function grantableApps() {

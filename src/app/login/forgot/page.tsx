@@ -4,6 +4,8 @@ import { getCurrentUser } from "@/lib/auth";
 import { BrandPanel, BrandPanelHeading } from "@/components/shell/brand-panel";
 import { Icon } from "@/components/shell/icons";
 import { ForgotForm } from "./forgot-form";
+import { CodeResetForm } from "./code-reset-form";
+import { codesOffered } from "@/lib/actions/auth";
 
 export const metadata = { title: "Forgot password - MahekOne" };
 
@@ -42,6 +44,16 @@ export default async function ForgotPasswordPage() {
             Back to sign in
           </Link>
           <ForgotForm />
+          {(await codesOffered()) ? (
+            <>
+              <div className="my-5 flex items-center gap-2.5">
+                <span className="h-px flex-1 bg-line" />
+                <span className="text-xs text-muted">or, from your phone</span>
+                <span className="h-px flex-1 bg-line" />
+              </div>
+              <CodeResetForm />
+            </>
+          ) : null}
         </div>
       </div>
     </div>

@@ -1,0 +1,9 @@
+/* Every phase's drawer panels, registered by importing this once. */
+import "./test-evidence";
+import "./video";
+import "./trace";
+import "./purchase-flow";
+import "./stock-check";
+import "./scrap";
+import "./returns";
+import "./can-photos";

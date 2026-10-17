@@ -81,6 +81,10 @@ export function Sidebar({
     if (badge === "statusRequests") return badges.statusRequests;
     if (badge === "leadsDueToday") return badges.leadsDueToday;
     if (badge === "leadsOverdue") return badges.leadsOverdue;
+    /* One number for §24: past its day if anything is, otherwise due today. */
+    if (badge === "leadsAttention") {
+      return badges.leadsOverdue > 0 ? badges.leadsOverdue : badges.leadsDueToday;
+    }
     return 0;
   };
 
@@ -101,7 +105,13 @@ export function Sidebar({
         renderIcon={(name, size) => <Icon name={name} size={size} className="flex-none" />}
         /* WHICH queue is red, rather than how big a number is. See
            `DANGER_BADGES` — the list outgrew being expressible as a ternary. */
-        badgeToneFor={(item) => (DANGER_BADGES.has((item as NavItem).badge) ? "danger" : "warn")}
+        badgeToneFor={(item) => {
+          const badge = (item as NavItem).badge;
+          /* The combined lead badge is red exactly when it is showing the
+             OVERDUE number, and amber when it is showing today's. */
+          if (badge === "leadsAttention") return badges.leadsOverdue > 0 ? "danger" : "warn";
+          return DANGER_BADGES.has(badge) ? "danger" : "warn";
+        }}
       />
 
       {/*

@@ -12,7 +12,7 @@ type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "dark";
 type ButtonSize = "sm" | "md";
 
 const BUTTON_BASE =
-  "inline-flex items-center justify-center gap-2 rounded-[4px] font-medium " +
+  "inline-flex items-center justify-center gap-2 rounded-control font-medium " +
   "whitespace-nowrap transition-colors duration-100 disabled:cursor-not-allowed";
 
 const BUTTON_VARIANTS: Record<ButtonVariant, string> = {
@@ -71,7 +71,7 @@ export type Tone =
 
 const BADGE_TONES: Record<Tone, string> = {
   neutral: "bg-divider text-body",
-  brand: "bg-brand-soft text-[#5223E0]",
+  brand: "bg-brand-soft text-brand-hover",
   success: "bg-success-soft text-success",
   warn: "bg-warn-soft text-warn-ink",
   danger: "bg-danger-soft text-danger",
@@ -140,7 +140,7 @@ export function Card({
     <div
       {...rest}
       className={cx(
-        "rounded-[6px] border border-line bg-surface",
+        "rounded-card border border-line bg-surface",
         className,
       )}
     >
@@ -206,7 +206,7 @@ export function PageHeader({
         ) : null}
       </div>
       {actions ? (
-        <div className="flex flex-none items-center gap-2.5">{actions}</div>
+        <div className="flex flex-none items-center gap-2.5 print:hidden">{actions}</div>
       ) : null}
     </div>
   );
@@ -221,49 +221,63 @@ export type Metric = {
   deltaTone?: "success" | "danger" | "muted";
   sub?: string;
   tone?: "ink" | "danger" | "success";
+  /**
+   * Optional. A tile with this set is a real control, not just a number —
+   * every existing caller omits it and keeps rendering exactly as before;
+   * only a caller that opts in gets a clickable tile.
+   */
+  onClick?: () => void;
 };
 
 export function MetricStrip({ metrics }: { metrics: Metric[] }) {
   return (
     <Card className="mb-4 flex flex-wrap items-start gap-x-8 gap-y-3.5 px-5 py-3.5">
-      {metrics.map((m) => (
-        <div key={m.label}>
-          <div className="text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">
-            {m.label}
-          </div>
-          <div className="mt-0.5 flex items-baseline gap-2">
-            <span
-              className={cx(
-                "text-[22px] leading-7 font-semibold",
-                m.tone === "danger"
-                  ? "text-danger"
-                  : m.tone === "success"
-                    ? "text-success"
-                    : "text-ink",
-              )}
-            >
-              {m.value}
-            </span>
-            {m.delta ? (
+      {metrics.map((m) => {
+        const Tag = m.onClick ? "button" : "div";
+        return (
+          <Tag
+            key={m.label}
+            type={m.onClick ? "button" : undefined}
+            onClick={m.onClick}
+            className={cx("text-left", m.onClick && "cursor-pointer")}
+          >
+            <div className="text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">
+              {m.label}
+            </div>
+            <div className="mt-0.5 flex items-baseline gap-2">
               <span
                 className={cx(
-                  "text-[13px] font-medium",
-                  m.deltaTone === "danger"
+                  "text-[22px] leading-7 font-semibold",
+                  m.tone === "danger"
                     ? "text-danger"
-                    : m.deltaTone === "muted"
-                      ? "text-muted"
-                      : "text-success",
+                    : m.tone === "success"
+                      ? "text-success"
+                      : "text-ink",
                 )}
               >
-                {m.delta}
+                {m.value}
               </span>
+              {m.delta ? (
+                <span
+                  className={cx(
+                    "text-[13px] font-medium",
+                    m.deltaTone === "danger"
+                      ? "text-danger"
+                      : m.deltaTone === "muted"
+                        ? "text-muted"
+                        : "text-success",
+                  )}
+                >
+                  {m.delta}
+                </span>
+              ) : null}
+            </div>
+            {m.sub ? (
+              <div className="text-xs whitespace-nowrap text-muted">{m.sub}</div>
             ) : null}
-          </div>
-          {m.sub ? (
-            <div className="text-xs whitespace-nowrap text-muted">{m.sub}</div>
-          ) : null}
-        </div>
-      ))}
+          </Tag>
+        );
+      })}
     </Card>
   );
 }
@@ -353,7 +367,10 @@ export function SortableTh({
         type="button"
         onClick={onSort}
         className={cx(
-          "inline-flex cursor-pointer items-center gap-1 hover:text-body",
+          /* A <button> does not inherit text-transform — the preflight resets
+             it — so without saying it again here a sortable heading read
+             "Customer" beside a plain one reading "CONTACT PERSON". */
+          "inline-flex cursor-pointer items-center gap-1 tracking-[0.04em] uppercase hover:text-body",
           align === "right" ? "flex-row-reverse" : undefined,
           active ? "text-body" : undefined,
         )}
@@ -475,7 +492,7 @@ export function Callout({
   children,
   className,
 }: {
-  tone?: "warn" | "danger" | "brand";
+  tone?: "warn" | "danger" | "brand" | "success";
   children: React.ReactNode;
   className?: string;
 }) {
@@ -483,11 +500,12 @@ export function Callout({
     warn: "border-warn-line bg-warn-soft border-l-[3px] border-l-warn",
     danger: "border-danger-soft bg-danger-soft border-l-[3px] border-l-danger",
     brand: "border-brand-softer bg-brand-soft border-l-[3px] border-l-brand",
+    success: "border-success-soft bg-success-soft border-l-[3px] border-l-success",
   };
   return (
     <div
       className={cx(
-        "mb-4 flex items-center gap-3 rounded-[4px] border px-4 py-2.5",
+        "mb-4 flex items-center gap-3 rounded-control border px-4 py-2.5",
         tones[tone],
         className,
       )}
@@ -528,9 +546,24 @@ export function Field({
   );
 }
 
-const CONTROL =
-  "w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink " +
-  "outline-none focus:border-brand";
+/**
+ * A text control's look — border, radius, padding, focus ring — said ONCE, so
+ * a screen that has to draw a bare `<input>` (a date in a toolbar, a cell in a
+ * line table) draws the same box as `Input`. The border colour is chosen here
+ * rather than layered, because two border colours on one element are decided
+ * by stylesheet order, not by which was meant.
+ */
+export function controlClass({
+  invalid = false,
+  warn = false,
+  className,
+}: { invalid?: boolean; warn?: boolean; className?: string } = {}): string {
+  return cx(
+    "w-full rounded-control border bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand",
+    invalid ? "border-danger" : warn ? "border-warn" : "border-line",
+    className,
+  );
+}
 
 export function Input({
   className,
@@ -540,7 +573,7 @@ export function Input({
   return (
     <input
       {...props}
-      className={cx(CONTROL, "h-8.5", invalid && "border-danger", className)}
+      className={controlClass({ invalid, className: cx("h-8.5", className) })}
     />
   );
 }
@@ -554,7 +587,7 @@ export function Select({
     <select
       {...props}
       className={cx(
-        "rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand",
+        "rounded-control border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand",
         "h-8.5 max-w-full",
         className,
       )}
@@ -572,12 +605,10 @@ export function Textarea({
   return (
     <textarea
       {...props}
-      className={cx(
-        CONTROL,
-        "resize-y py-2 leading-[21px]",
-        invalid && "border-danger",
-        className,
-      )}
+      className={controlClass({
+        invalid,
+        className: cx("resize-y py-2 leading-[21px]", className),
+      })}
     />
   );
 }
@@ -594,7 +625,7 @@ export function Checkbox({
       <input
         {...props}
         type="checkbox"
-        className="h-[15px] w-[15px] accent-[#6835FB]"
+        className="h-[15px] w-[15px] accent-brand"
       />
       {label}
     </label>
@@ -613,7 +644,7 @@ export function Radio({
       <input
         {...props}
         type="radio"
-        className="h-[15px] w-[15px] accent-[#6835FB]"
+        className="h-[15px] w-[15px] accent-brand"
       />
       {label}
     </label>
@@ -629,7 +660,7 @@ export function MoneyInput({
   return (
     <span
       className={cx(
-        "flex h-8.5 items-center rounded-[4px] border bg-surface px-2.5 focus-within:border-brand",
+        "flex h-8.5 items-center rounded-control border bg-surface px-2.5 focus-within:border-brand",
         invalid ? "border-danger" : "border-line",
         className,
       )}

@@ -1,4 +1,5 @@
 import "server-only";
+import { designationStandings, type DesignationStanding } from "./erp-designation-service";
 import {
   conflictsFor,
   type Role,
@@ -6,9 +7,10 @@ import {
 } from "@/lib/access-control";
 import { asc, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { appAccess, appModuleAccess, employees, users } from "@/db/schema";
+import { appAccess, appModuleAccess, employees, erpUserPowers, hireUserRoles, hrmsUserPowers, users } from "@/db/schema";
 import { APPS, type AppId } from "@/lib/apps";
-import { moduleKeysForApp, modulesForApp } from "@/lib/modules";
+import { placeFromRow, type CrewRole, type FactoryDept, type FactoryPlace } from "@/lib/factory/departments";
+import { isAlwaysOpen, moduleAllowed, moduleKeysForApp, modulesForApp } from "@/lib/modules";
 
 /* ---------------------------------------------------------------------------
  * Who can open what, read for the Access screen.
@@ -36,16 +38,25 @@ export type AppGrant = {
   app: AppId;
   appName: string;
   /**
-   * The hat this app is held under. Null means the account's own role, which
-   * is what every grant meant before roles existed and what `app:grant`
-   * writes — the screen shows the account's role there rather than an empty
-   * box, because "inherited" and "unset" look identical and are not.
+   * The level this app is held under, and NEVER null on the way out.
+   *
+   * Null used to mean "the account's own role", which made a grant with no
+   * level the widest thing the person held anywhere — so a CRM manager given
+   * Reports from a terminal was a Reports manager without anybody choosing
+   * that. `0197` wrote every stored null down to what it resolved to, and a
+   * null that still arrives (an older row, a hand-written insert) is read as
+   * an associate's, the same rule `levelInApp` applies. Resolving it HERE
+   * means the dialog seeds its selects with the level the server is actually
+   * enforcing, not with a guess of its own.
    */
-  role: Role | null;
+  role: Role;
   /** Every module of the app, ticked or not — the review table renders this. */
   modules: ModuleGrant[];
+  /** Screens, not modules: a write level is not a screen and is not counted. */
   grantedCount: number;
   totalCount: number;
+  /** The screens held at the Read level only — WhatsApp, today. */
+  readOnly: string[];
   /** True where nothing has ever been unticked, so the grant is the whole app. */
   whole: boolean;
 };
@@ -87,6 +98,25 @@ export type AccessRow = {
    */
   roles: Role[];
   conflicts: RoleConflict[];
+  /**
+   * The ERP's special powers this person holds by row (`lib/erp/powers.ts`).
+   * They are granted here, beside the ERP grant itself, because a power is
+   * part of what somebody's ERP lets them do — the verifier, the person who
+   * sees purchase money — and a second screen inside the ERP for it was a
+   * second place access was decided.
+   */
+  erpPowers: string[];
+  hrmsPowers: string[];
+  /** Their job inside Hire, where one is set; null means the level decides. */
+  hireRole: string | null;
+  /** Where they work on the factory floor, with the Factory level their department-level permission. */
+  factoryPlace: FactoryPlace | null;
+  /**
+   * The ERP designation this person holds, and whether their access is still
+   * exactly it. `matches: false` is CUSTOMISED: an edit to the designation
+   * leaves them where they are. Null where they hold none.
+   */
+  erpDesignation: DesignationStanding | null;
 };
 
 /**
@@ -158,7 +188,7 @@ async function employeeRows(): Promise<EmployeeLite[]> {
 function buildGrants(
   apps: AppId[],
   modulesByApp: Map<AppId, string[]>,
-  roleFor: (app: AppId) => Role | null,
+  roleFor: (app: AppId) => Role,
 ): AppGrant[] {
   return APPS.filter((a) => apps.includes(a.id)).map((a) => {
     const stored = modulesByApp.get(a.id) ?? [];
@@ -167,19 +197,33 @@ function buildGrants(
     // once in `moduleAllowed` and shown here rather than re-derived.
     const whole = stored.length === 0;
     const role = roleFor(a.id);
+    /* Asked of `moduleAllowed` with the same level `listUserModules` reads —
+       the grant's own, and nothing else — so this screen cannot show a module
+       as withheld that the guard lets an administrator through. */
+    const administrator = role === "admin";
     const modules: ModuleGrant[] = all.map((m) => ({
       key: m.key,
       label: m.label,
       group: m.group,
-      granted: whole || stored.includes(m.key),
+      /* An always-open module (HRMS check-in, the ERP's dashboard and
+         settings) is reached by every holder of the app, whatever was ticked
+         — `lib/hrms/access.ts` and `lib/erp/access.ts` add it — so it is
+         shown as held rather than as a withheld box that withholds nothing. */
+      granted: isAlwaysOpen(m.key) || moduleAllowed(m.key, stored, a.id, administrator),
     }));
+    const isWrite = new Set(all.filter((m) => m.writeOf).map((m) => m.key));
+    const screens = modules.filter((m) => !isWrite.has(m.key));
+    const held = new Set(modules.filter((m) => m.granted).map((m) => m.key));
     return {
       app: a.id,
       appName: a.name,
       role,
       modules,
-      grantedCount: modules.filter((m) => m.granted).length,
-      totalCount: modules.length,
+      grantedCount: screens.filter((m) => m.granted).length,
+      totalCount: screens.length,
+      readOnly: all
+        .filter((m) => m.writeOf && held.has(m.writeOf) && !held.has(m.key))
+        .map((m) => all.find((x) => x.key === m.writeOf)?.label ?? m.writeOf!),
       whole,
     };
   });
@@ -187,7 +231,7 @@ function buildGrants(
 
 /** Every account, with what it opens and how far into each app it reaches. */
 export async function listAccess(): Promise<AccessRow[]> {
-  const [accounts, access, moduleRows, staff] = await Promise.all([
+  const [accounts, access, moduleRows, staff, powerRows, hrmsPowerRows, hireRoleRows, standings, factoryRows] = await Promise.all([
     db
       .select({
         id: users.id,
@@ -212,15 +256,31 @@ export async function listAccess(): Promise<AccessRow[]> {
       })
       .from(appModuleAccess),
     employeeRows(),
+    db.select({ userId: erpUserPowers.userId, power: erpUserPowers.power }).from(erpUserPowers),
+    db.select({ userId: hrmsUserPowers.userId, power: hrmsUserPowers.power }).from(hrmsUserPowers),
+    db.select({ userId: hireUserRoles.userId, role: hireUserRoles.role }).from(hireUserRoles),
+    designationStandings(),
+    db.execute(sql`
+      select s.user_id as "userId", s.area, s.areas, s.badge_code as badge, s.hr_confirmed as "hrConfirmed",
+             (select coalesce(json_object_agg(d.proc, d.role), '{}'::json) from factory_team_defaults d where d.user_id = s.user_id) as crews
+        from factory_staff s`) as unknown as Promise<{ userId: string; area: FactoryDept; areas: FactoryDept[] | null; badge: string | null; hrConfirmed: boolean; crews: Record<string, CrewRole> }[]>,
   ]);
+  const placeByUser = new Map(factoryRows.map((r) => [r.userId, placeFromRow(r)]));
+  const hireRoleByUser = new Map(hireRoleRows.map((r) => [r.userId, r.role]));
+  const hrmsPowersByUser = new Map<string, string[]>();
+  for (const p of hrmsPowerRows) hrmsPowersByUser.set(p.userId, [...(hrmsPowersByUser.get(p.userId) ?? []), p.power]);
+
+  const powersByUser = new Map<string, string[]>();
+  for (const p of powerRows) powersByUser.set(p.userId, [...(powersByUser.get(p.userId) ?? []), p.power]);
 
   const appsByUser = new Map<string, AppId[]>();
-  const rolesByUserApp = new Map<string, Role | null>();
+  /* A grant with no level is an associate's — see `AppGrant.role`. */
+  const rolesByUserApp = new Map<string, Role>();
   for (const a of access) {
     const list = appsByUser.get(a.userId) ?? [];
     list.push(a.app as AppId);
     appsByUser.set(a.userId, list);
-    rolesByUserApp.set(`${a.userId}:${a.app}`, (a.role as Role) ?? null);
+    rolesByUserApp.set(`${a.userId}:${a.app}`, (a.role as Role | null) ?? "associate");
   }
 
   const modulesByUser = new Map<string, Map<AppId, string[]>>();
@@ -244,21 +304,18 @@ export async function listAccess(): Promise<AccessRow[]> {
 
   return accounts.map((u) => {
     /*
-     * Every hat, the account's own included: a grant with no role of its own
-     * is held under it, so it is one of the hats this person wears.
+     * Every hat, one per app granted. The account's own level is NOT one: it
+     * is derived from these, and a grant with no level is an associate's.
      *
      * The APP travels with the level now. A conflict is between two apps —
      * the calling book and the ledger desk — and with roles reduced to levels
      * a list of bare roles could no longer express one: "associate and
      * associate" is not a sentence about anything.
      */
-    const heldHats = [
-      { app: null as string | null, role: u.role as Role },
-      ...(appsByUser.get(u.id) ?? []).map((app) => ({
-        app: app as string | null,
-        role: rolesByUserApp.get(`${u.id}:${app}`) ?? (u.role as Role),
-      })),
-    ];
+    const heldHats = (appsByUser.get(u.id) ?? []).map((app) => ({
+      app: app as string | null,
+      role: rolesByUserApp.get(`${u.id}:${app}`) ?? ("associate" as Role),
+    }));
     const heldRoles = [...new Set<Role>(heldHats.map((h) => h.role))];
     /* The link somebody made first, and only then the guess — the same order
        lib/employee-link.ts applies in SQL for the salary figures, said once
@@ -290,10 +347,15 @@ export async function listAccess(): Promise<AccessRow[]> {
       grants: buildGrants(
         appsByUser.get(u.id) ?? [],
         modulesByUser.get(u.id) ?? new Map(),
-        (app) => rolesByUserApp.get(`${u.id}:${app}`) ?? null,
+        (app) => rolesByUserApp.get(`${u.id}:${app}`) ?? "associate",
       ),
       roles: heldRoles,
       conflicts: conflictsFor(heldHats),
+      erpPowers: powersByUser.get(u.id) ?? [],
+      hrmsPowers: hrmsPowersByUser.get(u.id) ?? [],
+      hireRole: hireRoleByUser.get(u.id) ?? null,
+      factoryPlace: placeByUser.get(u.id) ?? null,
+      erpDesignation: standings.get(u.id) ?? null,
     };
   });
 }
@@ -327,8 +389,8 @@ export type Candidate = {
 };
 
 /**
- * Everybody access could be given to: the employee master and the accounts
- * that already exist, merged on email or work number.
+ * Everybody access could be given to: the HRMS People directory, one row per
+ * employee, each with the account linked to it where there is one.
  *
  * Read fresh on every open of the dialog, so an employee added to the sheet
  * and synced a minute ago is pickable without anybody reloading the console.
@@ -343,6 +405,7 @@ export async function listCandidates(): Promise<Candidate[]> {
         email: users.email,
         phone: users.phone,
         active: users.active,
+        employeeId: users.employeeId,
       })
       .from(users)
       .orderBy(asc(users.name)),
@@ -360,28 +423,64 @@ export async function listCandidates(): Promise<Candidate[]> {
     rolesByUserApp.set(`${a.userId}:${a.app}`, (a.role as Role) ?? null);
   }
 
-  const userByEmail = new Map(
-    accounts.flatMap((u) => {
-      const k = emailKey(u.email);
-      return k ? ([[k, u]] as const) : [];
-    }),
-  );
-  const userByPhone = new Map(
-    accounts.flatMap((u) => {
-      const k = phoneKey(u.phone);
-      return k ? ([[k, u]] as const) : [];
-    }),
-  );
+  /*
+   * ONE ROW PER PERSON IN THE HRMS DIRECTORY, under the name HRMS gives them.
+   *
+   * The account behind a row is the one somebody LINKED to it
+   * (`users.employee_id`), and only failing that one matched on an email or a
+   * number — and only where that email or number is on exactly one employee
+   * and exactly one account. The sheet gives a shared company address
+   * (mahekmarketing1@gmail.com) to helpers and delivery staff alike, so a
+   * match on it named seven different employees after the one account that
+   * also used it, and picking any of them opened THAT account. An account is
+   * attached to one row at most.
+   *
+   * Accounts with nobody behind them in HRMS are not offered here: this is a
+   * list of the people who work here. They are still on the Access table and
+   * their own Manage access.
+   */
+  const countBy = (keys: (string | null)[]) => {
+    const n = new Map<string, number>();
+    for (const k of keys) if (k) n.set(k, (n.get(k) ?? 0) + 1);
+    return n;
+  };
+  const staffEmails = countBy(staff.map((e) => emailKey(e.email)));
+  const staffPhones = countBy(staff.map((e) => e.phone));
+  const accountEmails = countBy(accounts.map((u) => emailKey(u.email)));
+  const accountPhones = countBy(accounts.map((u) => phoneKey(u.phone)));
+  const staffIds = new Set(staff.map((e) => e.id));
 
   const claimed = new Set<string>();
+  const accountFor = new Map<string, (typeof accounts)[number]>();
+  // Deliberate links first, so a guess can never take an account somebody
+  // has already said belongs to a different employee.
+  for (const u of accounts) {
+    if (u.employeeId && staffIds.has(u.employeeId) && !accountFor.has(u.employeeId)) {
+      accountFor.set(u.employeeId, u);
+      claimed.add(u.id);
+    }
+  }
+  for (const e of staff) {
+    if (accountFor.has(e.id)) continue;
+    const em = emailKey(e.email);
+    const ph = e.phone;
+    const account =
+      (em && staffEmails.get(em) === 1 && accountEmails.get(em) === 1
+        ? accounts.find((u) => emailKey(u.email) === em)
+        : undefined) ??
+      (ph && staffPhones.get(ph) === 1 && accountPhones.get(ph) === 1
+        ? accounts.find((u) => phoneKey(u.phone) === ph)
+        : undefined);
+    if (account && !claimed.has(account.id) && !account.employeeId) {
+      accountFor.set(e.id, account);
+      claimed.add(account.id);
+    }
+  }
+
   const out: Candidate[] = [];
 
   for (const e of staff) {
-    const account =
-      userByEmail.get(emailKey(e.email) ?? "") ??
-      userByPhone.get(e.phone ?? "") ??
-      null;
-    if (account) claimed.add(account.id);
+    const account = accountFor.get(e.id) ?? null;
 
     // Only an active employee gets access. A leaver whose row is still in the
     // sheet, and somebody whose status cell nobody filled in, are both refused
@@ -401,9 +500,9 @@ export async function listCandidates(): Promise<Candidate[]> {
       userId: account?.id ?? null,
       employeeId: e.id,
       employeeCode: e.employeeCode,
-      name: account?.name ?? e.name,
-      email: account?.email ?? e.email,
-      phone: account?.phone ?? e.phone,
+      name: e.name,
+      email: e.email ?? account?.email ?? null,
+      phone: e.phone ?? account?.phone ?? null,
       department: e.department,
       position: e.position,
       office: e.officeName,
@@ -411,29 +510,6 @@ export async function listCandidates(): Promise<Candidate[]> {
       accountActive: account?.active ?? false,
       apps: account ? (appsByUser.get(account.id) ?? []) : [],
       blocked,
-    });
-  }
-
-  // Accounts with nobody behind them in HRMS. Several are real — an account
-  // created before the employee sheet existed, or somebody the sheet spells
-  // differently — so they are offered rather than dropped, and labelled so
-  // whoever grants knows the check that could not be made.
-  for (const u of accounts) {
-    if (claimed.has(u.id)) continue;
-    out.push({
-      userId: u.id,
-      employeeId: null,
-      employeeCode: null,
-      name: u.name,
-      email: u.email,
-      phone: u.phone,
-      department: null,
-      position: null,
-      office: null,
-      employeeStatus: null,
-      accountActive: u.active,
-      apps: appsByUser.get(u.id) ?? [],
-      blocked: u.active ? null : "This account is deactivated.",
     });
   }
 

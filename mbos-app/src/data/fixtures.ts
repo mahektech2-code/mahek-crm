@@ -24,14 +24,41 @@
 
 export type OutcomeKey = 'visited' | 'order' | 'payment' | 'complaint' | 'sample' | 'closed_now' | 'closed';
 
+/* Short on purpose: these are chips that wrap three to a row, read at a
+   shop counter. A long label pushed them into a two-column grid of tall boxes
+   that ate a whole screen of a form with plenty below it. */
 export const OUTCOMES: { k: OutcomeKey; label: string }[] = [
-  { k: 'visited', label: 'Visited' },
-  { k: 'order', label: 'Order taken' },
-  { k: 'payment', label: 'Payment collected' },
+  { k: 'visited', label: 'Just a visit' },
+  { k: 'order', label: 'Order' },
+  { k: 'payment', label: 'Payment' },
   { k: 'complaint', label: 'Complaint' },
-  { k: 'sample', label: 'Sample required' },
-  { k: 'closed_now', label: 'Not available' },
+  { k: 'sample', label: 'Sample' },
+  { k: 'closed_now', label: 'Owner away' },
   { k: 'closed', label: 'Shop closed' },
+];
+
+/**
+ * The word for a stored outcome. The visits table keeps the KEY — `closed_now`,
+ * `order` — and two screens printed it as it was, so a salesman read
+ * "closed_now" under "Last time". Anything unrecognised (an older build's
+ * value, the office's `not_available`) is shown as it came rather than
+ * dropped: an odd word beats a missing fact.
+ */
+export function outcomeLabel(key: string | null | undefined): string | null {
+  if (!key) return null;
+  if (key === 'not_available') return 'Owner away';
+  return OUTCOMES.find((o) => o.k === key)?.label ?? key;
+}
+
+/** How the next contact happens. The visit form asks it beside the date, and
+ *  it decides what the follow-up task says: "Call Sharma Paints" is a job
+ *  somebody can do from a desk, "Follow up with" was not. */
+export type FollowUpMode = 'visit' | 'call' | 'whatsapp';
+
+export const FOLLOW_UP_MODES: { k: FollowUpMode; label: string; task: string }[] = [
+  { k: 'visit', label: 'Visit', task: 'Visit' },
+  { k: 'call', label: 'Call', task: 'Call' },
+  { k: 'whatsapp', label: 'WhatsApp', task: 'WhatsApp' },
 ];
 
 /**
@@ -84,7 +111,7 @@ export const COMPLAINT_PRIORITIES = [
 /** The labels on the day-ahead strip. The three figures beside them are real. */
 export const DAY_AHEAD = [
   { l: 'stops planned' },
-  { l: 'to collect' },
+  { l: 'outstanding' },
   { l: 'follow-ups due' },
 ] as const;
 
@@ -116,8 +143,13 @@ export const DAY_AHEAD = [
 export const DASH_CARDS: { l: string; tone?: 'danger' | 'amber'; route?: string }[] = [
   { l: 'Today’s sales', route: 'orders' },
   { l: 'Visits', route: 'journey' },
-  { l: 'Collection due', tone: 'danger', route: 'customers' },
+  /* OUTSTANDING, not "due": the figure is everything the book owes, bills not
+     yet due included, and it opens the list of who owes rather than the whole
+     book. */
+  { l: 'Outstanding', tone: 'danger', route: 'accounts' },
   { l: 'Cash in hand', tone: 'amber', route: 'collections' },
   { l: 'Tasks', tone: 'amber', route: 'tasks' },
-  { l: 'Follow-ups', route: 'tasks' },
+  /* Opens the shops whose follow-up is due or missed — the same rule the
+     figure counts, so the number can be traced to its rows. */
+  { l: 'Follow-ups', route: 'customers?filter=followUp' },
 ];

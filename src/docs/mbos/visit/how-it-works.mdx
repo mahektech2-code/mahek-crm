@@ -1,0 +1,110 @@
+A visit is the field team's unit of work, and the record a manager reads to know what happened in a shop. Two things pull against each other: the record has to be **honest** — he was there, for long enough, and said what happened — and a salesman whose work is refused **stops recording work**. The rules below are where that balance was struck. The manager's side is [Field reports on the Sales Dashboard](/docs/sales/field-reports).
+
+## The four moments
+
+<Flow caption="Set off, arrive, check in, check out" chart={`
+flowchart TD
+  SV["Start visit"] --> P{"Punched in?"}
+  P -- "yes" --> LEG["Trip recorded silently<br/>under today's vehicle"]
+  P -- "no" --> FORM
+  LEG --> ARR["I am at the shop<br/>(precise GPS reading)"]
+  ARR --> G{"Check-in gate"}
+  G -- "no fix / weak fix" --> R1["Refused — nothing written<br/>step outside, press again"]
+  G -- "too far" --> R2["Refused — walk to the shop<br/>or go on with a written reason"]
+  R2 -- "reason given" --> UNV["Arrival recorded,<br/>visit will be NOT CHECKED"]
+  G -- "no pin on the shop" --> CONF["Are you at this shop?<br/>yes → this reading becomes the pin"]
+  G -- "within the radius" --> OK["Arrival recorded"]
+  CONF --> OK
+  OK --> CI["Check in at the shop<br/>dwell clock starts"]
+  UNV --> CI
+  CI --> FORM["Outcome · next step · note · photos"]
+  FORM --> CO["Check out and save"]
+`} />
+
+## Setting off: travel is asked twice a day, not per shop
+
+**Start visit** no longer asks anything. It used to ask how he was getting to each shop, open a meter camera, and ask for the fare on the way out; the field would not answer it — a man with eleven shops will not type a twenty-rupee auto fare eleven times. Mahek's decision is that travel is asked **at punch-in** (the vehicle and opening meter) and **at punch-out** (the closing meter), and every fare is claimed once in Expenses.
+
+| Day | What a visit records |
+|---|---|
+| Punched in on a metered vehicle | A trip under that vehicle, excluded from any claim — the two day readings already price the kilometres |
+| Punched in on bus, train or auto | A trip under that mode, excluded from any claim — fares go in Expenses |
+| Punched in walking, or in a customer's vehicle | A trip under that mode; nothing is priced either way |
+| Not punched in | No trip at all — a default would put somebody's mileage on a vehicle nobody named |
+
+The trip is still recorded because it is what makes the arrival and the time-in-shop measurable. A trip opened on the day log with its own meter (the older **Today's travel** screen) still photographs the meter at arrival.
+
+One journey at a time: a salesman who has arrived at a shop and not checked in cannot set off for another, or that arrival would be left with nothing that could ever close it.
+
+## The check-in radius
+
+<Rule title="Refused at the door, past the radius">
+Arrival is accepted only within <Setting k="mbos.location.visitMismatchM" /> m of the shop's saved location, measured from a high-accuracy reading. A reading worse than <Setting k="mbos.location.gpsAccuracyThresholdM" /> m is not used at all.
+</Rule>
+
+<Callout kind="why">
+**This is a reversal, and the one deliberate gate in the field product.** The principle everywhere else is that a reading is evidence, never a gate. The old behaviour measured the same distance and raised a flag that somebody read hours later and could no longer check, and a visit logged from a tea shop across the road counted until somebody went looking. Refusing **at the arrival** costs a walk to the right shop and nothing else: nothing has been typed, no meter photographed, the dwell clock has not started. Refusing at the save would lose the note, the photo and the order.
+</Callout>
+
+| The reading | Answer |
+|---|---|
+| Within the radius | Accepted. |
+| Past the radius | Refused, with the distance. He can go on by **writing a reason** — the visit saves as not checked. |
+| No reading, or too weak | Refused. *Step outside and press again.* No reason can override it — a missing reading is not a wrong pin. |
+| The shop has **no pin** | Accepted after he confirms he is standing in it; this reading becomes the shop's pin. |
+
+<Rule title="A poor reading never pins a shop">
+A pin dropped four hundred metres out would refuse every honest visit afterwards — the rule's own failure arriving by the back door. That is why the reading is judged before the shop's pin is even looked at. On the server, a shop is pinned only if it still had no pin when the visit arrived, so two visits in flight cannot fight over it.
+</Rule>
+
+### When the pin is wrong
+
+The pins in this book were typed by hand, dropped in an office or inherited from a spreadsheet, so a salesman standing in the right shop is refused by the book being wrong about as often as by anything. The way past costs a sentence, and is offered **only after** a refusal — offered before, it would be a way round the radius nobody had to be refused by.
+
+<Rule title="'The pin is wrong' is a request, never a write">
+Saying so marks the visit with a **pin correction request**. A manager accepts or declines it on the Sales Dashboard, and accepting moves the pin to the check-in reading already on the visit. The salesman cannot move a pin through a visit: one override would put the pin wherever he stood, and the radius would never refuse him there again.
+</Rule>
+
+### The server recomputes and never refuses
+
+A visit that reaches the office is a day's work that already happened. The office measures the same distance again and marks the visit **verified** or **unverified** with the reason in words — no location, a weak reading, no pin (and now pinned here), past the radius with his reason, or past the radius with no reason at all. That last one is also the only trace a payload that did not come from the app would leave. It never puts a visit in Not accepted over a distance, because an old phone that never had the gate is still sending real work.
+
+## What a visit must have
+
+| Check | Rule |
+|---|---|
+| Location | At the shop, or overridden with a reason, or the shop had no pin |
+| Time in the shop | At least <Setting k="mbos.visits.minimumDwellSeconds" /> seconds from check-in |
+| Outcome | One of the seven |
+| Next step | If the outcome was Order, Payment, Complaint or Sample, it was done inside the visit |
+| Note | At least <Setting k="mbos.visits.minimumNoteChars" /> characters — except **Shop closed**, where demanding a sentence teaches people to type one to get past the box |
+
+<Rule title="Missing is not refused">
+If something is missing he may **save as not checked** with a reason. The visit lands unverified and the manager reads why. Photographs are never on the checklist.
+</Rule>
+
+<Callout kind="note">
+**Complete is not the same as verified.** An overridden check-in satisfies the checklist (he is not asked for a second reason) but still saves as not checked, and the screen says so rather than showing a green "All done".
+</Callout>
+
+## The note and the recording
+
+The note box carries the same microphone as the CRM: speak in any language, read the English, correct it, import it. On a visit the **recording is kept** and sent with the visit whether or not it was transcribed — it is the one field where the audio is a record of what a customer said. With no signal the recording is queued and the office writes it out. Everywhere else in the app the audio is dropped once the words come back.
+
+## A Suspect cannot be visited for ever
+
+A lead still at the Suspect stage is counted against two thresholds. From visit <Setting k="mbos.leads.visitsBeforeDecision" /> the phone warns; at visit <Setting k="mbos.leads.maxSuspectVisits" /> and after, a decision is **demanded before the visit can be closed** — Prospect, not a prospect, on hold, lost, or still a Suspect with a reason.
+
+<Callout kind="why">
+The brief asked for three visits "enforced". Enforced as a block would cost the visit — the GPS, the competitor note, the reason — to stop a number reaching four. What the business wants is that nobody keeps visiting a shop nobody has decided about, and that is bought by demanding an **answer**. The decision is written in the visit's own transaction, so a visit cannot save while its decision is lost. If a visit arrives at the cap without a decision (the phone could not see the cap), it still lands, and the manager is told.
+</Callout>
+
+## Settings
+
+<SettingsTable keys={["mbos.location.visitMismatchM", "mbos.location.gpsAccuracyThresholdM", "mbos.visits.minimumDwellSeconds", "mbos.visits.minimumNoteChars", "mbos.leads.visitsBeforeDecision", "mbos.leads.maxSuspectVisits", "mbos.travel.maxLegKilometres", "mbos.ai.retainAudioAfterTranscription"]} />
+
+## Where the code and the intent disagree today
+
+- AGENTS.md says **no fix and a too-wide fix both go through** the check-in gate; the code refuses both (`mbos-app/src/engines/geo.ts` `checkInVerdict`, first branch). Only a shop with no pin is accepted without a measurement.
+- AGENTS.md describes a per-visit travel gate with a mode picker, a departure meter photograph and a ticket prompt; `TravelGate` now asks nothing and records the trip under the day's mode (`mbos-app/src/components/shell/TravelGate.tsx`, `src/lib/travel-leg.ts` `visitLegPlan`).
+- The visit screen still carries a "No GPS — going on without location" branch that tells him to save as not checked, though the arrival gate refuses a missing reading (`mbos-app/app/visit.tsx`).

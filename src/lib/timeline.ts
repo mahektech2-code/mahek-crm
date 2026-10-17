@@ -32,7 +32,7 @@ export type TimelineEventInput = {
   customerId: string;
   /** `call`, `visit`, `order`, `payment`, `complaint`, `sample`… */
   eventType: string;
-  sourceApp: "crm" | "mbos";
+  sourceApp: "crm" | "mbos" | "hrms";
   /** The row this describes, in whichever table owns it. */
   sourceRecordId: string | null;
   /** When it HAPPENED, not when it was projected. */
@@ -144,6 +144,21 @@ export const CRM_EVENT = {
  * in a table whose whole discipline is that every row points back at the record
  * that is the actual truth.
  */
+/**
+ * The event types HRMS's sales desk writes. A back-office caller putting a
+ * customer on the calling list is a planned call; logging it is the call. Both
+ * belong in the customer's shared history beside the telecaller's and the
+ * salesman's, or the office rang a shop and nobody else can see that it did.
+ */
+export const HRMS_EVENT = {
+  callPlanned: "hrms_call_planned",
+  call: "hrms_call",
+  /* A meeting or call a salesman logged on the Sales desk. It reached the
+     customer's history nowhere until the restructure, so the record showed
+     the telecaller's calls and the field visits and not the office's own. */
+  activity: "hrms_activity",
+} as const;
+
 export const MBOS_EVENT = {
   /* Already written before §R was completed. */
   visit: "visit",
@@ -240,6 +255,20 @@ export const MBOS_EVENT = {
 
   /** §14 — a file sent or a call placed from the manager's lead page. */
   leadCommunication: "lead_communication",
+  /**
+   * The calling desk asking for a lead to be put forward as a Prospect, and the
+   * sales manager sending it back.
+   *
+   * Their own kinds rather than `leadStage`, because neither is a stage move —
+   * the lead stays a Suspect through both, which is the whole point of the
+   * request. A reader scanning a history for "when did it go to the manager, and
+   * when did it come back" is looking for these two sentences, and a stage move
+   * would have said something that did not happen. The source row is the request
+   * or the return, so the moment goes in the source id: one lead can be sent
+   * back and resubmitted more than once.
+   */
+  prospectRequested: "prospect_requested",
+  prospectReturned: "prospect_returned",
   /** §18 — the eight questions, and the date they produced. */
   firstOrderAsk: "lead_first_order_ask",
 

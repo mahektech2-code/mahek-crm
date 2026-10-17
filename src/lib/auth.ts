@@ -18,12 +18,17 @@ const SESSION_DAYS = 30;
  * `remember` is the "keep me signed in on this computer" box. Unticked, the
  * cookie dies with the browser — which is what a shared machine on the sales
  * floor needs.
+ *
+ * `confirmed` says the person just proved who they are — a password or a code
+ * to their phone — which is what lets the Admin Console open without asking
+ * again (`lib/console-confirm.ts`). An impersonation link proves nothing about
+ * the person it signs in as, so it leaves this false.
  */
-export async function createSession(userId: string, remember = true) {
+export async function createSession(userId: string, remember = true, confirmed = false) {
   const id = randomUUID();
   const expiresAt = new Date(Date.now() + SESSION_DAYS * 86_400_000);
 
-  await db.insert(sessions).values({ id, userId, expiresAt });
+  await db.insert(sessions).values({ id, userId, expiresAt, confirmedAt: confirmed ? new Date() : null });
 
   const jar = await cookies();
   jar.set(SESSION_COOKIE, id, {

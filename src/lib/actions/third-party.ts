@@ -12,6 +12,8 @@ import {
   scopedUserIds,
 } from "@/lib/access-control";
 import { err, fromThrown, ok, okVoid, type Result } from "@/lib/result";
+import { checkDistributors as distributorProblem } from "@/lib/services/distributor-service";
+import { voidReviewForDistributorChange } from "@/lib/services/lead-qualification-flow-service";
 
 /* ---------------------------------------------------------------------------
  * Converting a lead into a third-party customer, and keeping the arrangement.
@@ -103,37 +105,7 @@ async function checkDistributors(
   distributorIds: string[],
   shopIds: string[],
 ): Promise<string | null> {
-  const unique = [...new Set(distributorIds)];
-  if (unique.length !== distributorIds.length) {
-    return "The same distributor is named twice. One arrangement per distributor.";
-  }
-  const clash = unique.find((d) => shopIds.includes(d));
-  if (clash) return "An account cannot be its own distributor.";
-
-  const rows = await db
-    .select({
-      id: customers.id,
-      name: customers.name,
-      kind: customers.kind,
-      thirdParty: customers.thirdParty,
-      status: customers.status,
-    })
-    .from(customers)
-    .where(inArray(customers.id, unique));
-
-  if (rows.length !== unique.length) return "That distributor no longer exists.";
-  for (const r of rows) {
-    if (r.kind !== "customer") {
-      return `${r.name} has never ordered from us, so it cannot bill anybody. A distributor is an account we invoice.`;
-    }
-    if (r.thirdParty) {
-      return `${r.name} is itself a third-party customer — we deliver to it and somebody else bills it, so it cannot be a distributor.`;
-    }
-    if (r.status === "deactivated") {
-      return `${r.name} is deactivated, so it cannot be named as who bills a shop from today.`;
-    }
-  }
-  return null;
+  return distributorProblem(distributorIds, shopIds);
 }
 
 /** At most one primary, said in words before the unique index says it in SQL. */
@@ -452,6 +424,9 @@ export async function addDistributor(
         entityId: customerId,
         afterState: { distributorId, isPrimary: isPrimary ?? false },
       });
+      /* A distributor link is a material Qualification answer: a Telecaller's
+         verified review does not survive it (a manager's own edit does). */
+      await voidReviewForDistributorChange(tx, customerId, ctx.user);
     });
 
     refresh();
@@ -562,6 +537,11 @@ export async function updateDistributor(
         beforeState: { distributorId: link.distributorId },
         afterState: { distributorId: distributorId ?? link.distributorId, isPrimary, note },
       });
+      /* Only a change of WHICH distributor is material; the primary badge and the
+         note are bookkeeping about an arrangement already there. */
+      if (distributorId && distributorId !== link.distributorId) {
+        await voidReviewForDistributorChange(tx, link.customerId, ctx.user);
+      }
     });
 
     refresh();
@@ -625,6 +605,7 @@ export async function removeDistributor(linkId: string): Promise<Result> {
         entityId: link.customerId,
         beforeState: { distributorId: link.distributorId },
       });
+      await voidReviewForDistributorChange(tx, link.customerId, ctx.user);
     });
 
     refresh();

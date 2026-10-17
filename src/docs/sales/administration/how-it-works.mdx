@@ -1,0 +1,91 @@
+The handsets are in salesmen's pockets, often with no signal, and cannot be recalled. So everything the office does to them happens **through the next sync** — a setting, a release, a notification — and everything the office knows about them is **what they last said**. These five screens are built around those two facts: they never claim to know something a phone could not have reported, and they never imply a change has landed before the phone has synced.
+
+## App preferences
+
+<Rule title="The handset reads the office's settings, never the other way round">
+Every setting whose key starts with `mbos.` is a field setting. The handset receives them on every pull and keeps them locally, so a phone with no signal works with the values from its last sync. A change saved here reaches each phone on its **next** sync.
+</Rule>
+
+<Rule title="Every field setting appears somewhere">
+Settings are grouped by subject; anything not yet given a group appears under *Everything else*. A setting that exists and appears on no screen is a setting nobody can change.
+</Rule>
+
+<Rule title="Saving is a decision about every phone in the field">
+Saving needs the App preferences module **and** the `config.write` capability — holding the app alone used to be the whole check, and is not a licence to reconfigure every handset. Only `mbos.` keys can be saved here; anything else is refused and lives in the Admin Console. Values are stored, validated, audited and versioned exactly like every other setting, and cross-checks between settings (a radius below the GPS accuracy, a half day longer than a full day) are refused or reported on save.
+</Rule>
+
+<Callout kind="note">
+Some keys are deliberately **not** sent to the phone — credentials and anything a phone has no business knowing. What a phone receives is the answer, never the question: for dictation, for example, it gets "available or not", never a provider key.
+</Callout>
+
+## Login history: one phone per person
+
+<Rule title="A second phone is refused until the first is released">
+With <Setting k="mbos.devices.onePerPerson" /> on, an account is bound to the first handset it signs in on. Releasing the binding takes a reason, because once it is lifted whoever holds the old phone can bind it again.
+</Rule>
+
+<Callout kind="why">
+It stops one salesman's visits being logged from somebody else's phone — a visit's location, selfie and time are only evidence if the phone is his.
+</Callout>
+
+The screen shows bindings, not sign-in attempts: MahekOne stores no failed-attempt table and no location on a session, and the screen says so rather than inferring one.
+
+## Sync health
+
+<Rule title="Silence is the only evidence of no signal">
+A phone with no connection cannot report having no connection. So the screen measures **when each phone last reached the office** and calls it *Quiet* past <Setting k="mbos.sync.quietHours" /> hours. *Last spoke* moves on every sync and every batch of positions, not only at sign-in.
+</Rule>
+
+<Rule title="What the office refused, not what the phone still holds">
+Each item a phone sends gets a receipt. The screen counts the ones **rejected** and the ones in **conflict** over the last 7 days, and conflicts still flagged for review. Something still in a phone's outbox has never reached the office and so cannot appear here — the salesman sees it on his handset's *Sync & rejections* screen.
+</Rule>
+
+A handset's own reasons for not reporting a position — permission, location off, battery — are put into words on the [Live map](/docs/sales/live-map) and explained on [Salesmen](/docs/sales/salesmen/how-it-works).
+
+## Sending a notification
+
+<Flow caption="From the screen to a phone" chart={`
+flowchart TD
+  A["Manager writes a title and message,<br/>picks everybody or named people"] --> B["Recipients narrowed to his team<br/>and to active holders of the field app"]
+  B --> C["Announcement written —<br/>one notification per person"]
+  C --> D["In the app straight away<br/>(seen on next open)"]
+  C --> E{"Push ready?"}
+  E -- "Push on, project id set,<br/>phone holds a token" --> F["Pushed through Expo<br/>(not during quiet hours)"]
+  E -- "No" --> G["Waits for the app to be opened"]
+  F --> H["Receipt read later —<br/>dead tokens cleared"]
+`} />
+
+<Rule title="A notification is written first and pushed second">
+The notification row is the record; the push is a courtesy on top. A push failing never fails the send, and a person with no push token still sees the message when he opens the app.
+</Rule>
+
+<Rule title="Delivery is checked, not assumed">
+Push providers answer "accepted" immediately and "delivered or not" later. MahekOne reads the later answer too — that is the only place an uninstalled app shows up — clears dead tokens, and shows recent failures on the screen. Sending into silence and being told "sent" is how a feature is believed to work for months.
+</Rule>
+
+<Rule title="Only your own team">
+"Everybody" means everybody in **your** team holding the field app. A request naming somebody outside your team drops them, so a message can never reach another manager's salesman with your name on it.
+</Rule>
+
+## Audit trail
+
+Every decision taken on the Sales Dashboard writes to the **same** audit log as the rest of MahekOne; this screen filters it to the field (actions named `mbos.*`, approvals and journey plans). A second audit table would be a second answer to who did what. The newest 200 are listed, with the total counted beside them.
+
+## Who can do what
+
+| Screen | Open | Act |
+|---|---|---|
+| App preferences | `sales.prefs` | Save: `config.write` (a Sales Dashboard manager) |
+| Login history | `sales.logins` | Release a handset: Salesmen or Login history, at a manager's level, with a reason |
+| Sync health | `sales.sync-health` | Read only |
+| Send a notification | `sales.notify` | Send: a manager's level |
+| Audit trail | `sales.audit` | Read only |
+
+## Settings that change this
+
+<SettingsTable keys={["mbos.devices.onePerPerson", "mbos.sync.quietHours", "mbos.push.enabled", "mbos.push.expoProjectId", "mbos.push.quietHours", "mbos.push.failureRetentionDays"]} />
+
+## Where the code and the intent disagree today
+
+- **The Audit trail is not narrowed to a manager's team.** Every field decision in the company is listed to anybody with the module.
+- **Push readiness counts every active handset in the company**, not the sender's team, so "nobody reachable" can be wrong in either direction for a regional manager.

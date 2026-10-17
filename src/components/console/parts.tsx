@@ -41,7 +41,7 @@ export function ScreenHeader({
           </p>
         ) : null}
       </div>
-      {actions ? <div className="flex flex-none gap-2">{actions}</div> : null}
+      {actions ? <div className="flex flex-none gap-2 print:hidden">{actions}</div> : null}
     </div>
   );
 }
@@ -555,6 +555,7 @@ export function RowMenu({
   return (
     <>
       <span
+        data-print="hide"
         ref={triggerRef}
         onClick={toggle}
         role={label ? "button" : undefined}

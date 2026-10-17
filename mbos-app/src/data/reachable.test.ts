@@ -29,11 +29,10 @@ import { join } from 'node:path';
  * dead function passes. It is the cheap half of the question, and the cheap
  * half is what was missing.
  *
- * `src/data/` only, deliberately. That is the seam where a feature meets a
- * screen. Engines are pure and are exercised by their own tests; `src/lib/` is
- * utilities, where a helper kept for one caller is ordinary rather than
- * suspicious. Widening this to either would produce a long allowlist, and an
- * allowlist nobody reads is a test nobody reads.
+ * `src/data/` was the only folder swept at first — the seam where a feature
+ * meets a screen. `native/` and `lib/` were added once leaving them out turned
+ * out to cost something; see `EXPORT_DIRS`. Engines are still left out: they
+ * are pure and exercised by their own tests.
  */
 
 const ROOT = join(import.meta.dirname, '..');
@@ -58,6 +57,10 @@ const PARKED: Record<string, string> = {
   configAge:
     'How stale the pulled configuration is. Worth a line on the Sync screen the ' +
     'day somebody is caught out by a setting that changed in the office an hour ago.',
+  followUpCounts:
+    'Replaced on Home by followUpsOwed in data/customers.ts, which counts by shop, ' +
+    'keeps missed follow-ups and matches the Customers filter the tile opens. Left ' +
+    'for the owner of data/visits.ts to delete.',
   listCustomers:
     'Superseded by the paged reads the Customers tab uses — the whole book at once ' +
     'is what froze that screen on a handset holding 1,076 shops. Kept because a ' +
@@ -71,17 +74,18 @@ const PARKED: Record<string, string> = {
     "The funnel module's per-customer read. The customer record's Samples tab still " +
     'reads `customerSamples` from `data/requests.ts` over the same table; one of ' +
     'the two should go, and picking which is a decision about that screen.',
-  acknowledge:
-    'A priority notification is meant to be cleared by ACTING on it rather than by ' +
-    'reading it — `notify({ priority: 1 })` is written for a bounced cheque today. ' +
-    'Nothing calls this, so a priority notification currently behaves like any ' +
-    'other. Harmless, and not what the column was for.',
-  unacknowledgedPriority:
-    'The other half of the same unbuilt thing: the repeating banner that keeps a ' +
-    'priority notification in front of somebody until it is dealt with.',
-  isSignedIn:
-    'A boolean over the session. Every caller wants the session itself and reads ' +
-    '`currentSession`, which answers both questions at once.',
+  productLines:
+    'The handset copy of the office rule for which order lines are product rows. ' +
+    'No screen calls it yet, but `product-lines-mirror.test.ts` holds it to the ' +
+    'office copy line for line, so deleting it would delete that guard too.',
+  wireStage:
+    'The legacy-stage word the lead card once wrote back. Its only caller, ' +
+    '`setStage`, went with the dead lead code; it stays, with its tests, until ' +
+    'the legacy-stage reader is retired alongside `localStage` below.',
+  localStage:
+    'Maps a funnel rung onto the six legacy stages. Nothing writes through it any ' +
+    'more — the pull and the visit save both carry the funnel stage — but the ' +
+    'legacy-stage reader on the lead card still needs retiring before this can go.',
   recentVisits:
     "This shop's last twenty visits. The customer record shows the shared timeline " +
     'instead, which carries the CRM\'s calls beside the salesman\'s visits — a ' +
@@ -107,15 +111,29 @@ function sourceFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-const FILES = [...sourceFiles(join(ROOT, 'data')), ...sourceFiles(join(ROOT, '..', 'app'))]
-  .concat(sourceFiles(join(ROOT, 'sync')), sourceFiles(join(ROOT, 'state')), sourceFiles(join(ROOT, 'components')));
+/**
+ * Where an exported function has to be reached FROM somewhere else.
+ *
+ * `src/data/` was the only one, on the reasoning above. `native/` and `lib/`
+ * joined it after the cost of leaving them out turned up: `releaseService`
+ * ("Sign-out: stop, and stop waking up as well") and `clearPushToken`
+ * ("Called on sign-out") were both finished, both documented as wired, and
+ * neither had a caller — so signing out left the phone tracking and receiving
+ * that salesman's pushes. A native wrapper with no caller is a capability the
+ * app believes it has. The allowlist that came with widening is the price,
+ * and every entry in it carries its reason.
+ */
+const EXPORT_DIRS = ['data', 'native', 'lib'];
+
+/* Everything that can call something: every source file in `src/` and `app/`. */
+const FILES = [...sourceFiles(ROOT), ...sourceFiles(join(ROOT, '..', 'app'))];
 
 const BODIES = new Map(FILES.map((f) => [f, stripComments(readFileSync(f, 'utf8'))]));
 
-/** Every `export function` in `src/data`, as file -> names. */
+/** Every `export function` in the swept folders, as file -> names. */
 function dataExports(): { file: string; name: string }[] {
   const out: { file: string; name: string }[] = [];
-  for (const file of sourceFiles(join(ROOT, 'data'))) {
+  for (const file of EXPORT_DIRS.flatMap((d) => sourceFiles(join(ROOT, d)))) {
     const raw = readFileSync(file, 'utf8');
     for (const m of raw.matchAll(/^export (?:async )?function ([A-Za-z0-9_]+)/gm)) {
       out.push({ file, name: m[1] });

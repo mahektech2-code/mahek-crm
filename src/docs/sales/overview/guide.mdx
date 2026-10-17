@@ -1,0 +1,148 @@
+The Sales Dashboard is the **office end of the field sales team**. Salesmen work on MBOS, the app on their phones: they check in, walk a route, visit shops, take orders, collect money and file reports. Everything they do on the phone lands here, where a sales manager can see the team's day, answer what is waiting, plan where people go next, and judge how the month is going.
+
+This page is the map. It tells you who the Sales Dashboard is for, what a manager's day looks like, what every screen in the sidebar is for, and how it fits with the phone app and the CRM. Each screen has its own page with the details — follow the links.
+
+## Who uses it
+
+<Cards cols={3}>
+<Card title="Sales manager" tone="brand">Runs a team of field salesmen. Answers their requests, plans their days, assigns tasks, sets and reviews targets. Sees **their team** — and, if they have been given regions, only the salesmen whose shops sit in those regions.</Card>
+<Card title="National manager or admin">Sees **every salesman in the company**. A manager with no regions allocated is national. Allocates regions to the regional managers.</Card>
+<Card title="Associate">Somebody given the Sales Dashboard to *read*. Sees only their own book, and every button that decides something refuses them with a sentence saying so.</Card>
+</Cards>
+
+The salesmen themselves do not use this screen. Their app is the handset — see [MBOS overview](/docs/mbos/overview).
+
+<Callout kind="note">
+What you can open inside the Sales Dashboard is decided on the Access screen. If a screen in this guide is missing from your sidebar, you have not been given it — ask whoever runs access.
+</Callout>
+
+## The screen at a glance
+
+<Wireframe url="/sales" nav={["Today", "#Overview", "Live map", "Territory", "Performance", "Sales Targets", "Cost & return", "#Field work", "Tasks", "Journeys & visits", "Field reports", "#Lead Management", "#Commercial", "#People", "#Enablement", "#Administration"]} active="Today" caption="The Sales Dashboard shell, on the Today screen">
+  <WfBar>
+    <WfText>11 salesmen · All India · 7 states</WfText>
+    <Hotspot n={1} />
+    <WfSpacer />
+    <WfInput placeholder="Search salesmen, shops, leads…" />
+    <WfButton>Ask about the team</WfButton>
+    <Hotspot n={2} />
+  </WfBar>
+  <WfBar>
+    <WfTitle sub="Wednesday 8 Oct">Good morning</WfTitle>
+    <WfSpacer />
+    <WfButton>Team map</WfButton>
+    <WfButton primary>Review 7</WfButton>
+  </WfBar>
+  <WfCard title="Live now"><WfText>6 of 11 in the field</WfText><Hotspot n={3} /></WfCard>
+  <WfBar><WfPill tone="danger">Tasks 4</WfPill><WfPill tone="warn">Journeys & visits 2</WfPill><Hotspot n={4} /></WfBar>
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Your patch.</b> How many salesmen you oversee and where. A regional manager reads their regions here; hover for the full list.</span>,
+  <span key="2"><b>Search and Ask.</b> Search finds a salesman, a shop or a lead. <i>Ask about the team</i> opens a drawer where you can ask a question in plain words; it reads only what you yourself are allowed to see.</span>,
+  <span key="3"><b>Live now.</b> Always at the bottom of the sidebar: how many of your team are checked in right now.</span>,
+  <span key="4"><b>Counts.</b> A number appears beside a screen only when something there is waiting on you. Red means more than five.</span>,
+]} />
+
+## A manager's day
+
+<Steps>
+<Step title="Open Today">
+[Today](/docs/sales/today) shows who is out, how many visits and orders the team has made, what has been collected, and a row of cards for **what is waiting on you**. Press **Review** to answer requests.
+</Step>
+<Step title="Answer what is waiting">
+Leave, expense claims, attendance corrections, tours and requests for different cities land on [Approvals](/docs/sales/approvals). The salesman is usually standing in a shop waiting for the answer.
+</Step>
+<Step title="Look at the map">
+The [Live map](/docs/sales/live-map) shows where each salesman is now, or everywhere they went today. A row in the team list explains a phone that has stopped reporting.
+</Step>
+<Step title="Plan tomorrow">
+On [Journeys & visits](/docs/sales/journeys), propose a city for each salesman's day. He agrees or refuses with a reason, then picks the shops himself. Today's card *Salesmen with nothing tomorrow* counts who has no day yet.
+</Step>
+<Step title="Hand out work">
+[Tasks](/docs/sales/tasks) lets you ask one salesman, or many at once, to do something at a shop — and see the answers as they come back.
+</Step>
+<Step title="Check the month">
+[Performance](/docs/sales/performance) scores each person against their published [target](/docs/sales/targets). *Cost & return* sets what the field brought in against what it cost.
+</Step>
+</Steps>
+
+## Every screen, as the sidebar groups it
+
+The sidebar has **Today** pinned at the top and seven groups below it. Only one group is open at a time.
+
+### Overview
+
+| Screen | What it is for |
+|---|---|
+| **Today** | The team's day at a glance and the decisions waiting. [Today](/docs/sales/today) |
+| **Live map** | Where every salesman is right now, or the shape of their whole day. [Live map](/docs/sales/live-map) |
+| **Territory** | Who covers which part of the book, as people, cities and a map of shops. [Territory](/docs/sales/territory) |
+| **Performance** | The month scored out of 100, per person. [Performance](/docs/sales/performance) |
+| **Sales Targets** | Setting and publishing what each person is asked for. [Targets](/docs/sales/targets) |
+| **Cost & return** | Sales per km, per visit, and spend against revenue. [Performance](/docs/sales/performance) |
+
+### Field work
+
+| Screen | What it is for |
+|---|---|
+| **Tasks** | What each salesman has been asked to do, and what is overdue. [Tasks](/docs/sales/tasks) |
+| **Journeys & visits** | Proposed, agreed and walked days, and every visit with which could not be verified. [Journeys](/docs/sales/journeys) |
+| **Field reports** | Complaints, competitor notes, internal notes, tours and order changes filed from shops. [Field reports](/docs/sales/field-reports) |
+| **Travel ledger** | Every movement, with the odometer and the GPS track side by side. [Travel](/docs/sales/travel) |
+| **Activity history** | Every visit ever logged, including the old field app's log. [Field reports](/docs/sales/field-reports) |
+
+### The other groups
+
+| Group | Screens | Page |
+|---|---|---|
+| **Lead Management** | All Leads, Intake, Sales Manager, Distributor appointments | [Lead management](/docs/sales/lead-management) |
+| **Commercial** | Orders, Payments, Invoices | [Commercial](/docs/sales/commercial) |
+| **People** | Attendance; Leave and Holidays; Expenses, Flagged expenses, Expense policy | [Attendance](/docs/sales/attendance), [Leave and holidays](/docs/sales/leave-and-holidays), [Expenses](/docs/sales/expenses) |
+| **Enablement** | Documents, Knowledge | [Enablement](/docs/sales/enablement) |
+| **Administration** | Salesmen; App preferences, Login history, Sync health, Send a notification, Audit trail | [Salesmen](/docs/sales/salesmen), [Administration](/docs/sales/administration) |
+
+**Approvals** is not in the sidebar on purpose. You reach it from the **Review** button on Today, which is where the count of what is waiting lives.
+
+## How it fits with the phone and the CRM
+
+<Flow caption="One database, three doors" chart={`
+flowchart TD
+  H["MBOS — the salesman's phone<br/>check-in, visits, orders, payments, requests"] -->|"syncs when it has signal"| DB[("MahekOne")]
+  DB --> S["Sales Dashboard<br/>the field team's manager"]
+  DB --> C["CRM<br/>the telecallers in the office"]
+  S -->|"answers, plans, tasks, targets"| DB
+  DB -->|"next pull"| H
+`} />
+
+- **Nothing is copied.** A shop on the Sales Dashboard is the same customer record the CRM rings. An order a salesman takes is the same order accounts approve.
+- **The phone hears your answers on its next sync.** A salesman with no signal sees your decision when his phone next connects.
+- **Some decisions are not the sales desk's.** An order over the credit limit is approved by accounts, not here — the person chasing a target must not sign off the orders that hit it.
+- **Leads are shared.** The lead screens on the Sales Dashboard and in the CRM are one feature; see [Leads in the CRM](/docs/crm/leads).
+
+## Words the Sales Dashboard uses
+
+| Word | Means |
+|---|---|
+| **Salesman** | Anybody who holds the Salesman App (MBOS) — the phone. |
+| **Checked in / punched in** | He started his working day on the phone. Tracking runs only between check-in and check-out. |
+| **Book** | The shops a salesman is responsible for. |
+| **Territory** | The cities, states or beats a salesman works. It decides which of his shops reach his phone. |
+| **Region** | A state a manager oversees. It decides which salesmen the manager sees. |
+| **Unverified visit** | A visit saved without the checks passing — for example checked in away from the shop's pin. It says why. |
+| **Published** | A target the salesman can see. A draft is the manager's working-out. |
+
+## Questions people ask
+
+<Faq q="A salesman I manage is missing from every screen.">
+Either he does not hold the Salesman App, or he is outside your regions. A salesman who has been given no shops at all is shown to every regional manager, so a brand-new phone is never invisible.
+</Faq>
+<Faq q="I can read everything but every button says it is a decision for a manager.">
+You hold the Sales Dashboard as an associate. Ask for the manager level on the Access screen.
+</Faq>
+<Faq q="Why can I not approve an order here?">
+Orders over the credit limit are decided in Accounts → Order approvals. The sales desk sees them and links you there.
+</Faq>
+<Faq q="Can I use the Sales Dashboard on my phone?">
+It is a browser screen and works on a phone, but it is built for a desk. The salesman's own app is MBOS.
+</Faq>

@@ -1,0 +1,141 @@
+Every active lead should owe somebody something: **what happens next, on which day, who does it, and what they should come back with**. The **Next actions & nurture** desk shows those promises across the whole book — what is due, what is late, what nobody has promised at all — and the follow-up tasks the system raises on its own. **Handovers** is where a lead that has become a customer is given to the person who will run the relationship from now on.
+
+<Callout kind="live">
+Numbers on this page are your CRM's current settings.
+</Callout>
+
+## Next actions & nurture: the six tabs
+
+| Tab | What it lists |
+|---|---|
+| **Due** | Next actions falling due today, and who owes each one. |
+| **Overdue** | Next actions past their day with nobody having said anything since. |
+| **Nothing scheduled** | Active leads with **no** next action at all — the thing this desk exists to stop. |
+| **On hold** | Parked leads, the day each comes back, and how far past that day it is. |
+| **Nurture** | The follow-up tasks the system raised, split by whose they are — the lead manager's or the salesman's. |
+| **Communication** | Every brochure, profile, price list and call recorded against leads, across the book. |
+
+### The Due tab at a glance
+
+<Wireframe url="/crm/leads/actions" nav={["#Lead Management", "All Leads", "Commercial", "Next actions & nurture", "Handovers"]} active="Next actions & nurture" caption="Next actions — due today">
+  <WfTabs items={["Due", "Overdue", "Nothing scheduled", "On hold", "Nurture", "Communication"]} active="Due" />
+  <WfBar>
+    <WfCard title="Owed today"><WfText>11</WfText></WfCard>
+    <WfCard title="People holding one"><WfText>4</WfText></WfCard>
+    <WfCard title="Missing an answer"><WfText>2</WfText></WfCard>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfTable
+    highlight={0}
+    columns={["Lead", "The action", "Who owes it", "Expected back", ""]}
+    rows={[
+      [<b key="a">Customer A</b>, <span key="b">Ring the works manager about the trial <Hotspot n={2} /></span>, "A sales manager", "Whether the trial ran", <WfButton key="c">Set the next action</WfButton>],
+      [<b key="d">Customer B</b>, "Send the price list", <span key="e"><WfPill tone="warn">Nobody recorded</WfPill> <Hotspot n={3} /></span>, "—", <WfButton key="f">Set the next action</WfButton>],
+    ]}
+  />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Totals.</b> How many actions fall today, how many people hold one, and how many are missing one of the four answers.</span>,
+  <span key="2"><b>The action.</b> What somebody promised to do, in their own words.</span>,
+  <span key="3"><b>Who owes it.</b> A missing person is shown as <i>Nobody recorded</i> — a date with nobody against it is how a lead sits for weeks.</span>,
+]} />
+
+## Setting a next action
+
+<Steps>
+<Step title="Press Set the next action">
+On the row here, or on the lead's own record.
+</Step>
+<Step title="Give all four answers">
+**What** happens next, **which day** and **who** will do it are required; the person must be able to sign in. **What they should come back with** is optional but worth writing. If somebody else owes it, they are told.
+</Step>
+<Step title="Save">
+The lead drops off *Nothing scheduled* and appears on *Due* on that day. Moving a lead up its ladder also asks for a next action while the rule is on (<Setting k="leads.requireNextAction" />), so most are set as part of a move.
+</Step>
+</Steps>
+
+| Answer | Example |
+|---|---|
+| The action | Ring the works manager about the trial |
+| The day | A date, never "soon" |
+| Who | A person who can sign in |
+| What they come back with (optional) | Whether the trial ran, and the result |
+
+## Nurture tasks
+
+When something happens on a lead, the system puts a dated task on somebody's list. You do not raise these yourself; you **do** them, and close them from your task list.
+
+| When | After | Whose | Task |
+|---|---|---|---|
+| Lead becomes a Prospect | same day | Lead manager | Check the customer and the salesman |
+| Lead becomes a Prospect | same day | Salesman | Get and check GST |
+| A salesman visits | 1 day | Lead manager | Check call after the visit |
+| Lead becomes a Prospect | 2 days | Lead manager | Send the company profile |
+| Lead becomes a Prospect | 4 days | Lead manager | Send the product brochure and video |
+| A sample is asked for | same day | Lead manager | Check the sample request |
+| A sample is dispatched | 2 days | Lead manager | Check it is moving |
+| The shop confirms the sample | first day of the review ladder | Lead manager | Sample review call |
+| The sample is approved | same day | Lead manager | Call about the order |
+| Lead reaches Negotiation | 3 days | Lead manager | Follow up the negotiation |
+| Their expected order date | that day | Lead manager | Ask for the first order |
+| An order arrives | 1 day | Lead manager | Follow the delivery |
+| Delivery completed | 2 days | Lead manager | Satisfaction call |
+| A payment falls due | that day | Lead manager | Payment follow-up |
+| Their reorder is expected | that day | Lead manager | Repeat-order call |
+
+<Callout kind="note">
+A task is only raised if there is somebody to give it to. A lead with no lead manager gets no lead-manager tasks — it shows up on the lists of leads with nobody running them instead. Each task is raised **once**, however many times the system checks.
+</Callout>
+
+## Communication
+
+Record what went out to a lead: **Call the customer**, **Send the company profile**, **Send a product image**, **Send the brochure**, **Send the video**, **Send the price list**, **Sample follow-up**, **Negotiation call**, **Ask for the first order**, **Payment follow-up**, **Repeat-order call**. Press **Record the send** (or **Log the call**). The entry goes on the lead's timeline. The tab shows the log across the book and which of the eleven are used and which are never used.
+
+## Handovers
+
+<Wireframe url="/crm/leads/handovers" nav={["#Lead Management", "Next actions & nurture", "Handovers", "Oversight"]} active="Handovers" caption="Handovers — converted accounts nobody runs yet">
+  <WfTitle sub="Converted, and nobody named yet to run the relationship">Handovers</WfTitle>
+  <WfBar>
+    <WfCard title="Nobody running them"><WfText>5</WfText></WfCard>
+    <WfCard title="Longest wait"><WfText>12 days</WfText></WfCard>
+    <Hotspot n={1} />
+  </WfBar>
+  <WfTable
+    columns={["", "Customer", "Converted", "Sales account manager", ""]}
+    rows={[
+      ["☐", <b key="a">Customer A</b>, "12 days ago", "A salesman", <span key="b"><WfButton primary>Hand over</WfButton> <Hotspot n={2} /></span>],
+      ["☐", <b key="c">Customer B</b>, "3 days ago", "A telecaller", <WfButton key="d">Hand over</WfButton>],
+    ]}
+  />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Waiting.</b> Accounts that have become customers and have nobody named to run the relationship. When this is empty it says <i>Every converted account has an owner</i>.</span>,
+  <span key="2"><b>Hand over.</b> Pick the person, a reason from the list (<i>Other</i> needs a note), and confirm. Tick several to hand over many at once.</span>,
+]} />
+
+### What a handover changes — and what it does not
+
+| Changes | Does not change |
+|---|---|
+| Who runs the relationship, and the date it changed hands | Whose book the account is in |
+| Who can **see** and work the account | Who is credited for its orders |
+| A history row with the reason, and a timeline entry | Anybody's target, collections list or Call Log |
+
+Both the person taking the account and the person losing it are told — one message each, however many accounts moved.
+
+## Questions people ask
+
+<Faq q="Why is a lead on Nothing scheduled when it has a follow-up date?">
+A date is not a next action. It needs what, who and what they should come back with as well.
+</Faq>
+<Faq q="I did not create this nurture task. Where did it come from?">
+Something happened on the lead — a sample went out, a visit was made, an order date arrived — and the sequence raised it. The task names the lead.
+</Faq>
+<Faq q="Can I hand over a lead?">
+No. A lead is run by its lead manager until it becomes a customer. The Hand over button explains this.
+</Faq>
+<Faq q="Will handing over an account move its revenue to the new person?">
+No. Moving revenue is a reassignment, which only accounts and administrators can do.
+</Faq>

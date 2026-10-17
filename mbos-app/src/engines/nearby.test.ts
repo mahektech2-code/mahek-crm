@@ -107,7 +107,7 @@ test('reasons stack, and the list says all of them', () => {
 
   assert.equal(both[0]?.shop.id, 'two-reasons');
   assert.ok(both[0].reasons.length >= 2, both[0].reasons.join(', '));
-  assert.ok(both[0].reasons.includes('Money outstanding'));
+  assert.ok(both[0].reasons.includes('Payment pending'));
 });
 
 test('a trivial debt is not a reason to make a detour', () => {
@@ -131,4 +131,10 @@ test('Next Best Visit is the head of the same list, not a second sum', () => {
 
 test('nothing worth stopping at answers null rather than the closest thing', () => {
   assert.equal(nextBestVisit(HERE, [shop('quiet', 50)], OPTS), null);
+});
+
+/* The handset stores the wire's word, capitalised. */
+test('an open lead counts whatever case its stage arrives in', () => {
+  assert.equal(nearby(HERE, [shop('live', 100, { leadStage: 'Negotiation' })], OPTS).length, 1);
+  assert.equal(nearby(HERE, [shop('won', 100, { leadStage: 'Converted' })], OPTS).length, 0);
 });

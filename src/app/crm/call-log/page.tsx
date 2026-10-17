@@ -1,4 +1,5 @@
-import { isManager, requireUser } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
+import { levelInApp } from "@/lib/access-control";
 import { categoryValue } from "@/lib/complaint-labels";
 import { cached } from "@/lib/reference-cache";
 import { getScope, scopeLabel } from "@/lib/scope";
@@ -210,8 +211,9 @@ export default async function QueuePage({
          everybody else holds whatever an associate may give, which ships as
          nothing at all. */
       discountAuthority={{
-        level:
-          user.role === "admin" ? "admin" : isManager(user) ? "manager" : "associate",
+        /* The CRM level, the same function the save asks — not the widest
+           level held anywhere. See `interaction-service.ts`. */
+        level: (await levelInApp(user, "crm")) ?? "associate",
         associateMaxBp: config["pricing.associateMaxDiscountBp"],
         managerMaxBp: config["pricing.managerMaxDiscountBp"],
       }}
