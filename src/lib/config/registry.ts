@@ -4399,17 +4399,6 @@ export const SETTINGS = [
     max: 100000,
   },
   {
-    key: "erp.purchase.minQuotations",
-    type: "integer",
-    category: "erp",
-    label: "Quotations needed before one is selected",
-    description:
-      "For an item whose purchase rule is Quotation (or a requirement the buyer sent for quotations): how many vendors' quotations must be in before one can be selected and the PO raised. One means a single quotation is enough; two or more is a real comparison.",
-    default: 2,
-    min: 1,
-    max: 10,
-  },
-  {
     key: "erp.returns.ownerApprovalPaise",
     type: "integer",
     category: "erp",
@@ -6333,7 +6322,6 @@ export type Config = {
   "erp.location.godownRadiusM": number;
   "erp.orders.live": boolean;
   "erp.purchase.ownVehicleRatePerKmPaise": number;
-  "erp.purchase.minQuotations": number;
   "erp.purchase.receiptTolerancePercent": number;
   "erp.returns.ownerApprovalPaise": number;
   "erp.stockCheck.onRequirement": boolean;

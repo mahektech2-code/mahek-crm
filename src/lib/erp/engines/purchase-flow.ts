@@ -1,43 +1,27 @@
 /* ---------------------------------------------------------------------------
  * THE PURCHASE FLOW, as rules (PURE, client-safe):
  *
- *   Requirement → Blind count → Purchase method → Vendor / Quotation →
- *   Approval → PO → Receipt
+ *   Requirement → Blind count → Vendor → Approval → PO → Receipt
  *
  * THE BLIND COUNT (Inventory Accuracy Control, `stock-check.ts`) holds a
  * requirement that carries `stockCheckRequired` only until the count is
  * ENTERED. A count that differs from the book flags the requirement and
- * tells stock control; the purchase goes on to its method regardless.
+ * tells stock control; the purchase goes on to its vendor regardless.
  *
- * The item master's PURCHASE RULE decides the method — direct purchase,
- * quotation, or the buyer decides — and it is copied onto the requirement
- * when it is raised. A quotation is required only where that rule says so.
+ * Every requirement is bought DIRECT: the vendor is picked (the item's
+ * default vendor is offered) and the PO is raised. Supplier rates are kept on
+ * the Quotation manager, never on a requirement — the quotation step that
+ * used to sit here is gone.
  * NO PURCHASE IS COMPLETED WITHOUT A PO: goods inward and a register row both
  * name an approved PO's line.
  *
- * One file says where a requirement has got to, what a quotation lands at,
- * what a PO is worth and what a receipt does to it — so the list, the drawer,
- * the dashboard tile and the form summary read one answer.
+ * One file says where a requirement has got to, what a PO is worth and what a
+ * receipt does to it — so the list, the drawer, the dashboard tile and the
+ * form summary read one answer.
  * ------------------------------------------------------------------------- */
 
-export type PurchaseMethod = "direct" | "quotation" | "buyer";
-
-export const PURCHASE_METHODS: { v: PurchaseMethod; label: string; sub: string }[] = [
-  { v: "direct", label: "Direct purchase", sub: "Pick the vendor, raise the PO. Regular boxes, cans, stationery and the routine chemicals." },
-  { v: "quotation", label: "Quotation", sub: "Collect quotations, compare them, select one, then raise the PO. Price-sensitive chemicals." },
-  { v: "buyer", label: "Buyer decision", sub: "The buyer decides, requirement by requirement, whether it is a direct purchase or a quotation." },
-];
-
-export function methodLabel(m: string | null | undefined): string {
-  return PURCHASE_METHODS.find((x) => x.v === m)?.label ?? "—";
-}
-
-export function methodByLabel(label: string | null | undefined): PurchaseMethod | null {
-  return PURCHASE_METHODS.find((x) => x.label === label || x.v === label)?.v ?? null;
-}
-
 /** The steps the flow is drawn as, in order. */
-export const FLOW_STEPS = ["Requirement", "Blind count", "Purchase method", "Vendor / quotation", "Approval", "Purchase order", "Receipt"] as const;
+export const FLOW_STEPS = ["Requirement", "Blind count", "Vendor", "Approval", "Purchase order", "Receipt"] as const;
 
 /** A PO that still stands — one that was cancelled or sent back no longer holds its requirements. */
 export const LIVE_PO = ["Pending approval", "Approved", "Sent", "Partly received", "Received", "Closed"];
@@ -46,13 +30,7 @@ export const RECEIVABLE_PO = ["Approved", "Sent", "Partly received"];
 
 export type RequirementState = {
   status: string;
-  /** The rule copied on raise; null on a requirement from before the rule, read as the item's rule now. */
-  rule: PurchaseMethod;
-  method: "direct" | "quotation" | null;
   supplierId: string | null;
-  quotationId: string | null;
-  quoteCount: number;
-  minQuotations: number;
   /** The live PO this requirement is on, with what was ordered and what has arrived. */
   po: { status: string; ordered: number; received: number } | null;
   /** A requirement from before POs, already ordered or received the old way. */
@@ -77,66 +55,22 @@ export function requirementStage(r: RequirementState): Stage {
   if (r.status === "Cancelled") return { stage: "Cancelled", step: -1, next: "Cancelled — nothing more happens.", readyForPo: false };
   if (r.po) {
     const { status, ordered, received } = r.po;
-    if (status === "Pending approval") return { stage: "PO awaiting approval", step: 4, next: "The approver approves the PO or sends it back.", readyForPo: false };
-    if (status === "Approved") return { stage: "PO approved", step: 5, next: "Send the PO to the vendor.", readyForPo: false };
+    if (status === "Pending approval") return { stage: "PO awaiting approval", step: 3, next: "The approver approves the PO or sends it back.", readyForPo: false };
+    if (status === "Approved") return { stage: "PO approved", step: 4, next: "Send the PO to the vendor.", readyForPo: false };
     if (status === "Closed") return { stage: received > 0 ? "Closed short" : "Closed", step: done, next: "The PO was closed; nothing more is expected.", readyForPo: false };
     if (status === "Received" || (ordered > 0 && received >= ordered)) return { stage: "Received", step: done, next: "Received in full.", readyForPo: false };
-    if (received > 0) return { stage: "Partly received", step: 6, next: "Receive the rest against the PO, or close it short.", readyForPo: false };
-    return { stage: "PO sent", step: 6, next: "Waiting for the goods. Receive them against the PO at the gate.", readyForPo: false };
+    if (received > 0) return { stage: "Partly received", step: 5, next: "Receive the rest against the PO, or close it short.", readyForPo: false };
+    return { stage: "PO sent", step: 5, next: "Waiting for the goods. Receive them against the PO at the gate.", readyForPo: false };
   }
   if (r.legacy) {
     if (r.status === "Received") return { stage: "Received", step: done, next: "Received before POs were kept in the ERP.", readyForPo: false };
-    return { stage: `${r.status} (before POs)`, step: 5, next: "Ordered before POs were kept in the ERP. Receive it as it arrives, or cancel it.", readyForPo: false };
+    return { stage: `${r.status} (before POs)`, step: 4, next: "Ordered before POs were kept in the ERP. Receive it as it arrives, or cancel it.", readyForPo: false };
   }
   if (r.gate?.blocks) {
-    return { stage: r.gate.stage ?? "Blind count", step: 1, next: r.gate.next ?? "Count the stock before choosing how it is bought.", readyForPo: false };
+    return { stage: r.gate.stage ?? "Blind count", step: 1, next: r.gate.next ?? "Count the stock before choosing the vendor.", readyForPo: false };
   }
-  if (!r.method) {
-    return r.rule === "buyer"
-      ? { stage: "Buyer decision", step: 2, next: "The buyer decides: direct purchase or quotation.", readyForPo: false }
-      : { stage: "Buyer decision", step: 2, next: "Choose how this is bought.", readyForPo: false };
-  }
-  if (r.method === "quotation" && !r.quotationId) {
-    if (r.quoteCount < r.minQuotations)
-      return {
-        stage: "Collect quotations",
-        step: 3,
-        next: `Collect quotations — ${r.quoteCount} of at least ${r.minQuotations}.`,
-        readyForPo: false,
-      };
-    return { stage: "Compare quotations", step: 3, next: "Compare the quotations and select one.", readyForPo: false };
-  }
-  if (!r.supplierId) return { stage: "Select vendor", step: 3, next: "Select the vendor to buy from.", readyForPo: false };
-  return { stage: "Ready for PO", step: 4, next: "Raise the purchase order; it goes for approval.", readyForPo: true };
-}
-
-/* ------------------------------------------------------------- quotations */
-
-export type QuoteIn = { id: string; ratePaise: number; gstBp: number; freightPaise: number; validUntil: string | null };
-
-export type QuoteFigures = { materialPaise: number; gstPaise: number; freightPaise: number; landedPaise: number; perUnitLandedPaise: number };
-
-/** What a quotation lands at for the quantity required: material, its GST and the freight. */
-export function quoteFigures(q: Pick<QuoteIn, "ratePaise" | "gstBp" | "freightPaise">, quantity: number): QuoteFigures {
-  const materialPaise = Math.round(q.ratePaise * quantity);
-  const gstPaise = Math.round((materialPaise * q.gstBp) / 10000);
-  const landedPaise = materialPaise + gstPaise + (q.freightPaise || 0);
-  return { materialPaise, gstPaise, freightPaise: q.freightPaise || 0, landedPaise, perUnitLandedPaise: quantity > 0 ? Math.round(landedPaise / quantity) : 0 };
-}
-
-export function quoteExpired(validUntil: string | null, today: string): boolean {
-  return !!validUntil && validUntil < today;
-}
-
-/**
- * The quotations ranked by landed cost, cheapest first. An expired quotation
- * is ranked after every live one and can never be the lowest: a price the
- * vendor no longer stands behind is not a price.
- */
-export function rankQuotes<T extends QuoteIn>(quotes: T[], quantity: number, today: string): (T & { fig: QuoteFigures; rank: number; lowest: boolean; expired: boolean })[] {
-  const out = quotes.map((q) => ({ ...q, fig: quoteFigures(q, quantity), expired: quoteExpired(q.validUntil, today) }));
-  out.sort((a, b) => Number(a.expired) - Number(b.expired) || a.fig.landedPaise - b.fig.landedPaise);
-  return out.map((q, i) => ({ ...q, rank: i + 1, lowest: i === 0 && !q.expired }));
+  if (!r.supplierId) return { stage: "Select vendor", step: 2, next: "Select the vendor to buy from.", readyForPo: false };
+  return { stage: "Ready for PO", step: 3, next: "Raise the purchase order; it goes for approval.", readyForPo: true };
 }
 
 /* --------------------------------------------------------------------- POs */
@@ -184,7 +118,7 @@ export function receivableQuantity(ordered: number, received: number, toleranceP
   return Math.max(0, Math.round((ceiling - received) * 1000) / 1000);
 }
 
-/** The purchase unit of an item: what a requirement, a quotation, a PO and the register all count it in. */
+/** The purchase unit of an item: what a requirement, a PO and the register all count it in. */
 export function purchaseUnit(itemUnit: string, materialType: string): "Kg" | "Litre" | "Pcs" {
   if (materialType === "Box") return "Pcs";
   if (itemUnit === "Kg") return "Kg";

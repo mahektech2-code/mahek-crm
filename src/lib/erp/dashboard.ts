@@ -154,11 +154,8 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
       const list = ids(stage);
       if (list.length || always) purchase.push({ l, v: String(list.length), sub, tone: list.length ? tone : undefined, href: tileHref("requisitions", list, stage) });
     };
-    tile("Blind count", "Requirements · waiting for a blind count", "the count comes before the purchase method", "info");
-    tile("Buyer decision", "Requirements · buyer decision", pw("purchaseBuyer") ? "you decide how these are bought" : "the buyer decides how these are bought", "brand");
-    tile("Select vendor", "Requirements · select vendor", "direct purchases with no vendor yet", "warn", true);
-    tile("Collect quotations", "Requirements · collect quotations", "not enough quotations in yet", "warn");
-    tile("Compare quotations", "Requirements · compare quotations", "quotations in — select one", "info");
+    tile("Blind count", "Requirements · waiting for a blind count", "the count comes before the vendor", "info");
+    tile("Select vendor", "Requirements · select vendor", "no vendor chosen yet", "warn", true);
     tile("Ready for PO", "Requirements · ready for PO", "vendor chosen — raise the PO", "brand", true);
     const open = Object.entries(work)
       .filter(([s]) => !["Received", "Cancelled", "Closed", "Closed short"].includes(s) && !s.endsWith("(before POs)"))
@@ -533,7 +530,7 @@ export async function accuracyFlow(ctx: ErpContext, godownName: string | null): 
   const stage = (...names: string[]) => ids(names.flatMap((n) => work[n] ?? []));
   /* The count holds a requirement only until it is entered; a red flag never does. */
   const held = stage("Blind count");
-  const moving = stage("Buyer decision", "Select vendor", "Collect quotations", "Compare quotations", "Ready for PO");
+  const moving = stage("Select vendor", "Ready for PO");
   const dueNow = w.toCount.filter((c) => c.due && inG(c.godown)).length;
   return {
     accuracy: w.accuracy,

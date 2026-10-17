@@ -631,7 +631,8 @@ export function QuoteGrid({
   /* ---------------------------------------------------------- stats */
 
   const stats = useMemo(() => {
-    const like = rows.map((r) => ({ id: r.id, date: r.date, status: r.status, cells: r.cells }));
+    /* Oldest first, so the latest rate on a date is the one entered last. */
+    const like = [...rows].reverse().map((r) => ({ id: r.id, date: r.date, status: r.status, cells: r.cells }));
     return new Map(cols.filter((c) => c.kind === "rate").map((c) => [c.id, columnStats(like, c.id)]));
   }, [rows, cols]);
 
@@ -866,7 +867,7 @@ export function QuoteGrid({
                           <span className="opacity-0 group-hover/row:opacity-100 focus-within:opacity-100">
                             <RowMenu
                               items={[
-                                { label: "Add a row below, same date", onSelect: () => addRow(row) },
+                                { label: "Add a row, same date", onSelect: () => addRow(row) },
                                 { label: "Duplicate this row", onSelect: () => addRow(row, row) },
                                 { label: "Delete this row", destructive: true, onSelect: () => commit([{ op: "deleteRow", rowId: row.id }]) },
                               ]}

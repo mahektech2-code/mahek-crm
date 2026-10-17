@@ -333,7 +333,7 @@ export const ST_TONE: Record<string, Tone> = {
   High: "success", Low: "warn", "Invoice Received": "info", "Purchase Matched": "brand",
   "Purchase Verified": "success", Dispatched: "success", Transfer: "neutral", Declined: "danger",
   Arrived: "neutral", Tested: "info", "Bill received": "info", Matched: "brand",
-  "Buyer decision": "brand", "Select vendor": "warn", "Collect quotations": "warn", "Compare quotations": "info",
+  "Select vendor": "warn",
   "Ready for PO": "brand", "PO awaiting approval": "warn", "PO approved": "info", "PO sent": "info",
   "Partly received": "warn", "Closed short": "muted", Closed: "muted", Cancelled: "muted",
   "Direct purchase": "neutral", Quotation: "info", "Pending approval": "warn", Approved: "success",

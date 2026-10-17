@@ -7,7 +7,6 @@ import {
   erpPoLines,
   erpProductPacking,
   erpPurchaseOrders,
-  erpQuotations,
   erpRawMaterials,
   erpRequisitions,
   erpRmLevels,
@@ -16,7 +15,6 @@ import {
   users,
 } from "@/db/schema";
 import { getConfig } from "@/lib/config/store";
-import { calendarDate } from "@/lib/business-date";
 import { err, fieldErr, ok, okVoid, type Result } from "@/lib/result";
 import type { ErpContext } from "../access";
 import { refValues } from "../refs";
@@ -29,26 +27,19 @@ import { fd, inr, inrRate, nf } from "../ui";
 import {
   FLOW_STEPS,
   LIVE_PO,
-  PURCHASE_METHODS,
   RECEIVABLE_PO,
-  methodByLabel,
   itemPickLabels,
-  methodLabel,
   poLabel,
   poLineFigures,
   poMessage,
   poStatusAfterReceipt,
   poTotals,
   purchaseUnit,
-  quoteExpired,
-  rankQuotes,
   requirementLabel,
   requirementStage,
-  type PurchaseMethod,
   type Stage,
 } from "../engines/purchase-flow";
 import { fgLevelAvailable, rmLevelAvailable, rmLots } from "../stock";
-import { bindErpFiles } from "../attachments";
 import { godownIdByName, godownOptions, has, inTx, materials, refuse, today, type Col, type Tx } from "./common";
 import { countLabel, gatesFor, notifyStockFlag, openCount, type GateInfo } from "../stock-check";
 import { openRequirementCounts, writeCounted } from "./stock-check";
@@ -56,15 +47,16 @@ import { openRequirementCounts, writeCounted } from "./stock-check";
 /* ---------------------------------------------------------------------------
  * THE PURCHASE FLOW'S FIRST FOUR STEPS (docs: AGENTS.md, "The purchase flow"):
  *
- *   Requirement → Purchase method → Vendor / quotation → Approval → PO → Receipt
+ *   Requirement → Blind count → Vendor → Approval → PO → Receipt
  *
- * Requirements (`requisitions`) and their Quotations tab, and Purchase orders.
+ * Requirements (`requisitions`) and Purchase orders. Every requirement is
+ * bought direct; supplier rates live on the Quotation manager.
  * The receipt is goods inward and the register (`purchase.ts`), which refuse
  * anything that does not name an approved PO's line.
  *
  * Every step is decided by the server from the requirement's own record — the
- * method from the item's purchase rule copied on raise, the vendor from a
- * direct choice or a selected quotation, the PO from the requirement it names
+ * vendor from the item's default vendor or a person's choice, the PO from the
+ * requirement it names
  * — and a step that is not available yet says why, rather than being hidden.
  * ------------------------------------------------------------------------- */
 
@@ -73,7 +65,6 @@ const MONEY_WHY = "Purchase money is not on your account";
 /* ======================================================== reading the flow */
 
 type Req = typeof erpRequisitions.$inferSelect;
-type Quote = typeof erpQuotations.$inferSelect & { supplier: string };
 
 export type ReqView = {
   r: Req;
@@ -81,14 +72,8 @@ export type ReqView = {
   item: string;
   itemType: string;
   itemUnit: string;
-  /** The rule in force: the one copied on raise, or the item's own for a requirement from before rules. */
-  rule: PurchaseMethod;
-  /** How it is being bought: stored, or — for a requirement from before rules — the item's rule where it is not the buyer's. */
-  method: "direct" | "quotation" | null;
   preferredSupplierId: string | null;
   supplier: string | null;
-  quotes: Quote[];
-  selected: Quote | null;
   po: { id: string; number: number; status: string; lineId: string; ordered: number; received: number } | null;
   legacy: boolean;
   by: string | null;
@@ -120,7 +105,6 @@ export async function requirementViews(where?: { ids?: string[] }): Promise<ReqV
       item: sql<string>`coalesce(${erpRawMaterials.name}, ${products.name})`,
       itemType: sql<string>`coalesce(${erpRawMaterials.materialType}, ${erpRequisitions.materialType})`,
       itemUnit: sql<string>`coalesce(${erpRawMaterials.unit}, ${erpRequisitions.unit})`,
-      itemRule: sql<string>`coalesce(${erpRawMaterials.purchaseMethod}, 'direct')`,
       preferred: erpRawMaterials.preferredSupplierId,
       supplier: erpSuppliers.name,
       by: users.name,
@@ -134,14 +118,7 @@ export async function requirementViews(where?: { ids?: string[] }): Promise<ReqV
     .where(where?.ids ? inArray(erpRequisitions.id, where.ids.length ? where.ids : ["-"]) : undefined)
     .orderBy(asc(erpRequisitions.reqDate), asc(erpRequisitions.createdAt), asc(erpRequisitions.id));
   const ids = rows.map((x) => x.r.id);
-  const [quotes, lines, received, gates] = await Promise.all([
-    ids.length
-      ? db
-          .select({ q: erpQuotations, supplier: erpSuppliers.name })
-          .from(erpQuotations)
-          .innerJoin(erpSuppliers, eq(erpSuppliers.id, erpQuotations.supplierId))
-          .where(inArray(erpQuotations.requisitionId, ids))
-      : Promise.resolve([]),
+  const [lines, received, gates] = await Promise.all([
     ids.length
       ? db
           .select({ l: erpPoLines, number: erpPurchaseOrders.poNumber, status: erpPurchaseOrders.status, createdAt: erpPurchaseOrders.createdAt })
@@ -152,8 +129,6 @@ export async function requirementViews(where?: { ids?: string[] }): Promise<ReqV
     receivedByLine(),
     gatesFor(rows.map((x) => ({ ...x.r, createdAt: x.r.createdAt }))),
   ]);
-  const quotesOf = new Map<string, Quote[]>();
-  quotes.forEach((x) => (quotesOf.get(x.q.requisitionId) ?? quotesOf.set(x.q.requisitionId, []).get(x.q.requisitionId)!).push({ ...x.q, supplier: x.supplier }));
   const poOf = new Map<string, ReqView["po"]>();
   lines
     .sort((a, b) => +a.createdAt - +b.createdAt)
@@ -161,23 +136,16 @@ export async function requirementViews(where?: { ids?: string[] }): Promise<ReqV
       poOf.set(x.l.requisitionId, { id: x.l.poId, number: x.number, status: x.status, lineId: x.l.id, ordered: x.l.quantity, received: received.get(x.l.id) ?? 0 }),
     );
   return rows.map((x) => {
-    const rule = (x.r.purchaseRule ?? x.itemRule) as PurchaseMethod;
     /* From before the rule and already ordered the old way — or a finished good, which is made, never bought. */
     const legacy = (!x.r.purchaseRule && !poOf.get(x.r.id) && ["Order Placed", "Booked", "Received"].includes(x.r.status)) || !!x.r.productId;
-    const method = (x.r.method ?? (rule !== "buyer" ? rule : null)) as ReqView["method"];
-    const q = quotesOf.get(x.r.id) ?? [];
     return {
       r: x.r,
       godown: x.godown,
       item: x.item,
       itemType: x.itemType,
       itemUnit: x.itemUnit,
-      rule,
-      method,
       preferredSupplierId: x.preferred,
       supplier: x.supplier,
-      quotes: q,
-      selected: q.find((y) => y.id === x.r.quotationId) ?? null,
       po: poOf.get(x.r.id) ?? null,
       legacy,
       by: x.by,
@@ -187,7 +155,7 @@ export async function requirementViews(where?: { ids?: string[] }): Promise<ReqV
 }
 
 /**
- * THE BLIND COUNT COMES FIRST: no method, vendor, quotation or PO for a
+ * THE BLIND COUNT COMES FIRST: no vendor or PO for a
  * requirement while its count has not been ENTERED — the same answer the
  * list draws, asked again by every handler, because a server action is a
  * URL. What the count found never holds it: a difference is a flag.
@@ -197,15 +165,10 @@ export function heldByStock(v: ReqView): Result<unknown> | null {
   return err(`Waiting for the blind count — ${v.stock.gate.next ?? "count the stock first"}`, "rule_violation");
 }
 
-export function stageOf(v: ReqView, minQuotations: number): Stage {
+export function stageOf(v: ReqView): Stage {
   return requirementStage({
     status: v.r.status,
-    rule: v.rule,
-    method: v.method,
     supplierId: v.r.supplierId,
-    quotationId: v.r.quotationId,
-    quoteCount: v.quotes.length,
-    minQuotations,
     po: v.po ? { status: v.po.status, ordered: v.po.ordered, received: v.po.received } : null,
     legacy: v.legacy,
     gate: v.stock?.gate ?? null,
@@ -214,18 +177,18 @@ export function stageOf(v: ReqView, minQuotations: number): Stage {
 
 /** Requirement ids by the work waiting on them — the dashboard tiles and the sidebar badge read these. */
 export async function requirementWork(ctx?: Pick<ErpContext, "department" | "user">): Promise<Record<string, { id: string; godown: string }[]>> {
-  const [views, config] = await Promise.all([requirementViews(), getConfig()]);
+  const views = await requirementViews();
   const out: Record<string, { id: string; godown: string }[]> = {};
   /* A departmental person counts only the requirements on their own list. */
   for (const v of views.filter((x) => !ctx || requirementVisibleTo(ctx.department, x.r.department, x.r.createdById === ctx.user.id))) {
-    const s = stageOf(v, config["erp.purchase.minQuotations"]).stage;
+    const s = stageOf(v).stage;
     (out[s] ??= []).push({ id: v.r.id, godown: v.godown });
   }
   return out;
 }
 
 /** Stages somebody has to act on before a PO exists. */
-export const REQUIREMENT_ACTION_STAGES = ["Buyer decision", "Select vendor", "Collect quotations", "Compare quotations", "Ready for PO"];
+export const REQUIREMENT_ACTION_STAGES = ["Select vendor", "Ready for PO"];
 
 /* -------------------------------------------------------------- the POs */
 
@@ -350,9 +313,8 @@ async function presentQuantities() {
 }
 
 /**
- * The requirement form. The item's purchase rule is shown as it is picked —
- * "Check purchase rule" is a step of the flow, so the person raising it sees
- * where it will go before they raise it.
+ * The requirement form. The item's default vendor is shown as it is picked, so
+ * the person raising it sees where it will go before they raise it.
  */
 export async function requisitionForm(ctx: ErpContext, init?: Record<string, string>, editing?: ReqView): Promise<FormSpec> {
   const [mats, gds, rm, allTypes, sups] = await Promise.all([
@@ -386,15 +348,9 @@ export async function requisitionForm(ctx: ErpContext, init?: Record<string, str
     (map[m.materialType] ??= []).push(label);
     unitOf[label] = purchaseUnit(m.unit, m.materialType);
     typeOf[label] = m.materialType;
-    const rule = m.purchaseMethod as PurchaseMethod;
     const vendor = m.preferredSupplierId ? supName.get(m.preferredSupplierId) : null;
-    ruleOf[label] =
-      rule === "direct"
-        ? `Direct purchase${vendor ? ` · ${vendor} is offered as the vendor` : " · a vendor is chosen next"}`
-        : rule === "quotation"
-          ? "Quotation required · quotations are collected and compared before the PO"
-          : "Buyer decision · the buyer chooses direct purchase or quotations";
-    ruleShortOf[label] = rule === "direct" ? `Direct${vendor ? ` · ${vendor}` : ""}` : rule === "quotation" ? "Quotations" : "Buyer decides";
+    ruleOf[label] = vendor ? `${vendor} is offered as the vendor` : "A vendor is chosen next";
+    ruleShortOf[label] = vendor ?? "Chosen next";
   }
   /* Every item the department may ask for, across its categories — a requirement lists them all in one table. */
   const itemsBy: Record<string, string[]> = Object.fromEntries(
@@ -414,7 +370,7 @@ export async function requisitionForm(ctx: ErpContext, init?: Record<string, str
       id: "edit",
       recordId: r!.id,
       title: `Edit ${r!.reqNo ? `${requirementLabel(r!.reqNo)} · ` : ""}${editing.item}`,
-      sub: "The item and its purchase rule are fixed; the rest can change until it is on a PO.",
+      sub: "The item is fixed; the rest can change until it is on a PO.",
       submit: "Save item",
       init: {
         date: r!.reqDate,
@@ -434,7 +390,7 @@ export async function requisitionForm(ctx: ErpContext, init?: Record<string, str
         { k: "department", l: "Department", t: "select", req: true, opts: departments },
         { k: "godown", l: "Deliver to godown", t: "select", req: true, opts: gds.map((g) => g.name) },
         { k: "item", l: "Item", t: "select", req: true, opts: [label], readOnly: true, sec: "Item" },
-        { k: "rule", l: "Purchase rule", t: "derived", calc: "requisitions.rule" },
+        { k: "rule", l: "Vendor", t: "derived", calc: "requisitions.rule" },
         { k: "onHand", l: "Available stock", t: "derived", calc: "requisitions.onHand" },
         { k: "required", l: "Quantity", t: "num", req: true, min: 0.001 },
         { k: "unit", l: "Unit", t: "derived", calc: "requisitions.unit" },
@@ -476,7 +432,7 @@ export async function requisitionForm(ctx: ErpContext, init?: Record<string, str
       { k: "stock", l: "In stock", t: "derived", calc: "requisitions.stockShort" },
       { k: "required", l: "Quantity", t: "num", req: true, min: 0.001 },
       { k: "unit", l: "Unit", t: "derived", calc: "requisitions.unit" },
-      { k: "rule", l: "Goes to", t: "derived", calc: "requisitions.ruleShort" },
+      { k: "rule", l: "Vendor", t: "derived", calc: "requisitions.ruleShort" },
     ],
     lineLabel: "Item",
     lineLayout: "table",
@@ -487,10 +443,6 @@ export async function requisitionForm(ctx: ErpContext, init?: Record<string, str
       pasteHint: "One item a row, its quantity last: \"Toluene, 200\" or copied straight from Excel.",
     },
   };
-}
-
-function quoteOptionLabel(q: Quote & { fig: { landedPaise: number }; lowest: boolean; expired: boolean }): string {
-  return `${q.supplier} · ${inr(q.fig.landedPaise)} landed${q.lowest ? " · lowest" : ""}${q.expired ? " · expired" : ""}`;
 }
 
 /* ------------------------------------------------- the stock check, per row */
@@ -534,11 +486,10 @@ function stockActions(v: ReqView): ActionSpec[] {
   return [];
 }
 
-function flowPanel(v: ReqView, st: Stage, money: boolean, minQuotations: number) {
-  const ranked = rankQuotes(v.quotes, v.r.requiredQty, today());
+function flowPanel(v: ReqView, st: Stage) {
   return {
     kind: "purchaseFlow",
-    covers: ["reqNo", "method", "stage", "vendor", "po"],
+    covers: ["reqNo", "stage", "vendor", "po"],
     data: {
       steps: FLOW_STEPS,
       step: st.step,
@@ -547,36 +498,11 @@ function flowPanel(v: ReqView, st: Stage, money: boolean, minQuotations: number)
       facts: [
         ...(v.r.reqNo ? [{ l: "Requirement", v: requirementLabel(v.r.reqNo) }] : []),
         ...stockFacts(v),
-        { l: "Purchase rule", v: methodLabel(v.rule) },
-        ...(v.method && v.method === v.rule ? [] : [{ l: "Method", v: v.method ? methodLabel(v.method) : "Waiting for the buyer" }]),
-        ...(v.r.methodNote ? [{ l: "Buyer's note", v: v.r.methodNote }] : []),
         { l: "Vendor", v: v.supplier ?? "Not chosen yet" },
-        ...(v.r.selectionNote ? [{ l: "Why this quotation", v: v.r.selectionNote }] : []),
         ...(v.po ? [{ l: "Purchase order", v: `${poLabel(v.po.number)} · ${v.po.status}`, href: erpLink("purchaseOrders", { open: v.po.id }) }] : []),
         ...(v.po ? [{ l: "Received", v: `${nf(v.po.received)} of ${nf(v.po.ordered)} ${v.r.unit}` }] : []),
         ...(v.r.cancelReason ? [{ l: "Cancelled because", v: v.r.cancelReason }] : []),
       ],
-      quotes:
-        v.method === "quotation" || v.quotes.length
-          ? {
-              min: minQuotations,
-              money,
-              rows: ranked.map((q) => ({
-                vendor: q.supplier,
-                rate: money ? inrRate(q.ratePaise) : null,
-                gst: `${q.gstBp / 100}%`,
-                freight: money ? inr(q.freightPaise) : null,
-                landed: money ? inr(q.fig.landedPaise) : null,
-                delivery: q.deliveryDays == null ? "—" : `${q.deliveryDays} days`,
-                terms: q.paymentTerms ?? "—",
-                validUntil: q.validUntil ? fd(q.validUntil) : "—",
-                lowest: q.lowest,
-                expired: q.expired,
-                selected: q.id === v.r.quotationId,
-                document: q.documentId,
-              })),
-            }
-          : null,
     },
   };
 }
@@ -589,10 +515,8 @@ export async function cancelRequirementItem(ctx: ErpContext, id: string, reason:
 const requisitions: ScreenModule = {
   key: "requisitions",
   async load(ctx) {
-    const [views, config, form, present] = await Promise.all([requirementViews(), getConfig(), requisitionForm(ctx), presentQuantities()]);
-    const min = config["erp.purchase.minQuotations"];
+    const [views, form, present] = await Promise.all([requirementViews(), requisitionForm(ctx), presentQuantities()]);
     const money = ctx.powers.has("viewPurchaseMoney");
-    const buyer = ctx.powers.has("purchaseBuyer");
     const poScreen = ctx.screens.has("purchaseOrders");
     const day = today();
     const cols: ColSpec[] = [
@@ -607,7 +531,6 @@ const requisitions: ScreenModule = {
       { k: "department", l: "Department", t: "t" },
       { k: "godown", l: "Godown", t: "t" },
       { k: "priority", l: "Priority", t: "s" },
-      { k: "method", l: "Method", t: "s" },
       { k: "stage", l: "Stage", t: "s" },
       { k: "vendor", l: "Vendor", t: "t" },
       { k: "po", l: "PO", t: "mono" },
@@ -619,63 +542,25 @@ const requisitions: ScreenModule = {
       .slice()
       .reverse()
       .map((v) => {
-        const st = stageOf(v, min);
+        const st = stageOf(v);
         const r = v.r;
         const actions: ActionSpec[] = [];
         const open = st.step >= 0 && !v.po && !v.legacy;
         const held = open && !!v.stock?.gate.blocks;
         if (open && v.stock) actions.push(...stockActions(v));
-        if (st.stage === "Buyer decision")
-          actions.push({
-            id: "decide",
-            l: "Decide method",
-            primary: true,
-            why: buyer ? "" : "Only the buyer decides how this is bought",
-            prompt: {
-              title: "Buyer decision",
-              sub: `${v.item} · ${nf(r.requiredQty)} ${r.unit}. Direct purchase picks the vendor; quotation collects and compares quotations first.`,
-              submit: "Save decision",
-              fields: [
-                { k: "method", l: "Buy by", t: "select", req: true, opts: PURCHASE_METHODS.filter((m) => m.v !== "buyer").map((m) => m.label) },
-                { k: "note", l: "Why", t: "area", hint: "What made this an exception — read by whoever picks it up next." },
-              ],
-            },
-          });
-        if (open && v.method === "direct")
+        if (open)
           actions.push({
             id: "vendor",
             l: v.r.supplierId ? "Change vendor" : "Select vendor",
             primary: !v.r.supplierId,
             prompt: {
               title: v.r.supplierId ? "Change vendor" : "Select vendor",
-              sub: `${v.item} · direct purchase. The PO is raised to this vendor.`,
+              sub: `${v.item}. The PO is raised to this vendor.`,
               submit: "Save vendor",
               fields: [{ k: "vendor", l: "Vendor", t: "select", req: true, opts: [] }],
               init: { vendor: v.supplier ?? "" },
             },
           });
-        if (open && v.method === "quotation") {
-          actions.push({ id: "addQuote", l: "Add quotation", loadsForm: true, primary: st.stage === "Collect quotations", why: money ? "" : MONEY_WHY });
-          const ranked = rankQuotes(v.quotes, r.requiredQty, day);
-          actions.push({
-            id: "selectQuote",
-            l: v.r.quotationId ? "Change quotation" : "Compare & select",
-            primary: st.stage === "Compare quotations",
-            why: !money ? MONEY_WHY : v.quotes.length < min ? `Needs at least ${min} quotation${min > 1 ? "s" : ""} — ${v.quotes.length} in` : "",
-            prompt: money
-              ? {
-                  title: "Select a quotation",
-                  sub: `${v.item} · ${nf(r.requiredQty)} ${r.unit}. Ranked by landed cost — rate, GST and freight. The open record shows them side by side.`,
-                  submit: "Select",
-                  fields: [
-                    { k: "quote", l: "Quotation", t: "select", req: true, opts: ranked.filter((q) => !q.expired).map(quoteOptionLabel) },
-                    { k: "note", l: "Why this one", t: "area", hint: "Required when it is not the lowest landed cost." },
-                  ],
-                  init: { quote: ranked.find((q) => q.id === v.r.quotationId) ? quoteOptionLabel(ranked.find((q) => q.id === v.r.quotationId)!) : "" },
-                }
-              : undefined,
-          });
-        }
         if (st.readyForPo)
           actions.unshift({
             id: "createPo",
@@ -695,7 +580,7 @@ const requisitions: ScreenModule = {
         else if (v.po && st.step >= 0 && st.step < FLOW_STEPS.length)
           actions.push({ id: "cancel", l: "Cancel requirement", why: `It is on ${poLabel(v.po.number)} — cancel or send back the PO first` });
         /* Waiting for its blind count: every buying step says why, and the server refuses it too. */
-        if (held) for (const a of actions) if (["decide", "vendor", "addQuote", "selectQuote"].includes(a.id) && !a.why) a.why = "Waiting for the blind count — enter it first";
+        if (held) for (const a of actions) if (a.id === "vendor" && !a.why) a.why = "Waiting for the blind count — enter it first";
         const flags: string[] = [];
         if (held) flags.push("stockToCount");
         if (open && v.stock?.gate.flag) flags.push(v.stock.gate.flag);
@@ -715,7 +600,6 @@ const requisitions: ScreenModule = {
             department: r.department,
             godown: v.godown,
             priority: r.priority,
-            method: v.method ? methodLabel(v.method) : methodLabel(v.rule),
             stage: st.stage,
             vendor: v.supplier,
             po: v.po ? poLabel(v.po.number) : null,
@@ -725,7 +609,7 @@ const requisitions: ScreenModule = {
           title: v.item,
           header: `${r.reqNo ? `${requirementLabel(r.reqNo)} · ` : ""}${nf(r.requiredQty)} ${r.unit} · ${v.godown}${r.department ? ` · ${r.department}` : ""} · ${st.next}`,
           actions,
-          panel: flowPanel(v, st, money, min),
+          panel: flowPanel(v, st),
           by: stampLine(v.by, r.createdAt),
         };
       });
@@ -753,7 +637,6 @@ const requisitions: ScreenModule = {
       const [v] = await requirementViews({ ids: [id] });
       return v ? requisitionForm(ctx, undefined, v) : null;
     },
-    addQuote: (ctx, id) => quotationForm(ctx, { requisitionId: id }),
     createPo: async (ctx, id) => {
       const [v] = await requirementViews({ ids: [id] });
       if (!v?.r.supplierId) return null;
@@ -777,32 +660,6 @@ const requisitions: ScreenModule = {
       await erpAudit(ctx, "erp.requisition.newCount", "erp_requisition", id, null, null);
       return okVoid("A blind count is open — it is on Stock accuracy → To count");
     },
-    async decide(ctx, id, values) {
-      if (!ctx.powers.has("purchaseBuyer")) return err("Only the buyer decides how a requirement is bought.", "not_permitted");
-      const m = methodByLabel(text(values.method));
-      if (m !== "direct" && m !== "quotation") return fieldErr("method", "Choose direct purchase or quotation");
-      const [v] = await requirementViews({ ids: [id] });
-      if (!v) return err("That requirement no longer exists.", "not_found");
-      const held = heldByStock(v);
-      if (held) return held;
-      const min = (await getConfig())["erp.purchase.minQuotations"];
-      if (stageOf(v, min).stage !== "Buyer decision") return err("This requirement's method is already decided.", "conflict");
-      const preset = m === "direct" && v.preferredSupplierId ? v.preferredSupplierId : null;
-      await db
-        .update(erpRequisitions)
-        .set({
-          method: m,
-          methodDecidedById: ctx.user.id,
-          methodDecidedAt: new Date(),
-          methodNote: text(values.note),
-          ...(preset ? { supplierId: preset, vendorSelectedAt: new Date(), vendorSelectedById: ctx.user.id } : {}),
-          updatedAt: new Date(),
-          updatedById: ctx.user.id,
-        })
-        .where(eq(erpRequisitions.id, id));
-      await erpAudit(ctx, "erp.requisition.decideMethod", "erp_requisition", id, null, { method: m, note: text(values.note) });
-      return okVoid(m === "direct" ? `Direct purchase${preset ? " · the item's default vendor is offered" : " · select the vendor next"}` : "Quotation · collect quotations next");
-    },
     async vendor(ctx, id, values) {
       const [sup] = await db.select().from(erpSuppliers).where(and(eq(erpSuppliers.name, text(values.vendor) ?? ""), eq(erpSuppliers.active, true)));
       if (!sup) return fieldErr("vendor", "Pick an active vendor");
@@ -810,7 +667,6 @@ const requisitions: ScreenModule = {
       if (!v) return err("That requirement no longer exists.", "not_found");
       if (v.r.status === "Cancelled") return err("This requirement is cancelled.", "conflict");
       if (v.po) return err(`It is on ${poLabel(v.po.number)} — the vendor is the PO's now.`, "conflict");
-      if (v.method !== "direct") return err("Only a direct purchase has its vendor picked; a quotation's vendor is the selected quotation.", "rule_violation");
       const held = heldByStock(v);
       if (held) return held;
       await db
@@ -819,14 +675,6 @@ const requisitions: ScreenModule = {
         .where(eq(erpRequisitions.id, id));
       await erpAudit(ctx, "erp.requisition.selectVendor", "erp_requisition", id, { supplierId: v.r.supplierId }, { supplierId: sup.id });
       return okVoid(`${sup.name} is the vendor · raise the PO next`);
-    },
-    async selectQuote(ctx, id, values) {
-      const [v] = await requirementViews({ ids: [id] });
-      if (!v) return err("That requirement no longer exists.", "not_found");
-      const ranked = rankQuotes(v.quotes, v.r.requiredQty, today());
-      const q = ranked.find((x) => quoteOptionLabel(x) === text(values.quote));
-      if (!q) return fieldErr("quote", "Pick one of the quotations");
-      return selectQuotation(ctx, q.id, text(values.note));
     },
     async cancel(ctx, id, values) {
       const reason = text(values.reason);
@@ -888,7 +736,7 @@ function requirementHeader(h: Record<string, string>): Result<{ date: string; re
 
 /**
  * RAISE A REQUIREMENT: one number, every item the department needs. Each item
- * is its own row — its method, quotations, vendor and PO line are decided per
+ * is its own row — its vendor and PO line are decided per
  * item — and all of them are written in ONE transaction under one requirement
  * number, so a requirement is never half raised. Every line is checked before
  * anything is written, and a refusal names the line it is about.
@@ -909,7 +757,8 @@ export type RaisedItem = {
   item: string;
   qty: number;
   unit: string;
-  rule: PurchaseMethod;
+  /** The item's default vendor, offered on the requirement; null where one is chosen next. */
+  vendor: string | null;
   /** The count the raiser made with it: matched, a red flag, or not recorded (a recount of that shelf was already open). Null: none was sent. */
   count: { id: string; countNo: number; verdict: "matched" | "flagged" | "skipped" } | null;
 };
@@ -946,7 +795,8 @@ export async function raiseRequirementWith(
   const cap = 500;
   if (lines.length > cap) return err(`A requirement carries at most ${cap} items — split this one in two.`, "validation");
 
-  const [mats, categories] = await Promise.all([materials(), refValues("materialType")]);
+  const [mats, categories, sups] = await Promise.all([materials(), refValues("materialType"), db.select({ id: erpSuppliers.id, name: erpSuppliers.name }).from(erpSuppliers)]);
+  const vendorName = new Map(sups.map((x) => [x.id, x.name]));
   const labels = itemPickLabels(mats);
   const byKey = new Map(mats.map((m) => [`${m.materialType}|${m.name}`, m]));
   /* A line's field, as the form knows it: `item` on a single-item header, `l3.item` on line 4. */
@@ -996,9 +846,8 @@ export async function raiseRequirementWith(
     for (const { m, qty } of items) {
       const reqId = erpId("req");
       raised.push({ id: reqId, rawMaterialId: m.id, godownId, label: requirementLabel(n) });
-      /* CHECK PURCHASE RULE: copied onto the item now, so changing the rule later never re-routes it. */
-      const rule = m.purchaseMethod as PurchaseMethod;
-      const preset = rule === "direct" && m.preferredSupplierId ? m.preferredSupplierId : null;
+      /* The item's default vendor is offered at once; anybody may change it before the PO. */
+      const preset = m.preferredSupplierId ?? null;
       await tx.insert(erpRequisitions).values({
         id: reqId,
         reqNo: n,
@@ -1012,8 +861,8 @@ export async function raiseRequirementWith(
         requiredQty: qty,
         priority,
         remarks,
-        purchaseRule: rule,
-        method: rule === "buyer" ? null : rule,
+        purchaseRule: "direct",
+        method: "direct",
         ...(preset ? { supplierId: preset, vendorSelectedAt: new Date(), vendorSelectedById: ctx.user.id } : {}),
         stockCheckRequired: stockCheck,
         createdById: ctx.user.id,
@@ -1040,7 +889,7 @@ export async function raiseRequirementWith(
             alarms.push({ countId: c.id, countNo: c.countNo, item: m.name, godown: w.facts.godown, counted, book: w.j.reconciled, difference: w.j.difference, unit: w.facts.unit, requirementId: r.id, byId: ctx.user.id });
         }
       }
-      raisedItems.push({ id: r.id, rawMaterialId: m.id, item: m.name, qty, unit: purchaseUnit(m.unit, m.materialType), rule: m.purchaseMethod as PurchaseMethod, count });
+      raisedItems.push({ id: r.id, rawMaterialId: m.id, item: m.name, qty, unit: purchaseUnit(m.unit, m.materialType), vendor: m.preferredSupplierId ? (vendorName.get(m.preferredSupplierId) ?? null) : null, count });
     }
     return n;
   });
@@ -1048,40 +897,24 @@ export async function raiseRequirementWith(
   for (const a of alarms) await notifyStockFlag(a);
   await erpAudit(ctx, "erp.requisition.create", "erp_requisition", requirementLabel(reqNo), null, {
     reqNo,
-    items: items.map(({ m, qty }) => ({ item: m.name, qty, rule: m.purchaseMethod })),
+    items: items.map(({ m, qty }) => ({ item: m.name, qty })),
     priority,
   });
   if (items.length === 1) {
     const { m, qty } = items[0];
-    const rule = m.purchaseMethod as PurchaseMethod;
-    const next =
-      rule === "buyer"
-        ? "the buyer decides how it is bought"
-        : rule === "quotation"
-          ? "collect quotations next"
-          : m.preferredSupplierId
-            ? "direct purchase from the item's default vendor — raise the PO next"
-            : "direct purchase — select the vendor next";
+    const next = m.preferredSupplierId ? "the item's default vendor is offered — raise the PO next" : "select the vendor next";
     return ok(
       { reqNo, items: raisedItems },
       `${requirementLabel(reqNo)} raised · ${m.name} · ${nf(qty)} ${purchaseUnit(m.unit, m.materialType)} · ${stockCheck ? "count the stock first, then " : ""}${next}`,
     );
   }
-  const count = (r: string) => items.filter((x) => x.m.purchaseMethod === r).length;
-  const split = [
-    count("direct") ? `${count("direct")} direct` : "",
-    count("quotation") ? `${count("quotation")} for quotations` : "",
-    count("buyer") ? `${count("buyer")} for the buyer` : "",
-  ].filter(Boolean);
-  return ok({ reqNo, items: raisedItems }, `${requirementLabel(reqNo)} raised · ${items.length} items · ${split.join(" · ")}${stockCheck ? " · each waits on a stock count" : ""}`);
+  const withVendor = items.filter((x) => x.m.preferredSupplierId).length;
+  const split = withVendor === items.length ? "every vendor offered" : withVendor ? `${withVendor} with a vendor offered · ${items.length - withVendor} to choose` : "vendors to choose";
+  return ok({ reqNo, items: raisedItems }, `${requirementLabel(reqNo)} raised · ${items.length} items · ${split}${stockCheck ? " · each waits on a stock count" : ""}`);
 }
 
-/* ============================================================ quotations */
 
-/** Requirements that are collecting quotations: method quotation, not cancelled, not yet on a PO. */
-async function quotableRequirements(extraId?: string) {
-  return (await requirementViews()).filter((v) => (v.method === "quotation" && !v.po && !v.legacy && v.r.status !== "Cancelled") || v.r.id === extraId);
-}
+/* ======================================================== purchase orders */
 
 function reqLabel(v: ReqView): string {
   return `${v.item} · ${nf(v.r.requiredQty)} ${v.r.unit} · ${v.godown} (${fd(v.r.reqDate)})`;
@@ -1098,316 +931,10 @@ function labelled(views: ReqView[]): Map<string, ReqView> {
   return out;
 }
 
-async function quotationForm(ctx: ErpContext, opts: { requisitionId?: string; quoteId?: string } = {}): Promise<FormSpec | null> {
-  let editing: (typeof erpQuotations.$inferSelect & { supplier: string }) | undefined;
-  if (opts.quoteId) {
-    const [x] = await db
-      .select({ q: erpQuotations, supplier: erpSuppliers.name })
-      .from(erpQuotations)
-      .innerJoin(erpSuppliers, eq(erpSuppliers.id, erpQuotations.supplierId))
-      .where(eq(erpQuotations.id, opts.quoteId));
-    if (!x) return null;
-    editing = { ...x.q, supplier: x.supplier };
-  }
-  const reqId = editing?.requisitionId ?? opts.requisitionId;
-  const [views, sups, terms] = await Promise.all([
-    quotableRequirements(reqId),
-    db.select({ name: erpSuppliers.name }).from(erpSuppliers).where(eq(erpSuppliers.active, true)).orderBy(asc(erpSuppliers.name)),
-    refValues("paymentTerms"),
-  ]);
-  const map = labelled(views);
-  const qtyOf: Record<string, number> = {};
-  const unitOf: Record<string, string> = {};
-  map.forEach((v, l) => {
-    qtyOf[l] = v.r.requiredQty;
-    unitOf[l] = v.r.unit;
-  });
-  const preset = [...map].find(([, v]) => v.r.id === reqId)?.[0] ?? "";
-  if (reqId && !preset) return null;
-  return {
-    screen: "quotations",
-    id: editing ? "edit" : "new",
-    recordId: editing?.id,
-    title: editing ? `Edit quotation · ${editing.supplier}` : "Add a quotation",
-    sub: "Compared on landed cost: rate × quantity, GST and freight.",
-    submit: editing ? "Save quotation" : "Add quotation",
-    init: editing
-      ? {
-          requirement: preset,
-          vendor: editing.supplier,
-          date: editing.quoteDate,
-          reference: editing.reference ?? "",
-          rate: rupeesField(editing.ratePaise),
-          gst: String(editing.gstBp / 100),
-          freight: rupeesField(editing.freightPaise),
-          deliveryDays: editing.deliveryDays == null ? "" : String(editing.deliveryDays),
-          terms: editing.paymentTerms ?? "",
-          validUntil: editing.validUntil ?? "",
-          document: editing.documentId ?? "",
-          remarks: editing.remarks ?? "",
-        }
-      : { requirement: preset, date: today(), gst: "18" },
-    data: { qtyOf, unitOf },
-    header: [
-      {
-        k: "requirement",
-        l: "Requirement",
-        t: "select",
-        req: true,
-        opts: [...map.keys()],
-        readOnly: !!preset,
-        hint: map.size ? undefined : "No requirement is collecting quotations. A requirement collects them when its item's rule is Quotation, or the buyer chose it.",
-      },
-      { k: "vendor", l: "Vendor", t: "select", req: true, opts: sups.map((s) => s.name), readOnly: !!editing },
-      { k: "date", l: "Quotation date", t: "date", req: true },
-      { k: "reference", l: "Vendor's quotation no", t: "text" },
-      { k: "rate", l: "Rate per unit (₹, before GST)", t: "num", req: true, min: 0.01, sec: "Price" },
-      { k: "gst", l: "GST %", t: "num", req: true, min: 0, max: 100 },
-      { k: "freight", l: "Freight (₹, whole quantity)", t: "num", min: 0, hint: "Blank when delivery is free." },
-      { k: "landed", l: "Landed cost", t: "derived", calc: "quotations.landed" },
-      { k: "deliveryDays", l: "Delivery (days from PO)", t: "num", min: 0, sec: "Terms" },
-      { k: "terms", l: "Payment terms", t: "select", opts: terms },
-      { k: "validUntil", l: "Valid until", t: "date" },
-      { k: "document", l: "Quotation (photo or PDF)", t: "photo" },
-      { k: "remarks", l: "Remarks", t: "area", mic: true },
-    ],
-  };
-}
-
-async function saveQuotation(ctx: ErpContext, h: Record<string, string>, id?: string): Promise<Result<unknown>> {
-  if (!ctx.powers.has("viewPurchaseMoney")) return err(`${MONEY_WHY}.`, "not_permitted");
-  let existing: typeof erpQuotations.$inferSelect | undefined;
-  if (id) {
-    [existing] = await db.select().from(erpQuotations).where(eq(erpQuotations.id, id));
-    if (!existing) return err("That quotation no longer exists.", "not_found");
-  }
-  const map = labelled(await quotableRequirements(existing?.requisitionId));
-  const v = existing ? [...map.values()].find((x) => x.r.id === existing!.requisitionId) : map.get(text(h.requirement) ?? "");
-  if (!v) return fieldErr("requirement", "Pick a requirement that is collecting quotations");
-  if (v.po) return err(`The requirement is on ${poLabel(v.po.number)} — its quotations are closed.`, "conflict");
-  if (v.method !== "quotation") return err("This requirement is not bought by quotation.", "rule_violation");
-  if (!existing) {
-    const held = heldByStock(v);
-    if (held) return held;
-  }
-  const [sup] = existing
-    ? await db.select().from(erpSuppliers).where(eq(erpSuppliers.id, existing.supplierId))
-    : await db.select().from(erpSuppliers).where(and(eq(erpSuppliers.name, text(h.vendor) ?? ""), eq(erpSuppliers.active, true)));
-  if (!sup) return fieldErr("vendor", "Pick an active vendor");
-  const rate = paise(h.rate);
-  if (rate == null || rate <= 0) return fieldErr("rate", "Rate is required");
-  const gst = num(h.gst);
-  if (gst == null || gst < 0 || gst > 100) return fieldErr("gst", "GST % is required");
-  const freight = paise(h.freight) ?? 0;
-  if (freight < 0) return fieldErr("freight", "Minus Quantity Not Allowed");
-  const days = num(h.deliveryDays);
-  if (days != null && days < 0) return fieldErr("deliveryDays", "Minus Quantity Not Allowed");
-  const values = {
-    quoteDate: text(h.date) ?? today(),
-    reference: text(h.reference),
-    ratePaise: rate,
-    gstBp: Math.round(gst * 100),
-    freightPaise: freight,
-    deliveryDays: days == null ? null : Math.round(days),
-    paymentTerms: text(h.terms),
-    validUntil: text(h.validUntil),
-    documentId: text(h.document),
-    remarks: text(h.remarks),
-    updatedAt: new Date(),
-    updatedById: ctx.user.id,
-  };
-  if (values.validUntil && values.validUntil < values.quoteDate) return fieldErr("validUntil", "Valid until cannot be before the quotation's date");
-  const qid = existing?.id ?? erpId("quo");
-  const res = await inTx(async (tx) => {
-    if (existing) {
-      await tx.update(erpQuotations).set(values).where(eq(erpQuotations.id, qid));
-      /* A selected quotation's price is the requirement's price: changing it re-opens nothing, but the PO will read the new rate. */
-    } else {
-      const [dup] = await tx.select({ id: erpQuotations.id }).from(erpQuotations).where(and(eq(erpQuotations.requisitionId, v.r.id), eq(erpQuotations.supplierId, sup.id)));
-      if (dup) refuse(fieldErr("vendor", `${sup.name} has already quoted for this — edit their quotation instead`));
-      await tx.insert(erpQuotations).values({ id: qid, requisitionId: v.r.id, supplierId: sup.id, createdById: ctx.user.id, ...values });
-    }
-    await bindErpFiles(tx as unknown as typeof db, [values.documentId], "erp_quotation", qid, ctx.user.id);
-    return okVoid(existing ? `Quotation from ${sup.name} saved` : `Quotation from ${sup.name} added · ${v.quotes.length + 1} for ${v.item}`);
-  });
-  if (res.ok) await erpAudit(ctx, existing ? "erp.quotation.edit" : "erp.quotation.create", "erp_quotation", qid, existing ?? null, { ...values, supplier: sup.name });
-  return res;
-}
-
-/**
- * Selecting a quotation chooses the requirement's vendor and fixes the rate the
- * PO is raised at. Enough quotations must be in; an expired one cannot win; and
- * choosing other than the lowest landed cost needs the reason in words, because
- * that is exactly the decision an auditor asks about.
- */
-async function selectQuotation(ctx: ErpContext, quoteId: string, note: string | null): Promise<Result<unknown>> {
-  if (!ctx.powers.has("viewPurchaseMoney")) return err(`${MONEY_WHY}.`, "not_permitted");
-  const [q] = await db.select().from(erpQuotations).where(eq(erpQuotations.id, quoteId));
-  if (!q) return err("That quotation no longer exists.", "not_found");
-  const [v] = await requirementViews({ ids: [q.requisitionId] });
-  if (!v) return err("That requirement no longer exists.", "not_found");
-  if (v.r.status === "Cancelled") return err("The requirement is cancelled.", "conflict");
-  if (v.po) return err(`The requirement is on ${poLabel(v.po.number)} — cancel or send back the PO to change its quotation.`, "conflict");
-  if (v.method !== "quotation") return err("This requirement is not bought by quotation.", "rule_violation");
-  const held = heldByStock(v);
-  if (held) return held;
-  const min = (await getConfig())["erp.purchase.minQuotations"];
-  if (v.quotes.length < min) return err(`At least ${min} quotation${min > 1 ? "s are" : " is"} needed before one is selected — ${v.quotes.length} in.`, "rule_violation");
-  const day = today();
-  if (quoteExpired(q.validUntil, day)) return err("That quotation has expired — ask the vendor to renew it.", "rule_violation");
-  const ranked = rankQuotes(v.quotes, v.r.requiredQty, day);
-  const me = ranked.find((x) => x.id === q.id)!;
-  if (!me.lowest && !note) return fieldErr("note", `Not the lowest landed cost (${ranked[0].supplier} is ${inr(ranked[0].fig.landedPaise)}) — say why this one`);
-  await db.transaction(async (tx) => {
-    await tx.update(erpQuotations).set({ status: "Not selected", updatedAt: new Date() }).where(eq(erpQuotations.requisitionId, v.r.id));
-    await tx.update(erpQuotations).set({ status: "Selected", updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpQuotations.id, q.id));
-    await tx
-      .update(erpRequisitions)
-      .set({ supplierId: q.supplierId, quotationId: q.id, selectionNote: note, vendorSelectedAt: new Date(), vendorSelectedById: ctx.user.id, updatedAt: new Date(), updatedById: ctx.user.id })
-      .where(eq(erpRequisitions.id, v.r.id));
-  });
-  await erpAudit(ctx, "erp.quotation.select", "erp_quotation", q.id, { quotationId: v.r.quotationId }, { requisitionId: v.r.id, lowest: me.lowest, note });
-  return okVoid(`${me.supplier} selected at ${inr(me.fig.landedPaise)} landed · raise the PO next`);
-}
-
-const quotations: ScreenModule = {
-  key: "quotations",
-  async load(ctx) {
-    const [views, form, config] = await Promise.all([requirementViews(), quotationForm(ctx), getConfig()]);
-    const min = config["erp.purchase.minQuotations"];
-    const money = ctx.powers.has("viewPurchaseMoney");
-    const day = today();
-    const all: Col[] = [
-      { k: "requirement", l: "Requirement", t: "t" },
-      { k: "vendor", l: "Vendor", t: "b" },
-      { k: "date", l: "Date", t: "d" },
-      { k: "qty", l: "Quantity", t: "n" },
-      { k: "rate", l: "Rate", t: "m", pw: "viewPurchaseMoney" },
-      { k: "gst", l: "GST %", t: "n" },
-      { k: "freight", l: "Freight", t: "m", pw: "viewPurchaseMoney" },
-      { k: "landed", l: "Landed cost", t: "m", pw: "viewPurchaseMoney" },
-      { k: "perUnit", l: "Landed / unit", t: "m", pw: "viewPurchaseMoney" },
-      { k: "rank", l: "Rank", t: "n" },
-      { k: "delivery", l: "Delivery days", t: "n" },
-      { k: "terms", l: "Payment terms", t: "t" },
-      { k: "validUntil", l: "Valid until", t: "d" },
-      { k: "status", l: "Status", t: "s" },
-      { k: "f", l: "Flags", t: "f" },
-    ];
-    const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
-    const rows: ListRow[] = [];
-    const labels = labelled(views);
-    const labelOf = new Map([...labels].map(([l, v]) => [v.r.id, l]));
-    for (const v of views) {
-      const ranked = rankQuotes(v.quotes, v.r.requiredQty, day);
-      const closed = !!v.po || v.r.status === "Cancelled" || v.legacy;
-      for (const q of ranked) {
-        const actions: ActionSpec[] = [];
-        const status = q.id === v.r.quotationId ? "Selected" : q.status === "Selected" ? "Not selected" : q.status;
-        if (!closed && q.id !== v.r.quotationId)
-          actions.push({
-            id: "select",
-            l: "Select this quotation",
-            primary: true,
-            why: !money ? MONEY_WHY : q.expired ? "Expired — ask the vendor to renew it" : v.quotes.length < min ? `Needs at least ${min} quotations — ${v.quotes.length} in` : "",
-            prompt: {
-              title: `Select ${q.supplier}`,
-              sub: q.lowest ? "The lowest landed cost." : `Not the lowest landed cost — ${ranked[0].supplier} is ${inr(ranked[0].fig.landedPaise)}. Say why.`,
-              submit: "Select",
-              fields: [{ k: "note", l: q.lowest ? "Note" : "Why this one", t: "area", req: !q.lowest }],
-            },
-          });
-        if (!closed) actions.push({ id: "edit", l: "Edit", loadsForm: true, why: money ? "" : MONEY_WHY });
-        if (!closed && q.id !== v.r.quotationId) actions.push({ id: "remove", l: "Remove", confirm: `Remove ${q.supplier}'s quotation for ${v.item}?`, why: money ? "" : MONEY_WHY });
-        if (v.po) actions.push({ id: "openPo", l: `Open ${poLabel(v.po.number)}`, href: erpLink("purchaseOrders", { open: v.po.id }) });
-        actions.push({ id: "openReq", l: "Open requirement", href: erpLink("requisitions", { open: v.r.id }) });
-        const flags = [...(q.lowest ? ["lowestQuote"] : []), ...(q.expired ? ["quoteExpired"] : [])];
-        rows.push({
-          id: q.id,
-          v: withoutHidden(
-            {
-              requirement: labelOf.get(v.r.id) ?? reqLabel(v),
-              vendor: q.supplier,
-              date: q.quoteDate,
-              qty: v.r.requiredQty,
-              rate: q.ratePaise,
-              gst: q.gstBp / 100,
-              freight: q.freightPaise,
-              landed: q.fig.landedPaise,
-              perUnit: q.fig.perUnitLandedPaise,
-              rank: q.rank,
-              delivery: q.deliveryDays,
-              terms: q.paymentTerms,
-              validUntil: q.validUntil,
-              status,
-            },
-            hiddenKeys,
-          ),
-          flags,
-          title: `${q.supplier} · ${v.item}`,
-          header: `${nf(v.r.requiredQty)} ${v.r.unit} · rank ${q.rank} of ${ranked.length}${q.reference ? ` · their ref ${q.reference}` : ""}`,
-          fields: [
-            ...(money ? [{ l: "Material", v: inr(q.fig.materialPaise), der: true }, { l: "GST amount", v: inr(q.fig.gstPaise), der: true }] : []),
-            { l: "Remarks", v: q.remarks || "—" },
-          ],
-          hiddenFields: money ? 0 : 2,
-          contacts: q.documentId ? [{ l: "Open the quotation", href: `/api/attachments/${q.documentId}` }] : undefined,
-          actions,
-          by: stampLine(null, q.createdAt),
-        });
-      }
-    }
-    return {
-      spec: {
-        screen: "quotations",
-        cols,
-        hidden,
-        groups: ["requirement"],
-        chips: "status",
-        sortDefault: ["rank", 1],
-        newForm: money ? (form ?? undefined) : undefined,
-        newLabel: "Add quotation",
-        noDataLine: "No quotations yet. Items bought by quotation collect them here.",
-      },
-      rows,
-    };
-  },
-  formLoaders: {
-    edit: (ctx, id) => quotationForm(ctx, { quoteId: id }),
-  },
-  forms: {
-    async new(ctx, h) {
-      return saveQuotation(ctx, h);
-    },
-    async edit(ctx, h, _l, id) {
-      return saveQuotation(ctx, h, id);
-    },
-  },
-  actions: {
-    async select(ctx, id, values) {
-      return selectQuotation(ctx, id, text(values.note));
-    },
-    async remove(ctx, id) {
-      if (!ctx.powers.has("viewPurchaseMoney")) return err(`${MONEY_WHY}.`, "not_permitted");
-      const [q] = await db.select().from(erpQuotations).where(eq(erpQuotations.id, id));
-      if (!q) return err("That quotation no longer exists.", "not_found");
-      const [v] = await requirementViews({ ids: [q.requisitionId] });
-      if (v?.r.quotationId === id) return err("The selected quotation is not removed — select another first.", "conflict");
-      if (v?.po) return err(`The requirement is on ${poLabel(v.po.number)}.`, "conflict");
-      await db.delete(erpQuotations).where(eq(erpQuotations.id, id));
-      await erpAudit(ctx, "erp.quotation.remove", "erp_quotation", id, q, null);
-      return okVoid("Quotation removed");
-    },
-  },
-};
-
-/* ======================================================== purchase orders */
-
 /** Everything the PO form needs: requirements ready for a PO (or already on the one being edited), by vendor. */
 async function poFormData(editingPoId?: string) {
-  const [views, config] = await Promise.all([requirementViews(), getConfig()]);
-  const min = config["erp.purchase.minQuotations"];
-  const eligible = views.filter((v) => stageOf(v, min).readyForPo || (editingPoId && v.po?.id === editingPoId));
+  const views = await requirementViews();
+  const eligible = views.filter((v) => stageOf(v).readyForPo || (editingPoId && v.po?.id === editingPoId));
   return { eligible, map: labelled(eligible) };
 }
 
@@ -1425,7 +952,6 @@ export async function purchaseOrderForm(ctx: ErpContext, opts: { supplierId?: st
   const gstOf: Record<string, string> = {};
   const itemOf: Record<string, string> = {};
   const unitOf: Record<string, string> = {};
-  const quotedOf: Record<string, string> = {};
   map.forEach((v, l) => {
     const vendor = supById.get(v.r.supplierId ?? "")?.name;
     if (!vendor) return;
@@ -1433,11 +959,7 @@ export async function purchaseOrderForm(ctx: ErpContext, opts: { supplierId?: st
     qtyOf[l] = String(v.r.requiredQty);
     itemOf[l] = v.item;
     unitOf[l] = v.r.unit;
-    if (v.selected) {
-      rateOf[l] = rupeesField(v.selected.ratePaise);
-      gstOf[l] = String(v.selected.gstBp / 100);
-      quotedOf[l] = rupeesField(v.selected.ratePaise);
-    } else gstOf[l] = "18";
+    gstOf[l] = "18";
   });
   let po: PoView | undefined;
   if (opts.poId) {
@@ -1459,13 +981,9 @@ export async function purchaseOrderForm(ctx: ErpContext, opts: { supplierId?: st
       ? (byVendor[vendor.name] ?? []).map((l) => ({ requirement: l, qty: qtyOf[l], rate: rateOf[l] ?? "", gst: gstOf[l] ?? "18" }))
       : undefined;
   const firstReq = focus?.[1] ?? (vendor ? map.get((byVendor[vendor.name] ?? [])[0] ?? "") : undefined);
-  const quoteTerms = firstReq?.selected?.paymentTerms ?? null;
   const vendorTerms = vendor?.creditDays ? `${vendor.creditDays} days credit` : null;
-  const term = po?.po.paymentTerms ?? quoteTerms ?? vendorTerms ?? "";
-  const days = firstReq?.selected?.deliveryDays;
-  /* Calendar arithmetic on a date string — noon UTC, so no zone can move the day. */
-  const addDays = (iso: string, n: number) => calendarDate(new Date(Date.parse(`${iso}T12:00:00Z`) + n * 86400000));
-  const deliveryInit = po?.po.deliveryDate ?? (days != null ? addDays(today(), days) : (firstReq?.r.requiredBy ?? ""));
+  const term = po?.po.paymentTerms ?? vendorTerms ?? "";
+  const deliveryInit = po?.po.deliveryDate ?? firstReq?.r.requiredBy ?? "";
   const vendors = Object.keys(byVendor).sort();
   if (vendor && !vendors.includes(vendor.name)) vendors.push(vendor.name);
   return {
@@ -1484,12 +1002,12 @@ export async function purchaseOrderForm(ctx: ErpContext, opts: { supplierId?: st
       deliverTo: po?.godown ?? firstReq?.godown ?? ctx.workingGodown?.name ?? "",
       deliveryDate: deliveryInit,
       terms: term,
-      freight: po ? rupeesField(po.po.freightPaise) : firstReq?.selected?.freightPaise ? rupeesField(firstReq.selected.freightPaise) : "",
+      freight: po ? rupeesField(po.po.freightPaise) : "",
       remarks: po?.po.remarks ?? "",
       poNo: po ? poLabel(po.po.poNumber) : "",
     },
     initLines,
-    data: { itemOf, unitOf, quotedOf },
+    data: { itemOf, unitOf },
     header: [
       { k: "po", l: "PO number", t: "derived", calc: "purchaseOrders.number" },
       { k: "date", l: "PO date", t: "date", req: true },
@@ -1500,7 +1018,7 @@ export async function purchaseOrderForm(ctx: ErpContext, opts: { supplierId?: st
         req: true,
         opts: vendors,
         readOnly: !!vendor,
-        hint: vendors.length ? undefined : "No requirement is ready for a PO. A requirement is ready once its vendor is chosen — directly, or by selecting a quotation.",
+        hint: vendors.length ? undefined : "No requirement is ready for a PO. A requirement is ready once its vendor is chosen.",
       },
       { k: "deliverTo", l: "Deliver to", t: "select", req: true, opts: gds.map((g) => g.name) },
       { k: "deliveryDate", l: "Delivery date", t: "date", req: true },
@@ -1549,10 +1067,6 @@ async function savePurchaseOrder(ctx: ErpContext, h: Record<string, string>, lin
     if (qty == null || qty <= 0) return fieldErr(`l${i}.qty`, qty != null && qty < 0 ? "Minus Quantity Not Allowed" : "Quantity is required");
     const rate = paise(l.rate);
     if (rate == null || rate <= 0) return fieldErr(`l${i}.rate`, "Rate is required");
-    if (v.method === "quotation") {
-      if (!v.selected) return fieldErr(`l${i}.requirement`, "Select a quotation for this requirement first");
-      if (rate !== v.selected.ratePaise) return fieldErr(`l${i}.rate`, `The selected quotation is ${inrRate(v.selected.ratePaise)} — change the quotation, not the PO`);
-    }
     const gst = num(l.gst);
     if (gst == null || gst < 0 || gst > 100) return fieldErr(`l${i}.gst`, "GST % is required");
     parsed.push({ v, qty, rate, gstBp: Math.round(gst * 100) });
@@ -1924,8 +1438,7 @@ const purchaseOrders: ScreenModule = {
 /** Badge counts for the sidebar: requirements waiting on somebody, and POs waiting on approval or on being sent. */
 export async function purchaseFlowCounts(ctx: ErpContext): Promise<{ requisitions: number; purchaseOrders: number }> {
   const [work, pos] = await Promise.all([requirementWork(ctx), purchaseOrderViews({ status: ["Pending approval", "Approved"] })]);
-  const buyer = ctx.powers.has("purchaseBuyer");
-  const requisitions = REQUIREMENT_ACTION_STAGES.filter((s) => s !== "Buyer decision" || buyer).reduce((n, s) => n + (work[s]?.length ?? 0), 0);
+  const requisitions = REQUIREMENT_ACTION_STAGES.reduce((n, s) => n + (work[s]?.length ?? 0), 0);
   const approver = ctx.powers.has("approvePurchaseOrder");
   const purchaseOrders = pos.filter(
     (p) =>
@@ -1935,4 +1448,4 @@ export async function purchaseFlowCounts(ctx: ErpContext): Promise<{ requisition
   return { requisitions, purchaseOrders };
 }
 
-export const PURCHASE_FLOW_SCREENS: ScreenModule[] = [requisitions, quotations, purchaseOrders];
+export const PURCHASE_FLOW_SCREENS: ScreenModule[] = [requisitions, purchaseOrders];

@@ -1,6 +1,6 @@
 /**
  * ERP purchase — the whole flow, against a real database through the real
- * handlers: requirement → purchase method → vendor / quotation → approval →
+ * handlers: requirement → vendor → approval →
  * PO → receipt (goods inward) → testing → register → raw-material stock.
  *
  *   npm run test:integration
@@ -21,7 +21,6 @@ import {
   erpPrCosts,
   erpPurchaseOrders,
   erpPurchases,
-  erpQuotations,
   erpRawMaterials,
   erpRequisitions,
   erpRmEntries,
@@ -104,11 +103,10 @@ before(async () => {
     { id: "sup_b", name: "Bharat Chemicals", partyCode: "BC" },
   ]);
   await db.insert(erpRawMaterials).values([
-    /* The three purchase rules: a price-sensitive chemical on quotation, a routine one direct
-       from its default vendor, and cans left to the buyer. */
-    { id: "rm_tol", serialNo: 1, name: "Toluene", code: "TOL", unit: "Litre", materialType: "Chemical", density: 0.87, testingList: ["Smell", "Density"], purchaseMethod: "quotation" },
+    /* Every item is bought direct: MEK from its default vendor, the other two pick one. */
+    { id: "rm_tol", serialNo: 1, name: "Toluene", code: "TOL", unit: "Litre", materialType: "Chemical", density: 0.87, testingList: ["Smell", "Density"], purchaseMethod: "direct" },
     { id: "rm_mek", serialNo: 2, name: "MEK", code: "MEK", unit: "Kg", materialType: "Chemical", density: 0.8, testingList: [], purchaseMethod: "direct", preferredSupplierId: "sup_a" },
-    { id: "rm_can", serialNo: 3, name: "1 L Tin Can", code: "CAN1", unit: "Unit", materialType: "Can", testingList: [], purchaseMethod: "buyer" },
+    { id: "rm_can", serialNo: 3, name: "1 L Tin Can", code: "CAN1", unit: "Unit", materialType: "Can", testingList: [], purchaseMethod: "direct" },
   ]);
 });
 
@@ -131,13 +129,13 @@ describe("the purchase flow up to the PO", () => {
     return rows.find((r) => r.v.item === item)?.v.stage;
   };
 
-  test("the item's purchase rule decides where a requirement goes the moment it is raised", async () => {
+  test("the item's default vendor is offered the moment a requirement is raised", async () => {
     assert.ok((await raise("Toluene", "Chemical", "400")).ok);
     assert.ok((await raise("MEK", "Chemical", "200")).ok);
     assert.ok((await raise("1 L Tin Can", "Can", "500")).ok);
-    assert.equal(await stage("Toluene"), "Collect quotations");
-    assert.equal(await stage("MEK"), "Ready for PO", "direct, and its default vendor is offered");
-    assert.equal(await stage("1 L Tin Can"), "Buyer decision");
+    assert.equal(await stage("Toluene"), "Select vendor");
+    assert.equal(await stage("MEK"), "Ready for PO", "its default vendor is offered");
+    assert.equal(await stage("1 L Tin Can"), "Select vendor");
     const mek = await req("rm_mek");
     assert.equal(mek.purchaseRule, "direct");
     assert.equal(mek.supplierId, "sup_a");
@@ -153,53 +151,21 @@ describe("the purchase flow up to the PO", () => {
     assert.ok(!fg.ok && fg.fieldErrors?.[0].field === "type");
   });
 
-  test("only the buyer decides a Buyer-decision requirement, and direct then asks for a vendor", async () => {
-    const can = await req("rm_can");
-    const refused = await mod("requisitions").actions!.decide(await as(clerk), can.id, { method: "Direct purchase" });
-    assert.ok(!refused.ok && refused.code === "not_permitted");
-    assert.ok((await mod("requisitions").actions!.decide(await as(admin), can.id, { method: "Direct purchase", note: "Same tins as always" })).ok);
-    assert.equal(await stage("1 L Tin Can"), "Select vendor");
-    assert.ok((await mod("requisitions").actions!.vendor(await as(clerk), can.id, { vendor: "Asian Solvents" })).ok);
-    assert.equal(await stage("1 L Tin Can"), "Ready for PO");
+  test("a requirement with no default vendor has one picked, and is then ready for the PO", async () => {
+    for (const [rm, item] of [["rm_can", "1 L Tin Can"], ["rm_tol", "Toluene"]] as const) {
+      const r = await req(rm);
+      assert.ok((await mod("requisitions").actions!.vendor(await as(clerk), r.id, { vendor: "Asian Solvents" })).ok);
+      assert.equal(await stage(item), "Ready for PO");
+    }
   });
 
-  test("a quotation item cannot skip its quotations, and the lowest landed cost wins unless somebody says why", async () => {
-    const a = await as(admin);
-    const tol = await req("rm_tol");
-    const label = (await mod("quotations").load(a)).spec.newForm!.header.find((f) => f.k === "requirement")!.opts![0];
-    /* Not ready for a PO until a quotation is selected — direct vendor selection is refused. */
-    assert.ok(!(await mod("requisitions").actions!.vendor(a, tol.id, { vendor: "Asian Solvents" })).ok);
-    const q1 = await mod("quotations").forms!.new(a, { requirement: label, vendor: "Asian Solvents", date: TODAY, rate: "100", gst: "18", deliveryDays: "5", terms: "30 days credit" }, []);
-    assert.ok(q1.ok, JSON.stringify(q1));
-    const [first] = await db.select().from(erpQuotations);
-    const early = await mod("quotations").actions!.select(a, first.id, {});
-    assert.ok(!early.ok && /At least 2/.test(early.error), "two quotations before one is selected");
-    const dup = await mod("quotations").forms!.new(a, { requirement: label, vendor: "Asian Solvents", date: TODAY, rate: "99", gst: "18" }, []);
-    assert.ok(!dup.ok && dup.fieldErrors?.[0].field === "vendor", "one quotation per vendor");
-    /* Bharat quotes a lower rate, but its freight makes it dearer landed. */
-    assert.ok((await mod("quotations").forms!.new(a, { requirement: label, vendor: "Bharat Chemicals", date: TODAY, rate: "95", gst: "18", freight: "5000" }, [])).ok);
-    assert.equal(await stage("Toluene"), "Compare quotations");
-    const { rows } = await mod("quotations").load(a);
-    const bharat = rows.find((r) => r.v.vendor === "Bharat Chemicals")!;
-    assert.deepEqual(rows.find((r) => r.v.vendor === "Asian Solvents")!.flags, ["lowestQuote"]);
-    const why = await mod("quotations").actions!.select(a, bharat.id, {});
-    assert.ok(!why.ok && why.fieldErrors?.[0].field === "note", "not the lowest — say why");
-    assert.ok((await mod("quotations").actions!.select(a, first.id, {})).ok);
-    const after = await req("rm_tol");
-    assert.equal(after.supplierId, "sup_a");
-    assert.equal(after.quotationId, first.id);
-    assert.equal(await stage("Toluene"), "Ready for PO");
-  });
-
-  test("a clerk without purchase money cannot add a quotation or raise a PO", async () => {
+  test("a clerk without purchase money cannot raise a PO", async () => {
     const c = await as(clerk);
-    const r = await mod("quotations").forms!.new(c, { requirement: "x", vendor: "Asian Solvents", date: TODAY, rate: "1", gst: "18" }, []);
-    assert.ok(!r.ok && r.code === "not_permitted");
     const po = await mod("purchaseOrders").forms!.new(c, { vendor: "Asian Solvents" }, []);
     assert.ok(!po.ok && po.code === "not_permitted");
   });
 
-  test("the PO is raised from the vendor's ready requirements, at the quotation's rate", async () => {
+  test("the PO is raised from the vendor's ready requirements", async () => {
     await db.execute(sql`insert into erp_user_powers (user_id, power) values (${clerk.id}, 'viewPurchaseMoney'), (${clerk.id}, 'approvePurchaseOrder') on conflict do nothing`);
     const c = await as(clerk);
     const mek = await req("rm_mek");
@@ -207,12 +173,8 @@ describe("the purchase flow up to the PO", () => {
     assert.ok(form);
     assert.equal(form!.init!.vendor, "Asian Solvents");
     assert.equal(form!.initLines!.length, 3, "every requirement ready for this vendor comes onto the PO");
-    const lines = form!.initLines!.map((l) => ({ ...l, requirement: l.requirement ?? "", rate: l.rate || "90" }));
-    const tolLine = lines.findIndex((l) => l.requirement.startsWith("Toluene"));
-    assert.equal(lines[tolLine].rate, "100", "the quotation's rate");
+    const lines = form!.initLines!.map((l) => ({ ...l, requirement: l.requirement ?? "", rate: l.requirement?.startsWith("Toluene") ? "100" : l.rate || "90" }));
     const h = { date: TODAY, vendor: "Asian Solvents", deliverTo: "Bhiwandi", deliveryDate: "2026-09-25", terms: "30 days credit" };
-    const off = await mod("purchaseOrders").forms!.new(c, h, lines.map((l, i) => (i === tolLine ? { ...l, rate: "110" } : l)));
-    assert.ok(!off.ok && off.fieldErrors?.[0].field === `l${tolLine}.rate`, "the PO keeps the selected quotation's rate");
     const made = await mod("purchaseOrders").forms!.new(c, h, lines.map((l) => (l.requirement.startsWith("1 L") ? { ...l, rate: "10" } : l)));
     assert.ok(made.ok, JSON.stringify(made));
     const [po] = await db.select().from(erpPurchaseOrders);
@@ -361,7 +323,7 @@ describe("testing", () => {
     assert.equal(regs[0].lotNo, "ASTOL1001");
     assert.equal(regs[0].density, 0.9);
     assert.equal(regs[0].poNumber, "PO-1", "a tested lot carries the PO it was bought on");
-    assert.equal(regs[0].ratePaise, 10000, "at the selected quotation's rate");
+    assert.equal(regs[0].ratePaise, 10000, "at the PO line's rate");
     const again = await mod("testing").actions!.verify(ctx, t.id, {});
     assert.ok(!again.ok);
     assert.equal((await db.select().from(erpPurchases).where(eq(erpPurchases.testId, t.id))).length, 1);
@@ -610,7 +572,7 @@ describe("after the PO: sending back, cancelling, closing short", () => {
     const a = await as(admin);
     assert.ok(!(await mod("purchaseOrders").actions!.cancel(a, po.id, { reason: "x" })).ok, "goods arrived — close it short instead");
     assert.ok((await mod("purchaseOrders").actions!.close(a, po.id, { reason: "Vendor short-shipped" })).ok);
-    const [tol] = await db.select().from(erpRequisitions).where(sql`raw_material_id = 'rm_tol' and purchase_rule = 'quotation'`);
+    const [tol] = await db.select().from(erpRequisitions).where(sql`raw_material_id = 'rm_tol' and department = 'Production Head' and required_by = '2026-09-30'`);
     assert.equal(tol.status, "Received");
     assert.equal(await stageOf(tol.id), "Closed short");
     const late = await mod("inward").forms!.new(a, { date: TODAY, po: flowPo, godown: "Bhiwandi", transportMode: NONE }, [{ poLine: flowLine["Toluene"], drums: "1", qty: "40" }]);
@@ -622,11 +584,11 @@ describe("after the PO: sending back, cancelling, closing short", () => {
     assert.ok(!r.ok && r.fieldErrors?.[0].field === "po");
   });
 
-  test("the item master carries the purchase rule and the default vendor", async () => {
+  test("the item master carries the default vendor, and every item is bought direct", async () => {
     const a = await as(admin);
     const r = await mod("rawMaterials").forms!.edit(
       a,
-      { name: "1 L Tin Can", code: "CAN1", unit: "Unit", materialType: "Can", purchaseMethod: "Direct purchase", preferredSupplier: "Bharat Chemicals" },
+      { name: "1 L Tin Can", code: "CAN1", unit: "Unit", materialType: "Can", preferredSupplier: "Bharat Chemicals" },
       [],
       "rm_can",
     );
@@ -642,7 +604,7 @@ describe("one requirement, many items", () => {
   const rowsOf = async (reqNo: number) =>
     db.select().from(erpRequisitions).where(sql`req_no = ${reqNo}`).orderBy(erpRequisitions.rawMaterialId);
 
-  test("every item is raised under ONE number, each on its own row and its own rule", async () => {
+  test("every item is raised under ONE number, each on its own row", async () => {
     const r = await mod("requisitions").forms!.new(await as(admin), head, [
       { item: "Toluene", required: "400" },
       { item: "MEK", required: "120.5" },
@@ -662,8 +624,8 @@ describe("one requirement, many items", () => {
       ],
       "the blank row is dropped; the header travels to every item",
     );
-    assert.equal(rows[1].purchaseRule, "direct", "each item copies its own rule");
-    assert.equal(rows[2].purchaseRule, "quotation");
+    assert.equal(rows[1].supplierId, "sup_a", "MEK's default vendor is offered");
+    assert.equal(rows[2].supplierId, null, "Toluene has no default vendor — one is picked next");
     /* The list names the requirement on each of its items. */
     const listed = (await mod("requisitions").load(await as(admin))).rows.filter((x) => x.v.reqNo === `REQ-${reqNo}`);
     assert.equal(listed.length, 3);
@@ -691,6 +653,6 @@ describe("one requirement, many items", () => {
     assert.equal(form.lineLayout, "table");
     assert.deepEqual(form.line!.map((f) => f.k), ["item", "stock", "required", "unit", "rule"]);
     assert.ok(form.line!.find((f) => f.k === "item")!.optsBy!.map["Production Head"].includes("Toluene"));
-    assert.equal((form.data!.ruleShortOf as Record<string, string>).Toluene, "Quotations");
+    assert.equal((form.data!.ruleShortOf as Record<string, string>).Toluene, "Chosen next");
   });
 });

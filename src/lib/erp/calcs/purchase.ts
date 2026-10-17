@@ -1,6 +1,6 @@
 import { fmt, n, registerCalc } from "../calc";
 import { lotNumber, netWeight, purchaseFigures, transportCostPaise, transportModeByLabel } from "../engines/purchase";
-import { poLineFigures, quoteFigures } from "../engines/purchase-flow";
+import { poLineFigures } from "../engines/purchase-flow";
 
 /* ---------------------------------------------------------------------------
  * The purchase forms' derived fields. The server recomputes each on save from
@@ -9,13 +9,13 @@ import { poLineFigures, quoteFigures } from "../engines/purchase-flow";
 
 const map = (data: Record<string, unknown>, k: string) => (data[k] ?? {}) as Record<string, unknown>;
 
-/* The item's purchase unit — what the requirement, its quotations, the PO and the register all count it in. */
+/* The item's purchase unit — what the requirement, the PO and the register all count it in. */
 /* A requirement names its item on each line, or — editing one item — in the header. */
 const reqItem = (h: Record<string, string>, l: Record<string, string>) => l.item || h.item || "";
 
 registerCalc("requisitions.unit", ({ h, l, data }) => (reqItem(h, l) ? String(map(data, "unitOf")[reqItem(h, l)] ?? "") : ""));
 
-/* CHECK PURCHASE RULE: where this requirement will go, read off the item master. */
+/* The vendor this requirement will go to, read off the item master's default vendor. */
 registerCalc("requisitions.rule", ({ h, l, data }) => (reqItem(h, l) ? String(map(data, "ruleOf")[reqItem(h, l)] ?? "") : ""));
 
 /* The same, in the two or three words a table row has room for. */
@@ -35,34 +35,19 @@ registerCalc("requisitions.stockShort", ({ h, l, data }) => {
   return [here ? `${fmt(here, 3)} ${unit} here` : "None here", there ? `${fmt(there, 3)} elsewhere` : ""].filter(Boolean).join(" · ");
 });
 
-/* What raising this requirement will set in motion, item by item. */
+/* What raising this requirement will set in motion. */
 registerCalc("requisitions.summary", ({ lines, data }) => {
   const shortOf = map(data, "ruleShortOf");
   const picked = lines.filter((x) => x.item);
   if (!picked.length) return "";
-  const by = new Map<string, number>();
-  picked.forEach((x) => {
-    const r = String(shortOf[x.item] ?? "").split(" · ")[0] || "Unknown item";
-    by.set(r, (by.get(r) ?? 0) + 1);
-  });
-  const parts = [...by].map(([r, c]) => `${c} ${r.toLowerCase()}`);
-  return `ok:${picked.length} item${picked.length === 1 ? "" : "s"} on one requirement · ${parts.join(" · ")}. Each item then goes its own way: a direct purchase picks a vendor, a quotation item collects quotations, and the buyer decides the rest.`;
-});
-
-registerCalc("quotations.landed", ({ h, data }) => {
-  const qty = Number(map(data, "qtyOf")[h.requirement] ?? 0);
-  const rate = n(h.rate);
-  if (!h.requirement || rate == null || Number.isNaN(rate)) return "Rate × quantity, its GST and the freight";
-  const f = quoteFigures({ ratePaise: Math.round(rate * 100), gstBp: Math.round((n(h.gst) ?? 0) * 100), freightPaise: Math.round((n(h.freight) ?? 0) * 100) }, qty);
-  const unit = String(map(data, "unitOf")[h.requirement] ?? "");
-  return `₹${fmt(f.landedPaise / 100)} for ${fmt(qty, 3)} ${unit} · ₹${fmt(f.perUnitLandedPaise / 100)} a ${unit} landed`;
+  const offered = picked.filter((x) => shortOf[x.item] && shortOf[x.item] !== "Chosen next").length;
+  return `ok:${picked.length} item${picked.length === 1 ? "" : "s"} on one requirement · ${offered} with a default vendor offered. Each item then picks its vendor and goes on a PO.`;
 });
 
 registerCalc("purchaseOrders.number", ({ h }) => (h.poNo ? h.poNo : "Next PO number, on save"));
 registerCalc("purchaseOrders.item", ({ l, data }) => {
   if (!l.requirement) return "";
-  const quoted = map(data, "quotedOf")[l.requirement];
-  return `${map(data, "itemOf")[l.requirement] ?? ""}${quoted ? ` · quoted at ₹${quoted}` : " · direct purchase"}`;
+  return String(map(data, "itemOf")[l.requirement] ?? "");
 });
 registerCalc("purchaseOrders.unit", ({ l, data }) => (l.requirement ? String(map(data, "unitOf")[l.requirement] ?? "") : ""));
 

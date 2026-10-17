@@ -2006,18 +2006,17 @@ order line's margin reads the issued credit note where it is
 ERP's complaints screen (`canRead` falls back to it). 0184 carried every ERP
 request across under the same id; `erp_requests` is retired, not dropped.
 
-**THE PURCHASE FLOW IS Requirement → Purchase method → Vendor / Quotation →
-Approval → PO → Receipt, and NO PURCHASE IS COMPLETED WITHOUT A PO.** Goods
+**THE PURCHASE FLOW IS Requirement → Blind count → Vendor → Approval → PO →
+Receipt, and NO PURCHASE IS COMPLETED WITHOUT A PO.** Goods
 inward (the GRN) names an approved PO and every line one of its items; a lot
 entered by hand on the register does the same; neither takes a typed supplier
 or item any more. `engines/purchase-flow.ts` is the rule, pure, and
-`screens/purchase-flow.ts` the requirements, their Quotations tab and the
-Purchase orders screen. The receipt side stays in `screens/purchase.ts`.
+`screens/purchase-flow.ts` the requirements and the Purchase orders screen. The receipt side stays in `screens/purchase.ts`.
 
 **A REQUIREMENT CARRIES EVERY ITEM A DEPARTMENT NEEDS, under one number.**
 It used to be one item per form, and a department's monthly list is a hundred.
-Each item is still its own `erp_requisitions` row — its method, quotations,
-vendor and PO line are decided per item, and everything after the raise reads
+Each item is still its own `erp_requisitions` row — its vendor and PO line
+are decided per item, and everything after the raise reads
 one item — and the rows raised together share `req_no` (`REQ-n`, series
 `requirement`), written in ONE transaction so a requirement is never half
 raised; a bad line refuses the whole save and names its row (`l3.item`).
@@ -2028,23 +2027,21 @@ search or by pasting a list ("Toluene, 200" a row, straight from Excel) that
 names one item itself and sends no lines is a requirement of one item, which is
 what the re-order levels' "Raise requirement" still sends.
 
-**The ITEM MASTER says how an item is bought** — `erp_raw_materials.purchase_method`:
-`direct` (boxes, cans, stationery, routine chemicals: pick the vendor, raise
-the PO), `quotation` (price-sensitive chemicals: quotations are collected and
-compared first) or `buyer` (the buyer decides per requirement, with the
-`purchaseBuyer` power). `preferred_supplier_id` is the vendor a direct purchase
-is offered. **The rule is COPIED onto the requirement when it is raised**
-(`purchase_rule`, and the resolved `method`), so changing an item's rule never
-re-routes a requirement already in flight. `0222` started every chemical on
-quotation and everything else direct.
-
-**A quotation is required ONLY where the rule says so.** A quotation
-requirement is not ready for a PO until one quotation is SELECTED, and one can
-be selected only once `erp.purchase.minQuotations` are in. They are compared on
-LANDED cost (rate × quantity, its GST, the freight); an expired one is never
-the lowest; choosing other than the lowest needs the reason in words
-(`selection_note`). The PO takes the selected quotation's rate and refuses
-another — the negotiation is recorded on the quotation, not hidden on the PO.
+**EVERY REQUIREMENT IS BOUGHT DIRECT, AND THAT IS A REVERSAL (Oct 2026).**
+The item master used to carry a purchase rule — direct, quotation or "buyer
+decides" (the `purchaseBuyer` power) — copied onto each requirement, and a
+quotation item collected and compared quotations on a Quotations tab of
+Requirements before its PO, which then refused any rate but the selected
+quotation's. Supplier rates are now kept on the Quotation manager, so the tab,
+the method, the buyer decision, `erp.purchase.minQuotations` and the
+quotation-rate check on the PO are all gone; `0275` deleted the retired
+power's rows. A requirement is offered its item's default vendor
+(`preferred_supplier_id`) when raised, or has one picked, and the PO rate is
+typed. `erp_quotations` and the requisition's `method`, `purchase_rule`,
+`quotation_id` and `selection_note` are kept as the record they are and read
+by nothing; new rows write `direct`. The Quotation manager's grid lists its
+rows LATEST FIRST — newest date on top, the last entered first within a date
+(`visibleRows` in `engines/quote-sheet.ts`).
 
 **WHO MAY ACT IN PURCHASE IS SET IN THE ADMIN CONSOLE, and only there.**
 Raising a requirement, raising a PO and recording a lot test follow the screen
@@ -2057,8 +2054,8 @@ approves this PO" is one too many, so it was removed and
 (`lib/erp/departments.ts`) still applies: it rides on the designation, which
 is itself set in the Admin Console.
 
-**A requirement's STAGE is derived, never typed** (`requirementStage`): Buyer
-decision, Select vendor, Collect / Compare quotations, Ready for PO, PO awaiting
+**A requirement's STAGE is derived, never typed** (`requirementStage`): Blind
+count, Select vendor, Ready for PO, PO awaiting
 approval, PO approved, PO sent, Partly received, Received, Closed short,
 Cancelled. `erp_requisitions.status` is written by the flow (Pending → Order
 Placed on approval → Received) and the old "Change status" button is gone,
@@ -2158,12 +2155,12 @@ group (its cans stay, not grouped), or a can's own Edit form.
 
 ## Inventory Accuracy Control
 
-**NO PURCHASE METHOD BEFORE THE SHELF IS COUNTED.** A raw-material requirement
+**NO VENDOR BEFORE THE SHELF IS COUNTED.** A raw-material requirement
 raised while `erp.stockCheck.onRequirement` is on opens a BLIND count of its
 item at its godown in the same transaction (`openRequirementCounts`), and the
-flow is Requirement → **Blind count** → Purchase method → Vendor / quotation →
-Approval → PO → Receipt. The setting is COPIED onto the row (`stock_check_required`),
-like the purchase rule, so nothing raised before it was held up. The rules are
+flow is Requirement → **Blind count** → Vendor → Approval → PO → Receipt. The
+setting is COPIED onto the row (`stock_check_required`), so nothing raised
+before it was held up. The rules are
 pure in `engines/stock-check.ts`; `stock-check.ts` hands them the ledgers'
 figures; `screens/stock-check.ts` is the Stock accuracy screen (To count · Red
 flags · Adjustments · Missing records · Every count).
@@ -8751,8 +8748,8 @@ department's `owner` crew seat, a manager over that department, and the
 Production Head. It covers the three departments that buy anything
 (`FactoryCtx.reqDepts`): Mixing & Blending, Refilling and Packing. It is the
 ERP's own requirement, raised through `raiseRequirementWith`, so the
-department's categories, the material duties, the purchase rule and the stock
-check all still apply. Each item is COUNTED before it is added. The phone is
+department's categories, the item's default vendor and the stock check all
+still apply. Each item is COUNTED before it is added. The phone is
 never sent a stock figure: not in the item list, and not after the save. The
 count is written onto the item's blind count by `writeCounted` in the same
 transaction, so it is the requirement's stock check. The answer is only

@@ -61,7 +61,7 @@ export const ERP_DEPARTMENTS: readonly ErpDepartment[] = [
       {
         key: "chemicalReq",
         label: "Create chemical requirement",
-        sentence: "Ask for the chemicals the next batches need. The chemical's purchase rule decides whether quotations are collected first.",
+        sentence: "Ask for the chemicals the next batches need. The chemical's default vendor is offered; the office picks the vendor and raises the PO.",
         screen: "requisitions",
         materialTypes: ["Chemical"],
       },

@@ -5,23 +5,17 @@ import {
   poStatusAfterReceipt,
   poTotals,
   purchaseUnit,
-  rankQuotes,
   receivableQuantity,
   requirementStage,
   type RequirementState,
 } from "./purchase-flow";
 
 /* The purchase flow's rules, pinned:
-   Requirement → Purchase method → Vendor / quotation → Approval → PO → Receipt. */
+   Requirement → Blind count → Vendor → Approval → PO → Receipt. */
 
 const base: RequirementState = {
   status: "Pending",
-  rule: "direct",
-  method: "direct",
   supplierId: null,
-  quotationId: null,
-  quoteCount: 0,
-  minQuotations: 2,
   po: null,
   legacy: false,
 };
@@ -34,22 +28,6 @@ test("direct purchase: select the vendor, then the PO", () => {
   assert.equal(FLOW_STEPS[ready.step], "Approval");
 });
 
-test("quotation: collect until the minimum, compare, then select — and only then a PO", () => {
-  const q = { ...base, rule: "quotation" as const, method: "quotation" as const };
-  assert.equal(requirementStage({ ...q, quoteCount: 1 }).stage, "Collect quotations");
-  assert.equal(requirementStage({ ...q, quoteCount: 2 }).stage, "Compare quotations");
-  /* A vendor without a selected quotation is not ready: the rule says a quotation is required. */
-  assert.equal(requirementStage({ ...q, quoteCount: 2, supplierId: "s1" }).readyForPo, false);
-  assert.equal(requirementStage({ ...q, quoteCount: 2, supplierId: "s1", quotationId: "q1" }).stage, "Ready for PO");
-});
-
-test("buyer decision waits on the buyer, and nothing can be ordered meanwhile", () => {
-  const s = requirementStage({ ...base, rule: "buyer", method: null, supplierId: "s1" });
-  assert.equal(s.stage, "Buyer decision");
-  assert.equal(FLOW_STEPS[s.step], "Purchase method");
-  assert.equal(s.readyForPo, false);
-});
-
 test("the PO drives the rest: approval, sending, receipt", () => {
   const on = (status: string, received = 0) => requirementStage({ ...base, supplierId: "s1", po: { status, ordered: 100, received } });
   assert.equal(on("Pending approval").stage, "PO awaiting approval");
@@ -59,23 +37,6 @@ test("the PO drives the rest: approval, sending, receipt", () => {
   assert.equal(on("Received", 100).step, FLOW_STEPS.length);
   assert.equal(on("Closed", 40).stage, "Closed short");
   assert.equal(requirementStage({ ...base, status: "Cancelled" }).step, -1);
-});
-
-test("quotations are ranked by LANDED cost, and an expired one can never be the lowest", () => {
-  const ranked = rankQuotes(
-    [
-      { id: "cheap-rate", ratePaise: 9000, gstBp: 1800, freightPaise: 300000, validUntil: null },
-      { id: "landed-best", ratePaise: 9500, gstBp: 1800, freightPaise: 0, validUntil: "2026-12-31" },
-      { id: "expired", ratePaise: 5000, gstBp: 1800, freightPaise: 0, validUntil: "2026-01-01" },
-    ],
-    100,
-    "2026-10-06",
-  );
-  assert.deepEqual(ranked.map((q) => q.id), ["landed-best", "cheap-rate", "expired"]);
-  assert.equal(ranked[0].lowest, true);
-  assert.equal(ranked[0].fig.landedPaise, 1121000, "100 × ₹95 + 18% GST");
-  assert.equal(ranked[1].fig.landedPaise, 1362000, "100 × ₹90 + 18% GST + ₹3,000 freight");
-  assert.equal(ranked[2].lowest, false);
 });
 
 test("a PO's status follows what was received, and only in the receiving states", () => {
@@ -133,10 +94,10 @@ test("a pasted list: the last number is the quantity, names match exactly or uni
   assert.deepEqual(parsePastedLines("Toluene 5", labels, ["Toluene"]).duplicates, ["Toluene"]);
 });
 
-test("a requirement waiting for its blind count sits at that step, before the purchase method", () => {
+test("a requirement waiting for its blind count sits at that step, before the vendor", () => {
   const held = requirementStage({ ...base, gate: { blocks: true, stage: "Blind count", next: "Count it." } });
   assert.equal(FLOW_STEPS[held.step], "Blind count");
-  assert.equal(FLOW_STEPS[held.step + 1], "Purchase method");
+  assert.equal(FLOW_STEPS[held.step + 1], "Vendor");
   assert.equal(held.stage, "Blind count");
   assert.equal(held.readyForPo, false);
   const counted = requirementStage({ ...base, gate: { blocks: false, stage: null, next: null } });
