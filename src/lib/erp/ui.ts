@@ -168,6 +168,12 @@ export type FormSpec = {
    * (one batch) when a list is laid out. A value with no entry leaves the lines.
    */
   linesFrom?: { by: string; map: Record<string, Record<string, string>[]>; set?: Record<string, string> };
+  /**
+   * A form drawn by its own drawer rather than field by field. `grn`: the goods
+   * receipt that starts from the item that arrived (`engines/grn-pick.ts`) —
+   * search the item, pick the open PO line, then the ordinary line fields.
+   */
+  flow?: "grn";
   /** What an AI reading was read from, shown beside the proposed values. */
   evidence?: { images?: string[]; text?: string; flags?: { tone: Tone; text: string }[]; note?: string };
 };

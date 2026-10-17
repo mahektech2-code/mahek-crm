@@ -2043,8 +2043,9 @@ panel):
 
 A new PO on the Purchase orders screen is Approved on save too. POs raised
 before this that still say Pending approval keep their Approve / Send back
-buttons, and the dashboard tile shows only while one is left. The GRN's PO
-field is typed (`FieldSpec.typed`), and the receipt also accepts a bare
+buttons, and the dashboard tile shows only while one is left. A new GRN starts
+from the item (#829); the PO-in-header form ("Receive goods" on a PO, "Add
+more") types its PO (`FieldSpec.typed`) and the receipt also accepts a bare
 number. Every screen names a PO with `poName` (the sheet's number where it came
 from there). The old decide / vendor / quotation handlers remain for records
 already on that path; nothing on the drawer offers them.
@@ -2062,6 +2063,17 @@ search or by pasting a list ("Toluene, 200" a row, straight from Excel) that
 `parsePastedLines` matches exactly or uniquely and never guesses. A header that
 names one item itself and sends no lines is a requirement of one item, which is
 what the re-order levels' "Raise requirement" still sends.
+
+**THE GRN STARTS FROM THE ITEM THAT ARRIVED.** The gate knows what came off
+the truck, not the PO number, so a new goods receipt is `flow: "grn"`
+(`app/erp/_ui/grn-drawer.tsx`): search the item, pick one of the approved PO
+lines still open for it (picked for you where there is one), then the ordinary
+line fields. Every line carries its own `po`, so one GRN may span several POs —
+of ONE vendor: "Add another item from this truck" searches only that vendor's
+open lines, and `inward.new` refuses a second vendor. The pick is pure in
+`engines/grn-pick.ts`; an item with no open line is listed as "Cannot receive",
+never hidden. "Receive goods" on a PO and "Add more" on a PR keep the
+PO-in-the-header form, and a line naming no PO takes the header's.
 
 **The ITEM MASTER says how an item is bought** — `erp_raw_materials.purchase_method`:
 `direct` (boxes, cans, stationery, routine chemicals: pick the vendor, raise

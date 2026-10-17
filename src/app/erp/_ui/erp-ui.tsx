@@ -12,6 +12,8 @@ import { runCalc } from "@/lib/erp/calc";
 import "@/lib/erp/calcs";
 import type { Result } from "@/lib/result";
 import { Field, PhotoTile } from "./field";
+import { checkField, optsFor } from "./form-check";
+import { GrnDrawer } from "./grn-drawer";
 import { CardGrid } from "@/components/ui/card-grid";
 import { LineTable } from "./line-table";
 import { ErpVoice } from "./voice";
@@ -196,7 +198,18 @@ export function ErpUiProvider({
     <ErpVoice.Provider value={voice}>
       <Ctx.Provider value={{ toast, confirm, prompt, openForm, act, bulk, tool }}>
         {children}
-        {form ? (
+        {form?.flow === "grn" ? (
+          <GrnDrawer
+            key={formKey}
+            spec={form}
+            onClose={() => setForm(null)}
+            onSaved={(msg) => {
+              setForm(null);
+              toast(msg);
+              router.refresh();
+            }}
+          />
+        ) : form ? (
           <FormDrawer
             key={formKey}
             spec={form}
@@ -247,29 +260,6 @@ export function ErpUiProvider({
     </ErpVoice.Provider>
     </KitContext.Provider>
   );
-}
-
-/* ------------------------------------------------------------ validation */
-
-function checkField(f: FieldSpec, v: string): string {
-  if (f.t === "derived" || f.t === "suggest") return "";
-  if (f.req && (v == null || v === "")) return `${f.l} is required`;
-  if (v !== "" && f.t === "num") {
-    const n = Number(v);
-    if (!Number.isFinite(n)) return "INVALID";
-    if (n < 0 && (f.min == null || f.min >= 0)) return "Minus Quantity Not Allowed";
-    if (f.min != null && n < f.min) return "INVALID";
-    if (f.max != null && n > f.max) return "INVALID";
-  }
-  return "";
-}
-
-function optsFor(f: FieldSpec, values: Record<string, string>): string[] | undefined {
-  if (f.optsBy) {
-    const by = Array.isArray(f.optsBy.by) ? f.optsBy.by : [f.optsBy.by];
-    return f.optsBy.map[by.map((k) => values[k] ?? "").join("|")] ?? [];
-  }
-  return f.opts;
 }
 
 /* -------------------------------------------------------------- prompt */
