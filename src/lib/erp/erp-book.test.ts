@@ -33,7 +33,7 @@ import { setTestUser } from "@/lib/auth";
 import { invalidateConfig } from "@/lib/config/store";
 import { erpContext } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
-import { bookStatus, bookStatusForStage } from "@/lib/erp/book";
+import { bookStatus, bookStatusForStage, syncAllBookOrders, syncBookOrders } from "@/lib/erp/book";
 import { approveOrder, declineOrder } from "@/lib/services/order-approval-service";
 import { projectSheet } from "@/lib/services/sheet-projection-service";
 import { recomputeOrderSystemHolds } from "@/lib/recompute";
@@ -128,6 +128,18 @@ describe("the switch", () => {
     await live(false);
     const o = await take("Shree Paints", 3);
     assert.equal(await book(o.orderNo), undefined);
+    await db.delete(erpOrders).where(eq(erpOrders.id, o.id));
+  });
+
+  test("on, a line copied in from the Taken Order tab is never written into the book", async () => {
+    await live(true);
+    const o = await take("Shree Paints", 4);
+    await db.update(erpOrders).set({ source: "sheet", sourceRef: `taken-${tag}` }).where(eq(erpOrders.id, o.id));
+    await db.delete(orders).where(eq(orders.externalRef, `ERP-${o.orderNo}`));
+    await syncAllBookOrders();
+    assert.equal(await book(o.orderNo), undefined, "the sheet's own SHEET- order already counts it");
+    await syncBookOrders([o.orderNo]);
+    assert.equal(await book(o.orderNo), undefined, "an edit's resync does not write it either");
     await db.delete(erpOrders).where(eq(erpOrders.id, o.id));
   });
 });
