@@ -17,7 +17,7 @@ flowchart TD
 ## Nothing is received without a PO
 
 <Rule title="A receipt names an approved PO, and every line one of its items">
-Goods inward picks a purchase order that is Approved, Sent or Partly received, and every line picks one of its lines. There is no typed supplier and no typed item. A hand-entered register row names an approved PO's line in the same way.
+Goods inward starts from the item that arrived: the receipt is searched by item, and offers only the open lines of purchase orders that are Approved, Sent or Partly received. Every line names its PO and one of its lines, and one receipt may carry several POs — but only of one vendor, because a GRN is one vendor's delivery; the save refuses a second vendor. "Receive goods" on a PO, and "Add more" on a PR, still name the one PO in the header. There is no typed supplier and no typed item. A hand-entered register row names an approved PO's line in the same way.
 </Rule>
 
 <Callout kind="why">

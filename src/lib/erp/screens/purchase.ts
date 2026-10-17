@@ -58,6 +58,7 @@ import { OWNERSHIP_LABEL, ownershipByLabel } from "../engines/drums";
 
 /** The GRN line's drum ownership: the supplier's usual answer unless the line says otherwise. */
 const DRUM_OWNER_OPTS = ["As the supplier's master says", OWNERSHIP_LABEL.mahek, OWNERSHIP_LABEL.returnable];
+import { sortPoLines, type GrnItem, type GrnPoLine } from "../engines/grn-pick";
 import { poOption, purchaseOrderViews, receivedByLine, refreshPurchaseOrder, type PoView } from "./purchase-flow";
 
 /* ---------------------------------------------------------------------------
@@ -313,6 +314,8 @@ async function receivable(tolerancePercent: number) {
   const qtyOf: Record<string, string> = {};
   const supplierOf: Record<string, string> = {};
   const godownOf: Record<string, string> = {};
+  /* The same open lines, by the item they bring: the receipt is searched by what arrived. */
+  const openByItem = new Map<string, GrnPoLine[]>();
   for (const [label, p] of byLabel) {
     godownOf[label] = p.godown;
     supplierOf[label] = `${p.supplier} · deliver to ${p.godown} by ${fd(p.po.deliveryDate)}`;
@@ -323,12 +326,18 @@ async function receivable(tolerancePercent: number) {
       itemOf[key] = l.item;
       const left = Math.max(0, l.quantity - l.received);
       qtyOf[key] = left > 0 ? String(left) : "";
+      if (left > 0) {
+        const open = openByItem.get(l.item) ?? [];
+        open.push({ po: label, poLine: l.label, poNumber: poLabel(p.po.poNumber), supplier: p.supplier, godown: p.godown, due: p.po.deliveryDate ?? null, ordered: l.quantity, received: l.received, pending: left, unit: l.unit });
+        openByItem.set(l.item, open);
+      }
       pendingOf[key] = `Ordered ${nf(l.quantity)} ${l.unit} · received ${nf(l.received)} · pending ${nf(left)} ${l.unit}${
         tolerancePercent ? ` · up to ${nf(receivableQuantity(l.quantity, l.received, tolerancePercent))} more may be taken` : ""
       }`;
     }
   }
-  return { pos, byLabel, linesBy, typeOf, itemOf, pendingOf, qtyOf, supplierOf, godownOf };
+  for (const [k, v] of openByItem) openByItem.set(k, sortPoLines(v));
+  return { pos, byLabel, linesBy, typeOf, itemOf, pendingOf, qtyOf, supplierOf, godownOf, openByItem };
 }
 
 async function inwardForm(ctx: ErpContext, init?: Record<string, string>, opts: { poId?: string; fixed?: boolean } = {}): Promise<FormSpec> {
@@ -357,11 +366,17 @@ async function inwardForm(ctx: ErpContext, init?: Record<string, string>, opts: 
         })
     : undefined;
   const itemMap = itemsByType(all.filter((m) => m.active || Object.values(rx.itemOf).includes(m.name)), types);
+  /* Every active item, with the open PO lines it can be received against — an item with none is listed and refused, never hidden. */
+  const grn: GrnItem[] = all
+    .filter((m) => m.active || rx.openByItem.has(m.name))
+    .map((m) => ({ item: m.name, type: m.materialType, code: m.code, unit: unitOf[m.name], lines: rx.openByItem.get(m.name) ?? [] }));
+  const itemFirst = !fixedPo && !opts.fixed && !init?.poFixed;
   return {
     screen: "inward",
     id: "new",
     title: fixedPo ? `Receive goods · ${poLabel(fixedPo.po.poNumber)}` : "Goods receipt (GRN)",
-    sub: "Against an approved PO, one line per item that arrived.",
+    sub: itemFirst ? "Search the item that came in. Its PO follows from it." : "Against an approved PO, one line per item that arrived.",
+    ...(itemFirst ? { flow: "grn" as const } : {}),
     submit: "Save receipt",
     lineLabel: "Item",
     init: {
@@ -380,6 +395,7 @@ async function inwardForm(ctx: ErpContext, init?: Record<string, string>, opts: 
       ratePerKmPaise: config["erp.purchase.ownVehicleRatePerKmPaise"],
       supplierOf: rx.supplierOf,
       pendingOf: rx.pendingOf,
+      ...(itemFirst ? { grn } : {}),
     },
     header: [
       { k: "pr", l: "PR number", t: "derived", calc: "inward.pr" },
@@ -497,6 +513,8 @@ const inward: ScreenModule = {
           form: receivableHere
             ? {
                 ...form,
+                flow: undefined,
+                sub: "Against an approved PO, one line per item that arrived.",
                 title: `Add to PR ${x.r.prNumber} · ${poLabel(x.poNumber!)}`,
                 initLines: undefined,
                 /* The PR's transport is already recorded; "Transport & costs" changes it. The PO is the PR's. */
@@ -567,17 +585,29 @@ const inward: ScreenModule = {
       const tolerance = config["erp.purchase.receiptTolerancePercent"];
       /* NO PURCHASE WITHOUT A PO: the receipt names an approved PO, and every line one of its items. */
       const rx = await receivable(tolerance);
-      const poText = text(h.poFixed) ?? text(h.po);
-      const po = poText ? rx.byLabel.get(poText) : undefined;
-      if (!po) return fieldErr("po", poText ? "That PO can no longer be received against — it is not approved, or it is already received or closed" : "Pick the purchase order these goods came against");
+      /*
+       * A receipt started from the item names its PO on each line, and may
+       * carry several POs of ONE vendor (one truck, one delivery). The PO form
+       * and "Add more" name it once in the header; a line naming none takes it.
+       */
+      const headerPo = text(h.poFixed) ?? text(h.po);
+      const gone = "That PO can no longer be received against — it is not approved, or it is already received or closed";
+      const lineFirst = !text(h.poFixed) && lines.some((l) => text(l.po));
+      if (!lineFirst && !headerPo) return fieldErr("po", "Pick the purchase order these goods came against");
+      if (headerPo && !rx.byLabel.get(headerPo)) return fieldErr("po", gone);
       const godownId = await godownIdByName(text(h.godown));
       if (!godownId) return fieldErr("godown", "Godown is required");
       if (!lines.length) return err("Add at least one item.");
       const all = await db.select().from(erpRawMaterials);
       const taking = new Map<string, number>();
-      const parsed: { l: Record<string, string>; m: (typeof all)[number]; qty: number; line: PoView["lines"][number] }[] = [];
+      const parsed: { l: Record<string, string>; m: (typeof all)[number]; qty: number; line: PoView["lines"][number]; po: PoView }[] = [];
       for (let i = 0; i < lines.length; i++) {
         const l = lines[i];
+        const poText = (lineFirst ? text(l.po) : null) ?? headerPo;
+        const po = poText ? rx.byLabel.get(poText) : undefined;
+        if (!po) return fieldErr(`l${i}.poLine`, poText ? gone : "Pick the purchase order this item came against");
+        if (parsed.length && po.po.supplierId !== parsed[0].po.po.supplierId)
+          return fieldErr(`l${i}.poLine`, `One receipt is one vendor's delivery: ${po.supplier} is not ${parsed[0].po.supplier}. Receive it on its own GRN.`);
         const line = po.lines.find((x) => x.label === l.poLine);
         if (!line) return fieldErr(`l${i}.poLine`, "Pick an item on this PO");
         const m = all.find((x) => x.id === line.rawMaterialId)!;
@@ -603,7 +633,7 @@ const inward: ScreenModule = {
             `More than the PO allows: ${nf(line.quantity)} ${line.unit} ordered, ${nf(line.received + already)} received, ${nf(room)} more may be taken. Raise a requirement for the extra.`,
           );
         taking.set(line.id, already + qty);
-        parsed.push({ l, m, qty, line });
+        parsed.push({ l, m, qty, line, po });
       }
       /* "Add more" on a PR keeps its number; a new inward draws the next one. */
       const fixed = int(h.prFixed);
@@ -621,6 +651,9 @@ const inward: ScreenModule = {
        * failing the whole delivery.
        */
       const sent = { testing: 0, register: 0, stuck: [] as string[] };
+      const po = parsed[0].po;
+      const poIds = [...new Set(parsed.map((x) => x.po.po.id))];
+      const poNames = [...new Set(parsed.map((x) => poLabel(x.po.po.poNumber)))];
       const [sup] = await db.select({ own: erpSuppliers.drumOwnership }).from(erpSuppliers).where(eq(erpSuppliers.id, po.po.supplierId));
       const supplierDrumOwnership = sup?.own ?? null;
       await db.transaction(async (tx) => {
@@ -633,7 +666,7 @@ const inward: ScreenModule = {
               .values({ prNumber: pr, ...costRow.data, createdById: ctx.user.id, updatedById: ctx.user.id })
               .onConflictDoUpdate({ target: erpPrCosts.prNumber, set: { ...costRow.data, updatedAt: new Date(), updatedById: ctx.user.id } });
         }
-        for (const { l, m, qty, line } of parsed) {
+        for (const { l, m, qty, line, po } of parsed) {
           const inwardId = erpId("pin");
           const testing = m.testingList.length > 0;
           const receivedDate = text(h.date) ?? today();
@@ -685,12 +718,12 @@ const inward: ScreenModule = {
             sent.register++;
           } else sent.stuck.push(m.name);
         }
-        await refreshPurchaseOrder(tx, po.po.id);
+        for (const id of poIds) await refreshPurchaseOrder(tx, id);
       });
-      await erpAudit(ctx, "erp.inward.create", "erp_inward", String(pr), null, { lines: parsed.length, po: poLabel(po.po.poNumber), supplier: po.supplier, ...sent });
+      await erpAudit(ctx, "erp.inward.create", "erp_inward", String(pr), null, { lines: parsed.length, po: poNames.join(", "), supplier: po.supplier, ...sent });
       const where = [sent.testing ? `${sent.testing} to testing` : "", sent.register ? `${sent.register} in the register` : ""].filter(Boolean).join(", ");
       return okVoid(
-        `PR ${pr} · ${parsed.length} line${parsed.length > 1 ? "s" : ""} received against ${poLabel(po.po.poNumber)}${where ? ` · ${where}` : ""}` +
+        `PR ${pr} · ${parsed.length} line${parsed.length > 1 ? "s" : ""} received against ${poNames.join(", ")}${where ? ` · ${where}` : ""}` +
           (sent.stuck.length ? ` · ${sent.stuck.join(", ")} not in the register: that lot number is taken — change the PR number and send it` : ""),
       );
     },
