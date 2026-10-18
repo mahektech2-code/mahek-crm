@@ -2344,6 +2344,23 @@ It needs the network on purpose: a figure queued for hours would be judged
 against a book that has moved. An office count from the phone goes through
 the ERP's own `submitCount`.
 
+**STOCK IS ADJUSTED FROM ITS ROW, AND IT TAKES EFFECT ON SAVE.** Every row of
+Stock on hand, on all four stages, ends in a ⋯ menu (`ListSpec.rowMenu`) with
+**Stock inquiry** and, for a `stockControl` holder, **Adjust stock**: Add or
+Remove, a quantity, and a reason from `ADJUST_REASONS` (Other must be written).
+Nobody approves it — Mahek asked for it simple. Add posts an inflow entry on
+the same lot (`source_type = 'adjustment'`); Remove is `postWriteOff`, the
+transfer to Item Lost Record the transfer form makes, so it is never a silent
+subtraction and never takes a lot below zero. `erp_manual_adjustments` keeps
+who, why, the stock before and what was posted (`lib/erp/stock-adjust.ts`).
+The count-driven adjustment above, with its approval, is unchanged.
+**The stock inquiry** (`/erp/stock-inquiry`, held with the Stock screen) is one
+item's lots now and every movement in a period with a running balance, read
+from the same sources `stock.ts` adds up (`lib/erp/stock-inquiry.ts`); Item
+Lost Record is left out, so a write-off reads as one movement out. A new way
+stock is consumed must be added to its union, or the inquiry's balance drifts
+from the stock.
+
 **PRODUCTION & DISPATCH ARE TRACEABLE, BOX BY BOX.** SFG lot → refill (FG
 filling) lot → packing batch → BOX → order → customer, and back. The lots
 already chained to each other; what `0237_erp_traceability` added is a QC

@@ -2,6 +2,7 @@ import "server-only";
 import { EVIDENCE_FIELDS } from "../engines/sfg-tests";
 import { getConfig } from "@/lib/config/store";
 import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { adjustStockRow, stockRowActions } from "../stock-adjust";
 import { inWindow, STOCK_ROW_CAP, STOCK_WINDOW, tooWide, unscoped, windowWhere } from "../window";
 import { db } from "@/db";
 import {
@@ -1929,6 +1930,7 @@ const rmStock: ScreenModule = {
     return {
       spec: {
         screen: "rmStock",
+        rowMenu: ["inquiry", "adjust"],
         cols,
         hidden,
         groups: ["godown"],
@@ -1954,8 +1956,12 @@ const rmStock: ScreenModule = {
         flags: [],
         title: `${l.item} · ${l.lotNo}`,
         header: `${nf(l.stock)} ${l.unit} at ${l.godown} · last entry ${fd(l.latestDate)}`,
+        actions: stockRowActions(ctx, { stage: "rm", itemId: l.rawMaterialId, item: l.item, lot: l.lotNo, godownId: l.godownId, godown: l.godown, stock: l.stock, unit: l.unit }),
       })),
     };
+  },
+  actions: {
+    adjust: (ctx, id, values) => adjustStockRow(ctx, "rm", id, values ?? {}),
   },
 };
 

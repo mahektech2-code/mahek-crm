@@ -15,7 +15,7 @@ import {
   products,
   users,
 } from "@/db/schema";
-import { err, fieldErr, okVoid, type Result } from "@/lib/result";
+import { err, fieldErr, ok, okVoid, type Result } from "@/lib/result";
 import type { ErpContext } from "../access";
 import { erpAudit, erpId, num, stampLine, text, type ScreenModule } from "../server";
 import { tooWide, unscoped, windowWhere } from "../window";
@@ -122,6 +122,32 @@ async function postTransferIn(tx: Tx, t: typeof erpTransfers.$inferSelect) {
   } else {
     await tx.insert(erpPackEntries).values({ id: erpId("pke"), ...base, skuId: t.itemId, batchNo: t.lotNo, boxes: t.quantity });
   }
+}
+
+/**
+ * Writes a quantity of one lot off to Item Lost Record: the transfer, its
+ * inflow there, and — for boxes and labelled cans — the units going with it,
+ * exactly as a transfer to that godown made on the form would. The caller has
+ * locked the lot and checked it holds the quantity.
+ */
+export async function postWriteOff(
+  tx: Tx,
+  w: { type: "Purchase" | "Semi Finished" | "Finish Goods" | "FG Packing"; itemId: string; item: string; lot: string; fromGodownId: string; qty: number; ledgerStock: number; remark: string; byId: string; day?: string },
+): Promise<Result<string>> {
+  const [lost] = await tx.select({ id: erpGodowns.id }).from(erpGodowns).where(eq(erpGodowns.reserved, true)).limit(1);
+  if (!lost) return err("There is no Item Lost Record godown to write the stock off to.", "rule_violation");
+  const id = erpId("TRF");
+  const [t] = await tx
+    .insert(erpTransfers)
+    .values({ id, transferDate: w.day ?? today(), itemType: w.type, fromGodownId: w.fromGodownId, toGodownId: lost.id, itemId: w.itemId, itemName: w.item, lotNo: w.lot, quantity: w.qty, remark: w.remark, createdById: w.byId })
+    .returning();
+  await postTransferIn(tx, t);
+  if (w.type === "FG Packing" || w.type === "Finish Goods") {
+    const moved = await moveUnitsForTransfer(tx, { lotFrom: w.type === "FG Packing" ? "pack" : "fg", lotCode: w.lot, fromGodownId: w.fromGodownId, toGodownId: lost.id, qty: w.qty, lost: true, transferId: id, byId: w.byId });
+    if (w.type === "Finish Goods" && moved < Math.floor(w.qty))
+      await trimLooseUnits(tx, { lotCode: w.lot, finishedGoodId: w.itemId, godownId: w.fromGodownId, ledgerStock: w.ledgerStock - w.qty, byId: w.byId, why: `Stock adjusted (${id})` });
+  }
+  return ok(id);
 }
 
 /* Transfers are a register: read by transfer date, never the whole history (`window.ts`). */
