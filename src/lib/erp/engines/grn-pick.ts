@@ -6,7 +6,7 @@
  * has a vendor — the narrowing to that vendor's open lines, because one GRN is
  * one vendor's delivery.
  *
- * PURE and client-safe: the server builds the list, the drawer searches it, and
+ * PURE and client-safe: the server builds the list, the record searches it, and
  * the save checks every line again against the POs as they stand.
  * ------------------------------------------------------------------------- */
 

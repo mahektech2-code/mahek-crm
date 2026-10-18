@@ -7,7 +7,7 @@ Inventory Accuracy Control is one pure engine, one service that hands it figures
 | Rules (pure) | `src/lib/erp/engines/stock-check.ts` | `toleranceFor`, `judgeCount`, `recountOutcome`, `abcClasses`, `cycleDaysFor`, `pickCycleCounts`, `reorderJustification`, `causeCandidates`, `stockGate`, `gateCountStatus`, `controlStep`, the labels |
 | Service | `src/lib/erp/stock-check.ts` | `shelfFacts`, `judgeOnShelf`, `openCount`, `gatesFor`, `missingRecords`, `planCycleCounts`, `openGodownCounts`, `fullCountDue`, `controlWork`, `notifyStockFlag` |
 | Screen | `src/lib/erp/screens/stock-check.ts` | `countTasks`, `stockFlags`, `stockAdjustments`, `missingRecords`, `stockCounts`; `submitCount`, `explainCount`, `decideAdjustment`, `postAdjustment`; `openRequirementCounts` |
-| Drawer | `src/app/erp/_ui/panels/stock-check.tsx` | the `stockCount` panel |
+| Record panel | `src/app/erp/_ui/panels/stock-check.tsx` | the `stockCount` panel |
 | Purchase gate | `src/lib/erp/engines/purchase-flow.ts`, `src/lib/erp/screens/purchase-flow.ts` | `FLOW_STEPS` gains "Blind count"; `requirementStage` reads `gate`; `ReqView.stock`; `heldByStock`; `stockActions`, `stockFacts`; the row flags `stockToCount`, `stockFlag`, `stockOverJustified` |
 | Dashboard | `src/lib/erp/dashboard.ts`, `src/app/erp/page.tsx` | the "Inventory accuracy" section; `accuracyFlow` and the flow strip |
 | Badges | `src/lib/erp/counts.ts` | `countTasks`, `stockFlags`, `stockAdjustments` |
@@ -100,7 +100,7 @@ Every lot of the item at the godown is locked under both lock spellings the ERP 
   posted: "What approving wrote: the transfer ids, or the entry id.",
 }} />
 
-`erp_requisitions` gains `stock_check_required` (copied on raise). The urgent-purchase columns `stock_exception_*` and the quantity confirmation `qty_confirm_*` are no longer written; they are kept, and shown in the drawer, as the record of decisions made under the old rule. `erp_raw_materials.count_tolerance_percent` overrides the tolerance per item. `erp_rm_entries.source_type` may now be `adjustment`.
+`erp_requisitions` gains `stock_check_required` (copied on raise). The urgent-purchase columns `stock_exception_*` and the quantity confirmation `qty_confirm_*` are no longer written; they are kept, and shown in the record, as the record of decisions made under the old rule. `erp_raw_materials.count_tolerance_percent` overrides the tolerance per item. `erp_rm_entries.source_type` may now be `adjustment`.
 
 ## Tests
 

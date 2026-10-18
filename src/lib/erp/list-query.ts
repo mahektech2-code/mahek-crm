@@ -4,7 +4,7 @@
  * The generic list used to do all of this in the browser, over every row the
  * server sent — which was every row there is. With the ERP holding real
  * history (ten thousand SFG lines, nine thousand FG fills) that was megabytes
- * of rows serialised into every page, each carrying its drawer and its
+ * of rows serialised into every page, each carrying its record and its
  * actions, to draw twenty-five of them. Now the ERP's page runs this on the
  * server and sends one page; HRMS and the other small lists still run it in
  * the browser. It is the SAME function in both places, so a search or a sort

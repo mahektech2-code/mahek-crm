@@ -4,7 +4,7 @@ import { registerPanel, type PanelProps } from "../panels";
 import { Stepper } from "./parts";
 
 /* ---------------------------------------------------------------------------
- * A material return's flow, in its drawer — vendor side:
+ * A material return's flow, in its record — vendor side:
  *   Purchase return → Approval → Debit note → Return outward → Confirmed
  * and customer side:
  *   Customer return → Return inward → Quarantine → Credit note → QC → Closed

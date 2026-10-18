@@ -10,7 +10,7 @@ import type { ColSpec, ColType } from "@/lib/erp/ui";
  * right-hand edge behind a scrollbar nobody noticed. This decides, for the
  * width actually available, which columns are drawn and how wide each is. The
  * rest are FOLDED: still searched, still exported, and drawn in full in the
- * record drawer a row opens. Nothing is lost. A column that does not fit is
+ * record dialog a row opens. Nothing is lost. A column that does not fit is
  * one click away rather than one scroll away.
  *
  * Columns are chosen in the order the server declared them, which is the
@@ -88,7 +88,7 @@ export type ColumnFit = {
   shown: ColSpec[];
   /** Pixel width per drawn column; with the checkbox they total `avail`. */
   widths: Record<string, number>;
-  /** Not drawn — in the record drawer, the search and the export. */
+  /** Not drawn — in the record dialog, the search and the export. */
   folded: ColSpec[];
   /** Of a person's own pick, how many there was no room for at this width. */
   dropped: number;

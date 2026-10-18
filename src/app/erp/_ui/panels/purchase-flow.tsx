@@ -12,17 +12,17 @@ import { resultError, useAct } from "../use-act";
 import { Stepper } from "./parts";
 
 /* ---------------------------------------------------------------------------
- * The purchase flow, drawn in the drawer of a requirement and of a PO:
+ * The purchase flow, drawn in the record of a requirement and of a PO:
  *
  *   Requirement → Blind count → Book comparison → Verification →
  *   Purchase method → PO number → Receipt
  *
- * A requirement's drawer shows its book comparison and verdict, then the PO
- * by the item's purchase rule — and both happen IN the drawer:
+ * A requirement's record shows its book comparison and verdict, then the PO
+ * by the item's purchase rule — and both happen IN the record:
  *
  * - Quotation: a PO NUMBER box. What is typed is looked up on the Quotation
  *   manager after a pause and shown; "Link PO" links it.
- * - Direct purchase: "Create PO" opens a three-page modal OVER the drawer,
+ * - Direct purchase: "Create PO" opens a three-page modal OVER the record,
  *   which stays open behind it. The rate is the item's price in Raw
  *   materials and is never typed; no price is ₹0.
  *
@@ -209,7 +209,7 @@ function LinkPo({ id }: { id: string }) {
 
 const PAGES = ["Vendor", "Delivery", "Review"] as const;
 
-/** Create PO: three pages over the drawer. The rate is the item's price and is shown, never asked. */
+/** Create PO: three pages over the record. The rate is the item's price and is shown, never asked. */
 function CreatePoModal({ id, d, onClose }: { id: string; d: CreateData; onClose: () => void }) {
   const [page, setPage] = useState(0);
   const termsOf = (name: string) => d.vendors.find((x) => x.name === name)?.terms ?? null;
@@ -578,7 +578,7 @@ function PurchaseOrder({ data }: PanelProps) {
       </div>
       <Stepper steps={p.steps} step={p.step} label="Purchase flow" />
       {/* A row per line rather than a seven-column table: the item and what it
-          costs on top, the quantities beneath — readable at a drawer's width. */}
+          costs on top, the quantities beneath — readable at a panel's width. */}
       <div className="overflow-hidden rounded-control border border-divider text-meta">
         {p.lines.map((l, i) => (
           <div key={i} className={cx("px-3 py-2", i > 0 && "border-t border-divider")}>

@@ -9,7 +9,7 @@ import { erpListExport, erpListIds, erpLoadForm, erpRunAction, erpRunBulk, erpRu
 /* ---------------------------------------------------------------------------
  * What makes the generic screens one app's rather than another's.
  *
- * The list screen, the record drawer, the form drawer and the prompt were
+ * The list screen, the record dialog, the form dialog and the prompt were
  * written for the ERP and are not about the ERP at all: they draw what a
  * server module sent and ask the server to act. Four things tied them to it —
  * the four server actions they call, the upload endpoint a photo field posts

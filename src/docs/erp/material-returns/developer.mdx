@@ -1,4 +1,4 @@
-One pure engine, one service, one screen module with seven lists, and a `returnFlow` drawer panel. Every figure is read off the documents. The only new stock reading is a confirmed return outward, which is an outflow of its raw-material lot.
+One pure engine, one service, one screen module with seven lists, and a `returnFlow` record panel. Every figure is read off the documents. The only new stock reading is a confirmed return outward, which is an outflow of its raw-material lot.
 
 ## Map of the code
 
@@ -7,7 +7,7 @@ One pure engine, one service, one screen module with seven lists, and a `returnF
 | Rules (pure) | `src/lib/erp/engines/returns.ts` | reasons, dispositions, `returnValue`, refusals, `approvalSteps`, `approvalRefusal`, the stage machines, `quarantineLeft`, `reworkFigures`, the labels |
 | Service | `src/lib/erp/returns.ts` | `returnableLots`, `returnableLines`, `moveReturnUnits`, `returnsSummary`, `debitNotesByPurchase`, `returnRowsForTrace` |
 | Screens | `src/lib/erp/screens/returns.ts` | `vendorReturns`, `debitNotes`, `returnOutwards`, `customerReturns`, `returnQc`, `reworkOrders`, `wasteDisposals` |
-| Drawer | `src/app/erp/_ui/panels/returns.tsx` | the `returnFlow` panel |
+| Record panel | `src/app/erp/_ui/panels/returns.tsx` | the `returnFlow` panel |
 | Stock | `src/lib/erp/stock.ts` | `rmLots` subtracts confirmed `erp_return_outwards` |
 | Payables | `src/lib/services/vendor-payout-service.ts` | `syncPurchasePayouts` nets issued debit notes off the PR's payout |
 | Powers | `src/lib/erp/powers.ts` | `returnApprove`, `returnQc` |

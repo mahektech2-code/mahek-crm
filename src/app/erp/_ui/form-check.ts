@@ -1,8 +1,8 @@
 import type { FieldSpec } from "@/lib/erp/ui";
 
-/* What every ERP form drawer checks in the browser before it asks the server,
+/* What every ERP form dialog checks in the browser before it asks the server,
    and a field's options for the values around it — one copy for the generic
-   drawer and the goods receipt's own. The server checks again. */
+   form and the goods receipt's own. The server checks again. */
 
 export function checkField(f: FieldSpec, v: string): string {
   if (f.t === "derived" || f.t === "suggest") return "";

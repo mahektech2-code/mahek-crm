@@ -7,7 +7,7 @@ import type { ScrapPanel } from "@/lib/erp/screens/scrap";
 
 /* ---------------------------------------------------------------------------
  * An empty drum, a scrap sale, a vendor return, a receipt or a buyer's
- * ledger, in its drawer: the few figures that matter, then the history or
+ * ledger, in its record: the few figures that matter, then the history or
  * the lines behind them. The server says everything; this only draws it.
  * ------------------------------------------------------------------------- */
 

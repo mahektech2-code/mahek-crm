@@ -91,7 +91,7 @@ export async function rejectComplaint(ctx: ErpContext, requestId: string): Promi
   return okVoid("Suggestion rejected");
 }
 
-/** Confirmed summaries, for the request drawer. */
+/** Confirmed summaries, for the request record. */
 export async function confirmedSummaries(ids: string[]): Promise<Map<string, string>> {
   if (!ids.length) return new Map();
   const rows = await db

@@ -202,7 +202,7 @@ describe("a red flag is recounted, investigated and adjusted — never silently"
     assert.ok(told.some((n) => /confirmed/.test(n.title)), "a confirmed difference is told again");
   });
 
-  test("the drawer lists causes from the records, and a shortage nothing explains is physical", async () => {
+  test("the record lists causes from the records, and a shortage nothing explains is physical", async () => {
     const load = await mod("stockFlags").load(await as(controller));
     const row = load.rows.find((x) => x.id === rootId);
     const panel = row?.panel?.data as { causes: { missing: string; likelihood: string }[]; counted: number; reconciled: number };

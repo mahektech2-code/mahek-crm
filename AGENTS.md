@@ -1780,12 +1780,13 @@ the measured width and draws a prefix of the server's order, always keeping the
 first column, the record's name, its first status and its flags; the table is
 `table-fixed`, a long value ends in "…" with the whole of it on hover, and a
 heading wraps rather than widening its column. The rest are FOLDED, not lost:
-still searched, still exported, and in full in the record drawer a row opens.
+still searched, still exported, and in full in the record dialog a row opens.
 The Columns menu lets a person choose their own set, remembered per browser per
 list, and a column with no room at this width says so instead of being added.
 So the ORDER of a screen's `cols` is now its priority: put what is read first,
-first. HRMS draws the same list and gets the same behaviour. A drawer is 600px,
-so a panel table of more than four columns is drawn as a card per row.
+first. HRMS draws the same list and gets the same behaviour. A panel was
+written for a 600px drawer, so a panel table of more than four columns is still
+drawn as a card per row.
 
 **Its decisions are POWERS granted to people, not capabilities of a level.**
 The source tied "verify a test", "see purchase money" and the rest to three
@@ -1885,11 +1886,12 @@ sidebar sums), `isPendingLine`/`isWorkingLine`, `ORDER_COL`, `godownField`,
 something a second time; never type an `/erp/…` URL, a hex brand colour, a
 pixel font size or a time zone.
 
-**A SCREEN SAYS A THING ONCE.** The generic list and drawer drop what would
+**A SCREEN SAYS A THING ONCE.** The generic list and record dialog drop what would
 repeat: a flag whose words are the row's own status (`flagsBesideStatus` in
 `_ui/badge.tsx`), the grouped-by column on grouped rows, the toolbar on a list
 with no rows, and the status strip that only repeated the status tabs. In a
-drawer a record field with a column's label replaces that column, and a panel
+record a field with a column's label replaces that column, its first status is
+said in the heading and not again under Details, and a panel
 lists the column keys it already draws in `covers`. Write a screen's
 `noDataLine` as a short first sentence (the heading) and an optional second
 (the explanation); keep subtitles to one line; name buttons as verbs ("Accept",
@@ -1907,9 +1909,32 @@ the reason one is not yet available) plus its handlers.
 
 **The generic screens are ports of the design**, in `app/erp/_ui/`: the list
 (search, godown filter, grouping with aggregates, chips, bulk bar, pager), the
-record drawer, the form drawer (header plus lines for a multi-line document),
+record dialog, the form dialog (header plus lines for a multi-line document),
 prompts, confirms and the toast. Rules are the server's; the client only
 filters, sorts and pages what it was sent.
+
+**A RECORD OR A FORM OPENS IN THE MIDDLE OF THE SCREEN, IN TABS OR PAGES,
+NEVER IN A SIDE DRAWER — and that is a reversal (Oct 2026).** Every ERP record
+and form was a 600–680px drawer at the right edge: a twenty-five-field purchase
+was one column somebody scrolled and lost their place in, and a requirement's
+purchase flow sat above forty labels. `app/erp/_ui/dialog.tsx` is the one
+frame — `ErpDialog` (z-60, under the prompt and confirm at z-70), its header,
+body and foot, `TabBar` and `StepBar`. A RECORD (`record-dialog.tsx`) is tabs:
+the screen's own panel first, named for what it is (`PANEL_TAB` — "Purchase
+flow", "Trace", "Test evidence"…), then Details three to a row, then "Not
+available yet" when an action is held back; the actions sit in the foot on
+every tab, and pressing a held-back one opens that tab rather than doing
+nothing. A FORM (`FormDialog` in `erp-ui.tsx`) is pages, planned by
+`form-pages.ts` (pure, tested): seven fields or fewer and no lines is one page;
+longer forms are cut at the fields' `sec` headings, small sections packed up to
+eight fields a page; a document's lines are a page of their own; more than one
+page ends on Review, which says back every value with a Change link per page.
+Next checks the page you are on; Save checks everything and lands on the first
+page carrying an error, the server's included. So a long form gets its pages
+from `sec` — give a new form's fields sections where they fall into groups, and
+order its fields so each section is consecutive. The goods receipt
+(`grn-dialog.tsx`) keeps its own item → PO → details flow inside the same
+frame, and Logistics' transporter record and edit are tabbed the same way.
 
 **The working location is chosen from the godowns a person is assigned to**
 (`erp_godown_staff`), never typed; an administrator is assigned everywhere.
@@ -2033,7 +2058,7 @@ panel):
   **Unlink** is allowed while nothing has arrived; a PO left empty is cancelled
   and reused if linked again (the number is unique).
 - **Direct purchase** — no quotation. **Create PO** opens a three-page modal
-  (Vendor → Delivery → Review) OVER the drawer, which stays open. The rate is
+  (Vendor → Delivery → Review) OVER the requirement, which stays open. The rate is
   the item's `erp_raw_materials.price_paise` and is never read from the request;
   **no price is ₹0** (`0275` lets a PO line's rate be 0), and the register then
   holds that lot out of stock until the bill's rate is entered, like any lot
@@ -2047,7 +2072,7 @@ from the item (#829); the PO-in-header form ("Receive goods" on a PO, "Add
 more") types its PO (`FieldSpec.typed`) and the receipt also accepts a bare
 number. Every screen names a PO with `poName` (the sheet's number where it came
 from there). The old decide / vendor / quotation handlers remain for records
-already on that path; nothing on the drawer offers them.
+already on that path; nothing on the requirement offers them.
 
 **A REQUIREMENT CARRIES EVERY ITEM A DEPARTMENT NEEDS, under one number.**
 It used to be one item per form, and a department's monthly list is a hundred.
@@ -2065,7 +2090,7 @@ what the re-order levels' "Raise requirement" still sends.
 
 **THE GRN STARTS FROM THE ITEM THAT ARRIVED.** The gate knows what came off
 the truck, not the PO number, so a new goods receipt is `flow: "grn"`
-(`app/erp/_ui/grn-drawer.tsx`): search the item, pick one of the approved PO
+(`app/erp/_ui/grn-dialog.tsx`): search the item, pick one of the approved PO
 lines still open for it (picked for you where there is one), then the ordinary
 line fields. Every line carries its own `po`, so one GRN may span several POs —
 of ONE vendor: "Add another item from this truck" searches only that vendor's

@@ -6,7 +6,7 @@ The receipt side of the purchase flow is `lib/erp/screens/purchase.ts`: the `inw
 |---|---|---|
 | Engine (pure) | `src/lib/erp/engines/purchase.ts` | `purchaseFigures`, `lotNumber`, `shortLabel`, `prBillLabel`, `postsToStock`, `settableStatuses`, `netWeight`, `TRANSPORT_MODES`, `transportCostPaise`, `shareInwardCost`, `landingFigures` |
 | Inward | `src/lib/erp/screens/purchase.ts` | `receivable`, `inwardForm`, `inwardFormForPo`, `inward` module (`forms.new`, `costs`, `toTesting`, `toPurchase`), `readPrCosts` |
-| Item-first pick | `src/lib/erp/engines/grn-pick.ts`, `src/app/erp/_ui/grn-drawer.tsx` | `searchGrnItems`, `linesFor`, `sortPoLines`; the drawer a form with `flow: "grn"` opens |
+| Item-first pick | `src/lib/erp/engines/grn-pick.ts`, `src/app/erp/_ui/grn-dialog.tsx` | `searchGrnItems`, `linesFor`, `sortPoLines`; the dialog a form with `flow: "grn"` opens |
 | Register row | same | `createPurchase`, `syncPurchaseEntry`, `refreshCache`, `savePurchase`, `register` module, `purchaseStage` |
 | Testing | same | `TEST_FIELDS`, `missingEvidence`, `testForm`, `saveTest`, `testing` module (`verify`, `unverify`, AI read) |
 | Drum labels | same | `barcode` module — working godown's chemical lots |

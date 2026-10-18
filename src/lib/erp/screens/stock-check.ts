@@ -37,7 +37,7 @@ import { requirementLabel } from "../engines/purchase-flow";
  *
  *   To count · Red flags · Adjustments · Missing records · Every count
  *
- * A count is BLIND: nothing on the To count tab, its prompt or its drawer
+ * A count is BLIND: nothing on the To count tab, its prompt or its record
  * shows the book, and the book is snapshotted at the moment the figure is
  * submitted. A red flag is recounted by somebody else, investigated, and
  * resolved by a holder of `stockControl`. Stock moves only through an
