@@ -1,11 +1,11 @@
 import "server-only";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { erpPoLines, erpPurchaseOrders, erpRawMaterials, erpRequisitions, erpSuppliers } from "@/db/schema";
+import { erpGodowns, erpPoLines, erpPurchaseOrders, erpQuoteColumns, erpQuoteRows, erpRawMaterials, erpRequisitions, erpSuppliers } from "@/db/schema";
 import { getConfig } from "@/lib/config/store";
 import { err, fieldErr, ok, type Result } from "@/lib/result";
 import type { ErpContext } from "../access";
-import { requirementVisibleTo } from "../departments";
+import { departmentForCategory, requirementVisibleTo } from "../departments";
 import { erpAudit, erpId, nextNumber, paise, text } from "../server";
 import { fd, inr, inrRate } from "../ui";
 import {
@@ -15,11 +15,13 @@ import {
   poLabel,
   poRouteOf,
   poTotals,
+  purchaseUnit,
+  quoteRatePaise,
   seriesNumberOf,
   type PoRoute,
   type QuotePoCell,
 } from "../engines/purchase-flow";
-import { godownIdByName, inTx, refuse, today, type Tx } from "./common";
+import { godownIdByName, godownOptions, inTx, refuse, today, type Tx } from "./common";
 import { heldByStock, refreshPurchaseOrder, requirementViews, type ReqView } from "./purchase-flow";
 
 /* ---------------------------------------------------------------------------
@@ -348,4 +350,268 @@ export async function createRequirementPo(ctx: ErpContext, id: string, values: R
   });
   if (res.ok) await erpAudit(ctx, "erp.requisition.createPo", "erp_requisition", id, null, { poId, number, vendor: vendor.name, ratePaise: rate, qty });
   return res;
+}
+
+/* ===================================================================
+ * PURCHASE IT ON THE QUOTATION MANAGER MAKES THE PURCHASE ORDER.
+ *
+ * The number used to be all it made, and the ERP's PO waited for somebody to
+ * type that number into a requirement. Now the purchase dialog also says how
+ * much, where it is delivered and by when — and, where a requirement for the
+ * item is waiting, which one — and the PO is written in the same save: the
+ * same number, source `quotation_manager`, Sent, ready to receive, exactly as
+ * linking makes it. With no requirement waiting, one is raised for the
+ * purchase (`QM_RAISED_REMARK`), because every PO line answers a requirement.
+ * Undoing the purchase takes the PO back while nothing has been received.
+ * =================================================================== */
+
+/** What the purchase dialog asks besides the drums. */
+export type QuoteOrder = { requisitionId?: string | null; qty: number; godown: string; deliveryDate: string };
+
+/** The remark a requirement raised by a Quotation manager purchase carries, so undoing the purchase cancels it. */
+export const QM_RAISED_REMARK = "Raised by a purchase on the Quotation manager";
+
+/** A requirement a Quotation manager purchase may be put against. */
+export type OpenRequirement = { id: string; label: string; materialId: string; qty: number; unit: string; godown: string; requiredBy: string | null };
+
+export type PurchaseChoices = {
+  godowns: string[];
+  defaultGodown: string | null;
+  /** Each raw material's purchase unit. */
+  units: Record<string, string>;
+  openRequirements: OpenRequirement[];
+};
+
+/** Why a requirement cannot take a Quotation manager purchase; null where it can. */
+function quoteReqRefusal(ctx: ErpContext, v: ReqView | undefined, materialId: string): string | null {
+  const r = poRefusal(ctx, v) ?? (v ? routeAllows(v, "link") : null);
+  if (r) return r.ok ? null : r.error;
+  if (v!.r.rawMaterialId !== materialId) return `That requirement is for ${v!.item}, not this column's material.`;
+  return null;
+}
+
+/** What the Purchase it dialog offers: godowns, units and the requirements waiting for a PO. */
+export async function purchaseChoices(ctx: ErpContext): Promise<PurchaseChoices> {
+  const [gds, mats, waiting] = await Promise.all([
+    godownOptions(ctx, { lost: false }),
+    db.select({ id: erpRawMaterials.id, unit: erpRawMaterials.unit, type: erpRawMaterials.materialType }).from(erpRawMaterials),
+    db
+      .select({ id: erpRequisitions.id })
+      .from(erpRequisitions)
+      .where(
+        and(
+          eq(erpRequisitions.status, "Pending"),
+          sql`${erpRequisitions.rawMaterialId} is not null`,
+          sql`not exists (select 1 from erp_po_lines l join erp_purchase_orders o on o.id = l.po_id
+                where l.requisition_id = ${erpRequisitions.id} and o.status in (${sql.join(LIVE_PO.map((x) => sql`${x}`), sql`, `)}))`,
+        ),
+      ),
+  ]);
+  const views = waiting.length ? await requirementViews({ ids: waiting.map((w) => w.id) }) : [];
+  const openRequirements = views
+    .filter((v) => !quoteReqRefusal(ctx, v, v.r.rawMaterialId ?? ""))
+    .map((v) => ({
+      id: v.r.id,
+      label: `${v.r.reqNo ? `REQ-${v.r.reqNo}` : "Requirement"} · ${v.r.requiredQty} ${v.r.unit} · ${v.godown}${v.r.department ? ` · ${v.r.department}` : ""}`,
+      materialId: v.r.rawMaterialId!,
+      qty: v.r.requiredQty,
+      unit: v.r.unit,
+      godown: v.godown,
+      requiredBy: v.r.requiredBy,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
+  return {
+    godowns: gds.map((g) => g.name),
+    defaultGodown: ctx.workingGodown?.name ?? null,
+    units: Object.fromEntries(mats.map((m) => [m.id, purchaseUnit(m.unit, m.type)])),
+    openRequirements,
+  };
+}
+
+/**
+ * Writes the ERP PO for a cell just bought, in the Quotation manager's own
+ * transaction. Refuses (rolling the purchase back) where a PO cannot be
+ * written: no Purchase party on the row, no raw material on the column, a
+ * rate that is not a number, or an order that does not add up.
+ */
+export async function orderFromQuote(
+  tx: Tx,
+  ctx: ErpContext,
+  p: { rowId: string; columnId: string; poNo: string; value: string; drums: number | null; order: QuoteOrder },
+): Promise<{ poId: string; label: string }> {
+  const no = (m: string): never => refuse(err(m, "validation"));
+  const [row] = await tx.select().from(erpQuoteRows).where(eq(erpQuoteRows.id, p.rowId));
+  const [col] = await tx.select().from(erpQuoteColumns).where(eq(erpQuoteColumns.id, p.columnId));
+  if (!row || !col) return no("That cell is no longer on the sheet. Refresh the page.");
+  if (!row.supplierId) return no(`"${row.party || "This row"}" is not one of the Purchase parties. Pick the party from the list so the PO has a vendor.`);
+  if (!col.rawMaterialId) return no(`The column "${[col.pack, col.name, col.brand].filter(Boolean).join(" ")}" is not linked to a raw material. Link it (right-click the column heading) so the PO knows what is bought.`);
+  const ratePaise = quoteRatePaise(p.value);
+  if (ratePaise == null) return no(`The rate "${p.value}" is not a number, so it cannot go on a PO.`);
+  const [sup] = await tx.select().from(erpSuppliers).where(eq(erpSuppliers.id, row.supplierId));
+  const [mat] = await tx.select().from(erpRawMaterials).where(eq(erpRawMaterials.id, col.rawMaterialId));
+  if (!sup || !mat) return no("The vendor or the material is no longer in the master.");
+  const qty = Number(p.order?.qty);
+  if (!Number.isFinite(qty) || qty <= 0) return no("Enter the quantity bought.");
+  const [gd] = await tx.select({ id: erpGodowns.id }).from(erpGodowns).where(eq(erpGodowns.name, String(p.order?.godown ?? "")));
+  if (!gd) return no("Pick the godown it is delivered to.");
+  const poDate = today();
+  const delivery = /^\d{4}-\d{2}-\d{2}$/.test(String(p.order?.deliveryDate ?? "")) ? p.order.deliveryDate : "";
+  if (!delivery) return no("Enter the delivery date.");
+  if (delivery < poDate) return no("Delivery cannot be before today.");
+  const unit = purchaseUnit(mat.unit, mat.materialType);
+  const gstBp = (await getConfig())["erp.purchase.poGstPercent"] * 100;
+
+  /* The requirement it answers: the one picked, checked again, or one raised now. */
+  let reqId = p.order.requisitionId || null;
+  if (reqId) {
+    const [v] = await requirementViews({ ids: [reqId] });
+    const why = quoteReqRefusal(ctx, v, mat.id);
+    if (why) return no(why);
+    await lockRequirement(tx, reqId);
+    await tx
+      .update(erpRequisitions)
+      .set({ supplierId: sup.id, status: "Order Placed", vendorSelectedAt: new Date(), vendorSelectedById: ctx.user.id, updatedAt: new Date(), updatedById: ctx.user.id })
+      .where(eq(erpRequisitions.id, reqId));
+  } else {
+    reqId = erpId("req");
+    await tx.insert(erpRequisitions).values({
+      id: reqId,
+      reqNo: await nextNumber(tx, "requirement"),
+      reqDate: poDate,
+      requiredBy: delivery,
+      department: departmentForCategory(mat.materialType),
+      godownId: gd.id,
+      materialType: mat.materialType,
+      rawMaterialId: mat.id,
+      unit,
+      requiredQty: qty,
+      priority: "Medium",
+      remarks: QM_RAISED_REMARK,
+      purchaseRule: mat.purchaseMethod,
+      method: "quotation",
+      supplierId: sup.id,
+      vendorSelectedAt: new Date(),
+      vendorSelectedById: ctx.user.id,
+      status: "Order Placed",
+      stockCheckRequired: false,
+      createdById: ctx.user.id,
+      updatedById: ctx.user.id,
+    });
+  }
+
+  /* The PO: the one already kept for this number (a live one for the same vendor gains a line), else a new one. */
+  let po = await poForNumber(p.poNo, tx);
+  if (po && !["Cancelled", "Rejected"].includes(po.status)) {
+    [po] = await tx.select().from(erpPurchaseOrders).where(eq(erpPurchaseOrders.id, po.id)).for("update");
+    if (po.supplierId !== sup.id) return no(`${po.qmPoNo} is kept for another vendor in the ERP.`);
+    if (po.status === "Closed") return no(`${po.qmPoNo} is closed in the ERP — nothing more is received against it.`);
+    const lines = await tx.select().from(erpPoLines).where(eq(erpPoLines.poId, po.id));
+    if (lines.some((l) => l.rawMaterialId === mat.id)) return no(`${po.qmPoNo} already carries ${mat.name}.`);
+  } else if (po) {
+    await tx.delete(erpPoLines).where(eq(erpPoLines.poId, po.id));
+    await tx
+      .update(erpPurchaseOrders)
+      .set({ status: "Sent", supplierId: sup.id, godownId: gd.id, deliveryDate: delivery, closedAt: null, closedById: null, closeReason: null, updatedAt: new Date(), updatedById: ctx.user.id })
+      .where(eq(erpPurchaseOrders.id, po.id));
+  } else {
+    const id = erpId("po");
+    const stamp = new Date();
+    await tx.insert(erpPurchaseOrders).values({
+      id,
+      poNumber: await numberFor(tx, p.poNo),
+      source: "quotation_manager",
+      qmPoNo: p.poNo,
+      status: "Sent",
+      poDate,
+      supplierId: sup.id,
+      godownId: gd.id,
+      deliveryDate: delivery,
+      paymentTerms: sup.creditDays ? `${sup.creditDays} days credit` : "As agreed",
+      freightPaise: 0,
+      remarks: null,
+      approvedById: ctx.user.id,
+      approvedAt: stamp,
+      decisionNote: "No approval needed — bought on the Quotation manager",
+      sentAt: stamp,
+      sentById: ctx.user.id,
+      sentVia: "Quotation manager",
+      createdById: ctx.user.id,
+      updatedById: ctx.user.id,
+    });
+    [po] = await tx.select().from(erpPurchaseOrders).where(eq(erpPurchaseOrders.id, id));
+  }
+  await tx.insert(erpPoLines).values({
+    id: erpId("pol"),
+    poId: po.id,
+    requisitionId: reqId,
+    rawMaterialId: mat.id,
+    quantity: qty,
+    unit,
+    ratePaise,
+    gstBp,
+    sortOrder: await nextSort(tx, po.id),
+    quoteRowId: p.rowId,
+    quoteColumnId: p.columnId,
+    drums: p.drums,
+  });
+  await refreshPurchaseOrder(tx, po.id);
+  return { poId: po.id, label: po.qmPoNo || poLabel(po.poNumber) };
+}
+
+/** The live ERP PO line a bought cell made, if any. */
+async function quotePoLine(tx: Tx, rowId: string, columnId: string) {
+  const rows = (await tx.execute(sql`
+    select l.id, l.po_id as "poId", l.requisition_id as "reqId", o.qm_po_no as name
+      from erp_po_lines l join erp_purchase_orders o on o.id = l.po_id
+     where l.quote_row_id = ${rowId} and l.quote_column_id = ${columnId}
+       and o.source = 'quotation_manager' and o.status in (${sql.join(LIVE_PO.map((x) => sql`${x}`), sql`, `)})
+     limit 1
+  `)) as unknown as { id: string; poId: string; reqId: string; name: string | null }[];
+  return rows[0] ?? null;
+}
+
+/** A bought cell's drums changed: its PO line says so too. */
+export async function syncQuotePoDrums(tx: Tx, rowId: string, columnId: string, drums: number | null): Promise<void> {
+  const line = await quotePoLine(tx, rowId, columnId);
+  if (line) await tx.update(erpPoLines).set({ drums }).where(eq(erpPoLines.id, line.id));
+}
+
+/**
+ * A purchase undone or cancelled on the sheet takes its ERP PO line back —
+ * refused once goods have been received against it. The PO is cancelled when
+ * it has no line left; a requirement this purchase raised is cancelled, one it
+ * was put against goes back to waiting for a PO.
+ */
+export async function withdrawQuotePo(tx: Tx, ctx: ErpContext, rowId: string, columnId: string): Promise<string | null> {
+  const line = await quotePoLine(tx, rowId, columnId);
+  if (!line) return null;
+  await tx.execute(sql`select id from erp_purchase_orders where id = ${line.poId} for update`);
+  const received = (await receivedFor(tx, line.id)) ?? 0;
+  if (received > 0) refuse(err(`Goods were received against ${line.name ?? "this PO"} — the purchase cannot be undone. Close the PO short on Purchase orders instead.`, "conflict"));
+  await tx.delete(erpPoLines).where(eq(erpPoLines.id, line.id));
+  const [left] = (await tx.execute(sql`select count(*)::int as n from erp_po_lines where po_id = ${line.poId}`)) as unknown as { n: number }[];
+  if (!Number(left?.n))
+    await tx
+      .update(erpPurchaseOrders)
+      .set({ status: "Cancelled", closeReason: "Purchase undone on the Quotation manager", closedAt: new Date(), closedById: ctx.user.id, updatedAt: new Date(), updatedById: ctx.user.id })
+      .where(eq(erpPurchaseOrders.id, line.poId));
+  else await refreshPurchaseOrder(tx, line.poId);
+  const [r] = await tx.select({ remarks: erpRequisitions.remarks }).from(erpRequisitions).where(eq(erpRequisitions.id, line.reqId));
+  if (r?.remarks === QM_RAISED_REMARK)
+    await tx
+      .update(erpRequisitions)
+      .set({ status: "Cancelled", cancelReason: "Purchase undone on the Quotation manager", updatedAt: new Date(), updatedById: ctx.user.id })
+      .where(eq(erpRequisitions.id, line.reqId));
+  else await tx.update(erpRequisitions).set({ status: "Pending", supplierId: null, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpRequisitions.id, line.reqId));
+  return line.name;
+}
+
+async function receivedFor(tx: Tx, lineId: string): Promise<number | null> {
+  const [r] = (await tx.execute(sql`
+    select coalesce(sum(q), 0)::float8 as q from (
+      select quantity as q from erp_inward where po_line_id = ${lineId}
+      union all select quantity from erp_purchases where po_line_id = ${lineId} and source = 'manual'
+    ) x
+  `)) as unknown as { q: number }[];
+  return r ? Number(r.q) : null;
 }

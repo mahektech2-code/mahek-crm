@@ -25,6 +25,8 @@ export type SheetOp =
       /** Who bought it and when — written by the server; carried here only so the screen can show it at once. */
       poBy?: string | null;
       poAt?: string | null;
+      /** Purchase it: how much, where and by when — the server writes the ERP purchase order with it. */
+      order?: { requisitionId?: string | null; qty: number; godown: string; deliveryDate: string };
     }
   | { op: "row"; rowId: string; create?: boolean; date?: string; party?: string; status?: QuoteStatus | null }
   | { op: "deleteRow"; rowId: string }
