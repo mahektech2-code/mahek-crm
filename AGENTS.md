@@ -3039,9 +3039,11 @@ whole order" is ids for the same reason.
 `ROW_CAP` (3,000), builds nothing and says so ("that period is too long to
 show"). That is what makes the server's memory a function of the cap rather
 than of the data: "All time" is allowed while all time is small and refused, in
-words, the day it is not. Stock screens open on all time under the same cap — a
-healthy book has a few hundred lots in stock; one whose dispatches have not
-been imported holds every lot ever made.
+words, the day it is not. Stock screens open on all time under their OWN,
+higher cap (`STOCK_ROW_CAP`, 25,000): their lots are summed in SQL before the
+cap is asked, so refusing them saved nothing and left Stock on hand answering
+"too long to show" on a book whose dispatches were never imported, which holds
+every lot ever made.
 
 **Stock reads return lots that hold something, and rates only for those.**
 `rmLots`/`sfgLots`/`fgLots`/`packLots` used to return every lot ever made and
