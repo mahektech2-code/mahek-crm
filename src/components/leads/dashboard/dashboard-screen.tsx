@@ -163,7 +163,7 @@ export function DashboardScreen({
     <>
       <ScreenHeader
         title="Lead dashboard"
-        subtitle="What is owed today, what is waiting on you, and what is stuck across the funnel. Every figure opens the list behind it — a number nobody can get behind is one they have to take on trust."
+        subtitle="What is due today, what is waiting on you, and where every lead stands. Click any number to see the leads behind it."
       />
 
       {/*

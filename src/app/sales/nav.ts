@@ -139,16 +139,21 @@ export const SALES_NAV: NavGroup[] = [
     label: "Lead Management",
     icon: "spark",
     items: [
-      { href: "/sales/leads", label: "All Leads", icon: "spark", exact: true },
-      { href: "/sales/leads/intake", label: "Intake", icon: "doc" },
+      { href: "/sales/leads", label: "All Leads", icon: "spark" },
+      { href: "/sales/leads/intake", label: "Add a lead", icon: "doc" },
       /* Its own route, outside `/sales`, but an ordinary module-backed link
          like every other row here — `sales.lead-pipeline`, in `lib/modules.ts`. */
       { href: "/sales-lead-pipeline", label: "Sales Manager", icon: "people" },
-      { href: "/sales/leads/appointments", label: "Distributor appointments", icon: "people" },
       /* ---- out of the main navigation; see `NavItem.legacy`. The same six the
          CRM keeps (Telecaller and Lost are CRM-only: callers work in the CRM,
          and the loss record has no Sales Dashboard module). ----------------- */
       { href: "/sales/leads/funnel", label: "Funnel & conversion", icon: "chart", legacy: true },
+      {
+        href: "/sales/leads/appointments",
+        label: "Distributor appointments",
+        icon: "people",
+        legacy: true,
+      },
       { href: "/sales/leads/qualify", label: "Qualification", icon: "tick", legacy: true },
       { href: "/sales/samples", label: "Samples & trials", icon: "sample", legacy: true },
       { href: "/sales/leads/commercial", label: "Commercial", icon: "order", legacy: true },

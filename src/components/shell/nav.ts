@@ -237,19 +237,23 @@ export const NAV: NavGroup[] = [
         href: at("/leads"),
         label: "All Leads",
         icon: "target",
-        exact: true,
         badge: "leadsAttention",
       },
-      { href: at("/leads/intake"), label: "Intake", icon: "plus" },
+      { href: at("/leads/intake"), label: "Add a lead", icon: "plus" },
       /* The module's own name. It read "Telecaller" here while the access
          screen called the same grant "Calling desk", so a manager ticking one
          could not find it in the other. */
       { href: at("/leads/calling-desk"), label: "Calling desk", icon: "phone" },
       { href: at("/leads/sales-manager"), label: "Sales Manager", icon: "people" },
-      { href: at("/leads/appointments"), label: "Distributor appointments", icon: "people" },
       { href: at("/leads/lost"), label: "Lost", icon: "warning" },
       /* ---- out of the main navigation; see `NavItem.legacy` -------------- */
       { href: at("/leads/funnel"), label: "Funnel & conversion", icon: "chart", legacy: true },
+      {
+        href: at("/leads/appointments"),
+        label: "Distributor appointments",
+        icon: "people",
+        legacy: true,
+      },
       { href: at("/leads/qualify"), label: "Qualification", icon: "check", legacy: true },
       { href: at("/samples"), label: "Samples & trials", icon: "doc", legacy: true },
       { href: at("/leads/commercial"), label: "Commercial", icon: "rupee", legacy: true },

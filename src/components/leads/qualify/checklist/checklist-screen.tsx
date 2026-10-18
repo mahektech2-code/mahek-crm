@@ -126,7 +126,7 @@ export function ChecklistScreen({
         <Banner
           tone="danger"
           title={`${plural(wrongState.length, "lead")} with a ticked box over an empty field`}
-          body="Eight of the twelve are answered by a real value and not by the checkbox beside them — the gate reads the litres, not a tick saying somebody asked about them. A ticked box with nothing behind it is the exact state §28 exists to prevent, and until now nothing drew it."
+          body="Each Qualification question needs a real answer. A tick on its own does not count, so these leads still have questions to answer."
         />
       ) : null}
 

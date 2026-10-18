@@ -131,6 +131,8 @@ export type VerificationRow = {
   salesmanId: string | null;
   salesmanName: string | null;
   leadManagerId: string | null;
+  /** The Sales Manager seat: who verifies and reviews this lead. */
+  salesManagerId: string | null;
   leadManagerName: string | null;
   /** The day it reached Prospect. What the wait is measured from. */
   prospectSince: string | null;
@@ -205,6 +207,8 @@ export async function verificationQueue(
              c.lead_stage::text as stage,
              c.owner_id as "salesmanId", u.name as "salesmanName",
              c.lead_manager_id as "leadManagerId", m.name as "leadManagerName",
+           c.sales_manager_id as "salesManagerId",
+             c.sales_manager_id as "salesManagerId",
              /* What the wait is measured from: the day it reached Prospect, or the
                 day the desk asked where it is a request. */
              (case when c.prospect_request_state is not null
@@ -364,6 +368,8 @@ export type NoNextActionRow = {
   salesmanId: string | null;
   salesmanName: string | null;
   leadManagerId: string | null;
+  /** The Sales Manager seat: who verifies and reviews this lead. */
+  salesManagerId: string | null;
   leadManagerName: string | null;
   stageSince: string | null;
   stuckDays: number;
@@ -410,6 +416,7 @@ export async function leadsWithoutNextAction(
              c.lead_stage::text as stage,
              c.owner_id as "salesmanId", u.name as "salesmanName",
              c.lead_manager_id as "leadManagerId", m.name as "leadManagerName",
+             c.sales_manager_id as "salesManagerId",
              c.lead_stage_since::text as "stageSince",
              coalesce(${day}::date - c.lead_stage_since, 0)::int as "stuckDays",
              coalesce(${day}::date - c.lead_last_activity_date, 0)::int as "quietDays",
@@ -553,6 +560,8 @@ export type ProspectiveDistributorRow = {
   salesmanId: string | null;
   salesmanName: string | null;
   leadManagerId: string | null;
+  /** The Sales Manager seat: who verifies and reviews this lead. */
+  salesManagerId: string | null;
   leadManagerName: string | null;
   stageSince: string | null;
   /** How long it has stood on this rung. What "sat there" means on the screen. */
@@ -610,6 +619,7 @@ export async function prospectiveDistributors(
              c.lead_stage::text as stage,
              c.owner_id as "salesmanId", u.name as "salesmanName",
              c.lead_manager_id as "leadManagerId", m.name as "leadManagerName",
+             c.sales_manager_id as "salesManagerId",
              c.lead_stage_since::text as "stageSince",
              coalesce(${day}::date - c.lead_stage_since, 0)::int as "stuckDays",
              coalesce(${day}::date - c.lead_last_activity_date, 0)::int as "quietDays",
@@ -1096,6 +1106,8 @@ export type LeadRecord = {
   salesmanId: string | null;
   salesmanName: string | null;
   leadManagerId: string | null;
+  /** The Sales Manager seat: who verifies and reviews this lead. */
+  salesManagerId: string | null;
   leadManagerName: string | null;
   salesAmId: string | null;
   salesAmName: string | null;

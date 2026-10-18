@@ -86,6 +86,8 @@ export type VantageSeats = {
   ownerId: string | null;
   backOfficeAmId: string | null;
   leadManagerId: string | null;
+  /** `sales_manager_id`: the seat that verifies and reviews this lead. */
+  salesManagerId?: string | null;
 };
 
 /**
@@ -134,9 +136,14 @@ export function vantagesFor(viewer: VantageViewer, seats: VantageSeats): LeadVan
    * account carries, which is the point of the seat: the office asks that
    * somebody coordinates the conversion, and the sentence in front of them has
    * to be the one about coordinating it. */
-  if (viewer.isSalesManager || seats.leadManagerId === viewer.id) out.push("sales_manager");
+  /* The Sales Manager seat is who verifies and reviews, whatever level the
+   * account carries: on this team that person holds the CRM as an associate. */
+  const seatedManager =
+    seats.leadManagerId === viewer.id ||
+    (seats.salesManagerId != null && seats.salesManagerId === viewer.id);
+  if (viewer.isSalesManager || seatedManager) out.push("sales_manager");
 
-  if (viewer.holdsCrm && !viewer.isSalesManager) out.push("calling_desk");
+  if (viewer.holdsCrm && !viewer.isSalesManager && !seatedManager) out.push("calling_desk");
 
   return out;
 }

@@ -304,6 +304,9 @@ function factsOf(lead: LeadRow) {
     hasCommitment: lead.hasCommitment,
     hasOrder: lead.hasOrder,
     sampleAwaitingDispatch: lead.sampleAwaitingDispatch,
+    verified: lead.verified,
+    qualificationReview: lead.qualificationReview,
+    qualificationComplete: lead.qualificationReady,
   };
 }
 
@@ -315,6 +318,7 @@ function seatsOf(lead: LeadRow) {
     ownerId: lead.salesmanId,
     backOfficeAmId: lead.backOfficeAmId,
     leadManagerId: lead.leadManagerId,
+    salesManagerId: lead.salesManagerId,
   };
 }
 

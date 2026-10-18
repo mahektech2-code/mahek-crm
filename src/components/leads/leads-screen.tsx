@@ -1,5 +1,6 @@
 "use client";
 
+import { LeadTabs } from "@/components/leads/lead-tabs";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import { SalesmanLink } from "@/components/leads/salesman-link";
 import * as React from "react";
@@ -34,12 +35,12 @@ import { cx } from "@/components/ui/primitives";
 import { pinnedCell, pinnedHead } from "@/components/ui/pinned";
 import {
   VIEW_CHIPS,
+  VIEW_MORE,
   VIEW_TEXT,
   retiredLadderNote,
   type LeadTileId,
   type LeadView,
 } from "@/lib/lead-views";
-import { TileStrip } from "@/components/leads/tile-strip";
 import {
   LEAD_FILTER_COLUMNS,
   LeadFilterBar,
@@ -71,7 +72,6 @@ import {
    `lib/lead-owed.ts` for why it is not decided in either screen. */
 import { leadOwed, owedSentence, owedTone, owedWord } from "@/lib/lead-owed";
 import {
-  isOnQueueFor,
   roleAction,
   type LeadAction,
   type LeadActionFacts,
@@ -403,7 +403,7 @@ export function LeadsScreen({
   const [bulk, setBulk] = React.useState<Bulk | null>(null);
   const [picked, setPicked] = React.useState<Set<string>>(new Set());
   const [salesmanId, setSalesmanId] = React.useState("");
-  const [stage, setStage] = React.useState<LeadStage>("contacted");
+  const [stage, setStage] = React.useState<LeadStage>("prospect");
   const [reason, setReason] = React.useState("");
   /* The bulk Lost picker. Its own state rather than `reason`, which is the
      archive sentence; nothing is pre-selected, for the reason MarkLost gives. */
@@ -487,7 +487,7 @@ export function LeadsScreen({
   function beginBulk(kind: Bulk) {
     setBulk(kind);
     setSalesmanId(firstChoosable(team));
-    setStage("contacted");
+    setStage("prospect");
     setReason("");
     setLostCode("");
     setLostNote("");
@@ -609,6 +609,8 @@ export function LeadsScreen({
         itself, so the sentence that admits what is being shown cannot drift
         from the clause that shows it.
       */}
+      {/* List · Board · Dashboard — three views of one book, one click apart. */}
+      <LeadTabs workspace={workspace} />
       <ScreenHeader
         title={VIEW_TEXT[view].title}
         subtitle={VIEW_TEXT[view].subtitle}
@@ -661,6 +663,18 @@ export function LeadsScreen({
                   {plural(archivedCount, "archived lead")}
                 </Link>
               ) : null}
+              {desks.otherDesks.length ? (
+                <RowMenu
+                  label="Other screens"
+                  items={desks.otherDesks.map((d) => ({ label: d.label, href: d.href }))}
+                />
+              ) : null}
+              <Link
+                href={leadHref(workspace, "leads/intake")}
+                className="inline-flex h-9 items-center rounded-[4px] bg-brand px-3.5 text-sm font-medium text-white no-underline hover:bg-brand-hover hover:no-underline"
+              >
+                + Add a lead
+              </Link>
             </div>
           )
         }
@@ -676,8 +690,21 @@ export function LeadsScreen({
       */}
       {!showArchived ? (
         <>
-          <ViewChips view={view} hrefFor={hrefFor} />
-          {tiles ? <TileStrip counts={tiles} view={view} hrefFor={hrefFor} /> : null}
+          <ViewChips
+            view={view}
+            hrefFor={hrefFor}
+            counts={{
+              mine: tiles?.mine,
+              today: tiles?.today,
+              overdue: tiles?.overdue,
+              expected: tiles?.expected,
+              lost30: tiles?.lost30,
+              unworked: desks.noNextAction,
+              parked: desks.parked,
+              decide: desks.suspectDecisions,
+              handover: desks.handovers,
+            }}
+          />
           {view === "register" ? <RegisterNote /> : null}
         </>
       ) : null}
@@ -693,9 +720,6 @@ export function LeadsScreen({
         />
       ) : (
         <>
-          {!showArchived ? <DeskLine workspace={workspace} desks={desks} /> : null}
-
-          {!showArchived ? <NeedsYouLine leads={leads} viewer={viewer} /> : null}
 
           {/* Counted over the FILTERED list in SQL, not over the ten rows this
               page happens to hold — see `leadsPage`. Before pagination the two
@@ -754,7 +778,7 @@ export function LeadsScreen({
 
           <Table
             chrome={false}
-            minWidth={1900}
+            minWidth={1160}
             head={
               <>
                 {/* PINNED. The row's name and its actions are the two cells
@@ -791,84 +815,13 @@ export function LeadsScreen({
                     Lead
                   </span>
                 </HeadCell>
-                <HeadCell width={160}>Owner</HeadCell>
-                <HeadCell width={140}>Source</HeadCell>
-                {/* §8.4's PRODUCT AND MONTHLY REQUIREMENT, in ONE column and
-                    NOT two.
-
-                    They are one question asked twice — what this shop buys, and
-                    how much of it — and neither is worth a column of its own on
-                    a table that already scrolls sideways. Together they are the
-                    thing the Potential beside them has been standing in for:
-                    "Nano Thinner · 400 L a month" is a fact somebody recorded,
-                    and "₹3,00,000" is a figure somebody guessed.
-
-                    IT SITS BEFORE THE POTENTIAL, because it is what the
-                    potential is an estimate OF. Read the other way round the
-                    money comes first and the thing being valued reads as a
-                    footnote to it.
-
-                    THE UNITS ARE NAMED ON EVERY LINE AND ARE NEVER ADDED UP. A
-                    lead's requirement is LITRES — §L: there is no SKU at
-                    capture, so cans would be a unit nobody agreed the size of —
-                    while the commitment under Potential is CANS. Nothing here
-                    converts between them, because `products.priceSource` is
-                    still `unset` and there is no packing to read. */}
-                <HeadCell width={170}>Wants</HeadCell>
-                <HeadCell align="right" width={160}>Potential</HeadCell>
-                {/* §4.1 — IMMEDIATELY AFTER THE POTENTIAL, because the two are
-                    only readable as a pair. "₹3,00,000 · Low" is a manager
-                    saying the big shop is not this fortnight's work, which is
-                    the sentence the field exists to let them write; the same
-                    two facts a column apart is two numbers nobody connects.
-                    It also keeps the filter bar and the header in the same
-                    left-to-right order, which is the rule FILTER_COLUMNS
-                    states above. */}
-                <HeadCell width={120}>Priority</HeadCell>
-                {/* §8.4's SALES TYPE RIDES IN THIS CELL rather than taking a
-                    column of its own, and the pairing is the argument
-                    FILTER_COLUMNS already makes one screen up: a RUNG IS NOT A
-                    TRACK. "Negotiation" answers nothing on its own, because
-                    `suspect` is the foot of all three ladders and the rungs
-                    above it mean different work on each — so the ladder and the
-                    rung are one fact read together, and a column between them
-                    would be a column read across.
-
-                    It was FILTERABLE AND NOT READABLE before this, which is the
-                    worst of the two halves to have: "which of these are
-                    distributor leads" was a filter round trip and a page
-                    reload, on a screen where the answer was already on the
-                    row. */}
-                <HeadCell width={152}>Stage</HeadCell>
-                {/* §7 — IMMEDIATELY AFTER THE STAGE, because the stage is
-                    where a lead IS and this is what that means for the person
-                    reading it. "Negotiation" on its own is a noun somebody has
-                    to translate into a morning's work, and the translation is
-                    different for each of the five jobs — so the two belong side
-                    by side and the verb belongs in the reader's own voice. The
-                    header names the vantage rather than saying "Action",
-                    because a column of instructions with no subject reads as
-                    instructions for everybody.
-
-                    IT IS HEADED "For you" AND NOT WITH A JOB TITLE, though the
-                    job is what the cell is answering from. The vantage is
-                    resolved per ROW — two of the five come off seats on the
-                    lead — so the same person genuinely reads this column as the
-                    back office on one line and as the sales manager on the next,
-                    and a single title over all of them would be wrong about
-                    some. Which job produced a given sentence rides on the
-                    cell's own hover, where it is asked rather than asserted. */}
-                <HeadCell width={180}>For you</HeadCell>
-                {/* §8.4 — RED IF IT IS PAST, AMBER IF IT FALLS TODAY. See
-                    `NextCell`: the tone is `owedTone`'s and the date is the
-                    earliest of the three days a lead can be carrying. */}
-                <HeadCell width={150}>Next</HeadCell>
+                <HeadCell width={170}>Stage</HeadCell>
+                {/* What the reader should do, and when it is due. Was two
+                    columns ("For you" and "Next") a screen apart. */}
+                <HeadCell width={260}>What&apos;s next</HeadCell>
+                <HeadCell width={150}>Owner</HeadCell>
+                <HeadCell width={130}>Source</HeadCell>
                 <HeadCell width={110}>Age</HeadCell>
-                <HeadCell width={190}>Health &amp; metrics</HeadCell>
-                {/* Wide enough for the menu trigger AND the cell's own padding: at the
-                    44 it was drawn at, the pinned cell clipped its own ⋯ and
-                    printed the ellipsis `Cell` adds on overflow, so the column
-                    read as a truncated value rather than a control. */}
                 <HeadCell width={72} className={pinnedHead("right")} />
               </>
             }
@@ -918,7 +871,28 @@ export function LeadsScreen({
                         </span>
                       </span>
                     </Cell>
-                    <Cell truncate={160}>
+                    <Cell truncate={170}>
+                      <Pill
+                        tone={
+                          l.stage === "won" ? "success" : l.stage === "lost" ? "danger" : "brand"
+                        }
+                      >
+                        {stageLabel(l.stage as LeadStage)}
+                      </Pill>
+                      <span
+                        className="mt-0.5 block truncate text-[12px] text-muted"
+                        title={salesTypeSentence(l.salesType)}
+                      >
+                        {salesTypeLabel(l.salesType)}
+                      </span>
+                    </Cell>
+                    <Cell truncate={260}>
+                      <ActionCell lead={l} viewer={viewer} />
+                      <span className="mt-0.5 block">
+                        <NextCell lead={l} day={day} />
+                      </span>
+                    </Cell>
+                    <Cell truncate={150}>
                       {l.salesmanId ? (
                         <span onClick={(e: React.MouseEvent) => e.stopPropagation()}>
                           <SalesmanLink
@@ -929,65 +903,19 @@ export function LeadsScreen({
                           />
                         </span>
                       ) : (
-                        <span className="text-warn-ink" title="Nobody is working this lead.">
-                          Nobody
+                        <span className="text-warn-ink" title="Nobody owns this lead yet.">
+                          Unassigned
                         </span>
                       )}
                     </Cell>
-                    <Cell className="capitalize">{l.source.replace(/_/g, " ")}</Cell>
-                    <Cell truncate={170}>
-                      <WantsCell lead={l} />
-                    </Cell>
-                    <Cell align="right">
-                      <PotentialCell lead={l} />
-                    </Cell>
-                    <Cell>
-                      {/* UNJUDGED IS SAID IN WORDS, not left as an empty cell.
-                          It is most of the book and it is the answer a manager
-                          is looking for; a blank reads as data that failed to
-                          load. The hover carries what the word means, because
-                          "Low" on its own invites being read as "this lead is
-                          no good" rather than as "not this fortnight". */}
-                      <span title={prioritySentence(l.priority)}>
-                        <Pill tone={priorityTone(l.priority)}>{priorityLabel(l.priority)}</Pill>
-                      </span>
-                    </Cell>
-                    <Cell truncate={152}>
-                      <Pill
-                        tone={
-                          l.stage === "won" ? "success" : l.stage === "lost" ? "danger" : "brand"
-                        }
-                      >
-                        {stageLabel(l.stage as LeadStage)}
-                      </Pill>
-                      {/* Which ladder the rung belongs to, under it rather than
-                          beside it: at this width a second pill on one line
-                          would wrap anyway, and the ladder is the quieter of
-                          the two facts — it says what the rung above it MEANS
-                          rather than where the lead is. */}
-                      <span
-                        className="mt-0.5 block truncate text-[12px] text-muted"
-                        title={salesTypeSentence(l.salesType)}
-                      >
-                        {salesTypeLabel(l.salesType)}
-                      </span>
-                    </Cell>
-                    <Cell truncate={180}>
-                      <ActionCell lead={l} viewer={viewer} />
-                    </Cell>
-                    <Cell truncate={150}>
-                      <NextCell lead={l} day={day} />
-                    </Cell>
+                    <Cell truncate={130} className="capitalize">{l.source.replace(/_/g, " ")}</Cell>
                     <Cell>
                       {plural(l.ageDays, "day")} old
                       {isStale ? (
                         <span className="block text-[12px] text-warn-ink">
-                          Stale — no activity in {staleDays} days
+                          No activity in {staleDays} days
                         </span>
                       ) : null}
-                    </Cell>
-                    <Cell truncate={190}>
-                      <HealthCell lead={l} atRiskBelow={healthAtRiskBelow} strongAtOrAbove={healthStrongAtOrAbove} />
                     </Cell>
                     <Cell
                       align="right"
@@ -1050,8 +978,14 @@ export function LeadsScreen({
                       className={i % 2 === 1 ? "bg-canvas" : "bg-surface"}
                       onClick={() => toggleExpanded(l.id)}
                     >
-                      <td colSpan={12} className="cursor-pointer border-b border-divider px-4 pb-3.5">
-                        <DetailPanel lead={l} hasDetail={hasDetail} viewer={viewer} />
+                      <td colSpan={7} className="cursor-pointer border-b border-divider px-4 pb-3.5">
+                        <DetailPanel
+                          lead={l}
+                          hasDetail={hasDetail}
+                          viewer={viewer}
+                          atRiskBelow={healthAtRiskBelow}
+                          strongAtOrAbove={healthStrongAtOrAbove}
+                        />
                       </td>
                     </tr>
                   ) : null}
@@ -1129,9 +1063,8 @@ export function LeadsScreen({
               ))}
             </select>
             <span className="mt-1 block text-[12px] text-muted">
-              Each one goes through the same gate the record screen asks. A lead missing a condition
-              for that rung, or not on a ladder that has it, does not move — and comes back named,
-              with what it is waiting on.
+              Each lead is checked the same way as on its own page. Any that are not ready stay
+              where they are, and you will see what each one is missing.
             </span>
           </label>
         ) : null}
@@ -1805,6 +1738,9 @@ function factsOf(lead: LeadRow): LeadActionFacts {
     hasCommitment: lead.hasCommitment,
     hasOrder: lead.hasOrder,
     sampleAwaitingDispatch: lead.sampleAwaitingDispatch,
+    verified: lead.verified,
+    qualificationReview: lead.qualificationReview,
+    qualificationComplete: lead.qualificationReady,
   };
 }
 
@@ -1817,6 +1753,7 @@ function seatsOf(lead: LeadRow) {
     ownerId: lead.salesmanId,
     backOfficeAmId: lead.backOfficeAmId,
     leadManagerId: lead.leadManagerId,
+    salesManagerId: lead.salesManagerId,
   };
 }
 
@@ -1860,9 +1797,9 @@ function ActionCell({ lead, viewer }: { lead: LeadRow; viewer: VantageViewer }) 
     return (
       <span
         className="text-[13px] text-muted"
-        title="Nobody has put you on this lead and none of your apps gives you a job on it. Open the row to see what it reads as to the people who do."
+        title="You are not named on this lead. Click the row to see who needs to do what."
       >
-        No job on this one
+        Nothing for you
       </span>
     );
   }
@@ -1900,9 +1837,9 @@ function RoleReadings({ lead, viewer }: { lead: LeadRow; viewer: VantageViewer }
   const mine = new Set<LeadVantage>(vantagesFor(viewer, seatsOf(lead)));
   const facts = factsOf(lead);
   return (
-    <div className="col-span-3 border-t border-divider pt-2">
+    <div className="col-span-4 border-t border-divider pt-2">
       <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-        What this lead reads as
+        Who needs to do what
       </div>
       {/* Wraps rather than scrolls: five short phrases fit one line on a desk
           and stack on a phone, and a sideways scroll inside an expanded row is
@@ -1943,13 +1880,33 @@ function RoleReadings({ lead, viewer }: { lead: LeadRow; viewer: VantageViewer }
 function ViewChips({
   view,
   hrefFor,
+  counts,
 }: {
   view: LeadView;
   hrefFor: (params: Record<string, string>) => string;
+  /** How many leads each view holds. A missing count draws no number. */
+  counts: Partial<Record<LeadView, number>>;
 }) {
+  const more = VIEW_MORE as readonly LeadView[];
+  const chips = (VIEW_CHIPS as readonly LeadView[]).filter((v) => !more.includes(v));
+  const inMore = more.includes(view);
+  const badge = (v: LeadView) => {
+    const n = counts[v];
+    if (n == null || n === 0) return null;
+    return (
+      <span
+        className={cx(
+          "ml-1.5 inline-flex h-[18px] min-w-5 items-center justify-center rounded-[9px] px-1.5 text-[11px] font-medium tabular-nums",
+          v === "overdue" || v === "unworked" ? "bg-danger-soft text-danger" : "bg-canvas text-muted",
+        )}
+      >
+        {n}
+      </span>
+    );
+  };
   return (
     <nav aria-label="Lead views" className="mb-4 flex flex-wrap items-center gap-1.5">
-      {VIEW_CHIPS.map((v) => {
+      {chips.map((v) => {
         const active = v === view;
         return (
           <Link
@@ -1958,16 +1915,24 @@ function ViewChips({
             aria-current={active ? "page" : undefined}
             title={VIEW_TEXT[v].subtitle}
             className={cx(
-              "inline-flex h-8 items-center rounded-[4px] border px-3 text-[13px] no-underline hover:no-underline",
+              "inline-flex h-8 items-center rounded-[16px] border px-3 text-[13px] no-underline hover:no-underline",
               active
                 ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
                 : "border-line bg-surface text-body hover:bg-canvas",
             )}
           >
             {VIEW_TEXT[v].title}
+            {badge(v)}
           </Link>
         );
       })}
+      <RowMenu
+        label={inMore ? VIEW_TEXT[view].title : "More views"}
+        items={more.map((v) => ({
+          label: `${VIEW_TEXT[v].title}${counts[v] ? ` (${counts[v]})` : ""}`,
+          href: hrefFor({ view: v }),
+        }))}
+      />
     </nav>
   );
 }
@@ -2042,236 +2007,66 @@ function emptyBodyFor(view: LeadView): string {
   }
 }
 
-/**
- * "Four of these fifteen need you" — §7's `isOnQueueFor`, counted.
- *
- * The engine's own header says the actionable flag is what decides whether a
- * lead counts towards somebody's "needs you today", and this is that sentence.
- * It is deliberately NOT a second reading of the ladder: it asks `roleAction`
- * through `isOnQueueFor` and believes the answer, so the count above the table
- * and the verbs in it cannot disagree about one shop.
- *
- * IT SAYS WHAT IT IS A SLICE OF, because it is counted over the PAGE and not
- * over the filtered book. Everything else measured around this table is
- * counted in SQL — the stale strip says so in its own comment — and this one
- * cannot be, because two of the five vantages are read off seats and the
- * arithmetic is per person. A bare "4 need you" over a list of four hundred
- * would be read as four in the whole book, which is the capped-list mistake
- * the timeline's filter pills are a paragraph about. So it names the page.
- *
- * Nothing is drawn where the answer is none: a line reading "0 need you" is
- * furniture on the screen somebody opens to find work, and the table beneath
- * it already says which leads are whose.
- */
-function NeedsYouLine({ leads, viewer }: { leads: LeadRow[]; viewer: VantageViewer }) {
-  const mine = leads.filter((l) => {
-    const vantage = primaryVantage(viewer, seatsOf(l));
-    return vantage !== null && isOnQueueFor(factsOf(l), vantage);
-  });
-  if (mine.length === 0) return null;
-  return (
-    <div className="mb-3 text-[13px] text-body">
-      <span className="font-semibold text-ink">{plural(mine.length, "lead")}</span> on this page{" "}
-      {mine.length === 1 ? "is" : "are"} waiting on you — the{" "}
-      <span className="text-muted">For you</span> column says what each one wants.
-    </div>
-  );
-}
-
 function DetailPanel({
   lead,
   hasDetail,
   viewer,
+  atRiskBelow,
+  strongAtOrAbove,
 }: {
   lead: LeadRow;
   hasDetail: boolean;
   viewer: VantageViewer;
+  atRiskBelow: number;
+  strongAtOrAbove: number;
 }) {
-  if (!hasDetail) {
-    /* The five readings are drawn even here. "Nothing more recorded" is about
-       what somebody has TYPED on this lead, and §7's instructions are derived
-       from where it stands — which is exactly as true of a lead with no notes
-       and no pin, and is the only thing an otherwise empty panel has to say. */
-    return (
-      <div className="grid grid-cols-3 gap-x-8 gap-y-2 pt-1 text-[13px]">
-        <p className="col-span-3 text-[13px] text-muted">
-          Nothing more recorded — no notes, no pin, and this shop has not converted.
-        </p>
-        <RoleReadings lead={lead} viewer={viewer} />
-      </div>
-    );
-  }
+  const label = "text-[11px] font-medium tracking-[0.04em] text-muted uppercase";
   return (
-    <div className="grid grid-cols-3 gap-x-8 gap-y-2 pt-1 text-[13px]">
+    <div className="grid grid-cols-4 gap-x-8 gap-y-3 pt-1 text-[13px]">
       <div>
-        <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-          Contact
-        </div>
-        <div className="text-body">{lead.mobile ?? "Not recorded"}</div>
+        <div className={label}>Contact</div>
+        <div className="text-body">{lead.mobile ?? "No number"}</div>
         <div className="text-muted">
           {[lead.area, lead.city].filter(Boolean).join(", ") || "No area recorded"}
         </div>
       </div>
       <div>
-        <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-          Raised
-        </div>
+        <div className={label}>What they want</div>
+        <WantsCell lead={lead} />
+      </div>
+      <div>
+        <div className={label}>Potential · priority</div>
+        <PotentialCell lead={lead} />
+        <span className="mt-1 inline-block" title={prioritySentence(lead.priority)}>
+          <Pill tone={priorityTone(lead.priority)}>{priorityLabel(lead.priority)}</Pill>
+        </span>
+      </div>
+      <div>
+        <div className={label}>Raised</div>
         <div className="text-body">{stamp(lead.createdAt)}</div>
         <div className="text-muted">
           {lead.lastActivityDate ? `Last worked ${shortDate(lead.lastActivityDate)}` : "Never worked"}
-          {" · "}
-          {lead.hasGps ? "has a map pin" : "no pin recorded"}
         </div>
       </div>
-      <div>
-        <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-          Notes
+      {hasDetail && lead.notes ? (
+        <div className="col-span-4">
+          <div className={label}>Notes</div>
+          <div className="text-pretty text-body">{lead.notes}</div>
         </div>
-        <div className="text-pretty text-body">{lead.notes || "None."}</div>
-      </div>
+      ) : null}
       {lead.stage === "lost" && lead.lostReason ? (
-        <div className="col-span-3">
-          <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-            Why it was lost
-          </div>
+        <div className="col-span-4">
+          <div className={label}>Why it was lost</div>
           <div className="text-body">{lead.lostReason}</div>
         </div>
       ) : null}
-      {lead.convertedCustomerId && lead.convertedAt ? (
-        <div className="col-span-3 text-[12px] text-muted">
-          Converted {stamp(lead.convertedAt)}.
+      {lead.convertedCustomerId ? (
+        <div className="col-span-4">
+          <div className={label}>Customer health</div>
+          <HealthCell lead={lead} atRiskBelow={atRiskBelow} strongAtOrAbove={strongAtOrAbove} />
         </div>
       ) : null}
       <RoleReadings lead={lead} viewer={viewer} />
-    </div>
-  );
-}
-
-/**
- * THE THREE DESKS, ON ONE LINE.
- *
- * They were four tiles the width of the screen, above a funnel that was another
- * four hundred pixels — so the worklist this page exists to be started below the
- * fold, and the first thing a manager saw on the screen they open to work a list
- * was a page of arithmetic. The tiles were never the point: the desks are
- * QUEUES, and what a queue needs on the screen people start from is a count and
- * a way in, which is a link with a number on it.
- *
- * The funnel went for a better reason than size. It has had its own screen since
- * the lead spec landed — `<app>/leads/funnel`, three ladders, cohort conversion
- * and a window to read them over, every band linking into the pre-filtered book.
- * Drawing a smaller, dumber copy of that above the list was two answers to one
- * question, and the one on this page was the worse of them.
- *
- * Nothing else moved up here: the counts live on the filter bar, where they
- * describe what the filter found, and the stale strip keeps its own line because
- * it NAMES the leads, which is the half a count cannot give you.
- */
-function DeskLine({
-  workspace,
-  desks,
-}: {
-  workspace: LeadWorkspace;
-  desks: {
-    verification: number;
-    verificationMine: number;
-    noNextAction: number;
-    appointments: number;
-    suspectDecisions: number;
-    parked: number;
-    handovers: number;
-    otherDesks: Array<{ label: string; href: string }>;
-  };
-}) {
-  const items = [
-    {
-      href: leadHref(workspace, "leads/qualify/verification"),
-      label: "Verification",
-      value: desks.verificationMine,
-      title:
-        desks.verification === desks.verificationMine
-          ? "Prospects waiting on your call."
-          : `Yours, of ${desks.verification} waiting on anybody.`,
-    },
-    {
-      href: `${leadHref(workspace, "leads")}?view=unworked`,
-      label: "Nobody is working these",
-      value: desks.noNextAction,
-      title: "No next action, or one whose day has gone.",
-    },
-    {
-      href: `${leadHref(workspace, "leads")}?view=decide`,
-      label: "Suspect decisions",
-      value: desks.suspectDecisions,
-      title: "Suspects visited as often as the warning allows and still undecided.",
-    },
-    {
-      href: `${leadHref(workspace, "leads")}?view=parked`,
-      label: "On hold",
-      value: desks.parked,
-      title: "Paused leads, by the day each comes back.",
-    },
-    {
-      href: `${leadHref(workspace, "leads")}?view=handover`,
-      label: "Handovers",
-      value: desks.handovers,
-      title: "Converted accounts with nobody named to run them.",
-    },
-    {
-      href: leadHref(workspace, "leads/appointments"),
-      label: "Appointments",
-      value: desks.appointments,
-      title: "Distributor appointments waiting on a signature.",
-    },
-    {
-      href: leadHref(workspace, "leads/actions/nurture"),
-      label: "Nurture",
-      value: null as number | null,
-      title: "What the nurture sequence has raised.",
-    },
-  ];
-
-  return (
-    <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[13px]">
-      {items.map((it) => (
-        <Link
-          key={it.href}
-          href={it.href}
-          title={it.title}
-          className="text-muted no-underline hover:text-ink hover:underline"
-        >
-          {it.label}
-          {it.value != null ? (
-            <span
-              className={
-                it.value > 0
-                  ? " font-semibold tabular-nums text-warn-ink"
-                  : " tabular-nums text-muted"
-              }
-            >
-              {" "}
-              {it.value}
-            </span>
-          ) : null}
-        </Link>
-      ))}
-      {desks.otherDesks.length ? (
-        <span
-          className="flex flex-wrap items-center gap-x-3 border-l border-line pl-4"
-          title="Screens that have left the sidebar. Their lists are views above; the rest of each is here."
-        >
-          <span className="text-muted">Other desks</span>
-          {desks.otherDesks.map((d) => (
-            <Link
-              key={d.href}
-              href={d.href}
-              className="text-muted no-underline hover:text-ink hover:underline"
-            >
-              {d.label}
-            </Link>
-          ))}
-        </span>
-      ) : null}
     </div>
   );
 }

@@ -375,7 +375,7 @@ export const APP_MODULES: AppModule[] = [
   {
     key: "crm.lead-intake",
     app: "crm",
-    label: "Intake",
+    label: "Add a lead",
     group: "Lead Management",
     href: "/crm/leads/intake",
     note: "Raising a lead at a desk, in bulk from a file, and the duplicate pairs a book fed by a website form, a handset and a spreadsheet keeps producing. The telecaller's own door into the funnel.",
@@ -750,7 +750,7 @@ export const APP_MODULES: AppModule[] = [
   {
     key: "sales.lead-intake",
     app: "sales",
-    label: "Intake",
+    label: "Add a lead",
     group: "Lead Management",
     href: "/sales/leads/intake",
     note: "Raising a lead at a desk, in bulk from a file, and the duplicate pairs a book fed by a website form, a handset and a spreadsheet keeps producing.",

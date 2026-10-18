@@ -130,7 +130,7 @@ export function AdvanceStage({
         }
         onClick={() => begin("override")}
       >
-        Override the gate
+        Move anyway
       </Button>
 
       <Modal

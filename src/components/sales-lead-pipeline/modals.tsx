@@ -723,7 +723,7 @@ function QualifyModal({ lead, onClose }: ModalProps) {
               {lead.qualReview.note ? ` — ${lead.qualReview.note}` : ""}
             </p>
           ) : (
-            <p className="mb-2 text-[13px] text-muted">The Salesman completes the answers; you review them. An unreviewed checklist does not hold the lead.</p>
+            <p className="mb-2 text-[13px] text-muted">The Salesman fills in the answers and you review them. No sample goes out until you verify them.</p>
           )}
           {lead.caps.canVerify ? (
             <>

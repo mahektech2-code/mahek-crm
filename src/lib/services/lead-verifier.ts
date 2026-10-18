@@ -475,6 +475,16 @@ export async function canValidateGstById(
   return (await gstValidatorRefusal(user, seats)) === null;
 }
 
+/** The screens' form of `gstValidatorRefusal`, with its sentence. */
+export async function gstValidatorRefusalById(
+  user: { id: string; role: string },
+  customerId: string,
+): Promise<string | null> {
+  const seats = await seatsOf(customerId);
+  if (!seats) return "This lead could not be found.";
+  return gstValidatorRefusal(user, seats);
+}
+
 /** The screens' form of `qualificationCollectorRefusal`: the sentence, or null where they may write. */
 export async function qualificationCollectorRefusalById(
   user: { id: string; role: string },

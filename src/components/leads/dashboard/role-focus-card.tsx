@@ -98,7 +98,7 @@ export function RoleFocusCard({
               read and no part in it, which is a thing to go and ask about. */}
           {focus.bookTotal === 0
             ? "There are no active leads in your book yet."
-            : "None of these leads is waiting on you. The full list says what each one reads as to the people it is waiting on."}
+            : "No lead is waiting on you right now."}
         </div>
       ) : (
         <ul className="m-0 list-none p-0">

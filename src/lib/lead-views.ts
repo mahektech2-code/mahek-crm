@@ -109,94 +109,65 @@ export function viewFromParam(value: string | undefined): LeadView {
  */
 export const VIEW_TEXT: Record<LeadView, { title: string; subtitle: string }> = {
   all: {
-    title: "Leads",
-    subtitle:
-      "Prospects each salesman is working. Anything untouched for the configured window is tagged stale.",
+    title: "All leads",
+    subtitle: "Every open lead in your book. Click a name to open it.",
   },
   mine: {
     title: "My leads",
-    subtitle:
-      "Leads carrying one of your seats — the book you own, the ones you coordinate as lead manager, and the ones whose paperwork is yours. Whether a seat is asking you for something today is the For you column.",
+    subtitle: "Leads you own, or where you are the lead manager or back office person.",
   },
   /*
-   * THESE TWO ARE NARROWER THAN THE NEXT COLUMN ON THE SAME SCREEN, and both
-   * subtitles say so.
-   *
-   * §24's windows — `dueTodayWindow` and `overdueWindow` — read the next action
-   * and a park coming back, and nothing else. The table's own Next column and
-   * the Next dropdown above it read `OWED_DATE_SQL`, which is those two plus
-   * the salesman's own diary entry, because the BOOK has to show a promise
-   * somebody broke whichever column it was written in.
-   *
-   * So a lead can be drawn "3 days overdue" in the Next column and be absent
-   * from this view, and that is correct: §24 never demanded a diary entry, and
-   * a worklist for a rule should hold the rule's own population. What is not
-   * allowed is the two using one word for two populations without saying so,
-   * which is the whole of why these sentences name the difference. The handset
-   * settled the same split — see `LEAD_WHENS` in `mbos-app/src/engines/leads.ts`.
+   * "Due today" and "Overdue" read the lead's NEXT ACTION and a paused lead's
+   * comeback day only. The table's "What's next" column also counts a
+   * salesman's own follow-up promise, so a lead can show a late date there and
+   * still not be on these lists — the subtitles say so in one line.
    */
   today: {
-    title: "Today's actions",
-    subtitle:
-      "What §24 says is owed today: a next action falling due, and a parked lead whose day has come. The same window the Actions screen reads — narrower than the Next column, which counts a salesman's own follow-up promise too.",
+    title: "Due today",
+    subtitle: "Leads whose next action, or the day they come off hold, is today.",
   },
   overdue: {
     title: "Overdue",
-    subtitle:
-      "Past its day with nobody having answered it, and parks read back late. The same window the Overdue screen reads — narrower than the Next column, which counts a salesman's own follow-up promise too.",
+    subtitle: "Leads whose next action date has passed with nothing done since.",
   },
   expected: {
     title: "Expected orders",
-    subtitle:
-      "A day AND a size — §3.4's commitment. A day on its own is a follow-up somebody has to make, not money anybody may forecast.",
+    subtitle: "Leads with a promised order: both a date and a quantity are recorded.",
   },
   lost30: {
-    title: "Lost in the last 30 days",
-    subtitle:
-      "Leads that reached Lost within the window, with the reason each one was closed on. Nobody rings these again — they are here to be read, not worked.",
+    title: "Lost (last 30 days)",
+    subtitle: "Leads closed as lost in the last 30 days, with the reason for each.",
   },
   register: {
     title: "Distributors & third-party",
-    subtitle:
-      "Who sells our goods on, and the shops the goods actually go to. One register, because the two are one chain and reading either half alone leaves nobody to ask about the other.",
+    subtitle: "Distributors, and the third-party shops our goods go to through them.",
   },
   archived: {
     title: "Archived leads",
-    subtitle:
-      "Filed out of the way, newest first. Nothing here is deleted — restore one to put it back on the working list.",
+    subtitle: "Leads filed away. Nothing here is deleted — restore one to work it again.",
   },
   decide: {
     title: "Suspect decisions",
-    subtitle:
-      "Suspects visited at least as often as the warning threshold and still undecided. Nothing is refused — an answer is demanded: Prospect, or not. Open the lead to answer it.",
+    subtitle: "Suspects visited several times and still undecided. Open each one and decide: Prospect or not.",
   },
   parked: {
     title: "On hold",
-    subtitle:
-      "Leads somebody paused, by the day each comes back — a park with no day named first, because nothing will ever make that one due. Open the lead to resume it.",
+    subtitle: "Leads somebody paused, sorted by the day each comes back.",
   },
   unworked: {
-    title: "Nobody is working these",
-    subtitle:
-      "§24 — an active lead may not sit with nothing owed by anybody. No plan at all comes first, then a plan whose day has gone with no answer beside it.",
+    title: "No next step",
+    subtitle: "Open leads with no next action planned, or whose planned day has passed. Give each one a next step.",
   },
   handover: {
     title: "Handovers",
-    subtitle:
-      "Converted, and still nobody named to run the relationship. A handover moves who RUNS the account and no money at all. Longest-waiting first.",
+    subtitle: "Leads that became customers and still need somebody named to look after them.",
   },
 };
 
 /**
- * The views offered as CHIPS above the table, in the order somebody reads
- * them: everything, then mine, then the two dated cuts, then the register.
- *
- * `expected` and `lost30` are deliberately absent. They are reachable, and
- * they are reachable from the tile that counts them — a chip strip that listed
- * every view would be seven chips over a nine-tile strip saying most of the
- * same words twice. `archived` is absent for its own reason: it is a different
- * book rather than a cut of this one, and it keeps the link it has always had
- * beside the export button.
+ * Every view offered on the list. The first six are drawn as chips; the rest
+ * sit in the "More views" menu beside them (`VIEW_MORE`), so the row stays
+ * short enough to read at a glance.
  */
 export const VIEW_CHIPS = [
   "all",
@@ -207,6 +178,17 @@ export const VIEW_CHIPS = [
   "parked",
   "decide",
   "handover",
+  "expected",
+  "lost30",
+  "register",
+] as const satisfies readonly LeadView[];
+
+/** The views that live in the "More views" menu rather than as chips. */
+export const VIEW_MORE = [
+  "decide",
+  "handover",
+  "expected",
+  "lost30",
   "register",
 ] as const satisfies readonly LeadView[];
 
@@ -266,14 +248,14 @@ export const LEAD_TILES: readonly LeadTile[] = [
   {
     id: "mine",
     label: "My leads",
-    hint: "Carrying one of your seats.",
+    hint: "Leads with your name on them.",
     tone: "brand",
     params: { view: "mine" },
   },
   {
     id: "today",
-    label: "Today's actions",
-    hint: "Owed today — promises and parks read back.",
+    label: "Due today",
+    hint: "Follow-ups and next steps due today.",
     tone: "brand",
     params: { view: "today" },
   },
@@ -283,7 +265,7 @@ export const LEAD_TILES: readonly LeadTile[] = [
     /* DANGER on the question rather than on the number: §24 exists because a
        lead sits for six weeks with everybody assuming somebody else is holding
        it, and one of these is already that. */
-    hint: "Past its day and nobody has answered it.",
+    hint: "Next steps past their date.",
     tone: "danger",
     params: { view: "overdue" },
   },
@@ -295,7 +277,7 @@ export const LEAD_TILES: readonly LeadTile[] = [
        first in the enum and nothing backfills a sales type onto one. A tile
        that counted only the new word would quietly leave those leads out of
        the one figure that is supposed to say how much unworked book there is. */
-    hint: "Nobody has decided about these yet.",
+    hint: "New leads not yet looked at.",
     tone: "brand",
     params: { stage: "suspect,new" },
   },
@@ -304,7 +286,7 @@ export const LEAD_TILES: readonly LeadTile[] = [
     label: "Prospects",
     /* `contacted` is the legacy ladder's second rung and is the same fact:
        somebody has spoken to them and nobody has qualified them. */
-    hint: "Worth something, not yet qualified.",
+    hint: "Interested, not yet qualified.",
     tone: "brand",
     params: { stage: "prospect,contacted" },
   },
@@ -314,14 +296,14 @@ export const LEAD_TILES: readonly LeadTile[] = [
     /* Three rungs, because stock has left the godown at all three and the
        question — has anybody written down what the customer thought — is the
        same one at each. */
-    hint: "Stock is out and a verdict is owed.",
+    hint: "Sample sent, waiting for feedback.",
     tone: "warn",
     params: { stage: "sample_trial,sample_received,sample_review" },
   },
   {
     id: "negotiation",
     label: "Negotiations",
-    hint: "A commercial conversation is open.",
+    hint: "Talking price and terms.",
     tone: "brand",
     params: { stage: "negotiation" },
   },
@@ -331,7 +313,7 @@ export const LEAD_TILES: readonly LeadTile[] = [
     /* NOT drawn as a problem however large it gets. A commitment is a plan;
        the block that wants a manager today is the slipped one, and that is the
        dashboard's, one tab along. */
-    hint: "A day and a size somebody wrote down.",
+    hint: "The customer gave a date and an amount.",
     tone: "brand",
     params: { view: "expected" },
   },
@@ -342,7 +324,7 @@ export const LEAD_TILES: readonly LeadTile[] = [
        because §8.2 names it and because a funnel with no visible bottom is one
        nobody learns from — but drawn at the weight of a queue it would read as
        something to go and do. */
-    hint: "Closed in the last 30 days, with reasons.",
+    hint: "Lost in the last 30 days, with the reasons.",
     tone: "muted",
     params: { view: "lost30" },
   },

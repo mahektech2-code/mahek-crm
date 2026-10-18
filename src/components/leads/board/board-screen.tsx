@@ -516,7 +516,7 @@ function Card({
               ? card.nextActionOverdue
                 ? "The day somebody promised something, and it has gone past."
                 : "What happens next, and when."
-              : "Nothing is owed by anybody on this lead — which is the state §24 exists to prevent."
+              : "No next step set on this lead."
           }
         >
           {card.nextActionDate ? shortDate(card.nextActionDate) : "Nothing promised"}

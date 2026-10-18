@@ -3,7 +3,6 @@
 import type { OwnerPerson } from "@/components/leads/owner-options";
 import * as React from "react";
 import Link from "next/link";
-import { useToast } from "@/components/ui/toast";
 import { Badge, Button, Card, Callout, Progress, SectionLabel, cx } from "@/components/ui/primitives";
 import { money, shortDate, stamp } from "@/lib/format";
 import { NO_ANSWER_REASONS } from "@/lib/call-outcomes";
@@ -107,7 +106,6 @@ export function RecordScreen({
 }) {
   const [tab, setTab] = React.useState<Tab>("overview");
   const [dialog, setDialog] = React.useState<DialogState>(null);
-  const toast = useToast();
 
   const phase = lead.phase;
   const working = isWorking(phase);
@@ -259,7 +257,7 @@ export function RecordScreen({
           <div>
             <b>Prospect created.</b> Waiting for Sales Manager verification
             {lead.managerName ? ` — ${lead.managerName} has it` : ""}. Qualification opens as soon as they
-            verify it, and it is yours to complete.
+            verify it, and then the lead&apos;s owner completes it.
           </div>
         </Callout>
       ) : null}
@@ -277,11 +275,11 @@ export function RecordScreen({
               <b>Qualification is open.</b>
             )}
             {lead.qualificationReview === "verified"
-              ? " The Sales Manager has verified your qualification — you can request the sample."
+              ? " The Sales Manager has verified the Qualification. The sample can be requested now."
               : lead.qualificationReview === "incomplete" || lead.qualificationReview === "clarification"
                 ? ` The Sales Manager sent it back: ${lead.qualificationReviewNote ?? "answer their note"}`
                 : lead.qualificationComplete
-                  ? " You have answered everything; it is with the Sales Manager for review."
+                  ? " Every answer is in. It is with the Sales Manager for review."
                   : ""}
           </div>
         </Callout>
@@ -312,18 +310,6 @@ export function RecordScreen({
                 Message
               </Button>
             ) : null}
-            {/* V6's Edit is a stub too ("Edit form omitted from this design pass"). It must NOT
-                navigate: the only place it could go is the Sales Manager's lead screens, which is
-                the old record this desk replaces. An answer is corrected by logging a call. */}
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() =>
-                toast.push("Editing lead details is not built on the desk yet. Correct an answer by logging a call.")
-              }
-            >
-              Edit
-            </Button>
             {!lead.lost && phase === "qualification" && canWork && !(lead.qualificationComplete && lead.qualificationReview !== "verified" && lead.qualificationReview !== "incomplete" && lead.qualificationReview !== "clarification") ? (
               <Link
                 href={lead.qualificationReview === "verified" ? `/crm/leads/${lead.id}?tab=samples` : `/crm/leads/${lead.id}/qualify`}
@@ -656,7 +642,11 @@ function NextActionPanel({
         </Button>
       ) : (
         <span className="ml-auto text-[12px] text-muted">
-          {na.ownerName && na.ownerName === lead.ownerName ? "Owned by the Telecaller" : "Owned by the Sales Manager"}
+          {na.ownerId && na.ownerId === lead.ownerId
+            ? "Owed by the lead's owner"
+            : na.ownerName
+              ? `Owed by ${na.ownerName}`
+              : "Nobody named yet"}
         </span>
       )}
     </Card>
@@ -1164,7 +1154,7 @@ function GateActionCard({
     );
   if (p === "returned")
     return box(
-      "The Sales Manager could not verify this lead and has returned it. Read their note on the Manager verification card, correct what is wrong on the Edit screen, then resubmit — or close the lead.",
+      "The Sales Manager could not verify this lead and has returned it. Read their note on the Manager verification card, correct what is wrong by logging a call, then resubmit — or close the lead.",
       <>
         <Button variant="primary" disabled={!canWork} onClick={onRequest}>
           Resubmit for verification
@@ -1178,7 +1168,7 @@ function GateActionCard({
     return box(
       `Three calls have been made and ${prospectProgress(lead.values)
         .missing.map((f) => f.label)
-        .join(" and ")} ${prospectProgress(lead.values).missing.length === 1 ? "is" : "are"} not yet captured. There is no Call 4 — the lead is not lost: fill them in on the Edit screen when they come in, or close the lead.`,
+        .join(" and ")} ${prospectProgress(lead.values).missing.length === 1 ? "is" : "are"} not yet captured. There is no Call 4 — the lead is not lost: log a call with them when they come in, or close the lead.`,
       <Button variant="secondary" className="text-danger" disabled={!canWork} onClick={onLost}>
         Mark Lost
       </Button>,
