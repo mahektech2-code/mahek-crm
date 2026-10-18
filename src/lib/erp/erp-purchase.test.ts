@@ -486,6 +486,13 @@ describe("register and stock", () => {
     const full = await mod("rmStock").load(a);
     const mek = full.rows.find((r) => r.v.lot === "ASMEK1001");
     assert.equal(mek?.v.rate, 7200, "₹90 a kg at density 0.8 is ₹72 a litre");
+    /* A can is one total per godown with its lots folded under it; a chemical stays a lot. */
+    assert.equal(mek?.id, "ASMEK1001|" + mek?.id.split("|")[1]);
+    const can = full.rows.find((r) => r.sub?.some((x) => x.v.lot === "ASCAN11001"));
+    assert.equal(can?.v.lot, "1 lot");
+    assert.equal(can?.v.stock, 500);
+    assert.ok(can?.id.startsWith("item|"));
+    assert.equal(full.spec.fold?.parts, "By lot");
   });
 
   test("the log flags an entry whose purchase has gone", async () => {

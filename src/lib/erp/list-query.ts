@@ -37,12 +37,14 @@ export type ListQuery = {
    * are not windowed ignore it.
    */
   pd: string;
+  /** A folding list (`ListSpec.fold`) read part by part — every lot its own row — instead of as totals. */
+  parts: boolean;
 };
 
 export const PAGE_SIZES = [25, 50, 100] as const;
 
 /** The query keys a list owns in the URL, beside the page's own (`view`, `open`, `f`, `fl`, `new`). */
-export const LIST_QUERY_KEYS = ["q", "chip", "gf", "grp", "sort", "page", "size", "pd"] as const;
+export const LIST_QUERY_KEYS = ["q", "chip", "gf", "grp", "sort", "page", "size", "pd", "parts"] as const;
 
 type Raw = Record<string, string | string[] | undefined>;
 const one = (raw: Raw, k: string) => (typeof raw[k] === "string" ? (raw[k] as string) : "");
@@ -62,6 +64,7 @@ export function parseListQuery(raw: Raw): ListQuery {
     size: (PAGE_SIZES as readonly number[]).includes(size) ? size : 25,
     ids: f ? f.split(",") : null,
     pd: validPeriod(one(raw, "pd")) ? one(raw, "pd") : "",
+    parts: one(raw, "parts") === "1",
   };
 }
 
@@ -76,6 +79,7 @@ export function listQueryParams(q: ListQuery): Record<string, string> {
   if (q.page > 1) out.page = String(q.page);
   if (q.size !== 25) out.size = String(q.size);
   if (q.pd) out.pd = q.pd;
+  if (q.parts) out.parts = "1";
   return out;
 }
 
@@ -126,32 +130,53 @@ export function colOf(cols: ColSpec[], k: string): ColSpec {
   );
 }
 
+/**
+ * The rows a folding list is read as: its totals, or — `parts` — every folded
+ * row in its total's place. A row with nothing folded is the same row either way.
+ */
+export function unfold(spec: Pick<ListSpec, "fold">, rows: ListRow[], query: Pick<ListQuery, "parts">): ListRow[] {
+  if (!spec.fold || !query.parts) return rows;
+  return rows.flatMap((r) => (r.sub?.length ? r.sub : [r]));
+}
+
+/** A row's searchable words: every column, as the list draws it. */
+function rowWords(cols: ColSpec[], r: ListRow, flagWords: Record<string, [string, Tone]>): string {
+  return cols
+    .map((c) => (c.t === "f" ? r.flags.map((f) => flagWords[f]?.[0] ?? f).join(" ") : cellText(c, r.v[c.k])))
+    .join(" ")
+    .toLowerCase();
+}
+
+/** Whether a search finds this row — itself, or one of the rows folded under it (a can's total is found by one of its lot numbers). */
+export function rowMatches(cols: ColSpec[], r: ListRow, ql: string, flagWords: Record<string, [string, Tone]>): boolean {
+  return rowWords(cols, r, flagWords).includes(ql) || (r.sub ?? []).some((x) => rowWords(cols, x, flagWords).includes(ql));
+}
+
+/** The folded rows a search found, so the list opens their total onto them. */
+export function subMatches(cols: ColSpec[], r: ListRow, q: string, flagWords: Record<string, [string, Tone]>): boolean {
+  const ql = q.trim().toLowerCase();
+  return !!ql && (r.sub ?? []).some((x) => rowWords(cols, x, flagWords).includes(ql));
+}
+
 /** The rows the filters, chip and search leave, sorted and grouped — every page of them. */
 export function queryRows(
-  spec: Pick<ListSpec, "cols" | "chips" | "godownKey" | "sortDefault" | "groups">,
+  spec: Pick<ListSpec, "cols" | "chips" | "godownKey" | "sortDefault" | "groups" | "fold">,
   rows: ListRow[],
   query: ListQuery,
   flagWords: Record<string, [string, Tone]>,
 ): { list: ListRow[]; beforeChip: ListRow[]; sort: ListSort | null; gk: string[] | null; gOf: (r: ListRow) => string; by: Map<string, ListRow[]> | null } {
   const cols = spec.cols;
-  let all = rows;
+  let all = unfold(spec, rows, query);
   if (query.ids) {
     const ids = new Set(query.ids);
-    all = all.filter((r) => ids.has(r.id));
+    /* A total is kept when it, or a part folded under it, was named. */
+    all = all.filter((r) => ids.has(r.id) || (r.sub ?? []).some((x) => ids.has(x.id)));
   }
   if (spec.godownKey && query.gf) all = all.filter((r) => String(r.v[spec.godownKey!] ?? "") === query.gf);
   const beforeChip = all;
   if (spec.chips && query.chip) all = all.filter((r) => String(r.v[spec.chips!] ?? "") === query.chip);
   const ql = query.q.trim().toLowerCase();
-  if (ql) {
-    all = all.filter((r) =>
-      cols
-        .map((c) => (c.t === "f" ? r.flags.map((f) => flagWords[f]?.[0] ?? f).join(" ") : cellText(c, r.v[c.k])))
-        .join(" ")
-        .toLowerCase()
-        .includes(ql),
-    );
-  }
+  if (ql) all = all.filter((r) => rowMatches(cols, r, ql, flagWords));
   const sort = query.sort ?? (spec.sortDefault ? { k: spec.sortDefault[0], d: spec.sortDefault[1] } : null);
   if (sort) {
     all = all.slice().sort((a, b) => {
@@ -248,7 +273,7 @@ export function pageOf(spec: ListSpec, rows: ListRow[], query: ListQuery, flagWo
     sort: r.sort,
     groupOf,
     groups,
-    badgeChars: badgeWidths(spec.cols, rows, flagWords),
+    badgeChars: badgeWidths(spec.cols, unfold(spec, rows, query), flagWords),
     all: rows.length,
   };
 }
