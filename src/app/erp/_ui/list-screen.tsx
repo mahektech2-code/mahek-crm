@@ -751,7 +751,7 @@ function FoldToggle({ open, n, onToggle }: { open: boolean; n: number; onToggle:
         onToggle();
       }}
       aria-expanded={open}
-      aria-label={open ? `Hide the ${n} folded under this` : `Show the ${n} folded under this`}
+      aria-label={open ? `Hide the ${n} ${n === 1 ? "row" : "rows"} under this` : `Show the ${n} ${n === 1 ? "row" : "rows"} under this`}
       className="mr-1.5 inline-flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] align-[-4px] text-muted hover:bg-brand-soft hover:text-brand-hover"
     >
       <Icon n={open ? "down" : "chev"} s={14} />

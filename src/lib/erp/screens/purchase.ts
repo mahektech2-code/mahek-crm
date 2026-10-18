@@ -1973,7 +1973,7 @@ const rmStock: ScreenModule = {
         readOnly: true,
         noDataLine: "Nothing in stock yet. Stock appears as purchases are given a rate.",
         fold: {
-          l: "Cans, boxes & others",
+          l: "Cans & boxes",
           whole: "Item total",
           parts: "By lot",
           note: "Chemicals are shown lot by lot. Cans, boxes and other items are one total per godown — open one to see its lots.",
