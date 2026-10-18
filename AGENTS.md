@@ -2043,7 +2043,7 @@ reversal (Oct 2026).** The flow is now Requirement → Blind count → Book
 comparison → Verification → Purchase method → PO number → Receipt; the vendor /
 quotation step and PO approval in the paragraphs below are history. At the
 purchase method the item's rule (`poRouteOf`) decides, and both happen inside
-the requirement's drawer (`screens/requirement-po.ts`, the `purchaseFlow`
+the requirement's record (`screens/requirement-po.ts`, the `purchaseFlow`
 panel):
 
 - **Quotation** — the rate is chosen and bought on the Quotation manager.
@@ -2119,6 +2119,16 @@ tab, its form and actions, the ranking engine and the setting are gone.
 kept as the record they are and read by nothing. The Quotation manager's grid
 lists its rows LATEST FIRST — newest date on top, the last entered first within
 a date (`visibleRows` in `engines/quote-sheet.ts`).
+
+**PURCHASE IT WRITES THE PURCHASE ORDER, not only its number.** The dialog asks
+the requirement (or none, and one is raised with the purchase, remarked
+`QM_RAISED_REMARK`), the quantity, the godown and the delivery date, and
+`orderFromQuote` (`screens/requirement-po.ts`) writes a `Sent` PO
+(`source = quotation_manager`, `qm_po_no`) with one line keyed on the cell, in
+the cell's own transaction. Changing the drums syncs the line; undoing withdraws
+it (`withdrawQuotePo`), refused once goods arrived. It happens only when the op
+carries `order`, so an older page still just mints the number and the
+requirement still links it.
 
 **WHO MAY ACT IN PURCHASE IS SET IN THE ADMIN CONSOLE, and only there.**
 Raising a requirement, raising a PO and recording a lot test follow the screen
