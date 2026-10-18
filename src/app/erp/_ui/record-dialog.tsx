@@ -62,10 +62,10 @@ export function RecordDialog({ screen, kind, row, onClose }: { screen: ListSpec;
   const acts = row.actions ?? [];
   const blocked = acts.filter((a) => a.why);
   const hiddenCount = screen.hidden.length + (row.hiddenFields ?? 0);
-  /* The record's status is said once, in the heading, where it is read first:
-     the column called Status or Stage, else the first status-like one. */
-  const statuses = fields.filter((f) => f.status && f.v !== "—");
-  const status = statuses.find((f) => /^(status|stage)$/i.test(f.l.trim())) ?? statuses[0];
+  /* The record's status is said once, in the heading, where it is read first —
+     only a column CALLED Status or Stage: a badge column like "Material type"
+     reads as a status in a heading and is not one. */
+  const status = fields.find((f) => f.status && f.v !== "—" && /^(status|stage)$/i.test(f.l.trim()));
   const shown = fields.filter((f) => f !== status);
 
   const panel = row.panel ? renderPanel(row.panel.kind, { data: row.panel.data, row, screen: screen.screen }) : null;
