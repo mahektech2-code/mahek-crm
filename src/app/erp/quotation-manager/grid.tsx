@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState } from "react";
 import { erpQuoteApply } from "@/lib/actions/erp-quotes";
-import type { QuoteSheet } from "@/lib/erp/quotes";
+import type { PurchaseChoices, QuoteOrder, QuoteSheet } from "@/lib/erp/quotes";
 import {
   cleanCell,
   columnStats,
@@ -104,6 +104,7 @@ export function QuoteGrid({
   title,
   sub,
   sheet,
+  choices,
   today,
   filter,
   sixMonths,
@@ -115,6 +116,8 @@ export function QuoteGrid({
   title: string;
   sub: string;
   sheet: QuoteSheet;
+  /** What Purchase it offers: godowns, units, and the requirements waiting for a PO. */
+  choices: PurchaseChoices;
   today: string;
   filter: { from: string | null; to: string | null; q: string; all: boolean };
   sixMonths: string;
@@ -190,8 +193,15 @@ export function QuoteGrid({
           const made = res.data.minted ?? [];
           if (made.length) {
             setBoth(applySheetOps(stateRef.current, made.map((m) => ({ op: "cell" as const, rowId: m.rowId, columnId: m.columnId, poNo: m.poNo }))));
-            if (made.length === 1) ui.toast(`Bought on ${made[0].poNo}. Enter this PO number on the purchase requirement.`);
+            if (made.length === 1)
+              ui.toast(
+                made[0].ordered
+                  ? `Bought on ${made[0].poNo}. Its purchase order is in Purchase orders, ready to receive.`
+                  : `Bought on ${made[0].poNo}. Enter this PO number on the purchase requirement.`,
+              );
             else ui.toast(`Bought on ${made.length} new PO numbers.`);
+            /* The requirements a purchase took are no longer waiting: fetch the dialog's choices afresh. */
+            if (made.some((m) => m.ordered)) router.refresh();
           }
         }
       } catch {
@@ -422,8 +432,8 @@ export function QuoteGrid({
     setPurchase(ref);
   }
 
-  function savePurchase(ref: CellRef, drums: number) {
-    commit([{ op: "cell", ...ref, status: "po", drums, poBy: me, poAt: new Date().toISOString() }]);
+  function savePurchase(ref: CellRef, drums: number, order: QuoteOrder | null) {
+    commit([{ op: "cell", ...ref, status: "po", drums, poBy: me, poAt: new Date().toISOString(), ...(order ? { order } : {}) }]);
     setPurchase(null);
     gridRef.current?.focus();
   }
@@ -1094,8 +1104,11 @@ export function QuoteGrid({
                 drums={at.cell?.drums ?? null}
                 poNo={at.cell?.poNo ?? ""}
                 editing={at.cell?.status === "po"}
+                materialId={at.col.rawMaterialId}
+                choices={choices}
+                today={today}
                 onClose={() => setPurchase(null)}
-                onSave={(d) => savePurchase(purchase, d)}
+                onSave={(d, order) => savePurchase(purchase, d, order)}
               />
             );
           })()
@@ -1622,7 +1635,12 @@ function CellMenu({ x, y, items, onClose }: { x: number; y: number; items: CellM
   );
 }
 
-/** Purchase it: the drums for one Ready to buy rate. The PO number is made by the server on save, never typed. */
+/**
+ * Purchase it: the drums for one Ready to buy rate, and the purchase order it
+ * makes — how much, the requirement it answers (or one raised with it), where
+ * it is delivered and by when. The PO number is made by the server, never
+ * typed. Editing a purchase already made changes only its drums.
+ */
 function PurchaseDialog({
   rowNo,
   date,
@@ -1632,6 +1650,9 @@ function PurchaseDialog({
   drums,
   poNo,
   editing,
+  materialId,
+  choices,
+  today,
   onClose,
   onSave,
 }: {
@@ -1643,29 +1664,54 @@ function PurchaseDialog({
   drums: number | null;
   poNo: string;
   editing: boolean;
+  materialId: string | null;
+  choices: PurchaseChoices;
+  today: string;
   onClose: () => void;
-  onSave: (drums: number) => void;
+  onSave: (drums: number, order: QuoteOrder | null) => void;
 }) {
+  const reqs = useMemo(() => choices.openRequirements.filter((r) => r.materialId === materialId), [choices, materialId]);
+  const first = reqs[0] ?? null;
+  const unit = (materialId && choices.units[materialId]) || "";
   const [d, setD] = useState(drums ? String(drums) : "");
+  const [reqId, setReqId] = useState(first?.id ?? "");
+  const [qty, setQty] = useState(first ? String(first.qty) : "");
+  const [godown, setGodown] = useState(first?.godown ?? choices.defaultGodown ?? choices.godowns[0] ?? "");
+  const [due, setDue] = useState(first?.requiredBy && first.requiredBy > today ? first.requiredBy : today);
   const [tried, setTried] = useState(false);
   const n = Number(d);
   const drumsBad = !d.trim() || !Number.isInteger(n) || n < 1;
+  const q = Number(qty);
+  const ordering = !editing;
+  const noMaterial = ordering && !materialId;
+  const qtyBad = ordering && (!qty.trim() || !Number.isFinite(q) || q <= 0);
+  const godownBad = ordering && !godown;
+  const dueBad = ordering && (!due || due < today);
+  function pickReq(id: string) {
+    setReqId(id);
+    const r = reqs.find((x) => x.id === id);
+    if (r) {
+      setQty(String(r.qty));
+      setGodown(r.godown);
+      if (r.requiredBy && r.requiredBy > today) setDue(r.requiredBy);
+    }
+  }
   function save() {
     setTried(true);
-    if (drumsBad) return;
-    onSave(n);
+    if (drumsBad || noMaterial || qtyBad || godownBad || dueBad) return;
+    onSave(n, ordering ? { requisitionId: reqId || null, qty: q, godown, deliveryDate: due } : null);
   }
   return (
     <Modal
       open
       onClose={onClose}
       title={editing ? "Edit purchase" : "Purchase it"}
-      width={480}
+      width={540}
       footer={
         <div className="flex w-full items-center justify-end gap-2">
           <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" onClick={save}>
-            {editing ? "Save purchase" : "Save and mark bought"}
+          <Button variant="primary" onClick={save} disabled={noMaterial}>
+            {editing ? "Save purchase" : "Buy and make the PO"}
           </Button>
         </div>
       }
@@ -1682,6 +1728,11 @@ function PurchaseDialog({
         <span className="text-muted">Rate</span>
         <span className="font-semibold text-ink tabular-nums">{rate || "—"}</span>
       </div>
+      {noMaterial ? (
+        <Callout tone="warn" className="mb-3 text-sm">
+          This column is not linked to a raw material, so no purchase order can be made for it. Edit the column (right-click its heading) and pick the raw material first.
+        </Callout>
+      ) : null}
       <form
         className="grid grid-cols-2 gap-3"
         onSubmit={(e) => {
@@ -1698,10 +1749,44 @@ function PurchaseDialog({
             {poNo || <span className="font-sans text-muted">Made when you save</span>}
           </div>
         </Labelled>
+        {ordering && !noMaterial ? (
+          <>
+            <div className="col-span-2">
+              <Labelled label="For requirement">
+                <Select value={reqId} onChange={(e) => pickReq(e.target.value)} className="w-full">
+                  {reqs.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.label}
+                    </option>
+                  ))}
+                  <option value="">None waiting — raise one with this purchase</option>
+                </Select>
+              </Labelled>
+            </div>
+            <Labelled label="Quantity" hint={unit ? `(${unit})` : undefined}>
+              <Input inputMode="decimal" value={qty} onChange={(e) => setQty(e.target.value.replace(/[^\d.]/g, ""))} invalid={tried && qtyBad} placeholder="e.g. 800" />
+              {tried && qtyBad ? <span className="text-xs text-danger">Enter the quantity bought.</span> : null}
+            </Labelled>
+            <Labelled label="Deliver to">
+              <Select value={godown} onChange={(e) => setGodown(e.target.value)} className="w-full">
+                {choices.godowns.map((g) => (
+                  <option key={g} value={g}>
+                    {g}
+                  </option>
+                ))}
+              </Select>
+              {tried && godownBad ? <span className="text-xs text-danger">Pick the godown.</span> : null}
+            </Labelled>
+            <Labelled label="Delivery by">
+              <Input type="date" min={today} value={due} onChange={(e) => setDue(e.target.value)} invalid={tried && dueBad} />
+              {tried && dueBad ? <span className="text-xs text-danger">A delivery date, today or later.</span> : null}
+            </Labelled>
+          </>
+        ) : null}
         <p className="col-span-2 text-xs text-muted">
-          {poNo
-            ? "This purchase keeps its PO number. Saving turns the cell yellow."
-            : "Saving gives this purchase the next PO number and turns the cell yellow. Enter that number on the purchase requirement to fetch the order."}
+          {editing
+            ? "This purchase keeps its PO number and its purchase order; changing the drums changes the order's line too."
+            : "Saving gives this purchase the next PO number, turns the cell yellow and puts the purchase order in Purchase orders — sent, ready for goods to be received against it."}
         </p>
         <button type="submit" className="hidden" />
       </form>

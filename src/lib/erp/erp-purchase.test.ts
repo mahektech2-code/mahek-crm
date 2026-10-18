@@ -781,3 +781,63 @@ describe("the goods receipt starts from the item", () => {
     assert.equal(pb.status, "Partly received");
   });
 });
+
+describe("Purchase it on the Quotation manager writes the purchase order", () => {
+  const order = (over: Record<string, unknown> = {}) => ({ qty: 300, godown: "Bhiwandi", deliveryDate: "2099-10-30", ...over });
+  const poOf = async (poNo: string) => (await db.select().from(erpPurchaseOrders).where(sql`qm_po_no = ${poNo}`))[0];
+
+  test("with nothing waiting, the purchase raises its requirement and the PO is sent, ready to receive", async () => {
+    const a = await as(admin);
+    await db.insert(erpQuoteRows).values({ id: "eqr_asian9", quoteDate: "2026-10-18", party: "Asian Solvents", supplierId: "sup_a" });
+    await db.insert(erpQuoteCells).values({ rowId: "eqr_asian9", columnId: "eqc_toluene", value: "104", status: "ready" });
+    const bought = await applyQuoteOps(a, [{ op: "cell", rowId: "eqr_asian9", columnId: "eqc_toluene", status: "po", drums: 2, order: order() }]);
+    assert.ok(bought.ok, JSON.stringify(bought));
+    const [m] = bought.data.minted;
+    assert.equal(m.ordered, true);
+    const po = await poOf(m.poNo);
+    assert.equal(po.status, "Sent", "no approval");
+    assert.equal(po.source, "quotation_manager");
+    assert.equal(po.supplierId, "sup_a");
+    assert.equal(po.paymentTerms, "30 days credit");
+    const [line] = await db.select().from(erpPoLines).where(eq(erpPoLines.poId, po.id));
+    assert.deepEqual([line.rawMaterialId, line.quantity, line.ratePaise, line.drums, line.quoteRowId], ["rm_tol", 300, 10400, 2, "eqr_asian9"]);
+    const [req] = await db.select().from(erpRequisitions).where(eq(erpRequisitions.id, line.requisitionId));
+    assert.equal(req.status, "Order Placed");
+    assert.equal(req.supplierId, "sup_a");
+    /* Changing the drums on the cell changes the line. */
+    assert.ok((await applyQuoteOps(a, [{ op: "cell", rowId: "eqr_asian9", columnId: "eqc_toluene", status: "po", drums: 5 }])).ok);
+    const [after1] = await db.select().from(erpPoLines).where(eq(erpPoLines.id, line.id));
+    assert.equal(after1.drums, 5);
+    /* Undoing the purchase cancels the PO and the requirement it raised. */
+    assert.ok((await applyQuoteOps(a, [{ op: "cell", rowId: "eqr_asian9", columnId: "eqc_toluene", status: "ready", poNo: null }])).ok);
+    assert.equal((await poOf(m.poNo)).status, "Cancelled");
+    assert.equal((await db.select().from(erpRequisitions).where(eq(erpRequisitions.id, req.id)))[0].status, "Cancelled");
+  });
+
+  test("a requirement picked in the dialog is the one the PO answers, and goes back to waiting on undo", async () => {
+    const a = await as(admin);
+    assert.ok((await mod("requisitions").forms!.new(a, { date: TODAY, requiredBy: "2099-11-20", department: "Production Head", godown: "Bhiwandi", type: "Chemical", item: "MEK", required: "150", priority: "Medium" }, [])).ok);
+    const [mek] = await db.select().from(erpRequisitions).where(sql`raw_material_id = 'rm_mek' and required_by = '2099-11-20'`);
+    await db.insert(erpQuoteRows).values({ id: "eqr_bharat9", quoteDate: "2026-10-18", party: "Bharat Chemicals", supplierId: "sup_b" });
+    await db.insert(erpQuoteCells).values({ rowId: "eqr_bharat9", columnId: "eqc_mekdrum", value: "91", status: "ready" });
+    const bought = await applyQuoteOps(a, [{ op: "cell", rowId: "eqr_bharat9", columnId: "eqc_mekdrum", status: "po", drums: 1, order: order({ requisitionId: mek.id, qty: 150 }) }]);
+    assert.ok(bought.ok, JSON.stringify(bought));
+    const po = await poOf(bought.data.minted[0].poNo);
+    const [line] = await db.select().from(erpPoLines).where(eq(erpPoLines.poId, po.id));
+    assert.equal(line.requisitionId, mek.id);
+    assert.ok((await applyQuoteOps(a, [{ op: "cell", rowId: "eqr_bharat9", columnId: "eqc_mekdrum", status: "ready", poNo: null }])).ok);
+    const [back] = await db.select().from(erpRequisitions).where(eq(erpRequisitions.id, mek.id));
+    assert.equal(back.status, "Pending", "a requirement somebody raised is never cancelled by an undo");
+  });
+
+  test("a row whose party is not a supplier is refused, and nothing is bought", async () => {
+    const a = await as(admin);
+    await db.insert(erpQuoteRows).values({ id: "eqr_stranger", quoteDate: "2026-10-18", party: "Somebody New" });
+    await db.insert(erpQuoteCells).values({ rowId: "eqr_stranger", columnId: "eqc_toluene", value: "99", status: "ready" });
+    const r = await applyQuoteOps(a, [{ op: "cell", rowId: "eqr_stranger", columnId: "eqc_toluene", status: "po", drums: 1, order: order() }]);
+    assert.ok(!r.ok);
+    const [cell] = await db.select().from(erpQuoteCells).where(sql`row_id = 'eqr_stranger'`);
+    assert.equal(cell.status, "ready");
+    assert.equal(cell.poNo, null);
+  });
+});
