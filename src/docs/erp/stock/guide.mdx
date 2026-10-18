@@ -33,7 +33,9 @@ The Stock group answers "what do we have, where is it, and where did it go?". **
 | **Finished goods** | cans | an FG lot at a godown | FG filling (net of cans lost); transfers in | packing lines; allocation to orders; transfers out |
 | **Packed** | boxes | a packing batch at a godown | a complete packing batch; transfers in | allocation to orders; transfers out |
 
-The available view lists only lots with stock above zero. Every row opens to the actions that apply: **Trace this lot**, **Print box labels** on a packing batch, and on a finished-goods lot **Label loose units** and **Print loose labels**.
+On the **Raw material** tab a chemical is one row per lot, as on every other tab. A can, box, drum or stationery item is **one row per godown with its total**: its Lot no column says how many lots it holds, and the arrow beside its name opens them underneath, oldest first, each with its own rate. Filling and packing do not record which lot of cans or boxes they used, so those lots are drawn down oldest first. The item's total is exact. Each lot's share of it is an estimate. **By lot** in the toolbar lists every lot as its own row instead. Searching a lot number finds the item it belongs to and opens it. The tabs above the list narrow it to one type: Chemical, Can, Box and so on.
+
+The available view lists only lots with stock above zero. An item's total is shown whenever it is not zero, so a can or box drawn below zero shows a negative total. Every row opens to the actions that apply: **Trace this lot**, **Print box labels** on a packing batch, and on a finished-goods lot **Label loose units** and **Print loose labels**.
 
 ### Labelling loose cans
 
