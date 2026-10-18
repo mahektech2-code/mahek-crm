@@ -81,6 +81,7 @@ const COLUMNS: Array<[string, string, "required" | "optional"]> = [
 export function BulkScreen({
   workspace,
   owners,
+  bookOwners,
   today,
   requireNextAction,
   canWork,
@@ -88,6 +89,8 @@ export function BulkScreen({
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
   owners: NextActionOwner[];
+  /** Who may own a lead: people who can open one. A narrower list than `owners`. */
+  bookOwners: NextActionOwner[];
   today: string;
   requireNextAction: boolean;
   canWork: boolean;
@@ -263,11 +266,8 @@ export function BulkScreen({
               What everything in this file gets
             </h2>
             <p className="mb-4 max-w-[760px] text-[13px] text-pretty text-muted">
-              A spreadsheet of leads names nobody and promises nothing, and §24
-              says an active lead may not sit with nothing owed by anybody. So it
-              is asked ONCE, here, for the whole file — the alternatives were to
-              invent an action per row or to switch the rule off for imports, and
-              both of those are how a thousand leads land owing nothing.
+              Every open lead needs a next step, so set one here for the whole
+              file: who owns these leads, what happens next, when, and who does it.
             </p>
 
             <div className="grid gap-4 sm:grid-cols-2">
@@ -277,7 +277,7 @@ export function BulkScreen({
               >
                 <Select value={ownerId} onChange={(e) => setOwnerId(e.target.value)}>
                   <option value="">Unassigned — said in words on every list</option>
-                  {owners.map((o) => (
+                  {bookOwners.map((o) => (
                     <option key={o.id} value={o.id}>
                       {o.name}
                     </option>

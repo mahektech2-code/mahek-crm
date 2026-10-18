@@ -1001,6 +1001,16 @@ export async function captureLeadBatch(
       );
     }
 
+    /* The owner is the file's, so it is checked once rather than refused on
+       every row: somebody who cannot open a lead cannot own a thousand. */
+    if (b.ownerId && !(await assignableOwner(b.ownerId))) {
+      return err(
+        "That person has no active CRM or Salesman App account, so leads they owned would not be visible to anybody.",
+        "rule_violation",
+        [{ field: "ownerId", message: "Cannot open leads." }],
+      );
+    }
+
     const preview = await previewBulkIntake(rows);
     if (!preview.ok) return preview;
 
