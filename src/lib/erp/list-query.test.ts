@@ -111,3 +111,28 @@ describe("a group's header facts", () => {
     assert.equal(groupHeadValues([row("a", "PO-9", "x"), row("b", null, "x")], ["po"]).po, "PO-9");
   });
 });
+
+describe("a list that folds rows under a total", () => {
+  const fspec: ListSpec = { ...spec, groups: undefined, chips: undefined, fold: { l: "Cans", whole: "Item total", parts: "By lot" } };
+  const lotOf = (id: string, no: string, qty: number): ListRow => ({ id, v: { no, item: "Can 5 L", qty, status: "Open", godown: "Bhiwandi" }, flags: [] });
+  const FOLD: ListRow[] = [
+    row("t", "T1", "Toluene", 10, "Open", "Bhiwandi"),
+    { ...row("can", "2 lots", "Can 5 L", 30, "Open", "Bhiwandi"), sub: [lotOf("c1", "C-001", 10), lotOf("c2", "C-002", 20)] },
+  ];
+
+  test("totals are the rows, and By lot puts each lot in its total's place", () => {
+    assert.deepEqual(queryRows(fspec, FOLD, Q(), FLAGS).list.map((r) => r.id), ["t", "can"]);
+    assert.deepEqual(queryRows(fspec, FOLD, Q({ parts: true }), FLAGS).list.map((r) => r.id), ["t", "c1", "c2"]);
+    assert.deepEqual(parseListQuery(listQueryParams(Q({ parts: true }))).parts, true);
+  });
+
+  test("a lot number finds its total, and a named lot keeps its total in the list", () => {
+    assert.deepEqual(queryRows(fspec, FOLD, Q({ q: "c-002" }), FLAGS).list.map((r) => r.id), ["can"]);
+    assert.deepEqual(queryRows(fspec, FOLD, Q({ ids: ["c1"] }), FLAGS).list.map((r) => r.id), ["can"]);
+    assert.deepEqual(queryRows(fspec, FOLD, Q({ ids: ["c1"], parts: true }), FLAGS).list.map((r) => r.id), ["c1"]);
+  });
+
+  test("a list that does not fold ignores By lot", () => {
+    assert.deepEqual(queryRows({ ...fspec, fold: undefined }, FOLD, Q({ parts: true }), FLAGS).list.map((r) => r.id), ["t", "can"]);
+  });
+});
