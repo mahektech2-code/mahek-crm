@@ -30,7 +30,7 @@ import { calendarDate } from "@/lib/business-date";
 import { erpContext } from "@/lib/erp/access";
 import { allScreenModules, screenModule } from "@/lib/erp/screens";
 import { salesCounts } from "@/lib/erp/counts";
-import { ROW_CAP, scopeFor } from "@/lib/erp/window";
+import { ROW_CAP, STOCK_ROW_CAP, STOCK_WINDOW, scopeFor } from "@/lib/erp/window";
 import { withReadMemo } from "@/lib/erp/read-memo";
 import { shiftDays } from "@/lib/erp/period";
 
@@ -139,7 +139,8 @@ describe("every screen, at the size of the real book", () => {
     const over: string[] = [];
     for (const mod of allScreenModules()) {
       const res = await withReadMemo(() => mod.load(c, scopeFor(mod.window, { pd: "", ids: null }, null)));
-      if (res.rows.length > ROW_CAP) over.push(`${mod.key}: ${res.rows.length} rows`);
+      // A stock screen's lots are summed in SQL first; it has its own, higher ceiling.
+      if (res.rows.length > (mod.window === STOCK_WINDOW ? STOCK_ROW_CAP : ROW_CAP)) over.push(`${mod.key}: ${res.rows.length} rows`);
     }
     assert.deepEqual(over, [], "a screen read a whole history table — give it a window (window.ts) or read only open work");
   });

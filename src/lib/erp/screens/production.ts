@@ -21,7 +21,7 @@ import {
 import { err, fieldErr, okVoid, type Result } from "@/lib/result";
 import type { ErpContext } from "../access";
 import { erpAudit, erpId, int, nextNumber, num, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
-import { inWindow, type LoadScope, STOCK_WINDOW, tooWide, unscoped, windowWhere } from "../window";
+import { inWindow, type LoadScope, STOCK_ROW_CAP, STOCK_WINDOW, tooWide, unscoped, windowWhere } from "../window";
 import type { ActionSpec, ColSpec, FieldSpec, FormSpec, ListRow } from "../ui";
 import { inr, nf } from "../ui";
 import {
@@ -1312,7 +1312,7 @@ const sfgStock: ScreenModule = {
   async load(ctx, s) {
     const sc = s ?? unscoped();
     const inStock = (await sfgLots()).filter((l) => l.stock > 0 && inWindow(l.latestDate, `${l.lotCode}|${l.godownId}`, sc));
-    const wide = tooWide(inStock.length, sc);
+    const wide = tooWide(inStock.length, sc, STOCK_ROW_CAP);
     const lots = wide ? [] : inStock;
     const qc = await sfgQcMap(lots.map((l) => l.lotCode));
     const all: Col[] = [
@@ -1368,7 +1368,7 @@ const fgStock: ScreenModule = {
   async load(ctx, s) {
     const sc = s ?? unscoped();
     const inStock = (await fgLots()).filter((l) => l.stock > 0 && inWindow(l.latestDate, `${l.finishedGoodId}|${l.lotCode}|${l.godownId}`, sc));
-    const wide = tooWide(inStock.length, sc);
+    const wide = tooWide(inStock.length, sc, STOCK_ROW_CAP);
     const lots = wide ? [] : inStock;
     const labelled = new Map(
       ((await db.execute(sql`select lot_code || '|' || godown_id as k, count(*)::int as n from erp_units where lot_from = 'fg' and status in ('available', 'hold') group by 1`)) as unknown as { k: string; n: number }[]).map((r) => [r.k, Number(r.n)]),
@@ -1456,7 +1456,7 @@ const packStock: ScreenModule = {
   async load(ctx, s) {
     const sc = s ?? unscoped();
     const inStock = (await packLots()).filter((l) => l.stock > 0 && inWindow(l.latestDate, `${l.batchNo}|${l.godownId}`, sc));
-    const wide = tooWide(inStock.length, sc);
+    const wide = tooWide(inStock.length, sc, STOCK_ROW_CAP);
     const lots = wide ? [] : inStock;
     const all: Col[] = [
       { k: "date", l: "Date", t: "d" },

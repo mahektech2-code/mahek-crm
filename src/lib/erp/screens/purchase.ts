@@ -2,7 +2,7 @@ import "server-only";
 import { EVIDENCE_FIELDS } from "../engines/sfg-tests";
 import { getConfig } from "@/lib/config/store";
 import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
-import { inWindow, STOCK_WINDOW, tooWide, unscoped, windowWhere } from "../window";
+import { inWindow, STOCK_ROW_CAP, STOCK_WINDOW, tooWide, unscoped, windowWhere } from "../window";
 import { db } from "@/db";
 import {
   erpGodowns,
@@ -1914,7 +1914,7 @@ const rmStock: ScreenModule = {
   async load(ctx, s) {
     const sc = s ?? unscoped();
     const inStock = (await rmLots()).filter((l) => l.stock > 0 && inWindow(l.latestDate, `${l.lotNo}|${l.godownId}`, sc));
-    const wide = tooWide(inStock.length, sc);
+    const wide = tooWide(inStock.length, sc, STOCK_ROW_CAP);
     const lots = wide ? [] : inStock;
     const all: Col[] = [
       { k: "item", l: "Item", t: "b" },

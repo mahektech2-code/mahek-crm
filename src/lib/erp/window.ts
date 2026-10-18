@@ -28,6 +28,17 @@ import { periodLabel, periodWindow, type DateWindow, type PeriodPreset } from ".
 
 export const ROW_CAP = 3000;
 
+/**
+ * A stock screen's ceiling, and why it is higher. A register builds a row per
+ * document from a table that only grows; a stock screen's lots are already
+ * summed in SQL before the cap is asked, so refusing them saves nothing, and
+ * the list sends the browser one page either way. What it cost was the screen
+ * itself: a book whose dispatches were never imported holds thousands of lots
+ * "in stock", and Stock on hand answered "that period is too long to show" on
+ * the one question it exists to answer. It is still a ceiling, not a promise.
+ */
+export const STOCK_ROW_CAP = 25000;
+
 /** What a register's `load` is told to read. */
 export type LoadScope = {
   /** The period as it travels in the URL, resolved to the screen's default when empty. */
@@ -72,8 +83,8 @@ export function windowWhere(day: SQL, id: SQL, s: LoadScope): SQL {
 }
 
 /** Whether `n` rows is more than one load may build. Ids are what somebody asked for, so they are never refused. */
-export function tooWide(n: number, s: LoadScope): { n: number; cap: number } | null {
-  return !s.ids?.length && n > ROW_CAP ? { n, cap: ROW_CAP } : null;
+export function tooWide(n: number, s: LoadScope, cap: number = ROW_CAP): { n: number; cap: number } | null {
+  return !s.ids?.length && n > cap ? { n, cap } : null;
 }
 
 export function windowInfo(win: ScreenWindow, s: LoadScope, wide: { n: number; cap: number } | null) {
