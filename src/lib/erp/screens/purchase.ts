@@ -1926,7 +1926,7 @@ const rmStock: ScreenModule = {
           (inWindow(r.lots.reduce((d, l) => (l.latestDate > d ? l.latestDate : d), ""), r.id, sc) ||
             r.lots.some((l) => sc.ids?.includes(lotRowId(l)) || sc.open === lotRowId(l))),
     );
-    const wide = tooWide(shown.length, sc);
+    const wide = tooWide(shown.length, sc, STOCK_ROW_CAP);
     const rowsIn = wide ? [] : shown;
     const all: Col[] = [
       { k: "item", l: "Item", t: "b" },
