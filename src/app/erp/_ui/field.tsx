@@ -53,7 +53,7 @@ export function Field({
   /* A control with several buttons inside cannot sit in a <label>: every
      button would take the whole label as its name, and a click on the label
      text would press the first one. Those fields are a named group instead. */
-  const grouped = f.t === "multi" || f.t === "photo" || f.t === "video" || f.t === "suggest" || f.t === "pin";
+  const grouped = f.t === "multi" || f.t === "pick" || f.t === "photo" || f.t === "video" || f.t === "suggest" || f.t === "pin";
   const Wrap = grouped ? "div" : "label";
   return (
     <Wrap className={cx("block min-w-0", f.wide && "col-span-full")} {...(grouped ? { role: "group", "aria-label": f.l } : {})}>
@@ -167,6 +167,30 @@ function Control({
           </option>
         ))}
       </select>
+    );
+  }
+  if (f.t === "pick") {
+    return (
+      <span className={cx("flex min-h-8.5 flex-wrap gap-1.5", error && "rounded-control outline outline-1 outline-danger")}>
+        {opts.map((o) => {
+          const on = value === o;
+          return (
+            <button
+              type="button"
+              key={o}
+              aria-pressed={on}
+              disabled={f.readOnly}
+              onClick={() => onChange(on ? "" : o)}
+              className={cx(
+                "h-8.5 cursor-pointer rounded-control border px-3 text-meta",
+                on ? "border-brand bg-brand-soft font-semibold text-brand-hover" : "border-line bg-surface text-body hover:bg-canvas",
+              )}
+            >
+              {o}
+            </button>
+          );
+        })}
+      </span>
     );
   }
   if (f.t === "multi") {

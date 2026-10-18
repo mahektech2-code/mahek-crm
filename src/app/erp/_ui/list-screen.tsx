@@ -9,7 +9,7 @@ import { cellText, inr, nf } from "@/lib/erp/ui";
 import { colOf as colIn, listCsv, listQueryParams, LIST_QUERY_KEYS, pageOf, subMatches, type ListPage, type ListQuery } from "@/lib/erp/list-query";
 import { Icon as ShellIcon } from "@/components/shell/icons";
 import { Button, Card, cx, EmptyState, SortableTh, Td, Th, Tr } from "@/components/ui/primitives";
-import { SelectionBar, Tabs } from "@/components/ui/overlays";
+import { RowMenu, SelectionBar, Tabs } from "@/components/ui/overlays";
 import { Pager } from "@/components/ui/pager";
 import { PeriodPicker } from "./period-picker";
 import { FlagBadge, flagsBesideStatus, rowTone, StatusBadge } from "./badge";
@@ -245,7 +245,10 @@ export function ListScreen({
   const lineCols = gk ? cols.filter((c) => !headCols.includes(c) && !gk.includes(c.k)) : cols;
   /* The longest badge each status and flags column will draw, over every row rather than this page, so widths hold still from page to page. */
   const badgeChars = lp.badgeChars;
-  const fit = fitColumns({ cols: lineCols, avail, check: bulkOn, chosen: chosenCols, badgeChars });
+  /* A row's ⋯ menu takes a narrow column of its own at the end. */
+  const menuIds = spec.rowMenu ?? [];
+  const menuOn = menuIds.length > 0;
+  const fit = fitColumns({ cols: lineCols, avail: menuOn ? Math.max(0, avail - MENU_COL) : avail, check: bulkOn, chosen: chosenCols, badgeChars });
   const shownCols = fit.shown;
 
   const exportCsv = async () => {
@@ -540,6 +543,7 @@ export function ListScreen({
                   {shownCols.map((c) => (
                     <col key={c.k} style={{ width: fit.widths[c.k] }} />
                   ))}
+                  {menuOn ? <col style={{ width: MENU_COL }} /> : null}
                 </colgroup>
                 <thead>
                   <tr>
@@ -573,6 +577,11 @@ export function ListScreen({
                         </SortableTh>
                       );
                     })}
+                    {menuOn ? (
+                      <Th>
+                        <span className="sr-only">Actions</span>
+                      </Th>
+                    ) : null}
                   </tr>
                 </thead>
                 <tbody>
@@ -589,7 +598,7 @@ export function ListScreen({
                           const allSel = grp.ids.every((id) => sel[id]);
                           out.push(
                             <tr key={`g:${g}`} className="border-b border-divider bg-canvas">
-                              <td colSpan={shownCols.length + (bulkOn ? 1 : 0)} className="px-3 py-2">
+                              <td colSpan={shownCols.length + (bulkOn ? 1 : 0) + (menuOn ? 1 : 0)} className="px-3 py-2">
                                 <span className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
                                   <span className="text-2xs font-medium tracking-[0.04em] text-muted uppercase">{gk.map((k) => colOf(k).l).join(" · ")}</span>
                                   <span className="text-meta font-semibold text-ink">{g || "—"}</span>
@@ -648,6 +657,7 @@ export function ListScreen({
                               }
                             />
                           ))}
+                          {menuOn ? <MenuCell row={r} ids={menuIds} screen={spec.screen} /> : null}
                         </Tr>,
                       );
                       /* Its folded rows, under it: indented, and blank where they only repeat their total. */
@@ -667,6 +677,7 @@ export function ListScreen({
                                   <Cell key={c.k} c={c} r={x} cols={cols} small />
                                 ),
                               )}
+                              {menuOn ? <MenuCell row={x} ids={menuIds} screen={spec.screen} /> : null}
                             </Tr>,
                           );
                         }
@@ -713,6 +724,27 @@ export function ListScreen({
 
       {open ? <RecordDialog key={open.id} screen={spec} kind={label} row={open} onClose={closeRec} /> : null}
     </Page>
+  );
+}
+
+/** The width of a row's ⋯ menu column. */
+const MENU_COL = 52;
+
+/**
+ * A row's ⋯ menu: the record's own actions the screen names in `rowMenu`, in
+ * that order, run exactly as the record dialog runs them. A click inside it
+ * never opens the record.
+ */
+function MenuCell({ row, ids, screen }: { row: ListRow; ids: string[]; screen: string }) {
+  const ui = useErpUi();
+  const items = ids
+    .map((id) => row.actions?.find((a) => a.id === id))
+    .filter((a): a is NonNullable<typeof a> => !!a)
+    .map((a) => ({ label: a.l, disabled: !!a.why, title: a.why || undefined, onSelect: () => ui.act(screen, a, row.id) }));
+  return (
+    <Td className="text-right" onClick={(e) => e.stopPropagation()}>
+      {items.length ? <RowMenu items={items} /> : null}
+    </Td>
   );
 }
 

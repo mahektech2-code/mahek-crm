@@ -2,6 +2,8 @@ import "server-only";
 import { EVIDENCE_FIELDS } from "../engines/sfg-tests";
 import { getConfig } from "@/lib/config/store";
 import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
+import { adjustStockRow, stockRowActions } from "../stock-adjust";
+import { erpStockInquiryHref } from "../stock-links";
 import { inWindow, STOCK_ROW_CAP, STOCK_WINDOW, tooWide, unscoped, windowWhere } from "../window";
 import { db } from "@/db";
 import {
@@ -1961,10 +1963,12 @@ const rmStock: ScreenModule = {
         ? `About ${nf(l.stock)} ${l.unit} of this lot at ${l.godown} · received ${fd(l.firstDate)}. Filling and packing do not say which lot they used, so lots are drawn down oldest first: the item's total is exact, this lot's share is an estimate.`
         : `${nf(l.stock)} ${l.unit} at ${l.godown} · last entry ${fd(l.latestDate)}`,
       ...(sub ? { subLine: `Lot ${l.lotNo} · received ${fd(l.firstDate)}` } : {}),
+      actions: stockRowActions(ctx, { stage: "rm", itemId: l.rawMaterialId, item: l.item, lot: l.lotNo, godownId: l.godownId, godown: l.godown, stock: l.stock, unit: l.unit }),
     });
     return {
       spec: {
         screen: "rmStock",
+        rowMenu: ["inquiry", "adjust"],
         cols,
         hidden,
         groups: ["godown"],
@@ -1995,9 +1999,14 @@ const rmStock: ScreenModule = {
           header: `${nf(r.stock)} ${l.unit} at ${l.godown}, across ${n} ${n === 1 ? "lot" : "lots"}${r.stock < 0 ? " — more has been used than was received" : ""}`,
           fields: r.lots.map((x) => ({ l: `Lot ${x.lotNo}`, v: `${nf(x.stock)} ${x.unit} · received ${fd(x.firstDate)}` })),
           sub: r.lots.map((x) => lotRow(x, true)),
+          /* An item's total is many lots: it can be looked into; each lot under it is adjusted on its own row. */
+          actions: [{ id: "inquiry", l: "Stock inquiry", href: erpStockInquiryHref({ stage: "rm", item: l.rawMaterialId, godown: l.godownId }) }],
         };
       }),
     };
+  },
+  actions: {
+    adjust: (ctx, id, values) => adjustStockRow(ctx, "rm", id, values ?? {}),
   },
 };
 

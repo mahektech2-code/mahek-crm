@@ -57,6 +57,8 @@ const files = [
   // flag is recounted by somebody else; stock moves only through an approved
   // adjustment; missing records and the daily cycle count.
   "src/lib/erp/erp-stock-check.test.ts",
+  // Stock adjusted by hand from its row, and the stock inquiry.
+  "src/lib/erp/erp-stock-adjust.test.ts",
   // Empty drums, scrap sale and vendor-returnable drums: the PRD's acceptance
   // tests — FIFO allocation, strict separation, receivables matched from
   // Petty Cash/Bank, corrections approved by somebody else.

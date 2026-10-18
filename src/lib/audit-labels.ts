@@ -339,6 +339,7 @@ const DESCRIBE: Record<string, Describer> = {
   "website.access.denied": () => ["was refused a website action"],
   /* ---- stock checks */
   "erp.floorCheck.record": () => ["recorded a stock check"],
+  "erp.stock.adjust": () => ["adjusted stock by hand"],
   "erp.floorCheck.review": () => ["reviewed a stock check that did not match the book"],
   "erp.floorCheck.escalate": () => ["raised a stock check mismatch into a formal count"],
   /* ---- empty drums, scrap sale and scrap receipts */

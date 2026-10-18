@@ -50,7 +50,9 @@ export type FieldType =
   /** A time of day, "HH:MM". */
   | "time"
   /** A map pin, "lat, lng": typed, picked on a map, or taken from here. */
-  | "pin";
+  | "pin"
+  /** One of a few options, drawn as buttons to tap rather than a dropdown. */
+  | "pick";
 
 /** A condition on another field of the same form: shown only while it holds. */
 export type When =
@@ -286,6 +288,8 @@ export type ListRow = {
 export type ListSpec = {
   screen: string;
   cols: ColSpec[];
+  /** Action ids drawn in a ⋯ menu at the end of every row (each row's own `actions` of those ids). */
+  rowMenu?: string[];
   /**
    * Draw the rows as image cards instead of table rows: the same rows,
    * search, chips and paging, and a card opens the same record. `img` names

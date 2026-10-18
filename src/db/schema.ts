@@ -13102,6 +13102,47 @@ export const erpStockAdjustments = pgTable(
   ],
 );
 
+/* ---- Stock adjusted by hand (0276) ---------------------------------------
+ * Add or Remove on any row of Stock on hand, with a reason; it takes effect on
+ * save. Adding posts an inflow entry (`source_type = 'adjustment'`, source_id
+ * this row) in the stage's ledger; removing writes the quantity off to Item
+ * Lost Record as a transfer. `posted` names what it wrote. See AGENTS.md,
+ * "STOCK IS ADJUSTED FROM ITS ROW".
+ * ------------------------------------------------------------------------- */
+export const erpManualAdjustments = pgTable(
+  "erp_manual_adjustments",
+  {
+    id: text("id").primaryKey(),
+    /** rm | sfg | fg | pack. */
+    stage: text("stage").notNull(),
+    /** The raw material, formulation, finished good or SKU. */
+    itemId: text("item_id").notNull(),
+    itemName: text("item_name").notNull(),
+    lot: text("lot").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    /** Signed: above zero added, below zero removed. */
+    quantity: erpQty("quantity").notNull(),
+    unit: text("unit"),
+    /** The lot's stock just before, read under its lock. */
+    stockBefore: erpQty("stock_before").notNull(),
+    reasonCode: text("reason_code").notNull(),
+    /** What the person wrote; required for "other". */
+    note: text("note"),
+    posted: jsonb("posted").$type<{ transfer?: string; entry?: string }>(),
+    createdById: text("created_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("erp_manual_adjustments_item_idx").on(t.stage, t.itemId, t.createdAt),
+    check("erp_manual_adjustments_stage_check", sql`${t.stage} in ('rm', 'sfg', 'fg', 'pack')`),
+    check("erp_manual_adjustments_qty_check", sql`${t.quantity} <> 0`),
+    check("erp_manual_adjustments_reason_check", sql`${t.reasonCode} in ('damaged', 'leakage', 'lost', 'count', 'missed', 'other')`),
+    check("erp_manual_adjustments_other_check", sql`${t.reasonCode} <> 'other' or length(trim(coalesce(${t.note}, ''))) >= 3`),
+  ],
+);
+
 /* ---- Empty drums, scrap sale and vendor-returnable drums (0257) ----------
  * A drum is registered when it becomes EMPTY: scanned off its GRN/lot label
  * and weighed. The record carries the GRN, supplier, material and lot from
