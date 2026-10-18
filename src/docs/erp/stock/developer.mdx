@@ -6,6 +6,7 @@
 |---|---|---|
 | Stock reading | `src/lib/erp/stock.ts` | `rmLots`, `packingUse`, `lotLandings`, `sfgLots`, `fgLots`, `packLots`, per-lot `…LotStock`, `rmLevelAvailable`, `fgLevelAvailable`, `lockLot` |
 | Stock tabs | `src/lib/erp/screens/purchase.ts`, `src/lib/erp/screens/production.ts` | `rmStock`/`rmLog`, `sfgStock`, `fgStock` (+ `labelLoose`), `packStock`, `logScreen(…)` |
+| Raw material by item | `src/lib/erp/engines/stock-fold.ts`, `src/lib/erp/list-query.ts` | `foldRmLots` (chemicals by lot, every other type one total per item and godown), `ListRow.sub`, `ListSpec.fold`, `unfold` and `?parts=1` for By lot |
 | Registry | `src/lib/erp/registry.ts` | Screen `stock`: tabs `rmStock`, `sfgStock`, `fgStock`, `packStock`, each with an `alt` log toggle |
 | Box register | `src/lib/erp/units.ts` | `unitEvent`, `ensureBatchBoxes`, `cancelBatchBoxes`, `mintLooseUnits`, `looseHeadroom`, `trimLooseUnits`, `moveUnitsForTransfer` |
 | Box rules (pure) | `src/lib/erp/engines/trace.ts` | `unitId`, `boxLots`, `UNIT_STATUS`, `UNIT_STATUS_LABEL`, `manualMove` |

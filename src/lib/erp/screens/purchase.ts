@@ -3,6 +3,7 @@ import { EVIDENCE_FIELDS } from "../engines/sfg-tests";
 import { getConfig } from "@/lib/config/store";
 import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { adjustStockRow, stockRowActions } from "../stock-adjust";
+import { erpStockInquiryHref } from "../stock-links";
 import { inWindow, STOCK_ROW_CAP, STOCK_WINDOW, tooWide, unscoped, windowWhere } from "../window";
 import { db } from "@/db";
 import {
@@ -52,6 +53,7 @@ import {
   transportModeLabel,
 } from "../engines/purchase";
 import { lotLandings, rmLots, type LotLanding } from "../stock";
+import { foldRmLots, lotRowId } from "../engines/stock-fold";
 import { bindErpFiles } from "../attachments";
 import { type Col, godownField, godownIdByName, godownOptions, has, today, type Tx } from "./common";
 import { RECEIVABLE_PO, normalisePoNo, poLabel, poName, receivableQuantity } from "../engines/purchase-flow";
@@ -1914,11 +1916,23 @@ const rmStock: ScreenModule = {
   window: STOCK_WINDOW,
   async load(ctx, s) {
     const sc = s ?? unscoped();
-    const inStock = (await rmLots()).filter((l) => l.stock > 0 && inWindow(l.latestDate, `${l.lotNo}|${l.godownId}`, sc));
-    const wide = tooWide(inStock.length, sc, STOCK_ROW_CAP);
-    const lots = wide ? [] : inStock;
+    /* Every lot that holds something — a can's lot drawn below zero included,
+       because its item's total is read across all of them (`stock-fold.ts`). */
+    const folded = foldRmLots(await rmLots());
+    /* A chemical lot by its own date; an item's total by its newest lot's, and
+       kept whole when its total or any of its lots is the one named. */
+    const shown = folded.filter((r) =>
+      r.kind === "lot"
+        ? r.lot.stock > 0 && inWindow(r.lot.latestDate, r.id, sc)
+        : r.stock !== 0 &&
+          (inWindow(r.lots.reduce((d, l) => (l.latestDate > d ? l.latestDate : d), ""), r.id, sc) ||
+            r.lots.some((l) => sc.ids?.includes(lotRowId(l)) || sc.open === lotRowId(l))),
+    );
+    const wide = tooWide(shown.length, sc, STOCK_ROW_CAP);
+    const rowsIn = wide ? [] : shown;
     const all: Col[] = [
       { k: "item", l: "Item", t: "b" },
+      { k: "type", l: "Type", t: "t" },
       { k: "stock", l: "Current stock", t: "n" },
       { k: "unit", l: "Unit", t: "t" },
       { k: "lot", l: "Lot no", t: "mono" },
@@ -1927,6 +1941,30 @@ const rmStock: ScreenModule = {
       { k: "value", l: "Value", t: "m", pw: "viewCost" },
     ];
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
+    type Lot = Awaited<ReturnType<typeof rmLots>>[number];
+    const lotRow = (l: Lot, sub: boolean) => ({
+      id: lotRowId(l),
+      v: withoutHidden(
+        {
+          item: l.item,
+          type: l.materialType,
+          stock: l.stock,
+          unit: l.unit,
+          lot: l.lotNo,
+          godown: l.godown,
+          rate: l.ratePaise,
+          value: l.ratePaise == null ? null : Math.round(l.ratePaise * l.stock),
+        },
+        hiddenKeys,
+      ),
+      flags: [],
+      title: `${l.item} · ${l.lotNo}`,
+      header: sub
+        ? `About ${nf(l.stock)} ${l.unit} of this lot at ${l.godown} · received ${fd(l.firstDate)}. Filling and packing do not say which lot they used, so lots are drawn down oldest first: the item's total is exact, this lot's share is an estimate.`
+        : `${nf(l.stock)} ${l.unit} at ${l.godown} · last entry ${fd(l.latestDate)}`,
+      ...(sub ? { subLine: `Lot ${l.lotNo} · received ${fd(l.firstDate)}` } : {}),
+      actions: stockRowActions(ctx, { stage: "rm", itemId: l.rawMaterialId, item: l.item, lot: l.lotNo, godownId: l.godownId, godown: l.godown, stock: l.stock, unit: l.unit }),
+    });
     return {
       spec: {
         screen: "rmStock",
@@ -1935,29 +1973,36 @@ const rmStock: ScreenModule = {
         hidden,
         groups: ["godown"],
         godownKey: "godown",
+        chips: "type",
         readOnly: true,
         noDataLine: "Nothing in stock yet. Stock appears as purchases are given a rate.",
+        fold: {
+          l: "Cans & boxes",
+          whole: "Item total",
+          parts: "By lot",
+          note: "Chemicals are shown lot by lot. Cans, boxes and other items are one total per godown — open one to see its lots.",
+        },
       },
       tooWide: wide,
-      rows: lots.map((l) => ({
-        id: `${l.lotNo}|${l.godownId}`,
-        v: withoutHidden(
-          {
-            item: l.item,
-            stock: l.stock,
-            unit: l.unit,
-            lot: l.lotNo,
-            godown: l.godown,
-            rate: l.ratePaise,
-            value: l.ratePaise == null ? null : Math.round(l.ratePaise * l.stock),
-          },
-          hiddenKeys,
-        ),
-        flags: [],
-        title: `${l.item} · ${l.lotNo}`,
-        header: `${nf(l.stock)} ${l.unit} at ${l.godown} · last entry ${fd(l.latestDate)}`,
-        actions: stockRowActions(ctx, { stage: "rm", itemId: l.rawMaterialId, item: l.item, lot: l.lotNo, godownId: l.godownId, godown: l.godown, stock: l.stock, unit: l.unit }),
-      })),
+      rows: rowsIn.map((r) => {
+        if (r.kind === "lot") return lotRow(r.lot, false);
+        const l = r.lots[r.lots.length - 1];
+        const n = r.lots.length;
+        return {
+          id: r.id,
+          v: withoutHidden(
+            { item: l.item, type: l.materialType, stock: r.stock, unit: l.unit, lot: `${n} ${n === 1 ? "lot" : "lots"}`, godown: l.godown, rate: r.ratePaise, value: r.valuePaise },
+            hiddenKeys,
+          ),
+          flags: [],
+          title: l.item,
+          header: `${nf(r.stock)} ${l.unit} at ${l.godown}, across ${n} ${n === 1 ? "lot" : "lots"}${r.stock < 0 ? " — more has been used than was received" : ""}`,
+          fields: r.lots.map((x) => ({ l: `Lot ${x.lotNo}`, v: `${nf(x.stock)} ${x.unit} · received ${fd(x.firstDate)}` })),
+          sub: r.lots.map((x) => lotRow(x, true)),
+          /* An item's total is many lots: it can be looked into; each lot under it is adjusted on its own row. */
+          actions: [{ id: "inquiry", l: "Stock inquiry", href: erpStockInquiryHref({ stage: "rm", item: l.rawMaterialId, godown: l.godownId }) }],
+        };
+      }),
     };
   },
   actions: {

@@ -114,6 +114,8 @@ export type RmLot = {
   /** The latest inflow entry for this lot at this godown (the source's slice). */
   latestEntryId: string;
   latestDate: string;
+  /** The lot's first inflow at this godown — the order cans and boxes are drawn down in. */
+  firstDate: string;
   /** Rate per litre (or per piece) of the lot, from its purchase, in paise. */
   ratePaise: number | null;
 };
@@ -235,6 +237,7 @@ export async function rmLots(ex: Ex = db, pick: LotPick = {}): Promise<RmLot[]> 
     stock: l.stock,
     latestEntryId: l.latestEntryId,
     latestDate: l.latestDate,
+    firstDate: l.firstDate,
     ratePaise: l.ratePaise,
   }));
 }

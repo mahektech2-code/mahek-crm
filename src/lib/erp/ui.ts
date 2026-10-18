@@ -274,6 +274,15 @@ export type ListRow = {
   /** Free-form panels a screen draws in the record (allocation, evidence…). */
   /** `covers`: column keys the panel already draws, left out of the record's field list. */
   panel?: { kind: string; data: unknown; covers?: string[] };
+  /**
+   * The rows FOLDED under this one (`ListSpec.fold`): a can's lots under its
+   * item total. Each is a whole row, with every column, so the list's
+   * "By lot" reading can draw it on its own and a click opens its own record.
+   * Folded rows are searched with their total and never sorted apart from it.
+   */
+  sub?: ListRow[];
+  /** What a folded row says in the first column, under its total ("Received 02 Sep"). */
+  subLine?: string;
 };
 
 export type ListSpec = {
@@ -315,6 +324,13 @@ export type ListSpec = {
   tools?: ToolSpec[];
   readOnly?: boolean;
   noDataLine?: string;
+  /**
+   * Some rows carry their parts folded under them (`ListRow.sub`), and the
+   * toolbar offers both readings: `whole` (the totals, each opening onto its
+   * parts) and `parts` (every part a row of its own, as `?parts=1`). `l` names
+   * what is folded; `note` is said under the toolbar while totals are shown.
+   */
+  fold?: { l: string; whole: string; parts: string; note?: string };
 };
 
 /* ------------------------------------------------------------------ tones */

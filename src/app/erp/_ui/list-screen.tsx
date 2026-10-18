@@ -6,7 +6,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ColSpec, ListRow, ListSpec, Tone } from "@/lib/erp/ui";
 import { cellText, inr, nf } from "@/lib/erp/ui";
-import { colOf as colIn, listCsv, listQueryParams, LIST_QUERY_KEYS, pageOf, type ListPage, type ListQuery } from "@/lib/erp/list-query";
+import { colOf as colIn, listCsv, listQueryParams, LIST_QUERY_KEYS, pageOf, subMatches, type ListPage, type ListQuery } from "@/lib/erp/list-query";
 import { Icon as ShellIcon } from "@/components/shell/icons";
 import { Button, Card, cx, EmptyState, SortableTh, Td, Th, Tr } from "@/components/ui/primitives";
 import { RowMenu, SelectionBar, Tabs } from "@/components/ui/overlays";
@@ -148,7 +148,7 @@ export function ListScreen({
   const router = useRouter();
   const path = usePathname();
   const params = useSearchParams();
-  const [local, setLocal] = useState<ListQuery>({ q: "", chip: "", gf: "", grp: true, sort: null, page: 1, size: 25, ids: filter?.ids ?? null, pd: "" });
+  const [local, setLocal] = useState<ListQuery>({ q: "", chip: "", gf: "", grp: true, sort: null, page: 1, size: 25, ids: filter?.ids ?? null, pd: "", parts: false });
   /* While the server cuts the next page the current one stays, dimmed — never a blank table between two pages. */
   const [pending, startTransition] = useTransition();
   /* The search box answers as it is typed; the server is asked once the typing pauses. */
@@ -180,6 +180,8 @@ export function ListScreen({
   const setPage = (n: number) => setQuery({ page: n });
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [openId, setOpenId] = useState<string | null>(initialOpen ?? null);
+  /* Totals opened onto their folded rows, by hand. Unset follows the search: a lot number typed opens the total it is under. */
+  const [unfolded, setUnfolded] = useState<Record<string, boolean>>({});
   /* Opened once per arrival, then the query is cleared so a reload does not open it again. */
   const newOpened = useRef(false);
   useEffect(() => {
@@ -283,7 +285,12 @@ export function ListScreen({
     });
   };
 
-  const open = pageRows.find((r) => r.id === openId) ?? (openRow && openRow.id === openId ? openRow : null) ?? (server ? null : rows.find((r) => r.id === openId) ?? null);
+  /* A folded row opens its own record, so it is looked for under its total too. */
+  const withSubs = (rs: ListRow[]) => rs.flatMap((r) => [r, ...(r.sub ?? [])]);
+  const open =
+    withSubs(pageRows).find((r) => r.id === openId) ??
+    (openRow && openRow.id === openId ? openRow : null) ??
+    (server ? null : withSubs(rows).find((r) => r.id === openId) ?? null);
   const closeRec = () => {
     setOpenId(null);
     if (params.get("open")) {
@@ -409,6 +416,27 @@ export function ListScreen({
               onPick={(v) => setQuery({ gf: v, page: 1 })}
             />
           ) : null}
+          {spec.fold ? (
+            <span role="group" aria-label={spec.fold.l} className="inline-flex h-8 items-center overflow-hidden rounded-control border border-line text-meta">
+              <span className="px-2.5 text-muted">{spec.fold.l}</span>
+              {[
+                { v: false, l: spec.fold.whole },
+                { v: true, l: spec.fold.parts },
+              ].map((o) => (
+                <button
+                  key={o.l}
+                  onClick={() => setQuery({ parts: o.v, page: 1 })}
+                  aria-pressed={query.parts === o.v}
+                  className={cx(
+                    "h-full cursor-pointer border-l border-line px-2.5 whitespace-nowrap",
+                    query.parts === o.v ? "bg-brand-soft font-medium text-brand-hover" : "bg-surface text-body hover:bg-canvas",
+                  )}
+                >
+                  {o.l}
+                </button>
+              ))}
+            </span>
+          ) : null}
           {spec.groups ? (
             <button
               onClick={() => setQuery({ grp: !query.grp, page: 1 })}
@@ -439,6 +467,8 @@ export function ListScreen({
           ) : null}
         </div>
         ) : null}
+
+        {spec.fold?.note && !query.parts && lp.all > 0 ? <div className="border-b border-divider px-4 py-2 text-meta text-muted">{spec.fold.note}</div> : null}
 
         {spec.scopedLine ? <div className="border-b border-divider bg-brand-soft/40 px-4 py-2 text-meta text-brand-hover">{spec.scopedLine}</div> : null}
 
@@ -610,11 +640,48 @@ export function ListScreen({
                             </Td>
                           ) : null}
                           {shownCols.map((c, i) => (
-                            <Cell key={c.k} c={c} r={r} cols={cols} edge={!bulkOn && i === 0 && tone ? EDGE[tone] : undefined} />
+                            <Cell
+                              key={c.k}
+                              c={c}
+                              r={r}
+                              cols={cols}
+                              edge={!bulkOn && i === 0 && tone ? EDGE[tone] : undefined}
+                              lead={
+                                i === 0 && r.sub?.length ? (
+                                  <FoldToggle
+                                    open={unfolded[r.id] ?? subMatches(cols, r, q, FLAG)}
+                                    n={r.sub.length}
+                                    onToggle={() => setUnfolded((u) => ({ ...u, [r.id]: !(u[r.id] ?? subMatches(cols, r, q, FLAG)) }))}
+                                  />
+                                ) : undefined
+                              }
+                            />
                           ))}
                           {menuOn ? <MenuCell row={r} ids={menuIds} screen={spec.screen} /> : null}
                         </Tr>,
                       );
+                      /* Its folded rows, under it: indented, and blank where they only repeat their total. */
+                      if (r.sub?.length && (unfolded[r.id] ?? subMatches(cols, r, q, FLAG))) {
+                        for (const x of r.sub) {
+                          out.push(
+                            <Tr key={`${r.id}>${x.id}`} onClick={() => setOpenId(x.id)} className="cursor-pointer bg-canvas/60 hover:bg-canvas">
+                              {bulkOn ? <Td /> : null}
+                              {shownCols.map((c, i) =>
+                                i === 0 ? (
+                                  <Td key={c.k} className="truncate pl-10 text-meta text-body" title={x.subLine ?? cellText(c, x.v[c.k])}>
+                                    {x.subLine ?? cellText(c, x.v[c.k])}
+                                  </Td>
+                                ) : c.t !== "n" && c.t !== "m" && x.v[c.k] === r.v[c.k] ? (
+                                  <Td key={c.k} />
+                                ) : (
+                                  <Cell key={c.k} c={c} r={x} cols={cols} small />
+                                ),
+                              )}
+                              {menuOn ? <MenuCell row={x} ids={menuIds} screen={spec.screen} /> : null}
+                            </Tr>,
+                          );
+                        }
+                      }
                     });
                     return out;
                   })()}
@@ -706,7 +773,25 @@ function splitFirstSentence(line: string): [string, string | undefined] {
   return m ? [m[1], m[2]] : [line.trim(), undefined];
 }
 
-function Cell({ c, r, edge, cols }: { c: ColSpec; r: ListRow; edge?: string; cols: ColSpec[] }) {
+/** The caret on a total that opens onto the rows folded under it. Its own button, so it does not open the total's record. */
+function FoldToggle({ open, n, onToggle }: { open: boolean; n: number; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onToggle();
+      }}
+      aria-expanded={open}
+      aria-label={open ? `Hide the ${n} ${n === 1 ? "row" : "rows"} under this` : `Show the ${n} ${n === 1 ? "row" : "rows"} under this`}
+      className="mr-1.5 inline-flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] align-[-4px] text-muted hover:bg-brand-soft hover:text-brand-hover"
+    >
+      <Icon n={open ? "down" : "chev"} s={14} />
+    </button>
+  );
+}
+
+function Cell({ c, r, edge, cols, lead, small }: { c: ColSpec; r: ListRow; edge?: string; cols: ColSpec[]; lead?: React.ReactNode; small?: boolean }) {
   /* Every cell is held to its column: the table is fixed-width, so a long
      value ends in "…" with the whole of it on hover, and badges that do not
      fit are clipped rather than pushing the row wider. */
@@ -749,8 +834,10 @@ function Cell({ c, r, edge, cols }: { c: ColSpec; r: ListRow; edge?: string; col
         c.t === "b" ? "font-medium text-ink" : empty ? "text-line-strong" : undefined,
         !empty && (c.t === "ph" || c.t === "em" || c.t === "map") && "text-brand",
         c.t === "mono" && "font-mono text-meta",
+        small && "text-meta",
       )}
     >
+      {lead}
       {txt}
     </Td>
   );
