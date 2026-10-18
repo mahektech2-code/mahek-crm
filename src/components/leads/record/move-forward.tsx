@@ -70,7 +70,7 @@ function destinationFor(
       return { href: leadHref(workspace, "samples/desk"), where: "the sample desk" };
     case "record_commitment":
     case "confirm_order":
-      return { href: `${base}?tab=commercial`, where: "the Commercial tab" };
+      return { href: `${base}?tab=commercial`, where: "the Orders & money tab" };
     case "management_approval":
       return { href: `${base}?tab=approval`, where: "the approval chain" };
   }

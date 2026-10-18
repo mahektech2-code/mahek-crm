@@ -256,14 +256,14 @@ export function IntakeForm({
   return (
     <div>
       <ScreenHeader
-        title="Capture a lead"
-        subtitle="Somebody rang, or a form came in. This is where that becomes a record instead of a note in a book — and it is the only way into the funnel that does not need a handset or a spreadsheet."
+        title="Add a lead"
+        subtitle="Someone called, or an enquiry came in. Fill this in to add them as a lead."
         actions={
           <Link
             href={leadHref(workspace, "leads/intake/bulk")}
             className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
           >
-            A whole file of them
+            Upload a file
           </Link>
         }
       />
@@ -272,14 +272,14 @@ export function IntakeForm({
         <Banner
           tone="danger"
           title="You cannot raise a lead"
-          body="Capturing one takes the lead.work capability, which every telecaller and field salesman holds. The form below is drawn so you can see what it asks; the save will be refused."
+          body="Your access does not include adding leads. You can see the form, but saving will not work. Ask an administrator if you need this."
         />
       ) : null}
 
       {/* ───────────────────────────────── step one, and nothing else with it */}
       <Card className="mb-4 p-6">
         <div className="mb-1 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-          First, and on its own
+          Step 1
         </div>
         <h2 className="text-lg font-semibold text-ink">How would we sell to them?</h2>
 
@@ -328,8 +328,7 @@ export function IntakeForm({
           >
             <div className="text-sm font-semibold text-ink">Not Decided</div>
             <div className="mt-0.5 text-[13px] text-muted">
-              It climbs the original six rungs until somebody sets one. Nothing
-              guesses on your behalf.
+              Not sure yet. You can set the type later.
             </div>
           </button>
         </div>
@@ -727,14 +726,14 @@ export function IntakeForm({
                 disabled={busy || !canWork}
                 title={
                   !canWork
-                    ? "Raising a lead takes the lead.work capability."
+                    ? "Your access does not include adding leads."
                     : busy
                       ? "Saving…"
                       : undefined
                 }
                 onClick={() => submit(false)}
               >
-                {busy ? "Saving…" : "Raise the lead"}
+                {busy ? "Saving…" : "Add the lead"}
               </Button>
             </div>
           </div>

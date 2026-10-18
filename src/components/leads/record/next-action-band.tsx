@@ -143,11 +143,10 @@ export function NextActionBand({
     if (!active) return null;
     return (
       <div className={cx("mb-4 rounded-[6px] border-l-[3px] px-4 py-3", SKIN.missing)}>
-        <div className="text-sm font-semibold text-ink">Nothing is owed by anybody</div>
+        <div className="text-sm font-semibold text-ink">No next step set</div>
         <p className="mt-0.5 mb-0 text-[13px] text-pretty text-body">
-          An active lead may not sit with no next action against it. Name an action, a day and a
-          person — the Commercial tab&rsquo;s first-order panel and every stage move ask for all
-          three, and this lead stays on the exception list until one of them does.
+          Every open lead needs a next step: what happens, on which day, and who does it. Set one
+          when you next move this lead forward.
         </p>
       </div>
     );

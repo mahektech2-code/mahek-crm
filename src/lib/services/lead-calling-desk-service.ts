@@ -393,6 +393,8 @@ export type DeskLeadRecord = {
     text: string;
     date: string | null;
     ownerName: string | null;
+    /** Who owes it, by id, so the screen never guesses from a name. */
+    ownerId: string | null;
     outcome: string | null;
     kind: NextActionKind | null;
   } | null;
@@ -950,6 +952,7 @@ export async function deskLeadRecord(customerId: string, today: string): Promise
           text: rec.nextAction,
           date: rec.nextActionDate,
           ownerName: rec.nextActionOwnerName,
+          ownerId: rec.nextActionOwnerId,
           outcome: rec.nextActionOutcome,
           kind: nextActionKindOf(rec.nextAction),
         }

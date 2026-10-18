@@ -25,17 +25,17 @@ const crmItems = () => NAV.find((g) => g.label === "Lead Management")!.items;
 const salesItems = () => SALES_NAV.find((g) => g.label === "Lead Management")!.items;
 
 describe("what stays in the main navigation", () => {
-  it("the CRM keeps six, in the order the work happens", () => {
+  it("the CRM keeps five, in the order the work happens", () => {
     assert.deepEqual(
       crmItems().filter((i) => !i.legacy).map((i) => i.label),
-      ["All Leads", "Intake", "Calling desk", "Sales Manager", "Distributor appointments", "Lost"],
+      ["All Leads", "Add a lead", "Calling desk", "Sales Manager", "Lost"],
     );
   });
 
   it("the Sales Dashboard keeps the same, minus the two that are the CRM's own", () => {
     assert.deepEqual(
       salesItems().filter((i) => !i.legacy).map((i) => i.label),
-      ["All Leads", "Intake", "Sales Manager", "Distributor appointments"],
+      ["All Leads", "Add a lead", "Sales Manager"],
     );
     assert.ok(!salesItems().some((i) => i.label === "Calling desk" || i.label === "Lost"));
   });

@@ -1,4 +1,5 @@
 import "server-only";
+import { QUAL_NEXT } from "@/lib/qualification-next";
 import { convertedOff, notConverted } from "../lead-action-window";
 import { bandFor, type HealthBand } from "../engines/inactivity";
 import {
@@ -1836,6 +1837,14 @@ export type LeadRow = {
    * looking at this row is the one who has to dispatch the sample on it.
    */
   backOfficeAmId: string | null;
+  /** The Sales Manager seat, for the vantage. */
+  salesManagerId: string | null;
+  /** The Sales Manager has verified this Prospect. */
+  verified: boolean;
+  /** The Sales Manager's verdict on the Qualification, if any. */
+  qualificationReview: "verified" | "incomplete" | "clarification" | null;
+  /** Every Qualification answer is in and the review has been asked for. */
+  qualificationReady: boolean;
   /**
    * §3.4 — a FORECAST somebody recorded, and never a sale. The two expected-
    * order columns are what a customer SAID on a phone call, which is the whole
@@ -1976,6 +1985,14 @@ const LEAD_ROW_SELECT = sql`
             * lib/lead-labels.ts, and a pg enum arrives as a string anyway. */
            c.lead_sales_type::text as "salesType",
            c.back_office_am_id as "backOfficeAmId",
+           c.sales_manager_id as "salesManagerId",
+           /* Where the Qualification hand-off stands, so the list names the
+            * same job the record does. Ready-for-review is the flow's own
+            * stored next action, written by settleQualificationState. NO
+            * BACKTICKS in this comment: it sits inside a sql template literal. */
+           (c.lead_verified_at is not null) as "verified",
+           c.lead_qualification_review::text as "qualificationReview",
+           (c.lead_next_action = ${QUAL_NEXT.review}) as "qualificationReady",
            /* A FORECAST, not a sale - and EITHER HALF NO LONGER COUNTS,
             * which is a reversal. It used to read a date with no size or a
             * size with no date as somebody having asked the question and

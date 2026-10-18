@@ -95,7 +95,7 @@ export function NegotiationScreen({
 
       <ScreenHeader
         title="Negotiation desk"
-        subtitle="Every lead standing on the negotiation rung, oldest first, with what is holding it up. §G refuses an order against a lead below this rung — so this is the queue that refusal is protecting, and a conversation nobody is having is one nobody can sell through."
+        subtitle="Leads in negotiation, oldest first, with what is holding each one up. An order at any stage turns the lead into a customer."
         actions={
           <Link
             href={leadHref(workspace, "leads")}
@@ -106,11 +106,6 @@ export function NegotiationScreen({
         }
       />
 
-      <Banner
-        tone="info"
-        title="No order may be taken below this rung"
-        body="§G says the requirement visit carries no price, service or quality promise, and an order is the most commercial commitment there is. handleOrder refuses one against a lead below negotiation and names the way forward. Nothing is lost by that refusal — the order was never agreed with anybody who could agree it — but every lead it stops is on this list."
-      />
 
       {stalled ? (
         <Banner

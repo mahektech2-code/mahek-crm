@@ -105,16 +105,13 @@ export function SharedBarFunnel({
           <p className="mt-0.5 max-w-[620px] text-xs text-muted">
             {compact ? (
               <>
-                One sale up one ladder, split by who holds the invoice. Every segment opens the
-                list narrowed to exactly the leads it counts.
+                How many leads are at each stage. Click a bar to see them.
               </>
             ) : (
               <>
-                One sale up one ladder, split by who holds the invoice —{" "}
-                {sharedRungOrder().length} rungs, with{" "}
-                {OPERATIONAL_STAGES.map((s) => stageLabel(s)).join(" and ").toLowerCase()} kept out
-                and counted below. Every segment opens the list narrowed to exactly the leads it
-                counts.
+                How many leads are at each of the {sharedRungOrder().length} stages.{" "}
+                {OPERATIONAL_STAGES.map((s) => stageLabel(s)).join(" and ")} are counted
+                separately below. Click a bar to see them.
               </>
             )}
           </p>
@@ -198,7 +195,7 @@ function Legend() {
       ))}
       <span className="flex items-center gap-1.5">
         <span className="inline-block h-2 w-2 rounded-[2px] border border-dashed border-line" />
-        Not a rung on that ladder
+        Not a stage for that type
       </span>
     </div>
   );

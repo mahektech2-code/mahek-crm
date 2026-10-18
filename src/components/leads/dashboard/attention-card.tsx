@@ -79,8 +79,7 @@ export function AttentionCard({
            over it reads as a screen that failed to load, and on this one the
            empty answer is the good news. */
         <div className="px-5 py-8 text-center text-[13px] text-muted">
-          Nothing owed today and nothing overdue. Leads with nothing promised at all are their
-          own tab — §24 calls that the state worth watching.
+          Nothing due today and nothing overdue.
         </div>
       ) : (
         <ul className="m-0 list-none p-0">

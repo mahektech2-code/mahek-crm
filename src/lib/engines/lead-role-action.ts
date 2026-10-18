@@ -42,22 +42,12 @@
  * WHERE THIS FILE PARTS COMPANY WITH §7, said here rather than left to be
  * discovered by whoever next reads the table beside the code.
  *
- * ONE CELL IS DELIBERATELY NOT THE TABLE'S. The back office reads "Validate
- * GST number" at Prospect, where §7's row has a dash and §7's own note says
- * the back office is silent from Suspect through Negotiation. The
- * specification disagrees with ITSELF about that cell, and the other two
- * readings win: §2 hands the back office "Sample dispatch, GST validation,
- * order processing…" in as many words, and §11.6 is emphatic — GST is
- * collected once and validated once, only the back office flips `gstVerified`,
- * and no other role's screens ask for it again. Qualification condition #1
- * says the same thing to the salesman standing in the shop. MahekOne built it
- * that way rather than borrowed it: `lead.gstValidate` is a real capability
- * with its own desk check, and the qualify gate reads the office's verdict, so
- * the number is asked for at Prospect precisely because qualification is the
- * rung it blocks. A back office told "nothing operational pending" on the one
- * early rung where a lead is waiting on THEM is the exact failure the muted
- * sentences exist to prevent. The dash is read as the prototype's mock
- * omitting a step it never implemented, not as a rule.
+ * THE BACK OFFICE IS SILENT AT PROSPECT, as §7's row says. It used to read
+ * "Check GST number" there, on §11.6's reading that the back office validates
+ * GST. That rule was reversed: a funnel lead's GST is collected by its owner
+ * and validated by its own Sales Manager during the Qualification review
+ * (`gstValidatorRefusal`), so the sentence sent the back office to a button
+ * the server refuses.
  *
  * AND THE TONES ARE AN INTERPRETATION, which is worth saying because it looks
  * like conformance. §7 marks four cells danger — "Confirm actual order",
@@ -363,10 +353,9 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
         case "management":
           return managementQuiet(facts);
         case "back_office":
-          /* §11.6 — GST is collected once and validated once, and the back
-           * office is who validates it. It is the earliest thing they own on
-           * the ladder, which is why this rung is not "nothing operational". */
-          return { label: "Check GST number", tone: "warn", actionable: true };
+          /* GST is validated by the lead's own Sales Manager as part of the
+           * Qualification review, never by the back office. */
+          return NOTHING_OPERATIONAL;
       }
       break;
 
@@ -391,9 +380,9 @@ export function roleAction(facts: LeadActionFacts, vantage: LeadVantage): LeadAc
           return { label: "Complete qualification", tone: "brand", actionable: true };
         }
         case "calling_desk": {
-          /* The calling desk's own wording, unchanged. QUALIFICATION WAS THE TELECALLER'S. What they see is a counted-down
-             job until it is complete, then a wait for the manager, and their own
-             next step once the manager has spoken. */
+          /* A lead a Telecaller owns is completed by its owner the same way
+             the salesman's is: a counted-down job, then a wait for the
+             manager, then the next step once the manager has spoken. */
           const review = facts.qualificationReview ?? null;
           if (review === "verified") {
             return { label: "Request the sample", tone: "brand", actionable: true };

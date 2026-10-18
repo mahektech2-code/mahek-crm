@@ -140,7 +140,7 @@ export function IntakeAssistant({
         <div className="text-[14px] font-semibold text-ink">Voice assistant</div>
         <p className="mt-0.5 mb-2.5 text-[12.5px] text-body">
           Speak in any language — the assistant suggests values for the boxes below. You check each one,
-          apply what is right, and press Raise the lead yourself. It never saves anything.
+          apply what is right, and press Add the lead yourself. It never saves anything.
         </p>
         {starter}
         {phase.kind === "failed" ? <p className="mt-2 text-[12.5px] text-danger">{phase.message}</p> : null}

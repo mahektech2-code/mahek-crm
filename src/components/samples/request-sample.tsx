@@ -84,6 +84,7 @@ export function RequestSample({
   salesType,
   reasons,
   canWork,
+  blocked = null,
 }: {
   customerId: string;
   customerName: string;
@@ -94,6 +95,8 @@ export function RequestSample({
   salesType: LeadSalesType | null;
   reasons: ReadonlyArray<{ code: string; label: string }>;
   canWork: boolean;
+  /** Why the server would refuse a request right now. Null when it would not. */
+  blocked?: string | null;
 }) {
   const [open, setOpen] = React.useState(false);
 
@@ -102,11 +105,13 @@ export function RequestSample({
       <Button
         size="sm"
         tone="primary"
-        disabled={!canWork}
+        disabled={!canWork || Boolean(blocked)}
         title={
-          canWork
-            ? "Raises the request and puts it in front of a manager to approve. The stock does not move until somebody says so."
-            : "Asking for a sample is the salesman's and the manager's, the same hat that moves a lead up a rung."
+          !canWork
+            ? "You cannot ask for samples on this lead."
+            : blocked
+              ? blocked
+              : "Sends the request to a manager to approve. No stock moves until they do."
         }
         onClick={() => setOpen(true)}
       >

@@ -7,7 +7,7 @@ import { distributorOptions } from "@/lib/services/distributor-service";
 import { canOpenModule } from "@/lib/access";
 import { sourcesFor } from "@/lib/lead-source-scope";
 import { isSalesManagerSeat } from "@/lib/services/lead-source-access";
-import { DESK_MODULE } from "@/lib/services/lead-desk-assignment-service";
+import { assignableAccounts, DESK_MODULE } from "@/lib/services/lead-desk-assignment-service";
 import { LeadTabs } from "@/components/leads/lead-tabs";
 import { IntakeForm } from "@/components/leads/intake/intake-form";
 
@@ -38,8 +38,9 @@ export async function Body({
 }) {
   const user = await requireUser();
 
-  const [owners, config, canWork, canPrioritise, distributors] = await Promise.all([
+  const [allOwners, assignable, config, canWork, canPrioritise, distributors] = await Promise.all([
     nextActionOwners(),
+    assignableAccounts(),
     getConfig(),
     canLead(user, "lead.work"),
     /* Priority is the manager's judgement — `setLeadPriority` asks for
@@ -51,6 +52,10 @@ export async function Body({
      */
     distributorOptions(),
   ]);
+
+  /* Only people who can open a lead may own one; the action checks the same. */
+  const canOwn = new Set(assignable.map((a) => a.id));
+  const owners = allOwners.filter((o) => canOwn.has(o.id));
 
   /* The creator is the initial owner where they work leads — the same rule the
      server applies when the box is left alone, drawn here so what the form

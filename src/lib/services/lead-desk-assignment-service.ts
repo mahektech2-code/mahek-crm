@@ -51,7 +51,7 @@ export type OwnerPlace = "desk" | "crm" | "handset";
 export type OwnerChoice = DeskPerson & { canOwn: boolean; place: OwnerPlace };
 
 /** Active people who hold the CRM or the Salesman App, with which of the two. Name order, one row each. */
-async function assignableAccounts(): Promise<Array<DeskPerson & { crm: boolean; field: boolean }>> {
+export async function assignableAccounts(): Promise<Array<DeskPerson & { crm: boolean; field: boolean }>> {
   const rows = await db
     .select({ id: users.id, name: users.name, app: appAccess.app })
     .from(users)

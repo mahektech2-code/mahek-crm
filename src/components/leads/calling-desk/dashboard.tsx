@@ -392,7 +392,7 @@ export function Dashboard({
           <>
             <button type="button" onClick={() => choose("all")} className={pbtn("secondary")}>
               <DeskIcon name="chart" size={15} />
-              View pipeline
+              Show all my leads
             </button>
             <Link href={intakeHref} className={cx(pbtn("primary"), "no-underline hover:text-white hover:no-underline")}>
               <DeskIcon name="plus" size={15} />
