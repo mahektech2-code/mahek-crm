@@ -3,7 +3,7 @@
 import { cx } from "@/components/ui/primitives";
 
 /* ---------------------------------------------------------------------------
- * What the record drawers' panels draw the same way, said once: the stepper
+ * What the record dialogs' panels draw the same way, said once: the stepper
  * (purchase flow, a return, a stock count) and a figure tile.
  * ------------------------------------------------------------------------- */
 
@@ -31,7 +31,7 @@ export function Stepper({ steps, step, label }: { steps: readonly string[]; step
 
 const FIGURE_TONE = { danger: "text-danger", success: "text-success", muted: "text-muted" } as const;
 
-/** One headline figure in a drawer panel: a small label over the number. */
+/** One headline figure in a record panel: a small label over the number. */
 export function Figure({ l, v, tone }: { l: string; v: string; tone?: keyof typeof FIGURE_TONE }) {
   return (
     <div className="min-w-0 rounded-control border border-divider px-3 py-2">

@@ -121,7 +121,7 @@ const PINNED_GROUPS = new Set(["dashboard", "alerts"]);
 const SHORTCUTS = [
   { what: "Focus search", key: "/" },
   { what: "Ask the ERP — end the search with a question mark", key: "?  Enter" },
-  { what: "Close a drawer or dialog", key: "Esc" },
+  { what: "Close a dialog", key: "Esc" },
   { what: "Show this list", key: "?" },
 ];
 

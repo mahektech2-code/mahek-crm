@@ -42,7 +42,7 @@ export function LineTable({
   setLines: (fn: (s: Line[]) => Line[]) => void;
   errs: Record<string, string>;
   clearErr: (key: string) => void;
-  /** A field's options for these values — the drawer's own `optsFor`. */
+  /** A field's options for these values — the form's own `optsFor`. */
   options: (f: FieldSpec, values: Record<string, string>) => string[] | undefined;
 }) {
   const data = spec.data ?? {};

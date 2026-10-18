@@ -16,7 +16,7 @@ import { FlagBadge, flagsBesideStatus, rowTone, StatusBadge } from "./badge";
 import { GodownPicker, type PickItem } from "./godown-picker";
 import { Icon } from "./icons";
 import { useErpUi } from "./erp-ui";
-import { RecordDrawer } from "./record-drawer";
+import { RecordDialog } from "./record-dialog";
 import { useKit } from "./kit";
 import { CHECK_COL, fitColumns } from "./fit-columns";
 import { ColumnsMenu } from "./columns-menu";
@@ -116,7 +116,7 @@ export function ListScreen({
   spec: ListSpec;
   /** Every row, or — with `server` — the one page the server cut. */
   rows: ListRow[];
-  /** The screen's name: the page title and the record drawer's kind line. */
+  /** The screen's name: the page title and the record dialog's kind line. */
   label: string;
   sub?: string;
   /** A record to open on arrival (`?open=` from search or a link). */
@@ -203,7 +203,7 @@ export function ListScreen({
   const cols = spec.cols;
   /* The table never scrolls sideways: it draws the columns that fit the card
      it is in (`fit-columns.ts`), measured as the card resizes, and folds the
-     rest into the record drawer. Before the first measurement it assumes a
+     rest into the record dialog. Before the first measurement it assumes a
      tablet-width card, so the page as the server sent it never overflows —
      on a wider screen the extra columns arrive with the measurement. */
   const [avail, setAvail] = useState(760);
@@ -645,7 +645,7 @@ export function ListScreen({
         </SelectionBar>
       ) : null}
 
-      {open ? <RecordDrawer key={open.id} screen={spec} kind={label} row={open} onClose={closeRec} /> : null}
+      {open ? <RecordDialog key={open.id} screen={spec} kind={label} row={open} onClose={closeRec} /> : null}
     </Page>
   );
 }

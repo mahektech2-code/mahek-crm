@@ -22,7 +22,7 @@ export type ScreenLoad = {
   tooWide?: { n: number; cap: number } | null;
 };
 
-/** Acting on one record: a button in its drawer, perhaps after a prompt. */
+/** Acting on one record: a button in its record, perhaps after a prompt. */
 export type ActionHandler = (ctx: ErpContext, id: string, values: Values) => Promise<Result<unknown>>;
 /** Acting on many selected records at once. */
 export type BulkHandler = (ctx: ErpContext, ids: string[], values: Values) => Promise<Result<unknown>>;

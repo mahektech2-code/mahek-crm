@@ -905,11 +905,11 @@ async function testForm(ctx: ErpContext, testId?: string): Promise<FormSpec | nu
     data: { testsOf, lineId },
     init: { tester: ctx.user.name, date: today(), godown: ctx.workingGodown?.name ?? "" },
     header: [
-      { k: "line", l: "Inward line", t: "select", req: true, opts: Object.keys(testsOf), hint: lines.length ? undefined : "No inward line is waiting for a test. Send one to testing from Purchase inward." },
+      { k: "line", l: "Inward line", t: "select", req: true, sec: "Lot", opts: Object.keys(testsOf), hint: lines.length ? undefined : "No inward line is waiting for a test. Send one to testing from Purchase inward." },
       { k: "tests", l: "Tests required", t: "derived", calc: "testing.tests" },
-      ...evidence("line"),
+      ...evidence("line").map((f, i) => (i === 0 ? { ...f, sec: "Readings" } : f)),
       { k: "video", l: "Test video", t: "video", when: { k: "line", notEmpty: true } },
-      { k: "tester", l: "Tester", t: "select", req: true, opts: testers.map((u) => u.name) },
+      { k: "tester", l: "Tester", t: "select", req: true, sec: "Recorded by", opts: testers.map((u) => u.name) },
       { k: "date", l: "Testing date", t: "date", req: true },
       godownField(gds),
       { k: "remark", l: "Remark", t: "area", mic: true },
@@ -1328,7 +1328,7 @@ async function purchaseForm(ctx: ErpContext, id?: string): Promise<FormSpec | nu
     };
   }
   const header: FieldSpec[] = [
-    { k: "pr", l: "PR number", t: id ? "text" : "num", readOnly: !!id, hint: id ? undefined : "Blank draws the next PR number." },
+    { k: "pr", l: "PR number", t: id ? "text" : "num", readOnly: !!id, sec: "Purchase", hint: id ? undefined : "Blank draws the next PR number." },
     { k: "date", l: "Purchase date", t: "date", req: true },
     ...(id
       ? ([
@@ -1351,7 +1351,7 @@ async function purchaseForm(ctx: ErpContext, id?: string): Promise<FormSpec | nu
           { k: "item", l: "Raw item", t: "select", req: true, readOnly: true, opts: mats.map((m) => m.name), fillBy: { by: ["po", "poLine"], map: rx.itemOf } },
         ] as FieldSpec[])),
     { k: "lot", l: "Raw-material lot no", t: "derived", calc: "register.lot" },
-    { k: "qty", l: "Quantity", t: "num", req: true, min: 0.001, ...(id ? {} : { fillBy: { by: ["po", "poLine"], map: rx.qtyOf } }) },
+    { k: "qty", l: "Quantity", t: "num", req: true, min: 0.001, sec: "Quantity", ...(id ? {} : { fillBy: { by: ["po", "poLine"], map: rx.qtyOf } }) },
     { k: "unit", l: "Unit", t: "select", req: true, opts: ["Kg", "Litre", "Pcs"], ...(id ? {} : { fillBy: { by: ["po", "poLine"], map: unitOfLine } }) },
     { k: "density", l: "Density", t: "num", min: 0 },
     { k: "drums", l: "No. of drum", t: "num", min: 0 },
@@ -1366,6 +1366,7 @@ async function purchaseForm(ctx: ErpContext, id?: string): Promise<FormSpec | nu
             l: "Rate (₹)",
             t: "num",
             min: 0,
+            sec: "Money",
             hint: "The PO's rate, until the supplier's bill says otherwise. Stock posts once a rate above zero is entered.",
             ...(id ? {} : { fillBy: { by: ["po", "poLine"], map: rateOf } }),
           },
@@ -1376,7 +1377,7 @@ async function purchaseForm(ctx: ErpContext, id?: string): Promise<FormSpec | nu
         ] as FieldSpec[])
       : []),
     { k: "billNumber", l: "Bill number", t: "text" },
-    godownField(gds),
+    { ...godownField(gds), sec: "Godown and notes" },
     { k: "notes", l: "Notes", t: "area", mic: true },
     { k: "remark", l: "Remark", t: "area", mic: true },
   ];

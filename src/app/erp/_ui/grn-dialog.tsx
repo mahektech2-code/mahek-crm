@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Button, cx } from "@/components/ui/primitives";
-import { Drawer, DrawerHeader } from "@/components/ui/overlays";
+import { DialogHeader, ErpDialog, StepBar } from "./dialog";
 import { runCalc } from "@/lib/erp/calc";
 import "@/lib/erp/calcs";
 import { fd, nf, resolveField, whenHolds, type FieldSpec, type FormSpec } from "@/lib/erp/ui";
@@ -13,7 +13,7 @@ import { useKit } from "./kit";
 
 /* ---------------------------------------------------------------------------
  * THE GOODS RECEIPT STARTS FROM THE ITEM THAT ARRIVED. The storekeeper knows
- * what came off the truck, not the PO number, so the drawer asks for the item
+ * what came off the truck, not the PO number, so the record asks for the item
  * first, then offers only the approved PO lines still waiting for it (picked
  * for them where there is one), then the ordinary line fields. A second item
  * on the same truck is searched among the same vendor's open lines only: one
@@ -31,7 +31,7 @@ const HEADER_SKIP = new Set(["po", "pr", "supplier"]);
 
 const keyOf = (l: Pick<GrnPoLine, "po" | "poLine">) => `${l.po}|${l.poLine}`;
 
-export function GrnDrawer({ spec, onClose, onSaved }: { spec: FormSpec; onClose: () => void; onSaved: (msg: string) => void }) {
+export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose: () => void; onSaved: (msg: string) => void }) {
   const kit = useKit();
   const data = useMemo(() => spec.data ?? {}, [spec.data]);
   const items = useMemo(() => (data.grn ?? []) as GrnItem[], [data]);
@@ -150,18 +150,15 @@ export function GrnDrawer({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
   const poLines = picked ? offered(picked) : [];
 
   return (
-    <Drawer open onClose={onClose} width={680} label={spec.title}>
-      <DrawerHeader onClose={onClose}>
-        <div className="text-lg leading-6 font-semibold text-ink">{spec.title}</div>
+    <ErpDialog onClose={onClose} label={spec.title} width={step === "lines" ? 920 : 760}>
+      <DialogHeader onClose={onClose}>
+        <div className="text-xl leading-7 font-semibold text-ink">{spec.title}</div>
         <div className="mt-0.5 text-meta text-muted">{sub}</div>
-        <div className="mt-3 flex gap-1.5" aria-label={`Step ${stepNo} of 3`}>
-          {[1, 2, 3].map((n) => (
-            <span key={n} className={cx("h-1 w-16 rounded-full", n <= stepNo ? "bg-brand" : "bg-divider")} />
-          ))}
-        </div>
-      </DrawerHeader>
+      </DialogHeader>
+      {/* The steps follow the truck, not a page order: adding a second item goes back to the first. */}
+      <StepBar steps={["Item received", "Purchase order", "Receipt details"]} active={stepNo - 1} reached={stepNo - 1} onChange={() => {}} />
 
-      <div className="grid min-h-0 flex-1 auto-rows-max grid-cols-[minmax(0,1fr)] content-start gap-3.5 overflow-y-auto px-5 py-4">
+      <div className="grid min-h-0 flex-1 auto-rows-max grid-cols-[minmax(0,1fr)] content-start gap-3.5 overflow-y-auto px-6 py-5">
         {step === "item" ? (
           <section className="grid gap-2">
             <label htmlFor="grn-item" className="text-xs font-semibold tracking-[0.04em] text-muted uppercase">
@@ -375,7 +372,7 @@ export function GrnDrawer({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
         ) : null}
       </div>
 
-      <div className="flex flex-none justify-end gap-2.5 border-t border-divider px-5 py-3">
+      <div className="flex flex-none flex-wrap justify-end gap-2.5 border-t border-divider bg-canvas/60 px-6 py-3">
         {step === "item" ? (
           lines.length ? (
             <Button variant="secondary" onClick={() => setStep("lines")}>
@@ -415,6 +412,6 @@ export function GrnDrawer({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
           </>
         ) : null}
       </div>
-    </Drawer>
+    </ErpDialog>
   );
 }

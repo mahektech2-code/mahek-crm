@@ -38,7 +38,7 @@ flowchart LR
 
 <Hotspots items={[
   <span key="1"><b>Ask for a count.</b> A manager, or somebody with the stock-control power, opens counts: one item at a godown (after a spill, a move, a doubt), every item at a godown (the full count), or today's cycle counts.</span>,
-  <span key="2"><b>No book column.</b> Nothing on this tab, its prompt or its drawer shows what the book says. The book is shown only after the count is submitted.</span>,
+  <span key="2"><b>No book column.</b> Nothing on this tab, its prompt or its record shows what the book says. The book is shown only after the count is submitted.</span>,
 ]} />
 
 | Tab | What it lists |
@@ -71,7 +71,7 @@ A recount is always counted by **somebody other than whoever counted first**. It
 
 A red flag sends a notification to everybody with the stock-control power, every ERP administrator, and whoever raised the requirement the count was for. The person who counted is not notified, because they saw the result on their screen. The notification names the item, the godown, the count, the book and the difference, and opens the red flag. If an independent recount confirms the difference, everyone is notified a second time.
 
-Fixing it is never urgent for the purchase — the requirement has already moved on. Open the row on **Red flags**. Its drawer shows the count against the book, every count of it in order, and the **possible causes** the records suggest — goods at the gate not yet in stock, a lot under test, a batch issue, a write-off — each with a link to the record.
+Fixing it is never urgent for the purchase — the requirement has already moved on. Open the row on **Red flags**. Its record shows the count against the book, every count of it in order, and the **possible causes** the records suggest — goods at the gate not yet in stock, a lot under test, a batch issue, a write-off — each with a link to the record.
 
 <Steps>
 <Step title="Ask for a recount">
@@ -98,7 +98,7 @@ Rejecting sends the check back to **Investigating**.
 
 ## On a purchase requirement
 
-A requirement raised while the stock check is switched on sits at **Blind count** in its flow until the count is entered, then moves on to **Purchase method** whatever the count found. Its drawer says what the count found, what is on the shelf and how much the shelf needs to reach its maximum level. A difference shows up as a flag on the requirements list and never stops the purchase.
+A requirement raised while the stock check is switched on sits at **Blind count** in its flow until the count is entered, then moves on to **Purchase method** whatever the count found. Its record says what the count found, what is on the shelf and how much the shelf needs to reach its maximum level. A difference shows up as a flag on the requirements list and never stops the purchase.
 
 | What you see | What it means |
 |---|---|

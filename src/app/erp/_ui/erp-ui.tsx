@@ -4,7 +4,9 @@ import { resultError } from "./use-act";
 import { Fragment, createContext, useCallback, useContext, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Callout, cx } from "@/components/ui/primitives";
-import { ConfirmDialog, Drawer, DrawerHeader, Modal } from "@/components/ui/overlays";
+import { ConfirmDialog, Modal } from "@/components/ui/overlays";
+import { DialogBody, DialogFooter, DialogHeader, ErpDialog, StepBar } from "./dialog";
+import { pageOfError, planPages, plural } from "./form-pages";
 import { useToast } from "@/components/ui/toast";
 import type { ActionSpec, BulkSpec, FieldSpec, FormSpec, PromptSpec, ToolResult, ToolSpec } from "@/lib/erp/ui";
 import { resolveField, whenHolds } from "@/lib/erp/ui";
@@ -13,20 +15,21 @@ import "@/lib/erp/calcs";
 import type { Result } from "@/lib/result";
 import { Field, PhotoTile } from "./field";
 import { checkField, optsFor } from "./form-check";
-import { GrnDrawer } from "./grn-drawer";
+import { GrnDialog } from "./grn-dialog";
 import { CardGrid } from "@/components/ui/card-grid";
 import { LineTable } from "./line-table";
 import { ErpVoice } from "./voice";
 import { ERP_KIT, KitContext, useKit, type ScreenKit } from "./kit";
 
 /* ---------------------------------------------------------------------------
- * The ERP's overlays, held once for the whole app: the form drawer, the prompt
+ * The ERP's overlays, held once for the whole app: the form dialog, the prompt
  * dialog and the confirm dialog. Screens ask for them through `useErpUi()`.
  *
- * They are the CRM's overlays — `Drawer`, `Modal`, `ConfirmDialog` and the
- * shared toast — carrying the ERP's form specs. The ERP drew its own of each
- * once, in its own colours and at its own layer, and a confirmation that looks
- * different in two apps of one suite reads as two different kinds of question.
+ * The prompt, the confirm and the toast are the CRM's own (`Modal`,
+ * `ConfirmDialog`), because a confirmation that looks different in two apps of
+ * one suite reads as two different kinds of question. The form is the ERP's
+ * `ErpDialog` — a wide dialog of pages (`form-pages.ts`) — because an ERP
+ * document runs to twenty fields and a line table, which no side drawer held.
  * ------------------------------------------------------------------------- */
 
 type Confirm = { msg: string; fn: () => void };
@@ -199,7 +202,7 @@ export function ErpUiProvider({
       <Ctx.Provider value={{ toast, confirm, prompt, openForm, act, bulk, tool }}>
         {children}
         {form?.flow === "grn" ? (
-          <GrnDrawer
+          <GrnDialog
             key={formKey}
             spec={form}
             onClose={() => setForm(null)}
@@ -210,7 +213,7 @@ export function ErpUiProvider({
             }}
           />
         ) : form ? (
-          <FormDrawer
+          <FormDialog
             key={formKey}
             spec={form}
             onClose={() => setForm(null)}
@@ -371,7 +374,16 @@ function promptRuns(fields: FieldSpec[]): PromptRun[] {
 
 /* ---------------------------------------------------------------- form */
 
-function FormDrawer({
+/*
+ * A form is a dialog of PAGES (`form-pages.ts`): a short form is one page, a
+ * long one is cut at its sections, a document's lines are a page of their
+ * own, and a form of several pages ends on Review, which says back what will
+ * be saved before Save is pressed. Next checks the page you are on; Save
+ * checks everything and, where a field is wrong — in the browser or on the
+ * server — goes back to the page it is on, so an error is never on a page
+ * nobody is looking at.
+ */
+function FormDialog({
   spec,
   onClose,
   onSaved,
@@ -403,9 +415,12 @@ function FormDrawer({
   const [errs, setErrs] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [topError, setTopError] = useState("");
+  const [page, setPage] = useState(0);
+  const [reached, setReached] = useState(0);
   /* The lines a `linesFrom` pick (or the opening recipe) laid out, so a later pick knows whether anybody has touched them. */
   const [laidOut, setLaidOut] = useState<string | null>(() => (spec.initLines?.length ? JSON.stringify(spec.initLines.map((l) => ({ ...blankLine(), ...l }))) : null));
   const data = spec.data ?? {};
+  const kit = useKit();
 
   /* A line's `fillBy` fields, refreshed after `changed` moved — header or line. */
   const fillLine = (l: Record<string, string>, hdr: Record<string, string>, changed: string) => {
@@ -421,30 +436,74 @@ function FormDrawer({
   const visible = (f: FieldSpec, l: Record<string, string> = {}) => whenHolds(f.when, { ...h, ...l }, data);
   const resolved = (f: FieldSpec, l: Record<string, string> = {}) => resolveField(f, { ...h, ...l }, data);
 
-  const current = lines;
-  const submit = () => {
-    /* A table row nobody filled in is not a line: it is dropped before anything is checked, so the errors name the rows that are left. */
-    const lines = table
-      ? current.filter((l) => (spec.line ?? []).some((f) => f.t !== "derived" && (l[f.k] ?? "") !== "" && (l[f.k] ?? "") !== (f.def ?? "")))
-      : current;
-    if (lines.length !== current.length) setLines(lines);
+  const shownHeader = spec.header.filter((f) => visible(f)).map((f) => resolved(f));
+  const pages = planPages(shownHeader, { lines: spec.line ? spec.lineLabel ?? "Line" : null });
+  const at = Math.min(page, pages.length - 1);
+  const current = pages[at];
+  const last = at === pages.length - 1;
+
+  /* A table row nobody filled in is not a line: it is dropped before anything is checked, so the errors name the rows that are left. */
+  const filledLines = () =>
+    table ? lines.filter((l) => (spec.line ?? []).some((f) => f.t !== "derived" && (l[f.k] ?? "") !== "" && (l[f.k] ?? "") !== (f.def ?? ""))) : lines;
+
+  const checkHeader = (keys?: string[]) => {
     const e: Record<string, string> = {};
-    spec.header.filter((f) => visible(f)).map((f) => resolved(f)).forEach((f) => {
-      const m = checkField(f, h[f.k] ?? "");
-      if (m) e[`h.${f.k}`] = m;
-    });
-    lines.forEach((l, i) =>
+    shownHeader
+      .filter((f) => !keys || keys.includes(f.k))
+      .forEach((f) => {
+        const m = checkField(f, h[f.k] ?? "");
+        if (m) e[`h.${f.k}`] = m;
+      });
+    return e;
+  };
+  const checkLines = (ls: Record<string, string>[]) => {
+    const e: Record<string, string> = {};
+    ls.forEach((l, i) =>
       (spec.line ?? []).filter((f) => visible(f, l)).map((f) => resolved(f, l)).forEach((f) => {
         const m = checkField(f, l[f.k] ?? "");
         if (m) e[`l${i}.${f.k}`] = m;
       }),
     );
+    return e;
+  };
+
+  const go = (i: number) => {
+    setPage(i);
+    setReached((r) => Math.max(r, i));
+  };
+  /** Shows the errors and goes to the first page carrying one. */
+  const land = (e: Record<string, string>) => {
     setErrs(e);
+    const first = Object.keys(e)
+      .map((k) => pageOfError(pages, k))
+      .filter((i) => i >= 0)
+      .sort((a, b) => a - b)[0];
+    if (first != null) setPage(first);
+  };
+
+  const next = () => {
+    let e: Record<string, string> = {};
+    if (current.kind === "fields") e = checkHeader(current.keys);
+    if (current.kind === "lines") {
+      const ls = filledLines();
+      if (ls.length !== lines.length) setLines(ls);
+      e = checkLines(ls);
+    }
+    setErrs((s) => ({ ...s, ...e }));
     if (Object.keys(e).length) return;
+    go(at + 1);
+  };
+
+  const submit = () => {
+    const ls = filledLines();
+    if (ls.length !== lines.length) setLines(ls);
+    const e = { ...checkHeader(), ...checkLines(ls) };
+    if (Object.keys(e).length) return land(e);
+    setErrs({});
     const save = async () => {
       setBusy(true);
       setTopError("");
-      const res = await kit.submitForm(spec.screen, spec.id, h, lines, spec.recordId);
+      const res = await kit.submitForm(spec.screen, spec.id, h, ls, spec.recordId);
       setBusy(false);
       if (res.ok) return onSaved(res.message ?? "Saved");
       const fe: Record<string, string> = {};
@@ -452,7 +511,7 @@ function FormDrawer({
         const key = /^l\d+\./.test(x.field) || x.field.startsWith("h.") ? x.field : `h.${x.field}`;
         fe[key] = x.message;
       });
-      if (Object.keys(fe).length) setErrs(fe);
+      if (Object.keys(fe).length) land(fe);
       else setTopError(res.error);
     };
     if (spec.confirm) {
@@ -461,138 +520,253 @@ function FormDrawer({
     } else void save();
   };
 
-  const kit = useKit();
   const summary = runCalc(`${spec.screen}.summary`, { h, l: {}, lines, i: -1, data });
+  const errored = new Set(Object.entries(errs).filter(([, m]) => m).map(([k]) => pageOfError(pages, k)).filter((i) => i >= 0));
+
+  const headerField = (f: FieldSpec, i: number, shown: FieldSpec[], drawSec: boolean) => (
+    <Fragment key={f.k}>
+      {/* A section named after its own first field ("Purchase rule" over
+          "Purchase rule") says the word twice: the field alone does. A page
+          named after its one section has the heading on the step already. */}
+      {drawSec && f.sec && f.sec !== shown[i - 1]?.sec && !(f.sec.toLowerCase() === f.l.toLowerCase() && shown[i + 1]?.sec !== f.sec) ? (
+        <div className="col-span-full mt-1 border-b border-divider pb-1 text-xs font-semibold tracking-[0.04em] text-muted uppercase">{f.sec}</div>
+      ) : null}
+      <Field
+        f={f}
+        value={h[f.k] ?? ""}
+        error={errs[`h.${f.k}`]}
+        options={optsFor(f, h)}
+        derived={f.t === "derived" || f.t === "suggest" ? runCalc(f.calc, { h, l: {}, lines, i: -1, data }) : undefined}
+        onUseSuggestion={(v) => {
+          const target = f.k.replace(/^ai/, "").replace(/^./, (c) => c.toLowerCase());
+          setH((s) => ({ ...s, [target]: v }));
+        }}
+        onChange={(v) => {
+          let nh = { ...h, [f.k]: v };
+          /* A header field filled from another (a PO item fills the item it names). */
+          for (const g of spec.header) {
+            if (!g.fillBy || !g.fillBy.by.includes(f.k)) continue;
+            const x = g.fillBy.map[g.fillBy.by.map((k) => nh[k] ?? "").join("|")];
+            if (x != null) nh = { ...nh, [g.k]: x };
+          }
+          /* A pick that brings its own lines (an SFG product its recipe). */
+          const from = spec.linesFrom?.by === f.k ? spec.linesFrom.map[v] : undefined;
+          if (from?.length) {
+            for (const [k, x] of Object.entries(spec.linesFrom!.set ?? {})) if (!nh[k]) nh = { ...nh, [k]: x };
+            const nextLines = from.map((l) => ({ ...blankLine(), ...l }));
+            const blank = JSON.stringify(blankLine());
+            const untouched = lines.every((l) => JSON.stringify(l) === blank) || JSON.stringify(lines) === laidOut;
+            const lay = () => {
+              setLines(nextLines);
+              setLaidOut(JSON.stringify(nextLines));
+            };
+            if (untouched) lay();
+            else confirm(`Replace these lines with ${v}'s ${from.length === 1 ? "line" : `${from.length} lines`}? What you have entered on them is cleared.`, lay);
+          }
+          setH(nh);
+          if (!from?.length && spec.line?.some((x) => x.fillBy?.by.includes(f.k))) setLines((s) => s.map((x) => fillLine(x, nh, f.k)));
+          setErrs((s) => ({ ...s, [`h.${f.k}`]: "" }));
+        }}
+      />
+    </Fragment>
+  );
+
+  const fieldsPage = (keys: string[], titled: boolean) => {
+    const shown = shownHeader.filter((f) => keys.includes(f.k));
+    /* One section on the page: the step already names it. */
+    const secs = new Set(shown.map((f) => f.sec).filter(Boolean));
+    return <Block title="">{shown.map((f, i) => headerField(f, i, shown, !titled || secs.size > 1))}</Block>;
+  };
+
+  const linesPage = (
+    <>
+      {table ? (
+        <LineTable
+          spec={spec}
+          h={h}
+          lines={lines}
+          setLines={setLines}
+          errs={errs}
+          clearErr={(k) => setErrs((s) => ({ ...s, [k]: "" }))}
+          options={optsFor}
+        />
+      ) : (
+        lines.map((l, i) => (
+          <Block
+            key={i}
+            title={`${spec.lineLabel ?? "Line"} ${i + 1} of ${lines.length}`}
+            onRemove={lines.length > 1 ? () => setLines((s) => s.filter((_, j) => j !== i)) : undefined}
+          >
+            {spec.line!
+              .filter((f) => visible(f, l))
+              .map((f) => resolved(f, l))
+              .map((f) => (
+                <Field
+                  key={f.k}
+                  f={f}
+                  value={l[f.k] ?? ""}
+                  error={errs[`l${i}.${f.k}`]}
+                  options={optsFor(f, { ...h, ...l })}
+                  derived={f.t === "derived" ? runCalc(f.calc, { h, l, lines, i, data }) : undefined}
+                  onChange={(v) => {
+                    setLines((s) => s.map((x, j) => (j === i ? fillLine({ ...x, [f.k]: v }, h, f.k) : x)));
+                    setErrs((s) => ({ ...s, [`l${i}.${f.k}`]: "" }));
+                  }}
+                />
+              ))}
+          </Block>
+        ))
+      )}
+      {!table ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <Button variant="secondary" onClick={() => setLines((s) => [...s, blankLine()])} className="border-dashed text-brand-hover">
+            + Add more {(spec.lineLabel ?? "line").toLowerCase()}
+          </Button>
+          <span className="text-xs text-muted">
+            Each new line keeps the header:{" "}
+            {spec.header
+              .filter((f) => f.t !== "derived")
+              .slice(0, 3)
+              .map((f) => f.l.toLowerCase())
+              .join(", ")}
+            .
+          </span>
+        </div>
+      ) : null}
+    </>
+  );
+
+  /** What will be saved, page by page — each heading goes back to its page. */
+  const review = (
+    <div className="grid gap-3">
+      {pages.map((p, pi) => {
+        if (p.kind === "review") return null;
+        return (
+          <section key={pi} className="rounded-card border border-line">
+            <div className="flex items-center justify-between border-b border-divider bg-canvas px-4 py-2">
+              <span className="text-meta font-semibold text-ink">{p.title || "Details"}</span>
+              <button type="button" onClick={() => setPage(pi)} className="cursor-pointer text-meta text-brand-hover hover:underline">
+                Change
+              </button>
+            </div>
+            {p.kind === "fields" ? (
+              <dl className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-x-6 gap-y-3 px-4 py-3">
+                {shownHeader
+                  .filter((f) => p.keys.includes(f.k))
+                  .map((f) => {
+                    const shown = reviewValue(f, f.t === "derived" || f.t === "suggest" ? runCalc(f.calc, { h, l: {}, lines, i: -1, data }) ?? "" : h[f.k] ?? "");
+                    return (
+                      <div key={f.k} className="min-w-0">
+                        <dt className="text-xs font-medium tracking-[0.04em] text-muted uppercase">{f.l}</dt>
+                        <dd className={cx("mt-0.5 text-sm break-words", shown ? "text-ink" : "text-line-strong")}>{shown || "—"}</dd>
+                      </div>
+                    );
+                  })}
+              </dl>
+            ) : (
+              <ReviewLines spec={spec} lines={filledLines()} h={h} data={data} />
+            )}
+          </section>
+        );
+      })}
+    </div>
+  );
+
+  const width = spec.evidence ? 1180 : table ? 1080 : spec.line ? 920 : 760;
 
   return (
-    <Drawer open onClose={onClose} width={table ? 1040 : 680} label={spec.title}>
-      <DrawerHeader onClose={onClose}>
-        <div className="text-lg leading-6 font-semibold text-ink">{spec.title}</div>
+    <ErpDialog onClose={onClose} label={spec.title} width={width} tall={pages.length > 1 || !!spec.line || !!spec.evidence}>
+      <DialogHeader onClose={onClose}>
+        <div className="text-xl leading-7 font-semibold text-ink">{spec.title}</div>
         {spec.sub ? <div className="mt-0.5 text-meta text-muted">{spec.sub}</div> : null}
-      </DrawerHeader>
-      <div className="grid min-h-0 flex-1 auto-rows-max grid-cols-[minmax(0,1fr)] content-start gap-3.5 overflow-y-auto px-5 py-4">
-        {spec.evidence ? <Evidence e={spec.evidence} /> : null}
-        <Block title={spec.line ? (table ? "Details" : "Header") : ""}>
-          {spec.header
-            .filter((f) => visible(f))
-            .map((f) => resolved(f))
-            .map((f, i, shown) => (
-              <Fragment key={f.k}>
-              {/* A section named after its own first field ("Purchase rule"
-                  over "Purchase rule") says the word twice: the field alone does. */}
-              {f.sec && f.sec !== shown[i - 1]?.sec && !(f.sec.toLowerCase() === f.l.toLowerCase() && shown[i + 1]?.sec !== f.sec) ? (
-                <div className="col-span-full mt-1 border-b border-divider pb-1 text-xs font-semibold tracking-[0.04em] text-muted uppercase">{f.sec}</div>
-              ) : null}
-              <Field
-                f={f}
-                value={h[f.k] ?? ""}
-                error={errs[`h.${f.k}`]}
-                options={optsFor(f, h)}
-                derived={f.t === "derived" || f.t === "suggest" ? runCalc(f.calc, { h, l: {}, lines, i: -1, data }) : undefined}
-                onUseSuggestion={(v) => {
-                  const target = f.k.replace(/^ai/, "").replace(/^./, (c) => c.toLowerCase());
-                  setH((s) => ({ ...s, [target]: v }));
-                }}
-                onChange={(v) => {
-                  let nh = { ...h, [f.k]: v };
-                  /* A header field filled from another (a PO item fills the item it names). */
-                  for (const g of spec.header) {
-                    if (!g.fillBy || !g.fillBy.by.includes(f.k)) continue;
-                    const x = g.fillBy.map[g.fillBy.by.map((k) => nh[k] ?? "").join("|")];
-                    if (x != null) nh = { ...nh, [g.k]: x };
-                  }
-                  /* A pick that brings its own lines (an SFG product its recipe). */
-                  const from = spec.linesFrom?.by === f.k ? spec.linesFrom.map[v] : undefined;
-                  if (from?.length) {
-                    for (const [k, x] of Object.entries(spec.linesFrom!.set ?? {})) if (!nh[k]) nh = { ...nh, [k]: x };
-                    const next = from.map((l) => ({ ...blankLine(), ...l }));
-                    const blank = JSON.stringify(blankLine());
-                    const untouched = lines.every((l) => JSON.stringify(l) === blank) || JSON.stringify(lines) === laidOut;
-                    const lay = () => {
-                      setLines(next);
-                      setLaidOut(JSON.stringify(next));
-                    };
-                    if (untouched) lay();
-                    else confirm(`Replace these lines with ${v}'s ${from.length === 1 ? "line" : `${from.length} lines`}? What you have entered on them is cleared.`, lay);
-                  }
-                  setH(nh);
-                  if (!from?.length && spec.line?.some((x) => x.fillBy?.by.includes(f.k))) setLines((s) => s.map((x) => fillLine(x, nh, f.k)));
-                  setErrs((s) => ({ ...s, [`h.${f.k}`]: "" }));
-                }}
-              />
-              </Fragment>
+      </DialogHeader>
+      {pages.length > 1 ? <StepBar steps={pages.map((p) => p.title || "Details")} active={at} reached={reached} errored={errored} onChange={setPage} /> : null}
+      <div className={cx("flex min-h-0 flex-1", spec.evidence && "divide-x divide-divider")}>
+        {/* What an AI reading was read from stays in view on every page, beside the values it proposed. */}
+        {spec.evidence ? (
+          <aside className="w-[380px] flex-none overflow-y-auto p-4">
+            <Evidence e={spec.evidence} />
+          </aside>
+        ) : null}
+        <DialogBody>
+          {current.kind === "fields" ? fieldsPage(current.keys, pages.length > 1) : null}
+          {current.kind === "lines" ? linesPage : null}
+          {current.kind === "review" ? review : null}
+          {last && summary ? <FormSummary text={summary} /> : null}
+          {topError ? (
+            <div className="rounded-control border border-danger-soft border-l-[3px] border-l-danger bg-danger-soft px-4 py-2.5 text-sm font-medium text-danger">
+              {topError}
+            </div>
+          ) : null}
+        </DialogBody>
+      </div>
+      <DialogFooter left={pages.length > 1 ? `Step ${at + 1} of ${pages.length}` : null}>
+        {at === 0 ? (
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+        ) : (
+          <Button variant="secondary" onClick={() => setPage(at - 1)}>
+            Back
+          </Button>
+        )}
+        {last ? (
+          <Button variant="primary" onClick={submit} disabled={busy}>
+            {busy ? "Saving…" : spec.submit}
+          </Button>
+        ) : (
+          <Button variant="primary" onClick={next}>
+            Next
+          </Button>
+        )}
+      </DialogFooter>
+    </ErpDialog>
+  );
+}
+
+/** A value as the review says it back: a photo is "Attached", a list is commas. */
+function reviewValue(f: FieldSpec, v: string): string {
+  if (!v) return "";
+  if (f.t === "photo" || f.t === "video") return "Attached";
+  if (f.t === "csv") return "File read";
+  if (f.t === "multi") return v.split("|").filter(Boolean).join(", ");
+  return v;
+}
+
+/** The lines on the review: the fields somebody fills in, a row each. */
+function ReviewLines({ spec, lines, h, data }: { spec: FormSpec; lines: Record<string, string>[]; h: Record<string, string>; data: Record<string, unknown> }) {
+  if (!lines.length) return <div className="px-4 py-3 text-meta text-muted">No {(spec.lineLabel ?? "line").toLowerCase()}s yet.</div>;
+  const cols = (spec.line ?? []).filter((f) => f.t !== "photo" && f.t !== "video" && f.t !== "area").slice(0, 6);
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-meta">
+        <thead>
+          <tr className="text-left text-xs text-muted uppercase">
+            <th className="px-4 py-2 font-medium">#</th>
+            {cols.map((c) => (
+              <th key={c.k} className="px-2 py-2 font-medium">
+                {c.l}
+              </th>
             ))}
-        </Block>
-        {spec.line && table ? (
-          <LineTable
-            spec={spec}
-            h={h}
-            lines={lines}
-            setLines={setLines}
-            errs={errs}
-            clearErr={(k) => setErrs((s) => ({ ...s, [k]: "" }))}
-            options={optsFor}
-          />
-        ) : null}
-        {spec.line && !table
-          ? lines.map((l, i) => (
-              <Block
-                key={i}
-                title={`${spec.lineLabel ?? "Line"} ${i + 1} of ${lines.length}`}
-                onRemove={lines.length > 1 ? () => setLines((s) => s.filter((_, j) => j !== i)) : undefined}
-              >
-                {spec.line!
-                  .filter((f) => visible(f, l))
-                  .map((f) => resolved(f, l))
-                  .map((f) => (
-                    <Field
-                      key={f.k}
-                      f={f}
-                      value={l[f.k] ?? ""}
-                      error={errs[`l${i}.${f.k}`]}
-                      options={optsFor(f, { ...h, ...l })}
-                      derived={f.t === "derived" ? runCalc(f.calc, { h, l, lines, i, data }) : undefined}
-                      onChange={(v) => {
-                        setLines((s) => s.map((x, j) => (j === i ? fillLine({ ...x, [f.k]: v }, h, f.k) : x)));
-                        setErrs((s) => ({ ...s, [`l${i}.${f.k}`]: "" }));
-                      }}
-                    />
-                  ))}
-              </Block>
-            ))
-          : null}
-        {spec.line && !table ? (
-          <div className="flex flex-wrap items-center gap-3">
-            <Button variant="secondary" onClick={() => setLines((s) => [...s, blankLine()])} className="border-dashed text-brand-hover">
-              + Add more {(spec.lineLabel ?? "line").toLowerCase()}
-            </Button>
-            <span className="text-xs text-muted">
-              Each new line keeps the header:{" "}
-              {spec.header
-                .filter((f) => f.t !== "derived")
-                .slice(0, 3)
-                .map((f) => f.l.toLowerCase())
-                .join(", ")}
-              .
-            </span>
-          </div>
-        ) : null}
-        {summary ? <FormSummary text={summary} /> : null}
-        {topError ? (
-          <div className="rounded-control border border-danger-soft border-l-[3px] border-l-danger bg-danger-soft px-4 py-2.5 text-sm font-medium text-danger">
-            {topError}
-          </div>
-        ) : null}
+          </tr>
+        </thead>
+        <tbody>
+          {lines.map((l, i) => (
+            <tr key={i} className="border-t border-divider">
+              <td className="px-4 py-1.5 text-muted tabular-nums">{i + 1}</td>
+              {cols.map((c) => (
+                <td key={c.k} className="px-2 py-1.5 text-ink">
+                  {(c.t === "derived" ? runCalc(c.calc, { h, l, lines, i, data }) : l[c.k]) || "—"}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="border-t border-divider px-4 py-2 text-xs text-muted">
+        {lines.length} {lines.length === 1 ? (spec.lineLabel ?? "line").toLowerCase() : plural((spec.lineLabel ?? "line").toLowerCase())}
       </div>
-      <div className="flex flex-none justify-end gap-2.5 border-t border-divider px-5 py-3">
-        <Button variant="secondary" onClick={onClose}>
-          Cancel
-        </Button>
-        <Button variant="primary" onClick={submit} disabled={busy}>
-          {busy ? "Saving…" : spec.submit}
-        </Button>
-      </div>
-    </Drawer>
+    </div>
   );
 }
 

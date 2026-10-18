@@ -1,6 +1,6 @@
 /* ---------------------------------------------------------------------------
  * The contract between an ERP screen's server loader and the generic client
- * screens (list, record drawer, form drawer, prompt, confirm).
+ * screens (list, record dialog, form dialog, prompt, confirm).
  *
  * The server decides EVERYTHING that is a rule — which rows, which columns a
  * person's powers reveal, which actions a record offers and why one is not
@@ -169,7 +169,7 @@ export type FormSpec = {
    */
   linesFrom?: { by: string; map: Record<string, Record<string, string>[]>; set?: Record<string, string> };
   /**
-   * A form drawn by its own drawer rather than field by field. `grn`: the goods
+   * A form drawn by its own dialog rather than field by field. `grn`: the goods
    * receipt that starts from the item that arrived (`engines/grn-pick.ts`) —
    * search the item, pick the open PO line, then the ordinary line fields.
    */
@@ -259,7 +259,7 @@ export type ListRow = {
   id: string;
   v: Record<string, CellValue>;
   flags: string[];
-  /** Record drawer. */
+  /** Record dialog. */
   title?: string;
   header?: string;
   fields?: RowField[];
@@ -267,10 +267,10 @@ export type ListRow = {
   actions?: ActionSpec[];
   /** "Created by X · 27 Sep, 10:14". */
   by?: string;
-  /** Fields hidden by powers, as a count, so the drawer can say so. */
+  /** Fields hidden by powers, as a count, so the record can say so. */
   hiddenFields?: number;
-  /** Free-form panels a screen draws in the drawer (allocation, evidence…). */
-  /** `covers`: column keys the panel already draws, left out of the drawer's field list. */
+  /** Free-form panels a screen draws in the record (allocation, evidence…). */
+  /** `covers`: column keys the panel already draws, left out of the record's field list. */
   panel?: { kind: string; data: unknown; covers?: string[] };
 };
 

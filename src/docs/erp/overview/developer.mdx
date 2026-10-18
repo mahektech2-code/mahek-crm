@@ -12,7 +12,7 @@ The ERP is **data-driven**. One registry (`lib/erp/registry.ts`) lists every scr
 | List route | `src/app/erp/[slug]/page.tsx` | Resolves screen and `?view=`, calls the module's `load(ctx)`, renders `ListScreen` |
 | Screen modules | `src/lib/erp/screens/*.ts` (index in `screens/index.ts`) | Per screen/tab: columns, rows, actions, forms, form loaders, tools |
 | Module contract | `src/lib/erp/server.ts` | `ScreenModule`, `nextNumber`, `erpId`, `erpAudit`, `visibleCols`, `withoutHidden` |
-| Generic UI | `src/app/erp/_ui/` | `erp-shell.tsx`, `list-screen.tsx`, `record-drawer.tsx`, form drawer, `line-table.tsx`, prompts |
+| Generic UI | `src/app/erp/_ui/` | `erp-shell.tsx`, `list-screen.tsx`, `record-dialog.tsx`, form dialog, `line-table.tsx`, prompts |
 | UI contract | `src/lib/erp/ui.ts` | `ListSpec`, `FormSpec`, `ActionSpec`, the flag vocabulary |
 | Writes | `src/lib/actions/erp.ts` | `erpRunAction`, `erpRunBulk`, `erpSubmitForm`, `erpRunTool`, `erpLoadForm`, working godown, preview |
 | Stock | `src/lib/erp/stock.ts` | One reading of current stock per stage: `rmLots`, `sfgLots`, `fgLots`, `packLots`, `lockLot` |
@@ -44,7 +44,7 @@ The ERP is about a hundred screens and tabs. Anything two of them draw or decide
 | A power's refusal sentence | `powerRefusal` in `src/lib/erp/access.ts` | Every handler that checks a power |
 | Running a write outside a list | `useAct` in `src/app/erp/_ui/use-act.ts` (`resultError` for the wording) | Logistics, Settings; a list's own actions use `useErpUi().finish`, which reports in the same words |
 | "Are you sure — and why?" | `ReasonDialog` in `transport/parts/common.tsx` | Void an LR, reopen a delivered bill |
-| A drawer panel's stepper and figure tile | `Stepper`, `Figure` in `src/app/erp/_ui/panels/parts.tsx` | Purchase flow, returns, stock count, scrap panels |
+| A record panel's stepper and figure tile | `Stepper`, `Figure` in `src/app/erp/_ui/panels/parts.tsx` | Purchase flow, returns, stock count, scrap panels |
 | A text control's look | `controlClass` / `Input` / `Textarea` in `src/components/ui/primitives.tsx` | ERP form fields, Logistics toolbars, Trace, Dispatch |
 | A callout (warn, danger, brand, success) | `Callout` in `primitives.tsx` | Form summaries, Trace's missing links, the dashboard digest |
 | How wide a column is | `fitColumns` in `src/app/erp/_ui/fit-columns.ts` — status and flag columns as wide as their longest badge | Every list |
@@ -54,15 +54,15 @@ The ERP is about a hundred screens and tabs. Anything two of them draw or decide
 
 ## A screen says a thing once
 
-The generic list (`_ui/list-screen.tsx`) and record drawer (`_ui/record-drawer.tsx`) leave out what would only repeat:
+The generic list (`_ui/list-screen.tsx`) and record dialog (`_ui/record-dialog.tsx`) leave out what would only repeat:
 
 | Repeat | What happens | Where |
 |---|---|---|
 | A flag reading the same as the row's status | Not drawn | `flagsBesideStatus` in `_ui/badge.tsx` |
 | The grouped-by column, while grouped | Dropped from the rows; the group header says it | `lineCols` in `list-screen.tsx` |
 | Search, group and columns on a list with no rows | Toolbar not drawn | `list-screen.tsx` |
-| A record field with a column's label | Takes the column's place in the drawer | `record-drawer.tsx` |
-| Columns a panel already shows | Listed in the panel's `covers`, left out of the drawer | `ListRow.panel.covers` in `lib/erp/ui.ts` |
+| A record field with a column's label | Takes the column's place in the record | `record-dialog.tsx` |
+| Columns a panel already shows | Listed in the panel's `covers`, left out of the record's Details tab | `ListRow.panel.covers` in `lib/erp/ui.ts` |
 
 A `noDataLine` is drawn as a heading (its first sentence) and a muted explanation (the rest), so write the first sentence to stand on its own.
 

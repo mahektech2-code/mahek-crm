@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Modal } from "@/components/ui/modal";
-import { Drawer, DrawerHeader } from "@/components/ui/overlays";
+import { DialogHeader, ErpDialog, TabBar } from "../../_ui/dialog";
 import { Badge, Button, Card, controlClass, cx } from "@/components/ui/primitives";
 import { erpLogisticsTransporter } from "@/lib/actions/erp-logistics";
 import { checkGstin } from "@/lib/engines/lead-scan";
@@ -179,18 +179,29 @@ function TransporterDetails({
   onClose: () => void;
   onEdit: (t: Transporter) => void;
 }) {
+  const [tab, setTab] = useState<"details" | "godowns">("details");
+  if (!t) return null;
   return (
-    <Drawer open={!!t} onClose={onClose} width={560} label="Transporter">
-      {t ? (
+    <ErpDialog onClose={onClose} label="Transporter" size="md">
         <>
-          <DrawerHeader onClose={onClose}>
-            <div className="flex items-center gap-2">
-              <span className="text-lg font-semibold text-ink">{t.name}</span>
+          <DialogHeader onClose={onClose}>
+            <div className="text-xs font-medium tracking-[0.04em] text-muted uppercase">Transporter</div>
+            <div className="mt-0.5 flex items-center gap-2">
+              <span className="text-xl font-semibold text-ink">{t.name}</span>
               {!t.active ? <Badge tone="muted">Not in use</Badge> : null}
             </div>
-          </DrawerHeader>
-          <div className="flex-1 space-y-5 overflow-y-auto px-5 py-4">
-            <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+          </DialogHeader>
+          <TabBar
+            tabs={[
+              { key: "details", label: "Details" },
+              { key: "godowns", label: "Godowns", count: t.godowns.length },
+            ]}
+            active={tab}
+            onChange={(k) => setTab(k as "details" | "godowns")}
+          />
+          <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+            {tab === "details" ? (
+            <dl className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm">
               <Fact k="GST number">{t.gstin ? <span className="font-mono">{t.gstin}</span> : null}</Fact>
               <Fact k="Consignment number is called">{t.consignmentLabel}</Fact>
               <Fact k="Online tracking">
@@ -202,14 +213,12 @@ function TransporterDetails({
               </Fact>
               <Fact k="With them now">{load?.active ? `${load.active} bill${load.active === 1 ? "" : "s"}${load.road ? ` · ${load.road} on the road` : ""}` : "Nothing"}</Fact>
             </dl>
+            ) : null}
 
+            {tab === "godowns" ? (
             <section>
-              <div className="mb-2 flex items-baseline justify-between">
-                <h3 className="text-sm font-semibold text-ink">Godowns</h3>
-                <span className="text-xs text-muted">{t.godowns.length || "None"}</span>
-              </div>
               {t.godowns.length ? (
-                <div className="space-y-3">
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-3">
                   {t.godowns.map((g, i) => (
                     <div key={g.id} className="rounded-card border border-line">
                       <div className="border-b border-divider bg-canvas px-3 py-2">
@@ -250,17 +259,17 @@ function TransporterDetails({
                 <div className="rounded-card border border-dashed border-line px-3 py-4 text-center text-meta text-muted">No godowns added yet.</div>
               )}
             </section>
+            ) : null}
           </div>
           {canWrite ? (
-            <div className="flex justify-end border-t border-divider px-5 py-3">
+            <div className="flex justify-end border-t border-divider bg-canvas/60 px-6 py-3">
               <Button variant="primary" onClick={() => onEdit(t)}>
                 Edit
               </Button>
             </div>
           ) : null}
         </>
-      ) : null}
-    </Drawer>
+    </ErpDialog>
   );
 }
 
@@ -332,6 +341,7 @@ function EditTransporter({
   const [adding, setAdding] = useState(false);
   /** The godown open in its own dialog: an existing draft's key, or "new". */
   const [editing, setEditing] = useState<string | "new" | null>(null);
+  const [tab, setTab] = useState<"company" | "godowns">("company");
   const labelOptions = v.consignmentLabel && !labels.includes(v.consignmentLabel) ? [...labels, v.consignmentLabel] : labels;
 
   const cls = controlClass({ className: "mt-1 block h-8.5" });
@@ -345,8 +355,11 @@ function EditTransporter({
     run(
       () => erpLogisticsTransporter({ id: t?.id ?? null, ...v, gstin: gst?.gstin ?? null, godowns: godowns.map(asInput) }),
       (r) => {
-        if (r.ok) onClose();
-        else setProblem(r.fieldErrors?.[0] ? { field: r.fieldErrors[0].field, message: r.fieldErrors[0].message } : null);
+        if (r.ok) return onClose();
+        const fe = r.fieldErrors?.[0];
+        setProblem(fe ? { field: fe.field, message: fe.message } : null);
+        /* A godown's error is on the Godowns tab: go to it, or nobody sees it. */
+        if (fe) setTab(/^g\d+\./.test(fe.field) ? "godowns" : "company");
       },
     );
 
@@ -355,23 +368,21 @@ function EditTransporter({
 
   return (
     <>
-      <Modal
-        open
-        onClose={onClose}
-        width={780}
-        title={t ? `Edit ${t.name}` : "Add a transporter"}
-        footer={
-          <>
-            <Button onClick={onClose}>Cancel</Button>
-            <Button variant="primary" disabled={pending || !v.name.trim() || gstBad} onClick={save}>
-              Save
-            </Button>
-          </>
-        }
-      >
-        <div className="space-y-5 text-xs text-muted">
+      <ErpDialog onClose={onClose} size="md" label={t ? `Edit ${t.name}` : "Add a transporter"}>
+        <DialogHeader onClose={onClose}>
+          <div className="text-xl leading-7 font-semibold text-ink">{t ? `Edit ${t.name}` : "Add a transporter"}</div>
+        </DialogHeader>
+        <TabBar
+          tabs={[
+            { key: "company", label: "Company" },
+            { key: "godowns", label: "Godowns", count: godowns.length },
+          ]}
+          active={tab}
+          onChange={(x) => setTab(x as "company" | "godowns")}
+        />
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5 text-xs text-muted">
+          {tab === "company" ? (
           <section>
-            <SectionTitle>Company</SectionTitle>
             <div className="grid grid-cols-2 gap-3">
               <label className="col-span-2">
                 Name (as it is written on bills and LRs)
@@ -448,7 +459,9 @@ function EditTransporter({
               </label>
             </div>
           </section>
+          ) : null}
 
+          {tab === "godowns" ? (
           <section>
             <SectionTitle hint="Each godown is a state, district, city and area, with its GST number if it has one, its pin and the people to ring there.">Godowns</SectionTitle>
             <div className="space-y-2">
@@ -487,8 +500,19 @@ function EditTransporter({
               </Button>
             </div>
           </section>
+          ) : null}
         </div>
-      </Modal>
+        <div className="flex flex-none items-center justify-end gap-2.5 border-t border-divider bg-canvas/60 px-6 py-3">
+          {problem && tab === "company" && /^g\d+\./.test(problem.field) ? <span className="mr-auto text-meta text-danger">A godown needs fixing — see Godowns.</span> : null}
+          <Button onClick={onClose}>Cancel</Button>
+          {tab === "company" ? (
+            <Button onClick={() => setTab("godowns")}>Next: godowns</Button>
+          ) : null}
+          <Button variant="primary" disabled={pending || !v.name.trim() || gstBad} onClick={save}>
+            Save
+          </Button>
+        </div>
+      </ErpDialog>
       {editing ? (
         <GodownDialog
           key={editing}

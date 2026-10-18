@@ -24,7 +24,7 @@
  * NO PURCHASE IS COMPLETED WITHOUT A PO: goods inward and a register row both
  * name an approved PO's line.
  *
- * One file says where a requirement has got to, what a PO is worth and what a receipt does to it — so the list, the drawer,
+ * One file says where a requirement has got to, what a PO is worth and what a receipt does to it — so the list, the record,
  * the dashboard tile and the form summary read one answer.
  * ------------------------------------------------------------------------- */
 
