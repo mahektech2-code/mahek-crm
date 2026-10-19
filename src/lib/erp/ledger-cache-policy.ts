@@ -37,7 +37,11 @@ export class StampedRowCache<V> {
     return params <= this.policy.maxParams;
   }
 
-  /** The answer kept under `stamp`, or nothing. A newer stamp than any seen empties the cache first. */
+  /**
+   * The answer kept under `stamp`, or nothing. A stamp other than the one the
+   * cache is on empties it first — stamps are compared for equality, not
+   * order, and the caller has just read this one, so it is the current one.
+   */
   get(key: string, stamp: string): V | undefined {
     this.observe(stamp);
     const at = this.kept.get(key);
@@ -47,9 +51,19 @@ export class StampedRowCache<V> {
     return at.value;
   }
 
-  /** Keeps an answer of `rows` rows, then drops the oldest until the budget holds. One answer over the whole budget is not kept. */
+  /**
+   * Keeps an answer of `rows` rows, then drops the oldest until the budget
+   * holds. One answer over the whole budget is not kept.
+   *
+   * An answer under a stamp the cache has since LEFT is not kept, and moves
+   * nothing. A read that started before a write lands after it; re-keeping it
+   * under its own stamp emptied the cache of every answer read since the write
+   * and pinned it to a stamp no page would ask for again. Only `get` moves the
+   * stamp, because only `get` is handed one just read.
+   */
   set(key: string, stamp: string, value: V, rows: number): void {
-    this.observe(stamp);
+    if (this.stamp === null) this.observe(stamp);
+    if (stamp !== this.stamp) return;
     this.drop(key);
     if (rows > this.policy.maxRows) return;
     this.kept.set(key, { stamp, value, rows });
@@ -61,9 +75,10 @@ export class StampedRowCache<V> {
     }
   }
 
-  drop(key: string): void {
+  /** Forgets `key` — only while it still holds `value`, when one is named, so a failed read cannot take a newer answer with it. */
+  drop(key: string, value?: V): void {
     const at = this.kept.get(key);
-    if (!at) return;
+    if (!at || (value !== undefined && at.value !== value)) return;
     this.kept.delete(key);
     this.total -= at.rows;
   }

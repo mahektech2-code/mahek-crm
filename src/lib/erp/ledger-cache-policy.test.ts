@@ -56,3 +56,24 @@ test("a statement with a long parameter list — a page's own lots — is not ad
   assert.ok(c.admits(3));
   assert.ok(!c.admits(4));
 });
+
+test("a read that lands after the stamp moved is not kept, and takes nothing with it", () => {
+  const c = new StampedRowCache<string>(policy);
+  c.set("slow", "1:1", "pending", 0);
+  assert.equal(c.get("fresh", "2:2"), undefined);
+  c.set("fresh", "2:2", "new", 10);
+  c.set("slow", "1:1", "landed late", 10);
+  assert.equal(c.get("fresh", "2:2"), "new", "the answer read since the write survives");
+  assert.equal(c.get("slow", "2:2"), undefined);
+  assert.deepEqual(c.size(), { entries: 1, rows: 10 });
+});
+
+test("a failed read forgets only its own answer", () => {
+  const c = new StampedRowCache<string>(policy);
+  c.set("a", "s", "first", 0);
+  c.set("a", "s", "second", 5);
+  c.drop("a", "first");
+  assert.equal(c.get("a", "s"), "second");
+  c.drop("a", "second");
+  assert.equal(c.get("a", "s"), undefined);
+});

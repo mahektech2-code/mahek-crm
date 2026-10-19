@@ -53,7 +53,7 @@ export async function ledgerRead<T>(q: SQL, run: () => Promise<T>): Promise<T> {
   kept.set(key, stamp, value, 0);
   value.then(
     (rows) => kept.set(key, stamp, value, Array.isArray(rows) ? rows.length : 1),
-    () => kept.drop(key),
+    () => kept.drop(key, value),
   );
   return value;
 }
