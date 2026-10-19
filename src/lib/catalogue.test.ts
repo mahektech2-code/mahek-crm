@@ -6,7 +6,13 @@ import {
   canValueOrders,
   canonicalName,
   describeQuantity,
+  finishedGoodNameFor,
   lineValuePaise,
+  newSkuProblems,
+  packingLabelFor,
+  sizeLabel,
+  skuNameFor,
+  type NewSkuDraft,
   litresFor,
   matchKey,
   productLines,
@@ -239,5 +245,74 @@ describe("which line leads on a product row", () => {
     ]) {
       assert.ok(productLines(row).lead.length > 0, JSON.stringify(row));
     }
+  });
+});
+
+describe("a new SKU", () => {
+  const draft = (over: Partial<NewSkuDraft> = {}): NewSkuDraft => ({
+    name: "Nano Thinner - 5 Liter (6 Can/Box)",
+    packingKind: "box",
+    cansPerBox: 6,
+    millilitresPerCan: 5000,
+    packingCostPaise: 4600,
+    weightGrams: 25000,
+    sellingPricePaise: null,
+    externalCode: null,
+    aliases: [],
+    ...over,
+  });
+
+  test("the suggested names follow the catalogue's own spelling", () => {
+    assert.equal(sizeLabel(500), "0.5 Liter");
+    assert.equal(sizeLabel(20000), "20 Liter");
+    assert.equal(finishedGoodNameFor("Nano Thinner", 5000), "Nano Thinner - 5 Liter");
+    assert.equal(packingLabelFor("box", 6), "6 Can/Box");
+    assert.equal(packingLabelFor("loose", 1), "Loose");
+    assert.equal(packingLabelFor("drum", 1), "Drum");
+    assert.equal(skuNameFor("Nano Thinner - 5 Liter", "6 Can/Box"), "Nano Thinner - 5 Liter (6 Can/Box)");
+  });
+
+  test("most of the seed's SKUs are their finished good plus their packing", () => {
+    // Three in four today; the rest carry "Tin Can" or "500ml" in the name, which
+    // is why the console's name is a suggestion somebody can edit. If this drops,
+    // the suggestion has stopped matching its siblings.
+    const same = SKUS.filter((s) => skuNameFor(s.finishedGood, s.packing) === s.name).length;
+    assert.ok(same / SKUS.length > 0.7, `${same} of ${SKUS.length}`);
+  });
+
+  test("a well-formed SKU has nothing wrong with it", () => {
+    assert.deepEqual(newSkuProblems(draft()), {});
+    assert.deepEqual(newSkuProblems(draft({ packingKind: "loose", cansPerBox: 1, packingCostPaise: null, name: "X Thinner - 5 Liter (Loose)" })), {});
+    assert.deepEqual(newSkuProblems(draft({ packingKind: "drum", cansPerBox: 1, millilitresPerCan: 210000 })), {});
+  });
+
+  test("the packing and its count must agree", () => {
+    assert.ok(newSkuProblems(draft({ cansPerBox: 1 })).cansPerBox);
+    assert.ok(newSkuProblems(draft({ packingKind: "drum", cansPerBox: 2 })).cansPerBox);
+    assert.ok(newSkuProblems(draft({ cansPerBox: 500 })).cansPerBox);
+  });
+
+  test("a loose can carries no packing cost, a drum may", () => {
+    assert.ok(newSkuProblems(draft({ packingKind: "loose", cansPerBox: 1, packingCostPaise: 3400 })).packingCostPaise);
+    assert.equal(newSkuProblems(draft({ packingKind: "drum", cansPerBox: 1, packingCostPaise: 90000 })).packingCostPaise, undefined);
+  });
+
+  test("blank figures are allowed and zero or negative ones are not", () => {
+    assert.deepEqual(newSkuProblems(draft({ weightGrams: null, packingCostPaise: null })), {});
+    assert.ok(newSkuProblems(draft({ sellingPricePaise: 0 })).sellingPricePaise);
+    assert.ok(newSkuProblems(draft({ weightGrams: -5 })).weightGrams);
+    assert.ok(newSkuProblems(draft({ millilitresPerCan: 0 })).millilitresPerCan);
+    assert.ok(newSkuProblems(draft({ millilitresPerCan: 300000 })).millilitresPerCan);
+    assert.ok(newSkuProblems(draft({ externalCode: 1.5 })).externalCode);
+  });
+
+  test("another name may not repeat the SKU's own name or itself", () => {
+    assert.ok(newSkuProblems(draft({ aliases: ["nano thinner 5 liter (6 can/box)"] })).aliases);
+    assert.ok(newSkuProblems(draft({ aliases: ["Nano 5L", "nano 5l"] })).aliases);
+    assert.equal(newSkuProblems(draft({ aliases: ["Nano 5L box"] })).aliases, undefined);
+  });
+
+  test("a name is required", () => {
+    assert.ok(newSkuProblems(draft({ name: "  " })).name);
   });
 });

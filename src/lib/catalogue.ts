@@ -204,3 +204,124 @@ export function productLines(row: {
   }
   return { lead: formulation, detail: sku };
 }
+
+/* ------------------------------------------------------------ a new SKU */
+
+/**
+ * HOW A SKU IS PACKED, AS THE CONSOLE'S "ADD SKU" ASKS IT.
+ *
+ * Three answers, because the name and two stored figures follow from it: a box
+ * holds several cans (`cans_per_box` > 1, weight per box); a loose can and a
+ * drum are each ONE container (`cans_per_box` 1, weight per can). Loose and
+ * drum are different answers although both are one container — a drum is a
+ * container that costs something, which is what keeps a drum cost from ever
+ * reading as a box cost (see `scripts/parse-catalogue.mjs`, `derivePacking`).
+ */
+export type PackingKind = "box" | "loose" | "drum";
+
+/** 500 → "0.5 Liter", 5000 → "5 Liter" — the size as the catalogue spells it. */
+export function sizeLabel(millilitres: number): string {
+  return `${trim(millilitres / 1000)} Liter`;
+}
+
+/**
+ * A finished good's name — "Nano Thinner - 5 Liter" — the shape the catalogue
+ * document gives almost every row. A SUGGESTION: the console shows it and
+ * somebody may change it, because a handful of real goods are spelled without
+ * the dash and a new one should be able to match its siblings.
+ */
+export function finishedGoodNameFor(brand: string, millilitres: number): string {
+  return canonicalName(`${brand.trim()} - ${sizeLabel(millilitres)}`);
+}
+
+/** "6 Can/Box", "Loose", "Drum" — what the name carries in its brackets. */
+export function packingLabelFor(kind: PackingKind, cansPerBox: number): string {
+  if (kind === "box") return `${cansPerBox} Can/Box`;
+  return kind === "drum" ? "Drum" : "Loose";
+}
+
+/** "Nano Thinner - 5 Liter (6 Can/Box)". Also a suggestion — see above. */
+export function skuNameFor(goodName: string, packing: string): string {
+  return canonicalName(`${goodName.trim()} (${packing.trim()})`);
+}
+
+/** Everything about a new SKU that can be judged without the database. */
+export type NewSkuDraft = {
+  name: string;
+  packingKind: PackingKind;
+  cansPerBox: number;
+  millilitresPerCan: number;
+  packingCostPaise: number | null;
+  weightGrams: number | null;
+  sellingPricePaise: number | null;
+  externalCode: number | null;
+  aliases: string[];
+};
+
+/** A pack this size or larger is a typo — the largest drum sold is 210 L. */
+export const MAX_MILLILITRES_PER_CAN = 250_000;
+/** The largest real box holds 32 cans; a hundred is a typo. */
+export const MAX_CANS_PER_BOX = 100;
+
+/**
+ * What is wrong with a new SKU, keyed by the field it is wrong about, so the
+ * console can put each sentence under the box it names. Empty means nothing
+ * this side can see — the action still checks the name and the legacy ID
+ * against the catalogue, which only the database knows.
+ *
+ * The console runs this on every keystroke and `createSku` runs it again
+ * before it writes, so the two cannot disagree about what is allowed.
+ */
+export function newSkuProblems(d: NewSkuDraft): Partial<Record<keyof NewSkuDraft, string>> {
+  const out: Partial<Record<keyof NewSkuDraft, string>> = {};
+  const name = canonicalName(d.name);
+  if (name.length < 3) out.name = "A SKU needs a real name.";
+  else if (name.length > 200) out.name = "That name is longer than any product name needs to be.";
+
+  if (!Number.isInteger(d.cansPerBox) || d.cansPerBox < 1) {
+    out.cansPerBox = "Cans per box is a whole number.";
+  } else if (d.packingKind === "box" && d.cansPerBox < 2) {
+    out.cansPerBox = "A box holds at least two cans — one can on its own is Loose.";
+  } else if (d.packingKind !== "box" && d.cansPerBox !== 1) {
+    out.cansPerBox = "A loose can or a drum is one container.";
+  } else if (d.cansPerBox > MAX_CANS_PER_BOX) {
+    out.cansPerBox = `No box holds more than ${MAX_CANS_PER_BOX} cans.`;
+  }
+
+  if (!Number.isInteger(d.millilitresPerCan) || d.millilitresPerCan < 1) {
+    out.millilitresPerCan = "Say how much one can holds.";
+  } else if (d.millilitresPerCan > MAX_MILLILITRES_PER_CAN) {
+    out.millilitresPerCan = `No container here holds more than ${MAX_MILLILITRES_PER_CAN / 1000} L.`;
+  }
+
+  if (d.packingCostPaise != null && (!Number.isInteger(d.packingCostPaise) || d.packingCostPaise < 0)) {
+    out.packingCostPaise = "A packing cost is zero or more.";
+  } else if (d.packingKind === "loose" && d.packingCostPaise != null && d.packingCostPaise > 0) {
+    out.packingCostPaise = "A loose can has no box, so it has no packing cost. Choose Drum if it is one.";
+  }
+  if (d.weightGrams != null && (!Number.isInteger(d.weightGrams) || d.weightGrams < 1)) {
+    out.weightGrams = "A weight is more than zero, or blank.";
+  }
+  if (d.sellingPricePaise != null && (!Number.isInteger(d.sellingPricePaise) || d.sellingPricePaise < 1)) {
+    out.sellingPricePaise = "A price is more than zero, or blank — a blank price is not a free product.";
+  }
+  if (d.externalCode != null && (!Number.isInteger(d.externalCode) || d.externalCode < 1)) {
+    out.externalCode = "A legacy Product ID is a whole number.";
+  }
+
+  const seen = new Set<string>([matchKey(name)]);
+  for (const a of d.aliases) {
+    const clean = canonicalName(a);
+    if (clean.length < 2) {
+      out.aliases = "Each other name needs at least two characters.";
+      break;
+    }
+    const key = matchKey(clean);
+    if (seen.has(key)) {
+      out.aliases = `"${clean}" is the SKU's own name or listed twice.`;
+      break;
+    }
+    seen.add(key);
+  }
+  return out;
+}

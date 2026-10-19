@@ -17,7 +17,7 @@ import {
 } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
 import { requireCapability } from "@/lib/access-control";
-import { canonicalName, matchKey } from "@/lib/catalogue";
+import { canonicalName, finishedGoodNameFor, matchKey, newSkuProblems, type PackingKind } from "@/lib/catalogue";
 import {
   importCatalogue,
   resolveCanonicalId,
@@ -736,5 +736,257 @@ export async function nameHeldRow(
     return ok({ productId }, `#${row.externalId} is now "${clean}" and can be ordered.`);
   } catch (e) {
     return fail(e instanceof Error ? e.message : "That did not save.");
+  }
+}
+
+/* ------------------------------------------------------------ a new SKU */
+
+/** An existing level by id, or a new one by what it is called. */
+type LevelPick = { id: string } | { name: string };
+
+export type NewSkuInput = {
+  formulation: LevelPick;
+  brand: LevelPick;
+  /** An existing finished good, or a new one of this size (and, optionally, this name). */
+  good: { id: string } | { millilitres: number; name?: string };
+  name: string;
+  packingKind: PackingKind;
+  cansPerBox: number;
+  millilitresPerCan: number;
+  packingCostPaise: number | null;
+  weightGrams: number | null;
+  sellingPricePaise: number | null;
+  externalCode: number | null;
+  aliases: string[];
+  /** Offered on the order form straight away, or kept back until somebody puts it on. */
+  active: boolean;
+};
+
+const levelPick = z.union([
+  z.object({ id: z.string().min(1) }),
+  z.object({ name: z.string().trim().min(2).max(120) }),
+]);
+
+const newSkuSchema = z.object({
+  formulation: levelPick,
+  brand: levelPick,
+  good: z.union([
+    z.object({ id: z.string().min(1) }),
+    z.object({
+      millilitres: z.number().int().min(1).max(250_000),
+      name: z.string().trim().max(160).optional(),
+    }),
+  ]),
+  name: z.string(),
+  packingKind: z.enum(["box", "loose", "drum"]),
+  cansPerBox: z.number(),
+  millilitresPerCan: z.number(),
+  packingCostPaise: z.number().nullable(),
+  weightGrams: z.number().nullable(),
+  sellingPricePaise: z.number().nullable(),
+  externalCode: z.number().nullable(),
+  aliases: z.array(z.string()).max(20),
+  active: z.boolean(),
+});
+
+/** A unique-index violation, turned into the sentence somebody can act on. */
+function clashSentence(e: unknown): string | null {
+  const m = e instanceof Error ? e.message : "";
+  if (/product_formulations_slug_key/.test(m)) return "A formulation already answers to that name — pick it from the list.";
+  if (/product_brands_slug_key/.test(m)) return "A brand line already answers to that name — pick it from the list.";
+  if (/finished_goods_slug_key/.test(m)) return "A finished good already answers to that name — pick it from the list.";
+  if (/products_name_key/.test(m)) return "Another SKU already has that name.";
+  if (/product_aliases_name_key/.test(m)) return "One of the other names already resolves to a product.";
+  return null;
+}
+
+/**
+ * ADDS A SKU BY HAND, and whatever it hangs from that does not exist yet.
+ *
+ * The import is how the catalogue was filled; this is how a product launched
+ * after it gets in without editing a document and re-running a parser. One
+ * transaction writes the formulation, brand line and finished good where the
+ * console asked for new ones, the SKU, and its other names — a SKU filed under
+ * a brand that failed to save is the state the hierarchy exists to prevent.
+ *
+ * The levels must chain: a brand picked from the list must belong to the
+ * formulation, and a finished good to the brand, because `updateSku` makes the
+ * same promise and a SKU filed across two branches reads as two products.
+ * The name is the join key, so it is checked against every SKU name AND every
+ * alias by match key — "Nano 5L" and "nano 5 l" are the same string to an
+ * order line. A legacy Product ID already carried by another SKU is refused
+ * for the same reason.
+ */
+export async function createSku(input: NewSkuInput): Promise<Result<{ productId: string; name: string }>> {
+  try {
+    const user = await actor();
+    const parsed = newSkuSchema.safeParse(input);
+    if (!parsed.success) return fail("Those values are not valid.");
+    const d = parsed.data;
+
+    const problems = newSkuProblems(d);
+    const first = Object.values(problems)[0];
+    if (first) return fail(first);
+
+    const name = canonicalName(d.name);
+    const key = matchKey(name);
+    const aliases = d.aliases.map(canonicalName);
+
+    /* The join key, by match key, against every SKU and every alias. */
+    const [names, aliasRows] = await Promise.all([
+      db.select({ name: products.name, externalCode: products.externalCode, externalIds: products.externalIds }).from(products),
+      db.select({ name: productAliases.name, externalId: productAliases.externalId }).from(productAliases),
+    ]);
+    const taken = new Map<string, string>();
+    for (const r of names) taken.set(matchKey(r.name), `the SKU "${r.name}"`);
+    for (const r of aliasRows) if (!taken.has(matchKey(r.name))) taken.set(matchKey(r.name), `another name for a product ("${r.name}")`);
+    if (taken.has(key)) return fail(`That name is already ${taken.get(key)}.`, "conflict");
+    for (const a of aliases) {
+      const hit = taken.get(matchKey(a));
+      if (hit) return fail(`"${a}" is already ${hit}.`, "conflict");
+    }
+    if (d.externalCode != null) {
+      const code = d.externalCode;
+      const owner = names.find(
+        (r) => r.externalCode === String(code) || (r.externalIds ?? []).includes(code),
+      );
+      if (owner) return fail(`Legacy Product ID ${code} already belongs to "${owner.name}".`, "conflict");
+      if (aliasRows.some((r) => r.externalId === code)) {
+        return fail(`Legacy Product ID ${code} already resolves through another name.`, "conflict");
+      }
+    }
+
+    /* The three levels above, existing or new — and chained. */
+    let formulation: { id: string; name: string; isNew: boolean };
+    if ("id" in d.formulation) {
+      const [f] = await db.select().from(productFormulations).where(eq(productFormulations.id, d.formulation.id));
+      if (!f) return fail("No such formulation.", "not_found");
+      formulation = { id: f.id, name: f.name, isNew: false };
+    } else {
+      const fname = canonicalName(d.formulation.name);
+      const [f] = await db.select().from(productFormulations).where(eq(productFormulations.slug, matchKey(fname)));
+      if (f) return fail(`"${f.name}" is already a formulation — pick it from the list.`, "conflict");
+      formulation = { id: newId("frm"), name: fname, isNew: true };
+    }
+
+    let brand: { id: string; name: string; isNew: boolean };
+    if ("id" in d.brand) {
+      const [b] = await db.select().from(productBrands).where(eq(productBrands.id, d.brand.id));
+      if (!b) return fail("No such brand line.", "not_found");
+      if (b.formulationId !== formulation.id) {
+        return fail(`"${b.name}" belongs to another formulation. Pick a brand under ${formulation.name}, or add one.`, "rule_violation");
+      }
+      brand = { id: b.id, name: b.name, isNew: false };
+    } else {
+      const bname = canonicalName(d.brand.name);
+      const [b] = await db.select().from(productBrands).where(eq(productBrands.slug, matchKey(bname)));
+      if (b) return fail(`"${b.name}" is already a brand line — pick it from the list.`, "conflict");
+      brand = { id: newId("brd"), name: bname, isNew: true };
+    }
+
+    let good: { id: string; name: string; millilitres: number; isNew: boolean };
+    if ("id" in d.good) {
+      const [g] = await db.select().from(finishedGoods).where(eq(finishedGoods.id, d.good.id));
+      if (!g) return fail("No such finished good.", "not_found");
+      if (g.brandId !== brand.id) {
+        return fail(`"${g.name}" belongs to another brand line. Pick one under ${brand.name}, or add one.`, "rule_violation");
+      }
+      good = { id: g.id, name: g.name, millilitres: g.millilitres, isNew: false };
+    } else {
+      const gname = canonicalName(d.good.name || finishedGoodNameFor(brand.name, d.good.millilitres));
+      if (gname.length < 3) return fail("The finished good needs a name.");
+      const [g] = await db
+        .select()
+        .from(finishedGoods)
+        .where(eq(finishedGoods.slug, matchKey(gname)));
+      if (g) return fail(`"${g.name}" is already a finished good — pick it from the list.`, "conflict");
+      good = { id: newId("fgd"), name: gname, millilitres: d.good.millilitres, isNew: true };
+    }
+
+    const productId = newId("prd");
+    const weightBasis = d.cansPerBox > 1 ? "box" : "can";
+    const packing = d.packingKind === "box" ? `${d.cansPerBox} Can/Box` : d.packingKind === "drum" ? "Drum" : "Loose";
+
+    await db.transaction(async (tx) => {
+      if (formulation.isNew) {
+        await tx.insert(productFormulations).values({
+          id: formulation.id,
+          name: formulation.name,
+          slug: matchKey(formulation.name),
+          active: true,
+        });
+      }
+      if (brand.isNew) {
+        await tx.insert(productBrands).values({
+          id: brand.id,
+          name: brand.name,
+          slug: matchKey(brand.name),
+          formulationId: formulation.id,
+          active: true,
+        });
+      }
+      if (good.isNew) {
+        await tx.insert(finishedGoods).values({
+          id: good.id,
+          name: good.name,
+          slug: matchKey(good.name),
+          brandId: brand.id,
+          formulationId: formulation.id,
+          millilitres: good.millilitres,
+          active: true,
+        });
+      }
+      await tx.insert(products).values({
+        id: productId,
+        name,
+        rawName: name,
+        externalCode: d.externalCode == null ? null : String(d.externalCode),
+        externalIds: d.externalCode == null ? null : [d.externalCode],
+        finishedGoodId: good.id,
+        brandId: brand.id,
+        formulationId: formulation.id,
+        packing,
+        cansPerBox: d.cansPerBox,
+        millilitresPerCan: d.millilitresPerCan,
+        packingCostPaise: d.packingCostPaise,
+        weightGrams: d.weightGrams,
+        weightBasis,
+        sellingPricePaise: d.sellingPricePaise,
+        status: "ok",
+        active: d.active,
+      });
+      for (const a of aliases) {
+        await tx.insert(productAliases).values({
+          id: newId("pal"),
+          productId,
+          name: a,
+          reason: "Added with the SKU in the Admin Console",
+          createdById: user.id,
+        });
+      }
+    });
+
+    await audit(user.id, "catalogue.skuCreated", productId, null, {
+      name,
+      formulation: { id: formulation.id, name: formulation.name, new: formulation.isNew },
+      brand: { id: brand.id, name: brand.name, new: brand.isNew },
+      finishedGood: { id: good.id, name: good.name, new: good.isNew },
+      packing,
+      cansPerBox: d.cansPerBox,
+      millilitresPerCan: d.millilitresPerCan,
+      packingCostPaise: d.packingCostPaise,
+      weightGrams: d.weightGrams,
+      sellingPricePaise: d.sellingPricePaise,
+      externalCode: d.externalCode,
+      aliases,
+      active: d.active,
+    });
+    refresh();
+    return ok(
+      { productId, name },
+      d.active ? `"${name}" is in the catalogue and can be ordered.` : `"${name}" is in the catalogue, kept off the order form.`,
+    );
+  } catch (e) {
+    return fail(clashSentence(e) ?? (e instanceof Error ? e.message : "That did not save."));
   }
 }
