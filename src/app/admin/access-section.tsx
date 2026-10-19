@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/primitives";
 import { FilterPills, Modal, RowMenu } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
-import { getModule, grantableApps, isAlwaysOpen, moduleGroupsForApp, modulesForApp, writeLevelsForApp } from "@/lib/modules";
+import { getModule, grantableApps, isAlwaysOpen, moduleGroupsForApp, modulesForApp, toggleModule, withoutOrphanLevels, writeLevelsForApp } from "@/lib/modules";
 import {
   describeDiff,
   designationShape,
@@ -1650,10 +1650,7 @@ function AppBlock({
      outlives its screen — the server drops one that does, and so does this. */
   const change = (next: string[]) =>
     onChange(
-      [...new Set([...always, ...next])].filter((k) => {
-        const screen = [...writeOf].find(([, w]) => w === k)?.[0];
-        return !screen || next.includes(screen);
-      }),
+      withoutOrphanLevels([...new Set([...always, ...next])]),
     );
   /* What the chosen level lets them DO, read off the capability matrix the
      server enforces — never a sentence typed here. See `capability-labels`. */
@@ -1881,13 +1878,7 @@ function AppBlock({
                       <Checkbox
                         checked={ticked.includes(m.key)}
                         title={m.note}
-                        onChange={() =>
-                          change(
-                            ticked.includes(m.key)
-                              ? ticked.filter((k) => k !== m.key)
-                              : [...ticked, m.key, writeOf.get(m.key)!],
-                          )
-                        }
+                        onChange={() => change(toggleModule(app, ticked, m.key))}
                         className="min-w-0 py-[1px]"
                         label={<span className="truncate text-[13px] text-body">{m.label}</span>}
                       />
@@ -1917,13 +1908,7 @@ function AppBlock({
                       // rather than help, the same trade the microphone's own
                       // guidance makes.
                       title={m.note}
-                      onChange={() =>
-                        change(
-                          ticked.includes(m.key)
-                            ? ticked.filter((k) => k !== m.key)
-                            : [...ticked, m.key],
-                        )
-                      }
+                      onChange={() => change(toggleModule(app, ticked, m.key))}
                       className="min-w-0 py-[1px]"
                       label={<span className="truncate text-[13px] text-body">{m.label}</span>}
                     />
