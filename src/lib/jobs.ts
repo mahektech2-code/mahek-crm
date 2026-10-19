@@ -161,6 +161,8 @@ export type JobName =
   /** The stock-read cache's stamp table, kept short: ticks older than two days go. */
   | "erp-ledger-ticks"
   | "erp-inbox"
+  /** Dispatch-verified lines on no consignment, handed to Logistics — idempotent, runs hourly. */
+  | "erp-dispatch-transports"
   /** Inventory Accuracy Control: today's cycle counts, by ABC class — idempotent, runs hourly. */
   | "erp-cycle-counts"
   /**
@@ -674,6 +676,13 @@ async function erpCycleCountStep() {
   return { recordsAffected: r.opened, detail: r.skipped ? `skipped: ${r.skipped}` : `${r.opened} cycle count${r.opened === 1 ? "" : "s"} opened` };
 }
 
+/** The net under dispatch → Logistics: every recently verified line on no consignment is given one. */
+async function erpDispatchTransportsStep() {
+  const { syncDispatchedTransports } = await import("./erp/screens/sales");
+  const n = await syncDispatchedTransports(null, (await getConfig())["erp.logistics.syncDays"]);
+  return { recordsAffected: n, detail: n ? `${n} dispatched line${n === 1 ? "" : "s"} handed to Logistics` : "every dispatched line is on a consignment" };
+}
+
 /** AI-2: new WhatsApp replies screened into the ERP's order inbox, as drafts nobody has accepted. */
 async function erpInboxStep() {
   const { screenWhatsApp } = await import("./erp/ai-orders");
@@ -698,6 +707,7 @@ export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
   results.push(await run("erp-alerts", erpAlertsStep, triggeredById));
   results.push(await run("erp-inbox", erpInboxStep, triggeredById));
   results.push(await run("erp-cycle-counts", erpCycleCountStep, triggeredById));
+  results.push(await run("erp-dispatch-transports", erpDispatchTransportsStep, triggeredById));
 
   results.push(await run("mbos-hourly", mbosHourly, triggeredById));
 
@@ -1136,6 +1146,8 @@ export async function runJob(
       return [await run("erp-inbox", erpInboxStep, triggeredById)];
     case "erp-cycle-counts":
       return [await run("erp-cycle-counts", erpCycleCountStep, triggeredById)];
+    case "erp-dispatch-transports":
+      return [await run("erp-dispatch-transports", erpDispatchTransportsStep, triggeredById)];
     case "erp-book-sync":
       return [
         await run(

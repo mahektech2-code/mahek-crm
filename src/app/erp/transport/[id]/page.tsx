@@ -44,7 +44,7 @@ export default async function ConsignmentPage({ params }: { params: Promise<{ id
   const [c] = await consignments({ ids: [id] });
   if (!c) notFound();
   const siblings = c.lrId ? await consignmentsOnLr(c.lrId) : [c];
-  const [events, msgs, lines, cfg] = await Promise.all([eventsFor([c.id]), messages({ transportId: c.id }), billLines(c.orderNo), getConfig()]);
+  const [events, msgs, lines, cfg] = await Promise.all([eventsFor([c.id]), messages({ transportId: c.id }), billLines(c.orderNo, c.id), getConfig()]);
   const today = businessToday();
   const online = trackingLink(c.transporterTrackUrl, c.lrNo);
 

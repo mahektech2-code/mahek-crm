@@ -12370,6 +12370,8 @@ export const erpOrderDetails = pgTable("erp_order_details", {
   verification: text("verification"),
   withoutGstPaise: bigint("without_gst_paise", { mode: "number" }),
   transportFollowUp: text("transport_follow_up"),
+  /** The consignment (`erp_transports`) this line left on, set when it is dispatch-verified (0279). */
+  transportId: text("transport_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   createdById: text("created_by_id").references(() => users.id),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -12545,7 +12547,13 @@ export const erpDispatchOverrides = pgTable(
 
 /* ---- ERP phase 5: logistics, requests, follow-up, petty cash, videos (spec §12–§13) ---- */
 
-/** One per bill (order number), written when its first detail line is dispatch-verified. */
+/**
+ * One per DISPATCH: the lines of one order and one bill verified together (or
+ * joining it before it leaves the gate). Not unique on the order number since
+ * 0279 — an order shipped in two goes, or one whose number carries an old row
+ * from the Taken Order history, is two consignments. `erp_order_details.transport_id`
+ * says which lines are on which.
+ */
 export const erpTransports = pgTable(
   "erp_transports",
   {
@@ -12594,7 +12602,7 @@ export const erpTransports = pgTable(
     updatedById: text("updated_by_id").references(() => users.id),
   },
   (t) => [
-    uniqueIndex("erp_transports_order_key").on(t.orderNo),
+    index("erp_transports_order_idx").on(t.orderNo),
     uniqueIndex("erp_transports_track_token_key").on(t.trackToken),
     index("erp_transports_lr_idx").on(t.lrId),
   ],

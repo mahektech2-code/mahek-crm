@@ -4756,6 +4756,17 @@ export const SETTINGS = [
     max: 60,
   },
   {
+    key: "erp.logistics.syncDays",
+    type: "integer",
+    category: "erp",
+    label: "Logistics · catch missed dispatches from the last",
+    description:
+      "Days back that a dispatch-verified line with no consignment is given one when Logistics opens and every hour. It catches anything the verify step did not hand over; older history is left alone.",
+    default: 30,
+    min: 1,
+    max: 365,
+  },
+  {
     key: "erp.location.autoDetect",
     type: "boolean",
     category: "erp",
@@ -6390,6 +6401,7 @@ export type Config = {
   "erp.logistics.signature": string;
   "erp.logistics.callEveryDays": number;
   "erp.logistics.lateAfterDays": number;
+  "erp.logistics.syncDays": number;
   "erp.ai.voice.enabled": boolean;
   "erp.ai.alerts.enabled": boolean;
   "erp.ai.alerts.rateJumpPct": number;

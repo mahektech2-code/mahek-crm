@@ -434,3 +434,90 @@ describe("transporters", () => {
 });
 
 
+
+describe("every dispatch reaches Logistics (0279)", () => {
+  const lot = `FGD${tag}`;
+  let fgId = "";
+  let skuId = "";
+  before(async () => {
+    const [p] = await db.select().from(products).where(eq(products.name, SKU));
+    skuId = p.id;
+    fgId = p.finishedGoodId!;
+    await db.insert(erpFgEntries).values({ id: id("fge"), sourceType: "fill", sourceId: `fin_${tag}`, entryDate: "2026-08-01", finishedGoodId: fgId, lotCode: lot, godownId: "erpg_bhiwandi", quantity: 200, packingType: "Can", skuId });
+  });
+
+  /** An order of one line per quantity, every line allocated and billed — not yet verified. */
+  async function billed(date: string, qtys: number[], bill: string) {
+    const ctx = await as(admin);
+    assert.ok((await mod("orders").forms!.new(ctx, { date, godown: "Bhiwandi", billing: "Shree Paints" }, qtys.map((q) => ({ sku: SKU, qty: String(q), rate: "300" })))).ok);
+    const ls = await db.select().from(erpOrders).where(sql`${erpOrders.orderDate} = ${date}`).orderBy(erpOrders.createdAt);
+    for (const o of ls) {
+      await mod("orders").actions!.ready(ctx, o.id, {});
+      assert.ok((await mod("orders").forms!.allocate(ctx, { lot, qty: String(o.qtyCans) }, [], o.id)).ok);
+      await mod("orders").forms!.edit(ctx, { status: "Ready", delivery: "Shree Paints", qty: String(o.qtyCans), rate: "300", bill, transport: "0" }, [], o.id);
+      assert.ok((await mod("orders").actions!.bill(ctx, o.id, {})).ok);
+    }
+    return ls;
+  }
+  const lineOf = async (orderId: string) => (await db.select().from(erpOrderDetails).where(eq(erpOrderDetails.orderId, orderId)))[0];
+
+  test("an order number that already carries a closed row from the history still opens a consignment", async () => {
+    const [o] = await billed("2026-09-01", [4], "MMI/26-27/901");
+    /* The Taken Order history's row for the same number: delivered long ago. */
+    await db.insert(erpTransports).values({ id: id("legacy"), orderNo: o.orderNo, billDate: "2025-01-05", billingCustomerId: "cus_shree", billNo: "OLD/1", materialStage: "Close - Received to Party", deliveredOn: "2025-01-09" });
+    const ctx = await as(admin);
+    assert.equal(msg(await mod("orderDetails").actions!.verify(ctx, o.id, { date: "2026-09-02" })), "ok");
+    const rows = await db.select().from(erpTransports).where(eq(erpTransports.orderNo, o.orderNo));
+    assert.equal(rows.length, 2, "the old row stays and a new one opens");
+    const fresh = rows.find((t) => t.billDate === "2026-09-02")!;
+    assert.equal((await lineOf(o.id)).transportId, fresh.id);
+    assert.equal(fresh.packages, 4);
+    const [c] = await L.consignments({ ids: [fresh.id] });
+    assert.equal(c.phase, "toTransport");
+    assert.ok((await L.consignments()).some((x) => x.id === fresh.id), "it is on the board");
+  });
+
+  test("lines verified together are one consignment; a line verified after it left is another", async () => {
+    const [a, b, c] = await billed("2026-09-03", [3, 5, 2], "MMI/26-27/902");
+    const ctx = await as(admin);
+    assert.equal(msg(await mod("orderDetails").bulk!.verify(ctx, [a.id, b.id], { date: "2026-09-04" })), "ok");
+    const first = (await lineOf(a.id)).transportId!;
+    assert.equal((await lineOf(b.id)).transportId, first);
+    assert.equal((await db.select().from(erpTransports).where(eq(erpTransports.id, first)))[0].packages, 8);
+    /* Reached the transporter, then the last line is verified: it cannot ride on a consignment already gone. */
+    assert.ok((await L.markAtTransport(ctx, [first])).ok);
+    assert.equal(msg(await mod("orderDetails").actions!.verify(ctx, c.id, { date: "2026-09-05" })), "ok");
+    const second = (await lineOf(c.id)).transportId!;
+    assert.notEqual(second, first);
+    const [t2] = await db.select().from(erpTransports).where(eq(erpTransports.id, second));
+    assert.equal(t2.packages, 2, "only the line that left on it is counted");
+    assert.deepEqual((await L.billLines(a.orderNo, second)).map((l) => l.id), [c.id]);
+  });
+
+  test("a line still at the gate takes a later line of the same bill", async () => {
+    const [a, b] = await billed("2026-09-06", [1, 1], "MMI/26-27/903");
+    const ctx = await as(admin);
+    assert.equal(msg(await mod("orderDetails").actions!.verify(ctx, a.id, { date: "2026-09-07" })), "ok");
+    assert.equal(msg(await mod("orderDetails").actions!.verify(ctx, b.id, { date: "2026-09-07" })), "ok");
+    assert.equal((await lineOf(a.id)).transportId, (await lineOf(b.id)).transportId);
+  });
+
+  test("a verified line on no consignment is caught by the sync, once", async () => {
+    const { syncDispatchedTransports } = await import("@/lib/erp/screens/sales");
+    const [o] = await billed("2026-09-08", [6], "MMI/26-27/904");
+    const ctx = await as(admin);
+    assert.equal(msg(await mod("orderDetails").actions!.verify(ctx, o.id, { date: "2026-09-09" })), "ok");
+    /* As though the hand-over never happened. */
+    const tid = (await lineOf(o.id)).transportId!;
+    await db.execute(sql`delete from erp_transport_events where transport_id = ${tid}`);
+    await db.delete(erpTransports).where(eq(erpTransports.id, tid));
+    await db.update(erpOrderDetails).set({ transportId: null }).where(eq(erpOrderDetails.orderId, o.id));
+    assert.equal(await syncDispatchedTransports(null, 3650), 1);
+    const back = (await lineOf(o.id)).transportId!;
+    const [t] = await db.select().from(erpTransports).where(eq(erpTransports.id, back));
+    assert.equal(t.billDate, "2026-09-09", "dated its own dispatch");
+    assert.equal(t.packages, 6);
+    assert.deepEqual((await L.eventsFor([t.id])).map((e) => e.kind), ["opened"]);
+    assert.equal(await syncDispatchedTransports(null, 3650), 0, "nothing left to hand over");
+  });
+});

@@ -104,7 +104,13 @@ async function linesOf(orderNos: number[]): Promise<LineRow[]> {
       left join finished_goods fg on fg.id = p.finished_good_id
       left join erp_product_packing pk on pk.product_id = p.id
       left join erp_order_details d on d.order_id = o.id
-      left join erp_transports t on t.order_no = o.order_no
+      /* The consignment this line left on; a line on none (or from before 0279) reads its order's newest. */
+      left join lateral (
+        select t.material_stage from erp_transports t
+         where t.id = d.transport_id or (d.transport_id is null and t.order_no = o.order_no)
+         order by (t.id = d.transport_id) desc nulls last, t.created_at desc
+         limit 1
+      ) t on true
      where o.order_no in ${orderNos}
        /* A line copied in from the Taken Order tab is already in the book as the
           sheet's own SHEET- order; writing it again would count it twice. */
