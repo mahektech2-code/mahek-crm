@@ -160,7 +160,7 @@ describe("the window cuts the register, never the work", () => {
   });
 
   test("an open line from a year ago is still on the working list", async () => {
-    const res = await page("pendingOrders");
+    const res = await page("readyOrders");
     assert.ok(res.rows.some((r) => r.id === OLD_OPEN), "work is read by state, not by date");
   });
 
