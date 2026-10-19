@@ -1216,6 +1216,42 @@ export function writeLevelsForApp(app: AppId): Map<string, string> {
 }
 
 /**
+ * Drop every module whose screen (`writeOf`) is not in the list — the rule the
+ * server applies to what the dialog posts (`cleanModules`), here so the screen
+ * draws exactly what will be stored. A level without its screen is never held,
+ * and without this the box stays ticked while the save quietly discards it.
+ */
+export function withoutOrphanLevels(modules: readonly string[]): string[] {
+  const held = new Set(modules);
+  return modules.filter((k) => {
+    const screen = getModule(k)?.writeOf;
+    return !screen || held.has(screen);
+  });
+}
+
+/**
+ * The list after ticking or unticking ONE box on the access screen.
+ *
+ * - Ticking a module that is a level of a screen (Publish, Review) ticks that
+ *   screen with it: it is held only beside it, and a box that ticks and then
+ *   saves as nothing is the bug this exists to prevent.
+ * - Ticking a SCREEN also ticks its Read/Write level, which is what holding it
+ *   has always meant — except an `explicitOnly` level (Publish): that is a right
+ *   somebody is given on purpose, never a side effect of ticking the screen.
+ * - Unticking a screen takes every level of it away.
+ */
+export function toggleModule(app: AppId, ticked: readonly string[], key: string): string[] {
+  if (ticked.includes(key)) return withoutOrphanLevels(ticked.filter((k) => k !== key));
+  const next = [...ticked, key];
+  const screen = getModule(key)?.writeOf;
+  if (screen && !next.includes(screen)) next.push(screen);
+  const level = writeLevelsForApp(app).get(key);
+  const levelModule = level ? getModule(level) : undefined;
+  if (levelModule && !levelModule.explicitOnly && !next.includes(levelModule.key)) next.push(levelModule.key);
+  return withoutOrphanLevels(next);
+}
+
+/**
  * The review table renders in sections, in the order the sidebar draws them.
  *
  * ONE SECTION PER GROUP NAME, not one per run of them. This used to merge only
