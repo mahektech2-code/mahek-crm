@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { erpLink } from "@/lib/erp/registry";
 import { CardGrid } from "@/components/ui/card-grid";
-import { Badge, Button, Card, cx } from "@/components/ui/primitives";
+import { Button, Card, cx } from "@/components/ui/primitives";
+import { Badge } from "../../_ui/badge";
+import { eyebrowClass, labelClass, LinkButton, SubTitle } from "../../_ui/look";
 import { erpLogisticsReopen } from "@/lib/actions/erp-logistics";
 import { callDue, daysBetween, runningLate, shortDay } from "@/lib/erp/engines/logistics";
 import type { Consignment } from "@/lib/erp/logistics";
@@ -48,16 +50,16 @@ export function Overview({
   ] as const;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <CardGrid min={200} gap="gap-3">
         {steps.map((s, i) => (
           <Link key={s.n} href={s.href} className="group relative no-underline hover:no-underline">
             <Card className={cx("h-full px-4 py-3 transition-colors group-hover:border-brand", s.tone === "warn" && "border-warn/60", s.tone === "brand" && "border-brand/50")}>
-              <div className="flex items-center gap-2 text-xs font-medium text-muted">
+              <div className={cx("flex items-center gap-2", eyebrowClass)}>
                 <span className="flex h-5 w-5 items-center justify-center rounded-full bg-canvas text-2xs text-body">{s.n}</span>
                 {s.l}
               </div>
-              <div className="mt-1 text-[28px] leading-8 font-semibold text-ink tabular-nums">{s.v}</div>
+              <div className="mt-1 text-xl leading-7 font-semibold text-ink tabular-nums">{s.v}</div>
               <div className={cx("text-xs", s.tone === "warn" ? "text-warn-ink" : s.tone === "brand" ? "text-brand-hover" : "text-muted")}>{s.sub}</div>
             </Card>
             {i < steps.length - 1 ? <span className="absolute top-1/2 -right-3 z-1 hidden -translate-y-1/2 text-muted xl:block">›</span> : null}
@@ -69,8 +71,8 @@ export function Overview({
         <Card className="overflow-hidden">
           <div className="flex items-center justify-between border-b border-divider px-4 py-3">
             <div>
-              <div className="text-md font-semibold text-ink">Calls to make today</div>
-              <div className="text-xs text-muted">Ring the transporter, then update the LR.</div>
+              <SubTitle className="mb-0">Calls to make today</SubTitle>
+              <div className="text-meta text-muted">Ring the transporter, then update the LR.</div>
             </div>
             <Link href={erpLink("trackLr", { filter: "calls" })}>
               <Button size="sm">Open</Button>
@@ -85,7 +87,7 @@ export function Overview({
                     <div className="truncate font-medium text-ink">
                       {lrLabel(c.lrNo)} · {c.deliveryParty}
                     </div>
-                    <div className="truncate text-xs text-muted">
+                    <div className="truncate text-meta text-muted">
                       {c.transporter ?? "—"} · {c.lastEventNote ?? "no update yet"}
                     </div>
                   </div>
@@ -102,8 +104,8 @@ export function Overview({
 
         <Card className="overflow-hidden">
           <div className="border-b border-divider px-4 py-3">
-            <div className="text-md font-semibold text-ink">Needs attention</div>
-            <div className="text-xs text-muted">What is not moving as it should.</div>
+            <SubTitle className="mb-0">Needs attention</SubTitle>
+            <div className="text-meta text-muted">What is not moving as it should.</div>
           </div>
           <Attention label="Problems on the road" tone="danger" href={erpLink("trackLr", { filter: "issue" })} items={issues.map((g) => ({ key: g.key, main: `${lrLabel(g.bills[0].lrNo)} · ${g.bills[0].deliveryParty}`, sub: `${g.bills.find((b) => b.issue)?.issue}${g.bills.find((b) => b.issue)?.issueNote ? ` — ${g.bills.find((b) => b.issue)?.issueNote}` : ""}` }))} />
           <Attention label="Running late" tone="warn" href={erpLink("trackLr", { filter: "late" })} items={late.map((g) => ({ key: g.key, main: `${lrLabel(g.bills[0].lrNo)} · ${g.bills[0].deliveryParty}`, sub: g.bills[0].expectedDeliveryOn ? `Expected ${shortDay(g.bills[0].expectedDeliveryOn)}` : `${daysBetween(g.bills[0].billDate ?? today, today)} days since dispatch` }))} />
@@ -121,15 +123,15 @@ function Attention({ label, tone, href, items }: { label: string; tone: "danger"
   return (
     <div className="border-b border-divider px-4 py-2.5 last:border-0">
       <Link href={href} className="flex items-center gap-2 text-meta font-medium text-ink no-underline">
-        <Badge tone={tone}>{items.length}</Badge> {label} ›
+        <Badge label={String(items.length)} tone={tone} /> {label} ›
       </Link>
       <div className="mt-1 space-y-0.5">
         {items.slice(0, 4).map((i) => (
-          <div key={i.key} className="truncate text-xs">
+          <div key={i.key} className="truncate text-meta">
             <span className="text-body">{i.main}</span> <span className="text-muted">· {i.sub}</span>
           </div>
         ))}
-        {items.length > 4 ? <div className="text-xs text-muted">and {items.length - 4} more</div> : null}
+        {items.length > 4 ? <div className="text-meta text-muted">and {items.length - 4} more</div> : null}
       </div>
     </div>
   );
@@ -150,7 +152,7 @@ export function Delivered({ rows, canWrite }: { rows: Consignment[]; canWrite: b
         </div>
       ) : null}
       <Card className="overflow-hidden">
-        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_76px_76px_44px_minmax(0,1fr)_64px] gap-3 border-b border-divider bg-canvas px-4 py-2 text-xs font-medium text-muted">
+        <div className={cx("grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_76px_76px_44px_minmax(0,1fr)_64px] gap-3 border-b border-divider bg-canvas px-4 py-2", labelClass)}>
           <span>Bill</span>
           <span>Party</span>
           <span>LR</span>
@@ -174,9 +176,9 @@ export function Delivered({ rows, canWrite }: { rows: Consignment[]; canWrite: b
               <span className="truncate text-meta">{c.receivedBy ?? "—"}</span>
               <span className="text-right">
                 {canWrite ? (
-                  <button className="cursor-pointer text-xs text-muted hover:underline" onClick={() => setReopen(c)}>
+                  <LinkButton tone="muted" className="text-meta" onClick={() => setReopen(c)}>
                     Reopen
-                  </button>
+                  </LinkButton>
                 ) : null}
               </span>
             </div>

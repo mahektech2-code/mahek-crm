@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { cx } from "@/components/ui/primitives";
+import { Button, cx } from "@/components/ui/primitives";
+import { IconButton, popoverClass } from "./look";
 import { useBackdropClose, useEscape } from "@/components/ui/modal";
 import { BodyPortal } from "@/components/ui/body-portal";
 
@@ -58,7 +59,7 @@ export function ErpDialog({
           /* `whitespace-normal`: a dialog inherits from where it was mounted, and a
              list row carries `nowrap` (see Modal). */
           className={cx(
-            "flex max-h-[92vh] flex-col overflow-hidden rounded-[6px] bg-surface whitespace-normal shadow-[0_12px_40px_rgba(22,22,22,0.18)]",
+            "flex max-h-[92vh] flex-col overflow-hidden rounded-card bg-surface whitespace-normal shadow-[0_12px_40px_rgba(22,22,22,0.18)]",
             tall && "h-[min(820px,92vh)]",
           )}
         >
@@ -75,15 +76,11 @@ export function DialogHeader({ children, onClose, aside }: { children: React.Rea
     <div className="flex flex-none items-start justify-between gap-3 border-b border-line px-6 py-4">
       <div className="min-w-0 flex-1">{children}</div>
       {aside ? <div className="flex flex-none items-center gap-2">{aside}</div> : null}
-      <button
-        onClick={onClose}
-        aria-label="Close"
-        className="flex h-8 w-8 flex-none cursor-pointer items-center justify-center rounded-control text-muted hover:bg-canvas hover:text-body"
-      >
+      <IconButton label="Close" onClick={onClose}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
           <path d="M6 6l12 12M18 6 6 18" />
         </svg>
-      </button>
+      </IconButton>
     </div>
   );
 }
@@ -227,25 +224,16 @@ export function MoreMenu({ items, label = "More" }: { items: MoreItem[]; label?:
   if (!items.length) return null;
   return (
     <div ref={box} className="relative">
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-haspopup="menu"
-        onClick={() => setOpen((o) => !o)}
-        className={cx(
-          "inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-control border px-3.5 text-sm font-medium",
-          open ? "border-line-strong bg-canvas text-ink" : "border-line bg-surface text-body hover:bg-canvas",
-        )}
-      >
+      <Button type="button" variant="secondary" aria-expanded={open} aria-haspopup="menu" onClick={() => setOpen((o) => !o)} className={cx(open && "text-ink")}>
         {label}
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className={cx(open && "rotate-180")}>
           <path d="m6 15 6-6 6 6" />
         </svg>
-      </button>
+      </Button>
       {open ? (
         <div
           role="menu"
-          className="animate-fade-in absolute right-0 bottom-full z-10 mb-2 flex max-h-[60vh] w-max max-w-[340px] min-w-[220px] flex-col overflow-y-auto rounded-card border border-line bg-surface py-1 shadow-[0_8px_24px_rgba(22,22,22,0.14)]"
+          className={cx("animate-fade-in absolute right-0 bottom-full z-10 mb-2 flex max-h-[60vh] w-max max-w-[340px] min-w-[220px] flex-col overflow-y-auto py-1", popoverClass)}
         >
           {items.map((it) => (
             <button

@@ -4,8 +4,10 @@ import { useRouter, useSearchParams } from "next/navigation";
 import type { ActionSpec } from "@/lib/erp/ui";
 import { RowMenu, Tabs } from "@/components/ui/overlays";
 import { controlClass } from "@/components/ui/primitives";
+import { erpStockInquiryHref, type InquiryStage } from "@/lib/erp/stock-links";
 import { PeriodPicker } from "../_ui/period-picker";
 import { useErpUi } from "../_ui/erp-ui";
+import { labelClass } from "../_ui/look";
 
 /** The stage tabs, the item, the godown and the period: each a URL parameter, so a link opens the same view. */
 export function InquiryControls({
@@ -35,15 +37,15 @@ export function InquiryControls({
       if (v) p.set(k, v);
       else p.delete(k);
     }
-    router.push(`/erp/stock-inquiry?${p.toString()}`);
+    router.push(erpStockInquiryHref({ stage: (p.get("stage") || stage) as InquiryStage, item: p.get("item") ?? undefined, godown: p.get("godown") ?? undefined, pd: p.get("pd") ?? undefined }));
   };
   return (
     <div className="flex flex-col gap-3">
       <Tabs tabs={stages.map((s) => ({ key: s.k, label: s.l }))} value={stage} onChange={(k) => go({ stage: k, item: null })} />
       <div className="flex flex-wrap items-end gap-3">
-        <label className="flex min-w-[280px] flex-1 flex-col gap-1 text-xs font-medium tracking-[0.04em] text-muted uppercase sm:max-w-[420px]">
-          Item
-          <select value={itemId} onChange={(e) => go({ item: e.target.value || null })} className={controlClass({ className: "h-8.5 cursor-pointer normal-case tracking-normal" })}>
+        <label className="flex min-w-[280px] flex-1 flex-col gap-1 sm:max-w-[420px]">
+          <span className={labelClass}>Item</span>
+          <select value={itemId} onChange={(e) => go({ item: e.target.value || null })} className={controlClass({ className: "h-8.5 cursor-pointer" })}>
             <option value="">Choose an item…</option>
             {items.map((i) => (
               <option key={i.id} value={i.id}>
@@ -52,9 +54,9 @@ export function InquiryControls({
             ))}
           </select>
         </label>
-        <label className="flex min-w-[180px] flex-col gap-1 text-xs font-medium tracking-[0.04em] text-muted uppercase">
-          Godown
-          <select value={godownId ?? ""} onChange={(e) => go({ godown: e.target.value || null })} className={controlClass({ className: "h-8.5 cursor-pointer normal-case tracking-normal" })}>
+        <label className="flex min-w-[180px] flex-col gap-1">
+          <span className={labelClass}>Godown</span>
+          <select value={godownId ?? ""} onChange={(e) => go({ godown: e.target.value || null })} className={controlClass({ className: "h-8.5 cursor-pointer" })}>
             <option value="">All godowns</option>
             {godowns.map((g) => (
               <option key={g.id} value={g.id}>

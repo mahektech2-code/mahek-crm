@@ -1,8 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Button, cx } from "@/components/ui/primitives";
-import { DialogHeader, ErpDialog, StepBar } from "./dialog";
+import { Button, Callout, Progress, SectionLabel, controlClass, cx } from "@/components/ui/primitives";
+import { DialogBody, DialogFooter, DialogHeader, ErpDialog, StepBar } from "./dialog";
+import { Badge } from "./badge";
+import { LinkButton, labelClass } from "./look";
 import { runCalc } from "@/lib/erp/calc";
 import "@/lib/erp/calcs";
 import { fd, nf, resolveField, whenHolds, type FieldSpec, type FormSpec } from "@/lib/erp/ui";
@@ -158,10 +160,10 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
       {/* The steps follow the truck, not a page order: adding a second item goes back to the first. */}
       <StepBar steps={["Item received", "Purchase order", "Receipt details"]} active={stepNo - 1} reached={stepNo - 1} onChange={() => {}} />
 
-      <div className="grid min-h-0 flex-1 auto-rows-max grid-cols-[minmax(0,1fr)] content-start gap-3.5 overflow-y-auto px-6 py-5">
+      <DialogBody>
         {step === "item" ? (
           <section className="grid gap-2">
-            <label htmlFor="grn-item" className="text-xs font-semibold tracking-[0.04em] text-muted uppercase">
+            <label htmlFor="grn-item" className={labelClass}>
               Item received
             </label>
             <input
@@ -185,7 +187,7 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
                   pick(hits[cursor].item);
                 }
               }}
-              className="h-10 w-full rounded-control border border-line bg-surface px-3 text-sm text-ink outline-none focus:border-brand"
+              className={controlClass({ className: "h-10" })}
             />
             <span className="text-xs text-muted">Items with an approved PO still waiting are listed first. ↑ ↓ and Enter work the list.</span>
             {hits.length ? (
@@ -209,20 +211,15 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
                           {hit.receivable ? hitSummary(hit.lines, nf) : vendor ? `No open PO from ${vendor} for this item` : "No PO is waiting for this item"}
                         </span>
                       </span>
-                      <span
-                        className={cx(
-                          "flex-none rounded-control px-2 py-0.5 text-xs font-medium",
-                          hit.receivable ? "bg-brand-soft text-brand-hover" : "bg-canvas text-muted",
-                        )}
-                      >
-                        {hit.receivable ? hit.item.type : "Cannot receive"}
+                      <span className="flex-none">
+                        <Badge label={hit.receivable ? hit.item.type : "Cannot receive"} tone={hit.receivable ? "brand" : "muted"} />
                       </span>
                     </button>
                   </li>
                 ))}
               </ul>
             ) : (
-              <div className="rounded-card bg-canvas px-3 py-3 text-meta text-muted">
+              <div className="rounded-card border border-dashed border-line px-3 py-4 text-center text-meta text-muted">
                 {query ? `No item matches "${query}".` : "No item is waiting on an approved PO."}
               </div>
             )}
@@ -241,11 +238,11 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
                   {picked.type} · {picked.unit}
                 </span>
               </span>
-              <button type="button" className="cursor-pointer text-meta font-semibold text-brand hover:underline" onClick={() => setStep("item")}>
+              <LinkButton className="text-meta" onClick={() => setStep("item")}>
                 Change item
-              </button>
+              </LinkButton>
             </div>
-            <h3 className="text-xs font-semibold tracking-[0.04em] text-muted uppercase">Approved POs waiting for {picked.item}</h3>
+            <SectionLabel>Approved POs waiting for {picked.item}</SectionLabel>
             <div role="radiogroup" className="grid gap-2.5">
               {poLines.map((x) => {
                 const on = choice === keyOf(x);
@@ -269,7 +266,7 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
                         <span className="text-sm font-semibold text-ink">
                           {x.poNumber} · {x.supplier}
                         </span>
-                        {x.received > 0 ? <span className="rounded-control bg-canvas px-2 py-0.5 text-xs text-muted">Partly received</span> : null}
+                        {x.received > 0 ? <Badge label="Partly received" tone="muted" /> : null}
                       </span>
                       <span className="mt-1 block text-meta text-muted">
                         Ordered {nf(x.ordered)} {x.unit} · received {nf(x.received)} ·{" "}
@@ -281,9 +278,7 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
                         Deliver to {x.godown}
                         {x.due ? ` by ${fd(x.due)}` : ""}
                       </span>
-                      <span className="mt-2 block h-1.5 overflow-hidden rounded-full bg-divider">
-                        <span className="block h-full bg-brand" style={{ width: `${done}%` }} />
-                      </span>
+                      <Progress value={done} className="mt-2" />
                     </span>
                   </button>
                 );
@@ -300,19 +295,17 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
               const lineErr = errs[`l${i}.poLine`];
               return (
                 <div key={keyOf({ po: l.po, poLine: l.poLine })} className="min-w-0 rounded-card border border-line">
-                  <div className="flex items-center justify-between gap-2 rounded-t-[6px] border-b border-divider bg-canvas px-3 py-2">
+                  <div className="flex items-center justify-between gap-2 rounded-t-card border-b border-divider bg-canvas px-3 py-2">
                     <span className="min-w-0 text-meta font-semibold text-ink">
                       {l.item} · against {x?.poNumber ?? l.po}
                     </span>
                     <span className="flex flex-none items-center gap-2">
                       {x ? (
-                        <span className="rounded-control bg-brand-soft px-2 py-0.5 text-xs font-medium text-brand-hover">
-                          pending {nf(x.pending)} {x.unit}
-                        </span>
+                        <Badge label={`pending ${nf(x.pending)} ${x.unit}`} tone="brand" />
                       ) : null}
-                      <button type="button" onClick={() => removeLine(i)} className="h-6 cursor-pointer px-1 text-meta text-danger hover:underline">
+                      <LinkButton tone="danger" className="text-meta" onClick={() => removeLine(i)}>
                         Remove
-                      </button>
+                      </LinkButton>
                     </span>
                   </div>
                   {lineErr ? <div className="border-b border-divider bg-danger-soft px-3 py-2 text-meta text-danger">{lineErr}</div> : null}
@@ -344,7 +337,7 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
               <span className="text-xs text-muted">Searches only {vendor ?? "this vendor"}&apos;s open POs — one GRN is one vendor&apos;s delivery.</span>
             </button>
             <div className="min-w-0 rounded-card border border-line">
-              <div className="rounded-t-[6px] border-b border-divider bg-canvas px-3 py-2 text-meta font-semibold text-ink">The delivery</div>
+              <div className="rounded-t-card border-b border-divider bg-canvas px-3 py-2 text-meta font-semibold text-ink">The delivery</div>
               <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3.5 px-3 py-3.5">
                 {headerFields.map((f) => (
                   <Field
@@ -364,15 +357,15 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
               </div>
             </div>
             {topError ? (
-              <div className="rounded-control border border-danger-soft border-l-[3px] border-l-danger bg-danger-soft px-4 py-2.5 text-sm font-medium text-danger">
-                {topError}
-              </div>
+              <Callout tone="danger">
+                <span className="text-sm font-medium text-danger">{topError}</span>
+              </Callout>
             ) : null}
           </>
         ) : null}
-      </div>
+      </DialogBody>
 
-      <div className="flex flex-none flex-wrap justify-end gap-2.5 border-t border-divider bg-canvas/60 px-6 py-3">
+      <DialogFooter>
         {step === "item" ? (
           lines.length ? (
             <Button variant="secondary" onClick={() => setStep("lines")}>
@@ -411,7 +404,7 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
             </Button>
           </>
         ) : null}
-      </div>
+      </DialogFooter>
     </ErpDialog>
   );
 }

@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { Button, cx } from "@/components/ui/primitives";
+import { Button, Callout, SectionLabel, checkboxClass, controlClass, cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
 import type { ShareOutcome, ShareSpec } from "@/lib/erp/ui";
 import { addressLine, type ShareChannel } from "@/lib/erp/engines/po-share";
+import { Badge } from "./badge";
 import { useKit } from "./kit";
 import { resultError } from "./use-act";
 
@@ -110,7 +111,7 @@ export function ShareDialog({
                   </div>
                 </div>
                 {r.status === "sent" ? (
-                  <span className="rounded-full bg-success-soft px-2 py-0.5 text-xs font-semibold text-success">Sent</span>
+                  <Badge label="Sent" tone="success" />
                 ) : r.href ? (
                   <a href={r.href} target="_blank" rel="noreferrer">
                     <Button size="sm" variant={r.status === "open" ? "primary" : "secondary"}>
@@ -154,7 +155,7 @@ export function ShareDialog({
     >
       <div className="grid gap-4">
         <section>
-          <div className="mb-1.5 text-xs font-medium tracking-[0.04em] text-muted uppercase">Send by</div>
+          <SectionLabel className="mb-1.5">Send by</SectionLabel>
           <div className="grid grid-cols-3 gap-2">
             {spec.channels.map((c) => (
               <button
@@ -178,7 +179,7 @@ export function ShareDialog({
 
         {channel !== "link" ? (
           <section>
-            <div className="mb-1.5 text-xs font-medium tracking-[0.04em] text-muted uppercase">Send to</div>
+            <SectionLabel className="mb-1.5">Send to</SectionLabel>
             <div className={cx("overflow-hidden rounded-card border", error?.field === "to" ? "border-danger" : "border-line")}>
               {spec.recipients.map((r) => {
                 const can = reachable(r);
@@ -187,8 +188,7 @@ export function ShareDialog({
                 return (
                   <label key={r.key} className={cx("flex items-center gap-3 border-b border-divider px-3 py-2.5", can ? "cursor-pointer" : "opacity-60")}>
                     <input
-                      type="checkbox"
-                      className="h-4 w-4 accent-[var(--color-brand)]"
+                      type="checkbox" className={checkboxClass}
                       checked={on}
                       disabled={!can}
                       onChange={(e) => {
@@ -201,7 +201,7 @@ export function ShareDialog({
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center gap-1.5 text-meta font-semibold text-ink">
                         <span className="truncate">{r.name}</span>
-                        {r.tag ? <span className="rounded-full bg-brand-soft px-2 py-px text-[11px] font-semibold text-brand">{r.tag}</span> : null}
+                        {r.tag ? <Badge label={r.tag} tone="brand" /> : null}
                       </span>
                       <span className="block text-xs text-muted">{line ?? `No ${channel === "whatsapp" ? "WhatsApp number" : "email"} on record`}</span>
                     </span>
@@ -214,10 +214,7 @@ export function ShareDialog({
                   value={extra}
                   onChange={(e) => setExtra(e.target.value)}
                   placeholder={channel === "whatsapp" ? "Mobile numbers, separated by commas" : "Email addresses, separated by commas"}
-                  className={cx(
-                    "h-8 min-w-0 flex-1 rounded-control border bg-surface px-2.5 text-meta text-ink outline-none focus:border-brand",
-                    error?.field === "extra" ? "border-danger" : "border-line",
-                  )}
+                  className={controlClass({ invalid: error?.field === "extra", className: "h-8 min-w-0 flex-1" })}
                 />
               </div>
             </div>
@@ -225,16 +222,13 @@ export function ShareDialog({
         ) : null}
 
         <section>
-          <div className="mb-1.5 text-xs font-medium tracking-[0.04em] text-muted uppercase">Message</div>
+          <SectionLabel className="mb-1.5">Message</SectionLabel>
           <textarea
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             rows={4}
             maxLength={2000}
-            className={cx(
-              "w-full resize-y rounded-card border bg-canvas px-3 py-2 text-meta leading-5 text-body outline-none focus:border-brand",
-              error?.field === "message" ? "border-danger" : "border-line",
-            )}
+            className={controlClass({ invalid: error?.field === "message", className: "resize-y py-2 leading-5" })}
           />
           <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-muted">
             {spec.attachment ? (
@@ -247,7 +241,11 @@ export function ShareDialog({
           </div>
         </section>
 
-        {error ? <div className="rounded-card bg-danger-soft px-3 py-2 text-meta text-danger">{error.text}</div> : null}
+        {error ? (
+          <Callout tone="danger">
+            <span className="text-meta text-danger">{error.text}</span>
+          </Callout>
+        ) : null}
       </div>
     </Modal>
   );

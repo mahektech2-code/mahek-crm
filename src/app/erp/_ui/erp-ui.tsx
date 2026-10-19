@@ -3,7 +3,8 @@
 import { resultError } from "./use-act";
 import { Fragment, createContext, useCallback, useContext, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button, Callout, cx } from "@/components/ui/primitives";
+import { Button, Callout, cx, SectionLabel, Td, Th, Tr } from "@/components/ui/primitives";
+import { labelClass, LinkButton } from "./look";
 import { ConfirmDialog, Modal } from "@/components/ui/overlays";
 import { DialogBody, DialogFooter, DialogHeader, ErpDialog, StepBar } from "./dialog";
 import { pageOfError, planPages, plural } from "./form-pages";
@@ -353,7 +354,7 @@ function PromptDialog({ state, onClose }: { state: PromptState; onClose: () => v
           };
           return (
             <section key={run.fields[0].k} className="grid gap-2">
-              {run.heading ? <h3 className="text-xs font-semibold tracking-[0.04em] text-muted uppercase">{run.heading}</h3> : null}
+              {run.heading ? <SectionLabel>{run.heading}</SectionLabel> : null}
               {run.kind === "one" ? (
                 field(run.fields[0])
               ) : run.kind === "tiles" ? (
@@ -550,7 +551,7 @@ function FormDialog({
           "Purchase rule") says the word twice: the field alone does. A page
           named after its one section has the heading on the step already. */}
       {drawSec && f.sec && f.sec !== shown[i - 1]?.sec && !(f.sec.toLowerCase() === f.l.toLowerCase() && shown[i + 1]?.sec !== f.sec) ? (
-        <div className="col-span-full mt-1 border-b border-divider pb-1 text-xs font-semibold tracking-[0.04em] text-muted uppercase">{f.sec}</div>
+        <SectionLabel className="col-span-full mt-1 border-b border-divider pb-1">{f.sec}</SectionLabel>
       ) : null}
       <Field
         f={f}
@@ -666,9 +667,9 @@ function FormDialog({
           <section key={pi} className="rounded-card border border-line">
             <div className="flex items-center justify-between border-b border-divider bg-canvas px-4 py-2">
               <span className="text-meta font-semibold text-ink">{p.title || "Details"}</span>
-              <button type="button" onClick={() => setPage(pi)} className="cursor-pointer text-meta text-brand-hover hover:underline">
+              <LinkButton onClick={() => setPage(pi)} className="text-meta">
                 Change
-              </button>
+              </LinkButton>
             </div>
             {p.kind === "fields" ? (
               <dl className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-x-6 gap-y-3 px-4 py-3">
@@ -678,7 +679,7 @@ function FormDialog({
                     const shown = reviewValue(f, f.t === "derived" || f.t === "suggest" ? runCalc(f.calc, { h, l: {}, lines, i: -1, data }) ?? "" : h[f.k] ?? "");
                     return (
                       <div key={f.k} className="min-w-0">
-                        <dt className="text-xs font-medium tracking-[0.04em] text-muted uppercase">{f.l}</dt>
+                        <dt className={labelClass}>{f.l}</dt>
                         <dd className={cx("mt-0.5 text-sm break-words", shown ? "text-ink" : "text-line-strong")}>{shown || "—"}</dd>
                       </div>
                     );
@@ -715,9 +716,9 @@ function FormDialog({
           {current.kind === "review" ? review : null}
           {last && summary ? <FormSummary text={summary} /> : null}
           {topError ? (
-            <div className="rounded-control border border-danger-soft border-l-[3px] border-l-danger bg-danger-soft px-4 py-2.5 text-sm font-medium text-danger">
+            <Callout tone="danger" className="mb-0 text-sm font-medium text-danger">
               {topError}
-            </div>
+            </Callout>
           ) : null}
         </DialogBody>
       </div>
@@ -760,27 +761,27 @@ function ReviewLines({ spec, lines, h, data }: { spec: FormSpec; lines: Record<s
   const cols = (spec.line ?? []).filter((f) => f.t !== "photo" && f.t !== "video" && f.t !== "area").slice(0, 6);
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-meta">
+      <table className="w-full">
         <thead>
-          <tr className="text-left text-xs text-muted uppercase">
-            <th className="px-4 py-2 font-medium">#</th>
+          <tr>
+            <Th className="px-4">#</Th>
             {cols.map((c) => (
-              <th key={c.k} className="px-2 py-2 font-medium">
+              <Th key={c.k}>
                 {c.l}
-              </th>
+              </Th>
             ))}
           </tr>
         </thead>
         <tbody>
           {lines.map((l, i) => (
-            <tr key={i} className="border-t border-divider">
-              <td className="px-4 py-1.5 text-muted tabular-nums">{i + 1}</td>
+            <Tr key={i}>
+              <Td className="px-4 text-meta text-muted tabular-nums">{i + 1}</Td>
               {cols.map((c) => (
-                <td key={c.k} className="px-2 py-1.5 text-ink">
+                <Td key={c.k} className="text-meta text-ink tabular-nums">
                   {(c.t === "derived" ? runCalc(c.calc, { h, l, lines, i, data }) : l[c.k]) || "—"}
-                </td>
+                </Td>
               ))}
-            </tr>
+            </Tr>
           ))}
         </tbody>
       </table>
@@ -804,7 +805,7 @@ function Evidence({ e }: { e: NonNullable<FormSpec["evidence"]> }) {
   };
   return (
     <section className="grid gap-2.5 rounded-card border border-brand-softer border-l-[3px] border-l-brand bg-brand-soft/40 p-3">
-      <span className="text-xs font-medium tracking-[0.04em] text-brand-hover uppercase">Read by AI · check it against the source</span>
+      <SectionLabel>Read by AI · check it against the source</SectionLabel>
       {e.images?.length ? (
         <div className="flex gap-2 overflow-x-auto">
           {e.images.map((id) => (
@@ -843,12 +844,12 @@ function Block({ title, onRemove, children }: { title: string; onRemove?: () => 
   return (
     <div className="min-w-0 rounded-card border border-line">
       {title ? (
-        <div className="flex items-center justify-between rounded-t-[6px] border-b border-divider bg-canvas px-3 py-2">
+        <div className="flex items-center justify-between rounded-t-card border-b border-divider bg-canvas px-3 py-2">
           <span className="text-meta font-semibold text-ink">{title}</span>
           {onRemove ? (
-            <button onClick={onRemove} className="h-6 cursor-pointer px-2 text-meta text-danger hover:underline">
+            <LinkButton tone="danger" onClick={onRemove} className="px-2 text-meta">
               Remove line
-            </button>
+            </LinkButton>
           ) : null}
         </div>
       ) : null}

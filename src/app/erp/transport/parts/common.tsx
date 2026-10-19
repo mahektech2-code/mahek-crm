@@ -3,10 +3,12 @@
 import Link from "next/link";
 import { erpBillRoadHref } from "@/lib/erp/trace-links";
 import { useState } from "react";
-import { Modal } from "@/components/ui/modal";
 import { phoneDisplay } from "@/lib/format";
 import { Icon } from "../../_ui/icons";
-import { Badge, Button, cx, Textarea } from "@/components/ui/primitives";
+import { Button, checkboxClass, cx, Textarea } from "@/components/ui/primitives";
+import { Badge } from "../../_ui/badge";
+import { DialogBody, DialogFooter, DialogHeader, ErpDialog } from "../../_ui/dialog";
+import { insetClass, linkClass } from "../../_ui/look";
 import { dueWord, STAGES, STAGE_SHORT, stageStep, type Stage } from "@/lib/erp/engines/logistics";
 import type { Consignment } from "@/lib/erp/logistics";
 
@@ -43,17 +45,14 @@ export function DuePill({ day, today, prefix }: { day: string | null; today: str
   const w = dueWord(day, today);
   if (!w) return <span className="text-muted">—</span>;
   return (
-    <Badge tone={w.tone === "danger" ? "danger" : w.tone === "warn" ? "warn" : "neutral"}>
-      {prefix ? `${prefix} ` : ""}
-      {w.word}
-    </Badge>
+    <Badge label={`${prefix ? `${prefix} ` : ""}${w.word}`} tone={w.tone === "danger" ? "danger" : w.tone === "warn" ? "warn" : "neutral"} />
   );
 }
 
 export function CallLink({ phone, name }: { phone: string | null; name: string | null }) {
   if (!phone) return <span className="text-xs text-muted">{name ? "No number — add it under Transporters" : "No transporter"}</span>;
   return (
-    <a href={`tel:${phone.replace(/[^\d+]/g, "")}`} className="inline-flex items-center gap-1 text-meta font-medium">
+    <a href={`tel:${phone.replace(/[^\d+]/g, "")}`} className={linkClass("brand", "inline-flex items-center gap-1 text-meta")}>
       <Icon n="phone" s={13} />
       {phoneDisplay(phone)}
     </a>
@@ -84,14 +83,14 @@ export function LrThumb({ fileId, size = 56 }: { fileId: string | null; size?: n
 
 export function BillRef({ c }: { c: Pick<Consignment, "id" | "orderNo" | "billNo"> }) {
   return (
-    <Link href={erpBillRoadHref(c.id)} className="font-mono text-meta">
+    <Link href={erpBillRoadHref(c.id)} className={linkClass("brand", "font-mono text-meta")}>
       {c.billNo ?? `Order ${c.orderNo}`}
     </Link>
   );
 }
 
 export function Empty({ children }: { children: React.ReactNode }) {
-  return <div className="px-5 py-8 text-center text-sm text-muted">{children}</div>;
+  return <div className="px-5 py-8 text-center text-meta text-muted">{children}</div>;
 }
 
 export function plural(n: number, one: string, many = `${one}s`): string {
@@ -139,11 +138,11 @@ export function useTicks() {
 
 export function NotifyToggle({ value, onChange, disabled }: { value: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
-    <label className={cx("flex items-start gap-2 rounded-control border border-line bg-canvas px-3 py-2 text-sm", disabled ? "opacity-60" : "cursor-pointer")}>
-      <input type="checkbox" checked={value && !disabled} disabled={disabled} onChange={(e) => onChange(e.target.checked)} className="mt-0.5 h-[15px] w-[15px] accent-brand" />
+    <label className={cx("flex items-start gap-2 bg-canvas text-sm", insetClass, disabled ? "opacity-60" : "cursor-pointer")}>
+      <input type="checkbox" checked={value && !disabled} disabled={disabled} onChange={(e) => onChange(e.target.checked)} className={cx(checkboxClass, "mt-0.5")} />
       <span>
         <span className="font-medium text-ink">Tell the customer on WhatsApp</span>
-        <span className="block text-xs text-muted">{disabled ? "Customer messages are switched off in ERP settings." : "Sent through Wati where it can be; otherwise it waits under Customer messages to send by hand."}</span>
+        <span className="block text-meta text-muted">{disabled ? "Customer messages are switched off in ERP settings." : "Sent through Wati where it can be; otherwise it waits under Customer messages to send by hand."}</span>
       </span>
     </label>
   );
@@ -184,22 +183,22 @@ export function ReasonDialog({
   onConfirm: (reason: string) => void;
 }) {
   const [reason, setReason] = useState("");
+  if (!open) return null;
   return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title={title}
-      footer={
-        <>
-          <Button onClick={onClose}>{keepLabel}</Button>
-          <Button variant={tone} disabled={pending || reason.trim().length < 3} onClick={() => onConfirm(reason)}>
-            {confirmLabel}
-          </Button>
-        </>
-      }
-    >
-      <p className="mb-2 text-sm text-body">{body}</p>
-      <Textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} placeholder={placeholder} />
-    </Modal>
+    <ErpDialog onClose={onClose} label={title} size="sm" tall={false}>
+      <DialogHeader onClose={onClose}>
+        <div className="text-xl leading-7 font-semibold text-ink">{title}</div>
+      </DialogHeader>
+      <DialogBody className="gap-2">
+        <p className="text-sm text-body">{body}</p>
+        <Textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} placeholder={placeholder} />
+      </DialogBody>
+      <DialogFooter>
+        <Button onClick={onClose}>{keepLabel}</Button>
+        <Button variant={tone} disabled={pending || reason.trim().length < 3} onClick={() => onConfirm(reason)}>
+          {confirmLabel}
+        </Button>
+      </DialogFooter>
+    </ErpDialog>
   );
 }

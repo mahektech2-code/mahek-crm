@@ -8,7 +8,7 @@ import { Callout, Card, cx, Dot, SectionLabel } from "@/components/ui/primitives
 import { Icon } from "@/components/shell/icons";
 import { crmTone } from "./_ui/badge";
 import { Page } from "./_ui/page-head";
-import { SectionTitle } from "./_ui/look";
+import { eyebrowClass, SectionTitle } from "./_ui/look";
 import { CardGrid } from "@/components/ui/card-grid";
 
 const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -61,7 +61,7 @@ export default async function ErpDashboard() {
                   href={st.href}
                   className="flex min-w-0 flex-col gap-1 border-r border-b border-divider px-4 py-3 no-underline hover:bg-canvas hover:no-underline"
                 >
-                  <span className="flex items-center gap-1.5 text-xs font-medium text-muted">
+                  <span className={cx("flex items-center gap-1.5", eyebrowClass)}>
                     <span className="text-line-strong tabular-nums">{i + 1}</span>
                     <span className="truncate" title={st.l}>
                       {st.l}

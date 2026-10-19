@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import type { ColSpec } from "@/lib/erp/ui";
-import { cx } from "@/components/ui/primitives";
+import { checkboxClass, cx } from "@/components/ui/primitives";
+import { LinkButton, popoverClass } from "./look";
 import type { ColumnFit } from "./fit-columns";
 import { Icon } from "./icons";
 
@@ -13,6 +14,17 @@ import { Icon } from "./icons";
  * says there is no room, and hiding another column makes room for it.
  * Every column, drawn or not, is in the record a row opens.
  * ------------------------------------------------------------------------- */
+
+/**
+ * A list toolbar's on/off control — Columns, Group by — in its pressed and
+ * unpressed looks. One string, so two toggles side by side cannot drift apart.
+ */
+export function toolbarToggleClass(on: boolean): string {
+  return cx(
+    "inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-control border px-2.5 text-meta whitespace-nowrap",
+    on ? "border-brand bg-brand-soft font-medium text-brand-hover" : "border-line bg-surface text-body hover:bg-canvas",
+  );
+}
 
 export function ColumnsMenu({
   cols,
@@ -41,10 +53,7 @@ export function ColumnsMenu({
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         title={folded ? `${folded} more column${folded > 1 ? "s" : ""} in each record — open a row to see them, or choose which to show` : "Choose which columns to show"}
-        className={cx(
-          "inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-control border px-2.5 text-meta whitespace-nowrap",
-          chosen ? "border-brand bg-brand-soft font-medium text-brand-hover" : "border-line bg-surface text-body hover:bg-canvas",
-        )}
+        className={toolbarToggleClass(!!chosen)}
       >
         Columns
         <span className={cx("tabular-nums", chosen ? undefined : "text-muted")}>
@@ -55,7 +64,7 @@ export function ColumnsMenu({
       {open ? (
         <>
           <div onClick={() => setOpen(false)} className="fixed inset-0 z-40" />
-          <div className="animate-fade-in absolute top-10 right-0 z-50 w-[300px] max-w-[90vw] overflow-hidden rounded-card border border-line bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]">
+          <div className={cx("animate-fade-in absolute top-10 right-0 z-50 w-[300px] max-w-[90vw] overflow-hidden", popoverClass)}>
             <div className="border-b border-divider px-3 py-2.5 text-xs leading-[1.45] text-muted">
               The list shows what fits your screen. Every column is in the record a row opens.
               {fit.dropped ? (
@@ -78,11 +87,10 @@ export function ColumnsMenu({
                     )}
                   >
                     <input
-                      type="checkbox"
+                      type="checkbox" className={checkboxClass}
                       checked={on}
                       disabled={!room}
                       onChange={() => toggle(c.k)}
-                      className="h-[15px] w-[15px] cursor-pointer accent-brand disabled:cursor-not-allowed"
                     />
                     <span className="min-w-0 flex-1 truncate">{c.l}</span>
                     {!room ? <span className="flex-none text-2xs">No room</span> : null}
@@ -92,14 +100,9 @@ export function ColumnsMenu({
             </div>
             <div className="flex items-center justify-between border-t border-divider px-3 py-2">
               <span className="text-xs text-muted">{chosen ? "Your choice" : "Chosen to fit"}</span>
-              <button
-                type="button"
-                disabled={!chosen}
-                onClick={() => onChoose(null)}
-                className="cursor-pointer text-meta font-medium text-brand-hover hover:underline disabled:cursor-default disabled:text-muted disabled:no-underline"
-              >
+              <LinkButton disabled={!chosen} onClick={() => onChoose(null)} className="text-meta">
                 Reset
-              </button>
+              </LinkButton>
             </div>
           </div>
         </>

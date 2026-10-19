@@ -3,7 +3,8 @@
 import { useState } from "react";
 import type { ListRow, ListSpec } from "@/lib/erp/ui";
 import { cellText } from "@/lib/erp/ui";
-import { Button, cx, SectionLabel } from "@/components/ui/primitives";
+import { Badge, Button, cx, SectionLabel } from "@/components/ui/primitives";
+import { insetClass, labelClass } from "./look";
 import { FlagBadge, flagsBesideStatus, StatusBadge } from "./badge";
 import { useKit } from "./kit";
 import { Icon } from "./icons";
@@ -84,7 +85,7 @@ export function RecordDialog({ screen, kind, row, onClose }: { screen: ListSpec;
   return (
     <ErpDialog onClose={onClose} label={title} size={panel ? "lg" : "md"} tall={tabs.length > 1}>
       <DialogHeader onClose={onClose} aside={status ? <StatusBadge value={status.v} /> : null}>
-        <div className="text-xs font-medium tracking-[0.04em] text-muted uppercase">{kind}</div>
+        <SectionLabel>{kind}</SectionLabel>
         <div className="mt-0.5 text-xl leading-7 font-semibold text-ink">{title}</div>
         {row.header ? <div className="mt-0.5 text-meta text-body">{row.header}</div> : null}
         {flags.length ? (
@@ -118,9 +119,13 @@ export function RecordDialog({ screen, kind, row, onClose }: { screen: ListSpec;
             <dl className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-x-6 gap-y-4">
               {shown.map((f, i) => (
                 <div key={`${f.l}:${i}`} className="min-w-0">
-                  <dt className="flex items-center gap-1.5 text-xs font-medium tracking-[0.04em] text-muted uppercase">
+                  <dt className={cx(labelClass, "flex items-center gap-1.5")}>
                     {f.l}
-                    {f.der ? <span className="rounded-[3px] bg-divider px-1.5 text-2xs tracking-normal normal-case">Calculated</span> : null}
+                    {f.der ? (
+                      <Badge tone="neutral" className="tracking-normal normal-case">
+                        Calculated
+                      </Badge>
+                    ) : null}
                   </dt>
                   <dd className="mt-0.5">
                     {f.status && f.v !== "—" ? (
@@ -144,8 +149,8 @@ export function RecordDialog({ screen, kind, row, onClose }: { screen: ListSpec;
           </>
         ) : null}
         {active === "blocked" ? (
-          <div className="rounded-control bg-canvas px-4 py-3">
-            <SectionLabel>Not available yet</SectionLabel>
+          <div className={insetClass}>
+            <SectionLabel className="mb-1">Not available yet</SectionLabel>
             {blocked.map((b) => (
               <div key={b.id} className="py-1 text-sm text-body">
                 <span className="font-medium text-ink">{b.l}</span> — {b.why}
