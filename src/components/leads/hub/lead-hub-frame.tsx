@@ -72,7 +72,7 @@ export function LeadHubFrame({
   /* A record (a lead, a sample, an appointment) is inside a desk and is none
      of its tabs: it gets the area and nothing under it. */
   const onRecord = place !== null && place.link === null;
-  const subTabs = !onRecord && desk && desk.links.length > 1 ? desk.links : null;
+  const subTabs = !onRecord && desk && !desk.pageTabs && desk.links.length > 1 ? desk.links : null;
   const strip = area && !onRecord ? area.desks.filter((d) => !d.hidden || d.key === desk?.key) : [];
 
   return (

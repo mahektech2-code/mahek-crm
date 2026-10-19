@@ -4,13 +4,14 @@ import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Card, Field, Input, Select, cx } from "@/components/ui/primitives";
+import { Card, Input, Select, cx } from "@/components/ui/primitives";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
 import { offeredSalesTypes, salesTypeLabel, type LeadSalesType } from "@/lib/lead-labels";
 import { captureLead } from "@/lib/actions/lead-intake";
 import type { NextActionOwner } from "@/lib/services/lead-intake-service";
-import { Banner, Button, Pill, ScreenHeader } from "@/components/console/parts";
+import { Banner, Button, ScreenHeader } from "@/components/console/parts";
+import { useInLeadHub } from "@/components/leads/hub/hub-context";
 import { ProductCombobox } from "@/components/products/product-combobox";
 import { IntakeAssistant } from "@/components/leads/intake/intake-assistant";
 
@@ -196,549 +197,464 @@ export function IntakeForm({
     }
   }
 
+  const inHub = useInLeadHub();
+  const typeLabel = answer === null ? null : answer === "undecided" ? "Not decided" : salesTypeLabel(answer);
+
   if (done) {
     return (
-      <div>
-        <ScreenHeader
-          title="Lead raised"
-          subtitle={`${done.name} is on the book, at the foot of the ladder that was chosen.`}
-        />
-        <Card className="p-6">
-          <div className="flex flex-wrap gap-2">
-            <Link
-              href={leadHref(workspace, `leads/${done.id}`)}
-              className="inline-flex h-9 items-center rounded-[4px] border border-brand bg-brand px-4 text-sm font-medium text-white no-underline hover:bg-brand-hover hover:no-underline"
-            >
-              Open the lead
-            </Link>
-            {/*
-              Cleared in the handler, never in an effect watching a prop — the
-              React Compiler rules forbid the second, and the town, the source
-              and the owner are deliberately KEPT: somebody raising four leads
-              off one call sheet is in one town, from one source, for one person.
-            */}
-            <Button
-              onClick={() => {
-                setDone(null);
-                setAnswer(null);
-                setRequirementProductId(null);
-                setF((s) => ({
-                  ...s,
-                  name: "",
-                  companyName: "",
-                  contactPerson: "",
-                  phone: "",
-                  address: "",
-                  monthlyLitres: "",
-                  competitor: "",
-                  requirement: "",
-                  application: "",
-                  notes: "",
-                  priority: "",
-                  distributorCustomerId: "",
-                }));
-              }}
-            >
-              Raise another
-            </Button>
-            <Link
-              href={leadHref(workspace, "leads")}
-              className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
-            >
-              All leads
-            </Link>
+      <div className="mx-auto max-w-[860px]">
+        <Card className="flex flex-wrap items-center gap-3 p-5">
+          <div className="min-w-0 flex-1">
+            <div className="text-[15px] font-semibold text-ink">Lead added</div>
+            <div className="text-[13px] text-muted">{done.name}</div>
           </div>
+          {/*
+            Cleared in the handler, never in an effect watching a prop — the
+            React Compiler rules forbid the second, and the town, the source
+            and the owner are deliberately KEPT: somebody raising four leads
+            off one call sheet is in one town, from one source, for one person.
+          */}
+          <Button
+            onClick={() => {
+              setDone(null);
+              setAnswer(null);
+              setRequirementProductId(null);
+              setF((s) => ({
+                ...s,
+                name: "",
+                companyName: "",
+                contactPerson: "",
+                phone: "",
+                address: "",
+                monthlyLitres: "",
+                competitor: "",
+                requirement: "",
+                application: "",
+                notes: "",
+                priority: "",
+                distributorCustomerId: "",
+              }));
+            }}
+          >
+            Add another
+          </Button>
+          <Link href={leadHref(workspace, "leads")} className={SECONDARY}>
+            All leads
+          </Link>
+          <Link href={leadHref(workspace, `leads/${done.id}`)} className={PRIMARY}>
+            Open the lead
+          </Link>
         </Card>
       </div>
     );
   }
 
+  const saveBlocked = !canWork
+    ? "Your access does not include adding leads."
+    : answer === null
+      ? "Pick how we sell to them first."
+      : busy
+        ? "Saving…"
+        : undefined;
+
   return (
-    <div>
-      <ScreenHeader
-        title="Add a lead"
-        subtitle="Someone called, or an enquiry came in. Fill this in to add them as a lead."
-        actions={
-          <Link
-            href={leadHref(workspace, "leads/intake/bulk")}
-            className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
-          >
-            Upload a file
-          </Link>
-        }
-      />
-
-      {!canWork ? (
-        <Banner
-          tone="danger"
-          title="You cannot raise a lead"
-          body="Your access does not include adding leads. You can see the form, but saving will not work. Ask an administrator if you need this."
+    <div className="mx-auto max-w-[860px]">
+      {inHub ? null : (
+        <ScreenHeader
+          title="New lead"
+          actions={
+            <Link href={leadHref(workspace, "leads/intake/bulk")} className={SECONDARY}>
+              From a file
+            </Link>
+          }
         />
-      ) : null}
+      )}
 
-      {/* ───────────────────────────────── step one, and nothing else with it */}
-      <Card className="mb-4 p-6">
-        <div className="mb-1 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-          Step 1
-        </div>
-        <h2 className="text-lg font-semibold text-ink">How would we sell to them?</h2>
-
-        {/*
-          OFFERED rather than all of them, and Distributor is the one missing.
-          Mahek does not appoint distributors through MahekOne, so starting a
-          lead on that ladder parked it behind a nine-step approval nobody in
-          the building could complete — see the note on the entry itself in
-          `lead-labels.ts`. Leads already on it keep everything they have; this
-          list is only about what a lead may be STARTED on.
-        */}
-        <div className="mt-4 grid gap-2 sm:grid-cols-2">
-          {offeredSalesTypes().map((t) => (
-            <button
-              key={t.code}
-              type="button"
-              onClick={() => setAnswer(t.code)}
-              className={cx(
-                "rounded-[6px] border px-4 py-3 text-left",
-                answer === t.code
-                  ? "border-brand bg-brand-soft"
-                  : "border-line bg-surface hover:bg-canvas",
-              )}
-            >
-              <div className="text-sm font-semibold text-ink">{t.label}</div>
-              <div className="mt-0.5 text-[13px] text-muted">{t.hint}</div>
-            </button>
-          ))}
+      <Card className="overflow-hidden p-0">
+        <div className="flex flex-col gap-[22px] px-[22px] py-5">
+          {!canWork ? (
+            <Banner tone="danger" title="Your access does not include adding leads" />
+          ) : null}
 
           {/*
-            THE FOURTH ANSWER, and it is a real one. A lead with no sales type
-            climbs the original six rungs — `new · contacted · qualified ·
-            negotiation · won · lost` — and nothing ever fills one in on its
-            behalf. Leaving it off this list would not stop people being unsure;
-            it would make them pick the commonest option to get past the screen.
+            THE SALES TYPE IS ASKED FIRST, and the rest of the form waits for
+            it — it decides which ladder the lead climbs. OFFERED rather than
+            all of them: Distributor is retired for new leads (see
+            `lead-labels.ts`). "Not decided" is the fourth, real answer: a
+            lead with no sales type climbs the original six rungs.
           */}
-          <button
-            type="button"
-            onClick={() => setAnswer("undecided")}
-            className={cx(
-              "rounded-[6px] border px-4 py-3 text-left",
-              answer === "undecided"
-                ? "border-brand bg-brand-soft"
-                : "border-line bg-surface hover:bg-canvas",
-            )}
+          <div
+            role="radiogroup"
+            aria-label="How we sell to them"
+            className="grid grid-cols-1 gap-2.5 sm:grid-cols-3"
           >
-            <div className="text-sm font-semibold text-ink">Not Decided</div>
-            <div className="mt-0.5 text-[13px] text-muted">
-              Not sure yet. You can set the type later.
-            </div>
-          </button>
-        </div>
-      </Card>
+            {[
+              ...offeredSalesTypes().map((t) => ({
+                code: t.code as Answer,
+                label: t.label,
+                hint: TYPE_HINT[t.code] ?? t.hint,
+              })),
+              { code: "undecided" as Answer, label: "Not decided", hint: "Set it later" },
+            ].map((t) => {
+              const on = answer === t.code;
+              return (
+                <button
+                  key={t.code}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  onClick={() => setAnswer(t.code)}
+                  className={cx(
+                    "flex flex-col gap-0.5 rounded-[8px] border px-3.5 py-3 text-left",
+                    on
+                      ? "border-brand bg-brand-soft shadow-[inset_0_0_0_1px_var(--color-brand)]"
+                      : "border-line bg-surface hover:border-line-strong",
+                  )}
+                >
+                  <strong className="text-sm font-semibold text-ink">{t.label}</strong>
+                  <span className="text-[13px] text-muted">{t.hint}</span>
+                </button>
+              );
+            })}
+          </div>
 
-      {answer === null ? (
-        <Card className="p-6 text-[15px] text-muted">
-          The rest of the form opens once that is answered.
-        </Card>
-      ) : (
-        <>
-          {duplicate ? (
-            <Banner
-              tone="danger"
-              title="That telephone number is already on the book"
-              body={
-                <>
-                  {duplicate}{" "}
-                  <span className="text-muted">
-                    Two counters of one business under one number is a real thing;
-                    a second record for one shop is not something anybody can undo
-                    from a screen.
-                  </span>
-                </>
-              }
-              action={
-                <Button
+          {answer === null ? null : (
+            <>
+              {duplicate ? (
+                <Banner
                   tone="danger"
-                  disabled={busy}
-                  title={busy ? "Saving…" : undefined}
-                  onClick={() => submit(true)}
-                >
-                  It is a different shop — raise it anyway
-                </Button>
-              }
-            />
-          ) : null}
-
-          {/*
-            THE VOICE ASSISTANT proposes; it does not save. It is handed the
-            current text of each box (so it never overwrites one), one setter
-            into this form's own state, and a boolean for whether "Under" is
-            drawn — and nothing else: not the sales type, not submit, not the
-            owner, not the priority, not the duplicate override.
-          */}
-          {canWork ? (
-            <IntakeAssistant
-              workspace={workspace}
-              offerUnder={answer === "third_party"}
-              current={{
-                name: f.name,
-                contactPerson: f.contactPerson,
-                phone: f.phone,
-                companyName: f.companyName,
-                city: f.city,
-                address: f.address,
-                customerType: f.customerType,
-                monthlyLitres: f.monthlyLitres,
-                competitor: f.competitor,
-                requirement: f.requirement,
-                application: f.application,
-                notes: f.notes,
-                source: f.source,
-                sourceDetail: f.sourceDetail,
-                distributorCustomerId: f.distributorCustomerId,
-              }}
-              onFill={(key, value) => {
-                /* A product the person chose from the catalogue wins over words
-                   the assistant heard: the text box is locked while one is
-                   chosen, and a value set behind it would show on screen and be
-                   dropped on save. */
-                if (key === "requirement" && requirementProductId) return;
-                set(key)(value);
-                /* The same rule the Lead source box applies when it changes. */
-                if (key === "source" && value !== "other") set("sourceDetail")("");
-              }}
-            />
-          ) : null}
-
-          <Card className="mb-4 overflow-hidden p-0">
-            {/* ─────────────────────────────────────────────── lead information */}
-            <div className="border-b border-divider px-6 py-5">
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                  Lead information
-                </div>
-                <Pill tone="brand">
-                  {answer === "undecided" ? "Not Decided" : salesTypeLabel(answer)}
-                </Pill>
-              </div>
-
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-12">
-                <Field
-                  label="Lead source"
-                  error={errors.source}
-                  className={answer === "third_party" ? "lg:col-span-4" : "lg:col-span-6"}
-                >
-                  <Select
-                    value={f.source}
-                    onChange={(e) => {
-                      set("source")(e.target.value);
-                      /* Cleared when the answer moves off Other, so a detail
-                         typed and then reconsidered is not saved against a
-                         source it does not describe. Nothing is cleared on the
-                         SAVED record — see the column's own note. */
-                      if (e.target.value !== "other") set("sourceDetail")("");
-                    }}
-                  >
-                    <option value="">Pick one&hellip;</option>
-                    {sourceOptions.map((o) => (
-                      <option key={o.code} value={o.code}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-
-                <Field
-                  label="Owner (optional)"
-                  error={errors.ownerId}
-                  className={answer === "third_party" ? "lg:col-span-4" : "lg:col-span-6"}
-                >
-                  <Select value={f.ownerId} onChange={(e) => set("ownerId")(e.target.value)}>
-                    <option value="">Unassigned</option>
-                    {owners.map((o) => (
-                      <option key={o.id} value={o.id}>
-                        {o.name}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-
-                {/*
-                  * §23 — WHO BILLS THIS SHOP, asked only on the ladder it means
-                  * anything on. `distributors` is the same direct-customer list
-                  * `crm/distributor-picker.tsx` already draws from — a picker,
-                  * not a permission, so the action checks the same thing again.
-                  */}
-                {answer === "third_party" ? (
-                  <Field
-                    label="Under"
-                    error={errors.distributorCustomerId}
-                    className="lg:col-span-4"
-                  >
-                    <Select
-                      value={f.distributorCustomerId}
-                      onChange={(e) => set("distributorCustomerId")(e.target.value)}
+                  fact
+                  title="That mobile number is already on the book"
+                  body={duplicate}
+                  action={
+                    <Button
+                      tone="danger"
+                      disabled={busy}
+                      title={busy ? "Saving…" : undefined}
+                      onClick={() => submit(true)}
                     >
-                      <option value="">Unassigned</option>
-                      {distributors.map((d) => (
-                        <option key={d.id} value={d.id}>
-                          {d.name}
-                          {d.city ? ` — ${d.city}` : ""}
+                      It is a different shop — add it anyway
+                    </Button>
+                  }
+                />
+              ) : null}
+
+              {/*
+                THE VOICE ASSISTANT proposes; it does not save. It is handed the
+                current text of each box (so it never overwrites one), one setter
+                into this form's own state, and whether "Under" is drawn — and
+                nothing else: not the sales type, not submit, not the owner, not
+                the priority, not the duplicate override.
+              */}
+              {canWork ? (
+                <IntakeAssistant
+                  workspace={workspace}
+                  offerUnder={answer === "third_party"}
+                  current={{
+                    name: f.name,
+                    contactPerson: f.contactPerson,
+                    phone: f.phone,
+                    companyName: f.companyName,
+                    city: f.city,
+                    address: f.address,
+                    customerType: f.customerType,
+                    monthlyLitres: f.monthlyLitres,
+                    competitor: f.competitor,
+                    requirement: f.requirement,
+                    application: f.application,
+                    notes: f.notes,
+                    source: f.source,
+                    sourceDetail: f.sourceDetail,
+                    distributorCustomerId: f.distributorCustomerId,
+                  }}
+                  onFill={(key, value) => {
+                    /* A product chosen from the catalogue wins over words the
+                       assistant heard: the box is locked while one is chosen. */
+                    if (key === "requirement" && requirementProductId) return;
+                    set(key)(value);
+                    /* The same rule the Source box applies when it changes. */
+                    if (key === "source" && value !== "other") set("sourceDetail")("");
+                  }}
+                />
+              ) : null}
+
+              <section>
+                <SectionTitle>Who</SectionTitle>
+                <div className="grid grid-cols-1 gap-x-4 gap-y-3.5 sm:grid-cols-3">
+                  <F label="Shop name" required error={errors.name} className="sm:col-span-2">
+                    <Input
+                      value={f.name}
+                      invalid={Boolean(errors.name)}
+                      onChange={(e) => set("name")(e.target.value)}
+                      placeholder="As written above the door"
+                    />
+                  </F>
+                  <F label="Mobile" required error={errors.phone}>
+                    <Input
+                      value={f.phone}
+                      invalid={Boolean(errors.phone)}
+                      onChange={(e) => set("phone")(e.target.value)}
+                      placeholder="10 digits"
+                      inputMode="tel"
+                    />
+                  </F>
+                  <F label="Contact person" error={errors.contactPerson}>
+                    <Input
+                      value={f.contactPerson}
+                      onChange={(e) => set("contactPerson")(e.target.value)}
+                    />
+                  </F>
+                  <F label="Town" required error={errors.city}>
+                    <Input
+                      value={f.city}
+                      invalid={Boolean(errors.city)}
+                      onChange={(e) => set("city")(e.target.value)}
+                    />
+                  </F>
+                  <F label="Address" error={errors.address}>
+                    <Input
+                      value={f.address}
+                      onChange={(e) => set("address")(e.target.value)}
+                      placeholder="Street, area"
+                    />
+                  </F>
+                  <F label="Registered name" error={errors.companyName}>
+                    <Input
+                      value={f.companyName}
+                      onChange={(e) => set("companyName")(e.target.value)}
+                      placeholder="If different"
+                    />
+                  </F>
+                  <F label="Source" required error={errors.source}>
+                    <Select
+                      value={f.source}
+                      onChange={(e) => {
+                        set("source")(e.target.value);
+                        /* Cleared when the answer moves off Other, so a detail
+                           typed and then reconsidered is not saved against a
+                           source it does not describe. */
+                        if (e.target.value !== "other") set("sourceDetail")("");
+                      }}
+                    >
+                      <option value="">Pick one</option>
+                      {sourceOptions.map((o) => (
+                        <option key={o.code} value={o.code}>
+                          {o.label}
                         </option>
                       ))}
                     </Select>
-                  </Field>
-                ) : null}
-
-                {/*
-                  * ONLY UNDER "OTHER", and required there.
-                  *
-                  * Mahek asked for it, and the reason is what Other does to a
-                  * coded list left alone: it is the easiest answer on the
-                  * dropdown, it costs nothing to pick, and a year later it is
-                  * the biggest bar on the chart with nothing behind it.
-                  *
-                  * Drawn conditionally rather than always-present-and-disabled:
-                  * a field that is dead on nine answers out of ten is furniture,
-                  * and people stop reading furniture.
-                  */}
-                {f.source === "other" ? (
-                  <Field label="Source details" error={errors.sourceDetail} className="lg:col-span-12">
-                    <Input
-                      value={f.sourceDetail}
-                      invalid={Boolean(errors.sourceDetail)}
-                      onChange={(e) => set("sourceDetail")(e.target.value)}
-                      placeholder="A builder on the site next door sent him"
-                    />
-                  </Field>
-                ) : null}
-              </div>
-            </div>
-
-            {/* ─────────────────────────────────────────────── customer / company */}
-            <div className="border-b border-divider px-6 py-5">
-              <div className="mb-4 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                Customer / company
-              </div>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-12">
-                <Field label="Business / shop name" error={errors.name} className="lg:col-span-6">
-                  <Input
-                    value={f.name}
-                    invalid={Boolean(errors.name)}
-                    onChange={(e) => set("name")(e.target.value)}
-                    placeholder="As it is written above the door"
-                  />
-                </Field>
-                <Field label="Contact person (optional)" error={errors.contactPerson} className="lg:col-span-3">
-                  <Input
-                    value={f.contactPerson}
-                    onChange={(e) => set("contactPerson")(e.target.value)}
-                  />
-                </Field>
-                <Field label="Mobile" error={errors.phone} className="lg:col-span-3">
-                  <Input
-                    value={f.phone}
-                    invalid={Boolean(errors.phone)}
-                    onChange={(e) => set("phone")(e.target.value)}
-                    placeholder="10 digits"
-                    inputMode="tel"
-                  />
-                </Field>
-
-                <Field label="Registered name (optional)" error={errors.companyName} className="lg:col-span-4">
-                  <Input
-                    value={f.companyName}
-                    onChange={(e) => set("companyName")(e.target.value)}
-                    placeholder="If different from the shop name"
-                  />
-                </Field>
-                <Field label="Town" error={errors.city} className="lg:col-span-3">
-                  <Input
-                    value={f.city}
-                    invalid={Boolean(errors.city)}
-                    onChange={(e) => set("city")(e.target.value)}
-                  />
-                </Field>
-                <Field label="Address (optional)" error={errors.address} className="lg:col-span-5">
-                  <Input
-                    value={f.address}
-                    onChange={(e) => set("address")(e.target.value)}
-                    placeholder="Street, area"
-                  />
-                </Field>
-              </div>
-            </div>
-
-            {/* ─────────────────────────────────────────────── business requirements */}
-            <div className="border-b border-divider px-6 py-5">
-              <div className="mb-4 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                Business requirements
-              </div>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-12">
-                <Field label="Account type (optional)" error={errors.customerType} className="lg:col-span-3">
-                  <Select
-                    value={f.customerType}
-                    onChange={(e) => set("customerType")(e.target.value)}
-                  >
-                    <option value="">Not stated</option>
-                    {CUSTOMER_TYPES.map((t) => (
-                      <option key={t.code} value={t.code}>
-                        {t.label} — {t.hint}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-                <Field
-                  label="Monthly requirement, litres (optional)"
-                  error={errors.monthlyLitres}
-                  className="lg:col-span-3"
-                >
-                  <Input
-                    value={f.monthlyLitres}
-                    inputMode="numeric"
-                    onChange={(e) => set("monthlyLitres")(e.target.value)}
-                    placeholder="0"
-                  />
-                </Field>
-                <Field label="Buying from now (optional)" error={errors.competitor} className="lg:col-span-6">
-                  <Input
-                    value={f.competitor}
-                    onChange={(e) => set("competitor")(e.target.value)}
-                    placeholder="Current supplier / competitor"
-                  />
-                </Field>
-
-                <Field
-                  label="What product they want (optional)"
-                  error={errors.requirement ?? errors.requirementProductId}
-                  className="lg:col-span-6"
-                >
+                  </F>
+                  <F label="Owner" error={errors.ownerId}>
+                    <Select value={f.ownerId} onChange={(e) => set("ownerId")(e.target.value)}>
+                      <option value="">Unassigned</option>
+                      {owners.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </F>
                   {/*
-                    * ONE FIELD: the whole active catalogue to pick from, or words.
-                    * Click it and every active Mahek product is offered; type and it
-                    * narrows; pick one and its name is the value. Nothing forces a
-                    * choice — words that match nothing are saved as typed, which is
-                    * what this box has always meant — and editing the box after a
-                    * pick drops the pick. A chosen product is stored by NAME in the
-                    * same column the words go in (the server checks it and writes
-                    * the catalogue's own spelling); it is not the Calling Desk's
-                    * Product answer and does not stand in for it.
-                    */}
-                  {productSearchEnabled ? (
-                    <ProductCombobox
-                      text={f.requirement}
-                      productId={requirementProductId}
-                      invalid={Boolean(errors.requirement || errors.requirementProductId)}
-                      placeholder="Search Mahek products, or type what they want"
-                      onText={(t) => {
-                        // Typing is words, never a pick: it drops any product that was chosen.
-                        setRequirementProductId(null);
-                        set("requirement")(t);
-                      }}
-                      onPick={(p) => {
-                        setRequirementProductId(p ? p.productId : null);
-                        set("requirement")(p ? p.name : "");
-                      }}
+                    §23 — WHO BILLS THIS SHOP, asked only on the ladder it means
+                    anything on. A picker, not a permission: the action checks
+                    the same eligibility again.
+                  */}
+                  {answer === "third_party" ? (
+                    <F label="Under" error={errors.distributorCustomerId}>
+                      <Select
+                        value={f.distributorCustomerId}
+                        onChange={(e) => set("distributorCustomerId")(e.target.value)}
+                      >
+                        <option value="">Unassigned</option>
+                        {distributors.map((d) => (
+                          <option key={d.id} value={d.id}>
+                            {d.name}
+                            {d.city ? ` — ${d.city}` : ""}
+                          </option>
+                        ))}
+                      </Select>
+                    </F>
+                  ) : null}
+                  {/* Only under Other, and required there — an empty Other is
+                      the biggest bar on the chart a year later. */}
+                  {f.source === "other" ? (
+                    <F label="Source details" required error={errors.sourceDetail} className="sm:col-span-3">
+                      <Input
+                        value={f.sourceDetail}
+                        invalid={Boolean(errors.sourceDetail)}
+                        onChange={(e) => set("sourceDetail")(e.target.value)}
+                      />
+                    </F>
+                  ) : null}
+                </div>
+              </section>
+
+              <section>
+                <SectionTitle>What they need</SectionTitle>
+                <div className="grid grid-cols-1 gap-x-4 gap-y-3.5 sm:grid-cols-3">
+                  <F label="Business type" error={errors.customerType}>
+                    <Select
+                      value={f.customerType}
+                      onChange={(e) => set("customerType")(e.target.value)}
+                    >
+                      <option value="">Not stated</option>
+                      {CUSTOMER_TYPES.map((t) => (
+                        <option key={t.code} value={t.code} title={t.hint}>
+                          {t.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </F>
+                  <F label="Litres a month" error={errors.monthlyLitres}>
+                    <Input
+                      value={f.monthlyLitres}
+                      inputMode="numeric"
+                      onChange={(e) => set("monthlyLitres")(e.target.value)}
                     />
-                  ) : (
-                    <>
+                  </F>
+                  <F label="Buying from now" error={errors.competitor}>
+                    <Input
+                      value={f.competitor}
+                      onChange={(e) => set("competitor")(e.target.value)}
+                    />
+                  </F>
+                  <F
+                    label="Product"
+                    error={errors.requirement ?? errors.requirementProductId}
+                    className="sm:col-span-2"
+                  >
+                    {/*
+                      ONE FIELD: the active catalogue to pick from, or words.
+                      Typing drops a pick; a pick is stored by NAME in the same
+                      column the words go in, and the server writes the
+                      catalogue's own spelling. With product search switched
+                      off the endpoint answers nothing, so plain words instead.
+                    */}
+                    {productSearchEnabled ? (
+                      <ProductCombobox
+                        text={f.requirement}
+                        productId={requirementProductId}
+                        invalid={Boolean(errors.requirement || errors.requirementProductId)}
+                        placeholder="Search Mahek products"
+                        onText={(t) => {
+                          setRequirementProductId(null);
+                          set("requirement")(t);
+                        }}
+                        onPick={(p) => {
+                          setRequirementProductId(p ? p.productId : null);
+                          set("requirement")(p ? p.name : "");
+                        }}
+                      />
+                    ) : (
                       <Input
                         value={f.requirement}
                         invalid={Boolean(errors.requirement)}
                         onChange={(e) => set("requirement")(e.target.value)}
-                        placeholder="e.g. Thinner for a spray booth"
+                        placeholder="What they want"
                       />
-                      <div className="mt-1 text-[12px] text-muted">
-                        Product search is switched off, so type what they want in your own words.
-                      </div>
-                    </>
-                  )}
-                </Field>
-                <Field
-                  label="What they'll use it on (optional)"
-                  error={errors.application}
-                  className="lg:col-span-6"
-                >
-                  <Input
-                    value={f.application}
-                    onChange={(e) => set("application")(e.target.value)}
-                    placeholder="e.g. Furniture polish"
-                  />
-                </Field>
-              </div>
-            </div>
-
-            {/* ─────────────────────────────────────────────── additional information */}
-            <div className="px-6 py-5">
-              <div className="mb-4 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                Additional information
-              </div>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-12">
-                <Field
-                  label="Note (optional)"
-                  error={errors.notes}
-                  className={canPrioritise ? "lg:col-span-8" : "lg:col-span-12"}
-                >
-                  <VoiceTextarea
-                    rows={3}
-                    value={f.notes}
-                    onChange={(e) => set("notes")(e.target.value)}
-                    onDictate={set("notes")}
-                  />
-                </Field>
-                {canPrioritise ? (
-                <Field label="Priority (optional)" error={errors.priority} className="lg:col-span-4">
-                  <Select
-                    value={f.priority}
-                    onChange={(e) => set("priority")(e.target.value)}
+                    )}
+                  </F>
+                  <F label="Used on" error={errors.application}>
+                    <Input
+                      value={f.application}
+                      onChange={(e) => set("application")(e.target.value)}
+                      placeholder="e.g. Furniture polish"
+                    />
+                  </F>
+                  <F
+                    label="Note"
+                    error={errors.notes}
+                    className={canPrioritise ? "sm:col-span-2" : "sm:col-span-3"}
                   >
-                    {/* Selectable, not a disabled placeholder: the field is
-                        optional, and a choice made by mistake has to be
-                        undoable without abandoning the form. */}
-                    <option value="">Not set</option>
-                    <option value="high">High</option>
-                    <option value="medium">Medium</option>
-                    <option value="low">Low</option>
-                  </Select>
-                </Field>
-                ) : null}
-              </div>
-            </div>
-          </Card>
+                    <VoiceTextarea
+                      rows={2}
+                      value={f.notes}
+                      onChange={(e) => set("notes")(e.target.value)}
+                      onDictate={set("notes")}
+                    />
+                  </F>
+                  {/* Priority is a manager's word (`lead.verify`). */}
+                  {canPrioritise ? (
+                    <F label="Priority" error={errors.priority}>
+                      <Select value={f.priority} onChange={(e) => set("priority")(e.target.value)}>
+                        <option value="">Not set</option>
+                        <option value="high">High</option>
+                        <option value="medium">Medium</option>
+                        <option value="low">Low</option>
+                      </Select>
+                    </F>
+                  ) : null}
+                </div>
+              </section>
+            </>
+          )}
+        </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <span className="text-[13px] text-muted">
-              It lands at{" "}
-              {answer === "undecided" ? (
-                <strong className="font-medium text-ink">New</strong>
-              ) : (
-                <strong className="font-medium text-ink">Suspect</strong>
-              )}
-              , the foot of the ladder you chose.
-            </span>
-            <div className="flex items-center gap-3">
-              <Link
-                href={leadHref(workspace, "leads")}
-                className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
-              >
-                Cancel
-              </Link>
-              <Button
-                tone="primary"
-                disabled={busy || !canWork}
-                title={
-                  !canWork
-                    ? "Your access does not include adding leads."
-                    : busy
-                      ? "Saving…"
-                      : undefined
-                }
-                onClick={() => submit(false)}
-              >
-                {busy ? "Saving…" : "Add the lead"}
-              </Button>
-            </div>
-          </div>
-        </>
-      )}
+        <div className="flex flex-wrap items-center gap-2.5 border-t border-divider bg-canvas px-[22px] py-4">
+          <span className="flex-1 text-[13px] text-muted">
+            {/* A lead with no sales type starts on the original ladder's first
+                rung; the two offered ladders start at Suspect. */}
+            {answer === null ? null : answer === "undecided" ? "Starts at New" : "Starts at Suspect"}
+            {typeLabel && answer !== "undecided" ? ` · ${typeLabel}` : null}
+          </span>
+          <Link href={leadHref(workspace, "leads")} className={SECONDARY}>
+            Cancel
+          </Link>
+          <Button
+            tone="primary"
+            disabled={Boolean(saveBlocked)}
+            title={saveBlocked}
+            onClick={() => submit(false)}
+          >
+            {busy ? "Saving…" : "Add lead"}
+          </Button>
+        </div>
+      </Card>
     </div>
+  );
+}
+
+const SECONDARY =
+  "inline-flex h-9 items-center rounded-[6px] border border-line bg-surface px-3.5 text-sm font-medium text-body no-underline hover:bg-canvas hover:text-ink hover:no-underline";
+const PRIMARY =
+  "inline-flex h-9 items-center rounded-[6px] border border-brand bg-brand px-4 text-sm font-medium text-white no-underline hover:bg-brand-hover hover:text-white hover:no-underline";
+
+/** Short enough for a card; the full sentence stays on `SALES_TYPES`. */
+const TYPE_HINT: Partial<Record<LeadSalesType, string>> = {
+  direct: "We bill them",
+  third_party: "A distributor bills them",
+};
+
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="m-0 mb-2.5 text-[11px] font-semibold tracking-[0.04em] text-muted uppercase">
+      {children}
+    </p>
+  );
+}
+
+/** A labelled control in this form's own, lighter style. */
+function F({
+  label,
+  required = false,
+  error,
+  className,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  error?: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className={cx("block min-w-0", className)}>
+      <span className="mb-1 block text-[13px] font-medium text-body">
+        {label}
+        {required ? <span className="ml-0.5 text-danger">*</span> : null}
+      </span>
+      <span className="block [&>select]:w-full">{children}</span>
+      {error ? <span className="mt-1 block text-[12.5px] text-danger">{error}</span> : null}
+    </label>
   );
 }

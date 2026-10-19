@@ -7,11 +7,15 @@ import { sharedFunnel } from "@/lib/engines/lead-funnel-shape";
 import { funnelByRung } from "@/lib/services/lead-funnel-service";
 import { leadTileCounts } from "@/lib/services/lead-views-service";
 import {
+  expectedOrders,
   leadsForRole,
   managerLeadBlocks,
   needsAttention,
   readsManagerStrip,
+  unownedLeadCount,
 } from "@/lib/services/lead-dashboard-service";
+import { canLead } from "@/lib/services/lead-console-service";
+import { getScope, managesHere } from "@/lib/scope";
 import { vantageViewer } from "@/lib/services/lead-vantage-service";
 import { Empty } from "@/components/console/parts";
 import { LeadTabs } from "@/components/leads/lead-tabs";
@@ -71,6 +75,19 @@ import { DashboardScreen } from "@/components/leads/dashboard/dashboard-screen";
  * Nothing in here re-checks it: one gate per route, in the layout the route
  * sits under.
  */
+/** How many rows My queue carries; the chips filter these and "All N" says how many there are. */
+const QUEUE_ROWS = 20;
+
+/** "Mon 19 Oct" from the business date, read in UTC because it is a date and not an instant. */
+function longDay(day: string): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    timeZone: "UTC",
+  }).format(new Date(`${day}T00:00:00Z`));
+}
+
 export async function Body({ workspace }: { workspace: LeadWorkspace }) {
   const user = await requireUser();
 
@@ -83,8 +100,16 @@ export async function Body({ workspace }: { workspace: LeadWorkspace }) {
   /* The three reads together. None of them is this file's own query — see the
      service — and running them in one `Promise.all` is what keeps a screen
      made of three other screens' answers costing one round of work. */
+  /* MINE / TEAM. The header's own scope preference, read for the app this
+     workspace is: a manager here flips between what they hold and what the
+     team holds; anybody else has only their own book, so no switch. "Mine"
+     narrows the queue to next actions this person holds. */
+  const app = workspace === "crm" ? "crm" : "sales";
+  const teamReader = await managesHere(user, app);
+  const who = teamReader ? await getScope(user, app) : null;
+
   const [attention, focus, blocks] = await Promise.all([
-    needsAttention(day),
+    needsAttention(day, { limit: QUEUE_ROWS, ownerId: who === "mine" ? user.id : undefined }),
     leadsForRole(day, viewer),
     readsManagerStrip(viewer) ? managerLeadBlocks(day) : Promise.resolve([]),
   ]);
@@ -126,9 +151,16 @@ export async function Body({ workspace }: { workspace: LeadWorkspace }) {
    * reader presses it, lands on a list of a different length, and stops
    * believing every other figure on the screen at the same time.
    */
-  const [tiles, ladders] = await Promise.all([
+  /* Assigning is the Calling desk's (`assignDeskLead`): `lead.verify` and the
+     desk itself, so the card is drawn only for somebody whose Assign works. */
+  const mayAssign =
+    workspace === "crm" && holds("leads/calling-desk") && (await canLead(user, "lead.verify"));
+
+  const [tiles, ladders, forecast, unowned] = await Promise.all([
     holds("leads") ? leadTileCounts(day) : Promise.resolve(null),
     holds("leads/funnel") ? funnelByRung(day) : Promise.resolve(null),
+    holds("leads/commercial/commitments") ? expectedOrders(day) : Promise.resolve(null),
+    mayAssign ? unownedLeadCount() : Promise.resolve(null),
   ]);
 
   const nothing =
@@ -156,6 +188,10 @@ export async function Body({ workspace }: { workspace: LeadWorkspace }) {
           focus={focus}
           tiles={tiles}
           pipeline={ladders ? sharedFunnel(ladders) : null}
+          who={who}
+          dayLabel={longDay(day)}
+          forecast={forecast}
+          unowned={unowned}
         />
       )}
     </div>

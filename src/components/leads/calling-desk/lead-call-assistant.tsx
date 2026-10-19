@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Badge, Button, Textarea, cx } from "@/components/ui/primitives";
+import { Badge, Button, cx } from "@/components/ui/primitives";
 import { DictateButton, type DictationMeta } from "@/components/ui/dictate";
 import { analyseLeadCallAction } from "@/lib/actions/lead-call-intel";
 import type { LeadCallAnalysis, LeadCallFill } from "@/lib/engines/lead-call-intel-decide";
@@ -91,60 +91,50 @@ export function LeadCallAssistant({
 
   const typedReady = notes.trim().length > 1;
 
+  /* The dialog's own Notes box is the typed half: "Read what I typed" reads
+     it, so there is one box for the note, not two. */
   const starter = (
-    <div className="flex flex-col gap-2">
-      <Textarea
-        rows={2}
-        value={notes}
-        onChange={(e) => onNotes(e.target.value)}
-        placeholder='Or type it: e.g. "Dealer, needs about 400 litres a month of Nano Thinner, currently using a local brand"'
+    <div className="flex flex-wrap items-center gap-2.5">
+      <DictateButton
+        modalTitle="Tell us about the call"
+        importLabel="Use this"
+        title="Speak about the call in any language"
+        hasExistingText={notes.trim().length > 0}
+        renderTrigger={(open) => (
+          <Button variant="secondary" size="sm" onClick={open} className="border-brand-softer text-brand-deep">
+            <MicGlyph /> Speak about the call
+          </Button>
+        )}
+        onImport={(text, _replace, meta) => {
+          onNotes(text);
+          void read({ ...meta, english: text }, text);
+        }}
       />
-      <div className="flex flex-wrap items-center gap-2">
-        <DictateButton
-          modalTitle="Tell us about the call"
-          importLabel="Use this"
-          title="Speak about the call in any language"
-          hasExistingText={notes.trim().length > 0}
-          renderTrigger={(open) => (
-            <Button variant="primary" size="sm" onClick={open}>
-              <MicGlyph /> Speak about this call
-            </Button>
-          )}
-          onImport={(text, _replace, meta) => {
-            onNotes(text);
-            void read({ ...meta, english: text }, text);
-          }}
-        />
-        <Button
-          variant="secondary"
-          size="sm"
-          disabled={!typedReady || phase.kind === "reading"}
-          title={typedReady ? "Read the note already in the box" : "Type a note first, or speak"}
-          onClick={() => void read(null, notes)}
-        >
-          Read what I typed
-        </Button>
-      </div>
+      <Button
+        variant="secondary"
+        size="sm"
+        disabled={!typedReady || phase.kind === "reading"}
+        title={typedReady ? "Read the note typed below" : "Type a note below first, or speak"}
+        onClick={() => void read(null, notes)}
+      >
+        Read the notes
+      </Button>
+      <span className="text-[13px] text-brand-deep">Fills the answers below. You review before saving.</span>
     </div>
   );
 
   if (phase.kind === "idle" || phase.kind === "failed") {
     return (
-      <section className="mb-3 rounded-[6px] border border-brand-softer bg-brand-soft p-3.5">
-        <div className="text-[14px] font-semibold text-ink">Voice assistant</div>
-        <p className="mt-0.5 mb-2.5 text-[12.5px] text-body">
-          Speak in any language — the assistant suggests answers for the questions below. You still
-          check them and press Save call.
-        </p>
+      <section className="rounded-[8px] border border-brand-softer bg-brand-soft px-3.5 py-3">
         {starter}
-        {phase.kind === "failed" ? <p className="mt-2 text-[12.5px] text-danger">{phase.message}</p> : null}
+        {phase.kind === "failed" ? <p className="mt-2 mb-0 text-[12.5px] text-danger">{phase.message}</p> : null}
       </section>
     );
   }
 
   if (phase.kind === "reading") {
     return (
-      <section className="mb-3 flex items-center gap-2 rounded-[6px] border border-brand-softer bg-brand-soft p-3.5">
+      <section className="flex items-center gap-2 rounded-[8px] border border-brand-softer bg-brand-soft px-3.5 py-3">
         <span className="h-2 w-2 flex-none animate-pulse rounded-full bg-brand" />
         <span className="text-[13px] text-body">Understanding…</span>
       </section>
@@ -155,7 +145,7 @@ export function LeadCallAssistant({
   const readyCount = analysis.fills.filter((f) => f.state === "ready" && !applied.has(f.key)).length;
 
   return (
-    <section className="mb-3 rounded-[6px] border border-brand-softer bg-surface p-3.5">
+    <section className="rounded-[8px] border border-brand-softer bg-surface p-3.5">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-[13px] font-semibold text-ink">
           {analysis.readByModel ? "Review suggested answers" : "Could not read this call"}

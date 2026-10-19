@@ -8325,6 +8325,22 @@ nothing, and `OutsideLeadHub` hides a screen's own "← back to a desk" link.
 The Sales Dashboard mounts the same screens outside the frame and sees no
 change. The routes are unchanged; `Dashboard` is now "My day".
 
+**A LEAD'S RECORD IS ONE PAGE OF CARDS, AND ITS ACTIONS ARE ONE MENU.** The
+header names the lead, its sales type, its rung and how long it has stood
+there, and its priority; beside it are Call (only for somebody who works the
+Calling desk — it opens the desk's own `LogCallDialog`, also from `?call=1`,
+which is what My day's Call buttons link to), Message, the rung's act
+(`PrimaryGateAction`, a link to the screen where that act is done) and a ⋯
+menu holding Reassign, Change sales type, Put on hold, Hand over, Mark lost and
+Delete. Each menu item is the component the old header drew as a button, with
+its own capability check and dialog; the menu is hidden rather than unmounted
+when closed, because unmounting would take the dialog an item just opened with
+it. The ladder is a row of bars; Overview is the next step (`setLeadNextAction`
+behind Change), the gate card ("To reach X", `checklistFor` ticked where the
+verdict does not name it missing, `AdvanceStage` under it), the opportunity and
+the calls; the rail is People, Who's up (`roleAction` for every vantage) and
+Details. `components/leads/record/record-chrome.tsx` holds the pieces.
+
 **THE CALLING DESK IS A MODULE, AND IT IS GRANTED — NOT INHERITED.** It was a
 tab of All Leads, and a tab cannot be withheld: every CRM user could open the
 telecaller's desk, which is the one thing that must not be true of it.

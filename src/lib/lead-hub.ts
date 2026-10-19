@@ -37,6 +37,8 @@ export type HubDesk = {
   links: HubLink[];
   /** Left out of the desk strip unless somebody is on it — reached by a button. */
   hidden?: boolean;
+  /** Its pages draw their own switch between the links, so the frame does not. */
+  pageTabs?: boolean;
 };
 
 export type HubArea = {
@@ -139,6 +141,7 @@ export const HUB_AREAS: readonly HubArea[] = [
       {
         key: "book",
         label: "All leads",
+        pageTabs: true,
         links: [
           { path: "leads", label: "List", module: "crm.leads", exact: true },
           { path: "leads/board", label: "Board", module: "crm.leads" },

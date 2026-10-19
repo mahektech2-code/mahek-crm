@@ -48,12 +48,15 @@ export function LeadPriorityControl({
   priority,
   potentialPaise,
   canPrioritise,
+  compact = false,
 }: {
   customerId: string;
   priority: LeadPriority | null;
   /** Quoted underneath, because the judgement is made AGAINST this figure. */
   potentialPaise: number | null;
   canPrioritise: boolean;
+  /** The record's Details card: a label, a full-width select, no sentence. */
+  compact?: boolean;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -93,7 +96,13 @@ export function LeadPriorityControl({
 
   return (
     <span className="block min-w-0">
-      <span className="block text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">
+      <span
+        className={
+          compact
+            ? "block text-xs text-muted"
+            : "block text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase"
+        }
+      >
         Priority
       </span>
       <select
@@ -105,7 +114,11 @@ export function LeadPriorityControl({
             ? "How hard a manager has asked for this one to be pushed. Not what the shop is worth."
             : "Deciding which leads the team pushes is a manager's. Yours is not one of the hats that carries it."
         }
-        className="mt-0.5 h-8 rounded-[4px] border border-line bg-surface px-2 text-[15px] font-medium text-ink outline-none focus:border-brand disabled:cursor-not-allowed disabled:opacity-60"
+        className={
+          compact
+            ? "mt-1 h-[34px] w-full rounded-[6px] border border-line bg-surface px-2 text-sm text-ink outline-none focus:border-brand disabled:cursor-not-allowed disabled:opacity-60"
+            : "mt-0.5 h-8 rounded-[4px] border border-line bg-surface px-2 text-[15px] font-medium text-ink outline-none focus:border-brand disabled:cursor-not-allowed disabled:opacity-60"
+        }
       >
         <option value="">{priorityLabel(null)}</option>
         {LEAD_PRIORITIES.map((v) => (
@@ -114,6 +127,7 @@ export function LeadPriorityControl({
           </option>
         ))}
       </select>
+      {compact ? null : (
       <OutsideLeadHub>
         <span className="block max-w-[240px] text-[12px] text-pretty text-muted">
           {prioritySentence(chosen === "" ? null : chosen)}
@@ -122,6 +136,7 @@ export function LeadPriorityControl({
             : " Nobody has estimated what this shop could spend."}
         </span>
       </OutsideLeadHub>
+      )}
     </span>
   );
 }

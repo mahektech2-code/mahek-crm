@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 
 import { Icon } from "@/components/shell/icons";
+import { OutsideLeadHub } from "@/components/leads/hub/hub-context";
 import { cx } from "@/components/ui/primitives";
 import {
   DESK_VIEWS,
@@ -211,9 +212,11 @@ export function Dashboard({
         title={data.greeting}
         sub="Your salesmen's leads, grouped by salesman. Open a lead to read what the salesman has done and to verify, review or confirm."
         actions={
-          <Link href={intakeHref} className={pbtn("primary")}>
-            <Icon name="plus" size={15} /> New lead
-          </Link>
+          <OutsideLeadHub>
+            <Link href={intakeHref} className={pbtn("primary")}>
+              <Icon name="plus" size={15} /> New lead
+            </Link>
+          </OutsideLeadHub>
         }
       />
 
