@@ -22,6 +22,12 @@
    phrased the same. */
 import { distanceLabel, inrFromPaise } from './format';
 
+/* 41208.6 - 41200.3 is 8.299999… in floating point; a reading and a
+   distance are both said to the tenth, so both are rounded there. */
+export function tenths(km: number): number {
+  return Math.round(km * 10) / 10;
+}
+
 export type OdometerVerdict =
   | { ok: true; km: number; distanceKm: number | null }
   | { ok: false; why: string };
@@ -57,14 +63,14 @@ export function checkOdometer(args: {
   const raw = args.typed.trim();
   if (!raw) return { ok: false, why: 'Type what the meter reads.' };
 
-  /* Whole kilometres. Trip meters show a decimal and odometers do not, and a
-     salesman reading "41208.6" off a dashboard should not be refused over the
-     part nobody is paid for — so it is accepted and dropped, rather than
-     rejected on a full stop. */
+  /* To the tenth, which is what an odometer's last drum reads. It used to be
+     floored to the kilometre, so a day of short hops between shops lost up to
+     a kilometre at each reading — paid per km, that is his money. Anything
+     past the tenth is rounded rather than refused over a full stop. */
   if (!/^\d{1,7}(\.\d+)?$/.test(raw)) {
     return { ok: false, why: 'Type the number only. No commas, no letters.' };
   }
-  const km = Math.floor(Number(raw));
+  const km = tenths(Number(raw));
   if (!Number.isFinite(km)) return { ok: false, why: 'This reading is not valid. Check it and type again.' };
 
   if (args.previousKm == null) return { ok: true, km, distanceKm: null };
@@ -76,7 +82,7 @@ export function checkOdometer(args: {
     };
   }
 
-  const distanceKm = km - args.previousKm;
+  const distanceKm = tenths(km - args.previousKm);
   if (distanceKm > args.maxLegKilometres) {
     return {
       ok: false,
@@ -183,7 +189,7 @@ export function legLine(leg: {
      arithmetic with a missing operand would be inventing the number this line
      exists to report. */
   if (leg.odometerStartKm != null && leg.odometerEndKm != null) {
-    return `${leg.modeLabel} · ${leg.odometerEndKm - leg.odometerStartKm} km`;
+    return `${leg.modeLabel} · ${tenths(leg.odometerEndKm - leg.odometerStartKm)} km`;
   }
   if (leg.ticketAmountPaise != null) {
     return `${leg.modeLabel} · ${inrFromPaise(leg.ticketAmountPaise)}`;

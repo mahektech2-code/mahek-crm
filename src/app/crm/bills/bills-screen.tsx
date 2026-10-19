@@ -26,12 +26,7 @@ import { yearLabel } from "@/lib/year-period";
 import { YearFilter } from "@/components/ui/year-filter";
 import { BillDetailPanel } from "@/components/bills/bill-detail-panel";
 import { recordPayment } from "@/lib/actions/crm";
-import {
-  ageLabel,
-  money,
-  shortDate,
-  today,
-} from "@/lib/format";
+import { ageLabel, money, rupeesFromPaise, shortDate, today } from "@/lib/format";
 import { PaymentModeFields } from "@/components/crm/payment-mode-fields";
 
 /* ---------------------------------------------------------------------------
@@ -615,7 +610,7 @@ function BillPaymentModal(props: BillPaymentProps) {
 
 function BillPaymentModalBody({ bill, onClose, onSubmit, modes, datedModes, today: businessDay }: BillPaymentProps) {
   const [amount, setAmount] = React.useState(
-    String(Math.round((bill?.balance ?? 0) / 100)),
+    rupeesFromPaise(bill?.balance ?? 0),
   );
   const [mode, setMode] = React.useState("Bank transfer");
   const [reference, setReference] = React.useState("");

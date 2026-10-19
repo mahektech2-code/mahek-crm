@@ -506,7 +506,7 @@ export async function priceDay(
       manualMetres: l.manualMetres,
       odometerMetres:
         l.odometerStartKm != null && l.odometerEndKm != null && l.odometerEndKm >= l.odometerStartKm
-          ? (l.odometerEndKm - l.odometerStartKm) * 1000
+          ? Math.round((l.odometerEndKm - l.odometerStartKm) * 1000)
           : null,
       hasOdometerPhoto: l.odometerPhotoId != null,
       ticketAmountPaise: l.ticketAmountPaise,

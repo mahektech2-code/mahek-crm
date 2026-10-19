@@ -10,7 +10,7 @@
  * ------------------------------------------------------------------------- */
 
 import * as React from "react";
-import { Callout, Field, Input, Select, Textarea } from "@/components/ui/primitives";
+import { Callout, DecimalInput, Field, Input, Select, Textarea } from "@/components/ui/primitives";
 import type { PriceDeliveryBasis, PriceFreightTerm } from "@/db/schema";
 import { DELIVERY_BASIS_LABEL, FREIGHT_TERM_HINT, FREIGHT_TERM_LABEL } from "@/lib/price-list-labels";
 import { headerLine, type PriceSheet } from "@/lib/price-sheet";
@@ -140,13 +140,9 @@ export function DetailsPanel({
               </Select>
             </Field>
             <Field label="GST rate (%)">
-              <Input
-                type="number"
-                min={0}
-                max={50}
-                step={0.5}
+              <DecimalInput
                 value={sheet.gstBp / 100}
-                onChange={(e) => set("gstBp", Math.round(Number(e.target.value || 0) * 100), "Changed the GST rate")}
+                onValue={(v) => set("gstBp", Math.round(Math.min(50, v ?? 0) * 100), "Changed the GST rate")}
               />
             </Field>
             <Field label="Delivered to">

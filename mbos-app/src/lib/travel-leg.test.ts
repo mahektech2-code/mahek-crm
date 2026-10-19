@@ -34,11 +34,20 @@ test('a departure reading is accepted on its own, with no distance yet', () => {
   assert.equal(v.ok && v.distanceKm, null);
 });
 
-test('a decimal trip reading is accepted and floored, never refused', () => {
-  /* Trip meters show a decimal and odometers do not. Refusing somebody over
-     the part nobody is paid for would be refusing to record the journey. */
+test('a reading is kept to the tenth, never floored to the kilometre', () => {
   const v = checkOdometer({ typed: '41208.6', previousKm: null, maxLegKilometres: 400 });
-  assert.equal(v.ok && v.km, 41208);
+  assert.equal(v.ok && v.km, 41208.6);
+  const long = checkOdometer({ typed: '41208.66', previousKm: null, maxLegKilometres: 400 });
+  assert.equal(long.ok && long.km, 41208.7);
+});
+
+test('a distance between two tenths carries no floating-point dust', () => {
+  const v = checkOdometer({ typed: '41208.6', previousKm: 41200.3, maxLegKilometres: 400 });
+  assert.equal(v.ok && v.distanceKm, 8.3);
+  assert.equal(
+    legLine({ modeLabel: 'Bike', odometerStartKm: 41200.3, odometerEndKm: 41208.6, ticketAmountPaise: null }),
+    'Bike · 8.3 km',
+  );
 });
 
 test('an arrival lower than the departure is refused, because meters do not run backwards', () => {

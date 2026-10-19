@@ -4724,9 +4724,9 @@ export async function reviewDayEvidence(input: {
     const correctedKm =
       input.correctedKm === null || input.correctedKm === undefined
         ? null
-        : Math.round(Number(input.correctedKm));
+        : Math.round(Number(input.correctedKm) * 10) / 10;
     if (correctedKm !== null && (!Number.isFinite(correctedKm) || correctedKm < 0)) {
-      return err("A meter reading is a whole number of kilometres.", "validation", [
+      return err("A meter reading is a number of kilometres.", "validation", [
         { field: "correctedKm", message: "Read the figure off the photograph." },
       ]);
     }

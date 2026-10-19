@@ -4,7 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
-import { money, parseRupees, shortDate } from "@/lib/format";
+import { cleanDecimal, cleanWhole, money, parseRupees, rupeesFromPaise, shortDate } from "@/lib/format";
 import { FIRST_ORDER_QUESTIONS } from "@/lib/lead-labels";
 import {
   commitmentGap,
@@ -81,7 +81,7 @@ export function FirstOrderPanel({
   const [date, setDate] = React.useState(expectedOrderDate ?? "");
   const [cans, setCans] = React.useState(expectedOrderCans ? String(expectedOrderCans) : "");
   const [value, setValue] = React.useState(
-    expectedOrderValuePaise ? String(Math.round(expectedOrderValuePaise / 100)) : "",
+    expectedOrderValuePaise ? rupeesFromPaise(expectedOrderValuePaise) : "",
   );
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -241,7 +241,7 @@ export function FirstOrderPanel({
             </span>
             <input
               value={cans}
-              onChange={(e) => setCans(e.target.value)}
+              onChange={(e) => setCans(cleanWhole(e.target.value))}
               inputMode="numeric"
               className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
             />
@@ -256,8 +256,8 @@ export function FirstOrderPanel({
             </span>
             <input
               value={value}
-              onChange={(e) => setValue(e.target.value)}
-              inputMode="numeric"
+              onChange={(e) => setValue(cleanDecimal(e.target.value))}
+              inputMode="decimal"
               className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
             />
             <span className="mt-1 block text-[12px] text-muted">
@@ -341,7 +341,7 @@ export function FirstOrderPanel({
  * customer promising nothing.
  */
 function parseCans(input: string): number | null {
-  const cleaned = input.replace(/[^0-9]/g, "");
+  const cleaned = cleanWhole(input);
   if (!cleaned) return null;
   const n = Number(cleaned);
   return Number.isFinite(n) && n > 0 ? n : null;

@@ -23,7 +23,7 @@ import { PRICE_DISCOUNT_KINDS, type PriceDiscountKind } from "@/db/schema";
 import type { DiscountTermView } from "@/lib/price-list-views";
 import { DISCOUNT_KIND_LABEL, discountTermSentence } from "@/lib/price-list-labels";
 import { setDiscountTerm } from "@/lib/actions/price-lists";
-import { parseRupees, rupeesFromPaise } from "@/lib/format";
+import { cleanDecimal, parseRupees, rupeesFromPaise } from "@/lib/format";
 
 export function DiscountTermModal(props: {
   open: boolean;
@@ -131,7 +131,7 @@ function DiscountBody({
         {kind === "quantity" ? (
           <div className="grid grid-cols-2 gap-3">
             <Field label="From (litres)" error={errors.thresholdLitres ?? null} hint="Either this or an order value.">
-              <Input value={litres} inputMode="numeric" onChange={(e) => setLitres(e.target.value)} placeholder="1000" />
+              <Input value={litres} inputMode="decimal" onChange={(e) => setLitres(cleanDecimal(e.target.value))} placeholder="1000" />
             </Field>
             <Field label="Or from (order value)" error={errors.thresholdPaise ?? null}>
               <MoneyInput value={amount} onChange={(e) => setAmount(e.target.value)} />

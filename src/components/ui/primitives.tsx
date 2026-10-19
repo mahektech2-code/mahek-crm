@@ -1,6 +1,7 @@
 import * as React from "react";
 import { Icon } from "@/components/shell/icons";
 import type { SortDirection } from "@/lib/sort-param";
+import { cleanDecimal, parseDecimal, parseRupees, rupeesFromPaise } from "@/lib/format";
 
 export function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(" ");
@@ -690,6 +691,73 @@ export function Radio({
   );
 }
 
+/**
+ * A rupee box bound to a figure in PAISE rather than to text.
+ *
+ * Deriving the box from the figure is what made decimals untypeable: "30."
+ * parses to 3000 paise, which renders back as "30", and the point is gone
+ * before the 5 can follow it. So the box keeps what was typed and shows it for
+ * as long as it still means the figure it is bound to; the moment the parent
+ * moves the figure itself — an automatic spread, a reset — the box follows.
+ */
+export function PaiseInput({
+  paise,
+  onPaise,
+  ...props
+}: Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "onChange"> & {
+  paise: number | null | undefined;
+  onPaise: (paise: number | null) => void;
+}) {
+  const [text, setText] = React.useState(() => (paise ? rupeesFromPaise(paise) : ""));
+  const shown = (parseRupees(text) ?? 0) === (paise ?? 0) ? text : paise ? rupeesFromPaise(paise) : "";
+  return (
+    <input
+      inputMode="decimal"
+      {...props}
+      value={shown}
+      onChange={(e) => {
+        const next = cleanDecimal(e.target.value);
+        setText(next);
+        onPaise(parseRupees(next));
+      }}
+    />
+  );
+}
+
+/**
+ * The same, for a plain number — a percent, litres, kilometres — bound to a
+ * figure rather than to text. `places` caps what can be typed after the point.
+ */
+export function DecimalInput({
+  value,
+  onValue,
+  places = 2,
+  className,
+  invalid,
+  ...props
+}: Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "onChange"> & {
+  value: number | null | undefined;
+  onValue: (value: number | null) => void;
+  places?: number;
+  invalid?: boolean;
+}) {
+  const [text, setText] = React.useState(() => (value == null ? "" : String(value)));
+  const shown = (parseDecimal(text) ?? null) === (value ?? null) ? text : value == null ? "" : String(value);
+  return (
+    <input
+      inputMode="decimal"
+      {...props}
+      value={shown}
+      onChange={(e) => {
+        const next = cleanDecimal(e.target.value, places);
+        setText(next);
+        onValue(parseDecimal(next));
+      }}
+      className={controlClass({ invalid, className: cx("h-8.5", className) })}
+    />
+  );
+}
+
 /** Rupee-prefixed money input. */
 export function MoneyInput({
   invalid,
@@ -705,9 +773,11 @@ export function MoneyInput({
       )}
     >
       <span className="mr-1 text-muted">₹</span>
+      {/* "decimal", never "numeric": on a phone the second is a keypad with
+          no point on it, and every rupee box in the product is this one. */}
       <input
+        inputMode="decimal"
         {...props}
-        inputMode="numeric"
         className="min-w-0 flex-1 border-none bg-transparent text-sm text-ink outline-none"
       />
     </span>

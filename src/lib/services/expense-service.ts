@@ -269,7 +269,7 @@ export function factsFor(day: DayRow, legs: LegRow[], lines: LineRow[]): DayFact
           l.odometerStartKm !== null &&
           l.odometerEndKm !== null &&
           l.odometerEndKm >= l.odometerStartKm
-            ? (l.odometerEndKm - l.odometerStartKm) * 1000
+            ? Math.round((l.odometerEndKm - l.odometerStartKm) * 1000)
             : l.odometerMetres,
         hasOdometerPhoto: l.odometerPhotoId !== null,
         ticketAmountPaise: l.ticketAmountPaise,

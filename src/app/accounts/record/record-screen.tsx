@@ -12,7 +12,7 @@ import {
   recordReceiptAction,
 } from "@/lib/actions/payments";
 import type { ReceiptMatchView } from "@/lib/services/receipt-service";
-import { longDate, money, parseRupees } from "@/lib/format";
+import { cleanDecimal, longDate, money, parseRupees, rupeesFromPaise } from "@/lib/format";
 import {
   allocate,
   type AllocatableBill,
@@ -416,11 +416,12 @@ function PaymentForm({
 
                   {allocation === "custom" ? (
                     <input
+                      inputMode="decimal"
                       value={custom[b.id] ?? ""}
                       onChange={(e) =>
                         setCustom((prev) => ({
                           ...prev,
-                          [b.id]: e.target.value.replace(/[^0-9]/g, ""),
+                          [b.id]: cleanDecimal(e.target.value),
                         }))
                       }
                       placeholder="0"
@@ -609,7 +610,7 @@ function PaymentForm({
 
               {allocation === "settle" && selected.length && settleTotal !== amount ? (
                 <button
-                  onClick={() => setAmountText(String(Math.round(settleTotal / 100)))}
+                  onClick={() => setAmountText(rupeesFromPaise(settleTotal))}
                   className="mt-1 cursor-pointer border-none bg-transparent p-0 text-[13px] font-medium text-brand hover:text-brand-hover"
                 >
                   Use {money(settleTotal)} — what those bills come to
@@ -995,10 +996,10 @@ function MergeDialog({
             <span className="mr-1 text-muted">₹</span>
             <input
               autoFocus
-              inputMode="numeric"
+              inputMode="decimal"
               value={typed}
               onChange={(e) => onTyped(e.target.value)}
-              placeholder={String(Math.round(target / 100))}
+              placeholder={rupeesFromPaise(target)}
               aria-label="Type the amount to confirm"
               className="w-full flex-1 border-none bg-transparent text-[17px] font-semibold tabular-nums outline-none"
             />

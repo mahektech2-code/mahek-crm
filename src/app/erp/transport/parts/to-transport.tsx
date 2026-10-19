@@ -8,6 +8,7 @@ import { erpLogisticsAtTransport, erpLogisticsDue, erpLogisticsPackages } from "
 import { addDays, shortDay } from "@/lib/erp/engines/logistics";
 import type { Consignment } from "@/lib/erp/logistics";
 import { BillRef, CallLink, DuePill, Empty, plural, sumLitres, sumPackages, useAct, useTicks } from "./common";
+import { cleanWhole } from "@/lib/format";
 
 /**
  * STEP 1 AND 2. Bills that have left the factory and are on their way to the
@@ -136,7 +137,7 @@ export function BoxInput({ id, value }: { id: string; value: number | null }) {
       value={v}
       inputMode="numeric"
       disabled={pending}
-      onChange={(e) => setV(e.target.value.replace(/[^\d]/g, ""))}
+      onChange={(e) => setV(cleanWhole(e.target.value))}
       onBlur={save}
       onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
       className={controlClass({ className: "h-8.5 tabular-nums" })}

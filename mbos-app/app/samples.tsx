@@ -26,6 +26,7 @@ import { type CodedOption } from '../src/engines/funnel';
 import { useStore } from '../src/state/store';
 import { PressableScale, Pop, Presence, Stagger, animateLayoutFor, useShake } from '../src/components/ui/motion';
 import { skuLines } from '../src/lib/sku-lines';
+import { cleanWhole, parseWhole } from '../src/lib/decimal-input';
 
 /**
  * Samples given out and never followed up are the quietest way a sales day
@@ -453,7 +454,8 @@ function RequestSheet({
     if (savingRef.current) return;
     if (!shop) return refuse('Which shop is the trial for?');
     if (!product) return refuse('Which product is the sample for?');
-    if (!(Number(cans) > 0)) return refuse('How many cans?');
+    const cansWhole = parseWhole(cans) ?? 0;
+    if (!(cansWhole > 0)) return refuse('How many cans?');
     if (!application.trim()) return refuse('What will they use it on? This is needed.');
     if (!reasonCode) return refuse('Say why they want a trial.');
     savingRef.current = true;
@@ -462,7 +464,7 @@ function RequestSheet({
       await onSubmit({
         productId: product.id,
         productName: product.name,
-        cans: Number(cans),
+        cans: cansWhole,
         application: application.trim(),
         reasonCode,
       });
@@ -563,7 +565,12 @@ function RequestSheet({
 
       <View style={{ marginTop: 12 }}>
         <SectionLabel style={{ marginBottom: 6 }}>How many cans</SectionLabel>
-        <Input value={cans} onChangeText={(v) => { setCans(v.replace(/[^\d]/g, '')); setErr(null); }} keyboardType="number-pad" />
+        <Input
+          value={cans}
+          onChangeText={(v) => { setCans(cleanWhole(v)); setErr(null); }}
+          keyboardType="number-pad"
+          wholeHint="Whole cans only."
+        />
       </View>
 
       <View style={{ marginTop: 12 }}>

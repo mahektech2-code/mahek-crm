@@ -927,7 +927,7 @@ function RuleModal({
         {kind === "payment" ? (
           <label className="block">
             <span className="mb-1 block text-[13px] font-medium text-ink">Only if overdue is at least ₹ (blank = any)</span>
-            <Input type="number" min={0} value={minAmount} onChange={(e) => setMinAmount(e.target.value)} />
+            <Input type="number" min={0} step="any" inputMode="decimal" value={minAmount} onChange={(e) => setMinAmount(e.target.value)} />
           </label>
         ) : null}
         <label className="block">

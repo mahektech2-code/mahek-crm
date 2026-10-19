@@ -60,6 +60,8 @@ import {
   type LeadStage,
 } from '../../engines/funnel';
 import { compactInrFromPaise, dmy, grouped, isoDate, pretty } from '../../lib/format';
+import { cleanDecimal, parseDecimal } from '../../lib/decimal-input';
+import { cleanAmount, paiseFromTyped } from '../../lib/money-input';
 import { useStore } from '../../state/store';
 import { PressableScale, Presence, Stagger, animateLayoutFor, useShake } from '../ui/motion';
 
@@ -755,7 +757,7 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
 
     saving.current = true;
     try {
-      const rupees = Number(potential.replace(/[^\d]/g, ''));
+      const potentialPaise = paiseFromTyped(potential);
       const result = await createLead({
         /* The person where there is one, the shop where there is not — the
            lead needs a name on its row either way. */
@@ -776,13 +778,13 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
            could count it. */
         sourceDetail: source === OTHER_SOURCE ? sourceDetail : null,
         /* Rupees on the screen, paise in the store — the only place the two meet. */
-        estimatedPotentialPaise: rupees > 0 ? rupees * 100 : null,
+        estimatedPotentialPaise: potentialPaise > 0 ? potentialPaise : null,
         nextFollowUpDate: followUp,
         salesType,
         address,
         customerType: custType,
         requirement,
-        monthlyVolumeLitres: Number(litres.replace(/[^\d]/g, '')) || null,
+        monthlyVolumeLitres: parseDecimal(litres) || null,
         decisionMaker,
         competitorName: competitor,
         shopPhotoId,
@@ -1297,9 +1299,9 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
               <SectionLabel style={{ marginBottom: 6 }}>How much they can buy a month</SectionLabel>
               <Input
                 value={potential}
-                onChangeText={setPotential}
+                onChangeText={(v) => setPotential(cleanAmount(v))}
                 placeholder="40000"
-                keyboardType="number-pad"
+                keyboardType="decimal-pad"
               />
               <T s="caption" style={{ marginTop: 6 }}>In rupees, about. Leave it empty if you do not know.</T>
             </View>
@@ -1346,7 +1348,7 @@ export function LeadsBook({ seedQuery = '' }: { seedQuery?: string } = {}) {
 
             <View style={{ marginTop: 12 }}>
               <SectionLabel style={{ marginBottom: 6 }}>How much a month</SectionLabel>
-              <Input value={litres} onChangeText={setLitres} placeholder="200" keyboardType="number-pad" />
+              <Input value={litres} onChangeText={(v) => setLitres(cleanDecimal(v, 2))} placeholder="200" keyboardType="decimal-pad" />
               {/* LITRES, not cans. There is no pack size agreed yet — a shop says
                   "about two hundred litres" long before anybody knows what they
                   will buy it as. */}

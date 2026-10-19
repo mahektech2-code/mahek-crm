@@ -5,7 +5,7 @@ import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { money, parseRupees, stamp } from "@/lib/format";
+import { cleanDecimal, money, parseRupees, rupeesFromPaise, stamp } from "@/lib/format";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { stageLabel } from "@/lib/lead-labels";
@@ -92,7 +92,7 @@ export function AppointmentsScreen({
       setDiscount(next.row.discountPercent != null ? String(next.row.discountPercent) : "");
       setCreditLimit(
         next.row.creditLimitPaise != null
-          ? String(Math.round(next.row.creditLimitPaise / 100))
+          ? rupeesFromPaise(next.row.creditLimitPaise)
           : "",
       );
       setExclusivity(Boolean(next.row.exclusivityGranted));
@@ -288,8 +288,8 @@ export function AppointmentsScreen({
                 <span className="mb-1 block text-[13px] font-medium text-ink">Discount %</span>
                 <input
                   value={discount}
-                  onChange={(e) => setDiscount(e.target.value)}
-                  inputMode="numeric"
+                  onChange={(e) => setDiscount(cleanDecimal(e.target.value))}
+                  inputMode="decimal"
                   className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
                 />
               </label>
@@ -299,8 +299,8 @@ export function AppointmentsScreen({
                 </span>
                 <input
                   value={creditLimit}
-                  onChange={(e) => setCreditLimit(e.target.value)}
-                  inputMode="numeric"
+                  onChange={(e) => setCreditLimit(cleanDecimal(e.target.value))}
+                  inputMode="decimal"
                   className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
                 />
                 <span className="mt-1 block text-[12px] text-muted">
