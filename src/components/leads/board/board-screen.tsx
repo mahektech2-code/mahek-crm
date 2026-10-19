@@ -1,6 +1,5 @@
 "use client";
 
-import { OutsideLeadHub } from "@/components/leads/hub/hub-context";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import * as React from "react";
 import Link from "next/link";
@@ -14,11 +13,13 @@ import {
   type LeadFilterOptions,
 } from "@/components/leads/filter-bar";
 import type { PlaceFilterOptions } from "@/lib/place-filters";
-import { SALES_TYPES, salesTypeLabel, stageLabel, type LeadStage } from "@/lib/lead-labels";
+import { LEGACY_SALES_TYPE } from "@/lib/lead-filters";
+import { SALES_TYPES, stageLabel, type LeadStage } from "@/lib/lead-labels";
 import type { BoardCard, LeadBoard } from "@/lib/services/lead-board-service";
 import { AdvanceStage } from "../record/advance-stage";
+import { Segmented } from "@/components/leads/segmented";
 import { LeadTabs } from "../lead-tabs";
-import { Button, Empty, Pill, ScreenHeader, plural } from "@/components/console/parts";
+import { Button, Empty, Pill, plural } from "@/components/console/parts";
 
 /**
  * THE LIST'S COLUMNS, LESS THE LADDER — because the ladder is what this screen
@@ -167,66 +168,75 @@ export function BoardScreen({
   const pendingNow = pending ? byId.get(pending.card.id) : undefined;
   const pendingMoved = Boolean(pending && pendingNow && pendingNow.stage !== pending.from);
 
-  const drawn = board.columns.reduce((n, c) => n + c.cards.length, 0);
+  const offLadder = board.offLadder.filter((o) => o.total > 0);
+
+  /* The list, narrowed to the same filters and ladder. A column's "+ N more"
+     adds its own rung. */
+  const listHref = (stage?: LeadStage) => {
+    const next = new URLSearchParams(search.toString());
+    next.delete("type");
+    next.set("salesType", typeKey === LEGACY ? LEGACY_SALES_TYPE : typeKey);
+    if (stage) next.set("stage", stage);
+    return leadHref(workspace, `leads?${next.toString()}`);
+  };
+
+  const ladders = [
+    ...SALES_TYPES.filter((t) => !t.retired || t.code === typeKey).map((t) => ({
+      key: t.code as string,
+      label: SHORT_TYPE[t.code] ?? t.label,
+      title: t.hint,
+    })),
+    { key: LEGACY, label: "Original", title: "Leads raised before the funnel existed." },
+  ];
 
   return (
     <div className="p-6">
       <LeadTabs workspace={workspace} />
 
-      <ScreenHeader
-        title="Stage board"
-        subtitle="The same book as the list, drawn as columns per rung — the view for seeing where a book is bunching rather than which lead to open. Dragging a card does not move it: it opens the advance flow with the gate attached."
-        actions={
-          <OutsideLeadHub>
-<Link
-            href={leadHref(workspace, `leads?${search.toString()}`)}
-            className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
-          >
-            Back to the list
-          </Link>
-</OutsideLeadHub>
-        }
-      />
-
-      {/* THE LADDER IS A URL PARAMETER, unlike the list's funnel chips, which
-          are local state. There the chip redraws four bars; here it redraws the
-          whole screen against a different population, and that is a view worth
-          sending to somebody. */}
-      <div className="mb-3 flex flex-wrap items-center gap-1.5">
-        {SALES_TYPES.map((t) => (
-          <TypeChip
-            key={t.code}
-            on={typeKey === t.code}
-            label={t.label}
-            title={t.hint}
-            onPick={() => navigate({ type: t.code })}
-          />
-        ))}
-        <TypeChip
-          on={typeKey === LEGACY}
-          label="Original ladder"
-          title="Leads raised before the funnel existed. They carry no sales type, nothing backfills one, and they climb the six rungs this product shipped with."
-          onPick={() => navigate({ type: LEGACY })}
+      <div className="mb-3.5 flex flex-wrap items-center gap-2.5">
+        <Segmented
+          label="Ladder"
+          items={ladders.map((l) => ({
+            key: l.key,
+            label: l.label,
+            title: l.title,
+            on: typeKey === l.key,
+            onPick: () => navigate({ type: l.key }),
+          }))}
+        />
+        <LeadFilterBar
+          className="min-w-0 flex-[1_1_320px]"
+          columns={FILTER_COLUMNS}
+          filters={filters}
+          options={options}
+          places={places}
+          navigate={navigate}
+          onClear={() =>
+            navigate(Object.fromEntries(FILTER_COLUMNS.map((c) => [c, undefined])))
+          }
+          total={board.total}
+          listTotal={board.listTotal}
+          totalSuffix=" on this ladder"
+        />
+        {offLadder.length ? (
+          <span className="text-[13px] text-muted">
+            {offLadder.map((o) => `${stageLabel(o.stage)} ${o.total.toLocaleString("en-IN")}`).join(" · ")}
+            {" — not on the board"}
+          </span>
+        ) : null}
+        <Segmented
+          label="Layout"
+          items={[
+            {
+              key: "list",
+              label: "List",
+              on: false,
+              href: leadHref(workspace, `leads?${search.toString()}`),
+            },
+            { key: "board", label: "Board", on: true },
+          ]}
         />
       </div>
-
-      <LeadFilterBar
-        className="mb-3"
-        columns={FILTER_COLUMNS}
-        filters={filters}
-        options={options}
-        places={places}
-        navigate={navigate}
-        onClear={() =>
-          navigate(Object.fromEntries(FILTER_COLUMNS.map((c) => [c, undefined])))
-        }
-        total={board.total}
-        listTotal={board.listTotal}
-        /* Both figures are this ladder's — the board is one sales type at a
-           time, so "of 511" would be a total from a population the screen is
-           not showing. */
-        totalSuffix=" on this ladder"
-      />
 
       {pending ? (
         <PendingMove
@@ -251,93 +261,53 @@ export function BoardScreen({
         </div>
       ) : null}
 
-      {/* WHAT THE COLUMNS DO NOT SHOW, said rather than dropped. `lost` is on
-          none of the three ladders and a PARKED lead is on none either — it
-          displaced its own rung, which is the whole subject of the transitions
-          screen. Omitting them silently would draw a book with the dead and the
-          parked deleted from it, and the parked ones are what somebody opens a
-          board to find. */}
-      {board.offLadder.length ? (
-        <div className="mb-3 rounded-[6px] border border-line bg-surface px-4 py-3">
-          <div className="text-[13px] text-body">
-            <span className="font-semibold text-ink">
-              {plural(
-                board.offLadder.reduce((n, o) => n + o.total, 0),
-                "lead",
-              )}{" "}
-              on no rung of this ladder
-            </span>
-            {" — "}
-            {board.offLadder
-              .map((o) => `${stageLabel(o.stage)} ${o.total}`)
-              .join(" · ")}
-          </div>
-          <p className="mt-1 mb-0 max-w-[720px] text-[12px] text-pretty text-muted">
-            A lost lead has left every ladder, and a parked one has not — on hold
-            takes the stage column, so the rung it was parked from lives only in
-            its stage history. Open the lead and read its Transitions to find out
-            what a reopen has to move it back to.
-          </p>
-        </div>
-      ) : null}
-
       {board.total === 0 ? (
         <Empty
           title={anyFilter ? "Nothing matches those filters" : "Nothing on this ladder"}
-          body={
-            anyFilter
-              ? `The filters are the list's own, so this is the same narrowing applied to ${salesTypeLabelFor(typeKey)}. Clear them, or pick another ladder — the three are different populations, not three views of one.`
-              : `No lead in your book carries this sales type. Nothing backfills one, so every lead raised before the funnel existed is on the original ladder rather than this one.`
-          }
+          body={anyFilter ? "Clear a filter or pick another ladder." : "Pick another ladder."}
         />
       ) : (
-        <div className="flex gap-3 overflow-x-auto pb-4">
-          {board.columns.map((column) => (
-            <Column workspace={workspace}
-              key={column.stage}
-              stage={column.stage}
-              total={column.total}
-              cards={column.cards}
-              cap={board.cap}
-              dragging={dragging}
-              onDragOverColumn={() => setRefusal(null)}
-              onDrop={() => drop(column.stage)}
-              onDragStart={(id) => setDragging(id)}
-              onDragEnd={() => setDragging(null)}
-              onMove={(card) => {
-                setRefusal(null);
-                if (card.next.noNextRung) {
-                  setRefusal({
-                    name: card.name,
-                    says: `${stageLabel(card.stage)} is the end of this ladder — there is no rung above it to move to.`,
-                  });
-                  return;
-                }
-                setPending({ card, from: card.stage, to: card.next.to });
-              }}
-            />
-          ))}
+        <div className="overflow-x-auto pb-2">
+          <div className="flex min-w-max items-start gap-3">
+            {board.columns.map((column) => (
+              <Column
+                workspace={workspace}
+                key={column.stage}
+                stage={column.stage}
+                total={column.total}
+                cards={column.cards}
+                moreHref={listHref(column.stage)}
+                dragging={dragging}
+                onDragOverColumn={() => setRefusal(null)}
+                onDrop={() => drop(column.stage)}
+                onDragStart={(id) => setDragging(id)}
+                onDragEnd={() => setDragging(null)}
+                onMove={(card) => {
+                  setRefusal(null);
+                  if (card.next.noNextRung) {
+                    setRefusal({
+                      name: card.name,
+                      says: `${stageLabel(card.stage)} is the end of this ladder — there is no rung above it to move to.`,
+                    });
+                    return;
+                  }
+                  setPending({ card, from: card.stage, to: card.next.to });
+                }}
+              />
+            ))}
+          </div>
         </div>
       )}
-
-      <OutsideLeadHub>
-<p className="mt-1 max-w-[860px] text-[12px] text-pretty text-muted">
-        {drawn === board.total
-          ? `Every one of ${plural(board.total, "lead")} on this ladder is drawn.`
-          : `${drawn.toLocaleString("en-IN")} cards drawn of ${board.total.toLocaleString("en-IN")} — each column is capped at ${board.cap} and says its own true count in its header. The counts come from the database, not from what fits on the screen.`}{" "}
-        The tick on a card is §28 for the rung above it: the gate engine&rsquo;s
-        answer, evaluated on the server, and the same verdict the advance flow is
-        handed — so the card and the refusal cannot disagree.
-      </p>
-</OutsideLeadHub>
     </div>
   );
 }
 
-function salesTypeLabelFor(typeKey: string): string {
-  const found = SALES_TYPES.find((t) => t.code === typeKey);
-  return found ? salesTypeLabel(found.code) : "the original ladder";
-}
+/** The ladder's word on the switch. */
+const SHORT_TYPE: Partial<Record<string, string>> = {
+  direct: "Direct",
+  third_party: "Third-party",
+  distributor: "Distributor",
+};
 
 /* ─────────────────────────────────────────────────────────────── a column */
 
@@ -346,7 +316,7 @@ function Column({
   stage,
   total,
   cards,
-  cap,
+  moreHref,
   dragging,
   onDragOverColumn,
   onDrop,
@@ -358,7 +328,7 @@ function Column({
   stage: LeadStage;
   total: number;
   cards: BoardCard[];
-  cap: number;
+  moreHref: string;
   dragging: string | null;
   onDragOverColumn: () => void;
   onDrop: () => void;
@@ -367,18 +337,17 @@ function Column({
   onMove: (card: BoardCard) => void;
 }) {
   const [over, setOver] = React.useState(false);
+  const more = total - cards.length;
 
   return (
     <section
+      aria-label={stageLabel(stage)}
       className={cx(
-        "flex w-[264px] flex-none flex-col rounded-[6px] border bg-canvas",
-        over && dragging ? "border-brand bg-brand-soft" : "border-line",
+        "flex w-[248px] flex-none flex-col gap-2 rounded-[10px] p-2.5",
+        over && dragging ? "bg-brand-soft shadow-[inset_0_0_0_1px_var(--color-brand)]" : "bg-divider",
       )}
       onDragOver={(e) => {
-        /* preventDefault is what makes a drop legal at all. It is called for
-           every column rather than only the one rung a drop would be accepted
-           on, because a column that refused the hover gives no way to SAY why —
-           and a refusal somebody reads beats a gesture that silently fails. */
+        /* Every column accepts the hover, so a refused drop can say why. */
         if (!dragging) return;
         e.preventDefault();
         setOver(true);
@@ -391,41 +360,33 @@ function Column({
         onDrop();
       }}
     >
-      <header className="border-b border-line px-3 py-2.5">
-        <div className="flex items-baseline justify-between gap-2">
-          <span className="truncate text-[13px] font-semibold text-ink">
-            {stageLabel(stage)}
-          </span>
-          {/* From SQL over the whole filtered population of this rung — never
-              `cards.length`, which is the count that made the CRM's timeline
-              print "Bill 34" against an account carrying 1,060. */}
-          <span className="text-[15px] font-semibold text-ink tabular-nums">
-            {total.toLocaleString("en-IN")}
-          </span>
-        </div>
-        {total > cards.length ? (
-          <div className="mt-0.5 text-[11px] text-muted">
-            showing the first {cap} — a slice, ordered by what was promised soonest
-          </div>
-        ) : null}
-      </header>
-
-      <div className="flex min-h-[120px] flex-col gap-2 p-2">
-        {cards.length === 0 ? (
-          <p className="px-1 py-6 text-center text-[12px] text-muted">Nothing on this rung</p>
-        ) : (
-          cards.map((card) => (
-            <Card workspace={workspace}
-              key={card.id}
-              card={card}
-              dragging={dragging === card.id}
-              onDragStart={() => onDragStart(card.id)}
-              onDragEnd={onDragEnd}
-              onMove={() => onMove(card)}
-            />
-          ))
-        )}
+      <div className="flex items-center gap-2 px-1 pt-0.5 pb-1">
+        <h2 className="m-0 min-w-0 flex-1 truncate text-[13px] font-semibold text-ink">
+          {stageLabel(stage)}
+        </h2>
+        {/* The rung's true count, from SQL — never the cards drawn. */}
+        <span className="h-[18px] min-w-5 rounded-[9px] bg-surface px-1.5 text-center text-[11px] leading-[18px] font-semibold text-body tabular-nums">
+          {total.toLocaleString("en-IN")}
+        </span>
       </div>
+
+      {cards.map((card) => (
+        <Card
+          workspace={workspace}
+          key={card.id}
+          card={card}
+          dragging={dragging === card.id}
+          onDragStart={() => onDragStart(card.id)}
+          onDragEnd={onDragEnd}
+          onMove={() => onMove(card)}
+        />
+      ))}
+
+      {more > 0 ? (
+        <Link href={moreHref} className="px-1 py-0.5 text-[12px]">
+          + {more.toLocaleString("en-IN")} more
+        </Link>
+      ) : null}
     </section>
   );
 }
@@ -453,92 +414,62 @@ function Card({
     <article
       draggable
       onDragStart={(e) => {
-        /* Something has to be on the transfer or Firefox will not start a drag.
-           The board reads its own state rather than this payload — a drop
-           handler that trusted `dataTransfer` would accept a drag begun in
-           another tab. */
+        /* Firefox will not start a drag with nothing on the transfer; the drop
+           reads the board's own state, never this payload. */
         e.dataTransfer.setData("text/plain", card.id);
         e.dataTransfer.effectAllowed = "move";
         onDragStart();
       }}
       onDragEnd={onDragEnd}
       className={cx(
-        "cursor-grab rounded-[5px] border border-line bg-surface px-2.5 py-2 active:cursor-grabbing",
+        "flex cursor-grab flex-col gap-2 rounded-[8px] border border-line bg-surface p-3 active:cursor-grabbing",
         dragging && "opacity-50",
       )}
     >
       <Link
         href={leadHref(workspace, `leads/${card.id}`)}
-        className="block truncate text-[13px] font-medium text-ink no-underline hover:underline"
+        className="truncate text-sm font-semibold text-ink no-underline hover:underline"
         title={card.companyName ?? card.name}
       >
         {card.name}
       </Link>
 
-      <div className="mt-0.5 truncate text-[12px] text-muted">
-        {/* City and owner on one line, with the gap said in words. A lead
-            nobody holds is the row a manager most needs to see, so "Nobody" is
-            printed rather than left blank — a blank reads as a missing value
-            rather than as an answer. */}
+      <span className="truncate text-[12px] text-muted">
         {card.city ?? "No city"} · {card.ownerName ?? "Nobody"}
-      </div>
+      </span>
 
-      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      <div className="flex flex-wrap items-center gap-1.5">
         {card.next.noNextRung ? (
           <Pill tone="neutral">Top of the ladder</Pill>
         ) : missing === 0 ? (
-          <Pill tone="success">
-            Ready for {stageLabel(card.next.to)}
-          </Pill>
+          <Pill tone="success">Ready for {stageLabel(card.next.to)}</Pill>
         ) : (
           <span title={card.next.missing.map((m) => m.says).join("; ")}>
             <Pill tone="warn">{plural(missing, "thing")} to do</Pill>
           </span>
         )}
-        {card.potentialPaise ? (
-          <span className="text-[11px] text-muted tabular-nums">
-            {money(card.potentialPaise)}
-          </span>
-        ) : null}
+        <span className="text-[12px] text-body tabular-nums">
+          {card.potentialPaise ? money(card.potentialPaise) : "—"}
+        </span>
       </div>
 
-      <div className="mt-1.5 flex items-center justify-between gap-2">
-        {/* §24's date. Muted where it is past, because it is the stored answer
-            to "what happens next and when" rather than a live prediction — and
-            a date already gone sitting in the same ink as a future one reads as
-            a commitment somebody is still keeping. */}
+      <div className="flex items-center gap-2 border-t border-divider pt-2">
         <span
           className={cx(
-            "truncate text-[11px] tabular-nums",
-            card.nextActionDate
-              ? card.nextActionOverdue
-                ? "text-muted line-through"
-                : "text-body"
-              : "text-muted",
+            "min-w-0 flex-1 truncate text-[12px] tabular-nums",
+            !card.nextActionDate || card.nextActionOverdue ? "text-danger" : "text-muted",
           )}
-          title={
-            card.nextActionDate
-              ? card.nextActionOverdue
-                ? "The day somebody promised something, and it has gone past."
-                : "What happens next, and when."
-              : "No next step set on this lead."
-          }
         >
-          {card.nextActionDate ? shortDate(card.nextActionDate) : "Nothing promised"}
+          {card.nextActionDate
+            ? `${shortDate(card.nextActionDate)}${card.nextActionOverdue ? " · late" : ""}`
+            : "Nothing promised"}
         </span>
-
-        {/* The keyboard and touch way in. HTML5 drag is a mouse gesture and has
-            no equivalent on either, so the same flow is reachable without one —
-            and it is the SAME flow, not a second one. */}
+        {/* The keyboard and touch way into the same advance flow a drag opens. */}
         <button
           type="button"
           onClick={onMove}
-          className="flex-none cursor-pointer rounded-[3px] border border-line bg-surface px-1.5 py-0.5 text-[11px] text-muted hover:bg-canvas hover:text-body"
-          title={
-            card.next.noNextRung
-              ? "There is no rung above this one."
-              : `Open the advance flow for ${stageLabel(card.next.to)}. It writes nothing on its own — the gate is asked first.`
-          }
+          title={card.next.noNextRung ? "There is no rung above this one." : undefined}
+          className="inline-flex h-7 flex-none cursor-pointer items-center rounded-[6px] border border-line bg-surface px-2.5 text-[12px] font-medium text-body hover:bg-canvas hover:text-ink"
         >
           Move
         </button>
@@ -580,11 +511,7 @@ function PendingMove({
           <div className="truncate text-[13px] font-semibold text-ink">
             {pending.card.name} · {stageLabel(pending.from)} → {stageLabel(pending.to)}
           </div>
-          <p className="mt-0.5 mb-0 max-w-[620px] text-[12px] text-pretty text-body">
-            {moved
-              ? "Moved. The board behind this has already redrawn."
-              : "Nothing has been written. The gate is asked first, and a shut one is passed only with a reason that is recorded against whoever passed it."}
-          </p>
+          {moved ? <p className="mt-0.5 mb-0 text-[12px] text-body">Moved.</p> : null}
         </div>
         <div className="flex flex-none items-center gap-2">
           {moved ? null : (
@@ -603,37 +530,6 @@ function PendingMove({
         </div>
       </div>
     </div>
-  );
-}
-
-/* ─────────────────────────────────────────────────────── the chrome above */
-
-function TypeChip({
-  on,
-  label,
-  title,
-  onPick,
-}: {
-  on: boolean;
-  label: string;
-  title?: string;
-  onPick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onPick}
-      title={title}
-      aria-pressed={on}
-      className={cx(
-        "h-8 cursor-pointer rounded-[4px] border px-2.5 text-[13px]",
-        on
-          ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
-          : "border-line bg-surface text-muted hover:bg-canvas hover:text-body",
-      )}
-    >
-      {label}
-    </button>
   );
 }
 

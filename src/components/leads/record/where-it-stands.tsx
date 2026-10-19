@@ -9,8 +9,6 @@ import {
 } from "@/lib/engines/lead-role-action";
 import {
   LEAD_VANTAGES,
-  primaryVantage,
-  vantageAsYou,
   vantagesFor,
   vantageLabel,
   type VantageSeats,
@@ -72,28 +70,11 @@ export function ActionPill({ action }: { action: LeadAction }) {
 }
 
 /**
- * The reader's own instruction, and then everybody else's.
- *
- * §8.5 item 7 asks for the current role's computed badge "shown alongside" the
- * ladder, and §7 asks that the role-relativity be visible. Those are two
- * halves of one section: the reader's own reading has to be the PRIMARY one —
- * they opened this page to find out what to do — and the other four have to be
- * underneath it, labelled, because "Sales Manager sees: Confirm actual order"
- * is the sentence that tells a salesman the ball is not in his court.
- *
- * `vantageAsYou` rather than `vantageLabel` on the reader's own line, because
- * a heading carrying somebody else's job title reads as a line about somebody
- * else. The other four are named with the plain label and the verb "sees",
- * which is the specification's own phrasing and is deliberately not "must" —
- * this section reports what the product is asking of people; it does not
- * assign anything.
- *
- * EVERY VANTAGE THE READER HOLDS IS MARKED rather than removed from the list
- * below. On nine people several is the ordinary case — a sales manager is
- * routinely also the named back office person on one lead — and a table with
- * one row quietly missing is one nobody can count against the specification.
+ * "Who's up" — every vantage and what this lead asks of it, one row each,
+ * the reader's own marked. The same `roleAction` readings as above, laid out
+ * as the record's right rail draws them.
  */
-export function RoleReadings({
+export function WhosUp({
   facts,
   viewer,
   seats,
@@ -103,43 +84,19 @@ export function RoleReadings({
   seats: VantageSeats;
 }) {
   const mine = new Set<LeadVantage>(vantagesFor(viewer, seats));
-  const own = primaryVantage(viewer, seats);
-
   return (
-    <div className="mb-3 border-b border-divider pb-3">
-      {own ? (
-        <div className="flex flex-wrap items-baseline gap-2">
-          <span className="text-[13px] font-medium text-ink">{vantageAsYou(own)}</span>
-          <ActionPill action={roleAction(facts, own)} />
-        </div>
-      ) : (
-        /* NO VANTAGE IS SAID IN WORDS rather than drawn as an empty strip. It
-           is a real answer — somebody holding the leads module through an app
-           that gives them no job on this particular shop — and inventing an
-           instruction for them would put a telecaller's verb in front of an
-           accounts clerk. The five readings below still draw, because "what is
-           owed, and by whom" is a question worth answering to somebody who is
-           owed none of it. */
-        <div className="text-[13px] text-muted">
-          Nobody has put you on this lead and none of your apps gives you a job on it. What it
-          reads as to the people who do:
-        </div>
-      )}
-
-      {/* Wraps rather than scrolls: five short phrases stack in a rail on a
-          desk and on a phone alike, and a sideways scroll inside a panel is a
-          thing nobody finds. */}
-      <ul className="mt-2 mb-0 flex list-none flex-col gap-1.5 p-0">
-        {LEAD_VANTAGES.filter((v) => v !== own).map((v) => (
-          <li key={v} className="flex flex-wrap items-baseline gap-1.5 text-[13px]">
-            <span className="text-muted">
-              {vantageLabel(v)}
-              {mine.has(v) ? " · also you" : ""} sees
-            </span>
+    <ul className="m-0 flex list-none flex-col gap-2 p-0">
+      {LEAD_VANTAGES.map((v) => (
+        <li key={v} className="flex items-center gap-2.5">
+          <span className="w-[120px] flex-none text-[13px] text-body">
+            {vantageLabel(v)}
+            {mine.has(v) ? <span className="text-muted"> · you</span> : null}
+          </span>
+          <span className="min-w-0 flex-1 [&>span]:!whitespace-normal">
             <ActionPill action={roleAction(facts, v)} />
-          </li>
-        ))}
-      </ul>
-    </div>
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }
