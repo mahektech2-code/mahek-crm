@@ -297,11 +297,16 @@ export function detailedOrdersOf(lines: OrderLine[]): Set<number> {
  * and the second existed only because AppSheet kept billing in another sheet.
  */
 export function billBlockers(l: OrderLine): string[] {
+  /* NEITHER READY NOR LOTS IS ASKED FOR. The office bills an order the moment
+     Tally has its bill, as it always did in the Taken Order sheet; requiring
+     the line to be Ready with its lots allocated first meant no order could be
+     billed in the ERP while the godown still works from the sheet. Lots are
+     still allocated where somebody does it — that is what takes the stock —
+     and a line billed without them simply takes none. */
   const miss: string[] = [];
   if (l.inDetails) return ["already billed"];
+  if (l.o.status === "Cancel") return ["the line is cancelled"];
   if (l.o.partyStatus === "Pending") miss.push("approval for this Pending customer");
-  if (l.o.status !== "Ready") miss.push("status Ready");
-  if (l.allocation !== "Done") miss.push("lots allocated in full");
   if (!l.o.tallyBillNo) miss.push("a Tally bill no.");
   if (l.o.ratePaise == null) miss.push("a rate");
   return miss;
@@ -756,7 +761,7 @@ async function doBill(ctx: ErpContext, ids: string[]) {
   const ls = await lines(ids);
   const ok = ls.filter((l) => !billBlockers(l).length);
   if (!ok.length) {
-    const why = ls.length === 1 ? billBlockers(ls[0]).join(", ") : "each line needs to be Ready with its lots allocated in full, a Tally bill no. and a rate";
+    const why = ls.length === 1 ? billBlockers(ls[0]).join(", ") : "each line needs a Tally bill no. and a rate";
     return err(`Not yet: ${why}.`, "rule_violation");
   }
   await db.transaction(async (tx) => {
@@ -1295,13 +1300,13 @@ const orderDetails: ScreenModule = {
           const gate = gates.get(l.o.id) ?? null;
           if (gate) flags.push("toScan");
           if (r.monthId && targetReached(monthSale, target)) flags.push("targetReached");
-          const verifiable = (!d.verification || d.verification === "Pending") && l.allocations > 0 && l.allocation === "Done";
+          const verifiable = !d.verification || d.verification === "Pending";
           const actions: ActionSpec[] = [
             {
               id: "verify",
               l: d.verification === "Verified" ? "Verified" : "Mark dispatch-verified",
               primary: verifiable && !gate,
-              why: d.verification === "Verified" ? "Already verified" : !l.allocations ? "No lot is allocated to this line" : l.allocation !== "Done" ? `Allocation: ${l.allocation}` : gate ? `Boxes to scan: ${gate}` : "",
+              why: d.verification === "Verified" ? "Already verified" : gate ? `Boxes to scan: ${gate}` : "",
               prompt: { title: "Dispatch date", sub: `Order ${l.o.orderNo} · ${l.sku.name}`, submit: "Verify", fields: [{ k: "date", l: "Dispatch date", t: "date", req: true }], init: { date: today() } },
             },
             ...(ctx.administrator && d.verification !== "Not Verify" ? [{ id: "notVerify", l: "Mark not verified", confirm: "Mark this line not verified?" } as ActionSpec] : []),
@@ -1419,9 +1424,10 @@ async function verify(ctx: ErpContext, ids: string[], values: Record<string, str
   const d = new Map(details.map((x) => [x.orderId, x]));
   const ok = ls.filter((l) => {
     const v = d.get(l.o.id)?.verification;
-    return d.has(l.o.id) && (!v || v === "Pending") && l.allocations > 0 && l.allocation === "Done";
+    /* Lots are optional, as they are for billing: a line billed without them leaves without them. */
+    return d.has(l.o.id) && (!v || v === "Pending");
   });
-  if (!ok.length) return err("Nothing to verify: a line needs its lots allocated in full and must not be verified already.", "rule_violation");
+  if (!ok.length) return err("Nothing to verify: those lines are verified already.", "rule_violation");
   /* A line whose lots carry box ids leaves only once every box on it has been scanned at the dispatch desk. */
   const gates = await scanGateFor(db, ok.map((l) => l.o.id));
   const unscanned = ok.filter((l) => gates.get(l.o.id));

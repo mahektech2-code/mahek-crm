@@ -6,16 +6,15 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { shortDate, stamp } from "@/lib/format";
+import { cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import {
   FEEDBACK_FIELDS,
   SAMPLE_REASONS,
   labelOf,
-  sampleStateLabel,
   stageLabel,
   type LeadStage,
-  type SampleState,
 } from "@/lib/lead-labels";
 import type { SampleDeskRow } from "@/lib/services/lead-console-service";
 import { qualifiedForSample } from "@/lib/engines/lead-ladder";
@@ -25,20 +24,9 @@ import {
   dispatchSample,
   recordSampleFeedback,
 } from "@/lib/actions/lead-samples";
-import {
-  Banner,
-  Button,
-  Cell,
-  Empty,
-  HeadCell,
-  MetricRow,
-  Pill,
-  Row,
-  ScreenHeader,
-  Table,
-} from "@/components/console/parts";
+import { Button, RowMenu, ScreenHeader } from "@/components/console/parts";
 import { plural } from "@/components/console/words";
-import { CancelSample } from "@/components/samples/cancel-sample";
+import { CancelForm } from "@/components/samples/cancel-sample";
 
 type Acting =
   | { kind: "decide"; row: SampleDeskRow; approve: boolean }
@@ -122,6 +110,7 @@ export function SampleDeskScreen({
   const [outcome, setOutcome] = React.useState<"approved" | "rejected" | "more_testing">(
     "approved",
   );
+  const [cancelling, setCancelling] = React.useState<SampleDeskRow | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -192,279 +181,108 @@ export function SampleDeskScreen({
    */
   const pendingApproval = (r: SampleDeskRow) =>
     r.approvalState === "pending" || r.state === "requested";
-  const awaitingApproval = rows.filter(pendingApproval);
   const late = rows.filter((r) => r.lateByDays != null);
-  const awaitingReview = rows.filter(
-    (r) => !r.feedbackRecorded && (r.state === "received" || r.state === "trial_done"),
-  );
   const chasedHard = rows.filter((r) => r.reviewChaseCount >= chaseDays.length);
+
+  /* One lane per thing a sample is waiting for, in the order it waits for
+     them. Every row lands in exactly one lane; a refused request, or a state
+     nobody taught this screen, falls to the last one with nothing to press. */
+  const laneOf = (r: SampleDeskRow): LaneKey =>
+    pendingApproval(r)
+      ? "approve"
+      : r.state === "rejected"
+        ? "done"
+        : r.state === "approved" && !r.dispatchedAt
+          ? "dispatch"
+          : r.dispatchedAt && !r.receivedAt
+            ? "transit"
+            : r.receivedAt && !r.feedbackRecorded
+              ? "review"
+              : "done";
+  const lanes = LANES.map((l) => ({ ...l, rows: rows.filter((r) => laneOf(r) === l.key) }));
 
   return (
     <div className="p-6">
       <ScreenHeader
         title="Sample desk"
-        subtitle="Approve it, send it, watch it land, and write down what they thought. A sample with no feedback is stock given away — and one nobody has answered is a salesman who cannot move."
         actions={
-          <OutsideLeadHub>
-            <Link
-              href={leadHref(workspace, "samples")}
-              className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
-            >
-              ← Samples
-            </Link>
-          </OutsideLeadHub>
+          <>
+            {chasedHard.length ? (
+              <span
+                className="inline-flex h-6 items-center rounded-full bg-warn-soft px-2.5 text-xs font-medium text-warn-ink"
+                title={`Chased ${plural(chaseDays.length, "time")} with no answer — nothing more will be raised automatically.`}
+              >
+                {plural(chasedHard.length, "trial")} out of chases
+              </span>
+            ) : null}
+            {late.length ? (
+              <span className="inline-flex h-6 items-center rounded-full bg-danger-soft px-2.5 text-xs font-medium text-danger">
+                {late.length} past promised delivery
+              </span>
+            ) : null}
+            <OutsideLeadHub>
+              <Link
+                href={leadHref(workspace, "samples")}
+                className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
+              >
+                ← Samples
+              </Link>
+            </OutsideLeadHub>
+          </>
         }
       />
 
-      {chasedHard.length ? (
-        <Banner
-          tone="warn"
-          title={`${plural(chasedHard.length, "trial")} chased ${plural(chaseDays.length, "time")} with no answer`}
-          body="The ladder has run out. Nothing further will be raised automatically — these are the ones to ring yourself."
-        />
-      ) : null}
-
-      {late.length ? (
-        <Banner
-          tone="danger"
-          title={`${plural(late.length, "sample")} past the promised delivery date`}
-          body="A docket with no movement on it is a sample nobody will ever review. The courier promised a day and it has gone."
-        />
-      ) : null}
-
-      <MetricRow
-        metrics={[
-          {
-            label: "Waiting on approval",
-            value: String(awaitingApproval.length),
-            tone: awaitingApproval.length ? "warn" : undefined,
-          },
-          {
-            label: "Late in delivery",
-            value: String(late.length),
-            tone: late.length ? "danger" : undefined,
-          },
-          {
-            label: "Delivered, not reviewed",
-            value: String(awaitingReview.length),
-          },
-          { label: "On the desk", value: String(rows.length) },
-        ]}
-      />
-
-      {rows.length === 0 ? (
-        <Empty
-          title="Nothing on the desk"
-          body="A sample reaches here when a salesman asks for one on a visit. Nothing goes out without somebody approving it, which is why the desk is the first stop rather than the courier."
-        />
-      ) : (
-        <Table
-          minWidth={1420}
-          head={
-            <>
-              <HeadCell width={210}>Customer</HeadCell>
-              <HeadCell width={210}>What, and why</HeadCell>
-              <HeadCell width={150}>State</HeadCell>
-              <HeadCell width={200}>Dispatch</HeadCell>
-              <HeadCell width={170}>Delivery</HeadCell>
-              <HeadCell width={210}>Review</HeadCell>
-              <HeadCell align="right" width={250} />
-            </>
-          }
-        >
-          {rows.map((r, i) => (
-            <Row key={r.id} striped={i % 2 === 1}>
-              <Cell truncate={210}>
-                <Link href={leadHref(workspace, `leads/${r.customerId}`)} className="no-underline">
-                  {r.customerName}
-                </Link>
-                <span className="block truncate text-[12px] text-muted">
-                  {[r.city, r.salesmanName].filter(Boolean).join(" · ") || "—"}
-                </span>
-              </Cell>
-              <Cell truncate={210}>
-                <span className="block truncate text-[13px] text-body">
-                  {r.quantityCans ? `${plural(r.quantityCans, "can")} · ` : ""}
-                  {r.productName ?? "no product named"}
-                </span>
-                <span className="block truncate text-[12px] text-muted">
-                  {labelOf(SAMPLE_REASONS, r.reasonCode)}
-                  {r.application ? ` · for ${r.application}` : ""}
-                </span>
-              </Cell>
-              <Cell>
-                <Pill
-                  tone={
-                    r.state === "reviewed"
-                      ? "success"
-                      : r.state === "rejected"
-                        ? "danger"
-                        : r.approvalState === "pending"
-                          ? "warn"
-                          : "brand"
-                  }
-                >
-                  {sampleStateLabel(r.state as SampleState)}
-                </Pill>
-                {r.approvalState === "pending" ? (
-                  <span className="block text-[12px] text-warn-ink">not approved yet</span>
-                ) : null}
-                {r.requestedDate ? (
-                  <span className="block text-[12px] text-muted">
-                    asked {shortDate(r.requestedDate)}
+      <div className="overflow-x-auto pb-1.5">
+        <div className="grid min-w-[1060px] grid-cols-[repeat(5,minmax(200px,1fr))] items-start gap-3">
+          {lanes.map((lane) => {
+            const shown = lane.key === "done" ? lane.rows.slice(0, DONE_SHOWN) : lane.rows;
+            return (
+              <section
+                key={lane.key}
+                aria-label={lane.label}
+                className="flex flex-col gap-2 rounded-[10px] bg-divider p-2.5"
+              >
+                <div className="flex items-center gap-2 px-1 pt-0.5 pb-1">
+                  <h2 className="m-0 flex-1 text-[13px] font-semibold text-ink">{lane.label}</h2>
+                  <span className="h-[18px] min-w-5 rounded-[9px] bg-surface px-1.5 text-center text-[11px] leading-[18px] font-semibold text-body tabular-nums">
+                    {lane.rows.length}
                   </span>
+                </div>
+                {shown.map((r) => (
+                  <SampleCard
+                    key={r.id}
+                    workspace={workspace}
+                    row={r}
+                    lane={lane.key}
+                    chasedOut={r.reviewChaseCount >= chaseDays.length}
+                    canWork={canWork}
+                    onAct={begin}
+                    onCancel={() => setCancelling(r)}
+                  />
+                ))}
+                {lane.rows.length > shown.length ? (
+                  <Link
+                    href={leadHref(workspace, "samples")}
+                    className="px-1 pt-0.5 text-xs"
+                  >
+                    + {lane.rows.length - shown.length} more
+                  </Link>
                 ) : null}
-              </Cell>
-              <Cell truncate={200}>
-                {r.dispatchedAt ? (
-                  <>
-                    <span className="block truncate text-[13px] text-body">
-                      {r.courierName ?? "courier not named"}
-                    </span>
-                    <span className="block truncate text-[12px] text-muted">
-                      {r.trackingNumber ?? "no docket"} · {stamp(r.dispatchedAt)}
-                    </span>
-                  </>
-                ) : (
-                  <span className="text-muted">Not sent</span>
-                )}
-              </Cell>
-              <Cell truncate={170}>
-                {r.receivedAt ? (
-                  <>
-                    <Pill tone="success">Landed</Pill>
-                    <span className="block text-[12px] text-muted">
-                      {stamp(r.receivedAt)}
-                    </span>
-                  </>
-                ) : r.expectedDeliveryDate ? (
-                  <>
-                    <span className="block text-[13px] text-body">
-                      promised {shortDate(r.expectedDeliveryDate)}
-                    </span>
-                    {r.lateByDays != null ? (
-                      <span className="block text-[12px] text-danger">
-                        {plural(r.lateByDays, "day")} past it
-                      </span>
-                    ) : (
-                      <span className="block text-[12px] text-muted">not confirmed</span>
-                    )}
-                  </>
-                ) : (
-                  <span className="text-muted">Nothing promised</span>
-                )}
-              </Cell>
-              <Cell truncate={210}>
-                {r.feedbackRecorded ? (
-                  <>
-                    <Pill tone="success">Reviewed</Pill>
-                    <span className="block truncate text-[12px] text-muted">
-                      {[r.feedbackQuality, r.feedbackPerformance, r.feedbackPrice]
-                        .filter(Boolean)
-                        .join(" · ") || "recorded"}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <span className="block text-[13px] text-body">Nothing recorded</span>
-                    <span
-                      className="block text-[12px] text-muted"
-                      title={
-                        r.lastReviewChaseAt
-                          ? `Last chased ${stamp(r.lastReviewChaseAt)}`
-                          : undefined
-                      }
-                    >
-                      {r.reviewChaseCount
-                        ? `asked ${plural(r.reviewChaseCount, "time")}`
-                        : "not chased"}
-                    </span>
-                  </>
-                )}
-              </Cell>
-              <Cell align="right">
-                <span className="flex flex-wrap items-center justify-end gap-1.5">
-                  {pendingApproval(r) ? (
-                    <>
-                      <Button
-                        size="sm"
-                        tone="primary"
-                        onClick={() => begin({ kind: "decide", row: r, approve: true })}
-                      >
-                        Approve
-                      </Button>
-                      <Button
-                        size="sm"
-                        tone="danger"
-                        onClick={() => begin({ kind: "decide", row: r, approve: false })}
-                      >
-                        Refuse
-                      </Button>
-                    </>
-                  ) : r.state === "rejected" ? (
-                    /*
-                     * ANSWER 01 — A REFUSED SAMPLE IS NOT DISPATCH WORK.
-                     *
-                     * It fell through to "Record dispatch" here, because the
-                     * only question this chain asked before was whether a
-                     * dispatch date had been written down — and a sample the
-                     * manager turned down yesterday has none, exactly like one
-                     * he approved this morning. So the desk offered to send
-                     * stock against a decision that had already said no, and
-                     * the row sat in the worklist for ever, since nothing that
-                     * follows a refusal ever fills a dispatch date in. The
-                     * desk's own `samplesAwaitingDispatch` query has always
-                     * keyed on `approved`; this is the screen catching up.
-                     */
-                    <span className="text-[12px] text-muted">Refused — nothing to send</span>
-                  ) : r.state !== "approved" && !r.dispatchedAt ? (
-                    /* Cancelled is filtered out upstream and `requested` is
-                       caught above, so what reaches here is a state nobody has
-                       taught this screen about. Saying so beats offering an
-                       action that does not follow from it. */
-                    <span className="text-[12px] text-muted">Nothing outstanding</span>
-                  ) : !r.dispatchedAt ? (
-                    <Button size="sm" onClick={() => begin({ kind: "dispatch", row: r })}>
-                      Record dispatch
-                    </Button>
-                  ) : !r.receivedAt ? (
-                    <Button size="sm" onClick={() => begin({ kind: "received", row: r })}>
-                      Confirm received
-                    </Button>
-                  ) : !r.feedbackRecorded ? (
-                    <Button
-                      size="sm"
-                      tone="primary"
-                      onClick={() => begin({ kind: "feedback", row: r })}
-                    >
-                      Record feedback
-                    </Button>
-                  ) : (
-                    <span className="text-[12px] text-muted">Nothing outstanding</span>
-                  )}
-                  {/*
-                   * CANCEL SITS BESIDE WHATEVER THE ROW IS OWED, rather than
-                   * replacing it, because calling a trial off is not a step on
-                   * the journey — it is leaving the journey, and it is available
-                   * at every point up to the review. `ALLOWED` in the action is
-                   * the authority on which those are; this draws the same three
-                   * terminal states out and the action refuses anything the
-                   * screen gets wrong, because a menu is not a rule.
-                   */}
-                  {r.state === "reviewed" || r.state === "rejected" || r.state === "cancelled" ? null : (
-                    <CancelSample
-                      sampleId={r.id}
-                      what={`${r.quantityCans ? `${plural(r.quantityCans, "can")} of ` : ""}${r.productName ?? "a product nobody named"} for ${r.customerName}`}
-                      reasons={cancelReasons}
-                      canWork={canWork}
-                    />
-                  )}
-                </span>
-              </Cell>
-            </Row>
-          ))}
-        </Table>
-      )}
+              </section>
+            );
+          })}
+        </div>
+      </div>
+
+      {cancelling ? (
+        <CancelForm
+          key={cancelling.id}
+          sampleId={cancelling.id}
+          what={`${cancelling.quantityCans ? `${plural(cancelling.quantityCans, "can")} of ` : ""}${cancelling.productName ?? "a product nobody named"} for ${cancelling.customerName}`}
+          reasons={cancelReasons}
+          onClose={() => setCancelling(null)}
+        />
+      ) : null}
 
       {/* ------------------------------------------------------------ decide */}
       <Modal
@@ -548,10 +366,6 @@ export function SampleDeskScreen({
                 onChange={(e) => setExpected(e.target.value)}
                 className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
               />
-              <span className="mt-1 block text-[12px] text-muted">
-                What the courier said. Without it nothing on any screen can tell a sample in
-                transit from one that has gone missing.
-              </span>
             </label>
             {error ? <p className="mt-2 text-[13px] text-danger">{error}</p> : null}
             <Footer
@@ -583,11 +397,6 @@ export function SampleDeskScreen({
         {acting?.kind === "received" ? (
           <>
             <Subject row={acting.row} />
-            <p className="text-[13px] text-body">
-              Confirmed by the customer or the salesman, not by the courier. A tracking status is
-              the courier&rsquo;s word about their own performance; this is somebody saying the
-              cans are on the shelf.
-            </p>
             {error ? <p className="mt-2 text-[13px] text-danger">{error}</p> : null}
             <Footer
               busy={busy}
@@ -652,12 +461,6 @@ export function SampleDeskScreen({
                   They want to try again
                 </Button>
               </div>
-              <p className="mt-1.5 text-[12px] text-muted">
-                Negotiation does not open until the trial is approved — and a rejected trial with
-                the seven answers behind it is worth far more than a lead quietly going cold.
-                &ldquo;They want to try again&rdquo; keeps the lead where it is and the review chase
-                counting, which is the honest answer when a customer has not said either thing.
-              </p>
             </div>
 
             {error ? <p className="mt-2 text-[13px] text-danger">{error}</p> : null}
@@ -746,5 +549,169 @@ function Footer({
         {busy ? "Saving…" : label}
       </Button>
     </div>
+  );
+}
+
+type LaneKey = "approve" | "dispatch" | "transit" | "review" | "done";
+
+const LANES: { key: LaneKey; label: string }[] = [
+  { key: "approve", label: "To approve" },
+  { key: "dispatch", label: "To dispatch" },
+  { key: "transit", label: "On the way" },
+  { key: "review", label: "Review due" },
+  { key: "done", label: "Reviewed" },
+];
+
+/** The finished lane is history; the rest of it is on All samples. */
+const DONE_SHOWN = 8;
+
+const VERDICT: Record<string, string> = {
+  approved: "Liked it",
+  rejected: "Did not",
+  more_testing: "Try again",
+};
+
+function SampleCard({
+  workspace,
+  row: r,
+  lane,
+  chasedOut,
+  canWork,
+  onAct,
+  onCancel,
+}: {
+  workspace: LeadWorkspace;
+  row: SampleDeskRow;
+  lane: LaneKey;
+  /** The review chase ladder has run out. */
+  chasedOut: boolean;
+  canWork: boolean;
+  onAct: (next: Acting) => void;
+  onCancel: () => void;
+}) {
+  const goods = `${r.quantityCans ? `${plural(r.quantityCans, "can")} · ` : ""}${r.productName ?? "No product named"}`;
+  const why = [labelOf(SAMPLE_REASONS, r.reasonCode), r.application ? `for ${r.application}` : null]
+    .filter(Boolean)
+    .join(" · ");
+  const asked = [r.requestedDate ? `Asked ${shortDate(r.requestedDate)}` : null, r.salesmanName]
+    .filter(Boolean)
+    .join(" · ");
+
+  let what = goods;
+  let note: string = asked;
+  let late = false;
+  let noteTitle: string | undefined;
+
+  if (lane === "approve") {
+    if (!qualifiedForSample(r.leadStageAtRequest, r.salesType)) note = `${note} · not qualified yet`;
+  } else if (lane === "transit") {
+    what = `${r.courierName ?? "Courier not named"} · ${r.trackingNumber ?? "no docket"}`;
+    noteTitle = r.dispatchedAt ? `Sent ${stamp(r.dispatchedAt)}` : undefined;
+    if (r.expectedDeliveryDate) {
+      note = `Promised ${shortDate(r.expectedDeliveryDate)}`;
+      if (r.lateByDays != null) {
+        note += ` · ${plural(r.lateByDays, "day")} past`;
+        late = true;
+      }
+    } else note = "Nothing promised";
+  } else if (lane === "review") {
+    what = `Landed ${shortDate(r.receivedAt)} · ${goods}`;
+    note = r.reviewChaseCount ? `Asked ${r.reviewChaseCount}×` : "Not asked yet";
+    noteTitle = r.lastReviewChaseAt ? `Last chased ${stamp(r.lastReviewChaseAt)}` : undefined;
+    late = chasedOut;
+  } else if (lane === "done") {
+    if (r.state === "rejected") {
+      /* A refused request is not dispatch work: nothing that follows a refusal
+         ever fills a dispatch date in, so it would sit in that lane for ever. */
+      what = goods;
+      note = "Refused · nothing to send";
+    } else if (r.feedbackRecorded) {
+      what =
+        [
+          VERDICT[r.trialOutcome] ?? null,
+          r.feedbackQuality,
+          r.feedbackPerformance,
+          r.feedbackPrice,
+        ]
+          .filter(Boolean)
+          .join(" · ") || "Review recorded";
+      note = [r.receivedAt ? `Landed ${shortDate(r.receivedAt)}` : null, r.salesmanName]
+        .filter(Boolean)
+        .join(" · ");
+    } else note = "Nothing outstanding";
+  }
+
+  /* Cancel is leaving the journey, and it is open up to the review. `ALLOWED`
+     in the action is the authority; this draws the same terminal states out. */
+  const cancellable = !(r.state === "reviewed" || r.state === "rejected" || r.state === "cancelled");
+
+  return (
+    <article className="flex flex-col gap-1.5 rounded-[8px] border border-line bg-surface p-3">
+      <div className="flex items-start gap-1.5">
+        <Link
+          href={leadHref(workspace, `samples/${r.id}`)}
+          className="min-w-0 flex-1 font-semibold text-ink no-underline hover:underline"
+        >
+          {r.customerName}
+        </Link>
+        <RowMenu
+          items={[
+            { label: "Open the lead", href: leadHref(workspace, `leads/${r.customerId}`) },
+            ...(cancellable
+              ? [
+                  {
+                    label: "Cancel the sample",
+                    danger: true,
+                    disabled: !canWork,
+                    title: canWork
+                      ? "Withdraws the request, rejects any approval still waiting on it, and stops the review chase."
+                      : "Calling a trial off is the salesman's and the manager's, the same hat that asks for one.",
+                    run: onCancel,
+                  },
+                ]
+              : []),
+          ]}
+        />
+      </div>
+      <span className="truncate text-[13px] text-body" title={why || undefined}>
+        {what}
+      </span>
+      {note ? (
+        <span className={cx("text-xs", late ? "text-danger" : "text-muted")} title={noteTitle}>
+          {note}
+        </span>
+      ) : null}
+      <div className="mt-1 flex flex-wrap gap-1.5">
+        {lane === "approve" ? (
+          <>
+            <Button size="sm" tone="primary" onClick={() => onAct({ kind: "decide", row: r, approve: true })}>
+              Approve
+            </Button>
+            <Button size="sm" onClick={() => onAct({ kind: "decide", row: r, approve: false })}>
+              Refuse
+            </Button>
+          </>
+        ) : lane === "dispatch" ? (
+          <Button size="sm" tone="primary" onClick={() => onAct({ kind: "dispatch", row: r })}>
+            Record dispatch
+          </Button>
+        ) : lane === "transit" ? (
+          <Button size="sm" tone="primary" onClick={() => onAct({ kind: "received", row: r })}>
+            Confirm received
+          </Button>
+        ) : lane === "review" ? (
+          <Button size="sm" tone="primary" onClick={() => onAct({ kind: "feedback", row: r })}>
+            Record review
+          </Button>
+        ) : (
+          <Link
+            href={leadHref(workspace, `samples/${r.id}`)}
+            className="inline-flex h-7 items-center rounded-[4px] border border-line bg-surface px-2.5 text-[13px] text-body no-underline hover:bg-canvas hover:no-underline"
+          >
+            Open
+          </Link>
+        )}
+      </div>
+    </article>
   );
 }

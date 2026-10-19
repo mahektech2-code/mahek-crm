@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Modal } from "@/components/ui/modal";
-import { DialogHeader, ErpDialog, TabBar } from "../../_ui/dialog";
-import { Badge, Button, Card, controlClass, cx } from "@/components/ui/primitives";
+import { DialogBody, DialogFooter, DialogHeader, ErpDialog, TabBar, DialogTitle } from "../../_ui/dialog";
+import { Button, Card, Checkbox, controlClass, cx, Field, Input, SectionLabel } from "@/components/ui/primitives";
+import { Badge } from "../../_ui/badge";
+import { IconButton, labelClass, LinkButton, linkClass, SubTitle } from "../../_ui/look";
 import { erpLogisticsTransporter } from "@/lib/actions/erp-logistics";
 import { checkGstin } from "@/lib/engines/lead-scan";
 import type { Transporter, TransporterGodown } from "@/lib/erp/logistics";
@@ -61,7 +62,7 @@ export function Transporters({ rows, tree, labels, load, canWrite }: { rows: Tra
         ) : null}
       </div>
       <Card className="overflow-hidden">
-        <div className={`grid ${COLS} gap-3 border-b border-divider bg-canvas px-4 py-2 text-xs font-medium text-muted`}>
+        <div className={cx("grid gap-3 border-b border-divider bg-canvas px-4 py-2", COLS, labelClass)}>
           <span>Transporter</span>
           <span>Godowns</span>
           <span>Main contact</span>
@@ -80,13 +81,13 @@ export function Transporters({ rows, tree, labels, load, canWrite }: { rows: Tra
                 <span className="min-w-0">
                   <span className="block truncate font-medium text-ink">{t.name}</span>
                   {t.gstin || t.consignmentLabel ? (
-                    <span className="block truncate text-xs text-muted">
+                    <span className="block truncate text-meta text-muted">
                       {t.gstin ? <span className="font-mono">{t.gstin}</span> : null}
                       {t.gstin && t.consignmentLabel ? " · " : null}
                       {t.consignmentLabel}
                     </span>
                   ) : null}
-                  {!t.active ? <Badge tone="muted">Not in use</Badge> : t.trackingUrl ? <span className="text-xs text-success">Online tracking</span> : null}
+                  {!t.active ? <Badge label="Not in use" tone="muted" /> : t.trackingUrl ? <span className="text-meta text-success">Online tracking</span> : null}
                 </span>
                 <GodownCell t={t} byId={byId} />
                 <span className="min-w-0" onClick={(e) => e.stopPropagation()}>
@@ -155,7 +156,7 @@ function GodownCell({ t, byId }: { t: Transporter; byId: PlaceLookup }) {
         {names.slice(0, 2).join(", ")}
         {names.length > 2 ? <span className="text-muted"> +{names.length - 2}</span> : null}
       </span>
-      <span className="block text-xs text-muted">
+      <span className="block text-meta text-muted">
         {t.godowns.length} godown{t.godowns.length === 1 ? "" : "s"} · {t.godowns.reduce((n, g) => n + g.contacts.length, 0)} people
       </span>
     </span>
@@ -183,12 +184,11 @@ function TransporterDetails({
   if (!t) return null;
   return (
     <ErpDialog onClose={onClose} label="Transporter" size="md">
-        <>
           <DialogHeader onClose={onClose}>
-            <div className="text-xs font-medium tracking-[0.04em] text-muted uppercase">Transporter</div>
+            <SectionLabel>Transporter</SectionLabel>
             <div className="mt-0.5 flex items-center gap-2">
-              <span className="text-xl font-semibold text-ink">{t.name}</span>
-              {!t.active ? <Badge tone="muted">Not in use</Badge> : null}
+              <DialogTitle>{t.name}</DialogTitle>
+              {!t.active ? <Badge label="Not in use" tone="muted" /> : null}
             </div>
           </DialogHeader>
           <TabBar
@@ -199,14 +199,14 @@ function TransporterDetails({
             active={tab}
             onChange={(k) => setTab(k as "details" | "godowns")}
           />
-          <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+          <DialogBody>
             {tab === "details" ? (
             <dl className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm">
               <Fact k="GST number">{t.gstin ? <span className="font-mono">{t.gstin}</span> : null}</Fact>
               <Fact k="Consignment number is called">{t.consignmentLabel}</Fact>
               <Fact k="Online tracking">
                 {t.trackingUrl ? (
-                  <a href={t.trackingUrl.replace("{lr}", "")} target="_blank" rel="noreferrer" className="break-all">
+                  <a href={t.trackingUrl.replace("{lr}", "")} target="_blank" rel="noreferrer" className={linkClass("brand", "break-all")}>
                     {t.trackingUrl}
                   </a>
                 ) : null}
@@ -222,18 +222,18 @@ function TransporterDetails({
                   {t.godowns.map((g, i) => (
                     <div key={g.id} className="rounded-card border border-line">
                       <div className="border-b border-divider bg-canvas px-3 py-2">
-                        <div className="text-sm font-medium text-ink">{g.label || `Godown ${i + 1}`}</div>
-                        <div className="text-xs text-muted">{placePath(g.placeId, byId) || "Town not picked"}</div>
-                        <div className="mt-0.5 text-xs">
+                        <SubTitle className="mb-0">{g.label || `Godown ${i + 1}`}</SubTitle>
+                        <div className="text-meta text-muted">{placePath(g.placeId, byId) || "Town not picked"}</div>
+                        <div className="mt-0.5 text-meta">
                           {g.gstin ? <span className="font-mono text-body">GST {g.gstin}</span> : <span className="text-muted">No GST number</span>}
-                          {incomplete(g, byId) ? <span className="text-warning"> · City and area not picked yet</span> : null}
+                          {incomplete(g, byId) ? <span className="text-warn-ink"> · City and area not picked yet</span> : null}
                         </div>
                         {g.lat != null && g.lng != null ? (
-                          <a href={`https://www.google.com/maps?q=${g.lat},${g.lng}`} target="_blank" rel="noreferrer" className="mt-0.5 block text-xs">
+                          <a href={`https://www.google.com/maps?q=${g.lat},${g.lng}`} target="_blank" rel="noreferrer" className={linkClass("brand", "mt-0.5 block text-meta")}>
                             Pin {g.lat.toFixed(5)}, {g.lng.toFixed(5)} — open the map
                           </a>
                         ) : (
-                          <div className="mt-0.5 text-xs text-muted">No pin yet</div>
+                          <div className="mt-0.5 text-meta text-muted">No pin yet</div>
                         )}
                       </div>
                       {g.contacts.length ? (
@@ -250,7 +250,7 @@ function TransporterDetails({
                           ))}
                         </ul>
                       ) : (
-                        <div className="px-3 py-2 text-xs text-muted">Nobody added here yet.</div>
+                        <div className="px-3 py-2 text-meta text-muted">Nobody added here yet.</div>
                       )}
                     </div>
                   ))}
@@ -260,15 +260,14 @@ function TransporterDetails({
               )}
             </section>
             ) : null}
-          </div>
+          </DialogBody>
           {canWrite ? (
-            <div className="flex justify-end border-t border-divider bg-canvas/60 px-6 py-3">
+            <DialogFooter>
               <Button variant="primary" onClick={() => onEdit(t)}>
                 Edit
               </Button>
-            </div>
+            </DialogFooter>
           ) : null}
-        </>
     </ErpDialog>
   );
 }
@@ -276,8 +275,8 @@ function TransporterDetails({
 function Fact({ k, children }: { k: string; children: React.ReactNode }) {
   return (
     <div className="min-w-0">
-      <dt className="text-xs text-muted">{k}</dt>
-      <dd className="mt-0.5 text-ink">{children ?? <span className="text-muted">—</span>}</dd>
+      <dt className={labelClass}>{k}</dt>
+      <dd className="mt-0.5 text-sm text-ink">{children ?? <span className="text-muted">—</span>}</dd>
     </div>
   );
 }
@@ -344,7 +343,6 @@ function EditTransporter({
   const [tab, setTab] = useState<"company" | "godowns">("company");
   const labelOptions = v.consignmentLabel && !labels.includes(v.consignmentLabel) ? [...labels, v.consignmentLabel] : labels;
 
-  const cls = controlClass({ className: "mt-1 block h-8.5" });
   const gst = checkGstin(v.gstin);
   const gstBad = !!gst && gst.check === "invalid";
 
@@ -370,7 +368,7 @@ function EditTransporter({
     <>
       <ErpDialog onClose={onClose} size="md" label={t ? `Edit ${t.name}` : "Add a transporter"}>
         <DialogHeader onClose={onClose}>
-          <div className="text-xl leading-7 font-semibold text-ink">{t ? `Edit ${t.name}` : "Add a transporter"}</div>
+          <DialogTitle>{t ? `Edit ${t.name}` : "Add a transporter"}</DialogTitle>
         </DialogHeader>
         <TabBar
           tabs={[
@@ -380,42 +378,35 @@ function EditTransporter({
           active={tab}
           onChange={(x) => setTab(x as "company" | "godowns")}
         />
-        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5 text-xs text-muted">
+        <DialogBody>
           {tab === "company" ? (
           <section>
             <div className="grid grid-cols-2 gap-3">
-              <label className="col-span-2">
-                Name (as it is written on bills and LRs)
-                <input value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} className={cls} />
-                {errAt("name") ? <span className="mt-1 block text-danger">{errAt("name")}</span> : null}
-              </label>
-              <label>
-                Head office GST number
-                <input
+              <Field label="Name (as it is written on bills and LRs)" error={errAt("name")} className="col-span-2">
+                <Input value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />
+              </Field>
+              <Field
+                label="Head office GST number"
+                error={gstBad ? "This number does not check out. Check it against their bill." : null}
+                hint={gst?.check === "corrected" ? `Will be saved as ${gst.gstin}.` : "Optional. Each godown can carry its own GST number below."}
+              >
+                <Input
                   value={v.gstin}
                   onChange={(e) => setV({ ...v, gstin: e.target.value.toUpperCase() })}
                   placeholder="27ABCDE1234F1Z5"
                   maxLength={20}
-                  className={cx(cls, "font-mono", gstBad && "border-danger")}
+                  invalid={gstBad}
+                  className="font-mono"
                 />
-                {gstBad ? (
-                  <span className="mt-1 block text-danger">This number does not check out. Check it against their bill.</span>
-                ) : gst?.check === "corrected" ? (
-                  <span className="mt-1 block">Will be saved as {gst.gstin}.</span>
-                ) : (
-                  <span className="mt-1 block">Optional. Each godown can carry its own GST number below.</span>
-                )}
-              </label>
-              <label>
-                Their consignment number is called
+              </Field>
+              <Field label="Their consignment number is called">
                 {adding ? (
-                  <span className="mt-1 flex gap-1.5">
-                    <input
+                  <span className="flex gap-1.5">
+                    <Input
                       autoFocus
                       value={v.consignmentLabel}
                       onChange={(e) => setV({ ...v, consignmentLabel: e.target.value })}
                       placeholder="e.g. Docket Number"
-                      className={cx(cls, "mt-0")}
                     />
                     <Button
                       size="sm"
@@ -436,7 +427,7 @@ function EditTransporter({
                         setV({ ...v, consignmentLabel: "" });
                       } else setV({ ...v, consignmentLabel: e.target.value });
                     }}
-                    className={cls}
+                    className={controlClass({ className: "h-8.5" })}
                   >
                     <option value="">Not set</option>
                     {labelOptions.map((l) => (
@@ -448,22 +439,21 @@ function EditTransporter({
                     <option value="__add">+ Add another…</option>
                   </select>
                 )}
-              </label>
-              <label className="col-span-2">
-                Online tracking page
-                <input value={v.trackingUrl} onChange={(e) => setV({ ...v, trackingUrl: e.target.value })} placeholder="https://… with {lr} where the LR number goes" className={cls} />
-                {errAt("trackingUrl") ? <span className="mt-1 block text-danger">{errAt("trackingUrl")}</span> : null}
-              </label>
-              <label className="col-span-2 flex items-center gap-2 text-sm text-body">
-                <input type="checkbox" checked={v.active} onChange={(e) => setV({ ...v, active: e.target.checked })} className="accent-brand" /> In use
-              </label>
+              </Field>
+              <Field label="Online tracking page" error={errAt("trackingUrl")} className="col-span-2">
+                <Input value={v.trackingUrl} onChange={(e) => setV({ ...v, trackingUrl: e.target.value })} placeholder="https://… with {lr} where the LR number goes" />
+              </Field>
+              <Checkbox label="In use" checked={v.active} onChange={(e) => setV({ ...v, active: e.target.checked })} className="col-span-2" />
             </div>
           </section>
           ) : null}
 
           {tab === "godowns" ? (
           <section>
-            <SectionTitle hint="Each godown is a state, district, city and area, with its GST number if it has one, its pin and the people to ring there.">Godowns</SectionTitle>
+            <div className="mb-2.5 border-b border-divider pb-1.5">
+              <SectionLabel>Godowns</SectionLabel>
+              <div className="mt-0.5 text-meta text-muted">Each godown is a state, district, city and area, with its GST number if it has one, its pin and the people to ring there.</div>
+            </div>
             <div className="space-y-2">
               {godowns.map((g, gi) => {
                 const wrong = problemAt === gi ? problem?.message : null;
@@ -474,14 +464,14 @@ function EditTransporter({
                   <div key={g.key} className={cx("flex items-start gap-3 rounded-card border px-3 py-2.5", wrong ? "border-danger" : "border-line")}>
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-medium text-ink">{g.label.trim() || `Godown ${gi + 1}`}</div>
-                      <div className="truncate text-xs text-body">{path || "No place picked"}</div>
-                      <div className="mt-0.5 text-xs">
+                      <div className="truncate text-meta text-body">{path || "No place picked"}</div>
+                      <div className="mt-0.5 text-meta text-muted">
                         {g.gstin.trim() ? <span className="font-mono text-body">GST {g.gstin.trim()}</span> : null}
                         {g.gstin.trim() ? " · " : null}
                         {people.length ? `${people.length} ${people.length === 1 ? "person" : "people"}` : "Nobody to ring yet"}
                         {g.pin.trim() ? " · pinned" : ""}
                       </div>
-                      {wrong ? <div className="mt-1 text-danger">{wrong}</div> : owes ? <div className="mt-1 text-warning">Needs its city and area before it saves.</div> : null}
+                      {wrong ? <div className="mt-1 text-meta text-danger">{wrong}</div> : owes ? <div className="mt-1 text-meta text-warn-ink">Needs its city and area before it saves.</div> : null}
                     </div>
                     <div className="flex shrink-0 gap-1">
                       <Button size="sm" onClick={() => setEditing(g.key)}>
@@ -501,9 +491,8 @@ function EditTransporter({
             </div>
           </section>
           ) : null}
-        </div>
-        <div className="flex flex-none items-center justify-end gap-2.5 border-t border-divider bg-canvas/60 px-6 py-3">
-          {problem && tab === "company" && /^g\d+\./.test(problem.field) ? <span className="mr-auto text-meta text-danger">A godown needs fixing — see Godowns.</span> : null}
+        </DialogBody>
+        <DialogFooter left={problem && tab === "company" && /^g\d+\./.test(problem.field) ? <span className="text-danger">A godown needs fixing — see Godowns.</span> : null}>
           <Button onClick={onClose}>Cancel</Button>
           {tab === "company" ? (
             <Button onClick={() => setTab("godowns")}>Next: godowns</Button>
@@ -511,7 +500,7 @@ function EditTransporter({
           <Button variant="primary" disabled={pending || !v.name.trim() || gstBad} onClick={save}>
             Save
           </Button>
-        </div>
+        </DialogFooter>
       </ErpDialog>
       {editing ? (
         <GodownDialog
@@ -558,7 +547,6 @@ function GodownDialog({
 }) {
   const [g, setG] = useState(draft);
   const [problem, setProblem] = useState<{ field: string; message: string } | null>(serverProblem ? { field: serverProblem.field.replace(/^g\d+/, "g1"), message: serverProblem.message } : null);
-  const cls = controlClass({ className: "mt-1 block h-8.5" });
   const set = (patch: Partial<DraftGodown>) => setG((x) => ({ ...x, ...patch }));
   const setP = (pKey: string, patch: Partial<DraftPerson>) => set({ people: g.people.map((p) => (p.key === pKey ? { ...p, ...patch } : p)) });
   const errAt = (field: string) => (problem && problem.field.startsWith(`g1.${field}`) ? problem.message.replace(/^[^:]*: /, "") : null);
@@ -574,29 +562,19 @@ function GodownDialog({
     onDone(g);
   };
 
+  const title = draft.id || draft.label ? `Godown ${number}${draft.label ? ` — ${draft.label}` : ""}` : "Add a godown";
   return (
-    <Modal
-      open
-      onClose={onClose}
-      width={640}
-      title={draft.id || draft.label ? `Godown ${number}${draft.label ? ` — ${draft.label}` : ""}` : "Add a godown"}
-      footer={
-        <>
-          <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" onClick={done}>
-            Done
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-4 text-xs text-muted">
-        <label className="block">
-          Godown name
-          <input value={g.label} onChange={(e) => set({ label: e.target.value })} placeholder="e.g. Bhiwandi main godown" className={cls} autoFocus />
-        </label>
+    <ErpDialog onClose={onClose} label={title} width={640} tall={false}>
+      <DialogHeader onClose={onClose}>
+        <DialogTitle>{title}</DialogTitle>
+      </DialogHeader>
+      <DialogBody>
+        <Field label="Godown name">
+          <Input value={g.label} onChange={(e) => set({ label: e.target.value })} placeholder="e.g. Bhiwandi main godown" autoFocus />
+        </Field>
 
         <div>
-          <div className="mb-1 text-xs font-medium text-body">Where it is — all four are needed</div>
+          <SectionLabel className="mb-1">Where it is — all four are needed</SectionLabel>
           <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
             {GODOWN_PLACE_KINDS.map((kind) => (
               <PlaceRungField key={kind} kind={kind} pick={g.place} tree={tree} byId={byId} error={errAt(`place.${kind}`)} onChange={(place) => set({ place })} />
@@ -604,70 +582,70 @@ function GodownDialog({
           </div>
         </div>
 
-        <label className="block">
-          GST number at this godown (optional)
-          <input
+        <Field label="GST number at this godown (optional)">
+          <Input
             value={g.gstin}
             onChange={(e) => set({ gstin: e.target.value.toUpperCase() })}
             placeholder={stateName ? `Starts with the code for ${stateName}` : "27ABCDE1234F1Z5"}
             maxLength={20}
-            className={cx(cls, "font-mono", (gstLive || errAt("gstin")) && "border-danger")}
+            invalid={!!(gstLive || errAt("gstin"))}
+            className="font-mono"
           />
           {gstLive || errAt("gstin") ? (
-            <span className="mt-1 block text-danger">{gstLive ?? errAt("gstin")}</span>
+            <span className="mt-1 block text-meta text-danger">{gstLive ?? errAt("gstin")}</span>
           ) : registered ? (
-            <span className="mt-1 block text-success">Registered in {registered}.</span>
+            <span className="mt-1 block text-meta text-success">Registered in {registered}.</span>
           ) : (
-            <span className="mt-1 block">Optional. If given, GST is registered per state, so its first two digits must be the code for the state picked above.</span>
+            <span className="mt-1 block text-meta text-muted">Optional. If given, GST is registered per state, so its first two digits must be the code for the state picked above.</span>
           )}
-        </label>
+        </Field>
 
         <div>
-          <div className="mb-1">Location pin</div>
+          <SectionLabel className="mb-1">Location pin</SectionLabel>
           <PinField value={g.pin} error={!!errAt("pin")} onChange={(pin) => set({ pin })} />
-          {errAt("pin") ? <span className="mt-1 block text-danger">{errAt("pin")}</span> : <span className="mt-1 block">Latitude, longitude — pick it on the map, type it, or use this device&apos;s location when standing in the godown.</span>}
+          {errAt("pin") ? <span className="mt-1 block text-meta text-danger">{errAt("pin")}</span> : <span className="mt-1 block text-meta text-muted">Latitude, longitude — pick it on the map, type it, or use this device&apos;s location when standing in the godown.</span>}
         </div>
 
         <div>
-          <div className="mb-1.5 text-xs font-medium text-body">People at this godown</div>
+          <SectionLabel className="mb-1.5">People at this godown</SectionLabel>
           <div className="space-y-2">
             {g.people.map((p, pi) => {
               const pErr = errAt(`c${pi + 1}`);
               return (
                 <div key={p.key}>
                   <div className="grid grid-cols-[1fr_1fr_auto] items-start gap-2">
-                    <input value={p.name} onChange={(e) => setP(p.key, { name: e.target.value })} placeholder="Name" aria-label="Name" className={cx(cls, "mt-0", pErr && "border-danger")} />
+                    <Input value={p.name} onChange={(e) => setP(p.key, { name: e.target.value })} placeholder="Name" aria-label="Name" invalid={!!pErr} />
                     {/* One number on the form; any further numbers a person was saved with ride along unseen. */}
-                    <input
+                    <Input
                       value={p.phones[0] ?? ""}
                       onChange={(e) => setP(p.key, { phones: [e.target.value, ...p.phones.slice(1)] })}
                       inputMode="tel"
                       placeholder="Phone number"
                       aria-label="Phone number"
-                      className={cx(cls, "mt-0", pErr && "border-danger")}
+                      invalid={!!pErr}
                     />
-                    <button
-                      type="button"
-                      onClick={() => set({ people: g.people.filter((x) => x.key !== p.key) })}
-                      className="h-9 px-2 text-[16px] text-muted hover:text-danger"
-                      aria-label="Remove this person"
-                      title="Remove this person"
-                    >
+                    <IconButton label="Remove this person" tone="danger" className="text-base" onClick={() => set({ people: g.people.filter((x) => x.key !== p.key) })}>
                       ×
-                    </button>
+                    </IconButton>
                   </div>
-                  {pErr ? <span className="mt-1 block text-danger">{pErr}</span> : null}
+                  {pErr ? <span className="mt-1 block text-meta text-danger">{pErr}</span> : null}
                 </div>
               );
             })}
           </div>
-          <button type="button" onClick={() => set({ people: [...g.people, blankPerson()] })} className="mt-2 text-xs font-medium text-brand">
+          <LinkButton className="mt-2 text-meta" onClick={() => set({ people: [...g.people, blankPerson()] })}>
             + Add a person
-          </button>
+          </LinkButton>
         </div>
-        {problem && !/\.(place|gstin|pin|c\d)/.test(problem.field) ? <div className="text-danger">{problem.message}</div> : null}
-      </div>
-    </Modal>
+        {problem && !/\.(place|gstin|pin|c\d)/.test(problem.field) ? <div className="text-meta text-danger">{problem.message}</div> : null}
+      </DialogBody>
+      <DialogFooter>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button variant="primary" onClick={done}>
+          Done
+        </Button>
+      </DialogFooter>
+    </ErpDialog>
   );
 }
 
@@ -679,7 +657,6 @@ function GodownDialog({
  * rest of the country.
  */
 function PlaceRungField({ kind, pick, tree, byId, error, onChange }: { kind: PlaceKind; pick: PlacePick; tree: PlaceOption[]; byId: PlaceLookup; error: string | null; onChange: (p: PlacePick) => void }) {
-  const cls = controlClass({ className: "mt-1 block h-8.5" });
   const label = PLACE_FILTER_LABELS[kind];
   const above = PLACE_KINDS[PLACE_KINDS.indexOf(kind) - 1];
   const aboveRung = above ? pick[above] : null;
@@ -691,15 +668,14 @@ function PlaceRungField({ kind, pick, tree, byId, error, onChange }: { kind: Pla
 
   if (typing)
     return (
-      <label className="min-w-0">
-        {label}
-        <span className="mt-1 flex gap-1.5">
-          <input
+      <Field label={label} error={error} hint={`Added under ${rungName(aboveRung ?? undefined, byId)} when you save.`} className="min-w-0">
+        <span className="flex gap-1.5">
+          <Input
             value={rung?.name ?? ""}
             onChange={(e) => onChange(setRung(pick, kind, { name: e.target.value }))}
             placeholder={`New ${word} — type its name`}
             aria-label={`${label} (not listed)`}
-            className={cx(cls, "mt-0", error && "border-danger")}
+            invalid={!!error}
             autoFocus={!typedAbove}
           />
           {!typedAbove ? (
@@ -708,16 +684,14 @@ function PlaceRungField({ kind, pick, tree, byId, error, onChange }: { kind: Pla
             </Button>
           ) : null}
         </span>
-        <span className={cx("mt-1 block", error ? "text-danger" : "")}>{error ?? `Added under ${rungName(aboveRung ?? undefined, byId)} when you save.`}</span>
-      </label>
+      </Field>
     );
 
   const opts = placeChoices(tree, kind, pick);
   const extraStates = kind === "state" ? unlistedStates(tree) : [];
   const value = rung?.id ?? (rung?.name ? `state:${rung.name}` : "");
   return (
-    <label className="min-w-0">
-      {label}
+    <Field label={label} error={error} className="min-w-0">
       <select
         value={value}
         disabled={off}
@@ -728,7 +702,7 @@ function PlaceRungField({ kind, pick, tree, byId, error, onChange }: { kind: Pla
           else if (val.startsWith("state:")) onChange(setRung(pick, kind, { name: val.slice(6) }));
           else onChange(setRung(pick, kind, val ? { id: val } : null));
         }}
-        className={cx(cls, "pr-7 disabled:bg-canvas disabled:text-muted", error && "border-danger")}
+        className={controlClass({ invalid: !!error, className: "h-8.5 pr-7 disabled:bg-canvas disabled:text-muted" })}
       >
         <option value="">{off ? `Pick the ${PLACE_FILTER_LABELS[above].toLowerCase()} first` : `Pick a ${word}`}</option>
         {opts.map((o) => (
@@ -747,16 +721,6 @@ function PlaceRungField({ kind, pick, tree, byId, error, onChange }: { kind: Pla
         ) : null}
         {kind !== "state" && !off ? <option value="__add">+ Add a {word} not listed…</option> : null}
       </select>
-      {error ? <span className="mt-1 block text-danger">{error}</span> : null}
-    </label>
-  );
-}
-
-function SectionTitle({ children, hint }: { children: React.ReactNode; hint?: string }) {
-  return (
-    <div className="mb-2.5 border-b border-divider pb-1.5">
-      <div className="text-sm font-semibold text-ink">{children}</div>
-      {hint ? <div className="mt-0.5 text-xs text-muted">{hint}</div> : null}
-    </div>
+    </Field>
   );
 }

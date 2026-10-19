@@ -43,6 +43,15 @@ import { OwnerOptions, UNASSIGNED, ownerIdFor, type OwnerPerson } from "@/compon
 import type { DeskLeadRecord } from "@/lib/services/lead-calling-desk-service";
 import { LeadCallAssistant } from "@/components/leads/calling-desk/lead-call-assistant";
 
+/** The outcome as the call dialog's pills say it; the full words ride on the hover. */
+const OUTCOME_SHORT: Record<(typeof CALL_OUTCOMES)[number]["code"], string> = {
+  spoke_collected: "Spoke",
+  spoke_callback: "Call back",
+  no_answer: "No answer",
+  wrong_number: "Wrong number",
+  not_interested: "Not interested",
+};
+
 type Coded = { code: string; label: string };
 
 /* ---------------------------------------------------------------------------
@@ -146,17 +155,9 @@ function unitOf(field: DeskField): string | null {
 }
 
 /**
- * One question, one row — label and answer control on the same line so the
- * relationship between them reads at a glance, never a label sat over a
- * fixed-width card with the rest of the row left blank.
- *
- * The PRODUCT field is the one exception: its control is a search box that
- * opens a results list, so it takes the full row width with the label above
- * it rather than squeezed beside it. Every other kind — a number, a short
- * choice — gets a control sized to what it actually needs
- * (`sm:w-[230px]`), because a two-digit answer stretched across half the
- * dialog is the same wasted space as the grey panel this replaced, just
- * filled with a box instead of left bare.
+ * One question in the "Ask on this call" grid: the label and its pills above,
+ * the control below. The PRODUCT field opens a results list, so it takes the
+ * whole row; everything else is one cell of three.
  */
 function QuestionCell({
   field,
@@ -177,62 +178,71 @@ function QuestionCell({
 }) {
   const isProduct = field.kind === "product";
   return (
-    <div
-      className={cx(
-        "flex flex-col gap-2 px-4 py-3",
-        isProduct ? "" : "sm:flex-row sm:items-center sm:justify-between sm:gap-4",
-      )}
-    >
-      <span className="flex min-w-0 flex-wrap items-center gap-1.5">
-        <span className="text-[13px] font-medium text-ink">
+    <div className={cx("min-w-0", isProduct && "sm:col-span-3")}>
+      <span className="mb-1.5 flex min-w-0 items-center gap-1.5">
+        <span className="min-w-0 truncate text-[13px] font-medium text-ink" title={field.label}>
           {field.label}
-          {unitOf(field) ? <span className="font-normal text-muted"> ({unitOf(field)})</span> : null}
         </span>
         {field.required ? (
           <Badge tone="warn">Required</Badge>
         ) : field.prospect ? (
-          <Badge tone="neutral" title="Not compulsory — leave it blank if the customer does not know yet">
-            Needed for Prospect
+          <Badge tone="neutral" title="Needed for Prospect — leave it blank if the customer does not know yet">
+            Prospect
           </Badge>
         ) : null}
       </span>
-      <span className={cx("block", isProduct ? "w-full" : "w-full sm:w-[230px] sm:flex-none")}>
-        {field.kind === "product" ? (
-          <ProductField
-            /* Keyed on `productName`, never on `productId`. `ProductField`
-               reads `productName` only once, at mount, to seed its own
-               display — fine for a manual pick, which never changes this
-               PROP (only its own internal state), but wrong for the voice
-               assistant, which sets a resolved match from OUTSIDE the field
-               and has no other way to make it show. Keying on `productId`
-               would also remount on every manual pick and wipe out the name
-               `ProductField` had just set for itself; keying on `productName`
-               remounts only when this prop itself changes, which happens for
-               the voice path and never for a pick made inside the field. */
-            key={productName ?? "none"}
-            customerId={customerId}
-            productId={productId}
-            productName={productName}
-            disabled={false}
-            onPick={onProduct}
-          />
-        ) : field.kind === "choice" ? (
-          <Select value={text} onChange={(e) => onText(e.target.value)} className="w-full">
-            <option value="">Not Yet Confirmed</option>
-            {(field.options ?? []).map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </Select>
-        ) : (
-          <Input
-            value={text}
-            inputMode={field.kind === "litres" || field.kind === "money" || field.kind === "days" ? "numeric" : undefined}
-            placeholder="Not Yet Confirmed"
-            onChange={(e) => onText(e.target.value)}
-          />
-        )}
+      {field.kind === "product" ? (
+        <ProductField
+          /* Keyed on `productName`, never on `productId`. `ProductField` reads
+             `productName` only once, at mount, to seed its own display — fine
+             for a manual pick, wrong for the voice assistant, which sets a
+             resolved match from OUTSIDE the field and has no other way to make
+             it show. Keying on `productId` would remount on every manual pick
+             and wipe the name the field had just set for itself. */
+          key={productName ?? "none"}
+          customerId={customerId}
+          productId={productId}
+          productName={productName}
+          disabled={false}
+          onPick={onProduct}
+        />
+      ) : field.kind === "choice" ? (
+        <Select value={text} onChange={(e) => onText(e.target.value)} className="w-full">
+          <option value="">Not confirmed</option>
+          {(field.options ?? []).map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </Select>
+      ) : (
+        <Input
+          value={text}
+          inputMode={field.kind === "litres" || field.kind === "money" || field.kind === "days" ? "numeric" : undefined}
+          /* The unit rides in the box, so the label row stays one line. */
+          placeholder={unitOf(field) ? `Not confirmed · ${unitOf(field)}` : "Not confirmed"}
+          aria-label={unitOf(field) ? `${field.label} (${unitOf(field)})` : undefined}
+          onChange={(e) => onText(e.target.value)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** An answer already on file: shown in the grid, marked Known, not asked again. */
+function KnownCell({ label, value, from }: { label: string; value: string; from: string }) {
+  return (
+    <div className="min-w-0">
+      <span className="mb-1.5 flex min-w-0 items-center gap-1.5">
+        <span className="min-w-0 truncate text-[13px] font-medium text-ink" title={label}>
+          {label}
+        </span>
+        <Badge tone="success" title={from}>
+          Known
+        </Badge>
+      </span>
+      <span className="flex h-9 items-center truncate rounded-[6px] border border-line bg-canvas px-3 text-sm text-body">
+        {value}
       </span>
     </div>
   );
@@ -251,7 +261,7 @@ function QuestionGrid({
   onProduct: (id: string | null) => void;
 }) {
   return (
-    <div className="mb-4 divide-y divide-line overflow-hidden rounded-[6px] border border-line bg-surface">
+    <>
       {list.map((f) => (
         <QuestionCell
           key={f.key}
@@ -264,10 +274,52 @@ function QuestionGrid({
           onProduct={rest.onProduct}
         />
       ))}
-    </div>
+    </>
   );
 }
 
+const SEC = "mb-2.5 text-[11px] font-semibold tracking-[0.05em] text-muted uppercase";
+
+/** A radio drawn as a pill — the outcome and the next step's type. */
+function OptionPill({
+  name,
+  checked,
+  onChange,
+  title,
+  children,
+}: {
+  name: string;
+  checked: boolean;
+  onChange: () => void;
+  title?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label
+      title={title}
+      className={cx(
+        "inline-flex h-9 cursor-pointer items-center rounded-full border px-3.5 text-[13px] font-medium select-none has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-brand",
+        checked ? "border-brand bg-brand-soft text-brand-deep" : "border-line bg-surface text-body hover:border-line-strong",
+      )}
+    >
+      <input type="radio" name={name} checked={checked} onChange={onChange} className="sr-only" />
+      {children}
+    </label>
+  );
+}
+
+/**
+ * Log a call — Version 6's dialog, drawn as the Leads frame's design: the
+ * outcome as pills, the questions as one grid with what is already known
+ * shown beside what is asked, notes, the next step on one row, and what
+ * saving does to the lead as a pill in the foot.
+ *
+ * Every rule is the engine's (`afterCall`, `questionsForCall`,
+ * `prospectProgress`) and every write is `logQualificationCall`, which checks
+ * it all again. Opened from the Calling desk record and the lead record alike:
+ * it needs the desk's own read of the lead (`DeskLeadRecord`), the business
+ * day and the default follow-up date.
+ */
 export function LogCallDialog({
   lead,
   defaultNextDate,
@@ -286,8 +338,7 @@ export function LogCallDialog({
   const [text, setText] = React.useState<Partial<Record<DeskFieldKey, string>>>({});
   const [productId, setProductId] = React.useState<string | null>(null);
   /* Set only by the voice assistant applying a resolved product match — see
-     the comment on `ProductField`'s `key` in `QuestionCell` for why this
-     exists rather than reusing `lead.productName`. */
+     the comment on `ProductField`'s `key` in `QuestionCell`. */
   const [voiceProductName, setVoiceProductName] = React.useState<string | null>(null);
   const [showLater, setShowLater] = React.useState(false);
   const [notes, setNotes] = React.useState("");
@@ -300,14 +351,12 @@ export function LogCallDialog({
   const [error, setError] = React.useState<string | null>(null);
 
   const q = questionsForCall(lead.values, n);
-  const askProspect = q.askNow.filter((f) => f.prospect);
-  const askOptional = q.askNow.filter((f) => !f.prospect);
   const spoke = outcome === "spoke_collected" || outcome === "spoke_callback";
   const endsLead = outcome === "not_interested" || outcome === "wrong_number";
   const exhausted = n >= MAX_QUALIFICATION_CALLS;
 
   /* What has been typed on this call, read the way the server reads it, so the
-     callouts below can say what saving is about to do. */
+     foot can say what saving is about to do. */
   const typed = (): DeskValues => {
     const out: DeskValues = {};
     if (!spoke) return out;
@@ -331,7 +380,6 @@ export function LogCallDialog({
   const draft = typed();
   const merged = { ...lead.values, ...draft };
   const progress = prospectProgress(merged);
-  const newCount = Object.keys(draft).length;
   /* THIS ROUND only: calls made before a reopen are history, not part of the three. */
   const priorOutcomes = lead.calls.filter((c) => !c.earlier).map((c) => c.outcome);
   /* What saving does to the lead is the engine's answer, not a second copy of
@@ -350,6 +398,11 @@ export function LogCallDialog({
   const needsNext = outcome !== null && !willBeReady && !willBeLost && !willBeExhausted;
   const suggested = suggestedLostCode(priorOutcomes, outcome ?? undefined);
   const lostCode = lostOverride ?? suggested;
+
+  /* "N of M known": what is on file plus what this call has typed, over every
+     question the desk asks. */
+  const asked = q.answered.length + q.askNow.length + q.later.length;
+  const known = q.answered.length + Object.keys(draft).length;
 
   async function save() {
     if (!outcome) return;
@@ -382,284 +435,240 @@ export function LogCallDialog({
   }
 
   const set = (key: DeskFieldKey, v: string) => setText((t) => ({ ...t, [key]: v }));
+  const productName = voiceProductName ?? lead.productName;
+
+  /* What saving does, as one pill in the foot. */
+  const verdict: { tone: "success" | "danger" | "warn" | "neutral"; label: string; title?: string } | null =
+    !outcome
+      ? null
+      : willBeReady
+        ? { tone: "success", label: "Ready for Prospect" }
+        : willBeLost
+          ? { tone: "danger", label: "Ends the lead · Lost" }
+          : willBeExhausted
+            ? {
+                tone: "warn",
+                label: "Last call · stays a Suspect",
+                title: `Not yet captured: ${progress.missing.map((f) => f.label).join(", ")}`,
+              }
+            : {
+                tone: "neutral",
+                label: `${progress.done} of ${progress.total} for Prospect`,
+                title: progress.missing.length
+                  ? `Not yet captured: ${progress.missing.map((f) => f.label).join(", ")}`
+                  : undefined,
+              };
 
   return (
     <Modal
       open
       onClose={onClose}
-      width={680}
+      width={820}
       title={
         <div>
           <div className="flex items-center gap-2">
-            Call {n} / {MAX_QUALIFICATION_CALLS}
+            Call {n} of {MAX_QUALIFICATION_CALLS}
             {exhausted ? <Badge tone="danger">Last call</Badge> : null}
           </div>
           <div className="mt-0.5 text-[13px] font-normal text-muted">
-            {lead.name} · {lead.contactPerson || "—"} · {lead.phone || "—"}
+            {[lead.name, lead.contactPerson, lead.phone].filter(Boolean).join(" · ")}
           </div>
         </div>
       }
       footer={
         <>
+          {verdict ? (
+            <span className="mr-auto self-center">
+              <Badge tone={verdict.tone} title={verdict.title}>
+                {verdict.label}
+              </Badge>
+            </span>
+          ) : null}
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
           <Button variant="primary" disabled={!outcome || busy} onClick={() => void save()}>
-            {busy
-              ? "Saving…"
-              : willBeLost
-                ? "Save call and mark Lost"
-                : willBeReady
-                  ? "Save call — Ready for Prospect"
-                  : "Save call"}
+            {busy ? "Saving…" : willBeLost ? "Save call and mark Lost" : "Save call"}
           </Button>
         </>
       }
     >
-      {lead.enquiry ? (
-        <div className="mb-3 rounded-[4px] border border-line bg-canvas px-3 py-2 text-[13px] text-body">
-          <span className="text-muted">The enquiry said: </span>“{lead.enquiry}”
-        </div>
-      ) : null}
-
-      <div className="mb-1 text-xs font-medium tracking-[0.04em] text-muted uppercase">How did the call go?</div>
-      <div className="mb-4 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-        {CALL_OUTCOMES.map((o) => (
-          <Choice key={o.code} name="outcome" checked={outcome === o.code} onChange={() => setOutcome(o.code)}>
-            <span className="block font-medium text-ink">{o.label}</span>
-            <span className="block text-[12px] text-muted">{o.hint}</span>
-          </Choice>
-        ))}
-      </div>
-
-      {outcome === "no_answer" ? (
-        <FieldLabel label="What happened" className="mb-4">
-          <Select value={noAnswerReason} onChange={(e) => setNoAnswerReason(e.target.value)} className="w-full">
-            {NO_ANSWER_REASONS.map((r) => (
-              <option key={r.code} value={r.code}>
-                {r.label}
-              </option>
-            ))}
-          </Select>
-        </FieldLabel>
-      ) : null}
-
-      {spoke ? (
-        <>
-          <div className="mb-3 rounded-[4px] border border-success/30 bg-success-soft px-3.5 py-2.5">
-            <div className="text-[13px] font-medium text-success">
-              ✓ {q.answered.length} answer{q.answered.length === 1 ? "" : "s"} already on file — these are not
-              asked again
-            </div>
-            {q.answered.length ? (
-              <details className="mt-1">
-                <summary className="cursor-pointer text-[12.5px] text-muted">▸ See what we already have</summary>
-                <div className="mt-1.5 divide-y divide-divider rounded-[4px] border border-line bg-surface">
-                  {q.answered.map((f) => (
-                    <div key={f.key} className="flex items-baseline justify-between gap-4 px-3 py-1.5 text-[12.5px]">
-                      <span className="text-muted">{f.label}</span>
-                      <span className="flex-none text-right font-medium text-ink">
-                        {displayAnswer(f.key, lead.values[f.key], lead.productName, lead.gstVerified)}{" "}
-                        <span className="font-normal text-muted">
-                          · {lead.answeredOn[f.key] ? `call ${lead.answeredOn[f.key]}` : "from the enquiry"}
-                        </span>
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </details>
-            ) : (
-              <div className="text-[12.5px] text-muted">Nothing yet — this is where the conversation starts.</div>
-            )}
+      <div className="flex flex-col gap-[22px]">
+        {lead.enquiry ? (
+          <div className="rounded-[6px] border border-line bg-canvas px-3 py-2 text-[13px] text-body">
+            <span className="text-muted">Enquiry: </span>“{lead.enquiry}”
           </div>
+        ) : null}
 
-          <LeadCallAssistant
-            customerId={lead.id}
-            notes={notes}
-            onNotes={setNotes}
-            currentText={text}
-            currentProductId={productId}
-            onFillText={set}
-            onFillProduct={(match) => {
-              setProductId(match.productId);
-              setVoiceProductName(match.name);
-            }}
-          />
-
-          <div className="mb-2 flex items-center justify-between">
-            <div className="text-xs font-medium tracking-[0.04em] text-muted uppercase">
-              {exhausted ? "Last call — ask what is still missing" : "Ask on this call"}
-            </div>
-            <span className="text-[12px] text-muted">
-              {newCount} new answer{newCount === 1 ? "" : "s"}
-            </span>
-          </div>
-
-          {q.askNow.length === 0 ? (
-            <div className="mb-3 rounded-[4px] border border-dashed border-line-strong px-4 py-4 text-center text-[13px] text-muted">
-              Nothing left worth asking on this call.
-            </div>
-          ) : (
-            <>
-              {askProspect.length ? (
-                <>
-                  <div className="mb-1.5 text-[11px] font-semibold tracking-[0.04em] text-muted uppercase">
-                    Needed for a Prospect — ask if you can, blank is fine
-                  </div>
-                  <QuestionGrid
-                    list={askProspect}
-                    customerId={lead.id}
-                    text={text}
-                    productId={productId}
-                    productName={voiceProductName ?? lead.productName}
-                    onText={set}
-                    onProduct={setProductId}
-                  />
-                </>
-              ) : null}
-              {askOptional.length ? (
-                <>
-                  <div
-                    className={cx(
-                      "mb-1.5 text-[11px] font-medium tracking-[0.04em] text-muted uppercase",
-                      askProspect.length ? "mt-3" : "",
-                    )}
-                  >
-                    Optional — ask if known, blank is fine
-                  </div>
-                  <QuestionGrid
-                    list={askOptional}
-                    customerId={lead.id}
-                    text={text}
-                    productId={productId}
-                    productName={voiceProductName ?? lead.productName}
-                    onText={set}
-                    onProduct={setProductId}
-                  />
-                </>
-              ) : null}
-            </>
-          )}
-
-          {q.later.length ? (
-            <div className="mb-4">
-              <button
-                type="button"
-                onClick={() => setShowLater((v) => !v)}
-                className="cursor-pointer text-[12.5px] font-medium text-brand-hover hover:underline"
+        <div>
+          <p className={SEC}>How did it go?</p>
+          <div role="radiogroup" aria-label="Outcome" className="flex flex-wrap gap-2">
+            {CALL_OUTCOMES.map((o) => (
+              <OptionPill
+                key={o.code}
+                name="outcome"
+                checked={outcome === o.code}
+                onChange={() => setOutcome(o.code)}
+                title={`${o.label}. ${o.hint}`}
               >
-                {showLater ? "Hide" : "Also ask"} {q.later.length} question{q.later.length === 1 ? "" : "s"} planned
-                for a later call
-              </button>
-              {showLater ? (
-                <div className="mt-3">
-                  <QuestionGrid
-                    list={q.later}
-                    customerId={lead.id}
-                    text={text}
-                    productId={productId}
-                    productName={voiceProductName ?? lead.productName}
-                    onText={set}
-                    onProduct={setProductId}
-                  />
-                </div>
-              ) : null}
+                {OUTCOME_SHORT[o.code]}
+              </OptionPill>
+            ))}
+          </div>
+          {outcome === "no_answer" ? (
+            <div className="mt-3 max-w-[320px]">
+              <FieldLabel label="What happened">
+                <Select value={noAnswerReason} onChange={(e) => setNoAnswerReason(e.target.value)} className="w-full">
+                  {NO_ANSWER_REASONS.map((r) => (
+                    <option key={r.code} value={r.code}>
+                      {r.label}
+                    </option>
+                  ))}
+                </Select>
+              </FieldLabel>
             </div>
           ) : null}
-        </>
-      ) : null}
+        </div>
 
-      {outcome ? (
-        <>
-          <FieldLabel label="Notes" className="mb-4">
-            <Textarea
-              rows={3}
-              placeholder="Anything worth remembering from this call"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
+        {spoke ? (
+          <>
+            <LeadCallAssistant
+              customerId={lead.id}
+              notes={notes}
+              onNotes={setNotes}
+              currentText={text}
+              currentProductId={productId}
+              onFillText={set}
+              onFillProduct={(match) => {
+                setProductId(match.productId);
+                setVoiceProductName(match.name);
+              }}
             />
-          </FieldLabel>
 
-          {willBeReady ? (
-            <Note tone="brand">
-              <b>Ready for Prospect.</b> Everything a Prospect needs will be in after this call — no further calls
-              are needed.
-            </Note>
-          ) : willBeExhausted ? (
-            <Note tone="warn">
-              <b>That was the last of {MAX_QUALIFICATION_CALLS} calls.</b> Not yet captured:{" "}
-              {progress.missing.map((f) => f.label).join(", ")}. The lead is not lost — it stays a Suspect, and you can
-              add these on the record when you know them, or close it yourself.
-            </Note>
-          ) : willBeLost ? (
-            <Note tone="danger">
-              <div className="text-ink">
-                <b>This call ends the lead — it will be marked Lost.</b>{" "}
-                {endsLead
-                  ? "The customer has closed the door."
-                  : `That was the last of ${MAX_QUALIFICATION_CALLS} calls and ${requiredProgress(merged)
-                      .missing.map((f) => f.label)
-                      .join(", ")} is still missing.`}
+            <div>
+              <div className="mb-2.5 flex items-center gap-2.5">
+                <p className={cx(SEC, "mb-0 flex-1")}>{exhausted ? "Last call — ask what is missing" : "Ask on this call"}</p>
+                <span className="text-[12px] text-muted">
+                  {known} of {asked} known
+                </span>
               </div>
-              <div className="mt-2.5 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-                <FieldLabel label="Lost reason">
-                  <Select value={lostCode} onChange={(e) => setLostOverride(e.target.value)} className="w-full">
-                    {DESK_LOST_REASONS.map((r) => (
-                      <option key={r.code} value={r.code}>
-                        {r.label}
-                      </option>
-                    ))}
-                  </Select>
-                </FieldLabel>
-                <FieldLabel label="Note">
-                  <Input placeholder="Optional detail" value={lostNote} onChange={(e) => setLostNote(e.target.value)} />
-                </FieldLabel>
+              <div className="grid grid-cols-1 gap-x-4 gap-y-3.5 sm:grid-cols-3">
+                {q.answered.map((f) => (
+                  <KnownCell
+                    key={f.key}
+                    label={f.label}
+                    value={displayAnswer(f.key, lead.values[f.key], lead.productName, lead.gstVerified)}
+                    from={lead.answeredOn[f.key] ? `From call ${lead.answeredOn[f.key]}` : "From the enquiry"}
+                  />
+                ))}
+                <QuestionGrid
+                  list={showLater ? [...q.askNow, ...q.later] : q.askNow}
+                  customerId={lead.id}
+                  text={text}
+                  productId={productId}
+                  productName={productName}
+                  onText={set}
+                  onProduct={setProductId}
+                />
               </div>
-            </Note>
-          ) : (
-            <div className="mb-2 rounded-[4px] border border-line bg-canvas px-4 py-3">
-              <div className="text-[13px] text-ink">
-                <b>
-                  {progress.done} / {progress.total} needed for Prospect
-                </b>{" "}
-                after this call. Call {n + 1} / {MAX_QUALIFICATION_CALLS} follows.
-              </div>
-              {progress.missing.length ? (
-                <div className="mt-0.5 text-[12.5px] text-muted">
-                  Not yet captured: {progress.missing.map((f) => f.label).slice(0, 4).join(" · ")}
-                  {progress.missing.length > 4 ? ` · +${progress.missing.length - 4} more` : ""}
-                </div>
+              {q.askNow.length === 0 && !showLater ? (
+                <p className="mt-2 mb-0 text-[13px] text-muted">Nothing left to ask on this call.</p>
               ) : null}
-              <div className="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-[1fr_1.4fr_1fr]">
-                <FieldLabel label="Next step">
-                  <Select
-                    value={nextKind}
-                    onChange={(e) => {
-                      const k = e.target.value as NextActionKind;
-                      setNextKind(k);
-                      setNextText(k === "call" ? `Call ${n + 1} — the remaining questions` : "Send information on WhatsApp, then ring back");
-                    }}
-                    className="w-full"
-                  >
-                    <option value="call">
-                      Call {n + 1} / {MAX_QUALIFICATION_CALLS}
+              {q.later.length ? (
+                <button
+                  type="button"
+                  onClick={() => setShowLater((v) => !v)}
+                  className="mt-3 cursor-pointer text-[12.5px] font-medium text-brand-hover hover:underline"
+                >
+                  {showLater ? "Hide" : "Also ask"} {q.later.length} for a later call
+                </button>
+              ) : null}
+            </div>
+          </>
+        ) : null}
+
+        {outcome ? (
+          <div>
+            <label htmlFor="call-notes" className="mb-1.5 block text-[13px] font-medium text-ink">
+              Notes
+            </label>
+            <Textarea id="call-notes" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} />
+          </div>
+        ) : null}
+
+        {willBeLost ? (
+          <div className="rounded-[8px] border border-danger-soft bg-danger-soft px-4 py-3">
+            <div className="text-[13px] text-ink">
+              <b>This call ends the lead.</b>{" "}
+              {endsLead
+                ? "The customer has closed the door."
+                : `Last call, and still missing: ${requiredProgress(merged)
+                    .missing.map((f) => f.label)
+                    .join(", ")}.`}
+            </div>
+            <div className="mt-2.5 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+              <FieldLabel label="Lost reason">
+                <Select value={lostCode} onChange={(e) => setLostOverride(e.target.value)} className="w-full">
+                  {DESK_LOST_REASONS.map((r) => (
+                    <option key={r.code} value={r.code}>
+                      {r.label}
                     </option>
-                    <option value="message">Message first</option>
-                  </Select>
-                </FieldLabel>
-                <FieldLabel label="What happens">
-                  <Input value={nextText} onChange={(e) => setNextText(e.target.value)} />
-                </FieldLabel>
-                <FieldLabel label="Follow-up date">
-                  <Input type="date" min={today} value={nextDate} onChange={(e) => setNextDate(e.target.value)} />
-                </FieldLabel>
+                  ))}
+                </Select>
+              </FieldLabel>
+              <FieldLabel label="Note">
+                <Input value={lostNote} onChange={(e) => setLostNote(e.target.value)} />
+              </FieldLabel>
+            </div>
+          </div>
+        ) : willBeExhausted ? (
+          <div className="rounded-[8px] border border-warn-line bg-warn-soft px-4 py-3 text-[13px] text-warn-ink">
+            Last of {MAX_QUALIFICATION_CALLS} calls. Not yet captured: {progress.missing.map((f) => f.label).join(", ")}.
+          </div>
+        ) : needsNext ? (
+          <div>
+            <p className={SEC}>Next step</p>
+            <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[auto_minmax(0,1fr)_180px]">
+              <div>
+                <span className="mb-1.5 block text-[13px] font-medium text-ink">Type</span>
+                <div role="radiogroup" aria-label="Next step type" className="flex gap-1.5">
+                  {(["call", "message"] as const).map((k) => (
+                    <OptionPill
+                      key={k}
+                      name="next-kind"
+                      checked={nextKind === k}
+                      onChange={() => {
+                        setNextKind(k);
+                        setNextText(
+                          k === "call"
+                            ? `Call ${n + 1} — the remaining questions`
+                            : "Send information on WhatsApp, then ring back",
+                        );
+                      }}
+                    >
+                      {k === "call" ? `Call ${n + 1}` : "Message"}
+                    </OptionPill>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label htmlFor="next-what" className="mb-1.5 block text-[13px] font-medium text-ink">
+                  What happens
+                </label>
+                <Input id="next-what" value={nextText} onChange={(e) => setNextText(e.target.value)} />
+              </div>
+              <div>
+                <label htmlFor="next-on" className="mb-1.5 block text-[13px] font-medium text-ink">
+                  On
+                </label>
+                <Input id="next-on" type="date" min={today} value={nextDate} onChange={(e) => setNextDate(e.target.value)} />
               </div>
             </div>
-          )}
-        </>
-      ) : null}
+          </div>
+        ) : null}
 
-      {error ? <p className="mt-2 mb-0 text-[13px] text-danger">{error}</p> : null}
+        {error ? <p className="m-0 text-[13px] text-danger">{error}</p> : null}
+      </div>
     </Modal>
   );
 }

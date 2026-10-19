@@ -549,6 +549,16 @@ export function nf(v: CellValue | undefined): string {
   return NF.format(n);
 }
 
+/** A counted or weighed quantity → "12,345.125": up to three decimals, because
+    kilograms and litres are recorded to the gram and the millilitre. */
+const QTY = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 3 });
+export function qty(v: CellValue | undefined): string {
+  if (v == null || v === "") return "";
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(v);
+  return QTY.format(n);
+}
+
 export function cellText(col: ColSpec, v: CellValue | undefined): string {
   if (col.t === "d") return fd(v) || "—";
   if (col.t === "m") return v === "" || v == null ? "—" : inr(v);

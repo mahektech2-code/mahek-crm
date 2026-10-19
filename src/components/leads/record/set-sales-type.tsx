@@ -76,6 +76,7 @@ export function SetSalesType({
   stage,
   canWork,
   canOverride,
+  label,
 }: {
   customerId: string;
   name: string;
@@ -87,6 +88,8 @@ export function SetSalesType({
   canWork: boolean;
   /** `lead.override`, which is what `holdsOverride` reads above `prospect`. */
   canOverride: boolean;
+  /** The trigger's words, where it sits in a menu. */
+  label?: string;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -161,7 +164,7 @@ export function SetSalesType({
         title={why ?? "Which of the three ladders this lead climbs."}
         onClick={begin}
       >
-        {salesType ? "Change it" : "Set the sales type"}
+        {label ?? (salesType ? "Change it" : "Set the sales type")}
       </Button>
 
       <Modal

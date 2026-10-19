@@ -3,6 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { cx } from "@/components/ui/primitives";
+import { OutsideLeadHub } from "@/components/leads/hub/hub-context";
 import { shortDate } from "@/lib/format";
 import { ladderFor } from "@/lib/engines/lead-ladder";
 import {
@@ -394,10 +395,12 @@ export function Dashboard({
               <DeskIcon name="chart" size={15} />
               Show all my leads
             </button>
-            <Link href={intakeHref} className={cx(pbtn("primary"), "no-underline hover:text-white hover:no-underline")}>
-              <DeskIcon name="plus" size={15} />
-              New lead
-            </Link>
+            <OutsideLeadHub>
+              <Link href={intakeHref} className={cx(pbtn("primary"), "no-underline hover:text-white hover:no-underline")}>
+                <DeskIcon name="plus" size={15} />
+                New lead
+              </Link>
+            </OutsideLeadHub>
           </>
         }
       />

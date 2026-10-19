@@ -36,6 +36,7 @@ export function ReassignLead({
   currentName,
   assignees,
   canReassign,
+  label,
 }: {
   customerId: string;
   name: string;
@@ -43,6 +44,8 @@ export function ReassignLead({
   currentName: string | null;
   assignees: Assignee[];
   canReassign: boolean;
+  /** The trigger's words, where it sits beside a name. */
+  label?: string;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -95,7 +98,7 @@ export function ReassignLead({
         }
         onClick={begin}
       >
-        Reassign
+        {label ?? "Reassign"}
       </Button>
 
       <Modal open={open} onClose={() => setOpen(false)} title="Reassign the lead" width={480}>

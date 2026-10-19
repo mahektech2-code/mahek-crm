@@ -1900,6 +1900,23 @@ lists the column keys it already draws in `covers`. Write a screen's
 (the explanation); keep subtitles to one line; name buttons as verbs ("Accept",
 "Add another", "Show the whole order"), never past tenses or "Do …".
 
+**AN ERP SCREEN DRAWS EACH PIECE ONE WAY, AND A TEST READS THE SOURCE.**
+The screens had drifted into twenty-two spellings of the small uppercase
+label, four heading sizes, three checkbox looks, ten text-link buttons and
+money formatted by hand — each a class string copied from a neighbour and then
+tweaked. `src/app/erp/_ui/look.tsx` is the ERP's kit: `SectionTitle` and
+`SubTitle` for headings, `Eyebrow`/`eyebrowClass` (11px) and
+`SectionLabel`/`labelClass` (12px) for labels, `LinkButton`/`linkClass` and
+`IconButton` for the small controls, `popoverClass` and `insetClass` for
+surfaces; `checkboxClass` sits in primitives beside `Checkbox`, and the
+tokens `tracking-label` and `shadow-pop` in `globals.css`.
+`erp-design.test.ts` fails on a hex colour, a `text-[Npx]`, a typed
+`tracking-[…]` or popover shadow, a hand-drawn heading or uppercase label, a
+bare checkbox or table cell, `toLocaleString`, and a typed `/erp/…` address,
+anywhere under `src/app/erp` except the printed labels. Reach for the kit; if
+it has no piece for what you need, add one there rather than typing the
+string a second time.
+
 **Every write goes through five server actions** (`lib/actions/erp.ts`): run
 an action, run a bulk action, run a header tool (a `ToolSpec` with no `href`,
 answered by the module's `tools`), submit a form, load a form (which writes
@@ -8346,6 +8363,22 @@ explanatory body (unless `fact`), `Empty` drop its paragraph, `LeadTabs` draw
 nothing, and `OutsideLeadHub` hides a screen's own "← back to a desk" link.
 The Sales Dashboard mounts the same screens outside the frame and sees no
 change. The routes are unchanged; `Dashboard` is now "My day".
+
+**A LEAD'S RECORD IS ONE PAGE OF CARDS, AND ITS ACTIONS ARE ONE MENU.** The
+header names the lead, its sales type, its rung and how long it has stood
+there, and its priority; beside it are Call (only for somebody who works the
+Calling desk — it opens the desk's own `LogCallDialog`, also from `?call=1`,
+which is what My day's Call buttons link to), Message, the rung's act
+(`PrimaryGateAction`, a link to the screen where that act is done) and a ⋯
+menu holding Reassign, Change sales type, Put on hold, Hand over, Mark lost and
+Delete. Each menu item is the component the old header drew as a button, with
+its own capability check and dialog; the menu is hidden rather than unmounted
+when closed, because unmounting would take the dialog an item just opened with
+it. The ladder is a row of bars; Overview is the next step (`setLeadNextAction`
+behind Change), the gate card ("To reach X", `checklistFor` ticked where the
+verdict does not name it missing, `AdvanceStage` under it), the opportunity and
+the calls; the rail is People, Who's up (`roleAction` for every vantage) and
+Details. `components/leads/record/record-chrome.tsx` holds the pieces.
 
 **THE CALLING DESK IS A MODULE, AND IT IS GRANTED — NOT INHERITED.** It was a
 tab of All Leads, and a tab cannot be withheld: every CRM user could open the

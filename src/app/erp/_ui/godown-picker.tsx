@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { cx } from "@/components/ui/primitives";
+import { controlClass, cx } from "@/components/ui/primitives";
+import { nf } from "@/lib/erp/ui";
 import { Icon } from "./icons";
+import { popoverClass } from "./look";
 
 /* A godown picker: a button that opens a searchable list of godowns (and,
    where asked, "All"). Used by the header's working location, every list's
@@ -63,7 +65,8 @@ export function GodownPicker({
           <div onClick={() => setOpen(false)} className="fixed inset-0 z-40" />
           <div
             className={cx(
-              "animate-fade-in absolute top-10 z-50 w-[320px] max-w-[90vw] overflow-hidden rounded-card border border-line bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)]",
+              popoverClass,
+              "animate-fade-in absolute top-10 z-50 w-[320px] max-w-[90vw] overflow-hidden",
               align === "right" ? "right-0" : "left-0",
             )}
           >
@@ -72,8 +75,8 @@ export function GodownPicker({
                 autoFocus
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                placeholder={placeholder ?? `Search ${items.length} godowns`}
-                className="h-8 w-full rounded-control border border-line px-2.5 text-meta outline-none focus:border-brand"
+                placeholder={placeholder ?? `Search ${nf(items.length)} godowns`}
+                className={controlClass({ className: "h-8" })}
               />
             </div>
             <div className="max-h-[340px] overflow-y-auto py-1">
@@ -97,7 +100,7 @@ export function GodownPicker({
             </div>
             {match.length > shown.length ? (
               <div className="border-t border-divider px-3 py-2 text-xs text-muted">
-                {match.length - shown.length} more — keep typing to narrow
+                {nf(match.length - shown.length)} more — keep typing to narrow
               </div>
             ) : null}
             {match.length === 0 ? (

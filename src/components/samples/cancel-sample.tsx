@@ -110,7 +110,7 @@ export function CancelSample({
   );
 }
 
-function CancelForm({
+export function CancelForm({
   sampleId,
   what,
   reasons,

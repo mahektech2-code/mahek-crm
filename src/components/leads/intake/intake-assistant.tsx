@@ -61,6 +61,7 @@ export function IntakeAssistant({
   const [phase, setPhase] = React.useState<Phase>({ kind: "idle" });
   const [applied, setApplied] = React.useState<Set<IntakeFillKey>>(new Set());
   const [typed, setTyped] = React.useState("");
+  const [typing, setTyping] = React.useState(false);
 
   async function read(meta: (DictationMeta & { english: string }) | null, typedNote: string) {
     setPhase({ kind: "reading" });
@@ -98,59 +99,62 @@ export function IntakeAssistant({
 
   const typedReady = typed.trim().length > 1;
 
-  const starter = (
-    <div className="flex flex-col gap-2">
-      <Textarea
-        rows={2}
-        value={typed}
-        onChange={(e) => setTyped(e.target.value)}
-        placeholder='Or type it: e.g. "Ramesh from Shree Paints, Nashik, 98xxxxxx21, dealer, needs about 400 litres a month of thinner"'
-      />
-      <div className="flex flex-wrap items-center gap-2">
-        <DictateButton
-          modalTitle="Tell us about the call"
-          importLabel="Read this"
-          title="Speak about the call in any language"
-          hasExistingText={false}
-          renderTrigger={(open) => (
-            <Button variant="primary" size="sm" onClick={open}>
-              <MicGlyph /> Speak about this call
-            </Button>
-          )}
-          onImport={(text, _replace, meta) => {
-            void read({ ...meta, english: text }, "");
-          }}
-        />
-        <Button
-          variant="secondary"
-          size="sm"
-          disabled={!typedReady || phase.kind === "reading"}
-          title={typedReady ? "Read what is typed above" : "Type a few words first, or speak"}
-          onClick={() => void read(null, typed)}
-        >
-          Read what I typed
-        </Button>
-      </div>
-    </div>
-  );
-
   if (phase.kind === "idle" || phase.kind === "failed") {
     return (
-      <section className="mb-4 rounded-[6px] border border-brand-softer bg-brand-soft p-3.5">
-        <div className="text-[14px] font-semibold text-ink">Voice assistant</div>
-        <p className="mt-0.5 mb-2.5 text-[12.5px] text-body">
-          Speak in any language — the assistant suggests values for the boxes below. You check each one,
-          apply what is right, and press Add the lead yourself. It never saves anything.
-        </p>
-        {starter}
-        {phase.kind === "failed" ? <p className="mt-2 text-[12.5px] text-danger">{phase.message}</p> : null}
+      <section className="flex flex-col gap-2.5 rounded-[8px] border border-brand-softer bg-brand-soft px-3.5 py-3">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <DictateButton
+            modalTitle="Tell us about this lead"
+            importLabel="Read this"
+            title="Speak about this lead in any language"
+            hasExistingText={false}
+            renderTrigger={(open) => (
+              <Button variant="secondary" size="sm" className="bg-surface" onClick={open}>
+                <MicGlyph /> Speak about this lead
+              </Button>
+            )}
+            onImport={(text, _replace, meta) => {
+              void read({ ...meta, english: text }, "");
+            }}
+          />
+          <span className="flex-1 text-[13px] text-brand-deep">Fills the form. You review before saving.</span>
+          <button
+            type="button"
+            className="cursor-pointer text-[12.5px] font-medium text-brand"
+            onClick={() => setTyping((t) => !t)}
+          >
+            {typing ? "Close" : "Type it instead"}
+          </button>
+        </div>
+        {typing ? (
+          <div className="flex flex-col gap-2">
+            <Textarea
+              rows={2}
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              placeholder="Ramesh from Shree Paints, Nashik, dealer, 400 litres a month of thinner"
+            />
+            <div>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={!typedReady}
+                title={typedReady ? undefined : "Type a few words first"}
+                onClick={() => void read(null, typed)}
+              >
+                Read what I typed
+              </Button>
+            </div>
+          </div>
+        ) : null}
+        {phase.kind === "failed" ? <p className="m-0 text-[12.5px] text-danger">{phase.message}</p> : null}
       </section>
     );
   }
 
   if (phase.kind === "reading") {
     return (
-      <section className="mb-4 flex items-center gap-2 rounded-[6px] border border-brand-softer bg-brand-soft p-3.5">
+      <section className="flex items-center gap-2 rounded-[8px] border border-brand-softer bg-brand-soft p-3.5">
         <span className="h-2 w-2 flex-none animate-pulse rounded-full bg-brand" />
         <span className="text-[13px] text-body">Understanding…</span>
       </section>
@@ -161,7 +165,7 @@ export function IntakeAssistant({
   const readyCount = analysis.fills.filter((f) => f.state === "ready" && !applied.has(f.key) && !blockedReason(f)).length;
 
   return (
-    <section className="mb-4 rounded-[6px] border border-brand-softer bg-surface p-3.5">
+    <section className="rounded-[8px] border border-brand-softer bg-surface p-3.5">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-[13px] font-semibold text-ink">Review suggested values</span>
         <span className="flex-1" />

@@ -5,12 +5,14 @@ import { type LeadWorkspace } from "@/lib/lead-workspace";
 import { qualificationAccess } from "@/lib/lead-qualification-access";
 import { canOpenModule } from "@/lib/access";
 import { DESK_MODULE, ownerChoices } from "@/lib/services/lead-desk-assignment-service";
+import { deskLeadRecord } from "@/lib/services/lead-calling-desk-service";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { canFor } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import { nowMs } from "@/lib/format";
 import { today } from "@/lib/recompute";
+import { addDays, onOrAfterWorkingDay, type BusinessDate } from "@/lib/business-date";
 import {
   gateForNext,
   ladderVerdicts,
@@ -177,6 +179,13 @@ export async function Body({
    * refusal naming a condition the page had never shown. One reading, from
    * `figuresAreStale`, through a required argument.
    */
+  /* The Calling desk's own record of this lead — its three calls — where the
+     reader works the desk. Nobody else is shown a call they cannot log. */
+  const desk =
+    workspace === "crm" && (await canOpenModule(user.id, DESK_MODULE))
+      ? await deskLeadRecord(id, day)
+      : null;
+
   const freshDays = config["leads.figuresFreshDays"];
   const gateInput = gateInputFor(record, freshDays);
   const figuresStale = Boolean(gateInput.figuresStale);
@@ -372,6 +381,14 @@ export async function Body({
       actionFacts={actionFacts}
       gateFacts={gateFacts}
       nowMs={nowMs()}
+      requireNextAction={config["leads.requireNextAction"]}
+      desk={desk}
+      defaultNextDate={onOrAfterWorkingDay(addDays(day as BusinessDate, 2), {
+        timezone: config["workingDay.timezone"],
+        dayBoundaryHour: config["workingDay.dayBoundaryHour"],
+        workingDays: config["workingDay.workingDays"],
+      })}
+      openCall={single(query.call) === "1"}
     />
   );
 }

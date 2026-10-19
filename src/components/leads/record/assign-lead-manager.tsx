@@ -67,6 +67,7 @@ export function AssignLeadManager({
   currentName,
   candidates,
   canWork,
+  label,
 }: {
   customerId: string;
   name: string;
@@ -76,6 +77,8 @@ export function AssignLeadManager({
   /** Region first, national below — the action's own order, left alone. */
   candidates: LeadManagerCandidate[];
   canWork: boolean;
+  /** The trigger's words, where it sits beside a name. */
+  label?: string;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -135,7 +138,7 @@ export function AssignLeadManager({
         }
         onClick={begin}
       >
-        {currentId ? "Change who holds it" : "Assign a lead manager"}
+        {label ?? (currentId ? "Change who holds it" : "Assign a lead manager")}
       </Button>
 
       <Modal

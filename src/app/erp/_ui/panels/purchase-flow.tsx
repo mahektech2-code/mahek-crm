@@ -1,14 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Button, cx, Input, Select, SectionLabel } from "@/components/ui/primitives";
+import { Button, Callout, cx, Input, Select, SectionLabel } from "@/components/ui/primitives";
 import { ComboBox } from "@/components/ui/combo-box";
-import { Modal } from "@/components/ui/modal";
+import { stamp } from "@/lib/format";
+import { inr, inrRate, qty } from "@/lib/erp/ui";
 import { erpRunAction } from "@/lib/actions/erp";
 import { erpRequirementPoLookup } from "@/lib/actions/erp-requirement-po";
 import type { LinkPreview } from "@/lib/erp/screens/requirement-po";
 import { registerPanel, type PanelProps } from "../panels";
 import { resultError, useAct } from "../use-act";
+import { DialogBody, DialogTitle, DialogFooter, DialogHeader, ErpDialog, StepBar } from "../dialog";
+import { eyebrowClass, insetClass, labelClass, linkClass } from "../look";
 import { Stepper } from "./parts";
 
 /* ---------------------------------------------------------------------------
@@ -75,8 +78,7 @@ type Flow = {
   entry: { held: boolean; link: boolean; create: CreateData | null } | null;
 };
 
-const rupees = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: paise % 100 ? 2 : 0, maximumFractionDigits: 2 })}`;
-const count = (q: string) => (Number.isFinite(Number(q)) && q.trim() ? Number(q).toLocaleString("en-IN", { maximumFractionDigits: 3 }) : q);
+const count = (q: string) => (Number.isFinite(Number(q)) && q.trim() ? qty(Number(q)) : q);
 
 function Comparison({ c, verdict }: { c: NonNullable<Flow["comparison"]>; verdict: Flow["verdict"] }) {
   const rows: [string, string, string?][] = [
@@ -109,15 +111,15 @@ function Comparison({ c, verdict }: { c: NonNullable<Flow["comparison"]>; verdic
         </div>
       </div>
       {verdict === "passed" ? (
-        <div className="rounded-control border border-success/30 bg-success-soft/60 px-3 py-2">
+        <Callout tone="success" className="mb-0 block">
           <div className="font-semibold text-success">✓ Stock verification passed</div>
-          <div className="text-xs text-body">The physical count agrees with the reconciled book within the allowed difference.</div>
-        </div>
+          <div className="text-meta text-body">The physical count agrees with the reconciled book within the allowed difference.</div>
+        </Callout>
       ) : verdict === "red" ? (
-        <div className="rounded-control border border-danger/30 bg-danger-soft/60 px-3 py-2">
+        <Callout tone="danger" className="mb-0 block">
           <div className="font-semibold text-danger">⚑ Red flag — stock differs from the book</div>
-          <div className="text-xs text-body">Beyond the allowed difference. Stock control is told and a recount is opened. The purchase carries on.</div>
-        </div>
+          <div className="text-meta text-body">Beyond the allowed difference. Stock control is told and a recount is opened. The purchase carries on.</div>
+        </Callout>
       ) : null}
     </div>
   );
@@ -157,7 +159,7 @@ function LinkPo({ id }: { id: string }) {
       <div className="border-b border-divider bg-canvas px-3 py-2 text-meta font-medium text-ink">Purchase order · Link PO</div>
       <div className="grid gap-2.5 p-3">
         <label className="grid gap-1">
-          <span className="text-xs font-medium tracking-[0.04em] text-muted uppercase">PO number</span>
+          <span className={labelClass}>PO number</span>
           <Input
             value={poNo}
             onChange={(e) => setPoNo(e.target.value)}
@@ -166,13 +168,13 @@ function LinkPo({ id }: { id: string }) {
             maxLength={60}
             invalid={!!miss}
           />
-          <span className={cx("text-xs", miss ? "text-danger" : "text-muted")}>
+          <span className={cx("text-meta", miss ? "text-danger" : "text-muted")}>
             {miss ?? (q && (looking || !hit) ? "Looking it up on the Quotation manager…" : "The vendor, rate and drums are fetched from it — nothing else to fill.")}
           </span>
         </label>
         {hit ? (
-          <div className="overflow-hidden rounded-control border border-success/30">
-            <div className="bg-success-soft/60 px-3 py-1.5 text-meta font-medium text-success">✓ Found in the Quotation manager</div>
+          <div className="overflow-hidden rounded-control border border-success-soft">
+            <div className="bg-success-soft px-3 py-1.5 text-meta font-medium text-success">✓ Found in the Quotation manager</div>
             <dl className="grid grid-cols-2 gap-x-5 gap-y-2 px-3 py-2.5 text-meta">
               {[
                 ["Vendor", hit.vendor],
@@ -182,15 +184,15 @@ function LinkPo({ id }: { id: string }) {
                 ["Quantity", hit.quantity],
                 ...(hit.amount ? [["Amount", hit.amount]] : []),
                 ["Quoted", hit.quotedOn],
-                ["Bought", [hit.boughtBy, hit.boughtAt ? new Date(hit.boughtAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" }) : null].filter(Boolean).join(" · ") || "—"],
+                ["Bought", [hit.boughtBy, hit.boughtAt ? stamp(hit.boughtAt) : null].filter(Boolean).join(" · ") || "—"],
               ].map(([l, v]) => (
                 <div key={l} className="min-w-0">
-                  <dt className="text-2xs tracking-[0.04em] text-muted uppercase">{l}</dt>
+                  <dt className={eyebrowClass}>{l}</dt>
                   <dd className="break-words text-ink">{v}</dd>
                 </div>
               ))}
             </dl>
-            {hit.shared ? <div className="px-3 pb-2 text-xs text-muted">This PO number already carries {hit.shared} other item{hit.shared > 1 ? "s" : ""}; this one is added to it.</div> : null}
+            {hit.shared ? <div className="px-3 pb-2 text-meta text-muted">This PO number already carries {hit.shared} other item{hit.shared > 1 ? "s" : ""}; this one is added to it.</div> : null}
           </div>
         ) : null}
         <div className="flex justify-end">
@@ -261,199 +263,178 @@ function CreatePoModal({ id, d, onClose }: { id: string; d: CreateData; onClose:
       },
     );
   }
-  const label = "text-xs font-medium tracking-[0.04em] text-muted uppercase";
-  const err = (k: string) => (errors[k] ? <span className="text-xs text-danger">{errors[k]}</span> : null);
+  const err = (k: string) => (errors[k] ? <span className="text-meta text-danger">{errors[k]}</span> : null);
   return (
-    <Modal
-      open
-      onClose={onClose}
-      width={680}
-      title={
-        <div>
-          <div>Create PO · {d.item}</div>
-          <div className="mt-0.5 text-meta font-normal text-muted">
-            {[d.reqNo, `${count(d.qty)} ${d.unit}`, d.godown, "Direct purchase — no quotation needed"].filter(Boolean).join(" · ")}
-          </div>
+    <ErpDialog onClose={onClose} label={`Create PO · ${d.item}`} width={680} tall={false}>
+      <DialogHeader onClose={onClose}>
+        <DialogTitle>Create PO · {d.item}</DialogTitle>
+        <div className="mt-0.5 text-meta text-muted">
+          {[d.reqNo, `${count(d.qty)} ${d.unit}`, d.godown, "Direct purchase — no quotation needed"].filter(Boolean).join(" · ")}
         </div>
-      }
-      footer={
-        <div className="flex w-full items-center justify-between">
-          {page === 0 ? <Button onClick={onClose}>Cancel</Button> : <Button onClick={() => setPage(page - 1)}>← Back</Button>}
-          {page < 2 ? (
-            <Button variant="primary" onClick={() => check(page) && setPage(page + 1)}>
-              Next · {PAGES[page + 1]}
-            </Button>
-          ) : (
-            <Button variant="primary" disabled={pending} onClick={submit}>
-              {pending ? "Creating…" : "Create PO"}
-            </Button>
-          )}
-        </div>
-      }
-    >
-      <ol className="mb-4 flex gap-2 border-b border-divider pb-3">
-        {PAGES.map((n, i) => (
-          <li key={n} className={cx("flex flex-1 items-center gap-2 text-sm", i === page ? "font-semibold text-ink" : i < page ? "text-success" : "text-muted")}>
-            <span
-              className={cx(
-                "inline-flex size-6 items-center justify-center rounded-full text-xs font-semibold",
-                i === page ? "bg-brand text-white" : i < page ? "bg-success-soft text-success" : "bg-canvas text-muted",
-              )}
-            >
-              {i < page ? "✓" : i + 1}
-            </span>
-            {n}
-          </li>
-        ))}
-      </ol>
-      {page === 0 ? (
-        <div className="grid gap-3">
-          <label className="grid gap-1">
-            <span className={label}>Vendor</span>
-            <ComboBox
-              label="Vendor"
-              value={v.vendor}
-              options={d.vendors.map((x) => x.name)}
-              onChange={(name) => setV((x) => ({ ...x, vendor: name, terms: termsOf(name) ?? x.terms }))}
-              placeholder="Search the vendors"
-              emptyHint="No vendor by that name"
-            />
-            {err("vendor") ?? <span className="text-xs text-muted">{d.defaultVendor ? (v.vendor === d.defaultVendor ? "The item's default vendor." : `The item's default vendor is ${d.defaultVendor}.`) : "The item has no default vendor."}</span>}
-          </label>
-          <div className="grid grid-cols-2 gap-3">
+      </DialogHeader>
+      <StepBar steps={[...PAGES]} active={page} reached={page} onChange={setPage} />
+      <DialogBody>
+        {page === 0 ? (
+          <div className="grid gap-3">
             <label className="grid gap-1">
-              <span className={label}>Item</span>
-              <div className="flex h-8.5 items-center rounded-control border border-dashed border-line bg-canvas px-2.5 text-sm text-ink">{d.item}</div>
+              <span className={labelClass}>Vendor</span>
+              <ComboBox
+                label="Vendor"
+                value={v.vendor}
+                options={d.vendors.map((x) => x.name)}
+                onChange={(name) => setV((x) => ({ ...x, vendor: name, terms: termsOf(name) ?? x.terms }))}
+                placeholder="Search the vendors"
+                emptyHint="No vendor by that name"
+              />
+              {err("vendor") ?? <span className="text-meta text-muted">{d.defaultVendor ? (v.vendor === d.defaultVendor ? "The item's default vendor." : `The item's default vendor is ${d.defaultVendor}.`) : "The item has no default vendor."}</span>}
             </label>
-            <label className="grid gap-1">
-              <span className={label}>Quantity ({d.unit})</span>
-              <Input inputMode="decimal" value={v.qty} onChange={(e) => set("qty", e.target.value)} invalid={!!errors.qty} />
-              {err("qty") ?? <span className="text-xs text-muted">From the requirement; change it if the vendor packs differently.</span>}
-            </label>
-          </div>
-        </div>
-      ) : page === 1 ? (
-        <div className="grid gap-3">
-          <div className="overflow-hidden rounded-control border border-line text-meta">
-            <div className="flex justify-between border-b border-divider bg-canvas px-3 py-2">
-              <span className="font-medium text-ink">Price · from Raw materials</span>
-              <span className="text-xs text-muted">not typed here</span>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="grid gap-1">
+                <span className={labelClass}>Item</span>
+                <div className="flex h-8.5 items-center rounded-control border border-dashed border-line bg-canvas px-2.5 text-sm text-ink">{d.item}</div>
+              </label>
+              <label className="grid gap-1">
+                <span className={labelClass}>Quantity ({d.unit})</span>
+                <Input inputMode="decimal" value={v.qty} onChange={(e) => set("qty", e.target.value)} invalid={!!errors.qty} />
+                {err("qty") ?? <span className="text-meta text-muted">From the requirement; change it if the vendor packs differently.</span>}
+              </label>
             </div>
-            <dl className="grid grid-cols-2 gap-x-5 gap-y-2 px-3 py-2.5">
-              {d.money ? (
-                <>
-                  <div>
-                    <dt className="text-2xs tracking-[0.04em] text-muted uppercase">Rate per {d.unit.toLowerCase()}</dt>
-                    <dd className="text-md font-semibold text-ink">{d.hasPrice ? rupees(rate) : "₹0 — no price on the item"}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-2xs tracking-[0.04em] text-muted uppercase">Amount</dt>
-                    <dd className="text-ink">
-                      {rupees(amount)} + GST {rupees(gst)}
-                    </dd>
-                  </div>
-                </>
-              ) : (
-                <div className="col-span-2 text-muted">The item&apos;s price is used; purchase money is not shown on your account.</div>
-              )}
-              <div>
-                <dt className="text-2xs tracking-[0.04em] text-muted uppercase">GST</dt>
-                <dd className="text-ink">{d.gstPercent}%</dd>
+          </div>
+        ) : page === 1 ? (
+          <div className="grid gap-3">
+            <div className="overflow-hidden rounded-control border border-line text-meta">
+              <div className="flex justify-between border-b border-divider bg-canvas px-3 py-2">
+                <span className="font-medium text-ink">Price · from Raw materials</span>
+                <span className="text-xs text-muted">not typed here</span>
               </div>
-              <div>
-                <dt className="text-2xs tracking-[0.04em] text-muted uppercase">Quantity</dt>
-                <dd className="text-ink">
-                  {count(v.qty)} {d.unit}
-                </dd>
-              </div>
+              <dl className="grid grid-cols-2 gap-x-5 gap-y-2 px-3 py-2.5">
+                {d.money ? (
+                  <>
+                    <div>
+                      <dt className={eyebrowClass}>Rate per {d.unit.toLowerCase()}</dt>
+                      <dd className="text-md font-semibold text-ink">{d.hasPrice ? inrRate(rate) : "₹0 — no price on the item"}</dd>
+                    </div>
+                    <div>
+                      <dt className={eyebrowClass}>Amount</dt>
+                      <dd className="text-ink">
+                        {inr(amount)} + GST {inr(gst)}
+                      </dd>
+                    </div>
+                  </>
+                ) : (
+                  <div className="col-span-2 text-muted">The item&apos;s price is used; purchase money is not shown on your account.</div>
+                )}
+                <div>
+                  <dt className={eyebrowClass}>GST</dt>
+                  <dd className="text-ink">{d.gstPercent}%</dd>
+                </div>
+                <div>
+                  <dt className={eyebrowClass}>Quantity</dt>
+                  <dd className="text-ink">
+                    {count(v.qty)} {d.unit}
+                  </dd>
+                </div>
+              </dl>
+              <div className="px-3 pb-2.5 text-meta text-muted">The rate is the price on the item in Masters → Raw materials. An item with no price there is ordered at ₹0.</div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="grid gap-1">
+                <span className={labelClass}>Deliver to</span>
+                <Select value={v.deliverTo} onChange={(e) => set("deliverTo", e.target.value)} className="w-full">
+                  {d.godowns.map((g) => (
+                    <option key={g}>{g}</option>
+                  ))}
+                </Select>
+                {err("deliverTo")}
+              </label>
+              <label className="grid gap-1">
+                <span className={labelClass}>Delivery date</span>
+                <Input type="date" value={v.deliveryDate} onChange={(e) => set("deliveryDate", e.target.value)} invalid={!!errors.deliveryDate} />
+                {err("deliveryDate") ?? (d.requiredBy ? <span className="text-meta text-muted">The requirement is needed by this date.</span> : null)}
+              </label>
+              <label className="grid gap-1">
+                <span className={labelClass}>Payment terms</span>
+                <Select value={v.terms} onChange={(e) => set("terms", e.target.value)} className="w-full">
+                  <option value="">Choose…</option>
+                  {[...new Set([...(v.terms && !d.terms.includes(v.terms) ? [v.terms] : []), ...d.terms])].map((t) => (
+                    <option key={t}>{t}</option>
+                  ))}
+                </Select>
+                {err("terms")}
+              </label>
+              <label className="grid gap-1">
+                <span className={labelClass}>Freight (₹)</span>
+                <Input inputMode="decimal" value={v.freight} onChange={(e) => set("freight", e.target.value)} placeholder="Blank when delivery is free" invalid={!!errors.freight} />
+                {err("freight")}
+              </label>
+            </div>
+            <label className="grid gap-1">
+              <span className={labelClass}>Remarks for the vendor</span>
+              <Input value={v.remarks} onChange={(e) => set("remarks", e.target.value)} placeholder="Optional" />
+            </label>
+          </div>
+        ) : (
+          <div className="grid gap-3 text-meta">
+            <dl className="grid grid-cols-2 gap-x-5 gap-y-2 rounded-control border border-line px-3 py-2.5">
+              {[
+                ["Vendor", v.vendor],
+                ["Deliver to", `${v.deliverTo}${v.deliveryDate ? ` · by ${v.deliveryDate}` : ""}`],
+                ["Payment terms", v.terms],
+                ["For", d.reqNo ?? d.item],
+              ].map(([l, x]) => (
+                <div key={l}>
+                  <dt className={eyebrowClass}>{l}</dt>
+                  <dd className="text-ink">{x}</dd>
+                </div>
+              ))}
             </dl>
-            <div className="px-3 pb-2.5 text-xs text-muted">The rate is the price on the item in Masters → Raw materials. An item with no price there is ordered at ₹0.</div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <label className="grid gap-1">
-              <span className={label}>Deliver to</span>
-              <Select value={v.deliverTo} onChange={(e) => set("deliverTo", e.target.value)} className="w-full">
-                {d.godowns.map((g) => (
-                  <option key={g}>{g}</option>
-                ))}
-              </Select>
-              {err("deliverTo")}
-            </label>
-            <label className="grid gap-1">
-              <span className={label}>Delivery date</span>
-              <Input type="date" value={v.deliveryDate} onChange={(e) => set("deliveryDate", e.target.value)} invalid={!!errors.deliveryDate} />
-              {err("deliveryDate") ?? (d.requiredBy ? <span className="text-xs text-muted">The requirement is needed by this date.</span> : null)}
-            </label>
-            <label className="grid gap-1">
-              <span className={label}>Payment terms</span>
-              <Select value={v.terms} onChange={(e) => set("terms", e.target.value)} className="w-full">
-                <option value="">Choose…</option>
-                {[...new Set([...(v.terms && !d.terms.includes(v.terms) ? [v.terms] : []), ...d.terms])].map((t) => (
-                  <option key={t}>{t}</option>
-                ))}
-              </Select>
-              {err("terms")}
-            </label>
-            <label className="grid gap-1">
-              <span className={label}>Freight (₹)</span>
-              <Input inputMode="decimal" value={v.freight} onChange={(e) => set("freight", e.target.value)} placeholder="Blank when delivery is free" invalid={!!errors.freight} />
-              {err("freight")}
-            </label>
-          </div>
-          <label className="grid gap-1">
-            <span className={label}>Remarks for the vendor</span>
-            <Input value={v.remarks} onChange={(e) => set("remarks", e.target.value)} placeholder="Optional" />
-          </label>
-        </div>
-      ) : (
-        <div className="grid gap-3 text-meta">
-          <dl className="grid grid-cols-2 gap-x-5 gap-y-2 rounded-control border border-line px-3 py-2.5">
-            {[
-              ["Vendor", v.vendor],
-              ["Deliver to", `${v.deliverTo}${v.deliveryDate ? ` · by ${v.deliveryDate}` : ""}`],
-              ["Payment terms", v.terms],
-              ["For", d.reqNo ?? d.item],
-            ].map(([l, x]) => (
-              <div key={l}>
-                <dt className="text-2xs tracking-[0.04em] text-muted uppercase">{l}</dt>
-                <dd className="text-ink">{x}</dd>
+            <div className="overflow-hidden rounded-control border border-line">
+              <div className={cx("grid grid-cols-[1fr_auto_auto_auto] gap-x-4 border-b border-divider bg-canvas px-3 py-2", eyebrowClass)}>
+                <span>Item</span>
+                <span className="text-right">Quantity</span>
+                <span className="text-right">Rate</span>
+                <span className="text-right">Total</span>
               </div>
-            ))}
-          </dl>
-          <div className="overflow-hidden rounded-control border border-line">
-            <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 border-b border-divider bg-canvas px-3 py-2 text-2xs tracking-[0.04em] text-muted uppercase">
-              <span>Item</span>
-              <span className="text-right">Quantity</span>
-              <span className="text-right">Rate</span>
-              <span className="text-right">Total</span>
-            </div>
-            <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 px-3 py-2">
-              <span className="text-ink">{d.item}</span>
-              <span className="text-right tabular-nums">
-                {count(v.qty)} {d.unit}
-              </span>
-              <span className="text-right tabular-nums">{d.money ? (d.hasPrice ? rupees(rate) : "₹0") : "—"}</span>
-              <span className="text-right font-semibold tabular-nums">{d.money ? rupees(amount + gst + freight) : "—"}</span>
-            </div>
-            {d.money ? (
-              <div className="border-t border-divider bg-canvas px-3 py-2 text-right text-body">
-                Amount {rupees(amount)} · GST {d.gstPercent}% {rupees(gst)}
-                {freight ? ` · freight ${rupees(freight)}` : ""}
+              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 px-3 py-2">
+                <span className="text-ink">{d.item}</span>
+                <span className="text-right tabular-nums">
+                  {count(v.qty)} {d.unit}
+                </span>
+                <span className="text-right tabular-nums">{d.money ? (d.hasPrice ? inrRate(rate) : "₹0") : "—"}</span>
+                <span className="text-right font-semibold tabular-nums">{d.money ? inr(amount + gst + freight) : "—"}</span>
               </div>
+              {d.money ? (
+                <div className="border-t border-divider bg-canvas px-3 py-2 text-right text-body">
+                  Amount {inr(amount)} · GST {d.gstPercent}% {inr(gst)}
+                  {freight ? ` · freight ${inr(freight)}` : ""}
+                </div>
+              ) : null}
+            </div>
+            {!d.hasPrice ? (
+              <Callout tone="warn" className="mb-0 block">
+                <div className="font-semibold text-warn-ink">No price on this item in Raw materials</div>
+                <div className="text-meta text-body">The PO is created at ₹0. Add the price on the item to order it at a rate next time.</div>
+              </Callout>
             ) : null}
+            <Callout tone="brand" className="mb-0 block text-brand-hover">
+              On save the PO number is made from the PO series. No approval — it is ready to send to the vendor and receive against.
+            </Callout>
           </div>
-          {!d.hasPrice ? (
-            <div className="rounded-control border border-warn/40 bg-warn-soft/60 px-3 py-2">
-              <div className="font-semibold text-warn">No price on this item in Raw materials</div>
-              <div className="text-xs text-body">The PO is created at ₹0. Add the price on the item to order it at a rate next time.</div>
-            </div>
-          ) : null}
-          <div className="rounded-control bg-brand-soft px-3 py-2 text-brand-hover">
-            On save the PO number is made from the PO series. No approval — it is ready to send to the vendor and receive against.
-          </div>
-        </div>
-      )}
-    </Modal>
+        )}
+      </DialogBody>
+      <DialogFooter left={`Step ${page + 1} of ${PAGES.length}`}>
+        {page === 0 ? <Button onClick={onClose}>Cancel</Button> : <Button onClick={() => setPage(page - 1)}>← Back</Button>}
+        {page < 2 ? (
+          <Button variant="primary" onClick={() => check(page) && setPage(page + 1)}>
+            Next · {PAGES[page + 1]}
+          </Button>
+        ) : (
+          <Button variant="primary" disabled={pending} onClick={submit}>
+            {pending ? "Creating…" : "Create PO"}
+          </Button>
+        )}
+      </DialogFooter>
+    </ErpDialog>
   );
 }
 
@@ -462,7 +443,7 @@ function PurchaseFlow({ data }: PanelProps) {
   const [creating, setCreating] = useState(false);
   const { run, pending } = useAct();
   return (
-    <section className="grid gap-3 rounded-card border border-line p-3.5">
+    <section className={cx("grid gap-3", insetClass)}>
       <div className="flex items-baseline justify-between gap-3">
         <SectionLabel>Purchase flow</SectionLabel>
         <span className="text-xs text-muted">{f.stage}</span>
@@ -479,10 +460,10 @@ function PurchaseFlow({ data }: PanelProps) {
       <dl className="grid grid-cols-2 gap-x-6 gap-y-2">
         {f.facts.map((x) => (
           <div key={x.l} className="min-w-0">
-            <dt className="text-xs font-medium tracking-[0.04em] text-muted uppercase">{x.l}</dt>
+            <dt className={labelClass}>{x.l}</dt>
             <dd className="mt-0.5 text-sm break-words text-ink">
               {x.href ? (
-                <a href={x.href} className="text-brand-hover underline-offset-2 hover:underline">
+                <a href={x.href} className={linkClass("brand")}>
                   {x.v}
                 </a>
               ) : (
@@ -498,7 +479,7 @@ function PurchaseFlow({ data }: PanelProps) {
             <span className="font-medium text-ink">
               Purchase order · <span className="font-mono">{f.po.name}</span>
             </span>
-            <a href={f.po.href} className="text-xs text-brand-hover hover:underline">
+            <a href={f.po.href} className={linkClass("brand", "text-xs")}>
               Open the PO
             </a>
           </div>
@@ -512,7 +493,7 @@ function PurchaseFlow({ data }: PanelProps) {
               ["From", f.po.fromQuotationManager ? "Quotation manager · no approval needed" : "Created on the requirement · no approval needed"],
             ].map(([l, v]) => (
               <div key={l} className="min-w-0">
-                <dt className="text-2xs tracking-[0.04em] text-muted uppercase">{l}</dt>
+                <dt className={eyebrowClass}>{l}</dt>
                 <dd className="break-words text-ink">{v}</dd>
               </div>
             ))}
@@ -567,11 +548,11 @@ type PoData = {
 function PurchaseOrder({ data }: PanelProps) {
   const p = data as PoData;
   return (
-    <section className="grid gap-3 rounded-card border border-line p-3.5">
+    <section className={cx("grid gap-3", insetClass)}>
       <div className="flex items-baseline justify-between gap-3">
         <SectionLabel>Purchase flow</SectionLabel>
         {p.print ? (
-          <a href={p.print} className="text-xs text-brand-hover hover:underline">
+          <a href={p.print} className={linkClass("brand", "text-xs")}>
             Open the printable PO
           </a>
         ) : null}
@@ -597,7 +578,7 @@ function PurchaseOrder({ data }: PanelProps) {
                 ["GST", l.gst, ""],
               ].map(([k, v, tone]) => (
                 <div key={k} className="min-w-0">
-                  <dt className="text-2xs text-muted">{k}</dt>
+                  <dt className={eyebrowClass}>{k}</dt>
                   <dd className={cx("truncate text-body tabular-nums", tone)} title={v}>
                     {v}
                   </dd>

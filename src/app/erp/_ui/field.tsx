@@ -2,7 +2,9 @@
 
 import { useContext, useId, useState } from "react";
 import type { FieldSpec } from "@/lib/erp/ui";
-import { controlClass, cx } from "@/components/ui/primitives";
+import { Badge, Button, controlClass, cx, type Tone } from "@/components/ui/primitives";
+import { nf } from "@/lib/erp/ui";
+import { labelClass, popoverClass } from "./look";
 import { DictateButton, joinDictation } from "@/components/ui/dictate";
 import { Icon } from "./icons";
 import { ErpVoice } from "./voice";
@@ -42,14 +44,8 @@ export function Field({
 }) {
   const opts = options ?? f.opts ?? [];
   const tag = f.conf ? (f.conf === "high" ? "AI · read" : f.conf === "check" ? "AI · check this" : "AI · not found") : f.t === "derived" ? "Calculated" : f.t === "suggest" ? "AI suggestion" : !f.req && !f.untagged ? "Optional" : "";
-  const tagTone =
-    f.conf === "check" || f.conf === "not found"
-      ? "bg-warn-soft text-warn-ink"
-      : f.conf || f.t === "suggest"
-        ? "bg-brand-soft text-brand-hover"
-        : f.t === "derived"
-          ? "bg-divider text-muted"
-          : "text-muted";
+  const tagTone: Tone =
+    f.conf === "check" || f.conf === "not found" ? "warn" : f.conf || f.t === "suggest" ? "brand" : f.t === "derived" ? "neutral" : "muted";
   /* A control with several buttons inside cannot sit in a <label>: every
      button would take the whole label as its name, and a click on the label
      text would press the first one. Those fields are a named group instead. */
@@ -57,9 +53,13 @@ export function Field({
   const Wrap = grouped ? "div" : "label";
   return (
     <Wrap className={cx("block min-w-0", f.wide && "col-span-full")} {...(grouped ? { role: "group", "aria-label": f.l } : {})}>
-      <span className="mb-1 flex items-center gap-1.5 text-xs font-medium tracking-[0.04em] text-muted uppercase">
+      <span className={cx("mb-1 flex items-center gap-1.5", labelClass)}>
         {f.l}
-        {tag ? <span className={cx("rounded-[3px] px-1.5 text-2xs font-medium tracking-normal normal-case", tagTone)}>{tag}</span> : null}
+        {tag ? (
+          <Badge tone={tagTone} className="tracking-normal normal-case">
+            {tag}
+          </Badge>
+        ) : null}
       </span>
       <Control f={f} value={value} error={!!error} opts={opts} derived={derived} onChange={onChange} onMic={onMic} onUseSuggestion={onUseSuggestion} />
       {error ? (
@@ -113,13 +113,9 @@ function Control({
       <span className={cx("flex min-h-8.5 items-center gap-2 rounded-control border border-dashed border-brand-softer bg-brand-soft/50 py-1 pr-1 pl-2.5 text-sm", has ? "text-brand-deep" : "text-muted")}>
         <span className="min-w-0 flex-1">{has ? derived : "Keep typing the description for a suggestion"}</span>
         {has ? (
-          <button
-            type="button"
-            onClick={() => onUseSuggestion?.(derived!)}
-            className="h-7 flex-none cursor-pointer rounded-control border border-brand bg-surface px-2.5 text-meta font-medium text-brand-hover hover:bg-brand-soft"
-          >
+          <Button type="button" size="sm" onClick={() => onUseSuggestion?.(derived!)} className="h-7 flex-none">
             Use it
-          </button>
+          </Button>
         ) : null}
       </span>
     );
@@ -148,6 +144,7 @@ function Control({
             type="button"
             onClick={onMic}
             title="Dictate — speak in any language"
+            aria-label="Dictate — speak in any language"
             className="absolute right-2 bottom-3 flex h-7 w-7 cursor-pointer items-center justify-center rounded-full border border-brand-softer bg-brand-soft text-brand-hover"
           >
             <Icon n="mic" />
@@ -183,7 +180,7 @@ function Control({
               onClick={() => onChange(on ? "" : o)}
               className={cx(
                 "h-8.5 cursor-pointer rounded-control border px-3 text-meta",
-                on ? "border-brand bg-brand-soft font-semibold text-brand-hover" : "border-line bg-surface text-body hover:bg-canvas",
+                on ? "border-brand bg-brand-soft font-medium text-brand-hover" : "border-line bg-surface text-body hover:bg-canvas",
               )}
             >
               {o}
@@ -252,7 +249,7 @@ function Combo({ value, opts, error, onChange, placeholder }: { value: string; o
     <span className="relative block">
       <input
         value={open ? q : value}
-        placeholder={value || placeholder || `Search ${opts.length.toLocaleString("en-IN")} options`}
+        placeholder={value || placeholder || `Search ${nf(opts.length)} options`}
         onFocus={() => {
           setOpen(true);
           setQ("");
@@ -268,7 +265,7 @@ function Combo({ value, opts, error, onChange, placeholder }: { value: string; o
         <Icon n="search" />
       </span>
       {open ? (
-        <span className="absolute top-10 right-0 left-0 z-50 block max-h-[300px] overflow-y-auto rounded-card border border-line bg-surface py-1 shadow-[0_8px_24px_rgba(22,22,22,0.12)]">
+        <span className={cx(popoverClass, "absolute top-10 right-0 left-0 z-50 block max-h-[300px] overflow-y-auto py-1")}>
           {m.slice(0, 8).map((x) => (
             <button
               type="button"
@@ -285,7 +282,7 @@ function Combo({ value, opts, error, onChange, placeholder }: { value: string; o
             </button>
           ))}
           {m.length > 8 ? (
-            <span className="block border-t border-divider px-3 py-2 text-xs text-muted">{(m.length - 8).toLocaleString("en-IN")} more — keep typing</span>
+            <span className="block border-t border-divider px-3 py-2 text-xs text-muted">{nf(m.length - 8)} more — keep typing</span>
           ) : null}
           {m.length === 0 ? <span className="block px-3 py-2.5 text-meta text-muted">Nothing matches “{q}”</span> : null}
         </span>
@@ -357,7 +354,7 @@ function ScanField({ value, opts, error, onChange }: { value: string; opts: stri
         <Icon n="scan" />
       </span>
       {open && opts.length ? (
-        <span id={listId} role="listbox" className="absolute top-10 right-0 left-0 z-50 block max-h-[300px] overflow-y-auto rounded-card border border-line bg-surface py-1 shadow-[0_8px_24px_rgba(22,22,22,0.12)]">
+        <span id={listId} role="listbox" className={cx(popoverClass, "absolute top-10 right-0 left-0 z-50 block max-h-[300px] overflow-y-auto py-1")}>
           {shown.map((x, i) => (
             <button
               type="button"
@@ -375,7 +372,7 @@ function ScanField({ value, opts, error, onChange }: { value: string; opts: stri
             </button>
           ))}
           {m.length > 8 ? (
-            <span className="block border-t border-divider px-3 py-2 text-xs text-muted">{(m.length - 8).toLocaleString("en-IN")} more — keep typing</span>
+            <span className="block border-t border-divider px-3 py-2 text-xs text-muted">{nf(m.length - 8)} more — keep typing</span>
           ) : null}
           {m.length === 0 ? <span className="block px-3 py-2.5 text-meta text-muted">No lot with stock here matches — what you scanned is still kept</span> : null}
         </span>
@@ -448,7 +445,7 @@ function PhotoPicker({
           <img
             src={`/api/attachments/${value}`}
             alt=""
-            className="h-7 w-7 shrink-0 rounded-sm border border-success/30 bg-surface object-cover"
+            className="h-7 w-7 shrink-0 rounded-control border border-success/30 bg-surface object-cover"
             onError={(e) => {
               e.currentTarget.style.display = "none";
             }}

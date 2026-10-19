@@ -9,7 +9,7 @@ import { CollapsibleNav, type NavRowGroup, type NavRowItem } from "@/components/
 import { FeedbackButton } from "@/components/shell/feedback-button";
 import { Icon as ShellIcon } from "@/components/shell/icons";
 import { NotificationBell } from "@/components/shell/notification-bell";
-import { cx } from "@/components/ui/primitives";
+import { Button, SectionLabel, cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
 import { ToastProvider, useToast } from "@/components/ui/toast";
 import { erpLocateWorkingGodown, erpSetWorkingGodown, erpStartViewAs, erpStopViewAs, type ErpLocateResult } from "@/lib/actions/erp";
@@ -20,9 +20,12 @@ import type { ErpViewingAs } from "@/lib/erp/access";
 import type { PreviewTargets } from "@/lib/services/erp-designation-service";
 import type { Notification } from "@/db/schema";
 import type { AppDefinition } from "@/lib/apps";
+import { erpLink } from "@/lib/erp/registry";
+import { nf } from "@/lib/erp/ui";
 import { GodownPicker } from "./godown-picker";
 import { Icon } from "./icons";
 import { ErpUiProvider } from "./erp-ui";
+import { IconButton, eyebrowClass } from "./look";
 
 /* ---------------------------------------------------------------------------
  * The ERP's shell, and it is the CRM's shell.
@@ -226,13 +229,9 @@ export function ErpShell({
                     Feedback button and the account chip are drawn as icons. */}
                 <FeedbackButton compact className="xl:hidden" />
                 <FeedbackButton className="hidden xl:flex" />
-                <button
-                  onClick={() => setShortcutsOpen(true)}
-                  title="Keyboard shortcuts"
-                  className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-control border border-line bg-surface text-meta font-medium text-muted hover:bg-canvas hover:text-body"
-                >
+                <IconButton label="Keyboard shortcuts" bordered onClick={() => setShortcutsOpen(true)} className="text-meta font-medium">
                   ?
-                </button>
+                </IconButton>
                 <NotificationBell notifications={notifications} />
                 <span className="mx-1 h-6 w-px bg-divider" />
                 <AccountMenu user={user} hat={hat} variant="header" nameFromXl />
@@ -256,7 +255,7 @@ export function ErpShell({
                 renderIcon={renderIcon}
                 /* Alerts are the one queue that is red whatever it counts: an
                    open alert is something the ERP could not explain. */
-                badgeToneFor={(item) => (item.href === "/erp/alerts" ? "danger" : "warn")}
+                badgeToneFor={(item) => (item.href === erpLink("alerts") ? "danger" : "warn")}
                 showSizes={false}
               />
               {/* The account is in the header, top right; a second copy of it
@@ -310,7 +309,7 @@ function PreviewAs({ preview }: { preview: { targets: PreviewTargets; current: E
   };
   return (
     <div className="flex-none border-t border-divider px-3 pt-2.5 pb-2">
-      <div className="mb-1.5 text-2xs font-medium tracking-[0.04em] text-muted uppercase">View the ERP as</div>
+      <SectionLabel className="mb-1.5">View the ERP as</SectionLabel>
       <select
         value={value}
         onChange={(e) => pick(e.target.value)}
@@ -360,8 +359,9 @@ function PreviewBanner({ current }: { current: ErpViewingAs }) {
         {current.kind === "designation" ? ", and lists that belong to a person show yours" : ""}.
       </span>
       <span className="flex-1" />
-      <button
+      <Button
         type="button"
+        size="sm"
         onClick={() =>
           void erpStopViewAs().then((r) => {
             if (!r.ok) return push(r.error, "error");
@@ -369,10 +369,9 @@ function PreviewBanner({ current }: { current: ErpViewingAs }) {
             router.refresh();
           })
         }
-        className="cursor-pointer rounded-control border border-brand bg-surface px-2.5 py-1 text-meta font-medium text-brand-hover hover:bg-canvas"
       >
         Back to my ERP
-      </button>
+      </Button>
     </div>
   );
 }
@@ -507,13 +506,13 @@ function WorkingAt({
   }
   return (
     <div className="flex h-7.5 items-center gap-1.5 rounded-control border border-line pr-1 pl-2">
-      <span className="hidden text-2xs font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase xl:inline">Working at</span>
+      <span className={cx(eyebrowClass, "hidden whitespace-nowrap xl:inline")}>Working at</span>
       <GodownPicker
         look="chip"
         value={working?.id ?? ""}
         label={working?.name ?? "Choose one"}
         items={godowns.map((g) => ({ v: g.id, l: g.name }))}
-        placeholder={`Search ${godowns.length} godowns you are assigned to`}
+        placeholder={`Search ${nf(godowns.length)} godowns you are assigned to`}
         onPick={(id) => {
           if (!id) return;
           remember();
