@@ -16,6 +16,7 @@ import type { Result } from "@/lib/result";
 import { Field, PhotoTile } from "./field";
 import { checkField, optsFor } from "./form-check";
 import { GrnDialog } from "./grn-dialog";
+import { ShareDialog } from "./share-dialog";
 import { CardGrid } from "@/components/ui/card-grid";
 import { LineTable } from "./line-table";
 import { ErpVoice } from "./voice";
@@ -72,6 +73,7 @@ export function ErpUiProvider({
   const [form, setForm] = useState<FormSpec | null>(null);
   const [formKey, setFormKey] = useState(0);
   const [resultDialog, setResultDialog] = useState<{ screen: string; d: NonNullable<ToolResult["dialog"]> } | null>(null);
+  const [share, setShare] = useState<{ screen: string; a: ActionSpec; recordId: string; after?: () => void; key: number } | null>(null);
 
   const toast = useCallback((t: string, tone: "info" | "error" = "info") => push(t, tone), [push]);
 
@@ -108,6 +110,10 @@ export function ErpUiProvider({
   const act = useCallback(
     (screen: string, a: ActionSpec, recordId: string, after?: () => void) => {
       if (a.why) return;
+      if (a.share) {
+        setShare({ screen, a, recordId, after, key: Date.now() });
+        return;
+      }
       if (a.href) {
         router.push(a.href);
         return;
@@ -223,6 +229,21 @@ export function ErpUiProvider({
               router.refresh();
             }}
             confirm={confirm}
+          />
+        ) : null}
+        {share?.a.share ? (
+          <ShareDialog
+            key={share.key}
+            screen={share.screen}
+            actionId={share.a.id}
+            recordId={share.recordId}
+            spec={share.a.share}
+            onClose={() => setShare(null)}
+            onDone={(msg) => {
+              toast(msg);
+              router.refresh();
+              share.after?.();
+            }}
           />
         ) : null}
         {promptState ? (

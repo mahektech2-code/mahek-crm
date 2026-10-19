@@ -15,6 +15,7 @@ import {
   users,
 } from "@/db/schema";
 import { getConfig } from "@/lib/config/store";
+import { calendarDate } from "@/lib/business-date";
 import { err, fieldErr, ok, okVoid, type Result } from "@/lib/result";
 import type { ErpContext } from "../access";
 import { refValues } from "../refs";
@@ -22,7 +23,7 @@ import { categoriesFor, categoriesForDepartment, requirementDepartmentsFor, requ
 import { erpLink } from "../registry";
 import { erpPoHref } from "../trace-links";
 import { erpAudit, erpId, nextNumber, num, paise, rupeesField, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
-import type { ActionSpec, ColSpec, FormSpec, ListRow, ToolResult } from "../ui";
+import type { ActionSpec, ColSpec, FormSpec, ListRow } from "../ui";
 import { fd, inr, inrRate, nf } from "../ui";
 import {
   FLOW_STEPS,
@@ -35,7 +36,6 @@ import {
   poName,
   poRouteOf,
   poLineFigures,
-  poMessage,
   poStatusAfterReceipt,
   poTotals,
   purchaseUnit,
@@ -1350,6 +1350,8 @@ const purchaseOrders: ScreenModule = {
   async load(ctx) {
     const [pos, form] = await Promise.all([purchaseOrderViews(), purchaseOrderForm(ctx)]);
     const money = ctx.powers.has("viewPurchaseMoney");
+    /* Imported here: po-share reads this file's PO views. */
+    const shareSpecs = await (await import("../po-share")).poShareSpecs(pos, money);
     const approver = ctx.powers.has("approvePurchaseOrder");
     const canReceive = ctx.screens.has("inward");
     const day = today();
@@ -1364,6 +1366,7 @@ const purchaseOrders: ScreenModule = {
       { k: "terms", l: "Payment terms", t: "t" },
       { k: "received", l: "Received", t: "t" },
       { k: "status", l: "Status", t: "s" },
+      { k: "shared", l: "Last shared", t: "t" },
       { k: "f", l: "Flags", t: "f" },
     ];
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
@@ -1391,19 +1394,16 @@ const purchaseOrders: ScreenModule = {
         });
       }
       if (s === "Pending approval" || (s === "Approved" && !anyReceived)) actions.push({ id: "edit", l: "Edit", loadsForm: true, why: money ? "" : MONEY_WHY });
-      if (s === "Approved" || s === "Sent" || s === "Partly received") {
+      if (s === "Approved" || s === "Sent" || s === "Partly received" || s === "Received") {
         actions.push({
-          id: "send",
-          l: s === "Approved" ? "Send to vendor" : "Send again",
+          id: "share",
+          l: "Share…",
           primary: s === "Approved",
-          prompt: {
-            title: `Send ${poName(p.po)} to ${p.supplier}`,
-            sub: "Records how it went. WhatsApp and email open with the PO written out; a printed copy opens the PO to print.",
-            submit: "Send",
-            fields: [{ k: "via", l: "Send by", t: "select", req: true, opts: ["WhatsApp", "Email", "Printed copy", "Phone"] }],
-            init: { via: p.supplierPhone ? "WhatsApp" : p.supplierEmail ? "Email" : "Printed copy" },
-          },
+          why: money ? "" : "The PO carries its rates, and purchase money is not on your account",
+          share: shareSpecs.get(p.po.id),
         });
+      }
+      if (s === "Approved" || s === "Sent" || s === "Partly received") {
         actions.push({ id: "receive", l: "Receive goods", primary: s !== "Approved", loadsForm: true, why: canReceive ? "" : "Goods receipt is not on your account" });
       }
       if (s === "Partly received")
@@ -1419,7 +1419,7 @@ const purchaseOrders: ScreenModule = {
           why: anyReceived ? "Goods were received against it — close it short instead" : "",
           prompt: { title: `Cancel ${poName(p.po)}`, sub: "Its requirements return to Ready for PO, keeping their vendor.", submit: "Cancel PO", fields: [{ k: "reason", l: "Reason", t: "area", req: true }] },
         });
-      if (p.po.approvedAt && s !== "Rejected") actions.push({ id: "print", l: "Print PO", href: erpPoHref(p.po.id) });
+      if (p.po.approvedAt && s !== "Rejected") actions.push({ id: "print", l: "Print / PDF", href: erpPoHref(p.po.id) });
       const flags: string[] = [];
       if (s === "Pending approval") flags.push("awaitingApproval");
       if (RECEIVABLE_PO.includes(s) && p.po.deliveryDate < day) flags.push("deliveryLate");
@@ -1442,6 +1442,7 @@ const purchaseOrders: ScreenModule = {
                   ? `${doneLines} of ${p.lines.length} items in full`
                   : "—",
             status: s,
+            shared: shareSpecs.get(p.po.id)?.last ?? (p.po.sentVia ? `${p.po.sentVia}${p.po.sentAt ? ` · ${fd(calendarDate(p.po.sentAt))}` : ""}` : null),
           },
           hiddenKeys,
         ),
@@ -1461,6 +1462,7 @@ const purchaseOrders: ScreenModule = {
     return {
       spec: {
         screen: "purchaseOrders",
+        rowMenu: ["share", "print", "receive", "edit", "close", "cancel"],
         cols,
         hidden,
         groups: ["status"],
@@ -1520,52 +1522,8 @@ const purchaseOrders: ScreenModule = {
       await erpAudit(ctx, "erp.purchaseOrder.sendBack", "erp_purchase_order", id, null, { reason });
       return okVoid(`${poName(po)} sent back · its requirements are ready for a new PO`);
     },
-    async send(ctx, id, values) {
-      const via = text(values.via);
-      if (!via || !["WhatsApp", "Email", "Printed copy", "Phone"].includes(via)) return fieldErr("via", "How was it sent?");
-      const [p] = await purchaseOrderViews({ ids: [id] });
-      if (!p) return err("That PO no longer exists.", "not_found");
-      if (!["Approved", "Sent", "Partly received"].includes(p.po.status))
-        return err(p.po.status === "Pending approval" ? "A PO is approved before it goes to the vendor." : `${poName(p.po)} is ${p.po.status}.`, "rule_violation");
-      await db
-        .update(erpPurchaseOrders)
-        .set({ status: p.po.status === "Approved" ? "Sent" : p.po.status, sentAt: new Date(), sentById: ctx.user.id, sentVia: via, updatedAt: new Date(), updatedById: ctx.user.id })
-        .where(eq(erpPurchaseOrders.id, id));
-      await erpAudit(ctx, "erp.purchaseOrder.send", "erp_purchase_order", id, null, { via });
-      const message = poMessage({
-        number: p.po.poNumber,
-        date: fd(p.po.poDate) + " " + p.po.poDate.slice(0, 4),
-        vendor: p.supplier,
-        deliverTo: p.godown,
-        deliveryDate: fd(p.po.deliveryDate) + " " + p.po.deliveryDate.slice(0, 4),
-        paymentTerms: p.po.paymentTerms,
-        freightPaise: p.po.freightPaise,
-        remarks: p.po.remarks,
-        lines: p.lines.map((l) => ({ item: l.item, quantity: l.quantity, unit: l.unit, ratePaise: l.ratePaise, gstBp: l.gstBp })),
-        company: "Mahek Marketing India",
-      });
-      const digits = (p.supplierPhone ?? "").replace(/\D/g, "");
-      const open =
-        via === "WhatsApp" && digits.length >= 10
-          ? { label: "Open WhatsApp", href: `https://wa.me/91${digits.slice(-10)}?text=${encodeURIComponent(message)}` }
-          : via === "Email" && p.supplierEmail
-            ? { label: "Open email", href: `mailto:${p.supplierEmail}?subject=${encodeURIComponent(`Purchase order ${poName(p.po)}`)}&body=${encodeURIComponent(message)}` }
-            : { label: "Open the PO to print", href: erpPoHref(p.po.id) };
-      const data: ToolResult = {
-        dialog: {
-          title: `${poName(p.po)} · sent by ${via}`,
-          sub:
-            via === "WhatsApp" && digits.length < 10
-              ? `${p.supplier} has no WhatsApp or mobile number on the supplier master — copy the PO and send it from your phone.`
-              : via === "Email" && !p.supplierEmail
-                ? `${p.supplier} has no email on the supplier master — copy the PO and send it yourself.`
-                : "The PO, written out for the vendor.",
-          text: message,
-          copy: true,
-          open,
-        },
-      };
-      return ok(data, `${poName(p.po)} marked sent by ${via}`);
+    async share(ctx, id, values) {
+      return (await import("../po-share")).sharePo(ctx, id, values ?? {});
     },
     async close(ctx, id, values) {
       const reason = text(values.reason);

@@ -2150,12 +2150,28 @@ because a status somebody types can say Received with nothing in the gate.
 
 **A PO is raised FOR APPROVAL and approved by somebody else.**
 `approvePurchaseOrder` approves or sends back; whoever raised a PO cannot
-approve it unless they are an ERP administrator. Only an approved PO is sent
-(WhatsApp, email, a printed copy at `/erp/po/<id>`, or phone — the action
-answers with the PO written out, which is why a record action may now answer
-with a dialog like a tool does) and only an approved PO is received against.
+approve it unless they are an ERP administrator. Only an approved PO is shared
+(see below) or printed at `/erp/po/<id>`, and only an approved PO is received
+against.
 Sent back or cancelled, its requirements return to Ready for PO with their
 vendor; a PO with goods against it is CLOSED SHORT with a reason instead.
+
+**A PO IS SHARED FROM ITS ⋯ MENU — WhatsApp, email or a copied link — and every
+person it reaches is a row.** "Share…" (an action carrying a `ShareSpec`, drawn
+by `_ui/share-dialog.tsx`) replaced "Send to vendor", which only recorded how a
+PO went. It offers the vendor (ticked) and the receiving godown from their own
+records, plus anybody typed in, checked by `readShare` (`engines/po-share.ts`)
+— a number WhatsApp cannot reach is refused by name, never dropped.
+`sharePo` (`lib/erp/po-share.ts`) sends WhatsApp through Wati only where the
+founder's switch, a key and `erp.purchase.poWatiTemplate` (an approved template
+asking only for `PO_WATI_PARAMS`) all hold, and otherwise hands back a wa.me
+link per person; email goes from MahekOne with the PDF attached
+(`renderPoPdf`, pdf-lib, the printed PO's figures) where a mail provider is
+set, otherwise a mailto link. Every message carries `/po/<share_token>`, the
+PDF with no sign-in, minted on the first share and answering only while the PO
+is one a vendor may act on. `erp_po_shares` keeps each person, address,
+message and outcome (Wati ticks via the `eposh_` id); the first share moves an
+Approved PO to Sent. The PDF has rates, so sharing needs `viewPurchaseMoney`.
 
 **What has been received against a PO line is READ, never stored**
 (`receivedByLine`: inward lines plus hand-entered register lots), and

@@ -19,6 +19,7 @@ import {
   appSettings,
   erpInward,
   erpPoLines,
+  erpPoShares,
   erpPrCosts,
   erpPurchaseOrders,
   erpPurchases,
@@ -36,6 +37,7 @@ import { setTestUser } from "@/lib/auth";
 import { erpContext } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
 import { purchaseStage } from "@/lib/erp/screens/purchase";
+import { publicPoPdf } from "@/lib/erp/po-share";
 import { rmLots, rmLotStock } from "@/lib/erp/stock";
 import { erpNavCounts } from "@/lib/erp/counts";
 import { invalidateConfig } from "@/lib/config/store";
@@ -43,7 +45,7 @@ import { approvedPo } from "@/lib/erp/po-fixture";
 import { applyQuoteOps } from "@/lib/erp/quotes";
 import { lookupRequirementPo } from "@/lib/erp/screens/requirement-po";
 import type { GrnItem } from "@/lib/erp/engines/grn-pick";
-import type { ToolResult } from "@/lib/erp/ui";
+import type { ShareOutcome } from "@/lib/erp/ui";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -266,17 +268,46 @@ describe("the purchase flow up to the PO", () => {
     assert.equal(line.ratePaise, 0);
   });
 
-  test("sending the PO records how, and hands back the PO written out for the vendor", async () => {
-    await db.execute(sql`insert into erp_user_powers (user_id, power) values (${clerk.id}, 'viewPurchaseMoney') on conflict do nothing`);
+  test("sharing the PO: refused without purchase money, then sent, recorded, and its PDF opens from the link", async () => {
     const [po] = await db.select().from(erpPurchaseOrders).where(eq(erpPurchaseOrders.poNumber, 1));
-    const r = await mod("purchaseOrders").actions!.send(await as(clerk), po.id, { via: "WhatsApp" });
+    const refused = await mod("purchaseOrders").actions!.share(await as(clerk), po.id, { channel: "whatsapp", to: '["vendor"]', message: "Hello" });
+    assert.equal(refused.ok, false, "the PDF carries rates");
+    await db.execute(sql`insert into erp_user_powers (user_id, power) values (${clerk.id}, 'viewPurchaseMoney') on conflict do nothing`);
+    const row = (await mod("purchaseOrders").load(await as(clerk))).rows.find((r) => r.id === po.id)!;
+    const share = row.actions!.find((a) => a.id === "share")!;
+    assert.ok(share.share && !share.why);
+    assert.deepEqual(share.share.recipients.map((r) => [r.key, r.checked]), [["vendor", true], ["godown", false]]);
+    assert.match(share.share.message, /purchase order PO-1 for/);
+    process.env.APP_URL = "https://one.test";
+    const r = await mod("purchaseOrders").actions!.share(await as(clerk), po.id, { channel: "whatsapp", to: '["vendor"]', extra: "97000 11182", message: "Please confirm PO-1." });
     assert.ok(r.ok, JSON.stringify(r));
-    const d = (r.data as ToolResult).dialog!;
-    assert.match(d.text!, /PURCHASE ORDER PO-1/);
-    assert.match(d.open!.href, /^https:\/\/wa\.me\/919820012345\?text=/);
+    const out = r.data as ShareOutcome;
+    assert.match(out.link!, /^https:\/\/one\.test\/po\/[0-9a-f]{20}$/);
+    assert.match(out.text, /Please confirm PO-1\.\n\nPurchase order \(PDF\): https:\/\/one\.test\/po\//);
+    /* No Wati template is named, so each opens on the sender's own WhatsApp. */
+    assert.deepEqual(out.results.map((x) => [x.status, x.href?.split("?")[0]]), [
+      ["open", "https://wa.me/919820012345"],
+      ["open", "https://wa.me/919700011182"],
+    ]);
+    const rows = await db.select().from(erpPoShares).where(eq(erpPoShares.poId, po.id));
+    assert.deepEqual(rows.map((x) => [x.channel, x.status, x.address]).sort(), [
+      ["whatsapp", "by_hand", "919700011182"],
+      ["whatsapp", "by_hand", "919820012345"],
+    ]);
     const [after] = await db.select().from(erpPurchaseOrders).where(eq(erpPurchaseOrders.poNumber, 1));
     assert.equal(after.status, "Sent");
     assert.equal(after.sentVia, "WhatsApp");
+    const pdf = await publicPoPdf(out.link!.split("/").pop()!);
+    assert.ok(pdf && pdf.filename === "PO-1.pdf" && pdf.bytes.length > 1000);
+    assert.equal(await publicPoPdf("0".repeat(20)), null, "a token that names nothing opens nothing");
+    /* Email with no mail provider: opened in the mail app, the link in the body. The same link again. */
+    const e = await mod("purchaseOrders").actions!.share(await as(clerk), po.id, { channel: "email", to: "[]", extra: "buyer@vendor.test", message: "PO attached." });
+    assert.ok(e.ok, JSON.stringify(e));
+    assert.equal((e.data as ShareOutcome).link, out.link);
+    assert.match((e.data as ShareOutcome).results[0].href!, /^mailto:buyer@vendor\.test\?subject=/);
+    const listed = (await mod("purchaseOrders").load(await as(clerk))).rows.find((x) => x.id === po.id)!;
+    assert.match(String(listed.v.shared), /^Email to buyer@vendor\.test · /);
+    delete process.env.APP_URL;
     const { spec } = await mod("inward").load(await as(admin));
     const po1 = spec.newForm!.header.find((f) => f.k === "po")!;
     assert.ok(po1.typed, "the GRN's PO number is typed");

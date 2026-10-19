@@ -213,6 +213,43 @@ export type ActionSpec = {
   loadsForm?: boolean;
   /** Navigates to a screen (e.g. "Open record"). */
   href?: string;
+  /**
+   * Opens the Share window (`_ui/share-dialog.tsx`): how it goes, who it goes
+   * to, the message. Its Send runs this action with `channel`, `to` (the ticked
+   * keys, as JSON), `extra` (typed numbers or emails) and `message`, and the
+   * action answers with a `ShareOutcome`.
+   */
+  share?: ShareSpec;
+};
+
+/** What the Share window offers for one record. */
+export type ShareSpec = {
+  title: string;
+  sub?: string;
+  /** The ways it may go, first one picked; each with a line saying what happens. */
+  channels: { k: "whatsapp" | "email" | "link"; l: string; d: string }[];
+  /** Who it may go to, from the record's own parties. */
+  recipients: { key: string; name: string; tag?: string; whatsapp: string | null; email: string | null; checked: boolean }[];
+  message: string;
+  /** What travels with the message ("PO-411.pdf"), named under it. */
+  attachment?: string;
+  /** "WhatsApp to Vendor B · 18 Oct by Deepa". */
+  last?: string;
+};
+
+/** What a share action answers with: one row per person, and the link. */
+export type ShareOutcome = {
+  link: string | null;
+  /** The message as it went, link included — for Copy. */
+  text: string;
+  results: {
+    recipient: string;
+    address: string | null;
+    /** sent: Wati or the mail provider took it. open: to be sent from the person's own app, through `href`. failed: `why`. */
+    status: "sent" | "open" | "failed";
+    href?: string;
+    why?: string;
+  }[];
 };
 
 /**

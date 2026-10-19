@@ -1919,6 +1919,13 @@
       "when": 1792700000000,
       "tag": "0276_erp_manual_adjustments",
       "breakpoints": true
+    },
+    {
+      "idx": 274,
+      "version": "7",
+      "when": 1792800000000,
+      "tag": "0277_erp_po_shares",
+      "breakpoints": true
     }
   ]
 }

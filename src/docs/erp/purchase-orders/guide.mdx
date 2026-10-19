@@ -46,18 +46,55 @@ A PO is ready to send and receive against the moment it is created or linked. PO
 
 **Edit** corrects a PO created here while nothing has been received against it (purchase money needed).
 
-## Sending it to the vendor
+## Sharing it with the vendor
+
+Every PO row ends in a **⋯** menu. **Share…** is the first item, and it is on the PO's own record too.
+
+<Wireframe url="/erp/purchaseOrders" caption="Share… on a PO: how, who, and the message">
+  <WfBar>
+    <WfTitle sub="Vendor A · delivery by 22 Oct">Share PO-91</WfTitle>
+  </WfBar>
+  <WfBar>
+    <WfCard title="Send by">
+      <WfButton primary>WhatsApp</WfButton>
+      <WfButton>Email</WfButton>
+      <WfButton>Copy link</WfButton>
+    </WfCard>
+    <WfCard title="Send to">
+      <WfText>☑ <b>Vendor A</b> · WhatsApp from the supplier record</WfText>
+      <WfText>☐ <b>Godown A</b> · so the gate knows what to expect</WfText>
+      <WfInput placeholder="+ Someone else: mobile numbers or emails" wide />
+    </WfCard>
+  </WfBar>
+  <WfBar>
+    <WfCard title="Message">
+      <WfText>Dear Vendor A, please find our purchase order PO-91 …</WfText>
+      <WfText muted>PO-91.pdf · the link to the PDF is added under the message</WfText>
+      <WfButton primary>Send to 1 person</WfButton>
+    </WfCard>
+  </WfBar>
+</Wireframe>
 
 <Steps>
-<Step title="Send to vendor">
-Choose how: **WhatsApp**, **Email**, **Printed copy** or **Phone**. WhatsApp is offered first when the vendor has a mobile number.
+<Step title="Choose how">
+**WhatsApp**, **Email** or **Copy link**. Each says what will happen — sent through Wati, or opened on your own WhatsApp with the message written; sent from MahekOne with the PDF attached, or opened in your mail app.
 </Step>
-<Step title="Send it">
-The PO is marked Sent, and a dialog shows the PO written out — every item, quantity, rate, GST, the totals, where to deliver, by when, payment terms, and "Please quote PO-91 on your invoice and delivery challan." **Open WhatsApp** or **Open email** starts the message with the text in it; **Copy** copies it.
+<Step title="Choose who">
+The vendor is ticked, with the number and email from Masters → Suppliers. The godown the goods go to is offered. Type anybody else under **+ Someone else** — mobile numbers for WhatsApp, emails for email, separated by commas. Somebody with no number or email on record cannot be ticked, and says so.
+</Step>
+<Step title="Check the message and send">
+The message is written out from the PO — the items, the total, where and by when. Change it if you like. The link to the PO's PDF is added under it.
+</Step>
+<Step title="See what happened">
+The window then lists each person: **Sent**, or **Open WhatsApp** / **Open email** to send it from your own app, or why it failed. **Copy link** and **Copy message** are there too.
 </Step>
 </Steps>
 
-**Print PO** opens the PO as the vendor receives it, ready to print or save as a PDF from the browser. Printing needs the purchase-money power because the rates are on the paper. **Send again** records another send.
+<Callout tone="info" title="The link opens the PDF without signing in">
+Anybody with the link can open the PO as a PDF, so share it only with the people it is for. It stops working if the PO is cancelled.
+</Callout>
+
+The first share moves an Approved PO to **Sent**, and the list's **Last shared** column says how, to whom, when and by whom. Sharing needs the purchase-money power, because the PDF carries the rates. **Print / PDF** opens the PO to print or save from the browser.
 
 ## Receiving, closing and cancelling
 

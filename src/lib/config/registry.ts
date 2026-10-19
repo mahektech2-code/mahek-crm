@@ -4514,6 +4514,15 @@ export const SETTINGS = [
     max: 50,
   },
   {
+    key: "erp.purchase.poWatiTemplate",
+    type: "text",
+    category: "erp",
+    label: "Purchase orders · Wati template",
+    description:
+      "The name of the APPROVED Wati template a PO goes out as when it is shared on WhatsApp. It may use {{name}} (who it is sent to), {{vendor}}, {{po}}, {{items}}, {{total}}, {{deliver_to}}, {{delivery}}, {{link}} (the PO's PDF) and {{message}} (what the sender wrote, link included). A template asking for anything else is not used. Blank, or WhatsApp switched off on the Founder Dashboard: WhatsApp opens on the sender's own phone with the message written.",
+    default: "",
+  },
+  {
     key: "erp.purchase.poGstPercent",
     type: "integer",
     category: "erp",
@@ -6334,6 +6343,7 @@ export type Config = {
   "erp.orders.live": boolean;
   "erp.purchase.ownVehicleRatePerKmPaise": number;
   "erp.purchase.receiptTolerancePercent": number;
+  "erp.purchase.poWatiTemplate": string;
   "erp.purchase.poGstPercent": number;
   "erp.returns.ownerApprovalPaise": number;
   "erp.stockCheck.onRequirement": boolean;

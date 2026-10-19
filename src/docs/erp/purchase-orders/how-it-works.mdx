@@ -6,7 +6,7 @@ A purchase order is the point where a decision about money is made by somebody o
 flowchart TD
   R["Raised from ready requirements<br/>Pending approval"] -- "Approve<br/>(not your own)" --> A["Approved<br/>requirements: Order Placed"]
   R -- "Send back with a reason" --> X["Rejected<br/>requirements back to Ready for PO"]
-  A -- "Send to vendor<br/>WhatsApp, email, print, phone" --> S["Sent"]
+  A -- "Share<br/>WhatsApp, email, link" --> S["Sent"]
   A -- "goods received<br/>without being marked sent" --> PR
   S -- "some goods received" --> PR["Partly received"]
   PR -- "all lines in full" --> RC["Received<br/>requirements: Received"]
@@ -49,13 +49,27 @@ A PO carries several materials. Where an ERP administrator has named who approve
 
 Approving moves the PO's requirements to **Order Placed**. Sending back marks the PO Rejected and returns its requirements to Ready for PO with their vendor, so they can be raised again with the correction.
 
-## Sending
+## Sharing
 
-<Rule title="Only an approved PO goes to the vendor">
-Send is offered on Approved, Sent and Partly received POs. A Pending approval PO is refused: "A PO is approved before it goes to the vendor."
+<Rule title="Only an approved PO goes to anybody">
+Share is offered on Approved, Sent, Partly received and Received POs. A Pending approval PO is refused: "A PO is approved before it goes to anybody."
 </Rule>
 
-Sending records **how** (WhatsApp, Email, Printed copy, Phone), **who** and **when**, moves an Approved PO to **Sent**, and hands back the PO written out for the vendor — with a WhatsApp or email link pre-filled where the vendor master has a number or address, and a plain "copy the PO and send it yourself" where it does not. The printed PO at its own address is for approved POs only and needs the purchase-money power.
+<Rule title="The PDF carries the rates, so sharing needs purchase money">
+The **View purchase money** power, the same one the printed PO needs. Without it the Share button is drawn disabled and says why.
+</Rule>
+
+A share goes one of three ways:
+
+| Way | Where it can be sent for you | Otherwise |
+|---|---|---|
+| WhatsApp | Through Wati, when the founder's WhatsApp switch is on, a key is set, and <Setting k="erp.purchase.poWatiTemplate" /> names an **approved** template asking only for what a PO can fill | Opens on the sender's own WhatsApp with the message written, one button per person |
+| Email | From MahekOne with the PO's PDF attached, when a mail provider is set up | Opens in the sender's mail app with the message and the link |
+| Copy link | — | The link and the message, to paste anywhere |
+
+Every message carries the PO's link: a PDF of the PO that opens **without signing in**, so a vendor can open it from a phone. The link is made the first time the PO is shared and stays the same after that. It stops answering when the PO is cancelled, sent back or closed.
+
+Each person a PO goes to is recorded — how, the number or email, the message, and what became of it (sent, sent from the person's own app, failed, copied; Wati's delivered and read ticks follow). The first share moves an Approved PO to **Sent**; the list's **Last shared** column is the newest share. A person typed in is checked before anything goes: a number WhatsApp cannot reach or an address that is not an email is refused by name, never dropped. One share reaches at most ten people.
 
 ## Receiving
 
@@ -89,11 +103,11 @@ POs awaiting approval ("you approve these" for an approver), POs to send to the 
 
 ## Settings
 
-<SettingsTable keys={["erp.purchase.receiptTolerancePercent"]} />
+<SettingsTable keys={["erp.purchase.receiptTolerancePercent", "erp.purchase.poWatiTemplate"]} />
 
 ## Where the code and the intent disagree today
 
-- **Send to vendor** does not check the purchase-money power, yet its dialog shows the PO written out with every rate and total; the printed PO, by contrast, refuses somebody without the power.
-- Send marks the PO Sent when the button is pressed, before the person has actually sent the WhatsApp or email it opens.
+- A WhatsApp or email opened on the sender's own phone counts as shared, and moves the PO to Sent, before the person has actually pressed send in their app.
+- WhatsApp through Wati carries the PO's link, not the PDF itself: the template has no document header.
 - **Close short** and **Cancel PO** need only the screen — no power — although each changes what its requirements say.
-- The company name on the written-out PO is fixed in the code.
+- The company name on the PDF and the message is fixed in the code.

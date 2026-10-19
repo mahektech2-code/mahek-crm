@@ -252,47 +252,6 @@ export function purchaseUnit(itemUnit: string, materialType: string): "Kg" | "Li
   return "Pcs";
 }
 
-/** The PO's text, sent to the vendor on WhatsApp or by email. Money in rupees, Indian grouping. */
-export function poMessage(po: {
-  number: number;
-  date: string;
-  vendor: string;
-  deliverTo: string;
-  deliveryDate: string;
-  paymentTerms: string;
-  freightPaise: number;
-  remarks: string | null;
-  lines: { item: string; quantity: number; unit: string; ratePaise: number; gstBp: number }[];
-  company: string;
-}): string {
-  const rs = (p: number) => "₹" + (p / 100).toLocaleString("en-IN", { minimumFractionDigits: p % 100 ? 2 : 0, maximumFractionDigits: 2 });
-  const t = poTotals(po.lines, po.freightPaise);
-  const rows = po.lines.map((l, i) => {
-    const f = poLineFigures(l);
-    return `${i + 1}. ${l.item} — ${l.quantity.toLocaleString("en-IN")} ${l.unit} @ ${rs(l.ratePaise)} + GST ${l.gstBp / 100}% = ${rs(f.totalPaise)}`;
-  });
-  return [
-    `PURCHASE ORDER ${poLabel(po.number)}`,
-    `${po.company}`,
-    `Date: ${po.date}`,
-    `To: ${po.vendor}`,
-    ``,
-    ...rows,
-    ``,
-    `Amount: ${rs(t.amountPaise)}`,
-    `GST: ${rs(t.gstPaise)}`,
-    ...(t.freightPaise ? [`Freight: ${rs(t.freightPaise)}`] : []),
-    `Total: ${rs(t.totalPaise)}`,
-    ``,
-    `Deliver to: ${po.deliverTo}`,
-    `Delivery by: ${po.deliveryDate}`,
-    `Payment terms: ${po.paymentTerms}`,
-    ...(po.remarks ? [`Note: ${po.remarks}`] : []),
-    ``,
-    `Please quote ${poLabel(po.number)} on your invoice and delivery challan.`,
-  ].join("\n");
-}
-
 /* ------------------------------------------------- a requirement of many items */
 
 /** A requirement's number, as every screen prints it. */
