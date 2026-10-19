@@ -3,9 +3,11 @@
 import Link from "next/link";
 import { erpLink } from "@/lib/erp/registry";
 import { useMemo, useState } from "react";
-import { Modal } from "@/components/ui/modal";
 import { FilterPills } from "@/components/ui/overlays";
-import { Badge, Button, Card, controlClass, cx } from "@/components/ui/primitives";
+import { Button, Card, cx, Field, Input, SectionLabel, Select, Textarea } from "@/components/ui/primitives";
+import { Badge } from "../../_ui/badge";
+import { DialogBody, DialogFooter, DialogHeader, ErpDialog, DialogTitle } from "../../_ui/dialog";
+import { linkClass, SubTitle } from "../../_ui/look";
 import { erpLogisticsClearIssue, erpLogisticsDelivered, erpLogisticsIssue, erpLogisticsUpdate } from "@/lib/actions/erp-logistics";
 import { addDays, callDue, daysBetween, ISSUES, ROAD_STAGES, runningLate, shortDay, STAGE_SHORT, trackingLink, type Stage } from "@/lib/erp/engines/logistics";
 import type { Consignment } from "@/lib/erp/logistics";
@@ -52,7 +54,9 @@ export function OnRoad({ rows, today, callEveryDays, lateAfterDays, notifyOn, ca
             { key: "issue", label: "With a problem", count: counts.issue },
           ]}
         />
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search LR, bill, party, transporter" className="ml-auto h-8.5 w-[260px] rounded-control border border-line bg-surface px-2.5 text-sm outline-none focus:border-brand" />
+        <span className="ml-auto w-[260px]">
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search LR, bill, party, transporter" aria-label="Search LR, bill, party, transporter" />
+        </span>
       </div>
 
       {!shown.length ? (
@@ -76,18 +80,18 @@ export function OnRoad({ rows, today, callEveryDays, lateAfterDays, notifyOn, ca
               <LrThumb fileId={c.lrFileId} size={60} />
               <div className="min-w-[220px] flex-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-md font-semibold text-ink">{lrLabel(c.lrNo)}</span>
+                  <SubTitle className="mb-0 font-mono">{lrLabel(c.lrNo)}</SubTitle>
                   <span className="text-meta text-body">· {c.transporter ?? "—"}</span>
-                  {issue ? <Badge tone="danger">{issue.issue}</Badge> : null}
-                  {late && !issue ? <Badge tone="warn">Running late</Badge> : null}
+                  {issue ? <Badge label={issue.issue ?? ""} tone="danger" /> : null}
+                  {late && !issue ? <Badge label="Running late" tone="warn" /> : null}
                   {waiting ? (
                     <Link href={erpLink("lrMessages")}>
-                      <Badge tone="warn">{plural(waiting, "message")} to send</Badge>
+                      <Badge label={`${plural(waiting, "message")} to send`} tone="warn" />
                     </Link>
                   ) : null}
                 </div>
                 <div className="mt-0.5 text-sm font-medium text-ink">{parties.join(", ")}</div>
-                <div className="text-xs text-muted">
+                <div className="text-meta text-muted">
                   {bills.map((b, i) => (
                     <span key={b.id}>
                       {i ? ", " : ""}
@@ -98,8 +102,8 @@ export function OnRoad({ rows, today, callEveryDays, lateAfterDays, notifyOn, ca
                   {c.area ? ` · ${c.area}` : ""}
                   {since ? ` · ${daysBetween(since, today)} d on the road` : ""}
                 </div>
-                {issue?.issueNote ? <div className="mt-1 text-xs text-danger">{issue.issueNote}</div> : null}
-                {c.lastEventNote ? <div className="mt-1 truncate text-xs text-body">Last: {c.lastEventNote}</div> : null}
+                {issue?.issueNote ? <div className="mt-1 text-meta text-danger">{issue.issueNote}</div> : null}
+                {c.lastEventNote ? <div className="mt-1 truncate text-meta text-body">Last: {c.lastEventNote}</div> : null}
               </div>
               <div className="w-[270px] space-y-1.5">
                 <StageStrip stage={c.stage} />
@@ -115,7 +119,7 @@ export function OnRoad({ rows, today, callEveryDays, lateAfterDays, notifyOn, ca
               <div className="w-[190px] space-y-1.5 text-right">
                 <CallLink phone={c.transporterPhone} name={c.transporter} />
                 {online ? (
-                  <a href={online} target="_blank" rel="noreferrer" className="block text-xs">
+                  <a href={online} target="_blank" rel="noreferrer" className={linkClass("brand", "block text-meta")}>
                     Track on {c.transporter}&apos;s site ↗
                   </a>
                 ) : null}
@@ -164,7 +168,6 @@ function ActionDialog({ dialog, today, callEveryDays, notifyOn, onClose }: { dia
   const [date, setDate] = useState(today);
   const [receivedBy, setReceivedBy] = useState("");
   const [notify, setNotify] = useState(true);
-  const cls = controlClass({ className: "mt-0.5 block h-8.5" });
 
   const title = dialog.kind === "update" ? `Update ${lrLabel(c.lrNo)}` : dialog.kind === "issue" ? `A problem with ${lrLabel(c.lrNo)}` : `${lrLabel(c.lrNo)} delivered`;
   const save = () => {
@@ -176,28 +179,18 @@ function ActionDialog({ dialog, today, callEveryDays, notifyOn, onClose }: { dia
   const moved = dialog.kind === "update" && (stage !== c.stage || (expected && expected !== c.expectedDeliveryOn));
 
   return (
-    <Modal
-      open
-      onClose={onClose}
-      title={title}
-      width={560}
-      footer={
-        <>
-          <Button onClick={onClose}>Cancel</Button>
-          <Button variant={dialog.kind === "issue" ? "danger" : "primary"} disabled={pending || (dialog.kind === "issue" && issue === "Other" && !note.trim())} onClick={save}>
-            {dialog.kind === "delivered" ? "Close as delivered" : dialog.kind === "issue" ? "Record the problem" : "Save update"}
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-3 text-xs text-muted">
+    <ErpDialog onClose={onClose} label={title} size="sm" tall={false}>
+      <DialogHeader onClose={onClose}>
+        <DialogTitle>{title}</DialogTitle>
+      </DialogHeader>
+      <DialogBody className="gap-3">
         <div className="text-sm text-body">
           {[...new Set(dialog.group.map((b) => b.deliveryParty))].join(", ")} · {plural(dialog.group.length, "bill")} · {c.transporter ?? "—"}
         </div>
         {dialog.kind === "update" ? (
           <>
             <div>
-              Where are the goods?
+              <SectionLabel>Where are the goods?</SectionLabel>
               <div className="mt-1 grid grid-cols-3 gap-2">
                 {ROAD_STAGES.map((s) => (
                   <button key={s} type="button" onClick={() => setStage(s)} className={cx("cursor-pointer rounded-control border px-2 py-2 text-meta", stage === s ? "border-brand bg-brand-soft font-medium text-brand-hover" : "border-line bg-surface text-body hover:bg-canvas")}>
@@ -207,37 +200,51 @@ function ActionDialog({ dialog, today, callEveryDays, notifyOn, onClose }: { dia
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <label>Expected delivery<input type="date" value={expected} min={today} onChange={(e) => setExpected(e.target.value)} className={cls} /></label>
-              <label>Next call to the transporter<input type="date" value={nextCall} min={today} onChange={(e) => setNextCall(e.target.value)} className={cls} /></label>
+              <Field label="Expected delivery">
+                <Input type="date" value={expected} min={today} onChange={(e) => setExpected(e.target.value)} />
+              </Field>
+              <Field label="Next call to the transporter">
+                <Input type="date" value={nextCall} min={today} onChange={(e) => setNextCall(e.target.value)} />
+              </Field>
             </div>
           </>
         ) : null}
         {dialog.kind === "issue" ? (
           <>
-            <label>
-              What went wrong?
-              <select value={issue} onChange={(e) => setIssue(e.target.value)} className={cls}>
+            <Field label="What went wrong?">
+              <Select value={issue} onChange={(e) => setIssue(e.target.value)}>
                 {ISSUES.map((i) => (
                   <option key={i}>{i}</option>
                 ))}
-              </select>
-            </label>
-            <label>New expected delivery (if the transporter gave one)<input type="date" value={expected} min={today} onChange={(e) => setExpected(e.target.value)} className={cls} /></label>
+              </Select>
+            </Field>
+            <Field label="New expected delivery (if the transporter gave one)">
+              <Input type="date" value={expected} min={today} onChange={(e) => setExpected(e.target.value)} />
+            </Field>
           </>
         ) : null}
         {dialog.kind === "delivered" ? (
           <div className="grid grid-cols-2 gap-3">
-            <label>Received on<input type="date" value={date} max={today} onChange={(e) => setDate(e.target.value)} className={cls} /></label>
-            <label>Received by<input value={receivedBy} onChange={(e) => setReceivedBy(e.target.value)} placeholder="Who signed for it" className={cls} /></label>
+            <Field label="Received on">
+              <Input type="date" value={date} max={today} onChange={(e) => setDate(e.target.value)} />
+            </Field>
+            <Field label="Received by">
+              <Input value={receivedBy} onChange={(e) => setReceivedBy(e.target.value)} placeholder="Who signed for it" />
+            </Field>
           </div>
         ) : null}
-        <label>
-          {dialog.kind === "update" ? "What the transporter said" : "Note"}
-          <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} className="mt-0.5 block w-full rounded-control border border-line bg-surface px-2.5 py-2 text-sm text-ink outline-none focus:border-brand" />
-        </label>
-        {dialog.kind === "update" && !moved ? <div className="text-xs text-muted">The stage and the date have not moved, so this is logged as a call and the customer is not messaged.</div> : null}
+        <Field label={dialog.kind === "update" ? "What the transporter said" : "Note"}>
+          <Textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} />
+        </Field>
+        {dialog.kind === "update" && !moved ? <div className="text-meta text-muted">The stage and the date have not moved, so this is logged as a call and the customer is not messaged.</div> : null}
         {dialog.kind !== "update" || moved ? <NotifyToggle value={notify} onChange={setNotify} disabled={!notifyOn} /> : null}
-      </div>
-    </Modal>
+      </DialogBody>
+      <DialogFooter>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button variant={dialog.kind === "issue" ? "danger" : "primary"} disabled={pending || (dialog.kind === "issue" && issue === "Other" && !note.trim())} onClick={save}>
+          {dialog.kind === "delivered" ? "Close as delivered" : dialog.kind === "issue" ? "Record the problem" : "Save update"}
+        </Button>
+      </DialogFooter>
+    </ErpDialog>
   );
 }

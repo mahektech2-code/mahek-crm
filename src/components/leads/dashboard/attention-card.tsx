@@ -1,46 +1,86 @@
+"use client";
+
+import * as React from "react";
 import Link from "next/link";
+import { cx } from "@/components/ui/primitives";
 import { Pill } from "@/components/console/parts";
 import { plural } from "@/components/console/words";
 import { shortDate } from "@/lib/format";
-import { salesTypeLabel, stageLabel } from "@/lib/lead-labels";
+import { stageLabel, type LeadStage } from "@/lib/lead-labels";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
-import type { AttentionList } from "@/lib/services/lead-dashboard-service";
+import type { AttentionList, AttentionRow } from "@/lib/services/lead-dashboard-service";
 
 /* ---------------------------------------------------------------------------
- * §8.2 — "Needs your attention".
+ * §8.2 — My queue: what is owed on a lead, overdue first, then due today.
  *
- * Six lines, overdue first, each one a lead and the thing that is owed on it.
- * It is the first card on the screen because it is the only one that answers
- * "what do I do now" — the strip below it answers "what is stuck", which is a
- * question about other people, and the focus card beside it answers "what is
- * mine", which is a list rather than a next move.
+ * The rows come from the Overdue and Due tabs' own functions (see the
+ * service); the TOTALS come from SQL over the whole scoped book, so "All N"
+ * says what the list is a slice of. The chips only filter the rows loaded —
+ * a view of this list, never a second query.
  *
- * **A ROW IS A DOOR, like every figure on this screen.** It opens the lead's
- * own record rather than the list it came from: the reader has already chosen
- * this one by reading its name, and landing them on a list of forty to find it
- * again is the trip nobody makes twice.
- *
- * **IT SAYS WHAT IT IS SIX OF.** Both totals come from SQL, over the whole
- * scoped book, so "6 of 41 overdue" is a true sentence and the reader knows to
- * open the tab. A capped list that implies it is the whole is the mistake the
- * timeline's filter pills carry a paragraph about.
- *
- * **THE LATENESS IS DRAWN, NOT INFERRED FROM A ZERO.** `overdue` is its own
- * answer on the row — a lead falling today is not a lead nought days late —
- * and the two get different words and different tones, because "today" is work
- * with a day left in it and "nine days past" is work somebody has already
- * failed to do.
+ * **A chip is the KIND of work, read off the rung.** The funnel's early rungs
+ * are worked by phone (the Calling desk's three calls, the verification call);
+ * the review rungs are a trial or an appointment somebody has to judge;
+ * everything else is a promise to follow up. The rung is the one fact every
+ * row carries that says which, so no row needs a second reading.
  * ------------------------------------------------------------------------- */
+
+type Kind = "calls" | "followUps" | "reviews";
+
+const CALL_RUNGS: ReadonlySet<LeadStage> = new Set<LeadStage>([
+  "new",
+  "contacted",
+  "suspect",
+  "prospect",
+]);
+const REVIEW_RUNGS: ReadonlySet<LeadStage> = new Set<LeadStage>([
+  "sample_received",
+  "sample_review",
+  "management_review",
+  "distributor_approval",
+]);
+
+function kindOf(stage: LeadStage): Kind {
+  if (CALL_RUNGS.has(stage)) return "calls";
+  if (REVIEW_RUNGS.has(stage)) return "reviews";
+  return "followUps";
+}
+
+const CHIPS: { key: Kind | "all"; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "calls", label: "Calls" },
+  { key: "followUps", label: "Follow-ups" },
+  { key: "reviews", label: "Reviews" },
+];
 
 /**
  * A fortnight is where a promise stops being late and starts being abandoned.
- *
- * It is a READING AID and not a threshold: nothing is chased, escalated or
- * scored on it — the overdue tab draws the same two tones at the same figure —
- * so it is not `app_settings` material. It exists so the eye can find the
- * worst three rows without reading six numbers.
+ * A READING AID, not a threshold: nothing is chased or scored on it.
  */
 const LONG_OVERDUE_DAYS = 14;
+
+function initials(name: string): string {
+  const words = name
+    .replace(/[^\p{L}\p{N} ]/gu, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  const two = (words[0]?.[0] ?? "") + (words[1]?.[0] ?? words[0]?.[1] ?? "");
+  return two.toUpperCase() || "?";
+}
+
+function Due({ row }: { row: AttentionRow }) {
+  if (row.overdue) {
+    return (
+      <Pill tone={row.overdueDays >= LONG_OVERDUE_DAYS ? "danger" : "warn"}>
+        {row.overdueDays === 0 ? "Late" : `${plural(row.overdueDays, "day")} late`}
+      </Pill>
+    );
+  }
+  return <Pill tone="brand">{row.parkedBack ? "Back today" : "Today"}</Pill>;
+}
+
+const ROW_BTN =
+  "inline-flex h-7 items-center rounded-[6px] border border-line bg-surface px-2.5 text-[12px] font-medium text-body no-underline hover:bg-canvas hover:text-ink hover:no-underline";
 
 export function AttentionCard({
   workspace,
@@ -50,75 +90,112 @@ export function AttentionCard({
   list: AttentionList;
 }) {
   const { rows, overdueTotal, dueTodayTotal } = list;
+  const [chip, setChip] = React.useState<Kind | "all">("all");
+
+  const counts = React.useMemo(() => {
+    const c: Record<Kind | "all", number> = { all: rows.length, calls: 0, followUps: 0, reviews: 0 };
+    for (const r of rows) c[kindOf(r.stage)] += 1;
+    return c;
+  }, [rows]);
+  const shown = chip === "all" ? rows : rows.filter((r) => kindOf(r.stage) === chip);
+  const total = overdueTotal + dueTodayTotal;
 
   return (
-    <div className="rounded-[6px] border border-line bg-surface">
-      <div className="flex items-center justify-between gap-3 border-b border-divider px-5 py-3.5">
-        <div className="flex min-w-0 items-center gap-2">
-          <div className="text-[15px] font-semibold text-ink">My queue</div>
-          {overdueTotal > 0 ? <Pill tone="danger">{overdueTotal} overdue</Pill> : null}
-          {dueTodayTotal > 0 ? <Pill tone="brand">{dueTodayTotal} today</Pill> : null}
-        </div>
-        <Link
-          /* The overdue VIEW of the list: the same window this card's total is
-             counted over. */
-          href={`${leadHref(workspace, "leads")}?view=overdue`}
-          className="flex-none text-[13px] whitespace-nowrap"
-        >
-          All overdue
-        </Link>
+    <section aria-label="My queue" className="rounded-[10px] border border-line bg-surface">
+      <div className="flex flex-wrap items-center gap-2 border-b border-divider px-[18px] py-3.5">
+        <h2 className="m-0 mr-2.5 text-base font-semibold text-ink">My queue</h2>
+        {rows.length > 0
+          ? CHIPS.map((c) => {
+              const on = chip === c.key;
+              return (
+                <button
+                  key={c.key}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => setChip(c.key)}
+                  className={cx(
+                    "inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border px-3 text-[13px] font-medium",
+                    on
+                      ? "border-brand bg-brand-soft text-brand-deep"
+                      : "border-line bg-surface text-body hover:text-ink",
+                  )}
+                >
+                  {c.label}
+                  <span
+                    className={cx(
+                      "rounded-[9px] px-1.5 text-[11px] leading-[18px] font-semibold tabular-nums",
+                      on ? "bg-surface text-brand-deep" : "bg-divider text-body",
+                    )}
+                  >
+                    {counts[c.key]}
+                  </span>
+                </button>
+              );
+            })
+          : null}
       </div>
 
-      {rows.length === 0 ? (
-        /* A sentence rather than a blank panel. An empty card with a heading
-           over it reads as a screen that failed to load, and on this one the
-           empty answer is the good news. */
+      {shown.length === 0 ? (
         <div className="px-5 py-8 text-center text-[13px] text-muted">
-          Nothing due today and nothing overdue.
+          {rows.length === 0 ? "Nothing due today and nothing overdue." : "Nothing of this kind."}
         </div>
       ) : (
         <ul className="m-0 list-none p-0">
-          {rows.map((r) => (
-            <li key={r.customerId} className="border-b border-divider last:border-b-0">
-              <Link
-                href={leadHref(workspace, `leads/${r.customerId}`)}
-                className="flex items-baseline justify-between gap-4 px-5 py-2.5 no-underline hover:bg-canvas hover:no-underline"
+          {shown.map((r) => {
+            const href = leadHref(workspace, `leads/${r.customerId}`);
+            return (
+              <li
+                key={r.customerId}
+                className="grid grid-cols-[34px_minmax(0,1.7fr)_auto_minmax(0,1.3fr)_auto_auto] items-center gap-3 border-b border-divider px-[18px] py-3 hover:bg-canvas"
               >
-                <span className="min-w-0">
-                  <span className="block truncate text-[14px] text-ink">{r.name}</span>
+                <span
+                  aria-hidden="true"
+                  className="flex size-[34px] items-center justify-center rounded-full bg-brand-soft text-[12px] font-semibold text-brand-deep"
+                >
+                  {initials(r.name)}
+                </span>
+                <Link href={href} className="min-w-0 text-ink no-underline hover:text-ink hover:no-underline">
+                  <span className="block truncate font-semibold">{r.name}</span>
                   <span className="block truncate text-[12px] text-muted">
-                    {/* The ACTION, which is what §24 says a date alone cannot
-                        carry. Where nobody wrote one down the row says so: a
-                        lead due today with no action named is the most urgent
-                        shape on this card, not a gap to leave blank. */}
-                    {r.action ?? "No action written down"}
-                    {r.ownerName ? ` · ${r.ownerName}` : " · nobody named"}
+                    {[r.city, r.ownerName ?? "Nobody named"].filter(Boolean).join(" · ")}
                   </span>
+                </Link>
+                <span className="min-w-0">
+                  <Pill tone="brand">{r.parkedBack ? "On hold" : stageLabel(r.stage)}</Pill>
                 </span>
-                <span className="flex-none text-right">
-                  {r.overdue ? (
-                    <Pill tone={r.overdueDays >= LONG_OVERDUE_DAYS ? "danger" : "warn"}>
-                      {plural(r.overdueDays, "day")} past
-                    </Pill>
-                  ) : (
-                    <Pill tone="brand">Due today</Pill>
-                  )}
-                  <span className="mt-0.5 block text-[12px] text-muted">
-                    {r.parkedBack
-                      ? /* Nobody promised this one — a day arrived. It is on
-                           the list because the read brings a park back on its
-                           own resume date, and saying which kind of work it is
-                           is the difference between a worklist and a pile. */
-                        "Back off hold"
-                      : `${stageLabel(r.stage)} · ${salesTypeLabel(r.salesType)}`}
-                    {r.actionDate ? ` · ${shortDate(r.actionDate)}` : ""}
-                  </span>
+                <span className="min-w-0 truncate text-[13px] text-body" title={r.action ?? undefined}>
+                  {r.action ?? "No action written down"}
+                  {r.overdue && r.actionDate ? (
+                    <span className="text-muted"> · {shortDate(r.actionDate)}</span>
+                  ) : null}
                 </span>
-              </Link>
-            </li>
-          ))}
+                <span>
+                  <Due row={r} />
+                </span>
+                <span className="flex justify-end gap-1.5">
+                  {/* Call opens the record with the call dialog up; the record decides
+                      whether a call can be logged there. */}
+                  <Link href={`${href}?call=1`} className={ROW_BTN}>
+                    Call
+                  </Link>
+                  <Link href={href} className={ROW_BTN}>
+                    Open
+                  </Link>
+                </span>
+              </li>
+            );
+          })}
         </ul>
       )}
-    </div>
+
+      {total > 0 ? (
+        <div className="px-[18px] py-3 text-[13px]">
+          {/* The list's own overdue / due view — All Leads is what this screen is gated on. */}
+          <Link href={`${leadHref(workspace, "leads")}?view=${overdueTotal > 0 ? "overdue" : "today"}`}>
+            All {total}
+          </Link>
+        </div>
+      ) : null}
+    </section>
   );
 }

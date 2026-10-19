@@ -3,8 +3,11 @@ import { cx } from "@/components/ui/primitives";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import type { LeadTileId } from "@/lib/lead-views";
 import type { SharedFunnel } from "@/lib/engines/lead-funnel-shape";
+import { money } from "@/lib/format";
+import { plural } from "@/components/console/words";
 import type {
   AttentionList,
+  ExpectedOrders,
   ManagerLeadBlock,
   RoleFocus,
 } from "@/lib/services/lead-dashboard-service";
@@ -12,6 +15,7 @@ import { SharedBarFunnel } from "../funnel/shared-bar-funnel";
 import { AttentionCard } from "./attention-card";
 import { BookTiles } from "./book-tiles";
 import { RoleFocusCard } from "./role-focus-card";
+import { WhoSwitch } from "./who-switch";
 
 /* ---------------------------------------------------------------------------
  * §8.2 — the lead dashboard, drawn.
@@ -71,11 +75,11 @@ import { RoleFocusCard } from "./role-focus-card";
  * ------------------------------------------------------------------------- */
 
 /** The tile's skin per tone. Number colour and border only — no new card style. */
-const SKIN: Record<ManagerLeadBlock["tone"], { border: string; value: string }> = {
-  danger: { border: "border-danger-soft", value: "text-danger" },
-  warn: { border: "border-warn-line", value: "text-warn-ink" },
-  brand: { border: "border-line", value: "text-ink" },
-  muted: { border: "border-line", value: "text-muted" },
+const SKIN: Record<ManagerLeadBlock["tone"], { pill: string }> = {
+  danger: { pill: "bg-danger-soft text-danger" },
+  warn: { pill: "bg-warn-soft text-warn-ink" },
+  brand: { pill: "bg-divider text-body" },
+  muted: { pill: "bg-divider text-muted" },
 };
 
 /**
@@ -91,10 +95,10 @@ function WaitingList({
   blocks: ManagerLeadBlock[];
 }) {
   return (
-    <div className="rounded-[10px] border border-line bg-surface">
-      <div className="border-b border-divider px-5 py-3.5 text-[15px] font-semibold text-ink">
+    <section aria-label="Waiting on you" className="rounded-[10px] border border-line bg-surface">
+      <h2 className="m-0 border-b border-divider px-[18px] py-3.5 text-base font-semibold text-ink">
         Waiting on you
-      </div>
+      </h2>
       <ul className="m-0 list-none p-0">
         {blocks.map((block) => {
           const empty = block.count === 0;
@@ -104,11 +108,14 @@ function WaitingList({
               <Link
                 href={leadHref(workspace, block.href)}
                 title={block.hint}
-                className="flex items-center justify-between gap-3 px-5 py-2.5 text-ink no-underline hover:bg-canvas hover:text-ink hover:no-underline"
+                className="flex items-center justify-between gap-3 px-[18px] py-3 text-ink no-underline hover:bg-canvas hover:text-ink hover:no-underline"
               >
                 <span className="min-w-0 truncate text-sm">{block.label}</span>
                 <span
-                  className={cx("flex-none text-[15px] font-semibold tabular-nums", skin.value)}
+                  className={cx(
+                    "flex-none rounded-[9px] px-2 text-[12px] leading-5 font-semibold tabular-nums",
+                    skin.pill,
+                  )}
                 >
                   {block.count}
                 </span>
@@ -117,7 +124,54 @@ function WaitingList({
           );
         })}
       </ul>
-    </div>
+    </section>
+  );
+}
+
+/** "Expected orders · 7 days" — the commitments screen's own due view, as a forecast. */
+function ForecastCard({ workspace, f }: { workspace: LeadWorkspace; f: ExpectedOrders }) {
+  const notes = [
+    plural(f.leads, "lead"),
+    f.unvalued > 0 ? `${f.unvalued} with no estimate` : null,
+    f.slipped > 0 ? `${plural(f.slipped, "promised day")} passed` : null,
+  ].filter(Boolean);
+  return (
+    <section
+      aria-label="Expected orders"
+      className="flex flex-col gap-2 rounded-[10px] border border-line bg-surface px-[18px] py-4"
+    >
+      <div className="flex items-center gap-2">
+        <h2 className="m-0 flex-1 text-base font-semibold text-ink">Expected orders · 7 days</h2>
+        <span className="rounded-[9px] bg-warn-soft px-2 text-[11px] leading-5 font-semibold text-warn-ink">
+          Forecast
+        </span>
+      </div>
+      <div className="text-[28px] leading-8 font-semibold text-ink tabular-nums">{money(f.valuePaise)}</div>
+      <div className="text-[13px] text-muted">{notes.join(" · ")}</div>
+      <Link href={leadHref(workspace, "leads/commercial/commitments?view=due")} className="text-[13px]">
+        Commitments
+      </Link>
+    </section>
+  );
+}
+
+/** Leads nobody owns — on no telecaller's desk until somebody assigns them. */
+function UnownedCard({ workspace, n }: { workspace: LeadWorkspace; n: number }) {
+  return (
+    <section
+      aria-label="Unassigned"
+      className="flex items-center gap-3 rounded-[10px] border border-line bg-surface px-[18px] py-4"
+    >
+      <div className="min-w-0 flex-1 font-semibold text-ink">
+        {n === 1 ? "1 lead with no owner" : `${n} leads with no owner`}
+      </div>
+      <Link
+        href={leadHref(workspace, "leads/calling-desk?view=unassigned")}
+        className="inline-flex h-9 items-center rounded-[6px] border border-line-strong bg-surface px-3.5 text-sm font-medium text-ink no-underline hover:bg-canvas hover:text-ink hover:no-underline"
+      >
+        Assign
+      </Link>
+    </section>
   );
 }
 
@@ -128,6 +182,10 @@ export function DashboardScreen({
   focus,
   tiles,
   pipeline,
+  who,
+  dayLabel,
+  forecast,
+  unowned,
 }: {
   workspace: LeadWorkspace;
   /** Empty for anybody who is neither a sales manager nor management. */
@@ -145,29 +203,45 @@ export function DashboardScreen({
   /** §8.3a's funnel. Null where Funnel & conversion was not granted, for the
       same reason and by the same rule. */
   pipeline: SharedFunnel | null;
+  /** Null for a reader with only their own book — no switch is drawn. */
+  who: "mine" | "team" | null;
+  /** The business day, already worded ("Mon 19 Oct"). */
+  dayLabel: string;
+  /** Null where Commitments was not granted. */
+  forecast: ExpectedOrders | null;
+  /** Null for somebody who may not assign; a zero draws no card. */
+  unowned: number | null;
 }) {
   return (
-    <>
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-wrap items-center gap-2.5">
+        {who ? <WhoSwitch who={who} /> : null}
+        <span className="text-sm text-muted">{dayLabel}</span>
+      </div>
+
       {tiles ? <BookTiles workspace={workspace} counts={tiles} /> : null}
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="lg:col-span-2">
-          <AttentionCard workspace={workspace} list={attention} />
-        </div>
-        <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)]">
+        <AttentionCard workspace={workspace} list={attention} />
+        <div className="flex flex-col gap-5">
           {blocks.length > 0 ? <WaitingList workspace={workspace} blocks={blocks} /> : null}
+          {/* Nothing promised and nothing slipped is no card, not a ₹0 forecast. */}
+          {forecast && (forecast.leads > 0 || forecast.slipped > 0) ? (
+            <ForecastCard workspace={workspace} f={forecast} />
+          ) : null}
+          {unowned ? <UnownedCard workspace={workspace} n={unowned} /> : null}
           <RoleFocusCard workspace={workspace} focus={focus} />
         </div>
       </div>
 
       {pipeline ? (
-        <div className="mt-6">
+        <div>
           <div className="mb-2 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
             Pipeline
           </div>
           <SharedBarFunnel workspace={workspace} funnel={pipeline} compact />
         </div>
       ) : null}
-    </>
+    </div>
   );
 }

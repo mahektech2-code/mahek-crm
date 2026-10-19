@@ -8,7 +8,8 @@ import type { ColSpec, ListRow, ListSpec, Tone } from "@/lib/erp/ui";
 import { cellText, inr, nf } from "@/lib/erp/ui";
 import { colOf as colIn, listCsv, listQueryParams, LIST_QUERY_KEYS, pageOf, subMatches, type ListPage, type ListQuery } from "@/lib/erp/list-query";
 import { Icon as ShellIcon } from "@/components/shell/icons";
-import { Button, Card, cx, EmptyState, SortableTh, Td, Th, Tr } from "@/components/ui/primitives";
+import { Button, Card, checkboxClass, cx, EmptyState, Input, Select, SortableTh, Td, Th, Tr } from "@/components/ui/primitives";
+import { eyebrowClass, LinkButton, linkClass } from "./look";
 import { RowMenu, SelectionBar, Tabs } from "@/components/ui/overlays";
 import { Pager } from "@/components/ui/pager";
 import { PeriodPicker } from "./period-picker";
@@ -19,7 +20,7 @@ import { useErpUi } from "./erp-ui";
 import { RecordDialog } from "./record-dialog";
 import { useKit } from "./kit";
 import { CHECK_COL, fitColumns } from "./fit-columns";
-import { ColumnsMenu } from "./columns-menu";
+import { ColumnsMenu, toolbarToggleClass } from "./columns-menu";
 import { useColumnChoice } from "./use-column-choice";
 
 /* ---------------------------------------------------------------------------
@@ -81,7 +82,7 @@ export function ListTabs({ label, tabs, toggle }: { label: string; tabs: ListTab
       ))}
       <span className="flex-1" />
       {toggle ? (
-        <Link href={toggle.href} className="px-2 py-2.5 text-meta font-medium text-brand-hover hover:underline">
+        <Link href={toggle.href} className={linkClass("brand", "px-2 py-2.5 text-meta")}>
           {toggle.label}
         </Link>
       ) : null}
@@ -363,7 +364,7 @@ export function ListScreen({
       {/* Not overflow-hidden: the filter bar's menus open over the rows, and on a short list they would be cut off at the card's edge. */}
       <Card className="relative">
         {/* The next page is on its way: a bar along the top, and the rows it replaces dimmed, so a click visibly took. */}
-        {pending ? <span aria-hidden className="absolute inset-x-0 top-0 z-10 h-0.5 animate-pulse rounded-t-[6px] bg-brand" /> : null}
+        {pending ? <span aria-hidden className="absolute inset-x-0 top-0 z-10 h-0.5 animate-pulse rounded-t-card bg-brand" /> : null}
         {chips.length >= 2 && chips.length <= MAX_TABS ? (
           <Tabs
             className="px-4"
@@ -378,34 +379,24 @@ export function ListScreen({
         {lp.all > 0 || filter || win ? (
         <div className="flex flex-wrap items-center gap-2.5 border-b border-divider px-4 py-3">
           <div className="relative w-[300px] max-w-full">
-            <ShellIcon name="search" size={16} className="pointer-events-none absolute top-2 left-2.5 text-muted" />
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search this list"
-              className="h-8 w-full rounded-control border border-line pr-7 pl-7.5 text-sm outline-none focus:border-brand"
-            />
+            <ShellIcon name="search" size={16} className="pointer-events-none absolute top-2.25 left-2.5 text-muted" />
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search this list" aria-label="Search this list" className="pr-7 pl-7.5" />
             {q ? (
-              <button onClick={() => setQ("")} aria-label="Clear search" className="absolute top-1.5 right-1.5 flex h-5 w-5 cursor-pointer items-center justify-center text-muted hover:text-body">
+              <button onClick={() => setQ("")} aria-label="Clear search" className="absolute top-1.75 right-1.5 flex h-5 w-5 cursor-pointer items-center justify-center text-muted hover:text-body">
                 <ShellIcon name="close" size={14} />
               </button>
             ) : null}
           </div>
           {win ? <PeriodPicker key={win.pd} pd={win.pd} label={win.label} dateLabel={win.dateLabel} onPick={(pd) => setQuery({ pd, page: 1 })} /> : null}
           {chips.length > MAX_TABS ? (
-            <select
-              value={chip}
-              onChange={(e) => pickChip(e.target.value)}
-              aria-label={colOf(spec.chips!).l}
-              className="h-8 cursor-pointer rounded-control border border-line bg-surface px-2.5 text-meta text-body outline-none focus:border-brand"
-            >
+            <Select value={chip} onChange={(e) => pickChip(e.target.value)} aria-label={colOf(spec.chips!).l} className="cursor-pointer">
               <option value="">All {colOf(spec.chips!).l.toLowerCase()} · {nf(lp.beforeChip)}</option>
               {chips.map((c) => (
                 <option key={c.v} value={c.v}>
                   {c.v} · {nf(c.n)}
                 </option>
               ))}
-            </select>
+            </Select>
           ) : null}
           {spec.godownKey ? (
             <GodownPicker
@@ -441,10 +432,7 @@ export function ListScreen({
             <button
               onClick={() => setQuery({ grp: !query.grp, page: 1 })}
               aria-pressed={!!gk}
-              className={cx(
-                "h-8 cursor-pointer rounded-control border px-2.5 text-meta whitespace-nowrap",
-                gk ? "border-brand bg-brand-soft font-medium text-brand-hover" : "border-line bg-surface text-body hover:bg-canvas",
-              )}
+              className={toolbarToggleClass(!!gk)}
             >
               Group by {spec.groups.map((k) => lowerFirst(colOf(k).l)).join(" · ")}
             </button>
@@ -452,7 +440,7 @@ export function ListScreen({
           {filter ? (
             <span className="inline-flex h-8 items-center gap-1.5 rounded-control border border-brand bg-brand-soft pr-1 pl-2.5 text-meta font-medium text-brand-hover">
               From dashboard · {filter.label}
-              <button onClick={() => (server ? go({ ...server.query, ids: null, page: 1 }, (p) => (p.delete("f"), p.delete("fl"))) : router.replace(home))} aria-label="Remove filter" className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-[3px] hover:bg-brand-softer">
+              <button onClick={() => (server ? go({ ...server.query, ids: null, page: 1 }, (p) => (p.delete("f"), p.delete("fl"))) : router.replace(home))} aria-label="Remove filter" className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-control hover:bg-brand-softer">
                 <ShellIcon name="close" size={14} />
               </button>
             </span>
@@ -550,7 +538,7 @@ export function ListScreen({
                     {bulkOn ? (
                       <Th>
                         <input
-                          type="checkbox"
+                          type="checkbox" className={checkboxClass}
                           checked={allOnPage}
                           aria-label="Select this page"
                           onChange={() => {
@@ -558,7 +546,6 @@ export function ListScreen({
                             pageRows.forEach((r) => (n[r.id] = !allOnPage));
                             setSel(n);
                           }}
-                          className="h-[15px] w-[15px] cursor-pointer accent-brand"
                         />
                       </Th>
                     ) : null}
@@ -597,30 +584,30 @@ export function ListScreen({
                           if (spec.agg && grp.agg != null) aggText += ` · ${colOf(spec.agg.k).t === "m" ? inr(grp.agg) : nf(grp.agg)} ${spec.agg.l}`;
                           const allSel = grp.ids.every((id) => sel[id]);
                           out.push(
-                            <tr key={`g:${g}`} className="border-b border-divider bg-canvas">
-                              <td colSpan={shownCols.length + (bulkOn ? 1 : 0) + (menuOn ? 1 : 0)} className="px-3 py-2">
+                            <Tr key={`g:${g}`} className="bg-canvas">
+                              <Td colSpan={shownCols.length + (bulkOn ? 1 : 0) + (menuOn ? 1 : 0)} className="py-2 whitespace-normal">
                                 <span className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
-                                  <span className="text-2xs font-medium tracking-[0.04em] text-muted uppercase">{gk.map((k) => colOf(k).l).join(" · ")}</span>
+                                  <span className={eyebrowClass}>{gk.map((k) => colOf(k).l).join(" · ")}</span>
                                   <span className="text-meta font-semibold text-ink">{g || "—"}</span>
                                   {headCols.map((c) => (
                                     <GroupFact key={c.k} c={c} v={grp.head[c.k]} />
                                   ))}
                                   <span className={cx("text-xs text-muted", headCols.length > 0 && "ml-auto")}>{aggText}</span>
                                   {spec.groupSel && bulkOn ? (
-                                    <button
+                                    <LinkButton
                                       onClick={() => {
                                         const n = { ...sel };
                                         grp.ids.forEach((id) => (n[id] = !allSel));
                                         setSel(n);
                                       }}
-                                      className="h-6 cursor-pointer rounded-control border border-line bg-surface px-2 text-xs text-brand-hover hover:bg-brand-soft"
+                                      className="text-xs"
                                     >
                                       {allSel ? "Clear" : `Select all ${grp.n}`}
-                                    </button>
+                                    </LinkButton>
                                   ) : null}
                                 </span>
-                              </td>
-                            </tr>,
+                              </Td>
+                            </Tr>,
                           );
                           lastG = g;
                         }
@@ -631,11 +618,10 @@ export function ListScreen({
                           {bulkOn ? (
                             <Td className={cx(tone && EDGE[tone])} onClick={(e) => e.stopPropagation()}>
                               <input
-                                type="checkbox"
+                                type="checkbox" className={checkboxClass}
                                 checked={!!sel[r.id]}
                                 aria-label="Select row"
                                 onChange={() => setSel((s) => ({ ...s, [r.id]: !s[r.id] }))}
-                                className="h-[15px] w-[15px] cursor-pointer accent-brand"
                               />
                             </Td>
                           ) : null}
@@ -689,7 +675,7 @@ export function ListScreen({
               </table>
             </div>
             )}
-            <div className="overflow-hidden rounded-b-[6px]">
+            <div className="overflow-hidden rounded-b-card">
               <Pager
                 total={total}
                 page={pg}
@@ -784,7 +770,7 @@ function FoldToggle({ open, n, onToggle }: { open: boolean; n: number; onToggle:
       }}
       aria-expanded={open}
       aria-label={open ? `Hide the ${n} ${n === 1 ? "row" : "rows"} under this` : `Show the ${n} ${n === 1 ? "row" : "rows"} under this`}
-      className="mr-1.5 inline-flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] align-[-4px] text-muted hover:bg-brand-soft hover:text-brand-hover"
+      className="mr-1.5 inline-flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-control align-[-4px] text-muted hover:bg-brand-soft hover:text-brand-hover"
     >
       <Icon n={open ? "down" : "chev"} s={14} />
     </button>

@@ -55,6 +55,7 @@ export type AttentionRow = {
   customerId: string;
   name: string;
   companyName: string | null;
+  city: string | null;
   stage: LeadStage;
   salesType: LeadSalesType | null;
   /** The action itself. Null is a real state — §24's whole subject. */
@@ -90,6 +91,7 @@ function attentionRow(r: NextActionRow, overdue: boolean): AttentionRow {
     customerId: r.customerId,
     name: r.name,
     companyName: r.companyName,
+    city: r.city,
     stage: r.stage,
     salesType: r.salesType,
     action: r.action,
@@ -126,11 +128,13 @@ function attentionRow(r: NextActionRow, overdue: boolean): AttentionRow {
  */
 export async function needsAttention(
   day: string,
-  { limit = 6 }: { limit?: number } = {},
+  { limit = 6, ownerId }: { limit?: number; ownerId?: string } = {},
 ): Promise<AttentionList> {
+  /* `ownerId` is the My day "Mine" switch: the next action's own holder,
+     which is the column both tabs already narrow by. */
   const [overdue, due] = await Promise.all([
-    nextActionsOverdue(day, { limit }),
-    nextActionsDue(day, { limit }),
+    nextActionsOverdue(day, { limit, ownerId }),
+    nextActionsDue(day, { limit, ownerId }),
   ]);
 
   const rows = [
@@ -536,4 +540,51 @@ export async function managerLeadBlocks(day: string): Promise<ManagerLeadBlock[]
       tone: "brand",
     },
   ];
+}
+
+/* ═════════════════════════════════════════ My day — two small cards */
+
+/**
+ * Leads nobody owns, in the reader's scope. An unowned lead is on no
+ * telecaller's desk, so the people who may assign are shown how many wait.
+ * Same population the Calling desk's "no owner yet" banner counts: still
+ * being worked, not archived, not in the trash, and `owner_id` empty.
+ */
+export async function unownedLeadCount(): Promise<number> {
+  const scope = await managerScope();
+  const rows = await db.execute<{ n: number }>(sql`
+    select count(*)::int as n
+      from customers c
+     where c.lead_stage is not null
+       and c.lead_archived = false
+       and c.lead_stage not in ('lost', 'won', 'customer', 'active_distributor')
+       and c.owner_id is null
+       ${leadsVisible(scope)}
+  `);
+  return Number(rows[0]?.n ?? 0);
+}
+
+export type ExpectedOrders = {
+  /** FORECAST ONLY — the commitments screen's own total for its "due" view. */
+  valuePaise: number;
+  leads: number;
+  /** Days customers named that went by with no order. */
+  slipped: number;
+  /** Due in the window with nobody's estimate against them. */
+  unvalued: number;
+};
+
+/**
+ * The commitments screen's "due in seven days" view, read through its own
+ * function so the card and the screen it opens are one answer. A forecast,
+ * never revenue: the card says so in its pill.
+ */
+export async function expectedOrders(day: string): Promise<ExpectedOrders> {
+  const due = await commitments(day, "due", { limit: 0 });
+  return {
+    valuePaise: due.forecastValuePaise,
+    leads: due.counts.due,
+    slipped: due.counts.slipped,
+    unvalued: due.unvalued,
+  };
 }

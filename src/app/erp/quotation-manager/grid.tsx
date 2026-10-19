@@ -26,12 +26,15 @@ import {
   type SheetRow,
   type SheetState,
 } from "@/lib/erp/engines/quote-sheet";
-import { Button, Callout, Card, cx, Dot, EmptyState, Input, PageHeader, Select } from "@/components/ui/primitives";
+import { Button, Callout, Card, controlClass, cx, Dot, EmptyState, Field, Input, PageHeader, Select, Td, Th } from "@/components/ui/primitives";
 import { Icon as ShellIcon } from "@/components/shell/icons";
-import { Modal } from "@/components/ui/modal";
+import { erpLink } from "@/lib/erp/registry";
+import { stamp } from "@/lib/format";
 import { BodyPortal } from "@/components/ui/body-portal";
 import { RowMenu } from "@/components/ui/overlays";
 import { useErpUi } from "../_ui/erp-ui";
+import { DialogBody, DialogTitle, DialogFooter, DialogHeader, ErpDialog } from "../_ui/dialog";
+import { eyebrowClass, insetClass, LinkButton, popoverClass } from "../_ui/look";
 
 /**
  * The grid. It behaves like the sheet it replaces: click a cell and type,
@@ -74,16 +77,14 @@ const STATUS_SWATCH: Record<QuoteStatus, string> = {
 
 /** When the clock string of a purchase is drawn. */
 function stampText(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return d.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" });
+  return iso ? stamp(iso) : "";
 }
 
-/* The list screens' header cell, and the toolbar's control. */
-const HEAD = "sticky top-0 border-r border-b border-divider border-b-line bg-canvas px-3 py-2 align-bottom text-xs font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase";
-const FOOT = "sticky h-9 bg-canvas px-3";
+/* What the sheet adds to the list screens' header cell (`Th`) and footer cell
+   (`Td`). A row is 36px — set as --rowh on the table, which `Td` reads. */
+const HEAD = "border-r border-r-divider align-bottom";
+const FOOT = "sticky bg-canvas";
 const FROZEN_EDGE = "shadow-[inset_-1px_0_0_var(--color-line)]";
-const TOOL = "h-8 rounded-control border border-line bg-surface px-2.5 text-meta text-body outline-none focus:border-brand";
 
 const FIXED = 2;
 
@@ -629,7 +630,7 @@ export function QuoteGrid({
     if (from) p.set("from", from);
     if (to) p.set("to", to);
     if (q) p.set("q", q);
-    router.push(`/erp/quotation-manager${p.size ? `?${p}` : ""}`);
+    router.push(erpLink("quoteManager", Object.fromEntries(p)));
   }
 
   function exportCsv() {
@@ -691,7 +692,7 @@ export function QuoteGrid({
       ) : null}
 
       <Card className="relative">
-        {saving ? <span aria-hidden className="absolute inset-x-0 top-0 z-40 h-0.5 animate-pulse rounded-t-[6px] bg-brand" /> : null}
+        {saving ? <span aria-hidden className="absolute inset-x-0 top-0 z-40 h-0.5 animate-pulse rounded-t-card bg-brand" /> : null}
 
         {/* Toolbar — the list screens' own: search, period, then what the sheet can do. */}
         <div className="flex flex-wrap items-center gap-2.5 border-b border-divider px-4 py-3">
@@ -702,14 +703,8 @@ export function QuoteGrid({
               go({ q: search.trim() });
             }}
           >
-            <ShellIcon name="search" size={16} className="pointer-events-none absolute top-2 left-2.5 text-muted" />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search party"
-              aria-label="Search party"
-              className="h-8 w-full rounded-control border border-line pr-7 pl-7.5 text-sm outline-none focus:border-brand"
-            />
+            <ShellIcon name="search" size={16} className="pointer-events-none absolute top-[9px] left-2.5 text-muted" />
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search party" aria-label="Search party" className="pr-7 pl-7.5" />
             {search ? (
               <button
                 type="button"
@@ -718,13 +713,13 @@ export function QuoteGrid({
                   if (filter.q) go({ q: "" });
                 }}
                 aria-label="Clear search"
-                className="absolute top-1.5 right-1.5 flex h-5 w-5 cursor-pointer items-center justify-center text-muted hover:text-body"
+                className="absolute top-[7px] right-1.5 flex h-5 w-5 cursor-pointer items-center justify-center text-muted hover:text-body"
               >
                 <ShellIcon name="close" size={14} />
               </button>
             ) : null}
           </form>
-          <select
+          <Select
             value={preset}
             onChange={(e) => {
               const v = e.target.value;
@@ -733,59 +728,57 @@ export function QuoteGrid({
               else if (v === "3") go({ from: threeMonths, to: null });
             }}
             aria-label="Period"
-            className={TOOL}
           >
             <option value="3">Last 3 months</option>
             <option value="6">Last 6 months</option>
             <option value="all">Every date</option>
             {preset === "custom" ? <option value="custom">Chosen dates</option> : null}
-          </select>
+          </Select>
           <span className="inline-flex items-center gap-1.5">
-            <input type="date" value={filter.all ? "" : (filter.from ?? "")} onChange={(e) => e.target.value && go({ from: e.target.value })} aria-label="From" className={cx(TOOL, "w-[136px]")} />
+            <span className="w-[136px]">
+              <Input type="date" value={filter.all ? "" : (filter.from ?? "")} onChange={(e) => e.target.value && go({ from: e.target.value })} aria-label="From" />
+            </span>
             <span className="text-meta text-muted">to</span>
-            <input type="date" value={filter.to ?? ""} onChange={(e) => go({ to: e.target.value || null })} aria-label="To" className={cx(TOOL, "w-[136px]")} />
+            <span className="w-[136px]">
+              <Input type="date" value={filter.to ?? ""} onChange={(e) => go({ to: e.target.value || null })} aria-label="To" />
+            </span>
           </span>
           <span className="flex-1" />
           <span className="flex items-center gap-1.5 text-meta text-muted" aria-live="polite">
             <Dot tone={failed ? "danger" : saving ? "brand" : readOnly ? "muted" : "success"} />
             {saving ? "Saving…" : failed ? "Last change not saved" : readOnly ? "Preview — read only" : "All changes saved"}
           </span>
-          <button type="button" onClick={doUndo} disabled={!undo.length || readOnly} title="Undo (Ctrl+Z)" className={cx(TOOL, "cursor-pointer hover:bg-canvas disabled:cursor-default disabled:text-line-strong disabled:hover:bg-surface")}>
+          <Button size="sm" variant="ghost" onClick={doUndo} disabled={!undo.length || readOnly} title="Undo (Ctrl+Z)">
             Undo
-          </button>
+          </Button>
           {archived.length ? (
-            <button type="button" onClick={() => setShowArchived(true)} className={cx(TOOL, "cursor-pointer hover:bg-canvas")}>
+            <Button size="sm" variant="ghost" onClick={() => setShowArchived(true)}>
               Removed columns · {archived.length}
-            </button>
+            </Button>
           ) : null}
         </div>
 
         {/* Marking — the sheet's legend, and the way a mark is put on. */}
         <div className="flex flex-wrap items-center gap-2 border-b border-divider bg-canvas px-4 py-2">
-          <span className="mr-1 text-2xs font-medium tracking-[0.04em] text-muted uppercase">Mark selected</span>
+          <span className={cx("mr-1", eyebrowClass)}>Mark selected</span>
           {canReady ? (
             <MarkButton status="ready" disabled={readOnly} onClick={() => colour("ready")} title="Choose this rate to buy — the cell turns grey and the team can buy it" />
           ) : null}
-          <button
-            type="button"
+          <Button
+            size="sm"
+            variant="primary"
             disabled={readOnly || (focusedStatus !== "ready" && focusedStatus !== "po")}
             onClick={() => openPurchase(focusedRef())}
             title={focusedStatus === "ready" || focusedStatus === "po" ? "Record the drums for this rate; the PO number is made for you" : "Select a grey (Ready to buy) rate to buy it"}
-            className="inline-flex h-7 cursor-pointer items-center gap-2 rounded-control border border-brand bg-brand px-2.5 text-meta font-medium text-white hover:bg-brand-hover disabled:cursor-default disabled:border-line disabled:bg-surface disabled:font-normal disabled:text-line-strong"
           >
             <span aria-hidden className={cx("h-3 w-3 rounded-[3px]", STATUS_SWATCH.po)} />
             {focusedStatus === "po" ? "Edit purchase" : "Purchase it"}
-          </button>
+          </Button>
           <MarkButton status="cancel" disabled={readOnly} onClick={() => colour("cancel")} />
           <MarkButton status="pickup" disabled={readOnly} onClick={() => colour("pickup")} />
-          <button
-            type="button"
-            disabled={readOnly}
-            onClick={() => colour(null)}
-            className="inline-flex h-7 cursor-pointer items-center rounded-control px-2 text-meta text-muted hover:text-body disabled:cursor-default"
-          >
+          <LinkButton tone="muted" disabled={readOnly} onClick={() => colour(null)} className="px-2 text-meta">
             Clear mark
-          </button>
+          </LinkButton>
           <span className="ml-auto text-xs text-muted">Right-click a cell for more · Ctrl+V pastes from Excel · Ctrl+Z undoes</span>
         </div>
 
@@ -804,21 +797,22 @@ export function QuoteGrid({
           }}
           onMouseUp={() => (dragging.current = false)}
           onMouseLeave={() => (dragging.current = false)}
-          className="max-h-[calc(100vh-300px)] overflow-auto rounded-b-[6px] outline-none"
+          className="max-h-[calc(100vh-300px)] overflow-auto rounded-b-card outline-none"
         >
-          <table className="border-separate border-spacing-0" style={{ minWidth: "100%" }}>
+          <table className="border-separate border-spacing-0 [--rowh:36px]" style={{ minWidth: "100%" }}>
             <thead>
               <tr>
-                <th className={cx(HEAD, "left-0 z-30 w-[52px] min-w-[52px] text-center tabular-nums")} title="Rows shown">
-                  {rows.length}
-                </th>
-                <th className={cx(HEAD, "left-[52px] z-30 w-[124px] min-w-[124px] text-left")}>Date</th>
-                <th className={cx(HEAD, FROZEN_EDGE, "left-[176px] z-30 w-[220px] min-w-[220px] text-left")}>Party</th>
+                <Th className={cx(HEAD, "left-0 z-30 w-[52px] min-w-[52px] tabular-nums")} title="Rows shown">
+                  <span className="block text-center">{rows.length}</span>
+                </Th>
+                <Th className={cx(HEAD, "left-[52px] z-30 w-[124px] min-w-[124px]")}>Date</Th>
+                <Th className={cx(HEAD, FROZEN_EDGE, "left-[176px] z-30 w-[220px] min-w-[220px]")}>Party</Th>
                 {cols.map((c, i) => {
                   const colSelected = sel.c0 <= FIXED + i && FIXED + i <= sel.c1;
                   return (
-                    <th
+                    <Th
                       key={c.id}
+                      align={c.kind === "text" ? "left" : "right"}
                       onClick={(e) => {
                         if (e.shiftKey) setFocus({ r: rows.length - 1, c: FIXED + i });
                         else {
@@ -828,18 +822,16 @@ export function QuoteGrid({
                         gridRef.current?.focus();
                       }}
                       onDoubleClick={() => !readOnly && setColEdit({ id: c.id, at: i })}
-                      className={cx(
-                        "group sticky top-0 z-20 cursor-pointer border-r border-b border-divider border-b-line px-3 pt-2 pb-1.5 align-bottom font-normal",
-                        colSelected ? "bg-brand-soft" : "bg-canvas hover:bg-divider",
-                        c.kind === "text" ? "min-w-[160px] text-left" : "min-w-[128px] text-right",
-                      )}
+                      className={cx(HEAD, "group z-20 cursor-pointer pt-2 pb-1.5 font-normal hover:bg-divider", c.kind === "text" ? "min-w-[160px]" : "min-w-[128px]")}
                       title={`${[c.pack, c.name, c.brand].filter(Boolean).join(" · ")}\nClick to select the column · double-click to edit it`}
                     >
-                      <div className="h-4 truncate text-2xs leading-4 font-medium tracking-[0.04em] text-muted uppercase">{c.pack}</div>
-                      <div className="text-meta leading-tight font-semibold whitespace-normal text-ink">{c.name || <span className="font-normal text-muted">Untitled</span>}</div>
-                      <div className="h-4 truncate text-2xs leading-4 text-muted">{c.brand}</div>
+                      {/* A selected column is tinted over the cell, since `Th` carries its own ground. */}
+                      {colSelected ? <span aria-hidden className="pointer-events-none absolute inset-0 bg-brand-soft" /> : null}
+                      <div className={cx("relative h-4 truncate leading-4", eyebrowClass)}>{c.pack}</div>
+                      <div className="relative text-meta leading-tight font-semibold tracking-normal whitespace-normal text-ink normal-case">{c.name || <span className="font-normal text-muted">Untitled</span>}</div>
+                      <div className="relative h-4 truncate text-2xs leading-4 tracking-normal text-muted normal-case">{c.brand}</div>
                       {!readOnly ? (
-                        <span className={cx("mt-1 flex gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100", c.kind === "text" ? "justify-start" : "justify-end")}>
+                        <span className={cx("relative mt-1 flex gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100", c.kind === "text" ? "justify-start" : "justify-end")}>
                           <HeadBtn label="Move left" onClick={() => moveColumn(c.id, -1)} disabled={i === 0}>
                             <ShellIcon name="chevron" size={12} className="rotate-180" />
                           </HeadBtn>
@@ -854,10 +846,10 @@ export function QuoteGrid({
                           </HeadBtn>
                         </span>
                       ) : null}
-                    </th>
+                    </Th>
                   );
                 })}
-                <th className="sticky top-0 z-20 w-full border-b border-line bg-canvas" />
+                <Th className="z-20 w-full" />
               </tr>
             </thead>
             <tbody>
@@ -865,8 +857,9 @@ export function QuoteGrid({
                 const rowSelected = sel.r0 <= r && r <= sel.r1;
                 return (
                   <tr key={row.id} className="group/row">
-                    <td className={cx("sticky left-0 z-10 border-r border-b border-divider px-1 text-center", rowSelected ? "bg-brand-soft" : "bg-canvas")}>
-                      <span className="flex items-center justify-between gap-0.5">
+                    <Td className={cx("sticky left-0 z-10 border-r border-b border-divider", rowSelected ? "bg-brand-soft" : "bg-canvas")}>
+                      {/* `Td` pads 12px a side; the 52px number column wants 4. */}
+                      <span className="-mx-2 flex items-center justify-between gap-0.5">
                         <button
                           type="button"
                           className={cx("min-w-[22px] cursor-pointer text-2xs tabular-nums", rowSelected ? "font-medium text-brand-hover" : "text-muted hover:text-body")}
@@ -894,7 +887,7 @@ export function QuoteGrid({
                           </span>
                         ) : null}
                       </span>
-                    </td>
+                    </Td>
                     {Array.from({ length: width }, (_, c) => {
                       const st = cellStatus(row, c);
                       const isFocus = focus.r === r && focus.c === c;
@@ -906,8 +899,9 @@ export function QuoteGrid({
                       const n = rate ? rateNumber(val) : null;
                       const lowest = s && n != null && s.count > 1 && n === s.lowest && st !== "cancel";
                       return (
-                        <td
+                        <Td
                           key={c}
+                          align={rate ? "right" : "left"}
                           data-cell={`${r}:${c}`}
                           onMouseDown={(e) => {
                             if (isEdit) return;
@@ -938,11 +932,11 @@ export function QuoteGrid({
                           }}
                           onDoubleClick={() => startEdit(r, c)}
                           className={cx(
-                            "relative h-9 border-r border-b border-divider px-3 text-sm whitespace-nowrap",
+                            "relative border-r border-b border-divider",
                             c === 0 && "sticky left-[52px] z-10 text-body",
                             c === 1 && cx("sticky left-[176px] z-10 max-w-[220px] truncate font-medium text-ink", FROZEN_EDGE),
                             c >= FIXED && "text-body",
-                            rate ? "text-right tabular-nums" : "text-left",
+                            rate && "tabular-nums",
                             st ? STATUS_CELL[st] : "bg-surface",
                             lowest && "font-semibold text-success",
                           )}
@@ -970,10 +964,10 @@ export function QuoteGrid({
                           ) : (
                             val
                           )}
-                        </td>
+                        </Td>
                       );
                     })}
-                    <td className="border-b border-divider bg-surface" />
+                    <Td className="border-b border-divider bg-surface" />
                   </tr>
                 );
               })}
@@ -983,23 +977,24 @@ export function QuoteGrid({
                 {(["latest", "lowest"] as const).map((k, fi) => (
                   /* Both rows stay in view: the first sits one row-height above the second. */
                   <tr key={k} className={fi === 0 ? "[&>td]:bottom-9" : "[&>td]:bottom-0"}>
-                    <td className={cx(FOOT, "left-0 z-20", fi === 0 && "border-t border-line")} />
-                    <td colSpan={2} className={cx(FOOT, FROZEN_EDGE, "left-[52px] z-20 text-left", fi === 0 && "border-t border-line")}>
-                      <span className="text-2xs font-medium tracking-[0.04em] text-muted uppercase">{k === "latest" ? "Latest rate" : "Lowest rate"}</span>
-                    </td>
+                    <Td className={cx(FOOT, "left-0 z-20", fi === 0 && "border-t border-line")} />
+                    <Td colSpan={2} className={cx(FOOT, FROZEN_EDGE, "left-[52px] z-20", fi === 0 && "border-t border-line")}>
+                      <span className={eyebrowClass}>{k === "latest" ? "Latest rate" : "Lowest rate"}</span>
+                    </Td>
                     {cols.map((c) => {
                       const s = stats.get(c.id);
                       return (
-                        <td
+                        <Td
                           key={c.id}
-                          className={cx(FOOT, "border-r border-divider text-right text-meta font-semibold text-ink tabular-nums", fi === 0 && "border-t border-line")}
+                          align="right"
+                          className={cx(FOOT, "border-r border-divider font-semibold text-ink tabular-nums", fi === 0 && "border-t border-line")}
                           title={k === "latest" && s?.latestDate ? `Quoted ${showDate(s.latestDate)}` : undefined}
                         >
-                          {s ? (k === "latest" ? (s.latest ?? "—") : (s.lowest ?? "—")) : ""}
-                        </td>
+                          <span className="text-meta">{s ? (k === "latest" ? (s.latest ?? "—") : (s.lowest ?? "—")) : ""}</span>
+                        </Td>
                       );
                     })}
-                    <td className={cx(FOOT, fi === 0 && "border-t border-line")} />
+                    <Td className={cx(FOOT, fi === 0 && "border-t border-line")} />
                   </tr>
                 ))}
               </tfoot>
@@ -1147,25 +1142,32 @@ export function QuoteGrid({
         />
       ) : null}
 
-      <Modal open={showArchived} onClose={() => setShowArchived(false)} title="Removed columns">
-        {archived.length ? (
-          <ul className="divide-y divide-divider">
-            {archived.map((c) => (
-              <li key={c.id} className="flex items-center justify-between gap-3 py-2.5 text-sm">
-                <span>
-                  <span className="font-medium text-ink">{c.name || "Untitled"}</span>
-                  {c.pack || c.brand ? <span className="ml-1.5 text-muted">{[c.pack, c.brand].filter(Boolean).join(" · ")}</span> : null}
-                </span>
-                <Button size="sm" onClick={() => commit([{ op: "restoreColumn", columnId: c.id }])}>
-                  Bring back
-                </Button>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-sm text-muted">No column has been removed.</p>
-        )}
-      </Modal>
+      {showArchived ? (
+        <ErpDialog onClose={() => setShowArchived(false)} label="Removed columns" size="sm" tall={false}>
+          <DialogHeader onClose={() => setShowArchived(false)}>
+            <DialogTitle>Removed columns</DialogTitle>
+          </DialogHeader>
+          <DialogBody>
+            {archived.length ? (
+              <ul className="divide-y divide-divider">
+                {archived.map((c) => (
+                  <li key={c.id} className="flex items-center justify-between gap-3 py-2.5 text-sm">
+                    <span>
+                      <span className="font-medium text-ink">{c.name || "Untitled"}</span>
+                      {c.pack || c.brand ? <span className="ml-1.5 text-muted">{[c.pack, c.brand].filter(Boolean).join(" · ")}</span> : null}
+                    </span>
+                    <Button size="sm" onClick={() => commit([{ op: "restoreColumn", columnId: c.id }])}>
+                      Bring back
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-muted">No column has been removed.</p>
+            )}
+          </DialogBody>
+        </ErpDialog>
+      ) : null}
     </>
   );
 }
@@ -1208,87 +1210,70 @@ function ColumnDialog({
   const [kind, setKind] = useState<QuoteColumnKind>(column?.kind ?? "rate");
   const [rm, setRm] = useState(column?.rawMaterialId ?? "");
   return (
-    <Modal
-      open
-      onClose={onClose}
-      title={column ? "Edit column" : "Add a column"}
-      footer={
-        <div className="flex w-full items-center gap-2">
-          {onRemove ? (
+    <ErpDialog onClose={onClose} label={column ? "Edit column" : "Add a column"} size="sm" tall={false}>
+      <DialogHeader onClose={onClose}>
+        <DialogTitle>{column ? "Edit column" : "Add a column"}</DialogTitle>
+      </DialogHeader>
+      <DialogBody>
+        <form
+          className="grid gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSave({ pack, name, brand, kind, rawMaterialId: rm || null });
+          }}
+        >
+          <Field label="Pack (top line)" hint="185/180 KGS NET, 200 LITER">
+            <Input value={pack} onChange={(e) => setPack(e.target.value)} maxLength={80} />
+          </Field>
+          <Field label="Material (middle line)">
+            <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} autoFocus />
+          </Field>
+          <Field label="Brand (bottom line)" hint="Mahek">
+            <Input value={brand} onChange={(e) => setBrand(e.target.value)} maxLength={80} />
+          </Field>
+          <Field label="Holds">
+            <Select value={kind} onChange={(e) => setKind(e.target.value === "text" ? "text" : "rate")} className="w-full">
+              <option value="rate">Rates (numbers)</option>
+              <option value="text">Text (a broker, a note)</option>
+            </Select>
+          </Field>
+          <Field label="Raw material" hint="Optional — which item in the master this column is for">
+            <Select value={rm} onChange={(e) => setRm(e.target.value)} className="w-full">
+              <option value="">Not linked</option>
+              {materials.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <button type="submit" className="hidden" />
+        </form>
+      </DialogBody>
+      <DialogFooter
+        left={
+          onRemove ? (
             <Button variant="danger" onClick={onRemove}>
               Remove column
             </Button>
-          ) : null}
-          <div className="flex-1" />
-          <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" onClick={() => onSave({ pack, name, brand, kind, rawMaterialId: rm || null })}>
-            {column ? "Save" : "Add column"}
-          </Button>
-        </div>
-      }
-    >
-      <form
-        className="grid gap-3"
-        onSubmit={(e) => {
-          e.preventDefault();
-          onSave({ pack, name, brand, kind, rawMaterialId: rm || null });
-        }}
+          ) : undefined
+        }
       >
-        <Labelled label="Pack (top line)" hint="185/180 KGS NET, 200 LITER">
-          <Input value={pack} onChange={(e) => setPack(e.target.value)} maxLength={80} />
-        </Labelled>
-        <Labelled label="Material (middle line)">
-          <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} autoFocus />
-        </Labelled>
-        <Labelled label="Brand (bottom line)" hint="Mahek">
-          <Input value={brand} onChange={(e) => setBrand(e.target.value)} maxLength={80} />
-        </Labelled>
-        <Labelled label="Holds">
-          <Select value={kind} onChange={(e) => setKind(e.target.value === "text" ? "text" : "rate")} className="w-full">
-            <option value="rate">Rates (numbers)</option>
-            <option value="text">Text (a broker, a note)</option>
-          </Select>
-        </Labelled>
-        <Labelled label="Raw material" hint="Optional — which item in the master this column is for">
-          <Select value={rm} onChange={(e) => setRm(e.target.value)} className="w-full">
-            <option value="">Not linked</option>
-            {materials.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}
-              </option>
-            ))}
-          </Select>
-        </Labelled>
-        <button type="submit" className="hidden" />
-      </form>
-    </Modal>
-  );
-}
-
-function Labelled({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <label className="grid gap-1 text-sm">
-      <span className="font-medium text-body">
-        {label}
-        {hint ? <span className="ml-1 font-normal text-muted">{hint}</span> : null}
-      </span>
-      {children}
-    </label>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button variant="primary" onClick={() => onSave({ pack, name, brand, kind, rawMaterialId: rm || null })}>
+          {column ? "Save" : "Add column"}
+        </Button>
+      </DialogFooter>
+    </ErpDialog>
   );
 }
 
 function MarkButton({ status, disabled, onClick, title }: { status: QuoteStatus; disabled: boolean; onClick: () => void; title?: string }) {
   return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      title={title ?? QUOTE_STATUS_LABEL[status]}
-      className="inline-flex h-7 cursor-pointer items-center gap-2 rounded-control border border-line bg-surface px-2.5 text-meta text-body hover:border-line-strong disabled:cursor-default"
-    >
+    <Button size="sm" variant="ghost" disabled={disabled} onClick={onClick} title={title ?? QUOTE_STATUS_LABEL[status]}>
       <span aria-hidden className={cx("h-3 w-3 rounded-[3px]", STATUS_SWATCH[status])} />
       {QUOTE_STATUS_LABEL[status]}
-    </button>
+    </Button>
   );
 }
 
@@ -1380,11 +1365,11 @@ function OptionPicker({
         }}
         onKeyDown={onKey}
         style={{ ...placeBy(anchor, 380, 300), width: Math.max(anchor.width, 300) }}
-        className="animate-fade-in fixed z-[95] flex max-h-[380px] flex-col overflow-hidden rounded-card border border-line bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.12)] outline-none"
+        className={cx("animate-fade-in fixed z-[95] flex max-h-[380px] flex-col overflow-hidden outline-none", popoverClass)}
       >
         <div className="flex items-center justify-between gap-2 border-b border-divider px-3 py-2">
-          <span className="text-2xs font-medium tracking-[0.04em] text-muted uppercase">{title}</span>
-          <span className="text-2xs text-muted">
+          <span className={eyebrowClass}>{title}</span>
+          <span className="text-xs text-muted">
             {q && showInput ? `${matched.length} of ${options.length}` : `${options.length} ${noun}`}
           </span>
         </div>
@@ -1400,7 +1385,7 @@ function OptionPicker({
                 setHl(0);
               }}
               placeholder={searchable ? `Search ${noun}, or type a new one` : "Type a new name"}
-              className="h-8 w-full rounded-control border border-line pr-2 pl-7.5 text-sm outline-none focus:border-brand"
+              className={controlClass({ className: "h-8 pr-2 pl-7.5" })}
             />
           </div>
         ) : null}
@@ -1461,24 +1446,19 @@ function OptionPicker({
         {matched.length > limit || (!showInput && !adding) || value ? (
           <div className="flex items-center gap-2 border-t border-divider bg-canvas px-3 py-1.5">
             {matched.length > limit ? (
-              <button
-                type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => setLimit((l) => l + PAGE)}
-                className="cursor-pointer text-meta font-medium text-brand-hover hover:underline"
-              >
+              <LinkButton onMouseDown={(e) => e.preventDefault()} onClick={() => setLimit((l) => l + PAGE)} className="text-meta">
                 Show {Math.min(PAGE, matched.length - limit)} more · {matched.length - limit} left
-              </button>
+              </LinkButton>
             ) : !showInput ? (
-              <button type="button" onClick={() => setAdding(true)} className="inline-flex cursor-pointer items-center gap-1.5 text-meta font-medium text-brand-hover hover:underline">
+              <LinkButton onClick={() => setAdding(true)} className="inline-flex items-center gap-1.5 text-meta">
                 <ShellIcon name="plus" size={13} /> Add new
-              </button>
+              </LinkButton>
             ) : null}
             <span className="flex-1" />
             {value ? (
-              <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => onPick("")} className="cursor-pointer text-meta text-muted hover:text-danger">
+              <LinkButton tone="muted" onMouseDown={(e) => e.preventDefault()} onClick={() => onPick("")} className="text-meta">
                 Clear
-              </button>
+              </LinkButton>
             ) : null}
           </div>
         ) : null}
@@ -1538,16 +1518,16 @@ function PoNote({
         style={{ ...style, width: W }}
         onKeyDown={(e) => e.key === "Escape" && onClose()}
         className={cx(
-          "animate-fade-in fixed z-[95] overflow-hidden rounded-card border border-warn-line bg-surface shadow-[0_8px_24px_rgba(22,22,22,0.14)]",
+          "animate-fade-in fixed z-[95] overflow-hidden rounded-card border border-warn-line bg-surface shadow-pop",
           !pinned && "pointer-events-none",
         )}
       >
         <div className="flex items-start justify-between gap-2 border-b border-warn-line bg-warn-soft px-3.5 py-2.5 shadow-[inset_3px_0_0_var(--color-warn)]">
           <div>
-            <div className="text-2xs font-medium tracking-[0.04em] text-warn-ink uppercase">PO made in Tally &amp; mailed</div>
+            <div className={eyebrowClass}>PO made in Tally &amp; mailed</div>
             <div className="mt-0.5 font-mono text-md font-semibold text-ink">{poNo || "—"}</div>
           </div>
-          <span className="rounded-[3px] bg-surface px-1.5 py-0.5 text-2xs font-medium text-body tabular-nums">Row {rowNo}</span>
+          <span className="rounded-control bg-surface px-1.5 py-0.5 text-2xs font-medium text-body tabular-nums">Row {rowNo}</span>
         </div>
         <dl className="grid grid-cols-[92px_1fr] gap-x-3 gap-y-1.5 px-3.5 py-3 text-meta">
           <dt className="text-muted">Drums</dt>
@@ -1608,7 +1588,7 @@ function CellMenu({ x, y, items, onClose }: { x: number; y: number; items: CellM
         ref={(el) => el?.focus()}
         onKeyDown={(e) => e.key === "Escape" && onClose()}
         style={style}
-        className="animate-fade-in fixed z-[95] flex flex-col overflow-hidden rounded-card border border-line bg-surface py-1 shadow-[0_8px_24px_rgba(22,22,22,0.12)] outline-none"
+        className={cx("animate-fade-in fixed z-[95] flex flex-col overflow-hidden py-1 outline-none", popoverClass)}
       >
         {items.map((it, i) => (
           <button
@@ -1627,7 +1607,7 @@ function CellMenu({ x, y, items, onClose }: { x: number; y: number; items: CellM
             )}
           >
             <span className="truncate">{it.label}</span>
-            {it.hint ? <span className="shrink-0 text-2xs text-muted">{it.hint}</span> : null}
+            {it.hint ? <span className="shrink-0 text-xs text-muted">{it.hint}</span> : null}
           </button>
         ))}
       </div>
@@ -1702,94 +1682,92 @@ function PurchaseDialog({
     onSave(n, ordering ? { requisitionId: reqId || null, qty: q, godown, deliveryDate: due } : null);
   }
   return (
-    <Modal
-      open
-      onClose={onClose}
-      title={editing ? "Edit purchase" : "Purchase it"}
-      width={540}
-      footer={
-        <div className="flex w-full items-center justify-end gap-2">
-          <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" onClick={save} disabled={noMaterial}>
-            {editing ? "Save purchase" : "Buy and make the PO"}
-          </Button>
+    <ErpDialog onClose={onClose} label={editing ? "Edit purchase" : "Purchase it"} width={540} tall={false}>
+      <DialogHeader onClose={onClose}>
+        <DialogTitle>{editing ? "Edit purchase" : "Purchase it"}</DialogTitle>
+      </DialogHeader>
+      <DialogBody>
+        <div className={cx("grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 bg-canvas text-meta", insetClass)}>
+          <span className="text-muted">Material</span>
+          <span className="font-medium text-ink">{column}</span>
+          <span className="text-muted">Party</span>
+          <span className="text-ink">{party || "—"}</span>
+          <span className="text-muted">Quoted</span>
+          <span className="text-ink">
+            {date} · row {rowNo}
+          </span>
+          <span className="text-muted">Rate</span>
+          <span className="font-semibold text-ink tabular-nums">{rate || "—"}</span>
         </div>
-      }
-    >
-      <div className="mb-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 rounded-control border border-line bg-canvas px-3.5 py-3 text-meta">
-        <span className="text-muted">Material</span>
-        <span className="font-medium text-ink">{column}</span>
-        <span className="text-muted">Party</span>
-        <span className="text-ink">{party || "—"}</span>
-        <span className="text-muted">Quoted</span>
-        <span className="text-ink">
-          {date} · row {rowNo}
-        </span>
-        <span className="text-muted">Rate</span>
-        <span className="font-semibold text-ink tabular-nums">{rate || "—"}</span>
-      </div>
-      {noMaterial ? (
-        <Callout tone="warn" className="mb-3 text-sm">
-          This column is not linked to a raw material, so no purchase order can be made for it. Edit the column (right-click its heading) and pick the raw material first.
-        </Callout>
-      ) : null}
-      <form
-        className="grid grid-cols-2 gap-3"
-        onSubmit={(e) => {
-          e.preventDefault();
-          save();
-        }}
-      >
-        <Labelled label="Number of drums">
-          <Input autoFocus inputMode="numeric" value={d} onChange={(e) => setD(e.target.value.replace(/[^\d]/g, ""))} invalid={tried && drumsBad} placeholder="e.g. 4" />
-          {tried && drumsBad ? <span className="text-xs text-danger">Enter how many drums, a whole number.</span> : null}
-        </Labelled>
-        <Labelled label="PO number">
-          <div className="flex h-9 items-center rounded-control border border-line bg-canvas px-3 font-mono text-sm text-ink">
-            {poNo || <span className="font-sans text-muted">Made when you save</span>}
-          </div>
-        </Labelled>
-        {ordering && !noMaterial ? (
-          <>
-            <div className="col-span-2">
-              <Labelled label="For requirement">
-                <Select value={reqId} onChange={(e) => pickReq(e.target.value)} className="w-full">
-                  {reqs.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.label}
+        {noMaterial ? (
+          <Callout tone="warn" className="mb-0 text-sm">
+            This column is not linked to a raw material, so no purchase order can be made for it. Edit the column (right-click its heading) and pick the raw material first.
+          </Callout>
+        ) : null}
+        <form
+          className="grid grid-cols-2 gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            save();
+          }}
+        >
+          <Field label="Number of drums">
+            <Input autoFocus inputMode="numeric" value={d} onChange={(e) => setD(e.target.value.replace(/[^\d]/g, ""))} invalid={tried && drumsBad} placeholder="e.g. 4" />
+            {tried && drumsBad ? <span className="text-meta text-danger">Enter how many drums, a whole number.</span> : null}
+          </Field>
+          <Field label="PO number">
+            <div className="flex h-8.5 items-center rounded-control border border-line bg-canvas px-2.5 font-mono text-sm text-ink">
+              {poNo || <span className="font-sans text-muted">Made when you save</span>}
+            </div>
+          </Field>
+          {ordering && !noMaterial ? (
+            <>
+              <div className="col-span-2">
+                <Field label="For requirement">
+                  <Select value={reqId} onChange={(e) => pickReq(e.target.value)} className="w-full">
+                    {reqs.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.label}
+                      </option>
+                    ))}
+                    <option value="">None waiting — raise one with this purchase</option>
+                  </Select>
+                </Field>
+              </div>
+              <Field label={`Quantity${unit ? ` (${unit})` : ""}`}>
+                <Input inputMode="decimal" value={qty} onChange={(e) => setQty(e.target.value.replace(/[^\d.]/g, ""))} invalid={tried && qtyBad} placeholder="e.g. 800" />
+                {tried && qtyBad ? <span className="text-meta text-danger">Enter the quantity bought.</span> : null}
+              </Field>
+              <Field label="Deliver to">
+                <Select value={godown} onChange={(e) => setGodown(e.target.value)} className="w-full">
+                  {choices.godowns.map((g) => (
+                    <option key={g} value={g}>
+                      {g}
                     </option>
                   ))}
-                  <option value="">None waiting — raise one with this purchase</option>
                 </Select>
-              </Labelled>
-            </div>
-            <Labelled label="Quantity" hint={unit ? `(${unit})` : undefined}>
-              <Input inputMode="decimal" value={qty} onChange={(e) => setQty(e.target.value.replace(/[^\d.]/g, ""))} invalid={tried && qtyBad} placeholder="e.g. 800" />
-              {tried && qtyBad ? <span className="text-xs text-danger">Enter the quantity bought.</span> : null}
-            </Labelled>
-            <Labelled label="Deliver to">
-              <Select value={godown} onChange={(e) => setGodown(e.target.value)} className="w-full">
-                {choices.godowns.map((g) => (
-                  <option key={g} value={g}>
-                    {g}
-                  </option>
-                ))}
-              </Select>
-              {tried && godownBad ? <span className="text-xs text-danger">Pick the godown.</span> : null}
-            </Labelled>
-            <Labelled label="Delivery by">
-              <Input type="date" min={today} value={due} onChange={(e) => setDue(e.target.value)} invalid={tried && dueBad} />
-              {tried && dueBad ? <span className="text-xs text-danger">A delivery date, today or later.</span> : null}
-            </Labelled>
-          </>
-        ) : null}
-        <p className="col-span-2 text-xs text-muted">
-          {editing
-            ? "This purchase keeps its PO number and its purchase order; changing the drums changes the order's line too."
-            : "Saving gives this purchase the next PO number, turns the cell yellow and puts the purchase order in Purchase orders — sent, ready for goods to be received against it."}
-        </p>
-        <button type="submit" className="hidden" />
-      </form>
-    </Modal>
+                {tried && godownBad ? <span className="text-meta text-danger">Pick the godown.</span> : null}
+              </Field>
+              <Field label="Delivery by">
+                <Input type="date" min={today} value={due} onChange={(e) => setDue(e.target.value)} invalid={tried && dueBad} />
+                {tried && dueBad ? <span className="text-meta text-danger">A delivery date, today or later.</span> : null}
+              </Field>
+            </>
+          ) : null}
+          <p className="col-span-2 text-meta text-muted">
+            {editing
+              ? "This purchase keeps its PO number and its purchase order; changing the drums changes the order's line too."
+              : "Saving gives this purchase the next PO number, turns the cell yellow and puts the purchase order in Purchase orders — sent, ready for goods to be received against it."}
+          </p>
+          <button type="submit" className="hidden" />
+        </form>
+      </DialogBody>
+      <DialogFooter>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button variant="primary" onClick={save} disabled={noMaterial}>
+          {editing ? "Save purchase" : "Buy and make the PO"}
+        </Button>
+      </DialogFooter>
+    </ErpDialog>
   );
 }

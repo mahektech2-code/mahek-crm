@@ -1,7 +1,7 @@
 "use client";
 
 import { ParkLead } from "@/components/leads/record/park-lead";
-import { useInLeadHub } from "@/components/leads/hub/hub-context";
+import { OutsideLeadHub, useInLeadHub } from "@/components/leads/hub/hub-context";
 import type { ActionOwnerCandidate } from "@/lib/services/lead-actions-service";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import { DeleteLead } from "./delete-lead";
@@ -21,17 +21,10 @@ import {
   salesTypeLabel,
   sampleStateLabel,
   stageLabel,
-  stageSentence,
   type LeadStage,
   type SampleState,
 } from "@/lib/lead-labels";
 import { checklistFor, type GateVerdict } from "@/lib/engines/lead-gates";
-import {
-  DIRECT_LADDER,
-  DISTRIBUTOR_LADDER,
-  LEGACY_LADDER,
-  THIRD_PARTY_LADDER,
-} from "@/lib/engines/lead-ladder";
 import type {
   HandoverCandidate,
   LeadOrderRow,
@@ -53,7 +46,7 @@ import type {
   ParkDetail,
   TimelinePage,
 } from "@/lib/services/lead-record-service";
-import { Banner, Button, Cell, HeadCell, Pill, Row, ScreenHeader, Table } from "@/components/console/parts";
+import { Banner, Button, Cell, HeadCell, Pill, Row, Table } from "@/components/console/parts";
 import { plural } from "@/components/console/words";
 import { RequestSample } from "@/components/samples/request-sample";
 import { CommunicationPanel } from "../communication-panel";
@@ -69,14 +62,36 @@ import { ValidateGst } from "./validate-gst";
 import { SetSalesType } from "./set-sales-type";
 import { AssignLeadManager, type LeadManagerCandidate } from "./assign-lead-manager";
 import { ReassignLead, type Assignee } from "./reassign-lead";
-import { NextActionBand } from "./next-action-band";
-import { RoleReadings } from "./where-it-stands";
+import { WhosUp } from "./where-it-stands";
+import { CardGrid } from "@/components/ui/card-grid";
+import {
+  DIRECT_LADDER,
+  DISTRIBUTOR_LADDER,
+  LEGACY_LADDER,
+  THIRD_PARTY_LADDER,
+} from "@/lib/engines/lead-ladder";
+import {
+  Card,
+  CallsVisitsCard,
+  GateCard,
+  KV,
+  LadderStepper,
+  MenuDanger,
+  MoreMenu,
+  NextStepCard,
+  PeopleCard,
+  type CallBox,
+} from "./record-chrome";
+import { priorityLabel, priorityTone } from "@/lib/lead-priority";
+import type { DeskLeadRecord } from "@/lib/services/lead-calling-desk-service";
+import { nextCallNumber, type CallOutcome } from "@/lib/engines/lead-calling-desk";
+import { LogCallDialog } from "@/components/leads/calling-desk/dialogs";
 import { timelineActor, type TimelineActorKind } from "./timeline-actor";
 import { RelationshipChain } from "./relationship-chain";
 import type { LeadActionFacts } from "@/lib/engines/lead-role-action";
 import type { LeadGateActionFacts } from "@/lib/engines/lead-gate-action";
-import { MoveForward } from "./move-forward";
-import type { VantageSeats, VantageViewer } from "@/lib/lead-vantage";
+import { PrimaryGateAction } from "./move-forward";
+import type { VantageViewer } from "@/lib/lead-vantage";
 
 /**
  * One lead's whole record, in the order somebody reads it.
@@ -310,6 +325,10 @@ export function LeadRecordScreen({
   gateFacts,
   nowMs,
   photoIds = [],
+  requireNextAction,
+  desk = null,
+  defaultNextDate = null,
+  openCall = false,
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
@@ -462,397 +481,198 @@ export function LeadRecordScreen({
   gateFacts: LeadGateActionFacts;
   /** The clock, read once on the server. A client may not read it in render. */
   nowMs: number;
+  /** `leads.requireNextAction`, for the next-step dialog. */
+  requireNextAction: boolean;
+  /**
+   * The Calling desk's own record of this lead, where the reader works the
+   * desk — its three calls, and what the call dialog needs. Null for
+   * everybody else, who are shown no Call button.
+   */
+  desk?: DeskLeadRecord | null;
+  /** The call dialog's default next-call day, worked out on the server. */
+  defaultNextDate?: string | null;
+  /** `?call=1` — open the call dialog on arrival, from My day's Call. */
+  openCall?: boolean;
 }) {
-  const inHub = useInLeadHub();
   const [verifying, setVerifying] = React.useState(false);
+  const nextCall = desk ? nextCallNumber(desk.phase) : null;
+  const canCall = canWork && nextCall !== null;
+  const [calling, setCalling] = React.useState(Boolean(openCall && desk && canCall));
+  const deskCalls = desk
+    ? {
+        calls: desk.calls,
+        nextDate: desk.nextAction?.kind === "message" ? null : (desk.nextAction?.date ?? null),
+      }
+    : null;
 
   const distributor = record.salesType === "distributor";
-  const byStage = new Map(verdicts.map((v) => [v.to, v]));
   const base = leadHref(workspace, `leads/${record.customerId}`);
   const tabs = RECORD_TABS.filter((t) => (distributor ? t.distributor : t.shop));
   const here: RecordTab = tabs.find((t) => t.id === tab)?.id ?? "overview";
+  const closed = CLOSED_STAGES.has(record.stage);
 
   const detail =
     [record.companyName, record.city].filter(Boolean).join(" · ") || record.mobile || "—";
+  const contact = [record.city, record.contactPerson, record.mobile].filter(Boolean).join(" · ");
+
+  /* The calls box: the Calling desk's three attempts where the desk has this
+     lead, numbered as the desk numbers them. */
+  const callBoxes: CallBox[] = (() => {
+    if (!deskCalls) return [];
+    const round = deskCalls.calls.filter((c) => !c.earlier);
+    const boxes: CallBox[] = [];
+    for (let n = 1; n <= Math.max(3, round.length); n++) {
+      const made = round.find((c) => c.callNumber === n);
+      if (made) {
+        boxes.push({
+          n,
+          state: callOutcomeLabel(made.outcome),
+          tone:
+            made.outcome === "spoke_collected"
+              ? "success"
+              : made.outcome === "spoke_callback"
+                ? "warn"
+                : made.outcome === "no_answer"
+                  ? "neutral"
+                  : "danger",
+          sub: `${shortDate(made.at)} · ${made.byName}`,
+        });
+      } else if (n === round.length + 1 && !closed) {
+        const due = deskCalls.nextDate;
+        const late = due ? due < day : false;
+        boxes.push({
+          n,
+          state: due ? (late ? "Late" : "Due") : "Next",
+          tone: late ? "danger" : due ? "warn" : "neutral",
+          sub: due ? `${shortDate(due)}${late ? " · late" : ""}` : "Not booked",
+          hot: late,
+        });
+      } else {
+        boxes.push({
+          n,
+          state: "Later",
+          tone: "neutral",
+          sub: n === 3 ? "Last attempt" : "—",
+        });
+      }
+    }
+    return boxes;
+  })();
+
+  const callsMade = deskCalls ? deskCalls.calls.filter((c) => !c.earlier).length : 0;
 
   return (
-    <div className="p-6">
-      <ScreenHeader
-        entity
-        title={record.name}
-        subtitle={
-          <>
-            {detail}
-            {record.contactPerson ? ` · ask for ${record.contactPerson}` : ""}
-            {record.mobile ? ` · ${record.mobile}` : ""}
-          </>
-        }
-        actions={
-          <>
-            <Link
-              href={leadHref(workspace, "leads")}
-              className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
-            >
-              ← All leads
-            </Link>
-            {/* §5.10 — a lead may be closed from any active rung, by any role.
-                Withheld on the four stages where it would say something false:
-                a lost lead has nothing left to lose, and a lead that reached
-                the book has been WON, so marking it lost would overwrite the
-                record of a sale rather than record a loss. */}
-            {/* THE DOOR ONTO THE MIGRATION, and the four conditions are here
-                rather than inside the control because three of them are facts
-                about this record that the screen already holds.
-
-                Only a distributor lead has anything to migrate; a CLOSED one
-                has nothing to put back to work — and `active_distributor` is
-                in that set, which is the half that matters. Mahek's rule is
-                that Prospective Distributor is a historical lead TYPE and
-                Distributor means formally APPOINTED, so a lead standing on
-                that rung was appointed, is a distributor, and the action
-                refuses it. Offering it there would be offering work that
-                cannot be done. */}
-            {record.salesType === "distributor" && !CLOSED_STAGES.has(record.stage) ? (
-              <MigrateDistributor
-                customerId={record.customerId}
-                name={record.name}
-                stage={record.stage}
-                canMigrate={canMigrate}
-              />
-            ) : null}
-            {/* Only a lead can be deleted: once it has reached the book it is an
-                account we invoice, and the ledger needs it. */}
-            {record.stage === "customer" || record.stage === "active_distributor" ? null : (
-              <DeleteLead
-                customerId={record.customerId}
-                name={record.name}
-                canTrash={canTrash}
-                backHref={leadHref(workspace, "leads")}
-              />
-            )}
-            {CLOSED_STAGES.has(record.stage) || park ? null : (
-              <ParkLead
-                customerId={record.customerId}
-                name={record.name}
-                stage={record.stage}
-                day={day}
-                candidates={parkCandidates}
-                holdReasons={holdReasons}
-                defaultOwnerId={record.salesmanId}
-                canWork={canWork}
-              />
-            )}
-            {CLOSED_STAGES.has(record.stage) ? null : (
-              <MarkLost
-                customerId={record.customerId}
-                name={record.name}
-                stage={record.stage}
-                lostReasons={lostReasons}
-                canWork={canWork}
-              />
-            )}
-          </>
-        }
-      />
-      {photoIds.length ? (
-        <div className="-mt-2 mb-4 flex items-center gap-2 text-[12px] text-muted">
-          <span>From the shop:</span>
-          {photoIds.map((pid) => (
-            <a key={pid} href={`/api/attachments/${pid}`} target="_blank" rel="noreferrer" title="Open the full photograph">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={`/api/attachments/${pid}`}
-                alt={`${record.name}, photographed in the field`}
-                loading="lazy"
-                className="h-14 w-14 rounded-[4px] border border-line object-cover hover:border-brand"
-              />
-            </a>
-          ))}
-        </div>
-      ) : null}
-
-      {/* ---------------------------------------------------------- header */}
-
-      <section className="mb-4 flex flex-wrap items-start gap-x-8 gap-y-3.5 rounded-[6px] border border-line bg-surface px-5 py-3.5">
-        <Fact label="Sales type" value={salesTypeLabel(record.salesType)}>
-          <span className="block text-[12px] text-muted" title={ladderName(record.salesType)}>
-            {record.salesType
-              ? ladderName(record.salesType)
-              : "on the original ladder — nothing backfills a type"}
-          </span>
-          {/* §2 — UNDER THE FACT IT CHANGES, which is the argument rather than
-              the layout. A lead raised before the funnel existed reads "Not
-              set · on the original ladder", and that sentence is the reason
-              somebody is looking for a way to fix it; the control belongs
-              where the problem is stated and not in a header row of buttons
-              three feet away that says nothing about ladders.
-
-              NOT on a distributor lead: `MigrateDistributor` is that path and
-              answers what happens to the rung as well, which this action
-              deliberately does not. Two doors onto one correction is how two
-              of them come to disagree about a rung. Not on a closed lead
-              either — a won, lost or converted account has no ladder left to
-              climb, so changing which one it was on moves nothing and invites
-              somebody to rewrite the record of a sale. */}
-          {record.salesType === "distributor" || CLOSED_STAGES.has(record.stage) ? null : (
-            <span className="mt-1 block">
-              <SetSalesType
-                customerId={record.customerId}
-                name={record.name}
-                salesType={record.salesType}
-                stage={record.stage}
-                canWork={canWork}
-                canOverride={canChangeLadder}
-              />
-            </span>
-          )}
-        </Fact>
-        <Fact label="Stage" value={park ? "On hold" : stageLabel(record.stage)}>
-          <span className="block max-w-[280px] text-[12px] text-pretty text-muted">
-            {park
-              ? park.fromStage
-                ? `Parked from ${stageLabel(park.fromStage)}`
-                : "Parked, and the transition does not say from where"
-              : inHub
-                ? null
-                : stageSentence(record.stage)}
-          </span>
-        </Fact>
-        <Fact
-          label="Here since"
-          value={record.stageSince ? shortDate(record.stageSince) : "—"}
-          sub={record.stageSince ? `${plural(record.stuckDays, "day")} at this stage` : undefined}
-        />
-        <Fact label="Salesman" value={record.salesmanName ?? "Nobody"}>
-          {record.salesmanId && workspace === "sales" ? (
-            <Link
-              href={`/sales/people/${record.salesmanId}`}
-              className="block text-[12px] no-underline"
-            >
-              their record
-            </Link>
-          ) : (
-            <span className="text-[12px] text-warn-ink">unassigned</span>
-          )}
-        </Fact>
-        <Fact
-          label="Lead manager"
-          value={record.leadManagerName ?? "Nobody"}
-          sub={
-            inHub
-              ? undefined
-              : record.leadManagerName
-                ? "owes the verification call and the nurture tasks"
-                : "nobody covers this area yet"
-          }
-        />
-        <Fact
-          label="Verified"
-          value={record.verifiedAt ? shortDate(record.verifiedAt.toString()) : "Not yet"}
-          sub={record.verifiedByName ?? undefined}
-        />
-        <Fact
-          label="Potential"
-          value={record.potentialPaise ? money(record.potentialPaise) : "Not estimated"}
-          sub={record.monthlyLitres ? `${record.monthlyLitres} L a month` : undefined}
-        />
-        {/* §4.1 — IMMEDIATELY AFTER THE POTENTIAL, and that is the argument
-            rather than the layout. The two carry the same three words and
-            answer different questions — what the shop could spend, which is
-            the salesman's estimate, and whether it is this fortnight's work,
-            which is the manager's word. Read side by side they are the
-            sentence somebody meant; read a screen apart they are one fact
-            appearing to be stated twice. */}
-        <LeadPriorityControl
-          customerId={record.customerId}
-          priority={record.priority}
-          potentialPaise={record.potentialPaise}
-          canPrioritise={canPrioritise}
-        />
-      </section>
-
-      {/* ------------------------------------------------------------ park */}
-
-      {park ? (
-        <Banner
-          tone="warn"
-          title={
-            /* Three facts and the day is the one somebody acts on, so it is in
-               the title rather than three lines down. A park with no day named
-               is a park nothing will ever make due — said in words here, not
-               left as an absence the reader has to notice. */
-            [
-              park.fromStage ? `Parked at ${stageLabel(park.fromStage)}` : "Parked",
-              park.resumeDate ? `back on ${shortDate(park.resumeDate)}` : "with no day named",
-            ].join(" — ")
-          }
-          body={
-            <>
-              {/*
-                THE CODE AND THE SENTENCE ARE TWO LINES BECAUSE THEY ARE TWO
-                ANSWERS. The code is which of the six, and it is what the
-                counting question is asked of; the sentence is what actually
-                happened, and it is what somebody picking this lead up on the
-                resume date reads. Either can be absent and neither absence is
-                drawn as a blank: a park made before the codes existed has only
-                the words, a park against one of the five named codes may have
-                only the code, and a park with neither is the row On Hold exists
-                to stop — so it says so.
-              */}
-              {park.reasonCode ? (
-                <p className="m-0 font-medium">{labelOf(holdReasons, park.reasonCode)}</p>
-              ) : null}
-              <p className="m-0">
-                {park.holdReason ??
-                  (park.reasonCode
-                    ? "Nothing further was written down."
-                    : "No reason was given.")}
-              </p>
-              <p className="m-0 mt-1 text-[12px] text-muted">
-                {park.at
-                  ? `${stamp(park.at)} · ${park.actorName ?? "somebody"}`
-                  : "No transition recorded"}
-
-              </p>
-            </>
-          }
-        />
-      ) : null}
-
-      {mustDecide ? (
-        <Banner
-          tone="warn"
-          title="This suspect is out of visits"
-          body="The window has run out, so nothing is being refused — something is being demanded. Somebody has to answer Prospect or Not Prospect, and both of those are moves the rules allow."
-        />
-      ) : null}
-
-      {record.stage === "prospect" && !record.verifiedAt ? (
-        <Banner
-          tone="warn"
-          title="Waiting on the verification call"
-          body="Qualification opens once a Sales Manager has called the customer to check."
-          action={
-            <Link
-              href={`${base}/verify`}
-              className={cx(
-                "inline-flex h-9 items-center rounded-[4px] border px-4 text-sm font-medium no-underline hover:no-underline",
-                canVerify
-                  ? "border-brand bg-brand text-white hover:bg-brand-hover"
-                  : "pointer-events-none border-line bg-surface text-muted opacity-50",
+    <div className="flex flex-col gap-4 p-6">
+      {/* ------------------------------------------------------- header */}
+      <header className="flex flex-col gap-3">
+        <Link
+          href={leadHref(workspace, "leads")}
+          className="self-start text-[13px] text-muted no-underline hover:text-ink hover:no-underline"
+        >
+          ← Leads
+        </Link>
+        <div className="flex flex-wrap items-start gap-4">
+          <div className="min-w-[260px] flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="m-0 text-[22px] leading-7 font-semibold text-ink">{record.name}</h1>
+              <Pill tone="neutral">{salesTypeLabel(record.salesType)}</Pill>
+              {park ? (
+                <Pill tone="warn">On hold</Pill>
+              ) : (
+                <Pill tone={record.stage === "lost" ? "danger" : "brand"}>
+                  {stageLabel(record.stage)} · {plural(record.stuckDays, "day")}
+                </Pill>
               )}
-              title={
-                canVerify
-                  ? undefined
-                  : "Only a Sales Manager can make the check call."
-              }
+              {record.priority ? (
+                <Pill tone={priorityTone(record.priority) === "warn" ? "neutral" : priorityTone(record.priority)}>
+                  {priorityLabel(record.priority)}
+                </Pill>
+              ) : null}
+            </div>
+            <div className="mt-1 text-[13px] text-muted">{contact || detail}</div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {desk ? (
+              <Button
+                tone="default"
+                disabled={!canCall}
+                title={
+                  !canWork
+                    ? "Working a lead is the salesman's and the manager's."
+                    : nextCall === null
+                      ? "No call is due on this lead."
+                      : undefined
+                }
+                onClick={() => setCalling(true)}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true" className="mr-1.5">
+                  <path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2" />
+                </svg>
+                {nextCall ? `Call ${nextCall} of 3` : `${plural(callsMade, "call")} made`}
+              </Button>
+            ) : null}
+            <Link
+              href={`${base}?tab=communication`}
+              className="inline-flex h-9 items-center rounded-[6px] border border-line bg-surface px-3.5 text-sm font-medium text-body no-underline hover:bg-canvas hover:text-ink hover:no-underline"
             >
-              Make the call
+              Message
             </Link>
-          }
-        />
-      ) : null}
-
-      {record.lostReason ? (
-        <Banner tone="danger" title="This lead is closed" body={record.lostReason} fact />
-      ) : null}
-
-      {/* --------------------------------------------- what happens next */}
-
-      {/* §24 ABOVE THE FOLD AND ACROSS THE PAGE, because it is the question
-          the rest of this record is evidence for. It used to be a panel third
-          down the rail, under the gate and under a twelve-rung ladder, which
-          on a laptop is a scroll — so the line saying what happens next sat
-          below the screen somebody opened to find out. `mustDecide` and the
-          park banner sit above it deliberately: both are things that have to
-          be answered before a next action means anything. */}
-      <NextActionBand
-        record={record}
-        active={!CLOSED_STAGES.has(record.stage) && !park}
-        nowMs={nowMs}
-      />
-
-      {/* ------------------------------------------ the body and the rail */}
-
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,380px)]">
-        <div className="flex min-w-0 flex-col gap-4">
-          {/* ------------------------------------------------- the tab strip */}
-          <nav className="-mb-1 flex flex-wrap gap-1 border-b border-line">
-            {tabs.map((t) => {
-              const on = t.id === here;
-              const count = countFor(t.id, counts, timeline.total);
-              return (
-                <Link
-                  key={t.id}
-                  href={t.id === "overview" ? base : `${base}?tab=${t.id}`}
-                  title={t.hint}
-                  aria-current={on ? "page" : undefined}
-                  className={cx(
-                    "inline-flex items-center gap-1.5 border-b-[2px] px-3 py-2 text-[13px] no-underline hover:no-underline",
-                    on
-                      ? "border-brand font-medium text-ink"
-                      : "border-transparent text-muted hover:text-body",
-                  )}
-                >
-                  {t.label}
-                  {count != null ? (
-                    <span className="rounded-[9px] bg-divider px-1.5 text-[11px] tabular-nums text-body">
-                      {count}
-                    </span>
-                  ) : null}
-                </Link>
-              );
-            })}
-          </nav>
-
-          {here === "overview" ? (
-            <>
-              {/* §8.5 — the one place "what do I do next on this lead"
-                  collapses to a single verb. It sits FIRST on the tab, above
-                  the seats and the visits, because those are who and what
-                  happened and this is what to do. The rail beside it still
-                  answers the other half — which rung, and what it is waiting
-                  on — and both read the same verdict, so neither can promise a
-                  move the other refuses. */}
-              <MoveForward
-                workspace={workspace}
-                base={base}
+            <PrimaryGateAction
+              workspace={workspace}
+              base={base}
+              facts={gateFacts}
+              canVerify={canVerify}
+            />
+            <MoreMenu>
+              <ReassignLead
                 customerId={record.customerId}
-                facts={gateFacts}
-                verdict={nextVerdict}
-                nextRung={nextRung}
-                canWork={canWork}
-                canOverride={canOverride}
-                overrideAllowed={overrideAllowed}
+                name={record.name}
+                currentId={record.salesmanId}
+                currentName={record.salesmanName}
+                assignees={assignees}
+                canReassign={canReassign}
               />
-              <SeatsPanel record={record} leadManagers={leadManagers} assignees={assignees} canReassign={canReassign} canWork={canWork} />
-              {/* §5.9 — the chain, and only where there is one. The seats panel
-                  above already holds two of its links, four cells apart and
-                  each reading as a fact of its own; this is the same facts in
-                  the order the goods and the money travel in, which is the
-                  order somebody uses them. `thirdParty` is the whole of when it
-                  is true — a direct customer is an account we invoice, so we
-                  are the far end of the chain rather than a link in it, and a
-                  shortened version drawn for one would invent a relationship
-                  nobody recorded. */}
-              {record.thirdParty ? (
-                <RelationshipChain
-                  shopName={record.name}
-                  links={record.distributorLinks}
-                  salesManagerName={record.salesManagerName}
+              {/* §2 — not on a distributor (`MigrateDistributor` is that path)
+                  and not on a closed lead, which has no ladder left to climb. */}
+              {distributor || closed ? null : (
+                <SetSalesType
+                  customerId={record.customerId}
+                  name={record.name}
+                  salesType={record.salesType}
+                  stage={record.stage}
+                  canWork={canWork}
+                  canOverride={canChangeLadder}
+                  label={record.salesType ? "Change sales type" : "Set sales type"}
+                />
+              )}
+              {distributor && !closed ? (
+                <MigrateDistributor
+                  customerId={record.customerId}
+                  name={record.name}
+                  stage={record.stage}
+                  canMigrate={canMigrate}
                 />
               ) : null}
-              <VisitsPanel visits={visits} total={counts.visits} record={record} />
+              {closed || park ? null : (
+                <ParkLead
+                  customerId={record.customerId}
+                  name={record.name}
+                  stage={record.stage}
+                  day={day}
+                  candidates={parkCandidates}
+                  holdReasons={holdReasons}
+                  defaultOwnerId={record.salesmanId}
+                  canWork={canWork}
+                />
+              )}
               <HandoverPanel
+                menu
                 customerId={record.customerId}
                 leadName={record.name}
                 stage={record.stage}
                 salesType={record.salesType}
                 convertedAt={record.convertedAt}
                 leadManagerName={record.leadManagerName}
-                /* The RELATIONSHIP seat, which is what this panel moves.
-                   Drawing the sales one here read as "held by Priya" and then
-                   handed the account to somebody else entirely. */
                 currentOwnerId={record.relationshipOwnerId}
                 currentOwnerName={record.relationshipOwnerName}
                 candidates={handover}
@@ -860,6 +680,173 @@ export function LeadRecordScreen({
                 canWork={canWork}
                 canHandOver={canHandOver}
               />
+              <MenuDanger>
+                {/* §5.10 — closed from any active rung; never on a lead that
+                    is already lost or that reached the book. */}
+                {closed ? null : (
+                  <MarkLost
+                    customerId={record.customerId}
+                    name={record.name}
+                    stage={record.stage}
+                    lostReasons={lostReasons}
+                    canWork={canWork}
+                  />
+                )}
+                {/* Only a lead can be deleted: an account on the book is one
+                    the ledger needs. */}
+                {record.stage === "customer" || record.stage === "active_distributor" ? null : (
+                  <DeleteLead
+                    customerId={record.customerId}
+                    name={record.name}
+                    canTrash={canTrash}
+                    backHref={leadHref(workspace, "leads")}
+                  />
+                )}
+              </MenuDanger>
+            </MoreMenu>
+          </div>
+        </div>
+        {photoIds.length ? (
+          <div className="flex items-center gap-2">
+            {photoIds.map((pid) => (
+              <a key={pid} href={`/api/attachments/${pid}`} target="_blank" rel="noreferrer" title="Open the full photograph">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`/api/attachments/${pid}`}
+                  alt={`${record.name}, photographed in the field`}
+                  loading="lazy"
+                  className="h-12 w-12 rounded-[6px] border border-line object-cover hover:border-brand"
+                />
+              </a>
+            ))}
+          </div>
+        ) : null}
+      </header>
+
+      {/* ------------------------------------------------------ ladder */}
+      <LadderStepper
+        ladder={ladder}
+        rung={rung}
+        parked={Boolean(park)}
+        name={ladderName(record.salesType)}
+      />
+
+      {/* -------------------------------------------------------- tabs */}
+      <nav aria-label="Record" className="flex gap-5 overflow-x-auto border-b border-line">
+        {tabs.map((t) => {
+          const on = t.id === here;
+          const count = countFor(t.id, counts, timeline.total);
+          return (
+            <Link
+              key={t.id}
+              href={t.id === "overview" ? base : `${base}?tab=${t.id}`}
+              title={t.hint}
+              aria-current={on ? "page" : undefined}
+              className={cx(
+                "-mb-px inline-flex h-10 items-center gap-1.5 border-b-2 px-0.5 text-[13.5px] whitespace-nowrap no-underline hover:no-underline",
+                on
+                  ? "border-b-brand font-semibold text-ink hover:text-ink"
+                  : "border-b-transparent font-medium text-muted hover:text-ink",
+              )}
+            >
+              {t.label}
+              {count != null ? (
+                <span className="h-[18px] min-w-5 rounded-[9px] bg-divider px-1.5 text-center text-[11px] leading-[18px] font-semibold tabular-nums text-body">
+                  {count}
+                </span>
+              ) : null}
+            </Link>
+          );
+        })}
+      </nav>
+
+      {/* ----------------------------------------------------- banners */}
+      {park ? (
+        <Banner
+          tone="warn"
+          fact
+          title={[
+            park.fromStage ? `On hold from ${stageLabel(park.fromStage)}` : "On hold",
+            park.resumeDate ? `back on ${shortDate(park.resumeDate)}` : "no day named",
+          ].join(" · ")}
+          body={[
+            park.reasonCode ? labelOf(holdReasons, park.reasonCode) : null,
+            park.holdReason,
+            park.at ? `${stamp(park.at)} · ${park.actorName ?? "somebody"}` : null,
+          ]
+            .filter(Boolean)
+            .join(" — ") || "No reason was given."}
+        />
+      ) : null}
+      {mustDecide ? (
+        <Banner tone="warn" fact title="Out of visits" body="Decide: Prospect, or not." />
+      ) : null}
+      {record.lostReason ? (
+        <Banner tone="danger" title="Lost" body={record.lostReason} fact />
+      ) : null}
+
+      {/* ------------------------------------------------- body + rail */}
+      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="flex min-w-0 flex-col gap-4">
+          {here === "overview" ? (
+            <>
+              <NextStepCard
+                record={record}
+                active={!closed && !park}
+                nowMs={nowMs}
+                day={day}
+                candidates={parkCandidates}
+                requireNextAction={requireNextAction}
+                canWork={canWork}
+              />
+              <GateCard
+                record={record}
+                base={base}
+                verdict={nextVerdict}
+                nextRung={nextRung}
+                parked={Boolean(park)}
+                canWork={canWork}
+                canOverride={canOverride}
+                overrideAllowed={overrideAllowed}
+                fixes={FIXED_ON}
+              />
+              <Card
+                title="Opportunity"
+                action={
+                  closed ? null : <ConfirmFigures customerId={record.customerId} canWork={canWork} stale={figuresStale} />
+                }
+              >
+                <CardGrid min={150} gap="gap-x-5 gap-y-4">
+                  <KV k="Customer type" v={record.customerType ?? "Not confirmed"} tone={record.customerType ? undefined : "faint"} />
+                  <KV k="Decision maker" v={record.decisionMaker ?? "Not confirmed"} tone={record.decisionMaker ? undefined : "faint"} />
+                  <KV k="Buyer" v={record.buyer ?? "Not confirmed"} tone={record.buyer ? undefined : "faint"} />
+                  <KV
+                    k="GST"
+                    v={record.gstin ? (record.gstVerified ? `${record.gstin} · checked` : `${record.gstin} · not checked`) : "Not given"}
+                    tone={record.gstin && record.gstVerified ? undefined : "warn"}
+                  />
+                  <KV k="A month" v={record.monthlyLitres ? `${record.monthlyLitres} L` : "Not confirmed"} tone={record.monthlyLitres ? undefined : "faint"} />
+                  <KV k="Potential" v={record.potentialPaise ? `${money(record.potentialPaise)} / month` : "Not estimated"} tone={record.potentialPaise ? undefined : "faint"} />
+                  <KV k="Credit days" v={record.creditDaysWanted ?? "Not confirmed"} tone={record.creditDaysWanted != null ? undefined : "faint"} />
+                  <KV k="Product" v={record.requiredProductName ?? "Not confirmed"} tone={record.requiredProductName ? undefined : "faint"} />
+                  <KV k="Using now" v={record.competitor ?? "Not confirmed"} tone={record.competitor ? undefined : "faint"} />
+                  <KV k="Application" v={record.application ?? "Not confirmed"} tone={record.application ? undefined : "faint"} />
+                  {record.figuresConfirmedAt ? (
+                    <KV k="Figures confirmed" v={`${shortDate(record.figuresConfirmedAt.toString())}${record.figuresConfirmedByName ? ` · ${record.figuresConfirmedByName}` : ""}`} />
+                  ) : null}
+                </CardGrid>
+              </Card>
+              <CallsVisitsCard
+                calls={callBoxes}
+                visits={visits.map((v) => ({ date: v.visitDate, who: v.salesmanName }))}
+              />
+              {record.thirdParty ? (
+                <RelationshipChain
+                  shopName={record.name}
+                  links={record.distributorLinks}
+                  salesManagerName={record.salesManagerName}
+                />
+              ) : null}
             </>
           ) : null}
 
@@ -871,12 +858,6 @@ export function LeadRecordScreen({
                 canWork={canWork}
                 missing={(verdicts.find((v) => v.to === "sample_trial") ?? verdicts.find((v) => v.to === "management_review"))?.missing.map((m) => m.id) ?? []}
               />
-              {/* The two gates that stand between a qualified lead and a
-                  sample, on the tab whose whole subject is what has to be true
-                  before one goes out. Both are read off a column rather than a
-                  tick, so neither is answerable on the checklist above — which
-                  is exactly why they need a panel that says who answers them
-                  and offers the control that does. */}
               <FiguresPanel
                 record={record}
                 base={base}
@@ -885,13 +866,8 @@ export function LeadRecordScreen({
                 freshDays={figuresFreshDays}
                 nowMs={nowMs}
               />
-              {/* NOT ON A DISTRIBUTOR, because its gate reads a different
-                  column. `DISTRIBUTOR_CONDITIONS` answers `gst_verified` off
-                  `distributor_profiles`, which the profile tab draws; this
-                  panel is about `customers.gst_verified`, which nothing on that
-                  ladder reads. Drawn on both, it would offer a control that
-                  lifted no gate and read as the back office having done the
-                  check somebody was still waiting for. */}
+              {/* Not on a distributor: its gate reads the GST check off the
+                  distributor profile, which the profile tab draws. */}
               {distributor ? null : (
                 <GstPanel
                   record={record}
@@ -975,11 +951,98 @@ export function LeadRecordScreen({
           ) : null}
         </div>
 
-        {/* ------------------------------------------------------ the rail */}
-
-        <div className="flex min-w-0 flex-col gap-4">
-          {/* On Overview the "Move this lead forward" card already says this,
-              so the rail drops it there rather than saying it twice. */}
+        {/* ---------------------------------------------------- the rail */}
+        <aside className="flex min-w-0 flex-col gap-4">
+          <PeopleCard
+            rows={[
+              {
+                k: "Owner",
+                v: record.salesmanName,
+                none: "Unassigned",
+                warnIfNone: true,
+                act: (
+                  <ReassignLead
+                    customerId={record.customerId}
+                    name={record.name}
+                    currentId={record.salesmanId}
+                    currentName={record.salesmanName}
+                    assignees={assignees}
+                    canReassign={canReassign}
+                    label="Change"
+                  />
+                ),
+              },
+              { k: "Sales manager", v: record.salesManagerName },
+              {
+                k: "Lead manager",
+                v: record.leadManagerName,
+                warnIfNone: !closed,
+                act: (
+                  <AssignLeadManager
+                    customerId={record.customerId}
+                    name={record.name}
+                    currentId={record.leadManagerId}
+                    currentName={record.leadManagerName}
+                    candidates={leadManagers}
+                    canWork={canWork}
+                    label={record.leadManagerId ? "Change" : "Assign"}
+                  />
+                ),
+              },
+              { k: "Sales account mgr", v: record.salesAmName },
+              { k: "Back office", v: record.backOfficeName },
+              {
+                k: "Relationship",
+                v: record.relationshipOwnerName
+                  ? `${record.relationshipOwnerName}${record.handedOverAt ? ` · ${shortDate(record.handedOverAt.toString())}` : ""}`
+                  : null,
+                none: "Not handed over",
+              },
+              {
+                k: "Billed by",
+                v: record.distributorNames ?? (record.thirdParty ? null : "We invoice them"),
+                none: "Nobody named",
+                warnIfNone: record.thirdParty,
+              },
+              { k: "Created by", v: record.createdByName, none: "Not recorded" },
+            ]}
+          />
+          <Card title="Who's up">
+            <WhosUp
+              facts={actionFacts}
+              viewer={viewer}
+              seats={{
+                /* `salesmanId` IS `owner_id` — the seat being matched. */
+                ownerId: record.salesmanId,
+                backOfficeAmId: record.backOfficeAmId,
+                leadManagerId: record.leadManagerId,
+                salesManagerId: record.salesManagerId,
+              }}
+            />
+          </Card>
+          <Card label="Details">
+            <div className="grid grid-cols-2 gap-3.5">
+              <KV k="Source" v={record.source} />
+              <KV
+                k="Raised"
+                v={record.createdAt ? shortDate(new Date(record.createdAt).toISOString()) : "—"}
+              />
+              <KV
+                k="Verified"
+                v={record.verifiedAt ? shortDate(record.verifiedAt.toString()) : "Not yet"}
+              />
+              <KV k="Quiet for" v={plural(record.quietDays, "day")} />
+              <div className="col-span-2">
+                <LeadPriorityControl
+                  compact
+                  customerId={record.customerId}
+                  priority={record.priority}
+                  potentialPaise={record.potentialPaise}
+                  canPrioritise={canPrioritise}
+                />
+              </div>
+            </div>
+          </Card>
           {here === "overview" ? null : (
             <GateRail
               record={record}
@@ -992,27 +1055,17 @@ export function LeadRecordScreen({
               overrideAllowed={overrideAllowed}
             />
           )}
-          <LadderPanel
-            ladder={ladder}
-            rung={rung}
-            byStage={byStage}
-            salesType={record.salesType}
-            parked={Boolean(park)}
-            facts={actionFacts}
-            viewer={viewer}
-            seats={{
-              /* `salesmanId` IS `owner_id` — the record names the column for
-                 the person rather than for the foreign key, which is the right
-                 word on a screen and the wrong one here, where the seat is
-                 what is being matched. */
-              ownerId: record.salesmanId,
-              backOfficeAmId: record.backOfficeAmId,
-              leadManagerId: record.leadManagerId,
-              salesManagerId: record.salesManagerId,
-            }}
-          />
-        </div>
+        </aside>
       </div>
+
+      {calling && desk && defaultNextDate ? (
+        <LogCallDialog
+          lead={desk}
+          defaultNextDate={defaultNextDate}
+          today={day}
+          onClose={() => setCalling(false)}
+        />
+      ) : null}
 
       {/* Keyed on the lead so the form remounts with fresh state rather than
           having an effect reset it — the React Compiler rules are on. */}
@@ -1037,6 +1090,16 @@ export function LeadRecordScreen({
     </div>
   );
 }
+
+/** A call's outcome as the record's call box says it. */
+const SHORT_OUTCOME: Record<CallOutcome, string> = {
+  spoke_collected: "Spoke",
+  spoke_callback: "Call back",
+  no_answer: "No answer",
+  wrong_number: "Wrong number",
+  not_interested: "Not interested",
+};
+const callOutcomeLabel = (o: CallOutcome) => SHORT_OUTCOME[o] ?? o;
 
 /** What a tab's badge counts, from SQL. Null where a count says nothing. */
 function countFor(
@@ -1114,17 +1177,16 @@ function Panel({
   slice?: string;
   children: React.ReactNode;
 }) {
+  const inHub = useInLeadHub();
   return (
-    <section className="flex max-h-[520px] min-h-[280px] flex-col rounded-[6px] border border-line bg-surface px-5 py-4">
+    <section className="flex max-h-[560px] min-h-[200px] flex-col rounded-[10px] border border-line bg-surface p-[18px]">
       <div className="mb-1 flex flex-none items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-            {title}
-          </div>
-          {hint ? (
+          <h2 className="m-0 text-[15px] leading-5 font-semibold text-ink">{title}</h2>
+          {hint && !inHub ? (
             <p className="mt-1 max-w-[520px] text-[12px] text-pretty text-muted">{hint}</p>
           ) : null}
-          {slice ? <p className="mt-1 text-[12px] text-muted">{slice}</p> : null}
+          {slice ? <p className="mt-1 text-xs text-muted">{slice}</p> : null}
         </div>
         {action ? <div className="flex-none">{action}</div> : null}
       </div>
@@ -1287,273 +1349,6 @@ function GateRail({
           overrideAllowed={overrideAllowed}
         />
       </div>
-    </Panel>
-  );
-}
-
-/**
- * The whole climb, with a verdict on every rung.
- *
- * Drawn whole rather than one step at a time: the question about a stalled lead
- * is where it stopped, and that is not answerable from the next button alone —
- * and a salesman learns the process from seeing the rungs above him rather than
- * from being refused at each one in turn.
- */
-/**
- * §8.5 item 7 — "Where this lead stands", which is TWO answers and one section.
- *
- * The rung is where it stands; the readings are what that rung ASKS OF WHOM.
- * They are one panel rather than two because a reader asking the first
- * question is always about to ask the second, and a ladder on its own answers
- * only a noun — the record page drew that noun and no verb at all until this
- * landed, on the one screen where somebody is deciding what to do.
- *
- * The readings sit ABOVE the rungs deliberately. The instruction is what the
- * reader came for; the twelve rungs underneath are the evidence for it, and a
- * verb printed below a twelve-item list is a verb below the fold.
- */
-function LadderPanel({
-  ladder,
-  rung,
-  byStage,
-  salesType,
-  parked,
-  facts,
-  viewer,
-  seats,
-}: {
-  ladder: readonly LeadStage[];
-  rung: number;
-  byStage: Map<LeadStage, GateVerdict>;
-  salesType: LeadRecord["salesType"];
-  parked: boolean;
-  facts: LeadActionFacts;
-  viewer: VantageViewer;
-  seats: VantageSeats;
-}) {
-  return (
-    <Panel
-      title="Where this lead stands"
-      hint={
-        parked
-          ? `${ladderName(salesType)}. This lead is on hold, so no stage is highlighted.`
-          : ladderName(salesType)
-      }
-    >
-      <RoleReadings facts={facts} viewer={viewer} seats={seats} />
-      <ol className="m-0 list-none p-0">
-        {ladder.map((stage, i) => {
-          const v = byStage.get(stage);
-          const past = !parked && rung >= 0 && i < rung;
-          const current = !parked && i === rung;
-          return (
-            <li
-              key={stage}
-              className={cx(
-                "flex gap-3 border-l-[3px] py-2 pl-3",
-                current
-                  ? "border-brand bg-brand-soft"
-                  : past
-                    ? "border-success"
-                    : "border-divider",
-              )}
-            >
-              <span className="mt-[3px] w-[26px] flex-none text-[12px] tabular-nums text-muted">
-                {i + 1}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="flex flex-wrap items-center gap-2">
-                  <span className="text-[14px] font-medium text-ink">{stageLabel(stage)}</span>
-                  {current ? <Pill tone="brand">Here now</Pill> : null}
-                  {past ? <Pill tone="success">Done</Pill> : null}
-                  {!past && !current && v ? (
-                    v.open ? (
-                      <Pill tone="success">Open</Pill>
-                    ) : (
-                      <Pill tone="warn">{plural(v.missing.length, "thing")} missing</Pill>
-                    )
-                  ) : null}
-                </span>
-                <span className="mt-0.5 block text-[12px] text-pretty text-muted">
-                  {stageSentence(stage)}
-                </span>
-                {!past && v && !v.open && v.missing.length ? (
-                  <ul className="mt-1.5 mb-0 list-none p-0">
-                    {v.missing.map((c) => (
-                      <li key={c.id} className="text-[12px] text-warn-ink">
-                        · {c.says}
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </span>
-            </li>
-          );
-        })}
-      </ol>
-    </Panel>
-  );
-}
-
-/** The five seats, where this lead came from, and who invoices the shop. */
-function SeatsPanel({
-  record,
-  leadManagers,
-  assignees,
-  canReassign,
-  canWork,
-}: {
-  record: LeadRecord;
-  leadManagers: LeadManagerCandidate[];
-  assignees: Assignee[];
-  canReassign: boolean;
-  canWork: boolean;
-}) {
-  return (
-    <Panel
-      title="Who holds this"
-      hint="The people named on this lead and what each one does."
-    >
-      <div className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2">
-        <Fact
-          label="Owner"
-          value={record.salesmanName ?? "Unassigned"}
-          sub="Works this lead day to day."
-        >
-          <span className="mt-1 block">
-            <ReassignLead
-              customerId={record.customerId}
-              name={record.name}
-              currentId={record.salesmanId}
-              currentName={record.salesmanName}
-              assignees={assignees}
-              canReassign={canReassign}
-            />
-          </span>
-        </Fact>
-        {/* WHO RAISED IT never changes. It is read off the append-only creation
-            event, so reassigning the owner above cannot touch it. */}
-        <Fact
-          label="Created by"
-          value={record.createdByName ?? "Not recorded"}
-          sub={
-            record.createdAt
-              ? `Raised ${shortDate(new Date(record.createdAt).toISOString())}. Reassigning does not change this.`
-              : "Came in from outside MahekOne."
-          }
-        />
-        <Fact
-          label="Sales account manager"
-          value={record.salesAmName ?? "Nobody"}
-          sub="Gets credit for its sales. Changed by accounts."
-        />
-        {/* §7 — BESIDE THE OTHER SEATS rather than in a block of its own,
-            because "who holds this" is one question and a lead manager named
-            on a different part of the page reads as a different kind of fact.
-            It is the only one of the five that can be changed from here: the
-            sales seat moves revenue and is accounts' and admin's on the
-            customer record, the relationship seat has its own panel below with
-            its own reason codes, and the back office seat is the customer's.
-            This one drives a worklist and nothing else, which is why the
-            action lets a salesman press it. */}
-        <Fact
-          label="Lead manager"
-          value={record.leadManagerName ?? "Nobody"}
-          sub="Coordinates the lead with the team."
-        >
-          <span className="mt-1 block">
-            <AssignLeadManager
-              customerId={record.customerId}
-              name={record.name}
-              currentId={record.leadManagerId}
-              currentName={record.leadManagerName}
-              candidates={leadManagers}
-              canWork={canWork}
-            />
-          </span>
-        </Fact>
-        <Fact label="Back office" value={record.backOfficeName ?? "Nobody"} sub="Dispatch, billing, paperwork." />
-        <Fact
-          label="Relationship owner"
-          value={record.relationshipOwnerName ?? "Nobody"}
-          sub={
-            record.handedOverAt
-              ? `Handed over ${shortDate(record.handedOverAt.toString())}`
-              : "Not handed over"
-          }
-        />
-        <Fact label="Source" value={record.source} sub="Where this lead came from." />
-        <Fact
-          label="Billed by"
-          value={record.distributorNames ?? (record.thirdParty ? "Nobody named" : "We invoice them")}
-          sub={
-            record.thirdParty && !record.distributorCount
-              ? "A third-party shop with nobody billing it is a row nobody can account for."
-              : undefined
-          }
-        />
-        <Fact
-          label="Quiet for"
-          value={plural(record.quietDays, "day")}
-          sub="Since anything was recorded against this lead."
-        />
-      </div>
-    </Panel>
-  );
-}
-
-/**
- * §4 — the visits behind the cap, listed rather than asserted over.
- *
- * The count is `count(*)` over `mbos_visits` and is deliberately not a column:
- * a counter would drift the first time a visit arrived late from a handset,
- * which on a book worked in market lanes is most of them.
- */
-function VisitsPanel({
-  visits,
-  total,
-  record,
-}: {
-  visits: LeadVisitRow[];
-  total: number;
-  record: LeadRecord;
-}) {
-  return (
-    <Panel
-      title="Visits"
-      hint="Every visit to this shop. After a few visits to a Suspect, somebody has to decide whether it is worth pursuing."
-      slice={
-        total > visits.length
-          ? `The newest ${visits.length} of ${total}.`
-          : `${plural(total, "visit")} in all.`
-      }
-    >
-      {visits.length === 0 ? (
-        <p className="text-[13px] text-muted">
-          Nobody has been to this shop. The suspect count is {record.suspectVisitCount}, which is
-          the same query said another way.
-        </p>
-      ) : (
-        <ul className="m-0 list-none p-0">
-          {visits.map((v) => (
-            <li key={v.id} className="border-b border-divider py-1.5 last:border-b-0">
-              <span className="flex flex-wrap items-baseline gap-2">
-                <span className="text-[13px] text-ink">
-                  {v.visitDate ? shortDate(v.visitDate) : "No check-in recorded"}
-                </span>
-                <span className="text-[13px] text-body">{v.salesmanName ?? "unassigned"}</span>
-                {v.outcome ? <Pill tone="neutral">{v.outcome.replace(/_/g, " ")}</Pill> : null}
-                {v.verified === false ? (
-                  <Pill tone="warn">Unverified</Pill>
-                ) : null}
-              </span>
-              {v.notes ? (
-                <span className="block text-[12px] text-pretty text-muted">{v.notes}</span>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      )}
     </Panel>
   );
 }
@@ -1758,12 +1553,14 @@ function FiguresPanel({
       </div>
 
       {stale ? (
+        <OutsideLeadHub>
         <p className="mb-3 text-[13px] text-pretty text-warn-ink">
           This is what is holding the sample. A can must not go out against a requirement that was
           true in March — read the four below, and if they still hold, say so. If one of them has
           moved, correct it on the checklist instead: confirming figures that have changed is worse
           than leaving them stale, because it puts somebody&rsquo;s name to them.
         </p>
+        </OutsideLeadHub>
       ) : null}
 
       <dl className="m-0 grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2">
@@ -1777,6 +1574,7 @@ function FiguresPanel({
         ))}
       </dl>
 
+      <OutsideLeadHub>
       <p className="mt-3 text-[12px] text-pretty text-muted">
         Confirming writes a date and a name and never a second copy of these four — a copy would be
         free to drift from the columns every other screen reads.{" "}
@@ -1785,6 +1583,7 @@ function FiguresPanel({
         </Link>{" "}
         if one of them no longer holds.
       </p>
+      </OutsideLeadHub>
     </Panel>
   );
 }
@@ -2000,11 +1799,13 @@ function Corrections({ rows }: { rows: LeadCorrection[] }) {
       <div className="mb-1 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
         What was checked
       </div>
+      <OutsideLeadHub>
       <p className="mb-2 max-w-[560px] text-[12px] text-pretty text-muted">
         The lead still carries the salesman&rsquo;s own answer. These are what came back when
         somebody asked again, kept beside his rather than written over it &mdash; this is not an
         edit history.
       </p>
+      </OutsideLeadHub>
       <div className="flex flex-col gap-2">
         {rows.map((r) => (
           /* One column on a phone, two once there is room. A before/after side
@@ -2480,10 +2281,12 @@ function ApprovalPanel({
               </div>
               <p className="mt-0.5 mb-0 text-[12px] text-pretty text-muted">{s.detail}</p>
               {!newest ? (
+                <OutsideLeadHub>
                 <p className="mt-1 mb-0 text-[12px] text-muted">
                   Nobody has put this step up yet. A step with no row and a step waiting on a
                   signature are different facts, and this is the first.
                 </p>
+                </OutsideLeadHub>
               ) : (
                 <div className="mt-1 text-[12px] text-muted">
                   Asked by {newest.requestedByName ?? "somebody"} on {stamp(newest.requestedAt)}
@@ -2691,10 +2494,12 @@ function LedgerPanel({
               </li>
             ))}
           </ul>
+          <OutsideLeadHub>
           <p className="mt-1.5 text-[12px] text-muted">
             Only a confirmed receipt is money the business has seen. A reported one stops the
             chasing and moves no figure.
           </p>
+          </OutsideLeadHub>
         </div>
       ) : null}
     </Panel>

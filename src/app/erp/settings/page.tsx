@@ -3,7 +3,8 @@ import { erpScreen } from "@/lib/erp/registry";
 import { hatForHeader } from "@/lib/hat-for-header";
 import { ERP_POWERS, ERP_POWER_LABEL } from "@/lib/erp/powers";
 import { SEAT_LABEL } from "@/lib/erp/departments";
-import { Badge, Card, CardHeader } from "@/components/ui/primitives";
+import { Card, CardHeader } from "@/components/ui/primitives";
+import { Badge } from "../_ui/badge";
 import { Page } from "../_ui/page-head";
 import { WorkingLocation } from "./working-location";
 
@@ -16,7 +17,7 @@ export default async function ErpSettings() {
   const hat = await hatForHeader(ctx.user, "erp");
   return (
     <Page title={SCREEN.label} sub={SCREEN.sub}>
-      <div className="grid max-w-[980px] grid-cols-[repeat(auto-fill,minmax(320px,1fr))] items-start gap-4">
+      <div className="grid max-w-[980px] grid-cols-[repeat(auto-fill,minmax(320px,1fr))] items-start gap-5">
         <Card>
           <CardHeader title="Working location" hint="Pre-fills godown on every form and scopes godown lists. Only godowns you are assigned to." />
           <div className="px-5 py-4">
@@ -40,7 +41,7 @@ export default async function ErpSettings() {
             {ERP_POWERS.map((p) => (
               <div key={p} className="flex items-center justify-between gap-3 border-b border-divider py-2.5 text-sm last:border-0">
                 <span className="text-body">{ERP_POWER_LABEL[p].label}</span>
-                {ctx.powers.has(p) ? <Badge tone="success">Yes</Badge> : <Badge tone="muted">No</Badge>}
+                {ctx.powers.has(p) ? <Badge label="Yes" tone="success" /> : <Badge label="No" tone="muted" />}
               </div>
             ))}
           </div>

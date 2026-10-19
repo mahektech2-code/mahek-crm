@@ -54,6 +54,15 @@
   --radius-control: 4px;
   --radius-card: 6px;
 
+  /* The letter-spacing of every small uppercase label — a table heading, a
+     field's name, a tile's caption. Named so a screen says tracking-label
+     rather than tracking-[0.04em], and the labels cannot drift apart. */
+  --tracking-label: 0.04em;
+
+  /* The lift of anything that floats over the page: a menu, a picker's list,
+     a suggestion box. One value, so two popovers side by side cast one shadow. */
+  --shadow-pop: 0 8px 24px rgba(22, 22, 22, 0.12);
+
   /* The sizes between Tailwind's steps that the dense screens (the ERP above
      all) are drawn in. Named so a screen says text-meta, not text-[13px], and
      a change to the scale is one line here. No line height of their own: they

@@ -1,7 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Badge, Button, Card, cx } from "@/components/ui/primitives";
+import { Button, Card, checkboxClass, controlClass, cx } from "@/components/ui/primitives";
+import { Badge } from "../../_ui/badge";
+import { labelClass, LinkButton, SubTitle } from "../../_ui/look";
 import { erpLogisticsAtTransport, erpLogisticsDue, erpLogisticsPackages } from "@/lib/actions/erp-logistics";
 import { addDays, shortDay } from "@/lib/erp/engines/logistics";
 import type { Consignment } from "@/lib/erp/logistics";
@@ -32,7 +34,7 @@ export function ToTransport({ rows, today, canWrite }: { rows: Consignment[]; to
   if (!rows.length) return <Card><Empty>Nothing is on its way to a transporter. A bill appears here the moment it is dispatch-verified.</Empty></Card>;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {canWrite ? (
         <div className={cx("sticky top-0 z-10 flex flex-wrap items-center gap-2 rounded-card border px-4 py-2.5", sel.length ? "border-brand bg-brand-soft" : "border-line bg-surface")}>
           <span className="mr-2 text-sm font-medium text-ink">{sel.length ? `${plural(sel.length, "bill")} ticked` : "Tick bills to plan them"}</span>
@@ -43,7 +45,9 @@ export function ToTransport({ rows, today, canWrite }: { rows: Consignment[]; to
             Reaches tomorrow
           </Button>
           <span className="flex items-center gap-1">
-            <input type="date" value={day} min={today} onChange={(e) => setDay(e.target.value)} className="h-8 rounded-control border border-line bg-surface px-2 text-meta" />
+            <span className="w-36">
+              <input type="date" value={day} min={today} onChange={(e) => setDay(e.target.value)} className={controlClass({ className: "h-8.5" })} />
+            </span>
             <Button size="sm" disabled={!sel.length || pending || !day} onClick={() => due(day)}>
               Set day
             </Button>
@@ -53,9 +57,9 @@ export function ToTransport({ rows, today, canWrite }: { rows: Consignment[]; to
             Reached transporter
           </Button>
           {sel.length ? (
-            <button className="ml-auto cursor-pointer text-meta text-muted hover:underline" onClick={clear}>
+            <LinkButton tone="muted" className="ml-auto text-meta" onClick={clear}>
               Clear
-            </button>
+            </LinkButton>
           ) : null}
         </div>
       ) : null}
@@ -68,10 +72,10 @@ export function ToTransport({ rows, today, canWrite }: { rows: Consignment[]; to
         return (
           <Card key={transporter} className="overflow-hidden">
             <div className="flex flex-wrap items-center gap-3 border-b border-divider bg-canvas px-4 py-2.5">
-              {canWrite ? <input type="checkbox" checked={all} onChange={() => setMany(ids, !all)} className="h-[15px] w-[15px] accent-brand" aria-label={`Tick every bill for ${transporter}`} /> : null}
+              {canWrite ? <input type="checkbox" checked={all} onChange={() => setMany(ids, !all)} className={checkboxClass} aria-label={`Tick every bill for ${transporter}`} /> : null}
               <div className="min-w-0">
-                <div className="text-md font-semibold text-ink">{transporter}</div>
-                <div className="text-xs text-muted">
+                <SubTitle className="mb-0">{transporter}</SubTitle>
+                <div className="text-meta text-muted">
                   {plural(bills.length, "bill")} · {boxes != null ? plural(boxes, "box", "boxes") : "boxes not counted"} · {sumLitres(bills)} L{dueToday ? ` · ${dueToday} due today or late` : ""}
                 </div>
               </div>
@@ -84,7 +88,7 @@ export function ToTransport({ rows, today, canWrite }: { rows: Consignment[]; to
                 ) : null}
               </div>
             </div>
-            <div className="grid grid-cols-[28px_minmax(120px,1fr)_minmax(160px,1.6fr)_110px_96px_90px_130px] gap-3 border-b border-divider px-4 py-1.5 text-xs font-medium text-muted">
+            <div className={cx("grid grid-cols-[28px_minmax(120px,1fr)_minmax(160px,1.6fr)_110px_96px_90px_130px] gap-3 border-b border-divider px-4 py-1.5", labelClass)}>
               <span />
               <span>Bill</span>
               <span>Goes to</span>
@@ -95,19 +99,19 @@ export function ToTransport({ rows, today, canWrite }: { rows: Consignment[]; to
             </div>
             {bills.map((b) => (
               <div key={b.id} className={cx("grid grid-cols-[28px_minmax(120px,1fr)_minmax(160px,1.6fr)_110px_96px_90px_130px] items-center gap-3 border-b border-divider px-4 py-2 text-sm last:border-0", ticked.has(b.id) && "bg-brand-soft/40")}>
-                {canWrite ? <input type="checkbox" checked={ticked.has(b.id)} onChange={() => toggle(b.id)} className="h-[15px] w-[15px] accent-brand" aria-label={`Tick ${b.billNo ?? b.orderNo}`} /> : <span />}
+                {canWrite ? <input type="checkbox" checked={ticked.has(b.id)} onChange={() => toggle(b.id)} className={checkboxClass} aria-label={`Tick ${b.billNo ?? b.orderNo}`} /> : <span />}
                 <span className="min-w-0">
                   <BillRef c={b} />
-                  <span className="block truncate text-xs text-muted">Order {b.orderNo}{b.godown ? ` · ${b.godown}` : ""}</span>
+                  <span className="block truncate text-meta text-muted">Order {b.orderNo}{b.godown ? ` · ${b.godown}` : ""}</span>
                 </span>
                 <span className="min-w-0">
                   <span className="block truncate font-medium text-ink">{b.deliveryParty}</span>
-                  <span className="block truncate text-xs text-muted">{b.area ?? b.partyCity ?? "—"}{b.deliveryParty !== b.party ? ` · billed to ${b.party}` : ""}</span>
+                  <span className="block truncate text-meta text-muted">{b.area ?? b.partyCity ?? "—"}{b.deliveryParty !== b.party ? ` · billed to ${b.party}` : ""}</span>
                 </span>
                 <span className="text-meta text-body">{b.billDate ? shortDay(b.billDate) : "—"}</span>
                 <span>{canWrite ? <BoxInput id={b.id} value={b.packages} /> : (b.packages ?? "—")}</span>
                 <span className="tabular-nums text-meta">{b.litres ?? "—"}</span>
-                <span>{b.transportDueOn ? <DuePill day={b.transportDueOn} today={today} /> : <Badge tone="muted">Not planned</Badge>}</span>
+                <span>{b.transportDueOn ? <DuePill day={b.transportDueOn} today={today} /> : <Badge label="Not planned" tone="muted" />}</span>
               </div>
             ))}
           </Card>
@@ -127,15 +131,17 @@ export function BoxInput({ id, value }: { id: string; value: number | null }) {
     void run(() => erpLogisticsPackages(id, n));
   };
   return (
-    <input
+    <span className="block w-16">
+      <input
       value={v}
       inputMode="numeric"
       disabled={pending}
       onChange={(e) => setV(e.target.value.replace(/[^\d]/g, ""))}
       onBlur={save}
       onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-      className="h-8 w-16 rounded-control border border-line bg-surface px-2 text-sm tabular-nums outline-none focus:border-brand"
+      className={controlClass({ className: "h-8.5 tabular-nums" })}
       aria-label="Boxes"
-    />
+      />
+    </span>
   );
 }

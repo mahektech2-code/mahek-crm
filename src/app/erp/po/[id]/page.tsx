@@ -4,6 +4,8 @@ import { erpLink } from "@/lib/erp/registry";
 import { purchaseOrderViews } from "@/lib/erp/screens/purchase-flow";
 import { poName, poLineFigures, poTotals } from "@/lib/erp/engines/purchase-flow";
 import { fdLong, inr, inrRate, nf } from "@/lib/erp/ui";
+import { SectionLabel, Td, Th, Tr } from "@/components/ui/primitives";
+import { linkClass } from "../../_ui/look";
 import { PrintButton } from "./print-button";
 import { calendarDate } from "@/lib/business-date";
 
@@ -24,7 +26,7 @@ export default async function PurchaseOrderPrint({ params }: { params: Promise<{
     return (
       <div className="p-6 text-sm text-body">
         {poName(p.po)} is {p.po.status.toLowerCase()} — a PO is printed once it is approved.{" "}
-        <a href={back} className="text-brand-hover underline">
+        <a href={back} className={linkClass("brand")}>
           Back to the PO
         </a>
       </div>
@@ -33,7 +35,7 @@ export default async function PurchaseOrderPrint({ params }: { params: Promise<{
     return (
       <div className="p-6 text-sm text-body">
         The printed PO carries its rates, and purchase money is not on your account.{" "}
-        <a href={back} className="text-brand-hover underline">
+        <a href={back} className={linkClass("brand")}>
           Back to the PO
         </a>
       </div>
@@ -43,7 +45,7 @@ export default async function PurchaseOrderPrint({ params }: { params: Promise<{
     <div className="mx-auto grid w-full max-w-[860px] gap-4 p-6">
       <style>{`@media print { body * { visibility: hidden; } .po-paper, .po-paper * { visibility: visible; } .po-paper { position: absolute; inset: 0 auto auto 0; width: 100%; border: 0 !important; } }`}</style>
       <div className="flex items-center justify-between gap-3 print:hidden">
-        <a href={back} className="text-sm text-brand-hover hover:underline">
+        <a href={back} className={linkClass("brand", "text-sm")}>
           ← Back to {poName(p.po)}
         </a>
         <PrintButton />
@@ -61,13 +63,13 @@ export default async function PurchaseOrderPrint({ params }: { params: Promise<{
         </header>
         <section className="grid grid-cols-2 gap-6">
           <div>
-            <div className="text-xs font-medium tracking-[0.04em] text-muted uppercase">Vendor</div>
+            <SectionLabel>Vendor</SectionLabel>
             <div className="mt-1 font-semibold">{p.supplier}</div>
             {p.supplierPhone ? <div className="text-body">{p.supplierPhone}</div> : null}
             {p.supplierEmail ? <div className="text-body">{p.supplierEmail}</div> : null}
           </div>
           <div>
-            <div className="text-xs font-medium tracking-[0.04em] text-muted uppercase">Deliver to</div>
+            <SectionLabel>Deliver to</SectionLabel>
             <div className="mt-1 font-semibold">{p.godown}</div>
             <div className="text-body">By {fdLong(p.po.deliveryDate)}</div>
             <div className="text-body">Payment: {p.po.paymentTerms}</div>
@@ -75,33 +77,33 @@ export default async function PurchaseOrderPrint({ params }: { params: Promise<{
         </section>
         <table className="w-full border-collapse">
           <thead>
-            <tr className="border-y border-ink text-left text-xs uppercase">
-              <th className="py-2 pr-2 font-medium">#</th>
-              <th className="py-2 pr-2 font-medium">Item</th>
-              <th className="py-2 pr-2 text-right font-medium">Quantity</th>
-              <th className="py-2 pr-2 text-right font-medium">Rate</th>
-              <th className="py-2 pr-2 text-right font-medium">Amount</th>
-              <th className="py-2 pr-2 text-right font-medium">GST</th>
-              <th className="py-2 text-right font-medium">Total</th>
+            <tr className="border-y border-ink">
+              <Th>#</Th>
+              <Th>Item</Th>
+              <Th align="right">Quantity</Th>
+              <Th align="right">Rate</Th>
+              <Th align="right">Amount</Th>
+              <Th align="right">GST</Th>
+              <Th align="right">Total</Th>
             </tr>
           </thead>
           <tbody>
             {p.lines.map((l, i) => {
               const f = poLineFigures(l);
               return (
-                <tr key={l.id} className="border-b border-divider">
-                  <td className="py-2 pr-2">{i + 1}</td>
-                  <td className="py-2 pr-2 font-medium">{l.item}</td>
-                  <td className="py-2 pr-2 text-right tabular-nums">
+                <Tr key={l.id}>
+                  <Td className="tabular-nums">{i + 1}</Td>
+                  <Td className="font-medium whitespace-normal text-ink">{l.item}</Td>
+                  <Td align="right" className="tabular-nums">
                     {nf(l.quantity)} {l.unit}
-                  </td>
-                  <td className="py-2 pr-2 text-right tabular-nums">{inrRate(l.ratePaise)}</td>
-                  <td className="py-2 pr-2 text-right tabular-nums">{inr(f.amountPaise)}</td>
-                  <td className="py-2 pr-2 text-right tabular-nums">
+                  </Td>
+                  <Td align="right" className="tabular-nums">{inrRate(l.ratePaise)}</Td>
+                  <Td align="right" className="tabular-nums">{inr(f.amountPaise)}</Td>
+                  <Td align="right" className="tabular-nums">
                     {l.gstBp / 100}% · {inr(f.gstPaise)}
-                  </td>
-                  <td className="py-2 text-right tabular-nums">{inr(f.totalPaise)}</td>
-                </tr>
+                  </Td>
+                  <Td align="right" className="tabular-nums">{inr(f.totalPaise)}</Td>
+                </Tr>
               );
             })}
           </tbody>
@@ -128,7 +130,7 @@ export default async function PurchaseOrderPrint({ params }: { params: Promise<{
         </section>
         {p.po.remarks ? (
           <section>
-            <div className="text-xs font-medium tracking-[0.04em] text-muted uppercase">Note</div>
+            <SectionLabel>Note</SectionLabel>
             <p className="mt-1 whitespace-pre-wrap">{p.po.remarks}</p>
           </section>
         ) : null}

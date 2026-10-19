@@ -39,8 +39,8 @@ A raw-material item with min 100 and max 200 holding 75 reads **-50%** and needs
 A **followed** SKU is short when its minimum is greater than what is available. That is the whole rule, and it is what puts the SKU on Below minimum and raises the alert.
 </Rule>
 
-<Rule title="Raw material: under the maximum">
-A **followed** raw-material level is listed, flagged and alerted as soon as **Required** is above zero — that is, the moment stock is below the **maximum**. The screen and the alert both call it "below minimum", which is the source system's word; the rule underneath is "you could top this up now".
+<Rule title="Raw material: under the minimum">
+A **followed** raw-material level is listed, flagged and alerted when stock is **below its minimum**. **Required** still says how much brings it up to the maximum, and **Raise requirement** is offered on any row with room under the maximum, so a buyer can top up early without the store being told it is short.
 </Rule>
 
 <Callout kind="why" title="Why UnFollow exists">
@@ -61,34 +61,54 @@ From a raw-material row the **Raise requirement** action opens the ordinary new 
 
 Everything after that — the purchase rule, quotations, the PO — is the normal purchase flow. See [Purchase requirements](/docs/erp/purchase-requirements).
 
-## Suggested levels
+## Planned levels
+
+<Rule title="Every raw material holds a week and a half, worked out from its own history">
+Each night the planner reads every raw material's **production use** (SFG batch lines for chemicals, fills for cans, packing for boxes) and its **purchases** (the purchase register's posted lots) at each godown, as far back as <Setting k="erp.levels.historyYears" /> years, and sets:
+
+- **Minimum** — the forecast use over the next <Setting k="erp.levels.coverDays" /> days
+- **Maximum** — the minimum plus <Setting k="erp.levels.orderCycleDays" /> more days of forecast use
+
+An item with less than <Setting k="erp.levels.minHistoryWeeks" /> weeks of either history gets no planned level. Drums are left out: they are counted company-wide, not per godown. The whole planner is switched by <Setting k="erp.levels.autoPlan" />.
+</Rule>
+
+The forecast for a day is **base rate × month factor × week-of-month factor**:
+
+| Part | Read from | What it captures |
+|---|---|---|
+| Base rate | Production use where there is enough of it, else purchases. The last <Setting k="erp.levels.recentWeeks" /> weeks lead (60%), the last year steadies it (40%) | What empties the shelf now |
+| Month factor | Whichever series reaches back further — usually the purchase register | A busy or slow month of the year |
+| Week-of-month factor | Production use only | A heavier first or last week of a month |
+
+Each factor is shrunk towards 1 by how much history stands behind it, so one unusual October cannot make every October look like it. A one-off week (a bulk buy, a backlog cleared) is capped before it reaches the rate.
+
+<Callout kind="why" title="Why the week of the month never comes from purchases">
+When a drum is bought is the buyer's calendar, not the shelf's. Two purchases on the 1st and the 21st would otherwise read as a shelf that empties in those weeks and stands still in the others, and the level would swing for no reason.
+</Callout>
+
+<Rule title="The AI reviews the plan, inside a fixed limit">
+Where <Setting k="erp.ai.levels.enabled" /> is on, an AI model reads each item's monthly history, its factors and the window ahead (festivals, the monsoon, the March year-end) and may move the planned level by at most <Setting k="erp.ai.levels.maxAdjustPercent" />% either way, with one sentence saying why. It looks at each item again every <Setting k="erp.ai.levels.reviewEveryDays" /> days, or sooner when the statistics moved a lot, and stops for the month at <Setting k="erp.ai.levels.monthlyCap" /> reviews. With no key, the cap spent or the switch off, the statistical plan stands.
+</Rule>
+
+<Rule title="A level a person set is never changed">
+A level the planner created is marked **Planned automatically** and rewritten every night. Editing its minimum or maximum by hand takes it off the planner for good, unless somebody presses **Let the planner keep it**. A level typed by hand keeps its figures; the planner's figures are shown beside it as **Planned min / Planned max** for comparison.
+</Rule>
+
+The planner runs nightly, on every deploy (once a day), from **Plan levels now** on the Raw-material levels screen, and by hand with `npm run jobs -- erp-levels-plan --dry-run`.
+
+<SettingsTable keys={["erp.levels.autoPlan", "erp.levels.coverDays", "erp.levels.orderCycleDays", "erp.levels.historyYears", "erp.levels.recentWeeks", "erp.levels.minHistoryWeeks", "erp.ai.levels.enabled", "erp.ai.levels.maxAdjustPercent", "erp.ai.levels.reviewEveryDays", "erp.ai.levels.monthlyCap"]} />
+
+## Suggested finished-goods levels
 
 <Rule title="A suggestion is arithmetic, and it is never applied by itself">
-Average daily use over the look-back, times the cover days, rounded up to whole units:
+Average daily dispatch over the look-back, times the cover days, rounded up to whole units:
 
 - **Look-back** — <Setting k="erp.ai.reorder.lookbackDays" /> days
 - **Minimum** — <Setting k="erp.ai.reorder.minCoverDays" /> days of cover
 - **Maximum** — <Setting k="erp.ai.reorder.maxCoverDays" /> days of cover
 
-The feature is switched by <Setting k="erp.ai.reorder.enabled" />. A person applies a suggestion with a button; nothing moves a level on its own.
+The feature is switched by <Setting k="erp.ai.reorder.enabled" />. A person applies a suggestion with a button. Raw-material levels use the planner above instead; this 90-day suggestion is shown for one only where the planner has not read the item yet.
 </Rule>
-
-Where the last 30 days (or the whole look-back, if shorter) ran at more than one and a half times, or less than half, the look-back's average, the row says so in a **Recent use** line.
-
-<Callout kind="why" title="Why the swing is said out loud">
-A level set from a slack quarter runs out in a busy month. The suggestion is the long average because a single week is noise; the swing line is there so a person who knows the season is coming can set the level higher than the arithmetic does.
-</Callout>
-
-What counts as "use" depends on the item:
-
-| Item | Use |
-|---|---|
-| Chemical | Litres consumed on SFG batch lines at that godown |
-| Can | Cans filled at that godown |
-| Box | Boxes packed at that godown × empty boxes each needs, matched by the box type's name |
-| Finished-goods SKU | Quantity on lots allocated to dispatch-verified orders from that godown |
-
-Drum and Stationary levels never get a suggestion — nothing in production records consuming them.
 
 ## The hourly alert and who is told
 
@@ -111,6 +131,6 @@ Every change is written to the audit log with the before and after values.
 
 ## Where the code and the intent disagree today
 
-- **"Below minimum" on raw materials means "below maximum".** The screen's sub-title says *Raise a requisition from any item below its minimum* and the empty-tab sentence says *Every followed item is at or above its level*, but the tab, the red flag and the hourly alert all fire when stock is under the **maximum**. The alert's own sentence then quotes the minimum, so a reader can see "available 150 against a minimum of 100" on an alert titled below re-order level.
+- **Finished-goods levels are not planned yet.** Only raw materials get the planner; a finished-goods level is still typed by hand or set from its 90-day suggestion.
 - **Drum and stationery levels never get a suggestion**, though the bulk **Apply suggestions** button is offered on them and answers *No suggestion to apply*.
 - **Drums ignore the godown.** A drum level at two godowns shows the same Available at both.

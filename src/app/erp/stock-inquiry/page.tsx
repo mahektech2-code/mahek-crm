@@ -9,8 +9,9 @@ import { stockRowActions } from "@/lib/erp/stock-adjust";
 import { erpTraceHref } from "@/lib/erp/trace-links";
 import { erpLink } from "@/lib/erp/registry";
 import { nf } from "@/lib/erp/ui";
-import { Card, cx, EmptyState, MetricStrip, Td, Th, Tr } from "@/components/ui/primitives";
-import { Page } from "../_ui/page-head";
+import { Card, cx, EmptyState, MetricStrip, SectionLabel, Td, Th, Tr } from "@/components/ui/primitives";
+import { Page, PageLinks } from "../_ui/page-head";
+import { linkClass, SectionTitle, SubTitle } from "../_ui/look";
 import { InquiryControls, LotMenu } from "./controls";
 
 /**
@@ -45,9 +46,11 @@ export default async function StockInquiryPage({ searchParams }: { searchParams:
       title="Stock inquiry"
       sub="One item in detail: where it is now, and every movement in and out."
       actions={
-        <Link href={erpLink(SCREEN_OF[stage])} className="text-meta">
-          Back to Stock on hand
-        </Link>
+        <PageLinks>
+          <Link href={erpLink(SCREEN_OF[stage])} className={linkClass()}>
+            Back to Stock on hand
+          </Link>
+        </PageLinks>
       }
     >
       <InquiryControls
@@ -62,18 +65,18 @@ export default async function StockInquiryPage({ searchParams }: { searchParams:
       />
 
       {!itemId ? (
-        <Card className="mt-4">
+        <Card className="mt-5">
           <EmptyState title="Pick an item" body={`Choose one of the ${nf(items.length)} ${STAGE_LABEL[stage].toLowerCase()} items in stock above, or open one from the ⋯ menu on its row in Stock on hand.`} />
         </Card>
       ) : !inq ? (
-        <Card className="mt-4">
+        <Card className="mt-5">
           <EmptyState title="That item is not on record" body="It may have been removed. Pick another item above." />
         </Card>
       ) : (
-        <div className="mt-4 flex flex-col gap-4">
+        <div className="mt-5 flex flex-col gap-5">
           <div>
-            <div className="text-xs font-medium tracking-[0.04em] text-muted uppercase">{STAGE_LABEL[stage]}</div>
-            <h2 className="mt-0.5 text-xl font-semibold text-ink">{inq.item}</h2>
+            <SectionLabel>{STAGE_LABEL[stage]}</SectionLabel>
+            <SectionTitle className="mt-0.5 mb-0">{inq.item}</SectionTitle>
           </div>
           <MetricStrip
             metrics={[
@@ -85,9 +88,9 @@ export default async function StockInquiryPage({ searchParams }: { searchParams:
           />
 
           <Card className="overflow-hidden">
-            <div className="border-b border-divider px-4 py-3 text-sm font-semibold text-ink">Where it is now</div>
+            <SubTitle className="mb-0 border-b border-divider px-4 py-3">Where it is now</SubTitle>
             {inq.lots.length === 0 ? (
-              <div className="px-4 py-4 text-meta text-muted">Nothing of this item is in stock{godownId ? " at this godown" : ""}.</div>
+              <div className="px-4 py-3 text-meta text-muted">Nothing of this item is in stock{godownId ? " at this godown" : ""}.</div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full">
@@ -106,7 +109,7 @@ export default async function StockInquiryPage({ searchParams }: { searchParams:
                     {inq.lots.map((l) => (
                       <Tr key={`${l.lot}|${l.godownId}`}>
                         <Td>
-                          <Link href={erpTraceHref(l.lot)} className="font-mono text-meta">
+                          <Link href={erpTraceHref(l.lot)} className={linkClass("brand", "font-mono text-meta")}>
                             {l.lot}
                           </Link>
                         </Td>
@@ -131,12 +134,12 @@ export default async function StockInquiryPage({ searchParams }: { searchParams:
           </Card>
 
           <Card className="overflow-hidden">
-            <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-divider px-4 py-3">
-              <span className="text-sm font-semibold text-ink">Movements · {periodLabel(pd)}</span>
-              <span className="text-xs text-muted">
-                {inq.capped ? `The newest ${nf(inq.movements.length)} are shown; pick a shorter period to see the rest.` : `${nf(inq.movements.length)} movements`}
-              </span>
-            </div>
+            <SubTitle
+              className="mb-0 border-b border-divider px-4 py-3"
+              aside={inq.capped ? `The newest ${nf(inq.movements.length)} are shown; pick a shorter period to see the rest.` : `${nf(inq.movements.length)} movements`}
+            >
+              Movements · {periodLabel(pd)}
+            </SubTitle>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[860px]">
                 <thead>
@@ -178,7 +181,7 @@ export default async function StockInquiryPage({ searchParams }: { searchParams:
                         <Td className="whitespace-nowrap">{m.date}</Td>
                         <Td>
                           <span className="block">{m.kind}</span>
-                          {m.note || m.by ? <span className="block text-xs text-muted">{[m.note, m.by].filter(Boolean).join(" · ")}</span> : null}
+                          {m.note || m.by ? <span className="block text-meta text-muted">{[m.note, m.by].filter(Boolean).join(" · ")}</span> : null}
                         </Td>
                         <Td className="font-mono text-meta">{m.doc ?? ""}</Td>
                         <Td className="font-mono text-meta">{m.lot ?? "—"}</Td>

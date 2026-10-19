@@ -12236,6 +12236,19 @@ export const erpRmLevels = pgTable(
     maxQty: erpQty("max_qty").notNull(),
     /** Follow | UnFollow. */
     status: text("status").notNull().default("Follow"),
+    /**
+     * The planner keeps this level (0280): min and max are rewritten nightly
+     * from the item's own history. A person editing the level turns it off,
+     * and the planner never touches a level a person set.
+     */
+    autoManaged: boolean("auto_managed").notNull().default(false),
+    /** The last plan worked out for this item here, kept even on a hand-set level. `LevelPlan` + the AI's review. */
+    plan: jsonb("plan").$type<Record<string, unknown>>(),
+    plannedAt: timestamp("planned_at", { withTimezone: true }),
+    /** The AI's adjustment to the statistical plan (1 = none), its reason, and when it last looked. */
+    aiFactor: numeric("ai_factor", { precision: 6, scale: 3, mode: "number" }),
+    aiReason: text("ai_reason"),
+    aiReviewedAt: timestamp("ai_reviewed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     updatedById: text("updated_by_id").references(() => users.id),

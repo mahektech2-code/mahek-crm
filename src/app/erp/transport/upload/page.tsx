@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { erpContext } from "@/lib/erp/access";
+import { erpLink } from "@/lib/erp/registry";
 
 /**
  * Upload LRs is a modal on the Logistics screen and the Dispatch desk now, not
@@ -10,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 export default async function UploadLrsPage() {
   const ctx = await erpContext();
-  if (ctx.screens.has("transport")) redirect("/erp/transport?view=pendingLr&upload=1");
-  if (ctx.screens.has("dispatch")) redirect("/erp/dispatch?upload=1");
+  if (ctx.screens.has("transport")) redirect(erpLink("pendingLr", { upload: "1" }));
+  if (ctx.screens.has("dispatch")) redirect(erpLink("dispatch", { upload: "1" }));
   redirect("/erp");
 }

@@ -1,6 +1,8 @@
 "use client";
 
-import { cx, SectionLabel } from "@/components/ui/primitives";
+import { Callout, cx, SectionLabel } from "@/components/ui/primitives";
+import { qty } from "@/lib/erp/ui";
+import { insetClass, linkClass } from "../look";
 import { registerPanel, type PanelProps } from "../panels";
 import { Figure, Stepper } from "./parts";
 import type { StockCountPanel } from "@/lib/erp/screens/stock-check";
@@ -13,14 +15,14 @@ import type { StockCountPanel } from "@/lib/erp/screens/stock-check";
  * counter may be the one reading it.
  * ------------------------------------------------------------------------- */
 
-const fmt = (n: number | null | undefined) => (n == null ? "—" : n.toLocaleString("en-IN", { maximumFractionDigits: 3 }));
+const fmt = (n: number | null | undefined) => (n == null ? "—" : qty(n));
 const signed = (n: number | null | undefined) => (n == null ? "—" : `${n > 0 ? "+" : ""}${fmt(n)}`);
 
 function StockCount({ data }: PanelProps) {
   const d = data as StockCountPanel;
   const within = d.difference != null && d.tolerance != null && Math.abs(d.difference) <= d.tolerance;
   return (
-    <section className="grid gap-3 rounded-card border border-line p-3.5">
+    <section className={cx("grid gap-3", insetClass)}>
       <div className="flex items-baseline justify-between gap-3">
         <SectionLabel>Inventory accuracy</SectionLabel>
         <span className="text-xs text-muted">
@@ -33,7 +35,7 @@ function StockCount({ data }: PanelProps) {
         {d.requirement ? (
           <>
             {" · "}
-            <a href={d.requirement.href} className="text-brand-hover underline-offset-2 hover:underline">
+            <a href={d.requirement.href} className={linkClass("brand")}>
               {d.requirement.label}
             </a>
           </>
@@ -41,10 +43,10 @@ function StockCount({ data }: PanelProps) {
       </div>
 
       {d.blind ? (
-        <div className="rounded-control bg-info-soft px-3 py-2 text-meta text-info">
+        <Callout tone="info" className="mb-0 block text-meta text-info">
           <span className="font-semibold">Blind count · </span>
           Count what is on the shelf, in {d.unit === "Pcs" ? "pieces" : "litres"}. The book quantity stays hidden until the count is submitted, so the figure is what is there and not what is expected.
-        </div>
+        </Callout>
       ) : (
         <>
           <div className="grid grid-cols-3 gap-2">
@@ -52,7 +54,7 @@ function StockCount({ data }: PanelProps) {
             <Figure l="Book" v={fmt(d.reconciled)} />
             <Figure l="Difference" v={signed(d.difference)} tone={d.difference == null ? undefined : within ? "success" : "danger"} />
           </div>
-          <p className="text-xs text-muted">
+          <p className="text-meta text-muted">
             The book is the ledger stock{d.pendingIn ? ` (${fmt(d.book)}) plus ${fmt(d.pendingIn)} received and not yet posted` : ""}, read when the count was submitted. Tolerance ±{fmt(d.tolerance)}.
           </p>
         </>
@@ -78,10 +80,10 @@ function StockCount({ data }: PanelProps) {
       ) : null}
 
       {d.ai?.summary ? (
-        <div className="grid gap-1.5 rounded-control border border-brand/30 bg-brand-soft/60 px-3 py-2">
+        <div className="grid gap-1.5 rounded-control border border-brand-softer bg-brand-soft px-3 py-2">
           <div className="flex items-baseline justify-between">
             <SectionLabel>Assistant · a suggestion</SectionLabel>
-            <span className="text-2xs text-muted">Nothing has been entered</span>
+            <span className="text-xs text-muted">Nothing has been entered</span>
           </div>
           <p className="text-meta text-ink">{d.ai.summary}</p>
           {d.ai.ranked?.length ? (
@@ -108,11 +110,11 @@ function StockCount({ data }: PanelProps) {
         <div className="grid gap-1.5">
           <div className="flex items-baseline justify-between">
             <SectionLabel>Possible causes, from the records</SectionLabel>
-            <span className="text-2xs text-muted">Suggestions — check each one</span>
+            <span className="text-xs text-muted">Suggestions — check each one</span>
           </div>
           <ul className="grid gap-2">
             {d.causes.map((c, i) => (
-              <li key={`${c.title}-${i}`} className={cx("rounded-control border px-3 py-2 text-meta", c.likelihood === "likely" ? "border-warn/40 bg-warn-soft/50" : "border-divider")}>
+              <li key={`${c.title}-${i}`} className={cx("rounded-control border px-3 py-2 text-meta", c.likelihood === "likely" ? "border-warn-line bg-warn-soft" : "border-divider")}>
                 <div className="flex flex-wrap items-baseline justify-between gap-x-2">
                   <span className="font-semibold text-ink">{c.title}</span>
                   <span className="text-xs text-muted">
@@ -122,7 +124,7 @@ function StockCount({ data }: PanelProps) {
                 </div>
                 <div className="mt-0.5 text-body">{c.detail}</div>
                 {c.href ? (
-                  <a href={c.href} className="mt-1 inline-block text-xs text-brand-hover underline-offset-2 hover:underline">
+                  <a href={c.href} className={linkClass("brand", "mt-1 inline-block text-xs")}>
                     Open the record
                   </a>
                 ) : null}
@@ -149,11 +151,11 @@ function StockCount({ data }: PanelProps) {
       ) : null}
 
       {d.resolution ? (
-        <div className="rounded-control bg-success-soft px-3 py-2 text-meta text-success">
+        <Callout tone="success" className="mb-0 block text-meta text-success">
           <span className="font-semibold">{d.resolution.label}</span>
           {d.resolution.by ? ` · ${d.resolution.by}` : ""}
           {d.resolution.note ? <div className="text-body">{d.resolution.note}</div> : null}
-        </div>
+        </Callout>
       ) : null}
     </section>
   );

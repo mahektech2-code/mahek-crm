@@ -1,5 +1,6 @@
 "use client";
 
+import { Segmented } from "@/components/leads/segmented";
 import { LeadTabs } from "@/components/leads/lead-tabs";
 import { useInLeadHub } from "@/components/leads/hub/hub-context";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
@@ -600,6 +601,83 @@ export function LeadsScreen({
   }
 
 
+  /* The list's own controls — layout, export, the archive. In the Leads
+     frame they ride on the view row; elsewhere they are the header's. */
+  const listActions = (
+    <div className="flex items-center gap-2">
+      {inHub && !showArchived ? (
+        <Segmented
+          label="Layout"
+          items={[
+            { key: "list", label: "List", on: true },
+            {
+              key: "board",
+              label: "Board",
+              on: false,
+              href: leadHref(
+                workspace,
+                `leads/board${search.toString() ? `?${search.toString()}` : ""}`,
+              ),
+            },
+          ]}
+        />
+      ) : null}
+      {/* The whole filtered list, fetched on the click — the table
+          holds one page now, and a ten-row file from a list of 3,776
+          is the version of this bug that looks like it worked. */}
+      <ExportButton
+        name="leads"
+        count={pageInfo.total}
+        fetchRows={async () => {
+          const res = await exportLeadRows({
+            archived: showArchived,
+            /* The file holds the VIEW as well as the filters. A CSV
+               downloaded from Overdue that quietly carried the whole
+               book is the capped-list mistake in reverse, and whoever
+               it is forwarded to has no way of noticing. */
+            view,
+            filters: {
+              ...Object.fromEntries(
+                FILTER_COLUMNS.map((c) => [c, filters[c].join(",") || undefined]),
+              ),
+              /* The search is a filter like any other, and a file that
+                 quietly ignored it would hold a different set to the
+                 table it was downloaded from. */
+              search: urlQ || undefined,
+            },
+          });
+          if (!res.ok) {
+            toast.push(res.error, "error");
+            return null;
+          }
+          return res.data.rows;
+        }}
+      />
+      {archivedCount > 0 ? (
+        <Link
+          href={`${leadHref(workspace, "leads")}?view=archived`}
+          className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
+        >
+          {plural(archivedCount, "archived lead")}
+        </Link>
+      ) : null}
+      {desks.otherDesks.length && !inHub ? (
+        <RowMenu
+          label="Other screens"
+          items={desks.otherDesks.map((d) => ({ label: d.label, href: d.href }))}
+        />
+      ) : null}
+      {inHub ? null : (
+        <Link
+          href={leadHref(workspace, "leads/intake")}
+          className="inline-flex h-9 items-center rounded-[4px] bg-brand px-3.5 text-sm font-medium text-white no-underline hover:bg-brand-hover hover:no-underline"
+        >
+          + Add a lead
+        </Link>
+      )}
+    </div>
+  );
+
   return (
     <div className="p-6">
       {/*
@@ -625,61 +703,7 @@ export function LeadsScreen({
               ← Back to leads
             </Link>
           ) : (
-            <div className="flex items-center gap-2">
-              {/* The whole filtered list, fetched on the click — the table
-                  holds one page now, and a ten-row file from a list of 3,776
-                  is the version of this bug that looks like it worked. */}
-              <ExportButton
-                name="leads"
-                count={pageInfo.total}
-                fetchRows={async () => {
-                  const res = await exportLeadRows({
-                    archived: showArchived,
-                    /* The file holds the VIEW as well as the filters. A CSV
-                       downloaded from Overdue that quietly carried the whole
-                       book is the capped-list mistake in reverse, and whoever
-                       it is forwarded to has no way of noticing. */
-                    view,
-                    filters: {
-                      ...Object.fromEntries(
-                        FILTER_COLUMNS.map((c) => [c, filters[c].join(",") || undefined]),
-                      ),
-                      /* The search is a filter like any other, and a file that
-                         quietly ignored it would hold a different set to the
-                         table it was downloaded from. */
-                      search: urlQ || undefined,
-                    },
-                  });
-                  if (!res.ok) {
-                    toast.push(res.error, "error");
-                    return null;
-                  }
-                  return res.data.rows;
-                }}
-              />
-              {archivedCount > 0 ? (
-                <Link
-                  href={`${leadHref(workspace, "leads")}?view=archived`}
-                  className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
-                >
-                  {plural(archivedCount, "archived lead")}
-                </Link>
-              ) : null}
-              {desks.otherDesks.length && !inHub ? (
-                <RowMenu
-                  label="Other screens"
-                  items={desks.otherDesks.map((d) => ({ label: d.label, href: d.href }))}
-                />
-              ) : null}
-              {inHub ? null : (
-                <Link
-                  href={leadHref(workspace, "leads/intake")}
-                  className="inline-flex h-9 items-center rounded-[4px] bg-brand px-3.5 text-sm font-medium text-white no-underline hover:bg-brand-hover hover:no-underline"
-                >
-                  + Add a lead
-                </Link>
-              )}
-            </div>
+            inHub ? null : listActions
           )
         }
       />
@@ -697,6 +721,7 @@ export function LeadsScreen({
           <ViewChips
             view={view}
             hrefFor={hrefFor}
+            trailing={inHub ? listActions : null}
             counts={{
               mine: tiles?.mine,
               today: tiles?.today,
@@ -1885,8 +1910,11 @@ function ViewChips({
   view,
   hrefFor,
   counts,
+  trailing,
 }: {
   view: LeadView;
+  /** Drawn at the far end of the row. */
+  trailing?: React.ReactNode;
   hrefFor: (params: Record<string, string>) => string;
   /** How many leads each view holds. A missing count draws no number. */
   counts: Partial<Record<LeadView, number>>;
@@ -1937,6 +1965,7 @@ function ViewChips({
           href: hrefFor({ view: v }),
         }))}
       />
+      {trailing ? <div className="ml-auto">{trailing}</div> : null}
     </nav>
   );
 }

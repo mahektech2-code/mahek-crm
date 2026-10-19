@@ -60,6 +60,7 @@ export function HandoverPanel({
   reasonCodes,
   canWork,
   canHandOver,
+  menu = false,
 }: {
   customerId: string;
   leadName: string;
@@ -73,6 +74,8 @@ export function HandoverPanel({
   reasonCodes: string[];
   canWork: boolean;
   canHandOver: boolean;
+  /** Draw only the trigger and its dialog — a row of the record's ⋯ menu. */
+  menu?: boolean;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -95,6 +98,156 @@ export function HandoverPanel({
     search.trim() ? c.name.toLowerCase().includes(search.trim().toLowerCase()) : true,
   );
 
+  const trigger = (
+    <Button
+      size="sm"
+      disabled={!canWork || !onTheBook}
+      title={
+        !canWork
+          ? "Working a lead is the salesman's and the manager's."
+          : !onTheBook
+            ? `Not yet — this account goes on the book at ${stageLabel(promotesAt)}.`
+            : undefined
+      }
+      onClick={() => setOpen(true)}
+    >
+      {menu ? "Hand over" : "Name the owner"}
+    </Button>
+  );
+
+  const dialog = (
+    <Modal open={open} onClose={() => setOpen(false)} title="Name the relationship owner" width={480}>
+      <div className="mb-3 rounded-[6px] border border-line bg-canvas px-3 py-2.5 text-[13px]">
+        <div className="font-medium text-ink">{leadName}</div>
+        <div className="text-muted">
+          Held by {currentOwnerName ?? "nobody"} · lead manager {leadManagerName ?? "nobody"}
+        </div>
+        <div className="mt-1 text-[12px] text-muted">Account {customerId}</div>
+      </div>
+
+      {/* One searchable list, always. A dropdown beats a search box while the
+          list is short and loses the moment it is not, and building both
+          means somebody has to notice on the day the eleventh person is
+          hired. */}
+      <label className="block">
+        <span className="mb-1 block text-[13px] font-medium text-ink">Hand it to</span>
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search people"
+          className="mb-1.5 h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
+        />
+        <select
+          value={ownerId}
+          onChange={(e) => setOwnerId(e.target.value)}
+          size={Math.min(8, Math.max(3, shown.length))}
+          className="w-full rounded-[4px] border border-line bg-surface px-2.5 py-1 text-sm text-ink outline-none focus:border-brand"
+        >
+          {shown.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name} · {c.role}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="mt-3 block">
+        <span className="mb-1 block text-[13px] font-medium text-ink">Why</span>
+        <select
+          value={reasonCode}
+          onChange={(e) => setReasonCode(e.target.value)}
+          className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
+        >
+          {reasonCodes.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="mt-2 block">
+        <span className="mb-1 block text-[13px] font-medium text-ink">
+          Note{needsNote ? "" : " (optional)"}
+        </span>
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          rows={2}
+          maxLength={500}
+          placeholder={needsNote ? "Say what happened." : "Anything the next person should know"}
+          className="w-full rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-sm text-ink outline-none focus:border-brand"
+        />
+      </label>
+
+      <p className="mt-3 text-[13px] text-body">
+        Both people are told — the person taking it, because work has moved onto their queue
+        without them asking, and the person losing it, because a book that shrinks silently reads
+        as a bug in the queue.
+      </p>
+
+      <p className="mt-2 rounded-[6px] border border-line bg-canvas px-3 py-2.5 text-[12px] text-muted">
+        This names who <strong className="font-medium text-body">runs the relationship</strong>.
+        It moves no revenue, no target and no collections list — which is what makes it a
+        manager&rsquo;s to do. Whose book the account is in for crediting orders is the sales
+        seat, changed on the customer record by accounts.
+      </p>
+
+      <div className="mt-4 flex justify-end gap-2">
+        <Button tone="quiet" onClick={() => setOpen(false)}>
+          Close
+        </Button>
+        <Button
+          tone="primary"
+          disabled={!canHandOver || !ownerId || !reasonCode || (needsNote && !note.trim()) || busy}
+          title={
+            !canHandOver
+              ? "Handing the relationship over is a manager's. It moves who runs the account and nothing else — the sales seat, which decides whose targets it counts toward, is a separate act and stays accounts' and admin's."
+              : !ownerId
+                ? "Pick who takes the account on."
+                : !reasonCode
+                  ? "Say why it is moving."
+                  : needsNote && !note.trim()
+                    ? "Other always needs a note saying what happened."
+                    : undefined
+          }
+          onClick={() => {
+            if (!ownerId || !reasonCode || busy) return;
+            setBusy(true);
+            void handOverRelationships({
+              /* A list, because the action's own entry point is the pending
+                 list and a manager clearing it hands eight accounts over in
+                 one decision. One account is that list of length one. */
+              customerIds: [customerId],
+              toUserId: ownerId,
+              reasonCode,
+              note: note.trim() || undefined,
+            }).then((r) => {
+              setBusy(false);
+              if (!r.ok) {
+                toast.push(r.error);
+                return;
+              }
+              toast.push(r.message ?? "Handed over.");
+              setOpen(false);
+              router.refresh();
+            });
+          }}
+        >
+          {busy ? "Handing over…" : "Hand it over"}
+        </Button>
+      </div>
+    </Modal>
+  );
+
+  if (menu)
+    return (
+      <>
+        {trigger}
+        {dialog}
+      </>
+    );
+
   return (
     <section className="rounded-[6px] border border-line bg-surface px-5 py-4">
       <div className="mb-1 flex items-start justify-between gap-3">
@@ -107,20 +260,7 @@ export function HandoverPanel({
             is released — working a lead and working a customer are different jobs.
           </p>
         </div>
-        <Button
-          size="sm"
-          disabled={!canWork || !onTheBook}
-          title={
-            !canWork
-              ? "Working a lead is the salesman's and the manager's."
-              : !onTheBook
-                ? `Not yet — this account goes on the book at ${stageLabel(promotesAt)}.`
-                : undefined
-          }
-          onClick={() => setOpen(true)}
-        >
-          Name the owner
-        </Button>
+        {trigger}
       </div>
 
       <div className="mt-2 text-[13px]">
@@ -152,128 +292,7 @@ export function HandoverPanel({
         ) : null}
       </div>
 
-      <Modal open={open} onClose={() => setOpen(false)} title="Name the relationship owner" width={480}>
-        <div className="mb-3 rounded-[6px] border border-line bg-canvas px-3 py-2.5 text-[13px]">
-          <div className="font-medium text-ink">{leadName}</div>
-          <div className="text-muted">
-            Held by {currentOwnerName ?? "nobody"} · lead manager {leadManagerName ?? "nobody"}
-          </div>
-          <div className="mt-1 text-[12px] text-muted">Account {customerId}</div>
-        </div>
-
-        {/* One searchable list, always. A dropdown beats a search box while the
-            list is short and loses the moment it is not, and building both
-            means somebody has to notice on the day the eleventh person is
-            hired. */}
-        <label className="block">
-          <span className="mb-1 block text-[13px] font-medium text-ink">Hand it to</span>
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search people"
-            className="mb-1.5 h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
-          />
-          <select
-            value={ownerId}
-            onChange={(e) => setOwnerId(e.target.value)}
-            size={Math.min(8, Math.max(3, shown.length))}
-            className="w-full rounded-[4px] border border-line bg-surface px-2.5 py-1 text-sm text-ink outline-none focus:border-brand"
-          >
-            {shown.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name} · {c.role}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="mt-3 block">
-          <span className="mb-1 block text-[13px] font-medium text-ink">Why</span>
-          <select
-            value={reasonCode}
-            onChange={(e) => setReasonCode(e.target.value)}
-            className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
-          >
-            {reasonCodes.map((r) => (
-              <option key={r} value={r}>
-                {r}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="mt-2 block">
-          <span className="mb-1 block text-[13px] font-medium text-ink">
-            Note{needsNote ? "" : " (optional)"}
-          </span>
-          <textarea
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            rows={2}
-            maxLength={500}
-            placeholder={needsNote ? "Say what happened." : "Anything the next person should know"}
-            className="w-full rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-sm text-ink outline-none focus:border-brand"
-          />
-        </label>
-
-        <p className="mt-3 text-[13px] text-body">
-          Both people are told — the person taking it, because work has moved onto their queue
-          without them asking, and the person losing it, because a book that shrinks silently reads
-          as a bug in the queue.
-        </p>
-
-        <p className="mt-2 rounded-[6px] border border-line bg-canvas px-3 py-2.5 text-[12px] text-muted">
-          This names who <strong className="font-medium text-body">runs the relationship</strong>.
-          It moves no revenue, no target and no collections list — which is what makes it a
-          manager&rsquo;s to do. Whose book the account is in for crediting orders is the sales
-          seat, changed on the customer record by accounts.
-        </p>
-
-        <div className="mt-4 flex justify-end gap-2">
-          <Button tone="quiet" onClick={() => setOpen(false)}>
-            Close
-          </Button>
-          <Button
-            tone="primary"
-            disabled={!canHandOver || !ownerId || !reasonCode || (needsNote && !note.trim()) || busy}
-            title={
-              !canHandOver
-                ? "Handing the relationship over is a manager's. It moves who runs the account and nothing else — the sales seat, which decides whose targets it counts toward, is a separate act and stays accounts' and admin's."
-                : !ownerId
-                  ? "Pick who takes the account on."
-                  : !reasonCode
-                    ? "Say why it is moving."
-                    : needsNote && !note.trim()
-                      ? "Other always needs a note saying what happened."
-                      : undefined
-            }
-            onClick={() => {
-              if (!ownerId || !reasonCode || busy) return;
-              setBusy(true);
-              void handOverRelationships({
-                /* A list, because the action's own entry point is the pending
-                   list and a manager clearing it hands eight accounts over in
-                   one decision. One account is that list of length one. */
-                customerIds: [customerId],
-                toUserId: ownerId,
-                reasonCode,
-                note: note.trim() || undefined,
-              }).then((r) => {
-                setBusy(false);
-                if (!r.ok) {
-                  toast.push(r.error);
-                  return;
-                }
-                toast.push(r.message ?? "Handed over.");
-                setOpen(false);
-                router.refresh();
-              });
-            }}
-          >
-            {busy ? "Handing over…" : "Hand it over"}
-          </Button>
-        </div>
-      </Modal>
+      {dialog}
     </section>
   );
 }

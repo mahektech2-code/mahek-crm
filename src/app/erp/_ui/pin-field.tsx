@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { useState } from "react";
 import { Modal } from "@/components/ui/modal";
-import { Button, cx } from "@/components/ui/primitives";
+import { Button, Callout, Input } from "@/components/ui/primitives";
 import { useKit } from "./kit";
 
 /* ---------------------------------------------------------------------------
@@ -64,21 +64,16 @@ export function PinField({ value, error, onChange }: { value: string; error: boo
   const pin = parsePin(value);
   return (
     <div className="grid gap-2">
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="19.209400, 73.093900"
-        className={cx("h-8.5 w-full rounded-control border bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand", error ? "border-danger" : "border-line")}
-      />
+      <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder="19.209400, 73.093900" invalid={error} />
       <div className="flex flex-wrap gap-2">
         {kit.mapKeyUrl ? (
-          <button type="button" onClick={() => void openMap()} className="h-8 cursor-pointer rounded-control border border-line bg-surface px-3 text-meta font-medium text-body hover:bg-canvas">
+          <Button type="button" size="sm" onClick={() => void openMap()}>
             Find in map
-          </button>
+          </Button>
         ) : null}
-        <button type="button" onClick={here} className="h-8 cursor-pointer rounded-control border border-line bg-surface px-3 text-meta font-medium text-body hover:bg-canvas">
+        <Button type="button" size="sm" onClick={here}>
           Use my location
-        </button>
+        </Button>
       </div>
       {note ? <span className="text-xs text-muted">{note}</span> : null}
       <Modal
@@ -100,9 +95,11 @@ export function PinField({ value, error, onChange }: { value: string; error: boo
         ) : key ? (
           <PinMap apiKey={key} pin={pin} height={480} onPick={(lat, lng) => onChange(fmt(lat, lng))} />
         ) : (
-          <div className="rounded-control border border-line bg-canvas px-3 py-2.5 text-meta text-muted">
-            No map key is set, so there is no map to pick on. An administrator adds it in Admin Console → Integrations; until then type the pin or use your location.
-          </div>
+          <Callout tone="warn">
+            <span className="text-meta text-body">
+              No map key is set, so there is no map to pick on. An administrator adds it in Admin Console → Integrations; until then type the pin or use your location.
+            </span>
+          </Callout>
         )}
       </Modal>
     </div>

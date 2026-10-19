@@ -50,6 +50,9 @@ npm run jobs -- erp-alerts                 # the ERP's unusual-activity checks �
                            # they also run hourly
 npm run jobs -- erp-digest                 # yesterday's owner summary — it also
                            # runs nightly
+npm run jobs -- erp-levels-plan --dry-run  # raw-material re-order levels from
+                           # history, writing nothing — without the flag it writes;
+                           # it also runs nightly and on every deploy (once a day)
 npm run jobs -- field-activity-reparse     # re-read every stored EMP 2.0
                            # activity date in its own read's day/month order
                            # (also runs after the daily reconcile)
@@ -1897,6 +1900,23 @@ lists the column keys it already draws in `covers`. Write a screen's
 (the explanation); keep subtitles to one line; name buttons as verbs ("Accept",
 "Add another", "Show the whole order"), never past tenses or "Do …".
 
+**AN ERP SCREEN DRAWS EACH PIECE ONE WAY, AND A TEST READS THE SOURCE.**
+The screens had drifted into twenty-two spellings of the small uppercase
+label, four heading sizes, three checkbox looks, ten text-link buttons and
+money formatted by hand — each a class string copied from a neighbour and then
+tweaked. `src/app/erp/_ui/look.tsx` is the ERP's kit: `SectionTitle` and
+`SubTitle` for headings, `Eyebrow`/`eyebrowClass` (11px) and
+`SectionLabel`/`labelClass` (12px) for labels, `LinkButton`/`linkClass` and
+`IconButton` for the small controls, `popoverClass` and `insetClass` for
+surfaces; `checkboxClass` sits in primitives beside `Checkbox`, and the
+tokens `tracking-label` and `shadow-pop` in `globals.css`.
+`erp-design.test.ts` fails on a hex colour, a `text-[Npx]`, a typed
+`tracking-[…]` or popover shadow, a hand-drawn heading or uppercase label, a
+bare checkbox or table cell, `toLocaleString`, and a typed `/erp/…` address,
+anywhere under `src/app/erp` except the printed labels. Reach for the kit; if
+it has no piece for what you need, add one there rather than typing the
+string a second time.
+
 **Every write goes through five server actions** (`lib/actions/erp.ts`): run
 an action, run a bulk action, run a header tool (a `ToolSpec` with no `href`,
 answered by the module's `tools`), submit a form, load a form (which writes
@@ -2343,6 +2363,25 @@ how overdue against the class's cycle (halved after a discrepancy), movement
 and past discrepancies, up to `erp.stockCheck.dailyCount` per day. One open
 count per shelf (a partial unique index); `openCount` answers with the open
 one rather than opening a second.
+
+**RAW-MATERIAL LEVELS ARE PLANNED FROM HISTORY, A WEEK AND A HALF AT A TIME.**
+`runLevelPlanner` (`lib/erp/level-planner.ts`) sets every raw material's
+minimum at every godown to the forecast use over `erp.levels.coverDays` (10.5)
+and the maximum to that plus `erp.levels.orderCycleDays`. The model is pure in
+`engines/stock-plan.ts`: the RATE from production use (purchases where use is
+not recorded), MONTH factors from whichever series reaches back further, and
+WEEK-OF-MONTH factors from use only — when a drum is bought is the buyer's
+calendar, not the shelf's. Both factors are ratio-to-moving-average, so growth
+is taken out first, and shrunk by how much history stands behind them. An AI
+review (`erp.ai.levels.*`, feature `levels`) may move a level by at most
+`maxAdjustPercent`, with a reason on the level; without it the statistics
+stand. `auto_managed` (0280) marks a level the planner keeps: a hand edit of
+min or max clears it and the planner never touches that level again; "Let the
+planner keep it" hands it back. It runs nightly before the alert pass, in
+`deploy:db` (which it never fails) and from "Plan levels now"; `planned_at`
+makes it once a day. A raw-material level is now BELOW when stock is under
+the MINIMUM (`rmBelowMin`) — it used to fire under the maximum, which with
+planned levels would list nearly every item every day.
 
 **MISSING RECORDS ARE A LIST, NOT A FIX.** `missingRecords` finds SFG lines
 without an SFG entry, fills without an FG entry, register lots not in stock,
@@ -8324,6 +8363,22 @@ explanatory body (unless `fact`), `Empty` drop its paragraph, `LeadTabs` draw
 nothing, and `OutsideLeadHub` hides a screen's own "← back to a desk" link.
 The Sales Dashboard mounts the same screens outside the frame and sees no
 change. The routes are unchanged; `Dashboard` is now "My day".
+
+**A LEAD'S RECORD IS ONE PAGE OF CARDS, AND ITS ACTIONS ARE ONE MENU.** The
+header names the lead, its sales type, its rung and how long it has stood
+there, and its priority; beside it are Call (only for somebody who works the
+Calling desk — it opens the desk's own `LogCallDialog`, also from `?call=1`,
+which is what My day's Call buttons link to), Message, the rung's act
+(`PrimaryGateAction`, a link to the screen where that act is done) and a ⋯
+menu holding Reassign, Change sales type, Put on hold, Hand over, Mark lost and
+Delete. Each menu item is the component the old header drew as a button, with
+its own capability check and dialog; the menu is hidden rather than unmounted
+when closed, because unmounting would take the dialog an item just opened with
+it. The ladder is a row of bars; Overview is the next step (`setLeadNextAction`
+behind Change), the gate card ("To reach X", `checklistFor` ticked where the
+verdict does not name it missing, `AdvanceStage` under it), the opportunity and
+the calls; the rail is People, Who's up (`roleAction` for every vantage) and
+Details. `components/leads/record/record-chrome.tsx` holds the pieces.
 
 **THE CALLING DESK IS A MODULE, AND IT IS GRANTED — NOT INHERITED.** It was a
 tab of All Leads, and a tab cannot be withheld: every CRM user could open the

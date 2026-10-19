@@ -462,6 +462,8 @@ export const FLAG: Record<string, [string, Tone]> = {
   detailed: ["In order details", "neutral"],
   cnSync: ["CN out of sync", "warn"],
   below: ["Below level", "danger"],
+  autoLevel: ["Planned automatically", "brand"],
+  aiAdjusted: ["Adjusted by AI", "info"],
   noLevel: ["No level set", "neutral"],
   notPosted: ["Not posted to inventory", "warn"],
   overRecipe: ["Above the recipe", "warn"],
@@ -545,6 +547,16 @@ export function nf(v: CellValue | undefined): string {
   const n = Number(v);
   if (!Number.isFinite(n)) return String(v);
   return NF.format(n);
+}
+
+/** A counted or weighed quantity → "12,345.125": up to three decimals, because
+    kilograms and litres are recorded to the gram and the millilitre. */
+const QTY = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 3 });
+export function qty(v: CellValue | undefined): string {
+  if (v == null || v === "") return "";
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(v);
+  return QTY.format(n);
 }
 
 export function cellText(col: ColSpec, v: CellValue | undefined): string {
