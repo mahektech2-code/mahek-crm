@@ -22,6 +22,21 @@ function control(err: boolean, extra?: string) {
   return controlClass({ invalid: err, className: cx("h-8.5", extra) });
 }
 
+/**
+ * A list never hides the value a record already holds. A select whose list
+ * lacks it reads "Choose…", and saving the form then writes a blank over a
+ * value nobody meant to touch — a segment typed in the Sales Party sheet, a
+ * state spelled before the list existed. The saved value is offered first.
+ * A list handed in by the form (`options`, narrowed by another field) is left
+ * alone: there a value that no longer fits is meant to read as unpicked.
+ */
+function withSaved(f: FieldSpec, value: string, options?: string[]): string[] {
+  const base = options ?? f.opts ?? [];
+  if (options || !value || !(f.t === "select" || f.t === "pick" || f.t === "multi")) return base;
+  const held = (f.t === "multi" ? value.split("|") : [value]).map((v) => v.trim()).filter((v) => v && !base.includes(v));
+  return held.length ? [...held, ...base] : base;
+}
+
 export function Field({
   f,
   value,
@@ -42,7 +57,7 @@ export function Field({
   onMic?: () => void;
   onUseSuggestion?: (v: string) => void;
 }) {
-  const opts = options ?? f.opts ?? [];
+  const opts = withSaved(f, value, options);
   const tag = f.conf ? (f.conf === "high" ? "AI · read" : f.conf === "check" ? "AI · check this" : "AI · not found") : f.t === "derived" ? "Calculated" : f.t === "suggest" ? "AI suggestion" : !f.req && !f.untagged ? "Optional" : "";
   const tagTone: Tone =
     f.conf === "check" || f.conf === "not found" ? "warn" : f.conf || f.t === "suggest" ? "brand" : f.t === "derived" ? "neutral" : "muted";

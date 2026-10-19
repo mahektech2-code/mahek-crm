@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { randomUUID } from "node:crypto";
 import { customers, sheetPartyRows, syncConflicts, users } from "@/db/schema";
-import { partyNameKey } from "@/lib/sheet-parse";
+import { sheetKeys } from "@/lib/customer-rename";
 import {
   customersWithDecidedContacts,
   reconcileContacts,
@@ -104,6 +104,7 @@ export async function projectParties(
     .select({
       id: customers.id,
       name: customers.name,
+      sheetName: customers.sheetName,
       phone: customers.phone,
       whatsappPhone: customers.whatsappPhone,
       salesAmId: customers.salesAmId,
@@ -159,9 +160,11 @@ export async function projectParties(
     c.deletedAt ? 0 : c.kind === "customer" ? 2 : 1;
   const byKey = new Map<string, (typeof existing)[number]>();
   for (const c of existing) {
-    const key = partyNameKey(c.name);
-    const held = byKey.get(key);
-    if (!held || rank(c) > rank(held)) byKey.set(key, c);
+    // A party somebody renamed is still found under the name the sheet uses.
+    for (const key of sheetKeys(c)) {
+      const held = byKey.get(key);
+      if (!held || rank(c) > rank(held)) byKey.set(key, c);
+    }
   }
 
   /*
@@ -435,8 +438,12 @@ export async function projectParties(
 
   // Customers the master does not mention. Reported rather than touched: a
   // customer who has ordered is real whatever a master list says.
-  for (const [key, c] of byKey) {
-    if (!seen.has(key) && c.kind === "customer") report.unmatchedCustomers.push(c.name);
+  // One verdict per customer: a renamed party answers to either of its names.
+  const reported = new Set<string>();
+  for (const c of byKey.values()) {
+    if (reported.has(c.id) || c.kind !== "customer") continue;
+    reported.add(c.id);
+    if (!sheetKeys(c).some((k) => seen.has(k))) report.unmatchedCustomers.push(c.name);
   }
 
   report.unlinkedPeople = [...unlinked].sort();

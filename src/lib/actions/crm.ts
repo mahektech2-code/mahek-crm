@@ -1,5 +1,6 @@
 "use server";
 
+import { renameValues } from "@/lib/customer-rename";
 import { revalidatePath } from "next/cache";
 import { placeShopsNow } from "@/lib/services/place-tree-service";
 import {
@@ -873,7 +874,9 @@ export async function updateCustomer(
       .set({
         ...(gstClear ?? {}),
         ...(voided?.set ?? {}),
-        ...(parsed.data.name ? { name: parsed.data.name } : {}),
+        // A rename keeps the name the sheets use (lib/customer-rename.ts), or
+        // the order projection writes the old name back within the half hour.
+        ...(parsed.data.name ? (renameValues({ name: existing.name, sheetName: existing.sheetName }, parsed.data.name) ?? {}) : {}),
         ...(parsed.data.contactPerson !== undefined
           ? { contactPerson: parsed.data.contactPerson || null }
           : {}),

@@ -1917,6 +1917,27 @@ anywhere under `src/app/erp` except the printed labels. Reach for the kit; if
 it has no piece for what you need, add one there rather than typing the
 string a second time.
 
+**A PARTY CAN BE RENAMED, AND THE SHEETS STILL FIND IT.** The ERP's Sales
+Party edit has a Party name field, and the CRM's customer form always had one.
+The Sales Party, Taken Order and Order Details tabs name a party by TEXT, so a
+rename used to be undone by the order projection within the half hour and to
+cut every name-matched link (the party master's phone, seats and salesperson,
+where an order was delivered, the back office handover). The first rename now
+keeps the name the sheets use in `customers.sheet_name` (`0281`), and every
+sheet matcher asks for either name — `sheetKeys` in `lib/customer-rename.ts`,
+pure, is the one rule. Setting the name back to the sheet's exact spelling
+clears it. A name another live party already carries is refused.
+
+**A DROPDOWN OFFERS WHAT IS ALREADY IN USE, AND NEVER DROPS A SAVED VALUE.**
+Segment, counter type, transporter and godown city were reference lists nobody
+had filled, so the customer form said "Nothing available" over data the Sales
+Party sheet had carried for years. `refOptions` (`lib/erp/refs.ts`) is the
+configured list plus the values in use (and every Indian state); it feeds the
+customer and godown forms, while `refValues` stays the configured list wherever
+a rule checks against it. And a select whose list lacks a record's saved value
+now offers it first (`withSaved` in `_ui/field.tsx`) — "Choose…" over a value
+was a blank written on the next save.
+
 **Every write goes through five server actions** (`lib/actions/erp.ts`): run
 an action, run a bulk action, run a header tool (a `ToolSpec` with no `href`,
 answered by the module's `tools`), submit a form, load a form (which writes

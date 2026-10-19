@@ -1,4 +1,5 @@
 import "server-only";
+import { sheetKeys } from "@/lib/customer-rename";
 import { randomUUID } from "node:crypto";
 import { billedInMonthSql, orderCountsSql } from "./order-status";
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
@@ -1300,6 +1301,7 @@ export async function recomputeSalesPeople(): Promise<number> {
     .select({
       id: customers.id,
       name: customers.name,
+      sheetName: customers.sheetName,
       salesPersonName: customers.salesPersonName,
       amDecidedAt: customers.amDecidedAt,
     })
@@ -1322,7 +1324,9 @@ export async function recomputeSalesPeople(): Promise<number> {
      * a day to unpick.
      */
     if (c.amDecidedAt) continue;
-    const next = byKey.get(partyNameKey(c.name)) ?? byCustomerId.get(c.id) ?? null;
+    // A renamed party is found under the name the sheet still uses.
+    const fromSheet = sheetKeys(c).map((k) => byKey.get(k)).find((v) => v !== undefined);
+    const next = fromSheet ?? byCustomerId.get(c.id) ?? null;
     if (next === c.salesPersonName) continue;
     await db
       .update(customers)

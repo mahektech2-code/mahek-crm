@@ -1393,6 +1393,16 @@ export const customers = pgTable(
     externalCode: text("external_code"),
     name: text("name").notNull(),
     /**
+     * The name the SHEETS call this party, kept the first time a person
+     * renames it. The Sales Party, Taken Order and Order Details tabs name a
+     * party by text, so a rename in the CRM or the ERP would otherwise stop
+     * every one of them matching — and the order projection would write the
+     * sheet's spelling back over the new name within the half hour. Null means
+     * nobody has renamed it, which is every row before 0281. See
+     * `lib/customer-rename.ts`.
+     */
+    sheetName: text("sheet_name"),
+    /**
      * Not every account has a single named contact — a shop counter often
      * does not — so this is no longer required to save the record. Business
      * name and phone still are: those are what a bill and a call need.

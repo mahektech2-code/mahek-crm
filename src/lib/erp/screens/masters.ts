@@ -1,6 +1,7 @@
 import "server-only";
 import { has, type Col } from "./common";
-import { and, asc, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
+import { foldName, renameValues } from "@/lib/customer-rename";
 import { db } from "@/db";
 import {
   appAccess,
@@ -30,8 +31,7 @@ import {
   REGIONS,
   RM_UNITS,
   WEIGHT_TYPES,
-  refValues,
-} from "../refs";
+  refValues, refOptions } from "../refs";
 import {
   erpAudit,
   erpId,
@@ -385,7 +385,7 @@ async function saveCanPhotos(ctx: ErpContext, h: Record<string, string>, id?: st
 /* =========================================================== suppliers */
 
 async function supplierForm(id?: string): Promise<FormSpec> {
-  const [areas, states] = await Promise.all([refValues("area"), refValues("state")]);
+  const [areas, states] = await Promise.all([refOptions("area"), refOptions("state")]);
   let init: Record<string, string> | undefined;
   if (id) {
     const [r] = await db.select().from(erpSuppliers).where(eq(erpSuppliers.id, id));
@@ -755,6 +755,8 @@ export type CustomerRow = {
   freightTerm: string | null;
   deliveryType: string | null;
   companyName: string | null;
+  /** The name the sheets know it by, kept when somebody renamed it (customer-rename). */
+  sheetName: string | null;
   status: string;
   kind: string;
   createdAt: Date;
@@ -788,6 +790,7 @@ export async function loadCustomers(where?: ReturnType<typeof and>): Promise<Cus
       freightTerm: customers.freightTerm,
       deliveryType: customers.deliveryType,
       companyName: customers.companyName,
+      sheetName: customers.sheetName,
       status: customers.status,
       kind: customers.kind,
       createdAt: customers.createdAt,
@@ -816,20 +819,21 @@ async function customerEditForm(id: string): Promise<FormSpec | null> {
   const [r] = await loadCustomers(eq(customers.id, id));
   if (!r) return null;
   const [areas, states, transporters, counters, segments] = await Promise.all([
-    refValues("area"),
-    refValues("state"),
-    refValues("transporter"),
-    refValues("counterType"),
-    refValues("segment"),
+    refOptions("area"),
+    refOptions("state"),
+    refOptions("transporter"),
+    refOptions("counterType"),
+    refOptions("segment"),
   ]);
   return {
     screen: "customers",
     id: "edit",
     recordId: id,
     title: `Edit ${r.name}`,
-    sub: "Name, sales person and price list are set where the account is managed.",
+    sub: "The sales person and price list are set where the account is managed.",
     submit: "Save changes",
     init: {
+      name: r.name,
       grade: r.p?.grade ?? "",
       area: r.area ?? "",
       city: r.city ?? "",
@@ -850,7 +854,15 @@ async function customerEditForm(id: string): Promise<FormSpec | null> {
       allocate: r.p?.allocateEmail ?? "",
     },
     header: [
-      { k: "company", l: "Company name", t: "text", sec: "Contact" },
+      {
+        k: "name",
+        l: "Party name",
+        t: "text",
+        req: true,
+        sec: "Contact",
+        hint: "The name on the bill and on every list. The Sales Party and order sheets still find this party under the name they use.",
+      },
+      { k: "company", l: "Company name", t: "text", hint: "Only where the registered company is named differently from the party." },
       { k: "mobile", l: "Mobile no.", t: "text" },
       { k: "whatsapp", l: "WhatsApp contact", t: "text" },
       { k: "email", l: "Party email", t: "text" },
@@ -863,7 +875,12 @@ async function customerEditForm(id: string): Promise<FormSpec | null> {
       { k: "counter", l: "Counter type", t: "multi", opts: counters },
       { k: "pay", l: "Payment type", t: "select", opts: PAYMENT_TYPES },
       { k: "credit", l: "Credit days", t: "num", min: 0 },
-      { k: "allocate", l: "Allocate (email)", t: "text" },
+      {
+        k: "allocate",
+        l: "Allocated to (email)",
+        t: "text",
+        hint: "The Sales Party sheet's Allocate column: the email of whoever this party is allocated to. Kept as a note — nothing in MahekOne sends to it.",
+      },
       { k: "transporter", l: "Transport detail", t: "select", opts: transporters, sec: "Delivery" },
       { k: "delivery", l: "Delivery type", t: "select", opts: DELIVERY_TYPES },
       { k: "weight", l: "Weight type", t: "select", opts: WEIGHT_TYPES },
@@ -877,7 +894,7 @@ export async function customerForm(id: string) {
 }
 
 async function customerNewForm(ctx: ErpContext): Promise<FormSpec> {
-  const [areas, states, salesPeople] = await Promise.all([refValues("area"), refValues("state"), salesPeopleNames()]);
+  const [areas, states, salesPeople] = await Promise.all([refOptions("area"), refOptions("state"), salesPeopleNames()]);
   const tags = await priceTags();
   return {
     screen: "customers",
@@ -930,7 +947,8 @@ function customerFields(r: CustomerRow, canSeeTarget: boolean): { l: string; v: 
     { l: "Segment", v: r.p?.segment || "—" },
     { l: "GST number", v: r.gstin || "—" },
     { l: "Company name", v: r.companyName || "—" },
-    { l: "Allocate", v: r.p?.allocateEmail || "—" },
+    ...(r.sheetName ? [{ l: "Name on the sheets", v: r.sheetName }] : []),
+    { l: "Allocated to", v: r.p?.allocateEmail || "—" },
   ];
 }
 
@@ -1109,7 +1127,26 @@ export async function saveCustomerDetails(ctx: ErpContext, id: string, h: Record
   if (mobileDigits && mobileDigits.length !== 10) return fieldErr("mobile", "INVALID");
   /* City and phone are required on every MahekOne customer, so an emptied
      field keeps what was there rather than blanking a column the CRM relies on. */
+  /* The party's name. A rename keeps the name the sheets use, so they go on
+     finding the party and stop writing the old name back (customer-rename). */
+  if (h.name !== undefined && !text(h.name)) return fieldErr("name", "REQUIRED");
+  const rename = h.name === undefined ? null : renameValues({ name: before.name, sheetName: before.sheetName }, h.name);
+  if (rename) {
+    const clash = await db
+      .select({ name: customers.name })
+      .from(customers)
+      .where(
+        and(
+          ne(customers.id, id),
+          isNull(customers.deletedAt),
+          sql`upper(regexp_replace(btrim(${customers.name}), '[[:space:]]+', ' ', 'g')) = ${foldName(rename.name)}`,
+        ),
+      )
+      .limit(1);
+    if (clash.length) return err(`Another party is already called ${clash[0].name}. Pick a name that tells them apart.`, "validation", [{ field: "name", message: "TAKEN" }]);
+  }
   const custValues = {
+    ...(rename ?? {}),
     area: text(h.area),
     city: text(h.city) ?? before.city ?? "",
     phone: mobileDigits || before.phone || "",
@@ -1143,14 +1180,14 @@ export async function saveCustomerDetails(ctx: ErpContext, id: string, h: Record
       .onConflictDoUpdate({ target: erpCustomerProfiles.customerId, set: profileValues });
   });
   await erpAudit(ctx, "erp.customer.edit", "customer", id, before, { ...custValues, ...profileValues });
-  return okVoid(`${before.name} updated`);
+  return okVoid(rename ? `${before.name} renamed to ${rename.name}` : `${before.name} updated`);
 }
 
 /* ============================================================= godowns */
 
 async function godownForm(id?: string): Promise<FormSpec> {
-  const cities = await refValues("godownCity");
-  const states = await refValues("state");
+  const cities = await refOptions("godownCity");
+  const states = await refOptions("state");
   let init: Record<string, string> | undefined;
   if (id) {
     const [g] = await db.select().from(erpGodowns).where(eq(erpGodowns.id, id));
