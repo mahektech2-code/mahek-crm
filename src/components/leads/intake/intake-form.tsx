@@ -546,12 +546,17 @@ export function IntakeForm({
                         }}
                       />
                     ) : (
-                      <Input
-                        value={f.requirement}
-                        invalid={Boolean(errors.requirement)}
-                        onChange={(e) => set("requirement")(e.target.value)}
-                        placeholder="What they want"
-                      />
+                      <>
+                        <Input
+                          value={f.requirement}
+                          invalid={Boolean(errors.requirement)}
+                          onChange={(e) => set("requirement")(e.target.value)}
+                          placeholder="What they want"
+                        />
+                        <div className="mt-1 text-[12px] text-muted">
+                          Product search is switched off, so type what they want in your own words.
+                        </div>
+                      </>
                     )}
                   </F>
                   <F label="Used on" error={errors.application}>

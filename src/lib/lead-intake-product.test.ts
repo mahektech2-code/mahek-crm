@@ -209,7 +209,7 @@ describe("ProductField keeps working for the screens that already use it", () =>
     const form = readFileSync("src/components/leads/intake/intake-form.tsx", "utf8");
     assert.match(form, /<ProductCombobox/);
     assert.doesNotMatch(form, /<ProductField/);
-    assert.ok(form.includes("What product they want (optional)"));
+    assert.match(form, /label="Product"/);
     assert.equal(form.includes("What they want (optional)"), false);
     assert.doesNotMatch(form, /Or choose one of Mahek/);
     assert.doesNotMatch(form, /Nothing chosen/);
