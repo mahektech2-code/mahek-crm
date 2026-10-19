@@ -1897,6 +1897,23 @@ lists the column keys it already draws in `covers`. Write a screen's
 (the explanation); keep subtitles to one line; name buttons as verbs ("Accept",
 "Add another", "Show the whole order"), never past tenses or "Do …".
 
+**AN ERP SCREEN DRAWS EACH PIECE ONE WAY, AND A TEST READS THE SOURCE.**
+The screens had drifted into twenty-two spellings of the small uppercase
+label, four heading sizes, three checkbox looks, ten text-link buttons and
+money formatted by hand — each a class string copied from a neighbour and then
+tweaked. `src/app/erp/_ui/look.tsx` is the ERP's kit: `SectionTitle` and
+`SubTitle` for headings, `Eyebrow`/`eyebrowClass` (11px) and
+`SectionLabel`/`labelClass` (12px) for labels, `LinkButton`/`linkClass` and
+`IconButton` for the small controls, `popoverClass` and `insetClass` for
+surfaces; `checkboxClass` sits in primitives beside `Checkbox`, and the
+tokens `tracking-label` and `shadow-pop` in `globals.css`.
+`erp-design.test.ts` fails on a hex colour, a `text-[Npx]`, a typed
+`tracking-[…]` or popover shadow, a hand-drawn heading or uppercase label, a
+bare checkbox or table cell, `toLocaleString`, and a typed `/erp/…` address,
+anywhere under `src/app/erp` except the printed labels. Reach for the kit; if
+it has no piece for what you need, add one there rather than typing the
+string a second time.
+
 **Every write goes through five server actions** (`lib/actions/erp.ts`): run
 an action, run a bulk action, run a header tool (a `ToolSpec` with no `href`,
 answered by the module's `tools`), submit a form, load a form (which writes

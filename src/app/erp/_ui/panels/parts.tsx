@@ -1,6 +1,7 @@
 "use client";
 
 import { cx } from "@/components/ui/primitives";
+import { Eyebrow } from "../look";
 
 /* ---------------------------------------------------------------------------
  * What the record dialogs' panels draw the same way, said once: the stepper
@@ -35,7 +36,7 @@ const FIGURE_TONE = { danger: "text-danger", success: "text-success", muted: "te
 export function Figure({ l, v, tone }: { l: string; v: string; tone?: keyof typeof FIGURE_TONE }) {
   return (
     <div className="min-w-0 rounded-control border border-divider px-3 py-2">
-      <div className="text-2xs font-medium tracking-[0.04em] text-muted uppercase">{l}</div>
+      <Eyebrow>{l}</Eyebrow>
       <div className={cx("mt-0.5 text-base font-semibold tabular-nums", tone ? FIGURE_TONE[tone] : "text-ink")}>{v}</div>
     </div>
   );

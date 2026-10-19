@@ -1,6 +1,7 @@
 "use client";
 
-import { cx, SectionLabel } from "@/components/ui/primitives";
+import { Callout, cx, SectionLabel } from "@/components/ui/primitives";
+import { insetClass } from "../look";
 import { registerPanel, type PanelProps } from "../panels";
 import { Figure } from "./parts";
 import type { ScrapPanel } from "@/lib/erp/screens/scrap";
@@ -16,7 +17,7 @@ const TONE = { danger: "text-danger", success: "text-success", muted: "text-mute
 function Scrap({ data }: PanelProps) {
   const d = data as ScrapPanel;
   return (
-    <section className="grid gap-3 rounded-card border border-line p-3.5">
+    <section className={cx("grid gap-3", insetClass)}>
       {d.figures.length ? (
         <div className="grid grid-cols-3 gap-2">
           {d.figures.map((f) => (
@@ -41,7 +42,11 @@ function Scrap({ data }: PanelProps) {
           )}
         </div>
       ))}
-      {d.note ? <div className="rounded-control bg-info-soft px-3 py-2 text-meta text-info">{d.note}</div> : null}
+      {d.note ? (
+        <Callout tone="brand" className="mb-0 block text-meta">
+          {d.note}
+        </Callout>
+      ) : null}
     </section>
   );
 }

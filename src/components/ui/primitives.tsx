@@ -176,9 +176,9 @@ export function CardHeader({
   );
 }
 
-export function SectionLabel({ children }: { children: React.ReactNode }) {
+export function SectionLabel({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className="text-xs font-medium tracking-[0.04em] text-muted uppercase">
+    <div className={cx("text-xs font-medium tracking-label text-muted uppercase", className)}>
       {children}
     </div>
   );
@@ -241,7 +241,7 @@ export function MetricStrip({ metrics }: { metrics: Metric[] }) {
             onClick={m.onClick}
             className={cx("text-left", m.onClick && "cursor-pointer")}
           >
-            <div className="text-[11px] font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase">
+            <div className="text-[11px] font-medium tracking-label whitespace-nowrap text-muted uppercase">
               {m.label}
             </div>
             <div className="mt-0.5 flex items-baseline gap-2">
@@ -328,7 +328,7 @@ export function Th({
     <th
       {...rest}
       className={cx(
-        "sticky top-0 z-10 border-b border-line bg-canvas px-3 py-2 text-xs font-medium tracking-[0.04em] whitespace-nowrap text-muted uppercase",
+        "sticky top-0 z-10 border-b border-line bg-canvas px-3 py-2 text-xs font-medium tracking-label whitespace-nowrap text-muted uppercase",
         align === "right" ? "text-right" : "text-left",
         className,
       )}
@@ -370,7 +370,7 @@ export function SortableTh({
           /* A <button> does not inherit text-transform — the preflight resets
              it — so without saying it again here a sortable heading read
              "Customer" beside a plain one reading "CONTACT PERSON". */
-          "inline-flex cursor-pointer items-center gap-1 tracking-[0.04em] uppercase hover:text-body",
+          "inline-flex cursor-pointer items-center gap-1 tracking-label uppercase hover:text-body",
           align === "right" ? "flex-row-reverse" : undefined,
           active ? "text-body" : undefined,
         )}
@@ -532,7 +532,7 @@ export function Field({
 }) {
   return (
     <label className={cx("block", className)}>
-      <span className="mb-1 block text-xs font-medium tracking-[0.04em] text-muted uppercase">
+      <span className="mb-1 block text-xs font-medium tracking-label text-muted uppercase">
         {label}
       </span>
       {/* Controls fill the field; in filter bars they keep their natural width. */}
@@ -613,6 +613,10 @@ export function Textarea({
   );
 }
 
+/** A bare checkbox's look, for a table cell or a header where `Checkbox`'s own
+    label would be in the way. One size and one tint, said once. */
+export const checkboxClass = "h-[15px] w-[15px] shrink-0 cursor-pointer accent-brand disabled:cursor-not-allowed";
+
 export function Checkbox({
   label,
   className,
@@ -625,7 +629,7 @@ export function Checkbox({
       <input
         {...props}
         type="checkbox"
-        className="h-[15px] w-[15px] accent-brand"
+        className={checkboxClass}
       />
       {label}
     </label>
@@ -644,7 +648,7 @@ export function Radio({
       <input
         {...props}
         type="radio"
-        className="h-[15px] w-[15px] accent-brand"
+        className={checkboxClass}
       />
       {label}
     </label>

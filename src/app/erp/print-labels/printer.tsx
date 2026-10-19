@@ -257,19 +257,18 @@ export function LabelPrinter({ ids, count, what, mm, setup, fileName }: { ids: s
 
   return (
     <span className="flex flex-wrap items-center justify-end gap-2">
-      {note ? <span className={`text-xs ${note.tone === "bad" ? "text-danger" : "text-ink-muted"}`}>{note.text}</span> : null}
+      {note ? <span className={`text-meta ${note.tone === "bad" ? "text-danger" : "text-muted"}`}>{note.text}</span> : null}
       {direct ? (
         <>
           <Button
             variant="ghost"
-            size="sm"
             disabled={pending}
             onClick={calibrate}
             title="When the print lands at a different height on each label: the printer feeds a few blank labels to measure this roll, and prints nothing"
           >
             Calibrate to this roll
           </Button>
-          <Button variant="ghost" size="sm" disabled={pending} onClick={() => send(true)} title="Pick which USB printer these labels go to">
+          <Button variant="ghost" disabled={pending} onClick={() => send(true)} title="Pick which USB printer these labels go to">
             Change printer
           </Button>
           <Button variant="primary" disabled={pending} onClick={() => send(false)} title={`Send straight to the ${mm} mm label printer`}>

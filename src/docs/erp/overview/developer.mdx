@@ -50,7 +50,11 @@ The ERP is about a hundred screens and tabs. Anything two of them draw or decide
 | How wide a column is | `fitColumns` in `src/app/erp/_ui/fit-columns.ts` — status and flag columns as wide as their longest badge | Every list |
 | Links to the bespoke screens | `erpLink` (lists and tabs, `registry.ts`); `erpTraceHref`, `orderTraceCode`, `erpDispatchHref`, `erpPoHref`, `erpBillRoadHref`, `erpLabelsHref` (`trace-links.ts`) | Never type `/erp/…` |
 | Money, dates and timestamps | `inr`, `inrRate`, `nf`, `fd`, `rupeesField` (`src/lib/erp/ui.ts`); `stamp`, `phoneDisplay` (`src/lib/format.ts`); `APP_TIMEZONE` | Every screen — never `toLocaleString` with a typed zone |
-| Colours, radii, type sizes | Tokens in `src/app/globals.css`: `brand`, `brand-hover`, `brand-deep`, `whatsapp`; `rounded-control`, `rounded-card`; `text-2xs` (11px), `text-xs`, `text-meta` (13px), `text-sm`, `text-md` (15px) | Never a hex value or `text-[13px]` |
+| Headings and small labels | `SectionTitle` (a block of a page), `SubTitle` (a part inside one), `Eyebrow` / `eyebrowClass` (11px caption over a figure), `labelClass` (12px, `SectionLabel`'s look for a label or span) in `src/app/erp/_ui/look.tsx`; `SectionLabel` in `primitives.tsx` | Every ERP screen — never an `<h2>` or an `uppercase` class typed out |
+| A word or an icon that acts | `LinkButton` / `linkClass(tone)` and `IconButton` (needs a `label`) in `look.tsx` | Every ERP screen — a worded action with a border is `Button` |
+| Anything that floats, a boxed group | `popoverClass` (`shadow-pop`) and `insetClass` in `look.tsx` | Menus, pickers, suggestion lists; groups inside a card or dialog |
+| A bare checkbox | `checkboxClass` in `primitives.tsx` (or `Checkbox` with its label) | List selection, Logistics ticks |
+| Colours, radii, type sizes | Tokens in `src/app/globals.css`: `brand`, `brand-hover`, `brand-deep`, `whatsapp`; `rounded-control`, `rounded-card`; `text-2xs` (11px), `text-xs`, `text-meta` (13px), `text-sm`, `text-md` (15px); `tracking-label`; `shadow-pop` | Never a hex value, `text-[13px]` or `tracking-[0.04em]` — `erp-design.test.ts` reads every ERP screen and fails on one |
 
 ## A screen says a thing once
 
