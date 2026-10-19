@@ -5,6 +5,7 @@ import { controlClass, cx } from "@/components/ui/primitives";
 import { nf } from "@/lib/erp/ui";
 import { Icon } from "./icons";
 import { popoverClass } from "./look";
+import { matchOptions, nearEnd, PAGE } from "./option-match";
 
 /* A godown picker: a button that opens a searchable list of godowns (and,
    where asked, "All"). Used by the header's working location, every list's
@@ -36,9 +37,9 @@ export function GodownPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
-  const ql = q.trim().toLowerCase();
-  const match = items.filter((it) => !ql || `${it.l} ${it.sub ?? ""}`.toLowerCase().includes(ql));
-  const shown = match.slice(0, 9);
+  const [limit, setLimit] = useState(PAGE);
+  const match = matchOptions(items, q, (it) => `${it.l} ${it.sub ?? ""}`);
+  const shown = match.slice(0, limit);
   return (
     <span className="relative inline-block flex-none">
       <button
@@ -74,12 +75,20 @@ export function GodownPicker({
               <input
                 autoFocus
                 value={q}
-                onChange={(e) => setQ(e.target.value)}
+                onChange={(e) => {
+                  setQ(e.target.value);
+                  setLimit(PAGE);
+                }}
                 placeholder={placeholder ?? `Search ${nf(items.length)} godowns`}
                 className={controlClass({ className: "h-8" })}
               />
             </div>
-            <div className="max-h-[340px] overflow-y-auto py-1">
+            <div
+              onScroll={(e) => {
+                if (limit < match.length && nearEnd(e.currentTarget)) setLimit((n) => n + PAGE);
+              }}
+              className="max-h-[340px] overflow-y-auto py-1"
+            >
               {shown.map((it) => (
                 <button
                   type="button"
@@ -100,7 +109,7 @@ export function GodownPicker({
             </div>
             {match.length > shown.length ? (
               <div className="border-t border-divider px-3 py-2 text-xs text-muted">
-                {nf(match.length - shown.length)} more — keep typing to narrow
+                Showing {nf(shown.length)} of {nf(match.length)} — scroll for more
               </div>
             ) : null}
             {match.length === 0 ? (

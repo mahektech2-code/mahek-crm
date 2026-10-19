@@ -8,6 +8,7 @@ import { runCalc } from "@/lib/erp/calc";
 import { parsePastedLines } from "@/lib/erp/engines/purchase-flow";
 import { Icon } from "./icons";
 import { IconButton, popoverClass } from "./look";
+import { matchOptions, nearEnd, PAGE } from "./option-match";
 
 /* ---------------------------------------------------------------------------
  * A document's lines as ONE TABLE, for documents that run to hundreds of
@@ -318,8 +319,9 @@ function ItemSearch({
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const [hi, setHi] = useState(0);
-  const ql = q.trim().toLowerCase();
-  const matches = (ql ? offered.filter((x) => x.toLowerCase().includes(ql)) : offered).slice(0, 50);
+  const [limit, setLimit] = useState(PAGE);
+  const all = matchOptions(offered, q);
+  const matches = all.slice(0, limit);
   const choose = (v: string) => {
     onPick(v);
     setQ("");
@@ -342,6 +344,7 @@ function ItemSearch({
           setQ(e.target.value);
           setHi(0);
           setOpen(true);
+          setLimit(PAGE);
         }}
         onKeyDown={(e) => {
           if (e.key === "ArrowDown") {
@@ -358,7 +361,12 @@ function ItemSearch({
         className="h-9 w-full rounded-control border border-brand-softer bg-surface pr-3 pl-8 text-sm text-ink outline-none placeholder:text-muted focus:border-brand disabled:bg-canvas"
       />
       {open && offered.length ? (
-        <span className={cx(popoverClass, "absolute top-10 right-0 left-0 z-30 block max-h-[280px] overflow-y-auto py-1")}>
+        <span
+          onScroll={(e) => {
+            if (limit < all.length && nearEnd(e.currentTarget)) setLimit((n) => n + PAGE);
+          }}
+          className={cx(popoverClass, "absolute top-10 right-0 left-0 z-30 block max-h-[280px] overflow-y-auto py-1")}
+        >
           {matches.map((x, i) => (
             <button
               type="button"
@@ -375,9 +383,7 @@ function ItemSearch({
             </button>
           ))}
           {!matches.length ? <span className="block px-3 py-2.5 text-meta text-muted">Nothing matches “{q}”</span> : null}
-          {ql && offered.filter((x) => x.toLowerCase().includes(ql)).length > 50 ? (
-            <span className="block border-t border-divider px-3 py-2 text-xs text-muted">More match — keep typing</span>
-          ) : null}
+          {all.length > limit ? <span className="block border-t border-divider px-3 py-2 text-xs text-muted">Showing {nf(limit)} of {nf(all.length)} — scroll for more</span> : null}
         </span>
       ) : null}
     </span>
