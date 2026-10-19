@@ -133,8 +133,10 @@ import { accountTypeParam } from "@/lib/account-types";
 import { describeQuantity } from "@/lib/catalogue";
 import {
   chooseCanonicalId,
+  createSku,
   nameHeldRow,
   setSkuActive,
+  type NewSkuInput,
 } from "@/lib/actions/catalogue";
 import {
   collectionsMetrics,
@@ -5914,6 +5916,88 @@ describe("The product master — importing it, and what an import must not touch
     });
     assert.equal(refused.ok, false);
     assert.match(refused.error, /packaging/i);
+  });
+
+  /* Adding a SKU by hand, from the console's Add SKU dialog. */
+  function newSku(over: Partial<NewSkuInput> = {}): NewSkuInput {
+    return {
+      formulation: { name: "Test Formulation Q7" },
+      brand: { name: "Test Brand Q7" },
+      good: { millilitres: 5000 },
+      name: "Test Brand Q7 - 5 Liter (6 Can/Box)",
+      packingKind: "box",
+      cansPerBox: 6,
+      millilitresPerCan: 5000,
+      packingCostPaise: 4600,
+      weightGrams: 25000,
+      sellingPricePaise: null,
+      externalCode: null,
+      aliases: ["Q7 5L box"],
+      active: true,
+      ...over,
+    };
+  }
+
+  test("a SKU added by hand writes its new levels with it, chained, and is orderable", async () => {
+    setTestUser(manager);
+    const made = await createSku(newSku());
+    assert.equal(made.ok, true, made.ok ? "" : made.error);
+    const [sku] = await db.select().from(productsTable).where(eq(productsTable.id, made.ok ? made.data!.productId : ""));
+    assert.equal(sku.name, "Test Brand Q7 - 5 Liter (6 Can/Box)");
+    assert.equal(sku.status, "ok");
+    assert.equal(sku.active, true);
+    assert.equal(sku.packing, "6 Can/Box");
+    assert.equal(sku.weightBasis, "box");
+    const [good] = await db.select().from(finishedGoodsTable).where(eq(finishedGoodsTable.id, sku.finishedGoodId!));
+    assert.equal(good.name, "Test Brand Q7 - 5 Liter", "the finished good takes the suggested name");
+    assert.equal(good.brandId, sku.brandId);
+    assert.equal(good.formulationId, sku.formulationId);
+    const aliases = await db.select().from(productAliasesTable).where(eq(productAliasesTable.productId, sku.id));
+    assert.deepEqual(aliases.map((a) => a.name), ["Q7 5L box"]);
+    const results = await searchProducts("Test Brand Q7");
+    assert.ok(results.some((r) => r.productId === sku.id), "a new SKU must be findable on an order form");
+  });
+
+  test("a SKU's name is refused when it matches another SKU or alias by match key", async () => {
+    setTestUser(manager);
+    const [live] = await db.select().from(productsTable).where(eq(productsTable.status, "ok")).limit(1);
+    const sameName = await createSku(newSku({ name: live.name.toUpperCase().replace(/ /g, "  ") }));
+    assert.equal(sameName.ok, false);
+    if (!sameName.ok) assert.match(sameName.error, /already/);
+
+    assert.equal((await createSku(newSku())).ok, true);
+    const aliasClash = await createSku(
+      newSku({ formulation: { name: "Other Q8" }, brand: { name: "Other Q8 Brand" }, name: "q7 5l BOX", aliases: [] }),
+    );
+    assert.equal(aliasClash.ok, false, "a name that is another product's alias would resolve to two products");
+  });
+
+  test("a brand from another formulation, or a legacy ID already in use, is refused", async () => {
+    setTestUser(manager);
+    const [good] = await db.select().from(finishedGoodsTable).limit(1);
+    const [otherForm] = await db
+      .select()
+      .from(productsTable)
+      .where(sql`${productsTable.formulationId} <> ${good.formulationId}`)
+      .limit(1);
+    const crossed = await createSku(
+      newSku({ formulation: { id: otherForm.formulationId! }, brand: { id: good.brandId }, good: { id: good.id } }),
+    );
+    assert.equal(crossed.ok, false);
+    if (!crossed.ok) assert.match(crossed.error, /another formulation/);
+
+    const [withId] = await db.select().from(productsTable).where(sql`${productsTable.externalCode} is not null`).limit(1);
+    const reused = await createSku(newSku({ externalCode: Number(withId.externalCode) }));
+    assert.equal(reused.ok, false);
+    if (!reused.ok) assert.match(reused.error, /already belongs/);
+    const none = await db.select().from(productsTable).where(eq(productsTable.name, "Test Brand Q7 - 5 Liter (6 Can/Box)"));
+    assert.equal(none.length, 0, "a refused SKU writes nothing");
+  });
+
+  test("a telecaller cannot add a SKU", async () => {
+    setTestUser(priya);
+    const refused = await createSku(newSku());
+    assert.equal(refused.ok, false);
   });
 
   test("a telecaller cannot change the catalogue, and the denial is recorded", async () => {

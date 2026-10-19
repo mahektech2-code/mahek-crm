@@ -4,7 +4,7 @@ import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { money, parseRupees, stamp } from "@/lib/format";
+import { money, parseRupees, rupeesFromPaise, stamp } from "@/lib/format";
 import { cx, Input, Textarea } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
 import { salesTypeLabel, stageLabel, type LeadStage } from "@/lib/lead-labels";
@@ -361,7 +361,7 @@ export function QualifyScreen({
     if (spec.kind === "bool") return Boolean(v);
     /* Paise in, rupees on the screen. `money()` is the only formatter and it
        is for reading; a box somebody types into needs the bare number. */
-    if (spec.kind === "money") return String(Math.round(Number(v) / 100));
+    if (spec.kind === "money") return rupeesFromPaise(Number(v));
     return String(v);
   }
 

@@ -1,7 +1,8 @@
 import "server-only";
 import { sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
-import { readOnce, statementKey } from "./read-memo";
+import { readOnce, statementShape } from "./read-memo";
+import { LEDGER_CACHE_POLICY, StampedRowCache } from "./ledger-cache-policy";
 
 /* ---------------------------------------------------------------------------
  * STOCK, KEPT BETWEEN REQUESTS — AND NEVER A MOMENT PAST BEING TRUE.
@@ -29,9 +30,8 @@ import { readOnce, statementKey } from "./read-memo";
 
 const STAMP = sql`select count(*)::text || ':' || coalesce(max(id), 0)::text as s from erp_ledger_ticks`;
 
-/** A handful of statements, each one ledger: kept by recency, the oldest dropped past this. */
-const MAX_KEPT = 48;
-const kept = new Map<string, { stamp: string; value: Promise<unknown> }>();
+/* What may be kept, in rows, and which statements are kept at all: `ledger-cache-policy.ts`. */
+const kept = new StampedRowCache<Promise<unknown>>(LEDGER_CACHE_POLICY);
 
 /** The stamp now — asked once per page inside `withReadMemo`, every time outside it. */
 function currentStamp(): Promise<string> {
@@ -43,20 +43,22 @@ function currentStamp(): Promise<string> {
 
 /** The statement's answer as of the ledgers' last committed write, from the pool. */
 export async function ledgerRead<T>(q: SQL, run: () => Promise<T>): Promise<T> {
-  const key = statementKey(q);
+  const { key, params } = statementShape(q);
+  if (!kept.admits(params)) return run();
   const stamp = await currentStamp();
-  const at = kept.get(key);
-  if (at && at.stamp === stamp) {
-    kept.delete(key);
-    kept.set(key, at);
-    return at.value as Promise<T>;
-  }
+  const at = kept.get(key, stamp);
+  if (at) return at as Promise<T>;
   const value = run();
-  const entry = { stamp, value };
-  kept.set(key, entry);
-  value.catch(() => {
-    if (kept.get(key) === entry) kept.delete(key);
-  });
-  while (kept.size > MAX_KEPT) kept.delete(kept.keys().next().value!);
+  /* Kept while it is being read, so two pages asking at once share one read; sized once it lands. */
+  kept.set(key, stamp, value, 0);
+  value.then(
+    (rows) => kept.set(key, stamp, value, Array.isArray(rows) ? rows.length : 1),
+    () => kept.drop(key, value),
+  );
   return value;
+}
+
+/** What the cache holds now. */
+export function ledgerCacheSize(): { entries: number; rows: number } {
+  return kept.size();
 }

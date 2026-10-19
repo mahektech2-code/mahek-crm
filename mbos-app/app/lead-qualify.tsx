@@ -14,6 +14,8 @@ import {
 } from '../src/data/lead-funnel';
 import { checklistFor, stageLabel, type Condition } from '../src/engines/funnel';
 import { plural } from '../src/lib/format';
+import { cleanWhole, parseWhole } from '../src/lib/decimal-input';
+import { cleanAmount, paiseFromTyped, typedFromPaise } from '../src/lib/money-input';
 import { useStore } from '../src/state/store';
 import { Pop, Stagger, animateLayout } from '../src/components/ui/motion';
 import { QualificationForm } from '../src/components/leads/qualification-form';
@@ -205,7 +207,7 @@ export default function QualifyScreen() {
           const raw = profile[f.field];
           if (raw === undefined || raw === null) continue;
           if (f.kind === 'confirm' || f.kind === 'yesno') on[cid] = raw === true;
-          else if (f.kind === 'money') next[cid] = String(Math.round(Number(raw) / 100));
+          else if (f.kind === 'money') next[cid] = typedFromPaise(Number(raw));
           else next[cid] = String(raw);
         }
         const q = qualificationOf(v.lead);
@@ -328,12 +330,10 @@ export default function QualifyScreen() {
         }
         const raw = (draft[c.id] ?? '').trim();
         if (!raw) continue;
+        /* Money to the paisa; a 'number' here is a count or a number of days
+           (and the storage column is whole litres), so it stays whole. */
         patch[f.field] =
-          f.kind === 'money'
-            ? Number(raw.replace(/[^\d]/g, '')) * 100
-            : f.kind === 'number'
-              ? Number(raw.replace(/[^\d]/g, ''))
-              : raw;
+          f.kind === 'money' ? paiseFromTyped(raw) : f.kind === 'number' ? (parseWhole(raw) ?? 0) : raw;
       }
       /* No group name on the trail any more: the write is the whole checklist,
          and "saved — Territory" against a row that carried all five groups is
@@ -489,9 +489,15 @@ export default function QualifyScreen() {
               {f && (f.kind === 'text' || f.kind === 'number' || f.kind === 'money' || f.kind === 'date') ? (
                 <Input
                   value={draft[c.id] ?? ''}
-                  onChangeText={(v) => setDraft({ ...draft, [c.id]: v })}
+                  onChangeText={(v) =>
+                    setDraft({
+                      ...draft,
+                      [c.id]: f.kind === 'money' ? cleanAmount(v) : f.kind === 'number' ? cleanWhole(v) : v,
+                    })
+                  }
                   placeholder={f.kind === 'money' ? 'In rupees' : f.kind === 'date' ? 'YYYY-MM-DD' : ''}
-                  keyboardType={f.kind === 'number' || f.kind === 'money' ? 'number-pad' : 'default'}
+                  keyboardType={f.kind === 'money' ? 'decimal-pad' : f.kind === 'number' ? 'number-pad' : 'default'}
+                  wholeHint={f.kind === 'number' ? 'Whole numbers only.' : undefined}
                   style={{ marginTop: 10 }}
                 />
               ) : null}

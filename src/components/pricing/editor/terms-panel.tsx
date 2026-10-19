@@ -12,7 +12,7 @@
  * ------------------------------------------------------------------------- */
 
 import * as React from "react";
-import { Button, Input, Select, Textarea, cx } from "@/components/ui/primitives";
+import { Button, DecimalInput, Select, Textarea, cx } from "@/components/ui/primitives";
 import type { PriceDiscountKind } from "@/db/schema";
 import { DISCOUNT_KIND_LABEL } from "@/lib/price-list-labels";
 import { defaultTerms, discountClause, printedClauses, type PriceSheet, type SheetDiscount } from "@/lib/price-sheet";
@@ -121,35 +121,28 @@ export function TermsPanel({ sheet, onChange }: { sheet: PriceSheet; onChange: (
                       ))}
                     </Select>
                     <span className="flex items-center gap-1">
-                      <Input
-                        type="number"
-                        step="0.25"
-                        min={0}
+                      <DecimalInput
                         className="w-[84px]"
                         value={d.percentBp / 100}
-                        onChange={(e) => patch({ percentBp: Math.max(1, Math.round(Number(e.target.value || 0) * 100)) })}
+                        onValue={(v) => patch({ percentBp: Math.max(1, Math.round((v ?? 0) * 100)) })}
                       />
                       <span className="text-[13px] text-muted">%</span>
                     </span>
                     {d.kind === "quantity" ? (
                       <>
                         <span className="text-[13px] text-muted">from</span>
-                        <Input
-                          type="number"
-                          min={0}
+                        <DecimalInput
                           className="w-[96px]"
                           placeholder="litres"
-                          value={d.thresholdLitres ?? ""}
-                          onChange={(e) => patch({ thresholdLitres: e.target.value ? Number(e.target.value) : null, thresholdPaise: null })}
+                          value={d.thresholdLitres}
+                          onValue={(v) => patch({ thresholdLitres: v, thresholdPaise: null })}
                         />
                         <span className="text-[13px] text-muted">litres, or ₹</span>
-                        <Input
-                          type="number"
-                          min={0}
+                        <DecimalInput
                           className="w-[110px]"
                           placeholder="order value"
-                          value={d.thresholdPaise == null ? "" : d.thresholdPaise / 100}
-                          onChange={(e) => patch({ thresholdPaise: e.target.value ? Math.round(Number(e.target.value) * 100) : null, thresholdLitres: null })}
+                          value={d.thresholdPaise == null ? null : d.thresholdPaise / 100}
+                          onValue={(v) => patch({ thresholdPaise: v == null ? null : Math.round(v * 100), thresholdLitres: null })}
                         />
                       </>
                     ) : null}

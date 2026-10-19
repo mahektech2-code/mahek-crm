@@ -10,6 +10,7 @@ import { Icon } from "./icons";
 import { ErpVoice } from "./voice";
 import { useKit } from "./kit";
 import { PinField } from "./pin-field";
+import { matchOptions, nearEnd, PAGE } from "./option-match";
 
 /* ---------------------------------------------------------------------------
  * One form field, drawn as the CRM draws every field: an uppercase label (with
@@ -258,8 +259,8 @@ function Control({
 function Combo({ value, opts, error, onChange, placeholder }: { value: string; opts: string[]; error: boolean; onChange: (v: string) => void; placeholder?: string }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
-  const ql = q.trim().toLowerCase();
-  const m = ql ? opts.filter((x) => x.toLowerCase().includes(ql)) : opts;
+  const [limit, setLimit] = useState(PAGE);
+  const m = matchOptions(opts, q);
   return (
     <span className="relative block">
       <input
@@ -268,10 +269,12 @@ function Combo({ value, opts, error, onChange, placeholder }: { value: string; o
         onFocus={() => {
           setOpen(true);
           setQ("");
+          setLimit(PAGE);
         }}
         onChange={(e) => {
           setOpen(true);
           setQ(e.target.value);
+          setLimit(PAGE);
         }}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
         className={control(error, "pr-8")}
@@ -280,8 +283,13 @@ function Combo({ value, opts, error, onChange, placeholder }: { value: string; o
         <Icon n="search" />
       </span>
       {open ? (
-        <span className={cx(popoverClass, "absolute top-10 right-0 left-0 z-50 block max-h-[300px] overflow-y-auto py-1")}>
-          {m.slice(0, 8).map((x) => (
+        <span
+          onScroll={(e) => {
+            if (limit < m.length && nearEnd(e.currentTarget)) setLimit((n) => n + PAGE);
+          }}
+          className={cx(popoverClass, "absolute top-10 right-0 left-0 z-50 block max-h-[300px] overflow-y-auto py-1")}
+        >
+          {m.slice(0, limit).map((x) => (
             <button
               type="button"
               key={x}
@@ -296,9 +304,7 @@ function Combo({ value, opts, error, onChange, placeholder }: { value: string; o
               {x}
             </button>
           ))}
-          {m.length > 8 ? (
-            <span className="block border-t border-divider px-3 py-2 text-xs text-muted">{nf(m.length - 8)} more — keep typing</span>
-          ) : null}
+          {m.length > limit ? <span className="block border-t border-divider px-3 py-2 text-xs text-muted">Showing {nf(limit)} of {nf(m.length)} — scroll for more</span> : null}
           {m.length === 0 ? <span className="block px-3 py-2.5 text-meta text-muted">Nothing matches “{q}”</span> : null}
         </span>
       ) : null}
@@ -318,9 +324,10 @@ function ScanField({ value, opts, error, onChange }: { value: string; opts: stri
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
   const listId = useId();
+  const [limit, setLimit] = useState(PAGE);
   const ql = value.trim().toLowerCase();
-  const m = ql && !opts.some((x) => x.toLowerCase() === ql) ? opts.filter((x) => x.toLowerCase().includes(ql)) : opts;
-  const shown = m.slice(0, 8);
+  const m = ql && !opts.some((x) => x.toLowerCase() === ql) ? matchOptions(opts, value) : opts;
+  const shown = m.slice(0, limit);
   const pick = (x: string) => {
     onChange(x);
     setOpen(false);
@@ -344,6 +351,7 @@ function ScanField({ value, opts, error, onChange }: { value: string; opts: stri
           onChange(e.target.value.trim());
           setOpen(true);
           setActive(-1);
+          setLimit(PAGE);
         }}
         onKeyDown={(e) => {
           if (e.key === "Enter") {
@@ -369,7 +377,14 @@ function ScanField({ value, opts, error, onChange }: { value: string; opts: stri
         <Icon n="scan" />
       </span>
       {open && opts.length ? (
-        <span id={listId} role="listbox" className={cx(popoverClass, "absolute top-10 right-0 left-0 z-50 block max-h-[300px] overflow-y-auto py-1")}>
+        <span
+          id={listId}
+          role="listbox"
+          onScroll={(e) => {
+            if (limit < m.length && nearEnd(e.currentTarget)) setLimit((n) => n + PAGE);
+          }}
+          className={cx(popoverClass, "absolute top-10 right-0 left-0 z-50 block max-h-[300px] overflow-y-auto py-1")}
+        >
           {shown.map((x, i) => (
             <button
               type="button"
@@ -386,9 +401,7 @@ function ScanField({ value, opts, error, onChange }: { value: string; opts: stri
               {x}
             </button>
           ))}
-          {m.length > 8 ? (
-            <span className="block border-t border-divider px-3 py-2 text-xs text-muted">{nf(m.length - 8)} more — keep typing</span>
-          ) : null}
+          {m.length > limit ? <span className="block border-t border-divider px-3 py-2 text-xs text-muted">Showing {nf(limit)} of {nf(m.length)} — scroll for more</span> : null}
           {m.length === 0 ? <span className="block px-3 py-2.5 text-meta text-muted">No lot with stock here matches — what you scanned is still kept</span> : null}
         </span>
       ) : null}

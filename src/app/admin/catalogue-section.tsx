@@ -39,6 +39,7 @@ import {
 } from "@/lib/actions/catalogue";
 import { pinnedCell, pinnedHead } from "@/components/ui/pinned";
 import type { CatalogueData } from "./catalogue-data";
+import { NewSkuDialog } from "./new-sku-dialog";
 
 /* ---------------------------------------------------------------------------
  * The Catalogue section.
@@ -188,7 +189,8 @@ function SkuTab({
   refresh: () => void;
 }) {
   const [query, setQuery] = React.useState(data.filters.query ?? "");
-  const [openId, setOpenId] = React.useState<string | null>(null);
+  const [openId, setOpenId] = React.useState<string | null>(data.filters.open ?? null);
+  const [adding, setAdding] = React.useState(false);
 
   // Filtering is done on the server, so the page reloads with the address as
   // the filter — a filtered list is a screen somebody can send to somebody else.
@@ -249,7 +251,27 @@ function SkuTab({
         <span className="pb-1.5 text-[13px] text-muted">
           {data.total} matching · showing {data.skus.length}
         </span>
+        <Button
+          variant="primary"
+          disabled={!canWrite}
+          title={canWrite ? undefined : "Configuration is changed by a manager."}
+          onClick={() => setAdding(true)}
+        >
+          Add SKU
+        </Button>
       </div>
+
+      <NewSkuDialog
+        open={adding}
+        hierarchy={data.hierarchy}
+        onClose={() => setAdding(false)}
+        onCreated={(sku) => {
+          /* Land on the new row with its detail open, through the address, so
+             the list is the server's and the SKU is found on whichever page. */
+          const params = new URLSearchParams({ q: sku.name, open: sku.productId });
+          window.location.search = params.toString();
+        }}
+      />
 
       <Card className="overflow-hidden">
         <div className="overflow-x-auto" style={{ ["--rowh" as string]: "44px" }}>

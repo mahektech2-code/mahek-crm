@@ -25,7 +25,7 @@ import { ExportMenu } from "@/components/ui/export-menu";
 import { targetsCsv } from "@/lib/target-export";
 import { PersonPicker, type Person } from "@/components/crm/person-picker";
 import { APP_TIMEZONE } from "@/lib/business-date";
-import { money, moneyShort, periodLabel } from "@/lib/format";
+import { money, moneyShort, periodLabel, rupeesFromPaise } from "@/lib/format";
 import { collectionLine } from "@/lib/performance-labels";
 import {
   publishSalesTarget,
@@ -339,7 +339,7 @@ const toPaise = (rupees: string): number | null => {
   return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) : null;
 };
 const toRupees = (paise: number | null): string =>
-  paise === null ? "" : String(Math.round(paise / 100));
+  paise === null ? "" : rupeesFromPaise(paise);
 
 const toMl = (litres: string): number | null => {
   const t = litres.trim();
@@ -348,16 +348,16 @@ const toMl = (litres: string): number | null => {
   return Number.isFinite(n) && n >= 0 ? Math.round(n * 1000) : null;
 };
 const toLitres = (ml: number | null): string =>
-  ml === null ? "" : String(Math.round(ml / 1000));
+  ml === null ? "" : String(Math.round(ml) / 1000);
 
-/** Whole percent on the screen, basis points in the database. */
+/** Percent on the screen, to two places; basis points in the database. */
 const toBp = (percent: string): number | null => {
   const t = percent.trim();
   if (!t) return null;
   const n = Number(t);
   return Number.isFinite(n) && n >= 0 && n <= 100 ? Math.round(n * 100) : null;
 };
-const toPercent = (bp: number | null): string => (bp === null ? "" : String(Math.round(bp / 100)));
+const toPercent = (bp: number | null): string => (bp === null ? "" : String(bp / 100));
 
 const toCount = (v: string): number | null => {
   const t = v.trim();
@@ -572,7 +572,7 @@ function TargetEditorModalBody({
               : "no measured history yet"
           }
         >
-          <Input inputMode="numeric" value={volume} onChange={(e) => setVolume(e.target.value)} placeholder="not asked" />
+          <Input inputMode="decimal" value={volume} onChange={(e) => setVolume(e.target.value)} placeholder="not asked" />
         </Field>
         <Field
           label="New customers"
@@ -584,7 +584,7 @@ function TargetEditorModalBody({
           label="Collection target (%)"
           hint="of what is already overdue at the start of the month"
         >
-          <Input inputMode="numeric" value={collection} onChange={(e) => setCollection(e.target.value)} placeholder="not asked" />
+          <Input inputMode="decimal" value={collection} onChange={(e) => setCollection(e.target.value)} placeholder="not asked" />
         </Field>
         <Field label="Tasks target" hint="of the tasks falling due in the month">
           <Input inputMode="numeric" value={activity} onChange={(e) => setActivity(e.target.value)} placeholder="not asked" />

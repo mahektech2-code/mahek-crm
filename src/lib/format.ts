@@ -76,8 +76,66 @@ export function parseRupees(input: string): number | null {
   return Math.round(value * 100);
 }
 
+/**
+ * Paise as an edit box should hold them: whole rupees bare, anything else to
+ * two places. It rounded to the rupee, so a freight rate of ₹10.17 reopened as
+ * "10" and saved back as ₹10.00 — a box pre-filled from the record must be
+ * able to say what the record says.
+ */
 export function rupeesFromPaise(paise: number): string {
-  return String(Math.round(paise / 100));
+  const p = Math.round(paise);
+  const sign = p < 0 ? "-" : "";
+  const abs = Math.abs(p);
+  const frac = abs % 100;
+  const whole = String(Math.floor(abs / 100));
+  return sign + (frac ? `${whole}.${String(frac).padStart(2, "0")}` : whole);
+}
+
+/*
+ * WHAT A BOX HOLDS WHILE IT IS BEING TYPED INTO.
+ *
+ * Decimals failed everywhere, and three different ways: a handler stripping
+ * everything but digits (so "30.5" became ₹305 — not refused, multiplied by
+ * ten), `type="number"` with the browser's default step of one (refused on
+ * submit), and `inputMode="numeric"`, which on a phone is a keypad with no
+ * point on it. These are the one copy of the first fix.
+ */
+
+/** Digits and at most one point, with at most `places` after it. */
+export function cleanDecimal(typed: string, places = 2): string {
+  const kept = typed.replace(/[^0-9.]/g, "");
+  const dot = kept.indexOf(".");
+  if (dot === -1) return kept;
+  const frac = kept.slice(dot + 1).replace(/\./g, "").slice(0, places);
+  return kept.slice(0, dot) + "." + frac;
+}
+
+/**
+ * For a quantity that is genuinely whole — cans, boxes, days. The point is
+ * KEPT and nothing may follow it: each keystroke is cleaned on its own, so a
+ * box that dropped the point would go "1" → "1" → "15" as 1 . 5 is typed,
+ * which is the original bug arriving by another road. "1." on the screen says
+ * plainly that the half did not go in, and reads as 1.
+ */
+export function cleanWhole(typed: string): string {
+  const dot = typed.indexOf(".");
+  const whole = (dot === -1 ? typed : typed.slice(0, dot)).replace(/[^0-9]/g, "");
+  return dot === -1 ? whole : whole + ".";
+}
+
+/** A typed number, or null where nothing usable is there. Commas are ignored. */
+export function parseDecimal(typed: string): number | null {
+  const cleaned = typed.replace(/[,\s₹]/g, "");
+  if (!cleaned || cleaned === ".") return null;
+  if (!/^-?(\d+\.?\d*|\.\d+)$/.test(cleaned)) return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** "1.5" (percent) -> 150 basis points. */
+export function bpFromPercent(typed: string): number | null {
+  const n = parseDecimal(typed);
+  return n == null ? null : Math.round(n * 100);
 }
 
 /** "2026-08-12" -> "12 Aug" */

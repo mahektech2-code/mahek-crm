@@ -209,7 +209,7 @@ export const logFollowUpSchema = z.object({
     "noanswer",
   ]),
   /** Whole rupees from the form; stored as paise. */
-  amount: z.coerce.number().int().positive().optional(),
+  amount: z.coerce.number().positive().optional(),
   date: z.string().optional(),
   notes: z.string().max(4000).optional(),
   chips: z.array(z.string()).default([]),
@@ -352,7 +352,7 @@ export async function logPaymentFollowUp(
     )
     .orderBy(bills.billDate);
 
-  const amountPaise = input.amount ? input.amount * 100 : 0;
+  const amountPaise = input.amount ? Math.round(input.amount * 100) : 0;
 
   /*
    * A payment reported on a call is worked out here and written below, but it

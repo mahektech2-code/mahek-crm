@@ -57,6 +57,7 @@ import { reopenTarget } from "@/lib/engines/lead-reopen";
 import { advanceLeadStage, setLeadNextAction } from "@/lib/actions/leads";
 import { canOpenModule } from "@/lib/access";
 import { closeRemindersOnEvidence } from "@/lib/services/worklist-services";
+import { litresSchema } from "../decimal-schemas";
 
 /** The module the desk's screens and writes are granted under — see `lib/modules.ts`. */
 const DESK_MODULE = "crm.lead-calling-desk";
@@ -113,7 +114,7 @@ const answersSchema = z.object({
   decisionMaker: z.string().trim().max(200).optional(),
   buyer: z.string().trim().max(200).optional(),
   gstin: z.string().trim().max(20).optional(),
-  monthlyLitres: z.number().int().positive().max(10_000_000).optional(),
+  monthlyLitres: z.number().positive().max(10_000_000).pipe(litresSchema).optional(),
   creditDaysWanted: z.number().int().min(0).max(365).optional(),
   requiredProductId: z.string().trim().min(1).optional(),
   competitor: z.string().trim().max(200).optional(),

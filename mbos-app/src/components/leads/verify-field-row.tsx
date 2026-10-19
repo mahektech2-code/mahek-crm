@@ -94,7 +94,7 @@ export function VerifyFieldRow({
   answer: VerifyAnswer;
   onChange: (patch: Partial<VerifyAnswer>) => void;
   placeholder?: string;
-  keyboardType?: 'default' | 'number-pad';
+  keyboardType?: 'default' | 'number-pad' | 'decimal-pad';
   renderCorrected?: () => React.ReactNode;
 }) {
   const edge = answer.verdict ? EDGE[answer.verdict] : C.hairline;

@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { money, parseRupees } from "@/lib/format";
+import { cleanDecimal, money, parseRupees, rupeesFromPaise } from "@/lib/format";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { decideApproval, type ApprovalDecision } from "@/lib/actions/sales";
@@ -72,7 +72,7 @@ export function ApprovalsScreen({
     setOpen(row);
     setDecision(initial);
     setNote("");
-    setAmount(row.amountPaise ? String(Math.round(row.amountPaise / 100)) : "");
+    setAmount(row.amountPaise ? rupeesFromPaise(row.amountPaise) : "");
     setError(null);
   }
 
@@ -295,8 +295,8 @@ export function ApprovalsScreen({
                 </span>
                 <input
                   value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  inputMode="numeric"
+                  onChange={(e) => setAmount(cleanDecimal(e.target.value))}
+                  inputMode="decimal"
                   placeholder="1200"
                   className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
                 />

@@ -34,6 +34,7 @@ import {
   phonesOnTheBook,
   type ExistingAccount,
 } from "@/lib/services/lead-intake-service";
+import { litresSchema } from "../decimal-schemas";
 
 /** The module `/crm/leads/sales-manager` is guarded on — holding it is what makes somebody a Sales Manager here. */
 const SALES_MANAGER_MODULE = "crm.sales-manager";
@@ -177,7 +178,7 @@ const captureSchema = z.object({
    * Litres, not cans — the one place in MahekOne where cans do not win. There
    * is no SKU at capture, so a can is a unit nobody has agreed the size of.
    */
-  monthlyLitres: z.number().int().positive().max(1_000_000).nullable().optional(),
+  monthlyLitres: z.number().positive().max(1_000_000).pipe(litresSchema).nullable().optional(),
   competitor: z.string().trim().max(200).optional(),
   /*
    * What they want, IN THEIR OWN WORDS, and deliberately not a product id.
@@ -897,8 +898,8 @@ export async function previewBulkIntake(rows: BulkRow[]): Promise<Result<BulkPre
       const type = readSalesType(r.salesType);
       if (type.problem) problems.push(type.problem);
 
-      if (r.monthlyLitres && !/^\d+$/.test(r.monthlyLitres.replace(/[\s,]/g, ""))) {
-        problems.push("Monthly litres is not a whole number.");
+      if (r.monthlyLitres && !/^\d+(\.\d+)?$/.test(r.monthlyLitres.replace(/[\s,]/g, ""))) {
+        problems.push("Monthly litres is not a number.");
       }
 
       const key = digits.length >= 10 ? digits.slice(-10) : "";

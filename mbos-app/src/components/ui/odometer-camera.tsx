@@ -11,7 +11,8 @@ import { useKeyboardHeight } from './keyboard';
 import { PrimaryButton, SecondaryButton, T } from './primitives';
 import { Appear, DUR, useShake } from './motion';
 import { feedback } from './feedback';
-import { checkOdometer } from '../../lib/travel-leg';
+import { checkOdometer, tenths } from '../../lib/travel-leg';
+import { cleanDecimal } from '../../lib/decimal-input';
 
 /**
  * The odometer, photographed and read, inside the app.
@@ -132,7 +133,7 @@ export function OdometerCamera({
      showing it only on the next screen is showing it to nobody. */
   const preview =
     previousKm != null && /^\d{1,7}(\.\d+)?$/.test(typed.trim())
-      ? Math.floor(Number(typed)) - previousKm
+      ? tenths(Number(typed) - previousKm)
       : null;
 
   /* Its own window over the app — see `useModalOpen`. */
@@ -207,10 +208,11 @@ export function OdometerCamera({
                 <TextInput
                   value={typed}
                   onChangeText={(v) => {
-                    setTyped(v);
+                    /* Tenths, the last drum on the meter. */
+                    setTyped(cleanDecimal(v, 1));
                     if (err) setErr(null);
                   }}
-                  keyboardType="number-pad"
+                  keyboardType="decimal-pad"
                   placeholder="41208"
                   placeholderTextColor="rgba(255,255,255,0.35)"
                   autoFocus

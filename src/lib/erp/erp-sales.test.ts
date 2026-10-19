@@ -181,6 +181,23 @@ describe("marking Ready", () => {
     assert.equal((await db.select().from(erpOrders).where(eq(erpOrders.id, big.id)))[0].status, big.status, "nothing was marked");
     await db.delete(erpOrders).where(eq(erpOrders.id, big.id));
   });
+  test("a status moves either way: hold, back to Under Process, cancel and back again", async () => {
+    const ctx = await as(admin);
+    const r = await mod("orders").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: LOOSE, qty: "41" }]);
+    assert.ok(r.ok, JSON.stringify(r));
+    const [line] = await db.select().from(erpOrders).where(sql`${erpOrders.skuId} = ${looseId} and ${erpOrders.qtyCans} = 41`);
+    const statusNow = async () => (await db.select().from(erpOrders).where(eq(erpOrders.id, line.id)))[0].status;
+    const a = mod("orders").actions!;
+    assert.ok((await a.hold(ctx, line.id, {})).ok);
+    assert.equal(await statusNow(), "Hold From Office");
+    assert.ok((await a.underProcess(ctx, line.id, {})).ok, "Hold goes back to Under Process");
+    assert.equal(await statusNow(), "Under Process");
+    assert.ok((await a.cancel(ctx, line.id, {})).ok);
+    assert.equal(await statusNow(), "Cancel");
+    assert.ok((await mod("orders").bulk!.hold(ctx, [line.id], {})).ok, "a cancelled line can be put back");
+    assert.equal(await statusNow(), "Hold From Office");
+    await db.delete(erpOrders).where(eq(erpOrders.id, line.id));
+  });
 });
 
 describe("allocating lots", () => {

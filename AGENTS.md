@@ -1923,7 +1923,7 @@ The Sales Party, Taken Order and Order Details tabs name a party by TEXT, so a
 rename used to be undone by the order projection within the half hour and to
 cut every name-matched link (the party master's phone, seats and salesperson,
 where an order was delivered, the back office handover). The first rename now
-keeps the name the sheets use in `customers.sheet_name` (`0281`), and every
+keeps the name the sheets use in `customers.sheet_name` (`0282`), and every
 sheet matcher asks for either name — `sheetKeys` in `lib/customer-rename.ts`,
 pure, is the one rule. Setting the name back to the sheet's exact spelling
 clears it. A name another live party already carries is refused.
@@ -2859,6 +2859,22 @@ to update the row.
 
 **Money is paise.** Integers everywhere; formatted only in `lib/format.ts` on
 the way to the screen. Never store rupees.
+
+**A number somebody types may have a point in it, and four things used to
+lose it.** A handler stripping everything but digits — so "30.5" saved as
+₹305, multiplied by ten rather than refused; `type="number"` with the browser's
+default step of one, which refuses on submit; `inputMode="numeric"`, which on a
+phone is a keypad with no point on it; and a box DERIVED from its stored figure,
+where "30." re-renders as "30" before the 5 can follow it. So: rupees go through
+`parseRupees` and come back through `rupeesFromPaise`, which keeps the paise; a
+box bound to a figure is `PaiseInput` or `DecimalInput`, never `value={x / 100}`;
+`MoneyInput` is `inputMode="decimal"`; `cleanDecimal` and `cleanWhole` in
+`lib/format.ts` are the only cleaning. Litres, kilometres and percentages take a
+fraction — `lib/decimal-schemas.ts` on the server, `double precision` in the
+database so raw SQL and the handset wire still see a number. Cans, boxes,
+drums and days stay whole, and a whole box KEEPS the point ("1.") rather than
+dropping it: cleaned a keystroke at a time, a box that drops it turns 1 . 5
+into 15.
 
 **Reads live in `lib/queries.ts`; writes live in `lib/actions/`.** A number on
 the dashboard and the same number on its own screen come from the same
@@ -3857,6 +3873,18 @@ decision and a re-import must not put every retired product back; and the
 canonical ID, because a re-run must not reset a name somebody has already
 settled. Both have a test saying so. Regenerate the seed from a new revision of
 the document with `npm run catalogue:parse`, then `npm run catalogue:import`.
+
+**A SKU CAN BE ADDED BY HAND, and the import is no longer the only door.**
+Admin Console → Catalogue → All SKUs → Add SKU opens a four-page dialog
+(`app/admin/new-sku-dialog.tsx`): where it sits (formulation, brand line,
+finished good — each picked or named new), packing, costs and codes, review.
+`createSku` in `lib/actions/catalogue.ts` writes any new level and the SKU and
+its other names in ONE transaction, refuses a brand or finished good from
+another branch, and refuses a name that matches any SKU name or alias by
+`matchKey`, or a legacy Product ID another SKU carries. The suggested names
+(`finishedGoodNameFor`, `skuNameFor`) are suggestions; `newSkuProblems` is the
+one rule the dialog and the action both run. The ERP's can and box are still
+set in ERP → Products.
 
 **Order value is not computed from the catalogue until a price source is
 confirmed.** The product master carries no prices at all, so

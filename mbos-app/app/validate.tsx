@@ -17,6 +17,7 @@ import {
 import { VERIFICATION_SECTIONS } from '../src/engines/funnel/lead-labels';
 import { getLead, type Lead } from '../src/data/leads';
 import { callNumber } from '../src/lib/messaging';
+import { cleanDecimal, parseDecimal } from '../src/lib/decimal-input';
 import { useStore } from '../src/state/store';
 import { Presence, useShake } from '../src/components/ui/motion';
 import { feedback } from '../src/components/ui/feedback';
@@ -154,7 +155,7 @@ export default function ValidateLead() {
       ...carried,
       customerId: id,
       reached,
-      confirmedMonthlyVolumeLitres: Number(litres.replace(/[^\d]/g, '')) || null,
+      confirmedMonthlyVolumeLitres: parseDecimal(litres) || null,
       verdict,
       verdictReason: why.trim() || null,
       taskId: params.taskId ?? null,
@@ -289,7 +290,7 @@ export default function ValidateLead() {
               {section.id === 'opportunity' ? (
                 <View style={{ marginTop: 12 }}>
                   <SectionLabel style={{ marginBottom: 6 }}>Monthly volume</SectionLabel>
-                  <Input value={litres} onChangeText={setLitres} placeholder="200" keyboardType="number-pad" />
+                  <Input value={litres} onChangeText={(v) => setLitres(cleanDecimal(v, 2))} placeholder="200" keyboardType="decimal-pad" />
                   <T s="caption" style={{ marginTop: 6 }}>
                     In litres. Only if they said a number. It is saved next to the salesman&apos;s
                     number. It does not replace it.

@@ -68,3 +68,10 @@ test('an edited figure keeps only its digits', () => {
   assert.equal(out.potential, '40000');
   assert.equal(out.litres, '200');
 });
+
+test('a spoken decimal keeps its point, and a "Rs." is not one', () => {
+  const values = { ...voiceValues(found, LISTS), potential: 'Rs. 40,000.50', litres: '30.5 litres' };
+  const out = voiceFill({ values, ticked: all(true), found, areas: { kind: 'free' } });
+  assert.equal(out.potential, '40000.50');
+  assert.equal(out.litres, '30.5');
+});

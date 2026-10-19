@@ -29,6 +29,7 @@ import { joinSignatory, verifySheet } from "@/lib/services/price-sheet-service";
 import { pdfFilename } from "@/lib/price-sheet-pdf";
 import { joinTerms, sheetRates, type PriceSheet } from "@/lib/price-sheet";
 import { err, fieldErr, fromThrown, ok, type FieldError, type Result } from "@/lib/result";
+import { litresSchema } from "../decimal-schemas";
 
 /* ---------------------------------------------------------------------------
  * A PRICE LIST MADE HERE RATHER THAN READ IN.
@@ -129,7 +130,7 @@ const sheetSchema = z.object({
     z.object({
       kind: z.enum(PRICE_DISCOUNT_KINDS),
       percentBp: z.number().int().min(1).max(10_000),
-      thresholdLitres: z.number().int().positive().nullable(),
+      thresholdLitres: z.number().positive().pipe(litresSchema).nullable(),
       thresholdPaise: z.number().int().positive().nullable(),
     }),
   ).max(12),

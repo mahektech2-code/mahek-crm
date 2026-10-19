@@ -78,7 +78,7 @@ export default async function CataloguePage({
           duplicates,
           exceptions,
           aliases,
-          filters: { query: one("q"), formulationId: one("formulation"), status },
+          filters: { query: one("q"), formulationId: one("formulation"), status, open: one("open") },
           priceSource: config["products.priceSource"],
           discrepancies: SOURCE_DISCREPANCIES,
           lastReport: null,
