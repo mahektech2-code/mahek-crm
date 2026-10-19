@@ -11902,6 +11902,12 @@ export const erpPurchaseOrders = pgTable(
     source: text("source").notNull().default("erp"),
     /** The PO number as the Quotation manager carries it (an older, typed one too); the name every screen prints. */
     qmPoNo: text("qm_po_no"),
+    /**
+     * The key in the PO's shared link (`/po/<token>`, the PDF a vendor opens
+     * with no sign-in): twenty random characters, minted the first time the PO
+     * is shared and kept, so every message about it carries the same link.
+     */
+    shareToken: text("share_token"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id").references(() => users.id),
@@ -11909,6 +11915,7 @@ export const erpPurchaseOrders = pgTable(
   },
   (t) => [
     uniqueIndex("erp_purchase_orders_number_key").on(t.poNumber),
+    uniqueIndex("erp_purchase_orders_share_token_key").on(t.shareToken),
     uniqueIndex("erp_purchase_orders_qm_po_no_key").on(sql`upper(${t.qmPoNo})`).where(sql`${t.qmPoNo} is not null`),
     check("erp_purchase_orders_source_check", sql`${t.source} in ('erp', 'quotation_manager')`),
     index("erp_purchase_orders_status_idx").on(t.status, t.poDate),
@@ -12697,6 +12704,43 @@ export const erpTransportMessages = pgTable(
     index("erp_transport_messages_status_idx").on(t.status),
     index("erp_transport_messages_customer_idx").on(t.customerId, t.createdAt),
     check("erp_transport_messages_status_check", sql`${t.status} in ('sent', 'to_send', 'sent_by_hand', 'failed', 'skipped', 'delivered', 'read')`),
+  ],
+);
+
+/**
+ * Every time a PO was SHARED, one row per person it went to: the vendor, the
+ * godown, anybody typed in. `channel` is how — whatsapp, email, or link (the
+ * link copied to be pasted somewhere by hand) — and `status` what became of it:
+ * sent through Wati or the mail provider, opened on the person's own WhatsApp
+ * or mail app (`by_hand`, which MahekOne cannot see go), failed, or copied.
+ * Wati's delivery ticks move a sent row on to delivered and read.
+ */
+export const erpPoShares = pgTable(
+  "erp_po_shares",
+  {
+    id: text("id").primaryKey(),
+    poId: text("po_id")
+      .notNull()
+      .references(() => erpPurchaseOrders.id),
+    /** whatsapp | email | link. */
+    channel: text("channel").notNull(),
+    /** Who it is for, as the dialog named them ("Vendor B", "Godown — Bhiwandi", a typed number). */
+    recipient: text("recipient").notNull(),
+    /** The WhatsApp number (country code, digits) or the email address; null for a copied link. */
+    address: text("address"),
+    body: text("body").notNull(),
+    /** sent | by_hand | failed | copied | delivered | read. */
+    status: text("status").notNull(),
+    /** Why it did not go through Wati or the mail provider, or why it failed. */
+    why: text("why"),
+    providerRef: text("provider_ref"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    index("erp_po_shares_po_idx").on(t.poId, t.createdAt),
+    check("erp_po_shares_channel_check", sql`${t.channel} in ('whatsapp', 'email', 'link')`),
+    check("erp_po_shares_status_check", sql`${t.status} in ('sent', 'by_hand', 'failed', 'copied', 'delivered', 'read')`),
   ],
 );
 

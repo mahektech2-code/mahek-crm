@@ -17,6 +17,8 @@ export type Mail = {
   to: string;
   subject: string;
   text: string;
+  /** Files sent with it — a PO's PDF. Logged by name only when no provider is configured. */
+  attachments?: { filename: string; content: Uint8Array }[];
 };
 
 export type MailOutcome =
@@ -41,6 +43,7 @@ export async function sendMail(mail: Mail): Promise<MailOutcome> {
         `Subject: ${mail.subject}`,
         "",
         mail.text,
+        ...(mail.attachments?.length ? ["", `Attached: ${mail.attachments.map((a) => a.filename).join(", ")}`] : []),
         "──────────────────────────────────────────────────────",
         "",
       ].join("\n"),
@@ -60,6 +63,9 @@ export async function sendMail(mail: Mail): Promise<MailOutcome> {
         to: [mail.to],
         subject: mail.subject,
         text: mail.text,
+        ...(mail.attachments?.length
+          ? { attachments: mail.attachments.map((a) => ({ filename: a.filename, content: Buffer.from(a.content).toString("base64") })) }
+          : {}),
       }),
     });
     if (!res.ok) {

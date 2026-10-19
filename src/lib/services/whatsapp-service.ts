@@ -1055,6 +1055,12 @@ export async function applyWatiEvent(event: WatiEvent): Promise<string> {
       const done = await applyLogisticsWatiEvent(event.localMessageId, event.kind, event.kind === "failed" ? event.reason : null);
       if (done) return done;
     }
+    /* A purchase order shared with a vendor (ERP → Purchase orders → Share). */
+    if (event.localMessageId?.startsWith("eposh_")) {
+      const { applyPoShareWatiEvent } = await import("@/lib/erp/po-share");
+      const done = await applyPoShareWatiEvent(event.localMessageId, event.kind, event.kind === "failed" ? event.reason : null);
+      if (done) return done;
+    }
     return `no message ${event.localMessageId ?? event.providerRef}`;
   }
 

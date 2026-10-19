@@ -4,13 +4,18 @@ Purchase orders are the `purchaseOrders` screen module in `lib/erp/screens/purch
 
 | Layer | File | What lives there |
 |---|---|---|
-| Engine (pure) | `src/lib/erp/engines/purchase-flow.ts` | `LIVE_PO`, `RECEIVABLE_PO`, `poLabel`, `poLineFigures`, `poTotals`, `poStatusAfterReceipt`, `receivableQuantity`, `poMessage` |
+| Engine (pure) | `src/lib/erp/engines/purchase-flow.ts` | `LIVE_PO`, `RECEIVABLE_PO`, `poLabel`, `poLineFigures`, `poTotals`, `poStatusAfterReceipt`, `receivableQuantity` |
 | Reading | `src/lib/erp/screens/purchase-flow.ts` | `purchaseOrderViews`, `receivedByLine`, `poOption` |
 | Form | same | `poFormData`, `purchaseOrderForm` (header + lines, filled from the selected quotation / vendor) |
-| Writes | same | `savePurchaseOrder`; actions `approve`, `sendBack`, `send`, `close`, `cancel`; form loader `receive` → `inwardFormForPo` |
+| Writes | same | `savePurchaseOrder`; actions `approve`, `sendBack`, `share`, `close`, `cancel`; form loader `receive` → `inwardFormForPo` |
 | Approval rule | same | `approvalRefusal` — the `approvePurchaseOrder` power |
 | After a receipt | same | `refreshPurchaseOrder(tx, poId)` |
 | Print | `src/app/erp/po/[id]/page.tsx` | Approved POs only; needs `viewPurchaseMoney` |
+| Share (pure) | `src/lib/erp/engines/po-share.ts` | `poRecipients`, `readShare`, `defaultPoMessage`, `itemsLine`, `withLink` |
+| Share | `src/lib/erp/po-share.ts` | `poShareSpecs` (the window, per row), `sharePo` (the action), `poShareToken`, `publicPoPdf`, `applyPoShareWatiEvent` |
+| PDF | `src/lib/erp/po-pdf.ts` | `renderPoPdf` — pdf-lib, the printed PO's figures |
+| Public link | `src/app/po/[token]/route.ts` | The PDF, no sign-in |
+| Window | `src/app/erp/_ui/share-dialog.tsx` | `ShareDialog`, opened by an action carrying `share` (`ShareSpec`) |
 | Badge | same | `purchaseFlowCounts` |
 
 ## Raising, end to end
@@ -31,9 +36,12 @@ sequenceDiagram
   AP->>F: actions.approve
   F->>F: approvalRefusal (approvePurchaseOrder), not the raiser unless administrator
   F->>DB: tx (row locked): status Approved, requirements Order Placed
-  U->>F: actions.send (via)
-  F->>DB: status Sent, sent_via, sent_at
-  F-->>U: dialog with poMessage() and a wa.me / mailto / print link
+  U->>F: actions.share (channel, to, extra, message)
+  F->>F: readShare: who, checked against the channel
+  F->>DB: share_token (minted once)
+  F->>F: Wati template / mail provider, or a wa.me / mailto link per person
+  F->>DB: erp_po_shares, one row per person · status Sent, sent_via, sent_at
+  F-->>U: ShareOutcome: the link, the message, each person's result
 `} />
 
 <Code file="src/lib/erp/screens/purchase-flow.ts" symbol="savePurchaseOrder" collapsed />
@@ -46,7 +54,13 @@ sequenceDiagram
 
 <Code file="src/lib/erp/engines/purchase-flow.ts" symbol="poTotals" />
 
-<Code file="src/lib/erp/engines/purchase-flow.ts" symbol="poMessage" collapsed />
+## Sharing
+
+<Code file="src/lib/erp/engines/po-share.ts" symbol="readShare" collapsed />
+
+<Code file="src/lib/erp/po-share.ts" symbol="sharePo" collapsed />
+
+A WhatsApp share goes through Wati only where `poWatiRoute` says so: the founder's switch, a key, and `erp.purchase.poWatiTemplate` naming an approved template whose variables are all in `PO_WATI_PARAMS`. Every share row id starts `eposh_`; `whatsapp-service.ts` hands Wati's ticks for those to `applyPoShareWatiEvent`.
 
 ## Receiving moves the PO
 
@@ -69,8 +83,15 @@ sequenceDiagram
   status: "Pending approval · Approved · Sent · Partly received · Received · Closed · Cancelled · Rejected.",
   approved_by_id: "Also written by Send back (with status Rejected).",
   decision_note: "The approval note, or what needs changing.",
-  sent_via: "WhatsApp · Email · Printed copy · Phone — the latest send.",
+  sent_via: "WhatsApp · Email · Copy link — the latest share (Printed copy · Phone on POs sent before Share).",
+  share_token: "The key in /po/<token>, minted on the first share.",
   close_reason: "Why it was closed short or cancelled.",
+}} />
+
+<DbTable name="erp_po_shares" note={{
+  channel: "whatsapp · email · link.",
+  status: "sent · by_hand · failed · copied · delivered · read.",
+  why: "Why it did not go through Wati or the mail provider, or why it failed.",
 }} />
 
 <DbTable name="erp_po_lines" note={{
@@ -83,7 +104,7 @@ sequenceDiagram
 ## Permissions
 
 - **Module:** <ModuleRef k="erp.purchaseOrders" />. Receive goods also needs <ModuleRef k="erp.register" /> (the Purchases screen, whose Goods receipt tab is `inward`).
-- **Powers:** `viewPurchaseMoney` (raise, edit, print), `approvePurchaseOrder` (approve, send back — unless the material names its approvers).
+- **Powers:** `viewPurchaseMoney` (raise, edit, print, share), `approvePurchaseOrder` (approve, send back — unless the material names its approvers).
 - **Duties:** `raisePo` (raise / edit, every line), `approve` (every line).
 
 ## Tests that pin this
@@ -91,7 +112,8 @@ sequenceDiagram
 | Suite | File | What it pins |
 |---|---|---|
 | `npm run test` | `src/lib/erp/engines/purchase-flow.test.ts` | The PO drives the requirement's stage; status follows what was received, only in the receiving states; tolerance is a share of what was ordered; totals add GST per line and freight once |
-| `npm run test:integration` | `src/lib/erp/erp-purchase.test.ts` | The PO is raised from the vendor's ready requirements at the quotation's rate; nothing is received against a PO awaiting approval; nobody approves their own; sending records how and hands back the PO written out |
+| `npm run test:integration` | `src/lib/erp/erp-purchase.test.ts` | The PO is raised from the vendor's ready requirements at the quotation's rate; nothing is received against a PO awaiting approval; nobody approves their own; sharing needs purchase money, records each person, moves the PO to Sent, and its link opens the PDF |
+| `npm run test` | `src/lib/erp/engines/po-share.test.ts` | Who a PO can go to; a party with no number is refused by name; typed entries are checked; the message and the PDF |
 
 ## Changing it safely
 
@@ -111,8 +133,7 @@ A new way of receiving goods that forgets leaves the PO at Sent with the goods i
 
 | Gap | Where |
 |---|---|
-| `send` has no `viewPurchaseMoney` check, but returns `poMessage` with rates and totals | `screens/purchase-flow.ts` `purchaseOrders.actions.send` |
-| `send` sets Sent before the message leaves | same |
+| A share opened on the sender's own app counts as Sent before it leaves | `lib/erp/po-share.ts` `sharePo` |
 | `close` and `cancel` check no power | `purchaseOrders.actions.close`, `.cancel` |
-| The company on the written-out PO is the literal "Mahek Marketing India" | `purchaseOrders.actions.send` |
+| The company on the PDF and the message is the literal "Mahek Marketing India" | `lib/erp/po-share.ts` `COMPANY` |
 | Send back writes `approved_by_id` / `approved_at` for a rejection | `purchaseOrders.actions.sendBack` |
