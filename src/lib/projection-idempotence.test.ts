@@ -414,3 +414,27 @@ test("a credit term nobody has stated is still filled from the sheet", async () 
   assert.equal(Number(after.creditDays), 45);
   assert.equal(Number(after.creditTermDays), 45);
 });
+
+test("a party renamed in the app keeps its name and its orders through the next sync", async () => {
+  await project();
+  const [deep] = await db.execute<{ id: string }>(sql`select customers.id as id from customers where customers.name = 'Deep Paints'`);
+  assert.ok(deep, "the first pass creates Deep Paints");
+
+  const renamed = await updateCustomer(deep.id, { name: "Deep Paints & Coatings" });
+  assert.ok(renamed.ok, renamed.ok ? "" : renamed.error);
+
+  // The sheet goes on calling it Deep Paints, and a new order arrives under that name.
+  await stageLine({ orderNumber: "1003", party: "Deep Paints", orderDate: "2026-08-02", amountPaise: 120_000, rowNumber: 5 });
+  const next = await project();
+  assert.equal(next.customers.created, 0, "the sheet's old name must not raise a second customer");
+
+  const rows = await db.execute<{ name: string; sheet_name: string | null }>(
+    sql`select customers.name as name, customers.sheet_name as sheet_name from customers where customers.id = ${deep.id}`,
+  );
+  assert.deepEqual([...rows], [{ name: "Deep Paints & Coatings", sheet_name: "Deep Paints" }], "the sync must not write the old name back");
+
+  const [order] = await db.execute<{ customer_id: string }>(
+    sql`select orders.customer_id as customer_id from orders where orders.external_ref like '%1003%'`,
+  );
+  assert.equal(order?.customer_id, deep.id, "the new order lands on the renamed party");
+});

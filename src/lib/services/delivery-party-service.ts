@@ -3,6 +3,7 @@ import { and, eq, isNotNull, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { customers, orders, sheetTakenOrderRows } from "@/db/schema";
 import { partyNameKey } from "@/lib/sheet-parse";
+import { sheetKeys } from "@/lib/customer-rename";
 
 /* ---------------------------------------------------------------------------
  * Where the goods actually went.
@@ -51,17 +52,19 @@ export async function linkDeliveryParties(): Promise<DeliveryLinkResult> {
    * match — by code, all 99 would be invisible.
    */
   const records = await db
-    .select({ id: customers.id, name: customers.name, status: customers.status })
+    .select({ id: customers.id, name: customers.name, sheetName: customers.sheetName, status: customers.status })
     .from(customers);
 
   const byName = new Map<string, string>();
   const duplicated = new Set<string>();
   for (const r of records) {
     // A deactivated record is not a delivery address anybody should be handed,
-    // but it is still the right answer about where an old order went.
-    const key = fold(r.name);
-    if (byName.has(key)) duplicated.add(key);
-    else byName.set(key, r.id);
+    // but it is still the right answer about where an old order went. A
+    // renamed one answers to the name the sheet uses as well (customer-rename).
+    for (const key of sheetKeys(r)) {
+      if (byName.has(key) && byName.get(key) !== r.id) duplicated.add(key);
+      else byName.set(key, r.id);
+    }
   }
 
   /*
@@ -170,8 +173,9 @@ export async function unresolvedDeliveryParties(): Promise<UnresolvedDeliveryPar
         ne(sheetTakenOrderRows.deliveryPartyName, sheetTakenOrderRows.billingPartyName),
         sql`not exists (
           select 1 from customers c
-           where upper(regexp_replace(btrim(c.name), '\s+', ' ', 'g'))
-               = upper(regexp_replace(btrim(${sheetTakenOrderRows.deliveryPartyName}), '\s+', ' ', 'g'))
+           where upper(regexp_replace(btrim(${sheetTakenOrderRows.deliveryPartyName}), '[[:space:]]+', ' ', 'g'))
+                 in (upper(regexp_replace(btrim(c.name), '[[:space:]]+', ' ', 'g')),
+                     upper(regexp_replace(btrim(c.sheet_name), '[[:space:]]+', ' ', 'g')))
         )`,
       ),
     )

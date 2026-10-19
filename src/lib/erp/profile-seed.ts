@@ -2,7 +2,7 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { customers, erpCustomerProfiles, erpRefValues, sheetPartyRows } from "@/db/schema";
-import { partyNameKey } from "@/lib/sheet-parse";
+import { sheetKeys } from "@/lib/customer-rename";
 import { erpId } from "./server";
 
 /* ---------------------------------------------------------------------------
@@ -22,8 +22,9 @@ import { erpId } from "./server";
 
 export async function seedErpCustomerProfiles(): Promise<{ matched: number; created: number; filled: number; refAdded: number }> {
   const parties = await db.select().from(sheetPartyRows).where(eq(sheetPartyRows.status, "present"));
-  const all = await db.select({ id: customers.id, name: customers.name }).from(customers);
-  const byKey = new Map(all.map((c) => [partyNameKey(c.name), c.id]));
+  const all = await db.select({ id: customers.id, name: customers.name, sheetName: customers.sheetName }).from(customers);
+  // A renamed party is still found under the name the sheet uses.
+  const byKey = new Map(all.flatMap((c) => sheetKeys(c).map((k) => [k, c.id] as const)));
   const existing = new Map(
     (await db.select().from(erpCustomerProfiles)).map((p) => [p.customerId, p]),
   );

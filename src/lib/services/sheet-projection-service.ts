@@ -258,6 +258,7 @@ export async function projectCustomers(
           // Read so the projected values can be compared with what is already
           // stored. See the skip below for why that comparison and not a hash.
           name: customers.name,
+          sheetName: customers.sheetName,
           city: customers.city,
           creditTermDays: customers.creditTermDays,
           creditDays: customers.creditDays,
@@ -302,15 +303,25 @@ export async function projectCustomers(
     ? ((await db.execute(sql`
         select c.id, c.owner_id as "ownerId", c.sales_am_id as "salesAmId",
                c.lead_source as "leadSource", c.phone, c.customer_since as "customerSince",
-               upper(btrim(regexp_replace(c.name, '\\s+', ' ', 'g'))) as key
+               case when upper(btrim(regexp_replace(c.name, '\\s+', ' ', 'g'))) in (${sql.join(
+                 unmatchedNames.map((n) => sql`${n}`),
+                 sql`, `,
+               )})
+                    then upper(btrim(regexp_replace(c.name, '\\s+', ' ', 'g')))
+                    else upper(btrim(regexp_replace(c.sheet_name, '\\s+', ' ', 'g'))) end as key
           from customers c
          where c.kind = 'lead'
            and c.deleted_at is null
            and c.external_code is null
-           and upper(btrim(regexp_replace(c.name, '\\s+', ' ', 'g'))) in (${sql.join(
-             unmatchedNames.map((n) => sql`${n}`),
-             sql`, `,
-           )})
+           and (upper(btrim(regexp_replace(c.name, '\\s+', ' ', 'g'))) in (${sql.join(
+                  unmatchedNames.map((n) => sql`${n}`),
+                  sql`, `,
+                )})
+                -- A lead somebody renamed is still the party the sheet names.
+                or upper(btrim(regexp_replace(c.sheet_name, '\\s+', ' ', 'g'))) in (${sql.join(
+                  unmatchedNames.map((n) => sql`${n}`),
+                  sql`, `,
+                )}))
       `)) as unknown as Array<{
         id: string;
         ownerId: string | null;
@@ -363,7 +374,10 @@ export async function projectCustomers(
         options.reassign && options.assignToUserId && !amIsDecided
           ? { ownerId: options.assignToUserId, salesAmId: options.assignToUserId }
           : {};
-      const name = party.name;
+      // A party a person renamed keeps its name: `sheet_name` is the mark of
+      // that decision, and writing the sheet's spelling back over it is the
+      // revert `lib/customer-rename.ts` exists to stop.
+      const name = known.sheetName ? known.name : party.name;
       const city = party.area ?? "";
       /*
        * CREDIT DAYS ARE FILLED, NEVER RESTATED.

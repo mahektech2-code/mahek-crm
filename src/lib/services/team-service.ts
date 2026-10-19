@@ -204,7 +204,8 @@ export async function provisionBackOffice(options: {
         from sheet_party_rows p
        where p.status = 'present'
          and lower(regexp_replace(trim(p.back_office_name), '\\s+', ' ', 'g')) = ${nameKey}
-         and upper(regexp_replace(trim(c.name), '\\s+', ' ', 'g')) = p.party_key
+         and p.party_key in (upper(regexp_replace(trim(c.name), '\\s+', ' ', 'g')),
+                             upper(regexp_replace(trim(c.sheet_name), '\\s+', ' ', 'g')))
       returning c.kind
     `);
     const returned = (
