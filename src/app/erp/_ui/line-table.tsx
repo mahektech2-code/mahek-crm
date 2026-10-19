@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Button, cx } from "@/components/ui/primitives";
+import { Button, EmptyState, Td, Th, Tr, controlClass, cx } from "@/components/ui/primitives";
 import type { FieldSpec, FormSpec } from "@/lib/erp/ui";
-import { whenHolds } from "@/lib/erp/ui";
+import { nf, whenHolds } from "@/lib/erp/ui";
 import { runCalc } from "@/lib/erp/calc";
 import { parsePastedLines } from "@/lib/erp/engines/purchase-flow";
 import { Icon } from "./icons";
+import { IconButton, popoverClass } from "./look";
 
 /* ---------------------------------------------------------------------------
  * A document's lines as ONE TABLE, for documents that run to hundreds of
@@ -25,7 +26,8 @@ import { Icon } from "./icons";
 
 type Line = Record<string, string>;
 
-const CELL = "h-8 w-full rounded-control border bg-surface px-2 text-sm text-ink outline-none focus:border-brand";
+/** A cell's control: the shared control look, a step shorter to fit a row. */
+const cell = (invalid: boolean, extra?: string) => controlClass({ invalid, className: cx("h-8", extra) });
 
 export function LineTable({
   spec,
@@ -142,7 +144,7 @@ export function LineTable({
             onChange={(e) => setPaste((p) => ({ ...p, text: e.target.value }))}
             rows={6}
             placeholder={"Toluene, 200\nMEK\t50\nTin can 5L 120"}
-            className="w-full rounded-control border border-line bg-surface px-2.5 py-2 font-mono text-meta text-ink outline-none focus:border-brand"
+            className={controlClass({ className: "py-2 font-mono" })}
           />
           <div className="flex gap-2">
             <Button variant="primary" onClick={applyPaste} disabled={!paste.text.trim()}>
@@ -158,13 +160,13 @@ export function LineTable({
       <div className="min-w-0 overflow-hidden rounded-card border border-line">
         <div className="flex items-center justify-between gap-3 border-b border-divider bg-canvas px-3 py-2">
           <span className="text-meta font-semibold text-ink">
-            {lines.length ? `${lines.length.toLocaleString("en-IN")} ${noun}${lines.length === 1 ? "" : "s"}` : `No ${noun}s yet`}
+            {lines.length ? `${nf(lines.length)} ${noun}${lines.length === 1 ? "" : "s"}` : `No ${noun}s yet`}
             {missingQty ? <span className="ml-2 font-normal text-warn-ink">· {missingQty} without a quantity</span> : null}
             {lineErrors ? <span className="ml-2 font-normal text-danger">· {lineErrors} to fix</span> : null}
           </span>
           {lines.length > 12 ? (
             <span className="relative w-56">
-              <input value={find} onChange={(e) => setFind(e.target.value)} placeholder="Find in this list" className={cx(CELL, "h-7 border-line pr-7 text-meta")} />
+              <input value={find} onChange={(e) => setFind(e.target.value)} placeholder="Find in this list" className={controlClass({ className: "h-7 pr-7" })} />
               <span className="pointer-events-none absolute top-1.5 right-2 flex text-muted">
                 <Icon n="search" s={14} />
               </span>
@@ -172,13 +174,15 @@ export function LineTable({
           ) : null}
         </div>
         {lines.length === 0 ? (
-          <div className="grid place-items-center gap-1 px-4 py-10 text-center">
-            <span className="flex size-9 items-center justify-center rounded-full bg-brand-soft text-brand-hover">
-              <Icon n="cart" />
-            </span>
-            <span className="text-sm font-medium text-ink">Search above to add the first {noun}</span>
-            <span className="text-meta text-muted">or paste a whole list from a spreadsheet — a hundred items take the same few seconds as one.</span>
-          </div>
+          <EmptyState
+            icon={
+              <span className="flex size-9 items-center justify-center rounded-full bg-brand-soft text-brand-hover">
+                <Icon n="cart" />
+              </span>
+            }
+            title={`Search above to add the first ${noun}`}
+            body="or paste a whole list from a spreadsheet — a hundred items take the same few seconds as one."
+          />
         ) : (
           <div className="max-h-[52vh] overflow-y-auto">
             <table className="w-full table-fixed border-collapse text-sm">
@@ -189,29 +193,29 @@ export function LineTable({
                 ))}
                 <col style={{ width: 40 }} />
               </colgroup>
-              <thead className="sticky top-0 z-10 bg-surface">
-                <tr className="border-b border-divider text-left text-2xs font-semibold tracking-[0.04em] text-muted uppercase">
-                  <th className="px-3 py-2 font-semibold">#</th>
+              <thead>
+                <tr>
+                  <Th>#</Th>
                   {fields.map((f) => (
-                    <th key={f.k} className={cx("px-2 py-2 font-semibold", f.t === "num" && "text-right")}>
+                    <Th key={f.k} align={f.t === "num" ? "right" : "left"}>
                       {f.l}
-                    </th>
+                    </Th>
                   ))}
-                  <th />
+                  <Th aria-label="Remove" />
                 </tr>
               </thead>
               <tbody>
                 {shown.map(({ l, i }) => (
-                  <tr key={i} className={cx("border-b border-divider last:border-b-0 align-middle", flash === i ? "bg-brand-soft" : "hover:bg-canvas/60")}>
-                    <td className="px-3 py-2 text-meta text-muted tabular-nums">{i + 1}</td>
+                  <Tr key={i} className={cx("align-middle", flash === i ? "bg-brand-soft" : "hover:bg-canvas/60")}>
+                    <Td className="text-meta text-muted tabular-nums">{i + 1}</Td>
                     {fields.map((f) => {
                       const err = errs[`l${i}.${f.k}`];
                       const values = { ...h, ...l };
-                      if (!whenHolds(f.when, values, data)) return <td key={f.k} />;
-                      let cell: React.ReactNode;
+                      if (!whenHolds(f.when, values, data)) return <Td key={f.k} />;
+                      let content: React.ReactNode;
                       if (f.k === pickField.k) {
                         const known = offered.includes(l[f.k] ?? "");
-                        cell = (
+                        content = (
                           <span className="block py-1.5">
                             <span className={cx("block truncate font-medium", known ? "text-ink" : "text-danger")} title={l[f.k]}>
                               {l[f.k] || "—"}
@@ -221,13 +225,13 @@ export function LineTable({
                         );
                       } else if (f.t === "derived") {
                         const v = runCalc(f.calc, { h, l, lines, i, data });
-                        cell = (
+                        content = (
                           <span className="block truncate py-1.5 text-meta text-body" title={v}>
                             {v || "—"}
                           </span>
                         );
                       } else if (f.t === "num") {
-                        cell = (
+                        content = (
                           <input
                             ref={f.k === qtyKey ? (el) => void (qtyRefs.current[i] = el) : undefined}
                             type="number"
@@ -247,13 +251,13 @@ export function LineTable({
                               }
                             }}
                             placeholder="0"
-                            className={cx(CELL, "text-right tabular-nums", err ? "border-danger" : "border-line")}
+                            className={cell(!!err, "text-right tabular-nums")}
                           />
                         );
                       } else if (f.t === "select") {
                         const opts = options(f, values) ?? [];
-                        cell = (
-                          <select value={l[f.k] ?? ""} onChange={(e) => set(i, f.k, e.target.value)} className={cx(CELL, "cursor-pointer", err ? "border-danger" : "border-line")}>
+                        content = (
+                          <select value={l[f.k] ?? ""} onChange={(e) => set(i, f.k, e.target.value)} className={cell(!!err, "cursor-pointer")}>
                             <option value="">Choose…</option>
                             {opts.map((o) => (
                               <option key={o}>{o}</option>
@@ -261,34 +265,28 @@ export function LineTable({
                           </select>
                         );
                       } else {
-                        cell = <input value={l[f.k] ?? ""} onChange={(e) => set(i, f.k, e.target.value)} className={cx(CELL, err ? "border-danger" : "border-line")} />;
+                        content = <input value={l[f.k] ?? ""} onChange={(e) => set(i, f.k, e.target.value)} className={cell(!!err)} />;
                       }
                       return (
-                        <td key={f.k} className="px-2 py-1.5">
-                          {cell}
+                        <Td key={f.k} className="py-1.5 whitespace-normal">
+                          {content}
                           {err ? <span className="mt-0.5 block text-xs text-danger">{err}</span> : null}
-                        </td>
+                        </Td>
                       );
                     })}
-                    <td className="py-1.5 pr-2 text-right">
-                      <button
-                        type="button"
-                        onClick={() => remove(i)}
-                        title={`Remove ${l[pickField.k] || "this line"}`}
-                        aria-label={`Remove ${l[pickField.k] || "this line"}`}
-                        className="inline-flex size-7 cursor-pointer items-center justify-center rounded-control text-muted hover:bg-danger-soft hover:text-danger"
-                      >
+                    <Td align="right" className="py-1.5">
+                      <IconButton label={`Remove ${l[pickField.k] || "this line"}`} tone="danger" onClick={() => remove(i)} className="ml-auto">
                         ×
-                      </button>
-                    </td>
-                  </tr>
+                      </IconButton>
+                    </Td>
+                  </Tr>
                 ))}
                 {fl && !shown.length ? (
-                  <tr>
-                    <td colSpan={fields.length + 2} className="px-3 py-4 text-center text-meta text-muted">
+                  <Tr>
+                    <Td colSpan={fields.length + 2} className="py-4 text-center text-meta text-muted">
                       Nothing on the list matches “{find}”
-                    </td>
-                  </tr>
+                    </Td>
+                  </Tr>
                 ) : null}
               </tbody>
             </table>
@@ -336,7 +334,7 @@ function ItemSearch({
       <input
         ref={inputRef}
         value={q}
-        placeholder={offered.length ? `${placeholder} (${offered.length.toLocaleString("en-IN")} items)` : "Choose the department first"}
+        placeholder={offered.length ? `${placeholder} (${nf(offered.length)} items)` : "Choose the department first"}
         disabled={!offered.length}
         onFocus={() => setOpen(true)}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
@@ -360,7 +358,7 @@ function ItemSearch({
         className="h-9 w-full rounded-control border border-brand-softer bg-surface pr-3 pl-8 text-sm text-ink outline-none placeholder:text-muted focus:border-brand disabled:bg-canvas"
       />
       {open && offered.length ? (
-        <span className="absolute top-10 right-0 left-0 z-30 block max-h-[280px] overflow-y-auto rounded-card border border-line bg-surface py-1 shadow-[0_8px_24px_rgba(22,22,22,0.12)]">
+        <span className={cx(popoverClass, "absolute top-10 right-0 left-0 z-30 block max-h-[280px] overflow-y-auto py-1")}>
           {matches.map((x, i) => (
             <button
               type="button"

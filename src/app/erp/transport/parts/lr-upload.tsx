@@ -6,6 +6,7 @@ import { Button, Card, controlClass, cx } from "@/components/ui/primitives";
 import { erpLogisticsReadLr, erpLogisticsUploadLrs } from "@/lib/actions/erp-logistics";
 import { lrRowHasAnything } from "@/lib/erp/engines/logistics";
 import { useAct } from "./common";
+import { labelClass, LinkButton } from "../../_ui/look";
 
 /**
  * STEP 3 — the dispatch team's upload. Photograph every LR collected from the
@@ -204,19 +205,19 @@ export function LrUpload({ today, transporters, canRead = false, onDone }: { tod
               </Box>
             </CardGrid>
             {r.readNotes.length ? (
-              <ul className="w-full space-y-0.5 text-xs text-warn-ink">
+              <ul className="w-full space-y-0.5 text-meta text-warn-ink">
                 {r.readNotes.map((n) => (
                   <li key={n}>{n}</li>
                 ))}
               </ul>
             ) : null}
-            <div className="flex w-full items-center gap-3 text-xs">
+            <div className="flex w-full items-center gap-3 text-meta">
               {r.error ? <span className="text-danger">{r.error}</span> : null}
-              <input value={r.note} onChange={(ev) => patch(r.key, { note: ev.target.value })} placeholder="Note for logistics (optional)" className="h-8 flex-1 rounded-control border border-line bg-surface px-2 text-meta outline-none focus:border-brand" />
+              <input value={r.note} onChange={(ev) => patch(r.key, { note: ev.target.value })} placeholder="Note for logistics (optional)" className={controlClass({ className: "h-8.5 flex-1" })} />
               {rows.length > 1 ? (
-                <button className="cursor-pointer text-muted hover:text-danger" onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))}>
+                <LinkButton tone="muted" onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))}>
                   Remove
-                </button>
+                </LinkButton>
               ) : null}
             </div>
           </Card>
@@ -230,7 +231,7 @@ export function LrUpload({ today, transporters, canRead = false, onDone }: { tod
           Add several photos
         </Button>
         <input ref={many} type="file" accept="image/*,application/pdf" multiple className="hidden" onChange={(e) => addPhotos(e.target.files)} />
-        <span className="text-xs text-muted">Each photo becomes its own LR row. Nothing is required — a photo alone is enough.</span>
+        <span className="text-meta text-muted">Each photo becomes its own LR row. Nothing is required — a photo alone is enough.</span>
         <Button variant="primary" className="ml-auto" disabled={pending || busy || reading || !filled} onClick={submit}>
           {busy ? "Waiting for photos…" : reading ? "Reading photos…" : `Upload ${filled || ""} LR${filled === 1 ? "" : "s"}`}
         </Button>
@@ -244,12 +245,12 @@ const inp = (bad: boolean, width = "w-full", check = false) => controlClass({ in
 function Box({ label, error, read, check, children }: { label: string; error?: string; read?: boolean; check?: boolean; children: React.ReactNode }) {
   return (
     <label className="block min-w-0">
-      <span className="mb-0.5 flex items-center gap-1.5 text-2xs font-medium tracking-[0.04em] text-muted uppercase">
+      <span className={cx("mb-0.5 flex items-center gap-1.5", labelClass)}>
         {label}
         {read ? <span className={cx("normal-case tracking-normal", check ? "text-warn-ink" : "text-brand")} title="Read from the photo — check it against the receipt">{check ? "· check" : "· read"}</span> : null}
       </span>
       {children}
-      {error ? <span className="mt-0.5 block text-xs text-danger">{error}</span> : null}
+      {error ? <span className="mt-0.5 block text-meta text-danger">{error}</span> : null}
     </label>
   );
 }

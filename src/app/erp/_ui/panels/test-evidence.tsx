@@ -2,6 +2,7 @@
 
 import { cx, SectionLabel } from "@/components/ui/primitives";
 import { registerPanel, type PanelProps } from "../panels";
+import { insetClass } from "../look";
 
 /* ---------------------------------------------------------------------------
  * A purchase test's evidence, in the record the verifier decides from: one
@@ -31,7 +32,7 @@ function TestEvidence({ data }: PanelProps) {
   const e = data as Evidence;
   if (!e.tests.length) return null;
   return (
-    <section className="grid gap-2.5 rounded-card border border-line p-3.5">
+    <section className={cx("grid gap-2.5", insetClass)}>
       <SectionLabel>{e.title ?? "Test evidence"}</SectionLabel>
       <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2.5">
         {e.tests.map((t) => {
@@ -61,7 +62,7 @@ function TestEvidence({ data }: PanelProps) {
         <video src={`/api/attachments/${e.video}`} controls className="w-full rounded-control bg-ink" />
       ) : null}
       {e.registerExists ? (
-        <span className="text-xs text-body">A purchase register row exists for this lot.</span>
+        <span className="text-meta text-muted">A purchase register row exists for this lot.</span>
       ) : null}
     </section>
   );

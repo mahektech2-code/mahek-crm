@@ -15,6 +15,7 @@ import { scopeFor, windowInfo } from "@/lib/erp/window";
 import { FLAG } from "@/lib/erp/ui";
 import { screenTabs } from "../_ui/screen-tabs";
 import { Page } from "../_ui/page-head";
+import { linkClass } from "../_ui/look";
 import { LrDesk } from "./parts/lr-desk";
 import { Messages } from "./parts/messages";
 import { OnRoad } from "./parts/on-road";
@@ -114,7 +115,9 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
       <ListTabs label={screen.label} tabs={tabs} />
       {ids ? (
         <div className="mb-3 flex items-center gap-2 text-meta text-muted">
-          Showing {ids.length} bill{ids.length === 1 ? "" : "s"}: {one("fl") ?? "filtered"} · <Link href={at(view)}>Show everything</Link>
+          Showing {ids.length} bill{ids.length === 1 ? "" : "s"}: {one("fl") ?? "filtered"} · <Link href={at(view)} className={linkClass()}>
+            Show everything
+          </Link>
         </div>
       ) : null}
 

@@ -48,7 +48,10 @@ export function PinMap({ apiKey, pin, onPick, height = 280 }: { apiKey: string; 
       if (!loaded && (status === 401 || status === 403)) setFailed(true);
     });
     const watch = setTimeout(() => !loaded && setFailed(true), 15_000);
-    const mk = new maplibregl.Marker({ color: "#6835FB", draggable: true });
+    /* MapLibre paints the marker itself and needs a real colour, so the brand
+       token is read off the page; without one it keeps its own default. */
+    const brand = getComputedStyle(document.documentElement).getPropertyValue("--color-brand").trim();
+    const mk = new maplibregl.Marker({ color: brand || undefined, draggable: true });
     if (pin) mk.setLngLat([pin.lng, pin.lat]).addTo(m);
     mk.on("dragend", () => {
       const p = mk.getLngLat();

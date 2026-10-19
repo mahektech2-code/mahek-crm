@@ -5,7 +5,10 @@ import { erpContext } from "@/lib/erp/access";
 import { copiesOf, LABEL_MM, MAX_COPIES, type LabelKind } from "@/lib/erp/engines/labels";
 import { boxLabels, dispatchLabels, purchaseLabel, sfgLabel } from "@/lib/erp/label-data";
 import type { PrinterSetup } from "@/lib/erp/engines/tspl";
+import { erpDispatchHref } from "@/lib/erp/trace-links";
+import { Button, Input } from "@/components/ui/primitives";
 import { Page } from "../_ui/page-head";
+import { linkClass } from "../_ui/look";
 import { LABEL_CSS } from "./label-css";
 import { BoxLabelView, DispatchLabelView, PurchaseLabelView, SfgLabelView } from "./labels";
 import { LabelPrinter } from "./printer";
@@ -117,17 +120,19 @@ export default async function ErpLabels({ searchParams }: { searchParams: Promis
       sub={sub}
       actions={
         <div className="flex flex-wrap items-center justify-end gap-3 no-print">
-          {order != null ? <Link href={`/erp/dispatch?order=${order}`}>Dispatch desk</Link> : null}
+          {order != null ? <Link href={erpDispatchHref(order)} className={linkClass("brand", "text-meta")}>
+              Dispatch desk
+            </Link> : null}
           {copiesShown != null ? (
             <form method="get" className="flex items-center gap-2 text-meta">
               {sfg ? <input type="hidden" name="sfg" value={sfg} /> : null}
               {one("godown") ? <input type="hidden" name="godown" value={one("godown")} /> : null}
               {purchase ? <input type="hidden" name="purchase" value={purchase} /> : null}
-              <label htmlFor="copies">Copies</label>
-              <input id="copies" name="copies" type="number" min={1} max={MAX_COPIES} defaultValue={copiesShown} className="h-9 w-[72px] rounded-control border border-line-strong bg-surface px-2 text-sm" />
-              <button type="submit" className="h-9 cursor-pointer rounded-control border border-line-strong bg-surface px-3 text-sm hover:bg-canvas">
-                Set
-              </button>
+              <label htmlFor="copies" className="text-muted">
+                Copies
+              </label>
+              <Input id="copies" name="copies" type="number" min={1} max={MAX_COPIES} defaultValue={copiesShown} className="h-9 w-[72px]" />
+              <Button type="submit">Set</Button>
             </form>
           ) : null}
           {n ? <LabelPrinter ids={unitIds} count={n} what={what} mm={mm} setup={setup} fileName={fileName} /> : null}

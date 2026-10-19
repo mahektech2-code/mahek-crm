@@ -9,8 +9,10 @@ import { billLines, consignments, consignmentsOnLr, eventsFor, messages } from "
 import { today as businessToday } from "@/lib/erp/screens/common";
 import { erpTraceHref, orderTraceCode } from "@/lib/erp/trace-links";
 import { CardGrid } from "@/components/ui/card-grid";
-import { Badge, Card } from "@/components/ui/primitives";
+import { Card } from "@/components/ui/primitives";
 import { Page, PageLinks } from "../../_ui/page-head";
+import { Badge } from "../../_ui/badge";
+import { Eyebrow, linkClass, SectionTitle, SubTitle } from "../../_ui/look";
 import { CallLink, LrThumb, StageStrip } from "../parts/common";
 import { Messages } from "../parts/messages";
 import { OnRoad } from "../parts/on-road";
@@ -50,7 +52,7 @@ export default async function ConsignmentPage({ params }: { params: Promise<{ id
 
   const fact = (l: string, v: React.ReactNode) => (
     <div>
-      <div className="text-2xs font-medium tracking-[0.04em] text-muted uppercase">{l}</div>
+      <Eyebrow>{l}</Eyebrow>
       <div className="mt-0.5 text-sm text-ink">{v ?? "—"}</div>
     </div>
   );
@@ -61,13 +63,17 @@ export default async function ConsignmentPage({ params }: { params: Promise<{ id
       sub={`${PHASE_LABEL[c.phase]} · ${STAGE_SHORT[STAGES[stageStep(c.stage)]]}`}
       actions={
         <PageLinks>
-          <Link href={erpLink("transport")}>← Logistics</Link>
-          <Link href={erpTraceHref(orderTraceCode(c.orderNo))}>Trace</Link>
+          <Link href={erpLink("transport")} className={linkClass()}>
+            ← Logistics
+          </Link>
+          <Link href={erpTraceHref(orderTraceCode(c.orderNo))} className={linkClass()}>
+            Trace
+          </Link>
         </PageLinks>
       }
     >
-      <div className="grid grid-cols-[minmax(0,1fr)_minmax(300px,380px)] items-start gap-4">
-        <div className="space-y-4">
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(300px,380px)] items-start gap-5">
+        <div className="space-y-5">
           <Card className="p-4">
             <StageStrip stage={c.stage} />
             <CardGrid min={150} className="mt-4">
@@ -82,9 +88,9 @@ export default async function ConsignmentPage({ params }: { params: Promise<{ id
               {fact("Expected delivery", c.expectedDeliveryOn ? shortDay(c.expectedDeliveryOn) : null)}
               {fact("Next call", c.nextCallOn ? shortDay(c.nextCallOn) : null)}
               {c.deliveredOn ? fact("Delivered", `${shortDay(c.deliveredOn)}${c.receivedBy ? ` · ${c.receivedBy}` : ""}`) : null}
-              {c.issue ? fact("Problem", <Badge tone="danger">{c.issue}</Badge>) : null}
+              {c.issue ? fact("Problem", <Badge label={c.issue} tone="danger" />) : null}
             </CardGrid>
-            {c.issueNote ? <div className="mt-3 text-sm text-danger">{c.issueNote}</div> : null}
+            {c.issueNote ? <div className="mt-3 text-meta text-danger">{c.issueNote}</div> : null}
           </Card>
 
           {c.phase === "onRoad" ? (
@@ -93,43 +99,43 @@ export default async function ConsignmentPage({ params }: { params: Promise<{ id
             <Card className="px-4 py-3 text-sm">
               {c.phase === "toTransport" ? (
                 <>
-                  On its way to the transporter. <Link href={erpLink("toTransport")}>Plan or mark it reached on To transporter →</Link>
+                  On its way to the transporter. <Link href={erpLink("toTransport")} className={linkClass()}>Plan or mark it reached on To transporter →</Link>
                 </>
               ) : (
                 <>
-                  At the transporter, waiting for its LR. <Link href={erpLink("pendingLr")}>Attach it on the LR desk →</Link>
+                  At the transporter, waiting for its LR. <Link href={erpLink("pendingLr")} className={linkClass()}>Attach it on the LR desk →</Link>
                 </>
               )}
             </Card>
           )}
 
           <Card className="overflow-hidden">
-            <div className="border-b border-divider px-4 py-3 text-md font-semibold text-ink">On this bill</div>
+            <SubTitle className="mb-0 border-b border-divider px-4 py-3">On this bill</SubTitle>
             {lines.map((l) => (
               <div key={l.id} className="flex items-center gap-3 border-b border-divider px-4 py-2 text-sm last:border-0">
                 <span className="min-w-0 flex-1 truncate">{l.sku}</span>
                 <span className="tabular-nums text-body">{l.cans} {l.cans === 1 ? "can" : "cans"}</span>
-                {l.status !== "Ready" ? <Badge tone="muted">{l.status}</Badge> : null}
+                {l.status !== "Ready" ? <Badge label={l.status} tone="muted" /> : null}
               </div>
             ))}
           </Card>
 
           <div>
-            <h2 className="mb-2 text-md font-semibold text-ink">What the customer was told</h2>
+            <SectionTitle>What the customer was told</SectionTitle>
             <Messages rows={msgs} canWrite={!ctx.viewingAs} wati={cfg["erp.logistics.watiTemplate"].trim() || null} />
           </div>
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-5">
           {c.lrNo ? (
             <Card className="flex gap-3 p-4">
               <LrThumb fileId={c.lrFileId} size={84} />
               <div className="min-w-0">
-                <div className="font-mono text-md font-semibold text-ink">LR {c.lrNo}</div>
+                <SubTitle className="mb-0 font-mono">LR {c.lrNo}</SubTitle>
                 <div className="text-xs text-muted">{c.lrDate ? shortDay(c.lrDate) : ""}</div>
-                {siblings.length > 1 ? <div className="mt-1 text-xs text-body">Carries {siblings.length} bills: {siblings.map((s) => s.billNo ?? s.orderNo).join(", ")}</div> : null}
+                {siblings.length > 1 ? <div className="mt-1 text-meta text-body">Carries {siblings.length} bills: {siblings.map((s) => s.billNo ?? s.orderNo).join(", ")}</div> : null}
                 {online ? (
-                  <a href={online} target="_blank" rel="noreferrer" className="mt-1 block text-xs">
+                  <a href={online} target="_blank" rel="noreferrer" className={linkClass("brand", "mt-1 block text-meta")}>
                     Track on {c.transporter}&apos;s site ↗
                   </a>
                 ) : null}
@@ -138,7 +144,7 @@ export default async function ConsignmentPage({ params }: { params: Promise<{ id
           ) : null}
           {c.trackToken ? <TrackLinkCopy token={c.trackToken} /> : null}
           <Card className="overflow-hidden">
-            <div className="border-b border-divider px-4 py-3 text-md font-semibold text-ink">Timeline</div>
+            <SubTitle className="mb-0 border-b border-divider px-4 py-3">Timeline</SubTitle>
             {events.length ? (
               <ol className="relative px-4 py-3">
                 {events.map((e) => (
@@ -146,7 +152,7 @@ export default async function ConsignmentPage({ params }: { params: Promise<{ id
                     <span className={`absolute top-1 -left-[5px] h-2.5 w-2.5 rounded-full ${e.kind === "issue" ? "bg-danger" : e.kind === "delivered" ? "bg-success" : "bg-brand"}`} />
                     <div className="text-sm font-medium text-ink">{KIND[e.kind] ?? e.kind}</div>
                     {e.note ? <div className="text-meta text-body">{e.note}</div> : null}
-                    <div className="text-2xs text-muted">
+                    <div className="text-xs text-muted">
                       {stamp(e.at)}
                       {e.by ? ` · ${e.by}` : ""}
                       {!e.shared ? " · not shown to the customer" : ""}
@@ -155,7 +161,7 @@ export default async function ConsignmentPage({ params }: { params: Promise<{ id
                 ))}
               </ol>
             ) : (
-              <div className="px-4 py-4 text-sm text-muted">Nothing recorded yet.</div>
+              <div className="px-4 py-3 text-meta text-muted">Nothing recorded yet.</div>
             )}
           </Card>
         </div>

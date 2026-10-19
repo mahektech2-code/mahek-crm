@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { customKey, customRange, PERIODS } from "@/lib/erp/period";
+import { Button, Input, Select } from "@/components/ui/primitives";
 
 /**
  * The period a register is read through (`lib/erp/period.ts`). A preset is
@@ -13,10 +14,9 @@ export function PeriodPicker({ pd, label, dateLabel, onPick }: { pd: string; lab
   const [open, setOpen] = useState(!!custom);
   const [from, setFrom] = useState(custom?.from ?? "");
   const [to, setTo] = useState(custom?.to ?? "");
-  const box = "h-8 rounded-control border border-line bg-surface px-2.5 text-meta text-body outline-none focus:border-brand";
   return (
     <div className="flex items-center gap-1.5">
-      <select
+      <Select
         value={custom || open ? "custom" : pd}
         onChange={(e) => {
           if (e.target.value === "custom") setOpen(true);
@@ -27,7 +27,7 @@ export function PeriodPicker({ pd, label, dateLabel, onPick }: { pd: string; lab
         }}
         aria-label={`${dateLabel} period`}
         title={`${dateLabel}: ${label}`}
-        className={`${box} cursor-pointer`}
+        className="cursor-pointer"
       >
         {PERIODS.map((p) => (
           <option key={p.k} value={p.k}>
@@ -35,20 +35,19 @@ export function PeriodPicker({ pd, label, dateLabel, onPick }: { pd: string; lab
           </option>
         ))}
         <option value="custom">{custom ? label : "Custom range…"}</option>
-      </select>
+      </Select>
       {open ? (
         <>
-          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} aria-label="From" className={box} />
+          <span className="w-38 flex-none">
+            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} aria-label="From" />
+          </span>
           <span className="text-meta text-muted">to</span>
-          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} aria-label="To" className={box} />
-          <button
-            type="button"
-            disabled={!from && !to}
-            onClick={() => onPick(customKey({ from: from || null, to: to || null }))}
-            className="h-8 cursor-pointer rounded-control border border-brand bg-brand-soft px-2.5 text-meta font-medium text-brand-hover disabled:cursor-not-allowed disabled:opacity-50"
-          >
+          <span className="w-38 flex-none">
+            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} aria-label="To" />
+          </span>
+          <Button type="button" variant="primary" size="sm" disabled={!from && !to} onClick={() => onPick(customKey({ from: from || null, to: to || null }))}>
             Apply
-          </button>
+          </Button>
         </>
       ) : null}
     </div>

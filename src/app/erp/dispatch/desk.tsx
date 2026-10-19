@@ -7,8 +7,10 @@ import type { DispatchBoard } from "@/lib/erp/dispatch";
 import type { ScanVerdict } from "@/lib/erp/engines/trace";
 import { erpTraceHref } from "@/lib/erp/trace-links";
 import { erpDispatchDecideOverride, erpDispatchRequestOverride, erpDispatchScan, erpDispatchUnscan, erpDispatchVerify } from "@/lib/actions/erp-trace";
-import { Badge, Button, Card, cx, Progress } from "@/components/ui/primitives";
+import { Button, Card, cx, Input, Progress, Textarea } from "@/components/ui/primitives";
 import { useErpUi } from "../_ui/erp-ui";
+import { Badge } from "../_ui/badge";
+import { labelClass, LinkButton, linkClass, SubTitle } from "../_ui/look";
 
 /**
  * The scanning desk. A hand scanner types the code and an Enter into the box,
@@ -91,7 +93,7 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
   return (
     <div className="flex flex-col gap-5">
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-5">
           <Card className="px-5 py-4">
             <form
               onSubmit={(e) => {
@@ -134,18 +136,19 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
                 <div className="px-5 py-3">
                   <div className="text-base text-ink">{last.verdict.message}</div>
                   <div className="mt-1 font-mono text-meta text-muted">
-                    <Link href={erpTraceHref(last.code)}>{last.code}</Link>
+                    <Link href={erpTraceHref(last.code)} className={linkClass()}>
+                      {last.code}
+                    </Link>
                   </div>
                   {last.verdict.result === "mismatch" && last.verdict.mismatch ? (
                     <div className="mt-3 border-t border-divider pt-3">
-                      <div className="mb-1 text-meta font-medium text-ink">Request an override</div>
-                      <div className="mb-2 text-xs text-muted">Only somebody else holding the dispatch-override power can approve it. Once approved, scan the box again.</div>
-                      <textarea
+                      <SubTitle className="mb-1">Request an override</SubTitle>
+                      <div className="mb-2 text-meta text-muted">Only somebody else holding the dispatch-override power can approve it. Once approved, scan the box again.</div>
+                      <Textarea
                         value={reason}
                         onChange={(e) => setReason(e.target.value)}
                         rows={2}
                         placeholder="Why must this box go: who agreed, what the customer was told"
-                        className="w-full rounded-control border border-line px-2.5 py-2 text-sm outline-none focus:border-brand"
                       />
                       <div className="mt-2 flex gap-2">
                         <Button size="sm" variant="secondary" onClick={() => setLast(null)}>
@@ -163,7 +166,7 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
           ) : null}
 
           <Card className="overflow-hidden">
-            <div className="grid grid-cols-[1fr_80px_150px_110px] gap-3 border-b border-divider bg-canvas px-4 py-2 text-xs font-medium text-muted">
+            <div className={cx("grid grid-cols-[1fr_80px_150px_110px] gap-3 border-b border-divider bg-canvas px-4 py-2", labelClass)}>
               <span>Line</span>
               <span>Pack</span>
               <span>Scanned</span>
@@ -173,7 +176,7 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
               <div key={l.id} className={cx("grid grid-cols-[1fr_80px_150px_110px] items-center gap-3 border-b border-divider px-4 py-2.5 last:border-0", l.cancelled && "opacity-60")}>
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-medium text-ink">{l.skuName}</span>
-                  <span className="block truncate text-xs text-muted">
+                  <span className="block truncate text-meta text-muted">
                     {l.alloc.length ? `Lots ${l.alloc.map((a) => `${a.lotCode} × ${a.qty}`).join(", ")}` : "No lot allocated yet — scanning allocates"}
                     {!l.unitsExist && l.alloc.length ? " · packed before box ids: no scan needed" : ""}
                   </span>
@@ -181,14 +184,13 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
                       nothing to scan, so its lot is allocated here by hand —
                       the one place left that does it. */}
                   {canAllocate && !l.cancelled && !l.dispatched && !l.billed && l.alloc.reduce((a, x) => a + x.qty, 0) < l.target ? (
-                    <button
-                      type="button"
+                    <LinkButton
                       onClick={() => ui.act("orders", { id: "allocate", l: "Allocate a lot by hand", loadsForm: true }, l.id)}
-                      className="mt-0.5 cursor-pointer text-xs text-brand-hover hover:underline"
+                      className="mt-0.5 text-meta"
                       title="For stock packed before box labels, which has nothing to scan"
                     >
                       Allocate a lot by hand (no box labels)
-                    </button>
+                    </LinkButton>
                   ) : null}
                 </span>
                 <span className="text-sm text-body">{l.packLabel}</span>
@@ -197,15 +199,15 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
                 </span>
                 <span>
                   {l.dispatched ? (
-                    <Badge tone="success">Dispatched</Badge>
+                    <Badge label="Dispatched" tone="success" />
                   ) : l.cancelled ? (
-                    <Badge tone="muted">Not Ready</Badge>
+                    <Badge label="Not Ready" tone="muted" />
                   ) : l.scanned >= l.target && l.target > 0 ? (
-                    <Badge tone="success">All scanned</Badge>
+                    <Badge label="All scanned" tone="success" />
                   ) : l.gate ? (
-                    <Badge tone="warn">To scan</Badge>
+                    <Badge label="To scan" tone="warn" />
                   ) : (
-                    <Badge tone="neutral">Scan optional</Badge>
+                    <Badge label="Scan optional" tone="neutral" />
                   )}
                 </span>
               </div>
@@ -213,11 +215,11 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
           </Card>
 
           <Card className="overflow-hidden">
-            <div className="border-b border-divider bg-canvas px-4 py-2 text-meta font-medium text-ink">Boxes on this order ({board.units.length})</div>
+            <SubTitle className="mb-0 border-b border-divider bg-canvas px-4 py-2">Boxes on this order ({board.units.length})</SubTitle>
             {board.units.length ? (
               board.units.map((u) => (
                 <div key={u.id} className="flex items-center gap-3 border-b border-divider px-4 py-1.5 text-meta last:border-0">
-                  <Link href={erpTraceHref(u.id)} className="font-mono">
+                  <Link href={erpTraceHref(u.id)} className={linkClass("brand", "font-mono")}>
                     {u.id}
                   </Link>
                   <span className="min-w-0 flex-1 truncate text-body">
@@ -225,23 +227,23 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
                     {u.by ? ` · ${u.by}` : ""}
                   </span>
                   {u.status === "dispatched" ? (
-                    <Badge tone="success">Dispatched</Badge>
+                    <Badge label="Dispatched" tone="success" />
                   ) : (
-                    <button type="button" className="text-xs text-danger hover:underline" disabled={pending} onClick={() => act(() => erpDispatchUnscan(u.id))}>
+                    <LinkButton tone="danger" disabled={pending} onClick={() => act(() => erpDispatchUnscan(u.id))}>
                       Take off
-                    </button>
+                    </LinkButton>
                   )}
                 </div>
               ))
             ) : (
-              <div className="px-4 py-3 text-sm text-muted">Nothing scanned yet.</div>
+              <div className="px-4 py-3 text-meta text-muted">Nothing scanned yet.</div>
             )}
           </Card>
         </div>
 
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-5">
           <Card className="px-4 py-3">
-            <div className="text-meta font-medium text-ink">Dispatch verification</div>
+            <SubTitle className="mb-0">Dispatch verification</SubTitle>
             {!billedWaiting.length ? (
               <div className="mt-1 text-meta text-muted">Nothing is billed and waiting. Bill the lines on Orders → Under process &amp; ready, then verify here.</div>
             ) : gated.length ? (
@@ -251,18 +253,18 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
             )}
             {canVerify ? (
               <div className="mt-3 flex items-center gap-2">
-                <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="h-8.5 rounded-control border border-line px-2 text-sm" />
+                <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="min-w-0 flex-1" />
                 <Button size="sm" variant="primary" disabled={pending || !billedWaiting.length || gated.length > 0} onClick={() => act(() => erpDispatchVerify(board.orderNo, date))}>
                   Mark dispatch-verified
                 </Button>
               </div>
             ) : (
-              <div className="mt-2 text-xs text-muted">Billing &amp; dispatch is not on your account, so somebody in the office verifies.</div>
+              <div className="mt-2 text-meta text-muted">Billing &amp; dispatch is not on your account, so somebody in the office verifies.</div>
             )}
           </Card>
 
           <Card className="overflow-hidden">
-            <div className="border-b border-divider bg-canvas px-4 py-2 text-meta font-medium text-ink">Overrides {pendingOverrides.length ? `· ${pendingOverrides.length} waiting` : ""}</div>
+            <SubTitle className="mb-0 border-b border-divider bg-canvas px-4 py-2">Overrides {pendingOverrides.length ? `· ${pendingOverrides.length} waiting` : ""}</SubTitle>
             {board.overrides.length ? (
               board.overrides.map((o) => {
                 const mine = o.requestedById === me && !administrator;
@@ -270,25 +272,24 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
                   <div key={o.id} className="border-b border-divider px-4 py-2.5 last:border-0">
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-meta">{o.unitId}</span>
-                      <Badge tone={o.status === "Pending" ? "warn" : o.status === "Declined" ? "danger" : "success"}>{o.status}</Badge>
+                      <Badge label={o.status} tone={o.status === "Pending" ? "warn" : o.status === "Declined" ? "danger" : "success"} />
                     </div>
-                    <div className="text-xs text-body">
+                    <div className="text-meta text-body">
                       {o.mismatch === "size" ? "Pack size" : "Product"}: ordered {o.ordered}, scanned {o.scanned}
                     </div>
-                    <div className="text-xs text-muted">
+                    <div className="text-meta text-muted">
                       “{o.reason}” — {o.requestedBy ?? "?"}
                       {o.decidedBy ? ` · decided by ${o.decidedBy}${o.note ? `: ${o.note}` : ""}` : ""}
                     </div>
                     {o.status === "Pending" && canDecide ? (
                       mine ? (
-                        <div className="mt-1 text-xs text-muted">You asked for this one; somebody else decides it.</div>
+                        <div className="mt-1 text-meta text-muted">You asked for this one; somebody else decides it.</div>
                       ) : (
                         <div className="mt-2 flex flex-col gap-1.5">
-                          <input
+                          <Input
                             value={note[o.id] ?? ""}
                             onChange={(e) => setNote({ ...note, [o.id]: e.target.value })}
                             placeholder="Note (needed to decline)"
-                            className="h-8 rounded-control border border-line px-2 text-meta"
                           />
                           <div className="flex gap-2">
                             <Button size="sm" variant="primary" disabled={pending} onClick={() => act(() => erpDispatchDecideOverride(o.id, true, note[o.id] ?? ""))}>
@@ -310,15 +311,15 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
           </Card>
 
           <Card className="overflow-hidden">
-            <div className="border-b border-divider bg-canvas px-4 py-2 text-meta font-medium text-ink">Scan log</div>
+            <SubTitle className="mb-0 border-b border-divider bg-canvas px-4 py-2">Scan log</SubTitle>
             {board.scans.length ? (
               board.scans.map((s, i) => (
                 <div key={i} className="border-b border-divider px-4 py-1.5 last:border-0">
-                  <div className="flex items-center gap-2 text-xs">
-                    <Badge tone={s.result === "ok" ? "success" : s.result === "mismatch" || s.result === "duplicate" ? "danger" : "warn"}>{s.result}</Badge>
+                  <div className="flex items-center gap-2 text-meta">
+                    <Badge label={s.result} tone={s.result === "ok" ? "success" : s.result === "mismatch" || s.result === "duplicate" ? "danger" : "warn"} />
                     <span className="font-mono">{s.code}</span>
                   </div>
-                  <div className="text-xs text-muted">
+                  <div className="text-meta text-muted">
                     {s.message}
                     {s.by ? ` · ${s.by}` : ""}
                   </div>

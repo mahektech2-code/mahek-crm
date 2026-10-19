@@ -1,6 +1,7 @@
 "use client";
 
-import { SectionLabel } from "@/components/ui/primitives";
+import { cx, SectionLabel } from "@/components/ui/primitives";
+import { insetClass } from "../look";
 import { registerPanel, type PanelProps } from "../panels";
 
 /* ---------------------------------------------------------------------------
@@ -10,7 +11,7 @@ import { registerPanel, type PanelProps } from "../panels";
  * ------------------------------------------------------------------------- */
 
 function Strip({ photos, alt, max, empty }: { photos: string[]; alt: string; max?: number; empty: string }) {
-  if (!photos.length) return <span className="text-xs text-muted">{empty}</span>;
+  if (!photos.length) return <span className="text-meta text-muted">{empty}</span>;
   return (
     <div className="grid grid-cols-[repeat(auto-fill,minmax(120px,1fr))] gap-2">
       {photos.map((src, i) => (
@@ -33,7 +34,7 @@ type CanData = { photos: string[]; max: number; group: { name: string; photos: s
 function CanPhotos({ data, row }: PanelProps) {
   const d = data as CanData;
   return (
-    <section className="grid gap-3 rounded-card border border-line p-3.5">
+    <section className={cx("grid gap-3", insetClass)}>
       <div className="grid gap-2">
         <SectionLabel>Photos of this can</SectionLabel>
         <Strip photos={d.photos} alt={row.title ?? "Can"} max={d.max} empty="No photo yet — Photos adds up to three." />
@@ -43,7 +44,7 @@ function CanPhotos({ data, row }: PanelProps) {
         {d.group ? (
           <Strip photos={d.group.photos} alt={d.group.name} empty="The group has no photo yet." />
         ) : (
-          <span className="text-xs text-muted">Not in a group. Pick one on Edit, or use Can groups → Group cans by name.</span>
+          <span className="text-meta text-muted">Not in a group. Pick one on Edit, or use Can groups → Group cans by name.</span>
         )}
       </div>
     </section>
@@ -55,7 +56,7 @@ type GroupData = { photos: string[]; max: number; members: { name: string; activ
 function CanGroup({ data, row }: PanelProps) {
   const d = data as GroupData;
   return (
-    <section className="grid gap-3 rounded-card border border-line p-3.5">
+    <section className={cx("grid gap-3", insetClass)}>
       <div className="grid gap-2">
         <SectionLabel>Group photos</SectionLabel>
         <Strip photos={d.photos} alt={row.title ?? "Group"} max={d.max} empty="No group photo yet — Edit group adds up to three." />
@@ -75,7 +76,7 @@ function CanGroup({ data, row }: PanelProps) {
             ))}
           </ul>
         ) : (
-          <span className="text-xs text-muted">No cans yet — Edit group ticks them.</span>
+          <span className="text-meta text-muted">No cans yet — Edit group ticks them.</span>
         )}
       </div>
     </section>

@@ -2,11 +2,13 @@ import Link from "next/link";
 import { stamp } from "@/lib/format";
 import { redirect } from "next/navigation";
 import { erpContext } from "@/lib/erp/access";
-import { erpScreen } from "@/lib/erp/registry";
+import { erpHref, erpScreen } from "@/lib/erp/registry";
 import { traceCode, traceDashboard, type TraceResult } from "@/lib/erp/traceability";
-import { Badge, Callout, Card, cx, Dot } from "@/components/ui/primitives";
+import { Callout, Card, cx, Dot } from "@/components/ui/primitives";
 import { CardGrid } from "@/components/ui/card-grid";
 import { Page, QuickFind } from "../_ui/page-head";
+import { Badge } from "../_ui/badge";
+import { Eyebrow, eyebrowClass, labelClass, linkClass, SectionTitle, SubTitle } from "../_ui/look";
 import { erpDispatchHref, erpTraceHref } from "@/lib/erp/trace-links";
 
 /**
@@ -33,9 +35,9 @@ export default async function ErpTrace({ searchParams }: { searchParams: Promise
 
   return (
     <Page title={SCREEN.label} sub={SCREEN.sub}>
-      <QuickFind action="/erp/trace" name="q" defaultValue={qv} mono button="Trace" className="max-w-[760px]" placeholder="Scan or type: BX-261008-000125, an SFG lot, FG12NA, FP40NA, order 1256, a bill number…">
+      <QuickFind action={erpHref(SCREEN)} name="q" defaultValue={qv} mono button="Trace" className="max-w-[760px]" placeholder="Scan or type: BX-261008-000125, an SFG lot, FG12NA, FP40NA, order 1256, a bill number…">
         {qv ? (
-          <Link href="/erp/trace" className="flex h-9 items-center px-2 text-sm">
+          <Link href={erpHref(SCREEN)} className={linkClass("muted", "flex h-9 items-center px-2 text-sm")}>
             Clear
           </Link>
         ) : null}
@@ -54,15 +56,15 @@ export default async function ErpTrace({ searchParams }: { searchParams: Promise
 
 function Dashboard({ d }: { d: NonNullable<Awaited<ReturnType<typeof traceDashboard>>> }) {
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-5">
       <section>
-        <h2 className="mb-2 text-base font-semibold text-ink">Today</h2>
+        <SectionTitle>Today</SectionTitle>
         <CardGrid min={170}>
           {d.today.map((t) => (
             <Link key={t.l} href={t.href ?? "#"} className="no-underline hover:no-underline">
               <Card className="h-full px-4 py-3 hover:border-brand">
-                <span className="block text-xs text-muted">{t.l}</span>
-                <span className="block text-xl font-semibold text-ink tabular-nums">{t.v}</span>
+                <Eyebrow>{t.l}</Eyebrow>
+                <span className="block text-xl leading-7 font-semibold text-ink tabular-nums">{t.v}</span>
                 {t.sub ? <span className="block text-xs text-muted">{t.sub}</span> : null}
               </Card>
             </Link>
@@ -70,15 +72,15 @@ function Dashboard({ d }: { d: NonNullable<Awaited<ReturnType<typeof traceDashbo
         </CardGrid>
       </section>
       <section>
-        <h2 className="mb-2 text-base font-semibold text-ink">Exceptions</h2>
+        <SectionTitle>Exceptions</SectionTitle>
         <CardGrid min={260}>
           {d.exceptions.map((e) => (
             <Link key={e.l} href={e.href} className="no-underline hover:no-underline">
               <Card className={cx("flex h-full items-start gap-3 px-4 py-3 hover:border-brand", !e.n && "opacity-60")}>
-                <span className={cx("text-2xl font-semibold tabular-nums", e.n ? (e.tone === "bad" ? "text-danger" : "text-warn-ink") : "text-muted")}>{e.n}</span>
+                <span className={cx("text-xl leading-7 font-semibold tabular-nums", e.n ? (e.tone === "bad" ? "text-danger" : "text-warn-ink") : "text-muted")}>{e.n}</span>
                 <span className="min-w-0">
                   <span className="block text-sm font-medium text-ink">{e.l}</span>
-                  <span className="block text-xs text-muted">{e.sub}</span>
+                  <span className="block text-meta text-muted">{e.sub}</span>
                 </span>
               </Card>
             </Link>
@@ -86,7 +88,7 @@ function Dashboard({ d }: { d: NonNullable<Awaited<ReturnType<typeof traceDashbo
         </CardGrid>
       </section>
       <section id="scans" className="scroll-mt-4">
-        <h2 className="mb-2 text-base font-semibold text-ink">Latest scans at the dispatch desk</h2>
+        <SectionTitle>Latest scans at the dispatch desk</SectionTitle>
         <Card className="overflow-hidden">
           {d.recentScans.length ? (
             d.recentScans.map((s, i) => (
@@ -94,13 +96,13 @@ function Dashboard({ d }: { d: NonNullable<Awaited<ReturnType<typeof traceDashbo
                 <ScanBadge result={s.result} />
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm text-ink">{s.message}</span>
-                  <span className="block text-xs text-muted">
-                    <Link href={erpTraceHref(s.code)} className="font-mono">
+                  <span className="block text-meta text-muted">
+                    <Link href={erpTraceHref(s.code)} className={linkClass("brand", "font-mono")}>
                       {s.code}
                     </Link>
                     {s.orderNo ? (
                       <>
-                        {" "}· <Link href={erpDispatchHref(s.orderNo)}>order {s.orderNo}</Link>
+                        {" "}· <Link href={erpDispatchHref(s.orderNo)} className={linkClass()}>order {s.orderNo}</Link>
                       </>
                     ) : null}
                     {s.by ? ` · ${s.by}` : ""} · {stamp(s.at)}
@@ -109,7 +111,7 @@ function Dashboard({ d }: { d: NonNullable<Awaited<ReturnType<typeof traceDashbo
               </div>
             ))
           ) : (
-            <div className="px-4 py-3 text-sm text-muted">No scans yet. Scanning happens on the Dispatch desk.</div>
+            <div className="px-4 py-3 text-meta text-muted">No scans yet. Scanning happens on the Dispatch desk.</div>
           )}
         </Card>
       </section>
@@ -126,23 +128,21 @@ function ScanBadge({ result }: { result: string }) {
     unknown: ["Unknown", "warn"],
   };
   const [l, t] = map[result] ?? [result, "neutral"];
-  return <Badge tone={t}>{l}</Badge>;
+  return <Badge label={l} tone={t} />;
 }
 
 function TraceView({ r }: { r: TraceResult }) {
   return (
     <div className="flex flex-col gap-5">
       <Card className="px-5 py-4">
-        <div className="flex flex-wrap items-baseline gap-3">
-          <h2 className="font-mono text-lg font-semibold text-ink">{r.title}</h2>
-          <span className="text-sm text-muted">{r.sub}</span>
-        </div>
+        <SectionTitle className="mb-0 font-mono">{r.title}</SectionTitle>
+        <div className="mt-0.5 text-meta text-muted">{r.sub}</div>
         {r.facts.length ? (
           <dl className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-x-6 gap-y-2">
             {r.facts.map((f) => (
               <div key={f.l}>
-                <dt className="text-xs text-muted">{f.l}</dt>
-                <dd className="text-sm text-ink">{f.href ? <Link href={f.href}>{f.v}</Link> : f.v}</dd>
+                <dt className={labelClass}>{f.l}</dt>
+                <dd className="text-sm text-ink">{f.href ? <Link href={f.href} className={linkClass()}>{f.v}</Link> : f.v}</dd>
               </div>
             ))}
           </dl>
@@ -150,7 +150,7 @@ function TraceView({ r }: { r: TraceResult }) {
         {r.links.length ? (
           <div className="mt-3 flex flex-wrap gap-3 text-meta">
             {r.links.map((l) => (
-              <Link key={l.l} href={l.href!}>
+              <Link key={l.l} href={l.href!} className={linkClass()}>
                 {l.l} →
               </Link>
             ))}
@@ -168,21 +168,21 @@ function TraceView({ r }: { r: TraceResult }) {
 
       <div className="grid gap-5 lg:grid-cols-2">
         <section>
-          <h3 className="mb-2 text-sm font-semibold text-ink">Backward · what it was made from</h3>
+          <SubTitle>Backward · what it was made from</SubTitle>
           {r.back.length ? (
             <ol className="flex flex-col gap-3">
               {r.back.map((b, i) => (
                 <li key={i}>
                   <Card className="overflow-hidden">
                     <div className="flex items-center gap-2 border-b border-divider bg-canvas px-4 py-2">
-                      <Badge tone="brand">{b.stage}</Badge>
+                      <Badge label={b.stage} tone="brand" />
                       <span className="truncate font-mono text-meta text-ink">{b.title}</span>
                     </div>
                     {b.facts.length ? (
                       <dl className="grid grid-cols-2 gap-x-4 gap-y-1 px-4 py-2">
                         {b.facts.map((f) => (
                           <div key={f.l}>
-                            <dt className="text-2xs text-muted">{f.l}</dt>
+                            <dt className={eyebrowClass}>{f.l}</dt>
                             <dd className="text-meta text-ink">{f.v}</dd>
                           </div>
                         ))}
@@ -191,7 +191,7 @@ function TraceView({ r }: { r: TraceResult }) {
                     {b.rows.map((x, j) => (
                       <div key={j} className="flex items-center gap-2 border-t border-divider px-4 py-1.5 text-meta">
                         <Dot tone={x.tone === "warn" ? "warn" : x.tone === "bad" ? "danger" : "neutral"} />
-                        {x.href ? <Link href={x.href}>{x.text}</Link> : <span className="text-body">{x.text}</span>}
+                        {x.href ? <Link href={x.href} className={linkClass()}>{x.text}</Link> : <span className="text-body">{x.text}</span>}
                       </div>
                     ))}
                   </Card>
@@ -199,35 +199,35 @@ function TraceView({ r }: { r: TraceResult }) {
               ))}
             </ol>
           ) : (
-            <Card className="px-4 py-3 text-sm text-muted">Nothing upstream is recorded.</Card>
+            <div className="rounded-card border border-dashed border-line px-3 py-4 text-center text-meta text-muted">Nothing upstream is recorded.</div>
           )}
         </section>
 
         <section className="flex flex-col gap-3">
-          <h3 className="text-sm font-semibold text-ink">Forward · where it went</h3>
+          <SubTitle className="mb-0">Forward · where it went</SubTitle>
           {r.forward.map((f) => (
             <Card key={f.stage} className="overflow-hidden">
               <div className="border-b border-divider bg-canvas px-4 py-2">
-                <Badge tone="neutral">{f.stage}</Badge>
+                <Badge label={f.stage} tone="neutral" />
               </div>
               {f.rows.map((x, j) => (
                 <div key={j} className="border-t border-divider px-4 py-1.5 first:border-0">
-                  <span className="block text-meta text-ink">{x.href ? <Link href={x.href}>{x.text}</Link> : x.text}</span>
-                  {x.sub ? <span className="block text-xs text-muted">{x.sub}</span> : null}
+                  <span className="block text-meta text-ink">{x.href ? <Link href={x.href} className={linkClass()}>{x.text}</Link> : x.text}</span>
+                  {x.sub ? <span className="block text-meta text-muted">{x.sub}</span> : null}
                 </div>
               ))}
             </Card>
           ))}
           <Card className="overflow-hidden">
-            <div className="border-b border-divider bg-canvas px-4 py-2 text-meta font-medium text-ink">Customers</div>
+            <SubTitle className="mb-0 border-b border-divider bg-canvas px-4 py-2">Customers</SubTitle>
             {r.customers.length ? (
               r.customers.map((c, i) => (
                 <div key={i} className="flex items-start gap-3 border-t border-divider px-4 py-2 first:border-0">
                   <span className="min-w-0 flex-1">
-                    <Link href={c.href} className="block text-sm font-medium">
+                    <Link href={c.href} className={linkClass("brand", "block text-sm")}>
                       {c.customer}
                     </Link>
-                    <span className="block text-xs text-muted">
+                    <span className="block text-meta text-muted">
                       Order {c.orderNo}
                       {c.bill ? ` · bill ${c.bill}` : ""} · {c.sku} · lot{c.lots.length > 1 ? "s" : ""} {c.lots.join(", ")}
                     </span>
@@ -236,17 +236,17 @@ function TraceView({ r }: { r: TraceResult }) {
                     <span className="block text-sm tabular-nums text-ink">
                       {c.qty} {c.unit}
                     </span>
-                    {c.dispatched ? <Badge tone="success">Dispatched {c.dispatched === "yes" ? "" : c.dispatched}</Badge> : <Badge tone="warn">Not dispatched</Badge>}
+                    {c.dispatched ? <Badge label={`Dispatched${c.dispatched === "yes" ? "" : ` ${c.dispatched}`}`} tone="success" /> : <Badge label="Not dispatched" tone="warn" />}
                   </span>
                 </div>
               ))
             ) : (
-              <div className="px-4 py-3 text-sm text-muted">{r.kind === "order" || r.kind === "bill" ? "This is the customer end of the chain." : "Nothing from it has been allocated to an order yet."}</div>
+              <div className="px-4 py-3 text-meta text-muted">{r.kind === "order" || r.kind === "bill" ? "This is the customer end of the chain." : "Nothing from it has been allocated to an order yet."}</div>
             )}
           </Card>
           {r.stock.length ? (
             <Card className="overflow-hidden">
-              <div className="border-b border-divider bg-canvas px-4 py-2 text-meta font-medium text-ink">Still in stock</div>
+              <SubTitle className="mb-0 border-b border-divider bg-canvas px-4 py-2">Still in stock</SubTitle>
               {r.stock.map((s, i) => (
                 <div key={i} className="flex justify-between border-t border-divider px-4 py-1.5 text-meta first:border-0">
                   <span>
@@ -262,7 +262,7 @@ function TraceView({ r }: { r: TraceResult }) {
 
       {r.history.length ? (
         <section>
-          <h3 className="mb-2 text-sm font-semibold text-ink">History</h3>
+          <SubTitle>History</SubTitle>
           <Card className="overflow-hidden">
             {r.history.map((h, i) => (
               <div key={i} className="flex gap-3 border-t border-divider px-4 py-1.5 text-meta first:border-0">

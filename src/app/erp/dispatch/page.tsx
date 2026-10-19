@@ -8,8 +8,10 @@ import { erpDispatchHref, erpLabelsHref, erpTraceHref, orderTraceCode } from "@/
 import { fd } from "@/lib/erp/ui";
 import { calendarDate } from "@/lib/business-date";
 import { nowMs } from "@/lib/format";
-import { Badge, Card, cx } from "@/components/ui/primitives";
+import { Card, cx, EmptyState } from "@/components/ui/primitives";
 import { Page, PageLinks, QuickFind } from "../_ui/page-head";
+import { Badge } from "../_ui/badge";
+import { labelClass, linkClass } from "../_ui/look";
 import { UploadLrsButton } from "../transport/parts/upload-lrs-button";
 import { DispatchDesk } from "./desk";
 
@@ -42,9 +44,9 @@ export default async function ErpDispatch({ searchParams }: { searchParams: Prom
         sub={SCREEN.sub}
         actions={kit ? <UploadLrsButton key={upload} variant="secondary" today={today} transporters={kit.transporters} recent={kit.recent} canRead={kit.canRead} initialOpen={upload === "1"} /> : null}
       >
-        <QuickFind action="/erp/dispatch" name="order" inputMode="numeric" placeholder="Order number" button="Open" className="mb-4 max-w-[420px]" />
+        <QuickFind action={erpDispatchHref()} name="order" inputMode="numeric" placeholder="Order number" button="Open" className="max-w-[420px]" />
         <Card className="overflow-hidden">
-          <div className="grid grid-cols-[90px_1fr_120px_110px_90px_110px] gap-3 border-b border-divider bg-canvas px-4 py-2 text-xs font-medium text-muted">
+          <div className={cx("grid grid-cols-[90px_1fr_120px_110px_90px_110px] gap-3 border-b border-divider bg-canvas px-4 py-2", labelClass)}>
             <span>Order</span>
             <span>Delivery party</span>
             <span>Godown</span>
@@ -59,14 +61,14 @@ export default async function ErpDispatch({ searchParams }: { searchParams: Prom
                 <span className="truncate">{o.delivery}</span>
                 <span className="truncate text-muted">{o.godown}</span>
                 <span className={cx(o.dispatchOn && o.dispatchOn < today ? "text-danger" : "text-body")}>{o.dispatchOn ? fd(o.dispatchOn) : "—"}</span>
-                <span>{o.billed ? `${o.billed} of ${o.lines}` : <Badge tone="warn">Not billed</Badge>}</span>
+                <span>{o.billed ? `${o.billed} of ${o.lines}` : <Badge label="Not billed" tone="warn" />}</span>
                 <span className="text-right tabular-nums">
                   {o.scanned} / {Math.round(o.target)}
                 </span>
               </Link>
             ))
           ) : (
-            <div className="px-4 py-4 text-sm text-muted">No order is Ready and waiting to leave. A line reaches the desk once it is marked Ready on Orders.</div>
+            <EmptyState title="No order is Ready and waiting to leave." body="A line reaches the desk once it is marked Ready on Orders." />
           )}
         </Card>
       </Page>
@@ -77,8 +79,15 @@ export default async function ErpDispatch({ searchParams }: { searchParams: Prom
   if (!board)
     return (
       <Page title={SCREEN.label}>
-        <Card className="px-5 py-4 text-sm">
-          There is no order {orderNo}. <Link href={erpDispatchHref()}>Back to the queue</Link>
+        <Card>
+          <EmptyState
+            title={`There is no order ${orderNo}.`}
+            action={
+              <Link href={erpDispatchHref()} className={linkClass()}>
+                Back to the queue
+              </Link>
+            }
+          />
         </Card>
       </Page>
     );
@@ -89,9 +98,15 @@ export default async function ErpDispatch({ searchParams }: { searchParams: Prom
       sub={`${board.delivery}${board.delivery !== board.billing ? ` (billed to ${board.billing})` : ""}${board.area ? ` · ${board.area}` : ""}${board.transporter ? ` · ${board.transporter}` : ""}${board.dispatchOn ? ` · leaves ${fd(board.dispatchOn)}` : ""}`}
       actions={
         <PageLinks>
-          <Link href={erpDispatchHref()}>← Queue</Link>
-          <Link href={erpLabelsHref({ order: board.orderNo })}>Dispatch labels</Link>
-          <Link href={erpTraceHref(orderTraceCode(board.orderNo))}>Trace</Link>
+          <Link href={erpDispatchHref()} className={linkClass()}>
+            ← Queue
+          </Link>
+          <Link href={erpLabelsHref({ order: board.orderNo })} className={linkClass()}>
+            Dispatch labels
+          </Link>
+          <Link href={erpTraceHref(orderTraceCode(board.orderNo))} className={linkClass()}>
+            Trace
+          </Link>
         </PageLinks>
       }
     >
