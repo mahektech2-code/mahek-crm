@@ -4399,17 +4399,6 @@ export const SETTINGS = [
     max: 100000,
   },
   {
-    key: "erp.purchase.minQuotations",
-    type: "integer",
-    category: "erp",
-    label: "Quotations needed before one is selected",
-    description:
-      "For an item whose purchase rule is Quotation (or a requirement the buyer sent for quotations): how many vendors' quotations must be in before one can be selected and the PO raised. One means a single quotation is enough; two or more is a real comparison.",
-    default: 2,
-    min: 1,
-    max: 10,
-  },
-  {
     key: "erp.returns.ownerApprovalPaise",
     type: "integer",
     category: "erp",
@@ -4418,6 +4407,17 @@ export const SETTINGS = [
       "A purchase return or customer return worth more than this, with GST, needs the owner (an ERP administrator) to approve it as well, after the ordinary approval. 0 switches the second approval off. In paise: 1,00,00,000 is ₹1,00,000.",
     default: 10_000_000,
     min: 0,
+  },
+  {
+    key: "erp.returns.unallocatedDays",
+    type: "integer",
+    category: "erp",
+    label: "Customer returns: how far back a line with no lot can be returned (days)",
+    description:
+      "A customer return is raised against the order line the goods went out on. A line that went out with no lot allocated — the Taken Order history, or stock dispatched before batch codes — is offered when its order is no older than this, and the batch is read off the returned cans. Lines with a lot allocated are offered whatever their age.",
+    default: 180,
+    min: 0,
+    max: 3650,
   },
   {
     key: "erp.stockCheck.onRequirement",
@@ -4523,6 +4523,26 @@ export const SETTINGS = [
     default: 5,
     min: 0,
     max: 50,
+  },
+  {
+    key: "erp.purchase.poWatiTemplate",
+    type: "text",
+    category: "erp",
+    label: "Purchase orders · Wati template",
+    description:
+      "The name of the APPROVED Wati template a PO goes out as when it is shared on WhatsApp. It may use {{name}} (who it is sent to), {{vendor}}, {{po}}, {{items}}, {{total}}, {{deliver_to}}, {{delivery}}, {{link}} (the PO's PDF) and {{message}} (what the sender wrote, link included). A template asking for anything else is not used. Blank, or WhatsApp switched off on the Founder Dashboard: WhatsApp opens on the sender's own phone with the message written.",
+    default: "",
+  },
+  {
+    key: "erp.purchase.poGstPercent",
+    type: "integer",
+    category: "erp",
+    label: "GST on a PO from a requirement",
+    description:
+      "The GST rate written on a PO line made from a requirement — linked from the Quotation manager, or created at the item's price. Neither the sheet nor the raw material holds a GST rate, so this is the rate the ERP PO, the register and the vendor payout read.",
+    default: 18,
+    min: 0,
+    max: 28,
   },
   {
     key: "erp.production.recipeTolerancePercent",
@@ -4734,6 +4754,17 @@ export const SETTINGS = [
     default: 7,
     min: 1,
     max: 60,
+  },
+  {
+    key: "erp.logistics.syncDays",
+    type: "integer",
+    category: "erp",
+    label: "Logistics · catch missed dispatches from the last",
+    description:
+      "Days back that a dispatch-verified line with no consignment is given one when Logistics opens and every hour. It catches anything the verify step did not hand over; older history is left alone.",
+    default: 30,
+    min: 1,
+    max: 365,
   },
   {
     key: "erp.location.autoDetect",
@@ -6439,9 +6470,11 @@ export type Config = {
   "erp.location.godownRadiusM": number;
   "erp.orders.live": boolean;
   "erp.purchase.ownVehicleRatePerKmPaise": number;
-  "erp.purchase.minQuotations": number;
   "erp.purchase.receiptTolerancePercent": number;
+  "erp.purchase.poWatiTemplate": string;
+  "erp.purchase.poGstPercent": number;
   "erp.returns.ownerApprovalPaise": number;
+  "erp.returns.unallocatedDays": number;
   "erp.stockCheck.onRequirement": boolean;
   "erp.stockCheck.tolerancePercent": number;
   "erp.stockCheck.toleranceFloor": number;
@@ -6484,6 +6517,7 @@ export type Config = {
   "erp.logistics.signature": string;
   "erp.logistics.callEveryDays": number;
   "erp.logistics.lateAfterDays": number;
+  "erp.logistics.syncDays": number;
   "erp.ai.voice.enabled": boolean;
   "erp.ai.alerts.enabled": boolean;
   "erp.ai.alerts.rateJumpPct": number;

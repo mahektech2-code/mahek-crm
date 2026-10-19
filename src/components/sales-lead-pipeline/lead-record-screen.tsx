@@ -659,7 +659,7 @@ export function SampleTab({ lead }: { lead: Lead }) {
     return (
       <Card className="px-6 py-10 text-center">
         <div className="text-[15px] font-semibold text-ink">No sample requested yet</div>
-        <div className="mt-1 text-sm text-muted">A sample opens once the qualification checklist is complete.</div>
+        <div className="mt-1 text-sm text-muted">A sample can be requested once the Qualification is complete and the Sales Manager has verified it.</div>
       </Card>
     );
   }

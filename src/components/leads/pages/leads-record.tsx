@@ -1,4 +1,6 @@
-import { canValidateGstById, canVerifyLeadById } from "@/lib/services/lead-verifier";
+import { canVerifyLeadById, gstValidatorRefusalById } from "@/lib/services/lead-verifier";
+import { nextActionOwnerCandidates } from "@/lib/services/lead-actions-service";
+import { sampleEligibility } from "@/lib/services/lead-qualification-flow-service";
 import { type LeadWorkspace } from "@/lib/lead-workspace";
 import { qualificationAccess } from "@/lib/lead-qualification-access";
 import { canOpenModule } from "@/lib/access";
@@ -9,7 +11,13 @@ import { canFor } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import { nowMs } from "@/lib/format";
 import { today } from "@/lib/recompute";
-import { gateForNext, ladderVerdicts, mustDecideSuspect, qualificationComplete } from "@/lib/engines/lead-gates";
+import {
+  gateForNext,
+  ladderVerdicts,
+  mustDecideSuspect,
+  qualificationComplete,
+  qualificationReadyForReview,
+} from "@/lib/engines/lead-gates";
 import { isParked, rungOf } from "@/lib/engines/lead-ladder";
 import {
   canLead,
@@ -174,31 +182,16 @@ export async function Body({
   const figuresStale = Boolean(gateInput.figuresStale);
 
   /*
-   * §11.6 — WHO MAY ANSWER THE GST CHECK ON THIS LEAD, resolved here because it
-   * is the action's rule and the screen must not invent a second one.
-   *
-   * The capability OR the named back office seat says who may — a team that has
-   * put somebody in that seat should not have to also grant them an app for the
-   * one thing the seat is for. THE LEAD'S OWN OWNER MAY TOO: the Telecaller who
-   * entered the number validates it, and there is no longer a self-check here
-   * or in `validateGstin` to disagree about. What stays is that the validation
-   * belongs to the number it was made against (a changed GSTIN clears it), and
-   * that it is a Qualification act — refused before the Sales Manager has
-   * verified the Prospect.
-   *
-   * The sentence travels with the answer, so the disabled control's hover says
-   * the same thing the action would have said.
+   * WHO MAY ANSWER THE GST CHECK ON THIS LEAD: the lead's own Sales Manager
+   * (or the designated approver, or an admin), never whoever entered it, and
+   * only once Qualification is open. The sentence is the action's own, so the
+   * disabled control's hover says what the action would have said.
    */
-  /* The responsible Sales Manager validates GST (`validateGstin` says so). */
-  const gstSeatOrCapability = await canValidateGstById(user, id);
+  const gstRefusal = await gstValidatorRefusalById(user, id);
   const gstNotYet = qualificationAccess(record.stage);
   const gstBeforeQualification = ["suspect", "new", "prospect", "contacted"].includes(record.stage);
-  const canValidateGst = gstSeatOrCapability && !gstBeforeQualification;
-  const gstBlockedReason = gstBeforeQualification
-    ? gstNotYet.reason
-    : gstSeatOrCapability
-      ? null
-      : "Checking a GST number is the CRM's, the Sales Dashboard's or the accounts desk's. Yours is not one of the hats that carries it.";
+  const canValidateGst = gstRefusal === null && !gstBeforeQualification;
+  const gstBlockedReason = gstBeforeQualification ? gstNotYet.reason : gstRefusal;
   const ladder = ladderOf(record);
 
   /*
@@ -237,12 +230,14 @@ export async function Body({
     hasCommitment: isConfirmedCommitment(record),
     hasOrder: record.countingOrderCount > 0,
     sampleAwaitingDispatch: samples.some((s) => s.state === "approved"),
-    /* THE TELECALLER'S QUALIFICATION, read off the gate rather than typed here:
-       whether the manager has verified the Prospect, what the manager said about
-       the Qualification, and whether everything the Telecaller owns is answered. */
+    /* The Qualification, read off the gate: whether the Prospect is verified,
+       what the manager said, and whether the answers are in and READY FOR
+       REVIEW. That is the looser test the hand-off itself uses, because GST
+       is validated during the review and the strict test would never ask for
+       it. The strict test is used only for "may request a sample", below. */
     verified: Boolean(record.verifiedAt),
     qualificationReview: record.qualificationReview,
-    qualificationComplete: qualificationComplete(gateInput),
+    qualificationComplete: qualificationReadyForReview(gateInput),
   };
 
   /*
@@ -265,7 +260,9 @@ export async function Body({
     sampleState: (record.sample?.state as SampleState | undefined) ?? null,
     verified: actionFacts.verified,
     qualificationReady:
-      Boolean(actionFacts.qualificationComplete) && record.qualificationReview === "verified",
+      qualificationComplete(gateInput) && record.qualificationReview === "verified",
+    awaitingReview:
+      qualificationReadyForReview(gateInput) && record.qualificationReview == null,
   };
 
   return (
@@ -303,11 +300,19 @@ export async function Body({
       handover={handover}
       handoverReasons={config["people.amChangeReasons"]}
       sampleReasons={config["leads.sampleReasons"]}
+      /* The same check requestSample makes before it writes, so the button
+         is disabled with the reason rather than offered and then refused. */
+      sampleBlocked={await (async () => {
+        const e = await sampleEligibility(id);
+        return e.applies && !e.eligible ? (e.message ?? "Not ready for a sample yet.") : null;
+      })()}
       /* §26's ten codes as a MANAGER may have reworded them. The action
          validates what arrives against this same setting, so a picker built
          from the literal list would offer a code the server refuses. */
       lostReasons={config["leads.lostReasons"]}
       holdReasons={config["leads.holdReasons"]}
+      day={day}
+      parkCandidates={await nextActionOwnerCandidates()}
       discountThresholdPercent={config["leads.distributorDiscountApprovalPercent"]}
       creditLimitThresholdPaise={config["leads.distributorCreditLimitApprovalPaise"]}
       canVerify={await canVerifyLeadById(user, id, { designated: true })}

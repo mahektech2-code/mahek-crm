@@ -46,6 +46,11 @@ export type NavRowItem = {
   icon: string;
   /** Only where the route is a prefix of every other route in the app. */
   exact?: boolean;
+  /**
+   * Other path prefixes this row is lit on. The CRM's "Leads" row lands on
+   * one screen and stands for every lead and sample screen behind it.
+   */
+  match?: readonly string[];
 };
 
 export type NavRowGroup = {
@@ -116,9 +121,24 @@ function writeOpen(storageKey: string, next: string): void {
 }
 
 export function isRowActive(item: NavRowItem, pathname: string): boolean {
+  if (item.match?.some((p) => pathname === p || pathname.startsWith(p + "/"))) return true;
   return item.exact
     ? pathname === item.href
     : pathname === item.href || pathname.startsWith(item.href + "/");
+}
+
+/**
+ * The ONE row that is active: the longest href that matches. A row and a row
+ * inside it ("/crm/leads" and "/crm/leads/intake") both match the inner page,
+ * and only the more specific one should light up — so a lead's own page
+ * lights All Leads without the list having to be marked exact.
+ */
+export function activeHrefFor(items: NavRowItem[], pathname: string): string | null {
+  let best: string | null = null;
+  for (const i of items) {
+    if (isRowActive(i, pathname) && (best === null || i.href.length > best.length)) best = i.href;
+  }
+  return best;
 }
 
 export function CollapsibleNav({
@@ -174,8 +194,9 @@ export function CollapsibleNav({
   const getSnapshot = React.useCallback(() => readOpen(storageKey), [storageKey]);
   const remembered = React.useSyncExternalStore(subscribe, getSnapshot, () => "");
 
-  const activeGroup =
-    groups.find((g) => g.items.some((i) => isRowActive(i, pathname)))?.label ?? null;
+  const activeHref = activeHrefFor([...pinned, ...groups.flatMap((g) => g.items)], pathname);
+  const isActive = (i: NavRowItem) => i.href === activeHref;
+  const activeGroup = groups.find((g) => g.items.some(isActive))?.label ?? null;
   const open = openGroupFor(groups, activeGroup, remembered, pathname);
 
   /*
@@ -193,7 +214,7 @@ export function CollapsibleNav({
           <Row
             key={item.href}
             item={item}
-            active={isRowActive(item, pathname)}
+            active={isActive(item)}
             count={countFor(item)}
             renderIcon={renderIcon}
             badgeToneFor={badgeToneFor}
@@ -207,7 +228,7 @@ export function CollapsibleNav({
               <Row
                 key={item.href}
                 item={item}
-                active={isRowActive(item, pathname)}
+                active={isActive(item)}
                 count={countFor(item)}
                 renderIcon={renderIcon}
                 badgeToneFor={badgeToneFor}
@@ -226,7 +247,7 @@ export function CollapsibleNav({
         <Row
           key={item.href}
           item={item}
-          active={isRowActive(item, pathname)}
+          active={isActive(item)}
           count={countFor(item)}
           renderIcon={renderIcon}
           badgeToneFor={badgeToneFor}
@@ -239,7 +260,7 @@ export function CollapsibleNav({
             <div key={group.label} className="mt-1 first:mt-2">
               <Row
                 item={group.items[0]}
-                active={isRowActive(group.items[0], pathname)}
+                active={isActive(group.items[0])}
                 count={countFor(group.items[0])}
                 renderIcon={renderIcon}
                 badgeToneFor={badgeToneFor}
@@ -314,7 +335,7 @@ export function CollapsibleNav({
                   <Row
                     key={item.href}
                     item={item}
-                    active={isRowActive(item, pathname)}
+                    active={isActive(item)}
                     count={countFor(item)}
                     renderIcon={renderIcon}
                     badgeToneFor={badgeToneFor}

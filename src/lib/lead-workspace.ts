@@ -173,24 +173,24 @@ export const LEAD_SECTIONS: readonly LeadSection[] = [
   },
   {
     slug: "lead-intake",
-    label: "Intake",
+    label: "Add a lead",
     path: "leads/intake",
     tabs: [
       {
         path: "leads/intake",
-        label: "Capture a lead",
+        label: "One lead",
         exact: true,
-        hint: "Raising a lead at a desk — the sales type is asked first, alone.",
+        hint: "Add one lead by hand.",
       },
       {
         path: "leads/intake/bulk",
-        label: "Bulk intake",
-        hint: "A file of leads, validated and previewed before anything is written.",
+        label: "From a file",
+        hint: "Upload a file of leads. You see a preview before anything is saved.",
       },
       {
         path: "leads/intake/duplicates",
         label: "Duplicates",
-        hint: "Two leads for one shop — detected here, merged nowhere yet.",
+        hint: "Leads that look like the same shop.",
       },
     ],
   },
@@ -414,7 +414,7 @@ export function leadSection(slug: string): LeadSection | undefined {
 }
 
 /**
- * THE SEVEN SECTIONS THAT HAVE LEFT THE MAIN NAVIGATION, and are still modules,
+ * THE EIGHT SECTIONS THAT HAVE LEFT THE MAIN NAVIGATION, and are still modules,
  * routes and grants.
  *
  * Both sidebars mark exactly these rows `legacy` (`components/shell/nav.ts` and
@@ -425,6 +425,7 @@ export function leadSection(slug: string): LeadSection | undefined {
  */
 export const NAV_RETIRED_SLUGS = [
   "lead-funnel",
+  "lead-appointments",
   "lead-qualify",
   "samples",
   "lead-commercial",

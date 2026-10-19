@@ -10,7 +10,7 @@ import { db } from "@/db";
 import { appAccess, appModuleAccess, employees, erpUserPowers, hireUserRoles, hrmsUserPowers, users } from "@/db/schema";
 import { APPS, type AppId } from "@/lib/apps";
 import { placeFromRow, type CrewRole, type FactoryDept, type FactoryPlace } from "@/lib/factory/departments";
-import { isAlwaysOpen, moduleAllowed, moduleKeysForApp, modulesForApp } from "@/lib/modules";
+import { isAlwaysOpen, moduleAllowed, moduleKeysForApp, modulesForApp, writeLevelsForApp } from "@/lib/modules";
 
 /* ---------------------------------------------------------------------------
  * Who can open what, read for the Access screen.
@@ -212,6 +212,7 @@ function buildGrants(
       granted: isAlwaysOpen(m.key) || moduleAllowed(m.key, stored, a.id, administrator),
     }));
     const isWrite = new Set(all.filter((m) => m.writeOf).map((m) => m.key));
+    const levels = new Set(writeLevelsForApp(a.id).values());
     const screens = modules.filter((m) => !isWrite.has(m.key));
     const held = new Set(modules.filter((m) => m.granted).map((m) => m.key));
     return {
@@ -222,7 +223,7 @@ function buildGrants(
       grantedCount: screens.filter((m) => m.granted).length,
       totalCount: screens.length,
       readOnly: all
-        .filter((m) => m.writeOf && held.has(m.writeOf) && !held.has(m.key))
+        .filter((m) => levels.has(m.key) && m.writeOf && held.has(m.writeOf) && !held.has(m.key))
         .map((m) => all.find((x) => x.key === m.writeOf)?.label ?? m.writeOf!),
       whole,
     };

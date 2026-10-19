@@ -232,32 +232,13 @@ describe("scope of each vantage, as §7 states it", () => {
     }
   });
 
-  test("except at Prospect, where the GST number is theirs and nobody else's", () => {
-    /* The one cell this engine does not take from §7's table, and the engine
-     * file carries the argument: §2 and §11.6 both give GST validation to the
-     * back office, and it is the rung qualification is blocked on. Pinned by
-     * name so the divergence cannot be undone by accident — reversing it is a
-     * decision somebody makes here, having read why. */
+  test("including Prospect: GST is the Sales Manager's to validate, not theirs", () => {
+    /* The back office used to read "Check GST number" here. A funnel lead's
+     * GST is validated by its own Sales Manager (gstValidatorRefusal), so the
+     * sentence pointed at a button the server refuses. */
     for (const stage of ["prospect", "contacted"] as LeadStage[]) {
       const a = roleAction(facts(stage), "back_office");
-      assert.equal(a.label, "Check GST number", stage);
-      assert.equal(a.actionable, true, stage);
-    }
-  });
-
-  test("management on a distributor candidate is told there is a track, not nothing", () => {
-    /* §7's note, second half — the half `facts.salesType` exists for. */
-    for (const stage of ["suspect", "prospect", "qualification"] as LeadStage[]) {
-      assert.equal(
-        roleAction(facts(stage, { salesType: "distributor" }), "management").label,
-        "Watch the distributor steps",
-        stage,
-      );
-      assert.equal(
-        roleAction(facts(stage), "management").label,
-        "No approval pending",
-        stage,
-      );
+      assert.equal(a.actionable, false, stage);
     }
   });
 

@@ -91,6 +91,23 @@ It takes the quantity out of a lot at one godown (read as an outflow) and posts 
 A loss nobody can see is a loss nobody asks about. Because a write-off is a transfer with a date, a lot, a quantity, a person and a remark, "what did we lose this month, and of what" is a list — the dashboard counts it by item type — and the unusual-activity alerts can notice a run of them.
 </Callout>
 
+## Adjusting stock by hand
+
+Any lot on any stage can be adjusted from its row: **Add** or **Remove**, a quantity and a reason (Damaged, Leakage, Lost or missing, Counting mistake, Entry missed, or Other with the reason written). It takes effect on save; nobody approves it.
+
+- **Add** writes an inflow entry on the same lot in that stage's own ledger, marked as an adjustment.
+- **Remove** writes the quantity off to Item Lost Record as a transfer — the same write-off the transfer form makes, boxes and labelled cans included — so it is never a silent subtraction.
+- A removal is refused past what the lot holds: stock is never taken below zero.
+- Every adjustment keeps who, when, why, the stock before and what it posted.
+
+<Callout kind="why">
+Stock that is wrong has to be put right where it is seen, and a correction nobody can trace is worse than the error. Because an adjustment is an ordinary entry or write-off with a reason and a name, the stock inquiry shows it in the lot's history like any other movement.
+</Callout>
+
+## The stock inquiry
+
+One item, in detail: the lots holding it now, and every movement in a period with a running balance from the period's opening. Movements are read from the same sources stock is added up from — the stage's entries, and the documents that consume it (transfers, SFG use, filling, packing, orders, returns to the vendor, cans and boxes used). Item Lost Record is left out, so a write-off reads as one movement out rather than a move between two godowns. A period with more than 2,000 movements shows the newest 2,000 and says so.
+
 ## Who can do what
 
 | Act | Needs |
@@ -102,6 +119,8 @@ A loss nobody can see is a loss nobody asks about. Because a write-off is a tran
 | Reject or mark returned | Dispatch-override power |
 | Transfer | Item transfers |
 | Write off to Item Lost Record | Write off to Item Lost Record |
+| Adjust stock (Add or Remove) | The stock-control power |
+| Stock inquiry | The Stock screen |
 
 ## Settings
 

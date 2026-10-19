@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { Pill } from "@/components/console/parts";
-import { plural } from "@/components/console/words";
 import { salesTypeLabel, stageLabel } from "@/lib/lead-labels";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import { vantageLabel } from "@/lib/lead-vantage";
@@ -70,11 +69,9 @@ export function RoleFocusCard({
   return (
     <div className="rounded-[6px] border border-line bg-surface">
       <div className="border-b border-divider px-5 py-3.5">
-        <div className="text-lg leading-6 font-semibold text-ink">{heading(focus)}</div>
-        <div className="mt-0.5 text-[13px] text-pretty text-muted">
-          {focus.total === 0
-            ? "Nothing on the book is waiting on you."
-            : `${plural(focus.total, "lead")} waiting on you. Each says what it wants.`}
+        <div className="flex items-center gap-2 text-[15px] font-semibold text-ink">
+          {heading(focus)}
+          {focus.total > 0 ? <Pill tone="brand">{focus.total}</Pill> : null}
         </div>
         {/* WHICH JOB PUT THEM THERE, where more than one did. Two people are
             being asked for two different things by one reader, and a single
@@ -98,7 +95,7 @@ export function RoleFocusCard({
               read and no part in it, which is a thing to go and ask about. */}
           {focus.bookTotal === 0
             ? "There are no active leads in your book yet."
-            : "None of these leads is waiting on you. The full list says what each one reads as to the people it is waiting on."}
+            : "No lead is waiting on you right now."}
         </div>
       ) : (
         <ul className="m-0 list-none p-0">
@@ -131,11 +128,6 @@ export function RoleFocusCard({
             answer is worked out over a page of the book rather than asked of
             the database. A card that did not say so would read as a statement
             about the whole book. */}
-        {focus.capped ? (
-          <span className="ml-2">
-            read off the {focus.scanned} leads promised soonest, of {focus.bookTotal}
-          </span>
-        ) : null}
       </div>
     </div>
   );

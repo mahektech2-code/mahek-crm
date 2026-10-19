@@ -152,6 +152,8 @@ export type LeadGateActionFacts = {
    * sample form), for a surface that holds a list row rather than the gate.
    */
   qualificationReady?: boolean;
+  /** Every answer is in and the Sales Manager's review is what is left. */
+  awaitingReview?: boolean;
 };
 
 const NOTHING: LeadGateAction = {
@@ -233,7 +235,7 @@ export function gateAction(facts: LeadGateActionFacts): LeadGateAction {
           label: "Open qualification",
           tone: "brand",
           control: "advance",
-          says: "The Sales Manager has verified this Prospect. Qualification is the Telecaller's to complete.",
+          says: "The Sales Manager has verified this Prospect. The lead's owner now completes the Qualification, and the Sales Manager reviews it.",
         };
       }
       return {
@@ -253,6 +255,14 @@ export function gateAction(facts: LeadGateActionFacts): LeadGateAction {
      */
     case "qualified":
     case "qualification":
+      if (!distributor && facts.qualificationReady === false && facts.awaitingReview) {
+        return {
+          label: "Waiting for the Sales Manager's review",
+          tone: "warn",
+          control: "qualify",
+          says: "Every answer is in. The Sales Manager checks the GST number and reviews the answers; a sample can be requested once they verify it.",
+        };
+      }
       if (!distributor && facts.qualificationReady === false) {
         return {
           label: "Complete qualification",

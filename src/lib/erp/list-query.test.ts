@@ -1,7 +1,7 @@
-import { test } from "node:test";
+import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import type { ListRow, ListSpec, Tone } from "./ui";
-import { listCsv, listQueryParams, pageOf, parseListQuery, queryRows, type ListQuery } from "./list-query";
+import { groupHeadValues, listCsv, listQueryParams, pageOf, parseListQuery, queryRows, type ListQuery } from "./list-query";
 
 const FLAGS: Record<string, [string, Tone]> = { late: ["Running late", "danger"] };
 const spec: ListSpec = {
@@ -94,4 +94,45 @@ test("the export is every filtered row, not the page", () => {
   assert.equal(n, 3);
   assert.equal(csv.split("\n").length, 4);
   assert.match(csv.split("\n")[0], /^No,Item,Qty,Status,Godown,Flags$/);
+});
+
+describe("a group's header facts", () => {
+  const row = (id: string, po: string | null, date: string) => ({ id, v: { pr: "15", po, date } }) as unknown as ListRow;
+  test("a fact every row shares is drawn once", () => {
+    assert.equal(groupHeadValues([row("a", "PO-15", "2026-10-17"), row("b", "PO-15", "2026-10-17")], ["po", "date"]).po, "PO-15");
+  });
+  test("a fact the rows disagree on lists every value, in order", () => {
+    const h = groupHeadValues([row("a", "PO-15", "2026-10-17"), row("b", "PO-16", "2026-10-17"), row("c", "PO-15", "2026-10-17")], ["po", "date"]);
+    assert.equal(h.po, "PO-15, PO-16");
+    assert.equal(h.date, "2026-10-17");
+  });
+  test("an empty value is not listed beside a real one", () => {
+    assert.equal(groupHeadValues([row("a", null, "x"), row("b", "PO-9", "x")], ["po"]).po, "PO-9");
+    assert.equal(groupHeadValues([row("a", "PO-9", "x"), row("b", null, "x")], ["po"]).po, "PO-9");
+  });
+});
+
+describe("a list that folds rows under a total", () => {
+  const fspec: ListSpec = { ...spec, groups: undefined, chips: undefined, fold: { l: "Cans", whole: "Item total", parts: "By lot" } };
+  const lotOf = (id: string, no: string, qty: number): ListRow => ({ id, v: { no, item: "Can 5 L", qty, status: "Open", godown: "Bhiwandi" }, flags: [] });
+  const FOLD: ListRow[] = [
+    row("t", "T1", "Toluene", 10, "Open", "Bhiwandi"),
+    { ...row("can", "2 lots", "Can 5 L", 30, "Open", "Bhiwandi"), sub: [lotOf("c1", "C-001", 10), lotOf("c2", "C-002", 20)] },
+  ];
+
+  test("totals are the rows, and By lot puts each lot in its total's place", () => {
+    assert.deepEqual(queryRows(fspec, FOLD, Q(), FLAGS).list.map((r) => r.id), ["t", "can"]);
+    assert.deepEqual(queryRows(fspec, FOLD, Q({ parts: true }), FLAGS).list.map((r) => r.id), ["t", "c1", "c2"]);
+    assert.deepEqual(parseListQuery(listQueryParams(Q({ parts: true }))).parts, true);
+  });
+
+  test("a lot number finds its total, and a named lot keeps its total in the list", () => {
+    assert.deepEqual(queryRows(fspec, FOLD, Q({ q: "c-002" }), FLAGS).list.map((r) => r.id), ["can"]);
+    assert.deepEqual(queryRows(fspec, FOLD, Q({ ids: ["c1"] }), FLAGS).list.map((r) => r.id), ["can"]);
+    assert.deepEqual(queryRows(fspec, FOLD, Q({ ids: ["c1"], parts: true }), FLAGS).list.map((r) => r.id), ["c1"]);
+  });
+
+  test("a list that does not fold ignores By lot", () => {
+    assert.deepEqual(queryRows({ ...fspec, fold: undefined }, FOLD, Q({ parts: true }), FLAGS).list.map((r) => r.id), ["t", "can"]);
+  });
 });

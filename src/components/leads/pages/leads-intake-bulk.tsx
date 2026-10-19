@@ -4,6 +4,7 @@ import { getConfig } from "@/lib/config/store";
 import { today } from "@/lib/recompute";
 import { canLead } from "@/lib/services/lead-console-service";
 import { nextActionOwners } from "@/lib/services/lead-intake-service";
+import { assignableAccounts } from "@/lib/services/lead-desk-assignment-service";
 import { LeadTabs } from "@/components/leads/lead-tabs";
 import { BulkScreen } from "@/components/leads/intake/bulk/bulk-screen";
 
@@ -32,8 +33,9 @@ export async function Body({
 }) {
   const user = await requireUser();
 
-  const [owners, config, day, canWork] = await Promise.all([
+  const [owners, assignable, config, day, canWork] = await Promise.all([
     nextActionOwners(),
+    assignableAccounts(),
     getConfig(),
     today(),
     canLead(user, "lead.work"),
@@ -44,6 +46,8 @@ export async function Body({
       <LeadTabs workspace={workspace} />
       <BulkScreen workspace={workspace}
         owners={owners}
+        /* Only people who can open a lead may own one; the save checks the same. */
+        bookOwners={owners.filter((o) => assignable.some((a) => a.id === o.id))}
         today={day}
         requireNextAction={config["leads.requireNextAction"]}
         canWork={canWork}

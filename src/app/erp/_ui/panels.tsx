@@ -3,7 +3,7 @@
 import type { ListRow } from "@/lib/erp/ui";
 
 /* ---------------------------------------------------------------------------
- * Panels a screen draws inside its record drawer, keyed by kind: lot
+ * Panels a screen draws inside its record dialog, keyed by kind: lot
  * allocation on an order line, test evidence on a purchase test, the lots of a
  * packing batch, the trace of a bill. Each phase registers its own.
  * ------------------------------------------------------------------------- */

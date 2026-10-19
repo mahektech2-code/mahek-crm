@@ -1,5 +1,6 @@
 "use client";
 
+import { OutsideLeadHub } from "@/components/leads/hub/hub-context";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import { SalesmanLink } from "@/components/leads/salesman-link";
 import * as React from "react";
@@ -91,19 +92,26 @@ export function SuspectsScreen({
         title="Suspect decisions"
         subtitle={`A Suspect cannot be visited for ever. The cap asks for an answer — Prospect or not — and it never refuses the visit: a salesman whose visit is blocked stops recording visits, and we would lose the GPS, the competitor note and the reason in order to stop a number reaching ${decideAt + 1}.`}
         actions={
-          <Link
-            href={leadHref(workspace, "leads")}
-            className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
-          >
-            ← All leads
-          </Link>
+          <OutsideLeadHub>
+            <Link
+              href={leadHref(workspace, "leads")}
+              className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
+            >
+              ← All leads
+            </Link>
+          </OutsideLeadHub>
         }
       />
 
       <FilterChips
         current={band}
         options={[
-          { key: "all", label: "Everybody undecided", href: base, count: rows.length },
+          {
+            key: "all",
+            label: "Everybody undecided",
+            href: base,
+            count: rows.length,
+          },
           {
             key: "warned",
             label: `Warned (${warnAt} visits)`,
@@ -116,7 +124,12 @@ export function SuspectsScreen({
             href: `${base}?band=must`,
             count: must.length,
           },
-          { key: "past", label: "Past it", href: `${base}?band=past`, count: past.length },
+          {
+            key: "past",
+            label: "Past it",
+            href: `${base}?band=past`,
+            count: past.length,
+          },
         ]}
       />
 

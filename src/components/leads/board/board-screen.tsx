@@ -1,5 +1,6 @@
 "use client";
 
+import { OutsideLeadHub } from "@/components/leads/hub/hub-context";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import * as React from "react";
 import Link from "next/link";
@@ -176,12 +177,14 @@ export function BoardScreen({
         title="Stage board"
         subtitle="The same book as the list, drawn as columns per rung — the view for seeing where a book is bunching rather than which lead to open. Dragging a card does not move it: it opens the advance flow with the gate attached."
         actions={
-          <Link
+          <OutsideLeadHub>
+<Link
             href={leadHref(workspace, `leads?${search.toString()}`)}
             className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
           >
             Back to the list
           </Link>
+</OutsideLeadHub>
         }
       />
 
@@ -317,7 +320,8 @@ export function BoardScreen({
         </div>
       )}
 
-      <p className="mt-1 max-w-[860px] text-[12px] text-pretty text-muted">
+      <OutsideLeadHub>
+<p className="mt-1 max-w-[860px] text-[12px] text-pretty text-muted">
         {drawn === board.total
           ? `Every one of ${plural(board.total, "lead")} on this ladder is drawn.`
           : `${drawn.toLocaleString("en-IN")} cards drawn of ${board.total.toLocaleString("en-IN")} — each column is capped at ${board.cap} and says its own true count in its header. The counts come from the database, not from what fits on the screen.`}{" "}
@@ -325,6 +329,7 @@ export function BoardScreen({
         answer, evaluated on the server, and the same verdict the advance flow is
         handed — so the card and the refusal cannot disagree.
       </p>
+</OutsideLeadHub>
     </div>
   );
 }
@@ -516,7 +521,7 @@ function Card({
               ? card.nextActionOverdue
                 ? "The day somebody promised something, and it has gone past."
                 : "What happens next, and when."
-              : "Nothing is owed by anybody on this lead — which is the state §24 exists to prevent."
+              : "No next step set on this lead."
           }
         >
           {card.nextActionDate ? shortDate(card.nextActionDate) : "Nothing promised"}

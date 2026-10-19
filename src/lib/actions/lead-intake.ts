@@ -23,7 +23,11 @@ import {
   EnquiryLeadConflict,
   linkEnquiryToNewLead,
 } from "@/lib/services/enquiry-service";
-import { DESK_MODULE, notifyDeskAssigners } from "@/lib/services/lead-desk-assignment-service";
+import {
+  assignableOwner,
+  DESK_MODULE,
+  notifyDeskAssigners,
+} from "@/lib/services/lead-desk-assignment-service";
 import {
   DUPLICATE_DISMISSED_ACTION,
   phoneAlreadyOnTheBook,
@@ -393,9 +397,17 @@ export async function captureLead(
       );
     }
 
-    /* The picker is not a permission: the owner, and whoever a next action is
-       owed by (screen 34's batch-wide answer, riding through per row), both
-       have to be somebody who can sign in and see it. */
+    /* The picker is not a permission. The OWNER must be somebody who can open
+       the lead (an active CRM or Salesman App account), the same rule
+       assignDeskLead keeps; a lead owned by anybody else is on nobody's desk.
+       Whoever a next action is owed by must at least be able to sign in. */
+    if (v.ownerId && !(await assignableOwner(v.ownerId))) {
+      return err(
+        "That person has no active CRM or Salesman App account, so a lead they owned would not be visible to anybody.",
+        "rule_violation",
+        [{ field: "ownerId", message: "Cannot open leads." }],
+      );
+    }
     const idsToCheck = [v.ownerId, v.nextAction?.ownerId].filter(
       (id): id is string => Boolean(id),
     );
@@ -986,6 +998,16 @@ export async function captureLeadBatch(
         "Every lead in this file would land owing nothing to anybody. Say what happens next, on what day, and who is doing it — once, for the whole file.",
         "rule_violation",
         [{ field: "nextAction.action", message: "Required." }],
+      );
+    }
+
+    /* The owner is the file's, so it is checked once rather than refused on
+       every row: somebody who cannot open a lead cannot own a thousand. */
+    if (b.ownerId && !(await assignableOwner(b.ownerId))) {
+      return err(
+        "That person has no active CRM or Salesman App account, so leads they owned would not be visible to anybody.",
+        "rule_violation",
+        [{ field: "ownerId", message: "Cannot open leads." }],
       );
     }
 

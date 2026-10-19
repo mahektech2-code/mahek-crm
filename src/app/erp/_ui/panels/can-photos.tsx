@@ -5,7 +5,7 @@ import { registerPanel, type PanelProps } from "../panels";
 
 /* ---------------------------------------------------------------------------
  * A can's photos and its group's, and a group's photos and its cans', in the
- * record drawer. A can is recognised by looking at it, so the drawer shows the
+ * record dialog. A can is recognised by looking at it, so the record shows the
  * pictures rather than a count of them.
  * ------------------------------------------------------------------------- */
 

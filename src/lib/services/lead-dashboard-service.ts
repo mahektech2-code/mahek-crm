@@ -304,6 +304,9 @@ function factsOf(lead: LeadRow) {
     hasCommitment: lead.hasCommitment,
     hasOrder: lead.hasOrder,
     sampleAwaitingDispatch: lead.sampleAwaitingDispatch,
+    verified: lead.verified,
+    qualificationReview: lead.qualificationReview,
+    qualificationComplete: lead.qualificationReady,
   };
 }
 
@@ -315,6 +318,7 @@ function seatsOf(lead: LeadRow) {
     ownerId: lead.salesmanId,
     backOfficeAmId: lead.backOfficeAmId,
     leadManagerId: lead.leadManagerId,
+    salesManagerId: lead.salesManagerId,
   };
 }
 
@@ -473,7 +477,7 @@ export async function managerLeadBlocks(day: string): Promise<ManagerLeadBlock[]
     },
     {
       id: "verified-awaiting-qualification",
-      label: "Verified, in qualification",
+      label: "In qualification",
       hint: "Verified by phone and now with the salesman for the eight-point checklist.",
       count: qualification.total,
       href: "leads/qualify/checklist",
@@ -510,7 +514,7 @@ export async function managerLeadBlocks(day: string): Promise<ManagerLeadBlock[]
     },
     {
       id: "awaiting-order",
-      label: "Promised, and the day has gone",
+      label: "Orders past their day",
       hint: "The day a customer gave has passed with no order against it. A FORECAST that did not arrive — never a sale, and not a rupee of revenue until an order is confirmed.",
       count: forecast.counts.slipped,
       /* The view whose rows ARE this count. Two blocks pointing at one
@@ -523,7 +527,7 @@ export async function managerLeadBlocks(day: string): Promise<ManagerLeadBlock[]
     },
     {
       id: "expected-this-week",
-      label: "Expected in the next 7 days",
+      label: "Expected in 7 days",
       hint: "FORECAST ONLY — days customers named on a call, inside the next seven. Not orders, not revenue, and never added to either.",
       count: forecast.counts.due,
       href: "leads/commercial/commitments?view=due",

@@ -1783,12 +1783,13 @@ the measured width and draws a prefix of the server's order, always keeping the
 first column, the record's name, its first status and its flags; the table is
 `table-fixed`, a long value ends in "…" with the whole of it on hover, and a
 heading wraps rather than widening its column. The rest are FOLDED, not lost:
-still searched, still exported, and in full in the record drawer a row opens.
+still searched, still exported, and in full in the record dialog a row opens.
 The Columns menu lets a person choose their own set, remembered per browser per
 list, and a column with no room at this width says so instead of being added.
 So the ORDER of a screen's `cols` is now its priority: put what is read first,
-first. HRMS draws the same list and gets the same behaviour. A drawer is 600px,
-so a panel table of more than four columns is drawn as a card per row.
+first. HRMS draws the same list and gets the same behaviour. A panel was
+written for a 600px drawer, so a panel table of more than four columns is still
+drawn as a card per row.
 
 **Its decisions are POWERS granted to people, not capabilities of a level.**
 The source tied "verify a test", "see purchase money" and the rest to three
@@ -1888,11 +1889,12 @@ sidebar sums), `isPendingLine`/`isWorkingLine`, `ORDER_COL`, `godownField`,
 something a second time; never type an `/erp/…` URL, a hex brand colour, a
 pixel font size or a time zone.
 
-**A SCREEN SAYS A THING ONCE.** The generic list and drawer drop what would
+**A SCREEN SAYS A THING ONCE.** The generic list and record dialog drop what would
 repeat: a flag whose words are the row's own status (`flagsBesideStatus` in
 `_ui/badge.tsx`), the grouped-by column on grouped rows, the toolbar on a list
 with no rows, and the status strip that only repeated the status tabs. In a
-drawer a record field with a column's label replaces that column, and a panel
+record a field with a column's label replaces that column, its first status is
+said in the heading and not again under Details, and a panel
 lists the column keys it already draws in `covers`. Write a screen's
 `noDataLine` as a short first sentence (the heading) and an optional second
 (the explanation); keep subtitles to one line; name buttons as verbs ("Accept",
@@ -1910,9 +1912,32 @@ the reason one is not yet available) plus its handlers.
 
 **The generic screens are ports of the design**, in `app/erp/_ui/`: the list
 (search, godown filter, grouping with aggregates, chips, bulk bar, pager), the
-record drawer, the form drawer (header plus lines for a multi-line document),
+record dialog, the form dialog (header plus lines for a multi-line document),
 prompts, confirms and the toast. Rules are the server's; the client only
 filters, sorts and pages what it was sent.
+
+**A RECORD OR A FORM OPENS IN THE MIDDLE OF THE SCREEN, IN TABS OR PAGES,
+NEVER IN A SIDE DRAWER — and that is a reversal (Oct 2026).** Every ERP record
+and form was a 600–680px drawer at the right edge: a twenty-five-field purchase
+was one column somebody scrolled and lost their place in, and a requirement's
+purchase flow sat above forty labels. `app/erp/_ui/dialog.tsx` is the one
+frame — `ErpDialog` (z-60, under the prompt and confirm at z-70), its header,
+body and foot, `TabBar` and `StepBar`. A RECORD (`record-dialog.tsx`) is tabs:
+the screen's own panel first, named for what it is (`PANEL_TAB` — "Purchase
+flow", "Trace", "Test evidence"…), then Details three to a row, then "Not
+available yet" when an action is held back; the actions sit in the foot on
+every tab, and pressing a held-back one opens that tab rather than doing
+nothing. A FORM (`FormDialog` in `erp-ui.tsx`) is pages, planned by
+`form-pages.ts` (pure, tested): seven fields or fewer and no lines is one page;
+longer forms are cut at the fields' `sec` headings, small sections packed up to
+eight fields a page; a document's lines are a page of their own; more than one
+page ends on Review, which says back every value with a Change link per page.
+Next checks the page you are on; Save checks everything and lands on the first
+page carrying an error, the server's included. So a long form gets its pages
+from `sec` — give a new form's fields sections where they fall into groups, and
+order its fields so each section is consecutive. The goods receipt
+(`grn-dialog.tsx`) keeps its own item → PO → details flow inside the same
+frame, and Logistics' transporter record and edit are tabbed the same way.
 
 **The working location is chosen from the godowns a person is assigned to**
 (`erp_godown_staff`), never typed; an administrator is assigned everywhere.
@@ -2009,13 +2034,59 @@ order line's margin reads the issued credit note where it is
 ERP's complaints screen (`canRead` falls back to it). 0184 carried every ERP
 request across under the same id; `erp_requests` is retired, not dropped.
 
+**BUT THE ERP SEES ONLY PRODUCT QUALITY COMPLAINTS (Oct 2026).** Every ERP
+read of `complaints` — the screen's three tabs (`complaintRows`), its sidebar
+badge, the dashboard tiles, the "credit note not issued" alert and the file
+fallback in `canReadErpAttachment` — is narrowed to `category =
+'product_quality'` (`ERP_COMPLAINT_CATEGORY`). The ERP raise form has no type
+and always writes Product Quality; accept, reject, issue and resolve refuse any
+other category; the AI helper suggests a summary only, never a type, because a
+changed type would only take the complaint off the ERP's list. The CRM and
+Accounts still see every category. A customer return's complaint of another
+category (damaged, wrong product) is therefore issued from Accounts alone.
+
 **THE PURCHASE FLOW IS Requirement → Purchase method → Vendor / Quotation →
 Approval → PO → Receipt, and NO PURCHASE IS COMPLETED WITHOUT A PO.** Goods
 inward (the GRN) names an approved PO and every line one of its items; a lot
 entered by hand on the register does the same; neither takes a typed supplier
 or item any more. `engines/purchase-flow.ts` is the rule, pure, and
-`screens/purchase-flow.ts` the requirements, their Quotations tab and the
-Purchase orders screen. The receipt side stays in `screens/purchase.ts`.
+`screens/purchase-flow.ts` the requirements and the Purchase orders screen. The receipt side stays in `screens/purchase.ts`.
+
+**THE PO COMES BY THE ITEM'S PURCHASE RULE, AND NOTHING IS APPROVED — a
+reversal (Oct 2026).** The flow is now Requirement → Blind count → Book
+comparison → Verification → Purchase method → PO number → Receipt; the vendor /
+quotation step and PO approval in the paragraphs below are history. At the
+purchase method the item's rule (`poRouteOf`) decides, and both happen inside
+the requirement's record (`screens/requirement-po.ts`, the `purchaseFlow`
+panel):
+
+- **Quotation** — the rate is chosen and bought on the Quotation manager.
+  Purchase it asks only for the drums: **the PO number is MADE by the server**
+  from the ERP's own `po` series (`applyQuoteOps` mints `PO-n`; a typed one is
+  ignored; editing keeps it; undoing gives it up). The requirement's tab has a
+  PO NUMBER box (never a pop-up): what is typed is looked up on the sheet
+  (`erpRequirementPoLookup`, a read) and shown, then **Link PO** keeps an ERP PO
+  for it — `source = 'quotation_manager'`, `qm_po_no`, the same `po_number`
+  where the sheet made it, status **Sent**, the cell's rate, drums and
+  `erp.purchase.poGstPercent`. Several requirements on one number are one PO.
+  **Unlink** is allowed while nothing has arrived; a PO left empty is cancelled
+  and reused if linked again (the number is unique).
+- **Direct purchase** — no quotation. **Create PO** opens a three-page modal
+  (Vendor → Delivery → Review) OVER the requirement, which stays open. The rate is
+  the item's `erp_raw_materials.price_paise` and is never read from the request;
+  **no price is ₹0** (`0275` lets a PO line's rate be 0), and the register then
+  holds that lot out of stock until the bill's rate is entered, like any lot
+  with no rate. The PO is **Approved** on save, ready to send and receive.
+- **Buyer decision** — either.
+
+A new PO on the Purchase orders screen is Approved on save too. POs raised
+before this that still say Pending approval keep their Approve / Send back
+buttons, and the dashboard tile shows only while one is left. A new GRN starts
+from the item (#829); the PO-in-header form ("Receive goods" on a PO, "Add
+more") types its PO (`FieldSpec.typed`) and the receipt also accepts a bare
+number. Every screen names a PO with `poName` (the sheet's number where it came
+from there). The old decide / vendor / quotation handlers remain for records
+already on that path; nothing on the requirement offers them.
 
 **A REQUIREMENT CARRIES EVERY ITEM A DEPARTMENT NEEDS, under one number.**
 It used to be one item per form, and a department's monthly list is a hundred.
@@ -2031,23 +2102,47 @@ search or by pasting a list ("Toluene, 200" a row, straight from Excel) that
 names one item itself and sends no lines is a requirement of one item, which is
 what the re-order levels' "Raise requirement" still sends.
 
+**THE GRN STARTS FROM THE ITEM THAT ARRIVED.** The gate knows what came off
+the truck, not the PO number, so a new goods receipt is `flow: "grn"`
+(`app/erp/_ui/grn-dialog.tsx`): search the item, pick one of the approved PO
+lines still open for it (picked for you where there is one), then the ordinary
+line fields. Every line carries its own `po`, so one GRN may span several POs —
+of ONE vendor: "Add another item from this truck" searches only that vendor's
+open lines, and `inward.new` refuses a second vendor. The pick is pure in
+`engines/grn-pick.ts`; an item with no open line is listed as "Cannot receive",
+never hidden. "Receive goods" on a PO and "Add more" on a PR keep the
+PO-in-the-header form, and a line naming no PO takes the header's.
+
 **The ITEM MASTER says how an item is bought** — `erp_raw_materials.purchase_method`:
 `direct` (boxes, cans, stationery, routine chemicals: pick the vendor, raise
-the PO), `quotation` (price-sensitive chemicals: quotations are collected and
-compared first) or `buyer` (the buyer decides per requirement, with the
+the PO), `quotation` (price-sensitive chemicals: bought on the Quotation
+manager, whose PO number the requirement links) or `buyer` (the buyer decides per requirement, with the
 `purchaseBuyer` power). `preferred_supplier_id` is the vendor a direct purchase
 is offered. **The rule is COPIED onto the requirement when it is raised**
 (`purchase_rule`, and the resolved `method`), so changing an item's rule never
 re-routes a requirement already in flight. `0222` started every chemical on
 quotation and everything else direct.
 
-**A quotation is required ONLY where the rule says so.** A quotation
-requirement is not ready for a PO until one quotation is SELECTED, and one can
-be selected only once `erp.purchase.minQuotations` are in. They are compared on
-LANDED cost (rate × quantity, its GST, the freight); an expired one is never
-the lowest; choosing other than the lowest needs the reason in words
-(`selection_note`). The PO takes the selected quotation's rate and refuses
-another — the negotiation is recorded on the quotation, not hidden on the PO.
+**A REQUIREMENT HAS NO QUOTATIONS TAB, and that is a reversal (Oct 2026).**
+Quotations were collected, compared on landed cost and selected on the
+requirement itself (a Quotations tab, `erp.purchase.minQuotations`, a PO that
+refused any rate but the selected one's). Supplier rates are now kept on the
+Quotation manager, and a quotation item links the PO number made there, so the
+tab, its form and actions, the ranking engine and the setting are gone.
+`erp_quotations` and the requisition's `quotation_id` and `selection_note` are
+kept as the record they are and read by nothing. The Quotation manager's grid
+lists its rows LATEST FIRST — newest date on top, the last entered first within
+a date (`visibleRows` in `engines/quote-sheet.ts`).
+
+**PURCHASE IT WRITES THE PURCHASE ORDER, not only its number.** The dialog asks
+the requirement (or none, and one is raised with the purchase, remarked
+`QM_RAISED_REMARK`), the quantity, the godown and the delivery date, and
+`orderFromQuote` (`screens/requirement-po.ts`) writes a `Sent` PO
+(`source = quotation_manager`, `qm_po_no`) with one line keyed on the cell, in
+the cell's own transaction. Changing the drums syncs the line; undoing withdraws
+it (`withdrawQuotePo`), refused once goods arrived. It happens only when the op
+carries `order`, so an older page still just mints the number and the
+requirement still links it.
 
 **WHO MAY ACT IN PURCHASE IS SET IN THE ADMIN CONSOLE, and only there.**
 Raising a requirement, raising a PO and recording a lot test follow the screen
@@ -2060,21 +2155,37 @@ approves this PO" is one too many, so it was removed and
 (`lib/erp/departments.ts`) still applies: it rides on the designation, which
 is itself set in the Admin Console.
 
-**A requirement's STAGE is derived, never typed** (`requirementStage`): Buyer
-decision, Select vendor, Collect / Compare quotations, Ready for PO, PO awaiting
-approval, PO approved, PO sent, Partly received, Received, Closed short,
-Cancelled. `erp_requisitions.status` is written by the flow (Pending → Order
+**A requirement's STAGE is derived, never typed** (`requirementStage`): Blind
+count, Waiting for PO number (quotation), Create PO (direct), Create or link PO
+(buyer), PO awaiting approval (an old PO only), Waiting for goods, Partly
+received, Received, Closed short, Cancelled. `erp_requisitions.status` is written by the flow (Pending → Order
 Placed on approval → Received) and the old "Change status" button is gone,
 because a status somebody types can say Received with nothing in the gate.
 
 **A PO is raised FOR APPROVAL and approved by somebody else.**
 `approvePurchaseOrder` approves or sends back; whoever raised a PO cannot
-approve it unless they are an ERP administrator. Only an approved PO is sent
-(WhatsApp, email, a printed copy at `/erp/po/<id>`, or phone — the action
-answers with the PO written out, which is why a record action may now answer
-with a dialog like a tool does) and only an approved PO is received against.
+approve it unless they are an ERP administrator. Only an approved PO is shared
+(see below) or printed at `/erp/po/<id>`, and only an approved PO is received
+against.
 Sent back or cancelled, its requirements return to Ready for PO with their
 vendor; a PO with goods against it is CLOSED SHORT with a reason instead.
+
+**A PO IS SHARED FROM ITS ⋯ MENU — WhatsApp, email or a copied link — and every
+person it reaches is a row.** "Share…" (an action carrying a `ShareSpec`, drawn
+by `_ui/share-dialog.tsx`) replaced "Send to vendor", which only recorded how a
+PO went. It offers the vendor (ticked) and the receiving godown from their own
+records, plus anybody typed in, checked by `readShare` (`engines/po-share.ts`)
+— a number WhatsApp cannot reach is refused by name, never dropped.
+`sharePo` (`lib/erp/po-share.ts`) sends WhatsApp through Wati only where the
+founder's switch, a key and `erp.purchase.poWatiTemplate` (an approved template
+asking only for `PO_WATI_PARAMS`) all hold, and otherwise hands back a wa.me
+link per person; email goes from MahekOne with the PDF attached
+(`renderPoPdf`, pdf-lib, the printed PO's figures) where a mail provider is
+set, otherwise a mailto link. Every message carries `/po/<share_token>`, the
+PDF with no sign-in, minted on the first share and answering only while the PO
+is one a vendor may act on. `erp_po_shares` keeps each person, address,
+message and outcome (Wati ticks via the `eposh_` id); the first share moves an
+Approved PO to Sent. The PDF has rates, so sharing needs `viewPurchaseMoney`.
 
 **What has been received against a PO line is READ, never stored**
 (`receivedByLine`: inward lines plus hand-entered register lots), and
@@ -2247,7 +2358,7 @@ calendar, not the shelf's. Both factors are ratio-to-moving-average, so growth
 is taken out first, and shrunk by how much history stands behind them. An AI
 review (`erp.ai.levels.*`, feature `levels`) may move a level by at most
 `maxAdjustPercent`, with a reason on the level; without it the statistics
-stand. `auto_managed` (0275) marks a level the planner keeps: a hand edit of
+stand. `auto_managed` (0280) marks a level the planner keeps: a hand edit of
 min or max clears it and the planner never touches that level again; "Let the
 planner keep it" hands it back. It runs nightly before the alert pass, in
 `deploy:db` (which it never fails) and from "Plan levels now"; `planned_at`
@@ -2281,6 +2392,23 @@ or, on a raw material, raised into a formal count. A check moves no stock.
 It needs the network on purpose: a figure queued for hours would be judged
 against a book that has moved. An office count from the phone goes through
 the ERP's own `submitCount`.
+
+**STOCK IS ADJUSTED FROM ITS ROW, AND IT TAKES EFFECT ON SAVE.** Every row of
+Stock on hand, on all four stages, ends in a ⋯ menu (`ListSpec.rowMenu`) with
+**Stock inquiry** and, for a `stockControl` holder, **Adjust stock**: Add or
+Remove, a quantity, and a reason from `ADJUST_REASONS` (Other must be written).
+Nobody approves it — Mahek asked for it simple. Add posts an inflow entry on
+the same lot (`source_type = 'adjustment'`); Remove is `postWriteOff`, the
+transfer to Item Lost Record the transfer form makes, so it is never a silent
+subtraction and never takes a lot below zero. `erp_manual_adjustments` keeps
+who, why, the stock before and what was posted (`lib/erp/stock-adjust.ts`).
+The count-driven adjustment above, with its approval, is unchanged.
+**The stock inquiry** (`/erp/stock-inquiry`, held with the Stock screen) is one
+item's lots now and every movement in a period with a running balance, read
+from the same sources `stock.ts` adds up (`lib/erp/stock-inquiry.ts`); Item
+Lost Record is left out, so a write-off reads as one movement out. A new way
+stock is consumed must be added to its union, or the inquiry's balance drifts
+from the stock.
 
 **PRODUCTION & DISPATCH ARE TRACEABLE, BOX BY BOX.** SFG lot → refill (FG
 filling) lot → packing batch → BOX → order → customer, and back. The lots
@@ -2977,9 +3105,11 @@ whole order" is ids for the same reason.
 `ROW_CAP` (3,000), builds nothing and says so ("that period is too long to
 show"). That is what makes the server's memory a function of the cap rather
 than of the data: "All time" is allowed while all time is small and refused, in
-words, the day it is not. Stock screens open on all time under the same cap — a
-healthy book has a few hundred lots in stock; one whose dispatches have not
-been imported holds every lot ever made.
+words, the day it is not. Stock screens open on all time under their OWN,
+higher cap (`STOCK_ROW_CAP`, 25,000): their lots are summed in SQL before the
+cap is asked, so refusing them saved nothing and left Stock on hand answering
+"too long to show" on a book whose dispatches were never imported, which holds
+every lot ever made.
 
 **Stock reads return lots that hold something, and rates only for those.**
 `rmLots`/`sfgLots`/`fgLots`/`packLots` used to return every lot ever made and
@@ -8202,6 +8332,21 @@ narrower than the number beside it says and truncates early. Ten tables were
 over by 20 to 200 pixels. `table-widths.test.ts` reads both spellings, the
 `width` prop and the third argument of the local `head()` helper.
 
+**THE CRM'S LEAD MANAGEMENT IS ONE SIDEBAR ROW, "Leads", AND A FRAME OF FOUR
+AREAS.** Today (My day, Calling desk, Sales Manager, Follow-ups), Leads (List,
+Board, Lost, New lead), Pipeline (Qualify, Samples, Commercial, Handovers,
+Distributors) and Insights (conversion, activity, control). `lib/lead-hub.ts`
+is the map, pure: every link names the module that guards its route, and
+`lead-hub.test.ts` fails on a link to no module or a lead module with no link.
+`components/leads/hub` draws it from `crm/leads/layout.tsx` and
+`crm/samples/layout.tsx`; it decides no access — every module folder keeps its
+own guard. Inside it, `useInLeadHub()` makes `ScreenHeader` keep only its
+actions (unless `entity` — a record keeps its name), a banner drop a long
+explanatory body (unless `fact`), `Empty` drop its paragraph, `LeadTabs` draw
+nothing, and `OutsideLeadHub` hides a screen's own "← back to a desk" link.
+The Sales Dashboard mounts the same screens outside the frame and sees no
+change. The routes are unchanged; `Dashboard` is now "My day".
+
 **THE CALLING DESK IS A MODULE, AND IT IS GRANTED — NOT INHERITED.** It was a
 tab of All Leads, and a tab cannot be withheld: every CRM user could open the
 telecaller's desk, which is the one thing that must not be true of it.
@@ -8541,6 +8686,23 @@ attention. Rules are pure in `engines/logistics.ts`; reads and writes in
 **THE PHASE IS DERIVED, NEVER STORED** — the stage plus whether there is an LR
 (`phaseOf`). "At transport" is the one new stage (0250 widened the check). A
 bill moved past Dispatched with no LR is still waiting for its LR.
+
+**A CONSIGNMENT IS ONE DISPATCH, NOT ONE ORDER NUMBER — and that is a reversal
+(0279).** `erp_transports` was unique on `order_no` and verify inserted with
+`onConflictDoNothing`, so a line verified on an order number that already had a
+row opened nothing and never reached Logistics: every order copied in from the
+Taken Order history whose number carried an old (usually closed, so hidden)
+row, and the second half of any order sent in two goes. `openTransports` in
+`screens/sales.ts` is now the one hand-over: lines of one order and bill
+verified together share a row; a later line joins it only while it is still at
+the gate (no LR, stage Dispatched, opened by a verify); anything else opens a
+row of its own. `erp_order_details.transport_id` records which row each line
+left on, and `fillPackages`, `billLines`, the book's stage and extra expenses
+read it (a pre-0279 row no line names reads its whole order).
+`syncDispatchedTransports` is the net: on Logistics page load and hourly
+(`erp-dispatch-transports`), any line verified in the last
+`erp.logistics.syncDays` on no row is given one, dated its dispatch date.
+Readers that join `erp_transports` on `order_no` must expect several rows.
 
 **COLLECTING AN LR AND ATTACHING IT ARE TWO JOBS.** The dispatch team uploads
 (`erp_lrs`) through the Upload LRs MODAL on the Logistics screen and the

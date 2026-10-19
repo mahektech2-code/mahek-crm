@@ -105,8 +105,8 @@ export const ERP_POWER_LABEL: Record<ErpPower, { label: string; source: string }
     source: "Lets a box whose product or pack size does not match the order go anyway, with a reason, and marks boxes rejected or returned. Nobody approves their own override request unless they are an ERP administrator.",
   },
   stockControl: {
-    label: "Resolve stock discrepancies and approve adjustments",
-    source: "Inventory Accuracy Control: is notified of every red-flagged count, resolves it, and approves or rejects a stock adjustment. A red flag never holds a purchase. Nobody approves an adjustment they asked for, unless they are an ERP administrator (new in MahekOne).",
+    label: "Adjust stock, resolve discrepancies and approve adjustments",
+    source: "Adjusts stock by hand from any row of Stock on hand (Add or Remove, with a reason). Inventory Accuracy Control: is notified of every red-flagged count, resolves it, and approves or rejects a stock adjustment. A red flag never holds a purchase. Nobody approves an adjustment they asked for, unless they are an ERP administrator (new in MahekOne).",
   },
   scrapSale: {
     label: "Sell scrap and return vendor drums",

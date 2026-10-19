@@ -1,6 +1,6 @@
 /* ---------------------------------------------------------------------------
  * The contract between an ERP screen's server loader and the generic client
- * screens (list, record drawer, form drawer, prompt, confirm).
+ * screens (list, record dialog, form dialog, prompt, confirm).
  *
  * The server decides EVERYTHING that is a rule — which rows, which columns a
  * person's powers reveal, which actions a record offers and why one is not
@@ -50,7 +50,9 @@ export type FieldType =
   /** A time of day, "HH:MM". */
   | "time"
   /** A map pin, "lat, lng": typed, picked on a map, or taken from here. */
-  | "pin";
+  | "pin"
+  /** One of a few options, drawn as buttons to tap rather than a dropdown. */
+  | "pick";
 
 /** A condition on another field of the same form: shown only while it holds. */
 export type When =
@@ -68,6 +70,12 @@ export type FieldSpec = {
   /** A section heading, drawn where it first changes down the form. */
   sec?: string;
   req?: boolean;
+  /**
+   * A select drawn as a box somebody TYPES into, however few its options —
+   * the GRN's PO number is typed, never scrolled for. The text is the
+   * placeholder.
+   */
+  typed?: string;
   /**
    * Draw no "Optional" tag beside a field that is not required — for a form
    * where nothing is, so saying it on every field says nothing.
@@ -162,6 +170,12 @@ export type FormSpec = {
    * (one batch) when a list is laid out. A value with no entry leaves the lines.
    */
   linesFrom?: { by: string; map: Record<string, Record<string, string>[]>; set?: Record<string, string> };
+  /**
+   * A form drawn by its own dialog rather than field by field. `grn`: the goods
+   * receipt that starts from the item that arrived (`engines/grn-pick.ts`) —
+   * search the item, pick the open PO line, then the ordinary line fields.
+   */
+  flow?: "grn";
   /** What an AI reading was read from, shown beside the proposed values. */
   evidence?: { images?: string[]; text?: string; flags?: { tone: Tone; text: string }[]; note?: string };
 };
@@ -199,6 +213,43 @@ export type ActionSpec = {
   loadsForm?: boolean;
   /** Navigates to a screen (e.g. "Open record"). */
   href?: string;
+  /**
+   * Opens the Share window (`_ui/share-dialog.tsx`): how it goes, who it goes
+   * to, the message. Its Send runs this action with `channel`, `to` (the ticked
+   * keys, as JSON), `extra` (typed numbers or emails) and `message`, and the
+   * action answers with a `ShareOutcome`.
+   */
+  share?: ShareSpec;
+};
+
+/** What the Share window offers for one record. */
+export type ShareSpec = {
+  title: string;
+  sub?: string;
+  /** The ways it may go, first one picked; each with a line saying what happens. */
+  channels: { k: "whatsapp" | "email" | "link"; l: string; d: string }[];
+  /** Who it may go to, from the record's own parties. */
+  recipients: { key: string; name: string; tag?: string; whatsapp: string | null; email: string | null; checked: boolean }[];
+  message: string;
+  /** What travels with the message ("PO-411.pdf"), named under it. */
+  attachment?: string;
+  /** "WhatsApp to Vendor B · 18 Oct by Deepa". */
+  last?: string;
+};
+
+/** What a share action answers with: one row per person, and the link. */
+export type ShareOutcome = {
+  link: string | null;
+  /** The message as it went, link included — for Copy. */
+  text: string;
+  results: {
+    recipient: string;
+    address: string | null;
+    /** sent: Wati or the mail provider took it. open: to be sent from the person's own app, through `href`. failed: `why`. */
+    status: "sent" | "open" | "failed";
+    href?: string;
+    why?: string;
+  }[];
 };
 
 /**
@@ -247,7 +298,7 @@ export type ListRow = {
   id: string;
   v: Record<string, CellValue>;
   flags: string[];
-  /** Record drawer. */
+  /** Record dialog. */
   title?: string;
   header?: string;
   fields?: RowField[];
@@ -255,16 +306,27 @@ export type ListRow = {
   actions?: ActionSpec[];
   /** "Created by X · 27 Sep, 10:14". */
   by?: string;
-  /** Fields hidden by powers, as a count, so the drawer can say so. */
+  /** Fields hidden by powers, as a count, so the record can say so. */
   hiddenFields?: number;
-  /** Free-form panels a screen draws in the drawer (allocation, evidence…). */
-  /** `covers`: column keys the panel already draws, left out of the drawer's field list. */
+  /** Free-form panels a screen draws in the record (allocation, evidence…). */
+  /** `covers`: column keys the panel already draws, left out of the record's field list. */
   panel?: { kind: string; data: unknown; covers?: string[] };
+  /**
+   * The rows FOLDED under this one (`ListSpec.fold`): a can's lots under its
+   * item total. Each is a whole row, with every column, so the list's
+   * "By lot" reading can draw it on its own and a click opens its own record.
+   * Folded rows are searched with their total and never sorted apart from it.
+   */
+  sub?: ListRow[];
+  /** What a folded row says in the first column, under its total ("Received 02 Sep"). */
+  subLine?: string;
 };
 
 export type ListSpec = {
   screen: string;
   cols: ColSpec[];
+  /** Action ids drawn in a ⋯ menu at the end of every row (each row's own `actions` of those ids). */
+  rowMenu?: string[];
   /**
    * Draw the rows as image cards instead of table rows: the same rows,
    * search, chips and paging, and a card opens the same record. `img` names
@@ -299,6 +361,13 @@ export type ListSpec = {
   tools?: ToolSpec[];
   readOnly?: boolean;
   noDataLine?: string;
+  /**
+   * Some rows carry their parts folded under them (`ListRow.sub`), and the
+   * toolbar offers both readings: `whole` (the totals, each opening onto its
+   * parts) and `parts` (every part a row of its own, as `?parts=1`). `l` names
+   * what is folded; `note` is said under the toolbar while totals are shown.
+   */
+  fold?: { l: string; whole: string; parts: string; note?: string };
 };
 
 /* ------------------------------------------------------------------ tones */
@@ -333,8 +402,8 @@ export const ST_TONE: Record<string, Tone> = {
   High: "success", Low: "warn", "Invoice Received": "info", "Purchase Matched": "brand",
   "Purchase Verified": "success", Dispatched: "success", Transfer: "neutral", Declined: "danger",
   Arrived: "neutral", Tested: "info", "Bill received": "info", Matched: "brand",
-  "Buyer decision": "brand", "Select vendor": "warn", "Collect quotations": "warn", "Compare quotations": "info",
-  "Ready for PO": "brand", "PO awaiting approval": "warn", "PO approved": "info", "PO sent": "info",
+  "Buyer decision": "brand", "Select vendor": "warn",
+  "Ready for PO": "brand", "Waiting for PO number": "warn", "Create PO": "brand", "Create or link PO": "brand", "Waiting for goods": "info", "PO awaiting approval": "warn", "PO approved": "info", "PO sent": "info",
   "Partly received": "warn", "Closed short": "muted", Closed: "muted", Cancelled: "muted",
   "Direct purchase": "neutral", Quotation: "info", "Pending approval": "warn", Approved: "success",
   Sent: "info", Selected: "success", "Not selected": "muted",
@@ -404,8 +473,6 @@ export const FLAG: Record<string, [string, Tone]> = {
   requiredOverdue: ["Past its required date", "danger"],
   noPo: ["Before POs", "neutral"],
   rateOffPo: ["Rate differs from PO", "warn"],
-  lowestQuote: ["Lowest landed cost", "success"],
-  quoteExpired: ["Quotation expired", "muted"],
   awaitingApproval: ["Awaiting approval", "warn"],
   deliveryLate: ["Delivery overdue", "danger"],
   qcPending: ["Waiting for SFG QC", "warn"],

@@ -73,7 +73,7 @@ export function readQcTests(tests: string[], values: Record<string, string | und
   return { ok: true, results };
 }
 
-/** The recorded checks in one line, for the record drawer. */
+/** The recorded checks in one line, for the record dialog. */
 export function testResultsLine(results: TestResults | null | undefined): string | null {
   const entries = Object.entries(results ?? {});
   if (!entries.length) return null;

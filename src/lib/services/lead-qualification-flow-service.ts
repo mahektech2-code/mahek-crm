@@ -57,24 +57,8 @@ import { approverFor } from "./lead-verifier";
 
 const gen = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
-/**
- * The sentence on a next action, as this workflow writes it.
- *
- * Constants because they are also how the workflow RECOGNISES its own work: a
- * next action reading "Review qualification" owed by the lead manager is the
- * review having been asked for, and a second pass must not ask again. A literal
- * that drifted by one character would put a second bell on the manager's phone
- * every time somebody saved a checklist.
- */
-export const QUAL_NEXT = {
-  verify: "Sales Manager verification call",
-  complete: "Complete the qualification",
-  review: "Review qualification",
-  answer: "Answer the Sales Manager's note",
-  sample: "Request the sample",
-  gst: "Correct the GST number",
-  assign: "Assign a Salesman to complete the qualification",
-} as const;
+export { QUAL_NEXT } from "@/lib/qualification-next";
+import { QUAL_NEXT } from "@/lib/qualification-next";
 
 /** Whether this person holds the manager's own judgement (`lead.verify`). */
 export async function isReviewer(user: { id: string; role: string }): Promise<boolean> {
@@ -518,8 +502,10 @@ export async function openQualificationAfterVerification(
   return {
     opened: true,
     message: telecaller
-      ? "Verified — Qualification is open and the Salesman has been told."
-      : "Verified — Qualification is open. Name a Salesman as this lead's owner; he completes it and you review it.",
+      ? telecaller === actor.userId
+        ? "Verified. Qualification is open."
+        : "Verified. Qualification is open and the lead's owner has been told."
+      : "Verified. Qualification is open. Name a Salesman as this lead's owner; he completes it and you review it.",
   };
 }
 

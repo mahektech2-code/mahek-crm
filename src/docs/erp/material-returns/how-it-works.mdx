@@ -8,6 +8,8 @@ A purchase return is raised against a GRN lot, and a customer return against a d
 
 <Rule title="You cannot return more than came in, or more than is there">
 A purchase return may not exceed what the lot received less what earlier returns took, nor what is still on a shelf. A customer return may not exceed what was dispatched on that line less what was already returned.
+
+A line that went out with no lot allocated — the Taken Order history copied into the ERP carries no batch codes and no dispatch verification — is returnable too once it is billed, or the sheet marked it Ready and Done, and its order is no older than <Setting k="erp.returns.unallocatedDays" /> days. Its return names the order line and the batch read off the returned cans' label, in cans, and is capped at the cans on the line.
 </Rule>
 
 <Rule title="A debit note never moves stock">

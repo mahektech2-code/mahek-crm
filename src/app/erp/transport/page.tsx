@@ -7,6 +7,7 @@ import { getConfig } from "@/lib/config/store";
 import { refValues } from "@/lib/erp/refs";
 import { consignments, lrUploadKit, messages, placeOptions, transporters, uploadedLrs } from "@/lib/erp/logistics";
 import { today as businessToday } from "@/lib/erp/screens/common";
+import { syncDispatchedTransports } from "@/lib/erp/screens/sales";
 import { ListScreen, ListTabs } from "../_ui/list-screen";
 import { pageOf, parseListQuery } from "@/lib/erp/list-query";
 import { withReadMemo } from "@/lib/erp/read-memo";
@@ -86,6 +87,8 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
 
   const today = businessToday();
   const cfg = await getConfig();
+  /* Anything dispatch-verified that is on no consignment is handed over before the board is read. */
+  await syncDispatchedTransports(ctx.actor.id, cfg["erp.logistics.syncDays"]).catch(() => 0);
   const [all, lrs, outbox, dir, kit] = await Promise.all([
     consignments(),
     view === "pendingLr" || view === "transport" ? uploadedLrs() : Promise.resolve([]),

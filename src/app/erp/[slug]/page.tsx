@@ -59,7 +59,8 @@ export default async function ErpScreenPage({
      `fl` what to call them. */
   const filter = sp.f ? { label: sp.fl ?? "Filtered", ids: sp.f.split(",") } : null;
   const page = { ...pageOf(spec, rows, query, FLAG), ...(mod.window ? { window: windowInfo(mod.window, scope, tooWide ?? null) } : {}) };
-  const openRow = sp.open ? (rows.find((r) => r.id === sp.open) ?? null) : null;
+  /* A folded lot opens too: its id is under its total, not at the top of the list. */
+  const openRow = sp.open ? (rows.flatMap((r) => [r, ...(r.sub ?? [])]).find((r) => r.id === sp.open) ?? null) : null;
 
   return (
     <ListScreen

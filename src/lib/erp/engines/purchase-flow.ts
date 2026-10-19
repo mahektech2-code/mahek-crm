@@ -1,8 +1,17 @@
 /* ---------------------------------------------------------------------------
  * THE PURCHASE FLOW, as rules (PURE, client-safe):
  *
- *   Requirement → Blind count → Purchase method → Vendor / Quotation →
- *   Approval → PO → Receipt
+ *   Requirement → Blind count → Book comparison → Verification →
+ *   Purchase method → PO number → Receipt
+ *
+ * THE PO NUMBER COMES FROM THE QUOTATION MANAGER (Oct 2026, a reversal).
+ * The admin marks the rate to buy there (Ready to buy) and the desk buys it
+ * with the PO number made in Tally, so the ERP no longer asks for a vendor,
+ * compares quotations or approves a PO of its own: the requirement is given
+ * that PO number, everything else is fetched from the bought cell
+ * (`pickQuotePoCell`), and goods are received against it. A requirement
+ * already on the old path (a vendor chosen, a PO awaiting approval) finishes
+ * on it.
  *
  * THE BLIND COUNT (Inventory Accuracy Control, `stock-check.ts`) holds a
  * requirement that carries `stockCheckRequired` only until the count is
@@ -15,18 +24,31 @@
  * NO PURCHASE IS COMPLETED WITHOUT A PO: goods inward and a register row both
  * name an approved PO's line.
  *
- * One file says where a requirement has got to, what a quotation lands at,
- * what a PO is worth and what a receipt does to it — so the list, the drawer,
+ * One file says where a requirement has got to, what a PO is worth and what a receipt does to it — so the list, the record,
  * the dashboard tile and the form summary read one answer.
  * ------------------------------------------------------------------------- */
 
 export type PurchaseMethod = "direct" | "quotation" | "buyer";
 
 export const PURCHASE_METHODS: { v: PurchaseMethod; label: string; sub: string }[] = [
-  { v: "direct", label: "Direct purchase", sub: "Pick the vendor, raise the PO. Regular boxes, cans, stationery and the routine chemicals." },
-  { v: "quotation", label: "Quotation", sub: "Collect quotations, compare them, select one, then raise the PO. Price-sensitive chemicals." },
-  { v: "buyer", label: "Buyer decision", sub: "The buyer decides, requirement by requirement, whether it is a direct purchase or a quotation." },
+  { v: "direct", label: "Direct purchase", sub: "No quotation: create the PO on the requirement, to the item's default vendor. Regular boxes, cans, stationery and the routine chemicals." },
+  { v: "quotation", label: "Quotation", sub: "Rates are compared and bought on the Quotation manager, which makes the PO number; the requirement links that number. Price-sensitive chemicals." },
+  { v: "buyer", label: "Buyer decision", sub: "Decided requirement by requirement: create the PO on it, or link a PO number from the Quotation manager." },
 ];
+
+/**
+ * HOW A REQUIREMENT GETS ITS PO, read off the item's purchase rule (copied on
+ * raise): a Quotation item is bought on the Quotation manager and LINKS the PO
+ * number made there; a Direct purchase item needs no quotation and CREATES its
+ * PO on the requirement. A Buyer-decision item, or one an old buyer decision
+ * left open, may do either.
+ */
+export type PoRoute = "link" | "create" | "either";
+
+export function poRouteOf(r: Pick<RequirementState, "rule" | "method">): PoRoute {
+  const m = r.method ?? (r.rule === "buyer" ? null : r.rule);
+  return m === "quotation" ? "link" : m === "direct" ? "create" : "either";
+}
 
 export function methodLabel(m: string | null | undefined): string {
   return PURCHASE_METHODS.find((x) => x.v === m)?.label ?? "—";
@@ -37,7 +59,10 @@ export function methodByLabel(label: string | null | undefined): PurchaseMethod 
 }
 
 /** The steps the flow is drawn as, in order. */
-export const FLOW_STEPS = ["Requirement", "Blind count", "Purchase method", "Vendor / quotation", "Approval", "Purchase order", "Receipt"] as const;
+export const FLOW_STEPS = ["Requirement", "Blind count", "Book comparison", "Verification", "Purchase method", "PO number", "Receipt"] as const;
+
+/** Where each step sits in FLOW_STEPS — named, so a step moved in the list moves every reader. */
+const STEP = { count: 1, method: 4, po: 5, receipt: 6 } as const;
 
 /** A PO that still stands — one that was cancelled or sent back no longer holds its requirements. */
 export const LIVE_PO = ["Pending approval", "Approved", "Sent", "Partly received", "Received", "Closed"];
@@ -50,9 +75,6 @@ export type RequirementState = {
   rule: PurchaseMethod;
   method: "direct" | "quotation" | null;
   supplierId: string | null;
-  quotationId: string | null;
-  quoteCount: number;
-  minQuotations: number;
   /** The live PO this requirement is on, with what was ordered and what has arrived. */
   po: { status: string; ordered: number; received: number } | null;
   /** A requirement from before POs, already ordered or received the old way. */
@@ -77,72 +99,110 @@ export function requirementStage(r: RequirementState): Stage {
   if (r.status === "Cancelled") return { stage: "Cancelled", step: -1, next: "Cancelled — nothing more happens.", readyForPo: false };
   if (r.po) {
     const { status, ordered, received } = r.po;
-    if (status === "Pending approval") return { stage: "PO awaiting approval", step: 4, next: "The approver approves the PO or sends it back.", readyForPo: false };
-    if (status === "Approved") return { stage: "PO approved", step: 5, next: "Send the PO to the vendor.", readyForPo: false };
+    /* A PO raised the old way, still waiting on its approver. */
+    if (status === "Pending approval") return { stage: "PO awaiting approval", step: STEP.po, next: "The approver approves the PO or sends it back.", readyForPo: false };
     if (status === "Closed") return { stage: received > 0 ? "Closed short" : "Closed", step: done, next: "The PO was closed; nothing more is expected.", readyForPo: false };
     if (status === "Received" || (ordered > 0 && received >= ordered)) return { stage: "Received", step: done, next: "Received in full.", readyForPo: false };
-    if (received > 0) return { stage: "Partly received", step: 6, next: "Receive the rest against the PO, or close it short.", readyForPo: false };
-    return { stage: "PO sent", step: 6, next: "Waiting for the goods. Receive them against the PO at the gate.", readyForPo: false };
+    if (received > 0) return { stage: "Partly received", step: STEP.receipt, next: "Receive the rest against the PO, or close it short.", readyForPo: false };
+    return { stage: "Waiting for goods", step: STEP.receipt, next: "Receive the goods against the PO number at the gate.", readyForPo: false };
   }
   if (r.legacy) {
     if (r.status === "Received") return { stage: "Received", step: done, next: "Received before POs were kept in the ERP.", readyForPo: false };
-    return { stage: `${r.status} (before POs)`, step: 5, next: "Ordered before POs were kept in the ERP. Receive it as it arrives, or cancel it.", readyForPo: false };
+    return { stage: `${r.status} (before POs)`, step: STEP.receipt, next: "Ordered before POs were kept in the ERP. Receive it as it arrives, or cancel it.", readyForPo: false };
   }
   if (r.gate?.blocks) {
-    return { stage: r.gate.stage ?? "Blind count", step: 1, next: r.gate.next ?? "Count the stock before choosing how it is bought.", readyForPo: false };
+    return { stage: r.gate.stage ?? "Blind count", step: STEP.count, next: r.gate.next ?? "Count the stock first.", readyForPo: false };
   }
-  if (!r.method) {
-    return r.rule === "buyer"
-      ? { stage: "Buyer decision", step: 2, next: "The buyer decides: direct purchase or quotation.", readyForPo: false }
-      : { stage: "Buyer decision", step: 2, next: "Choose how this is bought.", readyForPo: false };
-  }
-  if (r.method === "quotation" && !r.quotationId) {
-    if (r.quoteCount < r.minQuotations)
-      return {
-        stage: "Collect quotations",
-        step: 3,
-        next: `Collect quotations — ${r.quoteCount} of at least ${r.minQuotations}.`,
-        readyForPo: false,
-      };
-    return { stage: "Compare quotations", step: 3, next: "Compare the quotations and select one.", readyForPo: false };
-  }
-  if (!r.supplierId) return { stage: "Select vendor", step: 3, next: "Select the vendor to buy from.", readyForPo: false };
-  return { stage: "Ready for PO", step: 4, next: "Raise the purchase order; it goes for approval.", readyForPo: true };
+  /* Counted (or never asked to be): the comparison and the verdict are the count's own answer, so the next thing owed is the PO — by the item's rule. */
+  const route = poRouteOf(r);
+  if (route === "link")
+    return { stage: "Waiting for PO number", step: STEP.method, next: "Buy it on the Quotation manager, then link the PO number it made here.", readyForPo: false };
+  if (route === "create")
+    return { stage: "Create PO", step: STEP.method, next: "Direct purchase — no quotation. Create the PO here.", readyForPo: true };
+  return { stage: "Create or link PO", step: STEP.method, next: "Buyer decision — create the PO here, or link a PO number from the Quotation manager.", readyForPo: true };
 }
 
-/* ------------------------------------------------------------- quotations */
+/* ------------------------------------------------- the Quotation manager's PO */
 
-export type QuoteIn = { id: string; ratePaise: number; gstBp: number; freightPaise: number; validUntil: string | null };
-
-export type QuoteFigures = { materialPaise: number; gstPaise: number; freightPaise: number; landedPaise: number; perUnitLandedPaise: number };
-
-/** What a quotation lands at for the quantity required: material, its GST and the freight. */
-export function quoteFigures(q: Pick<QuoteIn, "ratePaise" | "gstBp" | "freightPaise">, quantity: number): QuoteFigures {
-  const materialPaise = Math.round(q.ratePaise * quantity);
-  const gstPaise = Math.round((materialPaise * q.gstBp) / 10000);
-  const landedPaise = materialPaise + gstPaise + (q.freightPaise || 0);
-  return { materialPaise, gstPaise, freightPaise: q.freightPaise || 0, landedPaise, perUnitLandedPaise: quantity > 0 ? Math.round(landedPaise / quantity) : 0 };
+/** A PO number as it is compared: spaces squeezed, case ignored. The number is stored as it was typed on the Quotation manager. */
+export function normalisePoNo(s: string): string {
+  return s.trim().replace(/\s+/g, " ").toUpperCase();
 }
 
-export function quoteExpired(validUntil: string | null, today: string): boolean {
-  return !!validUntil && validUntil < today;
+/** A rate as the Quotation manager holds it — text somebody typed — read as rupees: "89.5", "₹ 89.50/kg". Null where there is no positive number. */
+export function quoteRatePaise(value: string): number | null {
+  const m = value.replace(/,/g, "").match(/\d+(?:\.\d+)?/);
+  if (!m) return null;
+  const p = Math.round(Number(m[0]) * 100);
+  return p > 0 ? p : null;
 }
+
+export type QuotePoCell = {
+  rowId: string;
+  columnId: string;
+  materialId: string | null;
+  /** "Drum · Toluene · Reliance" — the column as the sheet heads it. */
+  material: string;
+  party: string;
+  supplierId: string | null;
+  value: string;
+  status: string | null;
+  rowStatus: string | null;
+  drums: number | null;
+  poNo: string;
+  quotedOn: string;
+  boughtBy: string | null;
+  boughtAt: string | null;
+};
 
 /**
- * The quotations ranked by landed cost, cheapest first. An expired quotation
- * is ranked after every live one and can never be the lowest: a price the
- * vendor no longer stands behind is not a price.
+ * Which bought cell a PO number gives a requirement for this item, or the
+ * sentence that says why none does. Bought is Purchase it (`po`) or picked up
+ * (`pickup`); a cancelled cell or row bought nothing. Where one PO number
+ * carries the item twice, the newest purchase is the one.
  */
-export function rankQuotes<T extends QuoteIn>(quotes: T[], quantity: number, today: string): (T & { fig: QuoteFigures; rank: number; lowest: boolean; expired: boolean })[] {
-  const out = quotes.map((q) => ({ ...q, fig: quoteFigures(q, quantity), expired: quoteExpired(q.validUntil, today) }));
-  out.sort((a, b) => Number(a.expired) - Number(b.expired) || a.fig.landedPaise - b.fig.landedPaise);
-  return out.map((q, i) => ({ ...q, rank: i + 1, lowest: i === 0 && !q.expired }));
+export function pickQuotePoCell(
+  cells: QuotePoCell[],
+  materialId: string,
+  item: string,
+  poNo: string,
+): { ok: true; cell: QuotePoCell; ratePaise: number } | { ok: false; error: string } {
+  const shown = poNo.trim();
+  if (!cells.length) return { ok: false, error: `No PO numbered ${shown} on the Quotation manager. Check the number, or buy it there first.` };
+  const bought = cells.filter((c) => (c.status === "po" || c.status === "pickup") && c.rowStatus !== "cancel");
+  if (!bought.length) return { ok: false, error: `PO ${shown} is marked cancelled on the Quotation manager.` };
+  const mine = bought.filter((c) => c.materialId === materialId).sort((a, b) => String(b.boughtAt).localeCompare(String(a.boughtAt)));
+  if (!mine.length) {
+    const named = [...new Set(bought.map((c) => c.material))].join(", ");
+    return { ok: false, error: `PO ${shown} on the Quotation manager is for ${named} — not ${item}.` };
+  }
+  const cell = mine[0];
+  if (!cell.supplierId) return { ok: false, error: `The party "${cell.party}" on that row is not one of the Purchase parties. Pick it from the list on the Quotation manager first.` };
+  const ratePaise = quoteRatePaise(cell.value);
+  if (ratePaise == null) return { ok: false, error: `The rate for ${item} on PO ${shown} is "${cell.value}", which is not a number.` };
+  return { ok: true, cell, ratePaise };
 }
 
 /* --------------------------------------------------------------------- POs */
 
 export function poLabel(n: number): string {
   return `PO-${n}`;
+}
+
+/**
+ * The ERP series number inside a PO number the Quotation manager made
+ * ("PO-1243" → 1243), so the ERP PO created when a requirement is linked
+ * carries the same number. Null for a number typed before they were made
+ * (an older Tally number), which then takes a fresh one.
+ */
+export function seriesNumberOf(poNo: string): number | null {
+  const m = /^PO-(\d{1,9})$/.exec(normalisePoNo(poNo));
+  return m ? Number(m[1]) : null;
+}
+
+/** A PO's name on every screen: the Quotation manager's PO number where it came from there, else the ERP's own. */
+export function poName(po: { poNumber: number; qmPoNo?: string | null }): string {
+  return po.qmPoNo || poLabel(po.poNumber);
 }
 
 export type PoLineIn = { quantity: number; ratePaise: number; gstBp: number };
@@ -190,47 +250,6 @@ export function purchaseUnit(itemUnit: string, materialType: string): "Kg" | "Li
   if (itemUnit === "Kg") return "Kg";
   if (itemUnit === "Litre") return "Litre";
   return "Pcs";
-}
-
-/** The PO's text, sent to the vendor on WhatsApp or by email. Money in rupees, Indian grouping. */
-export function poMessage(po: {
-  number: number;
-  date: string;
-  vendor: string;
-  deliverTo: string;
-  deliveryDate: string;
-  paymentTerms: string;
-  freightPaise: number;
-  remarks: string | null;
-  lines: { item: string; quantity: number; unit: string; ratePaise: number; gstBp: number }[];
-  company: string;
-}): string {
-  const rs = (p: number) => "₹" + (p / 100).toLocaleString("en-IN", { minimumFractionDigits: p % 100 ? 2 : 0, maximumFractionDigits: 2 });
-  const t = poTotals(po.lines, po.freightPaise);
-  const rows = po.lines.map((l, i) => {
-    const f = poLineFigures(l);
-    return `${i + 1}. ${l.item} — ${l.quantity.toLocaleString("en-IN")} ${l.unit} @ ${rs(l.ratePaise)} + GST ${l.gstBp / 100}% = ${rs(f.totalPaise)}`;
-  });
-  return [
-    `PURCHASE ORDER ${poLabel(po.number)}`,
-    `${po.company}`,
-    `Date: ${po.date}`,
-    `To: ${po.vendor}`,
-    ``,
-    ...rows,
-    ``,
-    `Amount: ${rs(t.amountPaise)}`,
-    `GST: ${rs(t.gstPaise)}`,
-    ...(t.freightPaise ? [`Freight: ${rs(t.freightPaise)}`] : []),
-    `Total: ${rs(t.totalPaise)}`,
-    ``,
-    `Deliver to: ${po.deliverTo}`,
-    `Delivery by: ${po.deliveryDate}`,
-    `Payment terms: ${po.paymentTerms}`,
-    ...(po.remarks ? [`Note: ${po.remarks}`] : []),
-    ``,
-    `Please quote ${poLabel(po.number)} on your invoice and delivery challan.`,
-  ].join("\n");
 }
 
 /* ------------------------------------------------- a requirement of many items */

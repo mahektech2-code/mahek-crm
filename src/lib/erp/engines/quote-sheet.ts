@@ -25,6 +25,8 @@ export type SheetOp =
       /** Who bought it and when — written by the server; carried here only so the screen can show it at once. */
       poBy?: string | null;
       poAt?: string | null;
+      /** Purchase it: how much, where and by when — the server writes the ERP purchase order with it. */
+      order?: { requisitionId?: string | null; qty: number; godown: string; deliveryDate: string };
     }
   | { op: "row"; rowId: string; create?: boolean; date?: string; party?: string; status?: QuoteStatus | null }
   | { op: "deleteRow"; rowId: string }
@@ -224,11 +226,11 @@ export function invertSheetOps(s: SheetState, ops: SheetOp[]): SheetOp[] {
   return out.reverse();
 }
 
-/** The rows on the screen: not deleted, by date, then in the order entered. */
+/** The rows on the screen: not deleted, latest first — newest date on top, and the last entered first within a date. */
 export function visibleRows(s: SheetState): SheetRow[] {
   return s.rows
     .filter((r) => !r.deleted)
-    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.seq - b.seq));
+    .sort((a, b) => (a.date > b.date ? -1 : a.date < b.date ? 1 : b.seq - a.seq));
 }
 
 export function visibleColumns(s: SheetState): SheetColumn[] {

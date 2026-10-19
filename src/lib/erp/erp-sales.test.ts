@@ -212,6 +212,10 @@ describe("order details and dispatch", () => {
     const edit = await mod("orders").forms!.edit(ctx, { status: "Ready", delivery: "Shree Paints", qty: "20", rate: "400", discount: "5", bill: "MMI/26-27/101", transport: "0" }, [], loose.id);
     assert.ok(edit.ok, JSON.stringify(edit));
     const beforeBill = await mod("pendingOrders").load(ctx);
+    const working = await mod("readyOrders").load(ctx);
+    const onBoth = beforeBill.rows.filter((r) => working.rows.some((w) => w.id === r.id));
+    assert.deepEqual(onBoth.map((r) => r.v.status), [], "no line is on Pending and Under process & ready at once");
+    assert.ok(!beforeBill.rows.some((r) => r.v.status === "Under Process" || r.v.status === "Ready"), "Pending holds no Under Process or Ready line");
     assert.ok(!beforeBill.rows.some((r) => r.id === loose.id), "a Ready line has left Pending for Under process & ready");
     assert.ok((await mod("readyOrders").load(ctx)).rows.some((r) => r.id === loose.id), "and is on Under process & ready");
     assert.ok((await mod("orders").actions!.bill(ctx, loose.id, {})).ok);

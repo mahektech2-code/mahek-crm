@@ -11808,11 +11808,10 @@ export const erpPurchases = pgTable(
 );
 
 /**
- * A vendor's quotation against one requirement — the QUOTATION method's step
- * between the requirement and the PO. Collected until there are enough to
- * compare (`erp.purchase.minQuotations`), compared on LANDED cost (rate ×
- * quantity, its GST and the freight), and exactly one is Selected: that
- * choice is the requirement's vendor, and its rate is the PO's rate.
+ * A vendor's quotation against one requirement, from when a requirement's
+ * Quotations tab collected and compared them. RETIRED (Oct 2026): supplier
+ * rates are kept on the Quotation manager, and nothing reads or writes this
+ * table any more; it is kept as the record it is.
  */
 export const erpQuotations = pgTable(
   "erp_quotations",
@@ -11894,6 +11893,21 @@ export const erpPurchaseOrders = pgTable(
     closeReason: text("close_reason"),
     closedAt: timestamp("closed_at", { withTimezone: true }),
     closedById: text("closed_by_id").references(() => users.id),
+    /**
+     * erp | quotation_manager. A Quotation manager PO was bought there — the
+     * admin marked the rate Ready to buy, Purchase it made the PO number from
+     * the ERP's own series — so it is never approved in the ERP: it arrives
+     * Sent, ready to receive, and keeps that number as its `po_number`.
+     */
+    source: text("source").notNull().default("erp"),
+    /** The PO number as the Quotation manager carries it (an older, typed one too); the name every screen prints. */
+    qmPoNo: text("qm_po_no"),
+    /**
+     * The key in the PO's shared link (`/po/<token>`, the PDF a vendor opens
+     * with no sign-in): twenty random characters, minted the first time the PO
+     * is shared and kept, so every message about it carries the same link.
+     */
+    shareToken: text("share_token"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id").references(() => users.id),
@@ -11901,6 +11915,9 @@ export const erpPurchaseOrders = pgTable(
   },
   (t) => [
     uniqueIndex("erp_purchase_orders_number_key").on(t.poNumber),
+    uniqueIndex("erp_purchase_orders_share_token_key").on(t.shareToken),
+    uniqueIndex("erp_purchase_orders_qm_po_no_key").on(sql`upper(${t.qmPoNo})`).where(sql`${t.qmPoNo} is not null`),
+    check("erp_purchase_orders_source_check", sql`${t.source} in ('erp', 'quotation_manager')`),
     index("erp_purchase_orders_status_idx").on(t.status, t.poDate),
     check(
       "erp_purchase_orders_status_check",
@@ -11930,11 +11947,16 @@ export const erpPoLines = pgTable(
     ratePaise: bigint("rate_paise", { mode: "number" }).notNull(),
     gstBp: integer("gst_bp").notNull().default(1800),
     sortOrder: integer("sort_order").notNull().default(0),
+    /** The Quotation manager cell this line was bought on: its row and column. Plain text, so a row tidied off the sheet leaves the PO alone. */
+    quoteRowId: text("quote_row_id"),
+    quoteColumnId: text("quote_column_id"),
+    /** Drums bought, as the desk recorded them on Purchase it. */
+    drums: integer("drums"),
   },
   (t) => [
     index("erp_po_lines_po_idx").on(t.poId),
     index("erp_po_lines_requisition_idx").on(t.requisitionId),
-    check("erp_po_lines_amounts_check", sql`${t.quantity} > 0 and ${t.ratePaise} > 0 and ${t.gstBp} >= 0`),
+    check("erp_po_lines_amounts_check", sql`${t.quantity} > 0 and ${t.ratePaise} >= 0 and ${t.gstBp} >= 0`),
     check("erp_po_lines_unit_check", sql`${t.unit} in ('Kg', 'Litre', 'Pcs')`),
   ],
 );
@@ -12215,7 +12237,7 @@ export const erpRmLevels = pgTable(
     /** Follow | UnFollow. */
     status: text("status").notNull().default("Follow"),
     /**
-     * The planner keeps this level (0275): min and max are rewritten nightly
+     * The planner keeps this level (0280): min and max are rewritten nightly
      * from the item's own history. A person editing the level turns it off,
      * and the planner never touches a level a person set.
      */
@@ -12361,6 +12383,8 @@ export const erpOrderDetails = pgTable("erp_order_details", {
   verification: text("verification"),
   withoutGstPaise: bigint("without_gst_paise", { mode: "number" }),
   transportFollowUp: text("transport_follow_up"),
+  /** The consignment (`erp_transports`) this line left on, set when it is dispatch-verified (0279). */
+  transportId: text("transport_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   createdById: text("created_by_id").references(() => users.id),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -12536,7 +12560,13 @@ export const erpDispatchOverrides = pgTable(
 
 /* ---- ERP phase 5: logistics, requests, follow-up, petty cash, videos (spec §12–§13) ---- */
 
-/** One per bill (order number), written when its first detail line is dispatch-verified. */
+/**
+ * One per DISPATCH: the lines of one order and one bill verified together (or
+ * joining it before it leaves the gate). Not unique on the order number since
+ * 0279 — an order shipped in two goes, or one whose number carries an old row
+ * from the Taken Order history, is two consignments. `erp_order_details.transport_id`
+ * says which lines are on which.
+ */
 export const erpTransports = pgTable(
   "erp_transports",
   {
@@ -12585,7 +12615,7 @@ export const erpTransports = pgTable(
     updatedById: text("updated_by_id").references(() => users.id),
   },
   (t) => [
-    uniqueIndex("erp_transports_order_key").on(t.orderNo),
+    index("erp_transports_order_idx").on(t.orderNo),
     uniqueIndex("erp_transports_track_token_key").on(t.trackToken),
     index("erp_transports_lr_idx").on(t.lrId),
   ],
@@ -12695,6 +12725,43 @@ export const erpTransportMessages = pgTable(
     index("erp_transport_messages_status_idx").on(t.status),
     index("erp_transport_messages_customer_idx").on(t.customerId, t.createdAt),
     check("erp_transport_messages_status_check", sql`${t.status} in ('sent', 'to_send', 'sent_by_hand', 'failed', 'skipped', 'delivered', 'read')`),
+  ],
+);
+
+/**
+ * Every time a PO was SHARED, one row per person it went to: the vendor, the
+ * godown, anybody typed in. `channel` is how — whatsapp, email, or link (the
+ * link copied to be pasted somewhere by hand) — and `status` what became of it:
+ * sent through Wati or the mail provider, opened on the person's own WhatsApp
+ * or mail app (`by_hand`, which MahekOne cannot see go), failed, or copied.
+ * Wati's delivery ticks move a sent row on to delivered and read.
+ */
+export const erpPoShares = pgTable(
+  "erp_po_shares",
+  {
+    id: text("id").primaryKey(),
+    poId: text("po_id")
+      .notNull()
+      .references(() => erpPurchaseOrders.id),
+    /** whatsapp | email | link. */
+    channel: text("channel").notNull(),
+    /** Who it is for, as the dialog named them ("Vendor B", "Godown — Bhiwandi", a typed number). */
+    recipient: text("recipient").notNull(),
+    /** The WhatsApp number (country code, digits) or the email address; null for a copied link. */
+    address: text("address"),
+    body: text("body").notNull(),
+    /** sent | by_hand | failed | copied | delivered | read. */
+    status: text("status").notNull(),
+    /** Why it did not go through Wati or the mail provider, or why it failed. */
+    why: text("why"),
+    providerRef: text("provider_ref"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    index("erp_po_shares_po_idx").on(t.poId, t.createdAt),
+    check("erp_po_shares_channel_check", sql`${t.channel} in ('whatsapp', 'email', 'link')`),
+    check("erp_po_shares_status_check", sql`${t.status} in ('sent', 'by_hand', 'failed', 'copied', 'delivered', 'read')`),
   ],
 );
 
@@ -13097,6 +13164,47 @@ export const erpStockAdjustments = pgTable(
     ),
     check("erp_stock_adjustments_qty_check", sql`${t.quantity} <> 0`),
     check("erp_stock_adjustments_reason_len_check", sql`length(trim(${t.reason})) >= 10`),
+  ],
+);
+
+/* ---- Stock adjusted by hand (0276) ---------------------------------------
+ * Add or Remove on any row of Stock on hand, with a reason; it takes effect on
+ * save. Adding posts an inflow entry (`source_type = 'adjustment'`, source_id
+ * this row) in the stage's ledger; removing writes the quantity off to Item
+ * Lost Record as a transfer. `posted` names what it wrote. See AGENTS.md,
+ * "STOCK IS ADJUSTED FROM ITS ROW".
+ * ------------------------------------------------------------------------- */
+export const erpManualAdjustments = pgTable(
+  "erp_manual_adjustments",
+  {
+    id: text("id").primaryKey(),
+    /** rm | sfg | fg | pack. */
+    stage: text("stage").notNull(),
+    /** The raw material, formulation, finished good or SKU. */
+    itemId: text("item_id").notNull(),
+    itemName: text("item_name").notNull(),
+    lot: text("lot").notNull(),
+    godownId: text("godown_id")
+      .notNull()
+      .references(() => erpGodowns.id),
+    /** Signed: above zero added, below zero removed. */
+    quantity: erpQty("quantity").notNull(),
+    unit: text("unit"),
+    /** The lot's stock just before, read under its lock. */
+    stockBefore: erpQty("stock_before").notNull(),
+    reasonCode: text("reason_code").notNull(),
+    /** What the person wrote; required for "other". */
+    note: text("note"),
+    posted: jsonb("posted").$type<{ transfer?: string; entry?: string }>(),
+    createdById: text("created_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("erp_manual_adjustments_item_idx").on(t.stage, t.itemId, t.createdAt),
+    check("erp_manual_adjustments_stage_check", sql`${t.stage} in ('rm', 'sfg', 'fg', 'pack')`),
+    check("erp_manual_adjustments_qty_check", sql`${t.quantity} <> 0`),
+    check("erp_manual_adjustments_reason_check", sql`${t.reasonCode} in ('damaged', 'leakage', 'lost', 'count', 'missed', 'other')`),
+    check("erp_manual_adjustments_other_check", sql`${t.reasonCode} <> 'other' or length(trim(coalesce(${t.note}, ''))) >= 3`),
   ],
 );
 
@@ -15244,9 +15352,12 @@ export const erpCustomerReturns = pgTable(
     orderId: text("order_id")
       .notNull()
       .references(() => erpOrders.id),
-    batchCodeId: text("batch_code_id")
-      .notNull()
-      .references(() => erpBatchCodes.id),
+    /**
+     * The allocation the lot left on. Null for a line that went out with no lot
+     * allocated (Taken Order history, stock dispatched before batch codes): the
+     * lot is then the batch read off the returned cans' label.
+     */
+    batchCodeId: text("batch_code_id").references(() => erpBatchCodes.id),
     skuId: text("sku_id")
       .notNull()
       .references(() => products.id),

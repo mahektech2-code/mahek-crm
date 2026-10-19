@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { erpContext } from "@/lib/erp/access";
 import { erpScreen } from "@/lib/erp/registry";
-import { quoteManagerOf, quoteSheet } from "@/lib/erp/quotes";
+import { quoteManagerOf, quotePurchaseChoices, quoteSheet } from "@/lib/erp/quotes";
 import { parseQuoteDate } from "@/lib/erp/engines/quotes";
 import { calendarDate } from "@/lib/business-date";
 import { nowMs } from "@/lib/format";
@@ -33,7 +33,7 @@ export default async function ErpQuotationManager({ searchParams }: { searchPara
   const from = all ? null : (parseQuoteDate(str("from")) ?? monthsBack(today, 6));
   const to = parseQuoteDate(str("to"));
   const q = str("q").trim().slice(0, 100);
-  const sheet = await quoteSheet({ from, to, q });
+  const [sheet, choices] = await Promise.all([quoteSheet({ from, to, q }), quotePurchaseChoices(ctx)]);
 
   return (
     <div className="px-6 pt-6 pb-10">
@@ -42,6 +42,7 @@ export default async function ErpQuotationManager({ searchParams }: { searchPara
         sub={SCREEN.sub}
         key={`${from}|${to}|${q}`}
         sheet={sheet}
+        choices={choices}
         today={today}
         filter={{ from, to, q, all }}
         sixMonths={monthsBack(today, 6)}

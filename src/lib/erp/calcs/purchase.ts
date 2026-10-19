@@ -1,6 +1,6 @@
 import { fmt, n, registerCalc } from "../calc";
 import { lotNumber, netWeight, purchaseFigures, transportCostPaise, transportModeByLabel } from "../engines/purchase";
-import { poLineFigures, quoteFigures } from "../engines/purchase-flow";
+import { poLineFigures } from "../engines/purchase-flow";
 
 /* ---------------------------------------------------------------------------
  * The purchase forms' derived fields. The server recomputes each on save from
@@ -46,23 +46,13 @@ registerCalc("requisitions.summary", ({ lines, data }) => {
     by.set(r, (by.get(r) ?? 0) + 1);
   });
   const parts = [...by].map(([r, c]) => `${c} ${r.toLowerCase()}`);
-  return `ok:${picked.length} item${picked.length === 1 ? "" : "s"} on one requirement · ${parts.join(" · ")}. Each item then goes its own way: a direct purchase picks a vendor, a quotation item collects quotations, and the buyer decides the rest.`;
-});
-
-registerCalc("quotations.landed", ({ h, data }) => {
-  const qty = Number(map(data, "qtyOf")[h.requirement] ?? 0);
-  const rate = n(h.rate);
-  if (!h.requirement || rate == null || Number.isNaN(rate)) return "Rate × quantity, its GST and the freight";
-  const f = quoteFigures({ ratePaise: Math.round(rate * 100), gstBp: Math.round((n(h.gst) ?? 0) * 100), freightPaise: Math.round((n(h.freight) ?? 0) * 100) }, qty);
-  const unit = String(map(data, "unitOf")[h.requirement] ?? "");
-  return `₹${fmt(f.landedPaise / 100)} for ${fmt(qty, 3)} ${unit} · ₹${fmt(f.perUnitLandedPaise / 100)} a ${unit} landed`;
+  return `ok:${picked.length} item${picked.length === 1 ? "" : "s"} on one requirement · ${parts.join(" · ")}. Each item then goes its own way: a direct purchase picks a vendor, a quotation item links the PO number the Quotation manager made, and a buyer-decision item does either.`;
 });
 
 registerCalc("purchaseOrders.number", ({ h }) => (h.poNo ? h.poNo : "Next PO number, on save"));
 registerCalc("purchaseOrders.item", ({ l, data }) => {
   if (!l.requirement) return "";
-  const quoted = map(data, "quotedOf")[l.requirement];
-  return `${map(data, "itemOf")[l.requirement] ?? ""}${quoted ? ` · quoted at ₹${quoted}` : " · direct purchase"}`;
+  return String(map(data, "itemOf")[l.requirement] ?? "");
 });
 registerCalc("purchaseOrders.unit", ({ l, data }) => (l.requirement ? String(map(data, "unitOf")[l.requirement] ?? "") : ""));
 
@@ -85,8 +75,15 @@ registerCalc("purchaseOrders.summary", ({ h, lines }) => {
   return `ok:PO total ₹${fmt(total / 100)} with GST${n(h.freight) ? " and freight" : ""} · it goes for approval on save, and only an approved PO is sent and received against.`;
 });
 
-registerCalc("inward.supplier", ({ h, data }) => (h.po ? String(map(data, "supplierOf")[h.po] ?? "") : "The PO's vendor"));
-registerCalc("inward.pending", ({ h, l, data }) => (h.po && l.poLine ? String(map(data, "pendingOf")[`${h.po}|${l.poLine}`] ?? "") : ""));
+/* A receipt started from the item names its PO on each line; the PO form names it once in the header. */
+registerCalc("inward.supplier", ({ h, lines, data }) => {
+  const po = h.po || lines.find((l) => l.po)?.po;
+  return po ? String(map(data, "supplierOf")[po] ?? "") : "The PO's vendor";
+});
+registerCalc("inward.pending", ({ h, l, data }) => {
+  const po = l.po || h.po;
+  return po && l.poLine ? String(map(data, "pendingOf")[`${po}|${l.poLine}`] ?? "") : "";
+});
 registerCalc("register.pending", ({ h, data }) => (h.po && h.poLine ? String(map(data, "pendingOf")[`${h.po}|${h.poLine}`] ?? "") : ""));
 
 registerCalc("inward.pr", ({ h }) => (h.prFixed ? h.prFixed : "Next PR number, on save"));

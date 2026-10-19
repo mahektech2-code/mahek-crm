@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { cx } from "@/components/ui/primitives";
-import { ScreenHeader } from "@/components/console/parts";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import type { LeadTileId } from "@/lib/lead-views";
 import type { SharedFunnel } from "@/lib/engines/lead-funnel-shape";
@@ -79,7 +78,12 @@ const SKIN: Record<ManagerLeadBlock["tone"], { border: string; value: string }> 
   muted: { border: "border-line", value: "text-muted" },
 };
 
-function ManagerStrip({
+/**
+ * WHAT IS WAITING ON SOMEBODY, as one compact list rather than a wall of
+ * tiles. Each row opens the screen whose rows are that count; the hint rides
+ * on hover rather than under every number.
+ */
+function WaitingList({
   workspace,
   blocks,
 }: {
@@ -87,49 +91,32 @@ function ManagerStrip({
   blocks: ManagerLeadBlock[];
 }) {
   return (
-    <div className="mt-6">
-      <div className="mb-2 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-        Across the funnel
+    <div className="rounded-[10px] border border-line bg-surface">
+      <div className="border-b border-divider px-5 py-3.5 text-[15px] font-semibold text-ink">
+        Waiting on you
       </div>
-      {/*
-        One column on a phone and four on a desk. It is a grid rather than the
-        console's own MetricRow because these are doors: a row of figures reads
-        as one sentence about a day, and a tile somebody is meant to press has
-        to look pressable and has to carry a line of prose under it saying what
-        pressing it opens.
-      */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <ul className="m-0 list-none p-0">
         {blocks.map((block) => {
           const empty = block.count === 0;
           const skin = SKIN[empty ? "muted" : block.tone];
           return (
-            <Link
-              key={block.id}
-              href={leadHref(workspace, block.href)}
-              className={cx(
-                "block rounded-[6px] border bg-surface px-4 py-3.5 no-underline",
-                "hover:border-line-strong hover:no-underline",
-                skin.border,
-              )}
-            >
-              <span className="block text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-                {block.label}
-              </span>
-              <span
-                className={cx(
-                  "mt-0.5 block text-[22px] leading-7 font-semibold tabular-nums",
-                  skin.value,
-                )}
+            <li key={block.id} className="border-b border-divider last:border-b-0">
+              <Link
+                href={leadHref(workspace, block.href)}
+                title={block.hint}
+                className="flex items-center justify-between gap-3 px-5 py-2.5 text-ink no-underline hover:bg-canvas hover:text-ink hover:no-underline"
               >
-                {block.count}
-              </span>
-              <span className="mt-1 block text-xs leading-[17px] text-pretty text-muted">
-                {empty ? "Nothing waiting." : block.hint}
-              </span>
-            </Link>
+                <span className="min-w-0 truncate text-sm">{block.label}</span>
+                <span
+                  className={cx("flex-none text-[15px] font-semibold tabular-nums", skin.value)}
+                >
+                  {block.count}
+                </span>
+              </Link>
+            </li>
           );
         })}
-      </div>
+      </ul>
     </div>
   );
 }
@@ -161,65 +148,22 @@ export function DashboardScreen({
 }) {
   return (
     <>
-      <ScreenHeader
-        title="Lead dashboard"
-        subtitle="What is owed today, what is waiting on you, and what is stuck across the funnel. Every figure opens the list behind it — a number nobody can get behind is one they have to take on trust."
-      />
+      {tiles ? <BookTiles workspace={workspace} counts={tiles} /> : null}
 
-      {/*
-        Two thirds and one third, and the focus card is the RIGHT RAIL the
-        specification asks for. It stacks on a phone with the attention card
-        first, because the order on a narrow screen is the order of urgency
-        rather than the order of the columns.
-      */}
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2">
           <AttentionCard workspace={workspace} list={attention} />
         </div>
-        <RoleFocusCard workspace={workspace} focus={focus} />
+        <div className="flex flex-col gap-4">
+          {blocks.length > 0 ? <WaitingList workspace={workspace} blocks={blocks} /> : null}
+          <RoleFocusCard workspace={workspace} focus={focus} />
+        </div>
       </div>
 
-      {/*
-        THE NINE, UNDER THE READER'S OWN WORK AND ABOVE THE TEAM'S.
-
-        They are cuts of a book rather than queues waiting on a decision, which
-        is what makes them the strip EVERYBODY gets — three of the nine are the
-        reader's own, and a salesman who is shown neither these nor the seven
-        was being shown no summary of his book at all. `tile-strip.tsx` carries
-        the argument for why they are these nine and not the seven below.
-
-        Two of the figures restate what the card above already says, and that
-        is a restatement rather than a second opinion: the Today and Overdue
-        tiles resolve to `dueTodayWindow` and `overdueWindow`, which is exactly
-        what `needsAttention` counts its own totals with. One clause, so they
-        cannot say different numbers about one book — and a reader who has
-        scrolled past the card still meets the figure on the way down.
-      */}
-      {tiles ? (
-        <div className="mt-6">
-          <div className="mb-2 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-            Your book
-          </div>
-          <BookTiles workspace={workspace} counts={tiles} />
-        </div>
-      ) : null}
-
-      {blocks.length > 0 ? <ManagerStrip workspace={workspace} blocks={blocks} /> : null}
-
-      {/*
-        PIPELINE AT A GLANCE — the same funnel the funnel screen draws, compact.
-
-        Not a second drawing of it: `SharedBarFunnel` takes a prop, and what
-        the prop removes is the footnotes rather than any figure. Every bar,
-        every count and every segment link is what `/leads/funnel` shows, off
-        the same `funnelByRung` read shaped by the same pure engine — so a
-        manager who reads a rung here and opens the screen cannot find a
-        different number waiting for him.
-      */}
       {pipeline ? (
         <div className="mt-6">
           <div className="mb-2 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-            Pipeline at a glance
+            Pipeline
           </div>
           <SharedBarFunnel workspace={workspace} funnel={pipeline} compact />
         </div>

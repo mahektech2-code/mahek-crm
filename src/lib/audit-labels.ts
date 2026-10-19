@@ -339,11 +339,17 @@ const DESCRIBE: Record<string, Describer> = {
   "website.access.denied": () => ["was refused a website action"],
   /* ---- stock checks */
   "erp.floorCheck.record": () => ["recorded a stock check"],
+  "erp.stock.adjust": () => ["adjusted stock by hand"],
+  "erp.purchaseOrder.share": () => ["shared a purchase order"],
   "erp.floorCheck.review": () => ["reviewed a stock check that did not match the book"],
   "erp.floorCheck.escalate": () => ["raised a stock check mismatch into a formal count"],
   /* ---- empty drums, scrap sale and scrap receipts */
   "erp.rawMaterial.photos": () => ["changed a can's photos"],
   "erp.quotes.edit": () => ["edited the quotation sheet"],
+  /* ---- a requirement's PO, by the item's purchase rule */
+  "erp.requisition.linkPo": () => ["linked a purchase requirement to a PO number from the Quotation manager"],
+  "erp.requisition.unlinkPo": () => ["took a Quotation manager PO number off a purchase requirement"],
+  "erp.requisition.createPo": () => ["created a PO for a direct-purchase requirement, at the item's price"],
   "erp.canGroup.byName": () => ["grouped the cans by name"],
   "erp.drum.empty": () => ["recorded an empty drum, weighed"],
   "erp.drum.classify": () => ["decided who owns an empty drum"],

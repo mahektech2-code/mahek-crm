@@ -75,6 +75,11 @@ export const refuse = (r: Result<unknown>): never => {
   throw new Refusal(r);
 };
 
+/** The Result a `refuse(...)` carried, for a transaction not run through `inTx`; null for any other error. */
+export function refusalResult(e: unknown): Result<unknown> | null {
+  return e instanceof Refusal ? e.result : null;
+}
+
 /** Runs a transaction that may `refuse(...)` part-way, rolling back and answering with the refusal. */
 export async function inTx(fn: (tx: Tx) => Promise<Result<unknown>>): Promise<Result<unknown>> {
   try {

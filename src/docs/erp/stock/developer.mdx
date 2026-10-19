@@ -6,12 +6,16 @@
 |---|---|---|
 | Stock reading | `src/lib/erp/stock.ts` | `rmLots`, `packingUse`, `lotLandings`, `sfgLots`, `fgLots`, `packLots`, per-lot `…LotStock`, `rmLevelAvailable`, `fgLevelAvailable`, `lockLot` |
 | Stock tabs | `src/lib/erp/screens/purchase.ts`, `src/lib/erp/screens/production.ts` | `rmStock`/`rmLog`, `sfgStock`, `fgStock` (+ `labelLoose`), `packStock`, `logScreen(…)` |
+| Raw material by item | `src/lib/erp/engines/stock-fold.ts`, `src/lib/erp/list-query.ts` | `foldRmLots` (chemicals by lot, every other type one total per item and godown), `ListRow.sub`, `ListSpec.fold`, `unfold` and `?parts=1` for By lot |
 | Registry | `src/lib/erp/registry.ts` | Screen `stock`: tabs `rmStock`, `sfgStock`, `fgStock`, `packStock`, each with an `alt` log toggle |
 | Box register | `src/lib/erp/units.ts` | `unitEvent`, `ensureBatchBoxes`, `cancelBatchBoxes`, `mintLooseUnits`, `looseHeadroom`, `trimLooseUnits`, `moveUnitsForTransfer` |
 | Box rules (pure) | `src/lib/erp/engines/trace.ts` | `unitId`, `boxLots`, `UNIT_STATUS`, `UNIT_STATUS_LABEL`, `manualMove` |
 | Boxes screen | `src/lib/erp/screens/units.ts` | `unitScreen("units" \| "allUnits")`, `move` |
 | Labels | `src/app/erp/print-labels/page.tsx`, `src/lib/actions/erp-trace.ts` | `?batch=`, `?lot=`, `?ids=`, `?order=`; `erpMarkLabelsPrinted` |
-| Transfers | `src/lib/erp/screens/movement.ts` | `transferable`, `transferForm`, `postTransferIn`, `transfers` module |
+| Transfers | `src/lib/erp/screens/movement.ts` | `transferable`, `transferForm`, `postTransferIn`, `postWriteOff`, `transfers` module |
+| Hand adjustment | `src/lib/erp/stock-adjust.ts`, `src/lib/erp/engines/stock-adjust.ts` | `stockRowActions` (the row's ⋯ menu), `adjustStockRow`, `readAdjust`, `ADJUST_REASONS`; table `erp_manual_adjustments` |
+| Stock inquiry | `src/app/erp/stock-inquiry/page.tsx`, `src/lib/erp/stock-inquiry.ts` | `stockInquiry`, `inquiryItems`; links built by `erpStockInquiryHref` (`stock-links.ts`) |
+| Row menu | `src/app/erp/_ui/list-screen.tsx` | `ListSpec.rowMenu` names the actions drawn in a ⋯ menu on every row |
 
 ## Reading a stage
 
@@ -109,6 +113,8 @@ sequenceDiagram
 | `npm run test:integration` | `src/lib/erp/erp-purchase.test.ts` — "register and stock" | Available stock lists lots above zero with the cost hidden; the log flags an orphaned entry |
 | `npm run test:integration` | `src/lib/erp/erp-traceability.test.ts` | Box ids minted per box; loose labels capped and trimmed |
 | `npm run test:integration` | `src/lib/erp/erp-foundation.test.ts` | The reserved godown cannot be switched off |
+| `npm run test` | `src/lib/erp/engines/stock-adjust.test.ts` | Add/Remove, never below zero, Other needs the reason |
+| `npm run test:integration` | `src/lib/erp/erp-stock-adjust.test.ts` | The ⋯ menu on every stage; the power; Add and Remove post at once; the inquiry's running balance leaves Item Lost Record out |
 
 ## Changing it safely
 

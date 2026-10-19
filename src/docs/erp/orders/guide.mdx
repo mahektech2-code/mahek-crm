@@ -35,14 +35,14 @@ How these orders then reach MahekOne's order book — the CRM, targets and outst
   <span key="3"><b>Bulk actions.</b> Tick rows (or a whole order number group) and act on them together.</span>,
   <span key="4"><b>Allocation.</b> Whether the lots set aside for the line add up to what it needs: <i>Done</i>, <i>Add More Quantity</i> or <i>Remove Some Quantity</i>.</span>,
   <span key="5"><b>Flags.</b> What state the line is in and what it is still missing.</span>,
-  <span key="6"><b>The line's drawer.</b> Every action on one line. A button that cannot be used yet says why when you hover it.</span>,
+  <span key="6"><b>The line's record.</b> Every action on one line. A button that cannot be used yet says why when you hover it.</span>,
 ]} />
 
 ## The tabs
 
 | Tab | What it lists |
 |---|---|
-| **Pending** | Every line that is not Ready yet and has not reached billing — not cancelled, not an empty-drum line. Marking a line **Ready** moves it to *Under process & ready*. Grouped by date and order number. Once any line of an order is billed, the whole order leaves this tab. |
+| **Pending** | Lines the office is holding — **Hold From Office** — that have not reached billing; not cancelled, not an empty-drum line. A line that is **Under Process** or **Ready** is on *Under process & ready* instead, never on both tabs. Grouped by date and order number. Once any line of an order is billed, the whole order leaves this tab. |
 | **Under process & ready** | Lines that are **Under Process** or **Ready** and not yet billed. This is the working list for the office. |
 | **Billing & dispatch** | Lines that have been billed. Here you set the dispatch date and mark them **Verified** once the goods leave. |
 | **Batch codes** | Every lot set aside for an order line, and how many. |
@@ -134,7 +134,7 @@ If anything is missing, hovering the button says exactly what: *Needs a Tally bi
 
 | Action | What it does |
 |---|---|
-| **Mark dispatch-verified** | Asks for the **dispatch date** and marks the line **Verified** and **Dispatched**. Needs the lots allocated in full and every box scanned. The date cannot be before the order date. The first verified line of a bill opens its record on [Transport](/docs/erp/transport). |
+| **Mark dispatch-verified** | Asks for the **dispatch date** and marks the line **Verified** and **Dispatched**. Needs the lots allocated in full and every box scanned. The date cannot be before the order date. The lines verified together open one record on [Transport](/docs/erp/transport). |
 | **Extra expenses** | Records extra freight on the line, once. It is added to the line's cost, and to the bill's record on Logistics. |
 | **Change GST** | 18% or 0%, until the line is verified. 18% bills from *Mahek Marketing India*, 0% from *Mylac*. |
 | **Mark not verified** | ERP administrators only. Sets the line's verification to *Not Verify*. |
@@ -144,7 +144,7 @@ If anything is missing, hovering the button says exactly what: *Needs a Tally bi
 
 Mark dispatch-verified and Extra expenses can also be done to a selection of lines at once.
 
-### What the drawer shows
+### What the record shows
 
 Besides the columns, a billed line shows the delivery party, litres dispatched, which company bills it, the **final amount** (with GST), the **lot-code costing** and **cost per can** (if you can see cost), the credit notes issued against it, **order fulfil days**, the customer's **credit days** and the **due date** that gives, the delivery party's segment and salesman, and the customer's **monthly target** from the CRM. The row is flagged *Sales target reached* when the customer's sales in the dispatch month meet that target.
 
@@ -230,7 +230,7 @@ At the Dispatch desk, by scanning each box onto the order. For old stock with no
 At least one lot on the line has box ids, so every box has to be scanned at the Dispatch desk before the line can be verified.
 </Faq>
 <Faq q="An order disappeared from Pending but one of its lines is not billed.">
-Pending hides a whole order once any of its lines is billed, and hides any line marked Ready. Those lines are on **Under process & ready** and **All lines**.
+Pending hides a whole order once any of its lines is billed, and hides any line that is Under Process or Ready. Those lines are on **Under process & ready** and **All lines**.
 </Faq>
 <Faq q="I cannot change the quantity on a line.">
 It has been billed. Undo billing first (only possible before it is dispatch-verified).

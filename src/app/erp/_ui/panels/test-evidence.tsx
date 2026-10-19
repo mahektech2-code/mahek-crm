@@ -4,7 +4,7 @@ import { cx, SectionLabel } from "@/components/ui/primitives";
 import { registerPanel, type PanelProps } from "../panels";
 
 /* ---------------------------------------------------------------------------
- * A purchase test's evidence, in the drawer the verifier decides from: one
+ * A purchase test's evidence, in the record the verifier decides from: one
  * tile per required test, the photograph or the reading, and what is missing
  * said in words — a verifier cannot pass what they cannot see.
  *

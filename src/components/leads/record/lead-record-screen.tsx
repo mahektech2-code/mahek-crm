@@ -1,5 +1,8 @@
 "use client";
 
+import { ParkLead } from "@/components/leads/record/park-lead";
+import { useInLeadHub } from "@/components/leads/hub/hub-context";
+import type { ActionOwnerCandidate } from "@/lib/services/lead-actions-service";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import { DeleteLead } from "./delete-lead";
 import * as React from "react";
@@ -152,70 +155,70 @@ export const RECORD_TABS: ReadonlyArray<{
     label: "Overview",
     shop: true,
     distributor: true,
-    hint: "Who holds this lead, where it came from, and the visits behind §4's cap.",
+    hint: "Who has this lead, where it came from, and its visits.",
   },
   {
     id: "qualification",
     label: "Qualification",
     shop: true,
     distributor: true,
-    hint: "§9 §11 — what has to be known, and which of it is answered.",
+    hint: "The Qualification questions and which are answered.",
   },
   {
     id: "verification",
     label: "Verification",
     shop: true,
     distributor: true,
-    hint: "§8 — what the manager asked the shop, and what they said.",
+    hint: "The Sales Manager's check call and what the shop said.",
   },
   {
     id: "samples",
     label: "Samples",
     shop: true,
     distributor: false,
-    hint: "§15 §16 — every trial, its three dates and its seven answers.",
+    hint: "Every sample sent and what the customer thought.",
   },
   {
     id: "commercial",
-    label: "Commercial",
+    label: "Orders & money",
     shop: true,
     distributor: false,
-    hint: "§18 §19 §20 — the first order, the ledger behind it and the money.",
+    hint: "Orders, bills and payments for this lead.",
   },
   {
     id: "profile",
     label: "Distributor profile",
     shop: false,
     distributor: true,
-    hint: "§11 — the thirty answers, in the specification's five groups.",
+    hint: "Everything asked about the distributor candidate.",
   },
   {
     id: "approval",
     label: "Approval",
     shop: false,
     distributor: true,
-    hint: "§12 — both steps, their deciders, and what forced the second.",
+    hint: "The approval steps and who decided each.",
   },
   {
     id: "communication",
-    label: "Communication",
+    label: "Messages",
     shop: true,
     distributor: true,
-    hint: "§14 — the eleven things we send, and what has gone.",
+    hint: "What we have sent this lead.",
   },
   {
     id: "nurture",
-    label: "Nurture",
+    label: "Follow-ups",
     shop: true,
     distributor: true,
-    hint: "§13 — what the sequence has raised against this lead.",
+    hint: "Follow-up tasks raised for this lead.",
   },
   {
     id: "transitions",
-    label: "Transitions",
+    label: "Stage history",
     shop: true,
     distributor: true,
-    hint: "§25 — every stage move, and what a manager ignored to make one.",
+    hint: "Every stage change, who made it and why.",
   },
   {
     id: "timeline",
@@ -241,13 +244,13 @@ const CLOSED_STAGES = new Set<LeadStage>(["lost", "won", "customer", "active_dis
 function ladderName(salesType: LeadRecord["salesType"]): string {
   switch (salesType) {
     case "direct":
-      return `§3A, the direct ladder — ${DIRECT_LADDER.length} rungs`;
+      return `Direct customer — ${DIRECT_LADDER.length} stages`;
     case "third_party":
-      return `§3C, the third-party ladder — ${THIRD_PARTY_LADDER.length} rungs`;
+      return `Third-party customer — ${THIRD_PARTY_LADDER.length} stages`;
     case "distributor":
-      return `§3B, the distributor ladder — ${DISTRIBUTOR_LADDER.length} rungs`;
+      return `Distributor — ${DISTRIBUTOR_LADDER.length} stages`;
     default:
-      return `the original ladder — ${LEGACY_LADDER.length} rungs`;
+      return `Older lead — ${LEGACY_LADDER.length} stages`;
   }
 }
 
@@ -279,8 +282,11 @@ export function LeadRecordScreen({
   handover,
   handoverReasons,
   sampleReasons,
+  sampleBlocked,
   lostReasons,
   holdReasons,
+  day,
+  parkCandidates,
   discountThresholdPercent,
   creditLimitThresholdPaise,
   canVerify,
@@ -345,10 +351,16 @@ export function LeadRecordScreen({
    * screen must not find the form still offering what shipped.
    */
   sampleReasons: { code: string; label: string }[];
+  /** Why a sample cannot be asked for yet, from `sampleEligibility`. Null when it can. */
+  sampleBlocked: string | null;
   /** `leads.lostReasons`, resolved on the server. Never the literal list. */
   lostReasons: { code: string; label: string }[];
   /** `leads.holdReasons`, the same way and for the same reason. */
   holdReasons: { code: string; label: string }[];
+  /** The business date, for the park form's default resume day. */
+  day: string;
+  /** Who a park's next action may be owed by. */
+  parkCandidates: ActionOwnerCandidate[];
   discountThresholdPercent: number;
   creditLimitThresholdPaise: number;
   canVerify: boolean;
@@ -451,6 +463,7 @@ export function LeadRecordScreen({
   /** The clock, read once on the server. A client may not read it in render. */
   nowMs: number;
 }) {
+  const inHub = useInLeadHub();
   const [verifying, setVerifying] = React.useState(false);
 
   const distributor = record.salesType === "distributor";
@@ -465,6 +478,7 @@ export function LeadRecordScreen({
   return (
     <div className="p-6">
       <ScreenHeader
+        entity
         title={record.name}
         subtitle={
           <>
@@ -514,6 +528,18 @@ export function LeadRecordScreen({
                 name={record.name}
                 canTrash={canTrash}
                 backHref={leadHref(workspace, "leads")}
+              />
+            )}
+            {CLOSED_STAGES.has(record.stage) || park ? null : (
+              <ParkLead
+                customerId={record.customerId}
+                name={record.name}
+                stage={record.stage}
+                day={day}
+                candidates={parkCandidates}
+                holdReasons={holdReasons}
+                defaultOwnerId={record.salesmanId}
+                canWork={canWork}
               />
             )}
             {CLOSED_STAGES.has(record.stage) ? null : (
@@ -587,13 +613,15 @@ export function LeadRecordScreen({
               ? park.fromStage
                 ? `Parked from ${stageLabel(park.fromStage)}`
                 : "Parked, and the transition does not say from where"
-              : stageSentence(record.stage)}
+              : inHub
+                ? null
+                : stageSentence(record.stage)}
           </span>
         </Fact>
         <Fact
           label="Here since"
           value={record.stageSince ? shortDate(record.stageSince) : "—"}
-          sub={record.stageSince ? `${plural(record.stuckDays, "day")} on this rung` : undefined}
+          sub={record.stageSince ? `${plural(record.stuckDays, "day")} at this stage` : undefined}
         />
         <Fact label="Salesman" value={record.salesmanName ?? "Nobody"}>
           {record.salesmanId && workspace === "sales" ? (
@@ -611,9 +639,11 @@ export function LeadRecordScreen({
           label="Lead manager"
           value={record.leadManagerName ?? "Nobody"}
           sub={
-            record.leadManagerName
-              ? "owes the verification call and the nurture tasks"
-              : "no territory covers this lead"
+            inHub
+              ? undefined
+              : record.leadManagerName
+                ? "owes the verification call and the nurture tasks"
+                : "nobody covers this area yet"
           }
         />
         <Fact
@@ -676,16 +706,13 @@ export function LeadRecordScreen({
                 {park.holdReason ??
                   (park.reasonCode
                     ? "Nothing further was written down."
-                    : "Nobody has said why. On Hold asks for a reason because somebody will look again, and “back after Diwali” is what tells them when.")}
+                    : "No reason was given.")}
               </p>
               <p className="m-0 mt-1 text-[12px] text-muted">
                 {park.at
                   ? `${stamp(park.at)} · ${park.actorName ?? "somebody"}`
                   : "No transition recorded"}
-                {" · "}
-                On hold displaces the rung rather than being one, so nothing above can say what
-                comes next until it is put back on a named rung. The rung it came from is read off
-                the transition above, which is the only place it exists.
+
               </p>
             </>
           }
@@ -704,7 +731,7 @@ export function LeadRecordScreen({
         <Banner
           tone="warn"
           title="Waiting on the verification call"
-          body="Qualification does not open until a sales manager has rung the customer. Every day this sits here is a day the salesman cannot move."
+          body="Qualification opens once a Sales Manager has called the customer to check."
           action={
             <Link
               href={`${base}/verify`}
@@ -717,7 +744,7 @@ export function LeadRecordScreen({
               title={
                 canVerify
                   ? undefined
-                  : "The verification call is a sales manager's. Yours is not one of the hats that carries it."
+                  : "Only a Sales Manager can make the check call."
               }
             >
               Make the call
@@ -727,7 +754,7 @@ export function LeadRecordScreen({
       ) : null}
 
       {record.lostReason ? (
-        <Banner tone="danger" title="This lead is closed" body={record.lostReason} />
+        <Banner tone="danger" title="This lead is closed" body={record.lostReason} fact />
       ) : null}
 
       {/* --------------------------------------------- what happens next */}
@@ -894,6 +921,7 @@ export function LeadRecordScreen({
               record={record}
               reasons={sampleReasons}
               canWork={canWork}
+              blocked={sampleBlocked}
             />
           ) : null}
 
@@ -950,16 +978,20 @@ export function LeadRecordScreen({
         {/* ------------------------------------------------------ the rail */}
 
         <div className="flex min-w-0 flex-col gap-4">
-          <GateRail
-            record={record}
-            base={base}
-            verdict={nextVerdict}
-            nextRung={nextRung}
-            park={park}
-            canWork={canWork}
-            canOverride={canOverride}
-            overrideAllowed={overrideAllowed}
-          />
+          {/* On Overview the "Move this lead forward" card already says this,
+              so the rail drops it there rather than saying it twice. */}
+          {here === "overview" ? null : (
+            <GateRail
+              record={record}
+              base={base}
+              verdict={nextVerdict}
+              nextRung={nextRung}
+              park={park}
+              canWork={canWork}
+              canOverride={canOverride}
+              overrideAllowed={overrideAllowed}
+            />
+          )}
           <LadderPanel
             ladder={ladder}
             rung={rung}
@@ -976,6 +1008,7 @@ export function LeadRecordScreen({
               ownerId: record.salesmanId,
               backOfficeAmId: record.backOfficeAmId,
               leadManagerId: record.leadManagerId,
+              salesManagerId: record.salesManagerId,
             }}
           />
         </div>
@@ -1166,23 +1199,21 @@ function GateRail({
      different places. */
   if (verdict.noNextRung) {
     return (
-      <Panel title="What happens next">
+      <Panel title="Next stage">
         {park ? (
           <p className="text-[13px] text-pretty text-body">
-            Nothing, until this comes off hold. A park is not a rung, so there is no rung above it
-            — putting it back means naming the rung it returns to, which is{" "}
+            Nothing until it comes off hold. It goes back to{" "}
             {park.fromStage ? (
               <strong className="font-medium text-ink">{stageLabel(park.fromStage)}</strong>
             ) : (
-              "not recorded on the transition that parked it"
+              "the stage it was at"
             )}
-            . The gate for that rung is then evaluated exactly as it always would be.
+            .
           </p>
         ) : (
           <p className="text-[13px] text-pretty text-body">
-            This lead is at {stageLabel(record.stage)}, which is the end of its ladder. There is no
-            next rung to draw a button for, and drawing a disabled one that could never be enabled
-            would be worse than drawing none.
+            This lead is at {stageLabel(record.stage)}, the last stage. There is nothing further
+            to do.
           </p>
         )}
       </Panel>
@@ -1191,8 +1222,8 @@ function GateRail({
 
   return (
     <Panel
-      title="What happens next"
-      hint="The next rung, and what it is waiting on. Read off the same function the server action refuses on, so nothing here can promise a move that is then turned down."
+      title="Next stage checklist"
+      hint="The next stage, and what it still needs."
     >
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <span className="text-[15px] font-medium text-ink">
@@ -1207,7 +1238,7 @@ function GateRail({
 
       {verdict.open ? (
         <p className="mb-3 text-[13px] text-pretty text-muted">
-          Everything this rung asks for has been answered.
+          Everything this stage needs is done.
         </p>
       ) : (
         <ul className="m-0 mb-3 list-none p-0">
@@ -1256,11 +1287,6 @@ function GateRail({
           overrideAllowed={overrideAllowed}
         />
       </div>
-      <p className="mt-2 text-[12px] text-pretty text-muted">
-        An override is allowed, recorded, and names exactly what was ignored — a system that
-        refuses everything is defeated in a week by people writing the work down after the event,
-        and the record then says the process was followed when it was not.
-      </p>
     </Panel>
   );
 }
@@ -1310,7 +1336,7 @@ function LadderPanel({
       title="Where this lead stands"
       hint={
         parked
-          ? `${ladderName(salesType)}. This lead is parked, so it stands on none of these — the highlight is off the ladder rather than missing from it.`
+          ? `${ladderName(salesType)}. This lead is on hold, so no stage is highlighted.`
           : ladderName(salesType)
       }
     >
@@ -1386,13 +1412,13 @@ function SeatsPanel({
   return (
     <Panel
       title="Who holds this"
-      hint="Five seats and they move independently. One sells to the account, one raises its paperwork, one coordinates the lead, one runs the relationship after it converts — and only the sales one decides whose targets an account counts toward."
+      hint="The people named on this lead and what each one does."
     >
       <div className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2">
         <Fact
-          label="Owner (whose book)"
+          label="Owner"
           value={record.salesmanName ?? "Unassigned"}
-          sub="A lead answers to its owner; a customer to its sales account manager."
+          sub="Works this lead day to day."
         >
           <span className="mt-1 block">
             <ReassignLead
@@ -1413,13 +1439,13 @@ function SeatsPanel({
           sub={
             record.createdAt
               ? `Raised ${shortDate(new Date(record.createdAt).toISOString())}. Reassigning does not change this.`
-              : "Raised outside MahekOne, so there is no creation record to read."
+              : "Came in from outside MahekOne."
           }
         />
         <Fact
           label="Sales account manager"
           value={record.salesAmName ?? "Nobody"}
-          sub="Moving this moves revenue, so it is accounts' and admin's."
+          sub="Gets credit for its sales. Changed by accounts."
         />
         {/* §7 — BESIDE THE OTHER SEATS rather than in a block of its own,
             because "who holds this" is one question and a lead manager named
@@ -1433,7 +1459,7 @@ function SeatsPanel({
         <Fact
           label="Lead manager"
           value={record.leadManagerName ?? "Nobody"}
-          sub="Coordinates. Read for sight, never for credit."
+          sub="Coordinates the lead with the team."
         >
           <span className="mt-1 block">
             <AssignLeadManager
@@ -1495,7 +1521,7 @@ function VisitsPanel({
   return (
     <Panel
       title="Visits"
-      hint="Counted from the visits themselves and never cached. §4's cap asks for a decision rather than refusing the visit — a salesman whose visit is refused stops recording visits, and the company loses the GPS, the competitor note and the reason in order to stop a number reaching four."
+      hint="Every visit to this shop. After a few visits to a Suspect, somebody has to decide whether it is worth pursuing."
       slice={
         total > visits.length
           ? `The newest ${visits.length} of ${total}.`
@@ -1614,7 +1640,7 @@ function QualificationPanel({
           title={
             canWork
               ? "Answer them at full size"
-              : "You can read this at full size; working a lead is not one of the hats you hold."
+              : "You can view this, but you cannot work this lead."
           }
           className="inline-flex h-[30px] items-center rounded-[4px] border border-line bg-surface px-3 text-[13px] text-body no-underline hover:bg-canvas hover:no-underline"
         >
@@ -1823,23 +1849,21 @@ function GstPanel({
       <p className="text-[13px] text-pretty text-body">
         {!has ? (
           <>
-            The salesman records the number, standing in the shop; this screen only ever says
-            whether it holds up. Until there is one, the sample gate stays shut and there is nothing
-            here for the back office to check.
+            No GST number yet. The lead&apos;s owner enters it, and no sample can be requested until
+            there is one.
           </>
         ) : looked ? (
           <>
             {refused ? "Refused" : "Validated"} {stamp(record.gstVerifiedAt)}
             {record.gstVerifiedByName ? ` by ${record.gstVerifiedByName}` : ""}.
             {refused
-              ? " Nothing has to be undone to lift it: the gate reads this column on every evaluation, so validating a corrected number releases the lead from the rung it is already on. The reason is on the timeline."
-              : " This is what the qualification gate reads before anybody may send a sample."}
+              ? " Correct the number and the Sales Manager can check it again. The reason is on the timeline."
+              : " A sample can be requested once the Qualification is also verified."}
           </>
         ) : (
           <>
-            Nobody has looked at this number yet, which is not the same as having looked and refused
-            it — and it is what is holding the sample. The back office, the CRM or the accounts desk
-            answers it; the salesman who collected it may not.
+            Not checked yet. The lead&apos;s Sales Manager checks it while reviewing the Qualification;
+            whoever entered it may not.
           </>
         )}
       </p>
@@ -1881,7 +1905,7 @@ function VerificationPanel({
             title={
               canVerify
                 ? "The findings and the twelve questions, at full size"
-                : "The verification call is a sales manager's. Yours is not one of the hats that carries it."
+                : "Only a Sales Manager can make the check call."
             }
             className="inline-flex h-[30px] items-center rounded-[4px] border border-line bg-surface px-3 text-[13px] text-body no-underline hover:bg-canvas hover:no-underline"
           >
@@ -1894,7 +1918,7 @@ function VerificationPanel({
             title={
               canVerify
                 ? undefined
-                : "The verification call is a sales manager's. Yours is not one of the hats that carries it."
+                : "Only a Sales Manager can make the check call."
             }
             onClick={onStart}
           >
@@ -2057,6 +2081,7 @@ function SamplesPanel({
   record,
   reasons,
   canWork,
+  blocked,
 }: {
   workspace: LeadWorkspace;
   samples: LeadSampleRow[];
@@ -2072,11 +2097,12 @@ function SamplesPanel({
   record: LeadRecord;
   reasons: { code: string; label: string }[];
   canWork: boolean;
+  blocked: string | null;
 }) {
   return (
     <Panel
       title="Samples and trials"
-      hint="A sample with no feedback is stock given away. §16 does not stop — the last chase interval repeats until there is an answer, because a trial nobody reviewed is stock given away for nothing."
+      hint="Every sample, and the customer's feedback on it. We keep asking until there is an answer."
       slice={
         total > samples.length
           ? `The newest ${samples.length} of ${total}.`
@@ -2110,6 +2136,7 @@ function SamplesPanel({
             salesType={record.salesType}
             reasons={reasons}
             canWork={canWork}
+            blocked={blocked}
           />
           <Link
             href={leadHref(workspace, "samples/desk")}
@@ -2413,7 +2440,11 @@ function ApprovalPanel({
 }) {
   const steps = [
     { index: 0, label: "The sales manager's review", detail: "The person who knows the territory." },
-    { index: 1, label: "Management's appointment", detail: "Billable from here." },
+    {
+      index: 1,
+      label: "Management's appointment",
+      detail: "Billable from here.",
+    },
   ];
 
   return (
@@ -2830,9 +2861,18 @@ function HistoryPanel({
  * visit would read as a good visit.
  */
 const ACTOR_MARK: Record<TimelineActorKind, { rule: string; name: string }> = {
-  field: { rule: "shadow-[inset_3px_0_0_var(--color-brand)]", name: "text-body" },
-  office: { rule: "shadow-[inset_3px_0_0_var(--color-line-strong)]", name: "text-body" },
-  system: { rule: "shadow-[inset_3px_0_0_var(--color-divider)]", name: "text-muted italic" },
+  field: {
+    rule: "shadow-[inset_3px_0_0_var(--color-brand)]",
+    name: "text-body",
+  },
+  office: {
+    rule: "shadow-[inset_3px_0_0_var(--color-line-strong)]",
+    name: "text-body",
+  },
+  system: {
+    rule: "shadow-[inset_3px_0_0_var(--color-divider)]",
+    name: "text-muted italic",
+  },
 };
 
 /**
@@ -2947,7 +2987,10 @@ function TimelinePanel({
           {page.next ? (
             <div className="mt-2">
               <Link
-                href={href({ tlKind: kind, tl: `${page.next.at}|${page.next.id}` })}
+                href={href({
+                  tlKind: kind,
+                  tl: `${page.next.at}|${page.next.id}`,
+                })}
                 className="inline-flex h-[30px] items-center rounded-[4px] border border-line bg-surface px-3 text-[13px] text-body no-underline hover:bg-canvas hover:no-underline"
               >
                 Load older

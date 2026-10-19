@@ -47,7 +47,12 @@ import { CRM_SALES_MANAGER_WORKSPACE } from "@/proxy";
 import { setTestWorkspace } from "@/lib/services/crm-sales-manager-scope";
 import { leadGateInput } from "@/lib/services/lead-service";
 import { QUAL_NEXT } from "@/lib/services/lead-qualification-flow-service";
-import { gstValidatorRefusal, requireQualificationApprover } from "@/lib/services/lead-verifier";
+import {
+  gstValidatorRefusal,
+  gstValidatorRefusalById,
+  qualificationApproverRefusalById,
+  requireQualificationApprover,
+} from "@/lib/services/lead-verifier";
 import type { MbosPrincipal } from "@/lib/services/mbos-service";
 import type { SyncItem } from "@/lib/mbos/types";
 import { QUALIFICATION_ANSWERS, qualificationColumns } from "@/lib/qualification-fixtures";
@@ -498,6 +503,27 @@ describe("E: authorization follows the lead's own Sales Manager", () => {
     const r = await reviewLeadQualification({ customerId: lead.id, verdict: "verified" });
     assert.equal(r.ok, false);
     assert.equal((await row(lead.id)).leadQualificationReview, null);
+  });
+
+  test("the screen's answer is the action's: the buttons show for exactly who may press them", async () => {
+    const lead = await complete();
+    for (const who of [salesman, other, globalMgr, seema]) {
+      setTestWorkspace(null);
+      setTestUser(who);
+      const screen = await qualificationApproverRefusalById(who, lead.id);
+      /* The action refuses by throwing where the person holds no verifying
+         route at all, and by returning a message otherwise; both are a no. */
+      const allowed = await requireQualificationApprover(lead.id).then(
+        (a) => a.ok,
+        () => false,
+      );
+      assert.equal(screen === null, allowed, `review: ${who.name}`);
+      const gstScreen = await gstValidatorRefusalById(who, lead.id);
+      const gstAction = await gstValidatorRefusal(who, { ownerId: salesman.id, salesManagerId: seema.id });
+      assert.equal(gstScreen === null, gstAction === null, `gst: ${who.name}`);
+    }
+    assert.equal(await qualificationApproverRefusalById(seema, lead.id), null);
+    assert.notEqual(await qualificationApproverRefusalById(salesman, lead.id), null);
   });
 
   test("the responsible Sales Manager can", async () => {

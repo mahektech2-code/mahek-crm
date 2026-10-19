@@ -465,6 +465,34 @@ export async function gstValidatorRefusal(
     : "This lead has no Sales Manager yet. Ask for one to be named; they validate its GST number.";
 }
 
+/**
+ * The screens' form of `requireQualificationApprover`: null where this person
+ * may record a review of this lead's Qualification, otherwise the sentence the
+ * action would refuse with. Same rule, asked without a request context.
+ */
+export async function qualificationApproverRefusalById(
+  user: { id: string; role: string },
+  customerId: string,
+): Promise<string | null> {
+  const seats = await seatsOf(customerId);
+  if (!(await canVerifyLeadById(user, customerId))) {
+    const designated = seats ? await approverFor(seats) : null;
+    return designated && seats?.salesManagerId === user.id
+      ? `You raised this lead yourself, so ${designated.name} reviews its Qualification. You collect the answers.`
+      : "Reviewing a Qualification is for the Sales Manager the lead is under.";
+  }
+  if (!seats) return null;
+  const designated = await approverFor(seats);
+  if (designated && designated.id === user.id) return null;
+  if (seats.ownerId && seats.ownerId === user.id) {
+    return "You own this lead, so you collected its Qualification and cannot approve it. Its Sales Manager reviews it.";
+  }
+  if (await isOtherSalesManager(user, seats)) {
+    return "This lead is under a different Sales Manager. Only its own Sales Manager reviews its Qualification.";
+  }
+  return null;
+}
+
 /** The screens' form of `gstValidatorRefusal`: may this person validate GST on this lead? */
 export async function canValidateGstById(
   user: { id: string; role: string },
@@ -473,6 +501,16 @@ export async function canValidateGstById(
   const seats = await seatsOf(customerId);
   if (!seats) return false;
   return (await gstValidatorRefusal(user, seats)) === null;
+}
+
+/** The screens' form of `gstValidatorRefusal`, with its sentence. */
+export async function gstValidatorRefusalById(
+  user: { id: string; role: string },
+  customerId: string,
+): Promise<string | null> {
+  const seats = await seatsOf(customerId);
+  if (!seats) return "This lead could not be found.";
+  return gstValidatorRefusal(user, seats);
 }
 
 /** The screens' form of `qualificationCollectorRefusal`: the sentence, or null where they may write. */

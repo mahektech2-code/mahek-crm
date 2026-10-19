@@ -1,5 +1,6 @@
 "use client";
 
+import { OutsideLeadHub } from "@/components/leads/hub/hub-context";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import * as React from "react";
 import Link from "next/link";
@@ -95,22 +96,19 @@ export function NegotiationScreen({
 
       <ScreenHeader
         title="Negotiation desk"
-        subtitle="Every lead standing on the negotiation rung, oldest first, with what is holding it up. §G refuses an order against a lead below this rung — so this is the queue that refusal is protecting, and a conversation nobody is having is one nobody can sell through."
+        subtitle="Leads in negotiation, oldest first, with what is holding each one up. An order at any stage turns the lead into a customer."
         actions={
-          <Link
-            href={leadHref(workspace, "leads")}
-            className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
-          >
-            ← All leads
-          </Link>
+          <OutsideLeadHub>
+            <Link
+              href={leadHref(workspace, "leads")}
+              className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
+            >
+              ← All leads
+            </Link>
+          </OutsideLeadHub>
         }
       />
 
-      <Banner
-        tone="info"
-        title="No order may be taken below this rung"
-        body="§G says the requirement visit carries no price, service or quality promise, and an order is the most commercial commitment there is. handleOrder refuses one against a lead below negotiation and names the way forward. Nothing is lost by that refusal — the order was never agreed with anybody who could agree it — but every lead it stops is on this list."
-      />
 
       {stalled ? (
         <Banner
@@ -331,7 +329,12 @@ export function NegotiationScreen({
 
 /* ------------------------------------------------------------- the blockers */
 
-type Blocker = { key: string; label: string; detail: string; tone: "danger" | "warn" | "neutral" };
+type Blocker = {
+  key: string;
+  label: string;
+  detail: string;
+  tone: "danger" | "warn" | "neutral";
+};
 
 /**
  * What is holding this negotiation up, composed rather than stored.

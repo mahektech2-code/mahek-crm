@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/toast";
+import { OutsideLeadHub } from "@/components/leads/hub/hub-context";
 import { money } from "@/lib/format";
 import { setLeadPriority } from "@/lib/actions/lead-priority";
 import {
@@ -113,12 +114,14 @@ export function LeadPriorityControl({
           </option>
         ))}
       </select>
-      <span className="block max-w-[240px] text-[12px] text-pretty text-muted">
-        {prioritySentence(chosen === "" ? null : chosen)}
-        {potentialPaise
-          ? ` Against ${money(potentialPaise)} a month.`
-          : " Nobody has estimated what this shop could spend."}
-      </span>
+      <OutsideLeadHub>
+        <span className="block max-w-[240px] text-[12px] text-pretty text-muted">
+          {prioritySentence(chosen === "" ? null : chosen)}
+          {potentialPaise
+            ? ` Against ${money(potentialPaise)} a month.`
+            : " Nobody has estimated what this shop could spend."}
+        </span>
+      </OutsideLeadHub>
     </span>
   );
 }

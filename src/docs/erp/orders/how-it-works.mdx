@@ -98,7 +98,7 @@ A line whose billing party was **Pending** when it was taken carries *Pending cu
 A line whose allocated lots carry box ids leaves only when every box on it has been scanned at the Dispatch desk (setting: <Setting k="erp.dispatch.requireScan" />). Stock packed before box ids existed has nothing to scan, so it is not held back. The dispatch date may not be before the order date.
 </Rule>
 
-Verifying sets the line **Verified** and **Dispatched** with the date, turns every box scanned onto it into a **dispatched** box, freezes its lots (no change of quantity or release afterwards), and — for the **first** verified line of an order number — opens that bill's record on [Transport](/docs/erp/transport). The unique index on the order number is what makes "first" hold.
+Verifying sets the line **Verified** and **Dispatched** with the date, turns every box scanned onto it into a **dispatched** box, freezes its lots (no change of quantity or release afterwards), and puts the lines verified together on one record on [Transport](/docs/erp/transport): a record of the same order and bill still at the gate, otherwise a new one. An order sent in two goes is two records.
 
 ## The bill's figures
 
@@ -124,7 +124,7 @@ A credit note comes off the bill **with** GST and the margin is **before** GST, 
 
 | Power | What it reveals |
 |---|---|
-| *See sales rate* | The Rate column and field, the live price-list rate in the drawer |
+| *See sales rate* | The Rate column and field, the live price-list rate in the record |
 | *See sales amounts* | Discount, bill total, amount, discounted amount, final amount, monthly sale, monthly target; the average-bill figure on Billing & dispatch |
 | *See cost and margin* | Costing on batch codes, lot-code costing, cost per can, credit-note amount, margin, payment type |
 

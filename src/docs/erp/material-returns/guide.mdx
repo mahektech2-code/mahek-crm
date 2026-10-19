@@ -66,7 +66,7 @@ Choose the godown the goods leave from. Add the transporter, vehicle, LR, packin
 
 <Steps>
 <Step title="Record the return">
-**Customer returns → Returns → Record customer return.** Pick the dispatched order line and lot the goods went out on. The customer, invoice, outward, product and batch fill themselves in. Enter whole cans, or whole boxes on a boxed line, along with the reason, the customer's remarks and the transport details.
+**Customer returns → Returns → Record customer return.** Pick the order line the goods went out on — type the order number, customer or product to find it. The customer, invoice, outward, product and batch fill themselves in. An older line that went out with **no lot allocated** (orders from the Taken Order sheet, or stock dispatched before batch codes) is listed as *no lot allocated*: for those, enter the batch printed on the label of the cans that came back. Such lines are offered in cans, for orders up to <Setting k="erp.returns.unallocatedDays" /> days old. Enter whole cans, or whole boxes on a boxed line, along with the reason, the customer's remarks and the transport details.
 </Step>
 <Step title="Receive it into quarantine">
 When the goods arrive, press **Receive into quarantine** and choose the godown holding them. They now sit in **Customer Return / Quarantine**. That is not saleable stock, and dispatch cannot pick it.

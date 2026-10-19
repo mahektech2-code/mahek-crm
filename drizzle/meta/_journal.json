@@ -1910,7 +1910,42 @@
       "idx": 272,
       "version": "7",
       "when": 1792620445442,
-      "tag": "0275_erp_levels_auto_plan",
+      "tag": "0275_erp_po_from_quotation_manager",
+      "breakpoints": true
+    },
+    {
+      "idx": 273,
+      "version": "7",
+      "when": 1792700000000,
+      "tag": "0276_erp_manual_adjustments",
+      "breakpoints": true
+    },
+    {
+      "idx": 274,
+      "version": "7",
+      "when": 1792800000000,
+      "tag": "0277_erp_po_shares",
+      "breakpoints": true
+    },
+    {
+      "idx": 275,
+      "version": "7",
+      "when": 1792800100000,
+      "tag": "0278_customer_return_without_lot",
+      "breakpoints": true
+    },
+    {
+      "idx": 276,
+      "version": "7",
+      "when": 1792800200000,
+      "tag": "0279_transport_per_dispatch",
+      "breakpoints": true
+    },
+    {
+      "idx": 277,
+      "version": "7",
+      "when": 1792800201000,
+      "tag": "0280_erp_levels_auto_plan",
       "breakpoints": true
     }
   ]

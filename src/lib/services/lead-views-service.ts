@@ -72,6 +72,7 @@ const SEAT_COLUMNS: Record<keyof VantageSeats, string> = {
   ownerId: "c.owner_id",
   backOfficeAmId: "c.back_office_am_id",
   leadManagerId: "c.lead_manager_id",
+  salesManagerId: "c.sales_manager_id",
 };
 
 /** `lost30`'s window, in days. A month, said as thirty. */

@@ -526,7 +526,7 @@ export type ReqItem = {
   countUnit: "L" | "pcs";
   /** What it is bought in. */
   buyUnit: string;
-  /** How it is bought, in words: "Quotations needed first", "Direct from Shree Chem". */
+  /** How it is bought, in words: "On the Quotation manager", "Direct from Shree Chem". */
   how: string;
   /** Asked for by this department in the last 90 days — drawn first. */
   recent: boolean;
@@ -539,7 +539,7 @@ export type ReqLine = {
   item: string;
   qty: number;
   unit: string;
-  /** The ERP's stage, in its words: "Count stock", "Collect quotations", "PO approved", "Received". */
+  /** The ERP's stage, in its words: "Count stock", "Waiting for PO number", "Waiting for goods", "Received". */
   stage: string;
   /** Index into `steps`; −1 cancelled; steps.length done. */
   step: number;
@@ -556,8 +556,6 @@ export type ReqLine = {
   vendor: string | null;
   /** Received so far against the PO, in the requirement's unit. */
   received: number | null;
-  /** Quotations collected, for an item bought on quotations. */
-  quotes: number;
 };
 
 export type ReqCard = {

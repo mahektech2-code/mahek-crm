@@ -52,7 +52,8 @@ async function fromScreen(ctx: ErpContext, key: string, keep: (r: ListRow) => bo
 }
 
 const has = (v: CellValue | undefined, q?: string | null) => !q || String(v ?? "").toLowerCase().includes(q.toLowerCase());
-const anyHas = (r: ListRow, q?: string | null) => !q || Object.values(r.v).some((v) => has(v, q)) || has(r.title, q);
+/* A total is found by what is folded under it too — a can by one of its lot numbers. */
+const anyHas = (r: ListRow, q?: string | null): boolean => !q || Object.values(r.v).some((v) => has(v, q)) || has(r.title, q) || (r.sub ?? []).some((x) => anyHas(x, q));
 
 export function askTools(ctx: ErpContext, records: AskRecord[]) {
   return {

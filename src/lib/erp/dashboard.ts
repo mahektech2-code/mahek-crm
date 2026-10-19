@@ -155,11 +155,9 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
       if (list.length || always) purchase.push({ l, v: String(list.length), sub, tone: list.length ? tone : undefined, href: tileHref("requisitions", list, stage) });
     };
     tile("Blind count", "Requirements · waiting for a blind count", "the count comes before the purchase method", "info");
-    tile("Buyer decision", "Requirements · buyer decision", pw("purchaseBuyer") ? "you decide how these are bought" : "the buyer decides how these are bought", "brand");
-    tile("Select vendor", "Requirements · select vendor", "direct purchases with no vendor yet", "warn", true);
-    tile("Collect quotations", "Requirements · collect quotations", "not enough quotations in yet", "warn");
-    tile("Compare quotations", "Requirements · compare quotations", "quotations in — select one", "info");
-    tile("Ready for PO", "Requirements · ready for PO", "vendor chosen — raise the PO", "brand", true);
+    tile("Waiting for PO number", "Requirements · waiting for PO number", "quotation items — buy on the Quotation manager, link its PO number", "warn", true);
+    tile("Create PO", "Requirements · create PO", "direct purchases — create the PO at the item's price", "brand", true);
+    tile("Create or link PO", "Requirements · create or link PO", "buyer decision — create a PO or link one", "brand");
     const open = Object.entries(work)
       .filter(([s]) => !["Received", "Cancelled", "Closed", "Closed short"].includes(s) && !s.endsWith("(before POs)"))
       .flatMap(([, r]) => r);
@@ -173,14 +171,16 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
   if (has("purchaseOrders")) {
     const pos = (await pre.pos)!.filter((p) => inG(p.godown));
     const by = (st: string) => pos.filter((p) => p.po.status === st).map((p) => p.po.id);
-    purchase.push({
-      l: "POs awaiting approval",
-      v: String(by("Pending approval").length),
-      sub: pw("approvePurchaseOrder") ? "you approve these" : "the approver decides",
-      tone: by("Pending approval").length ? "warn" : undefined,
-      href: tileHref("purchaseOrders", by("Pending approval"), "Pending approval"),
-    });
-    purchase.push({ l: "POs to send to the vendor", v: String(by("Approved").length), sub: "approved, not sent yet", tone: by("Approved").length ? "brand" : undefined, href: tileHref("purchaseOrders", by("Approved"), "Approved") });
+    /* No PO is approved any more; only one raised before that still waits, and the tile shows only while one does. */
+    if (by("Pending approval").length)
+      purchase.push({
+        l: "POs awaiting approval",
+        v: String(by("Pending approval").length),
+        sub: pw("approvePurchaseOrder") ? "raised before approval was dropped — you approve these" : "raised before approval was dropped",
+        tone: "warn",
+        href: tileHref("purchaseOrders", by("Pending approval"), "Pending approval"),
+      });
+    purchase.push({ l: "POs to send to the vendor", v: String(by("Approved").length), sub: "created, not sent yet", tone: by("Approved").length ? "brand" : undefined, href: tileHref("purchaseOrders", by("Approved"), "Approved") });
     const waiting = pos.filter((p) => ["Approved", "Sent", "Partly received"].includes(p.po.status)).map((p) => p.po.id);
     purchase.push({ l: "POs awaiting delivery", v: String(waiting.length), href: tileHref("purchaseOrders", waiting, "Awaiting delivery") });
     const overdue = pos.filter((p) => ["Approved", "Sent", "Partly received"].includes(p.po.status) && p.po.deliveryDate < day).map((p) => p.po.id);
@@ -400,7 +400,7 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
   const req: Tile[] = [];
   if (["requests", "issueCn"].some(has)) {
     /* The CRM's complaints — one record, whichever app raised it. */
-    const rows = (await q(sql`select id, status, cn_status as "cnStatus", request_cn as cn, created_at as raised, resolved_at as resolved from complaints`)).map((r) => ({ id: r.id, cn: r.cn, raised: r.raised, resolved: r.resolved, word: requestStatus({ status: String(r.status), cnStatus: (r.cnStatus as string | null) ?? null }) }));
+    const rows = (await q(sql`select id, status, cn_status as "cnStatus", request_cn as cn, created_at as raised, resolved_at as resolved from complaints where category = 'product_quality'`)).map((r) => ({ id: r.id, cn: r.cn, raised: r.raised, resolved: r.resolved, word: requestStatus({ status: String(r.status), cnStatus: (r.cnStatus as string | null) ?? null }) }));
     if (has("requests"))
       for (const st of ["Requested", "Accepted", "Rejected"] as const) {
         const ids = rows.filter((r) => r.word === st).map((r) => String(r.id));
@@ -533,7 +533,7 @@ export async function accuracyFlow(ctx: ErpContext, godownName: string | null): 
   const stage = (...names: string[]) => ids(names.flatMap((n) => work[n] ?? []));
   /* The count holds a requirement only until it is entered; a red flag never does. */
   const held = stage("Blind count");
-  const moving = stage("Buyer decision", "Select vendor", "Collect quotations", "Compare quotations", "Ready for PO");
+  const moving = stage("Waiting for PO number", "Create PO", "Create or link PO");
   const dueNow = w.toCount.filter((c) => c.due && inG(c.godown)).length;
   return {
     accuracy: w.accuracy,

@@ -141,12 +141,12 @@ export async function Body({ workspace }: { workspace: LeadWorkspace }) {
     focus.total === 0;
 
   return (
-    <>
+    <div className="p-6">
       <LeadTabs workspace={workspace} />
       {nothing ? (
         <Empty
           title="Nothing on this dashboard for you"
-          body="Nothing is owed on a lead today, no lead in your book is waiting on you, and none of the queues across the funnel has been granted to you. Ask a manager for the ones you work in."
+          body="Nothing is due on your leads today and nothing is waiting on you."
         />
       ) : (
         <DashboardScreen
@@ -158,6 +158,6 @@ export async function Body({ workspace }: { workspace: LeadWorkspace }) {
           pipeline={ladders ? sharedFunnel(ladders) : null}
         />
       )}
-    </>
+    </div>
   );
 }

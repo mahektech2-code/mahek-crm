@@ -6,17 +6,17 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ColSpec, ListRow, ListSpec, Tone } from "@/lib/erp/ui";
 import { cellText, inr, nf } from "@/lib/erp/ui";
-import { colOf as colIn, listCsv, listQueryParams, LIST_QUERY_KEYS, pageOf, type ListPage, type ListQuery } from "@/lib/erp/list-query";
+import { colOf as colIn, listCsv, listQueryParams, LIST_QUERY_KEYS, pageOf, subMatches, type ListPage, type ListQuery } from "@/lib/erp/list-query";
 import { Icon as ShellIcon } from "@/components/shell/icons";
 import { Button, Card, cx, EmptyState, SortableTh, Td, Th, Tr } from "@/components/ui/primitives";
-import { SelectionBar, Tabs } from "@/components/ui/overlays";
+import { RowMenu, SelectionBar, Tabs } from "@/components/ui/overlays";
 import { Pager } from "@/components/ui/pager";
 import { PeriodPicker } from "./period-picker";
 import { FlagBadge, flagsBesideStatus, rowTone, StatusBadge } from "./badge";
 import { GodownPicker, type PickItem } from "./godown-picker";
 import { Icon } from "./icons";
 import { useErpUi } from "./erp-ui";
-import { RecordDrawer } from "./record-drawer";
+import { RecordDialog } from "./record-dialog";
 import { useKit } from "./kit";
 import { CHECK_COL, fitColumns } from "./fit-columns";
 import { ColumnsMenu } from "./columns-menu";
@@ -116,7 +116,7 @@ export function ListScreen({
   spec: ListSpec;
   /** Every row, or — with `server` — the one page the server cut. */
   rows: ListRow[];
-  /** The screen's name: the page title and the record drawer's kind line. */
+  /** The screen's name: the page title and the record dialog's kind line. */
   label: string;
   sub?: string;
   /** A record to open on arrival (`?open=` from search or a link). */
@@ -148,7 +148,7 @@ export function ListScreen({
   const router = useRouter();
   const path = usePathname();
   const params = useSearchParams();
-  const [local, setLocal] = useState<ListQuery>({ q: "", chip: "", gf: "", grp: true, sort: null, page: 1, size: 25, ids: filter?.ids ?? null, pd: "" });
+  const [local, setLocal] = useState<ListQuery>({ q: "", chip: "", gf: "", grp: true, sort: null, page: 1, size: 25, ids: filter?.ids ?? null, pd: "", parts: false });
   /* While the server cuts the next page the current one stays, dimmed — never a blank table between two pages. */
   const [pending, startTransition] = useTransition();
   /* The search box answers as it is typed; the server is asked once the typing pauses. */
@@ -180,6 +180,8 @@ export function ListScreen({
   const setPage = (n: number) => setQuery({ page: n });
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [openId, setOpenId] = useState<string | null>(initialOpen ?? null);
+  /* Totals opened onto their folded rows, by hand. Unset follows the search: a lot number typed opens the total it is under. */
+  const [unfolded, setUnfolded] = useState<Record<string, boolean>>({});
   /* Opened once per arrival, then the query is cleared so a reload does not open it again. */
   const newOpened = useRef(false);
   useEffect(() => {
@@ -203,7 +205,7 @@ export function ListScreen({
   const cols = spec.cols;
   /* The table never scrolls sideways: it draws the columns that fit the card
      it is in (`fit-columns.ts`), measured as the card resizes, and folds the
-     rest into the record drawer. Before the first measurement it assumes a
+     rest into the record dialog. Before the first measurement it assumes a
      tablet-width card, so the page as the server sent it never overflows —
      on a wider screen the extra columns arrive with the measurement. */
   const [avail, setAvail] = useState(760);
@@ -243,7 +245,10 @@ export function ListScreen({
   const lineCols = gk ? cols.filter((c) => !headCols.includes(c) && !gk.includes(c.k)) : cols;
   /* The longest badge each status and flags column will draw, over every row rather than this page, so widths hold still from page to page. */
   const badgeChars = lp.badgeChars;
-  const fit = fitColumns({ cols: lineCols, avail, check: bulkOn, chosen: chosenCols, badgeChars });
+  /* A row's ⋯ menu takes a narrow column of its own at the end. */
+  const menuIds = spec.rowMenu ?? [];
+  const menuOn = menuIds.length > 0;
+  const fit = fitColumns({ cols: lineCols, avail: menuOn ? Math.max(0, avail - MENU_COL) : avail, check: bulkOn, chosen: chosenCols, badgeChars });
   const shownCols = fit.shown;
 
   const exportCsv = async () => {
@@ -280,7 +285,12 @@ export function ListScreen({
     });
   };
 
-  const open = pageRows.find((r) => r.id === openId) ?? (openRow && openRow.id === openId ? openRow : null) ?? (server ? null : rows.find((r) => r.id === openId) ?? null);
+  /* A folded row opens its own record, so it is looked for under its total too. */
+  const withSubs = (rs: ListRow[]) => rs.flatMap((r) => [r, ...(r.sub ?? [])]);
+  const open =
+    withSubs(pageRows).find((r) => r.id === openId) ??
+    (openRow && openRow.id === openId ? openRow : null) ??
+    (server ? null : withSubs(rows).find((r) => r.id === openId) ?? null);
   const closeRec = () => {
     setOpenId(null);
     if (params.get("open")) {
@@ -406,6 +416,27 @@ export function ListScreen({
               onPick={(v) => setQuery({ gf: v, page: 1 })}
             />
           ) : null}
+          {spec.fold ? (
+            <span role="group" aria-label={spec.fold.l} className="inline-flex h-8 items-center overflow-hidden rounded-control border border-line text-meta">
+              <span className="px-2.5 text-muted">{spec.fold.l}</span>
+              {[
+                { v: false, l: spec.fold.whole },
+                { v: true, l: spec.fold.parts },
+              ].map((o) => (
+                <button
+                  key={o.l}
+                  onClick={() => setQuery({ parts: o.v, page: 1 })}
+                  aria-pressed={query.parts === o.v}
+                  className={cx(
+                    "h-full cursor-pointer border-l border-line px-2.5 whitespace-nowrap",
+                    query.parts === o.v ? "bg-brand-soft font-medium text-brand-hover" : "bg-surface text-body hover:bg-canvas",
+                  )}
+                >
+                  {o.l}
+                </button>
+              ))}
+            </span>
+          ) : null}
           {spec.groups ? (
             <button
               onClick={() => setQuery({ grp: !query.grp, page: 1 })}
@@ -436,6 +467,8 @@ export function ListScreen({
           ) : null}
         </div>
         ) : null}
+
+        {spec.fold?.note && !query.parts && lp.all > 0 ? <div className="border-b border-divider px-4 py-2 text-meta text-muted">{spec.fold.note}</div> : null}
 
         {spec.scopedLine ? <div className="border-b border-divider bg-brand-soft/40 px-4 py-2 text-meta text-brand-hover">{spec.scopedLine}</div> : null}
 
@@ -510,6 +543,7 @@ export function ListScreen({
                   {shownCols.map((c) => (
                     <col key={c.k} style={{ width: fit.widths[c.k] }} />
                   ))}
+                  {menuOn ? <col style={{ width: MENU_COL }} /> : null}
                 </colgroup>
                 <thead>
                   <tr>
@@ -543,6 +577,11 @@ export function ListScreen({
                         </SortableTh>
                       );
                     })}
+                    {menuOn ? (
+                      <Th>
+                        <span className="sr-only">Actions</span>
+                      </Th>
+                    ) : null}
                   </tr>
                 </thead>
                 <tbody>
@@ -559,7 +598,7 @@ export function ListScreen({
                           const allSel = grp.ids.every((id) => sel[id]);
                           out.push(
                             <tr key={`g:${g}`} className="border-b border-divider bg-canvas">
-                              <td colSpan={shownCols.length + (bulkOn ? 1 : 0)} className="px-3 py-2">
+                              <td colSpan={shownCols.length + (bulkOn ? 1 : 0) + (menuOn ? 1 : 0)} className="px-3 py-2">
                                 <span className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
                                   <span className="text-2xs font-medium tracking-[0.04em] text-muted uppercase">{gk.map((k) => colOf(k).l).join(" · ")}</span>
                                   <span className="text-meta font-semibold text-ink">{g || "—"}</span>
@@ -601,10 +640,48 @@ export function ListScreen({
                             </Td>
                           ) : null}
                           {shownCols.map((c, i) => (
-                            <Cell key={c.k} c={c} r={r} cols={cols} edge={!bulkOn && i === 0 && tone ? EDGE[tone] : undefined} />
+                            <Cell
+                              key={c.k}
+                              c={c}
+                              r={r}
+                              cols={cols}
+                              edge={!bulkOn && i === 0 && tone ? EDGE[tone] : undefined}
+                              lead={
+                                i === 0 && r.sub?.length ? (
+                                  <FoldToggle
+                                    open={unfolded[r.id] ?? subMatches(cols, r, q, FLAG)}
+                                    n={r.sub.length}
+                                    onToggle={() => setUnfolded((u) => ({ ...u, [r.id]: !(u[r.id] ?? subMatches(cols, r, q, FLAG)) }))}
+                                  />
+                                ) : undefined
+                              }
+                            />
                           ))}
+                          {menuOn ? <MenuCell row={r} ids={menuIds} screen={spec.screen} /> : null}
                         </Tr>,
                       );
+                      /* Its folded rows, under it: indented, and blank where they only repeat their total. */
+                      if (r.sub?.length && (unfolded[r.id] ?? subMatches(cols, r, q, FLAG))) {
+                        for (const x of r.sub) {
+                          out.push(
+                            <Tr key={`${r.id}>${x.id}`} onClick={() => setOpenId(x.id)} className="cursor-pointer bg-canvas/60 hover:bg-canvas">
+                              {bulkOn ? <Td /> : null}
+                              {shownCols.map((c, i) =>
+                                i === 0 ? (
+                                  <Td key={c.k} className="truncate pl-10 text-meta text-body" title={x.subLine ?? cellText(c, x.v[c.k])}>
+                                    {x.subLine ?? cellText(c, x.v[c.k])}
+                                  </Td>
+                                ) : c.t !== "n" && c.t !== "m" && x.v[c.k] === r.v[c.k] ? (
+                                  <Td key={c.k} />
+                                ) : (
+                                  <Cell key={c.k} c={c} r={x} cols={cols} small />
+                                ),
+                              )}
+                              {menuOn ? <MenuCell row={x} ids={menuIds} screen={spec.screen} /> : null}
+                            </Tr>,
+                          );
+                        }
+                      }
                     });
                     return out;
                   })()}
@@ -645,8 +722,29 @@ export function ListScreen({
         </SelectionBar>
       ) : null}
 
-      {open ? <RecordDrawer key={open.id} screen={spec} kind={label} row={open} onClose={closeRec} /> : null}
+      {open ? <RecordDialog key={open.id} screen={spec} kind={label} row={open} onClose={closeRec} /> : null}
     </Page>
+  );
+}
+
+/** The width of a row's ⋯ menu column. */
+const MENU_COL = 52;
+
+/**
+ * A row's ⋯ menu: the record's own actions the screen names in `rowMenu`, in
+ * that order, run exactly as the record dialog runs them. A click inside it
+ * never opens the record.
+ */
+function MenuCell({ row, ids, screen }: { row: ListRow; ids: string[]; screen: string }) {
+  const ui = useErpUi();
+  const items = ids
+    .map((id) => row.actions?.find((a) => a.id === id))
+    .filter((a): a is NonNullable<typeof a> => !!a)
+    .map((a) => ({ label: a.l, disabled: !!a.why, title: a.why || undefined, onSelect: () => ui.act(screen, a, row.id) }));
+  return (
+    <Td className="text-right" onClick={(e) => e.stopPropagation()}>
+      {items.length ? <RowMenu items={items} /> : null}
+    </Td>
   );
 }
 
@@ -675,7 +773,25 @@ function splitFirstSentence(line: string): [string, string | undefined] {
   return m ? [m[1], m[2]] : [line.trim(), undefined];
 }
 
-function Cell({ c, r, edge, cols }: { c: ColSpec; r: ListRow; edge?: string; cols: ColSpec[] }) {
+/** The caret on a total that opens onto the rows folded under it. Its own button, so it does not open the total's record. */
+function FoldToggle({ open, n, onToggle }: { open: boolean; n: number; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onToggle();
+      }}
+      aria-expanded={open}
+      aria-label={open ? `Hide the ${n} ${n === 1 ? "row" : "rows"} under this` : `Show the ${n} ${n === 1 ? "row" : "rows"} under this`}
+      className="mr-1.5 inline-flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] align-[-4px] text-muted hover:bg-brand-soft hover:text-brand-hover"
+    >
+      <Icon n={open ? "down" : "chev"} s={14} />
+    </button>
+  );
+}
+
+function Cell({ c, r, edge, cols, lead, small }: { c: ColSpec; r: ListRow; edge?: string; cols: ColSpec[]; lead?: React.ReactNode; small?: boolean }) {
   /* Every cell is held to its column: the table is fixed-width, so a long
      value ends in "…" with the whole of it on hover, and badges that do not
      fit are clipped rather than pushing the row wider. */
@@ -718,8 +834,10 @@ function Cell({ c, r, edge, cols }: { c: ColSpec; r: ListRow; edge?: string; col
         c.t === "b" ? "font-medium text-ink" : empty ? "text-line-strong" : undefined,
         !empty && (c.t === "ph" || c.t === "em" || c.t === "map") && "text-brand",
         c.t === "mono" && "font-mono text-meta",
+        small && "text-meta",
       )}
     >
+      {lead}
       {txt}
     </Td>
   );

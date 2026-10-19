@@ -152,17 +152,14 @@ describe("the migration and the code agree on what is allowed", () => {
     assert.doesNotMatch(code, /app_module_access/i);
     assert.doesNotMatch(code, /website\.review/);
   });
-  it("is in journal order, newer than every migration before it", () => {
-    /* Every EARLIER entry, not every other: a migration added after this one
-       is newer by design, and must not fail this test. */
+  it("sits in the journal in order: newer than every migration before it, older than every one after", () => {
     const journal = JSON.parse(read("drizzle", "meta", "_journal.json")) as { entries: { idx: number; when: number; tag: string }[] };
-    const at = journal.entries.findIndex((e) => e.tag === "0274_website_review_workflow");
-    assert.ok(at >= 0, "no journal entry");
-    const mine = journal.entries[at];
-    for (const e of journal.entries.slice(0, at)) {
-      assert.ok(mine.when > e.when, `${e.tag} has a later or equal 'when' — drizzle would skip this migration`);
+    const mine = journal.entries.find((e) => e.tag === "0274_website_review_workflow");
+    assert.ok(mine, "no journal entry");
+    for (const e of journal.entries) {
+      if (e.idx < mine.idx) assert.ok(mine.when > e.when, `${e.tag} has a later or equal 'when' — drizzle would skip this migration`);
+      if (e.idx > mine.idx) assert.ok(e.when > mine.when, `${e.tag} comes after it but is not newer — drizzle would skip that one`);
     }
-    assert.equal(mine.idx, at);
   });
 });
 

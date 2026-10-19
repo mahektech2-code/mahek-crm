@@ -21,7 +21,8 @@ import {
 import { err, fieldErr, okVoid, type Result } from "@/lib/result";
 import type { ErpContext } from "../access";
 import { erpAudit, erpId, int, nextNumber, num, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
-import { inWindow, type LoadScope, STOCK_WINDOW, tooWide, unscoped, windowWhere } from "../window";
+import { adjustStockRow, stockRowActions } from "../stock-adjust";
+import { inWindow, type LoadScope, STOCK_ROW_CAP, STOCK_WINDOW, tooWide, unscoped, windowWhere } from "../window";
 import type { ActionSpec, ColSpec, FieldSpec, FormSpec, ListRow } from "../ui";
 import { inr, nf } from "../ui";
 import {
@@ -744,17 +745,17 @@ async function fillForm(ctx: ErpContext, fixed?: { fgNum: number; date: string; 
     init: fixed ? { fgFixed: String(fixed.fgNum), date: fixed.date, godown: fixed.godown } : { date: today(), godown: ctx.workingGodown?.name ?? "" },
     data: { avail, packAvail, typeOf: cat.typeOf, ...(cost ? { sfgRate, packRate } : {}) },
     header: [
-      { k: "fgNum", l: "FG num", t: "derived", calc: "fg.num" },
+      { k: "fgNum", l: "FG num", t: "derived", calc: "fg.num", sec: "SFG used" },
       { k: "date", l: "Date", t: "date", req: true, readOnly: !!fixed },
       godownField(gds, { readOnly: !!fixed }),
       { k: "sfg", l: "SFG product", t: "select", req: true, optsBy: { by: "godown", map: products }, when: { k: "godown", notEmpty: true } },
       { k: "sfgLot", l: "SFG lot code", t: "select", req: true, optsBy: { by: ["godown", "sfg"], map: lotsOf }, when: { k: "sfg", notEmpty: true }, hint: "Only lots QC has approved are offered." },
       { k: "sfgAvail", l: "SFG available (litres)", t: "derived", calc: "fg.sfgAvail" },
-      { k: "fg", l: "FG product", t: "select", req: true, optsBy: { by: "sfg", map: cat.fgOf }, when: { k: "sfg", notEmpty: true } },
+      { k: "fg", l: "FG product", t: "select", req: true, optsBy: { by: "sfg", map: cat.fgOf }, when: { k: "sfg", notEmpty: true }, sec: "Filled into" },
       { k: "size", l: "Can size (litres)", t: "select", req: true, optsBy: { by: "fg", map: cat.sizesOf }, when: { k: "fg", notEmpty: true } },
       { k: "canUse", l: "Can use", t: "select", optsBy: { by: ["fg", "size"], map: cat.canUseOf }, when: { k: "size", notEmpty: true }, hint: "Leave blank for a Naket fill, which takes no packing." },
       { k: "packAvail", l: "Available packing", t: "derived", calc: "fg.packAvail" },
-      { k: "cans", l: "Cans or drums filled", t: "num", req: true, min: 1 },
+      { k: "cans", l: "Cans or drums filled", t: "num", req: true, min: 1, sec: "Count" },
       { k: "litres", l: "Use quantity (litres)", t: "derived", calc: "fg.litres" },
       { k: "adjusted", l: "Cans adjusted (lost)", t: "num", min: 0 },
       { k: "net", l: "FG cans available", t: "derived", calc: "fg.net" },
@@ -1064,14 +1065,14 @@ async function packForm(ctx: ErpContext, fixed?: { serial: number; batchNo: stri
       : { date: today(), godown: ctx.workingGodown?.name ?? "" },
     data: { avail, cpb },
     header: [
-      { k: "batchNo", l: "Batch no", t: "derived", calc: "pack.batchNo" },
+      { k: "batchNo", l: "Batch no", t: "derived", calc: "pack.batchNo", sec: "Batch" },
       { k: "date", l: "Date", t: "date", req: true, readOnly: !!fixed },
       godownField(gds, { readOnly: !!fixed }),
       { k: "fg", l: "FG product", t: "select", req: true, optsBy: { by: "godown", map: productsAt }, when: { k: "godown", notEmpty: true }, readOnly: !!fixed },
       { k: "sku", l: "Description of goods (boxed SKU)", t: "select", req: true, optsBy: { by: "fg", map: skusOf }, when: { k: "fg", notEmpty: true }, readOnly: !!fixed },
       { k: "boxes", l: "Boxes in the whole batch", t: "num", req: true, min: 1, readOnly: !!fixed },
       { k: "totalCans", l: "Total cans", t: "derived", calc: "pack.totalCans" },
-      { k: "lot", l: "Finished lot", t: "select", req: true, optsBy: { by: ["godown", "fg"], map: lotsOf }, when: { k: "fg", notEmpty: true } },
+      { k: "lot", l: "Finished lot", t: "select", req: true, optsBy: { by: ["godown", "fg"], map: lotsOf }, when: { k: "fg", notEmpty: true }, sec: "Lot" },
       { k: "lotAvail", l: "Available FG (cans)", t: "derived", calc: "pack.lotAvail" },
       { k: "cans", l: "Cans from this lot", t: "num", min: 1, hint: "Blank takes as many as the batch still needs." },
       { k: "remarks", l: "Remarks", t: "area", mic: true },
@@ -1312,7 +1313,7 @@ const sfgStock: ScreenModule = {
   async load(ctx, s) {
     const sc = s ?? unscoped();
     const inStock = (await sfgLots()).filter((l) => l.stock > 0 && inWindow(l.latestDate, `${l.lotCode}|${l.godownId}`, sc));
-    const wide = tooWide(inStock.length, sc);
+    const wide = tooWide(inStock.length, sc, STOCK_ROW_CAP);
     const lots = wide ? [] : inStock;
     const qc = await sfgQcMap(lots.map((l) => l.lotCode));
     const all: Col[] = [
@@ -1330,7 +1331,7 @@ const sfgStock: ScreenModule = {
     ];
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
     return {
-      spec: { screen: "sfgStock", cols, hidden, groups: ["godown", "lot"], agg: { k: "stock", l: "litres" }, godownKey: "godown", readOnly: true, noDataLine: "No SFG in stock. Stock appears as SFG batches are saved." },
+      spec: { screen: "sfgStock", rowMenu: ["inquiry", "adjust"], cols, hidden, groups: ["godown", "lot"], agg: { k: "stock", l: "litres" }, godownKey: "godown", readOnly: true, noDataLine: "No SFG in stock. Stock appears as SFG batches are saved." },
       tooWide: wide,
       rows: lots.map((l) => ({
         id: `${l.lotCode}|${l.godownId}`,
@@ -1356,9 +1357,13 @@ const sfgStock: ScreenModule = {
         actions: [
           { id: "label", l: "Print SFG label", primary: true, href: erpLabelsHref({ sfg: l.lotCode, godown: l.godownId }) },
           { id: "trace", l: "Trace this lot", href: erpTraceHref(l.lotCode) },
+          ...stockRowActions(ctx, { stage: "sfg", itemId: l.formulationId, item: l.product, lot: l.lotCode, godownId: l.godownId, godown: l.godown, stock: l.stock, unit: "Ltr" }),
         ],
       })),
     };
+  },
+  actions: {
+    adjust: (ctx, id, values) => adjustStockRow(ctx, "sfg", id, values ?? {}),
   },
 };
 
@@ -1368,7 +1373,7 @@ const fgStock: ScreenModule = {
   async load(ctx, s) {
     const sc = s ?? unscoped();
     const inStock = (await fgLots()).filter((l) => l.stock > 0 && inWindow(l.latestDate, `${l.finishedGoodId}|${l.lotCode}|${l.godownId}`, sc));
-    const wide = tooWide(inStock.length, sc);
+    const wide = tooWide(inStock.length, sc, STOCK_ROW_CAP);
     const lots = wide ? [] : inStock;
     const labelled = new Map(
       ((await db.execute(sql`select lot_code || '|' || godown_id as k, count(*)::int as n from erp_units where lot_from = 'fg' and status in ('available', 'hold') group by 1`)) as unknown as { k: string; n: number }[]).map((r) => [r.k, Number(r.n)]),
@@ -1386,7 +1391,7 @@ const fgStock: ScreenModule = {
     ];
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
     return {
-      spec: { screen: "fgStock", cols, hidden, groups: ["godown"], agg: { k: "stock", l: "cans" }, godownKey: "godown", readOnly: true, noDataLine: "No finished goods in stock. Stock appears as filling is saved." },
+      spec: { screen: "fgStock", rowMenu: ["inquiry", "adjust"], cols, hidden, groups: ["godown"], agg: { k: "stock", l: "cans" }, godownKey: "godown", readOnly: true, noDataLine: "No finished goods in stock. Stock appears as filling is saved." },
       tooWide: wide,
       rows: lots.map((l) => ({
         id: `${l.finishedGoodId}|${l.lotCode}|${l.godownId}`,
@@ -1424,11 +1429,13 @@ const fgStock: ScreenModule = {
           },
           { id: "labels", l: "Print loose labels", href: erpLabelsHref({ lot: l.lotCode }) },
           { id: "trace", l: "Trace this lot", href: erpTraceHref(l.lotCode) },
+          ...stockRowActions(ctx, { stage: "fg", itemId: l.finishedGoodId, item: l.product, lot: l.lotCode, godownId: l.godownId, godown: l.godown, stock: l.stock, unit: "cans" }),
         ],
       })),
     };
   },
   actions: {
+    adjust: (ctx, id, values) => adjustStockRow(ctx, "fg", id, values ?? {}),
     async labelLoose(ctx, id, values) {
       const [fg, lotCode, godownId] = id.split("|");
       const count = int(values.count);
@@ -1456,7 +1463,7 @@ const packStock: ScreenModule = {
   async load(ctx, s) {
     const sc = s ?? unscoped();
     const inStock = (await packLots()).filter((l) => l.stock > 0 && inWindow(l.latestDate, `${l.batchNo}|${l.godownId}`, sc));
-    const wide = tooWide(inStock.length, sc);
+    const wide = tooWide(inStock.length, sc, STOCK_ROW_CAP);
     const lots = wide ? [] : inStock;
     const all: Col[] = [
       { k: "date", l: "Date", t: "d" },
@@ -1469,7 +1476,7 @@ const packStock: ScreenModule = {
     ];
     const { cols, hidden, hiddenKeys } = visibleCols(all, has(ctx));
     return {
-      spec: { screen: "packStock", cols, hidden, groups: ["sku"], agg: { k: "stock", l: "boxes" }, godownKey: "godown", readOnly: true, noDataLine: "No boxed stock. A packing batch reaches stock once its cans match its boxes." },
+      spec: { screen: "packStock", rowMenu: ["inquiry", "adjust"], cols, hidden, groups: ["sku"], agg: { k: "stock", l: "boxes" }, godownKey: "godown", readOnly: true, noDataLine: "No boxed stock. A packing batch reaches stock once its cans match its boxes." },
       tooWide: wide,
       rows: lots.map((l) => ({
         id: `${l.batchNo}|${l.godownId}`,
@@ -1491,9 +1498,13 @@ const packStock: ScreenModule = {
         actions: [
           { id: "labels", l: "Print box labels", primary: true, href: erpLabelsHref({ batch: l.batchNo }) },
           { id: "trace", l: "Trace this batch", href: erpTraceHref(l.batchNo) },
+          ...stockRowActions(ctx, { stage: "pack", itemId: l.skuId, item: l.sku, lot: l.batchNo, godownId: l.godownId, godown: l.godown, stock: l.stock, unit: "boxes" }),
         ],
       })),
     };
+  },
+  actions: {
+    adjust: (ctx, id, values) => adjustStockRow(ctx, "pack", id, values ?? {}),
   },
 };
 
@@ -1523,7 +1534,7 @@ function logScreen(key: "sfgLog" | "fgLog" | "packLog"): ScreenModule {
                     from erp_pack_entries e join products p on p.id = e.sku_id join erp_godowns g on g.id = e.godown_id where ${within} order by e.entry_date desc, e.posted_at desc, e.id desc`;
       const rows = wide ? [] : ((await db.execute(q)) as unknown as { id: string; date: string; type: string; source: string; item: string; lot: string; qty: number; godown: string; postedAt: Date }[]);
       const typeLabel = (t: string) =>
-        t === "transfer" ? "Transfer" : t === "return" ? "Customer return (reused)" : t === "rework" ? "Rework" : table === "sfg" ? "Batch" : table === "fg" ? "Filling" : "Packing";
+        t === "transfer" ? "Transfer" : t === "adjustment" ? "Adjusted by hand" : t === "return" ? "Customer return (reused)" : t === "rework" ? "Rework" : table === "sfg" ? "Batch" : table === "fg" ? "Filling" : "Packing";
       const cols: ColSpec[] = [
         { k: "date", l: "Date", t: "d" },
         { k: "type", l: "Entry", t: "s" },

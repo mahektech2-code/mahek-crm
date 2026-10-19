@@ -270,6 +270,10 @@ export type Caps = {
   canApproveDistributor: boolean;
   /** `lead.verify` — a Sales Manager's. Reversing a loss is their judgement, not every associate's who can read the Lost list. */
   canReopen: boolean;
+  /** Null where this viewer may validate or refuse the lead's GST number; else why not. */
+  gstRefusal: string | null;
+  /** Null where this viewer may record the Qualification review; else why not. */
+  reviewRefusal: string | null;
 };
 
 export type Lead = {

@@ -409,14 +409,14 @@ async function editForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
       remark: l.o.remark ?? "",
     },
     header: [
-      { k: "status", l: "Status", t: "select", req: true, opts: ORDER_STATUSES },
+      { k: "status", l: "Status", t: "select", req: true, opts: ORDER_STATUSES, sec: "Order" },
       { k: "dispatchOn", l: "Dispatch on", t: "date", hint: "Blank: not planned yet." },
       { k: "delivery", l: "Delivery party", t: "select", req: true, opts: names, readOnly: l.inDetails },
       { k: "transporter", l: "Transporter", t: "text" },
-      { k: "qty", l: "Order qty (cans)", t: "num", req: true, min: 1, readOnly: l.inDetails },
+      { k: "qty", l: "Order qty (cans)", t: "num", req: true, min: 1, readOnly: l.inDetails, sec: "Quantity and price" },
       ...(seeRate ? ([{ k: "rate", l: "Rate (₹)", t: "num", min: 0 }] as FieldSpec[]) : []),
       ...(seeAmounts ? ([{ k: "discount", l: "Discount %", t: "num", min: 0, max: 100 }] as FieldSpec[]) : []),
-      { k: "bill", l: "Tally bill no.", t: "text" },
+      { k: "bill", l: "Tally bill no.", t: "text", sec: "Billing" },
       { k: "transport", l: "Transportation cost (₹)", t: "num", min: 0 },
       { k: "remark", l: "Remark", t: "area", mic: true },
     ],
@@ -499,11 +499,19 @@ type Scope = "orders" | "pendingOrders" | "readyOrders" | "labels";
  * different set from the list it opens.
  */
 export function isPendingLine(l: OrderLine, detailedOrders: Set<number>): boolean {
-  /* Not Ready: a Ready line has stock on the shelf and has moved on to Under
-     process & ready. Mahek Plus's Pending view had no status test, so every
-     line sat there from entry to billing, Ready lines included, and the same
-     line was on two tabs at once. */
-  return l.o.status !== "Cancel" && l.o.status !== "Ready" && l.sku.name !== "Empty Drum" && !detailedOrders.has(l.o.orderNo);
+  /* Neither Under Process nor Ready: those two are the Under process & ready
+     tab's (`isWorkingLine`), and a line belongs to ONE tab. Mahek Plus's
+     Pending view had no status test, so every line sat there from entry to
+     billing and the same line was on two tabs at once; leaving out only Ready
+     kept every Under Process line on both. What is left is what the office is
+     holding — Hold From Office, or a status nobody has worked yet. */
+  return (
+    l.o.status !== "Cancel" &&
+    l.o.status !== "Ready" &&
+    l.o.status !== "Under Process" &&
+    l.sku.name !== "Empty Drum" &&
+    !detailedOrders.has(l.o.orderNo)
+  );
 }
 
 /** Being worked on: Ready or Under Process, and not yet done. Also the Labels tab's rows. */
@@ -582,7 +590,7 @@ function orderList(scope: Scope): ScreenModule {
             scope === "orders"
               ? "No sales orders yet."
               : scope === "pendingOrders"
-                ? "Nothing pending. Every open line is Ready or has reached order details."
+                ? "Nothing pending. Every open line is Under Process, Ready or has reached order details."
                 : "Nothing under process or ready.",
         },
         tooWide: wide,
@@ -1430,30 +1438,124 @@ async function verify(ctx: ErpContext, ids: string[], values: Record<string, str
       .set({ verification: "Verified", dispatchStatus: "Dispatched", dispatchedAt: new Date(), dispatchDate: date, updatedAt: new Date(), updatedById: ctx.user.id })
       .where(inArray(erpOrderDetails.orderId, go.map((l) => l.o.id)));
     await markDispatched(tx, go.map((l) => l.o.id), ctx.user.id, date);
-    /* §18: a bill's first verified line opens its transport follow-up, once per
-       order number — the unique index is what makes "once" hold. */
-    for (const l of go)
-      await tx
-        .insert(erpTransports)
-        .values({
-          id: l.o.id,
-          orderNo: l.o.orderNo,
-          billDate: date,
-          billingCustomerId: l.o.billingCustomerId,
-          billNo: l.o.tallyBillNo,
-          transporter: l.o.transporter ?? l.delivery.p?.transporter ?? null,
-          area: l.delivery.area,
-          paymentType: l.billing.freightTerm,
-          extraExpensePaise: d.get(l.o.id)?.extraExpensesPaise ?? null,
-          updatedById: ctx.user.id,
-        })
-        .onConflictDoNothing();
+    /* §18: what was verified together leaves as one consignment, and reaches Logistics now. */
+    await openTransports(tx, go, date, ctx.user.id, new Map([...d].map(([k, v]) => [k, v.extraExpensesPaise ?? null])));
   });
   await erpAudit(ctx, "erp.detail.verify", "erp_order_detail", go.map((l) => l.o.id).join(","), null, { dispatchDate: date });
   await syncBookOrders([...new Set(go.map((l) => l.o.orderNo))]);
   /* Logistics picks it up from here: boxes, tracking link, the first line of its timeline. */
   await (await import("../logistics")).afterDispatch(ctx, [...new Set(go.map((l) => l.o.orderNo))]);
   return okVoid(go.length < ids.length ? `${plural(go.length)} verified · ${ids.length - go.length} not ready to verify${unscanned.length ? ` (${unscanned.length} still to scan)` : ""}` : `${plural(go.length)} verified and dispatched`);
+}
+
+/* ======================================================= the hand-over to Logistics */
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * DISPATCH-VERIFIED LINES BECOME A CONSIGNMENT, every time. Lines of one order
+ * and one bill verified together are one `erp_transports` row; a line verified
+ * later joins that row only while it is still at the gate (no LR, not yet at
+ * the transporter) and was opened by a verify of this order. Anything else —
+ * an order shipped in a second go, or an order number that already carries a
+ * row from the Taken Order history, closed or on the road — opens a row of its
+ * own. Until 0279 the table was unique on the order number and those lines
+ * opened nothing, so they never reached Logistics.
+ *
+ * Writes `erp_order_details.transport_id` for each line. Returns the order
+ * numbers touched, for `afterDispatch`.
+ */
+export async function openTransports(
+  tx: Tx | typeof db,
+  ls: OrderLine[],
+  date: string,
+  userId: string | null,
+  extra: Map<string, number | null> = new Map(),
+): Promise<number[]> {
+  const groups = new Map<string, OrderLine[]>();
+  for (const l of ls) {
+    const k = `${l.o.orderNo}|${l.o.tallyBillNo ?? ""}`;
+    groups.set(k, [...(groups.get(k) ?? []), l]);
+  }
+  for (const g of groups.values()) {
+    const first = g[0];
+    /* A line already on a consignment (verified, un-verified, verified again) stays on it. */
+    const have = (await tx.execute(sql`
+      select d.order_id as id, d.transport_id as tid from erp_order_details d
+        join erp_transports t on t.id = d.transport_id
+       where d.order_id in ${g.map((l) => l.o.id)}
+    `)) as unknown as { id: string; tid: string }[];
+    const placed = new Set(have.map((h) => h.id));
+    const rest = g.filter((l) => !placed.has(l.o.id));
+    if (!rest.length) continue;
+    const [open] = (await tx.execute(sql`
+      select t.id from erp_transports t
+       where t.order_no = ${first.o.orderNo}
+         and coalesce(t.bill_no, '') = ${first.o.tallyBillNo ?? ""}
+         and t.lr_id is null and coalesce(t.lr_no, '') = ''
+         and t.material_stage = 'Dispatched'
+         and exists (select 1 from erp_order_details d where d.transport_id = t.id)
+       order by t.created_at desc
+       limit 1
+       for update
+    `)) as unknown as { id: string }[];
+    let tid = open?.id ?? null;
+    if (!tid) {
+      const [taken] = (await tx.execute(sql`select 1 from erp_transports where id = ${rest[0].o.id}`)) as unknown as unknown[];
+      tid = taken ? erpId("etrn") : rest[0].o.id;
+      const expense = rest.map((l) => extra.get(l.o.id)).find((v) => v != null) ?? null;
+      await tx.insert(erpTransports).values({
+        id: tid,
+        orderNo: first.o.orderNo,
+        billDate: date,
+        billingCustomerId: first.o.billingCustomerId,
+        billNo: first.o.tallyBillNo,
+        transporter: first.o.transporter ?? first.delivery.p?.transporter ?? null,
+        area: first.delivery.area,
+        paymentType: first.billing.freightTerm,
+        extraExpensePaise: expense,
+        updatedById: userId,
+      });
+    }
+    await tx.update(erpOrderDetails).set({ transportId: tid }).where(inArray(erpOrderDetails.orderId, rest.map((l) => l.o.id)));
+  }
+  return [...new Set(ls.map((l) => l.o.orderNo))];
+}
+
+/**
+ * THE NET UNDER THE HAND-OVER. Every line dispatch-verified in the last
+ * `erp.logistics.syncDays` that is on no consignment gets one, dated its own
+ * dispatch date — the lines the old one-row-per-order rule skipped, and any a
+ * failed write left behind. Run when Logistics opens and hourly; a line already
+ * placed costs nothing.
+ */
+export async function syncDispatchedTransports(userId: string | null, days: number): Promise<number> {
+  const rows = (await db.execute(sql`
+    select d.order_id as id, d.dispatch_date::text as date
+      from erp_order_details d
+     where d.verification = 'Verified'
+       and d.dispatch_date is not null
+       and d.dispatch_date >= (now() at time zone ${APP_TIMEZONE})::date - ${days}::int
+       and (d.transport_id is null or not exists (select 1 from erp_transports t where t.id = d.transport_id))
+  `)) as unknown as { id: string; date: string }[];
+  if (!rows.length) return 0;
+  const all = await lines(rows.map((r) => r.id));
+  const byDate = new Map<string, OrderLine[]>();
+  const dateOf = new Map(rows.map((r) => [r.id, r.date]));
+  for (const l of all) {
+    const day = dateOf.get(l.o.id)!;
+    byDate.set(day, [...(byDate.get(day) ?? []), l]);
+  }
+  const extras = new Map(
+    (await db.select({ id: erpOrderDetails.orderId, x: erpOrderDetails.extraExpensesPaise }).from(erpOrderDetails).where(inArray(erpOrderDetails.orderId, all.map((l) => l.o.id)))).map((r) => [r.id, r.x ?? null]),
+  );
+  const orderNos = new Set<number>();
+  for (const [day, ls] of byDate) {
+    const nos = await db.transaction((tx) => openTransports(tx, ls, day, userId, extras));
+    nos.forEach((n) => orderNos.add(n));
+  }
+  if (orderNos.size) await (await import("../logistics")).afterDispatchFor(userId, [...orderNos]);
+  return all.length;
 }
 
 /** Asked wherever a line's extra expenses are entered: Orders → Billing & dispatch and Logistics → Paid freight. */
@@ -1477,7 +1579,12 @@ export async function setExtraExpenses(ctx: ErpContext, ids: string[], values: R
     .where(and(inArray(erpOrderDetails.orderId, ids), sql`${erpOrderDetails.extraExpensesPaise} is null`))
     .returning({ id: erpOrderDetails.orderId });
   if (!res.length) return err("Extra expenses are already entered on these lines.", "rule_violation");
-  await db.execute(sql`update erp_transports t set extra_expense_paise = ${amount} where t.id in ${res.map((r) => r.id)} and t.extra_expense_paise is null`);
+  await db.execute(sql`
+    update erp_transports t set extra_expense_paise = ${amount}
+     where t.extra_expense_paise is null
+       and (t.id in ${res.map((r) => r.id)}
+            or t.id in (select d.transport_id from erp_order_details d where d.order_id in ${res.map((r) => r.id)}))
+  `);
   await erpAudit(ctx, "erp.detail.extra", "erp_order_detail", res.map((r) => r.id).join(","), null, { amount });
   return okVoid(`Extra expenses on ${plural(res.length)}`);
 }

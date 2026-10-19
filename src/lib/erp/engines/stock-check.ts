@@ -376,7 +376,7 @@ export function gateCountStatus(roots: { status: CountStatus; createdAt: Date }[
   return [...pool].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0].status;
 }
 
-/** The steps of the control, as drawn on the dashboard and in a count's drawer. */
+/** The steps of the control, as drawn on the dashboard and in a count's record. */
 export const CONTROL_STEPS = ["Count", "Compare", "Recount", "Investigate", "Resolve"] as const;
 
 /** Which of CONTROL_STEPS a ROOT count has reached (−1: cancelled). */

@@ -1,5 +1,6 @@
 "use client";
 
+import { OutsideLeadHub } from "@/components/leads/hub/hub-context";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import { SalesmanLink } from "@/components/leads/salesman-link";
 import * as React from "react";
@@ -98,20 +99,32 @@ export function ChecklistScreen({
         title="Qualification checklists"
         subtitle="No lead moves forward because somebody pressed a button. This is what each one at Qualification still owes — the same conditions the handset draws and the same ones the save refuses on, said as a list of what to go and do."
         actions={
-          <Link
-            href={leadHref(workspace, "leads")}
-            className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
-          >
-            ← All leads
-          </Link>
+          <OutsideLeadHub>
+            <Link
+              href={leadHref(workspace, "leads")}
+              className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
+            >
+              ← All leads
+            </Link>
+          </OutsideLeadHub>
         }
       />
 
       <FilterChips
         current={view}
         options={[
-          { key: "all", label: "In qualification", href: base, count: rows.length },
-          { key: "blocked", label: "Blocked", href: `${base}?view=blocked`, count: blocked.length },
+          {
+            key: "all",
+            label: "In qualification",
+            href: base,
+            count: rows.length,
+          },
+          {
+            key: "blocked",
+            label: "Blocked",
+            href: `${base}?view=blocked`,
+            count: blocked.length,
+          },
           { key: "ready", label: "Ready to advance", href: `${base}?view=ready`, count: ready.length },
           {
             key: "overridden",
@@ -126,7 +139,7 @@ export function ChecklistScreen({
         <Banner
           tone="danger"
           title={`${plural(wrongState.length, "lead")} with a ticked box over an empty field`}
-          body="Eight of the twelve are answered by a real value and not by the checkbox beside them — the gate reads the litres, not a tick saying somebody asked about them. A ticked box with nothing behind it is the exact state §28 exists to prevent, and until now nothing drew it."
+          body="Each Qualification question needs a real answer. A tick on its own does not count, so these leads still have questions to answer."
         />
       ) : null}
 

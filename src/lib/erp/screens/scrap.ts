@@ -93,7 +93,7 @@ const kgText = (n: number | null | undefined) => (n == null ? "—" : `${nf(n)} 
 const signedKg = (n: number | null | undefined) => (n == null ? "—" : `${n > 0 ? "+" : ""}${nf(n)} kg`);
 const reasonField = (l = "Reason"): FieldSpec => ({ k: "reason", l, t: "area", req: true, mic: true, hint: "Kept in the drum's history with your name." });
 
-/** The drawer panel every scrap record draws: figures, then lines of history. */
+/** The record panel every scrap record draws: figures, then lines of history. */
 export type ScrapPanel = {
   figures: { l: string; v: string; tone?: "danger" | "success" | "muted" }[];
   sections: { title: string; empty?: string; lines: { text: string; sub?: string; tone?: "danger" | "success" | "muted" }[] }[];
@@ -180,7 +180,7 @@ async function saveEmpty(ctx: ErpContext, h: Record<string, string>): Promise<Re
 /* ============================================================ drum rows */
 
 function drumCols(extra: ColSpec[] = []): ColSpec[] {
-  /* Order is priority: a narrow screen keeps the first columns and folds the rest into the drawer. */
+  /* Order is priority: a narrow screen keeps the first columns and folds the rest into the record. */
   return [
     { k: "drum", l: "Drum", t: "mono" },
     { k: "material", l: "Material", t: "b" },
@@ -323,14 +323,14 @@ async function saleForm(ctx: ErpContext): Promise<FormSpec> {
     submit: "Save sale",
     init: { date: today(), category: "", quantity: "", refKind: REF_KIND.invoice, unit: "Kg" },
     header: [
-      { k: "date", l: "Sale date", t: "date", req: true },
+      { k: "date", l: "Sale date", t: "date", req: true, sec: "Sale" },
       { k: "buyer", l: "Scrap buyer", t: "select", req: true, opts: buyers.map((b) => b.name), hint: buyers.length ? undefined : "Add the buyer on Scrap buyers first." },
       { k: "category", l: "Scrap category", t: "select", req: true, opts: [DRUM_CATEGORY, ...cats] },
       { k: "godown", l: "From godown (optional)", t: "select", opts: gds.map((g) => g.name), hint: "Empty it to take drums or scrap from any godown." },
       { k: "quantity", l: "Quantity sold", t: "num", req: true, min: 0.001 },
       { k: "unit", l: "Unit", t: "select", opts: ["Kg", "Pcs"], when: { k: "category", in: cats } },
       { k: "rate", l: "Rate (₹ per drum, kg or piece)", t: "num", req: true, min: 0 },
-      { k: "refKind", l: "Invoice / external reference", t: "select", req: true, opts: Object.values(REF_KIND), hint: "A sale with no external invoice is recorded by its own sale number. No invoice number is made up for it." },
+      { k: "refKind", l: "Invoice / external reference", t: "select", req: true, sec: "Invoice and payment", opts: Object.values(REF_KIND), hint: "A sale with no external invoice is recorded by its own sale number. No invoice number is made up for it." },
       { k: "externalRef", l: "Invoice / external reference no.", t: "text", when: { k: "refKind", in: [REF_KIND.invoice, REF_KIND.challan] }, reqWhen: { k: "refKind", in: [REF_KIND.invoice, REF_KIND.challan] } },
       { k: "dueDate", l: "Payment due by (optional)", t: "date" },
       { k: "remark", l: "Remarks", t: "area", mic: true },

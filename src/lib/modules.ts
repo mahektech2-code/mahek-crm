@@ -375,7 +375,7 @@ export const APP_MODULES: AppModule[] = [
   {
     key: "crm.lead-intake",
     app: "crm",
-    label: "Intake",
+    label: "Add a lead",
     group: "Lead Management",
     href: "/crm/leads/intake",
     note: "Raising a lead at a desk, in bulk from a file, and the duplicate pairs a book fed by a website form, a handset and a spreadsheet keeps producing. The telecaller's own door into the funnel.",
@@ -750,7 +750,7 @@ export const APP_MODULES: AppModule[] = [
   {
     key: "sales.lead-intake",
     app: "sales",
-    label: "Intake",
+    label: "Add a lead",
     group: "Lead Management",
     href: "/sales/leads/intake",
     note: "Raising a lead at a desk, in bulk from a file, and the duplicate pairs a book fed by a website form, a handset and a spreadsheet keeps producing.",
@@ -1193,6 +1193,62 @@ export function wholeAppKeys(app: AppId): string[] {
 export function isWholeApp(app: AppId, modules: readonly string[]): boolean {
   const ticked = new Set(modules);
   return modulesForApp(app).every((m) => (m.explicitOnly ? !ticked.has(m.key) : ticked.has(m.key)));
+}
+
+/**
+ * The WRITE LEVELS of an app's screens: which module is drawn as the Read / Write
+ * select on a screen's row, keyed by that screen.
+ *
+ * One level per screen, and the FIRST registered wins. A second module naming the
+ * same screen in `writeOf` — Website's `website.review` beside `website.publish`,
+ * both "of" the dashboard — is not a second level of it: keyed by screen, a Map of
+ * every `writeOf` kept the LAST, which hid `website.review` from the list as though
+ * it were the dashboard's Write option and turned the dashboard's Write select into
+ * the right to review. Such a module is an ordinary checkbox, kept out of
+ * navigation by `writeOf` alone.
+ */
+export function writeLevelsForApp(app: AppId): Map<string, string> {
+  const levels = new Map<string, string>();
+  for (const m of modulesForApp(app)) {
+    if (m.writeOf && !levels.has(m.writeOf)) levels.set(m.writeOf, m.key);
+  }
+  return levels;
+}
+
+/**
+ * Drop every module whose screen (`writeOf`) is not in the list — the rule the
+ * server applies to what the dialog posts (`cleanModules`), here so the screen
+ * draws exactly what will be stored. A level without its screen is never held,
+ * and without this the box stays ticked while the save quietly discards it.
+ */
+export function withoutOrphanLevels(modules: readonly string[]): string[] {
+  const held = new Set(modules);
+  return modules.filter((k) => {
+    const screen = getModule(k)?.writeOf;
+    return !screen || held.has(screen);
+  });
+}
+
+/**
+ * The list after ticking or unticking ONE box on the access screen.
+ *
+ * - Ticking a module that is a level of a screen (Publish, Review) ticks that
+ *   screen with it: it is held only beside it, and a box that ticks and then
+ *   saves as nothing is the bug this exists to prevent.
+ * - Ticking a SCREEN also ticks its Read/Write level, which is what holding it
+ *   has always meant — except an `explicitOnly` level (Publish): that is a right
+ *   somebody is given on purpose, never a side effect of ticking the screen.
+ * - Unticking a screen takes every level of it away.
+ */
+export function toggleModule(app: AppId, ticked: readonly string[], key: string): string[] {
+  if (ticked.includes(key)) return withoutOrphanLevels(ticked.filter((k) => k !== key));
+  const next = [...ticked, key];
+  const screen = getModule(key)?.writeOf;
+  if (screen && !next.includes(screen)) next.push(screen);
+  const level = writeLevelsForApp(app).get(key);
+  const levelModule = level ? getModule(level) : undefined;
+  if (levelModule && !levelModule.explicitOnly && !next.includes(levelModule.key)) next.push(levelModule.key);
+  return withoutOrphanLevels(next);
 }
 
 /**

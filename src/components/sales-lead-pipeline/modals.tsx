@@ -690,7 +690,7 @@ function QualifyModal({ lead, onClose }: ModalProps) {
                   ? `${lead.gstin} — you refused it. The Salesman has been told what to correct.`
                   : `${lead.gstin} — entered by the Salesman. Check it, then validate or refuse it. You cannot verify the Qualification until it is validated.`}
           </p>
-          {lead.caps.canVerify && gst !== "none" ? (
+          {lead.caps.gstRefusal === null && gst !== "none" ? (
             refusing ? (
               <div className="space-y-2">
                 <Field label="What is wrong with it?">
@@ -713,6 +713,8 @@ function QualifyModal({ lead, onClose }: ModalProps) {
                 </Button>
               </div>
             )
+          ) : gst !== "none" && lead.caps.gstRefusal ? (
+            <p className="text-[12.5px] text-muted">{lead.caps.gstRefusal}</p>
           ) : null}
 
           <div className="mb-1 mt-5 text-xs font-medium tracking-[0.04em] text-muted uppercase">Your review</div>
@@ -723,9 +725,9 @@ function QualifyModal({ lead, onClose }: ModalProps) {
               {lead.qualReview.note ? ` — ${lead.qualReview.note}` : ""}
             </p>
           ) : (
-            <p className="mb-2 text-[13px] text-muted">The Salesman completes the answers; you review them. An unreviewed checklist does not hold the lead.</p>
+            <p className="mb-2 text-[13px] text-muted">The Salesman fills in the answers and you review them. No sample goes out until you verify them.</p>
           )}
-          {lead.caps.canVerify ? (
+          {lead.caps.reviewRefusal === null ? (
             <>
               <div className="flex flex-col gap-1.5">
                 <RadioCard name="qrv" label="Verified — complete, GST validated, ready for a sample" checked={verdict === "verified"} onChange={() => setVerdict("verified")} />
@@ -749,11 +751,7 @@ function QualifyModal({ lead, onClose }: ModalProps) {
               </div>
             </>
           ) : (
-            <p className="text-[12.5px] text-muted">
-              {lead.approverName
-                ? `You raised this lead yourself, so ${lead.approverName} validates its GST number and reviews it. You collect the answers.`
-                : "Reviewing a Qualification is for the Sales Manager the lead is under."}
-            </p>
+            <p className="text-[12.5px] text-muted">{lead.caps.reviewRefusal}</p>
           )}
         </div>
       ) : null}

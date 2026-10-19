@@ -227,6 +227,7 @@ export function AppointmentRecordScreen({
   return (
     <div className="p-6">
       <ScreenHeader
+        entity
         title={candidate.name}
         subtitle={
           <>
