@@ -2031,6 +2031,17 @@ order line's margin reads the issued credit note where it is
 ERP's complaints screen (`canRead` falls back to it). 0184 carried every ERP
 request across under the same id; `erp_requests` is retired, not dropped.
 
+**BUT THE ERP SEES ONLY PRODUCT QUALITY COMPLAINTS (Oct 2026).** Every ERP
+read of `complaints` — the screen's three tabs (`complaintRows`), its sidebar
+badge, the dashboard tiles, the "credit note not issued" alert and the file
+fallback in `canReadErpAttachment` — is narrowed to `category =
+'product_quality'` (`ERP_COMPLAINT_CATEGORY`). The ERP raise form has no type
+and always writes Product Quality; accept, reject, issue and resolve refuse any
+other category; the AI helper suggests a summary only, never a type, because a
+changed type would only take the complaint off the ERP's list. The CRM and
+Accounts still see every category. A customer return's complaint of another
+category (damaged, wrong product) is therefore issued from Accounts alone.
+
 **THE PURCHASE FLOW IS Requirement → Purchase method → Vendor / Quotation →
 Approval → PO → Receipt, and NO PURCHASE IS COMPLETED WITHOUT A PO.** Goods
 inward (the GRN) names an approved PO and every line one of its items; a lot

@@ -94,7 +94,7 @@ export async function logisticsCounts() {
          and reminder_date <= (now() at time zone ${APP_TIMEZONE})::date
     `) as unknown as Promise<{ id: string }[]>,
     db.execute(sql`select id from erp_transport_messages where status in ('to_send', 'failed')`) as unknown as Promise<{ id: string }[]>,
-    db.execute(sql`select id from complaints where status = 'open'`) as unknown as Promise<{ id: string }[]>,
+    db.execute(sql`select id from complaints where status = 'open' and category = 'product_quality'`) as unknown as Promise<{ id: string }[]>,
     db.execute(sql`select id from erp_expenses where status = 'Pending'`) as unknown as Promise<{ id: string }[]>,
   ]);
   /* One figure per Logistics tab — LRs to attach, calls due on the road,

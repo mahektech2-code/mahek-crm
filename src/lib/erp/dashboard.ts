@@ -400,7 +400,7 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
   const req: Tile[] = [];
   if (["requests", "issueCn"].some(has)) {
     /* The CRM's complaints — one record, whichever app raised it. */
-    const rows = (await q(sql`select id, status, cn_status as "cnStatus", request_cn as cn, created_at as raised, resolved_at as resolved from complaints`)).map((r) => ({ id: r.id, cn: r.cn, raised: r.raised, resolved: r.resolved, word: requestStatus({ status: String(r.status), cnStatus: (r.cnStatus as string | null) ?? null }) }));
+    const rows = (await q(sql`select id, status, cn_status as "cnStatus", request_cn as cn, created_at as raised, resolved_at as resolved from complaints where category = 'product_quality'`)).map((r) => ({ id: r.id, cn: r.cn, raised: r.raised, resolved: r.resolved, word: requestStatus({ status: String(r.status), cnStatus: (r.cnStatus as string | null) ?? null }) }));
     if (has("requests"))
       for (const st of ["Requested", "Accepted", "Rejected"] as const) {
         const ids = rows.filter((r) => r.word === st).map((r) => String(r.id));

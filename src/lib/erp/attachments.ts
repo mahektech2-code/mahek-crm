@@ -1,7 +1,7 @@
 import "server-only";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "@/db";
-import { attachments } from "@/db/schema";
+import { attachments, complaints } from "@/db/schema";
 import { listUserApps, listUserModules } from "@/lib/access";
 
 /* ---------------------------------------------------------------------------
@@ -43,9 +43,13 @@ const SCREENS: Record<ErpParent | "complaint", string[]> = {
 };
 
 export async function canReadErpAttachment(userId: string, parentType: string, parentId: string): Promise<boolean> {
-  void parentId;
   const screens = SCREENS[parentType as ErpParent | "complaint"];
   if (!screens) return false;
+  /* The ERP's complaints screen lists product quality complaints only, so it opens only their files. */
+  if (parentType === "complaint") {
+    const [c] = await db.select({ category: complaints.category }).from(complaints).where(eq(complaints.id, parentId));
+    if (c?.category !== "product_quality") return false;
+  }
   const apps = await listUserApps(userId);
   if (!apps.includes("erp")) return false;
   const held = (await listUserModules(userId, "erp")).map((m) => m.key);

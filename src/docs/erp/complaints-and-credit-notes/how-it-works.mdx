@@ -1,4 +1,4 @@
-A customer complaint is one record in MahekOne, whichever app it was raised in. The ERP's screen reads and writes the CRM's complaints directly, decides them under its own *decide requests* power, and hands every credit note to Accounts to issue — because a credit note is money coming off a bill, and that is the ledger's decision, not the complaint desk's.
+A customer complaint is one record in MahekOne, whichever app it was raised in. **The ERP handles product quality complaints only**: every ERP read of complaints — this screen, its sidebar badge, the dashboard tiles, the "credit note not issued" alert and the complaint's files — is narrowed to that category, a complaint raised in the ERP is always one, and the ERP refuses to decide or resolve any other. Every other category is the CRM's and Accounts'. The ERP's screen reads and writes the CRM's complaints directly, decides them under its own *decide requests* power, and hands every credit note to Accounts to issue — because a credit note is money coming off a bill, and that is the ledger's decision, not the complaint desk's.
 
 The CRM side — categories, severities, the call panel and the complaint SLA — is on [the CRM's Complaints page](/docs/crm/complaints).
 
@@ -63,7 +63,7 @@ The people who made or dispatched the traced goods are listed beside it, as a st
 
 ## The AI suggestion
 
-**Suggest type and summary** asks a model for a category **from the configured list only** and a one-line summary. A category it invents is dropped. The person confirms or changes it; the confirmed type becomes the complaint's category everywhere, and the outcome (accepted as suggested, edited, rejected) is logged. Each reading counts against <Setting k="erp.ai.complaints.monthlyCap" /> a month. More in [Alerts and the AI helpers](/docs/erp/alerts-and-ai).
+**Suggest a summary** asks a model for a one-line summary of the description. It does not suggest a type — with one type in the ERP, a changed type would only take the complaint off the ERP's own list. The person confirms or changes the summary, and the outcome (accepted as suggested, edited, rejected) is logged. Each reading counts against <Setting k="erp.ai.complaints.monthlyCap" /> a month. More in [Alerts and the AI helpers](/docs/erp/alerts-and-ai).
 
 ## Alerts
 
@@ -78,7 +78,7 @@ An accepted credit-note request still not issued after <Setting k="erp.ai.alerts
 | Open the screen and its three tabs, raise a complaint | The Complaints & credit notes screen |
 | Accept, reject, resolve | *Decide customer requests* (ERP power) |
 | Issue a credit note | `creditnote.issue` (Accounts) |
-| Suggest, confirm or reject an AI type and summary | The screen |
+| Suggest, confirm or reject an AI summary | The screen |
 
 ## Where the code and the intent disagree today
 

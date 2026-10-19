@@ -1,4 +1,4 @@
-The **Complaints & credit notes** screen is where the factory side sees, raises and decides customer complaints — and the credit notes customers ask for. These are **the same records the CRM keeps**: a complaint raised here lands on the customer's record in the CRM, and one a telecaller raised on a call is here too. How complaints work from the CRM side — categories, the call panel, SLAs — is on [the CRM's Complaints page](/docs/crm/complaints); this page covers what the ERP adds.
+The **Complaints & credit notes** screen is where the factory side sees, raises and decides **product quality** complaints — and the credit notes customers ask for on them. These are **the same records the CRM keeps**: a complaint raised here lands on the customer's record in the CRM, and a product quality complaint a telecaller raised on a call is here too. **No other type of complaint appears anywhere in the ERP** — a short delivery, a billing question or a price issue stays in the CRM and Accounts. How complaints work from the CRM side — categories, the call panel, SLAs — is on [the CRM's Complaints page](/docs/crm/complaints); this page covers what the ERP adds.
 
 ## The screen at a glance
 
@@ -6,22 +6,22 @@ The **Complaints & credit notes** screen is where the factory side sees, raises 
   <WfBar>
     <WfTitle sub="The customer's complaints and the credit notes they ask for — the same records the CRM keeps, whichever app raised them.">Complaints & credit notes</WfTitle>
     <WfSpacer />
-    <WfButton primary>Raise complaint</WfButton>
+    <WfButton primary>Raise product quality complaint</WfButton>
     <Hotspot n={1} />
   </WfBar>
   <WfTabs items={["All", "Credit notes", "Without a credit note"]} active="All" />
   <WfBar><WfPill tone="warn">Requested 3</WfPill><WfPill tone="success">Accepted 2</WfPill><WfPill>Rejected 1</WfPill><WfPill>Resolved 9</WfPill><Hotspot n={2} /></WfBar>
   <WfTable
     highlight={0}
-    columns={["Raised", "Status", "Salesman", "Customer", "Complaint type", "CN", "Bill no", "Goods", "CN amount"]}
+    columns={["Raised", "Status", "Salesman", "Customer", "CN", "Bill no", "Goods", "CN amount"]}
     rows={[
-      ["9 Oct", <WfPill key="a" tone="warn">Requested</WfPill>, "a salesman", <b key="b">Customer A</b>, "Packaging damage", "Yes", "T-1119", "Nano Thinner – 1 Liter (12 Can/Box)", ""],
-      ["7 Oct", <WfPill key="c" tone="success">Accepted</WfPill>, "a telecaller", <b key="d">Customer B</b>, "Quality issue", "No", "", "", ""],
+      ["9 Oct", <WfPill key="a" tone="warn">Requested</WfPill>, "a salesman", <b key="b">Customer A</b>, "Yes", "T-1119", "Nano Thinner – 1 Liter (12 Can/Box)", ""],
+      ["7 Oct", <WfPill key="c" tone="success">Accepted</WfPill>, "a telecaller", <b key="d">Customer B</b>, "No", "", "", ""],
     ]}
   />
   <WfPanel title="Customer A" side>
     <WfText muted>Packaging damage · raised 9 Oct</WfText>
-    <WfBar><WfButton primary>Accept</WfButton><WfButton>Reject</WfButton><WfButton>Suggest type and summary</WfButton><Hotspot n={3} /></WfBar>
+    <WfBar><WfButton primary>Accept</WfButton><WfButton>Reject</WfButton><WfButton>Suggest a summary</WfButton><Hotspot n={3} /></WfBar>
     <WfCard title="Trace"><WfText muted>Bill → Lots dispatched → Packing → FG filling → SFG batch → Raw material → Purchase test</WfText><Hotspot n={4} /></WfCard>
   </WfPanel>
 </Wireframe>
@@ -29,7 +29,7 @@ The **Complaints & credit notes** screen is where the factory side sees, raises 
 <Hotspots items={[
   <span key="1"><b>Raise complaint.</b> A complaint, or a credit note the customer is asking for. It reaches the CRM record at once.</span>,
   <span key="2"><b>Status chips.</b> Filter the list by where each request stands.</span>,
-  <span key="3"><b>Decide.</b> Accept or reject a request — for the office and admins. An AI helper can suggest the type and a one-line summary.</span>,
+  <span key="3"><b>Decide.</b> Accept or reject a request — for the office and admins. An AI helper can suggest a one-line summary.</span>,
   <span key="4"><b>The trace.</b> From the bill and goods back to the lots, production and suppliers, with any other complaints on the same lots.</span>,
 ]} />
 
@@ -37,9 +37,9 @@ The **Complaints & credit notes** screen is where the factory side sees, raises 
 
 | Tab | What it lists |
 |---|---|
-| **All** | Every complaint, grouped by status. |
+| **All** | Every product quality complaint, grouped by status. |
 | **Credit notes** | Complaints where the customer asked for a credit note. |
-| **Without a credit note** | The rest, grouped by complaint type. |
+| **Without a credit note** | The rest. |
 
 | Status | Meaning |
 |---|---|
@@ -51,11 +51,11 @@ The **Complaints & credit notes** screen is where the factory side sees, raises 
 ## Raising a complaint
 
 <Steps>
-<Step title="Press Raise complaint">
+<Step title="Press Raise product quality complaint">
 **Name of salesman** is filled with your name if you are on the sales staff list; pick another if you are raising it for somebody.
 </Step>
-<Step title="Pick the customer and the type">
-The **Mobile number** fills from the customer. The **Complaint type** list is the same one the CRM uses.
+<Step title="Pick the customer">
+The **Mobile number** fills from the customer. There is no type to pick: a complaint raised in the ERP is always **Product Quality**.
 </Step>
 <Step title="Describe it">
 Type or speak the **Complaint description** in the customer's words. Add a **Complaint picture** if you have one.
@@ -97,9 +97,9 @@ When the complaint helper is on (currently <Setting k="erp.ai.complaints.enabled
 - **Who made it** — the people who made or dispatched what was traced, to help name the responsible employee.
 - **This customer's earlier complaints** — up to five, with their status and any credit note.
 
-## Suggest type and summary
+## Suggest a summary
 
-**Suggest type and summary** reads the description and suggests one of the existing complaint types (never a new one) and a one-line English summary. Nothing changes until you open **Review the suggestion**, check it against the description shown beside it, and press **Confirm** — or **Reject the suggestion**. A confirmed type is the complaint's type in the CRM too; the summary is shown on the complaint here. The helper never suggests a credit-note amount.
+**Suggest a summary** reads the description and suggests a one-line English summary. Nothing changes until you open **Review the suggestion**, check it against the description shown beside it, and press **Confirm** — or **Reject the suggestion**. The summary is shown on the complaint here. It never changes the complaint's type: that is the CRM's to change. The helper never suggests a credit-note amount.
 
 ## Questions people ask
 

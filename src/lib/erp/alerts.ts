@@ -133,7 +133,7 @@ export async function currentCandidates(t: Thresholds, now = new Date()): Promis
                  (select min(h.at) from complaint_status_history h where h.complaint_id = r.id and h.to_status = 'in_progress') as "approvedAt",
                  r.cn_status = 'issued' as issued, r.status = 'in_progress' as accepted, r.request_cn as cn
             from complaints r join customers c on c.id = r.customer_id
-           where r.request_cn and r.status = 'in_progress' and r.cn_status is distinct from 'issued'`),
+           where r.category = 'product_quality' and r.request_cn and r.status = 'in_progress' and r.cn_status is distinct from 'issued'`),
     /* Cash in hand is a running balance, so it is summed in SQL — one row per person, godown and mode. */
     q(sql`select c.employee_name as employee, c.godown_id as "godownId", c.mode, sum(c.amount_paise)::float8 as amount from erp_credits c group by 1, 2, 3`),
     q(sql`select e.id, e.expense_by as by, e.godown_id as "godownId", g.name as godown, e.mode, e.amount_paise::float8 as amount, e.particular, e.expense_date::text as date
