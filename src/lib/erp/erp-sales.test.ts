@@ -9,7 +9,7 @@
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
@@ -236,6 +236,21 @@ describe("order details and dispatch", () => {
     assert.equal(d.dispatchDate, "2026-09-22");
     const [bc] = await db.select().from(erpBatchCodes).where(eq(erpBatchCodes.orderId, loose.id));
     assert.equal(msg(await mod("batchCodes").actions!.release(ctx, bc.id, {})), "The order has been dispatch-verified.");
+  });
+
+  test("an Under Process line with no lots is billed once it has a bill no. and a rate, and leaves without lots", async () => {
+    const ctx = await as(admin);
+    assert.ok((await mod("orders").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: LOOSE, qty: "3" }])).ok);
+    const [line] = await db.select().from(erpOrders).where(and(eq(erpOrders.skuId, looseId), eq(erpOrders.qtyCans, 3)));
+    assert.equal(line.status, "Under Process");
+    assert.match(msg(await mod("orders").actions!.bill(ctx, line.id, {})), /a Tally bill no\./, "the bill no. is still asked for");
+    assert.doesNotMatch(msg(await mod("orders").actions!.bill(ctx, line.id, {})), /Ready|lots/, "Ready and lots are not");
+    assert.ok((await mod("orders").forms!.edit(ctx, { status: "Under Process", delivery: "Shree Paints", qty: "3", rate: "400", bill: "MMI/26-27/909", transport: "0" }, [], line.id)).ok);
+    assert.ok((await mod("orders").actions!.bill(ctx, line.id, {})).ok);
+    assert.ok((await mod("orderDetails").actions!.verify(ctx, line.id, { date: TODAY })).ok, "a line billed without lots is dispatch-verified without them");
+    const [d] = await db.select().from(erpOrderDetails).where(eq(erpOrderDetails.orderId, line.id));
+    assert.equal(d.verification, "Verified");
+    assert.equal((await db.select().from(erpBatchCodes).where(eq(erpBatchCodes.orderId, line.id))).length, 0, "and took no stock");
   });
 
   test("the bill: 20 × ₹400, 5% off, 18% GST, and the month's sale against the target", async () => {

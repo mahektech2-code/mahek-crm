@@ -10,7 +10,7 @@ flowchart TD
   B -- "No" --> A
   B -- "Yes" --> C["Ready"]
   C --> D["Lots allocated<br/>(scanned at the desk,<br/>or by hand for old stock)"]
-  D --> E{"Approved, Ready,<br/>allocated in full,<br/>Tally bill no, rate?"}
+  D --> E{"Approved,<br/>Tally bill no, rate?"}
   E -- "No" --> D
   E -- "Yes" --> F["Bill it<br/>(in Billing and dispatch)"]
   F --> G{"Every box scanned?"}
@@ -72,12 +72,12 @@ Releasing an allocation gives the stock back. It is refused once the line is bil
 
 ## Billing is one step
 
-<Rule title="Bill it needs five things, checked in the order the office fixes them">
+<Rule title="Bill it needs three things, and neither Ready nor lots">
 1. approval, if the billing party was Pending when the order was taken;
-2. status **Ready**;
-3. allocation **Done**;
-4. a **Tally bill no.**;
-5. a **rate**.
+2. a **Tally bill no.**;
+3. a **rate**.
+
+A line may be billed while it is Under Process and with no lots allocated, as the office billed in the Taken Order sheet. Allocating lots is what takes the stock, so a line billed without them takes none.
 
 Bill it then marks the line billed and writes its billing-and-dispatch record **in one transaction**.
 </Rule>
@@ -94,7 +94,7 @@ A line whose billing party was **Pending** when it was taken carries *Pending cu
 
 ## Dispatch verification
 
-<Rule title="Mark dispatch-verified needs the lots allocated in full, and every box scanned">
+<Rule title="Mark dispatch-verified needs every box scanned — lots are optional">
 A line whose allocated lots carry box ids leaves only when every box on it has been scanned at the Dispatch desk (setting: <Setting k="erp.dispatch.requireScan" />). Stock packed before box ids existed has nothing to scan, so it is not held back. The dispatch date may not be before the order date.
 </Rule>
 

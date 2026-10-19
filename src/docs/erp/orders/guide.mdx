@@ -102,13 +102,13 @@ The **Batch codes** tab lists every allocation. From a row you can:
 
 ## Billing a line
 
-Once the office has entered the bill in Tally, press **Bill it**. It needs, in this order:
+Once the office has entered the bill in Tally, press **Bill it**. It works on a line in any status except Cancel, and it needs:
 
 1. approval, if the customer is Pending;
-2. status **Ready**;
-3. lots allocated in full (*Allocation* reads **Done**);
-4. a **Tally bill no.** (set it from **Edit**);
-5. a **rate**.
+2. a **Tally bill no.** (set it from **Edit**);
+3. a **rate**.
+
+The line does not have to be **Ready**, and its lots do not have to be allocated. Allocating lots is still how stock leaves the shelf, so a line billed without them takes no stock.
 
 If anything is missing, hovering the button says exactly what: *Needs a Tally bill no., a rate.* A billed line moves to **Billing & dispatch** and is marked *In order details*.
 
@@ -134,7 +134,7 @@ If anything is missing, hovering the button says exactly what: *Needs a Tally bi
 
 | Action | What it does |
 |---|---|
-| **Mark dispatch-verified** | Asks for the **dispatch date** and marks the line **Verified** and **Dispatched**. Needs the lots allocated in full and every box scanned. The date cannot be before the order date. The lines verified together open one record on [Transport](/docs/erp/transport). |
+| **Mark dispatch-verified** | Asks for the **dispatch date** and marks the line **Verified** and **Dispatched**. Needs every box scanned, where the line's lots carry box ids; lots themselves are optional. The date cannot be before the order date. The lines verified together open one record on [Transport](/docs/erp/transport). |
 | **Extra expenses** | Records extra freight on the line, once. It is added to the line's cost, and to the bill's record on Logistics. |
 | **Change GST** | 18% or 0%, until the line is verified. 18% bills from *Mahek Marketing India*, 0% from *Mylac*. |
 | **Mark not verified** | ERP administrators only. Sets the line's verification to *Not Verify*. |
