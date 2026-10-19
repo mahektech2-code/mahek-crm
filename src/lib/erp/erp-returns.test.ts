@@ -262,6 +262,43 @@ describe("customer side", () => {
     assert.equal(await fgStock(), before - 2);
   });
 
+  test("a line that went out with no lot allocated — the Taken Order history — can be returned against the batch on the cans", async () => {
+    const day = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+    const sku = (await db.select().from(erpOrders).where(eq(erpOrders.id, "ord_r")))[0].skuId;
+    await db.insert(erpOrders).values([
+      { id: "ord_h", orderNo: 92, orderDate: day(5), godownId: BHW, billingCustomerId: "cus_r", deliveryCustomerId: "cus_r", skuId: sku, qtyCans: 6, ratePaise: 20_000, tallyBillNo: "MMI/26-27/10", status: "Ready", entryStatus: "Done", source: "sheet" },
+      { id: "ord_old", orderNo: 93, orderDate: day(400), godownId: BHW, billingCustomerId: "cus_r", deliveryCustomerId: "cus_r", skuId: sku, qtyCans: 6, ratePaise: 20_000, status: "Ready", entryStatus: "Done", source: "sheet" },
+      { id: "ord_open", orderNo: 94, orderDate: day(5), godownId: BHW, billingCustomerId: "cus_r", deliveryCustomerId: "cus_r", skuId: sku, qtyCans: 6, ratePaise: 20_000, status: "Under Process" },
+    ] as (typeof erpOrders.$inferInsert)[]);
+    const lines = await returnableLines();
+    const line = lines.find((l) => l.orderId === "ord_h")!;
+    assert.ok(line, "a sheet line marked Ready and Done is offered though it has no batch codes");
+    assert.equal(line.lotCode, null);
+    assert.equal(line.sent, 6, "in cans");
+    assert.ok(!lines.some((l) => l.orderId === "ord_old"), "older than erp.returns.unallocatedDays is not offered");
+    assert.ok(!lines.some((l) => l.orderId === "ord_open"), "a line still being worked has not gone out");
+
+    const form = (await mod("customerReturns").load(await as(clerk))).spec.newForm!;
+    assert.ok(form.header.find((f) => f.k === "line")!.opts!.includes(lineOption(line)), "the form offers it");
+    assert.ok(form.header.some((f) => f.k === "batch"), "and asks for the batch off the label");
+
+    const c = await as(clerk);
+    const noBatch = await mod("customerReturns").forms!.new(c, { line: lineOption(line), date: "2026-10-07", qty: "2", reason: "Quality defect" }, []);
+    assert.match(msg(noBatch), /batch printed on the returned cans/);
+    const r = await mod("customerReturns").forms!.new(c, { line: lineOption(line), date: "2026-10-07", qty: "2", reason: "Quality defect", batch: "fg5bh" }, []);
+    assert.ok(r.ok, msg(r));
+    const [ret] = await db.select().from(erpCustomerReturns).where(eq(erpCustomerReturns.orderId, "ord_h"));
+    assert.equal(ret.batchCodeId, null);
+    assert.equal(ret.lotCode, "FG5BH");
+    assert.equal(Number(ret.totalPaise), 47_200, "2 cans × ₹200 + 18% GST");
+    assert.equal((await returnableLines()).find((l) => l.orderId === "ord_h")!.returned, 2, "what is returned counts against the line");
+    const rows = (await mod("customerReturns").load(await as(head))).rows;
+    assert.ok(rows.some((x) => x.id === ret.id), "and it is on the Returns list");
+    const rec = await mod("customerReturns").actions!.receive(await as(head), ret.id, { qty: "2", godown: "Bhiwandi" });
+    assert.ok(rec.ok, msg(rec));
+    assert.ok((await mod("returnQc").load(await as(head))).rows.some((x) => x.id === ret.id), "received, it waits in Quarantine & QC");
+  });
+
   test("every returns screen loads, and the order's trace shows the return", async () => {
     const a = await as(admin);
     for (const k of ["vendorReturns", "debitNotes", "returnOutwards", "customerReturns", "returnQc", "reworkOrders", "wasteDisposals"]) {

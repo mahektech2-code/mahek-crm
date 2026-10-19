@@ -2,6 +2,7 @@ import "server-only";
 import { sql } from "drizzle-orm";
 import { orderTraceCode } from "./trace-links";
 import { db } from "@/db";
+import { APP_TIMEZONE } from "@/lib/business-date";
 import { orderType } from "./engines/sales";
 import { customerReturnLabel, purchaseReturnLabel, returnableQty, returnLitres, reworkLabel } from "./engines/returns";
 import { erpLink } from "./registry";
@@ -104,7 +105,8 @@ export const lotOption = (l: Pick<ReturnableLot, "lotNo" | "item" | "supplier" |
 /* ============================================================== customer */
 
 export type ReturnableLine = {
-  batchCodeId: string;
+  /** Null: the line went out with no lot allocated, so the return names the batch off the cans' label. */
+  batchCodeId: string | null;
   orderId: string;
   orderNo: number;
   orderDate: string;
@@ -118,10 +120,11 @@ export type ReturnableLine = {
   finishedGoodId: string | null;
   formulationId: string | null;
   lotFrom: "fg" | "pack";
-  lotCode: string;
+  /** Null on a line with no lot allocated. */
+  lotCode: string | null;
   godownId: string;
   godown: string;
-  /** Sent on this line from this lot, in its allocation unit. */
+  /** Sent on this line from this lot, in its allocation unit (cans, where no lot was allocated). */
   sent: number;
   /** Already on a live customer return. */
   returned: number;
@@ -136,8 +139,17 @@ export type ReturnableLine = {
  * Every lot that LEFT on a billed, dispatched order line — the only things a
  * customer can send back, because a return is linked to the invoice and the
  * goods outward it reverses.
+ *
+ * And every line that went out with NO lot allocated: the Taken Order history
+ * copied into the ERP carries no batch codes and no dispatch verification, nor
+ * does stock dispatched before batch codes. Reading allocations alone left the
+ * form with nothing to choose on the real book. Such a line has gone out when
+ * it is billed (it reached order details) or the sheet marked it Ready and
+ * Done; it is offered in cans, for `unallocatedDays` back, and the return names
+ * the batch printed on the cans that came back.
  */
-export async function returnableLines(ex: Ex = db, where = sql`true`): Promise<ReturnableLine[]> {
+export async function returnableLines(ex: Ex = db, opts: { unallocatedDays?: number } = {}): Promise<ReturnableLine[]> {
+  const days = Math.max(0, Math.floor(opts.unallocatedDays ?? 180));
   const rows = await q<Row>(ex, sql`
     select b.id as "batchCodeId", o.id as "orderId", o.order_no as "orderNo", o.order_date::text as "orderDate",
            o.billing_customer_id as "customerId", c.name as customer, o.sku_id as "skuId", p.name as sku, pk.box_type as "boxType",
@@ -155,10 +167,30 @@ export async function returnableLines(ex: Ex = db, where = sql`true`): Promise<R
       left join erp_product_packing pk on pk.product_id = p.id
       left join finished_goods fg on fg.id = coalesce(b.finished_good_id, p.finished_good_id)
       join erp_godowns g on g.id = b.godown_id
-     where d.dispatch_status = 'Dispatched' and ${where}
-     order by o.order_no desc, b.lot_code`);
+     where d.dispatch_status = 'Dispatched'
+    union all
+    select null, o.id, o.order_no, o.order_date::text,
+           o.billing_customer_id, c.name, o.sku_id, p.name, pk.box_type,
+           coalesce(p.cans_per_box, 1), coalesce(fg.millilitres, 0),
+           p.finished_good_id, fg.formulation_id,
+           'fg', null, o.godown_id, g.name,
+           o.qty_cans::float8, o.rate_paise::float8, o.discount_bp, d.gst_bp,
+           o.tally_bill_no, d.dispatch_date::text,
+           coalesce((select sum(r.quantity) from erp_customer_returns r where r.order_id = o.id and r.batch_code_id is null and r.status = 'open'), 0)::float8
+      from erp_orders o
+      left join erp_order_details d on d.order_id = o.id
+      join customers c on c.id = o.billing_customer_id
+      join products p on p.id = o.sku_id
+      left join erp_product_packing pk on pk.product_id = p.id
+      left join finished_goods fg on fg.id = p.finished_good_id
+      join erp_godowns g on g.id = o.godown_id
+     where not exists (select 1 from erp_batch_codes b where b.order_id = o.id)
+       and o.status <> 'Cancel'
+       and (d.order_id is not null or (o.status = 'Ready' and o.entry_status = 'Done'))
+       and o.order_date >= (now() at time zone ${APP_TIMEZONE})::date - ${days}::int
+     order by 3 desc, 15`);
   return rows.map((r) => ({
-    batchCodeId: String(r.batchCodeId),
+    batchCodeId: r.batchCodeId == null ? null : String(r.batchCodeId),
     orderId: String(r.orderId),
     orderNo: Number(r.orderNo),
     orderDate: String(r.orderDate),
@@ -172,7 +204,7 @@ export async function returnableLines(ex: Ex = db, where = sql`true`): Promise<R
     finishedGoodId: r.finishedGoodId == null ? null : String(r.finishedGoodId),
     formulationId: r.formulationId == null ? null : String(r.formulationId),
     lotFrom: r.lotFrom === "pack" ? "pack" : "fg",
-    lotCode: String(r.lotCode),
+    lotCode: r.lotCode == null ? null : String(r.lotCode),
     godownId: String(r.godownId),
     godown: String(r.godown),
     sent: Number(r.sent),
@@ -185,7 +217,10 @@ export async function returnableLines(ex: Ex = db, where = sql`true`): Promise<R
   }));
 }
 
-export const lineOption = (l: Pick<ReturnableLine, "orderNo" | "customer" | "sku" | "lotCode">) => `${orderTraceCode(l.orderNo)} · ${l.customer} · ${l.sku} · lot ${l.lotCode}`;
+export const lineOption = (l: Pick<ReturnableLine, "orderNo" | "customer" | "sku" | "lotCode" | "sent">) =>
+  l.lotCode == null
+    ? `${orderTraceCode(l.orderNo)} · ${l.customer} · ${l.sku} · ${l.sent} cans · no lot allocated`
+    : `${orderTraceCode(l.orderNo)} · ${l.customer} · ${l.sku} · lot ${l.lotCode}`;
 
 /**
  * The quantity a customer return is VALUED on: the rate is per can, or per
