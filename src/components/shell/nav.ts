@@ -1,3 +1,5 @@
+import { APP_MODULES } from "@/lib/modules";
+import { HUB_PREFIXES, hubLanding } from "@/lib/lead-hub";
 export type NavItem = {
   href: string;
   label: string;
@@ -46,6 +48,8 @@ export type NavItem = {
    * queue's actions and its route both ask.
    */
   managerOnly?: boolean;
+  /** Further path prefixes the row is lit on — see `NavRowItem.match`. */
+  match?: readonly string[];
 };
 
 /**
@@ -80,23 +84,59 @@ export function navForModules(
   isManager = true,
 ): NavGroup[] {
   const set = new Set(allowed);
-  /* A `legacy` row is drawn only for somebody with no All Leads — see the flag. */
-  const hub = set.has(`${CRM_BASE}/leads`);
-  return NAV.map((g) => ({
-    ...g,
-    // Three filters, deliberately. The module grant answers "were they given this
-    // screen"; `managerOnly` answers "is this screen theirs to have at all" —
-    // and the second is needed because an ungranted module is a HELD module,
-    // not a withheld one. `legacy` answers "has something else replaced it for
-    // this person".
-    items: g.items.filter(
-      (i) => set.has(i.href) && (isManager || !i.managerOnly) && !(i.legacy && hub),
-    ),
-  })).filter((g) => g.items.length > 0);
+  return NAV.map((g) =>
+    g.label === LEAD_GROUP
+      ? leadsRow(set)
+      : {
+          ...g,
+          // Two filters, deliberately. The module grant answers "were they given
+          // this screen"; `managerOnly` answers "is this screen theirs to have at
+          // all" — and the second is needed because an ungranted module is a
+          // HELD module, not a withheld one.
+          items: g.items.filter((i) => set.has(i.href) && (isManager || !i.managerOnly)),
+        },
+  ).filter((g) => g.items.length > 0);
+}
+
+/** The heading the lead modules are listed under, and reviewed under on Access. */
+export const LEAD_GROUP = "Lead Management";
+
+/**
+ * EVERY LEAD MODULE IS ONE ROW, "Leads".
+ *
+ * Behind it is the Leads frame (`components/leads/hub`) — Today, Leads,
+ * Pipeline and Insights — which draws the desks this person holds. The row
+ * lands on the first of them and lights on every lead and sample screen.
+ * Nobody is stranded: the row is drawn for whoever holds any one lead module,
+ * and it lands on a screen they hold.
+ */
+function leadsRow(set: ReadonlySet<string>): NavGroup {
+  const keys = new Set(
+    APP_MODULES.filter((m) => m.app === "crm" && set.has(m.href)).map((m) => m.key),
+  );
+  const landing = hubLanding(keys);
+  return {
+    label: "Leads",
+    icon: "target",
+    flat: true,
+    items: landing
+      ? [
+          {
+            href: landing,
+            label: "Leads",
+            icon: "target",
+            badge: "leadsAttention",
+            match: HUB_PREFIXES,
+          },
+        ]
+      : [],
+  };
 }
 
 export type NavGroup = {
   label: string;
+  /** One screen drawn as its own row — see `NavRowGroup.flat`. */
+  flat?: boolean;
   /**
    * The group's own glyph. Shut, a group IS its glyph and its word — see
    * `components/shell/collapsible-nav.tsx`, which both apps' sidebars are now.
@@ -150,7 +190,12 @@ export const NAV: NavGroup[] = [
     icon: "phone",
     items: [
       { href: at("/call-log"), label: "Call Log", icon: "phone" },
-      { href: at("/reminders"), label: "Reminders", icon: "bell", badge: "reminders" },
+      {
+        href: at("/reminders"),
+        label: "Reminders",
+        icon: "bell",
+        badge: "reminders",
+      },
       { href: at("/history"), label: "Call History", icon: "history" },
       { href: at("/opportunities"), label: "Opportunities", icon: "target" },
     ],
@@ -244,29 +289,63 @@ export const NAV: NavGroup[] = [
          screen called the same grant "Calling desk", so a manager ticking one
          could not find it in the other. */
       { href: at("/leads/calling-desk"), label: "Calling desk", icon: "phone" },
-      { href: at("/leads/sales-manager"), label: "Sales Manager", icon: "people" },
+      {
+        href: at("/leads/sales-manager"),
+        label: "Sales Manager",
+        icon: "people",
+      },
       { href: at("/leads/lost"), label: "Lost", icon: "warning" },
       /* ---- out of the main navigation; see `NavItem.legacy` -------------- */
-      { href: at("/leads/funnel"), label: "Funnel & conversion", icon: "chart", legacy: true },
+      {
+        href: at("/leads/funnel"),
+        label: "Funnel & conversion",
+        icon: "chart",
+        legacy: true,
+      },
       {
         href: at("/leads/appointments"),
         label: "Distributor appointments",
         icon: "people",
         legacy: true,
       },
-      { href: at("/leads/qualify"), label: "Qualification", icon: "check", legacy: true },
-      { href: at("/samples"), label: "Samples & trials", icon: "doc", legacy: true },
-      { href: at("/leads/commercial"), label: "Commercial", icon: "rupee", legacy: true },
+      {
+        href: at("/leads/qualify"),
+        label: "Qualification",
+        icon: "check",
+        legacy: true,
+      },
+      {
+        href: at("/samples"),
+        label: "Samples & trials",
+        icon: "doc",
+        legacy: true,
+      },
+      {
+        href: at("/leads/commercial"),
+        label: "Commercial",
+        icon: "rupee",
+        legacy: true,
+      },
       {
         href: at("/leads/actions"),
         label: "Next actions & nurture",
         icon: "clipboard",
         legacy: true,
       },
-      { href: at("/leads/handovers"), label: "Handovers", icon: "arrowRight", legacy: true },
+      {
+        href: at("/leads/handovers"),
+        label: "Handovers",
+        icon: "arrowRight",
+        legacy: true,
+      },
       /* Oversight is the Admin Console's now (Lead oversight, under Platform). It
          is kept here for somebody granted nothing but it. */
-      { href: at("/leads/oversight"), label: "Oversight", icon: "lock", legacy: true },
+      {
+        href: at("/leads/oversight"),
+        label: "Oversight",
+        icon: "lock",
+        legacy: true,
+      },
     ],
   },
   {

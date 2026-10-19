@@ -1,6 +1,7 @@
 "use client";
 
 import { ParkLead } from "@/components/leads/record/park-lead";
+import { useInLeadHub } from "@/components/leads/hub/hub-context";
 import type { ActionOwnerCandidate } from "@/lib/services/lead-actions-service";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import { DeleteLead } from "./delete-lead";
@@ -462,6 +463,7 @@ export function LeadRecordScreen({
   /** The clock, read once on the server. A client may not read it in render. */
   nowMs: number;
 }) {
+  const inHub = useInLeadHub();
   const [verifying, setVerifying] = React.useState(false);
 
   const distributor = record.salesType === "distributor";
@@ -476,6 +478,7 @@ export function LeadRecordScreen({
   return (
     <div className="p-6">
       <ScreenHeader
+        entity
         title={record.name}
         subtitle={
           <>
@@ -610,7 +613,9 @@ export function LeadRecordScreen({
               ? park.fromStage
                 ? `Parked from ${stageLabel(park.fromStage)}`
                 : "Parked, and the transition does not say from where"
-              : stageSentence(record.stage)}
+              : inHub
+                ? null
+                : stageSentence(record.stage)}
           </span>
         </Fact>
         <Fact
@@ -634,9 +639,11 @@ export function LeadRecordScreen({
           label="Lead manager"
           value={record.leadManagerName ?? "Nobody"}
           sub={
-            record.leadManagerName
-              ? "owes the verification call and the nurture tasks"
-              : "nobody covers this area yet"
+            inHub
+              ? undefined
+              : record.leadManagerName
+                ? "owes the verification call and the nurture tasks"
+                : "nobody covers this area yet"
           }
         />
         <Fact
@@ -747,7 +754,7 @@ export function LeadRecordScreen({
       ) : null}
 
       {record.lostReason ? (
-        <Banner tone="danger" title="This lead is closed" body={record.lostReason} />
+        <Banner tone="danger" title="This lead is closed" body={record.lostReason} fact />
       ) : null}
 
       {/* --------------------------------------------- what happens next */}
@@ -2433,7 +2440,11 @@ function ApprovalPanel({
 }) {
   const steps = [
     { index: 0, label: "The sales manager's review", detail: "The person who knows the territory." },
-    { index: 1, label: "Management's appointment", detail: "Billable from here." },
+    {
+      index: 1,
+      label: "Management's appointment",
+      detail: "Billable from here.",
+    },
   ];
 
   return (
@@ -2850,9 +2861,18 @@ function HistoryPanel({
  * visit would read as a good visit.
  */
 const ACTOR_MARK: Record<TimelineActorKind, { rule: string; name: string }> = {
-  field: { rule: "shadow-[inset_3px_0_0_var(--color-brand)]", name: "text-body" },
-  office: { rule: "shadow-[inset_3px_0_0_var(--color-line-strong)]", name: "text-body" },
-  system: { rule: "shadow-[inset_3px_0_0_var(--color-divider)]", name: "text-muted italic" },
+  field: {
+    rule: "shadow-[inset_3px_0_0_var(--color-brand)]",
+    name: "text-body",
+  },
+  office: {
+    rule: "shadow-[inset_3px_0_0_var(--color-line-strong)]",
+    name: "text-body",
+  },
+  system: {
+    rule: "shadow-[inset_3px_0_0_var(--color-divider)]",
+    name: "text-muted italic",
+  },
 };
 
 /**
@@ -2967,7 +2987,10 @@ function TimelinePanel({
           {page.next ? (
             <div className="mt-2">
               <Link
-                href={href({ tlKind: kind, tl: `${page.next.at}|${page.next.id}` })}
+                href={href({
+                  tlKind: kind,
+                  tl: `${page.next.at}|${page.next.id}`,
+                })}
                 className="inline-flex h-[30px] items-center rounded-[4px] border border-line bg-surface px-3 text-[13px] text-body no-underline hover:bg-canvas hover:no-underline"
               >
                 Load older

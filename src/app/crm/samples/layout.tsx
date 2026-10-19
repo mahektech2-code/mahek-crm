@@ -1,5 +1,6 @@
 import { requireUser } from "@/lib/auth";
 import { requireModule } from "@/lib/access";
+import { LeadHub } from "@/components/leads/hub/lead-hub";
 
 /**
  * The route guard for this module.
@@ -12,5 +13,6 @@ import { requireModule } from "@/lib/access";
 export default async function ModuleLayout({ children }: { children: React.ReactNode }) {
   const user = await requireUser();
   await requireModule(user.id, "crm.samples");
-  return children;
+  /* Samples are a desk of the Leads frame's Pipeline. */
+  return <LeadHub>{children}</LeadHub>;
 }

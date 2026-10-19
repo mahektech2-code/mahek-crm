@@ -1,3 +1,4 @@
+import { OutsideLeadHub } from "@/components/leads/hub/hub-context";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import Link from "next/link";
 import { shortDate, stamp } from "@/lib/format";
@@ -82,12 +83,14 @@ export async function Body({ workspace }: { workspace: LeadWorkspace }) {
         title="On hold"
         subtitle="Every lead somebody stopped, and the day they said it comes back. On hold is a pause and not a close — the shop is still live, somebody is going to look again, and this is the list that makes sure somebody does."
         actions={
-          <Link
-            href={leadHref(workspace, "leads")}
-            className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
-          >
-            ← All leads
-          </Link>
+          <OutsideLeadHub>
+            <Link
+              href={leadHref(workspace, "leads")}
+              className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
+            >
+              ← All leads
+            </Link>
+          </OutsideLeadHub>
         }
       />
 
@@ -110,7 +113,11 @@ export async function Body({ workspace }: { workspace: LeadWorkspace }) {
       <MetricRow
         metrics={[
           { label: "On hold", value: String(total) },
-          { label: "Due back", value: String(due), tone: due ? "warn" : "success" },
+          {
+            label: "Due back",
+            value: String(due),
+            tone: due ? "warn" : "success",
+          },
           {
             label: "No day named",
             value: String(undated),

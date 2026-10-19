@@ -1,6 +1,7 @@
 import * as React from "react";
 import Link from "next/link";
 
+import { useInLeadHub } from "@/components/leads/hub/hub-context";
 import { cx } from "@/components/ui/primitives";
 import { STAGE_LABEL } from "@/lib/sales-lead-pipeline/reference";
 import { stageAgeShort } from "@/lib/sales-lead-pipeline/stage-age";
@@ -61,12 +62,14 @@ export function PPageHead({
   sub?: React.ReactNode;
   actions?: React.ReactNode;
 }) {
+  /* Inside the CRM's Leads frame the desk is already named; keep the heading. */
+  const inHub = useInLeadHub();
   return (
     <div className="mb-[18px] flex items-start justify-between gap-4">
       <div>
-        {eyebrow ? <PEyebrow>{eyebrow}</PEyebrow> : null}
+        {eyebrow && !inHub ? <PEyebrow>{eyebrow}</PEyebrow> : null}
         <h1 className="m-0 text-[24px] leading-[30px] font-[650] text-ink">{title}</h1>
-        {sub ? <p className="mt-[3px] mb-0 max-w-[640px] text-[13px] leading-5 text-muted">{sub}</p> : null}
+        {sub && !inHub ? <p className="mt-[3px] mb-0 max-w-[640px] text-[13px] leading-5 text-muted">{sub}</p> : null}
       </div>
       {actions ? <div className="flex flex-none flex-wrap items-center gap-2">{actions}</div> : null}
     </div>

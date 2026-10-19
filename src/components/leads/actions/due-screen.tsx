@@ -1,5 +1,6 @@
 "use client";
 
+import { OutsideLeadHub } from "@/components/leads/hub/hub-context";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import { SalesmanLink } from "@/components/leads/salesman-link";
 import * as React from "react";
@@ -110,7 +111,11 @@ export function DueScreen({
   /* Grouped in the browser over rows the server already ordered, which is
      grouping and not filtering — the counts and the ordering are both SQL's,
      and this only decides where a heading goes. */
-  const groups: { ownerId: string | null; ownerName: string | null; rows: NextActionRow[] }[] = [];
+  const groups: {
+    ownerId: string | null;
+    ownerName: string | null;
+    rows: NextActionRow[];
+  }[] = [];
   for (const r of rows) {
     const last = groups[groups.length - 1];
     if (last && last.ownerId === r.ownerId) last.rows.push(r);
@@ -123,12 +128,14 @@ export function DueScreen({
         title="Owed today"
         subtitle="Every active lead whose next action falls today. Four answers and not a date — what is being done, on which day, by whom, and what they are expected to come back with. A date with nobody against it is how a lead sits for six weeks with everybody assuming somebody else is holding it."
         actions={
-          <Link
-            href={leadHref(workspace, "leads")}
-            className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
-          >
-            ← All leads
-          </Link>
+          <OutsideLeadHub>
+            <Link
+              href={leadHref(workspace, "leads")}
+              className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
+            >
+              ← All leads
+            </Link>
+          </OutsideLeadHub>
         }
       />
 
@@ -158,7 +165,11 @@ export function DueScreen({
 
       <MetricRow
         metrics={[
-          { label: "Owed today", value: String(total), tone: total ? "warn" : undefined },
+          {
+            label: "Owed today",
+            value: String(total),
+            tone: total ? "warn" : undefined,
+          },
           {
             label: "Missing an answer",
             value: String(incomplete),
@@ -169,7 +180,10 @@ export function DueScreen({
             value: String(parkedBack),
             tone: parkedBack ? "warn" : undefined,
           },
-          { label: "People holding one", value: String(owners.filter((o) => o.ownerId).length) },
+          {
+            label: "People holding one",
+            value: String(owners.filter((o) => o.ownerId).length),
+          },
           { label: "The day", value: shortDate(day) },
         ]}
       />

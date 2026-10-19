@@ -46,6 +46,11 @@ export type NavRowItem = {
   icon: string;
   /** Only where the route is a prefix of every other route in the app. */
   exact?: boolean;
+  /**
+   * Other path prefixes this row is lit on. The CRM's "Leads" row lands on
+   * one screen and stands for every lead and sample screen behind it.
+   */
+  match?: readonly string[];
 };
 
 export type NavRowGroup = {
@@ -116,6 +121,7 @@ function writeOpen(storageKey: string, next: string): void {
 }
 
 export function isRowActive(item: NavRowItem, pathname: string): boolean {
+  if (item.match?.some((p) => pathname === p || pathname.startsWith(p + "/"))) return true;
   return item.exact
     ? pathname === item.href
     : pathname === item.href || pathname.startsWith(item.href + "/");

@@ -8310,6 +8310,21 @@ narrower than the number beside it says and truncates early. Ten tables were
 over by 20 to 200 pixels. `table-widths.test.ts` reads both spellings, the
 `width` prop and the third argument of the local `head()` helper.
 
+**THE CRM'S LEAD MANAGEMENT IS ONE SIDEBAR ROW, "Leads", AND A FRAME OF FOUR
+AREAS.** Today (My day, Calling desk, Sales Manager, Follow-ups), Leads (List,
+Board, Lost, New lead), Pipeline (Qualify, Samples, Commercial, Handovers,
+Distributors) and Insights (conversion, activity, control). `lib/lead-hub.ts`
+is the map, pure: every link names the module that guards its route, and
+`lead-hub.test.ts` fails on a link to no module or a lead module with no link.
+`components/leads/hub` draws it from `crm/leads/layout.tsx` and
+`crm/samples/layout.tsx`; it decides no access — every module folder keeps its
+own guard. Inside it, `useInLeadHub()` makes `ScreenHeader` keep only its
+actions (unless `entity` — a record keeps its name), a banner drop a long
+explanatory body (unless `fact`), `Empty` drop its paragraph, `LeadTabs` draw
+nothing, and `OutsideLeadHub` hides a screen's own "← back to a desk" link.
+The Sales Dashboard mounts the same screens outside the frame and sees no
+change. The routes are unchanged; `Dashboard` is now "My day".
+
 **THE CALLING DESK IS A MODULE, AND IT IS GRANTED — NOT INHERITED.** It was a
 tab of All Leads, and a tab cannot be withheld: every CRM user could open the
 telecaller's desk, which is the one thing that must not be true of it.

@@ -1,5 +1,6 @@
 "use client";
 
+import { OutsideLeadHub } from "@/components/leads/hub/hub-context";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import * as React from "react";
 import Link from "next/link";
@@ -204,12 +205,14 @@ export function SampleDeskScreen({
         title="Sample desk"
         subtitle="Approve it, send it, watch it land, and write down what they thought. A sample with no feedback is stock given away — and one nobody has answered is a salesman who cannot move."
         actions={
-          <Link
-            href={leadHref(workspace, "samples")}
-            className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
-          >
-            ← Samples
-          </Link>
+          <OutsideLeadHub>
+            <Link
+              href={leadHref(workspace, "samples")}
+              className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
+            >
+              ← Samples
+            </Link>
+          </OutsideLeadHub>
         }
       />
 
@@ -241,7 +244,10 @@ export function SampleDeskScreen({
             value: String(late.length),
             tone: late.length ? "danger" : undefined,
           },
-          { label: "Delivered, not reviewed", value: String(awaitingReview.length) },
+          {
+            label: "Delivered, not reviewed",
+            value: String(awaitingReview.length),
+          },
           { label: "On the desk", value: String(rows.length) },
         ]}
       />

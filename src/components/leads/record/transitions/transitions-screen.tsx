@@ -147,6 +147,7 @@ export function TransitionsScreen({
   return (
     <div className="p-6">
       <ScreenHeader
+        entity
         title="Stage transitions"
         subtitle={
           <>

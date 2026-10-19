@@ -5,6 +5,7 @@ import Link from "next/link";
 import { cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
 import { SalesIcon } from "@/components/console/icons";
+import { useInLeadHub } from "@/components/leads/hub/hub-context";
 
 /* ---------------------------------------------------------------------------
  * The pieces every Sales Dashboard screen is built from.
@@ -20,11 +21,28 @@ export function ScreenHeader({
   title,
   subtitle,
   actions,
+  entity = false,
 }: {
   title: React.ReactNode;
   subtitle?: React.ReactNode;
   actions?: React.ReactNode;
+  /**
+   * The title names a RECORD — a lead, a sample, an appointment — rather than
+   * the screen. Inside the Leads frame it is kept: the frame can say which
+   * desk somebody is on, never which shop.
+   */
+  entity?: boolean;
 }) {
+  /* Inside the CRM's Leads frame the frame names the screen; only the
+     actions are this header's to draw. */
+  const inHub = useInLeadHub();
+  if (inHub && !entity) {
+    return actions ? (
+      <div className="mb-4 flex flex-wrap items-center justify-end gap-2 print:hidden">
+        {actions}
+      </div>
+    ) : null;
+  }
   return (
     <div className="mb-4 flex items-start justify-between gap-4">
       <div className="min-w-0">
@@ -94,12 +112,19 @@ export function Banner({
   title,
   body,
   action,
+  fact = false,
 }: {
   tone: "warn" | "danger" | "info";
   title: string;
   body?: React.ReactNode;
   action?: React.ReactNode;
+  /** The body is the fact itself (a reason somebody wrote), never an explanation. */
+  fact?: boolean;
 }) {
+  /* In the Leads frame a banner says its fact and leaves out the paragraph
+     explaining it. A body that carries data — markup, or a short line — stays. */
+  const inHub = useInLeadHub();
+  const explains = typeof body === "string" && body.length > 90 && !fact;
   const skin = {
     warn: "border-warn bg-warn-soft",
     danger: "border-danger bg-danger-soft",
@@ -115,7 +140,9 @@ export function Banner({
     >
       <div className="min-w-0">
         <div className="text-sm font-semibold text-ink">{title}</div>
-        {body ? <div className="mt-0.5 text-[13px] text-pretty text-body">{body}</div> : null}
+        {body && !(inHub && explains) ? (
+          <div className="mt-0.5 text-[13px] text-pretty text-body">{body}</div>
+        ) : null}
       </div>
       {action ? <div className="flex-none">{action}</div> : null}
     </div>
@@ -644,10 +671,13 @@ export function Empty({
   body: string;
   action?: React.ReactNode;
 }) {
+  const inHub = useInLeadHub();
   return (
     <div className="rounded-[6px] border border-line bg-surface px-6 py-14 text-center">
       <div className="text-lg font-semibold text-ink">{title}</div>
-      <p className="mx-auto mt-1.5 max-w-[480px] text-[15px] text-pretty text-muted">{body}</p>
+      {inHub ? null : (
+        <p className="mx-auto mt-1.5 max-w-[480px] text-[15px] text-pretty text-muted">{body}</p>
+      )}
       {action ? <div className="mt-4 flex justify-center">{action}</div> : null}
     </div>
   );

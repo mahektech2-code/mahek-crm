@@ -332,6 +332,7 @@ export function VerifyScreen({
   return (
     <div className="p-6">
       <ScreenHeader
+        entity
         title="Verification call"
         subtitle={
           <>
@@ -494,7 +495,12 @@ export function VerifyScreen({
                       rows={2}
                       disabled={!canVerify}
                       value={questions[q.id] ?? ""}
-                      onChange={(e) => setQuestions((s2) => ({ ...s2, [q.id]: e.target.value }))}
+                      onChange={(e) =>
+                        setQuestions((s2) => ({
+                          ...s2,
+                          [q.id]: e.target.value,
+                        }))
+                      }
                     />
                   </label>
                 ))}
@@ -546,7 +552,8 @@ export function VerifyScreen({
                       {" "}
                       <strong className="text-body">
                         This call will read as &ldquo;
-                        {verificationResultLabel("verified_with_corrections")}&rdquo;
+                        {verificationResultLabel("verified_with_corrections")}
+                        &rdquo;
                       </strong>{" "}
                       &mdash; you have corrected {plural(correctedCount, "finding")}. Nothing extra
                       is stored for it: it is read off the correction rows themselves, so the count

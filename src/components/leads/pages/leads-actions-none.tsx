@@ -1,3 +1,4 @@
+import { OutsideLeadHub } from "@/components/leads/hub/hub-context";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import Link from "next/link";
 import { shortDate } from "@/lib/format";
@@ -52,12 +53,14 @@ export async function Body({
         title="Nobody is working these"
         subtitle="An active lead may not sit with nothing owed by anybody. Every row here has either no plan at all, or a plan whose day has gone past with no outcome recorded — which is the same thing a fortnight later."
         actions={
-          <Link
-            href={leadHref(workspace, "leads")}
-            className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
-          >
-            ← All leads
-          </Link>
+          <OutsideLeadHub>
+            <Link
+              href={leadHref(workspace, "leads")}
+              className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
+            >
+              ← All leads
+            </Link>
+          </OutsideLeadHub>
         }
       />
 
@@ -71,7 +74,11 @@ export async function Body({
 
       <MetricRow
         metrics={[
-          { label: "On the list", value: String(total), tone: total ? "warn" : "success" },
+          {
+            label: "On the list",
+            value: String(total),
+            tone: total ? "warn" : "success",
+          },
           {
             label: "No plan at all",
             value: String(unplanned),

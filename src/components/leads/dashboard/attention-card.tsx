@@ -53,20 +53,15 @@ export function AttentionCard({
 
   return (
     <div className="rounded-[6px] border border-line bg-surface">
-      <div className="flex items-start justify-between gap-3 border-b border-divider px-5 py-3.5">
-        <div className="min-w-0">
-          <div className="text-lg leading-6 font-semibold text-ink">Needs your attention</div>
-          <div className="mt-0.5 text-[13px] text-pretty text-muted">
-            {overdueTotal + dueTodayTotal === 0
-              ? "Nothing is owed on a lead today, and nothing has gone past its day."
-              : `${plural(overdueTotal, "lead")} past the day somebody promised, ${dueTodayTotal} due today. The oldest are first.`}
-          </div>
+      <div className="flex items-center justify-between gap-3 border-b border-divider px-5 py-3.5">
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="text-[15px] font-semibold text-ink">My queue</div>
+          {overdueTotal > 0 ? <Pill tone="danger">{overdueTotal} overdue</Pill> : null}
+          {dueTodayTotal > 0 ? <Pill tone="brand">{dueTodayTotal} today</Pill> : null}
         </div>
         <Link
-          /* The overdue VIEW of the list this card is on: the same window
-             (`overdueWindow`) the card's own total is counted over, in the screen
-             every reader of this card already holds. It used to open the Overdue
-             tab of a section that is leaving the navigation. */
+          /* The overdue VIEW of the list: the same window this card's total is
+             counted over. */
           href={`${leadHref(workspace, "leads")}?view=overdue`}
           className="flex-none text-[13px] whitespace-nowrap"
         >
