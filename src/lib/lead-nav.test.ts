@@ -77,26 +77,36 @@ describe("what left, and that it is one list", () => {
   });
 });
 
-describe("hiding a row does not strand somebody", () => {
+describe("the CRM draws one Leads row", () => {
   const all = crmItems().map((i) => i.href);
+  const leadsRows = (allowed: string[]) =>
+    navForModules(allowed)
+      .filter((g) => g.label === "Leads")
+      .flatMap((g) => g.items);
 
-  it("whoever holds All Leads sees only the six", () => {
+  it("whoever holds All Leads gets one row, landing on My day", () => {
+    const rows = leadsRows(all);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].href, "/crm/leads/dashboard");
     const labels = navForModules(all).flatMap((g) => g.items.map((i) => i.label));
-    assert.ok(labels.includes("All Leads"));
-    for (const hidden of ["Qualification", "Samples & trials", "Commercial", "Next actions & nurture", "Handovers", "Funnel & conversion", "Oversight"]) {
-      assert.ok(!labels.includes(hidden), `${hidden} is not in the sidebar`);
+    for (const gone of ["All Leads", "Add a lead", "Qualification", "Samples & trials", "Oversight"]) {
+      assert.ok(!labels.includes(gone), `${gone} is not in the sidebar`);
     }
   });
 
-  it("whoever holds a retired section and NOT All Leads still has their door", () => {
-    const only = ["/crm/samples", "/crm/leads/qualify", "/crm/leads/oversight"];
-    const labels = navForModules(only).flatMap((g) => g.items.map((i) => i.label));
-    assert.deepEqual(labels.sort(), ["Oversight", "Qualification", "Samples & trials"].sort());
+  it("whoever holds one section alone still has a door, onto that section", () => {
+    assert.equal(leadsRows(["/crm/samples"])[0].href, "/crm/samples/desk");
+    assert.equal(leadsRows(["/crm/leads/oversight"])[0].href, "/crm/leads/oversight");
+    assert.equal(leadsRows(["/crm/leads/lost"])[0].href, "/crm/leads/lost");
   });
 
-  it("a kept row is never hidden by the rule", () => {
-    const labels = navForModules(["/crm/leads/lost", "/crm/leads/sales-manager"]).flatMap((g) => g.items.map((i) => i.label));
-    assert.deepEqual(labels.sort(), ["Lost", "Sales Manager"]);
+  it("nobody holding a lead module gets no row", () => {
+    assert.equal(leadsRows(["/crm/customers"]).length, 0);
+  });
+
+  it("the row lights on every lead and sample screen", () => {
+    const row = leadsRows(all)[0];
+    assert.deepEqual([...(row.match ?? [])].sort(), ["/crm/leads", "/crm/samples"]);
   });
 });
 

@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { NavLink } from "@/components/shell/nav-link";
 import { cx } from "@/components/ui/primitives";
 import { sectionForPath, type LeadSection } from "@/lib/lead-workspace";
+import { useInLeadHub } from "@/components/leads/hub/hub-context";
 
 /* ---------------------------------------------------------------------------
  * The second level of the Lead Management workspace.
@@ -49,7 +50,11 @@ export function LeadTabs({
   section?: LeadSection;
 }) {
   const pathname = usePathname();
+  const inHub = useInLeadHub();
   const current = section ?? sectionForPath(workspace, pathname);
+
+  /* The CRM's Leads frame draws its own desks and tabs. */
+  if (inHub) return null;
 
   // A section with one tab is a section with no tabs: drawing a strip of one
   // is a control that cannot be used, which reads as a broken screen.

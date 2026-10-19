@@ -1,5 +1,6 @@
 "use client";
 
+import { OutsideLeadHub } from "@/components/leads/hub/hub-context";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import { SalesmanLink } from "@/components/leads/salesman-link";
 import * as React from "react";
@@ -98,20 +99,32 @@ export function ChecklistScreen({
         title="Qualification checklists"
         subtitle="No lead moves forward because somebody pressed a button. This is what each one at Qualification still owes — the same conditions the handset draws and the same ones the save refuses on, said as a list of what to go and do."
         actions={
-          <Link
-            href={leadHref(workspace, "leads")}
-            className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
-          >
-            ← All leads
-          </Link>
+          <OutsideLeadHub>
+            <Link
+              href={leadHref(workspace, "leads")}
+              className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
+            >
+              ← All leads
+            </Link>
+          </OutsideLeadHub>
         }
       />
 
       <FilterChips
         current={view}
         options={[
-          { key: "all", label: "In qualification", href: base, count: rows.length },
-          { key: "blocked", label: "Blocked", href: `${base}?view=blocked`, count: blocked.length },
+          {
+            key: "all",
+            label: "In qualification",
+            href: base,
+            count: rows.length,
+          },
+          {
+            key: "blocked",
+            label: "Blocked",
+            href: `${base}?view=blocked`,
+            count: blocked.length,
+          },
           { key: "ready", label: "Ready to advance", href: `${base}?view=ready`, count: ready.length },
           {
             key: "overridden",

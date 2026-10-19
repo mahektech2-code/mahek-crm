@@ -1,5 +1,6 @@
 "use client";
 
+import { OutsideLeadHub } from "@/components/leads/hub/hub-context";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import * as React from "react";
 import Link from "next/link";
@@ -85,7 +86,8 @@ export function HandoversScreen({
       {/* What it moves and what it does not, in one line, above everything.
           Drawn as information rather than as a warning: this is the note that
           makes the act safe to perform, not a reason to hesitate over it. */}
-      <Banner
+      <OutsideLeadHub>
+<Banner
         tone="info"
         title="A handover moves who RUNS the account, and no money at all."
         body={
@@ -100,6 +102,7 @@ export function HandoversScreen({
           </>
         }
       />
+      </OutsideLeadHub>
 
       <MetricRow
         metrics={[

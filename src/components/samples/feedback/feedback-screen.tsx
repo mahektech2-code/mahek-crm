@@ -1,4 +1,5 @@
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
+import { OutsideLeadHub } from "@/components/leads/hub/hub-context";
 import Link from "next/link";
 import { shortDate } from "@/lib/format";
 import {
@@ -194,7 +195,8 @@ export function FeedbackScreen({
         ]}
       />
 
-      <p className="mb-4 max-w-[760px] text-[12px] leading-[17px] text-muted">
+      <OutsideLeadHub>
+<p className="mb-4 max-w-[760px] text-[12px] leading-[17px] text-muted">
         The competitor chips read the incumbent the lead named when it was raised —
         a stored value, which is what makes it countable.
         {facets.noCompetitor
@@ -206,6 +208,7 @@ export function FeedbackScreen({
         The COMPARISON itself is a sentence somebody wrote down and cannot be grouped,
         only read; it is the column that carries most of what a trial is worth.
       </p>
+</OutsideLeadHub>
 
       {/* ------------------------------------------------------------ the rows */}
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { OutsideLeadHub } from "@/components/leads/hub/hub-context";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import * as React from "react";
 import Link from "next/link";
@@ -104,12 +105,14 @@ export function FirstOrdersScreen({
         title="First order & conversion"
         subtitle="Leads on the first-order rung and the three after it — delivery, payment, the second order. The eight questions are asked here, once, and every order status on this page is read off the ledger rather than written by the funnel."
         actions={
-          <Link
-            href={leadHref(workspace, "leads/commercial/commitments")}
-            className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
-          >
-            ← Commitments
-          </Link>
+          <OutsideLeadHub>
+            <Link
+              href={leadHref(workspace, "leads/commercial/commitments")}
+              className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
+            >
+              ← Commitments
+            </Link>
+          </OutsideLeadHub>
         }
       />
 

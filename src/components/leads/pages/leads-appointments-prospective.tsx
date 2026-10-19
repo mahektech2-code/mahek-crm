@@ -1,3 +1,4 @@
+import { OutsideLeadHub } from "@/components/leads/hub/hub-context";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import Link from "next/link";
 import { shortDate } from "@/lib/format";
@@ -67,12 +68,14 @@ export async function Body({ workspace }: { workspace: LeadWorkspace }) {
         title="Leads on the retired distributor ladder"
         subtitle="Mahek appoints distributors outside MahekOne, so this ladder was retired for new leads and everything already on it was left where it stood. Each of these is waiting on an approval nobody here can give — open one to move it onto the ladder that describes how the account is actually being sold to."
         actions={
-          <Link
-            href={leadHref(workspace, "leads/appointments")}
-            className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
-          >
-            ← Appointments
-          </Link>
+          <OutsideLeadHub>
+            <Link
+              href={leadHref(workspace, "leads/appointments")}
+              className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
+            >
+              ← Appointments
+            </Link>
+          </OutsideLeadHub>
         }
       />
 
@@ -86,7 +89,11 @@ export async function Body({ workspace }: { workspace: LeadWorkspace }) {
 
       <MetricRow
         metrics={[
-          { label: "On the list", value: String(total), tone: total ? "warn" : "success" },
+          {
+            label: "On the list",
+            value: String(total),
+            tone: total ? "warn" : "success",
+          },
           {
             label: "Appointment already started",
             value: String(started),

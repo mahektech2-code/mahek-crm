@@ -1,5 +1,6 @@
 "use client";
 
+import { OutsideLeadHub } from "@/components/leads/hub/hub-context";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import * as React from "react";
 import Link from "next/link";
@@ -97,21 +98,38 @@ export function CommitmentsScreen({
         title="Commitments & forecast"
         subtitle="A day and a figure a customer gave somebody on a phone call. Every number on this screen is a forecast and none of it is revenue — nothing here has been billed, approved or received, and no total on this page may be added to a real order value."
         actions={
-          <Link
-            href={leadHref(workspace, "leads/commercial")}
-            className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
-          >
-            ← Negotiation desk
-          </Link>
+          <OutsideLeadHub>
+            <Link
+              href={leadHref(workspace, "leads/commercial")}
+              className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
+            >
+              ← Negotiation desk
+            </Link>
+          </OutsideLeadHub>
         }
       />
 
       <FilterChips
         current={view}
         options={[
-          { key: "open", label: "Open", href: "?view=open", count: counts.open },
-          { key: "due", label: "Due this week", href: "?view=due", count: counts.due },
-          { key: "slipped", label: "Slipped", href: "?view=slipped", count: counts.slipped },
+          {
+            key: "open",
+            label: "Open",
+            href: "?view=open",
+            count: counts.open,
+          },
+          {
+            key: "due",
+            label: "Due this week",
+            href: "?view=due",
+            count: counts.due,
+          },
+          {
+            key: "slipped",
+            label: "Slipped",
+            href: "?view=slipped",
+            count: counts.slipped,
+          },
           {
             key: "converted",
             label: "Converted",

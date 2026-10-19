@@ -1,4 +1,5 @@
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
+import { OutsideLeadHub } from "@/components/leads/hub/hub-context";
 import Link from "next/link";
 import { shortDate, stamp } from "@/lib/format";
 import { today } from "@/lib/recompute";
@@ -50,12 +51,14 @@ export async function Body({
         title="Nurture schedule"
         subtitle="What the sequence has raised, what is late, and what fired. Fifteen rules produce these; the rules are printed at the bottom so a missing task can be traced to the trigger that never happened."
         actions={
-          <Link
+          <OutsideLeadHub>
+<Link
             href={leadHref(workspace, "leads")}
             className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
           >
             ← All leads
           </Link>
+</OutsideLeadHub>
         }
       />
 
@@ -120,10 +123,12 @@ export async function Body({
         <div className="mb-1 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
           The fifteen rules
         </div>
-        <p className="mb-3 max-w-[680px] text-[12px] text-pretty text-muted">
+        <OutsideLeadHub>
+<p className="mb-3 max-w-[680px] text-[12px] text-pretty text-muted">
           Read straight from the sequence rather than described, so this page cannot drift from
           what actually runs. `after` is days from the event that triggers it.
         </p>
+</OutsideLeadHub>
         <div className="min-w-0 overflow-x-auto">
           <table className="w-full min-w-[860px] border-collapse text-[13px]">
             <thead>

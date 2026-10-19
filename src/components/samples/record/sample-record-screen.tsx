@@ -24,11 +24,20 @@ import { plural } from "@/components/console/words";
  */
 const JOURNEY: readonly { state: SampleState; asserts: string }[] = [
   { state: "requested", asserts: "The salesman asked, standing in the shop." },
-  { state: "approved", asserts: "Somebody at a desk said yes. Nothing goes out without it." },
+  {
+    state: "approved",
+    asserts: "Somebody at a desk said yes. Nothing goes out without it.",
+  },
   { state: "dispatched", asserts: "We say it left." },
   { state: "received", asserts: "The shop says it is in their hands." },
-  { state: "trial_done", asserts: "They have used it. What they thought is still unknown." },
-  { state: "reviewed", asserts: "Somebody asked, and wrote down the seven answers." },
+  {
+    state: "trial_done",
+    asserts: "They have used it. What they thought is still unknown.",
+  },
+  {
+    state: "reviewed",
+    asserts: "Somebody asked, and wrote down the seven answers.",
+  },
 ];
 
 type Approval = {
@@ -110,6 +119,7 @@ export function SampleRecordScreen({
   return (
     <div className="p-6">
       <ScreenHeader
+        entity
         title={sample.customerName || "Sample"}
         subtitle={`${sample.quantityCans ? `${plural(sample.quantityCans, "can")} of ` : ""}${sample.productName ?? "a product nobody named"}${sample.salesmanName ? ` · asked for by ${sample.salesmanName}` : ""}${sample.city ? ` · ${sample.city}` : ""}`}
         actions={

@@ -1,6 +1,7 @@
 "use client";
 
 import { LeadTabs } from "@/components/leads/lead-tabs";
+import { useInLeadHub } from "@/components/leads/hub/hub-context";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import { SalesmanLink } from "@/components/leads/salesman-link";
 import * as React from "react";
@@ -291,6 +292,7 @@ export function LeadsScreen({
   holdReasons: Array<{ code: string; label: string }>;
 }) {
   const router = useRouter();
+  const inHub = useInLeadHub();
   const search = useSearchParams();
   const toast = useToast();
 
@@ -663,18 +665,20 @@ export function LeadsScreen({
                   {plural(archivedCount, "archived lead")}
                 </Link>
               ) : null}
-              {desks.otherDesks.length ? (
+              {desks.otherDesks.length && !inHub ? (
                 <RowMenu
                   label="Other screens"
                   items={desks.otherDesks.map((d) => ({ label: d.label, href: d.href }))}
                 />
               ) : null}
-              <Link
-                href={leadHref(workspace, "leads/intake")}
-                className="inline-flex h-9 items-center rounded-[4px] bg-brand px-3.5 text-sm font-medium text-white no-underline hover:bg-brand-hover hover:no-underline"
-              >
-                + Add a lead
-              </Link>
+              {inHub ? null : (
+                <Link
+                  href={leadHref(workspace, "leads/intake")}
+                  className="inline-flex h-9 items-center rounded-[4px] bg-brand px-3.5 text-sm font-medium text-white no-underline hover:bg-brand-hover hover:no-underline"
+                >
+                  + Add a lead
+                </Link>
+              )}
             </div>
           )
         }
@@ -705,7 +709,7 @@ export function LeadsScreen({
               handover: desks.handovers,
             }}
           />
-          {view === "register" ? <RegisterNote /> : null}
+          {view === "register" && !inHub ? <RegisterNote /> : null}
         </>
       ) : null}
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { OutsideLeadHub } from "@/components/leads/hub/hub-context";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import * as React from "react";
 import Link from "next/link";
@@ -120,12 +121,14 @@ export function CommunicationScreen({
         title="Communication log"
         subtitle="The eleven things we send or say, across the book. What has gone out, to whom, and by whom — and which of the eleven cannot be sent today because nothing is published behind it."
         actions={
-          <Link
-            href={leadHref(workspace, "leads")}
-            className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
-          >
-            ← All leads
-          </Link>
+          <OutsideLeadHub>
+            <Link
+              href={leadHref(workspace, "leads")}
+              className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
+            >
+              ← All leads
+            </Link>
+          </OutsideLeadHub>
         }
       />
 
@@ -140,9 +143,18 @@ export function CommunicationScreen({
       <MetricRow
         metrics={[
           { label: "Recorded", value: String(total) },
-          { label: "Of the eleven used", value: String(tally.filter((t) => t.count > 0).length) },
-          { label: "Widest reach", value: reached ? plural(reached, "lead") : "—" },
-          { label: "People sending", value: String(actors.filter((a) => a.actorId).length) },
+          {
+            label: "Of the eleven used",
+            value: String(tally.filter((t) => t.count > 0).length),
+          },
+          {
+            label: "Widest reach",
+            value: reached ? plural(reached, "lead") : "—",
+          },
+          {
+            label: "People sending",
+            value: String(actors.filter((a) => a.actorId).length),
+          },
         ]}
       />
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { OutsideLeadHub } from "@/components/leads/hub/hub-context";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import * as React from "react";
 import Link from "next/link";
@@ -112,12 +113,14 @@ export function OverdueScreen({
         title="Past its day"
         subtitle="A next action whose day has gone with nobody recording an outcome. Nothing here should stay here — each row is either work somebody still owes, or a promise that needs replacing with an honest one."
         actions={
-          <Link
-            href={leadHref(workspace, "leads/actions")}
-            className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
-          >
-            ← Owed today
-          </Link>
+          <OutsideLeadHub>
+            <Link
+              href={leadHref(workspace, "leads/actions")}
+              className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
+            >
+              ← Owed today
+            </Link>
+          </OutsideLeadHub>
         }
       />
 
@@ -139,7 +142,11 @@ export function OverdueScreen({
 
       <MetricRow
         metrics={[
-          { label: "Past its day", value: String(total), tone: total ? "danger" : "success" },
+          {
+            label: "Past its day",
+            value: String(total),
+            tone: total ? "danger" : "success",
+          },
           { label: "Oldest", value: total ? plural(worst, "day") : "—" },
           {
             label: "Missing an answer",
