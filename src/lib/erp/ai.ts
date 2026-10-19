@@ -19,25 +19,27 @@ import { today } from "./screens/common";
  * person then did with it. Reading only: nothing here writes a record.
  * ------------------------------------------------------------------------- */
 
-export type AiFeature = "bills" | "orders" | "ask" | "photos" | "complaints" | "stockCheck";
+export type AiFeature = "bills" | "orders" | "ask" | "photos" | "complaints" | "stockCheck" | "levels";
 
 export type FeatureState = { on: true } | { on: false; reason: string };
 
-const SWITCH: Record<AiFeature, "erp.ai.bills.enabled" | "erp.ai.orders.enabled" | "erp.ai.ask.enabled" | "erp.ai.photos.enabled" | "erp.ai.complaints.enabled" | "erp.ai.stockCheck.enabled"> = {
+const SWITCH: Record<AiFeature, "erp.ai.bills.enabled" | "erp.ai.orders.enabled" | "erp.ai.ask.enabled" | "erp.ai.photos.enabled" | "erp.ai.complaints.enabled" | "erp.ai.stockCheck.enabled" | "erp.ai.levels.enabled"> = {
   bills: "erp.ai.bills.enabled",
   orders: "erp.ai.orders.enabled",
   ask: "erp.ai.ask.enabled",
   photos: "erp.ai.photos.enabled",
   complaints: "erp.ai.complaints.enabled",
   stockCheck: "erp.ai.stockCheck.enabled",
+  levels: "erp.ai.levels.enabled",
 };
-const CAP: Record<AiFeature, "erp.ai.bills.monthlyCap" | "erp.ai.orders.monthlyCap" | "erp.ai.ask.monthlyCap" | "erp.ai.photos.monthlyCap" | "erp.ai.complaints.monthlyCap" | "erp.ai.stockCheck.monthlyCap"> = {
+const CAP: Record<AiFeature, "erp.ai.bills.monthlyCap" | "erp.ai.orders.monthlyCap" | "erp.ai.ask.monthlyCap" | "erp.ai.photos.monthlyCap" | "erp.ai.complaints.monthlyCap" | "erp.ai.stockCheck.monthlyCap" | "erp.ai.levels.monthlyCap"> = {
   bills: "erp.ai.bills.monthlyCap",
   orders: "erp.ai.orders.monthlyCap",
   ask: "erp.ai.ask.monthlyCap",
   photos: "erp.ai.photos.monthlyCap",
   complaints: "erp.ai.complaints.monthlyCap",
   stockCheck: "erp.ai.stockCheck.monthlyCap",
+  levels: "erp.ai.levels.monthlyCap",
 };
 
 /** Whether a feature may run now, and if not, the sentence that says why. */

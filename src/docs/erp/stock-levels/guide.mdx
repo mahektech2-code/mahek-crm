@@ -47,13 +47,13 @@ The numbers on this page that come from settings — how far back the suggestion
 
 | Screen | Tab | What it lists |
 |---|---|---|
-| Raw-material levels | **Below minimum** | Every **followed** item whose stock is short of its **maximum** — the ones you would buy today. Read only: you raise requisitions here, you do not edit levels. |
-| Raw-material levels | **All levels** | Every level set, followed or not, with its suggested minimum and maximum. This is where you add, edit, copy and delete levels. |
+| Raw-material levels | **Below minimum** | Every **followed** item whose stock is under its **minimum** — the ones to buy today. Read only: you raise requisitions here, you do not edit levels. |
+| Raw-material levels | **All levels** | Every level, followed or not, whether the planner set it or a person did, with the planner's figures beside it. This is where you add, edit, copy and delete levels. |
 | Finished-goods levels | **Below minimum** | Every **followed** SKU whose stock is under its **minimum**. Read only. |
 | Finished-goods levels | **All levels** | Every SKU level set, with its suggested minimum. |
 
-<Callout kind="warn" title="The raw-material Below minimum tab is wider than its name">
-On the raw-material screen, an item appears on **Below minimum** as soon as its stock is under the **maximum**, even if it is still above the minimum. The row's header says how much to buy to reach the maximum. Read the **Re-order %** and **Min** columns to see whether it is genuinely below the minimum.
+<Callout kind="note" title="You do not have to type raw-material levels">
+The planner sets a level for every raw material that has been used or bought at a godown, so the godown holds <Setting k="erp.levels.coverDays" /> days of stock. See [Planned levels](#planned-levels).
 </Callout>
 
 ## Reading a row
@@ -66,7 +66,10 @@ On the raw-material screen, an item appears on **Below minimum** as soon as its 
 | **Re-order %** | Raw material: stock against the midpoint of min and max (0 means bang in the middle, -50 means half of it). Finished goods: stock as a percentage of the minimum (100 means exactly at the minimum). |
 | **Min / Max** | The level somebody set. Finished goods have no maximum. |
 | **Status** | **Follow** — the ERP watches this level. **UnFollow** — it is kept but never flagged. |
-| **Suggested min / max** | What the ERP would set from recent use. See [Suggested levels](#suggested-levels). |
+| **Days of stock** (raw material) | How many days today's stock lasts at the planned rate. |
+| **Set by** (raw material) | **Planner** — rewritten every night — or **By hand**. |
+| **Planned min / max** (raw material) | What the planner works out from history. On a level set by hand it is shown for comparison and never applied. |
+| **Suggested min** (finished goods) | What the ERP would set from recent dispatches. See [Suggested levels](#suggested-levels). |
 | **Material type / Type** | For raw material: Chemical, Can, Drum, Box or Stationary. For finished goods: *Finish Goods Inventory* (a loose SKU) or *FG Packing Inventory* (a boxed SKU). |
 
 <Callout kind="note" title="Drums are counted for the whole company">
@@ -114,9 +117,32 @@ Change the quantity if you want to buy more or less. From here it is an ordinary
 Finished goods have no **Raise requirement** button. A short SKU is made, not bought — it goes to production, not to purchase.
 </Callout>
 
+## Planned levels
+
+Every night the ERP works out each raw material's minimum and maximum at each godown from its own history — up to <Setting k="erp.levels.historyYears" /> years of production use and purchases — so the godown always holds <Setting k="erp.levels.coverDays" /> days of stock:
+
+- The **minimum** is the forecast use over the next <Setting k="erp.levels.coverDays" /> days.
+- The **maximum** adds <Setting k="erp.levels.orderCycleDays" /> more days, so a requirement buys a useful quantity.
+
+The forecast knows the calendar. A month that runs busy every year (say October) raises the level as it comes up; a heavier last week of each month is read too. An AI review then reads the history and the season ahead and may move the level by up to <Setting k="erp.ai.levels.maxAdjustPercent" />%, with a sentence saying why. Open a row to see **How it was worked out**, the **AI review**, the **Pattern** and the month and week factors.
+
+<Steps>
+<Step title="Leave it to the planner">
+A level marked **Planned automatically** changes by itself every night. You do not need to do anything.
+</Step>
+<Step title="Or set it yourself">
+Edit the minimum or maximum and the level is yours: the planner never changes it again, and shows its own figures beside yours.
+</Step>
+<Step title="Hand it back">
+**Let the planner keep it** on a level set by hand puts the planner's figures on it and lets it change every night again.
+</Step>
+</Steps>
+
+**Plan levels now** at the top of All levels runs the planner straight away, for example after a big import of history.
+
 ## Suggested levels
 
-When the suggestion feature is on (currently <Setting k="erp.ai.reorder.enabled" />), each level shows what the ERP would set it to, worked out from how much that godown actually used:
+For finished goods, when the suggestion feature is on (currently <Setting k="erp.ai.reorder.enabled" />), each level shows what the ERP would set it to, worked out from how much that godown actually used:
 
 | Kind of item | Use is read from |
 |---|---|
@@ -140,8 +166,11 @@ Besides the tab, the ERP checks every hour. When an item first falls short, a **
 
 ## Questions people ask
 
-<Faq q="An item is on Below minimum but its stock is above the minimum.">
-On the raw-material screen the tab lists anything short of its **maximum**. The header on the row says how much brings it to the maximum. If you only want to buy below the minimum, check the Re-order % and Min columns before raising.
+<Faq q="An item has no level at a godown.">
+Nothing was used or bought there in the last <Setting k="erp.levels.minHistoryWeeks" /> weeks or more, so there is nothing to plan from. Add one by hand if you want it watched.
+</Faq>
+<Faq q="The planner's level looks too high (or too low).">
+Open the row and read **How it was worked out** and the **Pattern**. If a one-off order or a season the ERP cannot know about is behind it, edit the level: it is then yours and the planner leaves it alone.
 </Faq>
 <Faq q="An item I know is low is not on the list.">
 Its level is set to **UnFollow**, or it has no level at that godown at all. Check **All levels** for that godown.

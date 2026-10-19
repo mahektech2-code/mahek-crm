@@ -5032,6 +5032,112 @@ export const SETTINGS = [
     max: 365,
   },
   {
+    key: "erp.levels.autoPlan",
+    type: "boolean",
+    category: "erp",
+    label: "Plan raw-material levels automatically",
+    description:
+      "Every night, each raw material's minimum and maximum at each godown is worked out from its own use and purchase history, so the godown always holds the cover below. A level somebody typed or edited by hand is never changed.",
+    default: true,
+  },
+  {
+    key: "erp.levels.coverDays",
+    type: "decimal",
+    category: "erp",
+    label: "Stock to hold (days)",
+    description:
+      "The planned minimum is the forecast use over this many days. 10.5 is a week and a half.",
+    default: 10.5,
+    min: 1,
+    max: 120,
+  },
+  {
+    key: "erp.levels.orderCycleDays",
+    type: "decimal",
+    category: "erp",
+    label: "Bought on top of the minimum (days)",
+    description:
+      "The planned maximum adds this many days of forecast use to the minimum, so a requirement buys a useful quantity rather than a day's worth.",
+    default: 7,
+    min: 0,
+    max: 120,
+  },
+  {
+    key: "erp.levels.historyYears",
+    type: "integer",
+    category: "erp",
+    label: "History read (years)",
+    description:
+      "How far back use and purchases are read. Seasonality needs at least a year; more years make each month's pattern steadier.",
+    default: 3,
+    min: 1,
+    max: 10,
+  },
+  {
+    key: "erp.levels.recentWeeks",
+    type: "integer",
+    category: "erp",
+    label: "Current rate measured over (weeks)",
+    description:
+      "The recent weeks the current rate leads from, steadied by the last year.",
+    default: 8,
+    min: 2,
+    max: 26,
+  },
+  {
+    key: "erp.levels.minHistoryWeeks",
+    type: "integer",
+    category: "erp",
+    label: "Least history to plan from (weeks)",
+    description:
+      "An item with less use or purchase history than this gets no planned level.",
+    default: 4,
+    min: 1,
+    max: 52,
+  },
+  {
+    key: "erp.ai.levels.enabled",
+    type: "boolean",
+    category: "erp-ai",
+    label: "ERP · AI review of planned levels",
+    description:
+      "An AI model reads each item's history, its monthly and weekly pattern and the season ahead (festivals, monsoon, year-end) and may raise or lower the planned level within the limit below, with a reason shown on the level.",
+    default: true,
+  },
+  {
+    key: "erp.ai.levels.monthlyCap",
+    type: "integer",
+    category: "erp-ai",
+    label: "Most AI reviews a month",
+    description:
+      "Each review covers up to 20 items. Past the cap the statistical plan stands on its own until the 1st.",
+    default: 200,
+    min: 0,
+    max: 5000,
+  },
+  {
+    key: "erp.ai.levels.reviewEveryDays",
+    type: "integer",
+    category: "erp-ai",
+    label: "Review each item every (days)",
+    description:
+      "The forecast is recomputed nightly; the AI looks at an item again after this many days, or sooner when its plan moved a lot.",
+    default: 7,
+    min: 1,
+    max: 90,
+  },
+  {
+    key: "erp.ai.levels.maxAdjustPercent",
+    type: "integer",
+    category: "erp-ai",
+    label: "Most the AI may move a level (%)",
+    description:
+      "The AI's change to the statistical level is held within this many percent either way.",
+    default: 30,
+    min: 0,
+    max: 100,
+  },
+  {
     key: "erp.ai.bills.enabled",
     type: "boolean",
     category: "erp-ai",
@@ -6347,6 +6453,16 @@ export type Config = {
   "erp.stockCheck.fullCountDays": number;
   "erp.ai.stockCheck.enabled": boolean;
   "erp.ai.stockCheck.monthlyCap": number;
+  "erp.levels.autoPlan": boolean;
+  "erp.levels.coverDays": number;
+  "erp.levels.orderCycleDays": number;
+  "erp.levels.historyYears": number;
+  "erp.levels.recentWeeks": number;
+  "erp.levels.minHistoryWeeks": number;
+  "erp.ai.levels.enabled": boolean;
+  "erp.ai.levels.monthlyCap": number;
+  "erp.ai.levels.reviewEveryDays": number;
+  "erp.ai.levels.maxAdjustPercent": number;
   "erp.production.recipeTolerancePercent": number;
   "erp.factory.packBatchBoxes": number;
   "erp.factory.mixTolerancePercent": number;

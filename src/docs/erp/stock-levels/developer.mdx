@@ -55,8 +55,10 @@ The two filters are the whole of the Below minimum tabs, the `below` flag and th
 <Code file="src/lib/erp/screens/movement.ts" symbol="rmReorderRows" />
 <Code file="src/lib/erp/screens/movement.ts" symbol="fgReorderRows" />
 
-<Callout kind="warn" title="rmReorderRows filters on required, not on min">
-`required` is `max − available`, so a followed raw-material level is "below" anywhere under its maximum. The `noDataLine` and the registry's sub-title say minimum. Changing the predicate changes three readers at once: the tab, `currentCandidates` in `alerts.ts`, and the Ask the ERP `reorder` tool.
+<Code file="src/lib/erp/screens/movement.ts" symbol="rmBelowMin" />
+
+<Callout kind="note" title="Below means below the minimum">
+`rmBelowMin` is the one predicate for the tab, the `below` flag, `currentCandidates` in `alerts.ts` and the Ask the ERP `reorder` tool. It used to be `required > 0` — anywhere under the maximum — which with planned levels would have listed nearly every item every day. **Raise requirement** is still offered on any row with room under the maximum.
 </Callout>
 
 ## The screen module
@@ -69,7 +71,32 @@ The `raise` loader sends the row's department through `reorderDepartment`:
 
 <Code file="src/lib/erp/screens/movement.ts" symbol="reorderDepartment" />
 
+## The planner
+
+Raw-material levels are planned nightly by `runLevelPlanner` (`src/lib/erp/level-planner.ts`) from the pure engine `src/lib/erp/engines/stock-plan.ts`. The engine takes two daily series per item per godown — production use and posted purchases — and the date, and returns the minimum, the maximum and everything the drawer shows.
+
+<Code file="src/lib/erp/engines/stock-plan.ts" symbol="planLevel" collapsed />
+
+<Code file="src/lib/erp/engines/stock-plan.ts" symbol="seasonalFactors" collapsed />
+
+The AI review is one `readText` call per 20 items (`erp.ai.levels.*`, feature `levels` in `ai.ts`), logged to `erp_ai_suggestions` and held inside `adjusted`:
+
+<Code file="src/lib/erp/engines/stock-plan.ts" symbol="adjusted" />
+
+<Code file="src/lib/erp/level-planner.ts" symbol="runLevelPlanner" collapsed />
+
+| Column on `erp_rm_levels` (0275) | Meaning |
+|---|---|
+| `auto_managed` | The planner keeps this level. A hand edit of min or max clears it; **Let the planner keep it** sets it |
+| `plan` | The last plan for the item here, kept on hand-set levels too |
+| `planned_at` | When it was planned — the once-a-day guard reads it |
+| `ai_factor`, `ai_reason`, `ai_reviewed_at` | The AI's last adjustment, carried between reviews |
+
+It runs in `runNightly` before the alert pass, in `deploy:db` (`scripts/erp-levels-plan.ts`, which never fails a deploy), from the **Plan levels now** tool, and as `npm run jobs -- erp-levels-plan [--dry-run]`.
+
 ## Suggestions
+
+Finished-goods levels, and raw materials the planner has not read, still use the 90-day suggestion:
 
 <Code file="src/lib/erp/engines/production.ts" symbol="suggestLevel" />
 
@@ -123,8 +150,8 @@ Never subtract fills or packing again in a level — lot stock is already net of
 <Step title="Make thresholds settings">
 Cover days and look-back are `erp.ai.reorder.*`. A new knob is a registry key with a `Config` type entry, read through `getConfig()`.
 </Step>
-<Step title="Never apply a suggestion without a press">
-`applyRm` / `applyFg` are the only writers of a suggested value, and both are actions a person runs.
+<Step title="Never change a level a person set">
+The planner writes min and max only where `auto_managed` is true, and re-checks it in the update's WHERE. `applyRm` / `applyFg` are the only other writers of a suggested value, and both are actions a person runs.
 </Step>
 </Steps>
 
@@ -132,8 +159,8 @@ Cover days and look-back are `erp.ai.reorder.*`. A new knob is a registry key wi
 
 | Gap | Where |
 |---|---|
-| Raw-material "Below minimum" lists anything below the **maximum**; the sub-title, empty sentence and alert title say minimum | `screens/movement.ts` `rmReorderRows`; `registry.ts` `rmLevels` sub |
-| The `belowLevel` alert sentence quotes the minimum even when stock is above it | `engines/alerts.ts` `belowLevel` |
+| Finished-goods levels are not planned; only raw materials are | `level-planner.ts` |
+| Drums are not planned, because their availability is company-wide | `level-planner.ts`, `stock.ts` `rmLevelAvailable` |
 | `Drum` and `Stationary` levels never get a suggestion (they look up the chemical map) | `suggest.ts` `levelSuggestions` `rm()` |
 | Drum availability is company-wide, so a drum level ignores its godown | `stock.ts` `rmLevelAvailable` |
 | Box use is matched to raw materials by name (`lower(m.name) = lower(pk.box_type)`), so a renamed box material silently loses its suggestion | `suggest.ts` |

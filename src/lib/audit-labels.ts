@@ -981,6 +981,9 @@ export const VERBS: Record<string, string> = {
   reactivate: "reactivated",
   writeOff: "wrote off",
   applySuggestion: "applied the suggested {0}",
+  /* The level planner: the nightly pass over every level, and handing one back to it. */
+  plan: "planned every {0}",
+  autoOn: "handed to the planner the",
   toTesting: "sent {} for testing",
   toPurchase: "sent {} on to purchase",
   costs: "recorded the transport and inward cost of",

@@ -163,6 +163,8 @@ export type JobName =
   | "erp-inbox"
   /** Inventory Accuracy Control: today's cycle counts, by ABC class — idempotent, runs hourly. */
   | "erp-cycle-counts"
+  /** Raw-material re-order levels planned from history (1.5 weeks of stock), with the AI review. Once a day; `--dry-run` to look first. */
+  | "erp-levels-plan"
   /**
    * The ERP's orders into MahekOne's order book, all of them, and the Call
    * Log's hold rebuilt from the ERP's open lines. The step to run the day
@@ -247,6 +249,9 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
       return { recordsAffected: gone.length, detail: `${gone.length} old ticks removed` };
     }, triggeredById),
   );
+
+  /* Re-order levels first, so tonight's alert pass reads tonight's levels. */
+  results.push(await run("erp-levels-plan", () => erpLevelsPlanStep({}), triggeredById));
 
   /* The ERP's alert pass, and the owner's paragraph built from it (AI-4). */
   results.push(await run("erp-alerts", erpAlertsStep, triggeredById));
@@ -672,6 +677,17 @@ async function erpCycleCountStep() {
   const { planCycleCounts } = await import("./erp/stock-check");
   const r = await planCycleCounts(null);
   return { recordsAffected: r.opened, detail: r.skipped ? `skipped: ${r.skipped}` : `${r.opened} cycle count${r.opened === 1 ? "" : "s"} opened` };
+}
+
+/**
+ * Raw-material re-order levels, planned from each item's own use and purchase
+ * history so a godown always holds `erp.levels.coverDays` of stock. Once a day
+ * however often it is asked (nightly and every deploy) unless forced.
+ */
+async function erpLevelsPlanStep(o: { dryRun?: boolean; force?: boolean; userId?: string | null }) {
+  const { runLevelPlanner, plannerLine } = await import("./erp/level-planner");
+  const r = await runLevelPlanner(o);
+  return { recordsAffected: r.created + r.updated, detail: plannerLine(r) };
 }
 
 /** AI-2: new WhatsApp replies screened into the ERP's order inbox, as drafts nobody has accepted. */
@@ -1136,6 +1152,9 @@ export async function runJob(
       return [await run("erp-inbox", erpInboxStep, triggeredById)];
     case "erp-cycle-counts":
       return [await run("erp-cycle-counts", erpCycleCountStep, triggeredById)];
+    case "erp-levels-plan":
+      /* By hand it always runs: somebody asked. */
+      return [await run("erp-levels-plan", () => erpLevelsPlanStep({ dryRun: options.dryRun, force: true, userId: triggeredById ?? null }), triggeredById)];
     case "erp-book-sync":
       return [
         await run(
