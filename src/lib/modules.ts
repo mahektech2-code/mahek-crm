@@ -1196,6 +1196,26 @@ export function isWholeApp(app: AppId, modules: readonly string[]): boolean {
 }
 
 /**
+ * The WRITE LEVELS of an app's screens: which module is drawn as the Read / Write
+ * select on a screen's row, keyed by that screen.
+ *
+ * One level per screen, and the FIRST registered wins. A second module naming the
+ * same screen in `writeOf` — Website's `website.review` beside `website.publish`,
+ * both "of" the dashboard — is not a second level of it: keyed by screen, a Map of
+ * every `writeOf` kept the LAST, which hid `website.review` from the list as though
+ * it were the dashboard's Write option and turned the dashboard's Write select into
+ * the right to review. Such a module is an ordinary checkbox, kept out of
+ * navigation by `writeOf` alone.
+ */
+export function writeLevelsForApp(app: AppId): Map<string, string> {
+  const levels = new Map<string, string>();
+  for (const m of modulesForApp(app)) {
+    if (m.writeOf && !levels.has(m.writeOf)) levels.set(m.writeOf, m.key);
+  }
+  return levels;
+}
+
+/**
  * The review table renders in sections, in the order the sidebar draws them.
  *
  * ONE SECTION PER GROUP NAME, not one per run of them. This used to merge only
