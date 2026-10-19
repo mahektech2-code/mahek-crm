@@ -51,6 +51,12 @@ export function statementKey(q: SQL): string {
   return `${sql}\u0000${JSON.stringify(params)}`;
 }
 
+/** A statement's identity and how many parameters it carries — the stock cache keeps only short ones. */
+export function statementShape(q: SQL): { key: string; params: number } {
+  const { sql, params } = dialect.sqlToQuery(q);
+  return { key: `${sql}\u0000${JSON.stringify(params)}`, params: params.length };
+}
+
 /**
  * A read that is not one statement — `orderLines`, built from six — shared the
  * same way, under a key the caller names. The badges, the dashboard and the
