@@ -91,6 +91,11 @@ rule("money, numbers and times are formatted in one place", /toLocale(String|Dat
 rule("no ERP address is typed", /["'`]\/erp\//, "Use erpLink / erpHref or the builders in trace-links.ts.");
 rule("no table cell is drawn bare", /<t[hd][\s>]/, "Use Th / Td (and Tr) from primitives.");
 
+test("a dialog names itself with DialogTitle", () => {
+  const found = offenders(/text-xl leading-7 font-semibold text-ink"/).filter((l) => !l.startsWith("_ui/dialog.tsx"));
+  assert.deepEqual(found, [], `Use DialogTitle from _ui/dialog.tsx.\n  ${found.join("\n  ")}`);
+});
+
 test("the type kit is what the rules point to", () => {
   const kit = SOURCES.find((f) => f.rel === "_ui/look.tsx");
   assert.ok(kit, "_ui/look.tsx is missing");

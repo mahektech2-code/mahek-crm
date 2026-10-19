@@ -33,8 +33,8 @@ import { stamp } from "@/lib/format";
 import { BodyPortal } from "@/components/ui/body-portal";
 import { RowMenu } from "@/components/ui/overlays";
 import { useErpUi } from "../_ui/erp-ui";
-import { DialogBody, DialogFooter, DialogHeader, ErpDialog } from "../_ui/dialog";
-import { eyebrowClass, insetClass, labelClass, LinkButton, popoverClass } from "../_ui/look";
+import { DialogBody, DialogTitle, DialogFooter, DialogHeader, ErpDialog } from "../_ui/dialog";
+import { eyebrowClass, insetClass, LinkButton, popoverClass } from "../_ui/look";
 
 /**
  * The grid. It behaves like the sheet it replaces: click a cell and type,
@@ -980,20 +980,21 @@ export function QuoteGrid({
                     <Td className={cx(FOOT, "left-0 z-20", fi === 0 && "border-t border-line")} />
                     <Td colSpan={2} className={cx(FOOT, FROZEN_EDGE, "left-[52px] z-20", fi === 0 && "border-t border-line")}>
                       <span className={eyebrowClass}>{k === "latest" ? "Latest rate" : "Lowest rate"}</span>
-                    </td>
+                    </Td>
                     {cols.map((c) => {
                       const s = stats.get(c.id);
                       return (
-                        <td
+                        <Td
                           key={c.id}
-                          className={cx(FOOT, "border-r border-divider text-right text-meta font-semibold text-ink tabular-nums", fi === 0 && "border-t border-line")}
+                          align="right"
+                          className={cx(FOOT, "border-r border-divider font-semibold text-ink tabular-nums", fi === 0 && "border-t border-line")}
                           title={k === "latest" && s?.latestDate ? `Quoted ${showDate(s.latestDate)}` : undefined}
                         >
-                          {s ? (k === "latest" ? (s.latest ?? "—") : (s.lowest ?? "—")) : ""}
-                        </td>
+                          <span className="text-meta">{s ? (k === "latest" ? (s.latest ?? "—") : (s.lowest ?? "—")) : ""}</span>
+                        </Td>
                       );
                     })}
-                    <td className={cx(FOOT, fi === 0 && "border-t border-line")} />
+                    <Td className={cx(FOOT, fi === 0 && "border-t border-line")} />
                   </tr>
                 ))}
               </tfoot>
@@ -1144,7 +1145,7 @@ export function QuoteGrid({
       {showArchived ? (
         <ErpDialog onClose={() => setShowArchived(false)} label="Removed columns" size="sm" tall={false}>
           <DialogHeader onClose={() => setShowArchived(false)}>
-            <div className="text-xl leading-7 font-semibold text-ink">Removed columns</div>
+            <DialogTitle>Removed columns</DialogTitle>
           </DialogHeader>
           <DialogBody>
             {archived.length ? (
@@ -1211,7 +1212,7 @@ function ColumnDialog({
   return (
     <ErpDialog onClose={onClose} label={column ? "Edit column" : "Add a column"} size="sm" tall={false}>
       <DialogHeader onClose={onClose}>
-        <div className="text-xl leading-7 font-semibold text-ink">{column ? "Edit column" : "Add a column"}</div>
+        <DialogTitle>{column ? "Edit column" : "Add a column"}</DialogTitle>
       </DialogHeader>
       <DialogBody>
         <form
@@ -1683,7 +1684,7 @@ function PurchaseDialog({
   return (
     <ErpDialog onClose={onClose} label={editing ? "Edit purchase" : "Purchase it"} width={540} tall={false}>
       <DialogHeader onClose={onClose}>
-        <div className="text-xl leading-7 font-semibold text-ink">{editing ? "Edit purchase" : "Purchase it"}</div>
+        <DialogTitle>{editing ? "Edit purchase" : "Purchase it"}</DialogTitle>
       </DialogHeader>
       <DialogBody>
         <div className={cx("grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 bg-canvas text-meta", insetClass)}>

@@ -6,7 +6,7 @@ import { useMemo, useState } from "react";
 import { FilterPills } from "@/components/ui/overlays";
 import { Button, Card, cx, Field, Input, SectionLabel, Select, Textarea } from "@/components/ui/primitives";
 import { Badge } from "../../_ui/badge";
-import { DialogBody, DialogFooter, DialogHeader, ErpDialog } from "../../_ui/dialog";
+import { DialogBody, DialogFooter, DialogHeader, ErpDialog, DialogTitle } from "../../_ui/dialog";
 import { linkClass, SubTitle } from "../../_ui/look";
 import { erpLogisticsClearIssue, erpLogisticsDelivered, erpLogisticsIssue, erpLogisticsUpdate } from "@/lib/actions/erp-logistics";
 import { addDays, callDue, daysBetween, ISSUES, ROAD_STAGES, runningLate, shortDay, STAGE_SHORT, trackingLink, type Stage } from "@/lib/erp/engines/logistics";
@@ -181,7 +181,7 @@ function ActionDialog({ dialog, today, callEveryDays, notifyOn, onClose }: { dia
   return (
     <ErpDialog onClose={onClose} label={title} size="sm" tall={false}>
       <DialogHeader onClose={onClose}>
-        <div className="text-xl leading-7 font-semibold text-ink">{title}</div>
+        <DialogTitle>{title}</DialogTitle>
       </DialogHeader>
       <DialogBody className="gap-3">
         <div className="text-sm text-body">

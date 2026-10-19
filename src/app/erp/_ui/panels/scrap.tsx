@@ -43,7 +43,7 @@ function Scrap({ data }: PanelProps) {
         </div>
       ))}
       {d.note ? (
-        <Callout tone="brand" className="mb-0 block text-meta">
+        <Callout tone="info" className="mb-0 block text-meta text-info">
           {d.note}
         </Callout>
       ) : null}

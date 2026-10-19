@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { erpLink } from "@/lib/erp/registry";
 import { CardGrid } from "@/components/ui/card-grid";
-import { Button, Card, cx } from "@/components/ui/primitives";
+import { Card, cx, buttonClass } from "@/components/ui/primitives";
 import { Badge } from "../../_ui/badge";
 import { eyebrowClass, labelClass, LinkButton, SubTitle } from "../../_ui/look";
 import { erpLogisticsReopen } from "@/lib/actions/erp-logistics";
@@ -74,8 +74,8 @@ export function Overview({
               <SubTitle className="mb-0">Calls to make today</SubTitle>
               <div className="text-meta text-muted">Ring the transporter, then update the LR.</div>
             </div>
-            <Link href={erpLink("trackLr", { filter: "calls" })}>
-              <Button size="sm">Open</Button>
+            <Link href={erpLink("trackLr", { filter: "calls" })} className={buttonClass({ size: "sm" })}>
+              Open
             </Link>
           </div>
           {calls.length ? (

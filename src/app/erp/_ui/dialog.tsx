@@ -85,6 +85,11 @@ export function DialogHeader({ children, onClose, aside }: { children: React.Rea
   );
 }
 
+/** A dialog's title — the one size every ERP dialog names itself in. */
+export function DialogTitle({ children, className }: { children: React.ReactNode; className?: string }) {
+  return <div className={cx("text-xl leading-7 font-semibold text-ink", className)}>{children}</div>;
+}
+
 /** The scrolling middle of a dialog. */
 export function DialogBody({ children, className }: { children: React.ReactNode; className?: string }) {
   return (

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { ColSpec } from "@/lib/erp/ui";
 import { checkboxClass, cx } from "@/components/ui/primitives";
-import { LinkButton, popoverClass } from "./look";
+import { LinkButton, popoverClass, toggleClass } from "./look";
 import type { ColumnFit } from "./fit-columns";
 import { Icon } from "./icons";
 
@@ -19,7 +19,7 @@ import { Icon } from "./icons";
  * A list toolbar's on/off control — Columns, Group by — in its pressed and
  * unpressed looks. One string, so two toggles side by side cannot drift apart.
  */
-export { toggleClass as toolbarToggleClass } from "./look";
+export const toolbarToggleClass = toggleClass;
 
 export function ColumnsMenu({
   cols,

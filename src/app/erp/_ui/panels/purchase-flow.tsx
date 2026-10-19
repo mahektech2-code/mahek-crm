@@ -4,13 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import { Button, Callout, cx, Input, Select, SectionLabel } from "@/components/ui/primitives";
 import { ComboBox } from "@/components/ui/combo-box";
 import { stamp } from "@/lib/format";
-import { inr, inrRate, nf } from "@/lib/erp/ui";
+import { inr, inrRate, qty } from "@/lib/erp/ui";
 import { erpRunAction } from "@/lib/actions/erp";
 import { erpRequirementPoLookup } from "@/lib/actions/erp-requirement-po";
 import type { LinkPreview } from "@/lib/erp/screens/requirement-po";
 import { registerPanel, type PanelProps } from "../panels";
 import { resultError, useAct } from "../use-act";
-import { DialogBody, DialogFooter, DialogHeader, ErpDialog, StepBar } from "../dialog";
+import { DialogBody, DialogTitle, DialogFooter, DialogHeader, ErpDialog, StepBar } from "../dialog";
 import { eyebrowClass, insetClass, labelClass, linkClass } from "../look";
 import { Stepper } from "./parts";
 
@@ -78,7 +78,7 @@ type Flow = {
   entry: { held: boolean; link: boolean; create: CreateData | null } | null;
 };
 
-const count = (q: string) => (Number.isFinite(Number(q)) && q.trim() ? nf(Number(q)) : q);
+const count = (q: string) => (Number.isFinite(Number(q)) && q.trim() ? qty(Number(q)) : q);
 
 function Comparison({ c, verdict }: { c: NonNullable<Flow["comparison"]>; verdict: Flow["verdict"] }) {
   const rows: [string, string, string?][] = [
@@ -267,7 +267,7 @@ function CreatePoModal({ id, d, onClose }: { id: string; d: CreateData; onClose:
   return (
     <ErpDialog onClose={onClose} label={`Create PO · ${d.item}`} width={680} tall={false}>
       <DialogHeader onClose={onClose}>
-        <div className="text-xl leading-7 font-semibold text-ink">Create PO · {d.item}</div>
+        <DialogTitle>Create PO · {d.item}</DialogTitle>
         <div className="mt-0.5 text-meta text-muted">
           {[d.reqNo, `${count(d.qty)} ${d.unit}`, d.godown, "Direct purchase — no quotation needed"].filter(Boolean).join(" · ")}
         </div>
@@ -422,7 +422,7 @@ function CreatePoModal({ id, d, onClose }: { id: string; d: CreateData; onClose:
           </div>
         )}
       </DialogBody>
-      <DialogFooter>
+      <DialogFooter left={`Step ${page + 1} of ${PAGES.length}`}>
         {page === 0 ? <Button onClick={onClose}>Cancel</Button> : <Button onClick={() => setPage(page - 1)}>← Back</Button>}
         {page < 2 ? (
           <Button variant="primary" onClick={() => check(page) && setPage(page + 1)}>

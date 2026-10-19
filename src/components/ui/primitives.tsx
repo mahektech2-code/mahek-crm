@@ -15,19 +15,20 @@ export function cx(...parts: Array<string | false | null | undefined>): string {
  * every screen that asked for none. A primitive therefore applies a default
  * only where the caller has not spoken, which this answers.
  */
-export function says(className: string | undefined, prop: "mb" | "h" | "w"): boolean {
+export function says(className: string | undefined, prop: "mb" | "h" | "w" | "display"): boolean {
   if (!className) return false;
   const re = {
     mb: /(^|\s)(-?mb|-?my|-?m)-/,
     h: /(^|\s)h-/,
     w: /(^|\s)w-/,
+    display: /(^|\s)(block|inline|inline-block|grid|inline-grid|hidden|contents)(\s|$)/,
   }[prop];
   return re.test(className);
 }
 
 /* ---------------------------------------------------------------- buttons */
 
-type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "dark";
+type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "dark" | "whatsapp";
 type ButtonSize = "sm" | "md";
 
 const BUTTON_BASE =
@@ -48,6 +49,8 @@ const BUTTON_VARIANTS: Record<ButtonVariant, string> = {
     "border border-danger bg-danger text-white hover:brightness-110 " +
     "disabled:bg-line-strong disabled:border-line-strong",
   dark: "border border-body bg-transparent text-white hover:bg-white/10",
+  /* Opens a WhatsApp chat — WhatsApp's own green, so it reads as leaving for WhatsApp. */
+  whatsapp: "border border-whatsapp bg-whatsapp text-white hover:brightness-95 disabled:bg-line-strong disabled:border-line-strong",
 };
 
 const BUTTON_SIZES: Record<ButtonSize, string> = {
@@ -517,7 +520,7 @@ export function Callout({
   children,
   className,
 }: {
-  tone?: "warn" | "danger" | "brand" | "success";
+  tone?: "warn" | "danger" | "brand" | "success" | "info" | "neutral";
   children: React.ReactNode;
   className?: string;
 }) {
@@ -526,11 +529,16 @@ export function Callout({
     danger: "border-danger-soft bg-danger-soft border-l-[3px] border-l-danger",
     brand: "border-brand-softer bg-brand-soft border-l-[3px] border-l-brand",
     success: "border-success-soft bg-success-soft border-l-[3px] border-l-success",
+    /* Information that asks nothing of the reader — what the system did, how a figure was read. */
+    info: "border-info-soft bg-info-soft border-l-[3px] border-l-info",
+    /* A plain aside, where no colour would be true. */
+    neutral: "border-line bg-canvas border-l-[3px] border-l-line-strong",
   };
   return (
     <div
       className={cx(
-        "flex items-center gap-3 rounded-control border px-4 py-2.5",
+        "rounded-control border px-4 py-2.5",
+        says(className, "display") ? null : "flex items-center gap-3",
         says(className, "mb") ? null : "mb-4",
         tones[tone],
         className,

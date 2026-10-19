@@ -1,4 +1,4 @@
-import { calendarDate, isoWeekday, localMinutesSince } from "@/lib/business-date";
+import { calendarDate, isoWeekday, localMinutesSince, type BusinessDate } from "@/lib/business-date";
 import { longDate } from "@/lib/format";
 import Link from "next/link";
 import { erpContext } from "@/lib/erp/access";
@@ -26,7 +26,7 @@ export default async function ErpDashboard() {
   const day = calendarDate(now);
   const hour = Math.floor((localMinutesSince(day, now) ?? 0) / 60);
   const hello = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
-  const today = `${WEEKDAYS[isoWeekday(day) - 1]}, ${longDate(day)}`;
+  const today = `${WEEKDAYS[isoWeekday(day as string as BusinessDate) - 1]}, ${longDate(day)}`;
   const moneyOff = !ctx.powers.has("viewPurchaseMoney") && !ctx.powers.has("viewSalesAmounts");
 
   return (

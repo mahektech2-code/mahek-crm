@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Button, Callout, Progress, SectionLabel, controlClass, cx } from "@/components/ui/primitives";
-import { DialogBody, DialogFooter, DialogHeader, ErpDialog, StepBar } from "./dialog";
+import { DialogBody, DialogTitle, DialogFooter, DialogHeader, ErpDialog, StepBar } from "./dialog";
 import { Badge } from "./badge";
 import { LinkButton, labelClass } from "./look";
 import { runCalc } from "@/lib/erp/calc";
@@ -154,7 +154,7 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
   return (
     <ErpDialog onClose={onClose} label={spec.title} width={step === "lines" ? 920 : 760}>
       <DialogHeader onClose={onClose}>
-        <div className="text-xl leading-7 font-semibold text-ink">{spec.title}</div>
+        <DialogTitle>{spec.title}</DialogTitle>
         <div className="mt-0.5 text-meta text-muted">{sub}</div>
       </DialogHeader>
       {/* The steps follow the truck, not a page order: adding a second item goes back to the first. */}

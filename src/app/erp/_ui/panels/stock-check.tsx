@@ -1,7 +1,7 @@
 "use client";
 
 import { Callout, cx, SectionLabel } from "@/components/ui/primitives";
-import { nf } from "@/lib/erp/ui";
+import { qty } from "@/lib/erp/ui";
 import { insetClass, linkClass } from "../look";
 import { registerPanel, type PanelProps } from "../panels";
 import { Figure, Stepper } from "./parts";
@@ -15,7 +15,7 @@ import type { StockCountPanel } from "@/lib/erp/screens/stock-check";
  * counter may be the one reading it.
  * ------------------------------------------------------------------------- */
 
-const fmt = (n: number | null | undefined) => (n == null ? "—" : nf(n));
+const fmt = (n: number | null | undefined) => (n == null ? "—" : qty(n));
 const signed = (n: number | null | undefined) => (n == null ? "—" : `${n > 0 ? "+" : ""}${fmt(n)}`);
 
 function StockCount({ data }: PanelProps) {
@@ -43,7 +43,7 @@ function StockCount({ data }: PanelProps) {
       </div>
 
       {d.blind ? (
-        <Callout tone="brand" className="mb-0 block text-meta">
+        <Callout tone="info" className="mb-0 block text-meta text-info">
           <span className="font-semibold">Blind count · </span>
           Count what is on the shelf, in {d.unit === "Pcs" ? "pieces" : "litres"}. The book quantity stays hidden until the count is submitted, so the figure is what is there and not what is expected.
         </Callout>

@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { Button, Card, checkboxClass, cx, Field, Input, Select } from "@/components/ui/primitives";
 import { Badge } from "../../_ui/badge";
-import { DialogBody, DialogFooter, DialogHeader, ErpDialog } from "../../_ui/dialog";
+import { DialogBody, DialogFooter, DialogHeader, ErpDialog, DialogTitle } from "../../_ui/dialog";
 import { SubTitle } from "../../_ui/look";
 import { erpLogisticsAttach, erpLogisticsEditLr, erpLogisticsVoidLr } from "@/lib/actions/erp-logistics";
 import { addDays, lrUploadName, rankForLr, shortDay } from "@/lib/erp/engines/logistics";
@@ -240,7 +240,7 @@ function EditLr({ lr, transporters, today, onClose }: { lr: UploadedLr; transpor
   return (
     <ErpDialog onClose={onClose} label={title} size="sm" tall={false}>
       <DialogHeader onClose={onClose}>
-        <div className="text-xl leading-7 font-semibold text-ink">{title}</div>
+        <DialogTitle>{title}</DialogTitle>
       </DialogHeader>
       <DialogBody>
         <datalist id="lr-edit-transporters">

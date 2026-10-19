@@ -7,7 +7,7 @@ import { phoneDisplay } from "@/lib/format";
 import { Icon } from "../../_ui/icons";
 import { Button, checkboxClass, cx, Textarea } from "@/components/ui/primitives";
 import { Badge } from "../../_ui/badge";
-import { DialogBody, DialogFooter, DialogHeader, ErpDialog } from "../../_ui/dialog";
+import { DialogBody, DialogFooter, DialogHeader, ErpDialog, DialogTitle } from "../../_ui/dialog";
 import { insetClass, linkClass } from "../../_ui/look";
 import { dueWord, STAGES, STAGE_SHORT, stageStep, type Stage } from "@/lib/erp/engines/logistics";
 import type { Consignment } from "@/lib/erp/logistics";
@@ -187,7 +187,7 @@ export function ReasonDialog({
   return (
     <ErpDialog onClose={onClose} label={title} size="sm" tall={false}>
       <DialogHeader onClose={onClose}>
-        <div className="text-xl leading-7 font-semibold text-ink">{title}</div>
+        <DialogTitle>{title}</DialogTitle>
       </DialogHeader>
       <DialogBody className="gap-2">
         <p className="text-sm text-body">{body}</p>

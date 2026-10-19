@@ -10,7 +10,7 @@ import { useKit } from "./kit";
 import { Icon } from "./icons";
 import { useErpUi } from "./erp-ui";
 import { renderPanel } from "./panels";
-import { DialogBody, DialogFooter, DialogHeader, ErpDialog, MoreMenu, TabBar, type DialogTab } from "./dialog";
+import { DialogBody, DialogTitle, DialogFooter, DialogHeader, ErpDialog, MoreMenu, TabBar, type DialogTab } from "./dialog";
 import "./panels/index";
 
 /* ---------------------------------------------------------------------------
@@ -86,7 +86,7 @@ export function RecordDialog({ screen, kind, row, onClose }: { screen: ListSpec;
     <ErpDialog onClose={onClose} label={title} size={panel ? "lg" : "md"} tall={tabs.length > 1}>
       <DialogHeader onClose={onClose} aside={status ? <StatusBadge value={status.v} /> : null}>
         <SectionLabel>{kind}</SectionLabel>
-        <div className="mt-0.5 text-xl leading-7 font-semibold text-ink">{title}</div>
+        <DialogTitle className="mt-0.5">{title}</DialogTitle>
         {row.header ? <div className="mt-0.5 text-meta text-body">{row.header}</div> : null}
         {flags.length ? (
           <div className="mt-2 flex flex-wrap gap-1">

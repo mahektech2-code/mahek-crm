@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Button, Callout, cx, SectionLabel, Td, Th, Tr, buttonClass } from "@/components/ui/primitives";
 import { labelClass, LinkButton } from "./look";
 import { ConfirmDialog, Modal } from "@/components/ui/overlays";
-import { DialogBody, DialogFooter, DialogHeader, ErpDialog, StepBar } from "./dialog";
+import { DialogBody, DialogTitle, DialogFooter, DialogHeader, ErpDialog, StepBar } from "./dialog";
 import { pageOfError, planPages, plural } from "./form-pages";
 import { useToast } from "@/components/ui/toast";
 import type { ActionSpec, BulkSpec, FieldSpec, FormSpec, PromptSpec, ToolResult, ToolSpec } from "@/lib/erp/ui";
@@ -699,7 +699,7 @@ function FormDialog({
   return (
     <ErpDialog onClose={onClose} label={spec.title} width={width} tall={pages.length > 1 || !!spec.line || !!spec.evidence}>
       <DialogHeader onClose={onClose}>
-        <div className="text-xl leading-7 font-semibold text-ink">{spec.title}</div>
+        <DialogTitle>{spec.title}</DialogTitle>
         {spec.sub ? <div className="mt-0.5 text-meta text-muted">{spec.sub}</div> : null}
       </DialogHeader>
       {pages.length > 1 ? <StepBar steps={pages.map((p) => p.title || "Details")} active={at} reached={reached} errored={errored} onChange={setPage} /> : null}

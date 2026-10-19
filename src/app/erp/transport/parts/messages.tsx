@@ -3,7 +3,7 @@
 import { stamp } from "@/lib/format";
 import { useState } from "react";
 import { FilterPills } from "@/components/ui/overlays";
-import { Button, Card, cx } from "@/components/ui/primitives";
+import { Button, Card, cx, buttonClass } from "@/components/ui/primitives";
 import { Badge } from "../../_ui/badge";
 import { useToast } from "@/components/ui/toast";
 import { erpLogisticsMessageRetry, erpLogisticsMessageSent, erpLogisticsMessageSkip } from "@/lib/actions/erp-logistics";
@@ -88,7 +88,7 @@ export function Messages({ rows, canWrite, wati }: { rows: OutboxMessage[]; canW
               {open && canWrite ? (
                 <div className="flex flex-wrap items-center gap-2">
                   {link ? (
-                    <a href={link} target="_blank" rel="noreferrer" className="inline-flex h-8 items-center rounded-control bg-whatsapp px-3 text-meta font-medium text-white no-underline hover:no-underline">
+                    <a href={link} target="_blank" rel="noreferrer" className={buttonClass({ variant: "whatsapp", size: "sm" })}>
                       Open in WhatsApp
                     </a>
                   ) : null}

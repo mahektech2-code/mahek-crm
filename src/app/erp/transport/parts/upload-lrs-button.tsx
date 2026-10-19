@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/primitives";
 import { Badge } from "../../_ui/badge";
-import { DialogBody, DialogHeader, ErpDialog } from "../../_ui/dialog";
+import { DialogBody, DialogHeader, ErpDialog, DialogTitle } from "../../_ui/dialog";
 import { SubTitle } from "../../_ui/look";
 import { lrUploadName, shortDay } from "@/lib/erp/engines/logistics";
 import type { RecentLr } from "@/lib/erp/logistics";
@@ -51,7 +51,7 @@ export function UploadLrsButton({
       {open ? (
         <ErpDialog onClose={close} label="Upload LRs" width={900} tall={false}>
           <DialogHeader onClose={close}>
-            <div className="text-xl leading-7 font-semibold text-ink">Upload LRs</div>
+            <DialogTitle>Upload LRs</DialogTitle>
           </DialogHeader>
           <DialogBody>
         <p className="text-meta text-muted">
