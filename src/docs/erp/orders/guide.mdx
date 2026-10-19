@@ -42,7 +42,7 @@ How these orders then reach MahekOne's order book — the CRM, targets and outst
 
 | Tab | What it lists |
 |---|---|
-| **Pending** | Every line that is not Ready yet and has not reached billing — not cancelled, not an empty-drum line. Marking a line **Ready** moves it to *Under process & ready*. Grouped by date and order number. Once any line of an order is billed, the whole order leaves this tab. |
+| **Pending** | Lines the office is holding — **Hold From Office** — that have not reached billing; not cancelled, not an empty-drum line. A line that is **Under Process** or **Ready** is on *Under process & ready* instead, never on both tabs. Grouped by date and order number. Once any line of an order is billed, the whole order leaves this tab. |
 | **Under process & ready** | Lines that are **Under Process** or **Ready** and not yet billed. This is the working list for the office. |
 | **Billing & dispatch** | Lines that have been billed. Here you set the dispatch date and mark them **Verified** once the goods leave. |
 | **Batch codes** | Every lot set aside for an order line, and how many. |
@@ -230,7 +230,7 @@ At the Dispatch desk, by scanning each box onto the order. For old stock with no
 At least one lot on the line has box ids, so every box has to be scanned at the Dispatch desk before the line can be verified.
 </Faq>
 <Faq q="An order disappeared from Pending but one of its lines is not billed.">
-Pending hides a whole order once any of its lines is billed, and hides any line marked Ready. Those lines are on **Under process & ready** and **All lines**.
+Pending hides a whole order once any of its lines is billed, and hides any line that is Under Process or Ready. Those lines are on **Under process & ready** and **All lines**.
 </Faq>
 <Faq q="I cannot change the quantity on a line.">
 It has been billed. Undo billing first (only possible before it is dispatch-verified).
