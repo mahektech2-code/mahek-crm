@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Button, Callout, SectionLabel, checkboxClass, controlClass, cx } from "@/components/ui/primitives";
+import { Button, Callout, SectionLabel, checkboxClass, controlClass, cx, buttonClass } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
 import type { ShareOutcome, ShareSpec } from "@/lib/erp/ui";
 import { addressLine, type ShareChannel } from "@/lib/erp/engines/po-share";
@@ -113,10 +113,8 @@ export function ShareDialog({
                 {r.status === "sent" ? (
                   <Badge label="Sent" tone="success" />
                 ) : r.href ? (
-                  <a href={r.href} target="_blank" rel="noreferrer">
-                    <Button size="sm" variant={r.status === "open" ? "primary" : "secondary"}>
-                      {channel === "whatsapp" ? "Open WhatsApp" : "Open email"}
-                    </Button>
+                  <a href={r.href} target="_blank" rel="noreferrer" className={buttonClass({ size: "sm", variant: r.status === "open" ? "primary" : "secondary" })}>
+                    {channel === "whatsapp" ? "Open WhatsApp" : "Open email"}
                   </a>
                 ) : null}
               </div>

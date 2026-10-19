@@ -73,11 +73,20 @@ rule(
   /className=(["'`])[^"'`]*\buppercase\b/,
   "Use Eyebrow / eyebrowClass (11px) or SectionLabel / labelClass (12px) from _ui/look.tsx.",
 );
-rule(
-  "a bare checkbox uses checkboxClass",
-  /type="checkbox"(?![^>]*checkboxClass)(?![^>]*className=\{)/,
-  "Use Checkbox, or className={checkboxClass} from primitives.",
-);
+test("a bare checkbox uses checkboxClass", () => {
+  /* Read the whole tag, not one line: a formatter may put className on its own line. */
+  const found: string[] = [];
+  for (const f of SOURCES) {
+    const c = code(f.text);
+    for (const m of c.matchAll(/type="checkbox"/g)) {
+      const start = c.lastIndexOf("<input", m.index);
+      const end = c.indexOf("/>", m.index);
+      const tag = c.slice(start, end);
+      if (!/checkboxClass/.test(tag)) found.push(`${f.rel}:${c.slice(0, m.index).split("\n").length}`);
+    }
+  }
+  assert.deepEqual(found, [], `Use Checkbox, or className={checkboxClass} from primitives.\n  ${found.join("\n  ")}`);
+});
 rule("money, numbers and times are formatted in one place", /toLocale(String|DateString|TimeString)\(|timeZone:/, "Use inr / inrRate / nf / fd (lib/erp/ui) or stamp / stampDate / clock (lib/format).");
 rule("no ERP address is typed", /["'`]\/erp\//, "Use erpLink / erpHref or the builders in trace-links.ts.");
 rule("no table cell is drawn bare", /<t[hd][\s>]/, "Use Th / Td (and Tr) from primitives.");
@@ -85,7 +94,7 @@ rule("no table cell is drawn bare", /<t[hd][\s>]/, "Use Th / Td (and Tr) from pr
 test("the type kit is what the rules point to", () => {
   const kit = SOURCES.find((f) => f.rel === "_ui/look.tsx");
   assert.ok(kit, "_ui/look.tsx is missing");
-  for (const name of ["LinkButton", "IconButton", "linkClass", "SectionTitle", "SubTitle", "Eyebrow", "eyebrowClass", "labelClass", "popoverClass"]) {
+  for (const name of ["toggleClass", "LinkButton", "IconButton", "linkClass", "SectionTitle", "SubTitle", "Eyebrow", "eyebrowClass", "labelClass", "popoverClass"]) {
     assert.match(kit.text, new RegExp(`export (function|const) ${name}\\b`), `${name} is not exported`);
   }
 });

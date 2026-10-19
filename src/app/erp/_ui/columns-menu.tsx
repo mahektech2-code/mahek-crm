@@ -19,12 +19,7 @@ import { Icon } from "./icons";
  * A list toolbar's on/off control — Columns, Group by — in its pressed and
  * unpressed looks. One string, so two toggles side by side cannot drift apart.
  */
-export function toolbarToggleClass(on: boolean): string {
-  return cx(
-    "inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-control border px-2.5 text-meta whitespace-nowrap",
-    on ? "border-brand bg-brand-soft font-medium text-brand-hover" : "border-line bg-surface text-body hover:bg-canvas",
-  );
-}
+export { toggleClass as toolbarToggleClass } from "./look";
 
 export function ColumnsMenu({
   cols,

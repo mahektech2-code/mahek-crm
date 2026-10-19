@@ -6,6 +6,25 @@ export function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(" ");
 }
 
+/**
+ * Whether the caller's className already says something about one property.
+ *
+ * `cx` is a plain join, not a Tailwind merge: when a default and an override
+ * both set one property, the stylesheet's order decides, not intent — and the
+ * default often wins. `<Callout className="mb-0">` kept its 16px margin on
+ * every screen that asked for none. A primitive therefore applies a default
+ * only where the caller has not spoken, which this answers.
+ */
+export function says(className: string | undefined, prop: "mb" | "h" | "w"): boolean {
+  if (!className) return false;
+  const re = {
+    mb: /(^|\s)(-?mb|-?my|-?m)-/,
+    h: /(^|\s)h-/,
+    w: /(^|\s)w-/,
+  }[prop];
+  return re.test(className);
+}
+
 /* ---------------------------------------------------------------- buttons */
 
 type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "dark";
@@ -35,6 +54,12 @@ const BUTTON_SIZES: Record<ButtonSize, string> = {
   sm: "h-8 px-2.5 text-[13px]",
   md: "h-9 px-4 text-sm",
 };
+
+/** `Button`'s look as a class, for a link (`<a>`, `Link`) that is an action. A
+    button inside a link is invalid HTML, and a link with its own border drifts. */
+export function buttonClass({ variant = "secondary", size = "md", className }: { variant?: ButtonVariant; size?: ButtonSize; className?: string } = {}): string {
+  return cx(BUTTON_BASE, BUTTON_VARIANTS[variant], BUTTON_SIZES[size], "cursor-pointer no-underline hover:no-underline", className);
+}
 
 export function Button({
   variant = "secondary",
@@ -505,7 +530,8 @@ export function Callout({
   return (
     <div
       className={cx(
-        "mb-4 flex items-center gap-3 rounded-control border px-4 py-2.5",
+        "flex items-center gap-3 rounded-control border px-4 py-2.5",
+        says(className, "mb") ? null : "mb-4",
         tones[tone],
         className,
       )}
@@ -559,7 +585,8 @@ export function controlClass({
   className,
 }: { invalid?: boolean; warn?: boolean; className?: string } = {}): string {
   return cx(
-    "w-full rounded-control border bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand",
+    "rounded-control border bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand",
+    says(className, "w") ? null : "w-full",
     invalid ? "border-danger" : warn ? "border-warn" : "border-line",
     className,
   );
@@ -573,7 +600,7 @@ export function Input({
   return (
     <input
       {...props}
-      className={controlClass({ invalid, className: cx("h-8.5", className) })}
+      className={controlClass({ invalid, className: cx(says(className, "h") ? null : "h-8.5", className) })}
     />
   );
 }
@@ -587,8 +614,8 @@ export function Select({
     <select
       {...props}
       className={cx(
-        "rounded-control border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand",
-        "h-8.5 max-w-full",
+        "max-w-full rounded-control border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand",
+        says(className, "h") ? null : "h-8.5",
         className,
       )}
     >

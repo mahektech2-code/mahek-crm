@@ -115,3 +115,13 @@ export function IconButton({
     </button>
   );
 }
+
+/** A control that is on or off — a toolbar toggle (Columns, Group by), a chip
+    picked from a row of chips. One look for pressed and one for not. */
+export function toggleClass(on: boolean, className?: string): string {
+  return cx(
+    "inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-control border px-2.5 text-meta whitespace-nowrap",
+    on ? "border-brand bg-brand-soft font-medium text-brand-hover" : "border-line bg-surface text-body hover:bg-canvas",
+    className,
+  );
+}

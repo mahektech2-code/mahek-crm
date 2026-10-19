@@ -26,7 +26,7 @@ import {
   type SheetRow,
   type SheetState,
 } from "@/lib/erp/engines/quote-sheet";
-import { Button, Callout, Card, controlClass, cx, Dot, EmptyState, Field, Input, PageHeader, Select } from "@/components/ui/primitives";
+import { Button, Callout, Card, controlClass, cx, Dot, EmptyState, Field, Input, PageHeader, Select, Td, Th } from "@/components/ui/primitives";
 import { Icon as ShellIcon } from "@/components/shell/icons";
 import { erpLink } from "@/lib/erp/registry";
 import { stamp } from "@/lib/format";
@@ -80,9 +80,10 @@ function stampText(iso: string | null): string {
   return iso ? stamp(iso) : "";
 }
 
-/* The list screens' header cell, and the toolbar's control. */
-const HEAD = cx("sticky top-0 border-r border-b border-divider border-b-line bg-canvas px-3 py-2 align-bottom whitespace-nowrap", labelClass);
-const FOOT = "sticky h-9 bg-canvas px-3";
+/* What the sheet adds to the list screens' header cell (`Th`) and footer cell
+   (`Td`). A row is 36px — set as --rowh on the table, which `Td` reads. */
+const HEAD = "border-r border-r-divider align-bottom";
+const FOOT = "sticky bg-canvas";
 const FROZEN_EDGE = "shadow-[inset_-1px_0_0_var(--color-line)]";
 
 const FIXED = 2;
@@ -798,19 +799,20 @@ export function QuoteGrid({
           onMouseLeave={() => (dragging.current = false)}
           className="max-h-[calc(100vh-300px)] overflow-auto rounded-b-card outline-none"
         >
-          <table className="border-separate border-spacing-0" style={{ minWidth: "100%" }}>
+          <table className="border-separate border-spacing-0 [--rowh:36px]" style={{ minWidth: "100%" }}>
             <thead>
               <tr>
-                <th className={cx(HEAD, "left-0 z-30 w-[52px] min-w-[52px] text-center tabular-nums")} title="Rows shown">
-                  {rows.length}
-                </th>
-                <th className={cx(HEAD, "left-[52px] z-30 w-[124px] min-w-[124px] text-left")}>Date</th>
-                <th className={cx(HEAD, FROZEN_EDGE, "left-[176px] z-30 w-[220px] min-w-[220px] text-left")}>Party</th>
+                <Th className={cx(HEAD, "left-0 z-30 w-[52px] min-w-[52px] tabular-nums")} title="Rows shown">
+                  <span className="block text-center">{rows.length}</span>
+                </Th>
+                <Th className={cx(HEAD, "left-[52px] z-30 w-[124px] min-w-[124px]")}>Date</Th>
+                <Th className={cx(HEAD, FROZEN_EDGE, "left-[176px] z-30 w-[220px] min-w-[220px]")}>Party</Th>
                 {cols.map((c, i) => {
                   const colSelected = sel.c0 <= FIXED + i && FIXED + i <= sel.c1;
                   return (
-                    <th
+                    <Th
                       key={c.id}
+                      align={c.kind === "text" ? "left" : "right"}
                       onClick={(e) => {
                         if (e.shiftKey) setFocus({ r: rows.length - 1, c: FIXED + i });
                         else {
@@ -820,18 +822,16 @@ export function QuoteGrid({
                         gridRef.current?.focus();
                       }}
                       onDoubleClick={() => !readOnly && setColEdit({ id: c.id, at: i })}
-                      className={cx(
-                        "group sticky top-0 z-20 cursor-pointer border-r border-b border-divider border-b-line px-3 pt-2 pb-1.5 align-bottom font-normal",
-                        colSelected ? "bg-brand-soft" : "bg-canvas hover:bg-divider",
-                        c.kind === "text" ? "min-w-[160px] text-left" : "min-w-[128px] text-right",
-                      )}
+                      className={cx(HEAD, "group z-20 cursor-pointer pt-2 pb-1.5 font-normal hover:bg-divider", c.kind === "text" ? "min-w-[160px]" : "min-w-[128px]")}
                       title={`${[c.pack, c.name, c.brand].filter(Boolean).join(" · ")}\nClick to select the column · double-click to edit it`}
                     >
-                      <div className={cx("h-4 truncate leading-4", eyebrowClass)}>{c.pack}</div>
-                      <div className="text-meta leading-tight font-semibold whitespace-normal text-ink">{c.name || <span className="font-normal text-muted">Untitled</span>}</div>
-                      <div className="h-4 truncate text-2xs leading-4 text-muted">{c.brand}</div>
+                      {/* A selected column is tinted over the cell, since `Th` carries its own ground. */}
+                      {colSelected ? <span aria-hidden className="pointer-events-none absolute inset-0 bg-brand-soft" /> : null}
+                      <div className={cx("relative h-4 truncate leading-4", eyebrowClass)}>{c.pack}</div>
+                      <div className="relative text-meta leading-tight font-semibold tracking-normal whitespace-normal text-ink normal-case">{c.name || <span className="font-normal text-muted">Untitled</span>}</div>
+                      <div className="relative h-4 truncate text-2xs leading-4 tracking-normal text-muted normal-case">{c.brand}</div>
                       {!readOnly ? (
-                        <span className={cx("mt-1 flex gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100", c.kind === "text" ? "justify-start" : "justify-end")}>
+                        <span className={cx("relative mt-1 flex gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100", c.kind === "text" ? "justify-start" : "justify-end")}>
                           <HeadBtn label="Move left" onClick={() => moveColumn(c.id, -1)} disabled={i === 0}>
                             <ShellIcon name="chevron" size={12} className="rotate-180" />
                           </HeadBtn>
@@ -846,10 +846,10 @@ export function QuoteGrid({
                           </HeadBtn>
                         </span>
                       ) : null}
-                    </th>
+                    </Th>
                   );
                 })}
-                <th className="sticky top-0 z-20 w-full border-b border-line bg-canvas" />
+                <Th className="z-20 w-full" />
               </tr>
             </thead>
             <tbody>
@@ -857,8 +857,9 @@ export function QuoteGrid({
                 const rowSelected = sel.r0 <= r && r <= sel.r1;
                 return (
                   <tr key={row.id} className="group/row">
-                    <td className={cx("sticky left-0 z-10 border-r border-b border-divider px-1 text-center", rowSelected ? "bg-brand-soft" : "bg-canvas")}>
-                      <span className="flex items-center justify-between gap-0.5">
+                    <Td className={cx("sticky left-0 z-10 border-r border-b border-divider", rowSelected ? "bg-brand-soft" : "bg-canvas")}>
+                      {/* `Td` pads 12px a side; the 52px number column wants 4. */}
+                      <span className="-mx-2 flex items-center justify-between gap-0.5">
                         <button
                           type="button"
                           className={cx("min-w-[22px] cursor-pointer text-2xs tabular-nums", rowSelected ? "font-medium text-brand-hover" : "text-muted hover:text-body")}
@@ -886,7 +887,7 @@ export function QuoteGrid({
                           </span>
                         ) : null}
                       </span>
-                    </td>
+                    </Td>
                     {Array.from({ length: width }, (_, c) => {
                       const st = cellStatus(row, c);
                       const isFocus = focus.r === r && focus.c === c;
@@ -898,8 +899,9 @@ export function QuoteGrid({
                       const n = rate ? rateNumber(val) : null;
                       const lowest = s && n != null && s.count > 1 && n === s.lowest && st !== "cancel";
                       return (
-                        <td
+                        <Td
                           key={c}
+                          align={rate ? "right" : "left"}
                           data-cell={`${r}:${c}`}
                           onMouseDown={(e) => {
                             if (isEdit) return;
@@ -930,11 +932,11 @@ export function QuoteGrid({
                           }}
                           onDoubleClick={() => startEdit(r, c)}
                           className={cx(
-                            "relative h-9 border-r border-b border-divider px-3 text-sm whitespace-nowrap",
+                            "relative border-r border-b border-divider",
                             c === 0 && "sticky left-[52px] z-10 text-body",
                             c === 1 && cx("sticky left-[176px] z-10 max-w-[220px] truncate font-medium text-ink", FROZEN_EDGE),
                             c >= FIXED && "text-body",
-                            rate ? "text-right tabular-nums" : "text-left",
+                            rate && "tabular-nums",
                             st ? STATUS_CELL[st] : "bg-surface",
                             lowest && "font-semibold text-success",
                           )}
@@ -962,10 +964,10 @@ export function QuoteGrid({
                           ) : (
                             val
                           )}
-                        </td>
+                        </Td>
                       );
                     })}
-                    <td className="border-b border-divider bg-surface" />
+                    <Td className="border-b border-divider bg-surface" />
                   </tr>
                 );
               })}
@@ -975,8 +977,8 @@ export function QuoteGrid({
                 {(["latest", "lowest"] as const).map((k, fi) => (
                   /* Both rows stay in view: the first sits one row-height above the second. */
                   <tr key={k} className={fi === 0 ? "[&>td]:bottom-9" : "[&>td]:bottom-0"}>
-                    <td className={cx(FOOT, "left-0 z-20", fi === 0 && "border-t border-line")} />
-                    <td colSpan={2} className={cx(FOOT, FROZEN_EDGE, "left-[52px] z-20 text-left", fi === 0 && "border-t border-line")}>
+                    <Td className={cx(FOOT, "left-0 z-20", fi === 0 && "border-t border-line")} />
+                    <Td colSpan={2} className={cx(FOOT, FROZEN_EDGE, "left-[52px] z-20", fi === 0 && "border-t border-line")}>
                       <span className={eyebrowClass}>{k === "latest" ? "Latest rate" : "Lowest rate"}</span>
                     </td>
                     {cols.map((c) => {

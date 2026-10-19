@@ -3,7 +3,7 @@
 import { resultError } from "./use-act";
 import { Fragment, createContext, useCallback, useContext, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button, Callout, cx, SectionLabel, Td, Th, Tr } from "@/components/ui/primitives";
+import { Button, Callout, cx, SectionLabel, Td, Th, Tr, buttonClass } from "@/components/ui/primitives";
 import { labelClass, LinkButton } from "./look";
 import { ConfirmDialog, Modal } from "@/components/ui/overlays";
 import { DialogBody, DialogFooter, DialogHeader, ErpDialog, StepBar } from "./dialog";
@@ -896,8 +896,8 @@ function ResultDialog({ d, onClose, onNext }: { d: NonNullable<ToolResult["dialo
             </Button>
           ) : null}
           {d.open ? (
-            <a href={d.open.href} target="_blank" rel="noreferrer" onClick={onClose}>
-              <Button variant="primary">{d.open.label}</Button>
+            <a href={d.open.href} target="_blank" rel="noreferrer" onClick={onClose} className={buttonClass({ variant: "primary" })}>
+              {d.open.label}
             </a>
           ) : null}
           {d.next && onNext ? (

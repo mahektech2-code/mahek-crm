@@ -3,7 +3,8 @@
 import { stamp } from "@/lib/format";
 import { useState } from "react";
 import { FilterPills } from "@/components/ui/overlays";
-import { Badge, Button, Card, cx } from "@/components/ui/primitives";
+import { Button, Card, cx } from "@/components/ui/primitives";
+import { Badge } from "../../_ui/badge";
 import { useToast } from "@/components/ui/toast";
 import { erpLogisticsMessageRetry, erpLogisticsMessageSent, erpLogisticsMessageSkip } from "@/lib/actions/erp-logistics";
 import { waLink } from "@/lib/erp/engines/logistics";
@@ -56,7 +57,7 @@ export function Messages({ rows, canWrite, wati }: { rows: OutboxMessage[]; canW
             { key: "skipped", label: "Could not be sent", count: rows.filter((m) => m.status === "skipped").length },
           ]}
         />
-        <span className="ml-auto max-w-[520px] text-right text-xs text-muted">{wati ? `Sent through Wati (${wati}) while WhatsApp is on.` : "Sent by hand: no Wati template is set for logistics."}</span>
+        <span className="ml-auto max-w-[520px] text-right text-meta text-muted">{wati ? `Sent through Wati (${wati}) while WhatsApp is on.` : "Sent by hand: no Wati template is set for logistics."}</span>
       </div>
       {!shown.length ? (
         <Card>
@@ -73,16 +74,16 @@ export function Messages({ rows, canWrite, wati }: { rows: OutboxMessage[]; canW
               <div className="min-w-[220px] flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-semibold text-ink">{m.customer}</span>
-                  <Badge tone="neutral">{KIND[m.kind] ?? m.kind}</Badge>
-                  <Badge tone={st.tone}>{st.l}</Badge>
+                  <Badge label={KIND[m.kind] ?? m.kind} tone="neutral" />
+                  <Badge label={st.l} tone={st.tone} />
                   {m.lrNo ? <span className="font-mono text-xs text-muted">LR {m.lrNo}</span> : null}
                 </div>
-                <div className="mt-0.5 text-xs text-muted">
+                <div className="mt-0.5 text-meta text-muted">
                   {m.phone ?? "No number"} · written {stamp(m.createdAt)}
                   {m.createdBy ? ` by ${m.createdBy}` : ""}
                   {m.sentAt ? ` · sent ${stamp(m.sentAt)}${m.sentBy ? ` by ${m.sentBy}` : ""}` : ""}
                 </div>
-                {m.why ? <div className={cx("mt-1 text-xs", m.status === "failed" ? "text-danger" : "text-warn-ink")}>{m.why}</div> : null}
+                {m.why ? <div className={cx("mt-1 text-meta", m.status === "failed" ? "text-danger" : "text-warn-ink")}>{m.why}</div> : null}
               </div>
               {open && canWrite ? (
                 <div className="flex flex-wrap items-center gap-2">
@@ -112,7 +113,7 @@ export function Messages({ rows, canWrite, wati }: { rows: OutboxMessage[]; canW
           </Card>
         );
       })}
-      {waiting.length > 1 ? <div className="text-xs text-muted">{plural(waiting.length, "message")} waiting. Each opens WhatsApp with the text already typed.</div> : null}
+      {waiting.length > 1 ? <div className="text-meta text-muted">{plural(waiting.length, "message")} waiting. Each opens WhatsApp with the text already typed.</div> : null}
     </div>
   );
 }
