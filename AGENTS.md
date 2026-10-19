@@ -2839,6 +2839,22 @@ to update the row.
 **Money is paise.** Integers everywhere; formatted only in `lib/format.ts` on
 the way to the screen. Never store rupees.
 
+**A number somebody types may have a point in it, and four things used to
+lose it.** A handler stripping everything but digits — so "30.5" saved as
+₹305, multiplied by ten rather than refused; `type="number"` with the browser's
+default step of one, which refuses on submit; `inputMode="numeric"`, which on a
+phone is a keypad with no point on it; and a box DERIVED from its stored figure,
+where "30." re-renders as "30" before the 5 can follow it. So: rupees go through
+`parseRupees` and come back through `rupeesFromPaise`, which keeps the paise; a
+box bound to a figure is `PaiseInput` or `DecimalInput`, never `value={x / 100}`;
+`MoneyInput` is `inputMode="decimal"`; `cleanDecimal` and `cleanWhole` in
+`lib/format.ts` are the only cleaning. Litres, kilometres and percentages take a
+fraction — `lib/decimal-schemas.ts` on the server, `double precision` in the
+database so raw SQL and the handset wire still see a number. Cans, boxes,
+drums and days stay whole, and a whole box KEEPS the point ("1.") rather than
+dropping it: cleaned a keystroke at a time, a box that drops it turns 1 . 5
+into 15.
+
 **Reads live in `lib/queries.ts`; writes live in `lib/actions/`.** A number on
 the dashboard and the same number on its own screen come from the same
 function, so they cannot drift apart.

@@ -23,6 +23,7 @@ import {
 import { RichTextEditor } from "./rich-text";
 import Link from "next/link";
 import { useToast } from "@/components/ui/toast";
+import { cleanDecimal, cleanWhole } from "@/lib/format";
 
 /* ---------------------------------------------------------------------------
  * One renderer per declared control type, and nothing else.
@@ -230,7 +231,8 @@ function Control({
           <input
             value={String(value ?? "")}
             disabled={locked}
-            onChange={(e) => set(e.target.value.replace(/[^0-9]/g, ""))}
+            inputMode="decimal"
+            onChange={(e) => set(cleanDecimal(e.target.value))}
             className="min-w-0 flex-1 border-none bg-transparent text-sm outline-none"
           />
         </span>
@@ -365,7 +367,7 @@ function Control({
                 <Input
                   value={String(v[p.k] ?? "")}
                   disabled={locked}
-                  onChange={(e) => set({ ...v, [p.k]: e.target.value.replace(/[^0-9]/g, "") })}
+                  onChange={(e) => set({ ...v, [p.k]: cleanWhole(e.target.value) })}
                   className="text-right"
                 />
               </span>

@@ -12,6 +12,7 @@ import {
   type LeadGateInput,
 } from '../../engines/funnel';
 import { plural } from '../../lib/format';
+import { cleanWhole, parseWhole } from '../../lib/decimal-input';
 import { useStore } from '../../state/store';
 
 /**
@@ -180,13 +181,13 @@ function liveInput(base: LeadGateInput, draft: Record<string, string>): LeadGate
   for (const key of ANSWER_KEYS) {
     if (key in draft) qualification[key] = draft[key];
   }
-  const credit = (draft.creditDaysWanted ?? '').replace(/[^\d]/g, '');
+  const credit = parseWhole(draft.creditDaysWanted ?? '');
   return {
     ...base,
     gstin: 'gstin' in draft ? draft.gstin : base.gstin,
     application: 'application' in draft ? draft.application : base.application,
     decisionMaker: 'decisionMaker' in draft ? draft.decisionMaker : base.decisionMaker,
-    creditDaysWanted: 'creditDaysWanted' in draft ? (credit ? Number(credit) : null) : base.creditDaysWanted,
+    creditDaysWanted: 'creditDaysWanted' in draft ? credit : base.creditDaysWanted,
     qualification,
   };
 }
@@ -238,8 +239,8 @@ export function QualificationForm({ view, onSaved }: { view: LeadFunnelView; onS
       if ('application' in draft) prospect.application = text('application') || null;
       if ('decisionMaker' in draft) prospect.decisionMaker = text('decisionMaker') || null;
       if ('creditDaysWanted' in draft) {
-        const digits = text('creditDaysWanted').replace(/[^\d]/g, '');
-        prospect.creditDaysWanted = digits ? Math.min(365, Number(digits)) : null;
+        const days = parseWhole(text('creditDaysWanted'));
+        prospect.creditDaysWanted = days == null ? null : Math.min(365, days);
       }
       const answers: Record<string, string> = {};
       for (const key of ANSWER_KEYS) {
@@ -320,9 +321,10 @@ export function QualificationForm({ view, onSaved }: { view: LeadFunnelView; onS
                     <Input
                       value={draft[f.key] ?? ''}
                       editable={writable}
-                      onChangeText={(v) => set(f.key, v)}
+                      onChangeText={(v) => set(f.key, f.kind === 'int' ? cleanWhole(v) : v)}
                       placeholder={f.kind === 'date' ? 'YYYY-MM-DD' : ''}
                       keyboardType={f.kind === 'int' ? 'number-pad' : 'default'}
+                      wholeHint={f.kind === 'int' ? 'Whole days only.' : undefined}
                       multiline={f.kind === 'long'}
                       style={{ marginTop: 6 }}
                     />

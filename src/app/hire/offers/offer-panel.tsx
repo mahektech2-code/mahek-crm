@@ -8,6 +8,7 @@ import type { OfferModel } from "@/lib/hire/blueprint-types";
 import { issueOfferAction, offerResponseAction, offerTrackingAction, saveOfferAction } from "@/lib/hire/actions/onboarding";
 import { Btn, Callout, Icon, Label, Locked, Panel, Pill, fd } from "../_ui/kit";
 import { growthLadder, renderLetter, rupees } from "../_onboard/letter";
+import { cleanDecimal, rupeesFromPaise } from "@/lib/format";
 
 type OfferView = {
   id: string;
@@ -80,8 +81,8 @@ export function OfferPanel({
   const grades = offerModel.grades;
   const [grade, setGrade] = useState(offer?.grade ?? grades[0]?.key ?? "");
   const g = grades.find((x) => x.key === grade);
-  const [basic, setBasic] = useState(String(Math.round((offer?.basicPaise ?? g?.basicMinPaise ?? 0) / 100)));
-  const [ctc, setCtc] = useState(offer?.ctcPaise ? String(Math.round(offer.ctcPaise / 100)) : "");
+  const [basic, setBasic] = useState(rupeesFromPaise(offer?.basicPaise ?? g?.basicMinPaise ?? 0));
+  const [ctc, setCtc] = useState(offer?.ctcPaise ? rupeesFromPaise(offer.ctcPaise) : "");
   const [incentive, setIncentive] = useState(offer?.incentive ?? offerModel.incentive);
   const [joining, setJoining] = useState(offer?.joiningDate ?? "");
   const [expiry, setExpiry] = useState(offer?.expiryDate ?? "");
@@ -165,7 +166,7 @@ export function OfferPanel({
                 disabled={!editable}
                 onClick={() => {
                   setGrade(x.key);
-                  setBasic(String(Math.round(x.basicMinPaise / 100)));
+                  setBasic(rupeesFromPaise(x.basicMinPaise));
                 }}
                 className={cx(
                   "flex cursor-pointer flex-col items-start rounded-[4px] border px-3 py-2 text-left disabled:cursor-default",
@@ -183,7 +184,7 @@ export function OfferPanel({
             <Label className="mb-1.5">Basic salary · ₹ a month · INR</Label>
             <span className="flex items-center gap-2">
               <span className="text-muted">₹</span>
-              <input disabled={!editable} inputMode="numeric" value={basic} onChange={(e) => setBasic(e.target.value.replace(/[^\d]/g, ""))} className={cx(inputCls, "tabular-nums", errors.basic ? "border-danger" : "")} />
+              <input disabled={!editable} inputMode="decimal" value={basic} onChange={(e) => setBasic(cleanDecimal(e.target.value))} className={cx(inputCls, "tabular-nums", errors.basic ? "border-danger" : "")} />
             </span>
             <span className={cx("mt-1 block text-xs", inBand ? "text-muted" : "text-danger")}>
               {g ? (inBand ? `Inside the ${g.key} band.` : `Outside ${g.label}’s band of ${rupees(g.basicMinPaise)}–${rupees(g.basicMaxPaise)}.`) : "Pick a grade."}
@@ -191,7 +192,7 @@ export function OfferPanel({
           </label>
           <label className="mb-3 block">
             <Label className="mb-1.5">Total CTC · ₹ a year · INR · optional</Label>
-            <input disabled={!editable} inputMode="numeric" value={ctc} onChange={(e) => setCtc(e.target.value.replace(/[^\d]/g, ""))} className={cx(inputCls, "tabular-nums", errors.ctc ? "border-danger" : "")} />
+            <input disabled={!editable} inputMode="decimal" value={ctc} onChange={(e) => setCtc(cleanDecimal(e.target.value))} className={cx(inputCls, "tabular-nums", errors.ctc ? "border-danger" : "")} />
             {errors.ctc ? <span className="mt-1 block text-xs text-danger">{errors.ctc}</span> : null}
           </label>
           <label className="mb-3 block">

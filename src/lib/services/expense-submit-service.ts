@@ -93,7 +93,7 @@ export async function rescoreLeg(legId: string): Promise<void> {
     leg.odometerStartKm !== null &&
     leg.odometerEndKm !== null &&
     leg.odometerEndKm >= leg.odometerStartKm
-      ? (leg.odometerEndKm - leg.odometerStartKm) * 1000
+      ? Math.round((leg.odometerEndKm - leg.odometerStartKm) * 1000)
       : null;
 
   await db

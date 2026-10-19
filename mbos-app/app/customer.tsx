@@ -42,6 +42,7 @@ import { TIMELINE_PAGE } from '../src/data/customer-query';
 import { getConfig } from '../src/data/config';
 import { inr, inrFromPaise, isoDate, pretty, shopName } from '../src/lib/format';
 import { callNumber, openWhatsApp } from '../src/lib/messaging';
+import { cleanAmount, paiseFromTyped } from '../src/lib/money-input';
 import { Appear, DUR, Stagger, animateLayoutFor } from '../src/components/ui/motion';
 import { feedback } from '../src/components/ui/feedback';
 
@@ -308,12 +309,12 @@ export default function CustomerRecord() {
     if (!id) return;
     if (!comp.name.trim()) return notify('Write the brand name first.', 'error');
     setCompBusy(true);
-    const rateRupees = Number(comp.rate.replace(/[^\d]/g, ''));
+    const ratePaise = paiseFromTyped(comp.rate);
     try {
       await recordCompetitor({
         customerId: id,
         competitorName: comp.name.trim(),
-        ratePaise: rateRupees > 0 ? rateRupees * 100 : null,
+        ratePaise: ratePaise > 0 ? ratePaise : null,
         rateNote: comp.note.trim() || null,
         creditTerms: comp.credit.trim() || null,
         delivery: comp.delivery.trim() || null,
@@ -1094,8 +1095,8 @@ export default function CustomerRecord() {
                 />
                 <Input
                   value={comp.rate}
-                  onChangeText={(v) => setComp((s) => ({ ...s, rate: v.replace(/[^0-9]/g, '') }))}
-                  keyboardType="number-pad"
+                  onChangeText={(v) => setComp((s) => ({ ...s, rate: cleanAmount(v) }))}
+                  keyboardType="decimal-pad"
                   placeholder="Rate quoted, ₹ (optional)"
                 />
                 <Input

@@ -6,6 +6,8 @@ import { Choice, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '
 import { skuText, useSkus } from '../ui/sku';
 import { color as C, radius, weight } from '../../theme/tokens';
 import { dmy } from '../../lib/format';
+import { cleanWhole, parseWhole } from '../../lib/decimal-input';
+import { cleanAmount, paiseFromTyped, typedFromPaise } from '../../lib/money-input';
 import type { CodedOption } from '../../engines/funnel';
 
 /**
@@ -60,16 +62,14 @@ export function CommitmentSheet({
   const [cans, setCans] = React.useState(current.quantityCans ? String(current.quantityCans) : '');
   /* Rupees on the screen and paise in the store, the one place the two meet —
      the same conversion the prospect form and the new-lead form do. */
-  const [rupees, setRupees] = React.useState(
-    current.valuePaise ? String(Math.round(current.valuePaise / 100)) : '',
-  );
+  const [rupees, setRupees] = React.useState(current.valuePaise ? typedFromPaise(current.valuePaise) : '');
   /* `no_blocker` is the default and is a real answer: a commitment nobody was
      asked about and one somebody said was clear are different facts, and only
      the second says anybody put the question. */
   const [blocker, setBlocker] = React.useState(current.blockerCode ?? 'no_blocker');
   const [picking, setPicking] = React.useState(false);
 
-  const cansNow = Number(cans.replace(/[^\d]/g, ''));
+  const cansNow = parseWhole(cans) ?? 0;
   const missing = !date
     ? 'Choose the day they will order.'
     : !cansNow
@@ -115,7 +115,13 @@ export function CommitmentSheet({
 
       <View style={{ marginTop: 14 }}>
         <SectionLabel style={{ marginBottom: 6 }}>How many cans</SectionLabel>
-        <Input value={cans} onChangeText={setCans} keyboardType="number-pad" placeholder="40" />
+        <Input
+          value={cans}
+          onChangeText={(v) => setCans(cleanWhole(v))}
+          keyboardType="number-pad"
+          placeholder="40"
+          wholeHint="Whole cans only."
+        />
         {/* CANS, and the SKU beside them so the unit is never in doubt. A lead
             being asked for a first order has been through qualification, which
             named the product — so there IS a pack size here, which is exactly
@@ -129,7 +135,7 @@ export function CommitmentSheet({
 
       <View style={{ marginTop: 14 }}>
         <SectionLabel style={{ marginBottom: 6 }}>Value in rupees, if you know</SectionLabel>
-        <Input value={rupees} onChangeText={setRupees} keyboardType="number-pad" placeholder="Rupees (optional)" />
+        <Input value={rupees} onChangeText={(v) => setRupees(cleanAmount(v))} keyboardType="decimal-pad" placeholder="Rupees (optional)" />
         <T s="caption" style={{ marginTop: 6 }}>
           Leave it empty if you do not know the price. The app has no prices. Do not guess a figure.
         </T>
@@ -161,7 +167,7 @@ export function CommitmentSheet({
             onSave({
               date,
               quantityCans: cansNow,
-              valuePaise: rupees.replace(/[^\d]/g, '') ? Number(rupees.replace(/[^\d]/g, '')) * 100 : null,
+              valuePaise: paiseFromTyped(rupees) || null,
               blockerCode: blocker,
             });
           }}

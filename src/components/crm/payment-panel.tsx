@@ -24,7 +24,7 @@ import {
   sendWhatsAppNow,
   recordPayment,
 } from "@/lib/actions/crm";
-import { ageLabel, money, shortDate, stamp, today as todayISO } from "@/lib/format";
+import { ageLabel, cleanDecimal, money, parseDecimal, parseRupees, rupeesFromPaise, shortDate, stamp, today as todayISO } from "@/lib/format";
 import { whenLabel } from "@/lib/whatsapp-status";
 import { PaymentModeFields } from "@/components/crm/payment-mode-fields";
 import type { FollowUpPanelData } from "@/lib/services/payment-followup-service";
@@ -272,7 +272,7 @@ function PanelBody({
         logPaymentFollowUpAction({
           customerId: panel.customerId,
           outcome: def.key as Exclude<typeof def.key, "part">,
-          amount: amount.trim() ? Number(amount.replace(/[^0-9]/g, "")) : undefined,
+          amount: parseDecimal(amount) ?? undefined,
           date: date || undefined,
           notes: notes.trim() || undefined,
           chips,
@@ -634,7 +634,7 @@ function RecordPaymentForm({
   onDone: () => void | Promise<void>;
 }) {
   const { run } = useToast();
-  const [amount, setAmount] = React.useState(String(Math.round(bill.balance / 100)));
+  const [amount, setAmount] = React.useState(rupeesFromPaise(bill.balance));
   const [mode, setMode] = React.useState("Bank transfer");
   const [reference, setReference] = React.useState("");
   /** The date written on the cheque — see `payments.datedModes`. */
@@ -657,7 +657,7 @@ function RecordPaymentForm({
 
   // What the bill will read after this is saved, shown while it is typed —
   // the same "here is what happens next" the panel's context bar gives.
-  const entered = Number(amount.replace(/[^0-9]/g, "")) * 100;
+  const entered = parseRupees(amount) ?? 0;
   const leftOpen = bill.balance - entered;
 
   return (
@@ -751,7 +751,7 @@ function RecordPaymentForm({
                   invalid={Boolean(error) || leftOpen < 0}
                   value={amount}
                   onChange={(e) => {
-                    setAmount(e.target.value.replace(/[^0-9]/g, ""));
+                    setAmount(cleanDecimal(e.target.value));
                     setError(null);
                   }}
                 />
@@ -1148,10 +1148,10 @@ function LogPane(props: {
                   error={props.errors.amount ?? null}
                 >
                   <Input
-                    inputMode="numeric"
+                    inputMode="decimal"
                     placeholder="1,00,000"
                     value={props.amount}
-                    onChange={(e) => props.setAmount(e.target.value.replace(/[^0-9,]/g, ""))}
+                    onChange={(e) => props.setAmount(e.target.value.replace(/[^0-9,.]/g, ""))}
                   />
                 </Field>
               ) : null}

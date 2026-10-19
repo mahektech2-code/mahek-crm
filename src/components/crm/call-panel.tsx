@@ -27,14 +27,7 @@ import {
   OUTCOMES_BY_TYPE,
   OUTCOME_LABEL as CATALOGUE_OUTCOME_LABEL,
 } from "@/db/catalogue";
-import {
-  addDays,
-  daysBetween,
-  money,
-  phoneDisplay,
-  shortDate,
-  today,
-} from "@/lib/format";
+import { addDays, cleanDecimal, cleanWhole, daysBetween, money, parseDecimal, phoneDisplay, shortDate, today } from "@/lib/format";
 import { describeQuantity, productLines } from "@/lib/catalogue";
 import {
   discountAuthority as discountAuthorityOf,
@@ -1480,7 +1473,7 @@ function CallPanelForm({
                   product: oppProduct.trim(),
                   estimatedQuantity: oppQuantity.trim() || undefined,
                   estimatedValueRupees: oppValue.trim()
-                    ? Math.round(Number(oppValue))
+                    ? (parseDecimal(oppValue) ?? undefined)
                     : undefined,
                   expectedOrderDate: oppDate || undefined,
                 }
@@ -3083,11 +3076,9 @@ function CallPanelForm({
                                             {productRow(p).detail ?? ""}
                                           </span>
                                           <input
-                                            type="number"
-                                            min={0}
                                             inputMode="numeric"
                                             value={raw ?? ""}
-                                            onChange={(e) => setQuantity(p, e.target.value)}
+                                            onChange={(e) => setQuantity(p, cleanWhole(e.target.value))}
                                             placeholder="Qty"
                                             aria-label={`Cans of ${p.name}`}
                                             className="h-8 w-[64px] flex-none rounded-[4px] border border-line bg-surface px-2 text-right text-sm"
@@ -3289,6 +3280,7 @@ function CallPanelForm({
                                         <input
                                           type="number"
                                           min={0}
+                                          step="any"
                                           inputMode="decimal"
                                           value={lineDiscounts[l.product.id] ?? ""}
                                           onChange={(e) =>
@@ -3315,11 +3307,9 @@ function CallPanelForm({
                                       </span>
                                     ) : null}
                                     <input
-                                      type="number"
-                                      min={0}
                                       inputMode="numeric"
                                       value={quantities[l.product.id] ?? ""}
-                                      onChange={(e) => setQuantity(l.product, e.target.value)}
+                                      onChange={(e) => setQuantity(l.product, cleanWhole(e.target.value))}
                                       placeholder="Qty"
                                       aria-label={`Cans of ${l.product.name}`}
                                       className="h-8 w-[70px] flex-none rounded-[4px] border border-line px-2 text-right text-sm"
@@ -3605,14 +3595,13 @@ function CallPanelForm({
                                     zero: nobody put a number on it. */}
                                 <Field
                                   label="Estimated value (optional)"
-                                  hint="Whole rupees, as they described it. Leave blank if nobody put a figure on it."
+                                  hint="Rupees, as they described it. Leave blank if nobody put a figure on it."
                                   error={errors["opportunity.estimatedValueRupees"] ?? null}
                                 >
                                   <Input
-                                    type="number"
-                                    min={0}
+                                    inputMode="decimal"
                                     value={oppValue}
-                                    onChange={(e) => setOppValue(e.target.value)}
+                                    onChange={(e) => setOppValue(cleanDecimal(e.target.value))}
                                     placeholder="₹"
                                   />
                                 </Field>

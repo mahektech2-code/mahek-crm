@@ -8,7 +8,7 @@ import { useRouter } from "next/navigation";
    however carefully the Date behind it was built — and the repo already has
    one answer to this. `format.ts` is the client-safe half of it, which is why
    `salesman-screen.tsx` next door reads the same file. */
-import { addDays } from "@/lib/format";
+import { addDays, cleanDecimal, parseDecimal } from "@/lib/format";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { reviewDayEvidence } from "@/lib/actions/sales";
 import { Modal } from "@/components/ui/modal";
@@ -464,7 +464,7 @@ function DecideDialog({
 
   const isOdometer = item.kind === "odometer";
   const viewable = Boolean(item.photoId && item.photoAvailable);
-  const typed = km.replace(/[^0-9]/g, "");
+  const typed = cleanDecimal(km, 1);
 
   const run = async (verdict: "accepted" | "declined") => {
     setBusy(true);
@@ -473,7 +473,7 @@ function DecideDialog({
       ref: item.ref,
       verdict,
       remark: verdict === "declined" ? remark : null,
-      correctedKm: verdict === "declined" && isOdometer && typed ? Number(typed) : null,
+      correctedKm: verdict === "declined" && isOdometer ? parseDecimal(typed) : null,
     });
     setBusy(false);
     if (!r.ok) {
@@ -549,8 +549,8 @@ function DecideDialog({
           </span>
           <input
             value={km}
-            onChange={(e) => setKm(e.target.value)}
-            inputMode="numeric"
+            onChange={(e) => setKm(cleanDecimal(e.target.value, 1))}
+            inputMode="decimal"
             disabled={!canCorrect}
             placeholder={item.km === null ? "" : String(item.km)}
             className="w-full rounded-[4px] border border-line bg-surface px-2.5 py-2 text-sm text-ink outline-none focus:border-brand disabled:bg-canvas disabled:text-muted"

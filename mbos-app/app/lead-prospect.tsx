@@ -26,6 +26,8 @@ import { searchProducts } from '../src/data/customers';
 import { currentSession } from '../src/data/session';
 import { PROSPECT_CONDITIONS, labelOf, stageLabel } from '../src/engines/funnel';
 import { pretty } from '../src/lib/format';
+import { cleanDecimal, cleanWhole, parseDecimal, parseWhole, typedFromDecimal } from '../src/lib/decimal-input';
+import { cleanAmount, paiseFromTyped, typedFromPaise } from '../src/lib/money-input';
 import { CUSTOMER_TYPES, gstinRefusal, normaliseGstin } from '../src/engines/leads';
 import { useStore } from '../src/state/store';
 import { Swap } from '../src/components/ui/motion';
@@ -191,11 +193,11 @@ export default function ProspectForm() {
            printed both as still to answer. `leadGateInput` coalesces the same
            way, so the boxes and the gate agree. */
         const litresHere = v.lead.monthlyLitres ?? v.lead.monthlyVolumeLitres;
-        setLitres(litresHere != null ? String(litresHere) : '');
+        setLitres(typedFromDecimal(litresHere, 2));
+        /* To the paisa, not rounded to the rupee — a box that rounds on the
+           way in rewrites the figure on a save nobody meant as an edit. */
         const potentialHere =
-          v.lead.estimatedPotentialPaise != null
-            ? String(Math.round(v.lead.estimatedPotentialPaise / 100))
-            : '';
+          v.lead.estimatedPotentialPaise != null ? typedFromPaise(v.lead.estimatedPotentialPaise) : '';
         setPotential(potentialHere);
         const competitorHere = (v.lead.competitor ?? v.lead.competitorName ?? '').trim();
         setCompetitor(competitorHere);
@@ -209,7 +211,7 @@ export default function ProspectForm() {
         /* Taken in the same breath as the boxes, off the same values, so the
            row can never show one thing and the pair record another. */
         setOriginals({
-          monthly_litres: litresHere != null ? String(litresHere) : '',
+          monthly_litres: typedFromDecimal(litresHere, 2),
           potential: potentialHere,
           competitor: competitorHere,
           required_product: productHere?.name ?? '',
@@ -321,16 +323,16 @@ export default function ProspectForm() {
 
       const r = await saveProspectFields(lead.id, {
         customerType: customerType.trim() || null,
-        monthlyLitres: litresNow ? Number(litresNow.replace(/[^\d]/g, '')) : null,
+        monthlyLitres: parseDecimal(litresNow),
         /* Rupees on the screen, paise in the store — the only place the two
            meet, exactly as the new-lead form does it. */
-        estimatedPotentialPaise: potentialNow ? Number(potentialNow.replace(/[^\d]/g, '')) * 100 : null,
+        estimatedPotentialPaise: potentialNow ? paiseFromTyped(potentialNow) || null : null,
         competitor: competitorNow || null,
         requiredProductId: product?.id ?? null,
         requiredProductName: product?.name ?? null,
         contactPerson: contactNow || null,
         decisionMaker: decisionMakerNow || null,
-        creditDaysWanted: creditDays.trim() ? Number(creditDays.replace(/[^\d]/g, '')) : null,
+        creditDaysWanted: parseWhole(creditDays),
         application: application.trim() || null,
         gstin: normaliseGstin(gstin) || null,
         prospectReasonCode: reasonCode ?? lead.prospectReasonCode ?? null,
@@ -495,10 +497,10 @@ export default function ProspectForm() {
             answer={checks.monthly_litres ?? BLANK_VERIFY}
             onChange={(patch) => patchCheck('monthly_litres', patch)}
             placeholder="200"
-            keyboardType="number-pad"
+            keyboardType="decimal-pad"
           />
         ) : (
-          <Input value={litres} onChangeText={setLitres} placeholder="200" keyboardType="number-pad" />
+          <Input value={litres} onChangeText={(v) => setLitres(cleanDecimal(v, 2))} placeholder="200" keyboardType="decimal-pad" />
         )}
         <T s="caption" style={{ marginTop: 6 }}>How much they use in total. Not only ours.</T>
       </View>
@@ -513,10 +515,10 @@ export default function ProspectForm() {
             answer={checks.potential ?? BLANK_VERIFY}
             onChange={(patch) => patchCheck('potential', patch)}
             placeholder="40000"
-            keyboardType="number-pad"
+            keyboardType="decimal-pad"
           />
         ) : (
-          <Input value={potential} onChangeText={setPotential} placeholder="40000" keyboardType="number-pad" />
+          <Input value={potential} onChangeText={(v) => setPotential(cleanAmount(v))} placeholder="40000" keyboardType="decimal-pad" />
         )}
         <T s="caption" style={{ marginTop: 6 }}>In rupees, about.</T>
       </View>
@@ -611,7 +613,13 @@ export default function ProspectForm() {
 
       <View style={{ marginTop: 14 }}>
         <SectionLabel style={{ marginBottom: 6 }}>Credit they want, in days</SectionLabel>
-        <Input value={creditDays} onChangeText={setCreditDays} placeholder="Optional. Example: 30" keyboardType="number-pad" />
+        <Input
+          value={creditDays}
+          onChangeText={(v) => setCreditDays(cleanWhole(v))}
+          placeholder="Optional. Example: 30"
+          keyboardType="number-pad"
+          wholeHint="Whole days only."
+        />
       </View>
 
       <View style={{ marginTop: 14 }}>

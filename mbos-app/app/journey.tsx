@@ -27,6 +27,7 @@ import { getConfig } from '../src/data/config';
 import { optimiseRoute } from '../src/engines/route';
 import { fixOf, getFix } from '../src/native/location';
 import { dayLabel, dayLabelRelative, dmy, hhmm, inrFromPaise, isoDate, plural } from '../src/lib/format';
+import { cleanAmount, paiseFromTyped } from '../src/lib/money-input';
 /* No `openMaps` here. Every stop row and every card on this screen navigates
    through `NavigateButton`, which is the one call site — see `StopMapButton`. */
 import { openRoute, shareText } from '../src/lib/messaging';
@@ -514,14 +515,14 @@ export default function JourneyScreen() {
     setTourBusy(true);
     setTourErr(null);
     const cities = tour.cities.split(',').map((c) => c.trim()).filter(Boolean);
-    const costRupees = Number(tour.cost.replace(/[^\d]/g, ''));
+    const costPaise = paiseFromTyped(tour.cost);
     const result = await requestTour({
       userId: boot.session?.user.id ?? '',
       startDate: tour.from,
       endDate: tour.to,
       cities,
       purpose: tour.purpose.trim(),
-      estimatedCostPaise: costRupees > 0 ? costRupees * 100 : null,
+      estimatedCostPaise: costPaise > 0 ? costPaise : null,
     });
     setTourBusy(false);
 
@@ -1741,8 +1742,8 @@ export default function JourneyScreen() {
           <T s="label" style={{ marginBottom: 6 }}>About how much it will cost (₹), if you know</T>
           <Input
             value={tour.cost}
-            onChangeText={(v) => setTour((t) => ({ ...t, cost: v.replace(/[^0-9]/g, '') }))}
-            keyboardType="number-pad"
+            onChangeText={(v) => setTour((t) => ({ ...t, cost: cleanAmount(v) }))}
+            keyboardType="decimal-pad"
             placeholder="4500"
           />
         </View>

@@ -29,6 +29,7 @@ import {
 } from "@/lib/sales-lead-pipeline/engine";
 import { STAGE_LABEL } from "@/lib/sales-lead-pipeline/reference";
 import type { Lead } from "@/lib/sales-lead-pipeline/types";
+import { cleanDecimal, cleanWhole, parseDecimal, rupeesFromPaise } from "@/lib/format";
 
 /**
  * Every Sales-Manager-side dialog, as one file: each is one small form and one
@@ -133,6 +134,11 @@ const wholeNumber = (v: string): number | undefined => {
   const n = Number(v.replace(/[,\s]/g, ""));
   return Number.isInteger(n) && n >= 0 ? n : undefined;
 };
+/** Litres and percentages take a fraction; cans and days do not. */
+const decimalNumber = (v: string): number | undefined => {
+  const n = parseDecimal(v);
+  return n !== null && n >= 0 ? n : undefined;
+};
 
 const CUSTOMER_TYPES = [
   { value: "retailer", label: "Retailer" },
@@ -232,7 +238,7 @@ function ConvertModal({ lead, onClose }: ModalProps) {
     }
     if (productId && productId !== lead.productId) fields.requiredProductId = productId;
     const litres = valueFor(CONVERSION_FIELDS.find((f) => f.key === "monthlyLitres")!);
-    if (litres) fields.monthlyLitres = wholeNumber(litres);
+    if (litres) fields.monthlyLitres = decimalNumber(litres);
     const potential = valueFor(CONVERSION_FIELDS.find((f) => f.key === "potentialPaise")!);
     if (potential) fields.potentialPaise = rupeesToPaise(potential);
     const competitor = valueFor(CONVERSION_FIELDS.find((f) => f.key === "competitor")!);
@@ -808,7 +814,7 @@ function RequestSampleModal({ lead, onClose }: ModalProps) {
         <Input value={application} onChange={(e) => setApplication(e.target.value)} placeholder="What they will use it on" />
       </Field>
       <Field label="Sample quantity (cans)" className="mb-3">
-        <Input inputMode="numeric" placeholder="e.g. 2" value={qty} onChange={(e) => setQty(e.target.value)} />
+        <Input inputMode="numeric" placeholder="e.g. 2" value={qty} onChange={(e) => setQty(cleanWhole(e.target.value))} />
       </Field>
       <Field label="Reason for sample" className="mb-3">
         <Select value={reason} onChange={(e) => setReason(e.target.value)}>
@@ -966,7 +972,7 @@ function AskOrderModal({ lead, onClose }: ModalProps) {
   const [qty, setQty] = React.useState("");
   const [date, setDate] = React.useState(lead.commitment?.expectedOrderDate ?? "");
   const [cans, setCans] = React.useState(lead.commitment?.cans ? String(lead.commitment.cans) : "");
-  const [value, setValue] = React.useState(lead.commitment?.valuePaise ? String(Math.round(lead.commitment.valuePaise / 100)) : "");
+  const [value, setValue] = React.useState(lead.commitment?.valuePaise ? rupeesFromPaise(lead.commitment.valuePaise) : "");
   const [blocker, setBlocker] = React.useState("");
 
   const canCount = cans ? wholeNumber(cans) : undefined;
@@ -1009,10 +1015,10 @@ function AskOrderModal({ lead, onClose }: ModalProps) {
       </Field>
       <div className="mb-3 grid grid-cols-2 gap-3">
         <Field label="Expected cans" hint="A size, in cans">
-          <Input inputMode="numeric" value={cans} onChange={(e) => setCans(e.target.value)} />
+          <Input inputMode="numeric" value={cans} onChange={(e) => setCans(cleanWhole(e.target.value))} />
         </Field>
         <Field label="Expected value (₹)" hint="Or a size in rupees">
-          <Input inputMode="numeric" value={value} onChange={(e) => setValue(e.target.value)} />
+          <Input inputMode="decimal" value={value} onChange={(e) => setValue(cleanDecimal(e.target.value))} />
         </Field>
       </div>
       {!sized ? <p className="mb-3 text-[12.5px] text-muted">No size given — this will be recorded as an expected order, not a commitment.</p> : null}
@@ -1074,10 +1080,10 @@ function ConfirmOrderModal({ lead, onClose }: ModalProps) {
         <Input type="date" value={orderedOn} max={today} onChange={(e) => setOrderedOn(e.target.value)} />
       </Field>
       <Field label="Order value (₹)" className="mb-2.5">
-        <Input inputMode="numeric" placeholder="e.g. 45000" value={value} onChange={(e) => setValue(e.target.value)} />
+        <Input inputMode="decimal" placeholder="e.g. 45000" value={value} onChange={(e) => setValue(cleanDecimal(e.target.value))} />
       </Field>
       <Field label="Quantity (cans, optional)" className="mb-2.5">
-        <Input inputMode="numeric" value={cans} onChange={(e) => setCans(e.target.value)} />
+        <Input inputMode="numeric" value={cans} onChange={(e) => setCans(cleanWhole(e.target.value))} />
       </Field>
       <Field label="Order reference / confirmation no.">
         <Input placeholder="e.g. PO number or confirmation reference" value={ref} onChange={(e) => setRef(e.target.value)} />
@@ -1282,11 +1288,11 @@ function DistributorTermsModal({ lead, onClose }: ModalProps) {
   const { doAgreeTerms } = useLeadPipeline();
   const t = lead.approvalThresholds;
   const [discount, setDiscount] = React.useState(lead.distributorProfile?.agreedDiscountPercent != null ? String(lead.distributorProfile.agreedDiscountPercent) : "");
-  const [credit, setCredit] = React.useState(lead.distributorProfile?.agreedCreditLimitPaise ? String(Math.round(lead.distributorProfile.agreedCreditLimitPaise / 100)) : "");
+  const [credit, setCredit] = React.useState(lead.distributorProfile?.agreedCreditLimitPaise ? rupeesFromPaise(lead.distributorProfile.agreedCreditLimitPaise) : "");
   const [exclusive, setExclusive] = React.useState(lead.distributorProfile?.exclusivityGranted ?? false);
   const [note, setNote] = React.useState(lead.distributorProfile?.termsNote ?? "");
 
-  const pct = discount === "" ? undefined : wholeNumber(discount);
+  const pct = discount === "" ? undefined : decimalNumber(discount);
   const paise = credit === "" ? undefined : rupeesToPaise(credit) ?? (Number(credit) === 0 ? 0 : undefined);
   const ready = pct !== undefined && pct <= 100 && paise !== undefined;
 
@@ -1321,10 +1327,10 @@ function DistributorTermsModal({ lead, onClose }: ModalProps) {
     >
       <FormError />
       <Field label="Special discount (%)" className="mb-2.5">
-        <Input inputMode="numeric" value={discount} onChange={(e) => setDiscount(e.target.value)} />
+        <Input inputMode="decimal" value={discount} onChange={(e) => setDiscount(cleanDecimal(e.target.value))} />
       </Field>
       <Field label="Credit limit (₹)" className="mb-2.5">
-        <Input inputMode="numeric" value={credit} onChange={(e) => setCredit(e.target.value)} />
+        <Input inputMode="decimal" value={credit} onChange={(e) => setCredit(cleanDecimal(e.target.value))} />
       </Field>
       <YesNo label="Territorial exclusivity granted?" value={exclusive} onChange={setExclusive} />
       <Field label="Note" className="mb-3">

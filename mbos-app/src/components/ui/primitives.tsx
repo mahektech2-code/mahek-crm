@@ -484,11 +484,20 @@ export function Input({
   secureTextEntry,
   multiline,
   style,
+  wholeHint,
   ...rest
-}: React.ComponentProps<typeof TextInput> & { invalid?: boolean }) {
+}: React.ComponentProps<typeof TextInput> & {
+  invalid?: boolean;
+  /**
+   * A whole-number box (cans, days) says so the moment a point is typed into
+   * it — `cleanWhole` keeps "1." rather than letting the next digit make 15,
+   * and this is the sentence that explains why the half did not land.
+   */
+  wholeHint?: string;
+}) {
   const [focused, setFocused] = React.useState(false);
   const fieldLabel = React.useContext(FieldLabel);
-  return (
+  const box = (
     <TextInput
       accessibilityLabel={fieldLabel ?? placeholder}
       value={value}
@@ -518,6 +527,16 @@ export function Input({
       ]}
       {...rest}
     />
+  );
+  /* A fragment rather than a wrapping View, so the box keeps its place in the
+     tree and its focus when the hint appears — a remount would drop the
+     keyboard mid-number. Without a hint it is the TextInput alone, as before. */
+  if (!wholeHint) return box;
+  return (
+    <>
+      {box}
+      {value?.includes('.') ? <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>{wholeHint}</Text> : null}
+    </>
   );
 }
 
