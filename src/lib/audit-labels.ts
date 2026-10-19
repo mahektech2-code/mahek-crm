@@ -1026,6 +1026,7 @@ export const VERBS: Record<string, string> = {
   skuActive: "switched a SKU on or off in",
   goodActive: "switched a finished good on or off in",
   heldNamed: "named a held product in",
+  skuCreated: "added a SKU to",
   draft_created: "started a draft of",
   draft_updated: "edited the draft of",
   rule_updated: "edited a rule in",

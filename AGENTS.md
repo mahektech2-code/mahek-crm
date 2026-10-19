@@ -3837,6 +3837,18 @@ canonical ID, because a re-run must not reset a name somebody has already
 settled. Both have a test saying so. Regenerate the seed from a new revision of
 the document with `npm run catalogue:parse`, then `npm run catalogue:import`.
 
+**A SKU CAN BE ADDED BY HAND, and the import is no longer the only door.**
+Admin Console → Catalogue → All SKUs → Add SKU opens a four-page dialog
+(`app/admin/new-sku-dialog.tsx`): where it sits (formulation, brand line,
+finished good — each picked or named new), packing, costs and codes, review.
+`createSku` in `lib/actions/catalogue.ts` writes any new level and the SKU and
+its other names in ONE transaction, refuses a brand or finished good from
+another branch, and refuses a name that matches any SKU name or alias by
+`matchKey`, or a legacy Product ID another SKU carries. The suggested names
+(`finishedGoodNameFor`, `skuNameFor`) are suggestions; `newSkuProblems` is the
+one rule the dialog and the action both run. The ERP's can and box are still
+set in ERP → Products.
+
 **Order value is not computed from the catalogue until a price source is
 confirmed.** The product master carries no prices at all, so
 `products.priceSource` starts `unset` and `canValueOrders()` answers no. An
