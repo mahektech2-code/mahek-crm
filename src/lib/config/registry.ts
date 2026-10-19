@@ -4409,6 +4409,17 @@ export const SETTINGS = [
     min: 0,
   },
   {
+    key: "erp.returns.unallocatedDays",
+    type: "integer",
+    category: "erp",
+    label: "Customer returns: how far back a line with no lot can be returned (days)",
+    description:
+      "A customer return is raised against the order line the goods went out on. A line that went out with no lot allocated — the Taken Order history, or stock dispatched before batch codes — is offered when its order is no older than this, and the batch is read off the returned cans. Lines with a lot allocated are offered whatever their age.",
+    default: 180,
+    min: 0,
+    max: 3650,
+  },
+  {
     key: "erp.stockCheck.onRequirement",
     type: "boolean",
     category: "erp",
@@ -6346,6 +6357,7 @@ export type Config = {
   "erp.purchase.poWatiTemplate": string;
   "erp.purchase.poGstPercent": number;
   "erp.returns.ownerApprovalPaise": number;
+  "erp.returns.unallocatedDays": number;
   "erp.stockCheck.onRequirement": boolean;
   "erp.stockCheck.tolerancePercent": number;
   "erp.stockCheck.toleranceFloor": number;

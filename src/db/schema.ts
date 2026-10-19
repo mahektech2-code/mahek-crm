@@ -15331,9 +15331,12 @@ export const erpCustomerReturns = pgTable(
     orderId: text("order_id")
       .notNull()
       .references(() => erpOrders.id),
-    batchCodeId: text("batch_code_id")
-      .notNull()
-      .references(() => erpBatchCodes.id),
+    /**
+     * The allocation the lot left on. Null for a line that went out with no lot
+     * allocated (Taken Order history, stock dispatched before batch codes): the
+     * lot is then the batch read off the returned cans' label.
+     */
+    batchCodeId: text("batch_code_id").references(() => erpBatchCodes.id),
     skuId: text("sku_id")
       .notNull()
       .references(() => products.id),

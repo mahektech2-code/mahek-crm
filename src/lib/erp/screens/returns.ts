@@ -717,7 +717,7 @@ type CustomerRow = {
   orderId: string;
   orderNo: number;
   billNo: string | null;
-  batchCodeId: string;
+  batchCodeId: string | null;
   skuId: string;
   sku: string;
   fgId: string | null;
@@ -808,8 +808,11 @@ const cStage = (r: CustomerRow, ds: DecisionRow[]) =>
 const decisionLine = (d: DecisionRow, unit: string) =>
   `${dispositionLabel(d.kind)} · ${nf(d.qty)} ${unit}${d.godown ? ` · ${d.godown}` : ""}${d.scrapKg ? ` · ${nf(d.scrapKg)} kg` : ""}${d.reworkNo ? ` · ${reworkLabel(d.reworkNo)}` : ""}${d.wasteNo ? ` · ${wasteLabel(d.wasteNo)}` : ""} · ${fd(d.at.toISOString?.() ?? String(d.at))}${d.status === "reversed" ? " · reversed" : ""}`;
 
+const unallocatedDays = async () => Number((await getConfig())["erp.returns.unallocatedDays"] ?? 180);
+
 async function customerForm() {
-  const lines = (await returnableLines()).filter((l) => l.sent - l.returned > 0);
+  const lines = (await returnableLines(undefined, { unallocatedDays: await unallocatedDays() })).filter((l) => l.sent - l.returned > 0);
+  const noLot = lines.filter((l) => l.lotCode == null).map((l) => lineOption(l));
   const opt = (l: (typeof lines)[number]) => lineOption(l);
   const fill = (f: (l: (typeof lines)[number]) => string) => ({ by: ["line"], map: Object.fromEntries(lines.map((l) => [opt(l), f(l)])) });
   const unitOf = (l: (typeof lines)[number]) => (l.lotFrom === "pack" ? "boxes" : "cans");
@@ -821,11 +824,32 @@ async function customerForm() {
     submit: "Record return",
     init: { date: today() },
     header: [
-      { k: "line", l: "Original order line and lot", t: "select", req: true, opts: lines.map(opt), hint: "Billed, dispatched lines with something not already returned.", wide: true },
+      {
+        k: "line",
+        l: "Original order line and lot",
+        t: "select",
+        req: true,
+        typed: "Type the order number, customer or product",
+        opts: lines.map(opt),
+        hint: "Lines that went out with something not already returned — with their lot, or with no lot allocated (older and sheet orders).",
+        wide: true,
+      },
       { k: "customer", l: "Customer", t: "text", readOnly: true, fillBy: fill((l) => l.customer) },
       { k: "invoice", l: "Sales invoice", t: "text", readOnly: true, fillBy: fill((l) => l.billNo ?? `${orderTraceCode(l.orderNo)} (no Tally bill number)`) },
-      { k: "outward", l: "Goods outward", t: "text", readOnly: true, fillBy: fill((l) => `Dispatched ${l.dispatchDate ? fd(l.dispatchDate) : ""} from ${l.godown}`) },
-      { k: "product", l: "Product · batch", t: "text", readOnly: true, fillBy: fill((l) => `${l.sku} · ${l.lotCode}`) },
+      { k: "outward", l: "Goods outward", t: "text", readOnly: true, fillBy: fill((l) => (l.dispatchDate ? `Dispatched ${fd(l.dispatchDate)} from ${l.godown}` : `From ${l.godown} · dispatch not recorded`)) },
+      { k: "product", l: "Product · batch", t: "text", readOnly: true, fillBy: fill((l) => `${l.sku} · ${l.lotCode ?? "no lot allocated"}`) },
+      ...(noLot.length
+        ? [
+            {
+              k: "batch",
+              l: "Batch on the returned cans",
+              t: "text" as const,
+              hint: "No lot was allocated on this line, so read the batch off the label of the cans that came back.",
+              when: { k: "line", in: noLot },
+              reqWhen: { k: "line", in: noLot },
+            },
+          ]
+        : []),
       { k: "sent", l: "Sent · already returned", t: "text", readOnly: true, fillBy: fill((l) => `${nf(l.sent)} ${unitOf(l)} · ${nf(l.returned)} returned`) },
       { k: "date", l: "Return date", t: "date", req: true, sec: "The return" },
       { k: "qty", l: "Return quantity", t: "num", req: true, min: 1, hint: "Whole cans, or whole boxes on a boxed line." },
@@ -1215,9 +1239,11 @@ const customerReturns: ScreenModule = {
   load: (ctx) => customerScreen(ctx, "customerReturns"),
   forms: {
     async new(ctx, h) {
-      const lines = await returnableLines();
+      const lines = await returnableLines(undefined, { unallocatedDays: await unallocatedDays() });
       const line = lines.find((l) => lineOption(l) === h.line);
-      if (!line) return fieldErr("line", "Choose the dispatched order line the material went out on.");
+      if (!line) return fieldErr("line", "Choose the order line the material went out on.");
+      const lotCode = line.lotCode ?? text(h.batch)?.toUpperCase() ?? null;
+      if (!lotCode) return fieldErr("batch", "No lot was allocated on this line — enter the batch printed on the returned cans.");
       const qty = num(h.qty);
       if (qty == null) return fieldErr("qty", "Enter the quantity being returned.");
       const refusal = customerReturnRefusal({ qty, dispatched: line.sent, alreadyReturned: line.returned, whole: true });
@@ -1239,7 +1265,7 @@ const customerReturns: ScreenModule = {
           skuId: line.skuId,
           finishedGoodId: line.finishedGoodId,
           lotFrom: line.lotFrom,
-          lotCode: line.lotCode,
+          lotCode,
           quantity: qty,
           unit: line.lotFrom === "pack" ? "Boxes" : "Cans",
           litres,
@@ -1257,7 +1283,7 @@ const customerReturns: ScreenModule = {
         await bindErpFiles(tx as unknown as typeof db, [text(h.photo)], "erp_customer_return", id, ctx.actor.id);
         return okVoid(`${customerReturnLabel(returnNo)} recorded — receive it into quarantine when it arrives`);
       });
-      if (res.ok) await erpAudit(ctx, "erp.customerReturn.create", "erp_customer_return", id, null, { order: line.orderNo, lot: line.lotCode, qty, reason, total: v?.totalPaise ?? null });
+      if (res.ok) await erpAudit(ctx, "erp.customerReturn.create", "erp_customer_return", id, null, { order: line.orderNo, lot: lotCode, allocated: line.batchCodeId != null, qty, reason, total: v?.totalPaise ?? null });
       return res;
     },
   },
