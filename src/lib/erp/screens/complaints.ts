@@ -43,6 +43,19 @@ import { traceBill, type Trace } from "../trace";
 
 export type ComplaintScope = "requests" | "issueCn" | "complaints";
 
+/**
+ * THE ERP SEES PRODUCT QUALITY COMPLAINTS AND NOTHING ELSE. A short delivery,
+ * a billing question or a price issue is the CRM's and Accounts' to answer;
+ * what the factory can act on is the product. So every ERP read of
+ * `complaints` — this screen, its badge, the dashboard, the alerts, the files
+ * — is narrowed to this category, and a complaint raised from the ERP is
+ * always one. The CRM still lists every category.
+ */
+export const ERP_COMPLAINT_CATEGORY = "product_quality" as const;
+export const ERP_COMPLAINT_TYPE = categoryLabel(ERP_COMPLAINT_CATEGORY);
+const ERP_ONLY = eq(complaints.category, ERP_COMPLAINT_CATEGORY);
+const NOT_ERP = "That complaint is not a product quality complaint, so the ERP does not handle it.";
+
 /** The words Mahek Plus used for where a request stands, read off the complaint. */
 export function requestStatus(c: { status: string; cnStatus: string | null }): "Requested" | "Accepted" | "Rejected" | "Resolved" {
   if (c.status === "rejected") return "Rejected";
@@ -62,6 +75,7 @@ type Row = {
 };
 
 export async function complaintRows(where?: ReturnType<typeof eq>): Promise<Row[]> {
+  const scoped = where ? and(ERP_ONLY, where)! : ERP_ONLY;
   const q = db
     .select({
       c: complaints,
@@ -76,12 +90,12 @@ export async function complaintRows(where?: ReturnType<typeof eq>): Promise<Row[
     .innerJoin(customers, eq(customers.id, complaints.customerId))
     .leftJoin(users, eq(users.id, complaints.loggedByUserId))
     .leftJoin(bills, eq(bills.id, complaints.billId));
-  return (where ? q.where(where) : q).orderBy(desc(complaints.createdAt));
+  return q.where(scoped).orderBy(desc(complaints.createdAt));
 }
 
 /** Requests still waiting for a decision, per customer — for My customers and the sidebar. */
 export async function openRequestIds(): Promise<string[]> {
-  return (await db.select({ id: complaints.id }).from(complaints).where(eq(complaints.status, "open"))).map((r) => r.id);
+  return (await db.select({ id: complaints.id }).from(complaints).where(and(eq(complaints.status, "open"), ERP_ONLY))).map((r) => r.id);
 }
 
 async function staff(): Promise<{ name: string; position: string | null }[]> {
@@ -113,7 +127,7 @@ async function billChoices(): Promise<{ bills: Record<string, string[]>; goods: 
 }
 
 async function requestForm(ctx: ErpContext, init?: Record<string, string>): Promise<FormSpec> {
-  const [parties, people, config, choices] = await Promise.all([loadCustomers(), staff(), getConfig(), billChoices()]);
+  const [parties, people, choices] = await Promise.all([loadCustomers(), staff(), billChoices()]);
   const mobile: Record<string, string> = {};
   parties.forEach((p) => (mobile[p.name] = p.phone ?? ""));
   const me = people.find((s) => s.name.toLowerCase() === ctx.user.name.toLowerCase() && /sales/i.test(s.position ?? ""));
@@ -121,8 +135,8 @@ async function requestForm(ctx: ErpContext, init?: Record<string, string>): Prom
   return {
     screen: "requests",
     id: "new",
-    title: "Raise a customer complaint",
-    sub: "It also appears on the customer's CRM record.",
+    title: "Raise a product quality complaint",
+    sub: "The ERP handles product quality complaints only. It also appears on the customer's CRM record.",
     submit: "Raise",
     init: { salesman: me?.name ?? "", cn: "No", ...init },
     data: { mobile, billDate: choices.billDate },
@@ -130,7 +144,6 @@ async function requestForm(ctx: ErpContext, init?: Record<string, string>): Prom
       { k: "salesman", l: "Name of salesman", t: "select", sec: "Complaint", opts: salesmen.length ? salesmen : people.map((s) => s.name) },
       { k: "customer", l: "Customer", t: "select", req: true, opts: parties.map((p) => p.name) },
       { k: "mobile", l: "Mobile number", t: "derived", calc: "request.mobile" },
-      { k: "type", l: "Complaint type", t: "select", req: true, opts: config["complaints.categories"] },
       { k: "description", l: "Complaint description", t: "area", req: true, mic: true },
       { k: "photo", l: "Complaint picture", t: "photo" },
       { k: "cn", l: "Credit note required", t: "select", req: true, opts: ["Yes", "No"], sec: "Credit note" },
@@ -144,8 +157,7 @@ async function requestForm(ctx: ErpContext, init?: Record<string, string>): Prom
 async function saveRequest(ctx: ErpContext, h: Record<string, string>): Promise<Result<unknown>> {
   const [c] = await loadCustomers(eq(customers.name, text(h.customer) ?? ""));
   if (!c) return fieldErr("customer", "Customer is required");
-  const type = text(h.type);
-  if (!type) return fieldErr("type", "Complaint type is required");
+  const type = ERP_COMPLAINT_TYPE;
   const description = text(h.description);
   if (!description) return fieldErr("description", "Complaint description is required");
   const cn = h.cn === "Yes";
@@ -198,7 +210,8 @@ async function history(tx: Parameters<Parameters<typeof db.transaction>[0]>[0], 
 
 async function decide(ctx: ErpContext, ids: string[], verdict: "Accepted" | "Rejected"): Promise<Result<unknown>> {
   if (!ctx.powers.has("decideRequests")) return err("Only an admin or the office decides a request.", "not_permitted");
-  const rows = await db.select().from(complaints).where(inArray(complaints.id, ids));
+  const rows = await db.select().from(complaints).where(and(inArray(complaints.id, ids), ERP_ONLY));
+  if (!rows.length) return err(NOT_ERP, "not_found");
   const open = rows.filter((c) => (verdict === "Accepted" ? c.status === "open" : c.status !== "rejected" && c.status !== "resolved" && c.status !== "closed"));
   if (!open.length) return err(`Already ${verdict === "Accepted" ? "decided" : "Rejected"}.`, "conflict");
   await db.transaction(async (tx) => {
@@ -300,8 +313,8 @@ function toRow(ctx: ErpContext, x: Row, files: Map<string, string[]>, canIssue: 
     });
   if (ai?.pending) {
     actions.unshift({ id: "aiComplaint", l: "Review the suggestion", ai: true, primary: true, loadsForm: true });
-    actions.push({ id: "aiComplaintReject", l: "Reject the suggestion", confirm: "Reject the suggested type and summary?" });
-  } else if (ai?.on && c.description) actions.push({ id: "aiComplaintRead", l: "Suggest type and summary", ai: true });
+    actions.push({ id: "aiComplaintReject", l: "Reject the suggestion", confirm: "Reject the suggested summary?" });
+  } else if (ai?.on && c.description) actions.push({ id: "aiComplaintRead", l: "Suggest a summary", ai: true });
   actions.push({ id: "more", l: "Add another", loadsForm: true });
   actions.push({ id: "customer", l: "View customer", href: erpLink("customers", { open: c.customerId }) });
   for (const f of files.get(c.id) ?? []) actions.push({ id: `file-${f}`, l: "Open attachment", href: `/api/attachments/${f}` });
@@ -314,7 +327,6 @@ function toRow(ctx: ErpContext, x: Row, files: Map<string, string[]>, canIssue: 
       salesman: c.salesmanName ?? x.by,
       party: x.party,
       mobile: c.mobileNumber ?? x.phone,
-      type: categoryLabel(c.category),
       cn: c.requestCn ? "Yes" : "No",
       bill: x.billNo,
       goods: c.goodsDescription,
@@ -360,7 +372,6 @@ function complaintList(scope: ComplaintScope): ScreenModule {
         { k: "salesman", l: "Salesman", t: "t" },
         { k: "party", l: "Customer", t: "b" },
         { k: "mobile", l: "Mobile", t: "ph" },
-        { k: "type", l: "Complaint type", t: "s" },
         { k: "cn", l: "Credit note", t: "s" },
         { k: "bill", l: "Bill no", t: "mono" },
         { k: "goods", l: "Goods", t: "t" },
@@ -377,12 +388,12 @@ function complaintList(scope: ComplaintScope): ScreenModule {
           screen: scope,
           cols,
           hidden: [],
-          groups: scope === "requests" ? ["status"] : scope === "complaints" ? ["type"] : undefined,
+          groups: scope === "requests" ? ["status"] : undefined,
           chips: "status",
           bulk: decider ? [{ id: "accept", l: "Accept" }, { id: "reject", l: "Reject", confirm: "Reject every selected complaint?" }] : undefined,
           newForm: await requestForm(ctx),
-          newLabel: "Raise complaint",
-          noDataLine: scope === "issueCn" ? "No credit notes asked for." : scope === "complaints" ? "No complaints without a credit note." : "No customer complaints yet.",
+          newLabel: "Raise product quality complaint",
+          noDataLine: scope === "issueCn" ? "No credit notes asked for." : scope === "complaints" ? "No complaints without a credit note." : "No product quality complaints yet.",
         },
         rows: rows.map((x) => toRow(ctx, x, files, canIssue, panels.get(x.c.id), { on, pending: pend.has(x.c.id), summary: summaries.get(x.c.id) })),
       };
@@ -396,7 +407,7 @@ function complaintList(scope: ComplaintScope): ScreenModule {
       async more(ctx, id) {
         const [x] = await complaintRows(eq(complaints.id, id));
         if (!x) return null;
-        const f = await requestForm(ctx, { salesman: x.c.salesmanName ?? "", customer: x.party, type: categoryLabel(x.c.category), description: x.c.description, cn: x.c.requestCn ? "Yes" : "No", bill: x.billNo ?? "" });
+        const f = await requestForm(ctx, { salesman: x.c.salesmanName ?? "", customer: x.party, description: x.c.description, cn: x.c.requestCn ? "Yes" : "No", bill: x.billNo ?? "" });
         return { ...f, title: "Raise another credit note for this bill" };
       },
     },
@@ -408,6 +419,7 @@ function complaintList(scope: ComplaintScope): ScreenModule {
       async issue(ctx, id, v) {
         const [c] = await db.select().from(complaints).where(eq(complaints.id, id));
         if (!c) return err("That complaint no longer exists.", "not_found");
+        if (c.category !== ERP_COMPLAINT_CATEGORY) return err(NOT_ERP, "not_found");
         if (requestStatus(c) !== "Accepted" || !c.requestCn) return err("A credit note is issued on an accepted credit-note request.", "rule_violation");
         const amount = paise(v.amount);
         if (amount == null || amount <= 0) return fieldErr("amount", "Credit note amount is required");
@@ -438,6 +450,7 @@ function complaintList(scope: ComplaintScope): ScreenModule {
         if (!responsible) return fieldErr("responsible", "Responsible employee is required");
         const [c] = await db.select().from(complaints).where(eq(complaints.id, id));
         if (!c) return err("That complaint no longer exists.", "not_found");
+        if (c.category !== ERP_COMPLAINT_CATEGORY) return err(NOT_ERP, "not_found");
         if (requestStatus(c) !== "Accepted" || c.requestCn) return err("A complaint is resolved once it is accepted.", "rule_violation");
         await db.transaction(async (tx) => {
           await tx

@@ -89,7 +89,7 @@ The vision model is <Setting k="erp.ai.visionModel" /> and the text model <Setti
 - **Order messages** — the customer, the SKU and the quantity in cans are decided by rules; several possible SKUs are left for the person to choose.
 - **LR photos** — the transporter match and repeated-LR check are rules.
 - **Test photos** — a density more than <Setting k="erp.ai.qc.densityTolerancePct" />% from the material's master density is flagged; the reading never sets the verification, which stays the verifier's.
-- **Complaints** — the category is accepted only if it is one of the configured categories; the helper never proposes a credit-note amount.
+- **Complaints** — the helper suggests a summary only, never a type or a credit-note amount.
 </Rule>
 
 <Rule title="Every reading is logged with its outcome">

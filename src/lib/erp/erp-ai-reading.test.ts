@@ -252,14 +252,14 @@ describe("LR and test photos (AI-8)", () => {
 });
 
 describe("complaint review (AI-6)", () => {
-  test("a confirmed suggestion sets the type, and the summary is kept with it", async () => {
+  test("a confirmed suggestion keeps the summary and never changes the type", async () => {
     const a = await as(admin);
-    /* The complaint is the CRM's own record, so the confirmed type is the category the telecaller sees too. */
-    await createComplaint({ id: "req_1", customerId: "cus_shree", loggedById: a.user.id, loggedByName: a.user.name, category: "Other", description: "Two cans came dented" });
-    const sid = await logSuggestion({ feature: "complaints", recordType: "complaint", recordId: "req_1", proposed: { type: "Leakage / Packaging", summary: "Two cans arrived dented." }, confidence: { type: "high" }, userId: a.user.id });
-    await ok(applyComplaint(a, sid, { type: "Leakage / Packaging", summary: "Two cans arrived dented." }));
+    /* The ERP handles product quality complaints only, so its suggestion is a summary, never a new type. */
+    await createComplaint({ id: "req_1", customerId: "cus_shree", loggedById: a.user.id, loggedByName: a.user.name, category: "Product Quality", description: "Paint peeled in a week" });
+    const sid = await logSuggestion({ feature: "complaints", recordType: "complaint", recordId: "req_1", proposed: { summary: "Paint peeled within a week." }, confidence: { summary: "check" }, userId: a.user.id });
+    await ok(applyComplaint(a, sid, { type: "Leakage / Packaging", summary: "Paint peeled within a week." }));
     const [r] = await db.select().from(complaints).where(eq(complaints.id, "req_1"));
-    assert.equal(r.category, "packaging_damage");
+    assert.equal(r.category, "product_quality");
     const [s] = await db.select().from(erpAiSuggestions).where(eq(erpAiSuggestions.id, sid));
     assert.equal(s.outcome, "accepted");
   });

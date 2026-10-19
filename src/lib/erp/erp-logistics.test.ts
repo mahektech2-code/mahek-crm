@@ -40,6 +40,7 @@ import { setTestUser } from "@/lib/auth";
 import { erpContext } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
 import * as L from "@/lib/erp/logistics";
+import { createComplaint } from "@/lib/services/complaint-create";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const tag = randomUUID().slice(0, 6);
@@ -299,11 +300,11 @@ describe("complaints and credit notes are the CRM's complaints", () => {
     /* The ERP is not live here, so the bill is one the sheet wrote — the bills Accounts credits against. */
     await db.insert(bills).values({ id: "bil_mmi1", customerId: "cus_shree", billNo: "MMI/26-27/1", billDate: "2026-08-02", amount: 354000, paymentPosition: "stated" });
     const c = await as(clerk);
-    assert.equal(msg(await mod("requests").forms!.new(c, { customer: "Shree Paints", type: "Leakage / Packaging", description: "Two cans leaked", cn: "Yes", bill: "NOPE" }, [])), "That is not one of this customer's bills");
+    assert.equal(msg(await mod("requests").forms!.new(c, { customer: "Shree Paints", description: "Two cans leaked", cn: "Yes", bill: "NOPE" }, [])), "That is not one of this customer's bills");
     assert.ok((await mod("requests").forms!.new(c, { salesman: "Ravi Sales", customer: "Shree Paints", type: "Leakage / Packaging", description: "Two cans leaked", cn: "Yes", bill: "MMI/26-27/1", goods: SKU }, [])).ok);
     const [r] = await db.select().from(complaints);
     assert.equal(r.customerId, "cus_shree");
-    assert.equal(r.category, "packaging_damage");
+    assert.equal(r.category, "product_quality", "the ERP raises product quality complaints only, whatever type is posted");
     assert.equal(r.requestCn, true);
     assert.equal(r.billId, "bil_mmi1");
     assert.equal(r.salesmanName, "Ravi Sales");
@@ -314,6 +315,15 @@ describe("complaints and credit notes are the CRM's complaints", () => {
     assert.equal(row.v.status, "Requested");
     assert.equal(row.v.bill, "MMI/26-27/1");
     assert.equal(msg(await mod("requests").actions!.accept(c, r.id, {})), "Only an admin or the office decides a request.");
+  });
+
+  test("a complaint of any other type is the CRM's: the ERP neither lists it nor acts on it", async () => {
+    const a = await as(admin);
+    await createComplaint({ id: "cmp_bill", customerId: "cus_shree", loggedById: a.user.id, loggedByName: a.user.name, category: "Billing Issue", description: "Wrong GST on the bill" });
+    for (const s of ["requests", "issueCn", "complaints"]) assert.ok(!(await mod(s).load(a)).rows.some((x) => x.id === "cmp_bill"), s);
+    assert.equal(msg(await mod("requests").actions!.accept(a, "cmp_bill", {})), "That complaint is not a product quality complaint, so the ERP does not handle it.");
+    await db.delete(complaintStatusHistory).where(eq(complaintStatusHistory.complaintId, "cmp_bill"));
+    await db.delete(complaints).where(eq(complaints.id, "cmp_bill"));
   });
 
   test("an accepted credit note is issued through Accounts: it comes off the bill, closes the complaint, and the margin takes it", async () => {

@@ -91,7 +91,7 @@ It traces **every** complaint row that names a bill on every load (one `traceBil
 |---|---|---|
 | `npm run test:integration` | `src/lib/erp/erp-logistics.test.ts` — `complaints and credit notes are the CRM's complaints` | A credit-note request names a real bill and goods, lands as a CRM complaint, and only the office decides; an accepted credit note is issued through Accounts, comes off the bill, closes the complaint, and the margin takes it |
 | `npm run test:integration` | `src/lib/erp/erp-ai.test.ts` — `batch trace and complaint clusters (AI-6)` | The trace runs from the bill back to the supplier, and three on one lot flag a batch problem |
-| `npm run test:integration` | `src/lib/erp/erp-ai-reading.test.ts` — `complaint review (AI-6)` | A confirmed suggestion sets the type, and the summary is kept |
+| `npm run test:integration` | `src/lib/erp/erp-ai-reading.test.ts` — `complaint review (AI-6)` | A confirmed suggestion keeps the summary and never changes the type |
 | `npm run test` | `src/lib/complaint-labels.test.ts` | The category labels both apps read |
 
 ## Changing it safely
