@@ -82,7 +82,11 @@ export async function deliveryOrdersFor(
            count(*)::int as "lines"
       from erp_orders o
       left join erp_order_details d on d.order_id = o.id
-      left join erp_transports t on t.order_no = o.order_no
+      /* An order may leave in more than one consignment (0279); the newest one speaks for it. */
+      left join lateral (
+        select t.bill_no, t.transporter, t.lr_no, t.material_stage from erp_transports t
+         where t.order_no = o.order_no order by t.created_at desc limit 1
+      ) t on true
      where (o.billing_customer_id = ${customerId} or o.delivery_customer_id = ${customerId})
        ${only}
      group by o.order_no

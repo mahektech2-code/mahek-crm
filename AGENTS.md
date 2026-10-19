@@ -8650,6 +8650,23 @@ attention. Rules are pure in `engines/logistics.ts`; reads and writes in
 (`phaseOf`). "At transport" is the one new stage (0250 widened the check). A
 bill moved past Dispatched with no LR is still waiting for its LR.
 
+**A CONSIGNMENT IS ONE DISPATCH, NOT ONE ORDER NUMBER — and that is a reversal
+(0279).** `erp_transports` was unique on `order_no` and verify inserted with
+`onConflictDoNothing`, so a line verified on an order number that already had a
+row opened nothing and never reached Logistics: every order copied in from the
+Taken Order history whose number carried an old (usually closed, so hidden)
+row, and the second half of any order sent in two goes. `openTransports` in
+`screens/sales.ts` is now the one hand-over: lines of one order and bill
+verified together share a row; a later line joins it only while it is still at
+the gate (no LR, stage Dispatched, opened by a verify); anything else opens a
+row of its own. `erp_order_details.transport_id` records which row each line
+left on, and `fillPackages`, `billLines`, the book's stage and extra expenses
+read it (a pre-0279 row no line names reads its whole order).
+`syncDispatchedTransports` is the net: on Logistics page load and hourly
+(`erp-dispatch-transports`), any line verified in the last
+`erp.logistics.syncDays` on no row is given one, dated its dispatch date.
+Readers that join `erp_transports` on `order_no` must expect several rows.
+
 **COLLECTING AN LR AND ATTACHING IT ARE TWO JOBS.** The dispatch team uploads
 (`erp_lrs`) through the Upload LRs MODAL on the Logistics screen and the
 Dispatch desk (`parts/upload-lrs-button.tsx`; the old `/erp/transport/upload`

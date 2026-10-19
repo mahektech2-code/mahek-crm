@@ -1,9 +1,13 @@
-Logistics is the part of a sale after the goods leave the factory and before the party says they arrived. One record per bill is opened by dispatch; the stage and the LR say where it is; every step writes an event; and the customer is told on WhatsApp at the steps that matter to them.
+Logistics is the part of a sale after the goods leave the factory and before the party says they arrived. One record per dispatch is opened by dispatch; the stage and the LR say where it is; every step writes an event; and the customer is told on WhatsApp at the steps that matter to them.
 
-## One record per bill, opened by dispatch
+## One record per dispatch, opened by dispatch
 
-<Rule title="Dispatch opens the record, once">
-When the **first** line of an order number is dispatch-verified, a record is written for that bill (a unique index on the order number makes "once" hold). Straight after, its box count and litres are read off its lines, it gets a random tracking token, and its timeline opens with *Left the factory*.
+<Rule title="Every dispatch opens a record">
+Lines of one order and one bill that are dispatch-verified together become one record. A line of the same bill verified later joins it only while the record is still at the factory gate — no LR and not yet at the transporter. Anything else opens a record of its own: an order sent in two goes, or an order number that already has an old record from the Taken Order history. Each line remembers the record it left on. Straight after, the record's box count and litres are read off **its own** lines, it gets a random tracking token, and its timeline opens with *Left the factory*.
+</Rule>
+
+<Rule title="Nothing dispatched is left behind">
+When Logistics opens, and every hour, any line dispatch-verified in the last <Setting k="erp.logistics.syncDays" /> days that is on no record is given one, dated its own dispatch date. That is the net under the rule above. Before October 2026 the record was one per order number, and lines on an order number that already had one opened nothing, so they never reached Logistics.
 </Rule>
 
 ## Where a bill is: the phase is derived

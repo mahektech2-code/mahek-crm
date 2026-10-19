@@ -359,12 +359,19 @@ export async function eventsFor(transportIds: string[]): Promise<(TransportEvent
   return rows.map((r) => ({ id: String(r.id), transportId: String(r.transportId), kind: String(r.kind), stage: s(r.stage), note: s(r.note), shared: Boolean(r.shared), at: new Date(String(r.at)).toISOString(), by: s(r.by) }));
 }
 
-/** The lines of a bill, for the consignment page. */
-export async function billLines(orderNo: number) {
+/** The lines of a bill, for the consignment page: those that left on it, or — a row from before 0279 no line names — the whole order. */
+export async function billLines(orderNo: number, transportId?: string) {
   const rows = (await db.execute(sql`
     select o.id, p.name as sku, o.qty_cans as cans, o.status, pk.box_type as "boxType", p.cans_per_box as "cansPerBox"
       from erp_orders o join products p on p.id = o.sku_id left join erp_product_packing pk on pk.product_id = p.id
+      left join erp_order_details d on d.order_id = o.id
      where o.order_no = ${orderNo}
+       ${
+         transportId
+           ? sql`and (d.transport_id = ${transportId}
+                  or (d.transport_id is null and not exists (select 1 from erp_order_details d2 where d2.transport_id = ${transportId})))`
+           : sql``
+       }
      order by o.created_at
   `)) as unknown as Row[];
   return rows.map((r) => ({ id: String(r.id), sku: String(r.sku), cans: Number(r.cans), status: String(r.status), boxType: s(r.boxType), cansPerBox: n(r.cansPerBox) }));
@@ -397,21 +404,27 @@ function day(v: string | null | undefined): string | null {
  * rather than a blank. A figure somebody typed is never overwritten.
  */
 export async function fillPackages(): Promise<void> {
+  /* A consignment's lines are those placed on it (`transport_id`); a row from
+     before 0279 that no line names is read off its whole order number. */
   await db.execute(sql`
     update erp_transports t
        set packages = x.packages, litres = x.litres
       from (
-        select o.order_no,
+        select t2.id,
                sum(case when coalesce(pk.box_type, '') like 'Empty Box%' and coalesce(p.cans_per_box, 0) > 1
                         then ceil(o.qty_cans::numeric / p.cans_per_box) else o.qty_cans end)::int as packages,
                round(sum(o.qty_cans * coalesce(p.millilitres_per_can, 0))::numeric / 1000, 2) as litres
-          from erp_orders o
+          from erp_transports t2
+          join erp_orders o on o.order_no = t2.order_no and o.status <> 'Cancel'
+          left join erp_order_details d on d.order_id = o.id
           join products p on p.id = o.sku_id
           left join erp_product_packing pk on pk.product_id = p.id
-         where o.status <> 'Cancel'
-         group by o.order_no
+         where t2.packages is null
+           and (d.transport_id = t2.id
+                or (d.transport_id is null and not exists (select 1 from erp_order_details d2 where d2.transport_id = t2.id)))
+         group by t2.id
       ) x
-     where x.order_no = t.order_no and t.packages is null
+     where x.id = t.id and t.packages is null
   `);
   await db.execute(sql`update erp_transports set track_token = substr(md5(random()::text || id), 1, 20) where track_token is null`);
 }
@@ -422,13 +435,18 @@ export async function fillPackages(): Promise<void> {
  * transaction, so it can never fail a dispatch.
  */
 export async function afterDispatch(ctx: ErpContext, orderNos: number[]): Promise<void> {
+  await afterDispatchFor(ctx.user.id, orderNos);
+}
+
+/** `afterDispatch` with no person behind it — the hourly net (`syncDispatchedTransports`) calls it. */
+export async function afterDispatchFor(userId: string | null, orderNos: number[]): Promise<void> {
   if (!orderNos.length) return;
   await fillPackages();
   await db.execute(sql`
     insert into erp_transport_events (id, transport_id, kind, stage, note, by_id)
     select 'etev_' || substr(md5(random()::text || t.id), 1, 16), t.id, 'opened', 'Dispatched',
            coalesce('From ' || (select min(g.name) from erp_orders o join erp_godowns g on g.id = o.godown_id where o.order_no = t.order_no), null),
-           ${ctx.user.id}
+           ${userId}
       from erp_transports t
      where t.order_no in ${orderNos}
        and not exists (select 1 from erp_transport_events e where e.transport_id = t.id)

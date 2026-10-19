@@ -1933,6 +1933,13 @@
       "when": 1792800100000,
       "tag": "0278_customer_return_without_lot",
       "breakpoints": true
+    },
+    {
+      "idx": 276,
+      "version": "7",
+      "when": 1792800200000,
+      "tag": "0279_transport_per_dispatch",
+      "breakpoints": true
     }
   ]
 }

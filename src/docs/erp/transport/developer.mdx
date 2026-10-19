@@ -22,8 +22,9 @@ sequenceDiagram
   participant DB as Postgres
   participant T as logistics.ts transportList
   participant AI as ai-photos.ts
-  Bill->>DB: insert erp_transports (id = first line, unique order_no)
-  Note over DB: later lines of the same order conflict and do nothing
+  Bill->>DB: openTransports - join a row of this order and bill still at the gate, else insert one
+  Bill->>DB: erp_order_details.transport_id = that row
+  Note over DB: syncDispatchedTransports hourly and on page load catches any verified line on no row
   T->>DB: load - pendingLr lists rows with no lr_no
   T->>AI: aiLrRead - readLr(ctx, id, photo)
   AI->>AI: featureState photos, readImages, recordLrReading checks
@@ -80,7 +81,7 @@ Extra expenses are written by ONE function, `setExtraExpenses`, whichever screen
 ## Tables
 
 <DbTable name="erp_transports" note={{
-  order_no: "Unique: one record per bill.",
+  order_no: "Indexed, not unique since 0279: an order sent in two goes, or one with an old history row, has several records. Which lines are on which is erp_order_details.transport_id.",
   material_stage: "One of STAGES in engines/logistics.ts; 'At transport' added by 0250.",
   lr_id: "The uploaded LR it travels under; lr_no mirrors its number.",
   reminder_date: "The next call to the transporter.",
