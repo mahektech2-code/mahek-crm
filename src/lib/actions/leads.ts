@@ -66,6 +66,7 @@ import {
 } from "@/lib/services/lead-qualification-flow-service";
 import { gstinChangeClear, materialOf, reviewVoidPatch } from "@/lib/lead-review-void";
 import { qualificationAccess, QUALIFICATION_ONLY_FIELDS } from "@/lib/lead-qualification-access";
+import { litresSchema } from "../decimal-schemas";
 
 /* ---------------------------------------------------------------------------
  * Every write the lead funnel makes from a browser.
@@ -844,7 +845,7 @@ const prospectFieldsSchema = z.object({
   customerType: z
     .enum(["dealer", "manufacturer", "distributor", "retailer", "private_limited_user"])
     .nullish(),
-  monthlyLitres: z.number().int().nonnegative().nullish(),
+  monthlyLitres: litresSchema.nullish(),
   potentialPaise: z.number().int().nonnegative().nullish(),
   competitor: z.string().trim().max(200).nullish(),
   requiredProductId: z.string().min(1).nullish(),

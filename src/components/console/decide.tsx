@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { money, parseRupees } from "@/lib/format";
+import { cleanDecimal, money, parseRupees, rupeesFromPaise } from "@/lib/format";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { decideApproval, type ApprovalDecision } from "@/lib/actions/sales";
@@ -59,7 +59,7 @@ export function Decide({
   function begin(decision: ApprovalDecision) {
     setOpen(decision);
     setNote("");
-    setAmount(amountPaise ? String(Math.round(amountPaise / 100)) : "");
+    setAmount(amountPaise ? rupeesFromPaise(amountPaise) : "");
     setError(null);
   }
 
@@ -135,8 +135,8 @@ export function Decide({
             </span>
             <input
               value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              inputMode="numeric"
+              onChange={(e) => setAmount(cleanDecimal(e.target.value))}
+              inputMode="decimal"
               className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
             />
             <span className="mt-1 block text-[12px] text-muted">

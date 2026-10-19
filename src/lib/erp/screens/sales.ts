@@ -570,6 +570,8 @@ function orderList(scope: Scope): ScreenModule {
         : [
             { id: "ready", l: "Ready" },
             { id: "underProcess", l: "Under Process" },
+            { id: "hold", l: "Hold From Office" },
+            { id: "cancel", l: "Cancel" },
             { id: "bill", l: "Bill it" },
             { id: "unbill", l: "Undo billing" },
             ...(approver ? [{ id: "approve", l: "Approved By Admin" }] : []),
@@ -604,7 +606,7 @@ function orderList(scope: Scope): ScreenModule {
           const actions: ActionSpec[] = labels
             ? [{ id: "labels", l: `Print dispatch labels · order ${l.o.orderNo}`, primary: true, href: erpLabelsHref({ order: l.o.orderNo }) }]
             : [
-                ...(l.o.status !== "Ready" ? [{ id: "ready", l: "Ready", primary: true } as ActionSpec] : [{ id: "underProcess", l: "Under Process" } as ActionSpec]),
+                ...statusActions(l),
                 ...(l.inDetails
                   ? [{ id: "unbill", l: "Undo billing", why: l.dispatched ? "It has been dispatch-verified" : "", confirm: `Take order ${l.o.orderNo} · ${l.sku.name} back out of billing?` } as ActionSpec]
                   : [{ id: "bill", l: "Bill it", primary: !blockers.length, why: blockers.length ? `Needs ${blockers.join(", ")}` : "" } as ActionSpec]),
@@ -734,12 +736,54 @@ async function doReady(ctx: ErpContext, ids: string[]) {
   if (res.ok && short.size) return okVoid(`Marked Ready · ${plural(ok.length)}. Not marked — stock is not there: ${why}.`);
   return res;
 }
-async function doUnder(ctx: ErpContext, ids: string[]) {
-  const ls = await lines(ids);
-  const ok = ls.filter((l) => l.o.status === "Ready").map((l) => l.o.id);
-  if (!ok.length) return err("Only a Ready line goes back to Under Process.", "rule_violation");
-  return setMany(ctx, ok, { status: "Under Process" }, "erp.order.underProcess", (n) => `${plural(n)} Under Process`);
+/**
+ * A STATUS MOVES EITHER WAY. Any line not yet dispatch-verified can be put at
+ * any status, back as well as forward — the edit form always allowed it, and
+ * the row and bulk actions now offer the same. Two checks stay because they
+ * protect stock, not the order of steps: Ready needs the stock on the shelf
+ * (`doReady`), and Cancel needs the line unbilled and its batch codes released,
+ * since an allocated lot is counted out of stock until it is let go.
+ */
+const STATUS_ACTION: Record<string, string> = { "Under Process": "underProcess", "Hold From Office": "hold", Cancel: "cancel" };
+function statusActions(l: OrderLine): ActionSpec[] {
+  const out: ActionSpec[] = [];
+  if (l.o.status !== "Ready") out.push({ id: "ready", l: "Ready", primary: l.o.status !== "Cancel" });
+  for (const st of ["Under Process", "Hold From Office", "Cancel"]) {
+    if (l.o.status === st) continue;
+    const why = l.dispatched
+      ? "It has been dispatch-verified"
+      : st === "Cancel" && l.inDetails
+        ? "It is billed; undo billing first"
+        : st === "Cancel" && l.allocations
+          ? "Release its batch codes first"
+          : "";
+    out.push({ id: STATUS_ACTION[st], l: st, why, confirm: st === "Cancel" ? `Cancel order ${l.o.orderNo} · ${l.sku.name}?` : undefined } as ActionSpec);
+  }
+  return out;
 }
+async function doStatus(ctx: ErpContext, ids: string[], status: string) {
+  const ls = (await lines(ids)).filter((l) => l.o.status !== status);
+  if (!ls.length) return err(`Those lines are already ${status}.`, "rule_violation");
+  const refused: string[] = [];
+  const ok: string[] = [];
+  for (const l of ls) {
+    const why = l.dispatched
+      ? "dispatch-verified"
+      : status === "Cancel" && l.inDetails
+        ? "billed — undo billing first"
+        : status === "Cancel" && l.allocations
+          ? "has batch codes — release them first"
+          : "";
+    if (why) refused.push(`order ${l.o.orderNo} · ${l.sku.name} is ${why}`);
+    else ok.push(l.o.id);
+  }
+  if (!ok.length) return err(`Not changed: ${refused.join("; ")}.`, "rule_violation");
+  const action = `erp.order.${STATUS_ACTION[status] ?? "status"}`;
+  const res = await setMany(ctx, ok, { status }, action, (n) => `${plural(n)} ${status}`);
+  if (res.ok && refused.length) return okVoid(`${plural(ok.length)} ${status}. Not changed: ${refused.join("; ")}.`);
+  return res;
+}
+const doUnder = (ctx: ErpContext, ids: string[]) => doStatus(ctx, ids, "Under Process");
 /**
  * "Approved By Admin", the ERP's own check on a Pending customer — used only
  * while the ERP is not where orders are taken. With `erp.orders.live` on, the
@@ -798,6 +842,8 @@ function lineHandlers(scope: Scope): Pick<ScreenModule, "actions" | "bulk" | "fo
     bulk: {
       ready: (ctx, ids) => doReady(ctx, ids),
       underProcess: (ctx, ids) => doUnder(ctx, ids),
+      hold: (ctx, ids) => doStatus(ctx, ids, "Hold From Office"),
+      cancel: (ctx, ids) => doStatus(ctx, ids, "Cancel"),
       bill: (ctx, ids) => doBill(ctx, ids),
       unbill: (ctx, ids) => doUnbill(ctx, ids),
       approve: (ctx, ids) => doApprove(ctx, ids),
@@ -805,6 +851,8 @@ function lineHandlers(scope: Scope): Pick<ScreenModule, "actions" | "bulk" | "fo
     actions: {
       ready: (ctx, id) => doReady(ctx, [id]),
       underProcess: (ctx, id) => doUnder(ctx, [id]),
+      hold: (ctx, id) => doStatus(ctx, [id], "Hold From Office"),
+      cancel: (ctx, id) => doStatus(ctx, [id], "Cancel"),
       bill: (ctx, id) => doBill(ctx, [id]),
       unbill: (ctx, id) => doUnbill(ctx, [id]),
       approve: (ctx, id) => doApprove(ctx, [id]),

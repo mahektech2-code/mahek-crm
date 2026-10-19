@@ -22,6 +22,7 @@ import { approvalRouteReason, managementRouteReason } from "@/lib/engines/lead-g
 import { err, fromThrown, ok, type Result } from "@/lib/result";
 import { writeTimelineEvent, MBOS_EVENT } from "@/lib/timeline";
 import { advanceLeadStage } from "@/lib/actions/leads";
+import { litresSchema, percentSchema } from "../decimal-schemas";
 
 /* ---------------------------------------------------------------------------
  * §11, §12 and §23 — appointing a distributor.
@@ -146,7 +147,7 @@ const profileSchema = z.object({
   deliveryCapability: z.string().trim().max(500).nullish(),
   hasWarehouse: z.boolean().optional(),
   /** Litres, which is how every capacity in MahekOne is measured. */
-  storageCapacityLitres: z.number().int().min(0).nullish(),
+  storageCapacityLitres: litresSchema.nullish(),
 
   /* commercial capability — every money field is PAISE, integers */
   productPortfolio: z.string().trim().max(1000).nullish(),
@@ -340,7 +341,7 @@ export async function submitForManagementReview(
 
 const termsSchema = z.object({
   /** Whole percent. A discount is negotiated in points, never in basis points. */
-  discountPercent: z.number().int().min(0).max(100),
+  discountPercent: percentSchema,
   /** PAISE, like every other money column here. */
   creditLimitPaise: z.number().int().min(0),
   exclusivity: z.boolean(),

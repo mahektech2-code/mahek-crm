@@ -400,7 +400,7 @@ function CalcCard({ q, a, n, view, closed, run, busy }: { q: Question; a: Answer
             <label key={i.key} className="flex flex-col gap-1 text-[13px] text-body">
               {i.label}
               {i.unit ? <span className="text-muted"> ({i.unit})</span> : null}
-              <input type="number" value={vals[i.key]} disabled={!can} onChange={(e) => setVals((v) => ({ ...v, [i.key]: e.target.value }))} className={cx(inputCls, "w-36")} />
+              <input type="number" step="any" inputMode="decimal" value={vals[i.key]} disabled={!can} onChange={(e) => setVals((v) => ({ ...v, [i.key]: e.target.value }))} className={cx(inputCls, "w-36")} />
             </label>
           ))}
         </div>

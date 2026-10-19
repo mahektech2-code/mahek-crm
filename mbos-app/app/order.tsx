@@ -11,6 +11,7 @@ import { SkuChip } from '../src/components/ui/sku';
 import { color as C, radius, tabular, type, weight } from '../src/theme/tokens';
 import { inr, inrFromPaise, plural } from '../src/lib/format';
 import { skuLines } from '../src/lib/sku-lines';
+import { cleanWhole, parseWhole } from '../src/lib/decimal-input';
 import {
   billingChoicesFor,
   listCustomersPage,
@@ -1022,11 +1023,15 @@ export default function OrderScreen() {
                         </Pressable>
                         <TextInput
                           value={cart[line.productId] || ''}
-                          onChangeText={(v) => setQty(line.productId, v.replace(/[^0-9]/g, ''))}
+                          onChangeText={(v) => setQty(line.productId, cleanWhole(v))}
                           /* Empty is allowed while he types a new number; left at
-                             nought or empty, the line comes off the order. */
+                             nought or empty, the line comes off the order. A
+                             point typed into it stays as "1." until here, so
+                             "1.5" never runs together into 15 cans. */
                           onEndEditing={() => {
-                            if (!(parseInt(useStore.getState().cart[line.productId] ?? '', 10) > 0)) removeLine(line.productId);
+                            const n = parseWhole(useStore.getState().cart[line.productId] ?? '') ?? 0;
+                            if (!(n > 0)) removeLine(line.productId);
+                            else setQty(line.productId, String(n));
                           }}
                           placeholder="0"
                           placeholderTextColor={C.faint}
@@ -1286,7 +1291,11 @@ function ProductRow({
           </Pressable>
           <TextInput
             value={qty ?? ''}
-            onChangeText={(v) => onQty(v.replace(/[^0-9]/g, ''))}
+            onChangeText={(v) => onQty(cleanWhole(v))}
+            onEndEditing={() => {
+              const whole = parseWhole(qty ?? '');
+              if (whole && qty !== String(whole)) onQty(String(whole));
+            }}
             placeholder="0"
             placeholderTextColor={C.faint}
             keyboardType="number-pad"

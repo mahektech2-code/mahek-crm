@@ -24,6 +24,7 @@ import { err, fromThrown, ok, type Result } from "@/lib/result";
 import { today } from "@/lib/recompute";
 import { requireUser } from "@/lib/auth";
 import { VERIFICATION_QUESTIONS, isVerificationFinding } from "@/lib/lead-labels";
+import { litresSchema } from "../decimal-schemas";
 
 /* ---------------------------------------------------------------------------
  * TWO THIN ORCHESTRATIONS AND ONE ROUTER, and nothing else.
@@ -67,7 +68,7 @@ const convertSchema = z.object({
   reasonCode: z.string().trim().min(1).max(80),
   fields: z.object({
     customerType: z.enum(["dealer", "manufacturer", "distributor", "retailer", "private_limited_user"]).nullish(),
-    monthlyLitres: z.number().int().nonnegative().nullish(),
+    monthlyLitres: litresSchema.nullish(),
     potentialPaise: z.number().int().nonnegative().nullish(),
     competitor: z.string().trim().max(200).nullish(),
     requiredProductId: z.string().min(1).nullish(),

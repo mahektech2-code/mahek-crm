@@ -7,6 +7,7 @@ import { erpLogisticsReadLr, erpLogisticsUploadLrs } from "@/lib/actions/erp-log
 import { lrRowHasAnything } from "@/lib/erp/engines/logistics";
 import { useAct } from "./common";
 import { labelClass, LinkButton } from "../../_ui/look";
+import { cleanWhole } from "@/lib/format";
 
 /**
  * STEP 3 — the dispatch team's upload. Photograph every LR collected from the
@@ -190,7 +191,7 @@ export function LrUpload({ today, transporters, canRead = false, onDone }: { tod
                 <input value={r.destination} onChange={(ev) => edit(r.key, "destination", ev.target.value)} placeholder="As printed on the LR" className={inp(false)} />
               </Box>
               <Box label="Boxes (articles)" read={r.read.includes("packages")}>
-                <input inputMode="numeric" value={r.packages} onChange={(ev) => edit(r.key, "packages", ev.target.value.replace(/\D/g, ""))} className={inp(false)} />
+                <input inputMode="numeric" value={r.packages} onChange={(ev) => edit(r.key, "packages", cleanWhole(ev.target.value))} className={inp(false)} />
               </Box>
               <Box label="Freight" error={e("freightTerm")} read={r.read.includes("freightTerm") || r.read.includes("freight")}>
                 <span className="flex gap-1">

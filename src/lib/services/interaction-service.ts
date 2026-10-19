@@ -94,7 +94,7 @@ function opportunitySummary(o: {
   const parts = [`Opportunity: ${o.product.trim()}`];
   if (o.estimatedQuantity?.trim()) parts.push(o.estimatedQuantity.trim());
   if (o.estimatedValueRupees !== undefined) {
-    parts.push(money(o.estimatedValueRupees * 100));
+    parts.push(money(Math.round(o.estimatedValueRupees * 100)));
   }
   if (o.expectedOrderDate) parts.push(`expected ${shortDate(o.expectedOrderDate)}`);
   return parts.join(" — ");
@@ -198,7 +198,7 @@ export const saveInteractionSchema = z.object({
   /** A credit note the customer asked for, and the bill it is against. */
   complaintRequestCn: z.boolean().default(false),
   /** Whole rupees from the form; stored as paise. Only ever with a Yes. */
-  complaintCnAmount: z.coerce.number().int().positive().optional(),
+  complaintCnAmount: z.coerce.number().positive().optional(),
   complaintBillId: z.string().optional(),
   complaintGoodsDescription: z.string().optional(),
 
@@ -253,7 +253,7 @@ export const saveInteractionSchema = z.object({
       product: z.string().min(1),
       estimatedQuantity: z.string().optional(),
       /** Whole rupees from the form. Stored as paise, like all money here. */
-      estimatedValueRupees: z.coerce.number().int().nonnegative().optional(),
+      estimatedValueRupees: z.coerce.number().nonnegative().optional(),
       expectedOrderDate: z.string().optional(),
     })
     .optional(),
@@ -1472,7 +1472,7 @@ export async function saveInteraction(
             : null,
           cnAmount:
             input.complaintRequestCn && input.complaintCnAmount
-              ? input.complaintCnAmount * 100
+              ? Math.round(input.complaintCnAmount * 100)
               : null,
           // Requested is where every request starts and, until something
           // outside the CRM moves it, where it stays.
@@ -1579,7 +1579,7 @@ export async function saveInteraction(
         estimatedValuePaise:
           input.opportunity.estimatedValueRupees === undefined
             ? null
-            : input.opportunity.estimatedValueRupees * 100,
+            : Math.round(input.opportunity.estimatedValueRupees * 100),
         expectedOrderDate: input.opportunity.expectedOrderDate || null,
         createdById: ctx.user.id,
         updatedById: ctx.user.id,

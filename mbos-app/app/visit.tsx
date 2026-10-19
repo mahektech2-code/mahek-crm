@@ -32,6 +32,7 @@ import { visitCapLabel, visitCapState, type VisitCapThresholds } from '../src/en
 import { restoreVisitDraft, useCustomer, useStore, type VisitForm, type VisitLinked } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { hhmm, isoDate, pretty } from '../src/lib/format';
+import { cleanDecimal, cleanWhole, parseDecimal, parseWhole, wholeOnly } from '../src/lib/decimal-input';
 import { elapsedLabel, FOLLOW_ON, unansweredQuestions, visitChecks, visitVerdict } from '../src/lib/visit';
 import { COMPLAINT_CATEGORIES, COMPLAINT_PRIORITIES, FOLLOW_UP_MODES, OUTCOMES, outcomeLabel } from '../src/data/fixtures';
 import { getConfig } from '../src/data/config';
@@ -975,7 +976,8 @@ export default function Visit() {
   const submitSample = async () => {
     if (formBusy.current) return;
     if (!draft.sku) return setFormErr('sku');
-    if (!(Number(draft.cans ?? '1') > 0)) return setFormErr('cans');
+    const sampleCans = parseWhole(draft.cans ?? '1') ?? 0;
+    if (!(sampleCans > 0)) return setFormErr('cans');
     if (!(draft.application ?? '').trim()) return setFormErr('application');
     if (!draft.reasonCode) return setFormErr('reason');
     if (!c) return;
@@ -987,7 +989,7 @@ export default function Visit() {
         customerId: c.id,
         productId: draft.sku,
         productName: draft.skuName ?? '',
-        cans: Number(draft.cans ?? '1'),
+        cans: sampleCans,
         reasonCode: draft.reasonCode,
         application: draft.application.trim(),
         followUpDate: trial,
@@ -1209,8 +1211,8 @@ export default function Visit() {
         suspectDecision: decision,
         suspectReason: decisionWhy.trim() || null,
         requirement: reqWhat.trim() || null,
-        monthlyVolumeLitres: Number(reqLitres.replace(/[^\d]/g, '')) || null,
-        quantityCans: Number(reqCans.replace(/[^\d]/g, '')) || null,
+        monthlyVolumeLitres: parseDecimal(reqLitres) || null,
+        quantityCans: parseWhole(reqCans) || null,
         aiDraftId,
       });
     } catch {
@@ -2069,10 +2071,10 @@ export default function Visit() {
               <View style={{ flex: 1 }}>
                 <TextInput
                   value={reqLitres}
-                  onChangeText={setReqLitres}
+                  onChangeText={(v) => setReqLitres(cleanDecimal(v, 2))}
                   placeholder="Litres a month"
                   placeholderTextColor={C.faint}
-                  keyboardType="number-pad"
+                  keyboardType="decimal-pad"
                   style={{
                     minHeight: 48, borderWidth: 1, borderColor: C.border, borderRadius: radius.sm,
                     paddingHorizontal: 12, fontSize: 15, color: C.ink,
@@ -2085,7 +2087,7 @@ export default function Visit() {
                     different questions, and the units say which is which. */}
                 <TextInput
                   value={reqCans}
-                  onChangeText={setReqCans}
+                  onChangeText={(v) => setReqCans(cleanWhole(v))}
                   placeholder="Cans to start"
                   placeholderTextColor={C.faint}
                   keyboardType="number-pad"
@@ -2094,6 +2096,9 @@ export default function Visit() {
                     paddingHorizontal: 12, fontSize: 15, color: C.ink,
                   }}
                 />
+                {wholeOnly(reqCans) ? (
+                  <Text style={{ fontSize: 13, color: C.danger, marginTop: 6 }}>Whole cans only.</Text>
+                ) : null}
               </View>
             </View>
 
@@ -2540,8 +2545,9 @@ export default function Visit() {
             offers letters invites "one". */}
         <Input
           value={draft.cans ?? '1'}
-          onChangeText={(v) => { setDraft({ ...draft, cans: v.replace(/[^\d]/g, '') }); setFormErr(null); }}
+          onChangeText={(v) => { setDraft({ ...draft, cans: cleanWhole(v) }); setFormErr(null); }}
           keyboardType="number-pad"
+          wholeHint="Whole cans only."
           invalid={formErr === 'cans'}
         />
         {formErr === 'cans' ? (
