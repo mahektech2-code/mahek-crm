@@ -4,7 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
-import { money, parseRupees, shortDate } from "@/lib/format";
+import { cleanWhole, money, parseRupees, shortDate } from "@/lib/format";
 import { commitmentSizeLabel } from "@/lib/lead-commitment";
 import { confirmFirstOrder } from "@/lib/actions/leads";
 import { Button } from "@/components/console/parts";
@@ -221,7 +221,7 @@ export function ConfirmOrderPanel({
             </span>
             <input
               value={cans}
-              onChange={(e) => setCans(e.target.value)}
+              onChange={(e) => setCans(cleanWhole(e.target.value))}
               inputMode="numeric"
               className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
             />
@@ -266,7 +266,7 @@ export function ConfirmOrderPanel({
  * and "2.5" would be stored as two or three by whoever rounded it first.
  */
 function parseCans(input: string): number | null {
-  const cleaned = input.replace(/[^0-9]/g, "");
+  const cleaned = cleanWhole(input);
   if (!cleaned) return null;
   const n = Number(cleaned);
   return Number.isFinite(n) && n > 0 ? n : null;

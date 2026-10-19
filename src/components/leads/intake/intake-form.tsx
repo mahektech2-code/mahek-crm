@@ -14,6 +14,7 @@ import { Banner, Button, ScreenHeader } from "@/components/console/parts";
 import { useInLeadHub } from "@/components/leads/hub/hub-context";
 import { ProductCombobox } from "@/components/products/product-combobox";
 import { IntakeAssistant } from "@/components/leads/intake/intake-assistant";
+import { cleanDecimal } from "@/lib/format";
 
 /* ---------------------------------------------------------------------------
  * Screen 5's form.
@@ -508,8 +509,8 @@ export function IntakeForm({
                   <F label="Litres a month" error={errors.monthlyLitres}>
                     <Input
                       value={f.monthlyLitres}
-                      inputMode="numeric"
-                      onChange={(e) => set("monthlyLitres")(e.target.value)}
+                      inputMode="decimal"
+                      onChange={(e) => set("monthlyLitres")(cleanDecimal(e.target.value))}
                     />
                   </F>
                   <F label="Buying from now" error={errors.competitor}>

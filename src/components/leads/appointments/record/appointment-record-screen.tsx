@@ -4,7 +4,7 @@ import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { groupIndian, money, parseRupees, stamp } from "@/lib/format";
+import { cleanDecimal, groupIndian, money, parseRupees, rupeesFromPaise, stamp } from "@/lib/format";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { stageLabel, stageSentence } from "@/lib/lead-labels";
@@ -143,7 +143,7 @@ export function AppointmentRecordScreen({
          `money()` is what renders paise everywhere else. */
       setCreditLimit(
         profile?.agreedCreditLimitPaise != null
-          ? String(Math.round(profile.agreedCreditLimitPaise / 100))
+          ? rupeesFromPaise(profile.agreedCreditLimitPaise)
           : "",
       );
       setExclusivity(Boolean(profile?.exclusivityGranted));
@@ -766,8 +766,8 @@ export function AppointmentRecordScreen({
                 <span className="mb-1 block text-[13px] font-medium text-ink">Discount %</span>
                 <input
                   value={discount}
-                  onChange={(e) => setDiscount(e.target.value)}
-                  inputMode="numeric"
+                  onChange={(e) => setDiscount(cleanDecimal(e.target.value))}
+                  inputMode="decimal"
                   className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
                 />
               </label>
@@ -775,8 +775,8 @@ export function AppointmentRecordScreen({
                 <span className="mb-1 block text-[13px] font-medium text-ink">Credit limit (₹)</span>
                 <input
                   value={creditLimit}
-                  onChange={(e) => setCreditLimit(e.target.value)}
-                  inputMode="numeric"
+                  onChange={(e) => setCreditLimit(cleanDecimal(e.target.value))}
+                  inputMode="decimal"
                   className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
                 />
                 <span className="mt-1 block text-[12px] text-muted">

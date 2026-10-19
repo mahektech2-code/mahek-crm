@@ -11,18 +11,15 @@
  * Pure — no clock, no store.
  */
 
+import { cleanDecimal } from './decimal-input';
+
 /**
  * What a box holds, cleaned as it is typed: digits and at most one point with
  * at most two places after it. Anything else is dropped rather than refused,
  * because a keypad slip should not cost him what he had already typed.
  */
 export function cleanAmount(typed: string): string {
-  const kept = typed.replace(/[^0-9.]/g, '');
-  const dot = kept.indexOf('.');
-  if (dot === -1) return kept;
-  const whole = kept.slice(0, dot);
-  const frac = kept.slice(dot + 1).replace(/\./g, '').slice(0, 2);
-  return whole + '.' + frac;
+  return cleanDecimal(typed, 2);
 }
 
 /** Paise from what is in the box, or 0 where nothing usable is there. */

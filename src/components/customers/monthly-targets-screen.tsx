@@ -30,7 +30,7 @@ import { ExportMenu } from "@/components/ui/export-menu";
 import { shiftMonth } from "@/components/ui/month";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { findTargetCandidates, setTarget, setTargetsBulk } from "@/lib/actions/crm";
-import { money, moneyShort, pct, periodLabel } from "@/lib/format";
+import { cleanDecimal, cleanWhole, money, moneyShort, pct, periodLabel, rupeesFromPaise } from "@/lib/format";
 import { UNASSIGNED_FILTER_VALUE } from "@/lib/am-filters";
 import { useRestoreSort, rememberSort } from "@/components/ui/use-remembered-sort";
 import { parseSort, nextSort, formatSort } from "@/lib/sort-param";
@@ -1168,7 +1168,7 @@ function TargetDialog({
   );
   const [loadingContext, setLoadingContext] = React.useState(Boolean(initial));
   const [amount, setAmount] = React.useState(
-    initial && initial.target ? String(Math.round(initial.target / 100)) : "",
+    initial && initial.target ? rupeesFromPaise(initial.target) : "",
   );
   const [billCount, setBillCount] = React.useState(
     initial?.billTarget ? String(initial.billTarget) : "",
@@ -1300,7 +1300,7 @@ function TargetDialog({
             setError(null);
           }}
           onBills={(v) => {
-            setBillCount(v.replace(/[^0-9]/g, ""));
+            setBillCount(cleanWhole(v));
             setError(null);
           }}
           onSubmit={() => save(false)}
@@ -1310,7 +1310,7 @@ function TargetDialog({
           period={period}
           onPick={(c) => {
             setPicked(c);
-            setAmount(c.target ? String(Math.round(c.target / 100)) : "");
+            setAmount(c.target ? rupeesFromPaise(c.target) : "");
             setBillCount(c.billTarget ? String(c.billTarget) : "");
             setError(null);
           }}
@@ -1618,7 +1618,7 @@ function TargetForm({
               <button
                 key={s.label}
                 type="button"
-                onClick={() => onAmount(String(Math.round(s.value / 100)))}
+                onClick={() => onAmount(rupeesFromPaise(s.value))}
                 className={cx(
                   "cursor-pointer rounded-[4px] border px-2.5 py-1.5 text-left",
                   amountPaise === s.value
@@ -1889,9 +1889,9 @@ function BulkTargetModal({
             hint="Raises each customer's current target by this much. A customer with no target starts from their average month over recent months — one with no recent sales is skipped."
           >
             <Input
-              type="number"
+              inputMode="decimal"
               value={value}
-              onChange={(e) => setValue(e.target.value)}
+              onChange={(e) => setValue(cleanDecimal(e.target.value))}
               className="w-[140px]"
             />
           </Field>

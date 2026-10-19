@@ -969,6 +969,8 @@ function NumberBox({ label, value, onChange }: { label: string; value?: number; 
       <span className={LABEL}>{label}</span>
       <input
         type="number"
+        step="any"
+        inputMode="decimal"
         value={value ?? ""}
         onChange={(e) => onChange(e.target.value === "" ? undefined : Number(e.target.value))}
         className={CONTROL}
@@ -1072,7 +1074,7 @@ function PreviewInput({ field: f, value, onChange }: { field: TaskField; value: 
     case "number":
       return (
         <div className="flex items-center gap-1">
-          <input type="number" className={box} value={typeof value === "number" ? value : ""} onChange={(e) => onChange(e.target.value === "" ? undefined : Number(e.target.value))} />
+          <input type="number" step="any" inputMode="decimal" className={box} value={typeof value === "number" ? value : ""} onChange={(e) => onChange(e.target.value === "" ? undefined : Number(e.target.value))} />
           {f.unit ? <span className="text-[11px] text-muted">{f.unit}</span> : null}
         </div>
       );

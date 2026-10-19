@@ -1,11 +1,11 @@
 "use client";
 
 import * as React from "react";
-import { Button, cx } from "@/components/ui/primitives";
+import { Button, PaiseInput, cx } from "@/components/ui/primitives";
 import { Drawer, DrawerHeader } from "@/components/ui/overlays";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import type { useToast } from "@/components/ui/toast";
-import { longDate, money, stamp } from "@/lib/format";
+import { cleanDecimal, longDate, money, parseRupees, rupeesFromPaise, stamp } from "@/lib/format";
 import { describeQuantity } from "@/lib/catalogue";
 import { approveOrderAction, declineOrderAction } from "@/lib/actions/orders";
 import {
@@ -101,14 +101,14 @@ export function ReviewDrawer({
         if (d.detail.kind === "credits" && d.detail.requestedAmount) {
           // Pre-filled with what was asked for, not with a decision — the
           // figure is still accounts' to change before it is issued.
-          setAmountText(String(Math.round(d.detail.requestedAmount / 100)));
+          setAmountText(rupeesFromPaise(d.detail.requestedAmount));
         }
       })
       .catch(() => {});
     return () => controller.abort();
   }, [kind, row.id]);
 
-  const amountPaise = Math.round(Number(amountText.replace(/[^0-9]/g, "") || 0) * 100);
+  const amountPaise = parseRupees(amountText) ?? 0;
 
   const positiveLabel =
     kind === "orders"
@@ -717,18 +717,14 @@ function AllocationEditor({
               {choice.mode === "custom" ? (
                 <span className="flex h-8 w-28 flex-none items-center rounded-[4px] border border-line px-2">
                   <span className="mr-1 text-[13px] text-muted">₹</span>
-                  <input
-                    inputMode="numeric"
-                    value={
-                      choice.custom?.[b.id] ? String(Math.round(choice.custom[b.id] / 100)) : ""
-                    }
-                    onChange={(e) => {
-                      const rupeesTyped = Number(e.target.value.replace(/[^0-9]/g, "") || 0);
+                  <PaiseInput
+                    paise={choice.custom?.[b.id]}
+                    onPaise={(paise) =>
                       onChoice({
                         ...choice,
-                        custom: { ...(choice.custom ?? {}), [b.id]: rupeesTyped * 100 },
-                      });
-                    }}
+                        custom: { ...(choice.custom ?? {}), [b.id]: paise ?? 0 },
+                      })
+                    }
                     placeholder="0"
                     aria-label={`Amount against ${b.billNo}`}
                     className="w-full border-none bg-transparent text-right text-sm tabular-nums outline-none"
@@ -785,7 +781,8 @@ function CreditBody({
           <span className="mr-1 text-muted">₹</span>
           <input
             value={amountText}
-            onChange={(e) => onAmount(e.target.value.replace(/[^0-9]/g, ""))}
+            onChange={(e) => onAmount(cleanDecimal(e.target.value))}
+            inputMode="decimal"
             disabled={!canDecide}
             placeholder="0"
             aria-label="Credit note amount in rupees"

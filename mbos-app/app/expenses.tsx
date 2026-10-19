@@ -23,6 +23,7 @@ import { pickDocuments, pickPhotos, takePhoto, type Picked } from '../src/native
 import { discardQueuedMedia } from '../src/sync/media';
 import { dmy, inrFromPaise, isoDate } from '../src/lib/format';
 import { checkFare } from '../src/lib/travel-leg';
+import { cleanAmount, typedFromPaise } from '../src/lib/money-input';
 import { useStore } from '../src/state/store';
 import { useBoot } from '../src/state/boot';
 import { color as C, radius, weight, tabular, type BadgeTone } from '../src/theme/tokens';
@@ -339,7 +340,7 @@ export default function ExpensesScreen() {
     setWhenWhy(refuse(x.spentOn));
     setEx({
       kind: was.key,
-      amt: x.amountPaise % 100 === 0 ? String(x.amountPaise / 100) : (x.amountPaise / 100).toFixed(2),
+      amt: typedFromPaise(x.amountPaise),
       note: x.remarks ?? '',
       when: dmy(x.spentOn),
       whenIso: x.spentOn,
@@ -686,7 +687,7 @@ export default function ExpensesScreen() {
             <T style={[{ fontSize: 18, color: C.muted }, weight(600)]}>₹</T>
             <TextInput
               value={ex.amt}
-              onChangeText={(v) => patch({ amt: v.replace(/[^0-9.]/g, '') })}
+              onChangeText={(v) => patch({ amt: cleanAmount(v) })}
               keyboardType="decimal-pad"
               maxLength={9}
               placeholder="0"

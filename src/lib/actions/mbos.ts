@@ -135,6 +135,7 @@ import {
   taskAnswersNote,
 } from "../task-form";
 import { applyLinkedAnswers, linkContexts, settleLinkedTasks } from "../services/task-link-service";
+import { kmSchema, litresSchema } from "../decimal-schemas";
 
 /* ---------------------------------------------------------------------------
  * MBOS — every write the handset makes.
@@ -1149,7 +1150,7 @@ const visitSchema = z.object({
    * not a second party's account of it.
    */
   requirement: z.string().max(1000).nullish(),
-  monthlyVolumeLitres: z.number().int().nonnegative().nullish(),
+  monthlyVolumeLitres: litresSchema.nullish(),
   quantityCans: z.number().int().nonnegative().nullish(),
   /*
    * THE VISIT ASSISTANT'S READING this visit was filled from, if any. The
@@ -4136,7 +4137,7 @@ const leadSchema = z.object({
   customerType: z
     .enum(["dealer", "manufacturer", "distributor", "retailer"])
     .nullish(),
-  monthlyLitres: z.number().int().nonnegative().nullish(),
+  monthlyLitres: litresSchema.nullish(),
   competitor: z.string().max(200).nullish(),
   requiredProductId: z.string().nullish(),
   contactPerson: z.string().max(200).nullish(),
@@ -4251,7 +4252,7 @@ const leadSchema = z.object({
    * field without a word. One column, `lead_monthly_volume_litres`, written
    * from whichever arrived.
    */
-  monthlyVolumeLitres: z.number().int().nonnegative().nullish(),
+  monthlyVolumeLitres: litresSchema.nullish(),
   /* An `attachments` id the media queue will fill in later — see
      `bindMbosMedia`. It routinely names a file whose bytes are still on the
      phone, which is why nothing here checks that it exists. */
@@ -5766,7 +5767,7 @@ const leadValidationSchema = z.object({
   dispatchFeedback: z.string().max(2000).nullish(),
   salesmanFeedback: z.string().max(2000).nullish(),
   confirmedRequirement: z.string().max(1000).nullish(),
-  confirmedMonthlyVolumeLitres: z.number().int().nonnegative().nullish(),
+  confirmedMonthlyVolumeLitres: litresSchema.nullish(),
   confirmedCompetitor: z.string().max(200).nullish(),
   confirmedPotentialPaise: z.number().int().nonnegative().nullish(),
 
@@ -6584,8 +6585,8 @@ const expenseDaySchema = z.object({
   arrivedAtDestinationAt: z.number().nullish(),
   overnight: wireBoolean.nullish(),
   stayedInHotel: wireBoolean.nullish(),
-  openingOdometerKm: z.number().int().nullish(),
-  closingOdometerKm: z.number().int().nullish(),
+  openingOdometerKm: kmSchema.nullish(),
+  closingOdometerKm: kmSchema.nullish(),
   tourId: z.string().nullish(),
   note: z.string().max(2000).nullish(),
 });
@@ -6683,8 +6684,8 @@ const travelLegSchema = z.object({
   visitId: z.string().nullish(),
   manualMetres: z.number().int().min(0).nullish(),
   manualReason: z.string().max(500).nullish(),
-  odometerStartKm: z.number().int().min(0).nullish(),
-  odometerEndKm: z.number().int().min(0).nullish(),
+  odometerStartKm: kmSchema.nullish(),
+  odometerEndKm: kmSchema.nullish(),
   odometerPhotoId: z.string().nullish(),
   /** The meter on arrival. See `mbosTravelLegs.odometerEndPhotoId`. */
   odometerEndPhotoId: z.string().nullish(),

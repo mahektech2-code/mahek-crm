@@ -29,7 +29,7 @@ import {
 import { Button, Callout, Card, controlClass, cx, Dot, EmptyState, Field, Input, PageHeader, Select, Td, Th } from "@/components/ui/primitives";
 import { Icon as ShellIcon } from "@/components/shell/icons";
 import { erpLink } from "@/lib/erp/registry";
-import { stamp } from "@/lib/format";
+import { cleanWhole, stamp } from "@/lib/format";
 import { BodyPortal } from "@/components/ui/body-portal";
 import { RowMenu } from "@/components/ui/overlays";
 import { useErpUi } from "../_ui/erp-ui";
@@ -1712,7 +1712,7 @@ function PurchaseDialog({
           }}
         >
           <Field label="Number of drums">
-            <Input autoFocus inputMode="numeric" value={d} onChange={(e) => setD(e.target.value.replace(/[^\d]/g, ""))} invalid={tried && drumsBad} placeholder="e.g. 4" />
+            <Input autoFocus inputMode="numeric" value={d} onChange={(e) => setD(cleanWhole(e.target.value))} invalid={tried && drumsBad} placeholder="e.g. 4" />
             {tried && drumsBad ? <span className="text-meta text-danger">Enter how many drums, a whole number.</span> : null}
           </Field>
           <Field label="PO number">

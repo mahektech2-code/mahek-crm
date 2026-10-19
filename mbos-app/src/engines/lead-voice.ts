@@ -1,5 +1,6 @@
 import type { AreaRule } from './lead-areas';
 import { matchLocation, type LocationMatch } from './lead-scan';
+import { cleanDecimal } from '../lib/decimal-input';
 
 /**
  * WHAT A SPOKEN DESCRIPTION PUTS IN THE NEW LEAD FORM — pure, so it is tested
@@ -164,6 +165,13 @@ function mobileDigits(raw: string): string {
   return d;
 }
 
+/* A figure as the box would hold it: two places, the same cap as the rupee
+   and litre boxes these land in. */
+function spokenNumber(raw: string): string {
+  const from = raw.search(/\d/);
+  return from === -1 ? '' : cleanDecimal(raw.slice(from), 2).replace(/\.$/, '');
+}
+
 export function voiceFill(args: {
   values: Record<LeadVoiceField, string>;
   ticked: Record<LeadVoiceField, boolean>;
@@ -186,13 +194,16 @@ export function voiceFill(args: {
     out.source = val('source');
     if (found.sourceDetail) out.sourceDetail = found.sourceDetail;
   }
-  /* Whole numbers only — the boxes they land in are number pads. */
-  if (val('potential').replace(/\D/g, '')) out.potential = val('potential').replace(/\D/g, '');
+  /* The point is kept — "30.5 litres" stripped to digits was 305. Read from
+     the first digit, so the point in "Rs. 40000" is not taken for a decimal. */
+  const potential = spokenNumber(val('potential'));
+  if (potential) out.potential = potential;
   if (val('followUp')) out.followUp = val('followUp');
   if (val('address')) out.address = val('address');
   if (val('custType')) out.custType = val('custType');
   if (val('requirement')) out.requirement = val('requirement');
-  if (val('litres').replace(/\D/g, '')) out.litres = val('litres').replace(/\D/g, '');
+  const litres = spokenNumber(val('litres'));
+  if (litres) out.litres = litres;
   if (val('decisionMaker')) out.decisionMaker = val('decisionMaker');
   if (val('competitor')) out.competitor = val('competitor');
   return out;

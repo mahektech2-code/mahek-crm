@@ -1684,7 +1684,7 @@ export const customers = pgTable(
      * litres a month" long before anybody knows what they will buy it as, and
      * litres is the only unit that sentence survives in.
      */
-    leadMonthlyVolumeLitres: integer("lead_monthly_volume_litres"),
+    leadMonthlyVolumeLitres: doublePrecision("lead_monthly_volume_litres"),
     /**
      * Who signs. Distinct from `contactPerson`, who is whoever answers the
      * phone — on the accounts where this matters they are routinely different
@@ -7210,7 +7210,7 @@ export const distributorProfiles = pgTable(
     deliveryCapability: text("delivery_capability"),
     hasWarehouse: boolean("has_warehouse"),
     /** Litres. The unit every capacity in MahekOne is measured in. */
-    storageCapacityLitres: integer("storage_capacity_litres"),
+    storageCapacityLitres: doublePrecision("storage_capacity_litres"),
 
     /* commercial capability */
     productPortfolio: text("product_portfolio"),
@@ -7243,7 +7243,7 @@ export const distributorProfiles = pgTable(
      * routing decision itself is in `lib/engines/lead-gates.ts`; these are the
      * numbers it reads.
      */
-    specialDiscountPercent: integer("special_discount_percent"),
+    specialDiscountPercent: doublePrecision("special_discount_percent"),
     agreedCreditLimitPaise: bigint("agreed_credit_limit_paise", { mode: "number" }),
     exclusivityGranted: boolean("exclusivity_granted"),
     commercialTermsNote: text("commercial_terms_note"),
@@ -7840,8 +7840,8 @@ export const mbosExpenseDays = pgTable(
     tourId: text("tour_id").references(() => mbosTours.id, { onDelete: "set null" }),
 
     /* ---- the odometer chain, so a gap in it is visible ---- */
-    openingOdometerKm: integer("opening_odometer_km"),
-    closingOdometerKm: integer("closing_odometer_km"),
+    openingOdometerKm: doublePrecision("opening_odometer_km"),
+    closingOdometerKm: doublePrecision("closing_odometer_km"),
     /**
      * Requirement 20's random draw, made in the OFFICE and sent down. A check
      * the handset rolls for itself is a check it can decline to fail.
@@ -7928,8 +7928,8 @@ export const mbosTravelLegs = pgTable(
     gpsReason: text("gps_reason"),
     manualMetres: integer("manual_metres"),
     manualReason: text("manual_reason"),
-    odometerStartKm: integer("odometer_start_km"),
-    odometerEndKm: integer("odometer_end_km"),
+    odometerStartKm: doublePrecision("odometer_start_km"),
+    odometerEndKm: doublePrecision("odometer_end_km"),
     odometerMetres: integer("odometer_metres"),
     /** The meter as he SET OFF. See `odometerEndPhotoId` below. */
     odometerPhotoId: text("odometer_photo_id").references(() => attachments.id),
@@ -8267,9 +8267,9 @@ export const mbosEvidenceReviews = pgTable(
     /** Required on a decline, by a check constraint and not only by a form. */
     remark: text("remark"),
     /** Odometer only: what the salesman typed, kept for ever. */
-    reportedKm: integer("reported_km"),
+    reportedKm: doublePrecision("reported_km"),
     /** Odometer only: what the manager read off the photograph. */
-    correctedKm: integer("corrected_km"),
+    correctedKm: doublePrecision("corrected_km"),
     decidedById: text("decided_by_id").references(() => users.id),
     decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -8874,7 +8874,7 @@ export const mbosLeadValidations = pgTable(
 
     /* What the SHOP says, as against what the salesman reported. */
     confirmedRequirement: text("confirmed_requirement"),
-    confirmedMonthlyVolumeLitres: integer("confirmed_monthly_volume_litres"),
+    confirmedMonthlyVolumeLitres: doublePrecision("confirmed_monthly_volume_litres"),
     confirmedCompetitor: text("confirmed_competitor"),
     confirmedPotentialPaise: bigint("confirmed_potential_paise", { mode: "number" }),
 
@@ -11014,7 +11014,7 @@ export const priceListDiscountTerms = pgTable(
       .references(() => priceLists.id, { onDelete: "cascade" }),
     kind: text("kind").notNull(),
     percentBp: integer("percent_bp").notNull(),
-    thresholdLitres: integer("threshold_litres"),
+    thresholdLitres: doublePrecision("threshold_litres"),
     thresholdPaise: bigint("threshold_paise", { mode: "number" }),
     rawText: text("raw_text"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

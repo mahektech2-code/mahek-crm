@@ -28,15 +28,7 @@ import {
   startStageOneBatch,
 } from "@/lib/actions/crm";
 import { toCsv, downloadCsv } from "@/lib/csv";
-import {
-  addDays,
-  ageLabel,
-  money,
-  shortDate,
-  signedMoney,
-  stamp,
-  today,
-} from "@/lib/format";
+import { addDays, ageLabel, money, rupeesFromPaise, shortDate, signedMoney, stamp, today } from "@/lib/format";
 
 import { PaymentPanel } from "@/components/crm/payment-panel";
 import type {
@@ -890,7 +882,7 @@ function PromiseModal(props: PromiseProps) {
 
 function PromiseModalBody({ row, onClose, onSubmit }: PromiseProps) {
   const [amount, setAmount] = React.useState(
-    String(Math.round((row?.totalOverdue ?? 0) / 100)),
+    rupeesFromPaise(row?.totalOverdue ?? 0),
   );
   const [promisedBy, setPromisedBy] = React.useState(addDays(today(), 7));
   const [note, setNote] = React.useState("");
@@ -983,7 +975,7 @@ function PaymentModal(props: PaymentProps) {
 function PaymentModalBody({ row, onClose, onSubmit, modes, datedModes, today: businessDay }: PaymentProps) {
   const [billId, setBillId] = React.useState(row?.openBills[0]?.id ?? "");
   const [amount, setAmount] = React.useState(
-    String(Math.round((row?.openBills[0]?.balance ?? 0) / 100)),
+    rupeesFromPaise(row?.openBills[0]?.balance ?? 0),
   );
   const [mode, setMode] = React.useState("Bank transfer");
   const [reference, setReference] = React.useState("");
@@ -1029,7 +1021,7 @@ function PaymentModalBody({ row, onClose, onSubmit, modes, datedModes, today: bu
             onChange={(e) => {
               setBillId(e.target.value);
               const next = row?.openBills.find((b) => b.id === e.target.value);
-              if (next) setAmount(String(Math.round(next.balance / 100)));
+              if (next) setAmount(rupeesFromPaise(next.balance));
             }}
           >
             {row?.openBills.map((b) => (
