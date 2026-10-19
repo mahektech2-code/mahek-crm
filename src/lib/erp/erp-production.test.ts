@@ -289,8 +289,10 @@ describe("re-order levels", () => {
     assert.equal(can?.v.available, 100 - 52);
     assert.equal(can?.v.required, 52);
     assert.equal(box?.v.available, 50 - 10);
+    /* Below MINIMUM is what lists a level: the can (48 < 50) is listed, the box
+       (40, above its minimum of 10 though under its maximum of 60) is not. */
     const reorder = await mod("reorderRm").load(ctx);
-    assert.deepEqual(reorder.rows.map((r) => r.v.item).sort(), ["Box6", "Tin can 5L"]);
+    assert.deepEqual(reorder.rows.map((r) => r.v.item).sort(), ["Tin can 5L"]);
   });
 
   test("a requisition's present quantity is the level's available figure", async () => {

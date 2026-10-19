@@ -16,6 +16,7 @@ import {
   users,
 } from "@/db/schema";
 import { err, fieldErr, ok, okVoid, type Result } from "@/lib/result";
+import { getConfig } from "@/lib/config/store";
 import type { ErpContext } from "../access";
 import { erpAudit, erpId, num, stampLine, text, type ScreenModule } from "../server";
 import { tooWide, unscoped, windowWhere } from "../window";
@@ -293,7 +294,30 @@ async function rmLevelForm(ctx: ErpContext, id?: string): Promise<FormSpec | nul
   };
 }
 
-type RmLevelRow = { id: string; godown: string; godownId: string; type: string; item: string; itemId: string; min: number; max: number; status: string; available: number | null; required: number | null; pct: number | null; by: string | null; updatedAt: Date; suggestion: LevelSuggestion | null };
+type RmPlan = {
+  min: number;
+  max: number;
+  statMin: number;
+  statMax: number;
+  baseDaily: number;
+  basis: string;
+  notes: string[];
+  confidence: string;
+  aiFactor: number;
+  aiReason: string | null;
+  monthFactor: number[];
+  weekOfMonthFactor: number[];
+};
+
+type RmLevelRow = { id: string; godown: string; godownId: string; type: string; item: string; itemId: string; min: number; max: number; status: string; available: number | null; required: number | null; pct: number | null; by: string | null; updatedAt: Date; suggestion: LevelSuggestion | null; auto: boolean; plan: RmPlan | null; plannedAt: Date | null; daysCover: number | null };
+
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** The planner's figures as a suggestion the ordinary "Apply suggestion" can set. */
+function planSuggestion(p: RmPlan | null): LevelSuggestion | null {
+  if (!p) return null;
+  return { min: p.min, max: p.max, perDay: p.baseDaily, recentPerDay: p.baseDaily, basis: p.basis, swing: p.notes.length ? p.notes.join(" ") : null };
+}
 
 async function rmLevelRows(): Promise<RmLevelRow[]> {
   const [rows, avail, suggest] = await Promise.all([
@@ -308,7 +332,9 @@ async function rmLevelRows(): Promise<RmLevelRow[]> {
   ]);
   return rows.map((x) => {
     const available = avail(x.l.materialType, x.l.rawMaterialId, x.l.godownId);
-    const suggestion = suggest.rm(x.l.materialType, x.l.rawMaterialId, x.l.godownId, x.unit === "Unit" ? "pcs" : "L");
+    const plan = (x.l.plan as RmPlan | null) ?? null;
+    /* The planner's figures, where it has read this item; the 90-day suggestion otherwise. */
+    const suggestion = planSuggestion(plan) ?? suggest.rm(x.l.materialType, x.l.rawMaterialId, x.l.godownId, x.unit === "Unit" ? "pcs" : "L");
     return {
       id: x.l.id,
       godown: x.godown,
@@ -325,13 +351,27 @@ async function rmLevelRows(): Promise<RmLevelRow[]> {
       by: x.by,
       updatedAt: x.l.updatedAt,
       suggestion,
+      auto: x.l.autoManaged,
+      plan,
+      plannedAt: x.l.plannedAt,
+      daysCover: plan && plan.baseDaily > 0 && available != null ? Math.round((available / plan.baseDaily) * 10) / 10 : null,
     };
   });
 }
 
-/** Followed levels that need buying (spec §10.2 "Re-Order Raw Items"). */
+/**
+ * Followed levels that need buying (spec §10.2 "Re-Order Raw Items"): stock
+ * under the MINIMUM, bought up to the maximum. It used to fire under the
+ * maximum, which with planned levels (a week and a half to hold, a week on
+ * top) would list nearly every item every day — the screen, the flag and the
+ * alert all said "below minimum" and now mean it.
+ */
+export function rmBelowMin(r: { status: string; available: number | null; min: number; required: number | null }): boolean {
+  return r.status === "Follow" && r.available != null && r.available < r.min && (r.required ?? 0) > 0;
+}
+
 export async function rmReorderRows(): Promise<RmLevelRow[]> {
-  return (await rmLevelRows()).filter((r) => r.status === "Follow" && (r.required ?? 0) > 0);
+  return (await rmLevelRows()).filter(rmBelowMin);
 }
 
 async function saveRmLevel(ctx: ErpContext, h: Record<string, string>, id?: string): Promise<Result<unknown>> {
@@ -344,8 +384,10 @@ async function saveRmLevel(ctx: ErpContext, h: Record<string, string>, id?: stri
   if (id) {
     const [before] = await db.select().from(erpRmLevels).where(eq(erpRmLevels.id, id));
     if (!before) return err("That level no longer exists.", "not_found");
-    await db.update(erpRmLevels).set({ minQty: min, maxQty: max, status, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpRmLevels.id, id));
-    await erpAudit(ctx, "erp.rmLevel.edit", "erp_rm_level", id, before, { min, max, status });
+    /* A person setting the figures takes the level off the planner: it never undoes a decision. */
+    const moved = before.minQty !== min || before.maxQty !== max;
+    await db.update(erpRmLevels).set({ minQty: min, maxQty: max, status, updatedAt: new Date(), updatedById: ctx.user.id, ...(moved ? { autoManaged: false } : {}) }).where(eq(erpRmLevels.id, id));
+    await erpAudit(ctx, "erp.rmLevel.edit", "erp_rm_level", id, before, { min, max, status, ...(moved && before.autoManaged ? { autoManaged: false } : {}) });
     return okVoid("Level saved");
   }
   const godownId = await godownIdByName(text(h.godown));
@@ -364,20 +406,45 @@ async function saveRmLevel(ctx: ErpContext, h: Record<string, string>, id?: stri
   return okVoid(`Level set for ${m.name}`);
 }
 
+/** What the drawer says about how a level was worked out. */
+function planFields(r: RmLevelRow): { l: string; v: string; der: boolean }[] {
+  const p = r.plan;
+  if (!p) {
+    return r.suggestion
+      ? [{ l: "Suggestion basis", v: r.suggestion.basis, der: true }, ...(r.suggestion.swing ? [{ l: "Recent use", v: r.suggestion.swing, der: true }] : [])]
+      : [{ l: "Plan", v: "No use or purchases recorded for this item at this godown yet.", der: true }];
+  }
+  const seasons = p.monthFactor.map((f, i) => `${MONTH_SHORT[i]} ${f.toFixed(2)}`).join(" · ");
+  const weeks = p.weekOfMonthFactor.map((f, i) => `${["1–7", "8–14", "15–21", "22–28", "29–31"][i]}: ${f.toFixed(2)}`).join(" · ");
+  return [
+    { l: "Set by", v: r.auto ? "The planner, every night" : "By hand — the planner's figures are shown beside it and never applied", der: true },
+    { l: "How it was worked out", v: p.basis, der: true },
+    { l: "Statistical level", v: `min ${p.statMin} · max ${p.statMax} (${p.confidence} confidence)`, der: true },
+    ...(p.aiReason ? [{ l: p.aiFactor === 1 ? "AI review" : `AI review (×${p.aiFactor})`, v: p.aiReason, der: true }] : []),
+    ...(p.notes.length ? [{ l: "Pattern", v: p.notes.join(" "), der: true }] : []),
+    { l: "Month factors", v: seasons, der: true },
+    { l: "Week of month", v: weeks, der: true },
+    ...(r.daysCover != null ? [{ l: "Days of stock now", v: `${r.daysCover} days at today's rate`, der: true }] : []),
+    ...(r.plannedAt ? [{ l: "Planned", v: stampLine(null, r.plannedAt).replace(/^Created/, "Planned"), der: true }] : []),
+  ];
+}
+
 function rmLevelList(key: "rmLevels" | "reorderRm"): ScreenModule {
   return {
     key,
     async load(ctx) {
       const reorder = key === "reorderRm";
-      const rows = reorder ? await rmReorderRows() : await rmLevelRows();
+      const [rows, cfg] = await Promise.all([reorder ? rmReorderRows() : rmLevelRows(), getConfig()]);
+      const planCover = cfg["erp.levels.coverDays"];
       const cols: ColSpec[] = [
         { k: "item", l: "Item", t: "b" },
         ...(reorder ? [] : ([{ k: "required", l: "Required", t: "n" }] as ColSpec[])),
         { k: "available", l: "Available", t: "n" },
+        { k: "days", l: "Days of stock", t: "n" },
         { k: "pct", l: "Re-order %", t: "n" },
         { k: "min", l: "Min", t: "n" },
-        ...(reorder ? [] : ([{ k: "max", l: "Max", t: "n" }, { k: "status", l: "Status", t: "s" }] as ColSpec[])),
-        ...(reorder ? [] : ([{ k: "sMin", l: "Suggested min", t: "n" }, { k: "sMax", l: "Suggested max", t: "n" }] as ColSpec[])),
+        ...(reorder ? [] : ([{ k: "max", l: "Max", t: "n" }, { k: "managed", l: "Set by", t: "s" }, { k: "status", l: "Status", t: "s" }] as ColSpec[])),
+        ...(reorder ? [] : ([{ k: "sMin", l: "Planned min", t: "n" }, { k: "sMax", l: "Planned max", t: "n" }] as ColSpec[])),
         { k: "godown", l: "Godown", t: "t" },
         { k: "type", l: "Material type", t: "s" },
         { k: "f", l: "Flags", t: "f" },
@@ -394,15 +461,27 @@ function rmLevelList(key: "rmLevels" | "reorderRm"): ScreenModule {
           bulk: reorder ? undefined : [{ id: "apply", l: "Apply suggestions", confirm: "Set every selected level to its suggested minimum and maximum?" }],
           newForm: reorder ? undefined : ((await rmLevelForm(ctx)) ?? undefined),
           newLabel: "New level",
+          tools: reorder
+            ? undefined
+            : [
+                {
+                  id: "planNow",
+                  l: "Plan levels now",
+                  confirm: `Work out every raw material's level again from its use and purchase history, so each godown holds ${planCover} days of stock? Levels somebody set by hand keep their figures.`,
+                },
+              ],
           noDataLine: reorder ? "Nothing to re-order. Every followed item is at or above its level." : "No levels set yet.",
         },
         rows: rows
           .sort((a, b) => (a.pct ?? Infinity) - (b.pct ?? Infinity))
           .map((r): ListRow => {
             const actions: ActionSpec[] = [];
+            /* Topping up is offered whenever there is room under the maximum; only under the minimum is it flagged. */
             if (reorder || (r.required ?? 0) > 0)
               actions.push({ id: "raise", l: "Raise requirement", primary: true, loadsForm: true });
-            if (!reorder && r.suggestion && (r.suggestion.min !== r.min || r.suggestion.max !== r.max))
+            if (!reorder && !r.auto && r.plan)
+              actions.push({ id: "autoOn", l: "Let the planner keep it", confirm: `Hand ${r.item} at ${r.godown} to the planner? It is set to min ${r.plan.min}, max ${r.plan.max} now and re-planned every night.` });
+            else if (!reorder && !r.auto && r.suggestion && (r.suggestion.min !== r.min || r.suggestion.max !== r.max))
               actions.push({ id: "apply", l: "Apply suggestion", confirm: `Set ${r.item} at ${r.godown} to min ${r.suggestion.min}, max ${r.suggestion.max}? ${r.suggestion.basis}` });
             if (!reorder) {
               actions.push({ id: "edit", l: "Edit", loadsForm: true });
@@ -411,9 +490,13 @@ function rmLevelList(key: "rmLevels" | "reorderRm"): ScreenModule {
             }
             return {
               id: r.id,
-              v: { item: r.item, required: r.required, available: r.available, pct: r.pct, min: r.min, max: r.max, status: r.status, godown: r.godown, type: r.type, sMin: r.suggestion?.min ?? null, sMax: r.suggestion?.max ?? null },
-              fields: r.suggestion ? [{ l: "Suggestion basis", v: r.suggestion.basis, der: true }, ...(r.suggestion.swing ? [{ l: "Recent use", v: r.suggestion.swing, der: true }] : [])] : [{ l: "Suggestion", v: "No use recorded at this godown in the look-back yet.", der: true }],
-              flags: (r.required ?? 0) > 0 && r.status === "Follow" ? ["below"] : [],
+              v: { item: r.item, required: r.required, available: r.available, days: r.daysCover, pct: r.pct, min: r.min, max: r.max, managed: r.auto ? "Planner" : "By hand", status: r.status, godown: r.godown, type: r.type, sMin: r.suggestion?.min ?? null, sMax: r.suggestion?.max ?? null },
+              fields: planFields(r),
+              flags: [
+                ...(rmBelowMin(r) ? ["below"] : []),
+                ...(r.auto ? ["autoLevel"] : []),
+                ...(r.plan && r.plan.aiFactor !== 1 ? ["aiAdjusted"] : []),
+              ],
               title: r.item,
               header: `${r.godown} · ${r.type}${r.required ? ` · buy ${nf(r.required)} to reach the maximum` : ""}`,
               actions,
@@ -440,11 +523,31 @@ function rmLevelList(key: "rmLevels" | "reorderRm"): ScreenModule {
         : {}),
     },
     forms: key === "rmLevels" ? { new: (ctx, h) => saveRmLevel(ctx, h), edit: (ctx, h, _l, id) => saveRmLevel(ctx, h, id) } : undefined,
+    tools:
+      key === "rmLevels"
+        ? {
+            async planNow(ctx) {
+              const { runLevelPlanner, plannerLine } = await import("../level-planner");
+              const r = await runLevelPlanner({ force: true, userId: ctx.user.id });
+              if (r.skipped) return err(`Not planned: ${r.skipped}.`, "rule_violation");
+              return okVoid(plannerLine(r));
+            },
+          }
+        : undefined,
     bulk: key === "rmLevels" ? { apply: (ctx, ids) => applyRm(ctx, ids) } : undefined,
     actions:
       key === "rmLevels"
         ? {
             apply: (ctx, id) => applyRm(ctx, [id]),
+            async autoOn(ctx, id) {
+              const [l] = await db.select().from(erpRmLevels).where(eq(erpRmLevels.id, id));
+              if (!l) return err("That level no longer exists.", "not_found");
+              const p = (l.plan as RmPlan | null) ?? null;
+              if (!p) return err("The planner has not read this item yet. Use “Plan levels now” first.", "rule_violation");
+              await db.update(erpRmLevels).set({ autoManaged: true, minQty: p.min, maxQty: p.max, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpRmLevels.id, id));
+              await erpAudit(ctx, "erp.rmLevel.autoOn", "erp_rm_level", id, l, { min: p.min, max: p.max, autoManaged: true });
+              return okVoid("The planner keeps this level now");
+            },
             async delete(ctx, id) {
               const [before] = await db.select().from(erpRmLevels).where(eq(erpRmLevels.id, id));
               if (!before) return err("That level no longer exists.", "not_found");

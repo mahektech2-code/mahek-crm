@@ -462,6 +462,8 @@ export const FLAG: Record<string, [string, Tone]> = {
   detailed: ["In order details", "neutral"],
   cnSync: ["CN out of sync", "warn"],
   below: ["Below level", "danger"],
+  autoLevel: ["Planned automatically", "brand"],
+  aiAdjusted: ["Adjusted by AI", "info"],
   noLevel: ["No level set", "neutral"],
   notPosted: ["Not posted to inventory", "warn"],
   overRecipe: ["Above the recipe", "warn"],

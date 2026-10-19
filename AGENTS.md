@@ -50,6 +50,9 @@ npm run jobs -- erp-alerts                 # the ERP's unusual-activity checks �
                            # they also run hourly
 npm run jobs -- erp-digest                 # yesterday's owner summary — it also
                            # runs nightly
+npm run jobs -- erp-levels-plan --dry-run  # raw-material re-order levels from
+                           # history, writing nothing — without the flag it writes;
+                           # it also runs nightly and on every deploy (once a day)
 npm run jobs -- field-activity-reparse     # re-read every stored EMP 2.0
                            # activity date in its own read's day/month order
                            # (also runs after the daily reconcile)
@@ -2360,6 +2363,25 @@ how overdue against the class's cycle (halved after a discrepancy), movement
 and past discrepancies, up to `erp.stockCheck.dailyCount` per day. One open
 count per shelf (a partial unique index); `openCount` answers with the open
 one rather than opening a second.
+
+**RAW-MATERIAL LEVELS ARE PLANNED FROM HISTORY, A WEEK AND A HALF AT A TIME.**
+`runLevelPlanner` (`lib/erp/level-planner.ts`) sets every raw material's
+minimum at every godown to the forecast use over `erp.levels.coverDays` (10.5)
+and the maximum to that plus `erp.levels.orderCycleDays`. The model is pure in
+`engines/stock-plan.ts`: the RATE from production use (purchases where use is
+not recorded), MONTH factors from whichever series reaches back further, and
+WEEK-OF-MONTH factors from use only — when a drum is bought is the buyer's
+calendar, not the shelf's. Both factors are ratio-to-moving-average, so growth
+is taken out first, and shrunk by how much history stands behind them. An AI
+review (`erp.ai.levels.*`, feature `levels`) may move a level by at most
+`maxAdjustPercent`, with a reason on the level; without it the statistics
+stand. `auto_managed` (0280) marks a level the planner keeps: a hand edit of
+min or max clears it and the planner never touches that level again; "Let the
+planner keep it" hands it back. It runs nightly before the alert pass, in
+`deploy:db` (which it never fails) and from "Plan levels now"; `planned_at`
+makes it once a day. A raw-material level is now BELOW when stock is under
+the MINIMUM (`rmBelowMin`) — it used to fire under the maximum, which with
+planned levels would list nearly every item every day.
 
 **MISSING RECORDS ARE A LIST, NOT A FIX.** `missingRecords` finds SFG lines
 without an SFG entry, fills without an FG entry, register lots not in stock,
