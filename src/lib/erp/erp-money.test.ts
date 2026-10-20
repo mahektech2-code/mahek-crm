@@ -21,6 +21,7 @@ import { ERP_SCREENS, erpKeysOf } from "@/lib/erp/registry";
 import * as M from "@/lib/erp/money";
 import { recordReceipt as recordScrapReceipt, voidReceipt as voidScrapReceipt } from "@/lib/erp/drums";
 import { FROM_CUSTOMER_CASH, FROM_WITHDRAWAL } from "@/lib/erp/engines/money";
+import * as V from "@/lib/erp/money-views";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const msg = (r: { ok: boolean; fieldErrors?: { message: string }[]; error?: string }) => (r.ok ? "ok" : (r.fieldErrors?.[0]?.message ?? r.error ?? "?"));
@@ -321,5 +322,34 @@ describe("the screens", () => {
     assert.ok((await mod("pettyExpenses").forms!.new(ctx, { ...f!.init!, amount: "150" }, [], t.id)).ok);
     const [t2] = await M.txnRows(sql`t.id = ${t.id}`);
     assert.deepEqual([t2.txnNo, t2.amountPaise], [t.txnNo, 150_00]);
+  });
+
+  test("Petty Cash's own screens read every list, the drawer, an advance, a statement and the bank view", async () => {
+    const ctx = await as(head);
+    const day = today();
+    const keys = Object.keys(V.TXN_VIEWS);
+    for (const k of keys) {
+      const v = await V.txnView(k, { period: "all" }, day);
+      assert.ok(Array.isArray(v.rows), k);
+      assert.ok(v.total >= v.rows.length, k);
+      await V.filterOptions(k);
+    }
+    const counts = await V.tabCounts([...keys, "advances", "bankLines"], "month", day);
+    assert.equal(typeof counts.expenses, "number");
+    const kit = await V.moneyKitData(day);
+    assert.ok(kit.accounts.length >= 4);
+    assert.match(kit.nextTxn, /^TXN-\d{2}-\d{5}$/);
+    const st = await V.statementView("macc_cash", "all", day);
+    assert.ok(st);
+    assert.equal(st.closing, st.opening + st.inPaise - st.outPaise);
+    const [any] = await M.txnRows(sql`t.status = 'active'`);
+    const d = await V.txnDetail(any.id);
+    assert.equal(d?.t.id, any.id);
+    for (const a of await V.advanceList()) assert.equal((await V.advanceView(a.id))?.a.id, a.id);
+    const b = await V.bankView(null, "all", null, 7);
+    assert.ok(b && b.counts.all >= 0);
+    assert.deepEqual(V.periodRange("last", "2026-03-15"), { from: "2026-02-01", to: "2026-02-28" });
+    assert.deepEqual(V.periodRange("fy", "2026-03-15"), { from: "2025-04-01", to: "2026-03-15" });
+    void ctx;
   });
 });

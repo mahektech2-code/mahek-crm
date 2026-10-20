@@ -158,6 +158,7 @@ export function ListScreen({
   initialNew,
   server,
   openRow,
+  bare = false,
 }: {
   spec: ListSpec;
   /** Every row, or — with `server` — the one page the server cut. */
@@ -190,6 +191,8 @@ export function ListScreen({
   server?: ListPage & { query: ListQuery };
   /** The record `?open=` names, sent beside the page because it may be on another one. */
   openRow?: ListRow | null;
+  /** Drawn inside a page that already has its own heading (Petty Cash): no title, its buttons on a row of their own. */
+  bare?: boolean;
 }) {
   const ui = useErpUi();
   const { flags: FLAG, place, exportList, listIds } = useKit();
@@ -369,8 +372,9 @@ export function ListScreen({
     setQuery({ sort: { k, d: on && view.srt!.d > 0 ? -1 : 1 } });
   };
 
+  const Frame = bare ? BareFrame : Page;
   return (
-    <Page
+    <Frame
       title={label}
       sub={sub}
       actions={
@@ -761,7 +765,7 @@ export function ListScreen({
       ) : null}
 
       {open ? <RecordDialog key={open.id} screen={spec} kind={label} row={open} onClose={closeRec} /> : null}
-    </Page>
+    </Frame>
   );
 }
 
@@ -884,4 +888,14 @@ function Cell({ c, r, edge, cols, lead, small }: { c: ColSpec; r: ListRow; edge?
 /** A query as the export and select-all actions take it: the URL's keys, plus the dashboard's ids. */
 function listQueryParamsWithIds(q: ListQuery): Record<string, string> {
   return { ...listQueryParams(q), ...(q.ids ? { f: q.ids.join(",") } : {}) };
+}
+
+/** A list inside a page that already carries its heading: the buttons on their own row, then the list. */
+function BareFrame({ actions, children }: { title: string; sub?: React.ReactNode; actions?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div>
+      {actions ? <div className="mb-3 flex flex-wrap justify-end gap-2.5 empty:hidden">{actions}</div> : null}
+      {children}
+    </div>
+  );
 }

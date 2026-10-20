@@ -2653,13 +2653,25 @@ original in the drum's history.
 
 ## Petty Cash
 
+**ITS SCREENS ARE ITS OWN, DRAWN AS THE MOCKUPS (docs/erp/money-flow).**
+`app/erp/expenses/page.tsx` routes each tab: the lists, the four statements,
+an advance's page (`?adv=`) and the bank statement are `screens.tsx`; the
+dialogs (`?dlg=expense|petty|receipt|transfer|advance|bills`, which "+ New"
+links to) are `money-dialogs.tsx` on `money-ui.tsx`'s pieces (account letter,
+Paid-from cards saying balance before → after, three-bar steps); a row opens
+its record in a drawer (`?open=`, `money-client.tsx`). Reports, Audit trail,
+Accounts and Old records stay the generic `ListScreen` (`bare`). The reads
+are `lib/erp/money-views.ts`, the writes `lib/actions/erp-money.ts` — both
+over `lib/erp/money.ts`, so a rule is still checked once. A receipt's "apply
+to open invoices" is SHOWN against the CRM's bills and stored as text on the
+receipt; it writes nothing to the CRM ledger.
+
 **ONE MODULE, FOUR SUB-MODULES, TABS UNDER EACH — and it replaced the old
 "Petty Cash/Bank" (Oct 2026).** The ERP's `expenses` screen (so `erp.expenses`
 is the grant it always was) is Overview, Expenses, Receipts and Cash & Bank
 across the top, drawn from `ErpView.section` in the registry: `screenTabs`
 returns `sections`, `SectionTabs` draws them, and a section is a way of
-drawing tabs, never a module. `app/erp/expenses/page.tsx` draws Overview ›
-Today and hands every other tab to `ListScreen`. The old per-employee funds
+drawing tabs, never a module. The old per-employee funds
 given and expenses (`erp_credits`, `erp_expenses`) are written by nothing and
 read by the Old records tab.
 

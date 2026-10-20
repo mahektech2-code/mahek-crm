@@ -86,13 +86,13 @@ const approverWhy = (ctx: ErpContext) => (ctx.powers.has("approveMoney") ? "" : 
 const WIN: ScreenWindow = { label: "Date", default: "month" };
 
 /** "+ New ▾" on every Petty Cash tab: each kind of record, opening its form on its own tab. */
-function newMenu(): { l: string; sub: string; href: string }[] {
+export function newMenu(): { l: string; sub: string; href: string }[] {
   return [
-    { l: "Expense", sub: "a cost we paid", href: erpLink("expenses", { new: "1" }) },
-    { l: "Petty cash expense", sub: "production's small spends", href: erpLink("pettyExpenses", { new: "1" }) },
-    { l: "Receipt", sub: "money that came in", href: erpLink("moneyReceipts", { new: "1" }) },
-    { l: "Transfer", sub: "bank ↔ cash, bank ↔ bank", href: erpLink("moneyTransfers", { new: "1" }) },
-    { l: "Advance", sub: "a lump sum to an employee", href: erpLink("advances", { new: "1" }) },
+    { l: "Expense", sub: "a cost we paid", href: erpLink("expenses", { dlg: "expense" }) },
+    { l: "Petty cash expense", sub: "production's small spends", href: erpLink("pettyExpenses", { dlg: "petty" }) },
+    { l: "Receipt", sub: "money that came in", href: erpLink("moneyReceipts", { dlg: "receipt" }) },
+    { l: "Transfer", sub: "bank ↔ cash, bank ↔ bank", href: erpLink("moneyTransfers", { dlg: "transfer" }) },
+    { l: "Advance", sub: "a lump sum to an employee", href: erpLink("advances", { dlg: "advance" }) },
   ];
 }
 

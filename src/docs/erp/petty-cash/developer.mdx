@@ -1,4 +1,4 @@
-Petty Cash is one ERP screen (`expenses`, so its grant `erp.expenses` is the one it always was) with fifteen tabs in four sections (`ErpView.section`). `app/erp/expenses/page.tsx` draws the Overview board and hands every other tab to `ListScreen`, exactly as `[slug]/page.tsx` does.
+Petty Cash is one ERP screen (`expenses`, so its grant `erp.expenses` is the one it always was) with fifteen tabs in four sections (`ErpView.section`). `app/erp/expenses/page.tsx` routes each tab to Petty Cash's own screens (`screens.tsx`: the lists, statements, an advance's page, the bank statement), opens the dialogs `?dlg=` names (`money-dialogs.tsx`) and the drawer `?open=` names; Reports, Audit trail, Accounts and Old records are the ordinary `ListScreen`.
 
 ## Map of the code
 
@@ -9,7 +9,10 @@ Petty Cash is one ERP screen (`expenses`, so its grant `erp.expenses` is the one
 | Rules (pure) | `src/lib/erp/engines/money.ts` | legs, balances, statements, advances, duplicates, bank parsing and matching |
 | Reads and writes | `src/lib/erp/money.ts` | `saveExpense`, `saveReceipt`, `saveTransfer`, advances, bank lines, `moneyOverview` |
 | Screens | `src/lib/erp/screens/money.ts` | every tab's module and form |
-| Board | `src/app/erp/expenses/page.tsx` | Overview › Today |
+| Page | `src/app/erp/expenses/page.tsx` | routes every tab |
+| Screens | `src/app/erp/expenses/screens.tsx` | lists, statement, drawer, advance page, bank view |
+| Dialogs | `src/app/erp/expenses/money-dialogs.tsx` | expense, petty cash, receipt, transfer, advance, bills |
+| Reads / writes | `src/lib/erp/money-views.ts`, `src/lib/actions/erp-money.ts` | the screens' reads, the dialogs' server actions |
 | Record panel | `src/app/erp/_ui/panels/money.tsx` | figures, where the money went, the bills |
 | Scrap receipts | `src/lib/erp/drums.ts` | `recordReceipt` writes the money row in its own transaction |
 
