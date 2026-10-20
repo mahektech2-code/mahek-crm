@@ -186,6 +186,22 @@ async function navCounts(ctx: ErpContext): Promise<Record<string, number>> {
         if (ctx.screens.has("cashReceipts") && ctx.powers.has("scrapAccounts")) out.cashReceipts = Number(r[0]?.unmatched ?? 0);
       }),
     );
+  /* Petty Cash: what waits for the accountant — expenses to review and bank lines nothing explains — and advances whose bills are late. */
+  if (ctx.screens.has("moneyReview"))
+    jobs.push(
+      (db.execute(sql`
+        select (select count(*) from erp_money_txns where status = 'active' and review = 'to_review')::int as review,
+               (select count(*) from erp_bank_lines l where l.status = 'open' and not exists (select 1 from erp_bank_matches m where m.line_id = l.id and m.voided_at is null))::int as lines,
+               (select count(*) from erp_advances a where a.status = 'open' and a.bills_due_on < (now() at time zone ${APP_TIMEZONE})::date
+                   and not exists (select 1 from erp_money_txns t where t.advance_id = a.id and t.kind = 'expense' and t.status = 'active'))::int as late
+      `) as unknown as Promise<{ review: number; lines: number; late: number }[]>).then((r) => {
+        if (ctx.powers.has("approveMoney")) {
+          out.moneyReview = Number(r[0]?.review ?? 0);
+          out.bankLines = Number(r[0]?.lines ?? 0);
+        }
+        out.advances = Number(r[0]?.late ?? 0);
+      }),
+    );
   /* Material returns: returns waiting for an approver, outwards prepared and not confirmed, and material waiting in quarantine for QC. */
   if (["vendorReturns", "returnOutwards", "returnQc"].some((k) => ctx.screens.has(k)))
     jobs.push(

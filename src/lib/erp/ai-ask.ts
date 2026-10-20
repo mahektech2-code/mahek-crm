@@ -111,9 +111,9 @@ export function askTools(ctx: ErpContext, records: AskRecord[]) {
       execute: async ({ status, match }) => fromScreen(ctx, "requests", (r) => has(r.v.status, status) && anyHas(r, match), [status, match].filter(Boolean).join(" · ") || "all", records),
     }),
     pettyCash: tool({
-      description: "Petty-cash expenses and the cash each person still holds, by person or godown.",
+      description: "Petty Cash expenses this month, paid or cancelled, by words to match (payee, category, account, TXN number).",
       inputSchema: z.object({ match: z.string().nullable() }),
-      execute: async ({ match }) => fromScreen(ctx, "expenses", (r) => anyHas(r, match), match || "all", records),
+      execute: async ({ match }) => fromScreen(ctx, "moneyTxns", (r) => anyHas(r, match), match || "all", records),
     }),
   };
 }

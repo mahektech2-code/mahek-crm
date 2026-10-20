@@ -35,6 +35,7 @@ export const ERP_POWERS = [
   "scrapApprove",
   "returnApprove",
   "returnQc",
+  "approveMoney",
 ] as const;
 
 export type ErpPower = (typeof ERP_POWERS)[number];
@@ -113,7 +114,7 @@ export const ERP_POWER_LABEL: Record<ErpPower, { label: string; source: string }
     source: "Records scrap sales (empty Mahek-owned drums are taken oldest first) and returnable drum outwards to suppliers, records non-drum scrap, and classifies an empty drum whose ownership is unknown — the Production Head (new in MahekOne).",
   },
   scrapAccounts: {
-    label: "Match Petty Cash/Bank receipts to scrap sales",
+    label: "Record scrap buyers' receipts and match them to scrap sales",
     source: "Records money received from scrap buyers and matches it, in part or in full, to their scrap sales — the accountant. Production cannot mark a sale paid (new in MahekOne).",
   },
   scrapApprove: {
@@ -127,6 +128,10 @@ export const ERP_POWER_LABEL: Record<ErpPower, { label: string; source: string }
   returnQc: {
     label: "Decide returned material (QC)",
     source: "Decides what happens to a customer return in quarantine — reuse, rework, chemical scrap or waste — completes a rework and records a waste disposal (new in MahekOne).",
+  },
+  approveMoney: {
+    label: "Accountant for Petty Cash",
+    source: "Approves or sends back expenses, petty cash and bills against advances, settles advances, cancels any transaction, sets up the bank and cash accounts, and imports and matches bank statements. Nobody approves what they entered themselves, unless they are an ERP administrator (new in MahekOne).",
   },
 };
 

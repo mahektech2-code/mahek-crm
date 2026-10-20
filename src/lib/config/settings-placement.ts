@@ -220,6 +220,7 @@ const RULES: Rule[] = [
   { test: /^erp\.stockCheck\./, page: "erp", tab: "general", group: "Inventory accuracy" },
   { test: /^erp\.levels\./, page: "erp", tab: "general", group: "Re-order levels" },
   { test: /^erp\.returns\./, page: "erp", tab: "general", group: "Material returns" },
+  { test: /^erp\.money\./, page: "erp", tab: "general", group: "Petty Cash" },
   { test: /^erp\.drums\./, page: "erp", tab: "general", group: "Empty drums and scrap" },
   { test: /^erp\.ai\.alerts\.enabled$/, page: "erp", tab: "alerts", group: "Switch" },
   { test: /^erp\.ai\.alerts\./, page: "erp", tab: "alerts", group: "Thresholds" },

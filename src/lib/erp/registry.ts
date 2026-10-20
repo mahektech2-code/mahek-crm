@@ -38,6 +38,13 @@ export type ErpView = {
    * entry log behind an "available stock" tab. Drawn as a toggle.
    */
   alt?: { key: string; label: string; back: string };
+  /**
+   * The sub-module a tab sits under, where a screen has two levels — Petty
+   * Cash is one screen with four sub-modules across the top (Overview,
+   * Expenses, Receipts, Cash & Bank), each with its own tabs. Still one grant:
+   * a section is a way of drawing the tabs, never a module.
+   */
+  section?: string;
 };
 
 export type ErpScreen = {
@@ -69,7 +76,9 @@ const s = (key: string, slug: string, label: string, sub: string, built = false,
   ...(views ? { views } : {}),
 });
 
-const v = (key: string, label: string, alt?: ErpView["alt"]): ErpView => ({ key, label, ...(alt ? { alt } : {}) });
+const v = (key: string, label: string, alt?: ErpView["alt"], section?: string): ErpView => ({ key, label, ...(alt ? { alt } : {}), ...(section ? { section } : {}) });
+/** A tab under a sub-module (`ErpView.section`). */
+const sv = (section: string, key: string, label: string): ErpView => v(key, label, undefined, section);
 
 export const ERP_GROUPS: ErpGroup[] = [
   {
@@ -260,18 +269,38 @@ export const ERP_GROUPS: ErpGroup[] = [
         v("scrapReceivables", "Receivables & ageing"),
         v("scrapStock", "Scrap stock", { key: "scrapEntries", label: "Entries", back: "On hand" }),
         v("scrapBuyers", "Scrap buyers"),
+        v("cashReceipts", "Receipts"),
       ]),
     ],
   },
   {
     id: "expenses",
-    label: "Petty Cash/Bank",
+    label: "Petty Cash",
     icon: "wallet",
     screens: [
-      s("expenses", "expenses", "Petty Cash/Bank", "Funds given, what was spent, and money received.", true, [
-        v("expenses", "Expenses"),
-        v("credits", "Funds given"),
-        v("cashReceipts", "Receipts"),
+      /* ONE module (`erp.expenses`, the grant it always was), four sub-modules, tabs under each. */
+      s("expenses", "expenses", "Petty Cash", "Expenses, receipts, cash and bank — each transaction entered once.", true, [
+        sv("Overview", "moneyOverview", "Today"),
+        sv("Overview", "moneyReports", "Reports"),
+        sv("Overview", "moneyAudit", "Audit trail"),
+        sv("Expenses", "expenses", "Paid"),
+        sv("Expenses", "pettyExpenses", "Production petty cash"),
+        sv("Expenses", "advances", "Advances"),
+        sv("Expenses", "moneyReview", "Needs approval"),
+        sv("Expenses", "expensesCancelled", "Cancelled"),
+        sv("Expenses", "moneyTxns", "All"),
+        sv("Receipts", "moneyReceipts", "All"),
+        sv("Receipts", "receiptsBank", "Bank"),
+        sv("Receipts", "receiptsCash", "Cash"),
+        sv("Receipts", "receiptsUnmatched", "Not matched to bank"),
+        sv("Cash & Bank", "moneyTransfers", "Transfers"),
+        sv("Cash & Bank", "stmtKotak", "Kotak"),
+        sv("Cash & Bank", "stmtIcici", "ICICI"),
+        sv("Cash & Bank", "stmtCash", "Cash"),
+        sv("Cash & Bank", "stmtPetty", "Petty Cash"),
+        sv("Cash & Bank", "bankLines", "Bank statement"),
+        sv("Cash & Bank", "moneyAccounts", "Accounts"),
+        sv("Cash & Bank", "legacyPetty", "Old records"),
       ]),
     ],
   },

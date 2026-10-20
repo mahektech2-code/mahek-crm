@@ -4399,6 +4399,38 @@ export const SETTINGS = [
     max: 100000,
   },
   {
+    key: "erp.money.approvalAbovePaise",
+    type: "integer",
+    category: "erp",
+    label: "Office expense needing the accountant's review (paise)",
+    description:
+      "An office expense on Petty Cash → Expenses worth more than this goes to the accountant's review list after it is recorded. Petty cash and bills against an advance are always reviewed, whatever their size. It never stops the expense being recorded: an expense is entered when it is paid. 0 sends no office expense for review. In paise: 50,00,000 is ₹50,000.",
+    default: 5_000_000,
+    min: 0,
+  },
+  {
+    key: "erp.money.advanceBillsDays",
+    type: "integer",
+    category: "erp",
+    label: "Days an employee has to submit bills against an advance",
+    description:
+      "When an advance is given, the day its bills are due is this many days later, unless the person giving it chooses another day. An advance with no bills past that day is flagged on Petty Cash → Advances and the overview.",
+    default: 7,
+    min: 1,
+    max: 90,
+  },
+  {
+    key: "erp.money.bankMatchDays",
+    type: "integer",
+    category: "erp",
+    label: "Days either side a bank line may match a transaction",
+    description:
+      "On Petty Cash → Bank statement, a transaction is offered as a match for a bank line when the amount agrees and their dates are within this many days. A line that names the transaction's UTR or cheque number is offered whatever the dates.",
+    default: 7,
+    min: 0,
+    max: 60,
+  },
+  {
     key: "erp.returns.ownerApprovalPaise",
     type: "integer",
     category: "erp",
@@ -6473,6 +6505,9 @@ export type Config = {
   "erp.purchase.receiptTolerancePercent": number;
   "erp.purchase.poWatiTemplate": string;
   "erp.purchase.poGstPercent": number;
+  "erp.money.approvalAbovePaise": number;
+  "erp.money.advanceBillsDays": number;
+  "erp.money.bankMatchDays": number;
   "erp.returns.ownerApprovalPaise": number;
   "erp.returns.unallocatedDays": number;
   "erp.stockCheck.onRequirement": boolean;

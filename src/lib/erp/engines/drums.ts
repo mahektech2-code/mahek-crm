@@ -9,7 +9,7 @@
  * sold. An unknown owner is never guessed — the drum waits for review.
  *
  * A scrap sale is a receivable. What is owed is the sale less what an
- * accountant matched to it from Petty Cash/Bank receipts — read, never
+ * accountant matched to it from scrap receipts — read, never
  * stored, so a voided match gives the balance back on its own.
  * ------------------------------------------------------------------------- */
 

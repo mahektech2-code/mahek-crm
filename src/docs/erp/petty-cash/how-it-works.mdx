@@ -1,23 +1,57 @@
-Petty cash keeps two lists — money given to a person and money that person spent — and works out what each person still holds from the two. Nothing is stored as a balance.
+Petty Cash keeps one table of transactions. A transaction takes its amount off one account and puts it on another (or off one and onto nothing, for an expense), and every balance on every screen is the sum of those moves. No balance is stored, so no balance can disagree with the transactions behind it.
 
-<Rule title="A balance is per person, godown and mode">
-What somebody holds is everything given to them at a godown in one mode (Bank Cash, Cash or Other), less everything spent by them there in that mode. The spender is who the expense names under *Expense by*, not who typed it.
+<Rule title="One movement, one transaction, posted once">
+Each real movement of money is one row with one number. An expense, a receipt, a transfer, an advance and its settlement are each one row. A bank line is matched to the rows that explain it; it is never entered a second time. Creating a transaction from a bank line is refused while something already on the books may be that line.
 </Rule>
 
-<Rule title="A manager verifies, and a verified expense is closed">
-Anybody with the screen records funds and expenses. Verifying, and moving an expense back to Pending, is an ERP manager's or administrator's, checked in the action as well as on the button. A verified expense's amount cannot be changed.
+<Rule title="An expense is entered when it is paid">
+There is no unpaid or pending expense. The form asks which account the money left, how and its reference. That is the record of the payment.
 </Rule>
+
+<Rule title="A transfer is never income or expense">
+Bank → cash, cash → bank and bank → bank move money between our own accounts. Both balances change together; nothing is spent.
+</Rule>
+
+<Rule title="Cash is traced to where it came from">
+Petty cash paid out of a customer's cash, or out of a withdrawal, names that receipt or withdrawal. It can never spend more than is left of it. A cash receipt shows where its cash went: deposited, spent, or still in hand.
+</Rule>
+
+<Rule title="An advance is the employee's until their bills are approved">
+Giving an advance moves money out of an account into the employee's hands; it is not an expense. Their bills are expenses drawn from the advance and move no account a second time. Settling needs every bill decided. The unspent part comes back to an account, or what they spent beyond it is paid to them — one transaction either way. An employee holds one open advance at a time.
+</Rule>
+
+<Rule title="Review">
+Petty cash and bills against an advance always go to the accountant. An office expense goes to them above <Setting k="erp.money.approvalAbovePaise" /> paise. Review never stops the payment being recorded. A bill sent back comes back to review once it is corrected. Nobody approves what they entered themselves, unless they are an ERP administrator.
+</Rule>
+
+<Rule title="Nothing is deleted">
+A wrong transaction is cancelled with a reason. It stays on record and counts in no balance. Cancelling is refused while a bank line is matched to it, or while cash from it has been paid onward.
+</Rule>
+
+## Settings
+
+| Setting | What it does |
+|---|---|
+| <SettingMap k="erp.money.approvalAbovePaise" /> | An office expense above this goes to review |
+| <SettingMap k="erp.money.advanceBillsDays" /> | Days after an advance its bills are due |
+| <SettingMap k="erp.money.bankMatchDays" /> | Days either side a bank line may match a transaction by amount |
+
+## Who may do what
+
+- **Module:** <ModuleRef k="erp.expenses" />. Holding it opens all four parts and every tab.
+- Anybody with the module records expenses, petty cash, receipts, transfers and advances, submits bills, and corrects or cancels what they entered before it is approved.
+- The **Accountant for Petty Cash** power reviews, settles advances, cancels anything, sets up the accounts and their opening balances, and imports and matches bank statements.
 
 ## Alerts
 
 | Alert | When it is raised |
 |---|---|
-| Duplicate-looking expense | One person records the same amount for the same particular within <Setting k="erp.ai.alerts.duplicateExpenseDays" /> days |
-| Petty cash below zero | A person has spent more than they were given at a godown in a mode |
+| Duplicate-looking expense | The same amount to the same payee in the same category within <Setting k="erp.ai.alerts.duplicateExpenseDays" /> days |
+| Cash account below zero | Cash in Hand or Petty Cash shows more paid out than was ever put in |
 
 Both clear themselves once the condition is gone — see [alerts](/docs/erp/alerts-and-ai/how-it-works).
 
-## Access
+## Where the code and the intent disagree today
 
-- **Module:** <ModuleRef k="erp.expenses" />; both tabs come with it.
-- Categories, particulars and credit notes are the ERP's reference lists, edited in ERP Settings.
+- A customer's receipt here records the bills it pays as written. It does not write the CRM ledger: Accounts still confirm customer money there.
+- An employee submits bills from the ERP. There is no factory-phone screen for it yet.

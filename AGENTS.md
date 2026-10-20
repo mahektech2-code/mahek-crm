@@ -2651,6 +2651,68 @@ Weight corrections, cancelled entries, cancelled sales (only with nothing
 matched) and cancelled outwards need `scrapApprove` and a reason, and keep the
 original in the drum's history.
 
+## Petty Cash
+
+**ITS SCREENS ARE ITS OWN, DRAWN AS THE MOCKUPS (docs/erp/money-flow).**
+`app/erp/expenses/page.tsx` routes each tab: the lists, the four statements,
+an advance's page (`?adv=`) and the bank statement are `screens.tsx`; the
+dialogs (`?dlg=expense|petty|receipt|transfer|advance|bills`, which "+ New"
+links to) are `money-dialogs.tsx` on `money-ui.tsx`'s pieces (account letter,
+Paid-from cards saying balance before → after, three-bar steps); a row opens
+its record in a drawer (`?open=`, `money-client.tsx`). Reports, Audit trail,
+Accounts and Old records stay the generic `ListScreen` (`bare`). The reads
+are `lib/erp/money-views.ts`, the writes `lib/actions/erp-money.ts` — both
+over `lib/erp/money.ts`, so a rule is still checked once. A receipt's "apply
+to open invoices" is SHOWN against the CRM's bills and stored as text on the
+receipt; it writes nothing to the CRM ledger.
+
+**ONE MODULE, FOUR SUB-MODULES, TABS UNDER EACH — and it replaced the old
+"Petty Cash/Bank" (Oct 2026).** The ERP's `expenses` screen (so `erp.expenses`
+is the grant it always was) is Overview, Expenses, Receipts and Cash & Bank
+across the top, drawn from `ErpView.section` in the registry: `screenTabs`
+returns `sections`, `SectionTabs` draws them, and a section is a way of
+drawing tabs, never a module. The old per-employee funds
+given and expenses (`erp_credits`, `erp_expenses`) are written by nothing and
+read by the Old records tab.
+
+**ONE MOVEMENT OF MONEY IS ONE ROW, POSTED ONCE.** `erp_money_txns`, numbered
+from the `moneyTxn` series (`TXN-26-00423`), takes its amount off
+`from_account_id` and puts it on `to_account_id`; every balance is the
+account's opening plus those legs, read and never stored (`engines/money.ts`,
+pure; `lib/erp/money.ts`, the writes; `screens/money.ts`, the tabs). Check
+constraints hold the shape of each kind. **An expense is entered when it is
+PAID** — there is no unpaid or pending state, by Mahek's instruction: the
+form names the account it left. A transfer (bank ↔ cash, bank ↔ bank) is never
+income or expense. A cancelled row counts nowhere and nothing is deleted;
+cancelling is refused while a bank line is matched to it or cash from it was
+paid onward.
+
+**CASH IS TRACED.** Petty cash paid from a customer's cash or from a
+withdrawal is Cash in Hand with `source_txn_id` naming the receipt or the
+transfer, locked and refused beyond what is left of it; a deposit may name the
+receipt too, so a cash receipt says where its cash went.
+
+**AN ADVANCE IS NOT AN EXPENSE.** `erp_advances`: giving one is a row of kind
+`advance` out of an account; the employee's bills are expenses with
+`advance_id` and no account (they move nothing a second time); settling,
+once every bill is decided, is one `advance_return` into an account or one
+`advance_topup` out of it (`advancePosition`). One open advance per employee.
+
+**REVIEW NEVER BLOCKS THE PAYMENT.** Petty cash and advance bills always go
+to the accountant; an office expense above `erp.money.approvalAbovePaise`.
+The `approveMoney` power reviews, settles, cancels anything, sets up accounts
+and works the bank statement; nobody approves what they entered, unless an
+ERP administrator.
+
+**A BANK LINE IS MATCHED, NEVER RE-ENTERED.** `erp_bank_lines` (deduplicated
+on `line_key`) are imported from the bank's CSV (`parseBankStatement`) and
+explained by `erp_bank_matches`; a line naming a transaction's reference is
+matched as it lands, a split must add up exactly (`splitRefusal`), and
+"Create transaction from this line" is refused while anything already on the
+books may be that line. **A scrap buyer's receipt writes its money row in its
+own transaction** (`recordScrapMoney`), so the balances include it, and
+voiding it cancels the row.
+
 ## Layout
 
 ```

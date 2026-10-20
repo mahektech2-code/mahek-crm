@@ -1,4 +1,4 @@
-**Empty drums & scrap** follows a drum from the day it is emptied to the day it leaves the factory — sold as Mahek's scrap, or sent back to the supplier who owns it — and follows the money from a scrap sale until the accountant matches it in Petty Cash/Bank.
+**Empty drums & scrap** follows a drum from the day it is emptied to the day it leaves the factory — sold as Mahek's scrap, or sent back to the supplier who owns it — and follows the money from a scrap sale until the accountant matches it on Scrap sales → Receipts.
 
 <Flow caption="Two kinds of drum, two ways out" chart={`
 flowchart LR
@@ -10,7 +10,7 @@ flowchart LR
   O -- Not recorded --> R[Needs review by the Production Head]
   M --> SS[Scrap sale by quantity, oldest first]
   SS --> RV[Scrap receivable]
-  RV --> PB[Receipt matched in Petty Cash/Bank]
+  RV --> PB[Receipt matched on Scrap sales]
   V --> RO[Returnable drum outward, oldest first]
 `} />
 
@@ -84,6 +84,6 @@ Vendor-returnable drums never appear in a scrap sale. Pressing **Sell as scrap**
 
 ## Getting paid
 
-A scrap sale stays outstanding until the **accountant** matches money to it. When the buyer pays, the accountant records the money on **Petty Cash/Bank → Receipts** and presses **Match to a sale** (or **Match oldest due first**). One receipt can pay several sales, and several receipts one sale. **Scrap sales → Receivables & ageing** lists what is still owed, by days past due; **Scrap buyers** opens each buyer's ledger.
+A scrap sale stays outstanding until the **accountant** matches money to it. When the buyer pays, the accountant records the money on **Scrap sales → Receipts** and presses **Match to a sale** (or **Match oldest due first**). One receipt can pay several sales, and several receipts one sale. **Scrap sales → Receivables & ageing** lists what is still owed, by days past due; **Scrap buyers** opens each buyer's ledger.
 
 Production cannot mark a sale paid — selling the scrap is not the same as the money reaching the bank.

@@ -26,7 +26,6 @@ import {
   type Candidate,
   type Thresholds,
 } from "./engines/alerts";
-import { cashBalances, cashKey } from "./engines/cash";
 import { today } from "./screens/common";
 import { fgReorderRows, rmReorderRows } from "./screens/movement";
 import { detailRows, orderLines } from "./screens/sales";
@@ -86,7 +85,7 @@ export async function currentCandidates(t: Thresholds, now = new Date()): Promis
   const lookback = (await getConfig())["erp.ai.alerts.lookbackDays"];
   const since = shiftDays(day, -lookback);
   const recentScope: LoadScope = { pd: `c:${since}:${day}`, window: { from: since, to: day }, ids: null, open: null };
-  const [purchases, sfg, fills, lost, packs, tests, details, lines, transports, reqs, credits, expenses, rmRe, fgRe] = await Promise.all([
+  const [purchases, sfg, fills, lost, packs, tests, details, lines, transports, reqs, moneyAccts, expenses, rmRe, fgRe] = await Promise.all([
     /* This lookback's purchases, the rateless ones whatever their age, and — so a
        jump has something to be measured against — the `rateLookback` purchases
        of the same item from the same supplier before the lookback began. */
@@ -134,14 +133,15 @@ export async function currentCandidates(t: Thresholds, now = new Date()): Promis
                  r.cn_status = 'issued' as issued, r.status = 'in_progress' as accepted, r.request_cn as cn
             from complaints r join customers c on c.id = r.customer_id
            where r.category = 'product_quality' and r.request_cn and r.status = 'in_progress' and r.cn_status is distinct from 'issued'`),
-    /* Cash in hand is a running balance, so it is summed in SQL — one row per person, godown and mode. */
-    q(sql`select c.employee_name as employee, c.godown_id as "godownId", c.mode, sum(c.amount_paise)::float8 as amount from erp_credits c group by 1, 2, 3`),
-    q(sql`select e.id, e.expense_by as by, e.godown_id as "godownId", g.name as godown, e.mode, e.amount_paise::float8 as amount, e.particular, e.expense_date::text as date
-            from erp_expenses e join erp_godowns g on g.id = e.godown_id where e.expense_date >= ${since}::date`),
+    /* Petty Cash: each account's balance is summed in SQL, the opening plus every live leg. */
+    q(sql`select a.id, a.name, a.kind, (a.opening_paise + coalesce((select sum(case when t.to_account_id = a.id then t.amount_paise else -t.amount_paise end) from erp_money_txns t
+              where t.status = 'active' and (t.from_account_id = a.id or t.to_account_id = a.id)), 0))::float8 as balance
+            from erp_money_accounts a where a.active`),
+    q(sql`select t.id, coalesce(t.payee, '') as by, t.amount_paise::float8 as amount, t.category as particular, t.txn_date::text as date
+            from erp_money_txns t where t.kind = 'expense' and t.status = 'active' and not t.duplicate_override and t.txn_date >= ${since}::date`),
     rmReorderRows(),
     fgReorderRows(),
   ]);
-  const spent = await q(sql`select e.expense_by as by, e.godown_id as "godownId", e.mode, sum(e.amount_paise)::float8 as amount from erp_expenses e group by 1, 2, 3`);
   const drumConfig = await getConfig();
   const drums = await q(sql`
     select d.id, d.drum_no as no, s.name as supplier, d.lot_no as lot, d.declared_tare_kg::float8 as declared, d.actual_kg::float8 as actual
@@ -170,18 +170,6 @@ export async function currentCandidates(t: Thresholds, now = new Date()): Promis
     batches.set(k, b);
   }
 
-  const bal = cashBalances(
-    credits.map((c) => ({ employee: String(c.employee), godownId: String(c.godownId), mode: String(c.mode), amountPaise: Number(c.amount) })),
-    spent.map((e) => ({ employee: String(e.by), godownId: String(e.godownId), mode: String(e.mode), amountPaise: Number(e.amount) })),
-  );
-  const balanceRows = new Map<string, { key: string; employee: string; godown: string; mode: string; availablePaise: number; ids: string[] }>();
-  for (const e of expenses) {
-    const k = cashKey(String(e.by), String(e.godownId), String(e.mode));
-    const b = balanceRows.get(k) ?? { key: k, employee: String(e.by), godown: String(e.godown), mode: String(e.mode), availablePaise: bal.get(k) ?? 0, ids: [] };
-    b.ids.push(String(e.id));
-    balanceRows.set(k, b);
-  }
-
   return [
     /* Measured against the older purchases, raised only on this lookback's. */
     ...rateJumps(purchaseFacts, t).filter((c) => recentIds.has(c.subject)),
@@ -197,8 +185,8 @@ export async function currentCandidates(t: Thresholds, now = new Date()): Promis
     ...readyUnbilled(lines.map((l) => ({ id: l.o.id, orderNo: l.o.orderNo, party: l.billing.name, readySince: l.o.updatedAt, allocatedInFull: l.allocation === "Done", billed: !!l.o.tallyBillNo, ready: l.o.status === "Ready" && !l.inDetails })), now, t),
     ...lrsMissing(transports.map((x) => ({ id: String(x.id), billNo: (x.billNo as string) ?? null, party: String(x.party), billDate: (x.billDate as string) ?? null, lr: (x.lr as string) ?? null })), day, t),
     ...cnsNotIssued(reqs.map((r) => ({ id: String(r.id), party: String(r.party), approvedAt: r.approvedAt ? asDate(r.approvedAt) : null, issued: Boolean(r.issued), accepted: Boolean(r.accepted), cn: Boolean(r.cn) })), now, t),
-    ...duplicateExpenses(expenses.map((e) => ({ id: String(e.id), by: String(e.by), amountPaise: Number(e.amount), particular: (e.particular as string) ?? null, date: String(e.date) })), t),
-    ...cashNegative([...balanceRows.values()]),
+    ...duplicateExpenses(expenses.filter((e) => String(e.by)).map((e) => ({ id: String(e.id), by: String(e.by), amountPaise: Number(e.amount), particular: (e.particular as string) ?? null, date: String(e.date) })), t),
+    ...cashNegative(moneyAccts.filter((a) => a.kind !== "bank").map((a) => ({ id: String(a.id), name: String(a.name), balancePaise: Number(a.balance) }))),
     ...drumVariances(
       drums.map((d) => ({ id: String(d.id), label: `DRM-${d.no}`, supplier: String(d.supplier ?? "the supplier"), lot: String(d.lot ?? ""), declaredKg: Number(d.declared), actualKg: Number(d.actual) })),
       { alertKg: drumConfig["erp.drums.varianceAlertKg"], alertPercent: drumConfig["erp.drums.varianceAlertPercent"] },

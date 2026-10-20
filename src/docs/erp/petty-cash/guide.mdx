@@ -1,49 +1,75 @@
-Petty cash is money handed to somebody at a godown to spend on the factory's small costs. The screen has two tabs: **Funds given**, what was handed over, and **Expenses**, what was spent. Each row shows what that person still holds at that godown in that mode.
+Petty Cash is one ERP module for every rupee that moves outside the order book: what we pay, what comes in, money moved between our own accounts, and lump sums handed to employees. It has four parts across the top — **Overview**, **Expenses**, **Receipts** and **Cash & Bank** — and each part keeps its lists as tabs underneath. Every real movement of money is entered **once**, gets one number (`TXN-26-00423`), and changes the balances once.
 
-<Wireframe url="/erp/expenses" nav={["Dashboard", "Alerts", "#Money", "Petty cash"]} active="Petty cash" caption="Petty cash, on its Expenses tab, for a manager">
+<Wireframe url="/erp/expenses" nav={["Dashboard", "Purchase", "#Money", "Petty Cash"]} active="Petty Cash" caption="Petty Cash, opening on Overview › Today">
   <WfBar>
-    <WfTitle sub="Funds given to people and what they spent, per godown and mode, with what is left.">Petty cash</WfTitle>
+    <WfTitle sub="Expenses, receipts, cash and bank — each transaction entered once.">Petty Cash</WfTitle>
     <WfSpacer />
     <WfButton primary>New expense</WfButton>
-    <Hotspot n={1} />
+    <WfButton>New receipt</WfButton>
   </WfBar>
-  <WfTabs items={["Expenses", "Funds given"]} active="Expenses" />
-  <WfBar><WfPill tone="warn">Pending 4</WfPill><WfPill tone="success">Verify 12</WfPill><Hotspot n={2} /></WfBar>
+  <WfTabs items={["Overview", "Expenses", "Receipts", "Cash & Bank"]} active="Overview" />
+  <Hotspot n={1} />
+  <WfTabs items={["Today", "All transactions"]} active="Today" />
   <WfTable
-    highlight={0}
-    columns={["Date", "Particular", "Amount", "Available", "Mode", "Godown", "Status", "Expense by"]}
-    rows={[
-      ["9 Oct", <b key="a">Tea and snacks</b>, "₹240", "₹1,760", "Cash", "Godown A", <WfPill key="b" tone="warn">Pending</WfPill>, "Person A"],
-      ["8 Oct", <b key="c">Courier</b>, "₹180", "₹2,000", "Cash", "Godown A", <WfPill key="d" tone="success">Verify</WfPill>, "Person A"],
-    ]}
+    columns={["Kotak Bank", "ICICI Bank", "Cash in Hand", "Petty Cash"]}
+    rows={[["₹12,16,460", "₹8,41,220", "₹63,450", "₹5,470"]]}
+  />
+  <Hotspot n={2} />
+  <WfTable
+    columns={["Needs somebody", "", ""]}
+    rows={[["Expenses to review", "3", "₹71,410"], ["Advances open", "2", "₹2,400 with employees"], ["Bank lines not matched", "4", "₹1,92,400"]]}
   />
   <Hotspot n={3} />
 </Wireframe>
 
 <Hotspots items={[
-  <span key="1"><b>New expense.</b> Date, godown, who spent it, the mode, a category, a particular and the amount. Funds given has <b>Give funds</b> in the same place.</span>,
-  <span key="2"><b>Status chips.</b> Pending is waiting for a manager; Verify is checked and closed.</span>,
-  <span key="3"><b>Available.</b> What that person still holds at that godown in that mode: everything given, less everything spent.</span>,
+  <span key="1"><b>The four parts.</b> Each opens its own tabs underneath: Expenses has Paid, Production petty cash, Advances, Needs review and Cancelled.</span>,
+  <span key="2"><b>Balances.</b> Every account's balance is its opening plus every transaction on it. Nothing is typed in.</span>,
+  <span key="3"><b>Needs somebody.</b> Each line opens the list behind it.</span>,
 ]} />
 
-## Doing the work
+## Recording money going out
 
 <Steps>
-  <Step title="Give funds">On **Funds given**, press **Give funds** and enter the date, godown, employee, mode and amount. Choose a credit note if one applies.</Step>
-  <Step title="Record an expense">On **Expenses**, press **New expense**. The message after saving says what is left with that person, and warns if they have spent more than they were given.</Step>
-  <Step title="Verify">A manager opens an expense and presses **Verify**, or ticks several and verifies them together. **Back to Pending** reopens one.</Step>
+  <Step title="An office expense">**Expenses › Paid**, then **New expense**. An expense is entered when it is paid — there is no "not paid yet". Give the date it was paid, the category, the amount, who was paid, the invoice number, what it was for, and **Paid from**: the account the money left, how (NEFT, UPI, Cheque, Cash…) and the UTR or cheque number. Photograph the bill.</Step>
+  <Step title="Production petty cash">**Expenses › Production petty cash**, then **New petty cash expense**. The same form, for the Production Head's small spends. Paid from can also be **Cash a customer paid** or **Cash withdrawn from a bank** — then pick which receipt or withdrawal the cash came out of, and only cash with something left is offered.</Step>
+  <Step title="If it says it is a duplicate">The same invoice number from the same payee, or for the same amount, is refused with the earlier transaction named. Open that one. If this really is a different invoice, tick **This is a different invoice with the same number** and save again.</Step>
 </Steps>
 
-<Faq q="Why can I not change the amount?">
-A verified expense is closed. A manager can move it back to Pending first.
-</Faq>
-<Faq q="Verify is greyed out.">
-A manager verifies expenses.
-</Faq>
-<Faq q="The available figure is negative.">
-More has been spent than was given to that person at that godown in that mode. The row is flagged, and the overnight alerts list it.
-</Faq>
+## Giving an employee a lump sum (advances)
 
-## Receipts
+<Steps>
+  <Step title="Give the advance">**Expenses › Advances**, then **Give an advance**: who, how much, what for, the day their bills are due, and the account it is given from. It is not an expense yet — the money has moved into their hands.</Step>
+  <Step title="They submit their bills">Open the advance and press **Submit bills**. One line per bill: date, category, who was paid, bill number, amount and a photo. A spend with no bill needs a sentence saying why.</Step>
+  <Step title="The accountant reviews">Each bill appears on **Needs review**. **Approve**, or **Send back** with what needs fixing.</Step>
+  <Step title="Settle">When nothing is waiting, **Settle**. Anything unspent comes back into an account; anything spent beyond the advance is paid to the employee. Both are one transaction.</Step>
+</Steps>
 
-The **Receipts** tab is money that came **in** — today, payments from scrap buyers. The accountant records each one from the cash book or the bank statement (date, mode, amount, the buyer or the payer named on the bank line, and the UTR or cheque number), then **matches** it to the scrap sales it pays for. A receipt can be matched in parts across several sales, and a sale can be paid by several receipts; neither can ever be matched beyond what it holds or owes. See **Empty drums, scrap sale and vendor returns**.
+## Money coming in
+
+**Receipts › All receipts**, then **New receipt**: when, which account it came into, the amount, how it came and its reference, and who paid — a customer from the list, or a name. A cash receipt shows, when opened, **how this cash was used**: deposited, spent as petty cash, or still in hand. Scrap buyers' payments are recorded on **Receipts › Scrap buyers** and appear here too.
+
+## Moving money between our own accounts
+
+**Cash & Bank › Transfers**, then **New transfer**: from, to, amount and how. A withdrawal is Bank → Cash in Hand; a deposit is Cash in Hand → Bank. A transfer changes both balances and is never income or expense. A deposit of a customer's cash can name the receipt it came from.
+
+## The bank statement
+
+<Steps>
+  <Step title="Import">**Cash & Bank › Bank statement**, **Import statement**: choose the bank and the CSV from net-banking. A line already imported is skipped. A line that names a transaction's UTR is matched as it lands.</Step>
+  <Step title="Match">Open a line that is not matched and press **Match**. The suggestions are transactions already on the books — the same amount near the date, or the UTR named on the line. Pick several to split one line across them; they must add up to the line.</Step>
+  <Step title="Only when nothing fits">**Create transaction from this line** makes the expense, receipt or transfer the line shows and matches it, in one step. It is refused while something already on the books may be that line.</Step>
+</Steps>
+
+<Faq q="I need to change an expense.">
+Open it and press **Correct**. Whoever entered it can correct it until it is approved; after that, the accountant. A transaction matched to a bank line cannot change its amount or account until the match is undone.
+</Faq>
+<Faq q="I entered something wrong.">
+Open it and **Cancel** with a reason. It stays on record, marked cancelled, and stops counting everywhere. Nothing is deleted.
+</Faq>
+<Faq q="Approve is greyed out.">
+Only the accountant for Petty Cash approves, and nobody approves what they entered themselves.
+</Faq>
+<Faq q="Where did the old petty cash go?">
+Funds given and expenses entered before this module are on **Cash & Bank › Old records**, read-only.
+</Faq>

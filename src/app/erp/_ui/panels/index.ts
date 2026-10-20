@@ -7,3 +7,4 @@ import "./stock-check";
 import "./scrap";
 import "./returns";
 import "./can-photos";
+import "./money";

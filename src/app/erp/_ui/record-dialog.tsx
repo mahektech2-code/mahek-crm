@@ -40,6 +40,7 @@ export const PANEL_TAB: Record<string, string> = {
   video: "Video",
   canPhotos: "Photos",
   canGroup: "Group",
+  money: "Summary",
 };
 
 export function RecordDialog({ screen, kind, row, onClose }: { screen: ListSpec; kind: string; row: ListRow; onClose: () => void }) {

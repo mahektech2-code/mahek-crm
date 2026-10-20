@@ -1961,6 +1961,13 @@
       "when": 1792900001000,
       "tag": "0282_customer_sheet_name",
       "breakpoints": true
+    },
+    {
+      "idx": 280,
+      "version": "7",
+      "when": 1793000000000,
+      "tag": "0283_erp_petty_cash_module",
+      "breakpoints": true
     }
   ]
 }

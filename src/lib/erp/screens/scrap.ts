@@ -12,6 +12,7 @@ import { erpAudit, erpId, int, num, paise, stampLine, text, type ScreenModule } 
 import type { ActionSpec, ColSpec, FieldSpec, FormSpec, ListRow } from "../ui";
 import { fd, inr, nf } from "../ui";
 import { godownField, godownIdByName, godownOptions, today } from "./common";
+import { moneyAccounts } from "../money";
 import {
   AGE_BUCKETS,
   DRUM_CATEGORY,
@@ -73,7 +74,7 @@ import {
  *   Returnable drum outward  Outwards · Pending by supplier
  *   Scrap sales            Sales · Receivables & ageing · Scrap stock ·
  *                          Scrap buyers
- *   Petty Cash/Bank        Receipts (the tab beside Expenses and Funds given)
+ *   Scrap sales            Receipts (each also a receipt in Petty Cash)
  *
  * Who may do what is a POWER, checked in each handler: recording an empty
  * drum is the screen's (production staff); selling and returning is
@@ -86,7 +87,7 @@ const can = (ctx: ErpContext, p: "scrapSale" | "scrapAccounts" | "scrapApprove")
 const why = (ctx: ErpContext, p: "scrapSale" | "scrapAccounts" | "scrapApprove") =>
   can(ctx, p) ? "" : p === "scrapSale" ? "The Production Head does this" : p === "scrapAccounts" ? "The accountant matches money" : "Somebody who approves drum corrections does this";
 const refused = (p: "scrapSale" | "scrapAccounts" | "scrapApprove"): Result =>
-  err(p === "scrapSale" ? "Only the Production Head sells scrap and returns drums." : p === "scrapAccounts" ? "Only the accountant records and matches Petty Cash/Bank receipts." : "Only somebody who approves drum corrections may do this.", "not_permitted");
+  err(p === "scrapSale" ? "Only the Production Head sells scrap and returns drums." : p === "scrapAccounts" ? "Only the accountant records and matches scrap receipts." : "Only somebody who approves drum corrections may do this.", "not_permitted");
 
 const ownLabel = (o: DrumOwnership | null) => (o ? OWNERSHIP_LABEL[o] : "Not recorded");
 const kgText = (n: number | null | undefined) => (n == null ? "—" : `${nf(n)} kg`);
@@ -833,8 +834,8 @@ function salePanel(s: SaleRow, allocs: Awaited<ReturnType<typeof allocationRows>
     ],
     sections: [
       {
-        title: "Petty Cash/Bank receipts matched",
-        empty: "Nothing matched yet. Money is matched by the accountant from Petty Cash/Bank → Receipts.",
+        title: "Receipts matched",
+        empty: "Nothing matched yet. Money is matched by the accountant from Scrap sales → Receipts.",
         lines: allocs.map((a) => ({
           text: `${inr(a.amountPaise)} from ${receiptLabel(a.receiptNo)} (${a.mode}, ${fd(a.receiptDate)})`,
           sub: a.voidedAt ? `Undone — ${a.voidReason}` : `Matched by ${a.by ?? "—"}`,
@@ -895,7 +896,7 @@ async function saleRowsFor(ctx: ErpContext, rows: SaleRow[]): Promise<ListRow[]>
     rows.map(async (s) => {
       const open = s.status === "confirmed" && s.outstandingPaise > 0;
       const receipts = open && can(ctx, "scrapAccounts") ? await openReceiptsFor(s.buyerId) : [];
-      const matchWhy = !open ? (s.status === "cancelled" ? "The sale is cancelled" : "Nothing outstanding") : why(ctx, "scrapAccounts") || (receipts.length ? "" : "No unmatched receipt from this buyer — record it on Petty Cash/Bank → Receipts first");
+      const matchWhy = !open ? (s.status === "cancelled" ? "The sale is cancelled" : "Nothing outstanding") : why(ctx, "scrapAccounts") || (receipts.length ? "" : "No unmatched receipt from this buyer — record it on Scrap sales → Receipts first");
       const hasMatches = allocs.some((a) => a.saleId === s.id && !a.voidedAt);
       return {
         id: s.id,
@@ -921,7 +922,7 @@ async function saleRowsFor(ctx: ErpContext, rows: SaleRow[]): Promise<ListRow[]>
               sub: `${inr(s.outstandingPaise)} outstanding. Never more than the receipt has left, nor more than is owed.`,
               submit: "Match",
               fields: [
-                { k: "receipt", l: "Petty Cash/Bank receipt", t: "select", req: true, opts: receipts.map(receiptOption) },
+                { k: "receipt", l: "Receipt", t: "select", req: true, opts: receipts.map(receiptOption) },
                 { k: "amount", l: "Amount to match (₹)", t: "num", req: true, min: 0.01, max: s.outstandingPaise / 100 },
               ],
             },
@@ -1237,23 +1238,25 @@ const scrapBuyers: ScreenModule = {
   },
 };
 
-/* ------------------------------------------------------------ Petty Cash/Bank receipts */
+/* ------------------------------------------------------------ Scrap buyers' receipts */
 
 const cashReceipts: ScreenModule = {
   key: "cashReceipts",
   async load(ctx) {
-    const [rows, buyers, sales, allocs] = await Promise.all([receiptRows(), buyerOptions(), saleRows(), allocationRows()]);
+    const [rows, buyers, sales, allocs, accounts] = await Promise.all([receiptRows(), buyerOptions(), saleRows(), allocationRows(), moneyAccounts()]);
     const acc = can(ctx, "scrapAccounts");
+    const live = accounts.filter((a) => a.active);
     const form: FormSpec = {
       screen: "cashReceipts",
       id: "new",
       title: "Record a receipt",
       sub: "Money from a scrap buyer. Match it to the sales it pays for.",
       submit: "Save receipt",
-      init: { date: today(), mode: "Bank transfer" },
+      init: { date: today(), mode: "Bank transfer", into: live.find((a) => a.kind === "bank")?.name ?? "" },
       header: [
         { k: "date", l: "Received on", t: "date", req: true },
         { k: "mode", l: "Mode", t: "select", req: true, opts: RECEIPT_MODES },
+        { k: "into", l: "Received into", t: "select", req: true, opts: live.map((a) => a.name), hint: "The Petty Cash account it landed in — cash goes to Cash in Hand." },
         { k: "amount", l: "Amount (₹)", t: "num", req: true, min: 0.01 },
         { k: "buyer", l: "Scrap buyer", t: "select", opts: buyers.map((b) => b.name), hint: "Leave empty if the bank line does not say who — name the payer instead." },
         { k: "payer", l: "Payer as on the bank line", t: "text" },
@@ -1369,7 +1372,7 @@ const cashReceipts: ScreenModule = {
       const buyer = (await buyerOptions()).find((b) => b.name === h.buyer);
       const amount = paise(h.amount);
       if (amount == null) return fieldErr("amount", "Enter the amount received.");
-      const r = await recordReceipt(actorOf(ctx), { date: text(h.date) ?? today(), mode: h.mode ?? "", amountPaise: amount, buyerId: buyer?.id ?? null, payer: text(h.payer), reference: text(h.reference), note: text(h.note) });
+      const r = await recordReceipt(actorOf(ctx), { date: text(h.date) ?? today(), mode: h.mode ?? "", amountPaise: amount, buyerId: buyer?.id ?? null, payer: text(h.payer), reference: text(h.reference), note: text(h.note), into: text(h.into) });
       return r.ok ? okVoid(r.message) : r;
     },
   },

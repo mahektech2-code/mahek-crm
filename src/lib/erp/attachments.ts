@@ -13,7 +13,7 @@ import { listUserApps, listUserModules } from "@/lib/access";
  * none of these has a customer behind it that decides who should see it.
  * ------------------------------------------------------------------------- */
 
-export type ErpParent = "erp_test" | "erp_purchase" | "erp_transport" | "erp_video" | "erp_quotation" | "erp_lr" | "erp_vendor_return" | "erp_customer_return" | "erp_waste" | "erp_raw_material" | "erp_material_group" | "erp_sfg_qc";
+export type ErpParent = "erp_test" | "erp_purchase" | "erp_transport" | "erp_video" | "erp_quotation" | "erp_lr" | "erp_vendor_return" | "erp_customer_return" | "erp_waste" | "erp_raw_material" | "erp_material_group" | "erp_sfg_qc" | "erp_money_txn";
 
 /*
  * The screen each kind of file is read under. `complaint` is not an ERP parent
@@ -39,6 +39,8 @@ const SCREENS: Record<ErpParent | "complaint", string[]> = {
   erp_material_group: ["rawMaterials"],
   /* An SFG lot's QC evidence: whoever may open SFG batches sees it. */
   erp_sfg_qc: ["sfgBatches"],
+  /* A bill, invoice or slip on a Petty Cash transaction: whoever may open Petty Cash. */
+  erp_money_txn: ["expenses"],
   complaint: ["requests"],
 };
 

@@ -651,6 +651,8 @@ export const attachmentParentEnum = pgEnum("attachment_parent", [
   "erp_material_group",
   /** An SFG lot's QC evidence photographs and video, keyed by lot code (0265). */
   "erp_sfg_qc",
+  /** A Petty Cash transaction's bill, invoice or slip (0283). */
+  "erp_money_txn",
   /* HRMS parents: read under the HRMS screen the record lives on (see
      lib/hrms/attachments.ts), never under a customer's scope. */
   "hrms_attendance",
@@ -13459,7 +13461,7 @@ export const erpScrapEntries = pgTable(
 );
 
 /**
- * Money that came into Petty Cash/Bank from a scrap buyer. The accountant
+ * Money that came in from a scrap buyer (each also a Petty Cash receipt). The accountant
  * records it and matches it to one or more scrap sales; what is left of it is
  * read from the allocations, never stored. A wrong receipt is voided, never
  * deleted, and only once nothing is matched to it.
@@ -13517,6 +13519,190 @@ export const erpScrapAllocations = pgTable(
     index("erp_scrap_allocations_receipt_idx").on(t.receiptId),
     check("erp_scrap_allocations_amount_check", sql`${t.amountPaise} > 0`),
     check("erp_scrap_allocations_void_check", sql`(${t.voidedAt} is null) = (${t.voidReason} is null)`),
+  ],
+);
+
+/* ===================================================================== Petty Cash
+ * The ERP's money module (spec v1.0, 20 Oct 2026). One real movement of money
+ * is ONE row of `erp_money_txns`, numbered once (TXN-26-00001), posted once.
+ * Balances are read from the rows, never stored: a row takes its amount off
+ * `from_account_id` and puts it on `to_account_id`. An expense is entered when
+ * it is paid — there is no unpaid state. A transfer between our own accounts
+ * is never income or expense. Nothing is deleted: a wrong row is cancelled
+ * with a reason. Rules: `lib/erp/engines/money.ts`; reads and writes:
+ * `lib/erp/money.ts`; screens: `lib/erp/screens/money.ts`.
+ * -------------------------------------------------------------------------- */
+
+/** Kotak, ICICI, Cash in Hand, Petty Cash — the places money sits. */
+export const erpMoneyAccounts = pgTable(
+  "erp_money_accounts",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    /** bank | cash | petty. */
+    kind: text("kind").notNull(),
+    /** The last four digits of a bank account, shown beside its name. */
+    last4: text("last4"),
+    /** What it held on `opening_date`, before the first row here. */
+    openingPaise: bigint("opening_paise", { mode: "number" }).notNull().default(0),
+    openingDate: date("opening_date"),
+    active: boolean("active").notNull().default(true),
+    sort: integer("sort").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("erp_money_accounts_name_key").on(t.name), check("erp_money_accounts_kind_check", sql`${t.kind} in ('bank', 'cash', 'petty')`)],
+);
+
+/** Cash handed to an employee to spend and account for. Its position is read from its transactions. */
+export const erpAdvances = pgTable(
+  "erp_advances",
+  {
+    id: text("id").primaryKey(),
+    advanceNo: integer("advance_no").notNull(),
+    /** The employee, as HRMS names them. */
+    employeeName: text("employee_name").notNull(),
+    purpose: text("purpose"),
+    issuedOn: date("issued_on").notNull(),
+    /** When their bills are expected. */
+    billsDueOn: date("bills_due_on"),
+    /** open | settled | cancelled. */
+    status: text("status").notNull().default("open"),
+    settledAt: timestamp("settled_at", { withTimezone: true }),
+    settledById: text("settled_by_id").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_advances_no_key").on(t.advanceNo),
+    check("erp_advances_status_check", sql`${t.status} in ('open', 'settled', 'cancelled')`),
+  ],
+);
+
+export const erpMoneyTxns = pgTable(
+  "erp_money_txns",
+  {
+    id: text("id").primaryKey(),
+    txnNo: integer("txn_no").notNull(),
+    txnDate: date("txn_date").notNull(),
+    /** expense | receipt | transfer | advance | advance_return | advance_topup. */
+    kind: text("kind").notNull(),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    fromAccountId: text("from_account_id").references(() => erpMoneyAccounts.id),
+    toAccountId: text("to_account_id").references(() => erpMoneyAccounts.id),
+    /** NEFT | RTGS | IMPS | UPI | Cheque | Cash | Card. */
+    mode: text("mode"),
+    /** UTR, cheque number or slip — what a bank line is matched on. */
+    reference: text("reference"),
+    category: text("category"),
+    payee: text("payee"),
+    invoiceNo: text("invoice_no"),
+    description: text("description"),
+    /** The Production Head's small spends: a sub-tab of Expenses, reviewed by the accountant. */
+    petty: boolean("petty").notNull().default(false),
+    /** A receipt from a customer of the book. */
+    customerId: text("customer_id").references(() => customers.id),
+    /** Who paid, where it is not a customer of the book. */
+    payer: text("payer"),
+    /** The bills a receipt pays, as written. */
+    billsText: text("bills_text"),
+    /** A receipt from a scrap buyer: the scrap side of the same money. */
+    scrapReceiptId: text("scrap_receipt_id").references(() => erpCashReceipts.id),
+    /** The cash this was paid from: a customer's cash receipt, or a withdrawal. */
+    sourceTxnId: text("source_txn_id").references((): AnyPgColumn => erpMoneyTxns.id),
+    advanceId: text("advance_id").references(() => erpAdvances.id),
+    /** A bill submitted with no paper: why. */
+    noBillReason: text("no_bill_reason"),
+    /** none | to_review | approved | sent_back. */
+    review: text("review").notNull().default("none"),
+    reviewNote: text("review_note"),
+    reviewedById: text("reviewed_by_id").references(() => users.id),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    /** Saved although the invoice number was already on another row. */
+    duplicateOverride: boolean("duplicate_override").notNull().default(false),
+    /** active | cancelled. */
+    status: text("status").notNull().default("active"),
+    cancelReason: text("cancel_reason"),
+    cancelledById: text("cancelled_by_id").references(() => users.id),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("erp_money_txns_no_key").on(t.txnNo),
+    index("erp_money_txns_date_idx").on(t.txnDate),
+    index("erp_money_txns_kind_idx").on(t.kind, t.status),
+    index("erp_money_txns_invoice_idx").on(t.invoiceNo),
+    index("erp_money_txns_advance_idx").on(t.advanceId),
+    index("erp_money_txns_source_idx").on(t.sourceTxnId),
+    uniqueIndex("erp_money_txns_scrap_key").on(t.scrapReceiptId),
+    check("erp_money_txns_amount_check", sql`${t.amountPaise} > 0`),
+    check("erp_money_txns_kind_check", sql`${t.kind} in ('expense', 'receipt', 'transfer', 'advance', 'advance_return', 'advance_topup')`),
+    check("erp_money_txns_status_check", sql`${t.status} in ('active', 'cancelled')`),
+    check("erp_money_txns_review_check", sql`${t.review} in ('none', 'to_review', 'approved', 'sent_back')`),
+    check("erp_money_txns_cancel_check", sql`(${t.status} = 'cancelled') = (${t.cancelReason} is not null)`),
+    check("erp_money_txns_transfer_check", sql`${t.kind} <> 'transfer' or (${t.fromAccountId} is not null and ${t.toAccountId} is not null and ${t.fromAccountId} <> ${t.toAccountId})`),
+    check("erp_money_txns_receipt_check", sql`${t.kind} <> 'receipt' or (${t.toAccountId} is not null and ${t.fromAccountId} is null)`),
+    check("erp_money_txns_expense_check", sql`${t.kind} <> 'expense' or (${t.toAccountId} is null and ((${t.fromAccountId} is null) = (${t.advanceId} is not null)))`),
+  ],
+);
+
+/** A line of a bank's own statement, imported as it came. Matched to the transactions that explain it, never re-entered. */
+export const erpBankLines = pgTable(
+  "erp_bank_lines",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => erpMoneyAccounts.id),
+    lineDate: date("line_date").notNull(),
+    description: text("description").notNull(),
+    reference: text("reference"),
+    /** Money out of the account. */
+    debitPaise: bigint("debit_paise", { mode: "number" }).notNull().default(0),
+    /** Money into the account. */
+    creditPaise: bigint("credit_paise", { mode: "number" }).notNull().default(0),
+    balancePaise: bigint("balance_paise", { mode: "number" }),
+    /** The same line imported twice is one line. */
+    lineKey: text("line_key").notNull(),
+    importBatch: text("import_batch").notNull(),
+    /** open | ignored. Matched is read from the matches. */
+    status: text("status").notNull().default("open"),
+    ignoreReason: text("ignore_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("erp_bank_lines_key").on(t.accountId, t.lineKey),
+    index("erp_bank_lines_date_idx").on(t.accountId, t.lineDate),
+    check("erp_bank_lines_side_check", sql`(${t.debitPaise} > 0) <> (${t.creditPaise} > 0)`),
+    check("erp_bank_lines_status_check", sql`${t.status} in ('open', 'ignored')`),
+  ],
+);
+
+/** A bank line explained by a transaction, in whole or in part. Undone by voiding, never deleted. */
+export const erpBankMatches = pgTable(
+  "erp_bank_matches",
+  {
+    id: text("id").primaryKey(),
+    lineId: text("line_id")
+      .notNull()
+      .references(() => erpBankLines.id),
+    txnId: text("txn_id")
+      .notNull()
+      .references(() => erpMoneyTxns.id),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    byId: text("by_id").references(() => users.id),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    voidedAt: timestamp("voided_at", { withTimezone: true }),
+    voidedById: text("voided_by_id").references(() => users.id),
+  },
+  (t) => [
+    index("erp_bank_matches_line_idx").on(t.lineId),
+    index("erp_bank_matches_txn_idx").on(t.txnId),
+    uniqueIndex("erp_bank_matches_live_key").on(t.lineId, t.txnId).where(sql`${t.voidedAt} is null`),
+    check("erp_bank_matches_amount_check", sql`${t.amountPaise} > 0`),
   ],
 );
 
