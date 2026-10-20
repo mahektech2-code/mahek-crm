@@ -190,7 +190,7 @@ tr.sel td{background:var(--brand-soft)}
    </div>
    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">
     <div class="card"><div class="dh" style="padding:12px 14px"><h3 style="font-size:14px">Needs somebody</h3></div>
-     <table><tr><td>Expenses waiting for payment</td><td class="r"><b>14</b></td><td class="r">₹1,84,650</td></tr><tr><td>Expenses waiting for approval</td><td class="r"><b>3</b></td><td class="r">₹71,410</td></tr><tr><td>Petty cash to review</td><td class="r"><b>5</b></td><td class="r">₹4,820</td></tr><tr><td>Receipts not matched to bank</td><td class="r"><b>6</b></td><td class="r">₹1,92,400</td></tr><tr><td style="color:var(--danger)">Possible duplicates</td><td class="r"><b>2</b></td><td class="r">₹50,040</td></tr></table></div>
+     <table><tr><td>Expenses waiting for approval</td><td class="r"><b>3</b></td><td class="r">₹71,410</td></tr><tr><td>Petty cash to review</td><td class="r"><b>5</b></td><td class="r">₹4,820</td></tr><tr><td>Receipts not matched to bank</td><td class="r"><b>6</b></td><td class="r">₹1,92,400</td></tr><tr><td style="color:var(--danger)">Possible duplicates</td><td class="r"><b>2</b></td><td class="r">₹50,040</td></tr></table></div>
     <div class="card"><div class="dh" style="padding:12px 14px"><h3 style="font-size:14px">Cash received by customer</h3><span class="sm2 ml">October</span></div>
      <table><tr><th>Customer</th><th class="r">Cash</th><th class="r">Bank</th></tr><tr><td><b>Colour Camp</b></td><td class="r">₹40,000</td><td class="r">₹1,20,000</td></tr><tr><td><b>Sai Paint House</b></td><td class="r">₹25,000</td><td class="r">—</td></tr><tr><td><b>Shiv Hardware</b></td><td class="r">₹18,500</td><td class="r">₹62,300</td></tr><tr><td><b>Jai Ambe Traders</b></td><td class="r">₹12,000</td><td class="r">₹45,000</td></tr></table></div>
     <div class="card"><div class="dh" style="padding:12px 14px"><h3 style="font-size:14px">Petty cash by category</h3><span class="sm2 ml">October</span></div>
@@ -203,7 +203,7 @@ tr.sel td{background:var(--brand-soft)}
      </div></div>
    </div>
    <div class="newmenu">
-    <div class="h"><b>Expense</b><span>a cost we owe or paid</span></div>
+    <div class="h"><b>Expense</b><span>a cost we paid</span></div>
     <div><b>Petty cash expense</b><span>production's small spends</span></div>
     <div><b>Receipt</b><span>money that came in</span></div>
     <div><b>Transfer</b><span>bank ↔ cash, bank ↔ bank</span></div>
@@ -215,7 +215,7 @@ tr.sel td{background:var(--brand-soft)}
 
 <!-- ============ 2. EXPENSES LIST ============ -->
 <section class="shot" id="s2">
-<div class="cap"><div class="n">2</div><h1>Petty Cash › Expenses — Pending payment</h1><p>Pending, Paid, Production petty cash and the rest are sub-tabs of one list. A pending expense moves no balance.</p></div>
+<div class="cap"><div class="n">2</div><h1>Petty Cash › Expenses — Paid</h1><p>An expense is entered when it is paid, so every row already says which account the money left. Production petty cash, Advances and the rest are sub-tabs of the same list.</p></div>
 <div class="app">
  <aside class="side" data-on="Petty Cash"></aside>
  <div class="main">
@@ -223,16 +223,16 @@ tr.sel td{background:var(--brand-soft)}
   <div class="pg">
    <div class="modhead" data-sub="Expenses"></div>
    <div class="card">
-    <div class="tabs"><div class="tab on">Pending payment<span class="c">14</span></div><div class="tab">Paid<span class="c">58</span></div><div class="tab">Production petty cash<span class="c">5</span></div><div class="tab">Advances<span class="c">3</span></div><div class="tab">Needs approval<span class="c">3</span></div><div class="tab">Cancelled<span class="c">1</span></div><div class="tab">All</div></div>
-    <div class="tool"><div class="in" style="width:200px">This month ▾</div><div class="in" style="width:180px">Category: All ▾</div><div class="in" style="width:180px">Vendor: All ▾</div><div class="ml sm2">14 rows · ₹1,84,650</div><button class="btn">Export</button></div>
+    <div class="tabs"><div class="tab on">Paid<span class="c">58</span></div><div class="tab">Production petty cash<span class="c">5</span></div><div class="tab">Advances<span class="c">3</span></div><div class="tab">Needs approval<span class="c">3</span></div><div class="tab">Cancelled<span class="c">1</span></div><div class="tab">All</div></div>
+    <div class="tool"><div class="in" style="width:200px">This month ▾</div><div class="in" style="width:180px">Category: All ▾</div><div class="in" style="width:180px">Vendor: All ▾</div><div class="in" style="width:180px">Paid from: All ▾</div><div class="ml sm2">58 rows · ₹6,42,310</div><button class="btn">Export</button></div>
     <table>
-     <tr><th>TXN ID</th><th>Date</th><th>Category</th><th>Vendor / payee</th><th>Invoice no.</th><th>Description</th><th class="r">Amount</th><th>Status</th><th>Due</th><th></th></tr>
-     <tr class="hl"><td class="mono">TXN-26-00418</td><td>18 Oct</td><td>Packing material</td><td><b>Shree Packaging Co.</b></td><td>SPC/2627/0912</td><td>500 × 5L corrugated boxes</td><td class="r"><b>₹48,500</b></td><td><span class="pill pend">Pending</span></td><td style="color:var(--danger);font-weight:600">2 days late</td><td><button class="btn sm ok">Mark as Paid</button></td></tr>
-     <tr><td class="mono">TXN-26-00415</td><td>17 Oct</td><td>Repairs &amp; maintenance</td><td><b>Om Sai Engineering</b></td><td>OSE-221</td><td>Mixer gearbox repair</td><td class="r"><b>₹22,800</b></td><td><span class="pill pend">Pending</span></td><td>24 Oct</td><td><button class="btn sm ok">Mark as Paid</button></td></tr>
-     <tr><td class="mono">TXN-26-00411</td><td>16 Oct</td><td>Electricity</td><td><b>MSEDCL</b></td><td>0411829366</td><td>Factory bill — Sep</td><td class="r"><b>₹63,140</b></td><td><span class="pill pend">Pending</span></td><td>21 Oct</td><td><button class="btn sm ok">Mark as Paid</button></td></tr>
-     <tr><td class="mono">TXN-26-00402</td><td>12 Oct</td><td>Rent</td><td><b>Patel Estates</b></td><td>PE/OCT/26</td><td>Godown rent — Oct</td><td class="r"><b>₹36,000</b></td><td><span class="pill pend">Pending</span></td><td>20 Oct</td><td><button class="btn sm ok">Mark as Paid</button></td></tr>
-     <tr><td class="mono">TXN-26-00399</td><td>11 Oct</td><td>Packing material</td><td><b>Shree Packaging Co.</b></td><td>SPC/2627/0912</td><td>500 × 5L corrugated boxes</td><td class="r"><b>₹48,500</b></td><td><span class="pill unm">Possible duplicate</span></td><td>—</td><td><span class="link">Review</span></td></tr>
-     <tr><td class="mono">TXN-26-00396</td><td>10 Oct</td><td>Freight</td><td><b>VRL Logistics</b></td><td>VRL/BH/88104</td><td>Inward freight — MEK</td><td class="r"><b>₹9,860</b></td><td><span class="pill pend">Pending</span></td><td>27 Oct</td><td><button class="btn sm ok">Mark as Paid</button></td></tr>
+     <tr><th>TXN ID</th><th>Date</th><th>Category</th><th>Vendor / payee</th><th>Invoice no.</th><th class="r">Amount</th><th>Paid from</th><th>Bank match</th></tr>
+     <tr class="hl"><td class="mono">TXN-26-00418</td><td>18 Oct</td><td>Packing material</td><td><b>Shree Packaging Co.</b></td><td>SPC/2627/0912</td><td class="r"><b>₹48,500</b></td><td><span class="acc"><i class="k">K</i>Kotak · NEFT</span></td><td><span class="pill pend">Not matched</span></td></tr>
+<tr><td class="mono">TXN-26-00415</td><td>17 Oct</td><td>Repairs &amp; maintenance</td><td><b>Om Sai Engineering</b></td><td>OSE-221</td><td class="r"><b>₹22,800</b></td><td><span class="acc"><i class="ic">I</i>ICICI · cheque 004127</span></td><td><span class="pill mat">Matched</span></td></tr>
+<tr><td class="mono">TXN-26-00411</td><td>16 Oct</td><td>Electricity</td><td><b>MSEDCL</b></td><td>0411829366</td><td class="r"><b>₹63,140</b></td><td><span class="acc"><i class="k">K</i>Kotak · UPI</span></td><td><span class="pill mat">Matched</span></td></tr>
+<tr><td class="mono">TXN-26-00402</td><td>12 Oct</td><td>Rent</td><td><b>Patel Estates</b></td><td>PE/OCT/26</td><td class="r"><b>₹36,000</b></td><td><span class="acc"><i class="ic">I</i>ICICI · NEFT</span></td><td><span class="pill mat">Matched</span></td></tr>
+<tr><td class="mono">TXN-26-00399</td><td>11 Oct</td><td>Packing material</td><td><b>Shree Packaging Co.</b></td><td>SPC/2627/0912</td><td class="r"><b>₹48,500</b></td><td><span class="acc"><i class="k">K</i>Kotak · NEFT</span></td><td><span class="pill unm">Duplicate?</span></td></tr>
+<tr><td class="mono">TXN-26-00396</td><td>10 Oct</td><td>Freight</td><td><b>VRL Logistics</b></td><td>VRL/BH/88104</td><td class="r"><b>₹9,860</b></td><td><span class="acc"><i class="ca">₹</i>Cash in Hand</span></td><td><span class="sm2">Cash — none</span></td></tr>
     </table>
    </div>
   </div>
@@ -242,7 +242,7 @@ tr.sel td{background:var(--brand-soft)}
 
 <!-- ============ 3. NEW EXPENSE ============ -->
 <section class="shot" id="s3">
-<div class="cap"><div class="n">3</div><h1>Petty Cash › Expenses — New expense</h1><p>Invoice number is required. "Not paid yet" saves it as Pending; "Paid now" asks which account it left.</p></div>
+<div class="cap"><div class="n">3</div><h1>Petty Cash › Expenses — New expense</h1><p>An expense is entered when it is paid — there is no "not paid" state. Invoice number is required, and the entry says which account the money left.</p></div>
 <div class="app">
  <aside class="side" data-on="Petty Cash"></aside>
  <div class="main">
@@ -264,7 +264,18 @@ tr.sel td{background:var(--brand-soft)}
       <div class="f"><label>Description / purpose <em>*</em></label><div class="box">500 × 5L corrugated boxes</div></div>
      </div>
      <div class="note r" style="margin-bottom:14px"><b>⚠</b><div><b>Looks like a duplicate.</b> Same invoice number, vendor and amount as TXN-26-00399. <span class="link">Open it</span> · or tick <b>"This is a different invoice"</b> to save anyway.</div></div>
-     <div class="f" style="margin-bottom:12px"><label>Payment status <em>*</em></label><div class="seg" style="width:420px"><span class="on">Not paid yet — Pending</span><span>Paid now</span></div><div class="hint">Pending moves no bank or cash balance. Mark it Paid from the list when it's paid.</div></div>
+     <div class="f" style="margin-bottom:8px"><label>Paid from <em>*</em></label></div>
+     <div class="grid" style="grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
+      <div class="cand best" style="margin:0;flex-direction:column;align-items:flex-start;gap:2px"><span class="acc"><i class="k">K</i>Kotak Bank</span><span class="sm2">₹12,16,460 → ₹11,67,960</span></div>
+      <div class="cand" style="margin:0;flex-direction:column;align-items:flex-start;gap:2px"><span class="acc"><i class="ic">I</i>ICICI Bank</span><span class="sm2">₹8,41,220</span></div>
+      <div class="cand" style="margin:0;flex-direction:column;align-items:flex-start;gap:2px"><span class="acc"><i class="ca">₹</i>Cash in Hand</span><span class="sm2">₹63,450</span></div>
+      <div class="cand" style="margin:0;flex-direction:column;align-items:flex-start;gap:2px"><span class="acc"><i class="pt">P</i>Petty Cash</span><span class="sm2">₹5,470</span></div>
+     </div>
+     <div class="grid g3" style="margin-bottom:14px">
+      <div class="f"><label>Paid on <em>*</em></label><div class="box">18 Oct 2026</div></div>
+      <div class="f"><label>Mode <em>*</em></label><div class="box sel">NEFT</div></div>
+      <div class="f"><label>UTR / cheque / reference</label><div class="box">KKBKH26291004812</div><div class="hint">Used to match the Kotak statement line</div></div>
+     </div>
      <div class="grid g2">
       <div class="f"><label>Invoice / supporting document</label><div class="file"><i>PDF</i>SPC-2627-0912.pdf<span class="sm2 ml">212 KB</span></div></div>
       <div class="f"><label>Notes</label><div class="box ph">Optional</div></div>
@@ -277,44 +288,9 @@ tr.sel td{background:var(--brand-soft)}
 </div>
 </section>
 
-<!-- ============ 4. MARK AS PAID ============ -->
-<section class="shot" id="s4">
-<div class="cap"><div class="n">4</div><h1>Petty Cash › Expenses — Mark as Paid</h1><p>The same TXN flips to Paid. It posts once to the chosen account and waits to be matched on that bank's statement.</p></div>
-<div class="app">
- <aside class="side" data-on="Petty Cash"></aside>
- <div class="main">
-  <div class="top"><div class="crumb">ERP › Petty Cash › <b>Expenses</b></div><div class="search">Search…</div><div class="av">DP</div></div>
-  <div class="pg" style="min-height:780px">
-   <div class="modhead" data-sub="Expenses"></div><div class="card" style="height:300px"></div>
-   <div class="veil"></div>
-   <div class="dlg" style="left:200px;top:30px;width:780px">
-    <div class="dh"><h3>Mark as Paid</h3><span class="mono" style="font-size:12px">TXN-26-00418</span><span class="x">✕</span></div>
-    <div class="db">
-     <div class="note i" style="margin-bottom:14px"><div><b>Shree Packaging Co.</b> · Invoice SPC/2627/0912 · Packing material · <b>₹48,500</b> · Pending since 18 Oct</div></div>
-     <div class="grid g3" style="margin-bottom:14px">
-      <div class="f"><label>Payment date <em>*</em></label><div class="box">20 Oct 2026</div></div>
-      <div class="f"><label>Paid from <em>*</em></label><div class="box sel focus"><span class="acc"><i class="k">K</i>Kotak Bank ••4471</span></div></div>
-      <div class="f"><label>UTR / reference</label><div class="box">KKBKN26293004118</div></div>
-     </div>
-     <div class="f" style="margin-bottom:6px"><label>Balance on the account you picked</label></div>
-     <div class="bal" style="margin-bottom:14px">
-      <div><div class="l">Kotak Bank now</div><div class="v">₹12,84,960</div></div>
-      <div><div class="l">This payment</div><div class="v" style="color:var(--danger)">− ₹48,500</div></div>
-      <div><div class="l">Kotak Bank after</div><div class="v">₹12,36,460</div></div>
-     </div>
-     <div class="sm2" style="margin-bottom:8px">Other accounts: <span class="acc"><i class="ic">I</i>ICICI ₹8,41,220</span> · <span class="acc"><i class="ca">₹</i>Cash in Hand ₹38,450</span> · <span class="acc"><i class="pt">P</i>Petty Cash ₹6,720</span></div>
-     <div class="note o"><b>✓</b><div>Posts once: <b>Vendor Payable − ₹48,500</b> and <b>Kotak Bank − ₹48,500</b>. It then waits on <b>Accounts → Bank statement → Kotak</b> to be matched to the debit line. The expense stays one record.</div></div>
-    </div>
-    <div class="df"><span class="sm2">Paid by Deepa P (Accounts)</span><button class="btn ml">Cancel</button><button class="btn ok">Confirm payment ₹48,500</button></div>
-   </div>
-  </div>
- </div>
-</div>
-</section>
-
 <!-- ============ 5. PRODUCTION PETTY CASH ============ -->
-<section class="shot" id="s5">
-<div class="cap"><div class="n">5</div><h1>Petty Cash › Expenses — Production petty cash</h1><p>The Production Head's small spends are a sub-tab of Expenses, not a separate screen. Each one is the single expense record, linked to how it was paid.</p></div>
+<section class="shot" id="s4">
+<div class="cap"><div class="n">4</div><h1>Petty Cash › Expenses — Production petty cash</h1><p>The Production Head's small spends are a sub-tab of Expenses, not a separate screen. Each one is the single expense record, linked to how it was paid.</p></div>
 <div class="app">
  <aside class="side" data-on="Petty Cash"></aside>
  <div class="main">
@@ -322,7 +298,7 @@ tr.sel td{background:var(--brand-soft)}
   <div class="pg" style="min-height:880px">
    <div class="modhead" data-sub="Expenses"></div>
    <div class="card">
-    <div class="tabs"><div class="tab">Pending payment<span class="c">14</span></div><div class="tab">Paid<span class="c">58</span></div><div class="tab on">Production petty cash<span class="c">5</span></div><div class="tab">Advances<span class="c">3</span></div><div class="tab">Needs approval<span class="c">3</span></div><div class="tab">Cancelled<span class="c">1</span></div><div class="tab">All</div></div>
+    <div class="tabs"><div class="tab">Paid<span class="c">58</span></div><div class="tab on">Production petty cash<span class="c">5</span></div><div class="tab">Advances<span class="c">3</span></div><div class="tab">Needs approval<span class="c">3</span></div><div class="tab">Cancelled<span class="c">1</span></div><div class="tab">All</div></div>
     <table><tr><th>TXN ID</th><th>Date</th><th>Category</th><th>Paid to</th><th>Bill no.</th><th>Paid from</th><th class="r">Amount</th><th>Status</th></tr>
     <tr><td class="mono">TXN-26-00423</td><td>19 Oct</td><td>Petrol</td><td><b>HP Petrol Pump</b></td><td>HP-77120</td><td><span class="acc"><i class="ca">₹</i>Cash · Sai Paint House rcpt</span></td><td class="r"><b>₹2,300</b></td><td><span class="pill drf">To review</span></td></tr>
     <tr><td class="mono">TXN-26-00410</td><td>18 Oct</td><td>Tea / food</td><td><b>Ramesh Tea Stall</b></td><td>RT-18</td><td><span class="acc"><i class="k">K</i>Kotak GPay</span></td><td class="r"><b>₹640</b></td><td><span class="pill drf">To review</span></td></tr>
@@ -359,8 +335,8 @@ tr.sel td{background:var(--brand-soft)}
 </section>
 
 <!-- ============ 6. RECEIPTS ============ -->
-<section class="shot" id="s6">
-<div class="cap"><div class="n">6</div><h1>Petty Cash › Receipts — New receipt</h1><p>Who paid and where the money landed. A cash receipt shows the customer and the new cash balance; a bank receipt waits for its statement line.</p></div>
+<section class="shot" id="s5">
+<div class="cap"><div class="n">5</div><h1>Petty Cash › Receipts — New receipt</h1><p>Who paid and where the money landed. A cash receipt shows the customer and the new cash balance; a bank receipt waits for its statement line.</p></div>
 <div class="app">
  <aside class="side" data-on="Petty Cash"></aside>
  <div class="main">
@@ -408,8 +384,8 @@ tr.sel td{background:var(--brand-soft)}
 </section>
 
 <!-- ============ 7. CASH & BANK – TRANSFERS ============ -->
-<section class="shot" id="s7">
-<div class="cap"><div class="n">7</div><h1>Petty Cash › Cash &amp; Bank — Transfers</h1><p>Moving our own money. A withdrawal is not an expense. Both legs carry one Transaction ID, post together and reverse together.</p></div>
+<section class="shot" id="s6">
+<div class="cap"><div class="n">6</div><h1>Petty Cash › Cash &amp; Bank — Transfers</h1><p>Moving our own money. A withdrawal is not an expense. Both legs carry one Transaction ID, post together and reverse together.</p></div>
 <div class="app">
  <aside class="side" data-on="Petty Cash"></aside>
  <div class="main">
@@ -455,8 +431,8 @@ tr.sel td{background:var(--brand-soft)}
 </section>
 
 <!-- ============ 8. CASH & BANK – CASH STATEMENT ============ -->
-<section class="shot" id="s8">
-<div class="cap"><div class="n">8</div><h1>Petty Cash › Cash &amp; Bank — Cash statement</h1><p>Each account's statement is a sub-tab here. Closing = Opening + Cash in − Cash out. Opening a cash receipt shows where that cash went.</p></div>
+<section class="shot" id="s7">
+<div class="cap"><div class="n">7</div><h1>Petty Cash › Cash &amp; Bank — Cash statement</h1><p>Each account's statement is a sub-tab here. Closing = Opening + Cash in − Cash out. Opening a cash receipt shows where that cash went.</p></div>
 <div class="app">
  <aside class="side" data-on="Petty Cash"></aside>
  <div class="main">
@@ -509,8 +485,8 @@ tr.sel td{background:var(--brand-soft)}
 </section>
 
 <!-- ============ 9. ACCOUNTS BANK STATEMENT ============ -->
-<section class="shot" id="s9">
-<div class="cap"><div class="n">9</div><h1>Accounts app › Bank statement (existing) — match, don't re-enter</h1><p>Reconciliation stays on the existing Accounts screen. Each Kotak / ICICI line is matched to a transaction the Petty Cash module already holds.</p></div>
+<section class="shot" id="s8">
+<div class="cap"><div class="n">8</div><h1>Accounts app › Bank statement (existing) — match, don't re-enter</h1><p>Reconciliation stays on the existing Accounts screen. Each Kotak / ICICI line is matched to a transaction the Petty Cash module already holds.</p></div>
 <div class="app">
  <aside class="side" data-app="accounts" data-on="Bank statement"></aside>
  <div class="main">
@@ -537,7 +513,7 @@ tr.sel td{background:var(--brand-soft)}
      <div style="font-weight:700;color:#1a1e28">Match this line</div>
      <div class="sm2">20 Oct · Kotak debit ₹48,500 · NEFT-SHREE PACKAGING CO</div>
      <div class="cand best"><span class="score" style="background:var(--ok-soft);color:var(--ok)">Exact</span><div style="flex:1"><b style="color:var(--ink)">Expense · Shree Packaging Co.</b><div class="sm2"><span class="mono">TXN-26-00418</span> · Paid 20 Oct · Kotak · UTR matches</div></div><button class="btn sm p">Match</button></div>
-     <div class="cand"><span class="score" style="background:var(--warn-soft);color:var(--warn-ink)">Amount</span><div style="flex:1"><b style="color:var(--ink)">Expense · Shree Packaging Co.</b><div class="sm2"><span class="mono">TXN-26-00399</span> · Pending · possible duplicate</div></div><button class="btn sm">Match</button></div>
+     <div class="cand"><span class="score" style="background:var(--warn-soft);color:var(--warn-ink)">Amount</span><div style="flex:1"><b style="color:var(--ink)">Expense · Shree Packaging Co.</b><div class="sm2"><span class="mono">TXN-26-00399</span> · Paid · possible duplicate</div></div><button class="btn sm">Match</button></div>
      <div style="margin-top:12px;font-size:12px;color:var(--muted)">Covers several bills? <span class="link">Split across transactions</span> — must add up to ₹48,500.</div>
      <div style="border-top:1px solid var(--div);margin-top:12px;padding-top:10px;font-size:12px;color:var(--muted)">Nothing represents it? <span class="link">Create transaction from this line</span><br><span class="sm2">Only offered when no match exists · Accounts only</span></div>
     </div>
@@ -555,8 +531,8 @@ tr.sel td{background:var(--brand-soft)}
 </section>
 
 <!-- ============ 10. ADVANCES – LIST + ISSUE ============ -->
-<section class="shot" id="s10">
-<div class="cap"><div class="n">10</div><h1>Petty Cash › Expenses — Advances</h1><p>A lump sum handed to an employee is an advance, not an expense. Issuing it moves money from Petty Cash to that person's advance; it becomes expense only as their bills are approved.</p></div>
+<section class="shot" id="s9">
+<div class="cap"><div class="n">9</div><h1>Petty Cash › Expenses — Advances</h1><p>A lump sum handed to an employee is an advance, not an expense. Issuing it moves money from Petty Cash to that person's advance; it becomes expense only as their bills are approved.</p></div>
 <div class="app">
  <aside class="side" data-on="Petty Cash"></aside>
  <div class="main">
@@ -564,7 +540,7 @@ tr.sel td{background:var(--brand-soft)}
   <div class="pg" style="min-height:900px">
    <div class="modhead" data-sub="Expenses"></div>
    <div class="card">
-    <div class="tabs"><div class="tab">Pending payment<span class="c">14</span></div><div class="tab">Paid<span class="c">58</span></div><div class="tab">Production petty cash<span class="c">5</span></div><div class="tab on">Advances<span class="c">3</span></div><div class="tab">Needs approval<span class="c">3</span></div><div class="tab">All</div></div>
+    <div class="tabs"><div class="tab">Paid<span class="c">58</span></div><div class="tab">Production petty cash<span class="c">5</span></div><div class="tab on">Advances<span class="c">3</span></div><div class="tab">Needs approval<span class="c">3</span></div><div class="tab">All</div></div>
     <table><tr><th>Advance</th><th>Given to</th><th>Issued</th><th>From</th><th class="r">Given</th><th class="r">Bills approved</th><th class="r">Bills to review</th><th class="r">Still with them</th><th>Status</th></tr>
     <tr><td class="mono">ADV-26-0031</td><td><b>Suresh K</b><div class="sm2">Mixing &amp; Blending</div></td><td>14 Oct</td><td><span class="acc"><i class="pt">P</i>Petty Cash</span></td><td class="r"><b>₹5,000</b></td><td class="r">₹2,860</td><td class="r">₹1,540</td><td class="r"><b>₹600</b></td><td><span class="pill drf">Bills to review</span></td></tr>
     <tr><td class="mono">ADV-26-0029</td><td><b>Anil P</b><div class="sm2">Dispatch</div></td><td>10 Oct</td><td><span class="acc"><i class="ca">₹</i>Cash in Hand</span></td><td class="r"><b>₹3,000</b></td><td class="r">₹1,200</td><td class="r">₹1,920</td><td class="r"><b style="color:var(--danger)">−₹120</b><div class="sm2">owed to him</div></td><td><span class="pill drf">Bills to review</span></td></tr>
@@ -600,8 +576,8 @@ tr.sel td{background:var(--brand-soft)}
 </section>
 
 <!-- ============ 11. EMPLOYEE SUBMITS BILLS ============ -->
-<section class="shot" id="s11">
-<div class="cap"><div class="n">11</div><h1>Petty Cash › Expenses › Advances — Submit bills</h1><p>The employee opens his own advance and uploads where the money went, a photo per bill. Each line becomes an expense record, drawn from the advance rather than from Petty Cash.</p></div>
+<section class="shot" id="s10">
+<div class="cap"><div class="n">10</div><h1>Petty Cash › Expenses › Advances — Submit bills</h1><p>The employee opens his own advance and uploads where the money went, a photo per bill. Each line becomes an expense record, drawn from the advance rather than from Petty Cash.</p></div>
 <div class="app">
  <aside class="side" data-on="Petty Cash"></aside>
  <div class="main">
@@ -634,8 +610,8 @@ tr.sel td{background:var(--brand-soft)}
 </section>
 
 <!-- ============ 12. REVIEW + SETTLE ============ -->
-<section class="shot" id="s12">
-<div class="cap"><div class="n">12</div><h1>Petty Cash › Expenses › Advances — Review and settle</h1><p>The Accountant approves each bill. When nothing is left to review, the advance is settled: unspent cash comes back to Petty Cash, or an overspend is paid back to the employee — one transaction each way.</p></div>
+<section class="shot" id="s11">
+<div class="cap"><div class="n">11</div><h1>Petty Cash › Expenses › Advances — Review and settle</h1><p>The Accountant approves each bill. When nothing is left to review, the advance is settled: unspent cash comes back to Petty Cash, or an overspend is paid back to the employee — one transaction each way.</p></div>
 <div class="app">
  <aside class="side" data-on="Petty Cash"></aside>
  <div class="main">
@@ -682,7 +658,7 @@ tr.sel td{background:var(--brand-soft)}
 </section>
 
 <script>
-const ERP=[["OPERATIONS",null],["Dashboard",""],["Purchase",""],["Stock",""],["Production",""],["Orders",""],["Logistics",""],["MONEY",null],["Petty Cash","22"],["Complaints & credit notes",""]];
+const ERP=[["OPERATIONS",null],["Dashboard",""],["Purchase",""],["Stock",""],["Production",""],["Orders",""],["Logistics",""],["MONEY",null],["Petty Cash","21"],["Complaints & credit notes",""]];
 const ACC=[["ACCOUNTS",null],["Today",""],["Order approvals",""],["Payments to confirm",""],["Outstanding",""],["Bills",""],["Bank statement","4"],["Cash flow",""]];
 document.querySelectorAll('aside.side').forEach(a=>{
  const on=a.dataset.on;const acc=a.dataset.app==='accounts';
@@ -690,7 +666,7 @@ document.querySelectorAll('aside.side').forEach(a=>{
  for(const [n,c] of (acc?ACC:ERP)){ if(c===null){h+=`<div class="grp">${n}</div>`;continue;}
   h+=`<div class="nav${n===on?' on':''}"><b></b>${n}${c?`<span class="c">${c}</span>`:''}</div>`;}
  a.innerHTML=h;});
-const SUBS=[["Overview",""],["Expenses","22"],["Receipts","6"],["Cash & Bank","4"]];
+const SUBS=[["Overview",""],["Expenses","11"],["Receipts","6"],["Cash & Bank","4"]];
 document.querySelectorAll('.modhead').forEach(m=>{
  const on=m.dataset.sub.replace('&amp;','&');
  m.innerHTML='<div><h2>Petty Cash</h2><div class="sub">Expenses, receipts, cash and bank — each transaction entered once</div></div><button class="btn p ml">+ New ▾</button>';
