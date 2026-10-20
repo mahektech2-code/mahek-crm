@@ -42,7 +42,7 @@ export const ALERT_LABEL: Record<AlertKind, string> = {
   cnNotIssued: "Credit note not issued",
   packStuck: "Packing batch incomplete",
   duplicateExpense: "Duplicate-looking expense",
-  cashNegative: "Petty cash below zero",
+  cashNegative: "Cash account below zero",
   belowLevel: "Stock below re-order level",
   drumVariance: "Empty drum heavier or lighter than declared",
 };
@@ -304,22 +304,23 @@ export function duplicateExpenses(exps: { id: string; by: string; amountPaise: n
           screen: "expenses",
           recordIds: [xs[i - 1].id, xs[i].id],
           values: { amount: xs[i].amountPaise },
-          explanation: `${xs[i].by} recorded ${rupees(xs[i].amountPaise)} for ${xs[i].particular ?? "the same particular"} twice within ${Math.abs(daysBetween(xs[i - 1].date, xs[i].date))} days.`,
+          explanation: `${rupees(xs[i].amountPaise)} paid to ${xs[i].by} for ${xs[i].particular ?? "the same category"} twice within ${Math.abs(daysBetween(xs[i - 1].date, xs[i].date))} days.`,
         });
   }
   return out;
 }
 
-export function cashNegative(balances: { key: string; employee: string; godown: string; mode: string; availablePaise: number; ids: string[] }[]): Candidate[] {
-  return balances
-    .filter((b) => b.availablePaise < 0)
-    .map((b) => ({
+/** A cash or petty cash account below zero: money recorded as spent that no funding explains. A bank may be overdrawn; a cash box cannot. */
+export function cashNegative(accounts: { id: string; name: string; balancePaise: number }[]): Candidate[] {
+  return accounts
+    .filter((a) => a.balancePaise < 0)
+    .map((a) => ({
       kind: "cashNegative" as const,
-      subject: b.key,
-      screen: "expenses",
-      recordIds: b.ids,
-      values: { available: b.availablePaise },
-      explanation: `${b.employee} has spent ${rupees(-b.availablePaise)} more than given at ${b.godown} (${b.mode}).`,
+      subject: a.id,
+      screen: "moneyAccounts",
+      recordIds: [a.id],
+      values: { available: a.balancePaise },
+      explanation: `${a.name} is ${rupees(-a.balancePaise)} below zero — more is recorded as paid from it than was ever put in. A transfer into it, or a receipt, is missing.`,
     }));
 }
 

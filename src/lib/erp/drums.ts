@@ -38,6 +38,7 @@ import {
   type DrumStatus,
 } from "./engines/drums";
 import { erpId, nextNumber } from "./server";
+import { cancelScrapMoney, recordScrapMoney } from "./money";
 
 /* ---------------------------------------------------------------------------
  * EMPTY DRUMS, SCRAP SALE, VENDOR RETURNS AND SCRAP RECEIVABLES — the writes
@@ -680,7 +681,7 @@ export async function cancelDrumReturn(actor: Actor, id: string, reason: string)
 
 export const RECEIPT_MODES = ["Cash", "Bank transfer", "UPI", "Cheque"];
 
-export async function recordReceipt(actor: Actor, x: { date: string; mode: string; amountPaise: number; buyerId: string | null; payer: string | null; reference: string | null; note: string | null }): Promise<Result<{ id: string; receiptNo: number }>> {
+export async function recordReceipt(actor: Actor, x: { date: string; mode: string; amountPaise: number; buyerId: string | null; payer: string | null; reference: string | null; note: string | null; into: string | null }): Promise<Result<{ id: string; receiptNo: number }>> {
   if (!RECEIPT_MODES.includes(x.mode)) return fieldErr("mode", "Choose how the money came.");
   if (!(x.amountPaise > 0)) return fieldErr("amount", "Enter the amount received.");
   if (!x.buyerId && !x.payer) return fieldErr("buyer", "Name the scrap buyer, or who the money came from.");
@@ -688,6 +689,10 @@ export async function recordReceipt(actor: Actor, x: { date: string; mode: strin
     const id = erpId("rcpt");
     const receiptNo = await nextNumber(tx, "cashReceipt");
     await tx.insert(erpCashReceipts).values({ id, receiptNo, receiptDate: x.date, mode: x.mode, amountPaise: x.amountPaise, buyerId: x.buyerId, payer: x.payer, reference: x.reference, note: x.note, createdById: actor.id });
+    /* The same money, once, in Petty Cash: a receipt into the account it landed in, so every balance includes it. */
+    const [buyer] = x.buyerId ? await q<{ name: string }>(tx, sql`select name from erp_scrap_buyers where id = ${x.buyerId}`) : [];
+    const money = await recordScrapMoney(tx, { scrapReceiptId: id, date: x.date, mode: x.mode, amountPaise: x.amountPaise, accountName: x.into, payer: buyer?.name ?? x.payer ?? "Scrap buyer", reference: x.reference, note: x.note, createdById: actor.id });
+    if (!money.ok) return refuse(money);
     return ok({ id, receiptNo });
   });
   if (r.ok) await audit(actor, "erp.receipt.create", "erp_cash_receipt", r.data.id, x);
@@ -751,6 +756,8 @@ export async function voidReceipt(actor: Actor, id: string, reason: string): Pro
     if (x.status !== "active") return err("Already void.", "conflict");
     const [m] = await q<{ n: number }>(tx, sql`select count(*)::int as n from erp_scrap_allocations where receipt_id = ${id} and voided_at is null`);
     if (Number(m?.n) > 0) return err("This receipt is matched to a sale. Undo the match first.", "rule_violation");
+    const money = await cancelScrapMoney(tx, id, reason.trim(), actor.id);
+    if (!money.ok) return money;
     await tx.update(erpCashReceipts).set({ status: "void", voidReason: reason.trim(), voidedById: actor.id, voidedAt: new Date() }).where(eq(erpCashReceipts.id, id));
     return okVoid(`${receiptLabel(x.receiptNo)} void`);
   });

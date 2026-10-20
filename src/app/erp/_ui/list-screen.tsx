@@ -22,6 +22,7 @@ import { useKit } from "./kit";
 import { CHECK_COL, fitColumns } from "./fit-columns";
 import { ColumnsMenu, toolbarToggleClass } from "./columns-menu";
 import { useColumnChoice } from "./use-column-choice";
+import { NewMenu } from "./new-menu";
 
 /* ---------------------------------------------------------------------------
  * The generic ERP list, drawn the way the CRM draws a list: the page header
@@ -90,6 +91,49 @@ export function ListTabs({ label, tabs, toggle }: { label: string; tabs: ListTab
   );
 }
 
+/**
+ * A screen's sub-modules, above its tabs (`ErpView.section`): Petty Cash's
+ * Overview, Expenses, Receipts and Cash & Bank. Drawn heavier than the tabs
+ * under them, so the two levels never read as one long strip.
+ */
+export function SectionTabs({ label, sections }: { label: string; sections: ListTab[] }) {
+  return (
+    <nav aria-label={`${label} sections`} className="mb-3 flex flex-wrap items-center gap-1 border-b border-line">
+      {sections.map((t) => (
+        <Link
+          key={t.key}
+          href={t.href}
+          aria-current={t.active ? "page" : undefined}
+          className={cx(
+            "-mb-px flex items-center gap-1.5 border-b-2 px-4 py-3 text-base whitespace-nowrap",
+            t.active ? "border-brand font-semibold text-ink" : "border-transparent text-muted hover:text-body",
+          )}
+        >
+          {t.label}
+          {t.count ? <span className={cx("rounded-full px-1.5 text-2xs leading-[18px] font-medium", t.active ? "bg-brand text-white" : "bg-canvas text-body")}>{t.count}</span> : null}
+        </Link>
+      ))}
+    </nav>
+  );
+}
+
+/** Figures read left to right with an operator between them: Opening + In − Out = Closing. */
+export function FigureStrip({ items }: { items: NonNullable<ListSpec["strip"]> }) {
+  return (
+    <Card className="mb-3 flex flex-wrap items-stretch">
+      {items.map((f) => (
+        <div key={f.l} className="flex min-w-0 flex-1 items-stretch">
+          {f.op ? <span className="flex items-center border-l border-divider px-3 text-lg text-muted">{f.op}</span> : null}
+          <div className={cx("min-w-0 flex-1 px-4 py-3", f.op && "border-l border-divider")}>
+            <div className={eyebrowClass}>{f.l}</div>
+            <div className={cx("mt-0.5 text-lg font-semibold tabular-nums", f.tone === "danger" ? "text-danger" : f.tone === "success" ? "text-success" : "text-ink")}>{f.v}</div>
+          </div>
+        </div>
+      ))}
+    </Card>
+  );
+}
+
 /** The coloured edge a flagged row carries, in the CRM's tokens. */
 const EDGE: Partial<Record<Tone, string>> = {
   danger: "shadow-[inset_3px_0_0_var(--color-danger)]",
@@ -108,6 +152,7 @@ export function ListScreen({
   godowns,
   filter,
   tabs,
+  sections,
   toggle,
   above,
   initialNew,
@@ -128,6 +173,8 @@ export function ListScreen({
   filter?: { label: string; ids: string[] } | null;
   /** The screen's tabs, when it has several lists. */
   tabs?: ListTab[];
+  /** Sub-modules above the tabs, where the screen has two levels. */
+  sections?: ListTab[] | null;
   /** The current tab's second list (every entry behind the available stock), and the way back. */
   toggle?: { label: string; href: string } | null;
   /** Drawn between the header and the list: a calendar, a chart, a scope switch. */
@@ -347,7 +394,9 @@ export function ListScreen({
               {t.l}
             </Button>
           ))}
-          {spec.newForm && !spec.readOnly ? (
+          {spec.newMenu?.length && !spec.readOnly ? (
+            <NewMenu items={spec.newMenu} />
+          ) : spec.newForm && !spec.readOnly ? (
             <Button variant="primary" onClick={() => spec.newForm && ui.openForm(spec.newForm)}>
               <ShellIcon name="plus" size={16} />
               {spec.newLabel ?? "New"}
@@ -357,9 +406,12 @@ export function ListScreen({
       }
     >
 
-      {tabs && tabs.length > 1 ? <ListTabs label={label} tabs={tabs} toggle={toggle} /> : null}
+      {sections?.length ? <SectionTabs label={label} sections={sections} /> : null}
+      {tabs && (tabs.length > 1 || (sections?.length && tabs.length)) ? <ListTabs label={label} tabs={tabs} toggle={toggle} /> : null}
 
       {above}
+
+      {spec.strip?.length ? <FigureStrip items={spec.strip} /> : null}
 
       {/* Not overflow-hidden: the filter bar's menus open over the rows, and on a short list they would be cut off at the card's edge. */}
       <Card className="relative">

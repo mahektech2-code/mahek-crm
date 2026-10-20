@@ -910,15 +910,15 @@ export const DOC_APPS: DocApp[] = [
       {
         slug: "empty-drums-scrap",
         title: "Empty drums, scrap sale and vendor returns",
-        summary: "Drums recorded empty off their GRN label and weighed; Mahek's sold as scrap oldest first, suppliers' returned; scrap receivables matched in Petty Cash/Bank.",
+        summary: "Drums recorded empty off their GRN label and weighed; Mahek's sold as scrap oldest first, suppliers' returned; scrap receivables matched in Petty Cash.",
         group: "Money",
         modules: ["erp.emptyDrums", "erp.drumReturns", "erp.scrapSales"],
         written: ALL,
       },
       {
         slug: "petty-cash",
-        title: "Petty Cash/Bank: expenses, funds given and receipts",
-        summary: "Funds given to people, what they spent, what each of them still holds, and money received from scrap buyers.",
+        title: "Petty Cash: expenses, receipts, cash, bank and advances",
+        summary: "Every rupee outside the order book entered once: expenses as they are paid, production petty cash, advances to employees, receipts, transfers, account statements and bank statement matching.",
         group: "Money",
         modules: ["erp.expenses"],
         written: ALL,

@@ -44,11 +44,11 @@ Opening stock, write-offs and owner changes are asked for by one person and appr
 |---|---|
 | Record an empty drum | the **Empty drums** screen (ERP), or a factory department named in <Setting k="erp.drums.factoryDepartments" /> or a supervisor (phone) |
 | Sell scrap, return drums, classify a drum in review | **Sell scrap and return vendor drums** (`scrapSale`) |
-| Record receipts and match them | **Match Petty Cash/Bank receipts to scrap sales** (`scrapAccounts`) |
+| Record receipts and match them | **Record scrap buyers' receipts and match them to scrap sales** (`scrapAccounts`) |
 | Approve corrections, cancel a sale or outward | **Approve drum corrections and adjustments** (`scrapApprove`) |
 
 ## Where the code and the intent disagree today
 
 - The PRD asks for attachments on sales and outwards. Remarks are stored; files are not yet attached to either.
-- Receipts are recorded in Petty Cash/Bank by hand. MahekOne has no bank-statement import, so a receipt is typed from the statement rather than imported from it.
+- Receipts are recorded on Scrap sales → Receipts, into one of the Petty Cash accounts; each is also a receipt in Petty Cash, so the account balances include it.
 - On the phone, Empty drum entry needs the network: a drum is saved the moment it is weighed, not queued for later.

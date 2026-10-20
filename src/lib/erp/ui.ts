@@ -357,6 +357,16 @@ export type ListSpec = {
   scopedLine?: string;
   newForm?: FormSpec;
   newLabel?: string;
+  /**
+   * "+ New ▾": every kind of record the screen can start, each opening its
+   * form on its own tab. Drawn in place of the single New button.
+   */
+  newMenu?: { l: string; sub?: string; href: string }[];
+  /**
+   * A row of figures above the list, read left to right with an operator
+   * between them — an account statement's Opening + In − Out = Closing.
+   */
+  strip?: { l: string; v: string; op?: "+" | "−" | "="; tone?: "danger" | "success" }[];
   /** Header buttons that act on the screen (see ToolSpec). */
   tools?: ToolSpec[];
   readOnly?: boolean;

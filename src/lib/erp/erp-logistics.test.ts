@@ -350,22 +350,6 @@ describe("complaints and credit notes are the CRM's complaints", () => {
   });
 });
 
-describe("petty cash", () => {
-  test("available is credits less what that person spent, on both screens (A-24)", async () => {
-    const ctx = await as(admin);
-    assert.ok((await mod("credits").forms!.new(ctx, { date: "2026-08-01", godown: "Bhiwandi", who: "Ravi Sales", mode: "Cash", amount: "5000" }, [])).ok);
-    assert.ok((await mod("expenses").forms!.new(ctx, { date: "2026-08-02", godown: "Bhiwandi", who: "Ravi Sales", mode: "Cash", particular: "Fuel", amount: "1200" }, [])).ok);
-    const cr = (await mod("credits").load(ctx)).rows[0];
-    const ex = (await mod("expenses").load(ctx)).rows[0];
-    assert.equal(cr.v.available, 380000);
-    assert.equal(ex.v.available, 380000);
-    const c = await as(clerk);
-    assert.equal(msg(await mod("expenses").actions!.verify(c, ex.id, {})), "A manager verifies expenses.");
-    assert.ok((await mod("expenses").actions!.verify(ctx, ex.id, {})).ok);
-    assert.equal(msg(await mod("expenses").actions!.amount(ctx, ex.id, { amount: "1" })), "A verified expense is closed.");
-  });
-});
-
 describe("transporters", () => {
   test("a godown is a state, district, city and area with its own GST number; an unlisted rung is added once; a new consignment name joins the list", async () => {
     const ctx = await as(admin);

@@ -78,5 +78,5 @@ test("petty cash: the same spend twice close together, and a balance below zero"
     T,
   );
   assert.deepEqual(d.map((x) => x.subject), ["e2"]);
-  assert.equal(cashNegative([{ key: "k", employee: "Ravi", godown: "Bhiwandi", mode: "Cash", availablePaise: -100, ids: [] }]).length, 1);
+  assert.equal(cashNegative([{ id: "macc_petty", name: "Petty Cash", balancePaise: -100 }, { id: "macc_cash", name: "Cash in Hand", balancePaise: 0 }]).length, 1);
 });

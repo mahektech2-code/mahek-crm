@@ -54,7 +54,7 @@ export default async function ErpScreenPage({
      READ through its window (`window.ts`): only the period's rows are built. */
   const query = parseListQuery(raw);
   const scope = scopeFor(mod.window, query, sp.open ?? null);
-  const [{ spec, rows, tooWide }, { tabs, toggle }] = await withReadMemo(() => Promise.all([mod.load(ctx, scope), screenTabs(ctx, screen, key)]));
+  const [{ spec, rows, tooWide }, { tabs, toggle, sections }] = await withReadMemo(() => Promise.all([mod.load(ctx, scope), screenTabs(ctx, screen, key)]));
   /* A dashboard tile opens its list pre-filtered: `f` is the ids it counted,
      `fl` what to call them. */
   const filter = sp.f ? { label: sp.fl ?? "Filtered", ids: sp.f.split(",") } : null;
@@ -73,6 +73,7 @@ export default async function ErpScreenPage({
       label={screen.label}
       sub={screen.sub}
       tabs={tabs}
+      sections={sections}
       toggle={toggle}
       initialOpen={sp.open ?? null}
       filter={filter}

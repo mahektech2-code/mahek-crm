@@ -204,14 +204,14 @@ describe("the PRD's acceptance tests", () => {
   test("Tests 9 and 10 — ₹10,000 sale, ₹6,000 matched leaves ₹4,000; ₹4,000 more closes it", async () => {
     const sale = await sellScrap(actor(head), { date: "2026-10-01", buyerId: "buyer_a", category: DRUM_CATEGORY, quantity: 20, unit: "Pcs", ratePaise: 50_000, refKind: "challan", externalRef: "CH-77", dueDate: "2026-10-05", remark: null, godownId: null });
     assert.ok(sale.ok, sale.ok ? "" : sale.error);
-    const r1 = await recordReceipt(actor(accountant), { date: "2026-10-06", mode: "Bank transfer", amountPaise: 600_000, buyerId: "buyer_a", payer: null, reference: "UTR1", note: null });
+    const r1 = await recordReceipt(actor(accountant), { date: "2026-10-06", mode: "Bank transfer", amountPaise: 600_000, buyerId: "buyer_a", payer: null, reference: "UTR1", note: null, into: "Kotak Bank" });
     assert.ok(r1.ok);
     const m1 = await allocateReceipt(actor(accountant), r1.data.id, sale.data.id, 600_000);
     assert.ok(m1.ok, m1.ok ? "" : m1.error);
     let row = (await saleRows()).find((s) => s.id === sale.data.id)!;
     assert.equal(row.outstandingPaise, 400_000);
     /* Never more than the sale owes. */
-    const r2 = await recordReceipt(actor(accountant), { date: "2026-10-09", mode: "UPI", amountPaise: 500_000, buyerId: "buyer_a", payer: null, reference: null, note: null });
+    const r2 = await recordReceipt(actor(accountant), { date: "2026-10-09", mode: "UPI", amountPaise: 500_000, buyerId: "buyer_a", payer: null, reference: null, note: null, into: "Kotak Bank" });
     assert.ok(r2.ok);
     const tooMuch = await allocateReceipt(actor(accountant), r2.data.id, sale.data.id, 500_000);
     assert.equal(tooMuch.ok, false);

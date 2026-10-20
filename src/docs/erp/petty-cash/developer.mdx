@@ -1,33 +1,45 @@
-Petty cash is one ERP screen (`expenses`) with two tabs, `expenses` and `credits`, both server modules in `src/lib/erp/screens/logistics.ts`. Writes go through the four generic ERP actions in `src/lib/actions/erp.ts`.
+Petty Cash is one ERP screen (`expenses`, so its grant `erp.expenses` is the one it always was) with fifteen tabs in four sections (`ErpView.section`). `app/erp/expenses/page.tsx` draws the Overview board and hands every other tab to `ListScreen`, exactly as `[slug]/page.tsx` does.
 
 ## Map of the code
 
 | Layer | File | What lives there |
 |---|---|---|
-| Registry | `src/lib/erp/registry.ts` | The `expenses` screen and its two views |
-| Tabs | `src/lib/erp/screens/logistics.ts` | `cashForm`, the `credits` and `expenses` modules, `setExpenseStatus` |
-| Rules (pure) | `src/lib/erp/engines/cash.ts` | `cashBalances`, `cashKey` |
-| Alerts (pure) | `src/lib/erp/engines/alerts.ts` | `duplicateExpenses`, `cashNegative` |
+| Registry | `src/lib/erp/registry.ts` | The `expenses` screen, its tabs and their sections |
+| Two-level tabs | `src/app/erp/_ui/screen-tabs.ts`, `list-screen.tsx` | `screenTabs` returns `sections`; `SectionTabs` draws them |
+| Rules (pure) | `src/lib/erp/engines/money.ts` | legs, balances, statements, advances, duplicates, bank parsing and matching |
+| Reads and writes | `src/lib/erp/money.ts` | `saveExpense`, `saveReceipt`, `saveTransfer`, advances, bank lines, `moneyOverview` |
+| Screens | `src/lib/erp/screens/money.ts` | every tab's module and form |
+| Board | `src/app/erp/expenses/page.tsx` | Overview › Today |
+| Record panel | `src/app/erp/_ui/panels/money.tsx` | figures, where the money went, the bills |
+| Scrap receipts | `src/lib/erp/drums.ts` | `recordReceipt` writes the money row in its own transaction |
 
 ## The balance
 
-<Code file="src/lib/erp/engines/cash.ts" symbol="cashBalances" />
+<Code file="src/lib/erp/engines/money.ts" symbol="legs" />
 
-Every load reads both tables whole and recomputes the balances; there is no cached figure to go stale.
+<Code file="src/lib/erp/engines/money.ts" symbol="advancePosition" />
 
-## Verifying
+## Matching a bank line
 
-<Code file="src/lib/erp/screens/logistics.ts" symbol="setExpenseStatus" />
+<Code file="src/lib/erp/engines/money.ts" symbol="matchCandidates" />
 
 ## Tables
 
-<DbTable name="erp_credits" />
+<DbTable name="erp_money_accounts" />
 
-<DbTable name="erp_expenses" />
+<DbTable name="erp_money_txns" />
+
+<DbTable name="erp_advances" />
+
+<DbTable name="erp_bank_lines" />
+
+<DbTable name="erp_bank_matches" />
+
+The old `erp_credits` and `erp_expenses` are kept and read only by the Old records tab.
 
 ## Tests
 
 | Command | File | What it pins |
 |---|---|---|
-| `npm run test` | `src/lib/erp/engines/cash.test.ts` | The balance arithmetic |
-| `npm run test` | `src/lib/erp/engines/alerts.test.ts` | The duplicate and below-zero alert rules |
+| `npm run test` | `src/lib/erp/engines/money.test.ts` | legs, balances, statements, advances, duplicates, bank statement parsing and matching |
+| `npm run test:integration` | `src/lib/erp/erp-money.test.ts` | every write end to end: expenses and review, traced cash, advances, bank import and matching, scrap receipts, every tab loading |

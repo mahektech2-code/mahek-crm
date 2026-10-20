@@ -22,6 +22,7 @@ import { openMismatches } from "./floor-checks";
 import { adjustmentReasonLabel } from "./engines/stock-check";
 import type { Tone } from "./ui";
 import { nf } from "./ui";
+import { moneyOverview } from "./money";
 
 /* ---------------------------------------------------------------------------
  * The ERP dashboard (PRD §6, spec §13.6): what needs attention now, from data
@@ -479,23 +480,13 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
   }
 
   /* ======================================================== petty cash */
-  if (has("expenses") || has("credits")) {
-    const [credits, expenses] = await Promise.all([
-      q(sql`select c.employee_name as who, g.name as godown, c.mode, c.amount_paise::float8 as amount from erp_credits c join erp_godowns g on g.id = c.godown_id`),
-      q(sql`select e.id, e.expense_by as who, g.name as godown, e.mode, e.amount_paise::float8 as amount, e.status from erp_expenses e join erp_godowns g on g.id = e.godown_id`),
-    ]);
-    /* Everyone's with the Expenses screen; otherwise the person's own (spec §13.6). */
-    const everyone = has("expenses");
-    const mine = (who: unknown) => everyone || String(who).trim().toLowerCase() === ctx.user.name.trim().toLowerCase();
-    const place = new Map<string, number>();
-    for (const c of credits) if (mine(c.who) && inG(c.godown)) place.set(`${c.godown} · ${c.mode}`, (place.get(`${c.godown} · ${c.mode}`) ?? 0) + Number(c.amount));
-    for (const e of expenses) if (mine(e.who) && inG(e.godown)) place.set(`${e.godown} · ${e.mode}`, (place.get(`${e.godown} · ${e.mode}`) ?? 0) - Number(e.amount));
-    const tiles: Tile[] = [...place.entries()].map(([k, v]) => ({ l: `Petty cash · ${k}`, v: rupees(v), sub: everyone ? "everyone's balance" : "your balance", tone: v < 0 ? "danger" : undefined, href: tileHref(has("expenses") ? "expenses" : "credits", null, "") }));
-    if (has("expenses")) {
-      const pend = expenses.filter((e) => e.status === "Pending").map((e) => String(e.id));
-      tiles.push({ l: "Expenses pending verification", v: String(pend.length), href: tileHref("expenses", pend, "Pending") });
-    }
-    push("Petty Cash/Bank", tiles);
+  if (has("expenses")) {
+    /* The same reads the module's own overview draws, so a tile and the board cannot disagree. */
+    const o = await moneyOverview(today());
+    const tiles: Tile[] = o.accounts.map((a) => ({ l: a.name, v: rupees(a.balance), sub: a.kind === "bank" && a.unmatched ? `${a.unmatched} bank lines not matched` : "balance", tone: a.balance < 0 && a.kind !== "bank" ? ("danger" as Tone) : undefined, href: tileHref(a.kind === "bank" ? (a.id === "macc_icici" ? "stmtIcici" : "stmtKotak") : a.kind === "petty" ? "stmtPetty" : "stmtCash", null, "") }));
+    if (ctx.powers.has("approveMoney")) tiles.push({ l: "Waiting for review", v: String(o.review.n + o.pettyReview.n), sub: rupees(o.review.paise + o.pettyReview.paise), tone: o.review.n + o.pettyReview.n ? ("warn" as Tone) : undefined, href: tileHref("moneyReview", null, "") });
+    if (o.advancesOpen.n) tiles.push({ l: "Advances open", v: String(o.advancesOpen.n), sub: `${rupees(o.advancesOpen.withThem)} with employees${o.advancesOpen.late ? ` · ${o.advancesOpen.late} late` : ""}`, tone: o.advancesOpen.late ? ("danger" as Tone) : undefined, href: tileHref("advances", null, "") });
+    push("Petty Cash", tiles);
   }
 
   /* ========================================================= customers */
