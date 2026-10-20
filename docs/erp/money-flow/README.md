@@ -12,7 +12,7 @@ across the top, and each page keeps its lists as sub-tabs:
 | Sub-module | Sub-tabs |
 |---|---|
 | Overview (opens here) | Today · Reports · Audit trail |
-| Expenses | Pending payment · Paid · Production petty cash · Advances · Needs approval · Cancelled · All |
+| Expenses | Paid · Production petty cash · Advances · Needs approval · Cancelled · All |
 | Receipts | All · Bank · Cash · Not matched to bank |
 | Cash & Bank | Transfers · Kotak · ICICI · Cash · Petty Cash (account statements) |
 
@@ -22,7 +22,8 @@ second bank statement screen is built.
 ## The rule
 
 One real movement of money is entered once, gets one Transaction ID, and posts
-to the ledgers once. A pending expense moves no balance. Transfers between our
+to the ledgers once. An expense is entered when it is paid, so there is no
+"not paid" or pending state: every expense names the account the money left. Transfers between our
 own accounts are never income or expense. Bank lines are matched, not re-entered.
 
 ## Advances to employees
@@ -41,16 +42,15 @@ with no receipt needs a written reason and is flagged for the Accountant.
 | # | Screen | Image |
 |---|---|---|
 | 1 | Overview › Today | ![](01-overview.png) |
-| 2 | Expenses › Pending payment | ![](02-expenses-pending.png) |
+| 2 | Expenses › Paid | ![](02-expenses-paid.png) |
 | 3 | Expenses › New expense | ![](03-expenses-new.png) |
-| 4 | Expenses › Mark as Paid | ![](04-expenses-mark-paid.png) |
-| 5 | Expenses › Production petty cash | ![](05-expenses-production-petty-cash.png) |
-| 10 | Expenses › Advances › Give an advance | ![](10-expenses-advances-give.png) |
-| 11 | Advances › Employee submits bills | ![](11-advances-submit-bills.png) |
-| 12 | Advances › Review and settle | ![](12-advances-review-settle.png) |
-| 6 | Receipts › New receipt | ![](06-receipts-new.png) |
-| 7 | Cash & Bank › Transfers | ![](07-cash-bank-transfers.png) |
-| 8 | Cash & Bank › Cash statement | ![](08-cash-bank-cash-statement.png) |
-| 9 | Accounts › Bank statement (existing) | ![](09-accounts-bank-statement.png) |
+| 4 | Expenses › Production petty cash | ![](04-expenses-production-petty-cash.png) |
+| 5 | Receipts › New receipt | ![](05-receipts-new.png) |
+| 6 | Cash & Bank › Transfers | ![](06-cash-bank-transfers.png) |
+| 7 | Cash & Bank › Cash statement | ![](07-cash-bank-cash-statement.png) |
+| 8 | Accounts › Bank statement (existing) | ![](08-accounts-bank-statement.png) |
+| 9 | Expenses › Advances › Give an advance | ![](09-advances-give.png) |
+| 10 | Advances › Employee submits bills | ![](10-advances-submit-bills.png) |
+| 11 | Advances › Review and settle | ![](11-advances-review-settle.png) |
 
 `mockup.html` is the source. Names, amounts and IDs are placeholders.
