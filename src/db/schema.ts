@@ -13543,6 +13543,10 @@ export const erpMoneyAccounts = pgTable(
     kind: text("kind").notNull(),
     /** The last four digits of a bank account, shown beside its name. */
     last4: text("last4"),
+    /** The bank as its statements name it — "Kotak Mahindra". Bank accounts only. */
+    bankName: text("bank_name"),
+    /** Current, OD, Savings, CC. Bank accounts only. */
+    accountType: text("account_type"),
     /** What it held on `opening_date`, before the first row here. */
     openingPaise: bigint("opening_paise", { mode: "number" }).notNull().default(0),
     openingDate: date("opening_date"),
@@ -13648,6 +13652,61 @@ export const erpMoneyTxns = pgTable(
   ],
 );
 
+/**
+ * A bank's own statement PDF, uploaded on Accounts → Bank statement management.
+ * It is read by OpenAI into `rows`, checked, and its new rows imported into
+ * `erp_bank_lines`. The PDF itself is kept until `pdf_expires_at` and then
+ * deleted (`file_ref` null, `pdf_deleted_at` set); the row and the lines stay.
+ */
+export const bankStatementUploads = pgTable(
+  "bank_statement_uploads",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => erpMoneyAccounts.id),
+    fileName: text("file_name").notNull(),
+    fileSize: integer("file_size").notNull(),
+    /** Where the PDF sits in file storage. Null once deleted. */
+    fileRef: text("file_ref"),
+    pages: integer("pages"),
+    note: text("note"),
+    /** reading | ready | failed | imported | discarded. */
+    status: text("status").notNull().default("reading"),
+    /** While reading: which step it is on, said in words. */
+    step: text("step"),
+    error: text("error"),
+    /** The statement's own period, as printed ("21 Oct 2026 00:00"). */
+    periodFrom: text("period_from"),
+    periodTo: text("period_to"),
+    openingPaise: bigint("opening_paise", { mode: "number" }),
+    closingPaise: bigint("closing_paise", { mode: "number" }),
+    /** The lines read from it, with what the check found — see `lib/engines/bank-statements.ts`. */
+    rows: jsonb("rows").notNull().default(sql`'[]'::jsonb`),
+    warnings: jsonb("warnings").notNull().default(sql`'[]'::jsonb`),
+    balanceOk: boolean("balance_ok"),
+    /** The first line whose running balance does not follow. */
+    breakAt: integer("break_at"),
+    linesRead: integer("lines_read").notNull().default(0),
+    linesNew: integer("lines_new").notNull().default(0),
+    linesExisting: integer("lines_existing").notNull().default(0),
+    model: text("model"),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    uploadedById: text("uploaded_by_id").references(() => users.id),
+    uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
+    readAt: timestamp("read_at", { withTimezone: true }),
+    importedAt: timestamp("imported_at", { withTimezone: true }),
+    importedById: text("imported_by_id").references(() => users.id),
+    pdfExpiresAt: timestamp("pdf_expires_at", { withTimezone: true }).notNull(),
+    pdfDeletedAt: timestamp("pdf_deleted_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("bank_statement_uploads_account_idx").on(t.accountId, t.uploadedAt),
+    check("bank_statement_uploads_status_check", sql`${t.status} in ('reading', 'ready', 'failed', 'imported', 'discarded')`),
+  ],
+);
+
 /** A line of a bank's own statement, imported as it came. Matched to the transactions that explain it, never re-entered. */
 export const erpBankLines = pgTable(
   "erp_bank_lines",
@@ -13670,6 +13729,27 @@ export const erpBankLines = pgTable(
     /** open | ignored. Matched is read from the matches. */
     status: text("status").notNull().default("open"),
     ignoreReason: text("ignore_reason"),
+    /** The PDF upload it came from; null for a line imported from a CSV on Petty Cash. */
+    uploadId: text("upload_id").references(() => bankStatementUploads.id),
+    lineNo: integer("line_no"),
+    page: integer("page"),
+    /** How sure the reading was, 0–100. */
+    confidence: integer("confidence"),
+    /** Its printed balance did not follow from the line before when it was read. Cleared when a person fixes the line. */
+    balanceBreak: boolean("balance_break").notNull().default(false),
+    /** Why a person must look at it — `BANK_FLAGS` in `lib/engines/bank-statements.ts`. Recomputed, never typed. */
+    flag: text("flag"),
+    flagNote: text("flag_note"),
+    /** The receipt a flag is about — the cheque that came back, the payment that was short, the one on hold. */
+    flagReceiptId: text("flag_receipt_id").references(() => paymentReceipts.id),
+    /** The best match found, recomputed after every import and match. Never acted on without a person. */
+    suggestion: jsonb("suggestion"),
+    /** Candidates a person said "Not this" to, so they are not suggested again. */
+    dismissed: jsonb("dismissed").notNull().default(sql`'[]'::jsonb`),
+    /** What a person marked it as: customer_payment, vendor_payment, expense, salary, tax, charges, transfer, other_in, other_out. */
+    markedAs: text("marked_as"),
+    editedAt: timestamp("edited_at", { withTimezone: true }),
+    editedById: text("edited_by_id").references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id").references(() => users.id),
   },
@@ -13689,10 +13769,13 @@ export const erpBankMatches = pgTable(
     lineId: text("line_id")
       .notNull()
       .references(() => erpBankLines.id),
-    txnId: text("txn_id")
-      .notNull()
-      .references(() => erpMoneyTxns.id),
+    /** Exactly one of these three: a Petty Cash transaction, a customer receipt, a vendor payout. */
+    txnId: text("txn_id").references(() => erpMoneyTxns.id),
+    receiptId: text("receipt_id").references(() => paymentReceipts.id),
+    payoutId: text("payout_id").references(() => vendorPayouts.id),
     amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    /** suggestion — accepted as suggested; hand — chosen or created by a person. Null before bank statement management. */
+    via: text("via"),
     byId: text("by_id").references(() => users.id),
     at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
     voidedAt: timestamp("voided_at", { withTimezone: true }),
@@ -13703,6 +13786,9 @@ export const erpBankMatches = pgTable(
     index("erp_bank_matches_txn_idx").on(t.txnId),
     uniqueIndex("erp_bank_matches_live_key").on(t.lineId, t.txnId).where(sql`${t.voidedAt} is null`),
     check("erp_bank_matches_amount_check", sql`${t.amountPaise} > 0`),
+    check("erp_bank_matches_one_target_check", sql`num_nonnulls(${t.txnId}, ${t.receiptId}, ${t.payoutId}) = 1`),
+    uniqueIndex("erp_bank_matches_receipt_live_key").on(t.receiptId).where(sql`${t.voidedAt} is null and ${t.receiptId} is not null`),
+    uniqueIndex("erp_bank_matches_payout_live_key").on(t.payoutId).where(sql`${t.voidedAt} is null and ${t.payoutId} is not null`),
   ],
 );
 

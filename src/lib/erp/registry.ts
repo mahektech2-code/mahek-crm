@@ -294,11 +294,13 @@ export const ERP_GROUPS: ErpGroup[] = [
         sv("Receipts", "receiptsCash", "Cash"),
         sv("Receipts", "receiptsUnmatched", "Not matched to bank"),
         sv("Cash & Bank", "moneyTransfers", "Transfers"),
-        sv("Cash & Bank", "stmtKotak", "Kotak"),
-        sv("Cash & Bank", "stmtIcici", "ICICI"),
-        sv("Cash & Bank", "stmtCash", "Cash"),
+        /* Petty Cash statements: OUR record of each account. Drawn as one tab
+           with the accounts inside it; the BANK's record is Accounts → Bank
+           statement management, where its PDFs are read and reconciled. */
+        sv("Cash & Bank", "stmtKotak", "Kotak Bank"),
+        sv("Cash & Bank", "stmtIcici", "ICICI Bank"),
+        sv("Cash & Bank", "stmtCash", "Cash in Hand"),
         sv("Cash & Bank", "stmtPetty", "Petty Cash"),
-        sv("Cash & Bank", "bankLines", "Bank statement"),
         sv("Cash & Bank", "moneyAccounts", "Accounts"),
         sv("Cash & Bank", "legacyPetty", "Old records"),
       ]),

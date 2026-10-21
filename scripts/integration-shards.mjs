@@ -38,6 +38,7 @@ export const WEIGHTS = {
   "src/lib/erp/erp-sales.test.ts": 3,
   "src/lib/erp/erp-logistics.test.ts": 3,
   "src/lib/erp/erp-money.test.ts": 2,
+  "src/lib/bank-statements.test.ts": 2,
   "src/lib/erp/erp-book.test.ts": 3,
   "src/lib/erp/erp-ai.test.ts": 3,
   "src/lib/erp/erp-ai-reading.test.ts": 2,

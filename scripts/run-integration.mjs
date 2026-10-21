@@ -79,6 +79,9 @@ const files = [
   "src/lib/erp/erp-sales.test.ts",
   "src/lib/erp/erp-logistics.test.ts",
   "src/lib/erp/erp-money.test.ts",
+  // Accounts → Bank statement management: upload, import only what is new,
+  // match each line to what explains it, and the PDF's seven days.
+  "src/lib/bank-statements.test.ts",
   "src/lib/erp/erp-book.test.ts",
   "src/lib/erp/erp-scale.test.ts",
   "src/lib/erp/erp-ai.test.ts",

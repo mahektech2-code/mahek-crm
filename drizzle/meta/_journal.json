@@ -1968,6 +1968,13 @@
       "when": 1793000000000,
       "tag": "0283_erp_petty_cash_module",
       "breakpoints": true
+    },
+    {
+      "idx": 281,
+      "version": "7",
+      "when": 1793100000000,
+      "tag": "0284_bank_statement_management",
+      "breakpoints": true
     }
   ]
 }

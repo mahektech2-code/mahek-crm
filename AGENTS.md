@@ -2705,13 +2705,67 @@ and works the bank statement; nobody approves what they entered, unless an
 ERP administrator.
 
 **A BANK LINE IS MATCHED, NEVER RE-ENTERED.** `erp_bank_lines` (deduplicated
-on `line_key`) are imported from the bank's CSV (`parseBankStatement`) and
-explained by `erp_bank_matches`; a line naming a transaction's reference is
+on `line_key`) are imported — from the bank's PDF on Accounts → Bank statement
+management (below), or the old CSV path (`parseBankStatement`), which no screen
+offers now — and explained by `erp_bank_matches`; a line naming a transaction's reference is
 matched as it lands, a split must add up exactly (`splitRefusal`), and
 "Create transaction from this line" is refused while anything already on the
 books may be that line. **A scrap buyer's receipt writes its money row in its
 own transaction** (`recordScrapMoney`), so the balances include it, and
 voiding it cancels the row.
+
+**PETTY CASH STATEMENTS ARE OURS; THE BANK'S STATEMENT IS ACCOUNTS'.** Cash &
+Bank's account tabs are one tab, **Petty Cash statements** — what MahekOne
+recorded going in and out of each account — and on a bank account each row
+says **✓ Bank** once a bank line is matched to it. Its "Bank statement" tab is
+gone from the registry (the `bankLines` module stays, unreached); the bank's own
+record lives in Accounts.
+
+## Bank statement management (Accounts)
+
+**THE BANK'S PDF, READ BY AI, CHECKED, AND EVERY LINE EXPLAINED ONCE.** Its own
+sidebar group with three modules: `accounts.bank-statements` (Bank accounts &
+uploads — the cards, upload, check and import), `accounts.bank-reconcile`
+(Reconcile) and `accounts.bank-uploads` (Upload history). A statement is
+uploaded as often as anybody likes (`/api/accounts/bank-statements/upload`, a
+route because a PDF is past an action's 1 MB) and read AFTER the answer
+(`after()`): `services/bank-statement-reader.ts` sends the PDF to OpenAI as a
+file (`bankStatements.model`) — or, where the bank locked it, opens it with the
+password (used once, never stored) and sends its text — into
+`bank_statement_uploads.rows`. The model only reads. Everything after is pure
+in `engines/bank-statements.ts`: the BALANCE CHECK (opening + credits − debits
+= closing, and every running balance follows; a break names its line), the
+order (newest-first statements are put oldest first), ALREADY IN (a line the
+account holds — same date, amount and balance — is skipped, so three downloads
+a day never double a line; `pdfLineKey` keys it), SUGGESTIONS and FLAGS.
+
+**A person checks before anything is imported**, correcting any cell, and
+imports only the new lines into `erp_bank_lines` — the ONE store, which Petty
+Cash ticks from. `erp_bank_matches` now points at exactly one of a Petty Cash
+transaction, a `payment_receipts` row or a `vendor_payouts` row (a check
+constraint), each receipt or payout at most once live (partial unique
+indexes), and records `via` (suggestion or hand).
+
+**A SUGGESTION NEVER MOVES MONEY.** `refreshSuggestions` stores the one strong
+candidate per line (a reported receipt's UTR and amount, an open bill of a
+customer named in the narration, a payout to the vendor named, a Petty Cash
+entry, our own transfer seen on the other account, a bank charge) and the flag
+(balance breaks, AI unsure, cheque returned, same UTR twice, less than
+reported, customer on hold, large and unexplained). Confirming is the
+existing writer: `confirmReceipt`, `recordReceipt` (settled against the bill,
+or oldest first), the payout marked paid with the bank's reference, Petty
+Cash's `saveExpense`/`saveTransfer`/`saveReceipt` for charges, transfers and
+other money. Uploading, importing, fixing a figure and setting a line aside are
+`payment.record`; matching, marking, reversing a returned cheque and confirming
+a short payment move money and are `payment.confirm`. Undoing a match leaves
+the record it confirmed or created, and says where to reverse it.
+
+**THE PDF IS KEPT `bankStatements.pdfRetentionDays` (7) AND THEN DELETED** by
+the hourly `bank-statement-pdfs` step (`fileStorage.remove`, `file_ref` null,
+`pdf_deleted_at` set); the upload row, its lines and every match stay, and the
+screens say "Deleted 21 Oct" rather than offering a link that 410s. A reading
+that never finished is failed after thirty minutes. The rest of its settings
+are `bankStatements.*` on the Accounts settings page.
 
 ## Layout
 

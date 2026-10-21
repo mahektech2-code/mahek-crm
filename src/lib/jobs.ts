@@ -155,6 +155,8 @@ export type JobName =
   | "erp-alerts"
   /** Website review: approvals whose seven days have passed become `expired`, freeing their items. Idempotent. */
   | "website-review-expiry"
+  /** Bank statement PDFs past `bankStatements.pdfRetentionDays` are deleted; the lines read from them stay. */
+  | "bank-statement-pdfs"
   /** HRMS: this month's paid-leave credit for every active employee — idempotent. */
   | "hrms-leave-credit"
   | "erp-digest"
@@ -717,6 +719,12 @@ async function topCustomersReportStep() {
   };
 }
 
+async function bankPdfStep() {
+  const { sweepStatementPdfs } = await import("./services/bank-statement-service");
+  const r = await sweepStatementPdfs();
+  return { recordsAffected: r.deleted, detail: `${r.deleted} statement PDF${r.deleted === 1 ? "" : "s"} deleted` };
+}
+
 export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
   const results: JobResult[] = [];
 
@@ -729,6 +737,9 @@ export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
 
   // Website review: approvals past their seven days.
   results.push(await run("website-review-expiry", websiteReviewExpiryStep, triggeredById));
+
+  // Bank statement PDFs past their days are deleted; the lines stay.
+  results.push(await run("bank-statement-pdfs", bankPdfStep, triggeredById));
 
   // The Top customers report has its own 10:00 IST cron line on the 1st. This
   // is the net under it: a droplet whose crontab predates that line still
@@ -1150,6 +1161,8 @@ export async function runJob(
       return [await run("erp-alerts", erpAlertsStep, triggeredById)];
     case "website-review-expiry":
       return [await run("website-review-expiry", websiteReviewExpiryStep, triggeredById)];
+    case "bank-statement-pdfs":
+      return [await run("bank-statement-pdfs", bankPdfStep, triggeredById)];
     case "hrms-leave-credit":
       return [
         await run("hrms-leave-credit", async () => {

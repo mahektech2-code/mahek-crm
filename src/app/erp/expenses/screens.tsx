@@ -671,8 +671,8 @@ export function StatementView({ st, openId }: { st: NonNullable<Awaited<ReturnTy
         <table className="w-full">
           <thead>
             <Tr>
-              {["Date", "TXN ID", "Type", "Party", cash ? "Cash in" : "Money in", cash ? "Cash out" : "Money out", "Balance"].map((h, i) => (
-                <Th key={h} align={i >= 4 ? "right" : undefined} className="bg-surface">
+              {["Date", "TXN ID", "Type", "Party", cash ? "Cash in" : "Money in", cash ? "Cash out" : "Money out", "Balance", ...(cash ? [] : ["Bank"])].map((h, i) => (
+                <Th key={h} align={i >= 4 && i <= 6 ? "right" : undefined} className="bg-surface">
                   {h}
                 </Th>
               ))}
@@ -701,6 +701,12 @@ export function StatementView({ st, openId }: { st: NonNullable<Awaited<ReturnTy
                   <Td align="right" className="font-bold text-ink">
                     {inr(r.balance)}
                   </Td>
+                  {cash ? null : (
+                    <Td>
+                      {/* Ticked when the bank's own PDF, read on Accounts → Bank statement management, shows this money. */}
+                      {t.matchedPaise >= t.amountPaise ? <Pill tone="success">✓ Bank</Pill> : <Pill tone="danger">Not in bank yet</Pill>}
+                    </Td>
+                  )}
                 </OpenRow>
               );
             })}

@@ -5,8 +5,7 @@ import { erpLink, erpScreenBySlug } from "@/lib/erp/registry";
 import { screenModule } from "@/lib/erp/screens";
 import { newMenu } from "@/lib/erp/screens/money";
 import { moneyOverview } from "@/lib/erp/money";
-import { advanceList, advanceView, bankView, filterOptions, moneyKitData, PERIODS, periodOf, statementView, tabCounts, TXN_VIEWS, txnDetail, txnView, type BankTab } from "@/lib/erp/money-views";
-import { getConfig } from "@/lib/config/store";
+import { advanceList, advanceView, filterOptions, moneyKitData, PERIODS, periodOf, statementView, tabCounts, TXN_VIEWS, txnDetail, txnView } from "@/lib/erp/money-views";
 import { today } from "@/lib/erp/screens/common";
 import { FLAG, inr, nf } from "@/lib/erp/ui";
 import { LIST_QUERY_KEYS, pageOf, parseListQuery } from "@/lib/erp/list-query";
@@ -21,7 +20,7 @@ import { linkClass, SectionTitle } from "../_ui/look";
 import { MoneyDialogHost } from "./money-dialogs";
 import type { FilterDef } from "./money-client";
 import type { MoneyKit } from "./money-ui";
-import { AccountCards, AdvancePage, AdvancesTable, BankView, Panel, SectionNav, StatementView, SubTabs, TxnDrawerView, TxnTable, type ListKind, type Tab } from "./screens";
+import { AccountCards, AdvancePage, AdvancesTable, Panel, SectionNav, StatementView, SubTabs, TxnDrawerView, TxnTable, type ListKind, type Tab } from "./screens";
 
 /**
  * PETTY CASH — one ERP module: Overview, Expenses, Receipts and Cash & Bank
@@ -101,13 +100,22 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
     Overview: 0,
     Expenses: overview.review.n + overview.pettyReview.n + overview.sentBack.n,
     Receipts: overview.receiptsNotInBank.n,
-    "Cash & Bank": overview.unmatchedLines.n,
+    "Cash & Bank": 0,
   };
   const sections: Tab[] = sectionNames.map((n) => {
     const first = views.find((v) => (v.section ?? "") === n)!;
     return { key: n, label: n, href: erpLink(first.key), active: n === current.section, count: sectionCount[n] || undefined };
   });
-  const tabs: Tab[] = mine.map((v) => ({ key: v.key, label: v.label, href: erpLink(v.key), active: v.key === view, count: counts[v.key] }));
+  /* The four account statements are ONE tab, "Petty Cash statements", with the accounts inside it. */
+  const tabs: Tab[] = [];
+  for (const v of mine) {
+    if (STATEMENTS[v.key]) {
+      if (!tabs.some((t) => t.key === "stmt")) tabs.push({ key: "stmt", label: "Petty Cash statements", href: erpLink(v.key), active: !!STATEMENTS[view] });
+      continue;
+    }
+    tabs.push({ key: v.key, label: v.label, href: erpLink(v.key), active: v.key === view, count: counts[v.key] });
+  }
+  const stmtTabs: Tab[] = mine.filter((v) => STATEMENTS[v.key]).map((v) => ({ key: v.key, label: v.label, href: erpLink(v.key), active: v.key === view }));
 
   const kit: MoneyKit = { ...kitBase, today: day, me: ctx.actor.name, approver };
   const dlg = canWrite ? (one("dlg") ?? null) : null;
@@ -182,32 +190,21 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
     return shell(
       <>
         <Panel className="mb-3">
-          <SubTabs tabs={tabs} />
+          <SubTabs
+            tabs={tabs}
+            aside={
+              <Link href="/accounts/bank-statements" className="text-sm font-semibold whitespace-nowrap text-brand hover:underline">
+                Bank PDFs and reconciling → Accounts · Bank statement management ↗
+              </Link>
+            }
+          />
         </Panel>
-        <div className="mb-3 flex justify-end">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <SubTabs tabs={stmtTabs} />
           <PeriodLinks period={period} href={(p) => here({ p, open: null })} />
         </div>
         {st ? <StatementView st={st} openId={openId} /> : <Card className="p-6 text-sm text-muted">This account is not set up. Add it on Cash &amp; Bank › Accounts.</Card>}
         {drawerView}
-      </>,
-    );
-  }
-
-  /* ---------------------------------------------------- bank statement */
-  if (view === "bankLines" && !openId) {
-    const cfg = await getConfig();
-    const bt = (["all", "unmatched", "matched", "ignored", "review"].includes(one("bt") ?? "") ? one("bt") : "unmatched") as BankTab;
-    const b = await bankView(one("acct") ?? null, bt, one("line") ?? null, cfg["erp.money.bankMatchDays"]);
-    return shell(
-      <>
-        <Panel className="mb-5">
-          <SubTabs tabs={tabs} />
-        </Panel>
-        {b ? (
-          <BankView b={b} tab={bt} hrefFor={here} approver={approver && canWrite} accounts={kit.accounts} />
-        ) : (
-          <Card className="p-6 text-sm text-muted">No bank account is set up. Add one on Cash &amp; Bank › Accounts.</Card>
-        )}
       </>,
     );
   }
@@ -222,7 +219,7 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
       { l: "Advances open", n: o.advancesOpen.n, v: inr(o.advancesOpen.withThem), href: erpLink("advances"), hide: !o.advancesOpen.n },
       { l: "Advances with bills late", n: o.advancesOpen.late, v: "", href: erpLink("advances"), danger: true, hide: !o.advancesOpen.late },
       { l: "Receipts not matched to bank", n: o.receiptsNotInBank.n, v: inr(o.receiptsNotInBank.paise), href: erpLink("receiptsUnmatched") },
-      { l: "Bank lines not matched", n: o.unmatchedLines.n, v: inr(o.unmatchedLines.paise), href: erpLink("bankLines"), hide: !approver || !o.unmatchedLines.n },
+      { l: "Bank lines not matched", n: o.unmatchedLines.n, v: inr(o.unmatchedLines.paise), href: "/accounts/bank-reconcile", hide: !approver || !o.unmatchedLines.n },
       { l: "Possible duplicates", n: o.duplicates.n, v: inr(o.duplicates.paise), href: erpLink("expenses"), danger: true },
     ];
     const maxCat = Math.max(1, ...o.byCategory.map((c) => c.paise));

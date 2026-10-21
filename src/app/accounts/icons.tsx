@@ -27,7 +27,10 @@ export type AccountsIconName =
   | "clock"
   | "check"
   | "chat"
-  | "payout";
+  | "payout"
+  | "bank"
+  | "reconcile"
+  | "upload";
 
 const PATHS: Record<AccountsIconName, React.ReactNode> = {
   today: (
@@ -126,6 +129,24 @@ const PATHS: Record<AccountsIconName, React.ReactNode> = {
     <>
       <circle cx="12" cy="12" r="9" />
       <path d="m8.5 12.5 2.5 2.5 4.5-5" />
+    </>
+  ),
+  bank: (
+    <>
+      <path d="M3 9.5 12 4l9 5.5" />
+      <path d="M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 20h18" />
+    </>
+  ),
+  reconcile: (
+    <>
+      <path d="M4 7h11M4 7l3-3M4 7l3 3" />
+      <path d="M20 17H9M20 17l-3-3M20 17l-3 3" />
+    </>
+  ),
+  upload: (
+    <>
+      <path d="M12 15V4M7.5 8.5 12 4l4.5 4.5" />
+      <path d="M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4" />
     </>
   ),
 };

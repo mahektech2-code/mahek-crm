@@ -585,6 +585,19 @@ export const APP_MODULES: AppModule[] = [
   },
   accounts("ledger", "Customer account", "Money"),
   accounts("on-account", "On account", "Money"),
+  accounts(
+    "bank-statements",
+    "Bank accounts & uploads",
+    "Bank statement management",
+    "The bank's own record: each bank account at a glance, and uploading its statement PDF to be read by AI and imported. Not Petty Cash's statements, which are our own record of each account.",
+  ),
+  accounts(
+    "bank-reconcile",
+    "Reconcile",
+    "Bank statement management",
+    "Every bank line matched to a customer receipt, a vendor payout or a Petty Cash entry, marked by hand, or set aside. Matching confirms money, so it is the Accounts manager's.",
+  ),
+  accounts("bank-uploads", "Upload history", "Bank statement management", "Every statement uploaded, what it brought in, and how long its PDF is kept."),
   accounts("import", "Sheet import", "System", "Runs the projection against the live database."),
   accounts("audit", "Audit log", "System"),
 
