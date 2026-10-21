@@ -1059,10 +1059,10 @@ export const SETTINGS = [
     type: "integer",
     category: "payments",
     label: "Largest statement PDF (MB)",
-    description: "A bank statement PDF larger than this is refused at upload.",
+    description: "A bank statement PDF larger than this is refused at upload. The page count does not matter — a long statement is read a few pages at a time. The server takes at most 32 MB in one upload.",
     default: 20,
     min: 1,
-    max: 50,
+    max: 30,
   },
   {
     key: "bankStatements.lowConfidencePercent",

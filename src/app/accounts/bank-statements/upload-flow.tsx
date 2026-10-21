@@ -32,6 +32,7 @@ export function UploadFlow({
   accounts,
   today,
   retentionDays,
+  maxPdfMb,
   initial,
   lastLabel,
   canRecord,
@@ -41,6 +42,7 @@ export function UploadFlow({
   accounts: UploadAccount[];
   today: string;
   retentionDays: number;
+  maxPdfMb: number;
   /** An upload to open straight at its reading or its review. */
   initial: string | null;
   lastLabel: (at: string | null) => string;
@@ -73,6 +75,7 @@ export function UploadFlow({
         accounts={accounts}
         today={today}
         retentionDays={retentionDays}
+        maxPdfMb={maxPdfMb}
         lastLabel={lastLabel}
         canRecord={canRecord}
         onStarted={(id) => setUploadId(id)}
@@ -101,6 +104,7 @@ function ChooseStep({
   accounts,
   today,
   retentionDays,
+  maxPdfMb,
   lastLabel,
   canRecord,
   onStarted,
@@ -110,6 +114,7 @@ function ChooseStep({
   accounts: UploadAccount[];
   today: string;
   retentionDays: number;
+  maxPdfMb: number;
   lastLabel: (at: string | null) => string;
   canRecord: boolean;
   onStarted: (id: string) => void;
@@ -150,6 +155,10 @@ function ChooseStep({
     if (!f) return;
     if (!/\.pdf$/i.test(f.name) && f.type !== "application/pdf") {
       setError(`${f.name} is not a PDF.`);
+      return;
+    }
+    if (f.size > maxPdfMb * 1024 * 1024) {
+      setError(`${f.name} is ${(f.size / 1024 / 1024).toFixed(1)} MB. The limit is ${maxPdfMb} MB — set on Accounts → Settings.`);
       return;
     }
     setError(null);
@@ -222,7 +231,7 @@ function ChooseStep({
           className={cx("cursor-pointer rounded-[14px] border-2 border-dashed p-[26px] text-center text-muted", drag ? "border-brand bg-brand-soft" : "border-brand-softer bg-[#fbfaff]")}
         >
           <b className="mb-1 block text-[14px] text-brand-deep">Drop the statement PDF here</b>
-          or click to choose · PDF up to 20 MB · several pages is fine
+          or click to choose · PDF up to {maxPdfMb} MB · any number of pages · no password needed unless the PDF asks for one
           <input ref={input} type="file" accept="application/pdf,.pdf" className="hidden" onChange={(e) => pick(e.target.files?.[0])} />
         </div>
         {file ? (
@@ -261,20 +270,27 @@ function ChooseStep({
 /* ------------------------------------------------------------ 2 · reading */
 
 function ReadingStep({ open, onClose, detail, onRetry }: { open: boolean; onClose: () => void; detail: UploadDetail | null; onRetry: () => void }) {
-  const step = detail?.step ?? "uploaded";
+  const rawStep = detail?.step ?? "uploaded";
+  const step = rawStep.split(" ")[0];
   const failed = detail?.status === "failed";
+  // "reading 3/10": pieces of PAGES_PER_CALL pages read so far.
+  const prog = /^reading (\d+)\/(\d+)$/.exec(rawStep);
+  const done = prog ? Number(prog[1]) : 0;
+  const total = prog ? Number(prog[2]) : 0;
+  const pagesRead = detail?.pages && total ? Math.min(detail.pages, Math.round((done / total) * detail.pages)) : null;
   const [pct, setPct] = React.useState(8);
   React.useEffect(() => {
     if (failed) return;
-    const t = setInterval(() => setPct((p) => Math.min(step === "checking" ? 96 : 88, p + (88 - p) * 0.06)), 600);
+    const floor = total ? 8 + (done / total) * 80 : 0;
+    const t = setInterval(() => setPct((p) => Math.max(floor, Math.min(step === "checking" ? 96 : 88, p + (88 - p) * 0.06))), 600);
     return () => clearInterval(t);
-  }, [step, failed]);
+  }, [step, failed, done, total]);
   const order = ["uploaded", "reading", "checking", "ready"];
   const at = Math.max(0, order.indexOf(step));
   const rows: { t: string; s: string; state: "d" | "a" | "w" }[] = [
     { t: "Uploaded and stored", s: detail ? `Kept until ${dayLabel(istDay(detail.pdfExpiresAt), true)}, then deleted` : "Storing the PDF", state: "d" },
     { t: "Account and period found", s: detail ? `${detail.account}${detail.last4 ? ` · ··${detail.last4}` : ""}${detail.periodFrom ? ` · ${detail.periodFrom} to ${detail.periodTo ?? "…"}` : ""}` : "", state: at >= 2 ? "d" : at === 1 ? "a" : "w" },
-    { t: "Reading the transactions table", s: "Date, narration, reference, debit, credit, balance", state: at >= 2 ? "d" : at === 1 ? "a" : "w" },
+    { t: "Reading the transactions table", s: pagesRead != null && step === "reading" ? `${pagesRead} of ${detail?.pages} pages read · a few pages at a time` : "Date, narration, reference, debit, credit, balance", state: at >= 2 ? "d" : at === 1 ? "a" : "w" },
     { t: "Checking the balances", s: "Opening + credits − debits must equal closing, and every running balance must follow", state: at >= 3 ? "d" : at === 2 ? "a" : "w" },
     { t: "Finding what is already in", s: "Lines an earlier upload brought in are skipped", state: at >= 3 ? "d" : "w" },
   ];

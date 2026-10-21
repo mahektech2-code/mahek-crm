@@ -767,7 +767,14 @@ export async function readUpload(uploadId: string, password: string | null): Pro
     const cfg = await getConfig();
     await set({ step: "reading" });
     const bytes = new Uint8Array(await fileStorage.read(u.fileRef));
-    const reading = await readStatementPdf({ bytes, fileName: u.fileName, password, model: u.model ?? cfg["bankStatements.model"] });
+    const reading = await readStatementPdf({
+      bytes,
+      fileName: u.fileName,
+      password,
+      model: u.model ?? cfg["bankStatements.model"],
+      // "reading 3/10": three pieces of ten read. The screen draws it as pages.
+      onProgress: (done, total, pages) => set({ step: `reading ${done}/${total}`, pages }).then(() => undefined),
+    });
     await set({ step: "checking", pages: reading.pages });
     const ordered = inStatementOrder(reading.rows, reading.openingPaise);
     const check = checkBalances(ordered, reading.openingPaise, reading.closingPaise);
@@ -966,7 +973,7 @@ export async function sweepStatementPdfs(): Promise<{ deleted: number }> {
   }
   /* An upload that never finished reading (the server restarted mid-read) is said to have failed, not left spinning. */
   await db.execute(sql`update bank_statement_uploads set status = 'failed', step = 'failed', error = 'The reading did not finish. Upload the PDF again.'
-    where status = 'reading' and uploaded_at < now() - interval '30 minutes'`);
+    where status = 'reading' and uploaded_at < now() - interval '90 minutes'`);
   return { deleted };
 }
 
