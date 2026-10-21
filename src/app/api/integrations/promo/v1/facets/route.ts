@@ -2,7 +2,7 @@ import { handlePromoFacetsRequest } from "@/lib/promo-feed";
 import { getPromoRecord, listPromoRecords, promoFacets } from "@/lib/services/promo-feed-service";
 
 /* ---------------------------------------------------------------------------
- * GET /api/integrations/promo/v1/facets?kind=lead|customer
+ * GET /api/integrations/promo/v1/facets?scope=active|lost&kind=lead|customer
  *
  * The values the Promotional App's filters can take (states, districts,
  * cities, owners, sales managers, stages, statuses), each with how many

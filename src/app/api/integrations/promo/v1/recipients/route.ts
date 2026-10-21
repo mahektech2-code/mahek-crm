@@ -3,7 +3,7 @@ import { getPromoRecord, listPromoRecords, promoFacets } from "@/lib/services/pr
 
 /* ---------------------------------------------------------------------------
  * GET /api/integrations/promo/v1/recipients
- *   ?kind=lead|customer&q=&state=&district=&city=&owner=&salesManager=
+ *   ?scope=active|lost&kind=lead|customer&q=&state=&district=&city=&owner=&salesManager=
  *   &stage=&status=&sort=&page=&pageSize=
  *
  * The Promotional App's read-only window onto leads and customers (see

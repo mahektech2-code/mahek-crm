@@ -33,10 +33,13 @@ export function promoWhere(f: PromoFilters): SQL | undefined {
     // deactivated customer is NOT trash: it stays listed with its status.
     isNull(customers.deletedAt),
     f.kind ? eq(customers.kind, f.kind) : undefined,
-    // an archived or lost lead is never offered, to a list, a count, a facet or a lookup by id: the rule is here, on the
-    // CRM server, so no caller can ask for them. A customer is not subject to it (an inactive or deactivated customer
-    // stays listed, with its status); only a lead is archived or lost.
-    or(eq(customers.kind, "customer"), and(eq(customers.leadArchived, false), or(isNull(customers.leadStage), ne(customers.leadStage, "lost")))),
+    // The scope decides which leads are offered, and it is always explicit on the request (the default is `active`).
+    //  - active: an archived or lost lead is never offered, to a list, a count, a facet or a lookup by id. A customer is
+    //    not subject to it (an inactive or deactivated customer stays listed, with its status); only a lead is archived or lost.
+    //  - lost: ONLY leads whose stage is lost, and never one that is archived (the trash is excluded above). No customer.
+    f.scope === "lost"
+      ? and(eq(customers.kind, "lead"), eq(customers.leadArchived, false), eq(customers.leadStage, "lost"))
+      : or(eq(customers.kind, "customer"), and(eq(customers.leadArchived, false), or(isNull(customers.leadStage), ne(customers.leadStage, "lost")))),
     f.state ? eq(customers.resolvedStateId, f.state) : undefined,
     f.district ? eq(customers.resolvedDistrictId, f.district) : undefined,
     f.city ? sql`lower(${customers.city}) = lower(${f.city})` : undefined,

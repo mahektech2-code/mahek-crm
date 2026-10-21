@@ -160,7 +160,17 @@ export function shapePromoRecord(row: PromoRawRow, sourceLabels: ReadonlyMap<str
 export const PROMO_SORTS = ["created_desc", "created_asc", "name_asc", "name_desc"] as const;
 export type PromoSort = (typeof PROMO_SORTS)[number];
 
+/**
+ * Which records a request is about. `active` (the default, and the only scope before this one existed) is every
+ * lead and customer the poster tool lists: no trashed record, no archived or lost lead. `lost` is the separate
+ * Lost Leads section: ONLY leads whose stage is `lost`, still never trashed and never archived. The scope is
+ * named explicitly on every request; leaving it out can never widen a request to lost leads.
+ */
+export const PROMO_SCOPES = ["active", "lost"] as const;
+export type PromoScope = (typeof PROMO_SCOPES)[number];
+
 export type PromoFilters = {
+  scope: PromoScope;
   kind: "lead" | "customer" | null;
   /** Free text: every word must match the name, company, contact, city, state or district. Never a phone or e-mail. */
   q: string | null;
@@ -179,7 +189,7 @@ export type PromoFilters = {
 };
 
 export type PromoFeedQuery = PromoFilters & { sort: PromoSort; page: number; pageSize: number };
-export type PromoFacetsQuery = Pick<PromoFilters, "kind">;
+export type PromoFacetsQuery = Pick<PromoFilters, "kind" | "scope">;
 
 export type PromoFacetValue = { id: string; name: string; count: number };
 export type PromoFacets = {
@@ -195,8 +205,9 @@ export type PromoFacets = {
   truncated: { states: boolean; districts: boolean; cities: boolean; owners: boolean; salesManagers: boolean };
 };
 
-const LIST_PARAMS = ["kind", "q", "state", "district", "city", "owner", "salesManager", "stage", "status", "sort", "page", "pageSize"] as const;
-const FACET_PARAMS = ["kind"] as const;
+const LIST_PARAMS = ["scope", "kind", "q", "state", "district", "city", "owner", "salesManager", "stage", "status", "sort", "page", "pageSize"] as const;
+const FACET_PARAMS = ["scope", "kind"] as const;
+const RECORD_PARAMS = ["scope"] as const;
 const ID = /^[A-Za-z0-9_-]{1,100}$/;
 const CONTROL = /[\u0000-\u001f\u007f]/;
 const MAX_TERMS = 5;
@@ -222,7 +233,16 @@ function readParams(url: URL, allowed: readonly string[]): { ok: true; get: (key
   return { ok: true, get: (key) => url.searchParams.get(key) };
 }
 
+function parseScope(get: (key: string) => string | null): { ok: true; scope: PromoScope } | { ok: false; message: string } {
+  const raw = get("scope");
+  if (raw === null) return { ok: true, scope: "active" };
+  if (!(PROMO_SCOPES as readonly string[]).includes(raw)) return { ok: false, message: `scope must be one of ${PROMO_SCOPES.join(", ")}.` };
+  return { ok: true, scope: raw as PromoScope };
+}
+
 function parseFilters(get: (key: string) => string | null): { ok: true; filters: PromoFilters } | { ok: false; message: string } {
+  const scoped = parseScope(get);
+  if (!scoped.ok) return scoped;
   const kind = get("kind");
   if (kind !== null && kind !== "lead" && kind !== "customer") return { ok: false, message: 'kind must be "lead" or "customer".' };
 
@@ -256,10 +276,18 @@ function parseFilters(get: (key: string) => string | null): { ok: true; filters:
   if (stage !== null && stage !== "" && !(mbosLeadStageEnum.enumValues as readonly string[]).includes(stage)) return { ok: false, message: "stage is not a known lead stage." };
   const status = get("status");
   if (status !== null && status !== "" && !(customerStatusEnum.enumValues as readonly string[]).includes(status)) return { ok: false, message: "status is not a known customer status." };
+  // the lost scope is leads in one stage: asking for customers, or for another stage or a customer status, is a
+  // contradiction and is refused rather than quietly answered with nothing
+  if (scoped.scope === "lost") {
+    if (kind === "customer") return { ok: false, message: 'scope "lost" has leads only.' };
+    if (stage !== null && stage !== "") return { ok: false, message: 'scope "lost" cannot be combined with stage.' };
+    if (status !== null && status !== "") return { ok: false, message: 'scope "lost" cannot be combined with status.' };
+  }
 
   return {
     ok: true,
     filters: {
+      scope: scoped.scope,
       kind,
       q,
       state: ids.state,
@@ -305,7 +333,7 @@ export function parsePromoFacetsQuery(url: URL): Parsed<PromoFacetsQuery> {
   if (!params.ok) return params;
   const filters = parseFilters(params.get);
   if (!filters.ok) return filters;
-  return { ok: true, query: { kind: filters.filters.kind } };
+  return { ok: true, query: { kind: filters.filters.kind, scope: filters.filters.scope } };
 }
 
 /** Clamp a requested page to the pages that exist (the first page when there are no records). */
@@ -347,8 +375,8 @@ export type PromoFeedDeps = {
   secret: string | null | undefined;
   /** Reads one page with the filters applied, and the total. Read-only by its type: it returns records and counts. */
   list: (query: PromoFeedQuery) => Promise<PromoListResult>;
-  /** Reads one record by id, or null when there is none the feed may show. */
-  get: (id: string) => Promise<PromoRecord | null>;
+  /** Reads one record by id within a scope, or null when there is none the feed may show in that scope. */
+  get: (id: string, scope: PromoScope) => Promise<PromoRecord | null>;
   /** The values the filters can take. */
   facets: (query: PromoFacetsQuery) => Promise<PromoFacets>;
   now?: () => Date;
@@ -402,15 +430,18 @@ export function handlePromoFeedRequest(request: Request, deps: PromoFeedDeps): P
 
 /**
  * One record by id: the same record, with the same allow-listed fields, that the list would carry for it.
- * An id the feed would not list (a lead in the trash, or one that does not exist) is 404. The path takes
- * no query string at all.
+ * An id the feed would not list in the requested scope (a lead in the trash, a lost lead asked for in the
+ * default scope, an active record asked for in the lost scope, or one that does not exist) is 404. The path
+ * takes one query parameter only: `scope`.
  */
 export function handlePromoRecordRequest(request: Request, id: string, deps: PromoFeedDeps): Promise<Response> {
   return guarded(request, deps, async (url) => {
-    const params = readParams(url, []);
+    const params = readParams(url, RECORD_PARAMS);
     if (!params.ok) return refuse(400, params.message);
+    const scoped = parseScope(params.get);
+    if (!scoped.ok) return refuse(400, scoped.message);
     if (!ID.test(id)) return refuse(400, "id is not a valid id.");
-    const found = await deps.get(id);
+    const found = await deps.get(id, scoped.scope);
     if (!found) return refuse(404, "There is no such record.");
     const record = Object.fromEntries(PROMO_FEED_FIELDS.map((f) => [f, found[f]]));
     return Response.json({ ok: true, contract: PROMO_FEED_CONTRACT, generatedAt: generatedAt(deps), record }, { headers: NO_STORE });

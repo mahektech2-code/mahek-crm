@@ -13,6 +13,7 @@ import {
   type PromoFeedQuery,
   type PromoListResult,
   type PromoRecord,
+  type PromoScope,
 } from "@/lib/promo-feed";
 import {
   COUNT,
@@ -76,9 +77,9 @@ async function sourceLabels(): Promise<Map<string, string>> {
   return new Map<string, string>((config["leads.sources"] ?? []).map((s: { code: string; label: string }) => [s.code, s.label]));
 }
 
-/** One record by id, under the same rule as the list (a trashed lead is not there), or null. */
-export async function getPromoRecord(id: string): Promise<PromoRecord | null> {
-  const where = and(promoWhere({ kind: null, q: null, state: null, district: null, city: null, owner: null, salesManager: null, stage: null, status: null }), eq(customers.id, id));
+/** One record by id, under the same rule as the list for the scope (a trashed lead is never there; a lost lead only in the lost scope), or null. */
+export async function getPromoRecord(id: string, scope: PromoScope = "active"): Promise<PromoRecord | null> {
+  const where = and(promoWhere({ scope, kind: null, q: null, state: null, district: null, city: null, owner: null, salesManager: null, stage: null, status: null }), eq(customers.id, id));
   const [row] = await db
     .select(RECORD_COLUMNS)
     .from(customers)
@@ -123,7 +124,7 @@ export async function listPromoRecords(query: PromoFeedQuery): Promise<PromoList
 
 /** The values the filters can take, over the same eligible records the list covers. */
 export async function promoFacets(query: PromoFacetsQuery): Promise<PromoFacets> {
-  const where = promoWhere({ kind: query.kind, q: null, state: null, district: null, city: null, owner: null, salesManager: null, stage: null, status: null });
+  const where = promoWhere({ scope: query.scope, kind: query.kind, q: null, state: null, district: null, city: null, owner: null, salesManager: null, stage: null, status: null });
   const take = PROMO_FACET_LIMIT + 1;
   const cut = <T>(rows: T[]) => ({ rows: rows.slice(0, PROMO_FACET_LIMIT), truncated: rows.length > PROMO_FACET_LIMIT });
 

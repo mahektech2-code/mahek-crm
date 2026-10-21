@@ -67,7 +67,7 @@ const raw = (o: Partial<PromoRawRow> = {}): PromoRawRow => ({
   ...o,
 });
 
-const NONE: PromoFilters = { kind: null, q: null, state: null, district: null, city: null, owner: null, salesManager: null, stage: null, status: null };
+const NONE: PromoFilters = { scope: "active", kind: null, q: null, state: null, district: null, city: null, owner: null, salesManager: null, stage: null, status: null };
 const EMPTY_FACETS: PromoFacets = { states: [], districts: [], cities: [], owners: [], salesManagers: [], stages: [], statuses: [], truncated: { states: false, districts: false, cities: false, owners: false, salesManagers: false } };
 
 const URL_BASE = "http://x/api/integrations/promo/v1/recipients";
@@ -223,7 +223,7 @@ describe("the request: parameters", () => {
   test("every filter is parsed", () => {
     const r = parse("kind=lead&q=%20shah%20%20paints%20&state=pl_st1&district=pl_d1&city=Rajkot&owner=u_1&salesManager=u_2&stage=new&sort=name_asc&page=3&pageSize=25");
     assert.ok(r.ok);
-    if (r.ok) assert.deepEqual(r.query, { kind: "lead", q: "shah paints", state: "pl_st1", district: "pl_d1", city: "Rajkot", owner: "u_1", salesManager: "u_2", stage: "new", status: null, sort: "name_asc", page: 3, pageSize: 25 });
+    if (r.ok) assert.deepEqual(r.query, { scope: "active", kind: "lead", q: "shah paints", state: "pl_st1", district: "pl_d1", city: "Rajkot", owner: "u_1", salesManager: "u_2", stage: "new", status: null, sort: "name_asc", page: 3, pageSize: 25 });
   });
   test("pageSize is at most 100, a whole number from 1", () => {
     assert.equal(PROMO_FEED_MAX_PAGE_SIZE, 100);
@@ -261,7 +261,7 @@ describe("the request: parameters", () => {
     for (const bad of ["stage=made_up", "stage=NEW", "status=gone", "kind=vendor", "kind=", "sort=owner"]) assert.equal(parse(bad).ok, false, bad);
     for (const ok of ["stage=lost", "stage=active_distributor", "status=inactive", "status=deactivated", "sort=created_asc", "sort=name_desc"]) assert.equal(parse(ok).ok, true, ok);
   });
-  test("the facets request takes only kind", () => {
+  test("the facets request takes only scope and kind", () => {
     assert.equal(parsePromoFacetsQuery(new URL("http://x/f?kind=lead")).ok, true);
     for (const bad of ["q=a", "page=2", "owner=u1", "kind=vendor"]) assert.equal(parsePromoFacetsQuery(new URL(`http://x/f?${bad}`)).ok, false, bad);
   });
@@ -522,5 +522,75 @@ describe("archived and lost leads: one rule for the list, the total, the facets 
   test("every record the list returns is not archived and not lost: the flags remain in the contract but are false", () => {
     const listed = shapePromoRecord(raw());
     assert.deepEqual([listed.archived, listed.lost, listed.trashed], [false, false, false]);
+  });
+});
+
+describe("the lost scope (separate Lost Leads section)", () => {
+  const lostWhere = (f: Partial<PromoFilters> = {}) => render(promoWhere({ ...NONE, scope: "lost", ...f }));
+
+  test("the default is active, and an unknown scope is refused on the list, the facets and a record", async () => {
+    const r = parse("");
+    assert.ok(r.ok && r.query.scope === "active");
+    for (const bad of ["scope=all", "scope=", "scope=LOST", "scope=archived", "scope=lost&scope=active"]) {
+      assert.equal(parse(bad).ok, false, bad);
+      assert.equal(parsePromoFacetsQuery(new URL(`http://x/f?${bad}`)).ok, false, bad);
+    }
+    assert.ok(parse("scope=lost").ok);
+    assert.ok(parse("scope=active").ok);
+  });
+  test("scope=lost is leads only: customers, another stage or a customer status contradict it and are refused", () => {
+    for (const bad of ["scope=lost&kind=customer", "scope=lost&stage=new", "scope=lost&stage=lost", "scope=lost&status=active"]) assert.equal(parse(bad).ok, false, bad);
+    for (const ok of ["scope=lost&kind=lead", "scope=lost&q=shah&state=st_1&sort=name_asc&page=2"]) assert.equal(parse(ok).ok, true, ok);
+  });
+  test("the lost scope selects lost, unarchived, untrashed leads, with every value bound", () => {
+    const { sql, params } = lostWhere();
+    assert.match(sql, /"deleted_at" is null/);
+    assert.match(sql, /"customers"\."kind" = \$\d+ and "customers"\."lead_archived" = \$\d+ and "customers"\."lead_stage" = \$\d+/);
+    assert.deepEqual(params, ["lead", false, "lost"]);
+    assert.ok(!/<>/.test(sql), "the lost scope never uses the active scope's exclusion");
+  });
+  test("the lost scope keeps the trash and archived leads out whatever else is asked, and filters still apply", () => {
+    for (const f of [{}, { q: "shah" }, { state: "st_1", city: "Rajkot", owner: "u_1" }, { kind: "lead" as const }]) {
+      const { sql, params } = lostWhere(f);
+      assert.match(sql, /"deleted_at" is null/, JSON.stringify(f));
+      assert.match(sql, /"lead_archived" = \$\d+/, JSON.stringify(f));
+      assert.ok(params.includes("lost") && params.includes(false), JSON.stringify(f));
+    }
+    assert.ok(lostWhere({ owner: "u_1" }).params.includes("u_1"));
+  });
+  test("the active scope is byte-for-byte what it was: it still hides lost and archived leads", () => {
+    const { sql, params } = render(promoWhere(NONE));
+    assert.match(sql, /"customers"\."kind" = \$\d+ or \("customers"\."lead_archived" = \$\d+ and \("customers"\."lead_stage" is null or "customers"\."lead_stage" <> \$\d+\)\)/);
+    assert.deepEqual(params, ["customer", false, "lost"]);
+    assert.deepEqual(render(promoWhere({ ...NONE, scope: undefined as never })).params, params, "a missing scope can never widen to lost leads");
+  });
+  test("the scope reaches the service for the list, the facets and a record, and the default never reaches lost", async () => {
+    let list: PromoFeedQuery | null = null;
+    let facets: unknown = null;
+    const seenScopes: string[] = [];
+    const d = deps({
+      list: async (q) => { list = q; return { records: [], total: 0, page: 1, pageCount: 1 }; },
+      facets: async (q) => { facets = q; return EMPTY_FACETS; },
+      get: async (_id, scope) => { seenScopes.push(scope); return scope === "lost" ? shapePromoRecord(raw({ leadStage: "lost" })) : null; },
+    });
+    await handlePromoFeedRequest(get("scope=lost"), d);
+    assert.equal((list as PromoFeedQuery | null)?.scope, "lost");
+    await handlePromoFeedRequest(get(""), d);
+    assert.equal((list as PromoFeedQuery | null)?.scope, "active");
+    await handlePromoFacetsRequest(get("scope=lost", undefined, "GET", "http://x/api/integrations/promo/v1/facets"), d);
+    assert.deepEqual(facets, { kind: null, scope: "lost" });
+    const rec = (qs: string) => handlePromoRecordRequest(new Request(`${URL_BASE}/cus_1${qs}`, { method: "GET", headers: { authorization: `Bearer ${SECRET}` } }), "cus_1", d);
+    assert.equal((await rec("")).status, 404, "a lost lead is not found in the default scope");
+    const found = await rec("?scope=lost");
+    assert.equal(found.status, 200);
+    assert.equal(((await found.json()) as { record: { lost: boolean } }).record.lost, true);
+    assert.deepEqual(seenScopes, ["active", "lost"]);
+    assert.equal((await rec("?scope=bogus")).status, 400);
+    assert.equal((await rec("?kind=lead")).status, 400, "no other parameter is accepted on a record");
+  });
+  test("the record in the lost scope carries the same allow-listed fields and no contact detail", async () => {
+    const res = await handlePromoRecordRequest(new Request(`${URL_BASE}/cus_1?scope=lost`, { method: "GET", headers: { authorization: `Bearer ${SECRET}` } }), "cus_1", deps({ get: async () => shapePromoRecord(raw({ leadStage: "lost" })) }));
+    const body = (await res.json()) as { record: Record<string, unknown> };
+    assert.deepEqual(Object.keys(body.record), [...PROMO_FEED_FIELDS]);
   });
 });
