@@ -1025,6 +1025,78 @@ export const SETTINGS = [
     max: 365,
   },
 
+  /* ------------------------------------------------ bank statement management */
+  {
+    key: "bankStatements.enabled",
+    type: "boolean",
+    category: "payments",
+    label: "Read bank statement PDFs with AI",
+    description:
+      "Accounts → Bank statement management sends each uploaded PDF to OpenAI to read its lines. Off, the upload is refused and says so. Needs the OpenAI key on the Admin Console.",
+    default: true,
+  },
+  {
+    key: "bankStatements.model",
+    type: "text",
+    category: "payments",
+    label: "Bank statement reading model",
+    description: "The OpenAI model that reads a statement PDF into lines. It must accept PDF files.",
+    default: "gpt-5-mini",
+  },
+  {
+    key: "bankStatements.pdfRetentionDays",
+    type: "integer",
+    category: "payments",
+    label: "Days a statement PDF is kept",
+    description:
+      "An uploaded bank statement PDF is kept this many days so a line can be checked against it, then deleted by the hourly clean-up. The lines read from it are kept for good.",
+    default: 7,
+    min: 1,
+    max: 90,
+  },
+  {
+    key: "bankStatements.maxPdfMb",
+    type: "integer",
+    category: "payments",
+    label: "Largest statement PDF (MB)",
+    description: "A bank statement PDF larger than this is refused at upload.",
+    default: 20,
+    min: 1,
+    max: 50,
+  },
+  {
+    key: "bankStatements.lowConfidencePercent",
+    type: "integer",
+    category: "payments",
+    label: "Flag a line read below this certainty (%)",
+    description:
+      "Where the AI says it is less sure than this of a line's figures, the line is highlighted before import and flagged after it, for a person to check against the PDF.",
+    default: 80,
+    min: 0,
+    max: 100,
+  },
+  {
+    key: "bankStatements.largeCreditPaise",
+    type: "integer",
+    category: "payments",
+    label: "Flag money in above this with no match (paise)",
+    description:
+      "Money into a bank account above this, with nothing in MahekOne to explain it, is flagged for a person to look at. In paise: 5,00,00,000 is ₹5,00,000.",
+    default: 50_000_000,
+    min: 0,
+  },
+  {
+    key: "bankStatements.matchWindowDays",
+    type: "integer",
+    category: "payments",
+    label: "Days either side a bank line is matched within",
+    description:
+      "A bank line is suggested against a receipt, a payout or a Petty Cash transaction dated within this many days of it. A matching UTR or cheque number is suggested whatever the date.",
+    default: 5,
+    min: 0,
+    max: 60,
+  },
+
   /* --------------------------------------------------------------- targets */
   {
     key: "targets.defaultMethod",
@@ -6375,6 +6447,13 @@ export type Config = {
   "payments.cashflowLookbackMonths": number;
   "payments.cashflowMinPayments": number;
   "payments.matchTolerancePercent": number;
+  "bankStatements.enabled": boolean;
+  "bankStatements.model": string;
+  "bankStatements.pdfRetentionDays": number;
+  "bankStatements.maxPdfMb": number;
+  "bankStatements.lowConfidencePercent": number;
+  "bankStatements.largeCreditPaise": number;
+  "bankStatements.matchWindowDays": number;
 
   "targets.defaultMethod": "trailing-average" | "last-month" | "fixed";
   "targets.trailingMonths": number;

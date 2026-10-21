@@ -49,6 +49,8 @@ export type NavCounts = {
   orderChanges: number;
   /** Vendor payouts planned for a day that has gone and still not paid. */
   payoutsOverdue: number;
+  /** Bank lines nobody has matched, marked or set aside. */
+  bankToDo: number;
 };
 
 const SHORTCUTS = [
@@ -202,6 +204,18 @@ export function AccountsShell({
         { href: "/accounts/whatsapp", label: "WhatsApp", icon: "chat" },
         { href: "/accounts/ledger", label: "Customer account", icon: "ledger" },
         { href: "/accounts/on-account", label: "On account", icon: "onaccount" },
+      ],
+    },
+    /*
+     * The BANK's own record — its statement PDFs, read and reconciled. Not
+     * Petty Cash's statements (ERP → Petty Cash), which are ours.
+     */
+    {
+      label: "Bank statement management",
+      items: [
+        { href: "/accounts/bank-statements", label: "Bank accounts & uploads", icon: "bank" },
+        { href: "/accounts/bank-reconcile", label: "Reconcile", icon: "reconcile", badge: counts.bankToDo },
+        { href: "/accounts/bank-uploads", label: "Upload history", icon: "upload" },
       ],
     },
     {

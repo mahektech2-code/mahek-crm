@@ -161,7 +161,7 @@ export async function filterOptions(key: string): Promise<{ categories: string[]
 
 /* ------------------------------------------------------------------ the kit */
 
-const DEFAULT_CATEGORIES = ["Petrol", "Tea / food", "Transportation", "Freight", "Courier", "Labour", "Repairs & maintenance", "Hardware", "Testing material", "Packing material", "Stationery", "Electricity", "Rent", "Telephone & internet", "Bank charges", "Other"];
+export const DEFAULT_CATEGORIES = ["Petrol", "Tea / food", "Transportation", "Freight", "Courier", "Labour", "Repairs & maintenance", "Hardware", "Testing material", "Packing material", "Stationery", "Electricity", "Rent", "Telephone & internet", "Bank charges", "Other"];
 
 /** Everything a Petty Cash dialog offers: the accounts and their balances, the lists, the next numbers. */
 export async function moneyKitData(day: string) {

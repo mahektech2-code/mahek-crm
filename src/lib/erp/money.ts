@@ -781,7 +781,14 @@ export async function bankLineRows(where: SQL = sql`true`): Promise<BankLineRow[
      group by l.id, a.name
      order by l.line_date desc, l.created_at desc`);
   return rows.map((r) => {
-    const matches = (r.matches as { id: string; txnId: string; no: number; date: string; amount: number; party: string }[]).map((m) => ({ id: m.id, txnId: m.txnId, label: txnLabel(Number(m.no), m.date), amountPaise: Number(m.amount), party: m.party }));
+    /* A line matched on Accounts → Bank statement management to a customer receipt or a vendor payout has no Petty Cash transaction behind it. */
+    const matches = (r.matches as { id: string; txnId: string | null; no: number | null; date: string | null; amount: number; party: string }[]).map((m) => ({
+      id: m.id,
+      txnId: m.txnId ?? "",
+      label: m.no == null ? "Accounts match" : txnLabel(Number(m.no), m.date ?? ""),
+      amountPaise: Number(m.amount),
+      party: m.party,
+    }));
     return {
       id: r.id as string,
       accountId: r.accountId as string,

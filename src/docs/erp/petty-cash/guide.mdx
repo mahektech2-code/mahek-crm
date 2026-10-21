@@ -53,13 +53,11 @@ Petty Cash is one ERP module for every rupee that moves outside the order book: 
 
 **Cash & Bank › Transfers**, then **New transfer**: from, to, amount and how. A withdrawal is Bank → Cash in Hand; a deposit is Cash in Hand → Bank. A transfer changes both balances and is never income or expense. A deposit of a customer's cash can name the receipt it came from.
 
-## The bank statement
+## Petty Cash statements, and the bank's own statement
 
-<Steps>
-  <Step title="Import">**Cash & Bank › Bank statement**, **Import statement**: choose the bank and the CSV from net-banking. A line already imported is skipped. A line that names a transaction's UTR is matched as it lands.</Step>
-  <Step title="Match">Open a line that is not matched and press **Match**. The suggestions are transactions already on the books — the same amount near the date, or the UTR named on the line. Pick several to split one line across them; they must add up to the line.</Step>
-  <Step title="Only when nothing fits">**Create transaction from this line** makes the expense, receipt or transfer the line shows and matches it, in one step. It is refused while something already on the books may be that line.</Step>
-</Steps>
+**Cash & Bank › Petty Cash statements** is our own record of each account — Kotak Bank, ICICI Bank, Cash in Hand, Petty Cash: what was entered going in and out, and the balance it leaves. On a bank account each row says **✓ Bank** once the bank's own statement shows that money, or **Not in bank yet**.
+
+The bank's own statement is not kept here. It is uploaded as a PDF on **Accounts › Bank statement management**, read by AI, and each line matched there — to a customer receipt, a vendor payout, or a Petty Cash expense or transfer. A line marked there as an expense, a charge or a transfer is entered on Petty Cash for you, and ticked here.
 
 <Faq q="I need to change an expense.">
 Open it and press **Correct**. Whoever entered it can correct it until it is approved; after that, the accountant. A transaction matched to a bank line cannot change its amount or account until the match is undone.
