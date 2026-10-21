@@ -13,6 +13,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ u
       view={view}
       today={day}
       retentionDays={config["bankStatements.pdfRetentionDays"]}
+      maxPdfMb={config["bankStatements.maxPdfMb"]}
       allAccounts={accounts}
       canRecord={powers.record}
       canConfirm={powers.confirm}

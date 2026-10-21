@@ -2729,10 +2729,22 @@ uploads — the cards, upload, check and import), `accounts.bank-reconcile`
 (Reconcile) and `accounts.bank-uploads` (Upload history). A statement is
 uploaded as often as anybody likes (`/api/accounts/bank-statements/upload`, a
 route because a PDF is past an action's 1 MB) and read AFTER the answer
-(`after()`): `services/bank-statement-reader.ts` sends the PDF to OpenAI as a
-file (`bankStatements.model`) — or, where the bank locked it, opens it with the
-password (used once, never stored) and sends its text — into
-`bank_statement_uploads.rows`. The model only reads. Everything after is pure
+(`after()`): `services/bank-statement-reader.ts` sends it to OpenAI
+(`bankStatements.model`) into `bank_statement_uploads.rows`.
+
+**ENCRYPTED IS NOT LOCKED, AND A LONG STATEMENT IS READ IN PIECES.** Most banks
+encrypt every statement with an OWNER password only — it opens in any viewer —
+so `lib/bank-statement-pdf.ts` always opens it WITHOUT a password first and asks
+for one only when pdf.js refuses (`StatementLocked`); a password typed for a PDF
+that needs none is not used. A password is used once, never stored. The PDF is
+then cut into pieces of `PAGES_PER_CALL` (4) pages, read four at a time and
+joined in page order, because fifty pages in one call is longer than a model
+answers and longer than any timeout: an unencrypted PDF goes as the file (each
+piece re-saved by pdf-lib), an encrypted one as its text laid out by position
+so the columns still line up (`layoutText`). Progress is `step = "reading
+3/10"`, drawn as pages read. The page count has no limit; the file size is
+`bankStatements.maxPdfMb` (20, at most 30 — the server takes 32 MB in one
+request), checked in the browser and again on the server. The model only reads. Everything after is pure
 in `engines/bank-statements.ts`: the BALANCE CHECK (opening + credits − debits
 = closing, and every running balance follows; a break names its line), the
 order (newest-first statements are put oldest first), ALREADY IN (a line the
@@ -2764,7 +2776,7 @@ the record it confirmed or created, and says where to reverse it.
 the hourly `bank-statement-pdfs` step (`fileStorage.remove`, `file_ref` null,
 `pdf_deleted_at` set); the upload row, its lines and every match stay, and the
 screens say "Deleted 21 Oct" rather than offering a link that 410s. A reading
-that never finished is failed after thirty minutes. The rest of its settings
+that never finished is failed after ninety minutes. The rest of its settings
 are `bankStatements.*` on the Accounts settings page.
 
 ## Layout

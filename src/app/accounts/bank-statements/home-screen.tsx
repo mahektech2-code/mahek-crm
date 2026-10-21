@@ -22,6 +22,7 @@ export function HomeScreen({
   view,
   today,
   retentionDays,
+  maxPdfMb,
   allAccounts,
   canRecord,
   canConfirm,
@@ -31,6 +32,7 @@ export function HomeScreen({
   view: HomeView;
   today: string;
   retentionDays: number;
+  maxPdfMb: number;
   allAccounts: { id: string; name: string; bankName: string | null; last4: string | null; accountType: string | null; active: boolean }[];
   canRecord: boolean;
   canConfirm: boolean;
@@ -103,6 +105,7 @@ export function HomeScreen({
           accounts={uploadAccounts}
           today={today}
           retentionDays={retentionDays}
+          maxPdfMb={maxPdfMb}
           initial={upload.id}
           lastLabel={(at) => (at ? whenLabel(at, today).replace(/^Today /, "").replace(/^Yesterday .*/, "yesterday") : "never")}
           canRecord={canRecord}
