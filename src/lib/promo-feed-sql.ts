@@ -80,3 +80,11 @@ export function promoOrderBy(sort: PromoFeedQuery["sort"]): SQL[] {
       return [desc(customers.createdAt), desc(customers.id)];
   }
 }
+
+/**
+ * The WHERE for one lost lead's WhatsApp target: the LOST scope (a lead in stage lost that is not archived and not trashed; no customer)
+ * and the id. Built here, with the other eligibility rules, so it can be tested by rendering it. It selects no column itself.
+ */
+export function promoWhatsappTargetWhere(id: string): SQL | undefined {
+  return and(promoWhere({ scope: "lost", kind: "lead", q: null, state: null, district: null, city: null, owner: null, salesManager: null, stage: null, status: null }), eq(customers.id, id));
+}
