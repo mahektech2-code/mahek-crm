@@ -1,6 +1,7 @@
 import "server-only";
 import { sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
+import { addDays } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
 import { refValues } from "./refs";
 import { advanceLabel, invoiceKey, matchCandidates, statement, txnLabel, type MatchCandidate } from "./engines/money";
@@ -63,10 +64,8 @@ export function periodRange(p: Period, day: string): { from: string; to: string 
   if (p === "all") return null;
   if (p === "month") return { from: iso(y, m), to: day };
   if (p === "last") {
-    const from = back(1);
-    const end = new Date(`${iso(y, m)}T00:00:00Z`);
-    end.setUTCDate(0);
-    return { from, to: end.toISOString().slice(0, 10) };
+    // the last day of the previous month: the day before this month's first
+    return { from: back(1), to: addDays(iso(y, m), -1) };
   }
   if (p === "3m") return { from: back(2), to: day };
   return { from: m >= 4 ? iso(y, 4) : iso(y - 1, 4), to: day };

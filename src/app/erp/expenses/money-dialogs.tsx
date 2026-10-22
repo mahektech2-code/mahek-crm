@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { cx } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
+import { addDays } from "@/lib/business-date";
 import type { Result } from "@/lib/result";
 import {
   erpMoneyAdvance,
@@ -740,11 +741,7 @@ export function AdvanceDialog({ kit, onClose }: { kit: MoneyKit; onClose: () => 
   const [amount, setAmount] = React.useState<number | null>(null);
   const [date, setDate] = React.useState(kit.today);
   const [purpose, setPurpose] = React.useState("");
-  const due = (d: string) => {
-    const t = new Date(`${d}T00:00:00Z`);
-    t.setUTCDate(t.getUTCDate() + kit.billsDays);
-    return t.toISOString().slice(0, 10);
-  };
+  const due = (d: string) => addDays(d, kit.billsDays);
   const [billsDue, setBillsDue] = React.useState(due(kit.today));
   const [handed, setHanded] = React.useState("Cash");
   const petty = kit.accounts.find((a) => a.kind === "petty");

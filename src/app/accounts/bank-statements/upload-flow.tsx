@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { cx } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
 import { bankDiscardUpload, bankEditUploadRows, bankImportUpload, bankUploadStatus } from "@/lib/actions/bank-statements";
+import { addDays } from "@/lib/business-date";
 import type { CheckedRow } from "@/lib/engines/bank-statements";
 import type { UploadDetail } from "@/lib/services/bank-statement-service";
 import { Btn, Conf, Dialog, FieldLabel, figure, inputCls, inr, LinkBtn, Note, Pill, dayLabel, istDay } from "./bank-ui";
@@ -127,7 +128,7 @@ function ChooseStep({
   const [error, setError] = React.useState<string | null>(null);
   const [drag, setDrag] = React.useState(false);
   const input = React.useRef<HTMLInputElement>(null);
-  const keptUntil = dayLabel(new Date(Date.parse(today) + retentionDays * 86_400_000).toISOString().slice(0, 10));
+  const keptUntil = dayLabel(addDays(today, retentionDays));
   const chosen = accounts.find((a) => a.id === account);
 
   async function send() {
