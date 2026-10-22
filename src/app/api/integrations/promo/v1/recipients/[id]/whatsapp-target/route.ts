@@ -1,4 +1,4 @@
-import { createRateLimiter, handlePromoWhatsappTargetRequest } from "@/lib/promo-whatsapp-target";
+import { createRateLimiter, handlePromoWhatsappTargetRequest, type PromoWhatsappAudit } from "@/lib/promo-whatsapp-target";
 import { getPromoWhatsappTarget } from "@/lib/services/promo-whatsapp-target-service";
 
 /* ---------------------------------------------------------------------------
@@ -23,6 +23,9 @@ type Context = { params: Promise<{ id: string }> };
 // one limiter for the whole endpoint, shared by every method so a flood of any kind counts
 const limiter = createRateLimiter();
 
+// the access trail: one JSON line per request, codes and an opaque id only (see PromoWhatsappAudit). No number, no secret, no name.
+const audit = (event: PromoWhatsappAudit) => console.info(JSON.stringify({ event: "promo_whatsapp_target", time: new Date().toISOString(), ...event }));
+
 const handle = async (request: Request, { params }: Context) => {
   const { id } = await params;
   return handlePromoWhatsappTargetRequest(request, id, {
@@ -31,6 +34,7 @@ const handle = async (request: Request, { params }: Context) => {
     defaultCountry: process.env.PROMO_WHATSAPP_DEFAULT_COUNTRY,
     target: getPromoWhatsappTarget,
     limiter,
+    audit,
   });
 };
 

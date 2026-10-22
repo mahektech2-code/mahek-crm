@@ -166,7 +166,28 @@ export function createRateLimiter(options: { max?: number; windowMs?: number; no
   };
 }
 
+/** Why no number was given, as a code, from the flags only (never from the number). */
+export function withheldReason(t: PromoWhatsappTarget): string {
+  if (!t.lost || t.archived || t.trashed) return "ineligible";
+  if (t.dnc) return "dnc";
+  if (t.whatsappDnd) return "whatsapp_dnd";
+  return "no_number";
+}
+
 /* ---- the handler ---- */
+
+/**
+ * One line of the access trail for this endpoint: WHO asked is not known here (the caller is the Promotional App's server), so it records
+ * WHAT happened. Only codes and, once it has been checked to be a plain id, the opaque record id. Never a number, a secret, a name, or any
+ * text from the request. `released` means a number was handed out; `withheld` means the answer was given with no number.
+ */
+export type PromoWhatsappAudit = {
+  outcome: "released" | "withheld" | "not_found" | "refused" | "failed";
+  /** A short code: dnc, whatsapp_dnd, ineligible, no_number, unauthorized, not_configured, same_secret, rate_limited, bad_request, method, read_failed. */
+  reason: string;
+  /** The opaque record id, present only when the id passed the plain-id check. */
+  lead?: string;
+};
 
 export type PromoWhatsappDeps = {
   /** PROMO_WHATSAPP_TARGET_SECRET. Null or empty closes the endpoint. */
@@ -178,6 +199,8 @@ export type PromoWhatsappDeps = {
   /** PROMO_WHATSAPP_DEFAULT_COUNTRY, if the owner set one. */
   defaultCountry?: string | null | undefined;
   limiter?: RateLimiter;
+  /** Receives one privacy-safe line per request. Optional; a failure inside it never changes the answer. */
+  audit?: (event: PromoWhatsappAudit) => void;
   now?: () => Date;
 };
 
@@ -197,33 +220,62 @@ function logFailure(e: unknown): void {
  * lead answers with a refusal and no number.
  */
 export async function handlePromoWhatsappTargetRequest(request: Request, id: string, deps: PromoWhatsappDeps): Promise<Response> {
-  if (request.method !== "GET") return refuse(405, "This endpoint is read-only.", { Allow: "GET" });
+  const audit = (event: PromoWhatsappAudit) => {
+    try {
+      deps.audit?.(event);
+    } catch {
+      // a broken audit sink must never change what the caller is told
+    }
+  };
+
+  if (request.method !== "GET") {
+    audit({ outcome: "refused", reason: "method" });
+    return refuse(405, "This endpoint is read-only.", { Allow: "GET" });
+  }
 
   const auth = authorizePromoFeed(request.headers.get("authorization"), deps.secret);
-  if (!auth.ok) return refuse(auth.status, auth.status === 503 ? "This endpoint is not configured." : auth.message);
-  if (deps.feedSecret && deps.feedSecret === deps.secret) return refuse(503, "This endpoint is not configured.");
+  if (!auth.ok) {
+    audit({ outcome: "refused", reason: auth.status === 503 ? "not_configured" : "unauthorized" });
+    return refuse(auth.status, auth.status === 503 ? "This endpoint is not configured." : auth.message);
+  }
+  if (deps.feedSecret && deps.feedSecret === deps.secret) {
+    audit({ outcome: "refused", reason: "same_secret" });
+    return refuse(503, "This endpoint is not configured.");
+  }
 
-  if (deps.limiter && !deps.limiter.allow()) return refuse(429, "Too many requests.", { "Retry-After": "60" });
+  if (deps.limiter && !deps.limiter.allow()) {
+    audit({ outcome: "refused", reason: "rate_limited" });
+    return refuse(429, "Too many requests.", { "Retry-After": "60" });
+  }
 
   try {
     const url = new URL(request.url);
     const seen = new Set<string>();
+    const bad = (message: string) => {
+      audit({ outcome: "refused", reason: "bad_request", ...(ID.test(id) ? { lead: id } : {}) });
+      return refuse(400, message);
+    };
     for (const key of url.searchParams.keys()) {
-      if (key !== "scope") return refuse(400, `Unknown parameter "${key}".`);
-      if (seen.has(key)) return refuse(400, 'Parameter "scope" was given more than once.');
+      if (key !== "scope") return bad(`Unknown parameter "${key}".`);
+      if (seen.has(key)) return bad('Parameter "scope" was given more than once.');
       seen.add(key);
     }
     // the scope must be named, and it can only be `lost`: this endpoint is part of the Lost Leads section and nothing else
-    if (url.searchParams.get("scope") !== "lost") return refuse(400, 'scope must be "lost".');
-    if (!ID.test(id)) return refuse(400, "id is not a valid id.");
+    if (url.searchParams.get("scope") !== "lost") return bad('scope must be "lost".');
+    if (!ID.test(id)) return bad("id is not a valid id.");
 
     const found = await deps.target(id, { defaultCountry: deps.defaultCountry });
-    if (!found) return refuse(404, "There is no such record.");
+    if (!found) {
+      audit({ outcome: "not_found", reason: "no_such_lost_lead", lead: id });
+      return refuse(404, "There is no such record.");
+    }
+    audit(found.whatsapp !== null ? { outcome: "released", reason: "eligible", lead: id } : { outcome: "withheld", reason: withheldReason(found), lead: id });
     // belt and braces: whatever the service returned, only allow-listed fields leave
     const target = Object.fromEntries(PROMO_WHATSAPP_TARGET_FIELDS.map((f) => [f, found[f]]));
     return Response.json({ ok: true, contract: PROMO_WHATSAPP_CONTRACT, generatedAt: (deps.now ?? (() => new Date()))().toISOString(), target }, { headers: NO_STORE });
   } catch (e) {
     logFailure(e);
+    audit({ outcome: "failed", reason: "read_failed", ...(ID.test(id) ? { lead: id } : {}) });
     return refuse(503, "The target could not be read.");
   }
 }

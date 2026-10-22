@@ -13,7 +13,9 @@ import {
   createRateLimiter,
   handlePromoWhatsappTargetRequest,
   normalizeWhatsappNumber,
+  withheldReason,
   shapeWhatsappTarget,
+  type PromoWhatsappAudit,
   type PromoWhatsappDeps,
   type PromoWhatsappRow,
   type PromoWhatsappTarget,
@@ -416,11 +418,12 @@ describe("a number can leave through this endpoint and no other", () => {
     const used = [...new Set([...text.matchAll(/customers\.([A-Za-z]+)/g)].map((m) => m[1]))].sort();
     assert.deepEqual(used, ["deletedAt", "doNotContact", "id", "kind", "leadArchived", "leadStage", "phone", "whatsappDnd", "whatsappPhone"]);
   });
-  test("the number code logs nothing but the kind of failure", () => {
+  test("the number code writes exactly two kinds of log line: the kind of a failure, and the audit line (codes and an opaque id)", () => {
     const text = code("lib", "promo-whatsapp-target.ts") + code("lib", "services", "promo-whatsapp-target-service.ts") + code("app", "api", "integrations", "promo", "v1", "recipients", "[id]", "whatsapp-target", "route.ts");
     const logs = [...text.matchAll(/console\.(log|warn|error|info|debug)\(([^;]*)\);/g)].map((m) => m[0]);
-    assert.equal(logs.length, 1);
-    assert.match(logs[0]!, /"promo-whatsapp-target: read failed", e instanceof Error \? e\.name : "error", code/);
+    assert.equal(logs.length, 2);
+    assert.ok(logs.some((l) => /"promo-whatsapp-target: read failed", e instanceof Error \? e\.name : "error", code/.test(l)));
+    assert.ok(logs.some((l) => /console\.info\(JSON\.stringify\(\{ event: "promo_whatsapp_target", time: new Date\(\)\.toISOString\(\), \.\.\.event \}\)\)/.test(l)), "the audit line is the event and a time, nothing added");
   });
   test("the env names it reads are the ones documented in both example files", () => {
     const route = fs.readFileSync(path.join(SRC, "app", "api", "integrations", "promo", "v1", "recipients", "[id]", "whatsapp-target", "route.ts"), "utf8");
@@ -430,5 +433,80 @@ describe("a number can leave through this endpoint and no other", () => {
       const text = fs.readFileSync(path.join(SRC, "..", file), "utf8");
       for (const n of names) assert.ok(new RegExp(`^#?\\s*${n}=`, "m").test(text), `${file} documents ${n}`);
     }
+  });
+});
+
+describe("the access trail (privacy-safe audit)", () => {
+  const collect = () => {
+    const events: PromoWhatsappAudit[] = [];
+    return { events, d: (o: Partial<PromoWhatsappDeps> = {}) => deps({ audit: (e) => void events.push(e), ...o }) };
+  };
+
+  test("a released number is recorded as released, with the opaque id and no number", async () => {
+    const { events, d } = collect();
+    await ask(get(), d());
+    assert.deepEqual(events, [{ outcome: "released", reason: "eligible", lead: "cus_1" }]);
+  });
+  test("each reason a number is withheld is a code from the flags, never from the number", async () => {
+    const cases: [string, Partial<PromoWhatsappTarget>, string][] = [
+      ["dnc", { whatsapp: null, dnc: true }, "dnc"],
+      ["whatsapp dnd", { whatsapp: null, whatsappDnd: true }, "whatsapp_dnd"],
+      ["trashed", { whatsapp: null, trashed: true }, "ineligible"],
+      ["archived", { whatsapp: null, archived: true }, "ineligible"],
+      ["not lost", { whatsapp: null, lost: false }, "ineligible"],
+      ["no usable number", { whatsapp: null }, "no_number"],
+    ];
+    for (const [name, patch, reason] of cases) {
+      const { events, d } = collect();
+      await ask(get(), d({ target: async () => target(patch) }));
+      assert.deepEqual(events, [{ outcome: "withheld", reason, lead: "cus_1" }], name);
+      assert.equal(withheldReason(target(patch)), reason);
+    }
+  });
+  test("a record the lost scope does not have is recorded as not found; a failing read as failed", async () => {
+    const a = collect();
+    await ask(get(), a.d(), "cus_missing");
+    assert.deepEqual(a.events, [{ outcome: "not_found", reason: "no_such_lost_lead", lead: "cus_missing" }]);
+    const b = collect();
+    const saved = console.error;
+    console.error = () => undefined;
+    try {
+      await ask(get(), b.d({ target: async () => { throw new Error("boom +15550100101"); } }));
+    } finally {
+      console.error = saved;
+    }
+    assert.deepEqual(b.events, [{ outcome: "failed", reason: "read_failed", lead: "cus_1" }]);
+  });
+  test("every refusal is recorded with a code; an unauthorized or unconfigured request carries NO id at all", async () => {
+    const run = async (request: Request, o: Partial<PromoWhatsappDeps> = {}, id = "cus_1") => {
+      const { events, d } = collect();
+      await ask(request, d(o), id);
+      return events;
+    };
+    assert.deepEqual(await run(new Request(`${BASE}?scope=lost`, { method: "POST", headers: { authorization: `Bearer ${SECRET}` } })), [{ outcome: "refused", reason: "method" }]);
+    assert.deepEqual(await run(get("scope=lost", { authorization: "Bearer wrong" })), [{ outcome: "refused", reason: "unauthorized" }]);
+    assert.deepEqual(await run(get(), { secret: undefined }), [{ outcome: "refused", reason: "not_configured" }]);
+    assert.deepEqual(await run(get(), { feedSecret: SECRET }), [{ outcome: "refused", reason: "same_secret" }]);
+    assert.deepEqual(await run(get(), { limiter: { allow: () => false } }), [{ outcome: "refused", reason: "rate_limited" }]);
+    assert.deepEqual(await run(get("scope=active")), [{ outcome: "refused", reason: "bad_request", lead: "cus_1" }]);
+    assert.deepEqual(await run(get("scope=lost&phone=1")), [{ outcome: "refused", reason: "bad_request", lead: "cus_1" }]);
+    assert.deepEqual(await run(get(), {}, "x'; drop table customers; --"), [{ outcome: "refused", reason: "bad_request" }], "a hostile id is never written to the trail");
+  });
+  test("nothing in any recorded line holds a number, a secret or request text, across every outcome", async () => {
+    const { events, d } = collect();
+    for (const request of [get(), get("scope=lost", { authorization: `Bearer ${FEED_SECRET}` }), get("scope=lost&x=%2B15550100101"), get("scope=lost", {}, "POST")]) await ask(request, d());
+    await ask(get(), d({ target: async () => target({ whatsapp: null, dnc: true }) }));
+    const text = JSON.stringify(events);
+    for (const secret of [SECRET, FEED_SECRET, "5550100", "+1", "Bearer", "x=", "phone", "whatsapp\":\"+"]) assert.ok(!text.includes(secret), secret);
+    assert.ok(events.length >= 4);
+    for (const e of events) assert.deepEqual(Object.keys(e).filter((k) => !["outcome", "reason", "lead"].includes(k)), []);
+  });
+  test("a broken audit sink never changes what the caller is told", async () => {
+    const r = await ask(get(), deps({ audit: () => { throw new Error("sink down"); } }));
+    assert.equal(r.status, 200);
+    assert.equal(((await r.json()) as { target: { whatsapp: string } }).target.whatsapp, NUMBER);
+  });
+  test("with no sink at all the endpoint works as before", async () => {
+    assert.equal((await ask(get(), deps())).status, 200);
   });
 });
