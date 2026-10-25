@@ -7,7 +7,7 @@ The ERP is **data-driven**. One registry (`lib/erp/registry.ts`) lists every scr
 | Registry (pure) | `src/lib/erp/registry.ts` | `ERP_GROUPS` — sidebar groups, screens, tabs (`views`); `erpLink`, `erpPlace`, `erpKeysOf`, `ERP_ALWAYS_OPEN` |
 | Modules | `src/lib/modules.ts` | One `erp.<key>` module per **built** screen, read off the registry |
 | Context | `src/lib/erp/access.ts` | `erpContext` (cached per request), `requireErpApp`, `requireErpWrite`, `requireErpForm`, preview-as |
-| Layout | `src/app/erp/layout.tsx` | Gate, sidebar built from the registry and `ctx.screens`, badges from `erpNavCounts`, preview targets |
+| Layout | `src/app/erp/layout.tsx` | Gate, sidebar built from the registry and `ctx.screens`, badges from `erpNavCounts` (streamed — the shell is drawn without waiting for them), preview targets |
 | Dashboard | `src/app/erp/page.tsx`, `src/lib/erp/dashboard.ts`, `src/lib/erp/digest.ts` | Sections and tiles; yesterday's paragraph |
 | List route | `src/app/erp/[slug]/page.tsx` | Resolves screen and `?view=`, calls the module's `load(ctx)`, renders `ListScreen` |
 | Screen modules | `src/lib/erp/screens/*.ts` (index in `screens/index.ts`) | Per screen/tab: columns, rows, actions, forms, form loaders, tools |
@@ -17,7 +17,7 @@ The ERP is **data-driven**. One registry (`lib/erp/registry.ts`) lists every scr
 | Writes | `src/lib/actions/erp.ts` | `erpRunAction`, `erpRunBulk`, `erpSubmitForm`, `erpRunTool`, `erpLoadForm`, working godown, preview |
 | Stock | `src/lib/erp/stock.ts` | One reading of current stock per stage: `rmLots`, `sfgLots`, `fgLots`, `packLots`, `lockLot` |
 | Engines (pure) | `src/lib/erp/engines/*.ts` | purchase-flow, purchase, production, sales, trace, alerts, match, godown-fence, cash |
-| Badges | `src/lib/erp/counts.ts` | `erpNavCounts` — the same id lists the dashboard tiles use |
+| Badges | `src/lib/erp/counts.ts` | `erpNavCounts` — the same id lists the dashboard tiles use; `erpCountsFor` — only a tab strip's own |
 | Order book | `src/lib/erp/book.ts` | Projection into `orders`/`bills` when `erp.orders.live` is on |
 | Bespoke routes | `src/app/erp/{dispatch,trace,po,print-labels,settings}` | Dispatch desk, traceability, PO print, label sheets, settings |
 
@@ -35,7 +35,8 @@ The ERP is about a hundred screens and tabs. Anything two of them draw or decide
 | "Type or scan a code, press Go" | `QuickFind` in `page-head.tsx` | Trace, Dispatch desk |
 | Small links in a header's corner | `PageLinks` in `page-head.tsx` | Dispatch order, a bill's road |
 | A screen's tabs and each tab's count | `screenTabs` in `src/app/erp/_ui/screen-tabs.ts`, drawn by `ListTabs` | The generic list route and Logistics |
-| What is waiting, per list | `erpNavCounts` in `src/lib/erp/counts.ts` (cached per request) | Sidebar badges (summed over tabs) and tab badges |
+| What is waiting, per list | `erpNavCounts` in `src/lib/erp/counts.ts` (cached per request); `erpCountsFor` for a tab strip, which runs only the jobs its own tabs draw | Sidebar badges (summed over tabs) and tab badges |
+| A heavy form, sent only when opened | `src/lib/erp/lazy-forms.ts` — `lightSpec`/`lightRow` leave a form over 12 KB on the server, `lazyForm` builds it again on demand through `erpLoadForm`, `newFormIn` skips building a deferred New form | Every list route; the New button and any record action |
 | Which order lines are Pending / being worked | `isPendingLine`, `isWorkingLine` in `screens/sales.ts` | The Orders tabs, their badges, the dashboard |
 | Order-line columns and their headings | `ORDER_COL` / `orderCols` in `screens/sales.ts` | Orders tabs, Billing & dispatch |
 | A line's extra expenses | `setExtraExpenses`, `EXTRA_EXPENSE_PROMPT` in `screens/sales.ts` | Orders → Billing & dispatch, Logistics → Paid freight |

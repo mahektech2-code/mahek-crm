@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { NavLink } from "@/components/shell/nav-link";
 import { notFound, redirect } from "next/navigation";
 import { erpContext } from "@/lib/erp/access";
 import { erpScreenBySlug } from "@/lib/erp/registry";
@@ -9,6 +9,7 @@ import { consignments, lrUploadKit, messages, placeOptions, transporters, upload
 import { today as businessToday } from "@/lib/erp/screens/common";
 import { syncDispatchedTransports } from "@/lib/erp/screens/sales";
 import { ListScreen, ListTabs } from "../_ui/list-screen";
+import { lightPage, lightRow, lightSpec } from "@/lib/erp/lazy-forms";
 import { pageOf, parseListQuery } from "@/lib/erp/list-query";
 import { withReadMemo } from "@/lib/erp/read-memo";
 import { scopeFor, windowInfo } from "@/lib/erp/window";
@@ -64,17 +65,18 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
     /* One page travels, as on every other ERP list (`[slug]/page.tsx`), read through the register's window. */
     const query = parseListQuery(raw);
     const open = one("open");
-    const scope = scopeFor(mod.window, query, open ?? null);
+    const scope = { ...scopeFor(mod.window, query, open ?? null), forms: "defer" as const };
     const { spec, rows, tooWide } = await withReadMemo(() => mod.load(ctx, scope));
-    const page = { ...pageOf(spec, rows, query, FLAG), ...(mod.window ? { window: windowInfo(mod.window, scope, tooWide ?? null) } : {}) };
+    const page = lightPage(mod, { ...pageOf(spec, rows, query, FLAG), ...(mod.window ? { window: windowInfo(mod.window, scope, tooWide ?? null) } : {}) });
+    const found = open ? (rows.find((r) => r.id === open) ?? null) : null;
     return (
       <ListScreen
         key={`${view}|${f ?? ""}|${open ?? ""}`}
         initialNew={null}
-        spec={spec}
+        spec={lightSpec(spec)}
         rows={page.rows}
         server={{ ...page, query }}
-        openRow={open ? (rows.find((r) => r.id === open) ?? null) : null}
+        openRow={found ? lightRow(mod, found) : null}
         label={screen.label}
         sub={screen.sub}
         tabs={tabs}
@@ -115,9 +117,9 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
       <ListTabs label={screen.label} tabs={tabs} />
       {ids ? (
         <div className="mb-3 flex items-center gap-2 text-meta text-muted">
-          Showing {ids.length} bill{ids.length === 1 ? "" : "s"}: {one("fl") ?? "filtered"} · <Link href={at(view)} className={linkClass()}>
+          Showing {ids.length} bill{ids.length === 1 ? "" : "s"}: {one("fl") ?? "filtered"} · <NavLink href={at(view)} className={linkClass()}>
             Show everything
-          </Link>
+          </NavLink>
         </div>
       ) : null}
 

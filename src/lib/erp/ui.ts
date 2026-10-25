@@ -190,6 +190,9 @@ export type PromptSpec = {
   init?: Record<string, string>;
 };
 
+/** What a list's own New form is asked for by, when it stayed on the server (`ListSpec.newFormLazy`). Never a module's action id: those are words. */
+export const NEW_FORM_ACTION = "__new";
+
 export type ActionSpec = {
   /** Stable id the server dispatches on. */
   id: string;
@@ -356,6 +359,11 @@ export type ListSpec = {
   /** Line under the toolbar when the list is scoped to the working godown. */
   scopedLine?: string;
   newForm?: FormSpec;
+  /**
+   * The New form was too heavy to send with the list (`lazy-forms.ts`): the
+   * button asks the server for it under `NEW_FORM_ACTION` when pressed.
+   */
+  newFormLazy?: boolean;
   newLabel?: string;
   /**
    * "+ New ▾": every kind of record the screen can start, each opening its

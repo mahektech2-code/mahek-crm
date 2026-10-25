@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { NavLink } from "@/components/shell/nav-link";
 import { stamp } from "@/lib/format";
 import { redirect } from "next/navigation";
 import { erpContext } from "@/lib/erp/access";
@@ -37,9 +37,9 @@ export default async function ErpTrace({ searchParams }: { searchParams: Promise
     <Page title={SCREEN.label} sub={SCREEN.sub}>
       <QuickFind action={erpHref(SCREEN)} name="q" defaultValue={qv} mono button="Trace" className="max-w-[760px]" placeholder="Scan or type: BX-261008-000125, an SFG lot, FG12NA, FP40NA, order 1256, a bill number…">
         {qv ? (
-          <Link href={erpHref(SCREEN)} className={linkClass("muted", "flex h-9 items-center px-2 text-sm")}>
+          <NavLink href={erpHref(SCREEN)} className={linkClass("muted", "flex h-9 items-center px-2 text-sm")}>
             Clear
-          </Link>
+          </NavLink>
         ) : null}
       </QuickFind>
 
@@ -61,13 +61,13 @@ function Dashboard({ d }: { d: NonNullable<Awaited<ReturnType<typeof traceDashbo
         <SectionTitle>Today</SectionTitle>
         <CardGrid min={170}>
           {d.today.map((t) => (
-            <Link key={t.l} href={t.href ?? "#"} className="no-underline hover:no-underline">
+            <NavLink key={t.l} href={t.href ?? "#"} className="no-underline hover:no-underline">
               <Card className="h-full px-4 py-3 hover:border-brand">
                 <Eyebrow>{t.l}</Eyebrow>
                 <span className="block text-xl leading-7 font-semibold text-ink tabular-nums">{t.v}</span>
                 {t.sub ? <span className="block text-xs text-muted">{t.sub}</span> : null}
               </Card>
-            </Link>
+            </NavLink>
           ))}
         </CardGrid>
       </section>
@@ -75,7 +75,7 @@ function Dashboard({ d }: { d: NonNullable<Awaited<ReturnType<typeof traceDashbo
         <SectionTitle>Exceptions</SectionTitle>
         <CardGrid min={260}>
           {d.exceptions.map((e) => (
-            <Link key={e.l} href={e.href} className="no-underline hover:no-underline">
+            <NavLink key={e.l} href={e.href} className="no-underline hover:no-underline">
               <Card className={cx("flex h-full items-start gap-3 px-4 py-3 hover:border-brand", !e.n && "opacity-60")}>
                 <span className={cx("text-xl leading-7 font-semibold tabular-nums", e.n ? (e.tone === "bad" ? "text-danger" : "text-warn-ink") : "text-muted")}>{e.n}</span>
                 <span className="min-w-0">
@@ -83,7 +83,7 @@ function Dashboard({ d }: { d: NonNullable<Awaited<ReturnType<typeof traceDashbo
                   <span className="block text-meta text-muted">{e.sub}</span>
                 </span>
               </Card>
-            </Link>
+            </NavLink>
           ))}
         </CardGrid>
       </section>
@@ -97,12 +97,12 @@ function Dashboard({ d }: { d: NonNullable<Awaited<ReturnType<typeof traceDashbo
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm text-ink">{s.message}</span>
                   <span className="block text-meta text-muted">
-                    <Link href={erpTraceHref(s.code)} className={linkClass("brand", "font-mono")}>
+                    <NavLink href={erpTraceHref(s.code)} className={linkClass("brand", "font-mono")}>
                       {s.code}
-                    </Link>
+                    </NavLink>
                     {s.orderNo ? (
                       <>
-                        {" "}· <Link href={erpDispatchHref(s.orderNo)} className={linkClass()}>order {s.orderNo}</Link>
+                        {" "}· <NavLink href={erpDispatchHref(s.orderNo)} className={linkClass()}>order {s.orderNo}</NavLink>
                       </>
                     ) : null}
                     {s.by ? ` · ${s.by}` : ""} · {stamp(s.at)}
@@ -142,7 +142,7 @@ function TraceView({ r }: { r: TraceResult }) {
             {r.facts.map((f) => (
               <div key={f.l}>
                 <dt className={labelClass}>{f.l}</dt>
-                <dd className="text-sm text-ink">{f.href ? <Link href={f.href} className={linkClass()}>{f.v}</Link> : f.v}</dd>
+                <dd className="text-sm text-ink">{f.href ? <NavLink href={f.href} className={linkClass()}>{f.v}</NavLink> : f.v}</dd>
               </div>
             ))}
           </dl>
@@ -150,9 +150,9 @@ function TraceView({ r }: { r: TraceResult }) {
         {r.links.length ? (
           <div className="mt-3 flex flex-wrap gap-3 text-meta">
             {r.links.map((l) => (
-              <Link key={l.l} href={l.href!} className={linkClass()}>
+              <NavLink key={l.l} href={l.href!} className={linkClass()}>
                 {l.l} →
-              </Link>
+              </NavLink>
             ))}
           </div>
         ) : null}
@@ -191,7 +191,7 @@ function TraceView({ r }: { r: TraceResult }) {
                     {b.rows.map((x, j) => (
                       <div key={j} className="flex items-center gap-2 border-t border-divider px-4 py-1.5 text-meta">
                         <Dot tone={x.tone === "warn" ? "warn" : x.tone === "bad" ? "danger" : "neutral"} />
-                        {x.href ? <Link href={x.href} className={linkClass()}>{x.text}</Link> : <span className="text-body">{x.text}</span>}
+                        {x.href ? <NavLink href={x.href} className={linkClass()}>{x.text}</NavLink> : <span className="text-body">{x.text}</span>}
                       </div>
                     ))}
                   </Card>
@@ -212,7 +212,7 @@ function TraceView({ r }: { r: TraceResult }) {
               </div>
               {f.rows.map((x, j) => (
                 <div key={j} className="border-t border-divider px-4 py-1.5 first:border-0">
-                  <span className="block text-meta text-ink">{x.href ? <Link href={x.href} className={linkClass()}>{x.text}</Link> : x.text}</span>
+                  <span className="block text-meta text-ink">{x.href ? <NavLink href={x.href} className={linkClass()}>{x.text}</NavLink> : x.text}</span>
                   {x.sub ? <span className="block text-meta text-muted">{x.sub}</span> : null}
                 </div>
               ))}
@@ -224,9 +224,9 @@ function TraceView({ r }: { r: TraceResult }) {
               r.customers.map((c, i) => (
                 <div key={i} className="flex items-start gap-3 border-t border-divider px-4 py-2 first:border-0">
                   <span className="min-w-0 flex-1">
-                    <Link href={c.href} className={linkClass("brand", "block text-sm")}>
+                    <NavLink href={c.href} className={linkClass("brand", "block text-sm")}>
                       {c.customer}
-                    </Link>
+                    </NavLink>
                     <span className="block text-meta text-muted">
                       Order {c.orderNo}
                       {c.bill ? ` · bill ${c.bill}` : ""} · {c.sku} · lot{c.lots.length > 1 ? "s" : ""} {c.lots.join(", ")}

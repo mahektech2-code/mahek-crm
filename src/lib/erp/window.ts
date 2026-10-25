@@ -46,6 +46,13 @@ export type LoadScope = {
   window: DateWindow;
   ids: string[] | null;
   open: string | null;
+  /**
+   * `defer`: the page will not send a heavy New form with the list
+   * (`lazy-forms.ts`), so a module whose form always exists says so
+   * (`newFormIn`) instead of building it. Absent means build, which is what
+   * every other caller — the form's own loader, an export, a test — wants.
+   */
+  forms?: "defer";
 };
 
 /** A register's declaration: which date it is cut by, and what it opens on. */

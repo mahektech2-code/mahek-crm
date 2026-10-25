@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { NavLink } from "@/components/shell/nav-link";
 import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 import type { DispatchBoard } from "@/lib/erp/dispatch";
@@ -136,9 +136,9 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
                 <div className="px-5 py-3">
                   <div className="text-base text-ink">{last.verdict.message}</div>
                   <div className="mt-1 font-mono text-meta text-muted">
-                    <Link href={erpTraceHref(last.code)} className={linkClass()}>
+                    <NavLink href={erpTraceHref(last.code)} className={linkClass()}>
                       {last.code}
-                    </Link>
+                    </NavLink>
                   </div>
                   {last.verdict.result === "mismatch" && last.verdict.mismatch ? (
                     <div className="mt-3 border-t border-divider pt-3">
@@ -219,9 +219,9 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
             {board.units.length ? (
               board.units.map((u) => (
                 <div key={u.id} className="flex items-center gap-3 border-b border-divider px-4 py-1.5 text-meta last:border-0">
-                  <Link href={erpTraceHref(u.id)} className={linkClass("brand", "font-mono")}>
+                  <NavLink href={erpTraceHref(u.id)} className={linkClass("brand", "font-mono")}>
                     {u.id}
-                  </Link>
+                  </NavLink>
                   <span className="min-w-0 flex-1 truncate text-body">
                     {u.sku} · lot {u.lotCode}
                     {u.by ? ` · ${u.by}` : ""}

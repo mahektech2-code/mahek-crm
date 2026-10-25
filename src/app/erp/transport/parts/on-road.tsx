@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { NavLink } from "@/components/shell/nav-link";
 import { erpLink } from "@/lib/erp/registry";
 import { useMemo, useState } from "react";
 import { FilterPills } from "@/components/ui/overlays";
@@ -85,9 +85,9 @@ export function OnRoad({ rows, today, callEveryDays, lateAfterDays, notifyOn, ca
                   {issue ? <Badge label={issue.issue ?? ""} tone="danger" /> : null}
                   {late && !issue ? <Badge label="Running late" tone="warn" /> : null}
                   {waiting ? (
-                    <Link href={erpLink("lrMessages")}>
+                    <NavLink href={erpLink("lrMessages")}>
                       <Badge label={`${plural(waiting, "message")} to send`} tone="warn" />
-                    </Link>
+                    </NavLink>
                   ) : null}
                 </div>
                 <div className="mt-0.5 text-sm font-medium text-ink">{parties.join(", ")}</div>

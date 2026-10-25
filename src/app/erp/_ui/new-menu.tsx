@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
+import { NavLink } from "@/components/shell/nav-link";
 import { Icon as ShellIcon } from "@/components/shell/icons";
 import { buttonClass, cx } from "@/components/ui/primitives";
 import { popoverClass } from "./look";
@@ -38,10 +38,10 @@ export function NewMenu({ items, label = "New" }: { items: NewMenuItem[]; label?
       {open ? (
         <div role="menu" className={cx(popoverClass, "absolute right-0 z-40 mt-1.5 grid w-64 gap-0.5 p-1.5")}>
           {items.map((i) => (
-            <Link key={i.l} role="menuitem" href={i.href} onClick={() => setOpen(false)} className="block rounded-control px-3 py-2 hover:bg-brand-soft">
+            <NavLink key={i.l} role="menuitem" href={i.href} onClick={() => setOpen(false)} className="block rounded-control px-3 py-2 hover:bg-brand-soft">
               <span className="block text-sm font-medium text-ink">{i.l}</span>
               {i.sub ? <span className="block text-meta text-muted">{i.sub}</span> : null}
-            </Link>
+            </NavLink>
           ))}
         </div>
       ) : null}

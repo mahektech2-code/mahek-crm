@@ -1,6 +1,6 @@
 import "server-only";
 import type { ErpContext } from "@/lib/erp/access";
-import { erpNavCounts } from "@/lib/erp/counts";
+import { erpCountsFor } from "@/lib/erp/counts";
 import { erpHref, type ErpScreen } from "@/lib/erp/registry";
 import type { ListTab } from "./list-screen";
 
@@ -18,7 +18,8 @@ export async function screenTabs(
   const views = screen.views ?? [];
   const base = erpHref(screen);
   const at = (k: string) => (k === views[0]?.key ? base : `${base}?view=${k}`);
-  const counts = views.length > 1 ? await erpNavCounts(ctx) : {};
+  /* Only this strip's own badges — the sidebar's are the layout's, and streamed. */
+  const counts = views.length > 1 ? await erpCountsFor(ctx, views.map((v) => v.key).join(",")) : {};
   const tabs: ListTab[] = views.map((v) => ({
     key: v.key,
     label: v.label,

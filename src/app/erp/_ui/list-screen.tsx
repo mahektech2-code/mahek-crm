@@ -2,10 +2,11 @@
 
 import { Page } from "./page-head";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
-import Link from "next/link";
+import { NavLink } from "@/components/shell/nav-link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import type { ColSpec, ListRow, ListSpec, Tone } from "@/lib/erp/ui";
-import { cellText, inr, nf } from "@/lib/erp/ui";
+import type { ColSpec, FormSpec, ListRow, ListSpec, Tone } from "@/lib/erp/ui";
+import type { Result } from "@/lib/result";
+import { cellText, inr, nf, NEW_FORM_ACTION } from "@/lib/erp/ui";
 import { colOf as colIn, listCsv, listQueryParams, LIST_QUERY_KEYS, pageOf, subMatches, type ListPage, type ListQuery } from "@/lib/erp/list-query";
 import { Icon as ShellIcon } from "@/components/shell/icons";
 import { Button, Card, checkboxClass, cx, EmptyState, Input, Select, SortableTh, Td, Th, Tr } from "@/components/ui/primitives";
@@ -65,10 +66,13 @@ export type ListTab = {
 export function ListTabs({ label, tabs, toggle }: { label: string; tabs: ListTab[]; toggle?: { label: string; href: string } | null }) {
   return (
     /* Tabs WRAP rather than scroll: on a tablet Orders and Logistics have more
-       tabs than fit, and a tab scrolled out of sight is one nobody finds. */
+       tabs than fit, and a tab scrolled out of sight is one nobody finds.
+       Each is a NavLink, prefetched on hover like the sidebar: a plain Link
+       prefetched every tab in view the moment the page drew — four requests
+       for each real click on production, on the one shared core. */
     <nav aria-label={`${label} lists`} className="mb-4 flex flex-wrap items-center border-b border-line">
       {tabs.map((t) => (
-        <Link
+        <NavLink
           key={t.key}
           href={t.href}
           aria-current={t.active ? "page" : undefined}
@@ -79,13 +83,13 @@ export function ListTabs({ label, tabs, toggle }: { label: string; tabs: ListTab
         >
           {t.label}
           {t.count ? <span className="rounded-full bg-warn px-1.5 text-2xs leading-[18px] font-medium text-white">{t.count}</span> : null}
-        </Link>
+        </NavLink>
       ))}
       <span className="flex-1" />
       {toggle ? (
-        <Link href={toggle.href} className={linkClass("brand", "px-2 py-2.5 text-meta")}>
+        <NavLink href={toggle.href} className={linkClass("brand", "px-2 py-2.5 text-meta")}>
           {toggle.label}
-        </Link>
+        </NavLink>
       ) : null}
     </nav>
   );
@@ -100,7 +104,7 @@ export function SectionTabs({ label, sections }: { label: string; sections: List
   return (
     <nav aria-label={`${label} sections`} className="mb-3 flex flex-wrap items-center gap-1 border-b border-line">
       {sections.map((t) => (
-        <Link
+        <NavLink
           key={t.key}
           href={t.href}
           aria-current={t.active ? "page" : undefined}
@@ -111,7 +115,7 @@ export function SectionTabs({ label, sections }: { label: string; sections: List
         >
           {t.label}
           {t.count ? <span className={cx("rounded-full px-1.5 text-2xs leading-[18px] font-medium", t.active ? "bg-brand text-white" : "bg-canvas text-body")}>{t.count}</span> : null}
-        </Link>
+        </NavLink>
       ))}
     </nav>
   );
@@ -195,7 +199,7 @@ export function ListScreen({
   bare?: boolean;
 }) {
   const ui = useErpUi();
-  const { flags: FLAG, place, exportList, listIds } = useKit();
+  const { flags: FLAG, place, exportList, listIds, loadForm } = useKit();
   const router = useRouter();
   const path = usePathname();
   const params = useSearchParams();
@@ -233,21 +237,43 @@ export function ListScreen({
   const [openId, setOpenId] = useState<string | null>(initialOpen ?? null);
   /* Totals opened onto their folded rows, by hand. Unset follows the search: a lot number typed opens the total it is under. */
   const [unfolded, setUnfolded] = useState<Record<string, boolean>>({});
+  /* A New form too heavy to send with the list is asked for when it is wanted
+     (`lazy-forms.ts`) — from the first hover over the button, so by the click
+     it has usually landed. Asked once per press: a form carries next numbers
+     and stock that a save moves, so a kept copy would go stale. */
+  const hasNew = !!(spec.newForm || spec.newFormLazy) && !spec.readOnly;
+  const newAsk = useRef<Promise<Result<FormSpec>> | null>(null);
+  const askNew = () => (newAsk.current ??= loadForm(spec.screen, NEW_FORM_ACTION, server?.query.pd ?? ""));
+  const warmNew = () => {
+    if (!spec.newForm && spec.newFormLazy) void askNew();
+  };
+  const openNew = (preset?: Record<string, string>) => {
+    const open = (form: FormSpec) => {
+      const known = new Set(form.header.map((f) => f.k));
+      const given = Object.fromEntries(Object.entries(preset ?? {}).filter(([k]) => known.has(k)));
+      ui.openForm(preset ? { ...form, init: { ...form.init, ...given } } : form);
+    };
+    if (spec.newForm) return open(spec.newForm);
+    if (!spec.newFormLazy) return;
+    void askNew().then((res) => {
+      newAsk.current = null;
+      if (res.ok) open(res.data);
+      else ui.toast(res.error, "error");
+    });
+  };
   /* Opened once per arrival, then the query is cleared so a reload does not open it again. */
   const newOpened = useRef(false);
   useEffect(() => {
-    if (newOpened.current || !initialNew || !spec.newForm || spec.readOnly) return;
+    if (newOpened.current || !initialNew || !hasNew) return;
     newOpened.current = true;
-    const form = spec.newForm;
-    const known = new Set(form.header.map((f) => f.k));
-    const preset = Object.fromEntries(Object.entries(initialNew).filter(([k]) => known.has(k)));
-    ui.openForm({ ...form, init: { ...form.init, ...preset } });
+    openNew(initialNew);
     const q = new URLSearchParams(params.toString());
     q.delete("new");
     for (const k of Object.keys(initialNew)) q.delete(k);
     const qs = q.toString();
     router.replace(qs ? `${path}?${qs}` : path, { scroll: false });
-  }, [initialNew, spec.newForm, spec.readOnly, ui, params, path, router]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per arrival; openNew reads the spec this render was given
+  }, [initialNew, hasNew, params, path, router]);
   /* Clearing a filter or closing a record returns to the same TAB: the tab is
      in the query, and a bare path would open the screen's first one. */
   const tabKey = params.get("view");
@@ -400,8 +426,8 @@ export function ListScreen({
           ))}
           {spec.newMenu?.length && !spec.readOnly ? (
             <NewMenu items={spec.newMenu} />
-          ) : spec.newForm && !spec.readOnly ? (
-            <Button variant="primary" onClick={() => spec.newForm && ui.openForm(spec.newForm)}>
+          ) : hasNew ? (
+            <Button variant="primary" onClick={() => openNew()} onPointerEnter={warmNew} onFocus={warmNew}>
               <ShellIcon name="plus" size={16} />
               {spec.newLabel ?? "New"}
             </Button>
@@ -528,8 +554,8 @@ export function ListScreen({
             title={emptyTitle}
             body={emptyBody}
             action={
-              spec.newForm && !spec.readOnly ? (
-                <Button variant="primary" onClick={() => ui.openForm(spec.newForm!)}>
+              hasNew ? (
+                <Button variant="primary" onClick={() => openNew()} onPointerEnter={warmNew} onFocus={warmNew}>
                   {spec.newLabel ?? "New"}
                 </Button>
               ) : undefined

@@ -1,6 +1,6 @@
 import { calendarDate, isoWeekday, localMinutesSince, type BusinessDate } from "@/lib/business-date";
 import { longDate } from "@/lib/format";
-import Link from "next/link";
+import { NavLink } from "@/components/shell/nav-link";
 import { erpContext } from "@/lib/erp/access";
 import { withReadMemo } from "@/lib/erp/read-memo";
 import { accuracyFlow, dashboardSections, latestDigest } from "@/lib/erp/dashboard";
@@ -56,7 +56,7 @@ export default async function ErpDashboard() {
             {flow.steps.map((st, i) => {
               const hot = st.v > 0 && st.tone ? st.tone : undefined;
               return (
-                <Link
+                <NavLink
                   key={st.l}
                   href={st.href}
                   className="flex min-w-0 flex-col gap-1 border-r border-b border-divider px-4 py-3 no-underline hover:bg-canvas hover:no-underline"
@@ -69,7 +69,7 @@ export default async function ErpDashboard() {
                   </span>
                   <span className={cx("text-xl leading-7 font-semibold tabular-nums", !st.v ? "text-line-strong" : hot === "danger" ? "text-danger" : hot === "warn" ? "text-warn-ink" : "text-ink")}>{st.v}</span>
                   <span className="text-xs leading-4 text-muted">{st.sub}</span>
-                </Link>
+                </NavLink>
               );
             })}
           </CardGrid>
@@ -86,7 +86,7 @@ export default async function ErpDashboard() {
               const zero = /^\D*0\D*$/.test(String(t.v));
               const hot = t.tone && !zero ? t.tone : undefined;
               return (
-                <Link
+                <NavLink
                   key={t.l}
                   href={t.href}
                   className="group flex w-full items-center gap-3 border-b border-divider px-5 py-2.5 text-left no-underline last:border-0 hover:bg-canvas hover:no-underline"
@@ -98,7 +98,7 @@ export default async function ErpDashboard() {
                   </span>
                   <span className={cx("text-lg font-semibold whitespace-nowrap tabular-nums", zero ? "text-line-strong" : hot === "danger" ? "text-danger" : "text-ink")}>{t.v}</span>
                   <Icon name="chevron" size={14} className="flex-none text-line-strong group-hover:text-muted" />
-                </Link>
+                </NavLink>
               );
             })}
           </Card>

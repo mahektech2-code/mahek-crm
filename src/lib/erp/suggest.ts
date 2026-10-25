@@ -5,6 +5,8 @@ import { getConfig } from "@/lib/config/store";
 import { suggestLevel, type LevelSuggestion } from "./engines/production";
 import { addDaysIso } from "./engines/sales";
 import { today } from "./screens/common";
+import { readOnce } from "./read-memo";
+import { ledgerRead } from "./ledger-cache";
 
 /* ---------------------------------------------------------------------------
  * AI-7's suggested re-order levels, from what each godown actually used:
@@ -15,8 +17,11 @@ import { today } from "./screens/common";
 
 type Use = { key: string; used: number; recent: number };
 
+/* Usage is read off the stock ledgers, so it is kept with them, under their
+   stamp (`ledger-cache.ts`): the re-order screens and the sidebar's badges ask
+   for it on every page, and it moves only when stock does. */
 async function uses(q: ReturnType<typeof sql>): Promise<Map<string, Use>> {
-  const rows = (await db.execute(q)) as unknown as { key: string; used: number; recent: number }[];
+  const rows = (await readOnce(q, () => ledgerRead(q, async () => (await db.execute(q)) as unknown as { key: string; used: number; recent: number }[])));
   return new Map(rows.map((r) => [r.key, { key: r.key, used: Number(r.used), recent: Number(r.recent) }]));
 }
 

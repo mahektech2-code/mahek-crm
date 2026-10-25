@@ -61,6 +61,8 @@ import {
 import { erpLink } from "../registry";
 import { lineOption, lotOption, moveReturnUnits, returnableLines, returnableLots, valuedQty } from "../returns";
 import { erpAudit, erpId, nextNumber, num, paise, stampLine, text, type ScreenModule } from "../server";
+import { newFormIn } from "../lazy-forms";
+import type { LoadScope } from "../window";
 import { fgLotStock, lockLot, packLotStock, rmLots } from "../stock";
 import type { ActionSpec, ColSpec, FieldSpec, ListRow, RowField } from "../ui";
 import { fd, inr, nf } from "../ui";
@@ -285,7 +287,7 @@ async function vendorForm(ctx: ErpContext) {
 
 const vendorReturns: ScreenModule = {
   key: "vendorReturns",
-  async load(ctx) {
+  async load(ctx, s) {
     const [rows, lots] = await Promise.all([vendorRows(), rmLots()]);
     const stockAt = (lot: string) => lots.filter((l) => l.lotNo === lot && l.stock > 0).map((l) => l.godown);
     const money = seesMoney(ctx);
@@ -310,7 +312,7 @@ const vendorReturns: ScreenModule = {
         groups: ["stage", "supplier"],
         chips: "stage",
         sortDefault: ["date", -1],
-        newForm: await vendorForm(ctx),
+        ...(await newFormIn(s, () => vendorForm(ctx))),
         newLabel: "Raise purchase return",
         noDataLine: "No purchase returns. Raise one against a defective or wrong GRN lot.",
       },
@@ -987,7 +989,7 @@ function customerRowFor(ctx: ErpContext, r: CustomerRow, ds: DecisionRow[], godo
   };
 }
 
-async function customerScreen(ctx: ErpContext, key: "customerReturns" | "returnQc") {
+async function customerScreen(ctx: ErpContext, key: "customerReturns" | "returnQc", s?: LoadScope) {
   const [rows, ds, gds] = await Promise.all([customerRows(), decisionRows(), godownOptions(ctx, { lost: false })]);
   const godowns = gds.map((g) => g.name);
   const byReturn = new Map<string, DecisionRow[]>();
@@ -1018,7 +1020,7 @@ async function customerScreen(ctx: ErpContext, key: "customerReturns" | "returnQ
       groups: ["stage", "customer"],
       chips: "stage",
       sortDefault: ["date", -1] as [string, 1 | -1],
-      ...(key === "customerReturns" ? { newForm: await customerForm(), newLabel: "Record customer return" } : {}),
+      ...(key === "customerReturns" ? { ...(await newFormIn(s, customerForm)), newLabel: "Record customer return" } : {}),
       noDataLine:
         key === "customerReturns"
           ? "No customer returns. Record one against the dispatched order line."
@@ -1236,7 +1238,7 @@ const customerActionHandlers: ScreenModule["actions"] = {
 
 const customerReturns: ScreenModule = {
   key: "customerReturns",
-  load: (ctx) => customerScreen(ctx, "customerReturns"),
+  load: (ctx, s) => customerScreen(ctx, "customerReturns", s),
   forms: {
     async new(ctx, h) {
       const lines = await returnableLines(undefined, { unallocatedDays: await unallocatedDays() });

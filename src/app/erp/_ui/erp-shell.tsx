@@ -43,7 +43,7 @@ import { IconButton, eyebrowClass } from "./look";
  * I looking at.
  * ------------------------------------------------------------------------- */
 
-export type NavScreen = { key: string; label: string; href: string; count?: number };
+export type NavScreen = { key: string; label: string; href: string };
 export type NavGroup = { id: string; label: string; icon: string; single: boolean; screens: NavScreen[] };
 
 /** Every sub-item carries its own icon, as the CRM's do. */
@@ -130,6 +130,7 @@ const SHORTCUTS = [
 
 export function ErpShell({
   nav,
+  badges,
   user,
   hat,
   godowns,
@@ -143,6 +144,12 @@ export function ErpShell({
   children,
 }: {
   nav: NavGroup[];
+  /**
+   * Each sidebar row's count of waiting work, by href. A PROMISE, because the
+   * layout does not wait for it: the shell is drawn at once and the badges
+   * fill in when the counting lands.
+   */
+  badges: Promise<Record<string, number>>;
   user: { name: string; email: string | null; phone: string | null; initials: string; role: string };
   hat: { label: string; sentence: string };
   godowns: { id: string; name: string }[];
@@ -162,6 +169,17 @@ export function ErpShell({
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  /* The last counts that landed: a refresh after a save keeps showing them until the new ones arrive, rather than blanking every badge. */
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  useEffect(() => {
+    let live = true;
+    void badges.then((c) => {
+      if (live) setCounts(c);
+    });
+    return () => {
+      live = false;
+    };
+  }, [badges]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -190,7 +208,6 @@ export function ErpShell({
       /* A flat group's one row wears the group's icon, so it looks the same shut or open. */
       return { label: g.label, icon, items: g.screens.map((s) => (g.single ? { ...toRow(s, icon), icon } : toRow(s, icon))), flat: g.single };
     });
-  const counts = new Map(nav.flatMap((g) => g.screens.map((s) => [s.href, s.count ?? 0] as const)));
 
   return (
     <ToastProvider>
@@ -250,7 +267,7 @@ export function ErpShell({
                 ariaLabel="ERP sections"
                 pinned={pinned}
                 groups={groups}
-                countFor={(item) => counts.get(item.href) ?? 0}
+                countFor={(item) => counts[item.href] ?? 0}
                 railed={collapsed}
                 renderIcon={renderIcon}
                 /* Alerts are the one queue that is red whatever it counts: an

@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { NavLink } from "@/components/shell/nav-link";
 import { erpBillRoadHref } from "@/lib/erp/trace-links";
 import { useState } from "react";
 import { phoneDisplay } from "@/lib/format";
@@ -83,9 +83,9 @@ export function LrThumb({ fileId, size = 56 }: { fileId: string | null; size?: n
 
 export function BillRef({ c }: { c: Pick<Consignment, "id" | "orderNo" | "billNo"> }) {
   return (
-    <Link href={erpBillRoadHref(c.id)} className={linkClass("brand", "font-mono text-meta")}>
+    <NavLink href={erpBillRoadHref(c.id)} className={linkClass("brand", "font-mono text-meta")}>
       {c.billNo ?? `Order ${c.orderNo}`}
-    </Link>
+    </NavLink>
   );
 }
 

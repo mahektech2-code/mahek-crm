@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { NavLink } from "@/components/shell/nav-link";
 import { redirect } from "next/navigation";
 import { erpContext } from "@/lib/erp/access";
 import { erpScreen } from "@/lib/erp/registry";
@@ -56,7 +56,7 @@ export default async function ErpDispatch({ searchParams }: { searchParams: Prom
           </div>
           {queue.length ? (
             queue.map((o) => (
-              <Link key={o.orderNo} href={erpDispatchHref(o.orderNo)} className="grid grid-cols-[90px_1fr_120px_110px_90px_110px] items-center gap-3 border-b border-divider px-4 py-2.5 text-sm text-ink no-underline last:border-0 hover:bg-canvas hover:no-underline">
+              <NavLink key={o.orderNo} href={erpDispatchHref(o.orderNo)} className="grid grid-cols-[90px_1fr_120px_110px_90px_110px] items-center gap-3 border-b border-divider px-4 py-2.5 text-sm text-ink no-underline last:border-0 hover:bg-canvas hover:no-underline">
                 <span className="font-mono">{o.orderNo}</span>
                 <span className="truncate">{o.delivery}</span>
                 <span className="truncate text-muted">{o.godown}</span>
@@ -65,7 +65,7 @@ export default async function ErpDispatch({ searchParams }: { searchParams: Prom
                 <span className="text-right tabular-nums">
                   {o.scanned} / {Math.round(o.target)}
                 </span>
-              </Link>
+              </NavLink>
             ))
           ) : (
             <EmptyState title="No order is Ready and waiting to leave." body="A line reaches the desk once it is marked Ready on Orders." />
@@ -83,9 +83,9 @@ export default async function ErpDispatch({ searchParams }: { searchParams: Prom
           <EmptyState
             title={`There is no order ${orderNo}.`}
             action={
-              <Link href={erpDispatchHref()} className={linkClass()}>
+              <NavLink href={erpDispatchHref()} className={linkClass()}>
                 Back to the queue
-              </Link>
+              </NavLink>
             }
           />
         </Card>
@@ -98,15 +98,15 @@ export default async function ErpDispatch({ searchParams }: { searchParams: Prom
       sub={`${board.delivery}${board.delivery !== board.billing ? ` (billed to ${board.billing})` : ""}${board.area ? ` · ${board.area}` : ""}${board.transporter ? ` · ${board.transporter}` : ""}${board.dispatchOn ? ` · leaves ${fd(board.dispatchOn)}` : ""}`}
       actions={
         <PageLinks>
-          <Link href={erpDispatchHref()} className={linkClass()}>
+          <NavLink href={erpDispatchHref()} className={linkClass()}>
             ← Queue
-          </Link>
-          <Link href={erpLabelsHref({ order: board.orderNo })} className={linkClass()}>
+          </NavLink>
+          <NavLink href={erpLabelsHref({ order: board.orderNo })} className={linkClass()}>
             Dispatch labels
-          </Link>
-          <Link href={erpTraceHref(orderTraceCode(board.orderNo))} className={linkClass()}>
+          </NavLink>
+          <NavLink href={erpTraceHref(orderTraceCode(board.orderNo))} className={linkClass()}>
             Trace
-          </Link>
+          </NavLink>
         </PageLinks>
       }
     >

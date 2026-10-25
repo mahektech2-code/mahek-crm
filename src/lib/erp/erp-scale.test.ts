@@ -14,7 +14,11 @@
  *  - checks the window cuts the register and never the work: an old open line
  *    is still on the working lists, a linked record still opens, a dashboard's
  *    ids still come back whatever their date;
- *  - checks "All time" is refused in words once it is too long to build.
+ *  - checks "All time" is refused in words once it is too long to build;
+ *  - and holds the page to what it DRAWS: a tab strip counts its own tabs, a
+ *    heavy form stays on the server and comes back unchanged, a lot's rate
+ *    kept between pages moves the moment a write could have moved it, and
+ *    Billing & dispatch reads its orders together rather than one by one.
  *
  *   npm run test:integration
  */
@@ -29,10 +33,15 @@ import { setTestUser } from "@/lib/auth";
 import { calendarDate } from "@/lib/business-date";
 import { erpContext } from "@/lib/erp/access";
 import { allScreenModules, screenModule } from "@/lib/erp/screens";
-import { salesCounts } from "@/lib/erp/counts";
+import { erpCountsFor, erpNavCounts, salesCounts } from "@/lib/erp/counts";
 import { ROW_CAP, STOCK_ROW_CAP, STOCK_WINDOW, scopeFor } from "@/lib/erp/window";
 import { withReadMemo } from "@/lib/erp/read-memo";
 import { shiftDays } from "@/lib/erp/period";
+import { ERP_SCREENS } from "@/lib/erp/registry";
+import { lazyForm, lightRow, lightSpec } from "@/lib/erp/lazy-forms";
+import { NEW_FORM_ACTION } from "@/lib/erp/ui";
+import { sfgRates } from "@/lib/erp/stock";
+import { scanGateFor } from "@/lib/erp/dispatch";
 
 const TODAY = calendarDate(new Date());
 const HISTORY = 25_000;
@@ -188,5 +197,90 @@ describe("the window cuts the register, never the work", () => {
     const [{ n }] = (await db.execute(sql`select count(*)::int as n from erp_orders where order_date between ${from}::date and ${to}::date`)) as unknown as { n: number }[];
     assert.equal(res.rows.length, Number(n));
     assert.ok(Number(n) > 0 && Number(n) <= ROW_CAP);
+  });
+});
+
+describe("a page costs what it draws", () => {
+  test("a tab strip counts its own tabs, the sidebar's way, and a strip with no badges counts nothing", async () => {
+    /* Three bills waiting for dispatch verification, so the comparison is not of zeros. */
+    await db.execute(sql`update erp_order_details set verification = 'Pending' where order_id in ('ord_h1', 'ord_h2', 'ord_h3')`);
+    try {
+      const c = await ctx();
+      const all = await withReadMemo(() => erpNavCounts(c));
+      for (const screen of ERP_SCREENS.filter((s) => (s.views?.length ?? 0) > 1 && c.screens.has(s.key))) {
+        const keys = screen.views!.map((v) => v.key);
+        const strip = await withReadMemo(() => erpCountsFor(c, keys.join(",")));
+        for (const k of keys) assert.equal(strip[k] ?? 0, all[k] ?? 0, `${screen.key} · ${k}`);
+      }
+      assert.equal((await withReadMemo(() => erpCountsFor(c, "orderDetails"))).orderDetails, 3);
+      assert.deepEqual(await withReadMemo(() => erpCountsFor(c, "rmStock,sfgStock,fgStock,packStock")), {});
+    } finally {
+      await db.execute(sql`update erp_order_details set verification = 'Verified' where order_id in ('ord_h1', 'ord_h2', 'ord_h3')`);
+    }
+  });
+
+  test("a heavy form stays on the server, and what comes back is the form the list would have sent", async () => {
+    const c = await ctx();
+    let heavy = 0;
+    for (const mod of allScreenModules()) {
+      const built = await withReadMemo(() => mod.load(c, scopeFor(mod.window, { pd: "", ids: null }, null)));
+      const deferred = await withReadMemo(() => mod.load(c, { ...scopeFor(mod.window, { pd: "", ids: null }, null), forms: "defer" }));
+      /* A deferred New button never promises a form that would not exist, and a form that is not deferred is unchanged. */
+      if (deferred.spec.newFormLazy) assert.ok(built.spec.newForm, `${mod.key} says it has a New form it does not build`);
+      else assert.deepEqual(deferred.spec.newForm, built.spec.newForm, mod.key);
+      if (lightSpec(built.spec).newFormLazy) {
+        heavy++;
+        assert.deepEqual(await lazyForm(c, mod, NEW_FORM_ACTION, ""), built.spec.newForm, mod.key);
+      }
+      for (const r of built.rows.slice(0, 3)) {
+        const light = lightRow(mod, r);
+        for (const a of light.actions ?? []) {
+          const was = r.actions!.find((x) => x.id === a.id)!;
+          if (a.loadsForm && was.form) assert.deepEqual(await lazyForm(c, mod, a.id, r.id), was.form, `${mod.key} ${a.id}`);
+        }
+      }
+    }
+    assert.ok(heavy > 0, "at the size of the real book some New form is heavy, or this test proves nothing");
+  });
+
+  test("a lot's rate kept between pages moves the moment a write could have moved it", async () => {
+    setTestUser(admin);
+    const before = (await sfgRates(["1SSST"])).get("1SSST");
+    assert.ok(before != null, "the seeded batch has a rate");
+    await db.execute(sql`update erp_purchases set rate_paise = rate_paise * 2 where lot_no = 'SSST1'`);
+    try {
+      const after = (await sfgRates(["1SSST"])).get("1SSST");
+      assert.notEqual(after, before, "the raw material's new rate reaches the batch made from it");
+    } finally {
+      await db.execute(sql`update erp_purchases set rate_paise = rate_paise / 2 where lot_no = 'SSST1'`);
+    }
+  });
+
+  test("Billing & dispatch reads its orders together, so thirty cost what five do", async () => {
+    const lines = (await db.execute(sql`select id from erp_orders where id like 'ord_t%' order by order_no`)) as unknown as { id: string }[];
+    const client = db.$client as unknown as { unsafe: (...a: unknown[]) => unknown };
+    const unsafe = client.unsafe;
+    let n = 0;
+    client.unsafe = (...a: unknown[]) => {
+      n++;
+      return unsafe.apply(db.$client, a);
+    };
+    try {
+      /* Configuration is kept for thirty seconds: read it before counting, so neither count carries it. */
+      await scanGateFor(db, lines.slice(0, 1).map((l) => l.id));
+      const statements = async (ids: string[]) => {
+        n = 0;
+        const gate = await scanGateFor(db, ids);
+        assert.equal(gate.size, ids.length);
+        return n;
+      };
+      const five = await statements(lines.slice(0, 5).map((l) => l.id));
+      const thirty = await statements(lines.map((l) => l.id));
+      assert.equal(lines.length, 30);
+      assert.ok(five > 0, "the statements are being counted");
+      assert.equal(thirty, five, "one more order is not three more statements");
+    } finally {
+      client.unsafe = unsafe;
+    }
   });
 });

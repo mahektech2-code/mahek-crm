@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { NavLink } from "@/components/shell/nav-link";
 import { erpLink } from "@/lib/erp/registry";
 import { CardGrid } from "@/components/ui/card-grid";
 import { Card, cx, buttonClass } from "@/components/ui/primitives";
@@ -53,7 +53,7 @@ export function Overview({
     <div className="space-y-5">
       <CardGrid min={200} gap="gap-3">
         {steps.map((s, i) => (
-          <Link key={s.n} href={s.href} className="group relative no-underline hover:no-underline">
+          <NavLink key={s.n} href={s.href} className="group relative no-underline hover:no-underline">
             <Card className={cx("h-full px-4 py-3 transition-colors group-hover:border-brand", s.tone === "warn" && "border-warn/60", s.tone === "brand" && "border-brand/50")}>
               <div className={cx("flex items-center gap-2", eyebrowClass)}>
                 <span className="flex h-5 w-5 items-center justify-center rounded-full bg-canvas text-2xs text-body">{s.n}</span>
@@ -63,7 +63,7 @@ export function Overview({
               <div className={cx("text-xs", s.tone === "warn" ? "text-warn-ink" : s.tone === "brand" ? "text-brand-hover" : "text-muted")}>{s.sub}</div>
             </Card>
             {i < steps.length - 1 ? <span className="absolute top-1/2 -right-3 z-1 hidden -translate-y-1/2 text-muted xl:block">›</span> : null}
-          </Link>
+          </NavLink>
         ))}
       </CardGrid>
 
@@ -74,9 +74,9 @@ export function Overview({
               <SubTitle className="mb-0">Calls to make today</SubTitle>
               <div className="text-meta text-muted">Ring the transporter, then update the LR.</div>
             </div>
-            <Link href={erpLink("trackLr", { filter: "calls" })} className={buttonClass({ size: "sm" })}>
+            <NavLink href={erpLink("trackLr", { filter: "calls" })} className={buttonClass({ size: "sm" })}>
               Open
-            </Link>
+            </NavLink>
           </div>
           {calls.length ? (
             calls.slice(0, 12).map((g) => {
@@ -122,9 +122,9 @@ function Attention({ label, tone, href, items }: { label: string; tone: "danger"
   if (!items.length) return null;
   return (
     <div className="border-b border-divider px-4 py-2.5 last:border-0">
-      <Link href={href} className="flex items-center gap-2 text-meta font-medium text-ink no-underline">
+      <NavLink href={href} className="flex items-center gap-2 text-meta font-medium text-ink no-underline">
         <Badge label={String(items.length)} tone={tone} /> {label} ›
-      </Link>
+      </NavLink>
       <div className="mt-1 space-y-0.5">
         {items.slice(0, 4).map((i) => (
           <div key={i.key} className="truncate text-meta">

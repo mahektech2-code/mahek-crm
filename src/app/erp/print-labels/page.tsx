@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { NavLink } from "@/components/shell/nav-link";
 import { redirect } from "next/navigation";
 import { getConfig } from "@/lib/config/store";
 import { erpContext } from "@/lib/erp/access";
@@ -120,9 +120,9 @@ export default async function ErpLabels({ searchParams }: { searchParams: Promis
       sub={sub}
       actions={
         <div className="flex flex-wrap items-center justify-end gap-3 no-print">
-          {order != null ? <Link href={erpDispatchHref(order)} className={linkClass("brand", "text-meta")}>
+          {order != null ? <NavLink href={erpDispatchHref(order)} className={linkClass("brand", "text-meta")}>
               Dispatch desk
-            </Link> : null}
+            </NavLink> : null}
           {copiesShown != null ? (
             <form method="get" className="flex items-center gap-2 text-meta">
               {sfg ? <input type="hidden" name="sfg" value={sfg} /> : null}
