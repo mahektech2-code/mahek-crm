@@ -11,7 +11,7 @@ flowchart TD
     H["Field salesmen<br/>MBOS app on an Android phone"]
   end
   subgraph Outside["Outside sources and services"]
-    GS["Google Sheets workbooks<br/>orders, payments, parties, employees, field activity"]
+    GS["Google Sheets workbooks<br/>orders until the ERP takes them,<br/>parties, employees, field activity"]
     WA["WhatsApp through Wati"]
     WEB["The public website<br/>enquiries"]
     SVC["Sign-in codes (MiniMoth), mail (Resend),<br/>maps (Ola), dictation (Sarvam, OpenAI)"]
@@ -41,7 +41,7 @@ Three things about this shape are deliberate:
 
 1. **Only Caddy faces the internet.** The app and the database publish no public port. Postgres is reachable only from the droplet itself, so a leaked database password is not, on its own, a way in.
 2. **The database sits next to the app.** Every query is a loopback on the same machine rather than a round trip to another continent. That is most of why the screens are fast, and why the whole thing costs a few dollars a month.
-3. **Google Sheets are read, never written.** The team still types into its workbooks; MahekOne pulls what they typed on a schedule and publishes it into the database. Nothing MahekOne does can change a cell.
+3. **Google Sheets are read, never written.** The team still types into its workbooks; MahekOne pulls what they typed on a schedule and publishes it into the database. Nothing MahekOne does can change a cell. Orders are moving to the ERP: once it takes them, the order tabs are no longer read at all (see [the ERP and the order book](/docs/erp/order-book)).
 
 <Callout kind="note">
 MahekOne ran on Vercel with a Neon database until August 2026. Some comments and older notes still talk about "a database in GMT" — that was Neon. The rule it produced (never turn a stored time into a date without naming the zone) still holds; see [The working day](#the-working-day-is-asiakolkata) below.
@@ -56,7 +56,7 @@ Every app is an entry in one registry. Granting somebody an app is a row in the 
 | **Telecaller CRM** | Telecallers and their managers | The daily Call Log, payment follow-up, reminders, customers, leads and the end-of-day report. |
 | **Salesman App** (mobile only) | Field salesmen | MBOS, the Android app. Granting it gives a phone sign-in and **nothing in the browser** — there is no web screen and there never will be. |
 | **Sales Dashboard** | Sales managers and the office end of the field team | The field team's day, the journeys they walk, live location, approvals, targets and expenses. |
-| **Accounts** | The accounts desk | Order approvals, money coming in, the bill ledger, credit notes, outstanding, the sheet import. Formerly called Orders; old `/orders` links still work. |
+| **Accounts** | The accounts desk | Order approvals, money coming in, the bill ledger, credit notes, outstanding, the sheet import (retired once the ERP takes the orders). Formerly called Orders; old `/orders` links still work. |
 | **Attendance and People** (retired) | — | Its work moved into HRMS. The id is kept so old grants still resolve, but nothing draws it. |
 | **Reports** (retired) | — | The owner's figures moved into the Founder Command Centre. Kept for the same reason. |
 | **HRMS** | HR, and every employee for their own check-in and leave | Check in and out, leave, payroll, tasks, performance and the employee master. |
@@ -171,10 +171,12 @@ The office decides what the phone may hold. A salesman's phone carries only his 
 
 The team's workbooks — the order sheet (Order Details, Payment Status, Taken Order, Sales Party), the employee sheet, and the older field app's shop master and activity log — are read by a Google service account with **read-only** access. Each run lands rows in staging tables first, then a separate step **publishes** them into customers, orders and bills. A run that changes nothing in the sheet writes nothing.
 
+The order sheet is being retired by two switches. Once <Setting k="erp.orders.live" /> is on, the ERP writes the order book and the Order Details, Payment Status and Taken Order tabs are no longer read; the Sales Party tab carries on as the party master until <Setting k="erp.orders.partySheet" /> is turned off. A retired tab's jobs answer with the reason instead of running, and nothing it already wrote is deleted.
+
 The droplet's cron runs the cycle every half hour, a lighter pass every hour, and a full compare plus every recompute once a night. See [Google Sheets sync and scheduled jobs](/docs/platform/sheets-and-jobs).
 
 <Rule title="The sheet never writes money">
-No sync, by any path, records a payment, sets what was paid on a bill, or changes outstanding. Whether money arrived is for a person to record. A bill imported from the sheet with no payment recorded either way is held out of outstanding and collections until somebody speaks for it.
+No sync, by any path, records a payment, sets what was paid on a bill, or changes outstanding. Whether money arrived is for a person to record. A bill imported from the sheet is owed from its due date until a receipt is recorded against it — unless the sheet's Payment Status tab says the money was received, in which case it is held out of outstanding and collections until accounts confirm it.
 </Rule>
 
 <Rule title="The sheet wins every column except a decision somebody made">

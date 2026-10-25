@@ -2318,6 +2318,13 @@ export async function triggerJob(
         "not_permitted",
       );
     }
+    /* A retired tab is refused here rather than run to a quiet "0 records":
+       the job runner would no-op it anyway, but a person who pressed a button
+       is owed the reason, not a toast that reads like a sync with nothing new. */
+    const { getConfig } = await import("@/lib/config/store");
+    const { retiredReason, sheetSwitches } = await import("@/lib/engines/sheet-retirement");
+    const retired = retiredReason(job, sheetSwitches(await getConfig()));
+    if (retired) return err(retired, "rule_violation");
     const { runJob } = await import("@/lib/jobs");
     const results = await runJob(job, ctx.user.id, options);
     refreshAll();

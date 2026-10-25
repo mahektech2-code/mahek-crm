@@ -1,5 +1,7 @@
 import { ADMIN, ADMIN_TABS, tabIndexOf, type TabsOf } from "@/lib/admin-routes";
 import { sheetsConfigured } from "@/lib/sheets";
+import { getConfig } from "@/lib/config/store";
+import { retiredReason, sheetSwitches } from "@/lib/engines/sheet-retirement";
 import { importHistory } from "@/lib/services/admin-platform-service";
 import {
   assignableOwners,
@@ -64,7 +66,7 @@ async function SheetBody({
   one: (k: string) => string | undefined;
   canImport: boolean;
 }) {
-  const [summary, page, orders, issues, owners] = await Promise.all([
+  const [summary, page, orders, issues, owners, config] = await Promise.all([
     sheetSummary(),
     listSheetRows({
       query: one("sq"),
@@ -75,6 +77,7 @@ async function SheetBody({
     listSheetOrders(200),
     listSheetIssues(),
     assignableOwners(),
+    getConfig(),
   ]);
   return (
     <SheetSection
@@ -91,6 +94,7 @@ async function SheetBody({
         source: { spreadsheetId: orderSheetId(), tabTitle: orderTabTitle(), configured: sheetsConfigured() },
         owners,
         canImport,
+        retired: retiredReason("sheet-reconcile", sheetSwitches(config)),
       }}
     />
   );

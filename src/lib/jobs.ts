@@ -54,6 +54,7 @@ import { syncTakenOrderSheet } from "./services/taken-order-sync-service";
 import { projectSheet, revertSheetSettledBills } from "./services/sheet-projection-service";
 import { trashLeadTwins, type LeadTwin } from "./services/lead-twin-service";
 import { projectParties } from "./services/party-projection-service";
+import { retiredReason, sheetSwitches } from "./engines/sheet-retirement";
 import { provisionBackOffice } from "./services/team-service";
 import {
   employeeSheetId,
@@ -167,6 +168,8 @@ export type JobName =
   | "erp-dispatch-transports"
   /** Inventory Accuracy Control: today's cycle counts, by ABC class — idempotent, runs hourly. */
   | "erp-cycle-counts"
+  /** Who the Call Log holds back for an open order — the sheet's Taken Order tab, or the ERP's lines once it takes the orders. Hourly. */
+  | "recompute-order-holds"
   /** Raw-material re-order levels planned from history (1.5 weeks of stock), with the AI review. Once a day; `--dry-run` to look first. */
   | "erp-levels-plan"
   /**
@@ -725,6 +728,31 @@ async function bankPdfStep() {
   return { recordsAffected: r.deleted, detail: `${r.deleted} statement PDF${r.deleted === 1 ? "" : "s"} deleted` };
 }
 
+/**
+ * WHO THE CALL LOG HOLDS BACK, rebuilt on the hour.
+ *
+ * `active_in_order_system` had exactly one scheduled writer: the Taken Order
+ * sync, which rebuilt it after reading the tab. That was enough while the tab
+ * was where orders landed. It is not enough once the ERP takes them — the tab
+ * is no longer read, `syncBookOrders` writes the book without touching the
+ * hold, and the nightly never called it either (the order-book docs said it
+ * did). So the hold would freeze on the day of the cut-over: a customer whose
+ * order shipped stays muted for good, and nobody placing an ERP order is ever
+ * muted at all.
+ *
+ * `recomputeOrderSystemHolds` already decides WHICH source it reads — the
+ * staged Taken Order rows while the sheet takes the orders, the ERP's open
+ * lines once `erp.orders.live` is on — so this asks it and nothing else. Both
+ * are a full reconcile that writes only the rows that change, so running it
+ * beside the Taken Order sync while the sheet is still live costs one pass and
+ * moves nothing.
+ */
+async function orderHoldsStep() {
+  const { recomputeOrderSystemHolds } = await import("./recompute");
+  const h = await recomputeOrderSystemHolds();
+  return { recordsAffected: h.newlyHeld + h.released, detail: `${h.held} held · ${h.newlyHeld} newly held · ${h.released} released` };
+}
+
 export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
   const results: JobResult[] = [];
 
@@ -860,6 +888,10 @@ export async function runHourly(triggeredById?: string): Promise<JobResult[]> {
     }, triggeredById),
   );
 
+  // Last, because `run` rethrows: a step added after the others must not be
+  // able to stop the ones that were already running every hour.
+  results.push(await run("recompute-order-holds", orderHoldsStep, triggeredById));
+
   return results;
 }
 
@@ -948,6 +980,17 @@ export async function runJob(
   triggeredById?: string,
   options: JobOptions = {},
 ): Promise<JobResult[]> {
+  /*
+   * A RETIRED TAB IS NOT READ, whoever asks. The cron calls these modes every
+   * half hour, the console and Accounts have buttons for them, and a terminal
+   * can name them — so the answer lives here, at the one door all three come
+   * through, rather than in three places that would disagree inside a release.
+   * It still writes a job row saying why, so a cron log full of quiet 200s and
+   * a console asking "did it run" both have an answer.
+   */
+  const retired = retiredReason(job, sheetSwitches(await getConfig()));
+  if (retired) return [await run(job, async () => ({ recordsAffected: 0, detail: retired }), triggeredById)];
+
   switch (job) {
     case "nightly":
       return runNightly(triggeredById);
@@ -1180,6 +1223,8 @@ export async function runJob(
       return [await run("erp-levels-plan", () => erpLevelsPlanStep({ dryRun: options.dryRun, force: true, userId: triggeredById ?? null }), triggeredById)];
     case "erp-dispatch-transports":
       return [await run("erp-dispatch-transports", erpDispatchTransportsStep, triggeredById)];
+    case "recompute-order-holds":
+      return [await run("recompute-order-holds", orderHoldsStep, triggeredById)];
     case "erp-book-sync":
       return [
         await run(
@@ -1648,10 +1693,12 @@ async function runProjection(
         includeBills: options.bills ?? false,
         reassign: options.reassign ?? false,
       });
-      const parties = await projectParties({
-        createLeads: options.leads ?? false,
-        leadOwnerId: ownerId,
-      });
+      /* A retired Sales Party tab publishes nothing either: its staged rows are
+         the last thing it said, and restating them every half hour would undo
+         every seat and deactivation the office has since made in MahekOne. */
+      const parties = sheetSwitches(await getConfig()).partySheetLive
+        ? await projectParties({ createLeads: options.leads ?? false, leadOwnerId: ownerId })
+        : { matched: 0, phonesFilled: 0, leadsCreated: 0, leadsAvailable: 0 };
 
       const detail =
         `customers ${orders.customers.created} new / ${orders.customers.updated} updated` +

@@ -510,7 +510,7 @@ async function figure(ctx: Ctx, metric: string): Promise<FigureDrawer> {
           value: `With GST · ${plural(cur.lines, "order line")} below list, of ${plural(cur.report.summary.lines, "line")} billed · ${num(cur.report.summary.unresolved)} with no list rate to compare`,
         },
         scope,
-        { label: "Source", value: "The order sheet's billed rate, against the list that applied on the order date" },
+        { label: "Source", value: "The billed rate on the order sheet and on the ERP's own orders, against the list that applied on the order date" },
         { label: "As of", value: asOf },
       ],
       def: "For every order line billed in the month, the list rate that applied to that shop on the order date minus the rate billed, times the cans, carried up by the list's GST. Only lines billed below list count; lines with no list rate are left out and counted.",

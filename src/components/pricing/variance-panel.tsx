@@ -101,8 +101,9 @@ export function VariancePanel({
       <div className="mt-4">
         <Callout tone="brand">
           <span className="text-[13px] text-body">
-            The billed rate is the order sheet&rsquo;s own, ex-GST, exactly as it was
-            entered. The list rate beside it is resolved as of{" "}
+            The billed rate is the order&rsquo;s own — the order sheet&rsquo;s, or the
+            ERP&rsquo;s once it takes the orders — ex-GST, exactly as it was entered.
+            The list rate beside it is resolved as of{" "}
             <strong>each order&rsquo;s own date</strong> rather than today, so a revision
             published since does not rewrite what last month looks like.
           </span>
@@ -127,7 +128,7 @@ export function VariancePanel({
         {rows.length === 0 ? (
           <EmptyState
             title={`Nothing to show for ${monthLabel(report.month)}`}
-            body="Either the order sheet has no priced lines in this month, or none of them fall in this filter."
+            body="Either no order — on the sheet or in the ERP — has a priced line in this month, or none of them fall in this filter."
           />
         ) : (
           <div className="overflow-x-auto">

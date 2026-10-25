@@ -124,8 +124,7 @@ Names only; the values are in the repository's settings (Settings → Secrets an
 | `DOCR_USERNAME`, `DOCR_TOKEN` | secret | build | Registry-scoped push credentials |
 | `DO_API_TOKEN` | secret | build, prune, registry-prune | **Account** token: list tags, garbage-collect. Optional — without it the prune warns and is skipped |
 | `DOMAIN` | secret | deploy | The site name, e.g. `one.mahekindia.com` |
-| `CRON_SECRET` | secret | sheet-sync, sheet-sync-nightly | For the manual sync workflows |
-| `SYNC_URL`, `SYNC_OWNER_EMAIL` | variables | sheet-sync workflows | The sync endpoint and projection owner |
+| `CRON_SECRET`, `SYNC_URL`, `SYNC_OWNER_EMAIL` | — | none | Once used by the manual sheet-sync workflows, removed when the ERP took the orders. The droplet's `.env` still holds `CRON_SECRET` and `SYNC_OWNER_EMAIL` for `deploy/sheet-sync.sh`; these repository copies can be deleted |
 | `MBOS_*`, `R2_*` | secret | mbos-apk | See [Handset release](/docs/platform/handset-release/developer) |
 
 `deploy`, `ship-sync-schedule` run in the `production` environment.

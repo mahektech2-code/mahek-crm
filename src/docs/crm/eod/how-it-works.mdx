@@ -91,7 +91,6 @@ A manager in the CRM with the team-report permission sees every active person in
 
 ## Where the code and the intent disagree today
 
-- **Approved orders are counted with a typed list of three statuses.** AGENTS.md says every "did we sell anything" read derives from `PURCHASE_STATUSES`, which now also includes *in transit* and *delivered*; the EOD counts `('captured','confirmed','dispatched')` only, so an approved order that has been marked in transit or delivered drops out of EOD value and the monthly target line (`lib/services/eod-service.ts` `eodMetricsForRange`).
 - **"Payments confirmed" is not confirmed money.** It sums payment lines the person recorded, by payment date, without checking the receipt was confirmed by accounts — a telecaller's reported payment counts (`eod-service.ts`, `payments_confirmed`).
 - **The target line uses the account owner**, not whose book the account is in or who is credited with it (`eod-service.ts`, `target_amount` and `target_achieved` join on `owner_id`).
 - **Order value is the order's total amount**, while targets and performance use the net-of-GST value (`eod-service.ts` vs `orderValueSql`).

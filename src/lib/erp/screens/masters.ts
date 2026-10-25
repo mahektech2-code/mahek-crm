@@ -1027,9 +1027,18 @@ const customersScreen: ScreenModule = {
       }
       const id = erpId("cust");
       /*
-       * A NEW PARTY IS A LEAD until its first order, which is what `kind`
-       * means everywhere in MahekOne; the ERP profile is what puts it on this
-       * list before then, and `pending_activation` is the source's "Pending".
+       * A NEW PARTY IS A LEAD until its second order, which is what `kind`
+       * means everywhere in MahekOne (`lead-conversion-service.ts`; the book
+       * asks the same rule when an ERP order lands). The ERP profile is what
+       * puts it on this list before then, and `pending_activation` is the
+       * source's "Pending".
+       *
+       * OWNED BY ITS SALESPERSON where the form names one who signs in, and by
+       * whoever typed it only where it does not. A lead's book IS its owner —
+       * `ASSIGNED_TO_SQL` and `CREDITED_TO_SQL` both read `owner_id` for a lead —
+       * and conversion carries that owner into the sales seat. Owned by the
+       * order desk, every party created there was the desk person's book and
+       * revenue, and became so permanently the day it converted.
        */
       await db.transaction(async (tx) => {
         await tx.insert(customers).values({
@@ -1044,7 +1053,7 @@ const customersScreen: ScreenModule = {
           priceTag: text(h.priceList),
           salesAmId,
           salesPersonName: salesName,
-          ownerId: ctx.user.id,
+          ownerId: salesAmId ?? ctx.user.id,
           leadSource: "erp",
           createdById: ctx.user.id,
           updatedById: ctx.user.id,

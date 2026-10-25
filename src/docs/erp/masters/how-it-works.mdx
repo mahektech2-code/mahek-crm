@@ -62,7 +62,7 @@ flowchart LR
 `} />
 
 <Rule title="A new customer is a lead, and Pending">
-A customer created in the ERP is a MahekOne **lead** (it has never ordered — the meaning `kind` has everywhere in MahekOne) with an ERP profile marking it **pending activation**. Its orders can be taken but cannot move until an admin or the office activates it, or — once [the ERP takes the orders](/docs/erp/order-book) — until Accounts approves the order.
+A customer created in the ERP is a MahekOne **lead** — as it stays, everywhere in MahekOne, until its second order — with an ERP profile marking it **pending activation**. Its orders can be taken but cannot move until an admin or the office activates it, or — once [the ERP takes the orders](/docs/erp/order-book) — until Accounts approves the order. Once the ERP takes the orders, its second ERP order makes it a customer.
 </Rule>
 
 <Rule title="Deactivating is the customer's own status">
@@ -71,6 +71,7 @@ Deactivate sets the MahekOne customer to `deactivated`, with "Deactivated in the
 
 - Activate, Deactivate and Mark pending need the **customer status** power, checked in the save.
 - Creating a customer needs a business name, a city and a ten-digit mobile, and a name not already used (ignoring capitals).
+- A new customer is **owned by the tagged sales person** where that name matches a MahekOne user, and by whoever created it otherwise. A lead's owner is whose book it is, and conversion makes that owner the sales account manager — so a party typed in at the order desk is not the desk's book.
 - Editing details needs only the screen. An emptied city or mobile keeps the old value, because every MahekOne customer must have both.
 - The list holds every MahekOne **customer**, plus every lead that has an ERP profile.
 - A customer's **monthly target** is the CRM's Monthly Targets figure for this month, shown only with the sales-amounts power — the ERP keeps no target of its own.

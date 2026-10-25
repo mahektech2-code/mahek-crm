@@ -100,7 +100,7 @@ Windows come from `rangeBoundaryWindow` (two instants with `+05:30`), bound as `
 The Dashboard and the team table read it for free. A second query for "the same number" is how two screens come to disagree.
 </Step>
 <Step title="Count sales with orderCountsSql">
-Replace a status literal list with `orderCountsSql("o")` and value with `orderValueSql("o")` when touching these subqueries.
+The order counts already use `orderCountsSql("o")`; keep it that way, and use `orderValueSql("o")` for value when touching these subqueries.
 </Step>
 <Step title="Keep the message pure">
 WhatsApp formatting lives in `aggregateEod`. Test it there; short lines, no tables.
@@ -114,7 +114,6 @@ WhatsApp formatting lives in `aggregateEod`. Test it there; short lines, no tabl
 
 | Gap | Where |
 |---|---|
-| Approved orders counted as `status in ('captured','confirmed','dispatched')`, missing `in_transit` and `delivered` from `PURCHASE_STATUSES` | `eod-service.ts` `eodMetricsForRange` (`orders_count`, `orders_value`, `target_achieved`) |
 | "Payments confirmed" sums `payments` by `recorded_by_id` without checking the receipt's status | `eod-service.ts` `payments_confirmed` |
 | Target line joins on `customers.owner_id`, not `ASSIGNED_TO_SQL` or `CREDITED_TO_SQL` | `eod-service.ts` `target_amount`, `target_achieved` |
 | Order value is `total_amount`, not `orderValueSql` (net of GST) | `eod-service.ts` |

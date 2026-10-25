@@ -33,20 +33,24 @@ import {
  * button, say — would quietly assign a thousand customers.
  * ------------------------------------------------------------------------- */
 
-export function ImportScreen({ state }: { state: ImportState }) {
+export function ImportScreen({ state, retired }: { state: ImportState; retired: string | null }) {
   const router = useRouter();
   const { run } = useToast();
   const [owner, setOwner] = React.useState("");
   const [busy, setBusy] = React.useState(false);
 
   const last = state.last;
-  const blocked = !state.canRun
-    ? "Running the import is the accounts team’s or a manager’s"
-    : !owner
-      ? "Choose whose book new customers land in"
-      : busy
-        ? "Running…"
-        : undefined;
+  // Retired first: once the ERP takes the orders there is nothing on the
+  // sheet to import, and that is the sentence the disabled button owes.
+  const blocked = retired
+    ? retired
+    : !state.canRun
+      ? "Running the import is the accounts team’s or a manager’s"
+      : !owner
+        ? "Choose whose book new customers land in"
+        : busy
+          ? "Running…"
+          : undefined;
 
   return (
     <div className="px-6 pt-6 pb-12">
@@ -59,7 +63,7 @@ export function ImportScreen({ state }: { state: ImportState }) {
               <select
                 value={owner}
                 onChange={(e) => setOwner(e.target.value)}
-                disabled={!state.canRun}
+                disabled={!state.canRun || Boolean(retired)}
                 aria-label="Whose book new customers land in"
                 className="h-9 rounded-[4px] border border-line bg-surface px-2.5 text-sm focus:border-brand focus:outline-none disabled:text-muted"
               >
@@ -97,7 +101,14 @@ export function ImportScreen({ state }: { state: ImportState }) {
           }
         />
 
-        {!state.canRun ? (
+        {retired ? (
+          <Banner tone="neutral" title="The order sheet is retired">
+            {retired} Bills are written by the ERP when goods leave, so there is nothing
+            here to run. The runs below are the history of the sheet import.
+          </Banner>
+        ) : null}
+
+        {!retired && !state.canRun ? (
           <Banner tone="warn" title="You can read this but not run it">
             Running the import writes customers, orders and bills. It is the accounts
             team’s and a manager’s.

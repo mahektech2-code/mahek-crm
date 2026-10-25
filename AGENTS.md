@@ -42,6 +42,9 @@ npm run jobs -- nightly    # run a scheduled task by hand
 npm run jobs -- sheet-payments             # pull the Payment Status tab
 npm run jobs -- taken-order-sync           # pull the Taken Order tab, then
                            # rebuild who is held back from order chasing
+npm run jobs -- recompute-order-holds      # just the rebuild — the Taken Order
+                           # rows, or the ERP's open lines once it takes the
+                           # orders. Also hourly, the hold's only schedule then
 npm run jobs -- erp-seed-profiles          # ERP customer profiles from the Sales
                            # Party sheet — fills blanks only, re-runnable
 npm run jobs -- erp-cycle-counts           # today's ABC cycle counts (Inventory
@@ -2037,15 +2040,33 @@ cut-over: off (the default) the ERP runs on its own and the sheet stays the
 source; on, `lib/erp/book.ts` writes every ERP order NUMBER as one `orders`
 row (`source = erp`, `ERP-<n>`) and, once dispatch-verified, one `bills` row
 (`ERPBILL-<n>`, `stated`, under the Tally number or the sheet's fallback
-chain) — the sheet projection writes no order or bill, a Pending customer's
-order waits in the Accounts approval queue instead of on "Approved By Admin"
-(`afterBookDecision` tells the ERP lines the answer), and
+chain) — the sheet projection writes no customer, order or bill, a Pending
+customer's order waits in the Accounts approval queue instead of on "Approved
+By Admin" (`afterBookDecision` tells the ERP lines the answer),
 `recomputeOrderSystemHolds` reads the ERP's open lines instead of the Taken
-Order tab. The book copy is a PROJECTION rewritten whole after every ERP
+Order tab, and `syncOne` asks the second-order rule (`convertIfNowQualified`)
+of every booked order not cancelled or declined. The book copy is a PROJECTION rewritten whole after every ERP
 order write (`syncBookOrders`), never edited in place, and its keys are its
 own so the sheet can never overwrite it. `npm run jobs -- erp-book-sync`
 rebuilds all of it on go-live day. Never turn the switch on while the team is
 still typing orders into the sheet: every order would be counted twice.
+
+**THE WORKBOOK IS RETIRED BY TWO SWITCHES, because its halves end on
+different days.** `erp.orders.live` retires the ORDER tabs — Order Details,
+Payment Status, Taken Order — and `erp.orders.partySheet` (default on)
+retires the Sales Party tab, which goes on filling seats, deactivations and
+blank phone/GST/credit/price-list fields until the office keeps those in
+MahekOne. `lib/engines/sheet-retirement.ts` is the one answer: `runJob` asks
+it before anything else and turns a retired read into a `job_runs` row whose
+detail is the reason — the droplet cron keeps calling the modes and keeps
+getting 200 — while `triggerJob`, `runBillImportAction`, the two import
+screens, the freshness monitor and Integrations all say "Retired" with the
+same sentence. No staging table is deleted. The Call Log hold has to be
+REBUILT ON THE HOUR now (`recompute-order-holds`, last in `runHourly`):
+its only scheduled writer used to be the Taken Order sync, the nightly never
+called it whatever the docs said, and a retired tab would have frozen it on
+the day of the cut-over. The hand-run cut-over steps are on the order-book
+docs page.
 
 **Billing is one step, and dates are dates.** Mahek Plus asked for "Done" and
 then "Add To Order Details", because billing lived in another sheet; "Bill
@@ -3537,7 +3558,7 @@ name as on the bill (the party sheet matches on it, so the sheet adopts the row
 rather than duplicating it), a mobile, the city, the STATE from a fixed list
 (the handset's territory matches on it — no state, no handset) and the sales
 account manager. The seats are written WITH their name mirrors and
-`am_decided_at`, so neither the nightly `recomputeSalesPeople` nor the party
+`am_decided_at`, so neither `recomputeSalesPeople` nor the party
 projection restates them; the contact goes through `reconcileContacts` and the
 place through `placeShopsNow`. A number or GSTIN already on the book is
 refused; the same name asks once. `customer-create.test.ts` pins it, including
@@ -5302,8 +5323,9 @@ projection set it on every row it touched, which muted the whole book the first
 time production filled itself: a full database and an empty Call Log, with the
 cause living in a column no screen shows. `0021` clears what it wrote.
 
-**What DOES set it is the Taken Order tab, and only through a full reconcile.**
-That tab is where an order lands first — typed as the customer gives it, hours
+**What DOES set it is the Taken Order tab, and only through a full reconcile**
+— until `erp.orders.live`, after which the ERP's open lines do, through the
+same function, rebuilt hourly. That tab is where an order lands first — typed as the customer gives it, hours
 or days before it is dispatched, billed, or written to the Order Details tab.
 While any line of an order is still open the customer has already ordered, and
 the Call Log must stop asking them to; `recomputeOrderSystemHolds()` is the one
@@ -5491,8 +5513,10 @@ saying opposite things about one sample.
 `orders.approvedAt` and `bills.paymentDecidedAt`, and it guards TWO things
 rather than one. `--reassign` no longer overwrites the ids on a decided
 account — but the half that would have been missed is
-`recomputeSalesPeople()`, which rewrites `salesPersonName` from the sheet every
-night. Holding the id while letting the NAME revert is the worst outcome
+`recomputeSalesPeople()`, which rewrites `salesPersonName` from the sheet
+wherever it runs. (Nothing schedules it any more: its one caller is
+`recomputeEverything`, which only the seed calls. The guard stays for when
+something does.) Holding the id while letting the NAME revert is the worst outcome
 available: the account moves for scope, the queue and collections, and every
 screen goes on showing the old person, because the lists read the sheet's name
 first. Nobody reports that as a bug — they report that reassignment does not
@@ -5727,8 +5751,10 @@ is an Apps Script time-driven trigger on the workbook instead
 the sheet it reads. Cron minutes are `:07`/`:37` and `:13` rather than `:00`,
 because the top of the hour is exactly when ticks get dropped.
 
-**The nightly stays in Actions, because `curl` waits and `UrlFetchApp` does
-not.** The daily pass is the one place ORDER is load-bearing across a
+**The nightly stayed in Actions, because `curl` waits and `UrlFetchApp` does
+not** — until both cycles moved to the droplet's crontab (`deploy/sheet-sync.sh`,
+which keeps the `curl` reasoning below); the two manual sheet-sync workflows
+were deleted when the ERP took the orders. The daily pass is the one place ORDER is load-bearing across a
 five-minute boundary — `nightly` rebuilds the caches from what `reconcile`
 landed, so starting it early rebuilds them from half a compare.
 `--max-time 310` blocks until the server answers; Apps Script gives up at
@@ -5889,8 +5915,8 @@ bank; a spreadsheet cell cannot make that assertion, because no person is
 behind it and there is nobody to ask when it turns out to be wrong. What it
 says is COUNTED and reported — `paidWithoutDate`, `blankStatus` — so accounts
 can go and confirm it. A BLANK status is no longer read as settled, nor as
-unpaid as it was before that; it is read as what it is, the same `unstated`
-every other row gets.
+unpaid as it was before that; it is read as silence — which since October 2026
+means owed from the due date, like every row the tab does not mark Received.
 
 **What the old assumption did is still in the database, and the revert is kept
 for it.** Production carries thousands of `source = 'sheet_import'` receipts
@@ -6226,10 +6252,11 @@ maps straight through while everything else is left at `active` for the engine
 to move.
 
 **And it does not write `sales_person_name`, though the sheet names one.**
-`recomputeSalesPeople` rewrites that column nightly from the PARTY sheet for
-every customer without `am_decided_at`, INCLUDING back to null where the party
+`recomputeSalesPeople` rewrites that column from the PARTY sheet for every
+customer without `am_decided_at`, INCLUDING back to null where the party
 sheet is silent — which it is for all 5,292 of these. Writing the name would
-last until the next nightly. Setting `am_decided_at` to protect it would be a
+last until it next ran. (It was nightly when this was written; today only
+`recomputeEverything`, called by the seed alone, runs it.) Setting `am_decided_at` to protect it would be a
 lie, since no person decided anything, and would freeze both manager seats
 against a future sync as a side effect. The name stays on the staging row.
 

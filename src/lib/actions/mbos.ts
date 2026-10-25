@@ -66,6 +66,7 @@ import {
 import { latestReopen } from "../services/lead-reopen-service";
 import { gstinChangeClear, materialOf, reviewVoidPatch } from "../lead-review-void";
 import { convertLeadOnSecondOrder } from "../services/lead-conversion-service";
+import { orderCountsSql } from "../order-status";
 import { canAny, grantingHat, hatsFor } from "../access-control";
 import { handsetSampleRefusal } from "../sales-gate";
 import {
@@ -9023,13 +9024,16 @@ export async function recomputeHealthScore(customerId: string): Promise<void> {
            c.cycle_days as "cycleDays",
            c.visit_frequency_days as "visitFrequencyDays",
            c.outstanding as "outstanding",
+           -- What counts is lib/order-status.ts: three statuses spelled out here
+           -- dropped an order once it was in transit or delivered, so a
+           -- customer whose ERP orders had arrived read as buying less.
            coalesce((select sum(o.total_amount) from orders o
                       where o.customer_id = c.id
-                        and o.status in ('captured','confirmed','dispatched')
+                        and ${orderCountsSql("o")}
                         and o.ordered_at >= now() - interval '90 days'), 0) as "recentValue",
            coalesce((select sum(o.total_amount) from orders o
                       where o.customer_id = c.id
-                        and o.status in ('captured','confirmed','dispatched')
+                        and ${orderCountsSql("o")}
                         and o.ordered_at >= now() - interval '180 days'
                         and o.ordered_at <  now() - interval '90 days'), 0) as "priorValue",
            (select count(*)::int from bills b where b.customer_id = c.id) as "billsTotal",

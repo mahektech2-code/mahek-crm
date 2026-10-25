@@ -4896,8 +4896,17 @@ export const SETTINGS = [
     category: "erp",
     label: "The ERP takes the orders",
     description:
-      "Off: orders still come from the Taken Order and Order Details sheets, and the ERP's own orders stay inside the ERP. On: every ERP order is written into MahekOne's order book and bills (targets, the Call Log, outstanding and reorder predictions read it), the order sheet stops writing orders and bills, orders from a Pending customer go to the Accounts approval queue, and a customer is held off the Call Log while an ERP order of theirs is open. Turn it on the day the team stops typing orders into the sheet — never while both are in use, or every order is counted twice.",
+      "Off: orders still come from the Taken Order and Order Details sheets, and the ERP's own orders stay inside the ERP. On: every ERP order is written into MahekOne's order book and bills (targets, the Call Log, outstanding and reorder predictions read it), the order sheet's Order Details, Payment Status and Taken Order tabs stop being read and write nothing, orders from a Pending customer go to the Accounts approval queue, and a customer is held off the Call Log while an ERP order of theirs is open. Turn it on the day the team stops typing orders into the sheet — never while both are in use, or every order is counted twice.",
     default: false,
+  },
+  {
+    key: "erp.orders.partySheet",
+    type: "boolean",
+    category: "erp",
+    label: "The Sales Party sheet is the party master",
+    description:
+      "On: the Sales Party tab of the Mahek Plus Master is still read every half hour and fills each party's salesperson and back-office seats, deactivations, and any phone, GST, credit days or price list nobody has typed into MahekOne. Off: the tab is retired — it is no longer read, the health screens stop expecting it, and all of that is kept in MahekOne (Accounts → Add customer, the customer record, the account-manager dialog, ERP → Customers). Independent of the order tabs, which stop with \"The ERP takes the orders\".",
+    default: true,
   },
   {
     key: "erp.ai.voice.enabled",
@@ -6580,6 +6589,7 @@ export type Config = {
   "erp.location.autoDetect": boolean;
   "erp.location.godownRadiusM": number;
   "erp.orders.live": boolean;
+  "erp.orders.partySheet": boolean;
   "erp.purchase.ownVehicleRatePerKmPaise": number;
   "erp.purchase.receiptTolerancePercent": number;
   "erp.purchase.poWatiTemplate": string;
