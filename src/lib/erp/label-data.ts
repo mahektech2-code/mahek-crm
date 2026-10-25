@@ -205,7 +205,9 @@ export async function dispatchLabels(orderNo: number): Promise<DispatchLabelRow[
       sku: l.sku.name,
       qty: l.o.qtyCans,
       type: l.type,
-      weightKg: l.sku.weightKg == null ? null : Number(l.sku.weightKg),
+      /* One label a box on a boxed line and one a can otherwise, so the label carries the
+         catalogue's own figure — a box's weight or a can's — never the line's total. */
+      weightKg: l.sku.weightGrams == null ? null : l.sku.weightGrams / 1000,
       lotSize: size,
       remark: l.o.remark?.trim() || null,
       transporter: (l.o.transporter ?? l.delivery.p?.transporter ?? "").trim() || null,
