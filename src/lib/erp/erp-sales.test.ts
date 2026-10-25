@@ -26,6 +26,7 @@ import {
   monthlyTargets,
   priceListDiscountTerms,
   priceListRates,
+  priceListScopes,
   priceLists,
   productBrands,
   productFormulations,
@@ -36,14 +37,19 @@ import { setTestUser } from "@/lib/auth";
 import { erpContext } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
 import { fgLots, packLots } from "@/lib/erp/stock";
-import { dueOf } from "@/lib/erp/screens/sales";
+import { dueOf, orderForm } from "@/lib/erp/screens/sales";
+import { withFills, type FieldSpec } from "@/lib/erp/ui";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const TODAY = "2026-09-20";
 const tag = randomUUID().slice(0, 6);
 const LOOSE = `ERPS Thinner ${tag} - 1 Liter (Loose)`;
 const BOXED = `ERPS Thinner ${tag} - 1 Liter (4 Can/Box)`;
-const LIST = `Retail ${tag}`;
+/* A packing the list prints a dash for: not for sale on it, so it must not borrow the loose rate. */
+const DASHED = `ERPS Thinner ${tag} - 1 Liter (12 Can/Box)`;
+/* The Accounts app's name for the list, and the sheet's tag beside it, which names no list. */
+const LIST = `Western line Paid ${tag}`;
+const SHEET_TAG = "Pan Maharashtra";
 
 async function makeUser(name: string, level: "associate" | "admin") {
   const [u] = await db
@@ -71,10 +77,11 @@ let clerk: typeof users.$inferSelect;
 let fgId = "";
 let looseId = "";
 let boxedId = "";
+let dashedId = "";
 
 before(async () => {
   await db.execute(sql`
-    truncate users, customers, erp_customer_profiles, erp_orders, erp_batch_codes, erp_order_details, erp_fg_entries,
+    truncate users, customers, price_lists, erp_customer_profiles, erp_orders, erp_batch_codes, erp_order_details, erp_fg_entries,
              erp_pack_entries, erp_pack_lines, erp_fg_fills, erp_transfers, erp_user_powers, erp_godown_staff, erp_user_settings,
              audit_log restart identity cascade`);
   await db.execute(sql`update erp_series set last = 0`);
@@ -86,21 +93,26 @@ before(async () => {
   fgId = id("fg");
   looseId = id("sku");
   boxedId = id("sku");
+  dashedId = id("sku");
   await db.insert(productFormulations).values({ id: fId, name: `ERPS Thinner ${tag}`, slug: `erps-${tag}` });
   await db.insert(productBrands).values({ id: bId, name: `ERPS ${tag}`, slug: `erps-b-${tag}`, formulationId: fId });
   await db.insert(finishedGoods).values({ id: fgId, name: `ERPS Thinner 1 L ${tag}`, slug: `erps-fg-${tag}`, brandId: bId, formulationId: fId, millilitres: 1000 });
   await db.insert(products).values([
     { id: looseId, name: LOOSE, finishedGoodId: fgId, brandId: bId, formulationId: fId, millilitresPerCan: 1000, cansPerBox: 1, weightGrams: 1100 },
     { id: boxedId, name: BOXED, finishedGoodId: fgId, brandId: bId, formulationId: fId, millilitresPerCan: 1000, cansPerBox: 4, weightGrams: 4500 },
+    { id: dashedId, name: DASHED, finishedGoodId: fgId, brandId: bId, formulationId: fId, millilitresPerCan: 1000, cansPerBox: 12, weightGrams: 13000 },
   ]);
   await db.insert(erpProductPacking).values([
     { productId: looseId, emptyBoxesRequired: 0 },
     { productId: boxedId, emptyBoxesRequired: 1, boxType: "Empty Box 1 Liter", boxRatePaise: 2000 },
+    { productId: dashedId, emptyBoxesRequired: 1, boxType: "Empty Box 1 Liter", boxRatePaise: 2000 },
   ]);
 
   await db.insert(customers).values([
-    { id: "cus_shree", name: "Shree Paints", city: "Pune", phone: "9876500001", kind: "customer", area: "Pune", priceTag: LIST, creditDays: 30, deliveryType: "Door Delivery", freightTerm: "Paid" },
-    { id: "cus_new", name: "New Colour House", city: "Nashik", phone: "9876500002", kind: "lead", priceTag: LIST },
+    { id: "cus_shree", name: "Shree Paints", city: "Pune", phone: "9876500001", kind: "customer", area: "Pune", priceTag: SHEET_TAG, creditDays: 30, deliveryType: "Door Delivery", freightTerm: "Paid" },
+    { id: "cus_new", name: "New Colour House", city: "Nashik", phone: "9876500002", kind: "lead", priceTag: SHEET_TAG },
+    /* Tagged with the list's very name, and named by none of its scopes: the tag is not what applies a list. */
+    { id: "cus_nolist", name: "No List Traders", city: "Surat", phone: "9876500003", kind: "customer", priceTag: LIST },
   ]);
   await db.insert(erpCustomerProfiles).values([
     { customerId: "cus_shree", transporter: "VRL", standingInstructions: "Call first", weightType: "With Weight" },
@@ -110,11 +122,18 @@ before(async () => {
   await db.insert(monthlyTargets).values({ id: id("mt"), customerId: "cus_shree", year: 2026, month: 9, targetAmount: 500000, isDefault: false });
 
   const [pl] = await db.insert(priceLists).values({ id: id("pl"), name: LIST, effectiveFrom: "2026-01-01", status: "published" }).returning();
+  /* Who it applies to, the way Accounts says it: by customer. */
+  await db.insert(priceListScopes).values([
+    { id: id("pls"), priceListId: pl.id, scopeKind: "customer", scopeValue: "cus_shree", scopeLabel: "Shree Paints" },
+    { id: id("pls"), priceListId: pl.id, scopeKind: "customer", scopeValue: "cus_new", scopeLabel: "New Colour House" },
+  ]);
   await db.insert(priceListRates).values([
     { id: id("plr"), priceListId: pl.id, productId: looseId, rateExGstPaise: 40000, rateInclGstPaise: 47200 },
     { id: id("plr"), priceListId: pl.id, productId: boxedId, rateExGstPaise: 38000, rateInclGstPaise: 44840 },
+    { id: id("plr"), priceListId: pl.id, productId: dashedId, rateExGstPaise: 0, rateInclGstPaise: 0, offered: false },
   ]);
-  await db.insert(priceListDiscountTerms).values({ id: id("pld"), priceListId: pl.id, kind: "flat", percentBp: 500 });
+  /* MP & CG's real shape: a discount with no threshold that is still conditional — on paying in advance. */
+  await db.insert(priceListDiscountTerms).values({ id: id("pld"), priceListId: pl.id, kind: "advance_payment", percentBp: 300 });
 
   /* Stock to sell from: 30 loose cans in FG, 10 boxes in packing, both at Bhiwandi. */
   await db.insert(erpFgEntries).values({ id: id("fge"), sourceType: "fill", sourceId: "fin_x", entryDate: TODAY, finishedGoodId: fgId, lotCode: "FG1BH", godownId: "erpg_bhiwandi", quantity: 30, packingType: "Can", skuId: looseId });
@@ -137,21 +156,53 @@ describe("taking an order", () => {
     assert.equal(msg(r), "INVALID");
   });
 
-  test("rate and discount default from the party's price list, and the transporter from the delivery party", async () => {
+  test("the rate defaults from the list the Accounts app applies to the party, and the transporter from the delivery party", async () => {
     const ctx = await as(admin);
     const r = await mod("orders").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [
-      { sku: LOOSE, qty: "20" },
+      { sku: LOOSE, qty: "20", discount: "5" },
       { sku: BOXED, qty: "24" },
     ]);
     assert.ok(r.ok, JSON.stringify(r));
     const loose = await orderFor(looseId);
     const boxed = await orderFor(boxedId);
     assert.equal(loose.orderNo, boxed.orderNo, "one save is one order");
-    assert.equal(loose.ratePaise, 40000);
-    assert.equal(loose.discountBp, 500);
+    assert.equal(loose.ratePaise, 40000, "the list's own rate for the SKU");
+    assert.equal(boxed.ratePaise, 38000);
+    assert.equal(loose.discountBp, 500, "the discount somebody typed");
+    assert.equal(boxed.discountBp, null, "the list's 3% for advance payment is not given unasked");
     assert.equal(loose.transporter, "VRL");
     assert.equal(loose.partyStatus, null);
     assert.match(loose.id, /^ODID-/);
+  });
+
+  test("a party no list applies to gets no rate, says so, and keeps the one typed for it", async () => {
+    const ctx = await as(admin);
+    const blank = await mod("orders").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", billing: "No List Traders" }, [{ sku: LOOSE, qty: "7" }]);
+    assert.ok(blank.ok);
+    assert.match(blank.ok ? String(blank.message) : "", /1 without a rate: no price list applies to the party/);
+    assert.ok((await mod("orders").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", billing: "No List Traders" }, [{ sku: LOOSE, qty: "9", rate: "350" }])).ok);
+    const rows = await db.select().from(erpOrders).where(eq(erpOrders.billingCustomerId, "cus_nolist"));
+    assert.deepEqual(rows.map((o) => [o.qtyCans, o.ratePaise]).sort((a, b) => Number(a[0]) - Number(b[0])), [[7, null], [9, 35000]]);
+  });
+
+  test("the form fills each party's list and its rates in, and names what it cannot fill", async () => {
+    const ctx = await as(admin);
+    const form = await orderForm(ctx);
+    const field = (k: string) => [...form.header, ...(form.line ?? [])].find((f) => f.k === k) as FieldSpec;
+    assert.equal(field("priceList").fillBy?.map["Shree Paints"], LIST);
+    assert.equal(field("priceList").fillBy?.map["No List Traders"], "None applies to this party");
+    assert.equal(field("listTerms").fillBy?.map["Shree Paints"], "3% off for advance payment");
+    const rate = field("rate").fillBy!;
+    assert.deepEqual(rate.by, ["priceList", "sku"]);
+    assert.equal(rate.map[`${LIST}|${LOOSE}`], "400");
+    assert.equal(rate.map[`${LIST}|${DASHED}`], undefined, "a dash is not for sale on the list, whatever its loose packing costs");
+    assert.equal(rate.otherwise, "", "a party or SKU without a rate clears the one the last pick filled in");
+    assert.equal(field("discount").fillBy, undefined, "no discount is filled in");
+    /* "Add to order" and a drafted order open with the party already picked. */
+    const more = await orderForm(ctx, { orderNo: 1, date: TODAY, godown: "Bhiwandi", billing: "Shree Paints", delivery: "Shree Paints", transporter: "" });
+    assert.equal(more.init?.priceList, LIST);
+    const drafted = withFills({ ...form, init: { ...form.init, billing: "Shree Paints" }, initLines: [{ sku: LOOSE, qty: "2" }, { sku: DASHED, qty: "12" }, { sku: BOXED, qty: "4", rate: "390" }] });
+    assert.deepEqual(drafted.initLines?.map((l) => l.rate ?? ""), ["400", "", "390"], "a drafted line's own rate stands");
   });
 
   test("somebody without the rate power cannot set a rate, and a pending party's order is marked for approval", async () => {

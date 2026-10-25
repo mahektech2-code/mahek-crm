@@ -1,7 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { APP_TIMEZONE, calendarDate } from "@/lib/business-date";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   customers,
@@ -15,13 +15,17 @@ import {
   priceLists,
   products,
   users,
+  type PriceDiscountKind,
 } from "@/db/schema";
 import { err, fieldErr, okVoid, type Result } from "@/lib/result";
+import { resolvePriceList, type CustomerGeo } from "@/lib/engines/price-resolution";
+import { discountTermSentence } from "@/lib/price-list-labels";
+import { activeScopesAndLists, geographyOf } from "@/lib/services/price-list-service";
 import type { ErpContext } from "../access";
 import { erpAudit, erpId, int, nextNumber, num, paise, rupeesField, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
 import { newFormIn } from "../lazy-forms";
 import type { ActionSpec, BulkSpec, CellValue, FieldSpec, FormSpec, ListRow } from "../ui";
-import { fd, inr, nf } from "../ui";
+import { fd, inr, nf, withFills } from "../ui";
 import {
   addDaysIso,
   allocationState,
@@ -101,50 +105,112 @@ async function readSkuCatalogue(): Promise<Map<string, Sku>> {
 const isBoxed = (s: Sku) => s.empty > 0;
 
 /**
- * The price-list rate and discount for a party and an SKU (spec §11.2): the
- * party's tagged list, the latest published version of it, the SKU's row —
- * or failing that a row for another SKU of the same FG product, as the source
- * looks up by FG product. The rate is the list's ex-GST rate, because order
- * details adds GST on top (decision recorded in the phase 4 PR).
+ * The price-list rate for a party and an SKU (spec §11.2), off the list THE
+ * ACCOUNTS APP APPLIES to that party — `resolvePriceList`, the
+ * rule its price-list screens and its variance report already price by: a
+ * list named for the customer, then their salesman, beat, area, city,
+ * district, state, customer type, everybody, narrowest wins. Then the SKU's
+ * flat row on that list, or failing that a row for another SKU of the same FG
+ * product, as the source looks up by FG product. A slab row is not a rate,
+ * and a dash ("not for sale on this list") is the list saying so about that
+ * SKU: no rate, and no borrowing one from its other packing either. The rate is the list's ex-GST rate,
+ * because order details adds GST on top (decision recorded in the phase 4 PR).
+ *
+ * A list's discounts are SAID, never applied. Every kind a list can carry is
+ * conditional — advance payment, prompt payment, a quantity, "other" — and the
+ * old reading took a term with no threshold to be flat, which on prod is MP &
+ * CG's 3% for advance payment: given to every order of theirs the day their
+ * list started resolving. The form prints the terms; the person types the
+ * discount the party has earned.
+ *
+ * It used to match the party's price TAG against a list's NAME. The tags are
+ * the sheet's ("Pan Maharashtra", "WESTERN LINE") and the names are Accounts'
+ * ("Western line Paid — 1 Aug 2026"), so on prod not one of 446 parties
+ * matched and every rate was typed, while Accounts resolved a list for 206.
+ *
+ * Resolved as of TODAY on the form and on the save alike, so the rate a person
+ * is shown is the rate that is written.
  */
-type PriceBook = (tag: string | null, sku: Sku | undefined) => { ratePaise: number | null; discountBp: number | null };
+type AppliedList = { id: string; name: string; /** Its discount terms, in the Accounts app's words: "3% off for advance payment". */ terms: string[] };
 
-function priceBook(): Promise<PriceBook> {
-  return readOnceKeyed("erp.priceBook", readPriceBook);
+type PriceBook = {
+  /** The list in force for this party, or null where none applies. */
+  listOf: (customerId: string) => AppliedList | null;
+  rateOf: (customerId: string, sku: Sku | undefined) => number | null;
+};
+
+async function priceBook(customerIds: Iterable<string>): Promise<PriceBook> {
+  const [book, geo] = await Promise.all([readOnceKeyed("erp.priceBook", readPriceBook), partyGeography([...new Set(customerIds)])]);
+  const day = today();
+  const resolved = new Map<string, AppliedList | null>();
+  const listOf = (customerId: string) => {
+    if (!resolved.has(customerId)) {
+      const g = geo.get(customerId);
+      const r = g ? resolvePriceList(g, book.scopes, book.lists, day) : null;
+      resolved.set(customerId, r ? { id: r.listId, name: r.listName, terms: book.terms.get(r.listId) ?? [] } : null);
+    }
+    return resolved.get(customerId)!;
+  };
+  return {
+    listOf,
+    rateOf(customerId, sku) {
+      const list = listOf(customerId);
+      return list && sku ? book.rateOf(list.id, sku) : null;
+    },
+  };
 }
 
-async function readPriceBook(): Promise<PriceBook> {
-  const lists = await db
-    .select({ id: priceLists.id, name: priceLists.name, from: priceLists.effectiveFrom, status: priceLists.status })
-    .from(priceLists)
-    .where(eq(priceLists.status, "published"))
-    .orderBy(desc(priceLists.effectiveFrom));
-  const listByName = new Map<string, string>();
-  for (const l of lists) if (!listByName.has(l.name.trim().toLowerCase())) listByName.set(l.name.trim().toLowerCase(), l.id);
-  const ids = [...new Set(listByName.values())];
-  if (!ids.length) return () => ({ ratePaise: null, discountBp: null });
-  const [rates, terms] = await Promise.all([
+/** Every published list, its scopes, flat rates and discount terms: the half of the book that does not depend on the party. */
+async function readPriceBook() {
+  const [{ scopes, lists }, rates, terms] = await Promise.all([
+    activeScopesAndLists(),
     db
-      .select({ list: priceListRates.priceListId, sku: priceListRates.productId, fg: products.finishedGoodId, rate: priceListRates.rateExGstPaise })
+      .select({ list: priceListRates.priceListId, sku: priceListRates.productId, fg: products.finishedGoodId, rate: priceListRates.rateExGstPaise, offered: priceListRates.offered })
       .from(priceListRates)
+      .innerJoin(priceLists, eq(priceLists.id, priceListRates.priceListId))
       .leftJoin(products, eq(products.id, priceListRates.productId))
-      .where(inArray(priceListRates.priceListId, ids)),
-    db.select({ list: priceListDiscountTerms.priceListId, bp: priceListDiscountTerms.percentBp, t1: priceListDiscountTerms.thresholdLitres, t2: priceListDiscountTerms.thresholdPaise }).from(priceListDiscountTerms).where(inArray(priceListDiscountTerms.priceListId, ids)),
+      .where(and(eq(priceLists.status, "published"), isNull(priceListRates.minCans))),
+    db
+      .select({ list: priceListDiscountTerms.priceListId, kind: priceListDiscountTerms.kind, percentBp: priceListDiscountTerms.percentBp, thresholdLitres: priceListDiscountTerms.thresholdLitres, thresholdPaise: priceListDiscountTerms.thresholdPaise })
+      .from(priceListDiscountTerms)
+      .innerJoin(priceLists, eq(priceLists.id, priceListDiscountTerms.priceListId))
+      .where(eq(priceLists.status, "published"))
+      .orderBy(asc(priceListDiscountTerms.percentBp), asc(priceListDiscountTerms.id)),
   ]);
-  const bySku = new Map<string, number>();
+  /* A dash is kept as null, so the SKU it names does not fall through to its FG product's rate. */
+  const bySku = new Map<string, number | null>();
   const byFg = new Map<string, number>();
   for (const r of rates) {
-    if (r.sku) bySku.set(`${r.list}|${r.sku}`, r.rate);
-    if (r.fg && !byFg.has(`${r.list}|${r.fg}`)) byFg.set(`${r.list}|${r.fg}`, r.rate);
+    bySku.set(`${r.list}|${r.sku}`, r.offered ? Number(r.rate) : null);
+    if (r.offered && r.fg && !byFg.has(`${r.list}|${r.fg}`)) byFg.set(`${r.list}|${r.fg}`, Number(r.rate));
   }
-  const disc = new Map<string, number>();
-  for (const t of terms) if (t.t1 == null && t.t2 == null && !disc.has(t.list)) disc.set(t.list, t.bp);
-  return (tag, sku) => {
-    const list = tag ? listByName.get(tag.trim().toLowerCase()) : undefined;
-    if (!list || !sku) return { ratePaise: null, discountBp: null };
-    const rate = bySku.get(`${list}|${sku.id}`) ?? (sku.fgId ? byFg.get(`${list}|${sku.fgId}`) : undefined) ?? null;
-    return { ratePaise: rate, discountBp: disc.get(list) ?? null };
+  const said = new Map<string, string[]>();
+  for (const t of terms) said.set(t.list, [...(said.get(t.list) ?? []), discountTermSentence({ ...t, kind: t.kind as PriceDiscountKind, thresholdPaise: t.thresholdPaise == null ? null : Number(t.thresholdPaise) })]);
+  const rateOf = (listId: string, sku: Sku) => {
+    const own = bySku.get(`${listId}|${sku.id}`);
+    if (own !== undefined) return own;
+    return (sku.fgId ? byFg.get(`${listId}|${sku.fgId}`) : undefined) ?? null;
   };
+  return { scopes, lists, terms: said, rateOf };
+}
+
+/** Where these parties are, for the price-list resolver — read by id, and within a page never one read twice. */
+async function partyGeography(ids: string[]): Promise<Map<string, CustomerGeo>> {
+  const known = pageMap<Promise<CustomerGeo | undefined>>("erp.partyGeography");
+  if (!known) return geographyOf(ids);
+  const missing = ids.filter((id) => !known.has(id));
+  if (missing.length) {
+    const got = geographyOf(missing);
+    for (const id of missing) known.set(id, got.then((m) => m.get(id)));
+    got.catch(() => missing.forEach((id) => known.delete(id)));
+  }
+  const found = await Promise.all(ids.map((id) => known.get(id)));
+  const out = new Map<string, CustomerGeo>();
+  ids.forEach((id, i) => {
+    const g = found[i];
+    if (g) out.set(id, g);
+  });
+  return out;
 }
 
 export type OrderLine = {
@@ -168,7 +234,6 @@ export type OrderLine = {
   dispatched: boolean;
   due: Due;
   si: string;
-  liveRatePaise: number | null;
   by: string | null;
 };
 
@@ -246,11 +311,7 @@ async function readLines(f: LineFilter): Promise<OrderLine[]> {
     .where(lineWhere(f))
     .orderBy(desc(erpOrders.orderNo), desc(erpOrders.orderDate), asc(erpOrders.createdAt));
   if (!rows.length) return [];
-  const [parties, skus, prices] = await Promise.all([
-    customersById([...new Set(rows.flatMap((r) => [r.o.billingCustomerId, r.o.deliveryCustomerId]))]),
-    skuCatalogue(),
-    priceBook(),
-  ]);
+  const [parties, skus] = await Promise.all([customersById([...new Set(rows.flatMap((r) => [r.o.billingCustomerId, r.o.deliveryCustomerId]))]), skuCatalogue()]);
   const now = today();
   const out: OrderLine[] = [];
   for (const r of rows) {
@@ -282,7 +343,6 @@ async function readLines(f: LineFilter): Promise<OrderLine[]> {
       dispatched: verified,
       due: dueOf(r.o.dispatchOn, verified, r.o.status, now),
       si: standingInstructions({ instructions: delivery.p?.standingInstructions ?? null, deliveryType: delivery.deliveryType, paymentType: delivery.freightTerm, weightType: delivery.p?.weightType ?? null }),
-      liveRatePaise: prices(billing.priceTag, sku).ratePaise,
       by: r.by,
     });
   }
@@ -356,45 +416,38 @@ function lineFlags(l: OrderLine): string[] {
 /* ============================================================== forms */
 
 export async function orderForm(ctx: ErpContext, fixed?: { orderNo: number; date: string; godown: string; billing: string; delivery: string; transporter: string }): Promise<FormSpec> {
-  const [gds, parties, skus, prices] = await Promise.all([godownOptions(ctx, { lost: false }), loadCustomers(), skuCatalogue(), priceBook()]);
+  const [gds, parties, skus] = await Promise.all([godownOptions(ctx, { lost: false }), loadCustomers(), skuCatalogue()]);
   const active = parties.filter((p) => partyStatus(p) !== "Deactive");
   const names = active.map((p) => p.name);
-  const party: Record<string, { a: string; si: string; t: string; g: string }> = {};
+  const party: Record<string, { a: string; si: string; t: string }> = {};
   for (const p of active)
     party[p.name] = {
       a: p.area ?? "",
       si: standingInstructions({ instructions: p.p?.standingInstructions ?? null, deliveryType: p.deliveryType, paymentType: p.freightTerm, weightType: p.p?.weightType ?? null }),
       t: p.p?.transporter ?? "",
-      g: p.priceTag ?? "",
     };
   const skuList = [...skus.values()].sort((a, b) => a.name.localeCompare(b.name));
   const cpb: Record<string, number> = {};
   const loose: Record<string, boolean> = {};
-  const rate: Record<string, number | null> = {};
-  const disc: Record<string, number | null> = {};
-  const tags = [...new Set(active.map((p) => p.priceTag).filter(Boolean))] as string[];
   for (const s of skuList) {
     cpb[s.name] = s.cpb;
     loose[s.name] = !isBoxed(s);
-    for (const t of tags) {
-      const pr = prices(t, s);
-      if (pr.ratePaise != null) rate[`${t}|${s.name}`] = pr.ratePaise;
-      if (pr.discountBp != null) disc[t] = pr.discountBp;
-    }
   }
   const seeRate = ctx.powers.has("viewSalesRate");
   const seeAmounts = ctx.powers.has("viewSalesAmounts");
-  return {
+  const pricing = seeRate || seeAmounts ? await priceFills(active, skuList) : null;
+  /* "Add to order" opens with its party chosen, so its price list is filled now rather than on a pick that never comes. */
+  return withFills({
     screen: "orders",
     id: fixed ? "more" : "new",
     title: fixed ? `Add to order ${fixed.orderNo}` : "New sales order",
-    sub: "One line per SKU. Rate and discount default from the billing party's price list.",
+    sub: "One line per SKU. The rate fills in from the price list the Accounts app applies to the billing party; type it where the list has none.",
     submit: "Save order",
     lineLabel: "SKU",
     init: fixed
       ? { orderFixed: String(fixed.orderNo), date: fixed.date, godown: fixed.godown, billing: fixed.billing, delivery: fixed.delivery, transporter: fixed.transporter }
       : { date: today(), godown: ctx.workingGodown?.name ?? "" },
-    data: { party, cpb, loose, ...(seeRate ? { rate } : {}), ...(seeAmounts ? { disc } : {}) },
+    data: { party, cpb, loose },
     header: [
       { k: "orderNo", l: "Order number", t: "derived", calc: "order.no" },
       { k: "date", l: "Date", t: "date", req: true, readOnly: !!fixed },
@@ -405,17 +458,57 @@ export async function orderForm(ctx: ErpContext, fixed?: { orderNo: number; date
       { k: "si", l: "Standing instructions", t: "derived", calc: "order.si" },
       { k: "transporter", l: "Transporter", t: "text", hint: "Blank uses the delivery party's transporter." },
       { k: "dispatchOn", l: "Dispatch on", t: "date", hint: "The day it should leave. The lists say today, tomorrow or late from it." },
+      ...(pricing ? ([{ k: "priceList", l: "Price list", t: "text", readOnly: true, untagged: true, fillBy: { by: ["billing"], map: pricing.list, otherwise: "" } }] as FieldSpec[]) : []),
+      ...(pricing && seeAmounts
+        ? ([{ k: "listTerms", l: "List discounts", t: "text", readOnly: true, untagged: true, wide: true, hint: "Each depends on how the party pays or how much it takes, so none is applied for you: type the discount on the line.", fillBy: { by: ["billing"], map: pricing.terms, otherwise: "" } }] as FieldSpec[])
+        : []),
     ],
     line: [
       { k: "sku", l: "Description of goods", t: "select", req: true, opts: skuList.map((s) => s.name) },
       { k: "qty", l: "Order qty (cans)", t: "num", req: true, min: 1 },
       { k: "boxes", l: "Box quantity", t: "derived", calc: "order.boxes" },
-      ...(seeRate ? ([{ k: "rate", l: "Rate (₹)", t: "num", min: 0, hint: "Blank takes the price-list rate." }, { k: "listRate", l: "Price-list rate", t: "derived", calc: "order.listRate" }] as FieldSpec[]) : []),
-      ...(seeAmounts ? ([{ k: "discount", l: "Discount %", t: "num", min: 0, max: 100, hint: "Blank takes the price-list discount." }] as FieldSpec[]) : []),
+      ...(seeRate && pricing
+        ? ([{ k: "rate", l: "Rate (₹)", t: "num", min: 0, hint: "From the price list. Blank where it has no rate for this SKU: type one.", fillBy: { by: ["priceList", "sku"], map: pricing.rate, otherwise: "" } }] as FieldSpec[])
+        : []),
+      ...(seeAmounts ? ([{ k: "discount", l: "Discount %", t: "num", min: 0, max: 100 }] as FieldSpec[]) : []),
       { k: "remark", l: "Remark", t: "area", mic: true },
     ],
-  };
+  });
 }
+
+/**
+ * What the order form fills in from the price lists: each party's list by
+ * name, its discount terms, and each list's rate for each SKU keyed on that
+ * name. A party none applies to is named as such rather than left blank, so
+ * picking it clears the rates the previous party's list filled in.
+ */
+async function priceFills(active: CustomerRow[], skuList: Sku[]): Promise<{ list: Record<string, string>; terms: Record<string, string>; rate: Record<string, string> }> {
+  const prices = await priceBook(active.map((p) => p.id));
+  const label = new Map<string, string>();
+  const taken = new Set<string>();
+  const list: Record<string, string> = {};
+  const terms: Record<string, string> = {};
+  const rate: Record<string, string> = {};
+  for (const p of active) {
+    const l = prices.listOf(p.id);
+    if (l && !label.has(l.id)) {
+      /* Two published lists can share a name; the rates are keyed on it, so it has to be unique here. */
+      let name = l.name;
+      for (let n = 2; taken.has(name); n++) name = `${l.name} (${n})`;
+      taken.add(name);
+      label.set(l.id, name);
+      for (const s of skuList) {
+        const r = prices.rateOf(p.id, s);
+        if (r != null) rate[`${name}|${s.name}`] = rupeesField(r);
+      }
+    }
+    list[p.name] = l ? label.get(l.id)! : NO_PRICE_LIST;
+    terms[p.name] = l?.terms.length ? l.terms.join(" · ") : l ? "None on this list" : "";
+  }
+  return { list, terms, rate };
+}
+
+const NO_PRICE_LIST = "None applies to this party";
 
 async function editForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
   const [l] = await orderLines({ ids: [id] });
@@ -608,6 +701,8 @@ function orderList(scope: Scope): ScreenModule {
           ];
       const byNo = new Map<number, string[]>();
       shown.forEach((l) => byNo.set(l.o.orderNo, [...(byNo.get(l.o.orderNo) ?? []), l.o.id]));
+      /* Read for the lines drawn, not inside orderLines: the badges and the dashboard count lines and never price them. */
+      const prices = await priceBook(shown.map((l) => l.billing.id));
       return {
         spec: {
           screen: scope,
@@ -693,8 +788,8 @@ function orderList(scope: Scope): ScreenModule {
               { l: "Type", v: l.type, der: true },
               { l: "Allocated", v: `${nf(l.allocated)} of ${nf(allocationTarget(l.boxed, l.boxes, l.o.qtyCans))} ${l.boxed ? "boxes" : "cans"} · ${l.allocations} batch code${l.allocations === 1 ? "" : "s"}`, der: true },
               { l: "Weight", v: l.sku.weightKg == null ? "—" : `${nf(l.sku.weightKg)} kg`, der: true },
-              { l: "Tag price list", v: l.billing.priceTag ?? "—", der: true },
-              ...(ctx.powers.has("viewSalesRate") ? [{ l: "Rate 2 (live price list)", v: l.liveRatePaise == null ? "—" : inr(l.liveRatePaise), der: true }] : []),
+              { l: "Price list", v: prices.listOf(l.billing.id)?.name ?? "None applies to the billing party", der: true },
+              ...(ctx.powers.has("viewSalesRate") ? [{ l: "Rate 2 (live price list)", v: inr(prices.rateOf(l.billing.id, l.sku)) || "—", der: true }] : []),
               { l: "Transportation cost", v: inr(l.o.transportCostPaise) },
               { l: "Party status", v: l.o.partyStatus ?? "—" },
               { l: "Remark", v: l.o.remark || "—" },
@@ -929,7 +1024,7 @@ async function saveOrder(ctx: ErpContext, h: Record<string, string>, ls: Record<
   if (partyStatus(billing) === "Deactive") return fieldErr("billing", "This party is deactivated");
   const delivery = (await partyByName(text(h.delivery))) ?? billing;
   if (!ls.length) return err("Add at least one SKU.");
-  const [skus, prices] = await Promise.all([skuCatalogue(), priceBook()]);
+  const [skus, prices] = await Promise.all([skuCatalogue(), priceBook([billing.id])]);
   const byName = new Map([...skus.values()].map((s) => [s.name, s]));
   const seeRate = ctx.powers.has("viewSalesRate");
   const seeAmounts = ctx.powers.has("viewSalesAmounts");
@@ -941,7 +1036,7 @@ async function saveOrder(ctx: ErpContext, h: Record<string, string>, ls: Record<
     const qty = int(l.qty);
     if (qty == null || qty <= 0) return fieldErr(`l${i}.qty`, "Minus Quantity Not Allowed");
     if (!boxQuantity(qty, sku.cpb, !isBoxed(sku)).valid) return fieldErr(`l${i}.qty`, "INVALID");
-    const list = prices(billing.priceTag, sku);
+    const listRate = prices.rateOf(billing.id, sku);
     /* Somebody who cannot see the rate cannot set it either: the list decides. */
     const typedRate = seeRate ? paise(l.rate) : null;
     const typedDisc = seeAmounts ? num(l.discount) : null;
@@ -949,8 +1044,8 @@ async function saveOrder(ctx: ErpContext, h: Record<string, string>, ls: Record<
     parsed.push({
       sku,
       qty,
-      rate: typedRate ?? list.ratePaise,
-      discount: typedDisc != null ? Math.round(typedDisc * 100) : list.discountBp,
+      rate: typedRate ?? listRate,
+      discount: typedDisc != null ? Math.round(typedDisc * 100) : null,
       remark: text(l.remark),
     });
   }
@@ -984,7 +1079,8 @@ async function saveOrder(ctx: ErpContext, h: Record<string, string>, ls: Record<
   const inboxId = text(h.inboxId);
   if (inboxId) await (await import("../ai-orders")).markConverted(ctx, inboxId, no);
   const noRate = parsed.filter((p) => p.rate == null).length;
-  return okVoid(`Order ${no} saved · ${plural(parsed.length)}${noRate ? ` · ${noRate} without a rate: none on ${billing.priceTag ? `price list "${billing.priceTag}"` : "the party, which has no price list"}` : ""}`);
+  const applied = prices.listOf(billing.id);
+  return okVoid(`Order ${no} saved · ${plural(parsed.length)}${noRate ? ` · ${noRate} without a rate: ${applied ? `none on ${applied.name}` : "no price list applies to the party"}` : ""}`);
 }
 
 async function saveEdit(ctx: ErpContext, h: Record<string, string>, id?: string): Promise<Result<unknown>> {

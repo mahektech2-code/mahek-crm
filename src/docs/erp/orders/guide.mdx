@@ -66,10 +66,12 @@ The day it should leave the godown. The lists then say **Dispatch today**, **Dis
 Pick the **Description of goods** and type the **Order qty** in **cans**. For a boxed SKU the **Box quantity** is worked out for you, and it must be a whole number of boxes — otherwise it reads *INVALID — 12 cans a box* and the order will not save.
 </Step>
 <Step title="Rate and discount, if you can see them">
-If your account can see the sales rate, a **Rate** box and the **Price-list rate** appear. Leave the rate blank to take the price list's. The same goes for **Discount %**. If you cannot see them, the price list decides both.
+Picking the billing party fills in **Price list** — the list the Accounts app applies to that party, the same one its price-list screens show — or *None applies to this party*. Picking an SKU then fills its **Rate** from that list. Where the list has no rate for the SKU, or no list applies, the box stays empty: type the rate. You can type over a filled rate too. Changing the billing party fills the rates in again from the new party's list.
+
+**List discounts** shows the list's discount terms, such as *3% off for advance payment*. None is applied for you, because each depends on how the party pays or how much it takes: type the **Discount %** the party has earned. If you cannot see the rate, the price list sets it and no discount is given.
 </Step>
 <Step title="Save">
-You are told the order number and how many lines were saved. If a line has no rate, the message says so: *1 without a rate: none on price list "…"* — a line with no rate cannot be billed until somebody adds one.
+You are told the order number and how many lines were saved. If a line has no rate, the message says so: *1 without a rate: none on Western line Paid — 1 Aug 2026*, or *no price list applies to the party* — a line with no rate cannot be billed until somebody adds one.
 </Step>
 </Steps>
 
@@ -239,5 +241,5 @@ It has been billed. Undo billing first (only possible before it is dispatch-veri
 A billed line has to have its billing undone first, and a line with lots allocated has to have them released first — they hold stock.
 </Faq>
 <Faq q="I don't see Rate or Discount columns.">
-They need the *See sales rate* and *See sales amounts* powers. Without them the price list sets the rate and discount for you, and the list's toolbar says *2 columns hidden* — hover it to see which.
+They need the *See sales rate* and *See sales amounts* powers. Without them the price list sets the rate for you and no discount is given, and the list's toolbar says *2 columns hidden* — hover it to see which.
 </Faq>

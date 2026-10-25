@@ -6,7 +6,7 @@ import { boxQuantity } from "../engines/sales";
  * on save; these show it first.
  * ------------------------------------------------------------------------- */
 
-type Party = { a: string; si: string; t: string; g: string };
+type Party = { a: string; si: string; t: string };
 const map = <T>(data: Record<string, unknown>, k: string) => (data[k] ?? {}) as Record<string, T>;
 const deliveryOf = (h: Record<string, string>, data: Record<string, unknown>) => map<Party>(data, "party")[h.delivery || h.billing || ""];
 
@@ -22,15 +22,6 @@ registerCalc("order.boxes", ({ l, data }) => {
   const b = boxQuantity(q, cpb, !!loose);
   if (loose) return "Loose";
   return b.valid ? fmt(b.boxes, 0) : `INVALID — ${cpb} cans a box`;
-});
-
-registerCalc("order.listRate", ({ h, l, data }) => {
-  const tag = map<Party>(data, "party")[h.billing ?? ""]?.g;
-  if (!h.billing || !l.sku) return "";
-  if (!tag) return "The billing party has no price list";
-  const r = map<number>(data, "rate")[`${tag}|${l.sku}`];
-  const d = map<number>(data, "disc")[tag];
-  return r == null ? `Not on "${tag}"` : `₹${fmt(r / 100)}${d != null ? ` · ${fmt(d / 100)}% off` : ""}`;
 });
 
 registerCalc("alloc.sku", ({ data }) => String(data.sku ?? ""));

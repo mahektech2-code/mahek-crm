@@ -666,6 +666,22 @@ export async function customerGeo(customerId: string): Promise<CustomerGeo | nul
   return row ? toGeo(row) : null;
 }
 
+/**
+ * Several named shops' geography in one read, for a screen that prices many
+ * parties at once — the ERP's order form resolves every billing party it
+ * offers. Not narrowed by the CRM's scope: the ERP decides who may see its own
+ * parties, and a list resolved for fewer of them would leave rates blank.
+ */
+export async function geographyOf(customerIds: string[]): Promise<Map<string, CustomerGeo>> {
+  const out = new Map<string, CustomerGeo>();
+  for (let i = 0; i < customerIds.length; i += 1000) {
+    const ids = customerIds.slice(i, i + 1000);
+    const rows = await db.execute<GeoRow>(sql`${GEO_SELECT} where c.id in (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`);
+    for (const r of rows) out.set(r.customerId, toGeo(r));
+  }
+  return out;
+}
+
 /** The whole book's geography, for the reports that resolve every shop. */
 async function bookGeography(): Promise<CustomerGeo[]> {
   const ids = await userIdsInScope();

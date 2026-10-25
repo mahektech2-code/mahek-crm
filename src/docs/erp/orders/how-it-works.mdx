@@ -36,12 +36,16 @@ The source system also had *Today*, *Tomorrow* and *Delay* as statuses — dates
 
 ## Prices
 
-<Rule title="The rate and discount come from the billing party's price list">
-The party's price-list tag names a list; the **latest published version** of that list is used. The rate is the SKU's row on it — or, failing that, a row for another SKU of the same finished good. It is the list's **ex-GST** rate, because GST is added on the bill. The discount is the list's unconditional discount term (one with no litre or rupee threshold).
+<Rule title="The rate comes from the price list the Accounts app applies to the billing party">
+Which list applies is decided exactly as the Accounts app decides it: a list set for the customer by name, then for their salesman, beat, area, city, district, state, customer type, or everybody — the narrowest wins. The party's price-list *tag* from the sheet plays no part. The rate is the SKU's flat row on that list — or, failing that, a row for another SKU of the same finished good. A dash on the list (not for sale on it) is no rate, and is not filled from another packing. It is the list's **ex-GST** rate, because GST is added on the bill. It is read as of today, on the form and on the save alike.
+</Rule>
+
+<Rule title="A list's discounts are shown, never applied">
+Every discount a list can carry depends on something — paying in advance, paying promptly, a quantity — so the form prints them under **List discounts** and the discount on a line is only ever what somebody typed.
 </Rule>
 
 <Rule title="Somebody who cannot see the rate cannot set it">
-The Rate field is offered only to holders of *See sales rate*, and Discount only to holders of *See sales amounts*. For anybody else the price list decides both, whatever the form sends. A line with no rate is saved, and the save message names the price list that had none.
+The Rate field is offered only to holders of *See sales rate*, and Discount only to holders of *See sales amounts*. For anybody else the price list decides the rate and no discount is given, whatever the form sends. A line with no rate is saved, and the save message names the price list that had none, or says none applies.
 </Rule>
 
 ## Ready means the goods are there
