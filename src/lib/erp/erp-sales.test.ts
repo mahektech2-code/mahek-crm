@@ -220,6 +220,19 @@ describe("taking an order", () => {
   });
 });
 
+describe("what a line weighs", () => {
+  test("a box's weight times the boxes, or a can's times the cans where there is no box", async () => {
+    const ctx = await as(admin);
+    assert.ok((await mod("orders").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: BOXED, qty: "24" }, { sku: LOOSE, qty: "7" }])).ok);
+    const [boxed] = await db.select().from(erpOrders).where(and(eq(erpOrders.skuId, boxedId), eq(erpOrders.qtyCans, 24)));
+    const [loose] = await db.select().from(erpOrders).where(and(eq(erpOrders.skuId, looseId), eq(erpOrders.qtyCans, 7)));
+    const { rows } = await mod("orders").load(ctx);
+    const weight = (lineId: string) => rows.find((r) => r.id === lineId)?.fields?.find((f) => f.l === "Weight")?.v;
+    assert.equal(weight(boxed.id), "27 kg", "6 boxes of 4.5 kg, not the 4.5 kg of one box");
+    assert.equal(weight(loose.id), "7.7 kg", "7 loose cans of 1.1 kg");
+  });
+});
+
 describe("marking Ready", () => {
   test("Ready is refused where the godown has not the stock, and says what it needs", async () => {
     const ctx = await as(admin);

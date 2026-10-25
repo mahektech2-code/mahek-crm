@@ -20,6 +20,7 @@ import {
 import { err, fieldErr, okVoid, type Result } from "@/lib/result";
 import { resolvePriceList, type CustomerGeo } from "@/lib/engines/price-resolution";
 import { discountTermSentence } from "@/lib/price-list-labels";
+import { weightFor } from "@/lib/catalogue";
 import { activeScopesAndLists, geographyOf } from "@/lib/services/price-list-service";
 import type { ErpContext } from "../access";
 import { erpAudit, erpId, int, nextNumber, num, paise, rupeesField, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
@@ -82,7 +83,18 @@ const DUE_WORD: Record<NonNullable<Due>, string> = { today: "Dispatch today", to
 
 /* ============================================================ the lines */
 
-type Sku = { id: string; name: string; fgId: string | null; cpb: number; litresPerCan: number; weightKg: number | null; boxType: string | null; empty: number };
+type Sku = {
+  id: string;
+  name: string;
+  fgId: string | null;
+  cpb: number;
+  litresPerCan: number;
+  /** One box's weight on a boxed SKU, one can's on a loose one or a drum — `weightBasis` says which. */
+  weightGrams: number | null;
+  weightBasis: "box" | "can";
+  boxType: string | null;
+  empty: number;
+};
 
 /* The catalogue and the price book are the same for every line on a page and are asked for by each sales reading; read once per page. */
 function skuCatalogue(): Promise<Map<string, Sku>> {
@@ -93,16 +105,31 @@ async function readSkuCatalogue(): Promise<Map<string, Sku>> {
   const rows = (await db.execute(sql`
     select p.id, p.name, p.finished_good_id as "fgId", p.cans_per_box as cpb,
            coalesce(p.millilitres_per_can, fg.millilitres)::float8 / 1000 as "litresPerCan",
-           p.weight_grams::float8 / 1000 as "weightKg", pk.box_type as "boxType", coalesce(pk.empty_boxes_required, 0) as empty
+           p.weight_grams::float8 as "weightGrams", p.weight_basis::text as "weightBasis", pk.box_type as "boxType", coalesce(pk.empty_boxes_required, 0) as empty
       from products p
       left join finished_goods fg on fg.id = p.finished_good_id
       left join erp_product_packing pk on pk.product_id = p.id
   `)) as unknown as Sku[];
-  return new Map(rows.map((r) => [r.id, { ...r, cpb: Number(r.cpb), litresPerCan: Number(r.litresPerCan ?? 0), empty: Number(r.empty) }]));
+  return new Map(rows.map((r) => [r.id, { ...r, cpb: Number(r.cpb), litresPerCan: Number(r.litresPerCan ?? 0), weightGrams: r.weightGrams == null ? null : Number(r.weightGrams), empty: Number(r.empty) }]));
 }
 
 /** A boxed SKU sells from packing stock in boxes; a loose one from FG stock in cans. */
 const isBoxed = (s: Sku) => s.empty > 0;
+
+/**
+ * WHAT A LINE WEIGHS, not what one of its SKU weighs. The catalogue stores a
+ * box's weight on a boxed SKU and a can's on a loose one or a drum, and the
+ * order screens printed that figure bare — so 64 one-litre cans in two boxes
+ * of 32 read as 29 kg, the weight of one box. `weightFor` is the catalogue's
+ * one rule for turning the stored figure into a quantity's: the box weight ×
+ * the boxes (a part box still travels, so it rounds up), or the can weight ×
+ * the order quantity where there is no box. The printed dispatch label keeps
+ * the stored figure: a label goes on one box.
+ */
+function lineWeightKg(qtyCans: number, sku: Sku): number | null {
+  const grams = weightFor(qtyCans, { cansPerBox: sku.cpb, millilitresPerCan: null, weightGrams: sku.weightGrams, weightBasis: sku.weightBasis });
+  return grams == null ? null : Math.round(grams) / 1000;
+}
 
 /**
  * The price-list rate for a party and an SKU (spec §11.2), off the list THE
@@ -223,6 +250,8 @@ export type OrderLine = {
   boxed: boolean;
   boxes: number;
   boxesValid: boolean;
+  /** What the line weighs, in kg: a box's weight × its boxes, or a can's × its cans (`weightFor`). */
+  weightKg: number | null;
   labels: number;
   allocated: number;
   allocations: number;
@@ -334,6 +363,7 @@ async function readLines(f: LineFilter): Promise<OrderLine[]> {
       boxed,
       boxes,
       boxesValid: valid,
+      weightKg: lineWeightKg(r.o.qtyCans, sku),
       labels: labelCount(type, boxes, r.o.qtyCans),
       allocated,
       allocations: Number(r.allocN ?? 0),
@@ -773,7 +803,7 @@ function orderList(scope: Scope): ScreenModule {
                 type: l.type,
                 remark: l.o.remark,
                 area: l.delivery.area,
-                weight: l.sku.weightKg,
+                weight: l.weightKg,
                 godown: l.godown,
               },
               hiddenKeys,
@@ -787,7 +817,7 @@ function orderList(scope: Scope): ScreenModule {
               { l: "Area", v: l.delivery.area ?? "—", der: true },
               { l: "Type", v: l.type, der: true },
               { l: "Allocated", v: `${nf(l.allocated)} of ${nf(allocationTarget(l.boxed, l.boxes, l.o.qtyCans))} ${l.boxed ? "boxes" : "cans"} · ${l.allocations} batch code${l.allocations === 1 ? "" : "s"}`, der: true },
-              { l: "Weight", v: l.sku.weightKg == null ? "—" : `${nf(l.sku.weightKg)} kg`, der: true },
+              { l: "Weight", v: l.weightKg == null ? "—" : `${nf(l.weightKg)} kg`, der: true },
               { l: "Price list", v: prices.listOf(l.billing.id)?.name ?? "None applies to the billing party", der: true },
               ...(ctx.powers.has("viewSalesRate") ? [{ l: "Rate 2 (live price list)", v: inr(prices.rateOf(l.billing.id, l.sku)) || "—", der: true }] : []),
               { l: "Transportation cost", v: inr(l.o.transportCostPaise) },
