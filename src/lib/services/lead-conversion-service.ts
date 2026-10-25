@@ -231,7 +231,9 @@ export async function convertIfNowQualified(
   tx: Writer & Reader,
   customerId: string,
   orderedOn: string,
-  actorId: string,
+  /* Null where no person is behind the order — an ERP line carried over from
+     the sheet at the cut-over has no creator. The audit row then says so. */
+  actorId: string | null,
   how: string,
   approvedOrderId: string,
 ): Promise<boolean> {
@@ -272,7 +274,7 @@ export async function convertLeadOnSecondOrder(
   tx: Writer & Reader,
   lead: ConvertibleLead,
   orderedOn: string,
-  actorId: string,
+  actorId: string | null,
   how: string,
   placedOrderId: string | null = null,
 ): Promise<boolean> {

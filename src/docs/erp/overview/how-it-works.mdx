@@ -73,9 +73,9 @@ The figures are always gathered by code. When <Setting k="erp.ai.alerts.enabled"
 
 ## Settings that shape the whole ERP
 
-<SettingsTable keys={["erp.orders.live", "erp.location.autoDetect", "erp.location.godownRadiusM", "erp.ai.voice.enabled", "erp.ai.alerts.enabled"]} />
+<SettingsTable keys={["erp.orders.live", "erp.orders.partySheet", "erp.location.autoDetect", "erp.location.godownRadiusM", "erp.ai.voice.enabled", "erp.ai.alerts.enabled"]} />
 
-`erp.orders.live` is the largest switch in the ERP: it decides whether the ERP or the order sheet writes MahekOne's order book. Read [the order book](/docs/erp/order-book) before changing it.
+`erp.orders.live` is the largest switch in the ERP: it decides whether the ERP or the order sheet writes MahekOne's order book, and once it is on the order sheet's order tabs stop being read. `erp.orders.partySheet` is its companion: whether the Sales Party tab is still the party master. Read [the order book](/docs/erp/order-book) before changing either.
 
 ## Where the code and the intent disagree today
 

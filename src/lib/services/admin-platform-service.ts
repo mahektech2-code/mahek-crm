@@ -18,6 +18,7 @@ import { ADMIN } from "@/lib/admin-routes";
 import { settingsCountFor } from "@/lib/config/settings-schemas";
 import { getConfig, configWarnings } from "@/lib/config/store";
 import { sheetsConfigured } from "@/lib/sheets";
+import { sheetSwitches, sourceRetired } from "@/lib/engines/sheet-retirement";
 import { secretStatuses } from "@/lib/secrets";
 import { mailConfigured } from "@/lib/mailer";
 
@@ -77,8 +78,14 @@ export async function attentionItems(): Promise<AttentionItem[]> {
     count(sql`select count(*)::int as n from job_runs
                 where ok = false and started_at > now() - interval '7 days'`),
     count(sql`select count(*)::int as n from feedback where status = 'new'`),
-    count(sql`select count(*)::int as n from sheet_order_rows
-                where status = 'present' and jsonb_array_length(issues) > 0`),
+    // Once the ERP takes the orders these rows are history rather than a
+    // worklist: nothing reads them into the book, so a row the import could
+    // not read is not something anybody needs to fix today.
+    (async () =>
+      (await getConfig())["erp.orders.live"]
+        ? 0
+        : count(sql`select count(*)::int as n from sheet_order_rows
+                where status = 'present' and jsonb_array_length(issues) > 0`))(),
     count(sql`select count(*)::int as n from products
                 where status = 'needs_canonical_id'`),
     // Attendance is the fallback, because `last_login_at` only started being
@@ -255,7 +262,8 @@ export async function platformHealth(): Promise<{ facts: Fact[]; apps: AppHealth
 
 export type Integration = {
   name: string;
-  state: "Healthy" | "Failing" | "Not connected";
+  /** Retired: a workbook tab nobody reads any more — see `engines/sheet-retirement.ts`. */
+  state: "Healthy" | "Failing" | "Not connected" | "Retired";
   last: string;
   note: string;
 };
@@ -268,6 +276,9 @@ export type Integration = {
  * load would bill somebody for a screen refresh. Where a subsystem records its
  * own last run — the sheets do — that run is what the row reports.
  */
+/** The workbook tabs `engines/sheet-retirement.ts` can retire. */
+const RETIRABLE = new Set(["order_details", "payment_status", "taken_order", "sales_party"]);
+
 export async function integrationStatus(): Promise<Integration[]> {
   const secrets = await secretStatuses();
   const held = (name: string) => secrets.some((s) => s.name === name && s.source !== "unset");
@@ -287,15 +298,22 @@ export async function integrationStatus(): Promise<Integration[]> {
   for (const r of runs) if (!latest.has(r.source)) latest.set(r.source, r);
 
   const sheets = sheetsConfigured();
-  const sheetRows: Integration[] = [...latest.entries()].map(([source, run]) => ({
-    name: `Google Sheet — ${source}`,
-    state: run.status === "failed" ? "Failing" : "Healthy",
-    last: stampOf(run.finishedAt ?? run.startedAt),
-    note:
-      run.status === "failed"
-        ? (run.error ?? "The last run failed.")
-        : "Read-only. MahekOne never writes to the workbook.",
-  }));
+  const switches = sheetSwitches(await getConfig());
+  const sheetRows: Integration[] = [...latest.entries()].map(([source, run]) => {
+    /* A tab nobody reads any more is said as that: its last run is history,
+       and "Healthy" beside a date months old reads as a sync that stopped. */
+    const why = RETIRABLE.has(source) ? sourceRetired(source as Parameters<typeof sourceRetired>[0], switches) : null;
+    if (why) return { name: `Google Sheet — ${source}`, state: "Retired", last: stampOf(run.finishedAt ?? run.startedAt), note: why };
+    return {
+      name: `Google Sheet — ${source}`,
+      state: run.status === "failed" ? "Failing" : "Healthy",
+      last: stampOf(run.finishedAt ?? run.startedAt),
+      note:
+        run.status === "failed"
+          ? (run.error ?? "The last run failed.")
+          : "Read-only. MahekOne never writes to the workbook.",
+    };
+  });
 
   const list: Integration[] = [
     {

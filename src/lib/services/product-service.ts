@@ -2,6 +2,7 @@ import "server-only";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { getConfig } from "../config/store";
+import { orderCountsSql } from "../order-status";
 
 /* ---------------------------------------------------------------------------
  * §2 Product selection.
@@ -12,12 +13,12 @@ import { getConfig } from "../config/store";
  * and disagreed about the same customer, which is a thing a telecaller
  * notices and stops trusting.
  *
- * Both CRM-captured and external orders count. The CRM records a product id
- * per line; the external system records a NAME inside the order's line items,
- * so external lines are matched back to the catalogue by name. That match is
- * the weak link — an external line naming a product the catalogue does not
- * carry contributes nothing, by design, because an unmatched name cannot be
- * put on an order form.
+ * CRM-captured, order-sheet and ERP orders all count. The CRM records a
+ * product id per line; the sheet and the ERP record a NAME inside the order's
+ * line items, so those lines are matched back to the catalogue by name. That
+ * match is the weak link — a sheet line naming a product the catalogue does
+ * not carry contributes nothing, by design, because an unmatched name cannot
+ * be put on an order form. (The ERP's names are the catalogue's own.)
  * ------------------------------------------------------------------------- */
 
 export type FrequentProduct = {
@@ -97,8 +98,15 @@ export async function customerProducts(
                       = regexp_replace(lower(li->>'product'), '[^a-z0-9]', '', 'g')
              )
        where o.customer_id = ${customerId}
-         and o.source = 'external'
-         and o.status in ('captured','confirmed','dispatched')
+         -- The order sheet's orders, and the ERP's once it takes them: both
+         -- carry their lines as product names here, the ERP's being the SKU's
+         -- own catalogue name. Reading the sheet's alone froze every
+         -- customer's history on the day of the cut-over.
+         and o.source in ('external', 'erp')
+         -- What counts as an order is lib/order-status.ts. The three statuses
+         -- spelled out here dropped an order the day it was marked in
+         -- transit or delivered, which ERP orders are.
+         and ${orderCountsSql("o")}
          and o.line_items is not null
     )
     select p.id as product_id, p.name, p.pack_size, f.name as formulation,

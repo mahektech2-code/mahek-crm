@@ -1,4 +1,4 @@
-Everything MahekOne says about selling is read off one order book — the `orders` and `bills` the CRM, Accounts, targets and the owner's figures all share. The ERP keeps far more detail about an order than that book does: lots allocated, readiness, billing line by line, dispatch scans, the lorry. This page explains how the two meet: one switch, <Setting k="erp.orders.live" />, decides whether the ERP or the order sheet writes the book, and what everything downstream reads once it does.
+Everything MahekOne says about selling is read off one order book — the `orders` and `bills` the CRM, Accounts, targets and the owner's figures all share. The ERP keeps far more detail about an order than that book does: lots allocated, readiness, billing line by line, dispatch scans, the lorry. This page explains how the two meet: one switch, <Setting k="erp.orders.live" />, decides whether the ERP or the order sheet writes the book, and what everything downstream reads once it does. A second, <Setting k="erp.orders.partySheet" />, decides how long the Sales Party tab stays the party master after the order tabs have stopped.
 
 ## Why there has to be one book
 
@@ -7,7 +7,7 @@ Targets, the Call Log's reorder dates, the buying cycle, outstanding, collection
 </Callout>
 
 <Rule title="Exactly one author at a time">
-Off, the ERP writes nothing into the book: the ERP runs on its own, and orders and bills keep arriving from the Taken Order and Order Details sheets. On, every ERP order is written into the book, and the sheet projection writes **no** order and **no** bill — it still updates customers from the party sheet, because the sheet is simply right about those.
+Off, the ERP writes nothing into the book: the ERP runs on its own, and orders and bills keep arriving from the Taken Order and Order Details sheets. On, every ERP order is written into the book, and the order sheet's Order Details, Payment Status and Taken Order tabs are no longer read: the projection writes **no** customer, **no** order and **no** bill. A new party is created in ERP → Customers or Accounts → Add customer. The Sales Party tab is a different source with its own switch (below).
 </Rule>
 
 ## What the switch changes
@@ -18,6 +18,33 @@ Off, the ERP writes nothing into the book: the ERP runs on its own, and orders a
 | A Pending customer's order | The ERP's own "Approved By Admin" (the approve-party power) | The Accounts approval queue, like any order needing a check |
 | Who is held off the Call Log for an open order | Open lines on the Taken Order tab | ERP lines not cancelled and not yet dispatch-verified |
 | Targets, buying cycle, outstanding, KPIs | Read the sheet's orders | Read the ERP's orders |
+| The Order Details, Payment Status and Taken Order tabs | Read every half hour | Not read — retired (below) |
+| A customer typed into Order Details | Created by the projection | Not created |
+| A lead's second order | Converts it on a CRM call, a handset order or an Accounts approval | An ERP order converts it too |
+| A customer's product history and frequent products | The sheet's orders | The sheet's history and the ERP's orders |
+
+## The Sales Party tab has its own switch
+
+<Rule title="The party master can outlive the order tabs">
+<Setting k="erp.orders.partySheet" /> is on by default. On, the Sales Party tab is still read every half hour and fills each party's salesperson and back-office seats, deactivations, and any phone, GST, credit days or price list nobody has typed into MahekOne. Off, the tab is retired: it is no longer read or published, and all of that is kept in MahekOne — Accounts → Add customer, the customer record, the account-manager dialog, ERP → Customers. The two switches are independent.
+</Rule>
+
+| `erp.orders.live` | `erp.orders.partySheet` | Order tabs | Sales Party tab | The half-hourly publish |
+|---|---|---|---|---|
+| Off | On | Read | Read | Customers, orders and bills from Order Details, then the party master |
+| On | On | Retired | Read | The party master only |
+| On | Off | Retired | Retired | Retired — nothing is published from the workbook |
+| Off | Off | Read | Retired | Customers, orders and bills from Order Details only |
+
+<SettingsTable keys={["erp.orders.live", "erp.orders.partySheet"]} />
+
+<Rule title="A retired tab is not read, whoever asks">
+The droplet's schedule, the Admin Console and a terminal all come through one job runner, and it answers a retired read with the reason instead of running it — it still records a job run carrying that sentence, so the schedule keeps getting a success and the job history says why nothing happened. Once the ERP takes the orders, Admin Console → Sheets and Accounts → Sheet import show a banner and draw their import buttons disabled with the reason. The Command Centre shows a retired source as **Retired · last read … ago** — never *Stale*, with nothing to run — and Admin Console → Integrations lists it as **Retired**.
+</Rule>
+
+<Callout kind="note" title="Nothing the sheet wrote is deleted">
+Retiring a tab deletes none of its staged rows or the orders and bills it published. Bill detail, delivery-party linking and the price-list variance report still read them for the months the sheet was the source.
+</Callout>
 
 ## An ERP order in the book
 
@@ -78,7 +105,7 @@ The first time a line of the order is dispatch-verified, one bill is written for
 </Rule>
 
 <Callout kind="money">
-Sheet bills arrive "unstated" — neither paid nor owed — because nobody vouched for them. An ERP bill is different in kind: the ERP itself billed and dispatched it. That is why it lands owed. Payment against it is recorded and confirmed in Accounts exactly as for any bill; see [Bills](/docs/crm/bills) and [Outstanding](/docs/crm/outstanding).
+Since October 2026 a sheet bill lands owed from its due date too, unless the sheet's Payment Status tab says the money was received. An ERP bill is owed for a stronger reason: the ERP itself billed and dispatched it, and there is no Payment Status tab to say otherwise. Payment against it is recorded and confirmed in Accounts exactly as for any bill; see [Bills](/docs/crm/bills) and [Outstanding](/docs/crm/outstanding).
 </Callout>
 
 <Rule title="A bill number is never taken from another bill">
@@ -118,19 +145,30 @@ In Mahek Plus a pending party's order was approved by the admin inside the ERP. 
 With the switch on, a customer is held off the Call Log's order chasing while any ERP line billed to them is neither cancelled nor dispatch-verified, and released when the last one leaves. Every customer is rewritten on every pass, so a hold can only say what the ERP currently says — the same rule the Taken Order tab followed. See [the Call Log](/docs/crm/call-log/how-it-works).
 </Rule>
 
-The hold is rebuilt by the scheduled passes (the Taken Order sync, which now reads the ERP, and the nightly recompute), not by each ERP save.
+The hold is rebuilt **every hour**, by a step of the hourly pass that reads whichever source is current — the staged Taken Order rows while the sheet takes the orders (the Taken Order sync also rebuilds it then, every half hour), the ERP's open lines once it does. The ERP book sync rebuilds it too. It is not rebuilt by each ERP save, so a customer can be rung for up to an hour after ordering.
 
 ## Going live
+
+Every step here is somebody's to perform; none of it happens on its own.
 
 <Steps>
 <Step title="Stop the sheet">
 The order desk stops typing orders into the Taken Order sheet at an agreed time.
 </Step>
+<Step title="Close the history copied from the sheet">
+A one-off developer step — no screen does it. Lines the Taken Order tab still had in flight, copied into the ERP with source *sheet*, are converted to source *erp*, because the book writes only the ERP's own lines. Copied lines the sheet showed **Ready** and **Done** whose Order Details row carries no dispatch date are marked dispatched: the hold reads every ERP line not cancelled and not dispatch-verified, and the import marked a copied line verified only where Order Details gave it a dispatch date — so left alone, those would hold their customers for good.
+</Step>
 <Step title="Turn the switch on">
 <Setting k="erp.orders.live" /> in Admin Console → Settings → ERP → Production & orders.
 </Step>
 <Step title="Run the ERP book sync once">
-It writes every ERP order already in the ERP into the book (two hundred at a time) and rebuilds the Call Log holds. While the switch is off the job writes nothing and says so.
+`npm run jobs -- erp-book-sync`. It writes every ERP order already in the ERP into the book (two hundred at a time) and rebuilds the Call Log holds. While the switch is off the job writes nothing and says so.
+</Step>
+<Step title="Retire the Sales Party tab, when the office is ready">
+Turn <Setting k="erp.orders.partySheet" /> off once seats, deactivations and contact details are kept in MahekOne rather than on the tab.
+</Step>
+<Step title="Trim the droplet's schedule">
+Tidying rather than urgent, since a retired mode answers successfully and does nothing. The planned trim of `deploy/sheet-sync.sh` leaves the half-hourly cycle with only the punch-out reminders and the nightly with only `sync nightly`, relaxes its `SYNC_OWNER_EMAIL` check, and changes the `grep -c field-activity` check at the end of `ship-sync-schedule.yml` to match. While <Setting k="erp.orders.partySheet" /> is on, `parties` and `project` must stay in the cycle — they are what publishes the party master.
 </Step>
 </Steps>
 
@@ -149,6 +187,7 @@ Never turn the switch on while the team is still typing orders into the sheet. O
 
 ## Where the code and the intent disagree today
 
-- The Call Log hold is not rebuilt when an ERP order is saved, only by the scheduled passes, so a customer can be chased for an order they placed until the next pass.
+- The Call Log hold is not rebuilt when an ERP order is saved, only by the hourly pass and the ERP book sync, so a customer can be chased for an order they placed for up to an hour.
+- The hold reads every ERP line not cancelled and not dispatch-verified, including lines copied in from the sheet, which the import marked verified only where Order Details gave a dispatch date; only the hand-run cut-over step above keeps the rest from holding their customers permanently.
 - Before an order's billing details exist, its value in the book assumes 18% GST on every line; the GST actually billed replaces it only once the line has billing details. The 18% is written in the code rather than taken from a setting.
 - The ERP book sync has no button in the Admin Console; on a deployment without shell access it cannot be run on go-live day.

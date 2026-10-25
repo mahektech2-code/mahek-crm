@@ -6,6 +6,7 @@ import { bills, customers, erpOrders, orders, type OrderLine as BookLine } from 
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { getConfig } from "@/lib/config/store";
 import { recomputeBuyingCycle, recomputeFollowUpState, recomputeOutstanding } from "@/lib/recompute";
+import { convertIfNowQualified } from "@/lib/services/lead-conversion-service";
 import { billFigures, orderType } from "./engines/sales";
 
 /* ---------------------------------------------------------------------------
@@ -237,6 +238,30 @@ async function syncOne(orderNo: number, lines: LineRow[]): Promise<string[]> {
       });
   } else if (bill && !Number(bill.paid)) {
     await db.delete(bills).where(eq(bills.id, bill.id));
+  }
+
+  /*
+   * AND IT MAY BE THE ORDER THAT MAKES THEM A CUSTOMER — the rule every other
+   * order path already asks (`lead-conversion-service.ts`: the CRM's save, the
+   * handset's order, Accounts' approval). The ERP was the one that did not, so
+   * a party created at the order desk (ERP → Customers writes a lead) stayed a
+   * lead through every order it ever placed: prospected by the Call Log,
+   * credited to its owner rather than a salesperson, and missing from every
+   * conversion figure. The rule is the second order, counted from orders that
+   * count, with this one excluded by id; a cancelled or declined order is not
+   * one, so it is not asked.
+   *
+   * Asked after the book is written, so the recomputes that follow already
+   * read the new `kind`. A failure is swallowed for the reason Accounts'
+   * approval swallows it: the order stands either way, and the next order asks
+   * again.
+   */
+  if (orderId && status !== "cancelled" && status !== "declined") {
+    try {
+      await convertIfNowQualified(db, head.billing, head.orderDate, head.createdById, "erp_order", orderId);
+    } catch {
+      /* A promotion that did not happen shows on the customer record and on the next order. */
+    }
   }
   return [head.billing, head.delivery, existing?.customerId, bill?.customerId].filter((x): x is string => !!x);
 }

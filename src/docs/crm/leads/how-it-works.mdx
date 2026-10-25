@@ -192,7 +192,8 @@ An account is either a **lead** or a **customer** (`kind`). The code converts a 
 1. **A call logged in the CRM** with an order, when the account has ordered before.
 2. **Accounts approving an order**, when the account has ordered before — so a shop whose first order was still waiting for approval is not left a lead until a third.
 3. **An order from the handset**, by the same rule.
-4. **A stage move** to 2nd order (or, for a distributor, to Distributor approval), through the gate.
+4. **An ERP order**, once [the ERP takes the orders](/docs/erp/order-book) — asked when the order is written into the book, unless it is cancelled or declined.
+5. **A stage move** to 2nd order (or, for a distributor, to Distributor approval), through the gate.
 </Rule>
 
 On conversion the account becomes a customer, its converted date is set, and the person who owned the lead becomes its **sales account manager**. The back-office seat is left for somebody to decide.

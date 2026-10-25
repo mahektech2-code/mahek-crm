@@ -619,7 +619,9 @@ async function sourceFoot(ctx: Ctx): Promise<string> {
   const lead = "Every figure here is company-wide and follows the period.";
   if (!total) return `${lead} No order counted in this period, so there are no sources to split.`;
   const word: Record<string, string> = { crm: "calls", mbos: "field", external: "order sheet import", erp: "the ERP" };
-  const parts = ["crm", "mbos", "external"]
+  // Every source the word map names. The ERP was in the map and missing from
+  // this list, so its share of the book was silently left out of the split.
+  const parts = ["crm", "mbos", "external", "erp"]
     .map((k) => ({ k, n: Number(rows.find((r) => r.source === k)?.n ?? 0) }))
     .filter((p) => p.n > 0)
     .map((p) => `${word[p.k]} ${Math.round((p.n / total) * 100)}%`);

@@ -528,11 +528,15 @@ function ImportPanel({ data }: { data: SheetData }) {
     }
   }
 
-  const blocked = !data.canImport
-    ? "Importing is a manager action."
-    : !data.source.configured
-      ? "The Google service account is not configured on this deployment."
-      : null;
+  // Retired first: once the ERP takes the orders neither step has anything to
+  // do, and the reason is what somebody pressing the button needs to read.
+  const blocked = data.retired
+    ? data.retired
+    : !data.canImport
+      ? "Importing is a manager action."
+      : !data.source.configured
+        ? "The Google service account is not configured on this deployment."
+        : null;
 
   return (
     <Card>
@@ -541,6 +545,12 @@ function ImportPanel({ data }: { data: SheetData }) {
         hint="Both steps are idempotent — running either twice changes nothing the second time."
       />
       <div className="space-y-4 px-5 py-4">
+        {data.retired ? (
+          <Callout tone="neutral">
+            <strong>The order sheet is retired.</strong> {data.retired} The rows here are
+            the history it wrote; new orders are taken, billed and dispatched in the ERP.
+          </Callout>
+        ) : null}
         <div className="flex flex-wrap items-end gap-3">
           <Field
             label="Whose book"
@@ -586,9 +596,9 @@ function ImportPanel({ data }: { data: SheetData }) {
         </div>
 
         <p className="text-[13px] text-muted">
-          Bills are the order history, one per order, and every one is imported
-          as paid — the order tab records what was billed and never what was
-          received. Mark the genuinely unpaid ones on Sales Bills.
+          Bills are the order history, one per order. Each is owed from its due
+          date unless the Payment Status tab says the money was received, and a
+          receipt recorded in Accounts is what settles it.
         </p>
       </div>
     </Card>

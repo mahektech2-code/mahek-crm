@@ -4,6 +4,8 @@ import { db } from "@/db";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import type { JobName, JobOptions } from "@/lib/jobs";
 import { secretStatuses } from "@/lib/secrets";
+import { getConfig } from "@/lib/config/store";
+import { sheetSwitches, sourceRetired } from "@/lib/engines/sheet-retirement";
 import { num, plural } from "./format";
 import type { Tone } from "./types";
 import { ADMIN } from "@/lib/admin-routes";
@@ -563,16 +565,46 @@ function nightlySource(n: NightlyPass): FreshSource {
   };
 }
 
+/**
+ * A source nobody is meant to read any more, said as that rather than as
+ * "Stale". The order tabs stop the day the ERP takes the orders and the Sales
+ * Party tab when the office retires it (`engines/sheet-retirement.ts`); judged
+ * against a half-hourly clock they would sit at the top of Needs you for ever,
+ * and a monitor that is always red is one nobody reads. The last read is kept
+ * on the row, so "when did the sheet last say anything" still has an answer,
+ * and there is nothing to run.
+ */
+function retired(src: FreshSource, why: string): FreshSource {
+  return {
+    ...src,
+    expected: "Not read — retired",
+    staleAfterHours: null,
+    state: "unjudged",
+    stateWord: src.lastSuccessAt ? `Retired · last read ${ageWords(src.lastSuccessAt)} ago` : "Retired",
+    tone: "muted",
+    detail: why,
+    job: null,
+    jobOptions: undefined,
+  };
+}
+
 /** Every source, judged once. */
 export async function freshnessSources(): Promise<FreshSource[]> {
-  const r = await readAll();
+  const [r, config] = await Promise.all([readAll(), getConfig()]);
+  const switches = sheetSwitches(config);
   const out: FreshSource[] = [];
 
-  for (const d of SHEETS.slice(0, 4)) out.push(sheetSource(d, r));
+  for (const d of SHEETS.slice(0, 4)) {
+    const src = sheetSource(d, r);
+    const why = sourceRetired(d.key as "order_details" | "payment_status" | "taken_order" | "sales_party", switches);
+    out.push(why ? retired(src, why) : src);
+  }
 
   const owner = process.env.SYNC_OWNER_EMAIL?.trim() || null;
+  const publishRetired = sourceRetired("publish", switches);
+  const publish = (src: FreshSource) => (publishRetired ? retired(src, publishRetired) : src);
   out.push(
-    jobSource(
+    publish(jobSource(
       {
         key: "publish",
         label: "Published into the CRM",
@@ -588,7 +620,7 @@ export async function freshnessSources(): Promise<FreshSource[]> {
         history: ["project-sheet"],
       },
       r,
-    ),
+    )),
   );
 
   out.push(nightlySource(r.nightly));
