@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { NavLink } from "@/components/shell/nav-link";
 import { notFound, redirect } from "next/navigation";
 import { erpContext } from "@/lib/erp/access";
 import { erpLink, erpScreenBySlug } from "@/lib/erp/registry";
@@ -14,6 +14,7 @@ import { scopeFor, windowInfo } from "@/lib/erp/window";
 import { Card, cx, Td, Th, Tr } from "@/components/ui/primitives";
 import { CardGrid } from "@/components/ui/card-grid";
 import { ListScreen } from "../_ui/list-screen";
+import { lightPage, lightRow, lightSpec } from "@/lib/erp/lazy-forms";
 import { Page } from "../_ui/page-head";
 import { NewMenu } from "../_ui/new-menu";
 import { linkClass, SectionTitle } from "../_ui/look";
@@ -193,9 +194,9 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
           <SubTabs
             tabs={tabs}
             aside={
-              <Link href="/accounts/bank-statements" className="text-sm font-semibold whitespace-nowrap text-brand hover:underline">
+              <NavLink href="/accounts/bank-statements" className="text-sm font-semibold whitespace-nowrap text-brand hover:underline">
                 Bank PDFs and reconciling → Accounts · Bank statement management ↗
-              </Link>
+              </NavLink>
             }
           />
         </Panel>
@@ -240,11 +241,11 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
                 .filter((w) => !w.hide)
                 .map((w) => (
                   <li key={w.l}>
-                    <Link href={w.href} className="flex items-center gap-3 px-5 py-3 hover:bg-canvas">
+                    <NavLink href={w.href} className="flex items-center gap-3 px-5 py-3 hover:bg-canvas">
                       <span className={cx("flex-1 text-sm", w.danger ? "text-danger" : "text-body")}>{w.l}</span>
                       <span className="w-8 text-right text-sm font-semibold text-ink tabular-nums">{nf(w.n)}</span>
                       <span className="w-28 text-right text-sm text-body tabular-nums">{w.v}</span>
-                    </Link>
+                    </NavLink>
                   </li>
                 ))}
             </ul>
@@ -282,9 +283,9 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
               <p className="px-5 py-4 text-sm text-muted">Nothing received this month yet.</p>
             )}
             <div className="px-5 py-3">
-              <Link href={erpLink("moneyReceipts")} className={linkClass("brand", "text-sm")}>
+              <NavLink href={erpLink("moneyReceipts")} className={linkClass("brand", "text-sm")}>
                 All receipts
-              </Link>
+              </NavLink>
             </div>
           </Panel>
           <Panel>
@@ -320,9 +321,10 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
   const RESERVED = new Set<string>(["f", "fl", "open", "view", "new", "dlg", ...LIST_QUERY_KEYS]);
   const initialNew = one("new") ? Object.fromEntries(Object.entries(raw).filter((e): e is [string, string] => !RESERVED.has(e[0]) && typeof e[1] === "string")) : null;
   const query = parseListQuery(raw);
-  const scope = scopeFor(mod.window, query, openId);
+  const scope = { ...scopeFor(mod.window, query, openId), forms: "defer" as const };
   const { spec, rows, tooWide } = await withReadMemo(() => mod.load(ctx, scope));
-  const page = { ...pageOf(spec, rows, query, FLAG), ...(mod.window ? { window: windowInfo(mod.window, scope, tooWide ?? null) } : {}) };
+  const page = lightPage(mod, { ...pageOf(spec, rows, query, FLAG), ...(mod.window ? { window: windowInfo(mod.window, scope, tooWide ?? null) } : {}) });
+  const found = openId ? (rows.find((r) => r.id === openId) ?? null) : null;
   const fParam = one("f");
   return shell(
     <>
@@ -332,10 +334,10 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
       <ListScreen
         key={`${view}|${fParam ?? ""}|${openId ?? ""}`}
         initialNew={initialNew}
-        spec={{ ...spec, newMenu: undefined, strip: undefined }}
+        spec={lightSpec({ ...spec, newMenu: undefined, strip: undefined })}
         rows={page.rows}
         server={{ ...page, query }}
-        openRow={openId ? (rows.find((r) => r.id === openId) ?? null) : null}
+        openRow={found ? lightRow(mod, found) : null}
         label={screen.label}
         tabs={[]}
         sections={null}
@@ -353,9 +355,9 @@ function PeriodLinks({ period, href }: { period: string; href: (p: string) => st
   return (
     <span className="flex items-center gap-1">
       {PERIODS.slice(0, 4).map((p) => (
-        <Link key={p.v} href={href(p.v)} className={cx("rounded-control px-2.5 py-1 text-sm", p.v === period ? "bg-brand-soft font-semibold text-brand-hover" : "text-muted hover:text-body")}>
+        <NavLink key={p.v} href={href(p.v)} className={cx("rounded-control px-2.5 py-1 text-sm", p.v === period ? "bg-brand-soft font-semibold text-brand-hover" : "text-muted hover:text-body")}>
           {p.l}
-        </Link>
+        </NavLink>
       ))}
     </span>
   );

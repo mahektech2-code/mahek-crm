@@ -1,8 +1,8 @@
 import "server-only";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
-import { readOnce } from "./read-memo";
-import { ledgerRead } from "./ledger-cache";
+import { readOnceAt, statementShape } from "./read-memo";
+import { ledgerDerived, ledgerReadShaped } from "./ledger-cache";
 import { fillFigures, packCosting, boxFigures, sfgRate } from "./engines/production";
 import { landingFigures, shareInwardCost } from "./engines/purchase";
 
@@ -41,12 +41,38 @@ export type Ex = { execute: (q: ReturnType<typeof sql>) => Promise<unknown> };
  */
 export type LotPick = { lots?: string[] };
 
-async function rows<T>(q: ReturnType<typeof sql>, ex: Ex = db): Promise<T[]> {
+async function rows<T>(q: ReturnType<typeof sql>, ex: Ex = db, keep = true): Promise<T[]> {
   /* On the pool, a page asks each ledger once however many doors ask
      (`read-memo.ts`), and a ledger nothing has written to since the last ask
-     is not added up again (`ledger-cache.ts`). On a transaction, always afresh. */
-  if (ex === db) return readOnce(q, () => ledgerRead(q, async () => (await db.execute(q)) as unknown as T[]));
+     is not added up again (`ledger-cache.ts`). On a transaction, always afresh.
+     `keep: false` is a read whose RESULT is kept instead (`ledgerDerived`):
+     its rows are needed once per write, and holding them as well would spend
+     the cache's row budget on the whole book's history twice over. */
+  if (ex === db) {
+    /* Worked out once: on a long statement, building its text is a cost of its own. */
+    const shape = statementShape(q);
+    const read = async () => (await db.execute(q)) as unknown as T[];
+    return readOnceAt(shape.key, keep ? () => ledgerReadShaped(shape, read) : read);
+  }
   return (await ex.execute(q)) as unknown as T[];
+}
+
+/**
+ * THE RATE OF A LOT IS WORKED OUT FROM THE WHOLE BOOK, ONCE PER WRITE.
+ *
+ * Each costing below is a pure function of one lot's own rows — its fills, its
+ * batch lines, its raw-material lots — so the whole book's answer, kept under
+ * the ledgers' stamp (`ledgerDerived`), answers any list of lots exactly as
+ * reading only those lots would. A page used to ask for the lots it shows: a
+ * statement naming eight thousand batch numbers, too long to keep, read and
+ * walked again on every page. Now the walk happens once after a write.
+ */
+function pick<V>(all: Map<string, V>, keys: string[] | undefined, keyOf: (k: string) => string = (k) => k): Map<string, V> {
+  if (!keys) return new Map(all);
+  const want = new Set(keys);
+  const out = new Map<string, V>();
+  for (const [k, v] of all) if (want.has(keyOf(k))) out.set(k, v);
+  return out;
 }
 
 /**
@@ -315,9 +341,14 @@ export type SfgLot = {
  */
 export async function sfgRates(lotCodes?: string[]): Promise<Map<string, number | null>> {
   if (lotCodes && !lotCodes.length) return new Map();
+  return pick(await ledgerDerived("sfgRates", allSfgRates), lotCodes);
+}
+
+async function allSfgRates(): Promise<Map<string, number | null>> {
   const lines = await rows<{ lotCode: string; lot: string; use: number }>(
-    sql`select lot_code as "lotCode", rm_lot_no as lot, sum(total_use)::float8 as use from erp_sfg_lines
-         ${lotCodes ? sql`where lot_code in ${lotCodes}` : sql``} group by 1, 2`,
+    sql`select lot_code as "lotCode", rm_lot_no as lot, sum(total_use)::float8 as use from erp_sfg_lines group by 1, 2`,
+    db,
+    false,
   );
   const rmLotNos = [...new Set(lines.map((l) => l.lot))];
   const rm = new Map((rmLotNos.length ? await rmLots(db, { lots: rmLotNos }) : []).map((l) => [l.lotNo, l.ratePaise]));
@@ -414,12 +445,15 @@ const fgKey = (fg: string, lot: string) => `${fg}|${lot}`;
 /** The rate of these FG lot codes (every lot, with no list), from their filling records' costing. */
 export async function fgRates(lotCodes?: string[]): Promise<Map<string, { ratePaise: number | null; perCanPaise: number | null }>> {
   if (lotCodes && !lotCodes.length) return new Map();
+  return pick(await ledgerDerived("fgRates", allFgRates), lotCodes, (k) => k.slice(k.indexOf("|") + 1));
+}
+
+async function allFgRates(): Promise<Map<string, { ratePaise: number | null; perCanPaise: number | null }>> {
   const fills = await rows<Row>(sql`
       select f.finished_good_id as fg, f.lot_code as lot, f.sfg_lot_code as "sfgLot", f.can_size::float8 as "canSize",
              f.cans, f.can_adjusted as "canAdjusted", f.packing_type as "packingType", m.price_paise::float8 as "packingRate"
         from erp_fg_fills f left join erp_raw_materials m on m.id = f.can_use_id
-       ${lotCodes ? sql`where f.lot_code in ${lotCodes}` : sql``}
-    `);
+    `, db, false);
   const sfg = await sfgRates([...new Set(fills.map((f) => String(f.sfgLot)))]);
   const acc = new Map<string, { cost: number; cans: number; litres: number; basis: string; unknown: boolean }>();
   for (const f of fills) {
@@ -523,14 +557,19 @@ export type PackLot = {
 };
 
 /** The costing of these packing batches (every batch, with no list): FG lot rates for their cans plus their boxes, paid once. */
-export async function packBatchCosting(batchNos?: string[]): Promise<Map<string, { amountPaise: number | null; cans: number; boxes: number; lines: Map<string, number | null> }>> {
+export async function packBatchCosting(batchNos?: string[]): Promise<Map<string, PackCosting>> {
   if (batchNos && !batchNos.length) return new Map();
+  return pick(await ledgerDerived("packBatchCosting", allPackBatchCosting), batchNos);
+}
+
+type PackCosting = { amountPaise: number | null; cans: number; boxes: number; lines: Map<string, number | null> };
+
+async function allPackBatchCosting(): Promise<Map<string, PackCosting>> {
   const lines = await rows<Row>(sql`
       select l.id, l.batch_no as "batchNo", l.finished_good_id as fg, l.fg_lot_code as lot, l.cans, l.boxes,
              pk.empty_boxes_required as "emptyBoxes", pk.box_rate_paise::float8 as "boxRate"
         from erp_pack_lines l left join erp_product_packing pk on pk.product_id = l.sku_id
-       ${batchNos ? sql`where l.batch_no in ${batchNos}` : sql``}
-    `);
+    `, db, false);
   const rates = await fgRates([...new Set(lines.map((l) => String(l.lot)))]);
   const by = new Map<string, Row[]>();
   for (const l of lines) {
@@ -538,7 +577,7 @@ export async function packBatchCosting(batchNos?: string[]): Promise<Map<string,
     a.push(l);
     by.set(String(l.batchNo), a);
   }
-  const out = new Map<string, { amountPaise: number | null; cans: number; boxes: number; lines: Map<string, number | null> }>();
+  const out = new Map<string, PackCosting>();
   for (const [batch, ls] of by) {
     const first = ls[0];
     const boxes = num(first.boxes);

@@ -24,10 +24,16 @@ export default async function ErpLayout({ children }: { children: React.ReactNod
   const ctx = await requireErpApp();
   /* The header, the switcher and the bell are always the person SIGNED IN —
      a preview changes whose ERP is drawn, never who is looking at it. */
-  const [apps, ownHat, counts, config, askState, notifications, canPreview] = await Promise.all([
+  /* THE BADGES ARE NOT WAITED FOR. They are forty-odd reads — the re-order
+     planner and the open order book among them — and the shell, the sidebar
+     and the screen need none of them to be drawn. Awaited here they held every
+     full load, and every refresh after a save, until the slowest badge had been
+     counted. They travel as a promise and fill in when it lands, the way the
+     CRM dashboard paints its header before its figures. */
+  const counts: Promise<Record<string, number>> = withReadMemo(() => erpNavCounts(ctx)).catch(() => ({}));
+  const [apps, ownHat, config, askState, notifications, canPreview] = await Promise.all([
     listUserApps(ctx.actor.id),
     hatForHeader(ctx.actor, "erp"),
-    withReadMemo(() => erpNavCounts(ctx)),
     getConfig(),
     featureState("ask", true),
     listNotifications(ctx.actor.id),
@@ -38,17 +44,14 @@ export default async function ErpLayout({ children }: { children: React.ReactNod
   const hat = ctx.designation && !ctx.viewingAs ? { ...ownHat, label: ctx.designation } : ownHat;
   const previewTargets = canPreview ? await erpPreviewTargets() : null;
 
+  const held = ERP_GROUPS.flatMap((g) => g.screens.filter((s) => s.built && ctx.screens.has(s.key)));
+  /* A screen with tabs carries the work waiting on any of them: the Transport
+     screen's badge is its Pending LR count. By href, which is what a nav row is. */
+  const badges = counts.then((c) => Object.fromEntries(held.map((s) => [erpHref(s), erpKeysOf(s).reduce((n, k) => n + (c[k] ?? 0), 0)])));
   const nav: NavGroup[] = ERP_GROUPS.map((g) => {
     const screens = g.screens
       .filter((s) => s.built && ctx.screens.has(s.key))
-      .map((s) => ({
-        key: s.key,
-        label: s.label,
-        href: erpHref(s),
-        /* A screen with tabs carries the work waiting on any of them: the
-           Transport screen's badge is its Pending LR count. */
-        count: erpKeysOf(s).reduce((n, k) => n + (counts[k] ?? 0), 0),
-      }));
+      .map((s) => ({ key: s.key, label: s.label, href: erpHref(s) }));
     return {
       id: g.id,
       label: g.label,
@@ -65,6 +68,7 @@ export default async function ErpLayout({ children }: { children: React.ReactNod
   return (
     <ErpShell
       nav={nav}
+      badges={badges}
       user={{ name: ctx.actor.name, email: ctx.actor.email, phone: ctx.actor.phone, initials: initialsOf(ctx.actor.name), role: ctx.actor.role }}
       hat={hat}
       godowns={ctx.assignedGodowns.map((g) => ({ id: g.id, name: g.name }))}

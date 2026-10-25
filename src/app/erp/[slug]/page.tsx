@@ -8,6 +8,7 @@ import { LIST_QUERY_KEYS, pageOf, parseListQuery } from "@/lib/erp/list-query";
 import { FLAG } from "@/lib/erp/ui";
 import { withReadMemo } from "@/lib/erp/read-memo";
 import { scopeFor, windowInfo } from "@/lib/erp/window";
+import { lightPage, lightRow, lightSpec } from "@/lib/erp/lazy-forms";
 
 /**
  * Every list screen in the ERP. The screen's module on the server decides the
@@ -53,20 +54,23 @@ export default async function ErpScreenPage({
      rows it draws and what it needs to say about the rest. A register is also
      READ through its window (`window.ts`): only the period's rows are built. */
   const query = parseListQuery(raw);
-  const scope = scopeFor(mod.window, query, sp.open ?? null);
+  /* `defer`: a heavy New form is not built for a page that would leave it on the server anyway. */
+  const scope = { ...scopeFor(mod.window, query, sp.open ?? null), forms: "defer" as const };
   const [{ spec, rows, tooWide }, { tabs, toggle, sections }] = await withReadMemo(() => Promise.all([mod.load(ctx, scope), screenTabs(ctx, screen, key)]));
   /* A dashboard tile opens its list pre-filtered: `f` is the ids it counted,
      `fl` what to call them. */
   const filter = sp.f ? { label: sp.fl ?? "Filtered", ids: sp.f.split(",") } : null;
-  const page = { ...pageOf(spec, rows, query, FLAG), ...(mod.window ? { window: windowInfo(mod.window, scope, tooWide ?? null) } : {}) };
+  /* Heavy forms stay on the server until somebody opens one (`lazy-forms.ts`). */
+  const page = lightPage(mod, { ...pageOf(spec, rows, query, FLAG), ...(mod.window ? { window: windowInfo(mod.window, scope, tooWide ?? null) } : {}) });
   /* A folded lot opens too: its id is under its total, not at the top of the list. */
-  const openRow = sp.open ? (rows.flatMap((r) => [r, ...(r.sub ?? [])]).find((r) => r.id === sp.open) ?? null) : null;
+  const found = sp.open ? (rows.flatMap((r) => [r, ...(r.sub ?? [])]).find((r) => r.id === sp.open) ?? null) : null;
+  const openRow = found ? lightRow(mod, found) : null;
 
   return (
     <ListScreen
       key={`${key}|${sp.open ?? ""}|${sp.f ?? ""}`}
       initialNew={initialNew}
-      spec={spec}
+      spec={lightSpec(spec)}
       rows={page.rows}
       server={{ ...page, query }}
       openRow={openRow}

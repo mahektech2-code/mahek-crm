@@ -19,6 +19,7 @@ import {
 import { err, fieldErr, okVoid, type Result } from "@/lib/result";
 import type { ErpContext } from "../access";
 import { erpAudit, erpId, int, nextNumber, num, paise, rupeesField, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
+import { newFormIn } from "../lazy-forms";
 import type { ActionSpec, BulkSpec, CellValue, FieldSpec, FormSpec, ListRow } from "../ui";
 import { fd, inr, nf } from "../ui";
 import {
@@ -42,7 +43,7 @@ import {
 import { fgLevelAvailable, fgLots, fgRates, lockLot, packBatchCosting, packLots } from "../stock";
 import { erpOrdersLive, orderNosOf, syncBookOrders } from "../book";
 import { erpLink } from "../registry";
-import { readOnceKeyed } from "../read-memo";
+import { pageMap, readOnceKeyed } from "../read-memo";
 import { monthWindow } from "../period";
 import { type LoadScope, tooWide, unscoped, windowWhere } from "../window";
 import { issuedCreditNotes } from "./complaints";
@@ -79,7 +80,12 @@ const DUE_WORD: Record<NonNullable<Due>, string> = { today: "Dispatch today", to
 
 type Sku = { id: string; name: string; fgId: string | null; cpb: number; litresPerCan: number; weightKg: number | null; boxType: string | null; empty: number };
 
-async function skuCatalogue(): Promise<Map<string, Sku>> {
+/* The catalogue and the price book are the same for every line on a page and are asked for by each sales reading; read once per page. */
+function skuCatalogue(): Promise<Map<string, Sku>> {
+  return readOnceKeyed("erp.skuCatalogue", readSkuCatalogue);
+}
+
+async function readSkuCatalogue(): Promise<Map<string, Sku>> {
   const rows = (await db.execute(sql`
     select p.id, p.name, p.finished_good_id as "fgId", p.cans_per_box as cpb,
            coalesce(p.millilitres_per_can, fg.millilitres)::float8 / 1000 as "litresPerCan",
@@ -101,7 +107,13 @@ const isBoxed = (s: Sku) => s.empty > 0;
  * looks up by FG product. The rate is the list's ex-GST rate, because order
  * details adds GST on top (decision recorded in the phase 4 PR).
  */
-async function priceBook(): Promise<(tag: string | null, sku: Sku | undefined) => { ratePaise: number | null; discountBp: number | null }> {
+type PriceBook = (tag: string | null, sku: Sku | undefined) => { ratePaise: number | null; discountBp: number | null };
+
+function priceBook(): Promise<PriceBook> {
+  return readOnceKeyed("erp.priceBook", readPriceBook);
+}
+
+async function readPriceBook(): Promise<PriceBook> {
   const lists = await db
     .select({ id: priceLists.id, name: priceLists.name, from: priceLists.effectiveFrom, status: priceLists.status })
     .from(priceLists)
@@ -277,8 +289,26 @@ async function readLines(f: LineFilter): Promise<OrderLine[]> {
   return out;
 }
 
-/** The customers these lines name — never the whole customer book. */
+/** The customers these lines name — never the whole customer book, and within a page never one read twice. */
 async function customersById(ids: string[]): Promise<Map<string, CustomerRow>> {
+  const known = pageMap<Promise<CustomerRow | undefined>>("erp.customersById");
+  if (!known) return readCustomersById(ids);
+  const missing = [...new Set(ids)].filter((id) => !known.has(id));
+  if (missing.length) {
+    const got = readCustomersById(missing);
+    for (const id of missing) known.set(id, got.then((m) => m.get(id)));
+    got.catch(() => missing.forEach((id) => known.delete(id)));
+  }
+  const found = await Promise.all(ids.map((id) => known.get(id)));
+  const out = new Map<string, CustomerRow>();
+  ids.forEach((id, i) => {
+    const c = found[i];
+    if (c) out.set(id, c);
+  });
+  return out;
+}
+
+async function readCustomersById(ids: string[]): Promise<Map<string, CustomerRow>> {
   const out = new Map<string, CustomerRow>();
   for (let i = 0; i < ids.length; i += 1000) for (const c of await loadCustomers(inArray(customers.id, ids.slice(i, i + 1000)))) out.set(c.id, c);
   return out;
@@ -591,7 +621,7 @@ function orderList(scope: Scope): ScreenModule {
           readOnly: labels,
           sortDefault: labels ? ["sku", 1] : undefined,
           bulk: bulk.length ? bulk : undefined,
-          newForm: labels ? undefined : await orderForm(ctx),
+          ...(labels ? {} : await newFormIn(s, () => orderForm(ctx))),
           newLabel: "New order",
           noDataLine:
             scope === "orders"

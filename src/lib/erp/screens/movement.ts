@@ -19,6 +19,7 @@ import { err, fieldErr, ok, okVoid, type Result } from "@/lib/result";
 import { getConfig } from "@/lib/config/store";
 import type { ErpContext } from "../access";
 import { erpAudit, erpId, num, stampLine, text, type ScreenModule } from "../server";
+import { newFormIn } from "../lazy-forms";
 import { tooWide, unscoped, windowWhere } from "../window";
 import type { ActionSpec, ColSpec, FormSpec, ListRow } from "../ui";
 import { nf } from "../ui";
@@ -187,7 +188,7 @@ const transfers: ScreenModule = {
         groups: ["date", "from"],
         godownKey: "from",
         download: true,
-        newForm: await transferForm(ctx),
+        ...(await newFormIn(s, () => transferForm(ctx))),
         newLabel: "New transfer",
         noDataLine: "No transfers yet.",
       },

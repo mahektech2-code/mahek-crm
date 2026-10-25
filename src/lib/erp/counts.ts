@@ -105,15 +105,28 @@ export async function logisticsCounts() {
 
 /**
  * The work waiting on each list, by module key: the sidebar badge of a screen
- * is the sum over its tabs, and each tab draws its own. Asked once per request
- * — the layout and the page share the answer.
+ * is the sum over its tabs, and each tab draws its own. Asked once per request.
  */
-export const erpNavCounts = cache(navCounts);
+export const erpNavCounts = cache((ctx: ErpContext) => navCounts(ctx, null));
 
-async function navCounts(ctx: ErpContext): Promise<Record<string, number>> {
+/**
+ * ONLY THE COUNTS A TAB STRIP DRAWS. A screen's tabs carry their own badges,
+ * and they used to be read off the whole sidebar's — every badge in the ERP,
+ * the re-order planner and the open order book among them, forty-odd
+ * statements — on every tab click, to label four tabs. Most strips draw no
+ * count at all (Stock's four), and a click on one now reads nothing. Each
+ * figure is still the job the sidebar runs, so a tab and its badge cannot
+ * disagree. `keys` is the strip's module keys, comma-joined, so a request
+ * asking twice asks once.
+ */
+export const erpCountsFor = cache((ctx: ErpContext, keys: string) => navCounts(ctx, new Set(keys.split(","))));
+
+async function navCounts(ctx: ErpContext, only: ReadonlySet<string> | null): Promise<Record<string, number>> {
   const out: Record<string, number> = {};
   const jobs: Promise<void>[] = [];
-  if (ctx.screens.has("requisitions") || ctx.screens.has("purchaseOrders"))
+  /* Whether a job is wanted: always for the sidebar, and for a tab strip only when it draws one of the keys the job fills. */
+  const wants = (...keys: string[]) => !only || keys.some((k) => only.has(k));
+  if (wants("requisitions", "purchaseOrders") && (ctx.screens.has("requisitions") || ctx.screens.has("purchaseOrders")))
     jobs.push(
       import("./screens/purchase-flow").then(async ({ purchaseFlowCounts }) => {
         const c = await purchaseFlowCounts(ctx);
@@ -121,22 +134,22 @@ async function navCounts(ctx: ErpContext): Promise<Record<string, number>> {
         if (ctx.screens.has("purchaseOrders")) out.purchaseOrders = c.purchaseOrders;
       }),
     );
-  if (ctx.screens.has("inward")) jobs.push(inwardAwaitingIds().then((x) => void (out.inward = x.length)));
-  if (ctx.screens.has("testing")) jobs.push(testsAwaitingIds().then((x) => void (out.testing = x.length)));
-  if (ctx.screens.has("register") && ctx.powers.has("viewPurchaseMoney"))
+  if (wants("inward") && ctx.screens.has("inward")) jobs.push(inwardAwaitingIds().then((x) => void (out.inward = x.length)));
+  if (wants("testing") && ctx.screens.has("testing")) jobs.push(testsAwaitingIds().then((x) => void (out.testing = x.length)));
+  if (wants("register") && ctx.screens.has("register") && ctx.powers.has("viewPurchaseMoney"))
     jobs.push(rateMissingIds().then((x) => void (out.register = x.length)));
-  if (ctx.screens.has("packBatches")) jobs.push(incompletePackIds().then((x) => void (out.packBatches = x.length)));
-  if (ctx.screens.has("reorderRm")) jobs.push(rmReorderRows().then((x) => void (out.reorderRm = x.length)));
-  if (ctx.screens.has("reorderFg")) jobs.push(fgReorderRows().then((x) => void (out.reorderFg = x.length)));
-  if (ctx.screens.has("pendingOrders") || ctx.screens.has("readyOrders"))
+  if (wants("packBatches") && ctx.screens.has("packBatches")) jobs.push(incompletePackIds().then((x) => void (out.packBatches = x.length)));
+  if (wants("reorderRm") && ctx.screens.has("reorderRm")) jobs.push(rmReorderRows().then((x) => void (out.reorderRm = x.length)));
+  if (wants("reorderFg") && ctx.screens.has("reorderFg")) jobs.push(fgReorderRows().then((x) => void (out.reorderFg = x.length)));
+  if (wants("pendingOrders", "readyOrders") && (ctx.screens.has("pendingOrders") || ctx.screens.has("readyOrders")))
     jobs.push(
       salesCounts().then((c) => {
         out.pendingOrders = c.pending.length;
         out.readyOrders = c.toAllocate.length;
       }),
     );
-  if (ctx.screens.has("orderDetails")) jobs.push(unverifiedIds().then((x) => void (out.orderDetails = x.length)));
-  if (["pendingLr", "requests", "expenses"].some((k) => ctx.screens.has(k)))
+  if (wants("orderDetails") && ctx.screens.has("orderDetails")) jobs.push(unverifiedIds().then((x) => void (out.orderDetails = x.length)));
+  if (wants("pendingLr", "trackLr", "lrMessages", "requests", "expenses") && ["pendingLr", "requests", "expenses"].some((k) => ctx.screens.has(k)))
     jobs.push(
       logisticsCounts().then((c) => {
         if (ctx.screens.has("pendingLr")) {
@@ -149,18 +162,18 @@ async function navCounts(ctx: ErpContext): Promise<Record<string, number>> {
       }),
     );
   /* The dispatch desk's badge is overrides somebody is waiting on; Boxes' is boxes on the shelf with no label yet; QC waiting sits on SFG batches beside incomplete packing. */
-  if (ctx.screens.has("dispatch") && ctx.powers.has("dispatchOverride"))
+  if (wants("dispatch") && ctx.screens.has("dispatch") && ctx.powers.has("dispatchOverride"))
     jobs.push((db.execute(sql`select count(*)::int as n from erp_dispatch_overrides where status = 'Pending'`) as unknown as Promise<{ n: number }[]>).then((r) => void (out.dispatch = Number(r[0]?.n ?? 0))));
-  if (ctx.screens.has("units"))
+  if (wants("units") && ctx.screens.has("units"))
     jobs.push((db.execute(sql`select count(*)::int as n from erp_units where status = 'available' and label_printed_at is null`) as unknown as Promise<{ n: number }[]>).then((r) => void (out.units = Number(r[0]?.n ?? 0))));
-  if (ctx.screens.has("sfgBatches") && ctx.powers.has("approveSfgQc"))
+  if (wants("sfgBatches") && ctx.screens.has("sfgBatches") && ctx.powers.has("approveSfgQc"))
     jobs.push(
       (db.execute(sql`select count(distinct l.lot_code)::int as n from erp_sfg_lines l left join erp_sfg_qc q on q.lot_code = l.lot_code where coalesce(q.status, 'Pending') = 'Pending'`) as unknown as Promise<{ n: number }[]>).then(
         (r) => void (out.sfgBatches = Number(r[0]?.n ?? 0)),
       ),
     );
   /* Inventory accuracy: counts due, red flags still open, and — for whoever approves them — adjustments waiting. */
-  if (["countTasks", "stockFlags", "stockAdjustments"].some((k) => ctx.screens.has(k)))
+  if (wants("countTasks", "stockFlags", "stockAdjustments") && ["countTasks", "stockFlags", "stockAdjustments"].some((k) => ctx.screens.has(k)))
     jobs.push(
       (db.execute(sql`
         select (select count(*) from erp_stock_counts where status = 'open' and due_date <= (now() at time zone ${APP_TIMEZONE})::date)::int as due,
@@ -173,7 +186,7 @@ async function navCounts(ctx: ErpContext): Promise<Record<string, number>> {
       }),
     );
   /* Empty drums: drums whose owner nobody has recorded, corrections waiting for an approver, and receipts not yet matched. */
-  if (["drumReview", "drumAdjustments", "cashReceipts"].some((k) => ctx.screens.has(k)))
+  if (wants("drumReview", "drumAdjustments", "cashReceipts") && ["drumReview", "drumAdjustments", "cashReceipts"].some((k) => ctx.screens.has(k)))
     jobs.push(
       (db.execute(sql`
         select (select count(*) from erp_empty_drums where status = 'review')::int as review,
@@ -187,7 +200,7 @@ async function navCounts(ctx: ErpContext): Promise<Record<string, number>> {
       }),
     );
   /* Petty Cash: what waits for the accountant — expenses to review and bank lines nothing explains — and advances whose bills are late. */
-  if (ctx.screens.has("moneyReview"))
+  if (wants("moneyReview", "bankLines", "advances") && ctx.screens.has("moneyReview"))
     jobs.push(
       (db.execute(sql`
         select (select count(*) from erp_money_txns where status = 'active' and review = 'to_review')::int as review,
@@ -203,7 +216,7 @@ async function navCounts(ctx: ErpContext): Promise<Record<string, number>> {
       }),
     );
   /* Material returns: returns waiting for an approver, outwards prepared and not confirmed, and material waiting in quarantine for QC. */
-  if (["vendorReturns", "returnOutwards", "returnQc"].some((k) => ctx.screens.has(k)))
+  if (wants("vendorReturns", "returnOutwards", "returnQc") && ["vendorReturns", "returnOutwards", "returnQc"].some((k) => ctx.screens.has(k)))
     jobs.push(
       (db.execute(sql`
         select (select count(*) from erp_purchase_returns where status = 'pending')::int as approve,

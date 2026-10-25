@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { NavLink } from "@/components/shell/nav-link";
 import { stamp } from "@/lib/format";
 import { erpLink } from "@/lib/erp/registry";
 import { notFound, redirect } from "next/navigation";
@@ -63,12 +63,12 @@ export default async function ConsignmentPage({ params }: { params: Promise<{ id
       sub={`${PHASE_LABEL[c.phase]} · ${STAGE_SHORT[STAGES[stageStep(c.stage)]]}`}
       actions={
         <PageLinks>
-          <Link href={erpLink("transport")} className={linkClass()}>
+          <NavLink href={erpLink("transport")} className={linkClass()}>
             ← Logistics
-          </Link>
-          <Link href={erpTraceHref(orderTraceCode(c.orderNo))} className={linkClass()}>
+          </NavLink>
+          <NavLink href={erpTraceHref(orderTraceCode(c.orderNo))} className={linkClass()}>
             Trace
-          </Link>
+          </NavLink>
         </PageLinks>
       }
     >
@@ -99,11 +99,11 @@ export default async function ConsignmentPage({ params }: { params: Promise<{ id
             <Card className="px-4 py-3 text-sm">
               {c.phase === "toTransport" ? (
                 <>
-                  On its way to the transporter. <Link href={erpLink("toTransport")} className={linkClass()}>Plan or mark it reached on To transporter →</Link>
+                  On its way to the transporter. <NavLink href={erpLink("toTransport")} className={linkClass()}>Plan or mark it reached on To transporter →</NavLink>
                 </>
               ) : (
                 <>
-                  At the transporter, waiting for its LR. <Link href={erpLink("pendingLr")} className={linkClass()}>Attach it on the LR desk →</Link>
+                  At the transporter, waiting for its LR. <NavLink href={erpLink("pendingLr")} className={linkClass()}>Attach it on the LR desk →</NavLink>
                 </>
               )}
             </Card>

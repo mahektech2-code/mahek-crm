@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { NavLink } from "@/components/shell/nav-link";
 import { Icon } from "@/components/shell/icons";
 import { Card, cx, Td, Th, Tr } from "@/components/ui/primitives";
 import { CardGrid } from "@/components/ui/card-grid";
@@ -26,7 +26,7 @@ export function SectionNav({ sections }: { sections: Tab[] }) {
   return (
     <nav aria-label="Petty Cash sections" className="mb-5 flex flex-wrap items-center gap-2 border-b border-line">
       {sections.map((t) => (
-        <Link
+        <NavLink
           key={t.key}
           href={t.href}
           aria-current={t.active ? "page" : undefined}
@@ -40,7 +40,7 @@ export function SectionNav({ sections }: { sections: Tab[] }) {
           </span>
           {t.label}
           {t.count ? <span className={cx("rounded-full px-2 text-xs leading-5 font-semibold tabular-nums", t.active ? "bg-brand text-white" : "bg-divider text-body")}>{t.count}</span> : null}
-        </Link>
+        </NavLink>
       ))}
     </nav>
   );
@@ -51,7 +51,7 @@ export function SubTabs({ tabs, aside }: { tabs: Tab[]; aside?: React.ReactNode 
   return (
     <nav aria-label="Petty Cash tabs" className="flex flex-wrap items-center gap-1 border-b border-line px-3">
       {tabs.map((t) => (
-        <Link
+        <NavLink
           key={t.key}
           href={t.href}
           aria-current={t.active ? "page" : undefined}
@@ -62,7 +62,7 @@ export function SubTabs({ tabs, aside }: { tabs: Tab[]; aside?: React.ReactNode 
         >
           {t.label}
           {t.count != null && t.count > 0 ? <span className="rounded-full bg-divider px-2 text-xs leading-5 font-semibold text-body tabular-nums">{nf(t.count)}</span> : null}
-        </Link>
+        </NavLink>
       ))}
       <span className="flex-1" />
       {aside}
@@ -536,13 +536,13 @@ export function AdvancePage({
             <div className="text-right text-sm text-muted">
               Issued {fd(a.issuedOn)} · {a.issueTxn?.from ?? "—"} · {a.issueTxn?.label ?? ""}
               <div className="mt-2 flex justify-end gap-3">
-                <Link href={backHref} className="text-sm font-semibold text-brand hover:underline">
+                <NavLink href={backHref} className="text-sm font-semibold text-brand hover:underline">
                   ← All advances
-                </Link>
+                </NavLink>
                 {a.status === "open" && canWrite ? (
-                  <Link href={billsHref} className="text-sm font-semibold text-brand hover:underline">
+                  <NavLink href={billsHref} className="text-sm font-semibold text-brand hover:underline">
                     Submit bills
-                  </Link>
+                  </NavLink>
                 ) : null}
               </div>
             </div>
@@ -744,7 +744,7 @@ export function BankView({ b, tab, hrefFor, approver, accounts }: { b: BankData;
     <div className="grid gap-5">
       <div className="flex flex-wrap items-center gap-3">
         {b.accounts.map((a) => (
-          <Link
+          <NavLink
             key={a.id}
             href={hrefFor({ acct: a.id, line: null })}
             className={cx("flex items-center gap-3 rounded-card border bg-surface px-4 py-2.5", a.id === b.account.id ? "border-2 border-brand" : "border-line hover:border-muted")}
@@ -757,7 +757,7 @@ export function BankView({ b, tab, hrefFor, approver, accounts }: { b: BankData;
               </span>
               <span className="block text-sm text-muted">{a.unmatched ? `${a.unmatched} unmatched` : `all matched${a.lastMatched ? ` to ${fd(a.lastMatched)}` : ""}`}</span>
             </span>
-          </Link>
+          </NavLink>
         ))}
         <span className="flex-1" />
         {approver ? <ImportStatement accounts={b.accounts.map((a) => a.name)} current={b.account.name} /> : null}
@@ -841,9 +841,9 @@ export function BankView({ b, tab, hrefFor, approver, accounts }: { b: BankData;
                 ) : null}
                 <div className="mt-4 border-t border-divider pt-4 text-sm leading-6 text-muted">
                   Nothing represents it?{" "}
-                  <Link href={erpLink("bankLines", { open: sel.id })} className="font-semibold text-brand hover:underline">
+                  <NavLink href={erpLink("bankLines", { open: sel.id })} className="font-semibold text-brand hover:underline">
                     Create transaction from this line
-                  </Link>
+                  </NavLink>
                   <div>Only offered when no match exists · the accountant only</div>
                 </div>
               </>
@@ -861,7 +861,7 @@ export function BankView({ b, tab, hrefFor, approver, accounts }: { b: BankData;
                       {l.description} → <b className="text-ink">{MONEY_KIND_LABEL[c!.t.kind]}</b> <span className="font-mono text-brand">{c!.t.label.slice(-5)}</span>
                       {c!.score !== "exact" && c!.t.amountPaise !== l.debitPaise + l.creditPaise ? <span className="text-muted"> {inr(c!.t.amountPaise)} ≠ {inr(l.debitPaise + l.creditPaise)}</span> : null}
                     </span>
-                    {approver ? c!.score === "near" ? <Link href={hrefFor({ line: l.id })} className="font-semibold text-brand hover:underline">Review</Link> : <MatchLink lineId={l.id} txnId={c!.t.id} /> : null}
+                    {approver ? c!.score === "near" ? <NavLink href={hrefFor({ line: l.id })} className="font-semibold text-brand hover:underline">Review</NavLink> : <MatchLink lineId={l.id} txnId={c!.t.id} /> : null}
                   </div>
                 ))}
               </div>
