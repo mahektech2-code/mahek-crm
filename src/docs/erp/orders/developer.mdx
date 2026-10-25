@@ -59,7 +59,9 @@ Which lines each tab shows:
 
 <Code file="src/lib/erp/screens/sales.ts" symbol="priceBook" collapsed />
 
-`saveOrder` takes the typed rate only from a holder of `viewSalesRate` and the typed discount only from a holder of `viewSalesAmounts`; otherwise the price list decides.
+`priceBook` resolves each party's list with `resolvePriceList` — the Accounts app's own rule, over `activeScopesAndLists` and `geographyOf` from `price-list-service.ts` — and never reads `customers.price_tag`. The order form carries the answer as fills, not data: the `priceList` header field is filled from `billing`, and each line's `rate` from `priceList` and `sku` (`otherwise: ""` clears it on a party or SKU with no rate). A header fill moves the line fields that read it, and `withFills` applies the same fills to a form that opens with its party picked ("Add to order", a drafted order).
+
+`saveOrder` takes the typed rate only from a holder of `viewSalesRate`; otherwise, or where the box is blank, the list's rate. The discount is only ever typed, by a holder of `viewSalesAmounts`.
 
 ## Ready
 
@@ -147,7 +149,7 @@ Accepting a draft is `draftForm(orderForm(ctx), id)`: the ordinary order form wi
 | Suite | File | What it pins |
 |---|---|---|
 | `npm run test` | `src/lib/erp/engines/sales.test.ts` | Order type, whole boxes, label count, allocation state, bill figures, lot costing and margin, `readyStockCheck` spending in order |
-| `npm run test:integration` | `src/lib/erp/erp-sales.test.ts` | Boxes must be whole; rate and discount from the price list; no rate without the power; Ready refused without stock; allocation only once Ready and never past need or lot stock; Bill it in one step; dispatch verification freezes lots; the bill arithmetic; dispatch-on wording; releasing an allocation |
+| `npm run test:integration` | `src/lib/erp/erp-sales.test.ts` | Boxes must be whole; the rate from the list Accounts applies, never the tag; a dash borrows no rate; no list, no rate, and a typed one kept; list discounts shown, not applied; the form's fills; no rate without the power; Ready refused without stock; allocation only once Ready and never past need or lot stock; Bill it in one step; dispatch verification freezes lots; the bill arithmetic; dispatch-on wording; releasing an allocation |
 | `npm run test:integration` | `src/lib/erp/erp-ai-reading.test.ts` — `orders from messages (AI-2)` | The sender's number finds the customer, past purchases break a tie, *peti* become cans; unclear lines are left to choose |
 | `npm run test:integration` | `src/lib/erp/erp-traceability.test.ts` | Mark dispatch-verified waits for every box |
 

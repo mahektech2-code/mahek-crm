@@ -8,7 +8,7 @@ import type { ErpContext } from "./access";
 import { decideSuggestion, featureState, logSuggestion, readText } from "./ai";
 import { bestMatches, toCans } from "./engines/match";
 import { erpId } from "./server";
-import type { FormSpec, Tone } from "./ui";
+import { withFills, type FormSpec, type Tone } from "./ui";
 
 /* ---------------------------------------------------------------------------
  * AI-2: an order from a pasted or spoken message, or a WhatsApp reply. The
@@ -122,7 +122,8 @@ export async function draftForm(base: FormSpec, inboxId: string): Promise<FormSp
     { tone: d.customerId ? "success" : "warn", text: d.customerName ? `${d.customerName} · ${d.how}` : d.how },
     ...d.lines.map((l) => ({ tone: l.tone, text: `${l.sku ?? l.mention}${l.qty != null ? ` · ${l.qty} cans` : ""} — ${l.note}${l.choices.length ? `: ${l.choices.join(" / ")}` : ""}` })),
   ];
-  return {
+  /* The party and SKUs arrive picked, so the price list and the rates are filled as a pick would fill them. */
+  return withFills({
     ...base,
     title: "Accept the drafted order",
     sub: "Drafted from the message. Check each line against it; nothing is an order until you save.",
@@ -130,7 +131,7 @@ export async function draftForm(base: FormSpec, inboxId: string): Promise<FormSp
     init: { ...base.init, billing: d.customerName ?? "", ...(d.transporter ? { transporter: d.transporter } : {}), inboxId },
     initLines: d.lines.map((l) => ({ sku: l.sku ?? "", qty: l.qty == null ? "" : String(l.qty), remark: [d.remark, l.sku ? "" : `Said: ${l.mention}`].filter(Boolean).join(" · ") })),
     evidence: { text: row.text, flags },
-  };
+  });
 }
 
 /** Called by the order save: the inbox message becomes Converted, linked to the order. */

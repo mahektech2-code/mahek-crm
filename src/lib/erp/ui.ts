@@ -100,10 +100,13 @@ export type FieldSpec = {
   /**
    * Filled in when a field it depends on changes: `{ by: ["product", "item"],
    * map: { "Nano|Toluene": "200" } }` — header and line values both count, keys
-   * joined with "|". No entry leaves the value as it was; whatever is filled
-   * stays editable. The SFG batch's quantity per batch reads the recipe this way.
+   * joined with "|". No entry leaves the value as it was, unless `otherwise`
+   * says what to put there instead; whatever is filled stays editable. A header
+   * field filled this way moves the line fields that read it, so one pick can
+   * fill a chain. The SFG batch's quantity per batch reads the recipe this way,
+   * and an order line's rate reads the billing party's price list.
    */
-  fillBy?: { by: string[]; map: Record<string, string> };
+  fillBy?: { by: string[]; map: Record<string, string>; otherwise?: string };
   when?: When;
   /** Numeric bounds, checked in the browser and again on the server. */
   min?: number;
@@ -582,6 +585,35 @@ export function cellText(col: ColSpec, v: CellValue | undefined): string {
   if (col.t === "m") return v === "" || v == null ? "—" : inr(v);
   if (col.t === "n") return v === "" || v == null ? "—" : typeof v === "number" ? nf(v) + (col.u ?? "") : String(v);
   return v == null || v === "" ? "—" : String(v);
+}
+
+/** What a field's `fillBy` puts in it for these values: its entry, else `otherwise`, else undefined — left as it was. */
+export function fillOf(f: FieldSpec, values: Record<string, string>): string | undefined {
+  if (!f.fillBy) return undefined;
+  return f.fillBy.map[f.fillBy.by.map((k) => values[k] ?? "").join("|")] ?? f.fillBy.otherwise;
+}
+
+/**
+ * A form that opens with its picks already made — "Add to order" names the
+ * party, a drafted order its party and SKUs — filled the way the dialog fills
+ * a pick as it is made. The dialog fills on a change, and these never change.
+ * Only empty values are filled; what the form was opened with stands.
+ */
+export function withFills(spec: FormSpec): FormSpec {
+  const h: Record<string, string> = { ...(spec.init ?? {}) };
+  for (const f of spec.header) {
+    const v = h[f.k] ? undefined : fillOf(f, h);
+    if (v) h[f.k] = v;
+  }
+  const initLines = spec.initLines?.map((l) => {
+    const out = { ...l };
+    for (const f of spec.line ?? []) {
+      const v = out[f.k] ? undefined : fillOf(f, { ...h, ...out });
+      if (v) out[f.k] = v;
+    }
+    return out;
+  });
+  return { ...spec, init: h, ...(initLines ? { initLines } : {}) };
 }
 
 /** The field as it stands for these values: `reqWhen` folded into `req`. */
