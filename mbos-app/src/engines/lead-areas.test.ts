@@ -38,3 +38,22 @@ test('a beat fills the town and the locality', () => {
   if (rule.kind !== 'pick') return;
   assert.deepEqual(rule.choices[0], { key: 'beat|sadar|nagpur', label: 'Sadar · Nagpur', city: 'Nagpur', area: 'Sadar', state: null });
 });
+
+test('a town fills itself and its state; a district asks for the town but knows the state', () => {
+  const rule = areaRule({
+    exempt: false,
+    areas: [
+      { kind: 'town', value: 'Kalyan', parent: 'Thane, Maharashtra' },
+      { kind: 'district', value: 'Pune', parent: 'Maharashtra' },
+    ],
+  });
+  assert.equal(rule.kind, 'pick');
+  if (rule.kind !== 'pick') return;
+  assert.deepEqual(
+    rule.choices.map((c) => [c.label, c.city, c.state]),
+    [
+      ['Kalyan · Thane', 'Kalyan', 'Maharashtra'],
+      ['Pune district · Maharashtra', null, 'Maharashtra'],
+    ],
+  );
+});

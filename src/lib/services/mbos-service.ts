@@ -29,6 +29,7 @@ import {
   territoryClause,
   type Territory,
 } from "./territory-service";
+import { territoryName } from "../territory-rules";
 import { policyForDate, resolveSubject } from "./expense-policy-service";
 import { policySetForUser } from "./expense-policy-set-service";
 import { describeRule } from "../expense-rule-forms";
@@ -943,7 +944,7 @@ export function mbosTerritoryState(
     areas: territories.map((t) => ({ kind: t.kind, value: t.value, parent: t.parent ?? null })),
     /* The narrowest name of each branch, which is what somebody recognises:
        "Pune" rather than "Maharashtra, Pune" on a chip a phone has to fit. */
-    places: [...new Set(working.map((t) => t.value))].sort((a, b) => a.localeCompare(b)),
+    places: [...new Set(working.map(territoryName))].sort((a, b) => a.localeCompare(b)),
   };
 }
 

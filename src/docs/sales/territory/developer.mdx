@@ -20,9 +20,9 @@ Territory is two features that share one table. The **Territory screen** (`/sale
 ## The table
 
 <DbTable name="mbos_user_territories" note={{
-  kind: "state · region · city · beat. 'region' rows are a manager's patch and are read only by managerScope.",
-  region: "The value itself — the state, city or beat name. Kept under this column name for anybody querying it.",
-  parent: "What the row was picked under. Empty means not stated — every row written before the column, read as 'this place wherever it is'.",
+  kind: "state · region · district · town · city · beat. 'region' rows are a manager's patch and are read only by managerScope. district and town are nodes of the reviewed tree.",
+  region: "The value itself — the state, district, town, city or beat name. Kept under this column name for anybody querying it.",
+  parent: "What the row was picked under — a district's state, or for a town 'District, State' (townParent). Empty means not stated — every row written before the column, read as 'this place wherever it is'.",
 }} />
 
 Unique on `(user_id, kind, region, parent)`. One table with each consumer asking for its own kinds: two tables would be two places for one region to be spelled differently.
@@ -47,7 +47,7 @@ sequenceDiagram
   UI->>A: salesmanId, territories with kind, value, parent
   A->>A: requireSalesAccess — manager, sales.people or sales.territory
   A->>A: salesmanOutsideScope — refuse another region's man
-  A->>A: drop region rows, refuse unknown kinds and parentless cities and beats
+  A->>A: drop region rows, refuse unknown kinds and places without their parent
   A->>A: prune to leaves (drop any row that is another row's parent)
   A->>DB: shopsLeavingTheBook — his book under old clause minus new
   A->>T: setWorkingTerritories (delete non-region rows, insert, rebuild holidays)

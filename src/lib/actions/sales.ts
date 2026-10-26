@@ -67,6 +67,7 @@ import {
   type Territory,
   type TerritoryKind,
 } from "@/lib/services/territory-service";
+import { territoryLeaves, territoryName } from "@/lib/territory-rules";
 import { bookIdsIgnoringTerritory } from "@/lib/services/mbos-service";
 import {
   assignableOwner,
@@ -2018,6 +2019,15 @@ export async function setSalesmanTerritories(input: {
         "validation",
       );
     }
+    /* A town names its district AND its state — see `townParent`. One naming
+       only the district would match nothing, silently. */
+    const halfTown = asked.find((t) => t.kind === "town" && !/,\s*\S/.test(t.parent));
+    if (halfTown) {
+      return err(
+        `${halfTown.value} needs its district and state — pick it under a district.`,
+        "validation",
+      );
+    }
 
     /*
      * THE NARROWEST PICK IN A BRANCH IS THE ALLOCATION, and the wider ones
@@ -2027,11 +2037,13 @@ export async function setSalesmanTerritories(input: {
      * clause would OR them and hand him the whole state — the opposite of what
      * somebody who took the trouble to pick a city meant, and invisible on
      * every screen afterwards because "Maharashtra, Pune" reads like a
-     * narrowing. So a state with cities under it is dropped, and a city with
-     * beats under it is dropped, and what is stored is the leaves.
+     * narrowing. So a state with districts or cities under it is dropped, a
+     * district with towns under it is dropped, a city with beats under it is
+     * dropped, and what is stored is the leaves. `territoryLeaves` compares
+     * whole paths, so a town under Aurangabad in Maharashtra does not prune
+     * Aurangabad district in Bihar.
      */
-    const parents = new Set(asked.map((t) => t.parent).filter(Boolean));
-    const wanted = asked.filter((t) => !parents.has(t.value));
+    const wanted = territoryLeaves(asked);
 
     const before = await territoriesFor(input.salesmanId);
     const key = (t: { kind: string; value: string; parent?: string }) =>
@@ -2071,7 +2083,7 @@ export async function setSalesmanTerritories(input: {
       input.salesmanId,
       wanted.length ? "Where you work has changed" : "Your handset has no area set",
       wanted.length
-        ? `Your handset now shows your customers in ${wanted.map((t) => t.value).join(", ")}. Everything else is still yours — it is just not on this list.`
+        ? `Your handset now shows your customers in ${wanted.map(territoryName).join(", ")}. Everything else is still yours — it is just not on this list.`
         : "No area is set for you, so your customer list will be empty until the office sets one. Nothing of yours is lost.",
       "/customers",
     );
@@ -2079,7 +2091,7 @@ export async function setSalesmanTerritories(input: {
     revalidatePath("/sales/people");
     return okVoid(
       wanted.length
-        ? `${person.name} works ${wanted.map((t) => t.value).join(", ")}.`
+        ? `${person.name} works ${wanted.map(territoryName).join(", ")}.`
         : `${person.name} has no area set, so their handset shows no customers at all.`,
     );
   } catch (e) {

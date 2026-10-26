@@ -111,6 +111,7 @@ import {
   type MbosPrincipal,
 } from "../services/mbos-service";
 import { territoriesFor } from "../services/territory-service";
+import { placeIndexFor, placeShopsNow } from "../services/place-tree-service";
 import { placeNewLead } from "../territory-rules";
 import { TERRITORY_REGION_SQL } from "../territory-sql";
 import {
@@ -5248,10 +5249,12 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
        group by 1
        order by count(*) desc
        limit 1`);
+    const territories = await territoriesFor(principal.user.id);
     const placement = placeNewLead(
-      await territoriesFor(principal.user.id),
+      territories,
       { city: p.city, area: p.area, state: p.state, bookState: book?.state ?? null },
       territoryExempt(principal),
+      await placeIndexFor(territories),
     );
     if (!placement.ok) {
       return {
@@ -5469,6 +5472,13 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
    * it. After the record, deliberately: a lead is never lost to a photograph.
    */
   await bindMbosMedia(p.shopPhotoId, "mbos_lead", item.entityId, principal.user.id);
+
+  /* Placed on the location tree now rather than by the nightly pass. A
+     district or town allocation reaches a shop through its place on the tree,
+     so an unplaced lead would leave its own salesman's handset on the very
+     next pull — the gate above let it in on the strength of that same match.
+     Never fails the write: a lead is not lost to its town not being found. */
+  if (item.op === "create") await placeShopsNow([item.entityId]);
 
   /*
    * §R — where the account began. Outside the insert's own transaction and
@@ -8637,10 +8647,12 @@ async function handleCustomerCreate(
      group by 1
      order by count(*) desc
      limit 1`);
+  const fieldTerritories = await territoriesFor(principal.user.id);
   const placement = placeNewLead(
-    await territoriesFor(principal.user.id),
+    fieldTerritories,
     { city, state: null, bookState: bookState?.state ?? null },
     true,
+    await placeIndexFor(fieldTerritories),
   );
   const territoryRegion = placement.ok ? placement.state : (bookState?.state ?? null);
 
@@ -8693,6 +8705,10 @@ async function handleCustomerCreate(
         .onConflictDoNothing();
     }
   });
+
+  /* On the location tree at once, for the reason the lead path gives: a
+     district or town allocation reaches it only through its place there. */
+  await placeShopsNow([item.entityId]);
 
   await notifyManagers(
     principal.user.id,

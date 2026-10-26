@@ -2,12 +2,14 @@
 
 import * as React from "react";
 import { areasSignature } from "@/lib/territory-signature";
+import { splitTownParent, territoryName, townParent } from "@/lib/territory-path";
 import { APP_TIMEZONE } from "@/lib/business-date";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/toast";
 import { Modal } from "@/components/ui/overlays";
+import { MultiSelect } from "@/components/ui/multi-select";
 import { setSalesmanTerritories } from "@/lib/actions/sales";
-import type { PlaceTree, Salesman, StateNode } from "@/lib/services/sales-service";
+import type { DistrictNode, PlaceTree, Salesman, StateNode } from "@/lib/services/sales-service";
 import { Button, Pill } from "@/components/console/parts";
 
 /**
@@ -26,38 +28,55 @@ import { Button, Pill } from "@/components/console/parts";
  * nobody can do it by accident — the state of "no area" is drawn as a warning
  * on this screen, counted on the one behind it, and explained on the handset.
  *
- * **IT IS A TREE, PICKED FROM THE TOP.** A city belongs to a state, so a state
- * is picked first and its own cities appear underneath it. Flat lists are what
- * this had, and on the real book that meant every city value in the country
- * under one heading — several hundred, most of them not cities at all but whole
- * postal addresses the sheet dropped into the column. Nesting does not clean
- * that and cannot; it makes it reachable, because a state's worth of it is a
- * list somebody can search and the country's is not.
+ * **STATE, THEN DISTRICT, THEN — IF YOU WANT TO — TOWN.** States and districts
+ * are two multi-selects, and every picked district opens its towns underneath
+ * to narrow it further. The districts and towns are the reviewed location tree
+ * every other list of shops narrows by. This used to offer `customers.city`
+ * under each state instead — whatever the sheet typed, several hundred values
+ * a state, most of them not towns at all but whole postal addresses — and a
+ * district is how Mahek actually divides the country.
  *
- * **The narrowest pick in a branch is the allocation.** A state with no cities
- * ticked under it means the whole state; tick one city and it means that city.
- * The wider place is then the PATH to the narrower one rather than a second
- * grant — stored as both, the clause would OR them and hand him the whole
- * state, which is the opposite of what picking a city meant. `setSalesmanTerritories`
- * does the pruning, on the server, because a server action is a URL.
+ * **The narrowest pick in a branch is the allocation.** A state with no
+ * district picked means the whole state; a district with no town ticked means
+ * the whole district. The wider place is then the PATH to the narrower one
+ * rather than a second grant — stored as both, the clause would OR them and
+ * hand him the whole state. `setSalesmanTerritories` does the pruning, on the
+ * server, because a server action is a URL.
  *
- * The places offered are the ones the BOOK uses, read off `customers` rather
- * than kept as a list of their own. A list of its own would offer a city no
- * customer is in, and a territory that matches nothing is a book that goes
- * quietly empty.
+ * **What was picked before districts existed is kept, and shown.** A typed
+ * city allocated last month goes on meaning exactly what it meant; it is
+ * listed under the states as an earlier pick he can keep or take off, never
+ * silently dropped because this dialog no longer offers its kind.
  */
 
-type Pick = { kind: "state" | "city" | "beat"; value: string; parent: string };
+type Pick = { kind: "state" | "district" | "town" | "city" | "beat"; value: string; parent: string };
 
-/** Where a city list stops being scannable and needs a search box. */
+/** Where a town list stops being scannable and needs a search box. */
 const SEARCH_ABOVE = 12;
 
+const fold = (s: string) => s.trim().toLowerCase();
+
 const same = (a: Pick, b: Pick) =>
-  a.kind === b.kind &&
-  a.value.toLowerCase() === b.value.toLowerCase() &&
-  a.parent.toLowerCase() === b.parent.toLowerCase();
+  a.kind === b.kind && fold(a.value) === fold(b.value) && fold(a.parent) === fold(b.parent);
 
 const count = (n: number) => n.toLocaleString("en-IN");
+
+/** The state a pick sits in — "" for a legacy row that never said. */
+function stateOf(p: Pick): string {
+  if (p.kind === "state") return p.value;
+  if (p.kind === "district" || p.kind === "city") return p.parent;
+  if (p.kind === "town") return splitTownParent(p.parent).state;
+  return "";
+}
+
+const districtPick = (district: string, state: string): Pick => ({
+  kind: "district",
+  value: district,
+  parent: state,
+});
+
+/** A district's value in the multi-select: two districts in two states can share a name. */
+const districtKey = (district: string, state: string) => `${state}|${district}`;
 
 export function Territories({
   salesman,
@@ -75,27 +94,27 @@ export function Territories({
   const [error, setError] = React.useState<string | null>(null);
 
   function begin() {
-    /* What is STORED is the leaves, so a city row arrives with no state row
-       beside it — and the state has to be re-ticked here or its section would
-       not draw at all. Re-deriving the path from the leaf is the inverse of the
-       pruning the action does on the way in. */
-    const stored = (salesman.territories ?? []).map((t) => ({
-      kind: t.kind as Pick["kind"],
-      value: t.value,
-      parent: t.parent ?? "",
-    }));
+    /* What is STORED is the leaves, so a town arrives with no district or
+       state row beside it — and both have to be re-ticked here or their
+       sections would not draw at all. Re-deriving the path from the leaf is
+       the inverse of the pruning the action does on the way in. */
+    const stored: Pick[] = (salesman.territories ?? [])
+      .filter((t) => t.kind !== "region")
+      .map((t) => ({ kind: t.kind as Pick["kind"], value: t.value, parent: t.parent ?? "" }));
     const path: Pick[] = [];
     for (const t of stored) {
-      if (t.kind === "city" && t.parent) {
+      if (t.kind === "district" && t.parent) {
         path.push({ kind: "state", value: t.parent, parent: "" });
       }
-      if (t.kind === "beat" && t.parent) {
-        const city = t.parent;
-        const state = places.states.find((s) =>
-          s.cities.some((c) => c.city.toLowerCase() === city.toLowerCase()),
-        );
-        path.push({ kind: "city", value: city, parent: state?.state ?? "" });
-        if (state) path.push({ kind: "state", value: state.state, parent: "" });
+      if (t.kind === "town") {
+        const { district, state } = splitTownParent(t.parent);
+        if (district && state) {
+          path.push(districtPick(district, state));
+          path.push({ kind: "state", value: state, parent: "" });
+        }
+      }
+      if (t.kind === "city" && t.parent) {
+        path.push({ kind: "state", value: t.parent, parent: "" });
       }
     }
     const all = [...stored, ...path].filter(
@@ -109,85 +128,118 @@ export function Territories({
 
   const has = (p: Pick) => picked.some((x) => same(x, p));
 
-  /** Ticking adds; unticking takes the branch below it as well. */
-  function flip(p: Pick) {
+  /** Adding is adding; taking a place away takes everything picked under it too. */
+  function drop(p: Pick) {
     setPicked((current) => {
-      if (!current.some((x) => same(x, p))) return [...current, p];
-
-      const dropped = new Set<string>([p.value.toLowerCase()]);
-      /* A state carries its cities out, and those cities carry their beats. */
-      if (p.kind === "state") {
-        for (const c of current) {
-          if (c.kind === "city" && c.parent.toLowerCase() === p.value.toLowerCase()) {
-            dropped.add(c.value.toLowerCase());
+      const gone = (x: Pick): boolean => {
+        if (same(x, p)) return true;
+        if (p.kind === "state") {
+          if (x.kind === "beat") {
+            /* A beat goes with the typed city it hangs from. */
+            return current.some(
+              (c) => c.kind === "city" && fold(c.value) === fold(x.parent) && fold(stateOf(c)) === fold(p.value),
+            );
           }
+          return x.kind !== "state" && fold(stateOf(x)) === fold(p.value);
         }
-      }
-      return current.filter(
-        (x) =>
-          !same(x, p) &&
-          !(x.parent && dropped.has(x.parent.toLowerCase())),
-      );
+        if (p.kind === "district") {
+          if (x.kind !== "town") return false;
+          const { district, state } = splitTownParent(x.parent);
+          return fold(district) === fold(p.value) && fold(state) === fold(p.parent);
+        }
+        if (p.kind === "city") return x.kind === "beat" && fold(x.parent) === fold(p.value);
+        return false;
+      };
+      return current.filter((x) => !gone(x));
     });
   }
 
-  const pickedStates = places.states.filter((s) =>
-    has({ kind: "state", value: s.state, parent: "" }),
+  function add(p: Pick) {
+    setPicked((current) => (current.some((x) => same(x, p)) ? current : [...current, p]));
+  }
+
+  const stateNode = (name: string) => places.states.find((s) => fold(s.state) === fold(name));
+
+  const pickedStates = picked
+    .filter((p) => p.kind === "state")
+    .map((p) => stateNode(p.value) ?? { state: p.value, districts: [], shops: 0, undistricted: 0 });
+
+  const districtsIn = (state: string) =>
+    picked.filter((p) => p.kind === "district" && fold(p.parent) === fold(state));
+
+  const townsIn = (district: string, state: string) =>
+    picked.filter((p) => {
+      if (p.kind !== "town") return false;
+      const at = splitTownParent(p.parent);
+      return fold(at.district) === fold(district) && fold(at.state) === fold(state);
+    });
+
+  /** Picks the tree no longer offers — a typed city or beat from before districts. */
+  const earlierIn = (state: string) =>
+    picked.filter(
+      (p) =>
+        (p.kind === "city" && fold(p.parent) === fold(state)) ||
+        (p.kind === "beat" &&
+          picked.some((c) => c.kind === "city" && fold(c.value) === fold(p.parent) && fold(c.parent) === fold(state))),
+    );
+  /* A typed city or beat that never named a state still counts — it is kept
+     and listed, it just cannot be drawn under one. */
+  const earlierNowhere = picked.filter(
+    (p) =>
+      (p.kind === "city" && !p.parent.trim()) ||
+      (p.kind === "beat" && !picked.some((c) => c.kind === "city" && fold(c.value) === fold(p.parent))),
   );
 
-  const citiesIn = (state: StateNode) =>
-    picked.filter(
-      (p) => p.kind === "city" && p.parent.toLowerCase() === state.state.toLowerCase(),
-    );
+  const districtNode = (state: StateNode, district: string) =>
+    state.districts.find((d) => fold(d.district) === fold(district));
 
   /**
-   * HOW MANY SHOPS THIS ACTUALLY REACHES, which is the only number that tells
+   * HOW MANY SHOPS THESE PLACES HOLD, which is the only number that tells
    * somebody whether they have allocated what they meant to. "Maharashtra,
-   * Pune" reads like a narrowing either way; 1,204 shops and 210 shops do not.
+   * Thane" reads like a narrowing either way; 2,352 shops and 739 do not. An
+   * earlier typed pick has no count on the tree, so it is said rather than
+   * guessed at.
    */
-  const covered = pickedStates.reduce((total, state) => {
-    const cities = citiesIn(state);
-    if (!cities.length) return total + state.shops;
-
-    return (
-      total +
-      cities.reduce((sum, c) => {
-        const node = state.cities.find(
-          (x) => x.city.toLowerCase() === c.value.toLowerCase(),
-        );
-        if (!node) return sum;
-        const beats = picked.filter(
-          (b) => b.kind === "beat" && b.parent.toLowerCase() === c.value.toLowerCase(),
-        );
-        if (!beats.length) return sum + node.shops;
-        return (
-          sum +
-          beats.reduce(
-            (bs, b) =>
-              bs +
-              (node.beats.find((x) => x.beat.toLowerCase() === b.value.toLowerCase())
-                ?.shops ?? 0),
-            0,
-          )
-        );
-      }, 0)
-    );
-  }, 0);
+  let covered = 0;
+  let uncounted = 0;
+  for (const state of pickedStates) {
+    const districts = districtsIn(state.state);
+    const earlier = earlierIn(state.state).filter((p) => p.kind === "city");
+    uncounted += earlier.length;
+    if (!districts.length && !earlier.length) {
+      covered += state.shops;
+      continue;
+    }
+    for (const d of districts) {
+      const node = districtNode(state, d.value);
+      if (!node) continue;
+      const towns = townsIn(d.value, state.state);
+      covered += towns.length
+        ? towns.reduce((sum, t) => sum + (node.towns.find((x) => fold(x.town) === fold(t.value))?.shops ?? 0), 0)
+        : node.shops;
+    }
+  }
+  uncounted += earlierNowhere.filter((p) => p.kind === "city").length;
 
   /** The sentence, in the shape somebody would say it out loud. */
-  const summary = pickedStates
-    .map((state) => {
-      const cities = citiesIn(state);
-      if (!cities.length) return `the whole of ${state.state}`;
-      const named = cities.map((c) => {
-        const beats = picked.filter(
-          (b) => b.kind === "beat" && b.parent.toLowerCase() === c.value.toLowerCase(),
-        );
-        return beats.length ? `${c.value} (${beats.map((b) => b.value).join(", ")})` : c.value;
-      });
+  const summary = [
+    ...pickedStates.map((state) => {
+      const districts = districtsIn(state.state);
+      const earlier = earlierIn(state.state).filter((p) => p.kind === "city");
+      if (!districts.length && !earlier.length) return `the whole of ${state.state}`;
+      const named = [
+        ...districts.map((d) => {
+          const towns = townsIn(d.value, state.state);
+          return towns.length
+            ? `${towns.map((t) => t.value).join(", ")} in ${d.value} district`
+            : `${d.value} district`;
+        }),
+        ...earlier.map((c) => c.value),
+      ];
       return `${named.join(", ")} in ${state.state}`;
-    })
-    .join("; ");
+    }),
+    ...earlierNowhere.filter((p) => p.kind === "city").map((c) => c.value),
+  ].join("; ");
 
   async function save() {
     setBusy(true);
@@ -211,6 +263,46 @@ export function Territories({
   }
 
   const nothing = places.states.length === 0;
+  const several = pickedStates.length > 1;
+
+  /* The districts on offer: every district of every picked state, biggest
+     first within a state. The state is named on each only when more than one
+     state is picked — with one, it is noise on every row. */
+  const districtOptions = pickedStates.flatMap((s) =>
+    s.districts.map((d) => ({
+      value: districtKey(d.district, s.state),
+      label: `${d.district}${several ? ` · ${s.state}` : ""} · ${count(d.shops)}`,
+    })),
+  );
+  const pickedDistrictKeys = picked
+    .filter((p) => p.kind === "district")
+    .map((p) => districtKey(p.value, p.parent));
+
+  function setStates(next: string[]) {
+    const now = new Set(next.map(fold));
+    for (const p of picked.filter((x) => x.kind === "state")) {
+      if (!now.has(fold(p.value))) drop(p);
+    }
+    for (const value of next) add({ kind: "state", value, parent: "" });
+  }
+
+  function setDistricts(next: string[]) {
+    const now = new Set(next);
+    for (const p of picked.filter((x) => x.kind === "district")) {
+      if (!now.has(districtKey(p.value, p.parent))) drop(p);
+    }
+    for (const key of next) {
+      const at = key.indexOf("|");
+      add(districtPick(key.slice(at + 1), key.slice(0, at)));
+    }
+  }
+
+  /* Shops a picked district cannot reach, per state, said only where a
+     district is narrowing that state — with the whole state picked they are
+     reached anyway. */
+  const unreachable = pickedStates.filter(
+    (s) => s.undistricted > 0 && districtsIn(s.state).length > 0,
+  );
 
   return (
     <>
@@ -227,7 +319,7 @@ export function Territories({
           <div className="flex items-center justify-between gap-4">
             <p className="text-[12px] text-muted">
               {picked.length
-                ? `About ${count(covered)} of ${count(salesman.customerCount ?? 0)} shops in their book`
+                ? `About ${count(covered)} shops in these places${uncounted ? `, plus ${uncounted} earlier ${uncounted === 1 ? "pick" : "picks"}` : ""} · ${count(salesman.customerCount ?? 0)} in their book`
                 : "No area picked"}
             </p>
             <div className="flex gap-2">
@@ -256,41 +348,118 @@ export function Territories({
         ) : (
           <>
             <Step n={1} title="Pick the states they cover" />
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {places.states.map((s) => (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              <MultiSelect
+                label="States"
+                triggerLabel={pickedStates.length ? "Add states" : "Pick states"}
+                everythingIsAll={false}
+                options={places.states.map((s) => ({
+                  value: s.state,
+                  label: `${s.state} · ${count(s.shops)}`,
+                }))}
+                selected={pickedStates.map((s) => s.state)}
+                onChange={setStates}
+              />
+              {pickedStates.map((s) => (
                 <Chip
                   key={s.state}
-                  on={has({ kind: "state", value: s.state, parent: "" })}
-                  onClick={() => flip({ kind: "state", value: s.state, parent: "" })}
                   label={s.state}
                   meta={count(s.shops)}
+                  onRemove={() => drop({ kind: "state", value: s.state, parent: "" })}
                 />
               ))}
             </div>
 
             <Step
               n={2}
-              title="Narrow to cities, if you want to"
-              hint="A state with nothing ticked under it means the whole state."
+              title="Narrow to districts, if you want to"
+              hint="A state with no district picked means the whole state."
             />
-
             {pickedStates.length === 0 ? (
-              <p className="mt-2 rounded-[4px] border border-dashed border-line px-3 py-4 text-center text-[13px] text-muted">
-                Pick a state above and its cities appear here.
+              <Empty>Pick a state above and its districts appear here.</Empty>
+            ) : districtOptions.length === 0 ? (
+              <p className="mt-2 text-[12px] text-muted">
+                No shop in {pickedStates.map((s) => s.state).join(" or ")} is placed in a
+                district yet, so the whole state is the only thing to allocate.
               </p>
             ) : (
-              <div className="mt-2 flex flex-col gap-3">
-                {pickedStates.map((state) => (
-                  <StateSection
-                    key={state.state}
-                    state={state}
-                    picked={picked}
-                    has={has}
-                    flip={flip}
-                  />
-                ))}
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <MultiSelect
+                  label="Districts"
+                  triggerLabel={pickedDistrictKeys.length ? "Add districts" : "Pick districts"}
+                  everythingIsAll={false}
+                  options={districtOptions}
+                  selected={pickedDistrictKeys}
+                  onChange={setDistricts}
+                />
+                {picked
+                  .filter((p) => p.kind === "district")
+                  .map((d) => (
+                    <Chip
+                      key={districtKey(d.value, d.parent)}
+                      label={several ? `${d.value} · ${d.parent}` : d.value}
+                      onRemove={() => drop(d)}
+                    />
+                  ))}
               </div>
             )}
+
+            <Step
+              n={3}
+              title="Narrow to towns, if you want to"
+              hint="A district with nothing ticked under it means the whole district."
+            />
+            {pickedStates.every((s) => !districtsIn(s.state).length) ? (
+              <Empty>Pick a district above and its towns appear here.</Empty>
+            ) : (
+              <div className="mt-2 flex flex-col gap-3">
+                {pickedStates.flatMap((s) =>
+                  districtsIn(s.state).map((d) => {
+                    const node = districtNode(s, d.value);
+                    return node ? (
+                      <DistrictSection
+                        key={districtKey(d.value, s.state)}
+                        state={s.state}
+                        district={node}
+                        picked={townsIn(d.value, s.state)}
+                        has={has}
+                        add={add}
+                        drop={drop}
+                      />
+                    ) : null;
+                  }),
+                )}
+              </div>
+            )}
+
+            {unreachable.length ? (
+              <p className="mt-3 text-[12px] text-pretty text-muted">
+                {unreachable
+                  .map((s) => `${count(s.undistricted)} shops in ${s.state}`)
+                  .join(" and ")}{" "}
+                are not placed in any district — the town on the record matched two places
+                or none — so only a whole-state pick reaches them.
+              </p>
+            ) : null}
+
+            {/* Earlier picks the tree no longer offers, kept and taken off one at a time. */}
+            {pickedStates.some((s) => earlierIn(s.state).length) || earlierNowhere.length ? (
+              <div className="mt-4 rounded-[4px] border border-line bg-canvas px-3 py-2.5">
+                <p className="text-[12px] text-pretty text-muted">
+                  Picked before districts existed. These go on meaning what they meant —
+                  the town as the sheet typed it — until you take them off.
+                </p>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {[...pickedStates.flatMap((s) => earlierIn(s.state)), ...earlierNowhere].map((p) => (
+                    <Chip
+                      key={`${p.kind}:${p.parent}:${p.value}`}
+                      label={p.parent && p.kind === "city" ? `${p.value} · ${p.parent}` : p.value}
+                      onRemove={() => drop(p)}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             {/* THE ANSWER, said back before it is written. A list of ticks is
                 not a review; a sentence naming what it comes to is. */}
@@ -305,9 +474,8 @@ export function Territories({
               {picked.length ? (
                 <>
                   Their handset will show their own customers and leads in{" "}
-                  <span className="font-medium text-ink">{summary}</span> — about{" "}
-                  {count(covered)} shops. The rest of their book is still theirs; it is
-                  just not on the list.
+                  <span className="font-medium text-ink">{summary}</span>. The rest of their
+                  book is still theirs; it is just not on the list.
                 </>
               ) : (
                 <>
@@ -353,111 +521,100 @@ function Step({ n, title, hint }: { n: number; title: string; hint?: string }) {
   );
 }
 
-/** One picked state, and everything inside it. */
-function StateSection({
+function Empty({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="mt-2 rounded-[4px] border border-dashed border-line px-3 py-4 text-center text-[13px] text-muted">
+      {children}
+    </p>
+  );
+}
+
+/** One picked district, and the towns inside it. */
+function DistrictSection({
   state,
+  district,
   picked,
   has,
-  flip,
+  add,
+  drop,
 }: {
-  state: StateNode;
+  state: string;
+  district: DistrictNode;
   picked: Pick[];
   has: (p: Pick) => boolean;
-  flip: (p: Pick) => void;
+  add: (p: Pick) => void;
+  drop: (p: Pick) => void;
 }) {
   const [query, setQuery] = React.useState("");
 
-  const cities = React.useMemo(() => {
+  const towns = React.useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return state.cities;
-    return state.cities.filter((c) => c.city.toLowerCase().includes(q));
-  }, [state.cities, query]);
+    if (!q) return district.towns;
+    return district.towns.filter((t) => t.town.toLowerCase().includes(q));
+  }, [district.towns, query]);
 
-  const pickedCities = picked.filter(
-    (p) => p.kind === "city" && p.parent.toLowerCase() === state.state.toLowerCase(),
-  );
-  const whole = pickedCities.length === 0;
+  const whole = picked.length === 0;
+  const parent = townParent(district.district, state);
 
   return (
     <section className="rounded-[4px] border border-line bg-surface">
       <header className="flex items-center justify-between gap-3 border-b border-line px-3 py-2">
-        <span className="text-[13px] font-medium text-ink">{state.state}</span>
+        <span className="text-[13px] font-medium text-ink">
+          {district.district} <span className="font-normal text-muted">· {state}</span>
+        </span>
         <span className="text-[12px] text-muted">
           {whole ? (
-            <Pill tone="brand">Whole state · {count(state.shops)} shops</Pill>
+            <Pill tone="brand">Whole district · {count(district.shops)} shops</Pill>
           ) : (
             <Pill>
-              {pickedCities.length} of {state.cities.length} cities
+              {picked.length} of {district.towns.length} towns
             </Pill>
           )}
         </span>
       </header>
 
       <div className="p-3">
-        {state.cities.length === 0 ? (
+        {district.towns.length === 0 ? (
           <p className="text-[12px] text-muted">
-            No customer in {state.state} names a city, so the whole state is the only thing
-            to allocate.
+            No shop in {district.district} is placed in a town, so the whole district is the
+            only thing to allocate.
           </p>
         ) : (
           <>
-            {state.cities.length > SEARCH_ABOVE ? (
+            {district.towns.length > SEARCH_ABOVE ? (
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder={`Search ${count(state.cities.length)} places in ${state.state}`}
+                placeholder={`Search ${count(district.towns.length)} towns in ${district.district}`}
                 className="mb-2 h-8 w-full rounded-[4px] border border-line bg-surface px-2.5 text-[13px] text-ink outline-none placeholder:text-muted focus:border-brand"
               />
             ) : null}
 
-            {/* Capped in height rather than in rows: the long tail here is
-                address strings, and a list that cannot be scrolled past is
-                a dialog somebody has to scroll a thousand rows of. */}
-            <div className="flex max-h-56 flex-col gap-1 overflow-y-auto">
-              {cities.length === 0 ? (
-                <p className="py-2 text-[12px] text-muted">
-                  Nothing in {state.state} matches “{query}”.
+            <div className="grid max-h-56 grid-cols-2 gap-x-3 gap-y-0.5 overflow-y-auto sm:grid-cols-3">
+              {towns.length === 0 ? (
+                <p className="col-span-full py-2 text-[12px] text-muted">
+                  Nothing in {district.district} matches “{query}”.
                 </p>
               ) : (
-                cities.map((c) => {
-                  const on = has({ kind: "city", value: c.city, parent: state.state });
-                  const beats = c.beats.length > 1 ? c.beats : [];
+                towns.map((t) => {
+                  const pick: Pick = { kind: "town", value: t.town, parent };
+                  const on = has(pick);
                   return (
-                    <div key={c.city}>
-                      <label className="flex cursor-pointer items-start gap-2 rounded-[4px] px-1.5 py-1 hover:bg-canvas">
-                        <input
-                          type="checkbox"
-                          checked={on}
-                          onChange={() =>
-                            flip({ kind: "city", value: c.city, parent: state.state })
-                          }
-                          className="mt-[3px] size-3.5 shrink-0 accent-[#5223E0]"
-                        />
-                        <span className="min-w-0 flex-1 text-[13px] text-pretty text-body">
-                          {c.city}
-                        </span>
-                        <span className="shrink-0 text-[12px] text-muted">
-                          {count(c.shops)}
-                        </span>
-                      </label>
-
-                      {on && beats.length ? (
-                        <div className="mt-0.5 mb-1 ml-6 flex flex-wrap gap-1.5 border-l border-line pl-2.5">
-                          {beats.map((b) => (
-                            <Chip
-                              key={b.beat}
-                              small
-                              on={has({ kind: "beat", value: b.beat, parent: c.city })}
-                              onClick={() =>
-                                flip({ kind: "beat", value: b.beat, parent: c.city })
-                              }
-                              label={b.beat}
-                              meta={count(b.shops)}
-                            />
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
+                    <label
+                      key={t.town}
+                      className="flex cursor-pointer items-start gap-2 rounded-[4px] px-1.5 py-1 hover:bg-canvas"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        onChange={() => (on ? drop(pick) : add(pick))}
+                        className="mt-[3px] size-3.5 shrink-0 accent-[#5223E0]"
+                      />
+                      <span className="min-w-0 flex-1 text-[13px] text-pretty text-body">
+                        {t.town}
+                      </span>
+                      <span className="shrink-0 text-[12px] text-muted">{count(t.shops)}</span>
+                    </label>
                   );
                 })
               )}
@@ -469,36 +626,22 @@ function StateSection({
   );
 }
 
-function Chip({
-  on,
-  onClick,
-  label,
-  meta,
-  small,
-}: {
-  on: boolean;
-  onClick: () => void;
-  label: string;
-  meta?: string;
-  small?: boolean;
-}) {
+/** A picked place, said back with a way to take it off. */
+function Chip({ label, meta, onRemove }: { label: string; meta?: string; onRemove: () => void }) {
   return (
-    <button
-      onClick={onClick}
-      aria-pressed={on}
-      className={
-        "inline-flex max-w-full items-center gap-1.5 rounded-[4px] border px-2.5 " +
-        (small ? "h-7 text-[12px] " : "h-8 text-[13px] ") +
-        (on
-          ? "border-brand bg-brand-soft font-medium text-[#5223E0]"
-          : "border-line bg-surface text-body hover:bg-canvas")
-      }
-    >
+    <span className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-[4px] border border-brand bg-brand-soft pr-1 pl-2.5 text-[13px] font-medium text-[#5223E0]">
       <span className="truncate">{label}</span>
-      {meta ? (
-        <span className={on ? "text-[#5223E0]/70" : "text-muted"}>{meta}</span>
-      ) : null}
-    </button>
+      {meta ? <span className="text-[#5223E0]/70">{meta}</span> : null}
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`Take off ${label}`}
+        title={`Take off ${label}`}
+        className="flex size-6 items-center justify-center rounded-[3px] text-[#5223E0]/70 hover:bg-[#5223E0]/10 hover:text-[#5223E0]"
+      >
+        ×
+      </button>
+    </span>
   );
 }
 
@@ -524,7 +667,7 @@ export function WorksCell({ salesman }: { salesman: Salesman }) {
      printing both would read as two places. */
   return (
     <>
-      {list.map((t) => t.value).join(", ")}
+      {list.map(territoryName).join(", ")}
       <AreaAnswer salesman={salesman} />
     </>
   );

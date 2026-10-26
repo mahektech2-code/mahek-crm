@@ -26,10 +26,30 @@ import {
   qualify,
   stateKeySql,
 } from "@/lib/territory-sql";
-import { canonicalState, stateKey, stateVariants } from "@/lib/india-states";
+import { canonicalState, isKnownState, stateKey, stateVariants } from "@/lib/india-states";
+import { placeKey } from "@/lib/place-parse";
+import { treeNamesFor, type PlaceIndex } from "@/lib/place-tree";
+import { splitTownParent, territoryName } from "@/lib/territory-path";
 
-/** The kinds a territory can be, coarsest first. */
-export const TERRITORY_KINDS = ["state", "region", "city", "beat"] as const;
+export { splitTownParent, territoryName, townParent } from "@/lib/territory-path";
+
+/**
+ * The kinds a territory can be, coarsest first.
+ *
+ * TWO FAMILIES SHARE THIS LIST. `state`, `city` and `beat` compare what the
+ * sheet TYPED on the customer row; `district` and `town` name nodes of the
+ * reviewed location tree (`places`) and compare the shop's `resolved_*_id`
+ * columns. The dialog now picks state › district › town, because a district
+ * is how Mahek actually divides the country and the typed city column is
+ * 1,165 spellings of a few hundred places with whole postal addresses among
+ * them. `city` and `beat` stay because rows of them exist and must go on
+ * meaning exactly what they meant — nothing rewrites somebody's allocation.
+ *
+ * `town` is the tree's CITY rung under another name, so that a row saying
+ * "Kalyan" cannot be confused with a typed `city` row saying the same word
+ * and matched against a different column.
+ */
+export const TERRITORY_KINDS = ["state", "region", "district", "town", "city", "beat"] as const;
 export type TerritoryKind = (typeof TERRITORY_KINDS)[number];
 
 /**
@@ -43,7 +63,7 @@ export type TerritoryKind = (typeof TERRITORY_KINDS)[number];
  * silently widened or narrowed somebody's console — which is exactly what
  * `setWorkingTerritories` refuses to allow by never touching `region` rows.
  */
-const COLUMN: Record<TerritoryKind, string> = {
+const COLUMN: Record<Exclude<TerritoryKind, "district" | "town">, string> = {
   state: TERRITORY_REGION_SQL,
   region: TERRITORY_REGION_SQL,
   city: "city",
@@ -63,9 +83,11 @@ const COLUMN: Record<TerritoryKind, string> = {
  * compared against. Three copies of a shape is how the screen comes to offer
  * something the action then rejects.
  */
-export const PARENT_KIND: Record<TerritoryKind, "state" | "city" | null> = {
+export const PARENT_KIND: Record<TerritoryKind, "state" | "district" | "city" | null> = {
   state: null,
   region: null,
+  district: "state",
+  town: "district",
   city: "state",
   beat: "city",
 };
@@ -74,12 +96,72 @@ export type Territory = {
   kind: TerritoryKind;
   value: string;
   /**
-   * The place this one was picked under — a city's state, a beat's city.
+   * The place this one was picked under — a city's state, a beat's city, a
+   * district's state. A TOWN's parent names its district AND that district's
+   * state ("Thane, Maharashtra", see `townParent`), because there is an
+   * Aurangabad district in Maharashtra and another in Bihar, each with an
+   * Aurangabad town in it, and the district's own name cannot tell them apart.
    * Empty or absent means not stated, which is every row written before the
    * hierarchy existed and is read as "this place wherever it is".
    */
   parent?: string;
 };
+
+/**
+ * WHICH NODE A ROW IS, and which node it hangs from — as keys a set can hold.
+ *
+ * The action stores only the narrowest pick in each branch, and that needs
+ * "does any other row hang from this one" asked of a district as well as a
+ * state. Comparing bare values, which is what it did, would prune Aurangabad
+ * district in Bihar because a town was picked under Aurangabad district in
+ * Maharashtra — so a district's key carries its state.
+ */
+export function territoryNodeKey(t: Territory): string {
+  const v = placeKey(t.value);
+  switch (t.kind) {
+    case "state":
+    case "region":
+      return `state:${stateKey(canonicalState(t.value))}`;
+    case "district":
+      return `district:${v}|${stateKey(canonicalState(t.parent))}`;
+    case "town": {
+      const { district, state } = splitTownParent(t.parent);
+      return `town:${v}|${placeKey(district)}|${stateKey(canonicalState(state))}`;
+    }
+    default:
+      return `${t.kind}:${v}`;
+  }
+}
+
+/** The key of the node a row hangs from, or null for the top of a branch. */
+export function territoryParentKey(t: Territory): string | null {
+  const parent = t.parent?.trim();
+  if (!parent) return null;
+  switch (t.kind) {
+    case "district":
+    case "city":
+      return `state:${stateKey(canonicalState(parent))}`;
+    case "town": {
+      const { district, state } = splitTownParent(parent);
+      return `district:${placeKey(district)}|${stateKey(canonicalState(state))}`;
+    }
+    case "beat":
+      return `city:${placeKey(parent)}`;
+    default:
+      return null;
+  }
+}
+
+/**
+ * THE NARROWEST PICK IN A BRANCH IS THE ALLOCATION, and the wider ones above
+ * it are the path to it rather than a second grant: a state with a district
+ * picked under it is dropped, a district with towns under it is dropped, and
+ * what is stored is the leaves. See `setSalesmanTerritories` for why.
+ */
+export function territoryLeaves<T extends Territory>(picked: T[]): T[] {
+  const hungFrom = new Set(picked.map(territoryParentKey).filter((k): k is string => !!k));
+  return picked.filter((t) => !hungFrom.has(territoryNodeKey(t)));
+}
 
 /**
  * WHICH TABLE THE COLUMNS BELONG TO, defaulted to the one every caller had.
@@ -116,6 +198,44 @@ function plainMatch(kind: "city" | "beat", value: string, table: string): SQL {
 }
 
 /**
+ * A DISTRICT OR A TOWN IS A NODE OF THE REVIEWED TREE, matched on the shop's
+ * place there and never on what the sheet typed.
+ *
+ * The node is named rather than stored by id, like every other territory row,
+ * so the handset can show it and the audit can read it; the subquery turns the
+ * name back into the one node it means — a district under ITS state, a town
+ * under its district under its state. It is uncorrelated, so Postgres reads it
+ * once however many shops are being narrowed.
+ *
+ * A shop the tree has placed only as far as its state — the town it typed
+ * matched two places or none — is reached by a whole-state pick and by nothing
+ * finer. The dialog counts those and says so, rather than guessing a district
+ * on its behalf.
+ */
+function districtMatch(district: string, state: string, table: string): SQL {
+  const d = placeKey(district);
+  const s = placeKey(canonicalState(state));
+  if (!d || !s) return sql`false`;
+  return sql`${sql.raw(`${table}.resolved_district_id`)} in (
+    select tp_d.id from places tp_d
+      join places tp_s on tp_s.id = tp_d.parent_id and tp_s.kind = 'state'
+     where tp_d.kind = 'district' and tp_d.key = ${d} and tp_s.key = ${s})`;
+}
+
+function townMatch(town: string, parent: string | undefined, table: string): SQL {
+  const { district, state } = splitTownParent(parent);
+  const c = placeKey(town);
+  const d = placeKey(district);
+  const s = placeKey(canonicalState(state));
+  if (!c || !d || !s) return sql`false`;
+  return sql`${sql.raw(`${table}.resolved_city_id`)} in (
+    select tp_c.id from places tp_c
+      join places tp_d on tp_d.id = tp_c.parent_id and tp_d.kind = 'district'
+      join places tp_s on tp_s.id = tp_d.parent_id and tp_s.kind = 'state'
+     where tp_c.kind = 'city' and tp_c.key = ${c} and tp_d.key = ${d} and tp_s.key = ${s})`;
+}
+
+/**
  * The SQL that narrows a customer list to somebody's territories.
  *
  * NEVER `undefined`. An empty list is a match-nothing clause rather than an
@@ -133,6 +253,11 @@ export function territoryClause(territories: Territory[], table = "customers"): 
   if (!territories.length) return sql`false`;
 
   const parts = territories.map((t) => {
+    /* A tree node already carries its whole path, so there is no parent to
+       AND on — the state is part of which district this is. */
+    if (t.kind === "district") return districtMatch(t.value, t.parent ?? "", table);
+    if (t.kind === "town") return townMatch(t.value, t.parent, table);
+
     const own =
       t.kind === "state" || t.kind === "region"
         ? stateMatch(t.value, table)
@@ -146,10 +271,12 @@ export function territoryClause(territories: Territory[], table = "customers"): 
        parent and keeps its old meaning, which is why this is a fall-through
        rather than a refusal: a city allocated before the hierarchy existed must
        not silently stop matching. */
+    /* Among the typed kinds only a beat hangs from something other than a
+       state, and what it hangs from is a typed city. */
     const above =
       parentKind === "state"
         ? stateMatch(parent, table)
-        : plainMatch(parentKind, parent, table);
+        : plainMatch("city", parent, table);
     return sql`(${above} and ${own})`;
   });
 
@@ -177,7 +304,15 @@ export function territoryClause(territories: Territory[], table = "customers"): 
  * names; what the rest of the book says that town is in (`bookState`, read by
  * the caller); and, for somebody allocated exactly one state, that state. A
  * state that cannot be resolved by any of them is not guessed — the lead is
- * refused as outside, and the sentence asks for the area to be picked.
+ * refused as outside, and the sentence asks for the area to be picked. A
+ * district or town allocation names its state too, so it counts as one.
+ *
+ * A DISTRICT OR TOWN ALLOCATION NEEDS THE TREE. Those rows are matched on the
+ * shop's place in `places`, and a lead has no row yet — so the caller hands in
+ * the tree (`index`), the typed town is placed on it by `treeNamesFor`, and
+ * that is the same matcher `placeShopsNow` runs on the row once it is written.
+ * Without the tree no district or town row can match, which is the safe
+ * direction: the lead is refused and says which areas are his.
  *
  * `exempt` with nothing allocated is the manager or admin whose book is not
  * narrowed by territory at all; for them there is nothing to be outside of,
@@ -192,6 +327,17 @@ export type LeadPlace = {
   bookState?: string | null;
 };
 
+/** A place as `matchesTerritory` reads it: what was typed, and where the tree puts it. */
+export type MatchPlace = {
+  city?: string | null;
+  area?: string | null;
+  state?: string | null;
+  /** The tree's district for this place, where it could be placed. */
+  district?: string | null;
+  /** The tree's town (its CITY rung), where it could be placed. */
+  town?: string | null;
+};
+
 export type LeadPlacement =
   | { ok: true; state: string | null }
   | { ok: false; reason: "no_area" | "outside"; areas: string[] };
@@ -203,11 +349,22 @@ const same = (a: string | null | undefined, b: string | null | undefined) =>
 const sameState = (a: string | null | undefined, b: string | null | undefined) =>
   !!a?.trim() && !!b?.trim() && stateVariants(b).includes(stateKey(a));
 
+const samePlace = (a: string | null | undefined, b: string | null | undefined) =>
+  placeKey(a) !== "" && placeKey(a) === placeKey(b);
+
 /** One territory row against one place — `territoryClause`'s own test, in JS. */
-export function matchesTerritory(
-  t: Territory,
-  place: { city?: string | null; area?: string | null; state?: string | null },
-): boolean {
+export function matchesTerritory(t: Territory, place: MatchPlace): boolean {
+  if (t.kind === "district") {
+    return samePlace(place.district, t.value) && sameState(place.state, t.parent);
+  }
+  if (t.kind === "town") {
+    const { district, state } = splitTownParent(t.parent);
+    return (
+      samePlace(place.town, t.value) &&
+      samePlace(place.district, district) &&
+      sameState(place.state, state)
+    );
+  }
   const own =
     t.kind === "state" || t.kind === "region"
       ? sameState(place.state, t.value)
@@ -219,28 +376,62 @@ export function matchesTerritory(
   return PARENT_KIND[t.kind] === "state" ? sameState(place.state, parent) : same(place.city, parent);
 }
 
-/** How an allocation reads on a refusal: "Pune (Maharashtra)", "Odisha". */
+/**
+ * How an allocation reads on a refusal: "Pune (Maharashtra)", "Odisha",
+ * "Thane district (Maharashtra)", "Kalyan (Thane, Maharashtra)".
+ */
 export function territoryLabel(t: Territory): string {
   const parent = t.parent?.trim();
-  return parent ? `${t.value} (${parent})` : t.value;
+  return parent ? `${territoryName(t)} (${parent})` : territoryName(t);
+}
+
+/** The state an allocation row sits in, whatever its kind — or "" where it names none. */
+function stateOfTerritory(t: Territory): string {
+  if (t.kind === "state" || t.kind === "region") return canonicalState(t.value);
+  if (t.kind === "district" || t.kind === "city") return canonicalState(t.parent);
+  if (t.kind === "town") return canonicalState(splitTownParent(t.parent).state);
+  return "";
 }
 
 export function placeNewLead(
   territories: Territory[],
   place: LeadPlace,
   exempt: boolean,
+  index?: PlaceIndex,
 ): LeadPlacement {
-  const states = territories.filter((t) => t.kind === "state" || t.kind === "region");
-  const onlyState =
-    new Set(states.map((t) => canonicalState(t.value))).size === 1 ? canonicalState(states[0].value) : null;
-  const cityParent = territories.find(
-    (t) => t.kind === "city" && same(place.city, t.value) && t.parent?.trim(),
-  )?.parent;
+  /* Every state an allocation names — a district and a town name theirs too,
+     so somebody given three districts of Maharashtra is "in one state". */
+  const allocatedStates = new Set(territories.map(stateOfTerritory).filter(Boolean));
+  const onlyState = allocatedStates.size === 1 ? [...allocatedStates][0] : null;
+  /* The town he typed IS one of his — a typed city row, a tree town or a
+     district of the same name — so its state is the one that row names. */
+  const named = territories.find(
+    (t) =>
+      (t.kind === "city" || t.kind === "town" || t.kind === "district") &&
+      samePlace(place.city, t.value) &&
+      stateOfTerritory(t),
+  );
+  const namedState = named ? stateOfTerritory(named) : null;
 
-  const state =
-    [place.state, cityParent, place.bookState, onlyState]
+  /* A handset built before districts existed offers a district or town chip
+     as though it were a STATE, and sends "Thane" in the state box. Taken at its
+     word that would file the lead in a state called Thane and refuse it; a
+     state the phone names is believed only when it is one. */
+  const phoneState = isKnownState(place.state) ? place.state : null;
+
+  let state =
+    [phoneState, namedState, place.bookState, onlyState]
       .map((s) => (s?.trim() ? canonicalState(s) : ""))
       .find(Boolean) || null;
+
+  /* Where the tree puts the place, under that state — and, with no state from
+     anywhere else, the one state a town name like "Nagpur" unambiguously means. */
+  /* The town the row will be written with — a handset lead falls back from its
+     city to its area — because that is what `placeShopsNow` places it by. */
+  const onTree = index
+    ? treeNamesFor(index, { state, city: place.city?.trim() || place.area?.trim() || null })
+    : null;
+  if (!state && onTree?.state) state = onTree.state;
 
   if (!territories.length) {
     return exempt
@@ -248,7 +439,13 @@ export function placeNewLead(
       : { ok: false, reason: "no_area", areas: [] };
   }
 
-  const resolved = { city: place.city, area: place.area, state };
+  const resolved: MatchPlace = {
+    city: place.city,
+    area: place.area,
+    state,
+    district: onTree?.district ?? null,
+    town: onTree?.town ?? null,
+  };
   if (territories.some((t) => matchesTerritory(t, resolved))) return { ok: true, state };
 
   return {
