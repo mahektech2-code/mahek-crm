@@ -101,8 +101,20 @@ remove one, so it filled and the next push failed with `denied: quota
 exceeded` — a green test job, a failed build, and the `deploy` job skipped
 underneath without a word about storage. It has happened twice: once when the
 build cache lived here as `buildcache` tags, and again from the images
-themselves. The `prune` job keeps the newest three plus `latest`, and it runs
-LAST — after the deploy it is housekeeping for, never before the build.
+themselves. The `prune` job keeps `latest`, the tag production is on and the
+one before it, and it runs LAST — after the deploy it is housekeeping for,
+never before the build.
+
+**It starts a garbage collection only when the next pushes might not fit.** A
+pending collection refuses pushes for up to a quarter of an hour, so starting
+one after every deploy made any merge inside that window wait for it — 7m55s
+on 26 October 2026, two merges fourteen minutes apart. The job reads the
+registry's usage and plan from the API, measures what a push adds (the layers
+the newest image has that the one before it does not), and collects when the
+free space would not hold the pushes the reading has not counted plus the next
+two. Anything it cannot read is answered "collect", as it was before. That is
+also why it keeps one tag rather than three: with three kept the registry was
+nearly full again right after a collection, and every deploy needed one.
 
 It used to run first, on the reasoning that a push into a full registry is the
 failure it exists to prevent. That reasoning was backwards: DigitalOcean will
@@ -623,13 +635,15 @@ sed -i 's|^IMAGE=.*|IMAGE=registry.digitalocean.com/mahekone/app:<sha>|' .env
 docker compose up -d app
 ```
 
-The newest three tags are kept, plus `latest`, and whatever production is
-actually on — the `prune` job in the deploy workflow enforces it after each
-deploy. This used to read "old tags stay in the registry for a week", which
+The droplet keeps its newest three images plus the live one, and that is what
+a rollback uses — `docker compose up -d app` runs a tag already on the box
+without asking the registry. The registry itself keeps `latest`, the tag
+production is on and the one before it (it kept three until October 2026; see
+the registry quota above). This used to read "old tags stay in the registry for a week", which
 sounded like a policy and was only a description of what nobody had got round
 to deleting; the registry filled up twice on the strength of it. Three is what
-500 MB holds at ~130 MB an image, so a rollback can reach the last three
-deploys and no further. A rollback that also has to
+500 MB holds at ~130 MB an image, and the droplet's three local images are
+what a rollback reaches now. A rollback that also has to
 undo a migration is a different and harder thing — restore the dump.
 
 **Jobs by hand** still work; they run on your laptop against the droplet
