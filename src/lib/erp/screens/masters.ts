@@ -1,4 +1,5 @@
 import "server-only";
+import { CUSTOMER_EDIT_REFUSAL } from "@/lib/customer-edit-gate";
 import { has, type Col } from "./common";
 import { and, asc, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import { foldName, renameValues } from "@/lib/customer-rename";
@@ -982,7 +983,7 @@ const customersScreen: ScreenModule = {
           actions.push({ id: "deactivate", l: "Deactivate", why, confirm: `Deactivate ${r.name}? New orders will not be accepted.` });
         if (st === "Active")
           actions.push({ id: "pend", l: "Mark pending", why, confirm: "Mark this party pending? Its orders wait until it is activated again." });
-        actions.push({ id: "edit", l: "Edit details", loadsForm: true });
+        /* No "Edit details": a customer's details are edited in Accounts only (lib/customer-edit-gate.ts). */
         return {
           id: r.id,
           v: {
@@ -1007,7 +1008,7 @@ const customersScreen: ScreenModule = {
     };
   },
   formLoaders: {
-    edit: (_ctx, id) => customerEditForm(id),
+    edit: async () => null,
   },
   forms: {
     async new(ctx, h) {
@@ -1068,9 +1069,9 @@ const customersScreen: ScreenModule = {
       await erpAudit(ctx, "erp.customer.create", "customer", id, null, { name, city });
       return okVoid(`${name} created as Pending · an admin activates it`);
     },
-    async edit(ctx, h, _l, id) {
-      if (!id) return err("No customer named.", "not_found");
-      return saveCustomerDetails(ctx, id, h);
+    /* Refused here as well as undrawn — a form posts to a URL whether or not a button leads to it. */
+    async edit() {
+      return err(CUSTOMER_EDIT_REFUSAL, "not_permitted");
     },
   },
   actions: {

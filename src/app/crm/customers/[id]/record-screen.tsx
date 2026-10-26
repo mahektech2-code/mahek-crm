@@ -790,8 +790,10 @@ export function RecordScreen({
                 initial={contacts}
                 today={businessDay}
                 birthdayHeadsUpDays={birthdayHeadsUpDays}
+                canEdit={false}
                 onChange={() => router.refresh()}
               />
+              <p className="mt-3 text-meta text-muted">Contacts are edited in the Accounts app — here they are view-only.</p>
               {customer.whatsappGroupName || customer.decisionMaker ? (
                 <dl className={cx(FACTS, "mt-4 border-t border-divider pt-4")}>
                   {customer.whatsappGroupName ? (

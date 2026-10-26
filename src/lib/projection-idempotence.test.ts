@@ -33,6 +33,7 @@ import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appAccess, orders, sheetOrderRows, sheetSyncRuns, syncConflicts, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
+import { setTestCustomerEditApp } from "@/lib/customer-edit-gate";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { recomputeAllBuyingCycles } from "@/lib/recompute";
 import { updateCustomer } from "@/lib/actions/crm";
@@ -154,8 +155,11 @@ beforeEach(async () => {
     })
     .returning();
   await db.insert(appAccess).values({ id: id("aca"), userId: row.id, app: "crm", role: "manager" });
+  /* Customer details are edited in Accounts only (customer-edit-gate.ts). */
+  await db.insert(appAccess).values({ id: id("aca"), userId: row.id, app: "accounts", role: "manager" });
   manager = row;
   setTestUser(manager);
+  setTestCustomerEditApp("accounts");
 
   const [run] = await db
     .insert(sheetSyncRuns)
@@ -177,6 +181,7 @@ beforeEach(async () => {
 
 after(async () => {
   setTestUser(null);
+  setTestCustomerEditApp(null);
   await db.$client.end();
 });
 

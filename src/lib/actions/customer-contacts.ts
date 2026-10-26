@@ -7,6 +7,7 @@ import { db } from "@/db";
 import { customers } from "@/db/schema";
 import { assertCustomerInScope, resolveScope } from "@/lib/access-control";
 import { canFor } from "@/lib/access-control";
+import { customerEditRefusal } from "@/lib/customer-edit-gate";
 import { CONTACT_DESIGNATIONS, CONTACT_ROLE_CODES } from "@/lib/customer-contacts";
 import {
   addContact as addContactService,
@@ -27,6 +28,14 @@ import { today } from "@/lib/recompute";
  * customer record and whoever may edit the record may edit who is on it. The
  * screens hide nothing the action does not also refuse: an action is a URL.
  */
+
+/** The same scope check, for a write: contacts are a customer's details, edited in Accounts only. */
+async function inScopeToEdit(customerId: string): Promise<{ actorId: string } | Result<never>> {
+  const ctx = await resolveScope();
+  const refusal = await customerEditRefusal(ctx.user.id);
+  if (refusal) return err(refusal, "not_permitted");
+  return inScope(customerId);
+}
 
 async function inScope(customerId: string): Promise<{ actorId: string } | Result<never>> {
   const ctx = await resolveScope();
@@ -90,7 +99,7 @@ export async function addCustomerContact(
   raw: unknown,
 ): Promise<Result<CustomerContact[]>> {
   try {
-    const scope = await inScope(customerId);
+    const scope = await inScopeToEdit(customerId);
     if ("ok" in scope) return scope;
     const parsed = contactSchema
       .extend({ designations: z.array(z.enum(CONTACT_DESIGNATIONS)).max(3).optional() })
@@ -114,7 +123,7 @@ export async function updateCustomerContact(
   try {
     const customerId = await customerOfContact(contactId);
     if (!customerId) return err("That contact no longer exists.", "not_found");
-    const scope = await inScope(customerId);
+    const scope = await inScopeToEdit(customerId);
     if ("ok" in scope) return scope;
     const parsed = contactSchema.safeParse(raw);
     if (!parsed.success) return validation(parsed.error);
@@ -133,7 +142,7 @@ export async function removeCustomerContact(contactId: string): Promise<Result<C
   try {
     const customerId = await customerOfContact(contactId);
     if (!customerId) return err("That contact no longer exists.", "not_found");
-    const scope = await inScope(customerId);
+    const scope = await inScopeToEdit(customerId);
     if ("ok" in scope) return scope;
     const result = await removeContactService(contactId, scope.actorId);
     if (result.ok) refresh();
@@ -153,7 +162,7 @@ export async function designateCustomerContact(
     if (!d.success) return err("Unknown designation.", "validation");
     const customerId = await customerOfContact(contactId);
     if (!customerId) return err("That contact no longer exists.", "not_found");
-    const scope = await inScope(customerId);
+    const scope = await inScopeToEdit(customerId);
     if ("ok" in scope) return scope;
     const result = await designateContactService(contactId, d.data, Boolean(on), scope.actorId);
     if (result.ok) refresh();
@@ -181,6 +190,7 @@ export type CustomerEditorData = {
     potentialMonthlyPaise: number | null;
     rating: string | null;
     segmentation: string | null;
+    taggedEmployeeName: string | null;
     dealerCode: string | null;
     customerSince: string | null;
     specialInstructions: string | null;
@@ -231,6 +241,7 @@ export async function loadCustomerEditor(customerId: string): Promise<Result<Cus
         potentialMonthlyPaise: c.potentialMonthlyPaise === null ? null : Number(c.potentialMonthlyPaise),
         rating: c.rating,
         segmentation: c.segmentation,
+        taggedEmployeeName: c.taggedEmployeeName,
         dealerCode: c.dealerCode,
         customerSince: c.customerSince,
         specialInstructions: c.specialInstructions,
