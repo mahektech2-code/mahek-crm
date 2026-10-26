@@ -1,5 +1,6 @@
 "use server";
 
+import { customerEditRefusal } from "@/lib/customer-edit-gate";
 import { renameValues } from "@/lib/customer-rename";
 import { revalidatePath } from "next/cache";
 import { placeShopsNow } from "@/lib/services/place-tree-service";
@@ -649,6 +650,8 @@ const customerDetailSchema = z.object({
   potentialMonthlyPaise: z.number().int().min(0).max(1_000_000_000_000).nullable().optional(),
   rating: blankable(60),
   segmentation: blankable(60),
+  /* The employee HRMS's Sales desk files this party under — its edit moved here with the rest. */
+  taggedEmployeeName: blankable(120),
   dealerCode: blankable(60),
   customerSince: z
     .string()
@@ -745,6 +748,8 @@ export async function updateCustomer(
 ): Promise<Result> {
   try {
     const ctx = await resolveScope();
+    const editRefusal = await customerEditRefusal(ctx.user.id);
+    if (editRefusal) return err(editRefusal, "not_permitted");
     const parsed = customerSchema.partial().merge(customerDetailSchema).safeParse(raw);
     if (!parsed.success) {
       const issue = parsed.error.issues[0];
@@ -828,6 +833,7 @@ export async function updateCustomer(
     }
     put("rating", blank(d.rating));
     put("segmentation", blank(d.segmentation));
+    put("taggedEmployeeName", blank(d.taggedEmployeeName));
     put("dealerCode", blank(d.dealerCode));
     put("customerSince", blank(d.customerSince));
     put("specialInstructions", blank(d.specialInstructions));

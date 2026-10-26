@@ -5413,6 +5413,18 @@ and the linked account only where the sheet is silent, and
 `recomputeSalesPeople()` rebuilds it from what is already stored — the command
 to run when the reading changed rather than the row.
 
+**A CUSTOMER'S DETAILS ARE EDITED IN ACCOUNTS AND READ EVERYWHERE ELSE.** The
+same party is drawn in the CRM, Accounts, the ERP's Masters and HRMS's Sales
+desk, and each grew its own Edit — four teams changing one phone number, GSTIN
+or credit term, last save winning. `lib/customer-edit-gate.ts` is the rule: the
+request must be IN the Accounts app (`x-mahek-app`) and the person must HOLD it,
+so somebody with both Accounts and the CRM edits from Accounts and their CRM
+screen is view-only like everybody else's. `updateCustomer` and the four contact
+writes ask it; the ERP's and HRMS's edit forms refuse outright and draw no
+button. Creating a customer or lead, reassigning, the workflows that write a
+column as a side effect, and the MBOS handset's field corrections are outside
+it on purpose.
+
 **Changing an account manager is accounts' and admin's, and not a manager's.**
 Whose book an account is in decides who is credited for its orders and whose
 targets it counts toward, so a manager reassigning accounts is a manager moving
