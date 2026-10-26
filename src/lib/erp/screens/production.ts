@@ -57,7 +57,7 @@ import { qcRefusal } from "../engines/trace";
 import { hasEvidence, evidenceFileIds, qcEvidenceFields, readQcEvidence, testResultsLine, type QcEvidence } from "../engines/sfg-tests";
 import { bindErpFiles } from "../attachments";
 import { refValues } from "../refs";
-import { cancelBatchBoxes, ensureBatchBoxes, looseHeadroom, mintLooseUnits, trimLooseUnits } from "../units";
+import { boxHeadroom, cancelBatchBoxes, ensureBatchBoxes, labelBatchBoxes, looseHeadroom, mintLooseUnits, trimLooseUnits } from "../units";
 import { erpLabelsHref, erpTraceHref } from "../trace-links";
 
 /* ---------------------------------------------------------------------------
@@ -1465,6 +1465,29 @@ const fgStock: ScreenModule = {
   },
 };
 
+/**
+ * Box ids for the boxes of a batch still at a godown, where the batch was
+ * packed before there were any — the reasons are on `labelBatchBoxes`. Asked
+ * from the Packed stock row and from the label sheet, which is where somebody
+ * finds out a batch has nothing to print.
+ */
+async function labelOldBatchBoxes(ctx: ErpContext, id: string) {
+  const [batchNo, godownId] = id.split("|");
+  let made: string[] = [];
+  const res = await inTx(async (tx) => {
+    await lockLot(tx, "pack", batchNo, godownId);
+    const lot = (await packLots(tx, { lots: [batchNo] })).find((l) => l.godownId === godownId);
+    if (!lot) return refuse(err("That batch has no boxes here any more.", "not_found"));
+    const h = await boxHeadroom(tx, { batchNo, godownId, ledgerStock: lot.stock });
+    if (!h.room) return refuse(err(h.labelled ? "Every box of this batch here already carries an id." : "That batch has no boxes here any more.", "rule_violation"));
+    const [sku] = await tx.select({ cpb: products.cansPerBox }).from(products).where(eq(products.id, lot.skuId));
+    made = await labelBatchBoxes(tx, { batchNo, skuId: lot.skuId, godownId, cansPerBox: sku?.cpb ?? 1, count: h.room, byId: ctx.user.id });
+    return okVoid(`${made.length} box id${made.length === 1 ? "" : "s"} created · print the labels and stick one on each box`);
+  });
+  if (res.ok) await erpAudit(ctx, "erp.unit.labelBoxes", "erp_unit", batchNo, null, { godownId, count: made.length, first: made[0], last: made[made.length - 1] });
+  return res;
+}
+
 const packStock: ScreenModule = {
   key: "packStock",
   window: STOCK_WINDOW,
@@ -1473,6 +1496,14 @@ const packStock: ScreenModule = {
     const inStock = (await packLots()).filter((l) => l.stock > 0 && inWindow(l.latestDate, `${l.batchNo}|${l.godownId}`, sc));
     const wide = tooWide(inStock.length, sc, STOCK_ROW_CAP);
     const lots = wide ? [] : inStock;
+    /* Asked of the batches on the page only: the register keeps every box ever packed. */
+    const batches = [...new Set(lots.map((l) => l.batchNo))];
+    const labelled = new Map(
+      (batches.length
+        ? ((await db.execute(sql`select lot_code || '|' || godown_id as k, count(*)::int as n from erp_units where lot_from = 'pack' and lot_code in ${batches} and status in ('available', 'hold') group by 1`)) as unknown as { k: string; n: number }[])
+        : []
+      ).map((r) => [r.k, Number(r.n)]),
+    );
     const all: Col[] = [
       { k: "date", l: "Date", t: "d" },
       { k: "batch", l: "Batch no", t: "mono" },
@@ -1486,33 +1517,47 @@ const packStock: ScreenModule = {
     return {
       spec: { screen: "packStock", rowMenu: ["inquiry", "adjust"], cols, hidden, groups: ["sku"], agg: { k: "stock", l: "boxes" }, godownKey: "godown", readOnly: true, noDataLine: "No boxed stock. A packing batch reaches stock once its cans match its boxes." },
       tooWide: wide,
-      rows: lots.map((l) => ({
-        id: `${l.batchNo}|${l.godownId}`,
-        v: withoutHidden(
-          {
-            date: l.latestDate,
-            batch: l.batchNo,
-            sku: l.sku,
-            stock: l.stock,
-            rate: l.perCanPaise,
-            godown: l.godown,
-            amount: l.perBoxPaise == null ? null : Math.round(l.perBoxPaise * l.stock),
-          },
-          hiddenKeys,
-        ),
-        flags: [],
-        title: `${l.sku} · ${l.batchNo}`,
-        header: `${nf(l.stock)} boxes at ${l.godown}`,
-        actions: [
-          { id: "labels", l: "Print box labels", primary: true, href: erpLabelsHref({ batch: l.batchNo }) },
-          { id: "trace", l: "Trace this batch", href: erpTraceHref(l.batchNo) },
-          ...stockRowActions(ctx, { stage: "pack", itemId: l.skuId, item: l.sku, lot: l.batchNo, godownId: l.godownId, godown: l.godown, stock: l.stock, unit: "boxes" }),
-        ],
-      })),
+      rows: lots.map((l): ListRow => {
+        const have = labelled.get(`${l.batchNo}|${l.godownId}`) ?? 0;
+        /* A batch packed before box ids has none to print until it is given them. */
+        const missing = Math.floor(l.stock + 1e-9) - have;
+        const actions: ActionSpec[] = [];
+        if (missing > 0)
+          actions.push({
+            id: "labelBoxes",
+            l: "Give these boxes ids",
+            primary: true,
+            confirm: `Give the ${nf(missing)} box${missing === 1 ? "" : "es"} of ${l.batchNo} at ${l.godown} their own ids? This batch was packed before box ids. Print the labels and stick one on each box: from then on the dispatch desk scans these boxes one by one and no longer takes the batch's lot QR.`,
+          });
+        actions.push({ id: "labels", l: "Print box labels", primary: missing <= 0, href: erpLabelsHref({ batch: l.batchNo }) });
+        actions.push({ id: "trace", l: "Trace this batch", href: erpTraceHref(l.batchNo) });
+        actions.push(...stockRowActions(ctx, { stage: "pack", itemId: l.skuId, item: l.sku, lot: l.batchNo, godownId: l.godownId, godown: l.godown, stock: l.stock, unit: "boxes" }));
+        return {
+          id: `${l.batchNo}|${l.godownId}`,
+          v: withoutHidden(
+            {
+              date: l.latestDate,
+              batch: l.batchNo,
+              sku: l.sku,
+              stock: l.stock,
+              rate: l.perCanPaise,
+              godown: l.godown,
+              amount: l.perBoxPaise == null ? null : Math.round(l.perBoxPaise * l.stock),
+            },
+            hiddenKeys,
+          ),
+          flags: [],
+          title: `${l.sku} · ${l.batchNo}`,
+          header: `${nf(l.stock)} boxes at ${l.godown}`,
+          fields: [{ l: "Box ids on the shelf", v: `${nf(have)} of these boxes carry their own id`, der: true }],
+          actions,
+        };
+      }),
     };
   },
   actions: {
     adjust: (ctx, id, values) => adjustStockRow(ctx, "pack", id, values ?? {}),
+    labelBoxes: (ctx, id) => labelOldBatchBoxes(ctx, id),
   },
 };
 

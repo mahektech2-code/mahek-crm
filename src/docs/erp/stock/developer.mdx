@@ -8,7 +8,7 @@
 | Stock tabs | `src/lib/erp/screens/purchase.ts`, `src/lib/erp/screens/production.ts` | `rmStock`/`rmLog`, `sfgStock`, `fgStock` (+ `labelLoose`), `packStock`, `logScreen(…)` |
 | Raw material by item | `src/lib/erp/engines/stock-fold.ts`, `src/lib/erp/list-query.ts` | `foldRmLots` (chemicals by lot, every other type one total per item and godown), `ListRow.sub`, `ListSpec.fold`, `unfold` and `?parts=1` for By lot |
 | Registry | `src/lib/erp/registry.ts` | Screen `stock`: tabs `rmStock`, `sfgStock`, `fgStock`, `packStock`, each with an `alt` log toggle |
-| Box register | `src/lib/erp/units.ts` | `unitEvent`, `ensureBatchBoxes`, `cancelBatchBoxes`, `mintLooseUnits`, `looseHeadroom`, `trimLooseUnits`, `moveUnitsForTransfer` |
+| Box register | `src/lib/erp/units.ts` | `unitEvent`, `ensureBatchBoxes`, `cancelBatchBoxes`, `labelBatchBoxes`, `mintLooseUnits`, `looseHeadroom`, `boxHeadroom`, `trimLooseUnits`, `moveUnitsForTransfer` |
 | Box rules (pure) | `src/lib/erp/engines/trace.ts` | `unitId`, `boxLots`, `UNIT_STATUS`, `UNIT_STATUS_LABEL`, `manualMove` |
 | Boxes screen | `src/lib/erp/screens/units.ts` | `unitScreen("units" \| "allUnits")`, `move` |
 | Labels | `src/app/erp/print-labels/page.tsx`, `src/lib/actions/erp-trace.ts` | `?batch=`, `?lot=`, `?ids=`, `?order=`; `erpMarkLabelsPrinted` |
@@ -82,6 +82,10 @@ sequenceDiagram
 <Code file="src/lib/erp/engines/trace.ts" symbol="manualMove" />
 
 <Code file="src/lib/erp/units.ts" symbol="ensureBatchBoxes" />
+
+<Code file="src/lib/erp/units.ts" symbol="labelBatchBoxes" />
+
+<Code file="src/lib/erp/label-data.ts" symbol="unlabelledStock" />
 
 <Code file="src/lib/erp/units.ts" symbol="trimLooseUnits" />
 

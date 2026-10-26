@@ -92,10 +92,44 @@ export async function mintLooseUnits(ex: Ex, p: { lotCode: string; finishedGoodI
  * stock, and a can still on the shelf is still a can).
  */
 export async function looseHeadroom(ex: Ex, p: { lotCode: string; finishedGoodId: string; godownId: string; ledgerStock: number }): Promise<{ labelled: number; room: number; cover: number }> {
-  const [r] = await q<{ labelled: number }>(ex, sql`select count(*)::int as labelled from erp_units where lot_from = 'fg' and lot_code = ${p.lotCode} and godown_id = ${p.godownId} and status in ('available', 'hold')`);
+  return headroom(ex, { lotFrom: "fg", ...p });
+}
+
+/**
+ * The same question of a packing batch at a godown: how many of its boxes on
+ * the shelf carry an id, and how many more can. Zero room on every batch
+ * packed since box ids — `ensureBatchBoxes` minted them all — and the whole
+ * shelf on a batch packed before them, which nothing ever minted.
+ */
+export async function boxHeadroom(ex: Ex, p: { batchNo: string; godownId: string; ledgerStock: number }): Promise<{ labelled: number; room: number; cover: number }> {
+  return headroom(ex, { lotFrom: "pack", lotCode: p.batchNo, finishedGoodId: null, godownId: p.godownId, ledgerStock: p.ledgerStock });
+}
+
+type LotAt = { lotFrom: "pack" | "fg"; lotCode: string; finishedGoodId: string | null; godownId: string };
+
+async function headroom(ex: Ex, p: LotAt & { ledgerStock: number }): Promise<{ labelled: number; room: number; cover: number }> {
+  const [r] = await q<{ labelled: number }>(ex, sql`select count(*)::int as labelled from erp_units where lot_from = ${p.lotFrom} and lot_code = ${p.lotCode} and godown_id = ${p.godownId} and status in ('available', 'hold')`);
   const labelled = Number(r?.labelled ?? 0);
   const cover = Math.max(0, Math.floor(p.ledgerStock + 1e-9)) + (await unscannedAllocated(ex, p));
   return { labelled, room: Math.max(0, cover - labelled), cover };
+}
+
+/**
+ * BOX IDS FOR A BATCH PACKED BEFORE THERE WERE ANY. Asked for, never
+ * automatic: until its boxes have ids the dispatch desk takes the batch's own
+ * lot QR, and the moment they have them it takes nothing but a box label — so
+ * ids nobody printed and stuck on would stop the batch at the desk. Only the
+ * boxes still here get one (a box that left years ago has no shelf to sit
+ * on), numbered from the lowest number the batch has not used.
+ */
+export async function labelBatchBoxes(ex: Ex, p: { batchNo: string; skuId: string; godownId: string; cansPerBox: number; count: number; byId: string | null }): Promise<string[]> {
+  const used = new Set((await q<{ seq: number }>(ex, sql`select seq from erp_units where lot_from = 'pack' and lot_code = ${p.batchNo}`)).map((r) => Number(r.seq)));
+  const ids: string[] = [];
+  for (let seq = 1; ids.length < p.count; seq++) {
+    if (used.has(seq)) continue;
+    ids.push(await mint(ex, { kind: "box", skuId: p.skuId, lotFrom: "pack", lotCode: p.batchNo, finishedGoodId: null, seq, cans: p.cansPerBox, godownId: p.godownId, byId: p.byId, note: `Box id for batch ${p.batchNo}, packed before box ids` }));
+  }
+  return ids;
 }
 
 /**
@@ -116,14 +150,16 @@ export async function trimLooseUnits(ex: Ex, p: { lotCode: string; finishedGoodI
   return rows.length;
 }
 
-async function unscannedAllocated(ex: Ex, p: { lotCode: string; finishedGoodId: string; godownId: string }): Promise<number> {
+async function unscannedAllocated(ex: Ex, p: LotAt): Promise<number> {
+  /* A batch's boxes are one SKU, so the batch number alone names them; an FG lot code is read with its finished good. */
+  const fg = p.finishedGoodId == null ? sql`true` : sql`b.finished_good_id = ${p.finishedGoodId}`;
   const [r] = await q<{ n: number }>(ex, sql`
     select greatest(0,
       (select coalesce(sum(b.quantity), 0)::float8 from erp_batch_codes b
          left join erp_order_details d on d.order_id = b.order_id
-        where b.lot_from = 'fg' and b.lot_code = ${p.lotCode} and b.godown_id = ${p.godownId} and b.finished_good_id = ${p.finishedGoodId}
+        where b.lot_from = ${p.lotFrom} and b.lot_code = ${p.lotCode} and b.godown_id = ${p.godownId} and ${fg}
           and coalesce(d.verification, '') <> 'Verified')
-      - (select count(*) from erp_units where lot_from = 'fg' and lot_code = ${p.lotCode} and godown_id = ${p.godownId} and status = 'scanned'))::float8 as n
+      - (select count(*) from erp_units where lot_from = ${p.lotFrom} and lot_code = ${p.lotCode} and godown_id = ${p.godownId} and status = 'scanned'))::float8 as n
   `);
   return Math.floor(Number(r?.n ?? 0));
 }

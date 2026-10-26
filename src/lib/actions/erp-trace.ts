@@ -95,10 +95,10 @@ export async function erpDispatchVerify(orderNo: number, date: string): Promise<
   }
 }
 
-/** Anybody who prints labels works one of these screens. */
-async function requireLabelScreen(): Promise<ErpContext> {
+/** Somebody who works any one of these screens, or the refusal. */
+async function requireOneOf(screens: string[], refusal: string): Promise<ErpContext> {
   const ctx = await erpContext();
-  for (const s of ["units", "dispatch", "packBatches", "stock", "orders"]) {
+  for (const s of screens) {
     try {
       return await requireErpWrite(s);
     } catch (e) {
@@ -106,7 +106,36 @@ async function requireLabelScreen(): Promise<ErpContext> {
       if (ctx.viewingAs) throw e;
     }
   }
-  throw new ErpNotPermitted("Labels are printed by whoever works the boxes, packing or dispatch.");
+  throw new ErpNotPermitted(refusal);
+}
+
+/** Anybody who prints labels works one of these screens. */
+async function requireLabelScreen(): Promise<ErpContext> {
+  return requireOneOf(["units", "dispatch", "packBatches", "stock", "orders"], "Labels are printed by whoever works the boxes, packing or dispatch.");
+}
+
+/**
+ * Ids for stock that has none, asked from the label sheet: the boxes of a
+ * batch packed before box ids, or cans of an FG lot to sell loose. The
+ * screens' own actions do the work, so the label sheet and the stock rows
+ * cannot give ids by two different rules.
+ */
+export async function erpGiveIds(p: { batch: string; godownId: string } | { lot: string; finishedGoodId: string; godownId: string; count: number }): Promise<Result<unknown>> {
+  try {
+    const res =
+      "batch" in p
+        ? await screenModule("packStock")!.actions!.labelBoxes(await requireOneOf(["packStock", "packBatches"], "Box ids are given by whoever works packing or the stock."), `${p.batch}|${p.godownId}`, {})
+        : await screenModule("fgStock")!.actions!.labelLoose(await requireOneOf(["fgStock", "fgFill"], "Unit ids are given by whoever works filling or the stock."), `${p.finishedGoodId}|${p.lot}|${p.godownId}`, { count: String(p.count) });
+    if (res.ok)
+      try {
+        revalidatePath("/erp/boxes");
+      } catch {
+        /* outside a request; the ids are written either way */
+      }
+    return res;
+  } catch (e) {
+    return refused(e);
+  }
 }
 
 /** The label sheet was sent to the printer: each box says when, and how many times. */
