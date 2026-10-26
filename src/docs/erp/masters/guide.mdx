@@ -8,18 +8,19 @@ Several of these are not the ERP's own lists. **Sales parties** are MahekOne's c
 
 Every item the business buys: chemicals, cans, drums, boxes, packing stationery.
 
-<Wireframe url="/erp/raw-materials" nav={["Dashboard", "#Masters", "Raw materials", "Purchase parties", "Products", "Sales parties", "Godowns", "Reference lists"]} active="Raw materials" caption="Raw materials, grouped by material type">
+<Wireframe url="/erp/raw-materials" nav={["Dashboard", "#Masters", "Raw materials", "Purchase parties", "Products", "Sales parties", "Godowns", "Reference lists"]} active="Raw materials" caption="Raw materials → All materials, grouped by material type">
   <WfBar>
-    <WfTitle sub="Every material the business buys. Chemicals carry a density and the tests each lot must pass.">Raw materials</WfTitle>
+    <WfTitle sub="Everything the business buys, with density and required tests for chemicals, and photos for cans.">Raw materials</WfTitle>
     <WfSpacer /><WfButton primary>New raw material</WfButton><Hotspot n={1} />
   </WfBar>
+  <WfTabs items={["All materials", "Can groups"]} active="All materials" />
   <WfBar><WfInput placeholder="Search" /><WfPill tone="brand">Active</WfPill><WfPill>Inactive</WfPill><Hotspot n={2} /></WfBar>
   <WfTable
-    columns={["S.no", "Item", "Code", "Unit", "Material type", "Density", "Testing list", "Purchase rule", "Default vendor", "Total stock"]}
+    columns={["S.no", "Item", "Code", "Unit", "Material type", "Can group", "Photos", "Density", "Testing list", "Purchase rule", "Default vendor", "Total stock"]}
     rows={[
-      ["14", <b key="a">Solvent A</b>, "SOA", "Kg", "Chemical", "0.87", "Smell, Density", <span key="b">Quotation <Hotspot n={3} /></span>, "—", "1,240"],
-      ["15", <b key="c">Tin can 5 L</b>, "TC5", "Unit", "Can", "—", "—", "Direct purchase", "Supplier B", "3,600"],
-      ["16", <b key="d">Empty Box 5 Liter</b>, "EB5", "Unit", "Box", "—", "—", "Direct purchase", "Supplier C", "500"],
+      ["14", <b key="a">Solvent A</b>, "SOA", "Kg", "Chemical", "—", "—", "0.87", "Smell, Density", <span key="b">Quotation <Hotspot n={3} /></span>, "—", "1,240"],
+      ["15", <b key="c">Tin can 5 L</b>, "TC5", "Unit", "Can", "Group A", "3", "—", "—", "Direct purchase", "Supplier B", "3,600"],
+      ["16", <b key="d">Empty Box 5 Liter</b>, "EB5", "Unit", "Box", "—", "—", "—", "—", "Direct purchase", "Supplier C", "500"],
     ]}
   />
 </Wireframe>
@@ -40,19 +41,19 @@ Every item the business buys: chemicals, cans, drums, boxes, packing stationery.
 | **Material type** | Chemical, Can, Drum, Box, Stationary… | From the Material type reference list |
 | **Density (kg to litre)** | Chemicals only, between 0.1 and 3 | Turns kilograms bought into litres in stock |
 | **Testing list** | Chemicals only, at least one test | Every lot of it must pass these before it reaches stock |
-| **Price (₹)** | Only if you can see purchase money | Used as the packing rate for cans and drums |
+| **Price (₹)** | Only if you can see purchase money | Used as the packing rate for cans and drums, and as the rate when **Create PO** orders this item on a requirement — an item with no price is ordered at ₹0 |
 | **Purchase rule** | Direct purchase, Quotation, or Buyer decision | Chemicals start on Quotation, everything else on Direct |
-| **Default vendor** | For Direct or Buyer decision | Offered automatically when a direct purchase is raised |
+| **Default vendor** | For Direct or Buyer decision | Given to a direct-purchase requirement when it is raised, and offered first on Create PO |
 | **Remark** | Anything worth knowing | Has a microphone if voice notes are on |
 
 ### Can photos and can groups
 
-A **Can** row has a **Photos** action: up to three pictures of that can — front, back, the lid, whatever tells it apart. The record shows them, with its group's photos beside them.
+A **Can** row has a **Photos** action: up to three pictures of that can — front, back, the lid, whatever tells it apart. A photo may be up to 20 MB, so a full-size phone picture goes straight up. The record shows them, with its group's photos beside them.
 
 The **Can groups** tab gathers look-alike cans, one print in several sizes, and shows each group as a card with its photo.
 
 - **Group cans by name** puts every can that is not in a group into one, read from its name. "Packing Material 1 liter Mahek Yellow" and "Mahek Yellow 5 Ltr" land together. It never moves a can somebody already placed, and it lists the cans it could not place.
-- **Edit group** changes the name, the cans (ticking a can from another group moves it here) and up to three group photos.
+- **Edit group** changes the name, the cans (ticking a can from another group moves it here) and up to three group photos, each up to 20 MB.
 - **Rename** changes only the name. **Delete group** keeps its cans, just not grouped.
 - A single can can also be moved from its own **Edit** form, under **Can group**.
 
@@ -118,7 +119,7 @@ Every godown by region, with the address, map pin and the people assigned to it.
 
 ## Reference lists
 
-The editable value lists every form picks from: material type, testing list, area, state, transporter, segment, counter type, complaint type, expense category and particular, credit note fund reference, zone, godown city, video search tag, short label names (Item=Label), and payment terms.
+The editable value lists every form picks from: material type, testing list, area, state, transporter, segment, counter type, complaint type, expense category and particular, credit note fund reference, zone, godown city, video search tag, short label names (Item=Label), payment terms, scrap category, and the consignment number name (LR, GR, CN…).
 
 <Steps>
 <Step title="Add a value">

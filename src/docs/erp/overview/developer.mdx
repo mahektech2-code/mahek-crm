@@ -1,4 +1,4 @@
-The ERP is **data-driven**. One registry (`lib/erp/registry.ts`) lists every screen and its tabs; one context (`erpContext`) says who the person is inside the ERP; one dynamic route (`app/erp/[slug]/page.tsx`) draws any list screen from a **screen module** in `lib/erp/screens/`; and every write goes through four server actions in `lib/actions/erp.ts`. The handful of bespoke screens — dispatch, trace, the PO print, labels, settings — live in their own route folders. This tab is the map; each area's page has its own developer tab.
+The ERP is **data-driven**. One registry (`lib/erp/registry.ts`) lists every screen and its tabs; one context (`erpContext`) says who the person is inside the ERP; one dynamic route (`app/erp/[slug]/page.tsx`) draws any list screen from a **screen module** in `lib/erp/screens/`; and every write from a list screen goes through four server actions in `lib/actions/erp.ts`. The bespoke screens — dispatch, trace, logistics, Petty Cash, the Quotation manager, stock inquiry, the PO print, labels, settings — live in their own route folders, and the ones that write have their own action files beside `erp.ts`. This tab is the map; each area's page has its own developer tab.
 
 ## Map of the code
 
@@ -15,11 +15,12 @@ The ERP is **data-driven**. One registry (`lib/erp/registry.ts`) lists every scr
 | Generic UI | `src/app/erp/_ui/` | `erp-shell.tsx`, `list-screen.tsx`, `record-dialog.tsx`, form dialog, `line-table.tsx`, prompts |
 | UI contract | `src/lib/erp/ui.ts` | `ListSpec`, `FormSpec`, `ActionSpec`, the flag vocabulary |
 | Writes | `src/lib/actions/erp.ts` | `erpRunAction`, `erpRunBulk`, `erpSubmitForm`, `erpRunTool`, `erpLoadForm`, working godown, preview |
+| Bespoke writes | `src/lib/actions/erp-trace.ts`, `erp-logistics.ts`, `erp-money.ts`, `erp-quotes.ts`, `erp-requirement-po.ts` | Dispatch scans and overrides, the logistics desk, Petty Cash, the Quotation manager grid, linking a requirement's PO |
 | Stock | `src/lib/erp/stock.ts` | One reading of current stock per stage: `rmLots`, `sfgLots`, `fgLots`, `packLots`, `lockLot` |
-| Engines (pure) | `src/lib/erp/engines/*.ts` | purchase-flow, purchase, production, sales, trace, alerts, match, godown-fence, cash |
+| Engines (pure) | `src/lib/erp/engines/*.ts` | purchase-flow, purchase, production, sales, trace, alerts, match, godown-fence, money, logistics, returns, drums, stock-check, stock-adjust, labels, quotes and more — one file per rule set |
 | Badges | `src/lib/erp/counts.ts` | `erpNavCounts` — the same id lists the dashboard tiles use; `erpCountsFor` — only a tab strip's own |
 | Order book | `src/lib/erp/book.ts` | Projection into `orders`/`bills` when `erp.orders.live` is on |
-| Bespoke routes | `src/app/erp/{dispatch,trace,po,print-labels,settings}` | Dispatch desk, traceability, PO print, label sheets, settings |
+| Bespoke routes | `src/app/erp/{dispatch,trace,transport,expenses,quotation-manager,stock-inquiry,po,print-labels,settings}` | Dispatch desk, traceability, the logistics desk, Petty Cash, the Quotation manager grid, stock inquiry, PO print, label sheets, settings |
 
 <Callout kind="rule">
 The engines in `lib/erp/engines/` perform **no I/O**, like every engine in MahekOne. The form previews a figure with the same function the server stores it with (`calc` names on derived fields map to `lib/erp/calcs/`), so the preview and the save cannot disagree.
@@ -139,7 +140,9 @@ Every write is audited with the actor (never the person being previewed) and `ac
 
 <Code file="src/lib/erp/dashboard.ts" symbol="dashboardSections" collapsed />
 
-Shared readings (`orderLines`, `detailRows`) are wrapped in a per-request `memo` so ten tiles reading the order lines run one query. The section order is fixed: Alerts, Purchase, Stock, Production and re-order, Sales, Logistics, Requests and credit notes, Petty cash, Customers.
+Shared readings (`orderLines`, `detailRows`) are wrapped in a per-request `memo` so ten tiles reading the order lines run one query, and every section's read is started at once, for exactly the sections the person holds. The section order is fixed: Alerts, Stock checks, Purchase, Stock, Production and re-order, Sales, Logistics, Requests and credit notes, Empty drums and scrap, Material returns, Petty Cash, Customers. The Stock accuracy strip above them is `accuracyFlow`, drawn only for somebody holding Stock accuracy.
+
+<Code file="src/lib/erp/dashboard.ts" symbol="accuracyFlow" collapsed />
 
 ### Yesterday's paragraph
 
@@ -147,7 +150,7 @@ Shared readings (`orderLines`, `detailRows`) are wrapped in a per-request `memo`
 
 <Code file="src/lib/erp/digest.ts" symbol="writeErpDigest" />
 
-It runs in the nightly pass (`runNightly` in `lib/jobs.ts`, right after `erp-alerts`) and by hand as `npm run jobs -- erp-digest`. It summarises the business day before the one it runs on, and upserts one row per day:
+It runs in the nightly pass (`runNightly` in `lib/jobs.ts`, right after `erp-alerts`) and by hand as `npm run jobs -- erp-digest`. It summarises the business day before the one it runs on, and upserts one row per day. The dashboard reads the newest row (`latestDigest`) and shows its day and text; `served_by` is stored and not drawn:
 
 <DbTable name="erp_digests" note={{ day: "The day summarised (yesterday when the job ran).", text: "The paragraph as shown.", served_by: "rules, or the writing model's provider." }} />
 

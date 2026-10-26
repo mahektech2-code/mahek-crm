@@ -4,7 +4,7 @@ With nothing typed in, the same screen is a dashboard of **today's production an
 
 ## The dashboard
 
-<Wireframe url="/erp/trace" nav={["Dashboard", "Alerts", "#Orders", "Orders", "Dispatch desk", "#Traceability", "Traceability"]} active="Traceability" caption="Traceability with no code typed: the day's dashboard">
+<Wireframe url="/erp/trace" nav={["Dashboard", "Alerts", "#Sales", "Orders", "Dispatch desk", "#Traceability", "Traceability"]} active="Traceability" caption="Traceability with no code typed: the day's dashboard">
   <WfBar>
     <WfTitle sub="Any box id, lot, batch, order or bill — where it came from, and where it went.">Traceability</WfTitle>
   </WfBar>
@@ -16,6 +16,7 @@ With nothing typed in, the same screen is a dashboard of **today's production an
     <WfCard title="Labels printed"><WfText>15</WfText></WfCard>
     <WfCard title="Scanned at dispatch"><WfText>22</WfText></WfCard>
     <WfCard title="Boxes dispatched"><WfText>18</WfText></WfCard>
+    <WfCard title="Packing batches open"><WfText>1</WfText></WfCard>
     <Hotspot n={2} />
   </WfBar>
   <WfCard tone="warn" title="Exceptions">
@@ -30,7 +31,7 @@ With nothing typed in, the same screen is a dashboard of **today's production an
 
 <Hotspots items={[
   <span key="1"><b>The trace box.</b> Type or scan any code. A QR that carries a link works too.</span>,
-  <span key="2"><b>Today.</b> SFG made, cans refilled, boxes packed (and box ids minted), labels printed, boxes scanned at dispatch and boxes dispatched — each opens its list.</span>,
+  <span key="2"><b>Today.</b> SFG made, cans refilled, boxes packed (and box ids minted), labels printed, boxes scanned at dispatch, boxes dispatched, and packing batches still drawing cans — each opens its list.</span>,
   <span key="3"><b>Exceptions.</b> Things that need somebody, with a count. Each opens the place to fix it.</span>,
   <span key="4"><b>Latest scans.</b> The last scans at the Dispatch desk, refused ones included.</span>,
 ]} />
@@ -115,7 +116,7 @@ If nothing carries the code at all, you see: *Nothing carries … A box id looks
 
 ## Getting to Traceability from elsewhere
 
-Most screens link straight in: **Trace this order** on an order line, **Trace this box** on Boxes & labels, the code under a refused scan at the Dispatch desk, and **Trace** at the top of an order at the desk.
+Most screens link straight in: **Trace this order** on an order line, **Trace this box** on Boxes & labels, **Trace this lot** or **Trace this batch** on SFG batches, FG filling, packing batches and their stock, the code under a refused scan at the Dispatch desk, and **Trace** at the top of an order at the desk.
 
 ## Questions people ask
 

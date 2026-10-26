@@ -8,7 +8,8 @@ Requirements are one screen module, `requisitions`, in `lib/erp/screens/purchase
 | Engine (pure) | `src/lib/erp/engines/purchase-flow.ts` | `PURCHASE_METHODS`, `FLOW_STEPS`, `requirementStage`, `poRouteOf`, `purchaseUnit`, `requirementLabel`, `itemPickLabels`, `parsePastedLines` |
 | Reading | `src/lib/erp/screens/purchase-flow.ts` | `requirementViews`, `stageOf`, `requirementWork` (dashboard and badge), `receivedByLine` |
 | Form | same | `requisitionForm` (new: header + `table` lines; edit: one item) |
-| Writes | same | `raiseRequirement`, `saveRequirement` (edit), `linkPo`, `unlinkPo`, `createPo`, `cancel` (and the older `decide`, `vendor`) |
+| Writes | same | `raiseRequirement` / `raiseRequirementWith`, `saveRequirement` (edit), `linkPo`, `unlinkPo`, `createPo`, `newCount`, `cancel` (and the older `decide`, `vendor`, which no button offers any more) |
+| PO step | `src/lib/erp/screens/requirement-po.ts` | `linkRequirementPo`, `unlinkRequirementPo`, `createRequirementPo`; `orderFromQuote` puts a Quotation manager purchase against a requirement, or raises one (`QM_RAISED_REMARK`) |
 | Departments (pure) | `src/lib/erp/departments.ts` | `requirementDepartmentsFor`, `categoriesFor`, `requirementRefusal`, `requirementVisibleTo` |
 | Line table UI | `src/app/erp/_ui/line-table.tsx` | Add-by-search and paste for `lineLayout: "table"` |
 | Form calculators | `src/lib/erp/calcs/purchase.ts` | `requisitions.unit`, `requisitions.rule`, `requisitions.stockShort` … |
@@ -74,10 +75,10 @@ The Requirements screen's Quotations tab was removed in October 2026: supplier r
   department: "The LABEL: one of the four teams, or an older label kept on an older row.",
   unit: "purchaseUnit(): Kg, Litre or Pcs (boxes and 'Unit' items are pieces).",
   priority: "Urgent · Medium · For Stock.",
-  status: "Written by the flow only: Pending → Order Placed (PO approved) → Received; Cancelled.",
+  status: "Written by the flow only: Pending → Order Placed (put on a PO) → Received; back to Pending when its PO is cancelled or unlinked; Cancelled.",
   purchase_rule: "The item's rule at the moment of raising. Null on rows raised before rules (read as the item's rule now).",
   method: "direct · quotation, or null while the buyer has not decided.",
-  supplier_id: "The vendor: chosen directly or preset from the default vendor.",
+  supplier_id: "The vendor: preset on raise from a direct item's default vendor; set by Create PO, Link PO or Purchase it; kept when its PO is cancelled, cleared when unlinked.",
   quotation_id: "Retired: the quotation selected on the old Quotations tab. Nothing writes it now.",
   selection_note: "Retired: why a quotation other than the lowest was selected. Nothing writes it now."
 }} />
@@ -92,8 +93,9 @@ The Requirements screen's Quotations tab was removed in October 2026: supplier r
 ## Permissions
 
 - **Module:** <ModuleRef k="erp.requisitions" /> — opens the screen.
-- **Powers:** `purchaseBuyer` (Decide method), `viewPurchaseMoney` (Create PO).
-- **Duties:** `request` (offered items, raise and edit), `raisePo` (Create PO).
+- **Screens:** Create PO also needs <ModuleRef k="erp.purchaseOrders" /> (`createRequirementPo` checks `ctx.screens`).
+- **Powers:** `viewPurchaseMoney` only decides whether the rate and amount are shown in Create PO and Link PO — neither needs it. `purchaseBuyer` guards the older `decide` action, which no button offers now.
+- There is no per-item list of who may request or buy an item; the Admin Console grant is the whole rule.
 
 ## Tests that pin this
 
@@ -101,7 +103,7 @@ The Requirements screen's Quotations tab was removed in October 2026: supplier r
 |---|---|---|
 | `npm run test` | `src/lib/erp/engines/purchase-flow.test.ts` | Direct, quotation and buyer paths; the PO drives the rest; units; pick labels; paste matching |
 | `npm run test` | `src/lib/erp/departments.test.ts` | Categories per department; four teams; visibility |
-| `npm run test:integration` | `src/lib/erp/erp-purchase.test.ts` — "the purchase flow up to the PO" | The rule routes on raise; date and department required, finished goods never bought; a clerk without purchase money cannot raise a PO |
+| `npm run test:integration` | `src/lib/erp/erp-purchase.test.ts` — "the purchase flow up to the PO", "one requirement, many items", "Create PO puts the vendor's other items on the same PO" | The rule routes on raise; date and department required, finished goods never bought; Link PO checks the number first; Create PO at the item's price; every item under one number, a bad line writes nothing |
 | `npm run test:integration` | `src/lib/erp/erp-departments.test.ts` | Each department raises and sees its own; the head and the store see all; cross-department cancel refused; the badge counts the department's own |
 
 ## Changing it safely
@@ -111,7 +113,7 @@ The Requirements screen's Quotations tab was removed in October 2026: supplier r
 Add it to `requirementStage` and its test. If somebody has to act on it before a PO exists, add it to `REQUIREMENT_ACTION_STAGES`, which the badge counts.
 </Step>
 <Step title="Never store the stage">
-The stored `status` is moved only by approval, receipt and cancel. A typed status can say Received with nothing at the gate.
+The stored `status` is moved only by putting it on a PO, receipt and cancel. A typed status can say Received with nothing at the gate.
 </Step>
 <Step title="Check departments on the server">
 The form filters with the same functions, but `raiseRequirement` and `saveRequirement` must refuse on their own.

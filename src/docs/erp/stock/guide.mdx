@@ -1,10 +1,10 @@
-The Stock group answers "what do we have, where is it, and where did it go?". **Stock** shows every lot at every godown, stage by stage, with every entry behind it one switch away. **Boxes & labels** shows every box by its own id and prints its labels. **Item transfers** moves stock between godowns — and writes stock off into Item Lost Record. Minimum levels have their own page: [Minimum levels and reordering](/docs/erp/stock-levels).
+The Stock group answers "what do we have, where is it, and where did it go?". **Stock on hand** shows every lot at every godown, stage by stage, with every entry behind it one switch away. **Boxes & labels** shows every box by its own id and prints its labels. **Item transfers** moves stock between godowns — and writes stock off into Item Lost Record. Counting has its own page, [Stock accuracy](/docs/erp/stock-accuracy), and so do minimum levels: [Minimum levels and reordering](/docs/erp/stock-levels).
 
-## Stock
+## Stock on hand
 
-<Wireframe url="/erp/stock" nav={["Dashboard", "#Stock", "Stock", "Boxes & labels", "Item transfers", "Raw-material levels", "Finished-goods levels"]} active="Stock" caption="Stock → Finished goods, available stock">
+<Wireframe url="/erp/stock" nav={["Dashboard", "#Stock", "Stock on hand", "Stock accuracy", "Boxes & labels", "Item transfers", "Raw-material levels", "Finished-goods levels"]} active="Stock on hand" caption="Stock on hand → Finished goods, available stock">
   <WfBar>
-    <WfTitle sub="What is in each godown, lot by lot, at every stage. Every entry behind it is one switch away.">Stock</WfTitle>
+    <WfTitle sub="What is in each godown, lot by lot, at every stage.">Stock on hand</WfTitle>
   </WfBar>
   <WfTabs items={["Raw material", "Semi-finished", "Finished goods", "Packed"]} active="Finished goods" />
   <WfBar><WfInput placeholder="Search" /><WfButton>All godowns ▾</WfButton><Hotspot n={1} /><WfSpacer /><WfButton>Show every entry</WfButton><Hotspot n={2} /></WfBar>
@@ -19,7 +19,7 @@ The Stock group answers "what do we have, where is it, and where did it go?". **
 </Wireframe>
 
 <Hotspots items={[
-  <span key="1"><b>Godown filter.</b> All godowns, or just one. Lists are grouped by godown with totals.</span>,
+  <span key="1"><b>Godown filter.</b> All godowns, or just one. Lists are grouped with totals — by godown on most tabs, by SKU on Packed. Item Lost Record is never one of the godowns: written-off stock is not stock.</span>,
   <span key="2"><b>Show every entry.</b> Switches from what is available now to the full log of entries behind it — every purchase, batch, fill, packing batch and transfer that put stock in. "Show available stock" switches back.</span>,
   <span key="3"><b>Money columns.</b> Rate and stock value appear only with the cost-and-margin power.</span>,
 ]} />
@@ -35,7 +35,7 @@ The Stock group answers "what do we have, where is it, and where did it go?". **
 
 On the **Raw material** tab a chemical is one row per lot, as on every other tab. A can, box, drum or stationery item is **one row per godown with its total**: its Lot no column says how many lots it holds, and the arrow beside its name opens them underneath, oldest first, each with its own rate. Filling and packing do not record which lot of cans or boxes they used, so those lots are drawn down oldest first. The item's total is exact. Each lot's share of it is an estimate. **By lot** in the toolbar lists every lot as its own row instead. Searching a lot number finds the item it belongs to and opens it. The tabs above the list narrow it to one type: Chemical, Can, Box and so on.
 
-The available view lists only lots with stock above zero. An item's total is shown whenever it is not zero, so a can or box drawn below zero shows a negative total. Every row opens to the actions that apply: **Trace this lot**, **Print box labels** on a packing batch (and **Give these boxes ids** first on one packed before box ids), and on a finished-goods lot **Label loose units** and **Print loose labels**.
+The available view opens on **All time** — the period picker in the toolbar narrows it by each lot's latest movement — and lists only lots with stock above zero. An item's total is shown whenever it is not zero, so a can or box drawn below zero shows a negative total. Every row opens to the actions that apply: **Trace this lot**, **Print box labels** on a packing batch (and **Give these boxes ids** first on one packed before box ids), and on a finished-goods lot **Label loose units** and **Print loose labels**.
 
 ### The ⋯ menu: Stock inquiry and Adjust stock
 
@@ -91,14 +91,14 @@ Until its boxes have ids, the dispatch desk takes the batch's own lot QR. Once t
 
 ### The entry logs
 
-Each stage's **Show every entry** list shows the date, the kind of entry (Purchase or Transfer for raw material; the batch, fill or packing batch for the others), the item, lot, quantity, godown and the document that wrote it. An entry whose document has since been deleted is flagged **Source deleted**, and the dashboard counts them as orphaned inventory entries.
+Each stage's **Show every entry** list opens on this month (the period picker shows more) and shows the date, the kind of entry (Purchase or Transfer for raw material; the batch, fill or packing batch for the others), the item, lot, quantity, godown and the document that wrote it. An entry whose document has since been deleted is flagged **Source deleted**, and the dashboard counts them as orphaned inventory entries.
 
 ## Boxes & labels
 
 Every box a packing batch made and every labelled loose can or drum, by its own id.
 
-<Wireframe url="/erp/boxes" nav={["Dashboard", "#Stock", "Stock", "Boxes & labels", "Item transfers"]} active="Boxes & labels" caption="Boxes & labels → In stock & at dispatch">
-  <WfBar><WfTitle sub="Every box a packing batch made and every labelled loose can, by its own id: where it is, whether it has gone, and its label.">Boxes &amp; labels</WfTitle></WfBar>
+<Wireframe url="/erp/boxes" nav={["Dashboard", "#Stock", "Stock on hand", "Stock accuracy", "Boxes & labels", "Item transfers"]} active="Boxes & labels" caption="Boxes & labels → In stock & at dispatch">
+  <WfBar><WfTitle sub="Every labelled box and loose can: where it is and its label.">Boxes &amp; labels</WfTitle></WfBar>
   <WfTabs items={["In stock & at dispatch", "Every box"]} active="In stock & at dispatch" />
   <WfBar><WfButton>Print labels</WfButton><WfButton>Put on hold</WfButton><WfButton>Release hold</WfButton><Hotspot n={1} /></WfBar>
   <WfTable
@@ -141,8 +141,9 @@ Labels are drawn from the record, never typed. A product label carries the box's
 
 - **one box** — from its row;
 - **a selection** — tick boxes and press Print labels;
-- **a whole packing batch** — Print box labels on the batch or on Stock → Packed;
-- **every labelled loose can of an FG lot** — Print loose labels on Stock → Finished goods;
+- **a whole packing batch** — Print box labels on the batch or on Stock on hand → Packed;
+- **every labelled loose can of an FG lot** — Print loose labels on Stock on hand → Finished goods;
+- **an SFG lot's label** — Print SFG label on the batch or on Stock on hand → Semi-finished, and **a purchased lot's drum label** from Purchases → Register or Drum labels (see [Goods receipt](/docs/erp/goods-receipt-and-testing));
 - **dispatch stickers for an order** — from the [dispatch desk](/docs/erp/dispatch).
 
 When the sheet is sent to the printer, each box records when and how many times its label was printed.
@@ -170,7 +171,7 @@ Boxes and labelled cans travel with the stock: the lowest-numbered boxes still o
 
 ### Writing stock off: Item Lost Record
 
-If you hold the write-off power, **Item Lost Record** appears in the "Transfer to godown" list. A transfer into it **writes the stock off**: "200 of Solvent A written off". Any boxes moved with it are marked Written off. The transfer is flagged **Lost stock** on the list, and the dashboard counts what was written off this month.
+If you hold the write-off power, **Item Lost Record** appears in the "Transfer to godown" list. A transfer into it **writes the stock off**: "200 of Solvent A written off". It leaves Stock on hand altogether — Item Lost Record is never listed as a godown there. Any boxes moved with it are marked Written off. The transfer is flagged **Lost stock** on the list, and the dashboard counts what was written off this month.
 
 <Callout kind="warn">
 Stock never moves **out** of Item Lost Record, and it never appears in the "From godown" list. A write-off is final; if goods are found, they come back in as a fresh receipt or are corrected by the office.

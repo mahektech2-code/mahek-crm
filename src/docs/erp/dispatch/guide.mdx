@@ -6,9 +6,12 @@ Scanning is also how the lots on an order get set aside: the box you scan decide
 
 When you open the desk with no order chosen, you see every order with a **Ready** line that has not been dispatch-verified yet, the soonest to leave first.
 
-<Wireframe url="/erp/dispatch" nav={["Dashboard", "Alerts", "#Orders", "Orders", "Dispatch desk", "#Traceability", "Traceability"]} active="Dispatch desk" caption="The Dispatch desk queue">
+<Wireframe url="/erp/dispatch" nav={["Dashboard", "Alerts", "#Sales", "Orders", "Dispatch desk", "#Traceability", "Traceability"]} active="Dispatch desk" caption="The Dispatch desk queue">
   <WfBar>
-    <WfTitle sub="Choose an order, then scan every box going onto the lorry. Each box is checked against the order's product, pack size and quantity as it is scanned.">Dispatch desk</WfTitle>
+    <WfTitle sub="Pick an order and scan every box onto it before the lorry leaves.">Dispatch desk</WfTitle>
+    <WfSpacer />
+    <WfButton>Upload LRs</WfButton>
+    <Hotspot n={3} />
   </WfBar>
   <WfBar><WfInput placeholder="Order number" /><WfButton primary>Open</WfButton><Hotspot n={1} /></WfBar>
   <WfTable
@@ -25,16 +28,17 @@ When you open the desk with no order chosen, you see every order with a **Ready*
 <Hotspots items={[
   <span key="1"><b>Open an order.</b> Type its number, or click a row. A date in red is already late.</span>,
   <span key="2"><b>Scanned.</b> Boxes scanned so far against how many the order's Ready lines need. A loose line counts cans.</span>,
+  <span key="3"><b>Upload LRs.</b> The same Upload LRs dialog as the [Logistics](/docs/erp/transport) LR desk, so a lorry receipt photographed at the gate can be uploaded from here.</span>,
 ]} />
 
-An order reaches the queue the moment one of its lines is marked **Ready** on [Orders](/docs/erp/orders). It does not have to be billed yet — you can scan while the office bills it.
+An order reaches the queue the moment one of its lines is marked **Ready** on [Orders](/docs/erp/orders). It does not have to be billed yet — you can scan while the office bills it. With nothing Ready, the queue says *No order is Ready and waiting to leave.*
 
 ## Scanning an order
 
 <Wireframe url="/erp/dispatch?order=1256" caption="Order 1256 at the desk, after a box of the wrong pack size was scanned">
   <WfBar><WfTitle sub="Customer A · Area 1 · Transporter X · leaves 2026-10-10">Dispatch · order 1256</WfTitle><WfSpacer /><WfText muted>← Queue · Dispatch labels · Trace</WfText></WfBar>
   <WfCard>
-    <WfBar><WfInput placeholder="Scan a box QR, or type its id and press Enter" wide /><WfButton primary>Scan</WfButton><Hotspot n={1} /></WfBar>
+    <WfBar><WfInput placeholder="Scan a box or lot QR, or type its code and press Enter" wide /><WfButton primary>Scan</WfButton><Hotspot n={1} /></WfBar>
     <WfBar><WfText>3 of 5 scanned</WfText><Hotspot n={2} /></WfBar>
   </WfCard>
   <WfCard tone="warn" title="✗ DISPATCH BLOCKED">
@@ -43,10 +47,10 @@ An order reaches the queue the moment one of its lines is marked **Ready** on [O
     <WfBar><WfButton>Cancel</WfButton><WfButton>Request override</WfButton><Hotspot n={3} /></WfBar>
   </WfCard>
   <WfTable
-    columns={["Line", "Lots", "Scanned", ""]}
+    columns={["Line", "Pack", "Scanned", "State"]}
     rows={[
-      ["Nano Thinner – 1 Liter (12 Can/Box)", "Lots FP40NA × 3", "3 / 3", <WfPill key="a" tone="success">All scanned</WfPill>],
-      ["PU Sealer – 4 Liter (4 Can/Box)", "No lot allocated yet — scanning allocates", "0 / 2", <span key="b"><WfPill tone="warn">To scan</WfPill> <Hotspot n={4} /></span>],
+      ["Nano Thinner – 1 Liter (12 Can/Box) · Lots FP40NA × 3", "1 L", "3 / 3 boxes", <WfPill key="a" tone="success">All scanned</WfPill>],
+      ["PU Sealer – 4 Liter (4 Can/Box) · No lot allocated yet — scanning allocates", "4 L", "0 / 2 boxes", <span key="b"><WfPill tone="warn">To scan</WfPill> <Hotspot n={4} /></span>],
     ]}
   />
   <WfCard title="Dispatch verification">
@@ -56,10 +60,10 @@ An order reaches the queue the moment one of its lines is marked **Ready** on [O
 </Wireframe>
 
 <Hotspots items={[
-  <span key="1"><b>The scan box.</b> A barcode scanner types the box id and presses Enter for you. You can also type an id. A scanned link from a QR works too.</span>,
+  <span key="1"><b>The scan box.</b> A barcode scanner types the box id and presses Enter for you. You can also type an id, or scan a lot label for stock with no box labels. A scanned link from a QR works too.</span>,
   <span key="2"><b>Progress.</b> Boxes scanned across the order's Ready lines.</span>,
   <span key="3"><b>A stopped box.</b> What was wrong, in words, with the way to ask for an override when the box is the wrong product or pack size.</span>,
-  <span key="4"><b>Each line.</b> Its lots and how many boxes are scanned. The badge says Dispatched, Not Ready, All scanned, To scan, or Scan optional.</span>,
+  <span key="4"><b>Each line.</b> Its lots, its pack and how many boxes are scanned. The badge says Dispatched, Not Ready, All scanned, To scan, or Scan optional.</span>,
   <span key="5"><b>Mark dispatch-verified.</b> Once every box is scanned and the lines are billed, this marks the order dispatched.</span>,
 ]} />
 
@@ -73,14 +77,14 @@ A good box shows **✓ Matched** with the box id, the SKU and its lot. A box fro
 <Step title="Stock with only a lot label">
 Stock packed before box labels has no box QR — only its lot label (FP… for a packing batch, FG… for loose cans). Scan that label once. The lot the order was given shows **✓** with how many to load from it; a lot of the same product on a line not yet given one is allocated, as many as the line still needs. A lot whose boxes carry their own BX- labels asks you to scan the boxes instead.
 </Step>
-<Step title="Or scan on the lorry, with the Factory app">
-The loaders can scan the boxes on the **Mahek Factory** phone app instead: open the order's dispatch job, and on **Scan and load** press **Scan label** and scan each box. Every box goes through this same scan, so it shows here at once — scanned by the loader — and the desk never scans it twice. **Take off** on the phone takes a box loaded by mistake back off the order. Scanning a box label from the app's home screen says what the box is and where it stands.
+<Step title="Or load the lorry with the Factory app">
+The loaders can scan on the **Mahek Factory** phone app instead. Its home screen lists **Transports to load**: every Ready line at the godown not yet dispatch-verified, grouped by the transporter typed on it. Tapping one opens its loading — **Load**, **Team**, then **Check and send** — and the loader presses **Scan a box or lot label** for each piece going on. The loader never picks an order: the app puts each box on an order whose allocated lot it is from, then on the soonest due, and an approved override names its own line. Every scan goes through this same desk scan, so it shows here at once — scanned by the loader — and the desk never scans it twice. **Take off** on the phone takes a box loaded by mistake back off its order, and a wrong box can ask for an override from the phone too.
 </Step>
 <Step title="Deal with anything stopped">
 A red panel says why. See [What stops a box](#what-stops-a-box) below.
 </Step>
 <Step title="Verify once everything is scanned">
-When every box is scanned and the lines are billed, pick the dispatch date and press **Mark dispatch-verified**. The boxes become **dispatched**, the order leaves the queue, and the bill appears on [Transport](/docs/erp/transport).
+When every box is scanned and the lines are billed, pick the dispatch date and press **Mark dispatch-verified**. The boxes become **dispatched**, the order leaves the queue, and the lines verified together reach [Logistics](/docs/erp/transport) as one consignment. If nothing is billed yet, the panel says *Nothing is billed and waiting. Bill the lines on Orders → Under process & ready, then verify here.*
 </Step>
 </Steps>
 
@@ -106,6 +110,8 @@ Verifying is the office's step on **Orders → Billing & dispatch**. The desk of
 | **✗ NOT ALLOWED** — *… leaves in boxes; … is a loose unit* (or the reverse) | A loose can was scanned for a boxed line, or a box for a loose line. | Use the right kind. |
 | **✗ NOT ALLOWED** — *… is at Godown B; order … leaves from Godown A. Transfer it first.* | The box is booked at another godown. | Record an item transfer, then scan again. |
 | **✗ NOT ALLOWED** — *… whose stock here is all set aside for other orders* | The box's lot is fully promised to other orders. | Scan a box of a lot already on this order. |
+| **✗ NOT ALLOWED** — *… is not at Godown A, where order … leaves from. Transfer it first.* | A lot label for stock booked at another godown. | Record an item transfer, then scan again. |
+| **✗ NOT ALLOWED** — *… has nothing free at Godown A: its stock is set aside for other orders* | A lot label whose stock is all promised. | Load from a lot given to this order. |
 | **✗ DISPATCH BLOCKED** — *Pack size mismatch. Ordered: … – 1 L. Scanned: … – 500 ml.* | Same product, different pack size. | Load the right box, or request an override. |
 | **✗ DISPATCH BLOCKED** — *Product mismatch. Nothing on this order is …* | A product the order does not have. | Load the right box, or request an override. |
 
@@ -133,7 +139,9 @@ A box scanned by mistake can be taken off the order before dispatch: press **Tak
 
 ## Stock packed before box labels
 
-Stock packed before box ids existed has no label to scan. On such a line the badge reads **Scan optional**, and people who hold the Orders screen see **Allocate a lot by hand** — pick the lot and the quantity as you would have before. Mark dispatch-verified does not wait for scans on these lines.
+Stock packed before box ids existed has no box label to scan. Scan its lot label instead (above), or — for people who hold the Orders screen, while the line is not billed and not yet allocated in full — use **Allocate a lot by hand (no box labels)**: pick the lot and the quantity as you would have before. Lines whose lots have no box ids read *packed before box ids: no scan needed* with the badge **Scan optional**, and Mark dispatch-verified does not wait for scans on them.
+
+An old packing batch can be given box ids on **Stock on hand → Packed** with **Give these boxes ids** (see [Stock](/docs/erp/stock)). It is never done for you: once a batch has box ids the desk stops taking its lot label and asks for every box, so ids nobody has stuck on the boxes would stop the batch here.
 
 ## Printing dispatch labels
 

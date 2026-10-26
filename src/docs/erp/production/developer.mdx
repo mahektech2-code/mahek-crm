@@ -62,8 +62,12 @@ sequenceDiagram
 <DbTable name="erp_sfg_qc" note={{
   lot_code: "The SFG lot code — the key, so a transfer carries the verdict. No row reads as Pending.",
   status: "Pending · Approved · Rejected (check constraint).",
-  note: "Readings on approval; the reason on rejection (required).",
+  note: "The QC note on approval; the reason on rejection (required).",
+  tests: "Test name → Pass · Fail, written by the Factory phone's QC (readQcTests); empty from the ERP's prompt.",
+  evidence: "The ERP prompt's evidence — a photo per test, smell, pH and density readings, a video (QcEvidence). None required.",
 }} />
+
+The Factory phone decides through `saveQcDecision` in `lib/factory/qc.ts`, calling the same `setSfgQc` (`lib/erp/qc.ts`) and writing the same audit actions; `readQcTests` in `engines/sfg-tests.ts` is its rule. `FactoryCtx.qc` — the Mixing & Blending department — decides who may, not `approveSfgQc`.
 
 ## Filling
 

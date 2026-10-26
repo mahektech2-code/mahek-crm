@@ -1,16 +1,17 @@
-The desk is a bespoke route, `src/app/erp/dispatch`, not a generic list. Its rules are one pure function, `scanVerdict` in `engines/trace.ts`; the reading and the transaction that acts on a verdict are `lib/erp/dispatch.ts`; the writes are four server actions in `actions/erp-trace.ts`. Mark dispatch-verified is not reimplemented here — the desk calls the Billing & dispatch tab's own bulk handler.
+The desk is a bespoke route, `src/app/erp/dispatch`, not a generic list. Its rules are two pure functions in `engines/trace.ts` — `scanVerdict` for a box, `lotScanVerdict` for a lot label; the reading and the transaction that acts on a verdict are `lib/erp/dispatch.ts`; the writes are four server actions in `actions/erp-trace.ts`. Mark dispatch-verified is not reimplemented here — the desk calls the Billing & dispatch tab's own bulk handler.
 
 ## Map of the code
 
 | Layer | File | What lives there |
 |---|---|---|
-| Route | `src/app/erp/dispatch/page.tsx` | `ctx.screens.has("dispatch")`; no `?order=` → `dispatchQueue()`; with one → `dispatchBoard(orderNo)` |
+| Route | `src/app/erp/dispatch/page.tsx` | `ctx.screens.has("dispatch")`; no `?order=` → `dispatchQueue()` and the `UploadLrsButton` from Logistics (`?upload=1` opens it); with one → `dispatchBoard(orderNo)` |
 | Desk (client) | `src/app/erp/dispatch/desk.tsx` | Scan box, verdict panels, override request and decision, lines, boxes (Take off), Mark dispatch-verified, scan log; `canVerify` = holds `orderDetails`, `canAllocate` = holds `orders` |
-| Rules (pure) | `src/lib/erp/engines/trace.ts` | `normaliseCode`, `scanVerdict`, `scanGate`, `packLabel`, `UNIT_STATUS_LABEL`, `manualMove` |
-| Reading and acting | `src/lib/erp/dispatch.ts` | `scanLines`, `unitFor`, `dispatchBoard`, `dispatchQueue`, `scanOntoOrder`, `unscanUnit`, `requestOverride`, `decideOverride`, `scanGateFor`, `markDispatched`, `scannedOnAllocation` |
+| Rules (pure) | `src/lib/erp/engines/trace.ts` | `normaliseCode`, `looksLikeUnitId`, `scanVerdict`, `lotScanVerdict`, `scanGate`, `packLabel`, `UNIT_STATUS_LABEL`, `manualMove` |
+| Reading and acting | `src/lib/erp/dispatch.ts` | `scanLines`, `unitFor`, `lotFor`, `dispatchBoard`, `dispatchQueue`, `loadingLines`, `scanOntoOrder`, `scanLotOntoOrder`, `unscanUnit`, `requestOverride`, `decideOverride`, `scanGateFor`, `markDispatched`, `scannedOnAllocation`, `unitInfo`, `lotInfo` |
+| Factory app loading | `src/lib/factory/lorry.ts` | A lorry is the desk's `loadingLines` grouped by transporter (`lorryKeyOf` in `lib/factory/rules.ts`); it picks the order for each scan and calls `scanOntoOrder`, `unscanUnit`, `requestOverride`, `decideOverride` |
 | Unit history | `src/lib/erp/units.ts` | `unitEvent` |
 | Writes | `src/lib/actions/erp-trace.ts` | `erpDispatchScan`, `erpDispatchUnscan`, `erpDispatchRequestOverride`, `erpDispatchDecideOverride`, `erpDispatchVerify` |
-| Verify | `src/lib/erp/screens/sales.ts` | `orderDetails.bulk.verify` → `verify`, which calls `scanGateFor` and `markDispatched` |
+| Verify | `src/lib/erp/screens/sales.ts` | `orderDetails.bulk.verify` → `verify`, which calls `scanGateFor`, `markDispatched` and `openTransports` (one consignment per verify), then `afterDispatch` in `lib/erp/logistics.ts` |
 | Hand allocation | `src/lib/erp/screens/sales.ts` | `allocateForm` / `saveAllocation`, opened by the desk as `ui.act("orders", { id: "allocate" })` |
 | Dispatch labels | `src/app/erp/print-labels/page.tsx`, `src/lib/erp/label-data.ts` | `?order=` → `dispatchLabels`: one 80 mm label per `labelCount` of every line not cancelled, each carrying `lotSize` over the order |
 
@@ -50,11 +51,15 @@ sequenceDiagram
 
 `productId` on a `ScanUnit` / `ScanLine` is the **brand line** (`product_brands.id` via `finished_goods.brand_id`), which is what makes a same-brand SKU a "size" mismatch.
 
+A code that does not look like a box id (`looksLikeUnitId`) is a lot label, judged by `lotScanVerdict`:
+
+<Code file="src/lib/erp/engines/trace.ts" symbol="lotScanVerdict" collapsed />
+
 ## Acting on it
 
 <Code file="src/lib/erp/dispatch.ts" symbol="scanOntoOrder" collapsed />
 
-The scan log is written **after** the transaction, from `logged`, so a refused scan is recorded even though nothing in the transaction changed.
+The scan log is written **after** the transaction, from `logged`, so a refused scan is recorded even though nothing in the transaction changed. `scanOntoOrder` hands a lot label to `scanLotOntoOrder`, which locks the lot, re-judges it against the lot's free stock and writes the batch code; it changes no `erp_units` row.
 
 <Code file="src/lib/erp/dispatch.ts" symbol="unscanUnit" />
 
@@ -110,7 +115,8 @@ The action re-checks the power before `decideOverride` does: `requireErpWrite("d
 
 | Suite | File | What it pins |
 |---|---|---|
-| `npm run test` | `src/lib/erp/engines/trace.test.ts` | `normaliseCode` with links, `scanVerdict` for every refusal, matched / allocate / swap, override substitution, `scanGate` with and without units, `manualMove` |
+| `npm run test` | `src/lib/erp/engines/trace.test.ts` | `normaliseCode` with links, `scanVerdict` for every refusal, matched / allocate / swap, override substitution, `lotScanVerdict` (given lot, allocate, wrong stock, labelled boxes, base liquid), `scanGate` with and without units, `manualMove` |
+| `npm run test:integration` | `src/lib/factory/factory.test.ts` | Loading a lorry by transporter through the desk's scan |
 | `npm run test:integration` | `src/lib/erp/erp-traceability.test.ts` — `the dispatch desk` | An order for 3 boxes; Mark dispatch-verified waits for every box; a matching box counts and the same box, an unknown code and a wrong pack size are stopped; another lot of the same SKU takes its place; an override is asked, decided by somebody else and used once; once all are scanned the boxes become dispatched |
 
 ## Changing it safely

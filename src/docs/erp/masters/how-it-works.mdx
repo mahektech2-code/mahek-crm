@@ -20,7 +20,7 @@ A chemical must carry a density (between 0.1 and 3) and at least one test. The d
 </Rule>
 
 <Rule title="The item master says how an item is bought">
-Every item carries a **purchase rule**: **Direct purchase** (pick the vendor, raise the PO — boxes, cans, stationery, routine chemicals), **Quotation** (bought on the Quotation manager, whose PO number the requirement links — price-sensitive chemicals), or **Buyer decision** (the buyer chooses, requirement by requirement). A new chemical starts on Quotation and anything else on Direct. A **default vendor** is offered on a direct purchase; it is cleared on a Quotation item, where the vendor comes with the Quotation manager's PO.
+Every item carries a **purchase rule**: **Direct purchase** (Create PO on the requirement, at this item's price — boxes, cans, stationery, routine chemicals), **Quotation** (bought on the Quotation manager, which writes the PO — price-sensitive chemicals), or **Buyer decision** (either, requirement by requirement). A new chemical starts on Quotation and anything else on Direct. A **default vendor** is given to a direct-purchase requirement when it is raised and offered first on Create PO; it is cleared on a Quotation item, where the vendor comes with the Quotation manager's PO.
 </Rule>
 
 <Callout kind="note">
@@ -30,12 +30,12 @@ The rule is copied onto a requirement when it is raised, so changing an item's r
 - The **name** is unique, ignoring capitals: "Duplicate Entry!".
 - The **item code** and the supplier's **party code** together make the lot number of everything bought — so a code is chosen once and kept.
 - **Serial numbers** follow on, issued one at a time even when two people save together.
-- The **price** is saved only by somebody who can see purchase money; a clerk saving the item never overwrites it.
+- The **price** is saved only by somebody who can see purchase money; a clerk saving the item never overwrites it. It is the packing rate for cans and drums, and the rate **Create PO** puts on a direct-purchase PO line — no price is ₹0.
 - **Retire** takes an item off new forms and keeps it on every record that names it. **Restore** brings it back.
 
 ### Can photos and groups
 
-A can is recognised by sight, so a Can carries up to three photos and belongs to at most one look-alike group, which has a name and up to three photos of its own. "Group cans by name" is a suggestion: it reads a can's family — the name without its size and the words every can carries — and only ever fills cans with no group, so a can somebody moved stays put. A name that is only a size ("1 L Tin Can") is left for a person, and so is a family no other can shares. A photo taken off is marked removed, never deleted.
+A can is recognised by sight, so a Can carries up to three photos (each up to 20 MB, where every other ERP upload keeps the ordinary attachment limit) and belongs to at most one look-alike group, which has a name and up to three photos of its own. "Group cans by name" is a suggestion: it reads a can's family — the name without its size and the words every can carries — and only ever fills cans with no group, so a can somebody moved stays put. A name that is only a size ("1 L Tin Can") is left for a person, and so is a family no other can shares. A photo taken off is marked removed, never deleted.
 
 ## Purchase parties
 
@@ -73,6 +73,8 @@ Deactivate sets the MahekOne customer to `deactivated`, with "Deactivated in the
 - Creating a customer needs a business name, a city and a ten-digit mobile, and a name not already used (ignoring capitals).
 - A new customer is **owned by the tagged sales person** where that name matches a MahekOne user, and by whoever created it otherwise. A lead's owner is whose book it is, and conversion makes that owner the sales account manager — so a party typed in at the order desk is not the desk's book.
 - Editing details needs only the screen. An emptied city or mobile keeps the old value, because every MahekOne customer must have both.
+- **Renaming** keeps the name the sheets use as the party's sheet name, so the Sales Party and order sheets still find it and never write the old name back; a name another party already has is refused. The same rule runs when the CRM renames a customer.
+- A drop-down offers the configured reference values **and** every value already in use on the party book, and always the party's own saved value — so a field is never blanked by saving.
 - The list holds every MahekOne **customer**, plus every lead that has an ERP profile.
 - A customer's **monthly target** is the CRM's Monthly Targets figure for this month, shown only with the sales-amounts power — the ERP keeps no target of its own.
 
@@ -89,7 +91,7 @@ Stock written off is moved **into** a reserved godown rather than simply vanishi
 
 ## Reference lists
 
-Sixteen open lists a manager can grow without a deploy. A value is **retired**, never deleted, because records already carry it; a duplicate value in one list is refused. Lists whose exact spelling a rule depends on — units, box types, payment, delivery and weight types, grades, regions — are fixed in the code instead.
+Eighteen open lists a manager can grow without a deploy. A value is **retired**, never deleted, because records already carry it; a duplicate value in one list is refused. Lists whose exact spelling a rule depends on — units, box types, payment, delivery and weight types, grades, regions — are fixed in the code instead.
 
 ## Who can change what
 

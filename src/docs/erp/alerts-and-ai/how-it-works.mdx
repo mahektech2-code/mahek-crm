@@ -46,9 +46,10 @@ The checks run in the hourly job and in the nightly one; a manager or ERP admini
 | LR missing | A bill without an LR more than <Setting k="erp.ai.alerts.stuckLrDays" /> days after it left |
 | Credit note not issued | Accepted more than <Setting k="erp.ai.alerts.stuckCnDays" /> days ago and not issued |
 | Packing batch incomplete | Cans short or over for more than <Setting k="erp.ai.alerts.stuckPackDays" /> days |
-| Duplicate-looking expense | One person, one amount, one particular, twice within <Setting k="erp.ai.alerts.duplicateExpenseDays" /> days |
-| Petty cash below zero | A person has spent more than they were given at a godown in one mode — see [petty cash](/docs/erp/petty-cash/how-it-works) |
+| Duplicate-looking expense | The same amount to the same payee for the same category, twice within <Setting k="erp.ai.alerts.duplicateExpenseDays" /> days — an expense saved as *a different invoice* is not counted |
+| Cash account below zero | Cash in Hand or Petty Cash below zero — more recorded as paid from it than was ever put in. A bank account may be overdrawn and is not checked. See [Petty Cash](/docs/erp/petty-cash/how-it-works) |
 | Stock below re-order level | A followed level is short — see [levels](/docs/erp/stock-levels/how-it-works) |
+| Empty drum heavier or lighter than declared | Actual empty weight off the declared tare by more than <Setting k="erp.drums.varianceAlertKg" /> kg or <Setting k="erp.drums.varianceAlertPercent" />% — see [Empty drums and scrap](/docs/erp/empty-drums-scrap/how-it-works) |
 
 <Callout kind="why" title="Why each rule compares with the item's own history">
 A ₹10 change is noise on one chemical and a scandal on another. The rate rule compares a purchase with the same supplier's own recent rates for that item, and a margin with the line's own amount, so one threshold means the same thing everywhere.
@@ -79,8 +80,10 @@ Each helper has its own switch and its own monthly allowance, counted from the r
 | Ask the ERP | <Setting k="erp.ai.ask.enabled" /> | <Setting k="erp.ai.ask.monthlyCap" /> | text (OpenAI) |
 | LR and test photos | <Setting k="erp.ai.photos.enabled" /> | <Setting k="erp.ai.photos.monthlyCap" /> | vision |
 | Complaints | <Setting k="erp.ai.complaints.enabled" /> | <Setting k="erp.ai.complaints.monthlyCap" /> | text |
+| Discrepancy assistant (stock accuracy) | <Setting k="erp.ai.stockCheck.enabled" /> | <Setting k="erp.ai.stockCheck.monthlyCap" /> | text |
+| Level planner review | <Setting k="erp.ai.levels.enabled" /> | <Setting k="erp.ai.levels.monthlyCap" /> | text |
 
-The vision model is <Setting k="erp.ai.visionModel" /> and the text model <Setting k="erp.ai.textModel" />. Suggested levels use no model at all and are switched by <Setting k="erp.ai.reorder.enabled" />; the dictation microphone is switched by <Setting k="erp.ai.voice.enabled" />.
+The vision model is <Setting k="erp.ai.visionModel" /> and the text model <Setting k="erp.ai.textModel" />. The level planner itself is arithmetic on history, switched by <Setting k="erp.levels.autoPlan" />; the model only reviews each item's plan against the season ahead, moving it by no more than <Setting k="erp.ai.levels.maxAdjustPercent" />%. The older suggested levels use no model at all and are switched by <Setting k="erp.ai.reorder.enabled" />; the dictation microphone is switched by <Setting k="erp.ai.voice.enabled" />.
 
 ### The model reads; rules decide
 
@@ -90,6 +93,8 @@ The vision model is <Setting k="erp.ai.visionModel" /> and the text model <Setti
 - **LR photos** — the transporter match and repeated-LR check are rules.
 - **Test photos** — a density more than <Setting k="erp.ai.qc.densityTolerancePct" />% from the material's master density is flagged; the reading never sets the verification, which stays the verifier's.
 - **Complaints** — the helper suggests a summary only, never a type or a credit-note amount.
+- **Discrepancy assistant** — the rules find the pending and missing records that could explain a red-flagged count; the model only ranks and explains them, and creates no entry.
+- **Level planner review** — the plan comes from history by arithmetic; the model may adjust it within its limit and must say why, and a level a person set by hand is never touched.
 </Rule>
 
 <Rule title="Every reading is logged with its outcome">
@@ -98,7 +103,7 @@ Each suggestion is stored before anybody decides, with what was proposed, how su
 
 ### Ask the ERP answers as you
 
-The model does not query the database. It picks from a fixed set of question tools — stock, order lines, billed lines, purchases, a bill's trace, items to re-order, transport, complaints, petty cash — and each tool answers by loading **that screen exactly as the person asking would see it**. Rows they cannot see are not there; columns their powers hide are removed and listed as hidden, and the model is told never to guess them. It answers in one to three sentences, figure first, links to the filtered lists it read, and writes nothing.
+The model does not query the database. It picks from a fixed set of question tools — stock, order lines, billed lines, purchases, a bill's trace, items to re-order, transport, complaints, this month's Petty Cash expenses — and each tool answers by loading **that screen exactly as the person asking would see it**. Rows they cannot see are not there; columns their powers hide are removed and listed as hidden, and the model is told never to guess them. It is also told to answer only about what the person's own screens show: a total covers only the rows the tools returned and is never presented as company-wide, and anything outside that access — another department's records, company revenue, profit or margin, money a tool withheld — is declined in a sentence rather than worked out. It answers in one to three sentences, figure first, links to the filtered lists it read, and writes nothing.
 
 ## Who can do what
 
@@ -115,4 +120,3 @@ The model does not query the database. It picks from a fixed set of question too
 
 - **Resolving by hand does not stick while the condition holds.** A resolved alert no longer blocks the same kind and subject, so the next hourly run raises it again as a new alert.
 - **The summary is written by the dictation's language model**, not by the ERP's own reading model.
-- **"Below re-order level" alerts for raw materials fire below the maximum** — see [levels](/docs/erp/stock-levels/how-it-works).

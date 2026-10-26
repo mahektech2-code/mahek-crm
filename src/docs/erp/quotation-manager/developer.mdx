@@ -4,13 +4,15 @@ The Quotation manager is its own route, `app/erp/quotation-manager`, not a gener
 
 | Layer | File | What lives there |
 |---|---|---|
-| Rules (pure) | `src/lib/erp/engines/quotes.ts` | `cleanCell`, `cleanRate`, `parseQuoteDate`, `parseTsv`, `columnStats`, `QUOTE_STATUSES` |
+| Rules (pure) | `src/lib/erp/engines/quotes.ts` | `cleanCell`, `cleanRate`, `parseQuoteDate`, `parseTsv`, `columnStats`, `QUOTE_STATUSES`, `ROW_STATUSES`, `quoteStatusRefusal` (who may mark, buy and unbuy) |
 | Grid state (pure) | `src/lib/erp/engines/quote-sheet.ts` | `applySheetOps`, `invertSheetOps` — optimistic display, roll-back and Undo |
-| Reads and the write | `src/lib/erp/quotes.ts` | `quoteSheet`, `applyQuoteOps` |
+| Reads and the write | `src/lib/erp/quotes.ts` | `quoteSheet`, `applyQuoteOps`, `quoteManagerOf` (ERP manager or admin level) |
+| The purchase order | `src/lib/erp/screens/requirement-po.ts` | `purchaseChoices` (what the Purchase it dialog offers), `joinablePoNumber` (Add to PO-…), `orderFromQuote` (writes the PO in the sheet's transaction), `syncQuotePoDrums`, `withdrawQuotePo` (undo or cancel) |
 | Action | `src/lib/actions/erp-quotes.ts` | `erpQuoteApply` — `requireErpWrite("quoteManager")` |
 | Page | `src/app/erp/quotation-manager/page.tsx` | the period and search from the URL |
-| Grid | `src/app/erp/quotation-manager/grid.tsx` | selection, editing, paste, colours, column dialog |
-| Tests | `src/lib/erp/engines/quotes.test.ts` | parsing, stats, every op undone by its inverse |
+| Grid | `src/app/erp/quotation-manager/grid.tsx` | selection, editing, paste, marks, column dialog, `PurchaseDialog`, the PO note |
+| Tests | `src/lib/erp/engines/quotes.test.ts` | parsing, stats, latest first, every op undone by its inverse, buying only a Ready to buy rate with drums |
+| Tests | `src/lib/erp/erp-purchase.test.ts` — "Purchase it on the Quotation manager writes the purchase order" | the PO is Sent with a requirement picked or raised, a second material joins the same PO, undo takes one line back, a party that is not a supplier is refused |
 
 ## Tables
 
@@ -23,6 +25,10 @@ The Quotation manager is its own route, `app/erp/quotation-manager`, not a gener
 ## One write
 
 <Code file="src/lib/erp/quotes.ts" symbol="applyQuoteOps" />
+
+A cell moving to `po` with no PO number takes the next number of the ERP's `po` series — or, where the dialog chose **Add to PO-…**, that open PO's number, checked again by `joinablePoNumber` — and `orderFromQuote` writes the PO line in the same transaction; a refusal there rolls the whole save back. A cell leaving `po` for anything but `pickup` calls `withdrawQuotePo`, which is refused once goods are received.
+
+<Code file="src/lib/erp/engines/quotes.ts" symbol="quoteStatusRefusal" />
 
 Ids for new rows and columns are minted on the screen (`newQuoteId`) so a paste can create rows and fill them in one list; the server accepts an id only in that shape. A cell write checks the column's kind on the server, whatever the screen did. One audit row (`erp.quotes.edit`) is written per save, with the count of each kind of change.
 

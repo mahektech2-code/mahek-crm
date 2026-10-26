@@ -1,50 +1,56 @@
-Purchase orders are the `purchaseOrders` screen module in `lib/erp/screens/purchase-flow.ts`, with the arithmetic and status rules in `lib/erp/engines/purchase-flow.ts`. The receiving side lives in `screens/purchase.ts` and calls back into `refreshPurchaseOrder`. The printable PO is its own route, `app/erp/po/[id]/page.tsx`.
+Purchase orders are the `purchaseOrders` screen module in `lib/erp/screens/purchase-flow.ts`, with the arithmetic and status rules in `lib/erp/engines/purchase-flow.ts`. The two routes that make a PO from a requirement — Create PO and Link PO — and the Quotation manager's Purchase it live in `lib/erp/screens/requirement-po.ts`. No route approves a PO. The receiving side lives in `screens/purchase.ts` and calls back into `refreshPurchaseOrder`. The printable PO is its own route, `app/erp/po/[id]/page.tsx`.
 
 ## Map of the code
 
 | Layer | File | What lives there |
 |---|---|---|
-| Engine (pure) | `src/lib/erp/engines/purchase-flow.ts` | `LIVE_PO`, `RECEIVABLE_PO`, `poLabel`, `poLineFigures`, `poTotals`, `poStatusAfterReceipt`, `receivableQuantity` |
+| Engine (pure) | `src/lib/erp/engines/purchase-flow.ts` | `LIVE_PO`, `RECEIVABLE_PO`, `poRouteOf`, `poLabel`, `poName`, `pickQuotePoCell`, `quoteRatePaise`, `poLineFigures`, `poTotals`, `poStatusAfterReceipt`, `receivableQuantity` |
 | Reading | `src/lib/erp/screens/purchase-flow.ts` | `purchaseOrderViews`, `receivedByLine`, `poOption` |
-| Form | same | `poFormData`, `purchaseOrderForm` (header + lines, filled from the selected quotation / vendor) |
-| Writes | same | `savePurchaseOrder`; actions `approve`, `sendBack`, `share`, `close`, `cancel`; form loader `receive` → `inwardFormForPo` |
-| Approval rule | same | `approvalRefusal` — the `approvePurchaseOrder` power |
+| Form | same | `poFormData`, `purchaseOrderForm` (New PO and Edit: header + lines from the vendor's requirements ready for a PO; rate and GST typed per line) |
+| Writes | same | `savePurchaseOrder` (New PO and Edit, written Approved); actions `share`, `close`, `cancel`, and `approve` / `sendBack` for a leftover Pending approval PO; form loader `receive` → `inwardFormForPo` |
+| Approval rule (leftovers) | same | `approvalRefusal` — the `approvePurchaseOrder` power |
+| From a requirement | `src/lib/erp/screens/requirement-po.ts` | `createRequirementPo` (Create PO, Approved, the item's price, `values.also` for more items), `linkRequirementPo` / `unlinkRequirementPo` / `lookupRequirementPo` (Link PO, Sent), `createPoReady` |
+| From the Quotation manager | same | `orderFromQuote` (Purchase it writes the PO, Sent), `joinablePoNumber` (Add to PO-…), `purchaseChoices`, `syncQuotePoDrums`, `withdrawQuotePo` (undo) |
 | After a receipt | same | `refreshPurchaseOrder(tx, poId)` |
-| Print | `src/app/erp/po/[id]/page.tsx` | Approved POs only; needs `viewPurchaseMoney` |
+| Print | `src/app/erp/po/[id]/page.tsx` | Refuses a leftover Pending approval or a Rejected PO; needs `viewPurchaseMoney` |
 | Share (pure) | `src/lib/erp/engines/po-share.ts` | `poRecipients`, `readShare`, `defaultPoMessage`, `itemsLine`, `withLink` |
 | Share | `src/lib/erp/po-share.ts` | `poShareSpecs` (the window, per row), `sharePo` (the action), `poShareToken`, `publicPoPdf`, `applyPoShareWatiEvent` |
 | PDF | `src/lib/erp/po-pdf.ts` | `renderPoPdf` — pdf-lib, the printed PO's figures |
 | Public link | `src/app/po/[token]/route.ts` | The PDF, no sign-in |
 | Window | `src/app/erp/_ui/share-dialog.tsx` | `ShareDialog`, opened by an action carrying `share` (`ShareSpec`) |
-| Badge | same | `purchaseFlowCounts` |
+| Badge | `src/lib/erp/screens/purchase-flow.ts` | `purchaseFlowCounts` |
 
-## Raising, end to end
+## Making a PO, end to end
 
-<Flow caption="Raise, approve, send" chart={`
+<Flow caption="Three ways a PO is made, none approved" chart={`
 sequenceDiagram
   autonumber
-  participant U as Store (purchase money)
+  participant U as Purchase desk
+  participant R as screens/requirement-po.ts
   participant F as screens/purchase-flow.ts
-  participant AP as Approver
   participant DB as Postgres
-  U->>F: forms.new -> savePurchaseOrder(h, lines)
-  F->>F: vendor, deliver-to, dates, terms, freight
-  loop each line
-    F->>F: requirement ready for PO, this vendor, qty, rate (= selected quotation), GST
-  end
-  F->>DB: tx: nextNumber(po), erp_purchase_orders (Pending approval), erp_po_lines - refuse a requirement already on a live PO
-  AP->>F: actions.approve
-  F->>F: approvalRefusal (approvePurchaseOrder), not the raiser unless administrator
-  F->>DB: tx (row locked): status Approved, requirements Order Placed
+  U->>R: Create PO on a requirement (actions.createPo)
+  R->>R: poRefusal, routeAllows create, the item's price, values.also checked the same way
+  R->>DB: tx: nextNumber(po), erp_purchase_orders Approved, erp_po_lines, requirements Order Placed
+  U->>R: Purchase it on the Quotation manager (orderFromQuote, inside the sheet's save)
+  R->>R: the cell's rate, the requirement picked or one raised, GST from erp.purchase.poGstPercent
+  R->>DB: same number as the cell, source quotation_manager, status Sent - or one more line on an open PO
+  U->>R: Link PO on a requirement (actions.linkPo)
+  R->>R: pickQuotePoCell for this item on that number
+  R->>DB: the PO kept under that number gains a line, Sent
+  U->>F: New PO (forms.new -> savePurchaseOrder)
+  F->>DB: tx: requirements locked, refuse one already on a live PO, status Approved
   U->>F: actions.share (channel, to, extra, message)
-  F->>F: readShare: who, checked against the channel
-  F->>DB: share_token (minted once)
-  F->>F: Wati template / mail provider, or a wa.me / mailto link per person
-  F->>DB: erp_po_shares, one row per person · status Sent, sent_via, sent_at
-  F-->>U: ShareOutcome: the link, the message, each person's result
+  F->>DB: share_token minted once, erp_po_shares one row per person, status Sent
 `} />
 
+<Code file="src/lib/erp/screens/requirement-po.ts" symbol="createRequirementPo" collapsed />
+
+<Code file="src/lib/erp/screens/requirement-po.ts" symbol="orderFromQuote" collapsed />
+
 <Code file="src/lib/erp/screens/purchase-flow.ts" symbol="savePurchaseOrder" collapsed />
+
+`approvalRefusal` and the `approve` / `sendBack` actions remain only for a PO still at Pending approval from before approval was dropped; nothing writes that status any more.
 
 <Code file="src/lib/erp/screens/purchase-flow.ts" symbol="approvalRefusal" />
 
@@ -80,10 +86,12 @@ A WhatsApp share goes through Wati only where `poWatiRoute` says so: the founder
   po_number: "PO-n (series 'po').",
   godown_id: "Deliver to.",
   freight_paise: "Freight for the whole PO, added once to the total.",
-  status: "Pending approval · Approved · Sent · Partly received · Received · Closed · Cancelled · Rejected.",
-  approved_by_id: "Also written by Send back (with status Rejected).",
-  decision_note: "The approval note, or what needs changing.",
-  sent_via: "WhatsApp · Email · Copy link — the latest share (Printed copy · Phone on POs sent before Share).",
+  status: "Approved (New PO, Create PO) · Sent (Quotation manager, or shared) · Partly received · Received · Closed · Cancelled. Pending approval and Rejected only on POs from before approval was dropped.",
+  approved_by_id: "Now the creator, stamped on create with decision_note 'No approval needed…'. Also written by Send back (with status Rejected).",
+  decision_note: "'No approval needed' and the route, or on an old PO the approval note or what needs changing.",
+  sent_via: "WhatsApp · Email · Copy link — the latest share; 'Quotation manager' on a PO bought there (Printed copy · Phone on POs sent before Share).",
+  source: "erp · quotation_manager — a Quotation manager PO arrives Sent.",
+  qm_po_no: "The PO number as the Quotation manager carries it; the name every screen prints (poName).",
   share_token: "The key in /po/<token>, minted on the first share.",
   close_reason: "Why it was closed short or cancelled.",
 }} />
@@ -97,22 +105,24 @@ A WhatsApp share goes through Wati only where `poWatiRoute` says so: the founder
 <DbTable name="erp_po_lines" note={{
   requisition_id: "The requirement this line buys — one live PO per requirement.",
   quantity: "In the requirement's purchase unit.",
-  rate_paise: "Per unit; equal to the selected quotation's for a quotation requirement.",
-  gst_bp: "1800 = 18%.",
+  rate_paise: "Per unit: the item's price (Create PO, 0 where none), the bought cell's rate (Quotation manager), or typed (New PO, Edit).",
+  gst_bp: "Basis points (1800 = 18%); erp.purchase.poGstPercent on Create PO and a Quotation manager line.",
+  quote_row_id: "With quote_column_id, the Quotation manager cell this line was bought on.",
+  drums: "Drums bought, as Purchase it recorded them.",
 }} />
 
 ## Permissions
 
 - **Module:** <ModuleRef k="erp.purchaseOrders" />. Receive goods also needs <ModuleRef k="erp.register" /> (the Purchases screen, whose Goods receipt tab is `inward`).
-- **Powers:** `viewPurchaseMoney` (raise, edit, print, share), `approvePurchaseOrder` (approve, send back — unless the material names its approvers).
-- **Duties:** `raisePo` (raise / edit, every line), `approve` (every line).
+- **Powers:** `viewPurchaseMoney` (New PO, Edit, print, share — Create PO on a requirement does not need it), `approvePurchaseOrder` (approve or send back a leftover Pending approval PO).
+- Create PO on a requirement also checks the `purchaseOrders` screen; Link PO checks only that the requirement is visible to the person's department.
 
 ## Tests that pin this
 
 | Suite | File | What it pins |
 |---|---|---|
-| `npm run test` | `src/lib/erp/engines/purchase-flow.test.ts` | The PO drives the requirement's stage; status follows what was received, only in the receiving states; tolerance is a share of what was ordered; totals add GST per line and freight once |
-| `npm run test:integration` | `src/lib/erp/erp-purchase.test.ts` | The PO is raised from the vendor's ready requirements at the quotation's rate; nothing is received against a PO awaiting approval; nobody approves their own; sharing needs purchase money, records each person, moves the PO to Sent, and its link opens the PDF |
+| `npm run test` | `src/lib/erp/engines/purchase-flow.test.ts` | The item's rule picks Link or Create; the PO drives the requirement's stage; status follows what was received, only in the receiving states; tolerance is a share of what was ordered; totals add GST per line and freight once; a PO number picks the bought cell for this item, or says why not |
+| `npm run test:integration` | `src/lib/erp/erp-purchase.test.ts` | The item's rule decides how the PO comes; Create PO at the item's price (₹0 with none), with the vendor's other items on one PO; Purchase it and Link PO give a Sent PO with no approval, a second material joins the same PO and undo takes one line back; cancel, unlink and close short; sharing needs purchase money, records each person, moves the PO to Sent, and its link opens the PDF |
 | `npm run test` | `src/lib/erp/engines/po-share.test.ts` | Who a PO can go to; a party with no number is refused by name; typed entries are checked; the message and the PDF |
 
 ## Changing it safely
@@ -124,8 +134,8 @@ Read it with `receivedByLine`. A stored figure needs a recompute path and a way 
 <Step title="Every receipt path calls refreshPurchaseOrder in its transaction">
 A new way of receiving goods that forgets leaves the PO at Sent with the goods in stock.
 </Step>
-<Step title="Keep the self-approval check inside the locked transaction">
-`approve` re-reads the PO `for update` before checking status and raiser, so two approvers cannot both approve.
+<Step title="Every route that writes a PO checks the requirement again inside its transaction">
+`savePurchaseOrder`, `createRequirementPo` and `orderFromQuote` lock the requirement and refuse one already on a live PO, so two POs made at once cannot both take it.
 </Step>
 </Steps>
 
@@ -137,3 +147,5 @@ A new way of receiving goods that forgets leaves the PO at Sent with the goods i
 | `close` and `cancel` check no power | `purchaseOrders.actions.close`, `.cancel` |
 | The company on the PDF and the message is the literal "Mahek Marketing India" | `lib/erp/po-share.ts` `COMPANY` |
 | Send back writes `approved_by_id` / `approved_at` for a rejection | `purchaseOrders.actions.sendBack` |
+| The screen's subtitle and the `approvePurchaseOrder` power's description still speak of approving a PO | `lib/erp/registry.ts`, `lib/erp/powers.ts` |
+| New PO's line form never fills a rate (`rateOf` is declared and left empty), so every New PO rate is typed | `purchaseOrderForm` |

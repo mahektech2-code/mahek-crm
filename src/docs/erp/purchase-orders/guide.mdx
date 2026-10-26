@@ -2,25 +2,25 @@ Nothing is bought without a purchase order. A PO comes from a requirement by the
 
 ## The screen at a glance
 
-<Wireframe url="/erp/purchase-orders" nav={["Dashboard", "#Purchase", "Purchase requirements", "Purchase orders", "Purchases", "Lot testing"]} active="Purchase orders" caption="Purchase orders">
+<Wireframe url="/erp/purchase-orders" nav={["Dashboard", "#Purchase", "Requirements", "Purchase orders", "Purchases", "Lot testing", "Quotation manager"]} active="Purchase orders" caption="Purchase orders">
   <WfBar>
-    <WfTitle sub="No purchase without a PO. Linked from the Quotation manager or created on a requirement — no approval — sent to the vendor and received against at the gate.">Purchase orders</WfTitle>
-    <WfSpacer /><WfButton primary>New purchase order</WfButton><Hotspot n={1} />
+    <WfTitle sub="Raised from requirements, approved, sent and received against.">Purchase orders</WfTitle>
+    <WfSpacer /><WfButton primary>New PO</WfButton><Hotspot n={1} />
   </WfBar>
   <WfTable
     highlight={0}
-    columns={["PO no", "PO date", "Vendor", "Items", "Deliver to", "Delivery date", "PO value", "Received", "Status", "Flags"]}
+    columns={["PO no", "PO date", "Vendor", "Items", "Deliver to", "Delivery date", "PO value", "Received", "Status", "Last shared", "Flags"]}
     rows={[
-      ["PO-91", "6 Oct", <b key="a">Supplier B</b>, "Tin can 5 L", "Godown A", "12 Oct", "₹54,000", "—", <span key="b"><WfPill tone="info">Approved</WfPill> <Hotspot n={2} /></span>, "—"],
-      ["PO-90", "4 Oct", <b key="c">Supplier D</b>, "Solvent A, Solvent C", "Godown A", "9 Oct", "₹2,10,400", "1 of 2 items in full", "Partly received", <span key="d"><WfPill tone="danger">Delivery overdue</WfPill> <Hotspot n={3} /></span>],
-      ["PO-88", "1 Oct", <b key="e">Supplier C</b>, "Empty Box 5 Liter", "Godown B", "8 Oct", "₹18,880", "500 of 500 Pcs", "Received", "—"],
+      ["PO-91", "6 Oct", <b key="a">Supplier B</b>, "Tin can 5 L", "Godown A", "12 Oct", "₹54,000", "—", <span key="b"><WfPill tone="info">Approved</WfPill> <Hotspot n={2} /></span>, "—", "—"],
+      ["PO-90", "4 Oct", <b key="c">Supplier D</b>, "Solvent A, Solvent C", "Godown A", "9 Oct", "₹2,10,400", "1 of 2 items in full", "Partly received", "WhatsApp · 4 Oct", <span key="d"><WfPill tone="danger">Delivery overdue</WfPill> <Hotspot n={3} /></span>],
+      ["PO-88", "1 Oct", <b key="e">Supplier C</b>, "Empty Box 5 Liter", "Godown B", "8 Oct", "₹18,880", "500 of 500 Pcs", "Received", "Email · 1 Oct", "—"],
     ]}
   />
 </Wireframe>
 
 <Hotspots items={[
-  <span key="1"><b>New purchase order.</b> Only offers vendors that have a requirement ready for a PO. Needs the purchase-money power.</span>,
-  <span key="2"><b>Status.</b> Approved (created here) or Sent (linked from the Quotation manager) → Partly received → Received, or Closed short, Cancelled.</span>,
+  <span key="1"><b>New PO.</b> Only offers vendors that have a requirement ready for a PO with that vendor already on it. Needs the purchase-money power. The subtitle above it still says "approved" from before approval was dropped.</span>,
+  <span key="2"><b>Status.</b> Approved (created here or on a requirement) or Sent (from the Quotation manager) → Partly received → Received, or Closed short, Cancelled.</span>,
   <span key="3"><b>Flags.</b> "Delivery overdue" once the delivery date has passed and goods are still due.</span>,
 ]} />
 
@@ -28,13 +28,13 @@ Nothing is bought without a purchase order. A PO comes from a requirement by the
 
 <Steps>
 <Step title="Linked from the Quotation manager">
-For a **Quotation** item. The desk presses **Purchase it** on the Quotation manager with the number of drums, and the PO number is made for them. The dialog also asks which requirement it is for, the quantity, the godown and the delivery date, and the **PO appears here at once** — nobody has to link it. Buying a second material from the same party, the **PO number** box offers **Add to PO-…** for that party's open PO (the one made today first), so several materials bought together are one PO with a line each. A purchase made from an older open page only makes the number; then somebody types it on the requirement's record and presses **Link PO**: the PO is kept here under the same number, with the sheet's vendor, rate and drums, at GST 18% (Settings), already **Sent** — the desk sent it when they bought it. Several requirements linked to one number are one PO.
+For a **Quotation** item. The desk presses **Purchase it** on the Quotation manager with the number of drums, and the PO number is made for them. The dialog also asks which requirement it is for (or **None waiting — raise one with this purchase**), the quantity, the godown and the delivery date, and the **PO appears here at once**, already **Sent** — nobody has to link it. Buying a second material from the same party, the **PO number** box offers **Add to PO-…** for that party's open PO (the one made today first), so several materials bought together are one PO with a line each. A purchase made from an older open page only makes the number; then somebody types it on the requirement's record and presses **Link PO**: the PO is kept here under the same number, with the sheet's vendor, rate and drums, at GST <Setting k="erp.purchase.poGstPercent" />%, already **Sent** — the desk sent it when they bought it. Several requirements linked to one number are one PO.
 </Step>
 <Step title="Created on the requirement">
 For a **Direct purchase** item. **Create PO** on the requirement opens three pages — Vendor, Delivery, Review — over its record. The rate is the item's price in Masters → Raw materials; nobody types an amount, and an item with no price is ordered at ₹0. **Also on this PO** on the Vendor page lists the other requirements ready for a PO with no vendor yet or with the vendor picked — the vendor's own already ticked — so one PO carries every item for that vendor, each at its own price. The PO is **Approved**: send it to the vendor.
 </Step>
-<Step title="New purchase order (this screen)">
-Still here for a PO of several requirements to one vendor. It is created **Approved** — no approval.
+<Step title="New PO (this screen)">
+Still here for a PO of several requirements to one vendor, but it offers only requirements that are ready for a PO and **already carry a vendor** — a direct-purchase item with a default vendor in Masters gets it when the requirement is raised, and a requirement whose PO was cancelled keeps its own. Here the rate and GST are typed on each line. It is created **Approved** — no approval.
 </Step>
 </Steps>
 
@@ -44,7 +44,7 @@ Every requirement on a PO must be for that PO's vendor, may appear only once, an
 A PO is ready to send and receive against the moment it is created or linked. POs raised before this change that still say **Pending approval** keep their **Approve** and **Send back** buttons until they are decided.
 </Callout>
 
-**Edit** corrects a PO created here while nothing has been received against it (purchase money needed).
+**Edit** corrects an **Approved** PO — one created here or on a requirement — while nothing has been received and before it is shared (purchase money needed). A Quotation manager PO is Sent from the start, so it is not edited here.
 
 ## Sharing it with the vendor
 
@@ -91,7 +91,7 @@ The window then lists each person: **Sent**, or **Open WhatsApp** / **Open email
 </Steps>
 
 <Callout tone="info" title="The link opens the PDF without signing in">
-Anybody with the link can open the PO as a PDF, so share it only with the people it is for. It stops working if the PO is cancelled.
+Anybody with the link can open the PO as a PDF, so share it only with the people it is for. It stops working if the PO is cancelled or closed short.
 </Callout>
 
 The first share moves an Approved PO to **Sent**, and the list's **Last shared** column says how, to whom, when and by whom. Sharing needs the purchase-money power, because the PDF carries the rates. **Print / PDF** opens the PO to print or save from the browser.
@@ -120,12 +120,12 @@ Once anything has been received against a PO it cannot be cancelled — close it
 
 ## Common questions
 
-<Faq q="The vendor I want is not in the New purchase order list.">
-Only vendors with a requirement ready for a PO are offered. A quotation item is never put on a PO here — link the PO number from the Quotation manager on the requirement instead.
+<Faq q="The vendor I want is not in the New PO list.">
+Only vendors with a requirement ready for a PO, and already given that vendor, are offered. Use **Create PO** on the requirement instead — it picks the vendor as it makes the PO. A quotation item is never put on a PO here — buy it on the Quotation manager, or link the PO number from there on the requirement.
 </Faq>
 
 <Faq q="Can I change the rate on a direct-purchase PO?">
-No — it is the item's price in Masters → Raw materials. Change the price there; the supplier's bill rate is entered on the register as before.
+Create PO always takes the item's price in Masters → Raw materials, so the right fix is usually to change the price there. **Edit** on this screen does let the rate be typed while the PO is still Approved — not yet shared, nothing received — and it must then be above zero. The supplier's bill rate is entered on the register as before.
 </Faq>
 
 <Faq q="Goods arrived but Receive goods is greyed out.">

@@ -9,7 +9,8 @@ The receipt side of the purchase flow is `lib/erp/screens/purchase.ts`: the `inw
 | Item-first pick | `src/lib/erp/engines/grn-pick.ts`, `src/app/erp/_ui/grn-dialog.tsx` | `searchGrnItems`, `linesFor`, `sortPoLines`; the dialog a form with `flow: "grn"` opens |
 | Register row | same | `createPurchase`, `syncPurchaseEntry`, `refreshCache`, `savePurchase`, `register` module, `purchaseStage` |
 | Testing | same | `TEST_FIELDS`, `missingEvidence`, `testForm`, `saveTest`, `testing` module (`verify`, `unverify`, AI read) |
-| Drum labels | same | `barcode` module — working godown's chemical lots |
+| Drum labels | same | `barcode` module — working godown's chemical lots; each row (and each register row) links to `erpLabelsHref({ purchase })`, the `?purchase=` view of `app/erp/print-labels` |
+| Date window | `src/lib/erp/window.ts` | `INWARD_WINDOW`, `TEST_WINDOW`, `REGISTER_WINDOW`, `BARCODE_WINDOW` open on this month; an unrouted inward line and an undecided test always show |
 | Landed cost | `src/lib/erp/stock.ts` | `lotLandings` — shares by PR on read; `rmLots` values stock at the landed litre rate |
 | PO back-link | `src/lib/erp/screens/purchase-flow.ts` | `refreshPurchaseOrder`, `receivedByLine` |
 | AI | `src/lib/erp/ai-bills.ts`, `src/lib/erp/ai-photos.ts` | Bill reading for the register, test-photo reading for testing |
@@ -92,7 +93,7 @@ Shares are computed every time stock is read, so a rate entered later moves the 
   empty_drum_weight: "Per drum.",
   quantity: "Net weight for a kg chemical, otherwise the typed quantity.",
   testing_required: "The item had a testing list when received.",
-  po_id: "The approved PO received against.",
+  po_id: "The PO received against (Approved, Sent or Partly received when saved).",
   po_line_id: "Its line.",
   routed: "Testing · Purchase · null (refused by the register, waiting for Send to …).",
 }} />
@@ -124,8 +125,8 @@ Shares are computed every time stock is read, so a rate entered later moves the 
 ## Permissions
 
 - **Modules:** <ModuleRef k="erp.register" /> (Goods receipt, Register, Drum labels), <ModuleRef k="erp.testing" />.
-- **Powers:** `viewPurchaseMoney`, `verifyTest`, `verifyPurchase`, `reopenPurchase`.
-- **Duty:** `test`, per material.
+- **Powers:** `viewPurchaseMoney` (also the register's bulk `billReceivedMany`), `verifyTest`, `verifyPurchase`, `reopenPurchase`.
+- **Labels:** a purchase label opens for anybody holding `barcode`, `register` or `stock` (`SCREENS` in `app/erp/print-labels/page.tsx`).
 
 ## Tests that pin this
 
@@ -136,6 +137,7 @@ Shares are computed every time stock is read, so a rate entered later moves the 
 | | "testing" | No verification on missing evidence, nor by a clerk; density 0.5–1.5; verifying creates the register row once with the tested density |
 | | "register and stock" | Lot number clash message; an edit moves the stock entry; money hidden from a clerk; bill and status cannot disagree; only the verifier sets Purchase Verified; the log flags an orphaned entry |
 | | "transport and landing cost" / "net quantity off the scale" | Weight rules; own vehicle refused without a rate; shares by value; the stock rate is the landed rate; costs corrected once per PR |
+| | "the goods receipt starts from the item" | A receipt started from the item carries a line per PO across one vendor's POs, and refuses a second vendor |
 
 ## Changing it safely
 

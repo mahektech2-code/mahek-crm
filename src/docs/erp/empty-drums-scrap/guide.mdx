@@ -41,7 +41,7 @@ A torn or missing label: keep the drum aside and tell the Production Head. Never
 
 <Wireframe url="/erp/empty-drums" nav={["Dashboard", "#Empty drums & scrap", "Empty drums", "Returnable drum outward", "Scrap sales"]} active="Empty drums" caption="Empty drums → Mahek stock">
   <WfBar>
-    <WfTitle sub="Every drum recorded empty off its GRN label and weighed.">Empty drums</WfTitle>
+    <WfTitle sub="Every emptied drum, weighed and linked to its GRN.">Empty drums</WfTitle>
     <WfSpacer />
     <WfButton>Sell drums</WfButton>
     <WfButton primary>Record empty drum</WfButton>
@@ -84,6 +84,6 @@ Vendor-returnable drums never appear in a scrap sale. Pressing **Sell as scrap**
 
 ## Getting paid
 
-A scrap sale stays outstanding until the **accountant** matches money to it. When the buyer pays, the accountant records the money on **Scrap sales → Receipts** and presses **Match to a sale** (or **Match oldest due first**). One receipt can pay several sales, and several receipts one sale. **Scrap sales → Receivables & ageing** lists what is still owed, by days past due; **Scrap buyers** opens each buyer's ledger.
+A scrap sale stays outstanding until the **accountant** matches money to it. When the buyer pays, the accountant records the money on **Scrap sales → Receipts** with **Record receipt** — including **Received into**, the Petty Cash account it landed in (cash goes to Cash in Hand) — and presses **Match to a sale** (or **Match oldest due first**). The same receipt is written once into [Petty Cash](/docs/erp/petty-cash), so that account's balance includes it. One receipt can pay several sales, and several receipts one sale. **Scrap sales → Receivables & ageing** lists what is still owed, by days past due; **Scrap buyers** opens each buyer's ledger.
 
 Production cannot mark a sale paid — selling the scrap is not the same as the money reaching the bank.

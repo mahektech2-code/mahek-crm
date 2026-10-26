@@ -4,16 +4,16 @@ How these orders then reach MahekOne's order book — the CRM, targets and outst
 
 ## The screen at a glance
 
-<Wireframe url="/erp/orders" nav={["Dashboard", "Alerts", "#Orders", "Orders", "Dispatch desk", "#Traceability", "Traceability", "#Logistics", "Transport"]} active="Orders" caption="Orders, on its Under process & ready tab, for somebody who can see the sales rate">
+<Wireframe url="/erp/orders" nav={["Dashboard", "Alerts", "#Sales", "Orders", "Dispatch desk", "#Traceability", "Traceability", "#Logistics", "Logistics"]} active="Orders" caption="Orders, on its Under process & ready tab, for somebody who can see the sales rate">
   <WfBar>
-    <WfTitle sub="From the order being taken to the bill leaving the godown. Each tab is one step of it.">Orders</WfTitle>
+    <WfTitle sub="From the order to the bill leaving the godown, one step per tab.">Orders</WfTitle>
     <WfSpacer />
     <WfButton primary>New order</WfButton>
     <Hotspot n={1} />
   </WfBar>
   <WfTabs items={["Pending", "Under process & ready", "Billing & dispatch", "Batch codes", "Labels", "All lines", "WhatsApp inbox"]} active="Under process & ready" />
   <Hotspot n={2} />
-  <WfBar><WfText muted>3 selected</WfText><WfButton>Ready</WfButton><WfButton>Under Process</WfButton><WfButton>Bill it</WfButton><WfButton>Undo billing</WfButton><Hotspot n={3} /></WfBar>
+  <WfBar><WfText muted>3 selected</WfText><WfButton>Ready</WfButton><WfButton>Under Process</WfButton><WfButton>Hold From Office</WfButton><WfButton>Cancel</WfButton><WfButton>Bill it</WfButton><WfButton>Undo billing</WfButton><Hotspot n={3} /></WfBar>
   <WfTable
     highlight={0}
     columns={["Order no", "Status", "Billing party", "Description of goods", "Order qty", "Boxes", "Rate", "Allocation", "Tally bill no", "Flags"]}
@@ -81,15 +81,15 @@ To add another SKU to an order already saved, open any of its lines and press **
 An order whose billing party is still **Pending** is marked *Pending customer* and cannot be billed until it is approved. Who approves it depends on whether the ERP is where orders are taken — see [The ERP and MahekOne's order book](/docs/erp/order-book).
 </Callout>
 
-## From Under Process to Ready
+## Moving a line between statuses
 
 A new line starts **Under Process**. Press **Ready** when the goods are on the shelf.
+
+Every line offers each status it is not at — **Ready**, **Under Process**, **Hold From Office** and **Cancel** — on its record and in the bulk bar, so a status can move back as well as forward. Two checks stay, because they protect stock: Ready needs the stock (below), and **Cancel** needs the line unbilled and its batch codes released. A dispatch-verified line stays where it is. The same statuses can still be set from **Edit**.
 
 <Callout kind="rule" title="Ready is refused without stock">
 The ERP only marks a line Ready if the godown holds the boxes (or cans) it needs, **after** what the lines already Ready and not yet allocated will take. If it does not, you see: *Stock is not there: order 1256 · Nano Thinner – 1 Liter at Godown A needs 3 boxes, 1 in stock. Pack or move the stock first, then mark it Ready.* When you mark several lines Ready together, those that have stock are marked and the rest are named.
 </Callout>
-
-**Under Process** takes a Ready line back. The other statuses — **Hold From Office** and **Cancel** — are set from **Edit**.
 
 ## Allocating lots
 
@@ -136,7 +136,7 @@ If anything is missing, hovering the button says exactly what: *Needs a Tally bi
 
 | Action | What it does |
 |---|---|
-| **Mark dispatch-verified** | Asks for the **dispatch date** and marks the line **Verified** and **Dispatched**. Needs every box scanned, where the line's lots carry box ids; lots themselves are optional. The date cannot be before the order date. The lines verified together open one record on [Transport](/docs/erp/transport). |
+| **Mark dispatch-verified** | Asks for the **dispatch date** and marks the line **Verified** and **Dispatched**. Needs every box scanned, where the line's lots carry box ids; lots themselves are optional. The date cannot be before the order date. The lines verified together open one record on [Logistics](/docs/erp/transport). |
 | **Extra expenses** | Records extra freight on the line, once. It is added to the line's cost, and to the bill's record on Logistics. |
 | **Change GST** | 18% or 0%, until the line is verified. 18% bills from *Mahek Marketing India*, 0% from *Mylac*. |
 | **Mark not verified** | ERP administrators only. Sets the line's verification to *Not Verify*. |
@@ -223,7 +223,7 @@ If drafting is switched off or has used up this month's allowance, the tab says 
 Other lines already marked Ready at the same godown are counted first. If they will take what is on the shelf, your line has to wait until more is packed or moved in.
 </Faq>
 <Faq q="Bill it is greyed out.">
-Hover it: it names everything still missing — approval, Ready, the allocation, the Tally bill number or the rate.
+Hover it: it names everything still missing — approval for a Pending customer, the Tally bill number or the rate. The line does not have to be Ready, and no lots have to be allocated. A cancelled line cannot be billed at all.
 </Faq>
 <Faq q="Where do I allocate lots?">
 At the Dispatch desk, by scanning each box onto the order. For old stock with no box labels, the desk has **Allocate a lot by hand**.

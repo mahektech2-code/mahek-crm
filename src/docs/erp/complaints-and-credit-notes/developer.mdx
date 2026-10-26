@@ -4,7 +4,7 @@ The screen is three list modules from one factory, `complaintList("requests" | "
 
 | Layer | File | What lives there |
 |---|---|---|
-| Registry | `src/lib/erp/registry.ts` | `requests` screen with views `requests` (All), `issueCn` (Credit notes), `complaints` (Without a credit note) |
+| Registry | `src/lib/erp/registry.ts` | `requests` screen with views `requests` (All complaints), `issueCn` (Credit notes), `complaints` (Without a credit note) |
 | Screen | `src/lib/erp/screens/complaints.ts` | `requestStatus`, `complaintRows`, `billChoices`, `requestForm`, `saveRequest`, `decide`, `assist`, `toRow`, `complaintList`, `issuedCreditNotes`, `openRequestIds` |
 | Form calculators | `src/lib/erp/calcs/logistics.ts` | `request.mobile`, `request.billDate` |
 | CRM writer | `src/lib/services/complaint-create.ts` | `createComplaint` |
@@ -112,7 +112,6 @@ Deciding is the ERP's `decideRequests`; issuing is Accounts' `creditnote.issue`.
 
 | Gap | Where |
 |---|---|
-| `applyComplaint` changes a CRM complaint's category with no `decideRequests` check | `ai-complaints.ts` `applyComplaint`; `screens/complaints.ts` `forms.aiComplaint` |
 | Issuing the credit note and resolving the complaint are separate transactions | `screens/complaints.ts` `actions.issue` |
 | **Add another** is offered on complaints that asked for no credit note | `screens/complaints.ts` `toRow` |
 | `issuedCreditNotes` keys on `goods_description` text, which must equal the SKU name for the margin to pick it up | `screens/complaints.ts` `issuedCreditNotes`; `screens/sales.ts` `creditOf` |
