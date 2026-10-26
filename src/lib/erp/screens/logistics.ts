@@ -12,7 +12,7 @@ import { type Col, has, isErpManager, today } from "./common";
 import { countLines, detailRows, EXTRA_EXPENSE_PROMPT, type LineFilter, monthlySalesFor, setExtraExpenses } from "./sales";
 import { tooWide, unscoped, windowWhere } from "../window";
 import { syncBookOrders } from "../book";
-import { CLOSED, STAGES } from "../engines/logistics";
+import { CLOSED, freightWord, isPaidFreight, STAGES } from "../engines/logistics";
 
 /* ---------------------------------------------------------------------------
  * Logistics, customer requests and credit notes, order follow-up and help
@@ -141,8 +141,8 @@ function transportList(scope: TransportScope, key: string = scope): ScreenModule
                 vehicle: t.vehicleNo,
                 tripCost: r.share == null ? null : Number(r.share),
                 track: onTheRoad(t) ? "Yes" : "No",
-                payment: t.paymentType,
-                extra: t.paymentType === "Paid" ? t.extraExpensePaise : null,
+                payment: freightWord(t.paymentType),
+                extra: isPaidFreight(t.paymentType) ? t.extraExpensePaise : null,
                 note: t.note,
                 stage: stageWord(t),
                 reminder: t.reminderDate,
@@ -228,7 +228,7 @@ const paidFreight: ScreenModule = {
     const f: LineFilter = sc.ids?.length ? { ids: sc.ids } : { window: { scope: sc, on: "dispatch" } };
     const wide = sc.ids?.length ? null : tooWide(await countLines({ ...f, billed: true }), sc);
     const { rows } = wide ? { rows: [] as Awaited<ReturnType<typeof detailRows>>["rows"] } : await detailRows(f);
-    const shown = rows.filter((r) => r.l.billing.freightTerm === "Paid" && r.d.extraExpensesPaise == null);
+    const shown = rows.filter((r) => isPaidFreight(r.l.billing.freightTerm) && r.d.extraExpensesPaise == null);
     /* The same gate Orders → Billing & dispatch puts on these columns. */
     const { cols, hidden, hiddenKeys } = visibleCols(
       [
@@ -247,7 +247,7 @@ const paidFreight: ScreenModule = {
       tooWide: wide,
       rows: shown.map((r) => ({
         id: r.l.o.id,
-        v: withoutHidden({ party: r.l.billing.name, extra: r.d.extraExpensesPaise, sku: r.l.sku.name, litres: r.litres, payment: r.l.billing.freightTerm, transporter: r.l.o.transporter ?? r.l.delivery.p?.transporter ?? "—" }, hiddenKeys),
+        v: withoutHidden({ party: r.l.billing.name, extra: r.d.extraExpensesPaise, sku: r.l.sku.name, litres: r.litres, payment: freightWord(r.l.billing.freightTerm), transporter: r.l.o.transporter ?? r.l.delivery.p?.transporter ?? "—" }, hiddenKeys),
         flags: [],
         title: `${r.l.billing.name} · order ${r.l.o.orderNo}`,
         actions: [{ id: "extra", l: "Extra expenses", primary: true, prompt: EXTRA_EXPENSE_PROMPT }],
