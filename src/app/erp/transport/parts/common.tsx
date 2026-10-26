@@ -11,6 +11,7 @@ import { DialogBody, DialogFooter, DialogHeader, ErpDialog, DialogTitle } from "
 import { insetClass, linkClass } from "../../_ui/look";
 import { dueWord, STAGES, STAGE_SHORT, stageStep, type Stage } from "@/lib/erp/engines/logistics";
 import type { Consignment } from "@/lib/erp/logistics";
+import { DELIVERY_STATUS_TONE, deliveryStatus } from "@/lib/erp/engines/transport-cost";
 
 /* ---------------------------------------------------------------------------
  * What every tab of the Logistics desk draws the same way: the stage strip,
@@ -79,6 +80,22 @@ export function LrThumb({ fileId, size = 56 }: { fileId: string | null; size?: n
       )}
     </a>
   );
+}
+
+/**
+ * The bill's logistics status in the PRD's words — Logistics Pending, In
+ * Transit, Delivery Pending Confirmation, Delivered, Exception — derived from
+ * its phase, stage, problem and expected day, never stored.
+ */
+export function DeliveryStatusBadge({ c, today }: { c: Pick<Consignment, "phase" | "stage" | "issue" | "expectedDeliveryOn">; today: string }) {
+  const st = deliveryStatus(c, today);
+  return <Badge label={st} tone={DELIVERY_STATUS_TONE[st]} />;
+}
+
+/** "Trip 12 · MH04 AB 1234", "Vehicle MH04…", or that dispatch named no vehicle. */
+export function vehicleWords(c: Pick<Consignment, "tripNo" | "vehicleNo">): string {
+  if (c.tripNo != null) return `Trip ${c.tripNo}${c.vehicleNo ? ` · ${c.vehicleNo}` : ""}`;
+  return c.vehicleNo ? `Vehicle ${c.vehicleNo}` : "No vehicle recorded";
 }
 
 export function BillRef({ c }: { c: Pick<Consignment, "id" | "orderNo" | "billNo"> }) {

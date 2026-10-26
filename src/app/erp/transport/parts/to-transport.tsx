@@ -7,7 +7,7 @@ import { labelClass, LinkButton, SubTitle } from "../../_ui/look";
 import { erpLogisticsAtTransport, erpLogisticsDue, erpLogisticsPackages } from "@/lib/actions/erp-logistics";
 import { addDays, shortDay } from "@/lib/erp/engines/logistics";
 import type { Consignment } from "@/lib/erp/logistics";
-import { BillRef, CallLink, DuePill, Empty, plural, sumLitres, sumPackages, useAct, useTicks } from "./common";
+import { BillRef, CallLink, DuePill, Empty, plural, sumLitres, sumPackages, useAct, useTicks, vehicleWords } from "./common";
 import { cleanWhole } from "@/lib/format";
 
 /**
@@ -104,6 +104,7 @@ export function ToTransport({ rows, today, canWrite }: { rows: Consignment[]; to
                 <span className="min-w-0">
                   <BillRef c={b} />
                   <span className="block truncate text-meta text-muted">Order {b.orderNo}{b.godown ? ` · ${b.godown}` : ""}</span>
+                  <span className={cx("block truncate text-2xs", b.vehicleNo ? "text-muted" : "text-warn")}>{vehicleWords(b)}</span>
                 </span>
                 <span className="min-w-0">
                   <span className="block truncate font-medium text-ink">{b.deliveryParty}</span>

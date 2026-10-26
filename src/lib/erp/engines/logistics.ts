@@ -35,7 +35,13 @@ export const STAGE_SHORT: Record<Stage, string> = {
   "Close - Received to Party": "Delivered",
 };
 
-export const ISSUES = ["Delayed", "Damaged", "Short received", "Held at transport", "Wrong address", "Other"] as const;
+/**
+ * The exceptions a consignment can carry (PRD step 12): delayed, incomplete
+ * (damaged or short), held, a wrong address, refused by the party, or a
+ * delivery nobody can confirm. Any of them makes the bill an Exception until
+ * it is cleared or delivered.
+ */
+export const ISSUES = ["Delayed", "Damaged", "Short received", "Held at transport", "Wrong address", "Refused", "Unconfirmed", "Other"] as const;
 
 export type Phase = "toTransport" | "lrPending" | "onRoad" | "delivered";
 
@@ -267,6 +273,10 @@ function issueSentence(issue: string): string {
       return "the consignment is held at the transporter";
     case "Wrong address":
       return "the transporter has an address problem with the delivery";
+    case "Refused":
+      return "the delivery was refused at the destination";
+    case "Unconfirmed":
+      return "we are still confirming that the consignment reached you";
     default:
       return "there is a problem with the consignment";
   }

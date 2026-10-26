@@ -23,6 +23,8 @@ import { OnRoad } from "./parts/on-road";
 import { Delivered, Overview } from "./parts/overview";
 import { ToTransport } from "./parts/to-transport";
 import { Transporters } from "./parts/transporters";
+import { Trips } from "./parts/trips";
+import { billsWithoutTrip, trips as readTrips } from "@/lib/erp/trips";
 import { UploadLrsButton } from "./parts/upload-lrs-button";
 
 /**
@@ -35,6 +37,7 @@ import { UploadLrsButton } from "./parts/upload-lrs-button";
  *   On the road      one card per LR: ring, update, report a problem, deliver
  *   Delivered        closed, with how long it took
  *   Customer messages every WhatsApp the flow wrote, and those to send by hand
+ *   Trips & freight  vehicle trips, and the transport payment shared by litres
  *   Transporters     who to ring, and their tracking page
  *   All bills / Paid freight   the registers, as lists
  *
@@ -43,7 +46,7 @@ import { UploadLrsButton } from "./parts/upload-lrs-button";
  */
 export const dynamic = "force-dynamic";
 
-const BOARD = new Set(["transport", "toTransport", "pendingLr", "trackLr", "delivered", "lrMessages", "transporters"]);
+const BOARD = new Set(["transport", "toTransport", "pendingLr", "trackLr", "delivered", "lrMessages", "trips", "transporters"]);
 
 export default async function LogisticsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const ctx = await erpContext();
@@ -96,10 +99,11 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
     consignments(),
     view === "pendingLr" || view === "transport" ? uploadedLrs() : Promise.resolve([]),
     view === "lrMessages" || view === "transport" ? messages({ limit: view === "transport" ? 500 : 300 }) : Promise.resolve([]),
-    view === "transporters" || view === "pendingLr" ? transporters() : Promise.resolve([]),
+    view === "transporters" || view === "pendingLr" || view === "trips" ? transporters() : Promise.resolve([]),
     canWrite ? lrUploadKit() : Promise.resolve(null),
   ]);
   const [tree, labels] = view === "transporters" ? await Promise.all([placeOptions(), refValues("consignmentLabel")]) : [[], []];
+  const [tripRows, noTrip] = view === "trips" ? await Promise.all([readTrips(), billsWithoutTrip()]) : [[], []];
   /* A dashboard tile opens a tab narrowed to the bills it counted. */
   const ids = one("f")?.split(",");
   const rows = ids ? all.filter((c) => ids.includes(c.id)) : all;
@@ -150,6 +154,7 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
       ) : null}
       {view === "delivered" ? <Delivered rows={rows.filter((c) => c.phase === "delivered")} canWrite={canWrite} /> : null}
       {view === "lrMessages" ? <Messages rows={outbox} canWrite={canWrite} wati={cfg["erp.logistics.watiTemplate"].trim() || null} /> : null}
+      {view === "trips" ? <Trips trips={tripRows} unassigned={noTrip} today={today} transporters={dir.filter((t) => t.active).map((t) => t.name)} canWrite={canWrite} /> : null}
       {view === "transporters" ? (
         <Transporters
           rows={dir}

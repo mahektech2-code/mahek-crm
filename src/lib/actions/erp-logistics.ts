@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { err, fromThrown, type Result } from "@/lib/result";
 import { ErpNotPermitted, erpContext, previewRefusal, requireErpWrite, type ErpContext } from "@/lib/erp/access";
 import * as L from "@/lib/erp/logistics";
+import * as T from "@/lib/erp/trips";
 
 /* ---------------------------------------------------------------------------
  * The Logistics desk's writes. Every one re-checks the Logistics screen
@@ -109,7 +110,7 @@ export async function erpLogisticsClearIssue(transportIds: string[], note: strin
   return run((ctx) => L.clearIssue(ctx, ids(transportIds), note ?? ""));
 }
 
-export async function erpLogisticsDelivered(transportIds: string[], input: { date: string; receivedBy?: string | null; note?: string | null; notify?: boolean }) {
+export async function erpLogisticsDelivered(transportIds: string[], input: { date: string; receivedBy?: string | null; proof?: string | null; note?: string | null; notify?: boolean }) {
   return run((ctx) => L.markDelivered(ctx, ids(transportIds), input));
 }
 
@@ -131,4 +132,27 @@ export async function erpLogisticsMessageSkip(messageId: string) {
 
 export async function erpLogisticsMessageRetry(messageId: string) {
   return run((ctx) => L.retryMessage(ctx, messageId));
+}
+
+/* ---- trips and the transport payment (Order-to-Delivery PRD steps 10–11) ---- */
+
+export async function erpTripSave(input: T.TripInput) {
+  return run((ctx) => T.saveTrip(ctx, { ...input, transportIds: ids(input?.transportIds) }));
+}
+
+export async function erpTripAddBills(tripId: string, transportIds: string[]) {
+  return run((ctx) => T.addToTrip(ctx, String(tripId ?? ""), ids(transportIds)));
+}
+
+export async function erpTripRemoveBill(transportId: string) {
+  return run((ctx) => T.removeFromTrip(ctx, String(transportId ?? "")));
+}
+
+/** Logistics records the confirmed payment; it does not make it. */
+export async function erpTransportPaymentRecord(input: T.PaymentInput) {
+  return run((ctx) => T.recordTransportPayment(ctx, { ...input, transportIds: ids(input?.transportIds) }));
+}
+
+export async function erpTransportPaymentReverse(paymentId: string, reason: string) {
+  return run((ctx) => T.reverseTransportPayment(ctx, String(paymentId ?? ""), reason ?? ""));
 }
