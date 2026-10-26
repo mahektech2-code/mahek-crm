@@ -3,7 +3,7 @@ import QRCode from "qrcode";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { erpPurchases, erpRawMaterials } from "@/db/schema";
-import { lotSize, productLine, shortRef, type BoxLabel, type DispatchLabel, type PurchaseLabel, type Qr, type SfgLabel } from "./engines/labels";
+import { productLine, type BoxLabel, type DispatchLabel, type PurchaseLabel, type Qr, type SfgLabel } from "./engines/labels";
 import { purchaseFigures, shortLabel } from "./engines/purchase";
 import { packLabel } from "./engines/trace";
 import { refValues } from "./refs";
@@ -208,38 +208,21 @@ export async function purchaseLabel(id: string): Promise<PurchaseLabelRow | null
 export type DispatchLabelRow = { label: DispatchLabel; lineId: string; copies: number };
 
 /**
- * Dispatch labels for an order: one for every box or can on every line that is
- * still going, each carrying the LOT SIZE — the labels on the whole order —
- * so the pieces can be counted on and off the lorry. Read through the order
- * lines every sales list shares, so the type, the label count and the weight
- * are the ones on the Labels tab.
+ * Dispatch stickers for an order: one for every box or can on every line of
+ * its APPROVED invoice that has not left yet (PRD step 7 — the sticker goes on
+ * after the invoice is verified). Each carries the customer, the product, the
+ * invoice number and the order number, and no lot or box code (rule 5).
+ * Read through the order lines every sales list shares, so the sticker count
+ * is the one on the Dispatch stickers tab.
  */
 export async function dispatchLabels(orderNo: number): Promise<DispatchLabelRow[]> {
-  const lines = (await orderLines({ orderNos: [orderNo] })).filter((l) => l.o.status !== "Cancel");
+  const lines = (await orderLines({ orderNos: [orderNo] })).filter((l) => l.o.status !== "Cancel" && l.inDetails && l.invoiceCheck === "Approved" && !l.dispatched && l.o.tallyBillNo);
   if (!lines.length) return [];
-  /* Entered order, not newest first: the labels come off the roll as the order was written. */
+  /* Entered order, not newest first: the stickers come off the roll as the order was written. */
   lines.sort((a, b) => a.o.createdAt.getTime() - b.o.createdAt.getTime());
-  const size = lotSize(lines);
   return lines.map((l) => ({
     lineId: l.o.id,
     copies: Math.max(0, Math.round(l.labels)),
-    label: {
-      kind: "dispatch",
-      orderNo: l.o.orderNo,
-      date: l.o.orderDate,
-      lineRef: shortRef(l.o.id),
-      delivery: l.delivery.name,
-      area: l.delivery.area?.trim() || l.delivery.city?.trim() || null,
-      billing: l.billing.name,
-      sku: l.sku.name,
-      qty: l.o.qtyCans,
-      type: l.type,
-      /* One label a box on a boxed line and one a can otherwise, so the label carries the
-         catalogue's own figure — a box's weight or a can's — never the line's total. */
-      weightKg: l.sku.weightGrams == null ? null : l.sku.weightGrams / 1000,
-      lotSize: size,
-      remark: l.o.remark?.trim() || null,
-      transporter: (l.o.transporter ?? l.delivery.p?.transporter ?? "").trim() || null,
-    },
+    label: { kind: "dispatch", orderNo: l.o.orderNo, invoiceNo: l.o.tallyBillNo!, customer: l.delivery.name, product: l.sku.name },
   }));
 }

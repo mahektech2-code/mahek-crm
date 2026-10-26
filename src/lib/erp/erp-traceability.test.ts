@@ -149,20 +149,21 @@ describe("production makes boxes with ids", () => {
 describe("the dispatch desk", () => {
   test("an order for 3 boxes of Nano 1 L, Ready and allocated to FP1BH", async () => {
     const a = await as(admin);
-    assert.ok((await mod("orders").forms!.new(a, { date: TODAY, godown: "Bhiwandi", billing: "ABC Paints" }, [{ sku: BOX1, qty: "12", rate: "100" }])).ok);
+    assert.ok((await mod("orders").forms!.new(a, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "ABC Paints" }, [{ sku: BOX1, qty: "12", rate: "100" }])).ok);
     const [o] = (await db.execute(sql`select id, order_no as no from erp_orders`)) as unknown as { id: string; no: number }[];
     orderNo = Number(o.no);
     lineId = o.id;
+    assert.ok((await mod("orders").actions!.verifyOrder(a, lineId, {})).ok);
     assert.ok((await mod("orders").actions!.ready(a, lineId, {})).ok);
     assert.ok((await mod("orders").forms!.allocate(a, { lot: "FP1BH", qty: "3" }, [], lineId)).ok);
-    assert.ok((await mod("orders").forms!.edit(a, { status: "Ready", delivery: "ABC Paints", qty: "12", rate: "100", bill: "INV-261008-00456", transport: "0" }, [], lineId)).ok);
-    assert.ok((await mod("orders").actions!.bill(a, lineId, {})).ok);
+    assert.ok((await mod("orders").actions!.bill(a, lineId, { invoiceNo: "INV-261008-00456", invoiceDate: TODAY })).ok);
+    assert.ok((await mod("orders").actions!.approveInvoice(a, lineId, {})).ok);
   });
 
   test("Do Verified waits for every box to be scanned", async () => {
     const a = await as(admin);
     const r = await mod("orderDetails").bulk!.verify(a, [lineId], { date: TODAY });
-    assert.match(msg(r), /Scan the boxes first/);
+    assert.match(msg(r), /still to scan at the Dispatch desk/);
   });
 
   test("a matching box counts; the same box again, an unknown code and a box of the wrong pack size are stopped", async () => {
@@ -228,8 +229,9 @@ describe("a lot label at the desk (stock packed before box ids)", () => {
     assert.ok((await mod("packBatches").forms!.new(a, { date: TODAY, godown: "Bhiwandi", fg: FG1, sku: BOX1, boxes: "2", lot: "FG1BH" }, [])).ok);
     await db.execute(sql`delete from erp_unit_events where unit_id in (select id from erp_units where lot_code = 'FP5BH')`);
     await db.execute(sql`delete from erp_units where lot_code = 'FP5BH'`);
-    assert.ok((await mod("orders").forms!.new(a, { date: TODAY, godown: "Bhiwandi", billing: "ABC Paints" }, [{ sku: BOX1, qty: "8", rate: "100" }])).ok);
+    assert.ok((await mod("orders").forms!.new(a, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "ABC Paints" }, [{ sku: BOX1, qty: "8", rate: "100" }])).ok);
     const [o] = (await db.execute(sql`select id, order_no as no from erp_orders order by order_no desc limit 1`)) as unknown as { id: string; no: number }[];
+    assert.ok((await mod("orders").actions!.verifyOrder(a, o.id, {})).ok);
     assert.ok((await mod("orders").actions!.ready(a, o.id, {})).ok);
 
     const c = await as(clerk);

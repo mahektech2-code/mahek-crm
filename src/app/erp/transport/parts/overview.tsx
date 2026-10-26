@@ -40,6 +40,8 @@ export function Overview({
   const issues = roadGroups.filter((g) => g.bills.some((c) => c.issue));
   const late = roadGroups.filter((g) => !g.bills.some((c) => c.issue) && g.bills.some((c) => runningLate({ expectedDeliveryOn: c.expectedDeliveryOn, billDate: c.billDate, materialStage: c.stage }, today, lateAfterDays)));
   const stuck = lrP.filter((c) => c.atTransportAt && daysBetween(c.atTransportAt.slice(0, 10), today) >= 2);
+  /* The PRD asks for the vehicle at dispatch; a recent bill without one cannot go on a trip or carry its share of the transport cost. */
+  const noVehicle = rows.filter((c) => c.phase !== "delivered" && !c.vehicleNo && c.billDate && daysBetween(c.billDate, today) <= 3);
   const dueToday = toT.filter((c) => c.transportDueOn && c.transportDueOn <= today);
 
   const steps = [
@@ -110,8 +112,14 @@ export function Overview({
           <Attention label="Problems on the road" tone="danger" href={erpLink("trackLr", { filter: "issue" })} items={issues.map((g) => ({ key: g.key, main: `${lrLabel(g.bills[0].lrNo)} · ${g.bills[0].deliveryParty}`, sub: `${g.bills.find((b) => b.issue)?.issue}${g.bills.find((b) => b.issue)?.issueNote ? ` — ${g.bills.find((b) => b.issue)?.issueNote}` : ""}` }))} />
           <Attention label="Running late" tone="warn" href={erpLink("trackLr", { filter: "late" })} items={late.map((g) => ({ key: g.key, main: `${lrLabel(g.bills[0].lrNo)} · ${g.bills[0].deliveryParty}`, sub: g.bills[0].expectedDeliveryOn ? `Expected ${shortDay(g.bills[0].expectedDeliveryOn)}` : `${daysBetween(g.bills[0].billDate ?? today, today)} days since dispatch` }))} />
           <Attention label="At the transporter 2+ days with no LR" tone="warn" href={erpLink("pendingLr")} items={stuck.map((c) => ({ key: c.id, main: `${c.billNo ?? `Order ${c.orderNo}`} · ${c.deliveryParty}`, sub: `${c.transporter ?? "—"} since ${shortDay(c.atTransportAt!.slice(0, 10))}` }))} />
+          <Attention
+            label="Left in the last 3 days with no vehicle recorded"
+            tone="warn"
+            href={erpLink("trips")}
+            items={noVehicle.map((c) => ({ key: c.id, main: `${c.billNo ?? `Order ${c.orderNo}`} · ${c.deliveryParty}`, sub: `${c.transporter ?? "No transporter"} · put it on a trip under Trips & freight` }))}
+          />
           <Attention label="Customer messages to send by hand" tone="warn" href={erpLink("lrMessages")} items={messagesWaiting ? [{ key: "m", main: plural(messagesWaiting, "message"), sub: "Open WhatsApp from the Customer messages tab and mark each sent." }] : []} />
-          {!issues.length && !late.length && !stuck.length && !messagesWaiting ? <Empty>Nothing needs attention.</Empty> : null}
+          {!issues.length && !late.length && !stuck.length && !messagesWaiting && !noVehicle.length ? <Empty>Nothing needs attention.</Empty> : null}
         </Card>
       </CardGrid>
     </div>
@@ -160,7 +168,7 @@ export function Delivered({ rows, canWrite }: { rows: Consignment[]; canWrite: b
           <span>Left</span>
           <span>Delivered</span>
           <span>Days</span>
-          <span>Received by</span>
+          <span>Received by · proof</span>
           <span />
         </div>
         {sorted.length ? (
@@ -173,7 +181,10 @@ export function Delivered({ rows, canWrite }: { rows: Consignment[]; canWrite: b
               <span className="text-meta">{c.billDate ? shortDay(c.billDate) : "—"}</span>
               <span className="text-meta">{c.deliveredOn ? shortDay(c.deliveredOn) : "—"}</span>
               <span className="tabular-nums">{c.deliveredOn && c.billDate ? daysBetween(c.billDate, c.deliveredOn) : "—"}</span>
-              <span className="truncate text-meta">{c.receivedBy ?? "—"}</span>
+              <span className="min-w-0 text-meta" title={[c.deliveryProof ? `Proof: ${c.deliveryProof}` : null, c.deliveredBy ? `Confirmed by ${c.deliveredBy}` : null].filter(Boolean).join(" · ") || undefined}>
+                <span className="block truncate">{c.receivedBy ?? "—"}</span>
+                {c.deliveryProof || c.deliveredBy ? <span className="block truncate text-2xs text-muted">{[c.deliveryProof, c.deliveredBy ? `by ${c.deliveredBy}` : null].filter(Boolean).join(" · ")}</span> : null}
+              </span>
               <span className="text-right">
                 {canWrite ? (
                   <LinkButton tone="muted" className="text-meta" onClick={() => setReopen(c)}>

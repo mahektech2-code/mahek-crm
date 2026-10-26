@@ -11,7 +11,7 @@ import { linkClass, SubTitle } from "../../_ui/look";
 import { erpLogisticsClearIssue, erpLogisticsDelivered, erpLogisticsIssue, erpLogisticsUpdate } from "@/lib/actions/erp-logistics";
 import { addDays, callDue, daysBetween, ISSUES, ROAD_STAGES, runningLate, shortDay, STAGE_SHORT, trackingLink, type Stage } from "@/lib/erp/engines/logistics";
 import type { Consignment } from "@/lib/erp/logistics";
-import { BillRef, byLr, CallLink, DuePill, Empty, LrThumb, NotifyToggle, plural, StageStrip, sumPackages, useAct, lrLabel } from "./common";
+import { BillRef, byLr, CallLink, DeliveryStatusBadge, DuePill, Empty, LrThumb, NotifyToggle, plural, StageStrip, sumPackages, useAct, lrLabel, vehicleWords } from "./common";
 
 /**
  * STEP 5 AND 6 — following the lorry. One card per LR (one LR is one
@@ -82,6 +82,7 @@ export function OnRoad({ rows, today, callEveryDays, lateAfterDays, notifyOn, ca
                 <div className="flex flex-wrap items-center gap-2">
                   <SubTitle className="mb-0 font-mono">{lrLabel(c.lrNo)}</SubTitle>
                   <span className="text-meta text-body">· {c.transporter ?? "—"}</span>
+                  <DeliveryStatusBadge c={issue ?? c} today={today} />
                   {issue ? <Badge label={issue.issue ?? ""} tone="danger" /> : null}
                   {late && !issue ? <Badge label="Running late" tone="warn" /> : null}
                   {waiting ? (
@@ -101,6 +102,7 @@ export function OnRoad({ rows, today, callEveryDays, lateAfterDays, notifyOn, ca
                   {boxes != null ? ` · ${plural(boxes, "box", "boxes")}` : ""}
                   {c.area ? ` · ${c.area}` : ""}
                   {since ? ` · ${daysBetween(since, today)} d on the road` : ""}
+                  {` · ${vehicleWords(c)}`}
                 </div>
                 {issue?.issueNote ? <div className="mt-1 text-meta text-danger">{issue.issueNote}</div> : null}
                 {c.lastEventNote ? <div className="mt-1 truncate text-meta text-body">Last: {c.lastEventNote}</div> : null}
@@ -167,6 +169,7 @@ function ActionDialog({ dialog, today, callEveryDays, notifyOn, onClose }: { dia
   const [issue, setIssue] = useState<string>("Delayed");
   const [date, setDate] = useState(today);
   const [receivedBy, setReceivedBy] = useState("");
+  const [proof, setProof] = useState("");
   const [notify, setNotify] = useState(true);
 
   const title = dialog.kind === "update" ? `Update ${lrLabel(c.lrNo)}` : dialog.kind === "issue" ? `A problem with ${lrLabel(c.lrNo)}` : `${lrLabel(c.lrNo)} delivered`;
@@ -174,7 +177,7 @@ function ActionDialog({ dialog, today, callEveryDays, notifyOn, onClose }: { dia
     const done = (r: { ok: boolean }) => r.ok && onClose();
     if (dialog.kind === "update") return run(() => erpLogisticsUpdate(ids, { stage, note, expectedOn: expected || null, nextCallOn: nextCall || null, notify }), done);
     if (dialog.kind === "issue") return run(() => erpLogisticsIssue(ids, { issue, note, expectedOn: expected || null, notify }), done);
-    return run(() => erpLogisticsDelivered(ids, { date, receivedBy, note, notify }), done);
+    return run(() => erpLogisticsDelivered(ids, { date, receivedBy, proof, note, notify }), done);
   };
   const moved = dialog.kind === "update" && (stage !== c.stage || (expected && expected !== c.expectedDeliveryOn));
 
@@ -231,6 +234,12 @@ function ActionDialog({ dialog, today, callEveryDays, notifyOn, onClose }: { dia
             <Field label="Received by">
               <Input value={receivedBy} onChange={(e) => setReceivedBy(e.target.value)} placeholder="Who signed for it" />
             </Field>
+            <div className="col-span-2">
+              <Field label="Proof / reference">
+                <Input value={proof} onChange={(e) => setProof(e.target.value)} placeholder="POD number, signed copy, photo name — optional" />
+              </Field>
+            </div>
+            <p className="col-span-2 text-meta text-muted">Close it only once the party has confirmed. Not confirmed yet? Report a problem — Unconfirmed — and it stays open.</p>
           </div>
         ) : null}
         <Field label={dialog.kind === "update" ? "What the transporter said" : "Note"}>

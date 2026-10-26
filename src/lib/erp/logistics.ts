@@ -77,6 +77,13 @@ export type Consignment = {
   nextCallOn: string | null;
   deliveredOn: string | null;
   receivedBy: string | null;
+  /** Who pressed "Delivered" — the confirmation the PRD asks to be attributable. */
+  deliveredBy: string | null;
+  deliveryProof: string | null;
+  /** The vehicle trip this bill went on, and the vehicle dispatch recorded (0285). */
+  tripId: string | null;
+  tripNo: number | null;
+  vehicleNo: string | null;
   issue: string | null;
   issueNote: string | null;
   note: string | null;
@@ -129,6 +136,8 @@ export async function consignments(opts: { deliveredDays?: number; ids?: string[
            l.lr_date::text as "lrDate", l.file_id as "lrFileId",
            t.expected_delivery_on::text as "expectedDeliveryOn", t.reminder_date::text as "nextCallOn",
            t.delivered_on::text as "deliveredOn", t.received_by as "receivedBy",
+           du.name as "deliveredBy", t.delivery_proof as "deliveryProof",
+           t.trip_id as "tripId", tp.trip_no as "tripNo", coalesce(t.vehicle_no, tp.vehicle_no) as "vehicleNo",
            t.issue, t.issue_note as "issueNote", t.note, t.track_token as "trackToken",
            ev.at as "lastEventAt", ev.note as "lastEventNote",
            coalesce(msg.waiting, 0) as "messagesWaiting", t.updated_at as "updatedAt"
@@ -137,6 +146,8 @@ export async function consignments(opts: { deliveredDays?: number; ids?: string[
       left join o on o.order_no = t.order_no
       left join customers dc on dc.id = o.delivery_id
       left join erp_lrs l on l.id = t.lr_id
+      left join users du on du.id = t.delivered_by_id
+      left join erp_trips tp on tp.id = t.trip_id
       left join erp_transporters tr on lower(tr.name) = lower(coalesce(t.transporter, l.transporter)) and tr.active
       left join ev on ev.transport_id = t.id
       left join msg on msg.transport_id = t.id
@@ -178,6 +189,11 @@ export async function consignments(opts: { deliveredDays?: number; ids?: string[
       nextCallOn: s(r.nextCallOn),
       deliveredOn: s(r.deliveredOn),
       receivedBy: s(r.receivedBy),
+      deliveredBy: s(r.deliveredBy),
+      deliveryProof: s(r.deliveryProof),
+      tripId: s(r.tripId),
+      tripNo: n(r.tripNo),
+      vehicleNo: s(r.vehicleNo),
       issue: s(r.issue),
       issueNote: s(r.issueNote),
       note: s(r.note),
@@ -784,11 +800,16 @@ export async function clearIssue(ctx: ErpContext, transportIds: string[], note: 
   return okVoid("Problem cleared");
 }
 
-/** Step 6 — the party has the goods. Closing needs the day; who signed is asked, not demanded. */
+/**
+ * Step 6 — the party has the goods. Closing needs the day; who signed and a
+ * proof or reference are asked, not demanded. Who CONFIRMED it is the person
+ * pressing the button, recorded on the bill (PRD step 12) — nothing else ever
+ * closes a bill, so an unconfirmed delivery stays open or carries an exception.
+ */
 export async function markDelivered(
   ctx: ErpContext,
   transportIds: string[],
-  input: { date: string; receivedBy?: string | null; note?: string | null; notify?: boolean },
+  input: { date: string; receivedBy?: string | null; proof?: string | null; note?: string | null; notify?: boolean },
 ): Promise<Result<{ notified: NotifyOutcome }>> {
   const d = day(input.date);
   if (!d) return fieldErr("date", "Pick the day the party received it");
@@ -798,16 +819,17 @@ export async function markDelivered(
   const early = ts.find((t) => t.billDate && d < t.billDate);
   if (early) return fieldErr("date", `Order ${early.orderNo} left on ${early.billDate}; it cannot arrive before that`);
   const receivedBy = input.receivedBy?.trim() || null;
+  const proof = input.proof?.trim().slice(0, 200) || null;
   const note = input.note?.trim() || null;
   let eventId = "";
   await db.transaction(async (tx) => {
     await tx
       .update(erpTransports)
-      .set({ materialStage: CLOSED, trackStatus: "Don't Track", deliveredOn: d, receivedBy, issue: null, issueNote: null, issueAt: null, reminderDate: null, ...(note ? { note } : {}), updatedAt: new Date(), updatedById: ctx.user.id })
+      .set({ materialStage: CLOSED, trackStatus: "Don't Track", deliveredOn: d, receivedBy, deliveredById: ctx.user.id, deliveryProof: proof, issue: null, issueNote: null, issueAt: null, reminderDate: null, ...(note ? { note } : {}), updatedAt: new Date(), updatedById: ctx.user.id })
       .where(inArray(erpTransports.id, ts.map((t) => t.id)));
-    eventId = await addEvent(tx as unknown as typeof db, ctx, ts.map((t) => t.id), "delivered", CLOSED, [receivedBy ? `Received by ${receivedBy}` : null, note].filter(Boolean).join(" · ") || null);
+    eventId = await addEvent(tx as unknown as typeof db, ctx, ts.map((t) => t.id), "delivered", CLOSED, [receivedBy ? `Received by ${receivedBy}` : null, proof ? `Proof: ${proof}` : null, note].filter(Boolean).join(" · ") || null);
   });
-  await erpAudit(ctx, "erp.logistics.delivered", "erp_transport", ts.map((t) => t.id).join(","), null, { date: d, receivedBy });
+  await erpAudit(ctx, "erp.logistics.delivered", "erp_transport", ts.map((t) => t.id).join(","), null, { date: d, receivedBy, proof });
   await syncBookOrders([...new Set(ts.map((t) => t.orderNo))]);
   const notified = input.notify === false ? NO_NOTIFY : await notifyCustomers(ctx, "delivered", ts.map((t) => t.id), eventId, { deliveredOn: d, receivedBy });
   return ok({ notified }, `Delivered and closed${notifyWords(notified)}`);
@@ -821,7 +843,7 @@ export async function reopen(ctx: ErpContext, transportId: string, reason: strin
   if (!t || t.materialStage !== CLOSED) return err("That bill is not closed.", "rule_violation");
   const stage = t.lrNo ? "Reached Destination Area" : "At transport";
   await db.transaction(async (tx) => {
-    await tx.update(erpTransports).set({ materialStage: stage, trackStatus: t.lrNo ? "Track" : "Don't Track", deliveredOn: null, receivedBy: null, reminderDate: today(), updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpTransports.id, t.id));
+    await tx.update(erpTransports).set({ materialStage: stage, trackStatus: t.lrNo ? "Track" : "Don't Track", deliveredOn: null, receivedBy: null, deliveredById: null, deliveryProof: null, reminderDate: today(), updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpTransports.id, t.id));
     await addEvent(tx as unknown as typeof db, ctx, [t.id], "reopened", stage, why, false);
   });
   await erpAudit(ctx, "erp.logistics.reopen", "erp_transport", t.id, { stage: CLOSED }, { stage, reason: why });

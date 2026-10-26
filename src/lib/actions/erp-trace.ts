@@ -76,17 +76,17 @@ export async function erpDispatchDecideOverride(id: string, approve: boolean, no
  * yet verified. It runs the Billing & dispatch tab's own handler, so it asks
  * for that screen too and every rule there — the scan gate included — holds.
  */
-export async function erpDispatchVerify(orderNo: number, date: string): Promise<Result<unknown>> {
+export async function erpDispatchVerify(orderNo: number, input: { date: string; vehicle?: string; driver?: string; remark?: string }): Promise<Result<unknown>> {
   try {
     const ctx = await requireErpWrite("orderDetails");
     const ids = ((await db.execute(sql`
       select o.id from erp_orders o join erp_order_details d on d.order_id = o.id
        where o.order_no = ${orderNo} and coalesce(d.verification, 'Pending') = 'Pending'
     `)) as unknown as { id: string }[]).map((r) => r.id);
-    if (!ids.length) return err("Nothing on this order is billed and waiting for dispatch verification. Bill it first, on Orders → Under process & ready.", "rule_violation");
+    if (!ids.length) return err("Nothing on this order is billed and waiting to be dispatched. Bill it first, on Orders → Ready to bill.", "rule_violation");
     const verify = screenModule("orderDetails")?.bulk?.verify;
     if (!verify) return err("Dispatch verification is not available.", "not_found");
-    const res = await verify(ctx, ids, { date });
+    const res = await verify(ctx, ids, { date: input?.date ?? "", vehicle: input?.vehicle ?? "", driver: input?.driver ?? "", remark: input?.remark ?? "" });
     touched(orderNo);
     revalidatePath("/erp/orders");
     return res;

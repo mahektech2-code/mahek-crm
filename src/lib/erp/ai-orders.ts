@@ -128,7 +128,7 @@ export async function draftForm(base: FormSpec, inboxId: string): Promise<FormSp
     title: "Accept the drafted order",
     sub: "Drafted from the message. Check each line against it; nothing is an order until you save.",
     submit: "Create the order",
-    init: { ...base.init, billing: d.customerName ?? "", ...(d.transporter ? { transporter: d.transporter } : {}), inboxId },
+    init: { ...base.init, billing: d.customerName ?? "", source: "WhatsApp", ...(d.transporter ? { transporter: d.transporter } : {}), inboxId },
     initLines: d.lines.map((l) => ({ sku: l.sku ?? "", qty: l.qty == null ? "" : String(l.qty), remark: [d.remark, l.sku ? "" : `Said: ${l.mention}`].filter(Boolean).join(" · ") })),
     evidence: { text: row.text, flags },
   });

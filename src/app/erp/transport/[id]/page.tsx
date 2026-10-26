@@ -4,6 +4,7 @@ import { erpLink } from "@/lib/erp/registry";
 import { notFound, redirect } from "next/navigation";
 import { erpContext } from "@/lib/erp/access";
 import { getConfig } from "@/lib/config/store";
+import { DELIVERY_STATUS_TONE, deliveryStatus } from "@/lib/erp/engines/transport-cost";
 import { PHASE_LABEL, shortDay, STAGE_SHORT, stageStep, STAGES, trackingLink } from "@/lib/erp/engines/logistics";
 import { billLines, consignments, consignmentsOnLr, eventsFor, messages } from "@/lib/erp/logistics";
 import { today as businessToday } from "@/lib/erp/screens/common";
@@ -37,6 +38,7 @@ const KIND: Record<string, string> = {
   issue_cleared: "Problem solved",
   delivered: "Delivered",
   reopened: "Reopened",
+  trip: "Vehicle trip",
 };
 
 export default async function ConsignmentPage({ params }: { params: Promise<{ id: string }> }) {
@@ -49,6 +51,7 @@ export default async function ConsignmentPage({ params }: { params: Promise<{ id
   const [events, msgs, lines, cfg] = await Promise.all([eventsFor([c.id]), messages({ transportId: c.id }), billLines(c.orderNo, c.id), getConfig()]);
   const today = businessToday();
   const online = trackingLink(c.transporterTrackUrl, c.lrNo);
+  const status = deliveryStatus(c, today);
 
   const fact = (l: string, v: React.ReactNode) => (
     <div>
@@ -75,7 +78,10 @@ export default async function ConsignmentPage({ params }: { params: Promise<{ id
       <div className="grid grid-cols-[minmax(0,1fr)_minmax(300px,380px)] items-start gap-5">
         <div className="space-y-5">
           <Card className="p-4">
-            <StageStrip stage={c.stage} />
+            <div className="flex flex-wrap items-center gap-3">
+              <StageStrip stage={c.stage} />
+              <Badge label={status} tone={DELIVERY_STATUS_TONE[status]} />
+            </div>
             <CardGrid min={150} className="mt-4">
               {fact("Billed to", c.party)}
               {fact("Delivered to", c.deliveryParty)}
@@ -84,10 +90,25 @@ export default async function ConsignmentPage({ params }: { params: Promise<{ id
               {fact("Boxes", c.packages)}
               {fact("Litres", c.litres)}
               {fact("Freight", c.paymentType)}
+              {fact(
+                "Vehicle trip",
+                c.tripNo != null ? (
+                  <NavLink href={erpLink("trips")} className={linkClass()}>
+                    Trip {c.tripNo}
+                    {c.vehicleNo ? ` · ${c.vehicleNo}` : ""}
+                  </NavLink>
+                ) : c.vehicleNo ? (
+                  `Vehicle ${c.vehicleNo} · on no trip`
+                ) : (
+                  <span className="text-warn">No vehicle recorded</span>
+                ),
+              )}
               {fact("Transporter", c.transporter ? <span>{c.transporter}<span className="block"><CallLink phone={c.transporterPhone} name={c.transporter} /></span></span> : null)}
               {fact("Expected delivery", c.expectedDeliveryOn ? shortDay(c.expectedDeliveryOn) : null)}
               {fact("Next call", c.nextCallOn ? shortDay(c.nextCallOn) : null)}
               {c.deliveredOn ? fact("Delivered", `${shortDay(c.deliveredOn)}${c.receivedBy ? ` · ${c.receivedBy}` : ""}`) : null}
+              {c.deliveredOn ? fact("Confirmed by", c.deliveredBy) : null}
+              {c.deliveredOn ? fact("Proof / reference", c.deliveryProof) : null}
               {c.issue ? fact("Problem", <Badge label={c.issue} tone="danger" />) : null}
             </CardGrid>
             {c.issueNote ? <div className="mt-3 text-meta text-danger">{c.issueNote}</div> : null}

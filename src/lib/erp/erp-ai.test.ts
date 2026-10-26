@@ -119,13 +119,14 @@ before(async () => {
   await ok(mod("sfgBatches").actions!.qcApprove(a, sfgLine.id, allPassValues(await refValues("testingList"))));
   await ok(mod("fgFill").forms!.new(a, { date: ago(14), godown: "Bhiwandi", sfg: SFG, sfgLot: "1ASTOL1", fg: FG, size: "1", canUse: "Tin can 1L", cans: "150" }, []));
   for (const [i, qty] of [10, 11, 12].entries()) {
-    await ok(mod("orders").forms!.new(a, { date: ago(10 - i), godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: SKU, qty: String(qty), rate: "300" }]));
+    await ok(mod("orders").forms!.new(a, { source: "Phone", date: ago(10 - i), godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: SKU, qty: String(qty), rate: "300" }]));
     const [o] = await db.select().from(erpOrders).where(eq(erpOrders.qtyCans, qty));
     orderIds.push(o.id);
+    await ok(mod("orders").actions!.verifyOrder(a, o.id, {}));
     await ok(mod("orders").actions!.ready(a, o.id, {}));
     await ok(mod("orders").forms!.allocate(a, { lot: "FG1BH", qty: String(qty) }, [], o.id));
-    await ok(mod("orders").forms!.edit(a, { status: "Ready", delivery: "Shree Paints", qty: String(qty), rate: "300", bill: `MMI/${qty}`, transport: "0" }, [], o.id));
-    await ok(mod("orders").actions!.bill(a, o.id, {}));
+    await ok(mod("orders").actions!.bill(a, o.id, { invoiceNo: `MMI/${qty}`, invoiceDate: ago(8 - i) }));
+    await ok(mod("orders").actions!.approveInvoice(a, o.id, {}));
     await ok(mod("orderDetails").actions!.verify(a, o.id, { date: ago(8 - i) }));
   }
 });

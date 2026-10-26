@@ -76,8 +76,8 @@ export default async function ErpLabels({ searchParams }: { searchParams: Promis
   const views: React.ReactNode[] = [];
 
   if (kind === "dispatch" && order != null) {
-    title = `Dispatch labels · order ${order}`;
-    empty = "This order has no line to label. A cancelled line gets none.";
+    title = `Dispatch stickers · order ${order}`;
+    empty = "No dispatch stickers for this order yet. They are printed once its invoice is approved by the checker, and not after it has left.";
     fileName = `dispatch-order-${order}.prn`;
     for (const r of await dispatchLabels(order))
       for (let i = 0; i < r.copies; i++) views.push(<DispatchLabelView key={`${r.lineId}:${i}`} l={r.label} lineId={r.lineId} copy={i + 1} />);

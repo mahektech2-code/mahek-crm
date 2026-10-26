@@ -3,7 +3,6 @@ import {
   boxNameFit,
   labelDate,
   labelNumber,
-  orderQty,
   packSizePt,
   partyPt,
   purchaseLotPt,
@@ -11,7 +10,6 @@ import {
   sfgLotPt,
   sfgNamePt,
   skuPt,
-  transporterPt,
   type BoxLabel,
   type DispatchLabel,
   type PurchaseLabel,
@@ -199,51 +197,29 @@ export function PurchaseLabelView({ l, qr, copy }: { l: PurchaseLabel; qr: Qr; c
 }
 
 /**
- * THE DISPATCH LABEL, 80 × 80 mm: who it goes to, what it is, and who carries
- * it — each read from across a loading bay. One is printed for every box or
- * can on the line, and every one of them carries the lot size: the pieces on
- * the whole order.
+ * THE DISPATCH STICKER, 80 × 80 mm: the customer, the product, the invoice
+ * number and the order number — each read from across a loading bay, and
+ * nothing else (PRD rule 5). No QR and no lot or box code: the box's own
+ * 50 mm label is what the desk scans, and the two stickers stay apart.
  */
 export function DispatchLabelView({ l, lineId, copy }: { l: DispatchLabel; lineId: string; copy?: number }) {
-  const transporter = l.transporter ?? "—";
   return (
     <div className="lb lb-80 lb-dis" data-key={`dispatch:${lineId}`} data-copy={copy}>
       <div className="to">
-        <div className="meta">
-          <div>Deliver to</div>
-          <div>
-            Order <b>{l.orderNo}</b> · {labelDate(l.date)} · <span className="mono">{l.lineRef}</span>
-          </div>
-        </div>
-        <div className="party clamp2" style={pt(partyPt(l.delivery))}>
-          {l.delivery}
-        </div>
-        {l.area ? <div className="area cut">{l.area}</div> : null}
-        <div className="billed cut">
-          Billed to <b>{l.billing}</b>
+        <div className="k">Customer</div>
+        <div className="party clamp2" style={pt(partyPt(l.customer))}>
+          {l.customer}
         </div>
       </div>
       <div className="goods">
-        <div className="sku clamp2" style={pt(skuPt(l.sku))}>
-          {l.sku}
+        <div className="k">Product</div>
+        <div className="sku clamp2" style={pt(skuPt(l.product))}>
+          {l.product}
         </div>
-        <div className="facts">
-          <Cell k="Order qty" v={orderQty(l.type, l.qty)} />
-          <Cell k="Type" v={l.type} />
-          <Cell k="Weight" v={l.weightKg == null ? "—" : `${labelNumber(l.weightKg)} kg`} />
-          <Cell k="Lot size" v={String(l.lotSize)} />
-        </div>
-        {l.remark ? (
-          <div className="remark clamp2">
-            <b>Remark:</b> {l.remark}
-          </div>
-        ) : null}
       </div>
-      <div className="carrier">
-        <div className="k">Transporter</div>
-        <div className="v clamp2" style={pt(transporterPt(transporter))}>
-          {transporter}
-        </div>
+      <div className="facts">
+        <Cell k="Invoice no" v={l.invoiceNo} />
+        <Cell k="Order no" v={String(l.orderNo)} />
       </div>
     </div>
   );

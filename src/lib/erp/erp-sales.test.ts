@@ -19,7 +19,9 @@ import {
   erpCustomerProfiles,
   erpFgEntries,
   erpOrderDetails,
+  erpOrderReviews,
   erpOrders,
+  erpUserPowers,
   erpPackEntries,
   erpProductPacking,
   finishedGoods,
@@ -71,6 +73,8 @@ const mod = (k: string) => {
   return m;
 };
 const msg = (r: { ok: boolean; fieldErrors?: { message: string }[]; error?: string }) => (r.ok ? "ok" : (r.fieldErrors?.[0]?.message ?? r.error ?? "?"));
+/** What a result says, success included. */
+const say = (r: { ok: boolean; message?: unknown; fieldErrors?: { message: string }[]; error?: string }) => (r.ok ? String(r.message ?? "ok") : msg(r));
 
 let admin: typeof users.$inferSelect;
 let clerk: typeof users.$inferSelect;
@@ -83,7 +87,7 @@ before(async () => {
   await db.execute(sql`
     truncate users, customers, price_lists, erp_customer_profiles, erp_orders, erp_batch_codes, erp_order_details, erp_fg_entries,
              erp_pack_entries, erp_pack_lines, erp_fg_fills, erp_transfers, erp_user_powers, erp_godown_staff, erp_user_settings,
-             audit_log restart identity cascade`);
+             erp_order_reviews, audit_log restart identity cascade`);
   await db.execute(sql`update erp_series set last = 0`);
   admin = await makeUser("Kavita Admin", "admin");
   clerk = await makeUser("Deepa Clerk", "associate");
@@ -147,18 +151,18 @@ after(async () => {
 
 /** The two lines of Shree Paints' first order: 20 loose cans and 24 boxed ones. */
 const orderFor = async (sku: string) =>
-  (await db.select().from(erpOrders).where(sql`${erpOrders.skuId} = ${sku} and ${erpOrders.billingCustomerId} = 'cus_shree' and ${erpOrders.qtyCans} in (20, 24)`))[0];
+  (await db.select().from(erpOrders).where(sql`${erpOrders.skuId} = ${sku} and ${erpOrders.billingCustomerId} = 'cus_shree' and ${erpOrders.qtyCans} in (20, 24)`).orderBy(erpOrders.orderNo))[0];
 
 describe("taking an order", () => {
   test("boxes must come out whole", async () => {
     const ctx = await as(admin);
-    const r = await mod("orders").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: BOXED, qty: "25" }]);
+    const r = await mod("orders").forms!.new(ctx, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: BOXED, qty: "25" }]);
     assert.equal(msg(r), "INVALID");
   });
 
   test("the rate defaults from the list the Accounts app applies to the party, and the transporter from the delivery party", async () => {
     const ctx = await as(admin);
-    const r = await mod("orders").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [
+    const r = await mod("orders").forms!.new(ctx, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [
       { sku: LOOSE, qty: "20", discount: "5" },
       { sku: BOXED, qty: "24" },
     ]);
@@ -177,10 +181,10 @@ describe("taking an order", () => {
 
   test("a party no list applies to gets no rate, says so, and keeps the one typed for it", async () => {
     const ctx = await as(admin);
-    const blank = await mod("orders").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", billing: "No List Traders" }, [{ sku: LOOSE, qty: "7" }]);
+    const blank = await mod("orders").forms!.new(ctx, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "No List Traders" }, [{ sku: LOOSE, qty: "7" }]);
     assert.ok(blank.ok);
     assert.match(blank.ok ? String(blank.message) : "", /1 without a rate: no price list applies to the party/);
-    assert.ok((await mod("orders").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", billing: "No List Traders" }, [{ sku: LOOSE, qty: "9", rate: "350" }])).ok);
+    assert.ok((await mod("orders").forms!.new(ctx, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "No List Traders" }, [{ sku: LOOSE, qty: "9", rate: "350" }])).ok);
     const rows = await db.select().from(erpOrders).where(eq(erpOrders.billingCustomerId, "cus_nolist"));
     assert.deepEqual(rows.map((o) => [o.qtyCans, o.ratePaise]).sort((a, b) => Number(a[0]) - Number(b[0])), [[7, null], [9, 35000]]);
   });
@@ -199,7 +203,7 @@ describe("taking an order", () => {
     assert.equal(rate.otherwise, "", "a party or SKU without a rate clears the one the last pick filled in");
     assert.equal(field("discount").fillBy, undefined, "no discount is filled in");
     /* "Add to order" and a drafted order open with the party already picked. */
-    const more = await orderForm(ctx, { orderNo: 1, date: TODAY, godown: "Bhiwandi", billing: "Shree Paints", delivery: "Shree Paints", transporter: "" });
+    const more = await orderForm(ctx, { orderNo: 1, date: TODAY, godown: "Bhiwandi", billing: "Shree Paints", delivery: "Shree Paints", transporter: "", source: "Phone" });
     assert.equal(more.init?.priceList, LIST);
     const drafted = withFills({ ...form, init: { ...form.init, billing: "Shree Paints" }, initLines: [{ sku: LOOSE, qty: "2" }, { sku: DASHED, qty: "12" }, { sku: BOXED, qty: "4", rate: "390" }] });
     assert.deepEqual(drafted.initLines?.map((l) => l.rate ?? ""), ["400", "", "390"], "a drafted line's own rate stands");
@@ -207,7 +211,7 @@ describe("taking an order", () => {
 
   test("somebody without the rate power cannot set a rate, and a pending party's order is marked for approval", async () => {
     const c = await as(clerk);
-    const r = await mod("orders").forms!.new(c, { date: TODAY, godown: "Bhiwandi", billing: "New Colour House" }, [{ sku: LOOSE, qty: "2", rate: "1" }]);
+    const r = await mod("orders").forms!.new(c, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "New Colour House" }, [{ sku: LOOSE, qty: "2", rate: "1" }]);
     assert.ok(r.ok, JSON.stringify(r));
     const [o] = await db.select().from(erpOrders).where(eq(erpOrders.billingCustomerId, "cus_new"));
     assert.equal(o.ratePaise, 40000, "the typed rate was ignored");
@@ -223,7 +227,7 @@ describe("taking an order", () => {
 describe("what a line weighs", () => {
   test("a box's weight times the boxes, or a can's times the cans where there is no box", async () => {
     const ctx = await as(admin);
-    assert.ok((await mod("orders").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: BOXED, qty: "24" }, { sku: LOOSE, qty: "7" }])).ok);
+    assert.ok((await mod("orders").forms!.new(ctx, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: BOXED, qty: "24" }, { sku: LOOSE, qty: "7" }])).ok);
     const [boxed] = await db.select().from(erpOrders).where(and(eq(erpOrders.skuId, boxedId), eq(erpOrders.qtyCans, 24)));
     const [loose] = await db.select().from(erpOrders).where(and(eq(erpOrders.skuId, looseId), eq(erpOrders.qtyCans, 7)));
     const { rows } = await mod("orders").load(ctx);
@@ -236,10 +240,13 @@ describe("what a line weighs", () => {
 describe("marking Ready", () => {
   test("Ready is refused where the godown has not the stock, and says what it needs", async () => {
     const ctx = await as(admin);
-    const r = await mod("orders").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: LOOSE, qty: "40" }]);
+    const r = await mod("orders").forms!.new(ctx, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: LOOSE, qty: "40" }]);
     assert.ok(r.ok, JSON.stringify(r));
     const [big] = await db.select().from(erpOrders).where(sql`${erpOrders.skuId} = ${looseId} and ${erpOrders.qtyCans} = 40`);
-    assert.match(msg(await mod("orders").actions!.ready(ctx, big.id, {})), /^Stock is not there: .*needs 40 cans, 30 in stock/);
+    assert.match(msg(await mod("orders").actions!.ready(ctx, big.id, {})), /order \d+ is not verified by the back office yet/, "production starts on a verified order");
+    assert.match(msg(await mod("orders").forms!.edit(ctx, { status: "Ready", delivery: "Shree Paints", qty: "40" }, [], big.id)), /not verified/);
+    assert.ok((await mod("orders").actions!.verifyOrder(ctx, big.id, {})).ok);
+    assert.match(msg(await mod("orders").actions!.ready(ctx, big.id, {})), /stock is not there: .*needs 40 cans, 30 in stock/);
     const viaEdit = await mod("orders").forms!.edit(ctx, { status: "Ready", delivery: "Shree Paints", qty: "40" }, [], big.id);
     assert.match(msg(viaEdit), /Stock is not there/);
     assert.equal((await db.select().from(erpOrders).where(eq(erpOrders.id, big.id)))[0].status, big.status, "nothing was marked");
@@ -247,7 +254,7 @@ describe("marking Ready", () => {
   });
   test("a status moves either way: hold, back to Under Process, cancel and back again", async () => {
     const ctx = await as(admin);
-    const r = await mod("orders").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: LOOSE, qty: "41" }]);
+    const r = await mod("orders").forms!.new(ctx, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: LOOSE, qty: "41" }]);
     assert.ok(r.ok, JSON.stringify(r));
     const [line] = await db.select().from(erpOrders).where(sql`${erpOrders.skuId} = ${looseId} and ${erpOrders.qtyCans} = 41`);
     const statusNow = async () => (await db.select().from(erpOrders).where(eq(erpOrders.id, line.id)))[0].status;
@@ -269,6 +276,8 @@ describe("allocating lots", () => {
     const ctx = await as(admin);
     const loose = await orderFor(looseId);
     assert.equal(msg(await mod("orders").forms!.allocate(ctx, { lot: "FG1BH", qty: "20" }, [], loose.id)), "Lots are allocated once the line is Ready.");
+    assert.equal(msg(await mod("orders").bulk!.verifyOrder(await as(clerk), [loose.id], {})), "The back office verifies orders: it needs the Verify orders power.");
+    assert.match(say(await mod("orders").bulk!.verifyOrder(ctx, [loose.id], {})), /^Verified · order/);
     assert.ok((await mod("orders").bulk!.ready(ctx, [loose.id, (await orderFor(boxedId)).id], {})).ok);
     assert.equal(msg(await mod("orders").forms!.allocate(ctx, { lot: "FG1BH", qty: "21" }, [], loose.id)), "Invalid Quantity Or Wait For Synchronization");
     assert.ok((await mod("orders").forms!.allocate(ctx, { lot: "FG1BH", qty: "20" }, [], loose.id)).ok);
@@ -284,53 +293,99 @@ describe("allocating lots", () => {
   });
 });
 
-describe("order details and dispatch", () => {
-  test("Bill it takes a Ready, fully allocated line with a bill no. and a rate — one step, not Done then Add To Order Details", async () => {
+describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
+  let movedNo = 0;
+  test("goods that will go later move to a new, linked order; the rest is billed whole with its Tally invoice", async () => {
     const ctx = await as(admin);
     const loose = await orderFor(looseId);
-    const blocked = await mod("orders").actions!.bill(ctx, loose.id, {});
-    assert.match(msg(blocked), /a Tally bill no\./);
-    const edit = await mod("orders").forms!.edit(ctx, { status: "Ready", delivery: "Shree Paints", qty: "20", rate: "400", discount: "5", bill: "MMI/26-27/101", transport: "0" }, [], loose.id);
+    const boxed = await orderFor(boxedId);
+    const a = mod("orders").actions!;
+    assert.match(msg(await a.bill(ctx, loose.id, {})), /The Tally invoice number is required/);
+    assert.equal(msg(await a.moveOut(ctx, boxed.id, { qty: "24" })), "Release its batch codes first; they hold stock for this order.");
+    const [bc] = await db.select().from(erpBatchCodes).where(eq(erpBatchCodes.orderId, boxed.id));
+    assert.ok((await mod("batchCodes").actions!.release(ctx, bc.id, {})).ok);
+    assert.equal((await packLots())[0].stock, 10, "releasing gives the stock back");
+    assert.equal(msg(await a.moveOut(ctx, boxed.id, { qty: "6" })), "Both parts must be whole boxes of 4.");
+    assert.match(say(await a.moveOut(ctx, boxed.id, { qty: "24" })), /moved to order \d+, linked to order/);
+    const [moved] = await db.select().from(erpOrders).where(eq(erpOrders.linkedFromOrderNo, loose.orderNo));
+    assert.equal(moved.qtyCans, 24);
+    assert.equal(moved.status, "Under Process", "it waits for production on its own order");
+    assert.notEqual(moved.orderNo, loose.orderNo);
+    movedNo = moved.orderNo;
+    assert.equal((await db.select().from(erpOrders).where(eq(erpOrders.id, boxed.id))).length, 0, "the whole line moved");
+    const edit = await mod("orders").forms!.edit(ctx, { status: "Ready", delivery: "Shree Paints", qty: "20", rate: "400", discount: "5", transport: "0" }, [], loose.id);
     assert.ok(edit.ok, JSON.stringify(edit));
     const beforeBill = await mod("pendingOrders").load(ctx);
     const working = await mod("readyOrders").load(ctx);
-    const onBoth = beforeBill.rows.filter((r) => working.rows.some((w) => w.id === r.id));
-    assert.deepEqual(onBoth.map((r) => r.v.status), [], "no line is on Pending and Under process & ready at once");
-    assert.ok(!beforeBill.rows.some((r) => r.v.status === "Under Process" || r.v.status === "Ready"), "Pending holds no Under Process or Ready line");
-    assert.ok(!beforeBill.rows.some((r) => r.id === loose.id), "a Ready line has left Pending for Under process & ready");
-    assert.ok((await mod("readyOrders").load(ctx)).rows.some((r) => r.id === loose.id), "and is on Under process & ready");
-    assert.ok((await mod("orders").actions!.bill(ctx, loose.id, {})).ok);
-    assert.equal((await orderFor(looseId)).entryStatus, "Done", "billing it is what Done means");
-    assert.equal((await db.select().from(erpOrderDetails).where(eq(erpOrderDetails.orderId, loose.id))).length, 1);
-    const pending = await mod("pendingOrders").load(ctx);
-    assert.ok(!pending.rows.some((r) => r.v.orderNo === String(loose.orderNo)), "an order in details has left the pending list");
+    assert.deepEqual(beforeBill.rows.filter((r) => working.rows.some((w) => w.id === r.id)).map((r) => r.id), [], "no line is on two tabs at once");
+    assert.ok((await mod("toBill").load(ctx)).rows.some((r) => r.id === loose.id), "Ready material is on Ready to bill");
+    assert.ok((await a.bill(ctx, loose.id, { invoiceNo: "MMI/26-27/101", invoiceDate: TODAY })).ok);
+    const [l] = await db.select().from(erpOrders).where(eq(erpOrders.id, loose.id));
+    assert.equal(l.entryStatus, "Done");
+    assert.equal(l.tallyBillNo, "MMI/26-27/101");
+    assert.equal(l.invoiceDate, TODAY);
+    const [d] = await db.select().from(erpOrderDetails).where(eq(erpOrderDetails.orderId, loose.id));
+    assert.equal(d.invoiceCheck, "Pending", "a new bill waits for the invoice check");
+    assert.ok((await mod("invoiceCheck").load(ctx)).rows.some((r) => r.id === loose.id), "and is on Invoice check");
+    assert.equal(msg(await mod("orders").forms!.more(ctx, { orderFixed: String(l.orderNo), source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: LOOSE, qty: "1" }])), `Order ${l.orderNo} is billed. One order is one bill — take a new order for these goods.`);
   });
 
-  test("dispatch verification needs a date, stamps the line, and freezes its lots", async () => {
+  test("dispatch waits for the independent invoice check, and the checker is not the person who billed", async () => {
     const ctx = await as(admin);
     const loose = await orderFor(looseId);
+    assert.match(msg(await mod("orderDetails").actions!.verify(ctx, loose.id, { date: "2026-09-22" })), /waiting for the invoice check/);
+    await db.insert(erpUserPowers).values({ userId: clerk.id, power: "checkInvoices" });
+    await db.update(erpOrderDetails).set({ createdById: clerk.id }).where(eq(erpOrderDetails.orderId, loose.id));
+    assert.equal(msg(await mod("orders").actions!.approveInvoice(await as(clerk), loose.id, {})), "You entered this bill, so somebody else checks it.");
+    await db.update(erpOrderDetails).set({ createdById: admin.id }).where(eq(erpOrderDetails.orderId, loose.id));
+    assert.match(say(await mod("orders").actions!.approveInvoice(await as(clerk), loose.id, {})), /approved · order \d+ can be dispatched/);
+    const [d0] = await db.select().from(erpOrderDetails).where(eq(erpOrderDetails.orderId, loose.id));
+    assert.equal(d0.invoiceCheck, "Approved");
+    assert.equal(d0.invoiceCheckedById, clerk.id);
     assert.equal(msg(await mod("orderDetails").actions!.verify(ctx, loose.id, {})), "Dispatch date is required");
-    assert.ok((await mod("orderDetails").actions!.verify(ctx, loose.id, { date: "2026-09-22" })).ok);
+    assert.match(say(await mod("orderDetails").actions!.verify(ctx, loose.id, { date: "2026-09-22", vehicle: "mh 04 ab 1234", driver: "Ramesh", remark: "" })), /Dispatched · order \d+ on MH 04 AB 1234/);
     const [d] = await db.select().from(erpOrderDetails).where(eq(erpOrderDetails.orderId, loose.id));
     assert.equal(d.verification, "Verified");
     assert.equal(d.dispatchStatus, "Dispatched");
     assert.equal(d.dispatchDate, "2026-09-22");
+    assert.equal(d.vehicleNo, "MH 04 AB 1234");
+    assert.equal(d.driver, "Ramesh");
     const [bc] = await db.select().from(erpBatchCodes).where(eq(erpBatchCodes.orderId, loose.id));
     assert.equal(msg(await mod("batchCodes").actions!.release(ctx, bc.id, {})), "The order has been dispatch-verified.");
   });
 
-  test("an Under Process line with no lots is billed once it has a bill no. and a rate, and leaves without lots", async () => {
+  test("an order is billed only once Ready, one invoice is one order, and a changed invoice goes back to the checker", async () => {
     const ctx = await as(admin);
-    assert.ok((await mod("orders").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: LOOSE, qty: "3" }])).ok);
+    assert.ok((await mod("orders").forms!.new(ctx, { source: "WhatsApp", date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: LOOSE, qty: "3" }])).ok);
     const [line] = await db.select().from(erpOrders).where(and(eq(erpOrders.skuId, looseId), eq(erpOrders.qtyCans, 3)));
-    assert.equal(line.status, "Under Process");
-    assert.match(msg(await mod("orders").actions!.bill(ctx, line.id, {})), /a Tally bill no\./, "the bill no. is still asked for");
-    assert.doesNotMatch(msg(await mod("orders").actions!.bill(ctx, line.id, {})), /Ready|lots/, "Ready and lots are not");
-    assert.ok((await mod("orders").forms!.edit(ctx, { status: "Under Process", delivery: "Shree Paints", qty: "3", rate: "400", bill: "MMI/26-27/909", transport: "0" }, [], line.id)).ok);
-    assert.ok((await mod("orders").actions!.bill(ctx, line.id, {})).ok);
-    assert.ok((await mod("orderDetails").actions!.verify(ctx, line.id, { date: TODAY })).ok, "a line billed without lots is dispatch-verified without them");
-    const [d] = await db.select().from(erpOrderDetails).where(eq(erpOrderDetails.orderId, line.id));
-    assert.equal(d.verification, "Verified");
+    assert.equal(line.orderSource, "WhatsApp");
+    assert.equal(line.orderCheck, "Pending");
+    const a = mod("orders").actions!;
+    assert.match(msg(await a.bill(ctx, line.id, { invoiceNo: "MMI/26-27/909", invoiceDate: TODAY })), /the back office to verify the order/);
+    assert.ok((await a.verifyOrder(ctx, line.id, {})).ok);
+    assert.match(msg(await a.bill(ctx, line.id, { invoiceNo: "MMI/26-27/909", invoiceDate: TODAY })), /to be Ready — or moved to a new order/);
+    assert.ok((await a.ready(ctx, line.id, {})).ok);
+    assert.match(msg(await a.bill(ctx, line.id, { invoiceNo: " mmi/26-27/101 ", invoiceDate: TODAY })), /is already on order \d+\. One invoice is one order\./);
+    assert.ok((await a.bill(ctx, line.id, { invoiceNo: "MMI/26-27/909", invoiceDate: TODAY })).ok);
+    assert.equal(msg(await a.rejectInvoice(ctx, line.id, {})), "Say why the invoice is rejected");
+    assert.ok((await a.rejectInvoice(ctx, line.id, { reason: "Rate should be ₹410" })).ok);
+    assert.match(msg(await mod("orderDetails").actions!.verify(ctx, line.id, { date: TODAY })), /was rejected/);
+    assert.ok((await mod("orders").forms!.edit(ctx, { status: "Ready", delivery: "Shree Paints", qty: "3", rate: "410", transport: "0" }, [], line.id)).ok);
+    const det = async () => (await db.select().from(erpOrderDetails).where(eq(erpOrderDetails.orderId, line.id)))[0];
+    assert.equal((await det()).invoiceCheck, "Pending", "the corrected invoice is back with the checker");
+    assert.ok((await a.approveInvoice(ctx, line.id, {})).ok);
+    assert.ok((await a.changeInvoice(ctx, line.id, { invoiceNo: "MMI/26-27/910", invoiceDate: TODAY })).ok);
+    assert.equal((await det()).invoiceCheck, "Pending", "a changed invoice number after approval goes back too");
+    assert.ok((await a.approveInvoice(ctx, line.id, {})).ok);
+    const history = await db.select().from(erpOrderReviews).where(eq(erpOrderReviews.orderNo, line.orderNo)).orderBy(erpOrderReviews.at);
+    assert.deepEqual(
+      history.map((h) => `${h.kind}:${h.result}`),
+      ["order:submitted", "order:verified", "invoice:submitted", "invoice:rejected", "invoice:submitted", "invoice:approved", "invoice:reset", "invoice:approved"],
+    );
+    assert.ok((await mod("labels").load(ctx)).rows.some((r) => r.id === line.id), "an approved invoice is on Dispatch stickers");
+    assert.ok((await a.stickers(ctx, line.id, {})).ok);
+    assert.ok((await det()).stickersAt, "the stickers are recorded");
+    assert.match(say(await mod("orderDetails").actions!.verify(ctx, line.id, { date: TODAY })), /no vehicle recorded/, "a lot-less line leaves without lots");
     assert.equal((await db.select().from(erpBatchCodes).where(eq(erpBatchCodes.orderId, line.id))).length, 0, "and took no stock");
   });
 
@@ -348,12 +403,47 @@ describe("order details and dispatch", () => {
     const clerkView = await mod("orderDetails").load(c);
     assert.ok(!clerkView.rows.some((x) => "amount" in x.v || "margin" in x.v));
   });
+
+  test("the order domains are separate words, and the moved order says where it came from", async () => {
+    const ctx = await as(admin);
+    const { rows } = await mod("orders").load(ctx);
+    const loose = await orderFor(looseId);
+    const r = rows.find((x) => x.id === loose.id)!;
+    assert.deepEqual([r.v.orderStatus, r.v.production, r.v.billingStatus, r.v.dispatchStatus], ["Verified", "Ready", "Approved", "Dispatched"]);
+    const [moved] = await db.select().from(erpOrders).where(eq(erpOrders.orderNo, movedNo));
+    const m = rows.find((x) => x.id === moved.id);
+    if (m) assert.ok(m.flags.includes("linkedOrder"));
+  });
+});
+
+describe("the back office's check", () => {
+  test("a duplicate is caught, a correction is asked for, and a material change goes back for verification", async () => {
+    const ctx = await as(admin);
+    const head = { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "No List Traders" };
+    assert.ok((await mod("orders").forms!.new(ctx, head, [{ sku: LOOSE, qty: "11", rate: "300" }])).ok);
+    assert.match(msg(await mod("orders").forms!.new(ctx, head, [{ sku: LOOSE, qty: "11", rate: "300" }])), /has exactly these goods/);
+    assert.ok((await mod("orders").forms!.new(ctx, { ...head, dupOk: "Yes — it is a separate order" }, [{ sku: LOOSE, qty: "11", rate: "300" }])).ok);
+    assert.match(msg(await mod("orders").forms!.new(ctx, { ...head, source: "" }, [{ sku: LOOSE, qty: "12" }])), /how the order was received/);
+    const [o] = await db.select().from(erpOrders).where(and(eq(erpOrders.billingCustomerId, "cus_nolist"), eq(erpOrders.qtyCans, 11))).orderBy(erpOrders.orderNo);
+    const a = mod("orders").actions!;
+    assert.equal(msg(await a.correctOrder(ctx, o.id, {})), "Say what needs correcting");
+    assert.ok((await a.correctOrder(ctx, o.id, { reason: "Customer asked for 12, not 11" })).ok);
+    assert.equal((await db.select().from(erpOrders).where(eq(erpOrders.id, o.id)))[0].orderCheck, "Correction");
+    assert.ok((await mod("verifyOrders").load(ctx)).rows.some((r) => r.id === o.id), "it waits on To verify");
+    assert.ok((await mod("orders").forms!.edit(ctx, { status: "Under Process", delivery: "No List Traders", qty: "12", rate: "300", transport: "0" }, [], o.id)).ok);
+    assert.equal((await db.select().from(erpOrders).where(eq(erpOrders.id, o.id)))[0].orderCheck, "Pending", "corrected, it is sent to verify again");
+    assert.ok((await a.verifyOrder(ctx, o.id, {})).ok);
+    assert.ok((await mod("orders").forms!.edit(ctx, { status: "Under Process", delivery: "No List Traders", qty: "12", rate: "300", transport: "0", remark: "Call first" }, [], o.id)).ok);
+    assert.equal((await db.select().from(erpOrders).where(eq(erpOrders.id, o.id)))[0].orderCheck, "Verified", "a remark is not a material change");
+    assert.ok((await mod("orders").forms!.edit(ctx, { status: "Under Process", delivery: "No List Traders", qty: "13", rate: "300", transport: "0" }, [], o.id)).ok);
+    assert.equal((await db.select().from(erpOrders).where(eq(erpOrders.id, o.id)))[0].orderCheck, "Pending", "a changed quantity is");
+  });
 });
 
 describe("numbers and releases", () => {
   test("a dispatch date is planned, and the lists say today, tomorrow or late from it", async () => {
     const ctx = await as(admin);
-    const made = await mod("orders").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", billing: "Shree Paints", dispatchOn: "2026-10-05" }, [{ sku: LOOSE, qty: "1" }]);
+    const made = await mod("orders").forms!.new(ctx, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "Shree Paints", dispatchOn: "2026-10-05" }, [{ sku: LOOSE, qty: "1" }]);
     assert.ok(made.ok);
     const [o] = await db.select().from(erpOrders).where(eq(erpOrders.qtyCans, 1));
     assert.equal(o.dispatchOn, "2026-10-05");
@@ -364,14 +454,5 @@ describe("numbers and releases", () => {
     assert.equal(dueOf("2026-10-01", true, "Ready", "2026-10-05"), null, "once it has left it is not late");
     assert.equal(dueOf("2026-10-01", false, "Cancel", "2026-10-05"), null);
     assert.equal(dueOf(null, false, "Ready", "2026-10-05"), null);
-  });
-
-  test("releasing an allocation gives the stock back, and a billed line's lots stay until its billing is undone", async () => {
-    const ctx = await as(admin);
-    const boxed = await orderFor(boxedId);
-    const [bc] = await db.select().from(erpBatchCodes).where(eq(erpBatchCodes.orderId, boxed.id));
-    assert.ok((await mod("batchCodes").actions!.release(ctx, bc.id, {})).ok);
-    assert.equal((await packLots())[0].stock, 10);
-    assert.equal((await orderFor(boxedId)).entryStatus, "Not Done");
   });
 });

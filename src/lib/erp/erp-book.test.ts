@@ -82,7 +82,7 @@ let skuId: string;
 /** One ERP order of `qty` cans for `party`, through the real handlers. */
 async function take(party: string, qty: number) {
   const ctx = await as(admin);
-  const r = await mod("orders").forms!.new(ctx, { date: "2026-09-10", godown: "Bhiwandi", billing: party }, [{ sku: SKU, qty: String(qty), rate: "300" }]);
+  const r = await mod("orders").forms!.new(ctx, { source: "Phone", date: "2026-09-10", godown: "Bhiwandi", billing: party }, [{ sku: SKU, qty: String(qty), rate: "300" }]);
   assert.ok(r.ok, JSON.stringify(r));
   const [o] = await db.select().from(erpOrders).where(sql`${erpOrders.qtyCans} = ${qty}`);
   return o;
@@ -90,12 +90,14 @@ async function take(party: string, qty: number) {
 /** Ready → allocated → billed → dispatch-verified. */
 async function send(o: typeof erpOrders.$inferSelect, bill: string, date: string) {
   const ctx = await as(admin);
+  assert.ok((await mod("orders").actions!.verifyOrder(ctx, o.id, {})).ok);
   assert.ok((await mod("orders").actions!.ready(ctx, o.id, {})).ok);
   assert.ok((await mod("orders").forms!.allocate(ctx, { lot: "FG1BH", qty: String(o.qtyCans) }, [], o.id)).ok);
-  assert.ok((await mod("orders").forms!.edit(ctx, { status: "Ready", delivery: "Shree Paints", qty: String(o.qtyCans), rate: "300", bill, transport: "0" }, [], o.id)).ok);
-  const billed = await mod("orders").actions!.bill(ctx, o.id, {});
+  const billed = await mod("orders").actions!.bill(ctx, o.id, { invoiceNo: bill, invoiceDate: date });
   assert.ok(billed.ok, JSON.stringify(billed));
-  assert.ok((await mod("orderDetails").actions!.verify(ctx, o.id, { date })).ok);
+  assert.ok((await mod("orders").actions!.approveInvoice(ctx, o.id, {})).ok);
+  const sent = await mod("orderDetails").actions!.verify(ctx, o.id, { date });
+  assert.ok(sent.ok, JSON.stringify(sent));
 }
 
 before(async () => {
@@ -212,7 +214,7 @@ describe("a Pending customer goes to the Accounts queue", () => {
     const b = await book(o.orderNo);
     assert.equal(b.status, "pending_approval");
     const ctx = await as(admin);
-    const blocked = await mod("orders").actions!.bill(ctx, o.id, {});
+    const blocked = await mod("orders").actions!.bill(ctx, o.id, { invoiceNo: "MMI/PENDING/1", invoiceDate: "2026-09-10" });
     assert.match(blocked.ok ? "" : (blocked.error ?? ""), /approval for this Pending customer/);
     assert.ok(!(await mod("orders").actions!.approve(ctx, o.id, {})).ok, "the ERP's own approval is gone while the ERP is live");
     setTestUser(ledger);
@@ -220,6 +222,7 @@ describe("a Pending customer goes to the Accounts queue", () => {
     const [after] = await db.select().from(erpOrders).where(eq(erpOrders.id, o.id));
     assert.equal(after.partyStatus, "Approved By Admin");
     /* The next ERP write re-states the order; the approval is not undone by it. */
+    assert.ok((await mod("orders").actions!.verifyOrder(await as(admin), o.id, {})).ok);
     assert.ok((await mod("orders").actions!.ready(await as(admin), o.id, {})).ok);
     assert.equal((await book(o.orderNo)).status, "confirmed");
   });

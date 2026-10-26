@@ -35,6 +35,8 @@ type LineRow = {
   id: string;
   orderNo: number;
   status: string;
+  /** The independent invoice check on the billed line — dispatch waits for Approved. */
+  invoiceCheck: string | null;
   qty: number;
   skuId: string;
   sku: string;
@@ -56,7 +58,7 @@ async function lineRows(ex: Ex, orderNos: number[]): Promise<LineRow[]> {
            coalesce(pk.empty_boxes_required, 0)::int as empty,
            coalesce(p.millilitres_per_can, fg.millilitres)::float8 / 1000 as litres,
            b.id as "productId", b.name as product, o.godown_id as "godownId", g.name as godown,
-           d.verification, d.order_id is not null as billed, p.finished_good_id as "fgId"
+           d.verification, d.order_id is not null as billed, d.invoice_check as "invoiceCheck", p.finished_good_id as "fgId"
       from erp_orders o
       join products p on p.id = o.sku_id
       left join finished_goods fg on fg.id = p.finished_good_id
@@ -174,7 +176,9 @@ export type DispatchBoard = {
   area: string | null;
   transporter: string | null;
   dispatchOn: string | null;
-  lines: (ScanLine & { billed: boolean; verification: string | null; gate: string | null; unitsExist: boolean })[];
+  lines: (ScanLine & { billed: boolean; verification: string | null; invoiceCheck: string | null; gate: string | null; unitsExist: boolean })[];
+  /** The Tally invoice on the order, once billed. */
+  invoiceNo: string | null;
   units: { id: string; lineId: string; sku: string; lotCode: string; status: string; scannedAt: string | null; by: string | null }[];
   scans: { at: string; code: string; result: string; message: string; by: string | null }[];
   overrides: { id: string; unitId: string; lineId: string; ordered: string; scanned: string; mismatch: string; reason: string; status: string; requestedBy: string | null; requestedById: string | null; at: string; decidedBy: string | null; note: string | null }[];
@@ -187,7 +191,8 @@ export async function dispatchBoard(orderNo: number): Promise<DispatchBoard | nu
   const ids = lines.map((l) => l.id);
   const [head, rows, units, scans, overrides, withUnits, cfg] = await Promise.all([
     q<Row>(db, sql`
-      select bc.name as billing, dc.name as delivery, coalesce(dc.area, dc.city) as area, o.transporter, o.dispatch_on::text as "dispatchOn"
+      select bc.name as billing, dc.name as delivery, coalesce(dc.area, dc.city) as area, o.transporter, o.dispatch_on::text as "dispatchOn",
+             (select max(o2.tally_bill_no) from erp_orders o2 where o2.order_no = o.order_no and o2.entry_status = 'Done') as "invoiceNo"
         from erp_orders o join customers bc on bc.id = o.billing_customer_id left join customers dc on dc.id = o.delivery_customer_id
        where o.order_no = ${orderNo} limit 1
     `),
@@ -222,9 +227,10 @@ export async function dispatchBoard(orderNo: number): Promise<DispatchBoard | nu
     area: h.area == null ? null : String(h.area),
     transporter: h.transporter == null ? null : String(h.transporter),
     dispatchOn: h.dispatchOn == null ? null : String(h.dispatchOn),
+    invoiceNo: h.invoiceNo == null ? null : String(h.invoiceNo),
     lines: lines.map((l) => {
       const unitsExist = withUnits.has(l.id);
-      return { ...l, billed: !!meta.get(l.id)?.billed, verification: meta.get(l.id)?.verification ?? null, unitsExist, gate: scanGate({ requireScan, lotsHaveUnits: unitsExist, target: l.target, scanned: l.scanned }) };
+      return { ...l, billed: !!meta.get(l.id)?.billed, verification: meta.get(l.id)?.verification ?? null, invoiceCheck: meta.get(l.id)?.invoiceCheck ?? null, unitsExist, gate: scanGate({ requireScan, lotsHaveUnits: unitsExist, target: l.target, scanned: l.scanned }) };
     }),
     units: units.map((u) => ({ id: String(u.id), lineId: String(u.lineId), sku: String(u.sku), lotCode: String(u.lotCode), status: String(u.status), scannedAt: u.scannedAt == null ? null : new Date(u.scannedAt as string).toISOString(), by: u.by == null ? null : String(u.by) })),
     scans: scans.map((s) => ({ at: new Date(s.at as string).toISOString(), code: String(s.code), result: String(s.result), message: String(s.message), by: s.by == null ? null : String(s.by) })),

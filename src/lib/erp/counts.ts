@@ -6,7 +6,7 @@ import { db } from "@/db";
 import { erpInward, erpPurchases, erpTests } from "@/db/schema";
 import type { ErpContext } from "./access";
 import { fgReorderRows, rmReorderRows } from "./screens/movement";
-import { detailedOrdersOf, isPendingLine, isWorkingLine, orderLines } from "./screens/sales";
+import { detailedOrdersOf, isInvoiceToCheckLine, isPendingLine, isStickerLine, isToBillLine, isToVerifyLine, isWorkingLine, orderLines } from "./screens/sales";
 
 /* ---------------------------------------------------------------------------
  * The sidebar's badges: work waiting on a screen (untested inward lines,
@@ -66,7 +66,11 @@ export async function salesCounts() {
   const working = lines.filter(isWorkingLine);
   const toAllocate = lines.filter((l) => l.o.status === "Ready" && l.o.entryStatus !== "Done" && l.allocation === "Add More Quantity");
   const pendingParty = lines.filter((l) => l.o.partyStatus === "Pending" && !l.inDetails);
-  return { lines, pending, working, toAllocate, pendingParty };
+  const toVerify = lines.filter(isToVerifyLine);
+  const toBill = lines.filter(isToBillLine);
+  const invoiceToCheck = lines.filter(isInvoiceToCheckLine);
+  const stickersDue = lines.filter(isStickerLine);
+  return { lines, pending, working, toAllocate, pendingParty, toVerify, toBill, invoiceToCheck, stickersDue };
 }
 
 /** Detail lines still waiting for dispatch verification. */
@@ -141,11 +145,15 @@ async function navCounts(ctx: ErpContext, only: ReadonlySet<string> | null): Pro
   if (wants("packBatches") && ctx.screens.has("packBatches")) jobs.push(incompletePackIds().then((x) => void (out.packBatches = x.length)));
   if (wants("reorderRm") && ctx.screens.has("reorderRm")) jobs.push(rmReorderRows().then((x) => void (out.reorderRm = x.length)));
   if (wants("reorderFg") && ctx.screens.has("reorderFg")) jobs.push(fgReorderRows().then((x) => void (out.reorderFg = x.length)));
-  if (wants("pendingOrders", "readyOrders") && (ctx.screens.has("pendingOrders") || ctx.screens.has("readyOrders")))
+  if (wants("pendingOrders", "readyOrders", "verifyOrders", "toBill", "invoiceCheck", "labels") && (ctx.screens.has("pendingOrders") || ctx.screens.has("readyOrders")))
     jobs.push(
       salesCounts().then((c) => {
         out.pendingOrders = c.pending.length;
         out.readyOrders = c.toAllocate.length;
+        out.verifyOrders = new Set(c.toVerify.map((l) => l.o.orderNo)).size;
+        out.toBill = new Set(c.toBill.map((l) => l.o.orderNo)).size;
+        out.invoiceCheck = new Set(c.invoiceToCheck.map((l) => l.o.orderNo)).size;
+        out.labels = new Set(c.stickersDue.filter((l) => !l.stickersAt).map((l) => l.o.orderNo)).size;
       }),
     );
   if (wants("orderDetails") && ctx.screens.has("orderDetails")) jobs.push(unverifiedIds().then((x) => void (out.orderDetails = x.length)));
