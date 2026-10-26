@@ -545,13 +545,16 @@ jobs:
                 .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
               const used = Number(reg.storage_usage_bytes);
               const quota = Number(tier.included_storage_bytes);
-              const readAt = Date.parse(reg.storage_usage_bytes_updated_at);
+              // The live API calls it `storage_usage_updated_at`; the godo struct
+              // says `storage_usage_bytes_updated_at`. Either is accepted.
+              const readAtRaw = reg.storage_usage_updated_at ?? reg.storage_usage_bytes_updated_at;
+              const readAt = Date.parse(readAtRaw);
               if (!(used > 0) || !(quota > 0) || !Number.isFinite(readAt) || manifests.length === 0) {
                 // Say WHICH answer was missing, and the shape that came back
                 // (key names only — none of these carry a credential), so the
                 // next run can be read rather than guessed at.
                 const keys = f => { try { const j = require(f); return Object.keys(j).map(k => `${k}{${j[k] && typeof j[k] === "object" ? Object.keys(j[k]).slice(0, 12).join(",") : typeof j[k]}}`).join(" "); } catch (e) { return String(e.message); } };
-                console.error(`registry: used=${reg.storage_usage_bytes} quota=${tier.included_storage_bytes} readAt=${reg.storage_usage_bytes_updated_at} manifests=${manifests.length}`);
+                console.error(`registry: used=${reg.storage_usage_bytes} quota=${tier.included_storage_bytes} readAt=${readAtRaw} manifests=${manifests.length}`);
                 console.error(`shapes: registry ${keys("/tmp/registry.json")} | subscription ${keys("/tmp/subscription.json")} | digests ${keys("/tmp/manifests.json")}`);
                 console.error("::warning::Could not read how full the registry is, so a collection is started as before.");
                 console.log("yes");
@@ -575,7 +578,7 @@ jobs:
               const wanted = (unseen + 2) * push;
               const free = quota - used;
               const mb = b => `${Math.round(b / 1e6)} MB`;
-              console.error(`registry: ${mb(used)} of ${mb(quota)} as of ${reg.storage_usage_bytes_updated_at}, ${unseen} push(es) since; a push adds up to ${mb(push)}; ${mb(free)} free, ${mb(wanted)} wanted.`);
+              console.error(`registry: ${mb(used)} of ${mb(quota)} as of ${readAtRaw}, ${unseen} push(es) since; a push adds up to ${mb(push)}; ${mb(free)} free, ${mb(wanted)} wanted.`);
               console.log(push > 0 && free >= wanted ? "no" : "yes");
             ')" || need=yes
           else
