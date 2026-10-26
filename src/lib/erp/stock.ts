@@ -38,6 +38,17 @@ export type Ex = { execute: (q: ReturnType<typeof sql>) => Promise<unknown> };
  * wants them. A caller that needs particular lots whatever they hold — a
  * trace, a label, the lot a scan names, the rate of a lot already sold — names
  * them, and gets exactly those, zero or not.
+ *
+ * WRITTEN-OFF STOCK IS NOT STOCK. A write-off is a transfer to the reserved
+ * Item Lost Record godown, and its inflow there is how the ledger balances —
+ * but nothing is ever moved out of it, nobody works there, and what it holds is
+ * gone. All four reads leave it out (`not g.reserved`), so Stock on hand, the
+ * dashboard's totals, the re-order plan and every "is there enough" check stop
+ * counting what was written off. They counted it before: the Stock on hand
+ * screens listed Item Lost Record as a godown, and "All godowns" on the
+ * dashboard read the stock a count had just written off as still there. The
+ * record of each write-off is the transfer itself — the Transfers register and
+ * the Stock inquiry's "Written off" / "Adjusted by hand" lines.
  */
 export type LotPick = { lots?: string[] };
 
@@ -187,7 +198,7 @@ export async function rmLots(ex: Ex = db, pick: LotPick = {}): Promise<RmLot[]> 
            r.rate_paise::float8 as "unitRate", r.unit as "purchaseUnit", r.density::float8 as density
       from inflow i
       join erp_raw_materials m on m.id = i.raw_material_id
-      join erp_godowns g on g.id = i.godown_id
+      join erp_godowns g on g.id = i.godown_id and not g.reserved
       left join outflow o on o.lot_no = i.lot_no and o.godown_id = i.godown_id
       left join latest l on l.lot_no = i.lot_no and l.godown_id = i.godown_id
       left join rate r on r.lot_no = i.lot_no
@@ -384,7 +395,7 @@ export async function sfgLots(ex: Ex = db, pick: LotPick = {}): Promise<SfgLot[]
              l.id as "latestEntryId", l.entry_date::text as "latestDate", l.source_type as "latestType", l.batches::float8 as batches
         from inflow i
         join product_formulations f on f.id = i.formulation_id
-        join erp_godowns g on g.id = i.godown_id
+        join erp_godowns g on g.id = i.godown_id and not g.reserved
         left join outflow o on o.lot_code = i.lot_code and o.godown_id = i.godown_id
         left join latest l on l.lot_code = i.lot_code and l.godown_id = i.godown_id
        where ${pick.lots ? (pick.lots.length ? sql`i.lot_code in ${pick.lots}` : sql`false`) : sql`(i.qty - coalesce(o.qty, 0)) <> 0`}
@@ -508,7 +519,7 @@ export async function fgLots(ex: Ex = db, pick: LotPick = {}): Promise<FgLot[]> 
              l.packing_type as "packingType", l.id as "latestEntryId", l.entry_date::text as "latestDate"
         from inflow i
         join finished_goods fg on fg.id = i.finished_good_id
-        join erp_godowns g on g.id = i.godown_id
+        join erp_godowns g on g.id = i.godown_id and not g.reserved
         left join outflow o on o.fg = i.finished_good_id and o.lot_code = i.lot_code and o.godown_id = i.godown_id
         left join latest l on l.finished_good_id = i.finished_good_id and l.lot_code = i.lot_code and l.godown_id = i.godown_id
         left join products p on p.id = l.sku_id
@@ -614,7 +625,7 @@ export async function packLots(ex: Ex = db, pick: LotPick = {}): Promise<PackLot
              l.posted_at as "postedAt"
         from inflow i
         join products p on p.id = i.sku_id
-        join erp_godowns g on g.id = i.godown_id
+        join erp_godowns g on g.id = i.godown_id and not g.reserved
         left join outflow o on o.batch_no = i.batch_no and o.godown_id = i.godown_id
         left join latest l on l.batch_no = i.batch_no and l.godown_id = i.godown_id
        where ${pick.lots ? (pick.lots.length ? sql`i.batch_no in ${pick.lots}` : sql`false`) : sql`(i.qty - coalesce(o.qty, 0)) <> 0`}
