@@ -12345,6 +12345,23 @@ export const erpOrders = pgTable(
      */
     source: text("source").notNull().default("erp"),
     sourceRef: text("source_ref"),
+    /* ---- 0285: the Order-to-Delivery PRD. See "Order to delivery" in docs/erp/orders. ---- */
+    /** How the order reached us: WhatsApp | Phone | Sales Order | Other. Null on lines taken before it was asked. */
+    orderSource: text("order_source"),
+    /**
+     * The back office's check of what was entered against what the customer
+     * asked for — Pending | Verified | Correction. Shared by every line of the
+     * order; a line cannot be marked Ready until its order is Verified, and a
+     * material change before billing puts it back to Pending.
+     */
+    orderCheck: text("order_check").notNull().default("Pending"),
+    orderCheckedById: text("order_checked_by_id").references(() => users.id),
+    orderCheckedAt: timestamp("order_checked_at", { withTimezone: true }),
+    orderCheckNote: text("order_check_note"),
+    /** The order this line was moved out of, to be dispatched later on an order of its own (PRD rule 2). */
+    linkedFromOrderNo: integer("linked_from_order_no"),
+    /** The Tally invoice's date, recorded beside its number. */
+    invoiceDate: date("invoice_date"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id").references(() => users.id),
@@ -12397,6 +12414,23 @@ export const erpOrderDetails = pgTable("erp_order_details", {
   transportFollowUp: text("transport_follow_up"),
   /** The consignment (`erp_transports`) this line left on, set when it is dispatch-verified (0279). */
   transportId: text("transport_id"),
+  /**
+   * THE INDEPENDENT INVOICE CHECK (0285) — Pending | Approved | Rejected. The
+   * checker compares the Tally invoice with the order; nobody checks a bill they
+   * entered, unless they are an ERP administrator. Dispatch waits for Approved,
+   * and a change to the invoice's figures after approval puts it back to Pending.
+   */
+  invoiceCheck: text("invoice_check").notNull().default("Pending"),
+  invoiceCheckedById: text("invoice_checked_by_id").references(() => users.id),
+  invoiceCheckedAt: timestamp("invoice_checked_at", { withTimezone: true }),
+  invoiceCheckNote: text("invoice_check_note"),
+  /** When the dispatch stickers were put on, and by whom — recorded, never required. */
+  stickersAt: timestamp("stickers_at", { withTimezone: true }),
+  stickersById: text("stickers_by_id").references(() => users.id),
+  /** What dispatch records as the goods leave: the vehicle, its driver, and any remark or exception. */
+  vehicleNo: text("vehicle_no"),
+  driver: text("driver"),
+  dispatchRemark: text("dispatch_remark"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   createdById: text("created_by_id").references(() => users.id),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -12622,6 +12656,14 @@ export const erpTransports = pgTable(
     issueAt: timestamp("issue_at", { withTimezone: true }),
     /** The unguessable part of the customer's tracking link (/track/<token>). */
     trackToken: text("track_token"),
+    /* ---- 0285: one vehicle trip carries many bills; delivery is confirmed by somebody. ---- */
+    /** The vehicle trip (`erp_trips`) this bill travelled on. */
+    tripId: text("trip_id"),
+    /** The vehicle number dispatch recorded, copied from the lines as the record opened. */
+    vehicleNo: text("vehicle_no"),
+    deliveredById: text("delivered_by_id").references(() => users.id),
+    /** A proof or reference for the delivery — a POD number, who signed, a photo's name. */
+    deliveryProof: text("delivery_proof"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     updatedById: text("updated_by_id").references(() => users.id),
@@ -12774,6 +12816,127 @@ export const erpPoShares = pgTable(
     index("erp_po_shares_po_idx").on(t.poId, t.createdAt),
     check("erp_po_shares_channel_check", sql`${t.channel} in ('whatsapp', 'email', 'link')`),
     check("erp_po_shares_status_check", sql`${t.status} in ('sent', 'by_hand', 'failed', 'copied', 'delivered', 'read')`),
+  ],
+);
+
+/* ---- 0285: the Order-to-Delivery PRD — check history, trips, and the transport payment ---- */
+
+/**
+ * EVERY CHECK OF AN ORDER, appended and never edited: the back office's order
+ * verification (`kind = order`) and the independent invoice check
+ * (`kind = invoice`). The current answer lives on the lines
+ * (`erp_orders.order_check`, `erp_order_details.invoice_check`); this is how it
+ * got there — who verified, who rejected and why, and which change sent an
+ * approved invoice back for checking. `snapshot` is what was checked.
+ */
+export const erpOrderReviews = pgTable(
+  "erp_order_reviews",
+  {
+    id: text("id").primaryKey(),
+    orderNo: integer("order_no").notNull(),
+    /** order | invoice. */
+    kind: text("kind").notNull(),
+    /** submitted | verified | correction | approved | rejected | reset. */
+    result: text("result").notNull(),
+    note: text("note"),
+    snapshot: jsonb("snapshot").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+    byId: text("by_id").references(() => users.id),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("erp_order_reviews_order_idx").on(t.orderNo, t.kind, t.at),
+    check("erp_order_reviews_kind_check", sql`${t.kind} in ('order', 'invoice')`),
+    check("erp_order_reviews_result_check", sql`${t.result} in ('submitted', 'verified', 'correction', 'approved', 'rejected', 'reset')`),
+  ],
+);
+
+/**
+ * ONE VEHICLE TRIP: a tempo or truck that carries several bills, for several
+ * customers, at once. A bill's record (`erp_transports.trip_id`) says which
+ * trip it went on; dispatch opens or joins one from the vehicle number it
+ * records, and Logistics can regroup them. The transport payment is recorded
+ * against a trip and shared out over its bills by dispatched litres.
+ */
+export const erpTrips = pgTable(
+  "erp_trips",
+  {
+    id: text("id").primaryKey(),
+    /** Series `trip`. */
+    tripNo: integer("trip_no").notNull(),
+    tripDate: date("trip_date").notNull(),
+    vehicleNo: text("vehicle_no"),
+    driver: text("driver"),
+    transporter: text("transporter"),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdById: text("created_by_id").references(() => users.id),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedById: text("updated_by_id").references(() => users.id),
+  },
+  (t) => [uniqueIndex("erp_trips_no_key").on(t.tripNo), index("erp_trips_vehicle_idx").on(t.tripDate, sql`upper(${t.vehicleNo})`)],
+);
+
+/**
+ * A CONFIRMED TRANSPORT PAYMENT, as Logistics records it. Logistics does not
+ * make the payment — recording one says somebody has paid, or will, this
+ * amount for this trip. The amount is recorded once and shared out over the
+ * chosen bills by dispatched litres (`erp_transport_allocations`); reversing
+ * it keeps the row and frees the bills to be allocated again.
+ */
+export const erpTransportPayments = pgTable(
+  "erp_transport_payments",
+  {
+    id: text("id").primaryKey(),
+    tripId: text("trip_id")
+      .notNull()
+      .references(() => erpTrips.id),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    paidOn: date("paid_on"),
+    /** Who the money goes to — usually the transporter. */
+    paidTo: text("paid_to"),
+    reference: text("reference"),
+    /** Which part of the trip it covers, where it does not cover all of it. */
+    scope: text("scope"),
+    note: text("note"),
+    /** recorded | allocated | reversed. */
+    status: text("status").notNull().default("recorded"),
+    recordedById: text("recorded_by_id").references(() => users.id),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+    reversedById: text("reversed_by_id").references(() => users.id),
+    reversedAt: timestamp("reversed_at", { withTimezone: true }),
+    reverseReason: text("reverse_reason"),
+  },
+  (t) => [
+    index("erp_transport_payments_trip_idx").on(t.tripId),
+    check("erp_transport_payments_amount_check", sql`${t.amountPaise} > 0`),
+    check("erp_transport_payments_status_check", sql`${t.status} in ('recorded', 'allocated', 'reversed')`),
+  ],
+);
+
+/**
+ * One bill's share of a transport payment: its dispatched litres and the
+ * paise they carry. The shares of one payment add up to its amount exactly.
+ * A bill holds at most one live share, so the same cost cannot reach it twice.
+ */
+export const erpTransportAllocations = pgTable(
+  "erp_transport_allocations",
+  {
+    id: text("id").primaryKey(),
+    paymentId: text("payment_id")
+      .notNull()
+      .references(() => erpTransportPayments.id),
+    transportId: text("transport_id")
+      .notNull()
+      .references(() => erpTransports.id),
+    litres: numeric("litres", { precision: 12, scale: 2, mode: "number" }).notNull(),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    reversed: boolean("reversed").notNull().default(false),
+  },
+  (t) => [
+    uniqueIndex("erp_transport_allocations_pair_key").on(t.paymentId, t.transportId),
+    uniqueIndex("erp_transport_allocations_live_key").on(t.transportId).where(sql`${t.reversed} = false`),
+    check("erp_transport_allocations_litres_check", sql`${t.litres} > 0`),
+    check("erp_transport_allocations_amount_check", sql`${t.amountPaise} >= 0`),
   ],
 );
 

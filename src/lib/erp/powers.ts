@@ -25,6 +25,8 @@ export const ERP_POWERS = [
   "lostStock",
   "customerStatus",
   "approveParty",
+  "verifyOrders",
+  "checkInvoices",
   "decideRequests",
   "employeeAdmin",
   "approveSfgQc",
@@ -88,6 +90,14 @@ export const ERP_POWER_LABEL: Record<ErpPower, { label: string; source: string }
   approveParty: {
     label: "Approve orders from pending customers",
     source: "“Approved By Admin” on a taken order (admin in the source).",
+  },
+  verifyOrders: {
+    label: "Verify orders (back office)",
+    source: "Checks an entered order against what the customer asked for — Verified, or sent back for correction with a reason — before production can mark it Ready. Told when an order's goods are Ready to bill (new in MahekOne: Order-to-Delivery PRD step 2).",
+  },
+  checkInvoices: {
+    label: "Check invoices before dispatch",
+    source: "Independently approves or rejects the Tally invoice against the order — customer, goods, quantity, invoice number, rate and discount. Dispatch waits for approval. Nobody checks a bill they entered themselves, unless they are an ERP administrator (new in MahekOne: Order-to-Delivery PRD step 6).",
   },
   decideRequests: {
     label: "Decide customer requests",
