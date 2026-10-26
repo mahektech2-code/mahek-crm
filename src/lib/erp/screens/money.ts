@@ -1251,16 +1251,31 @@ const moneyOverviewList: ScreenModule = {
 
 /* ------------------------------------------------------------- old records */
 
+/* The old expense sheet (Credit Expense + Expenses, from 2022) is thousands of rows, so this reads by date like every register. */
+const LEGACY_WIN: ScreenWindow = { label: "Date", default: "fy" };
+
 const legacyPetty: ScreenModule = {
   key: "legacyPetty",
-  async load() {
-    const [credits, expenses] = await Promise.all([
-      db.select({ c: erpCredits, godown: erpGodowns.name }).from(erpCredits).innerJoin(erpGodowns, eq(erpGodowns.id, erpCredits.godownId)),
-      db.select({ e: erpExpenses, godown: erpGodowns.name }).from(erpExpenses).innerJoin(erpGodowns, eq(erpGodowns.id, erpExpenses.godownId)),
+  window: LEGACY_WIN,
+  async load(_ctx, scope) {
+    const s = scope ?? scopeFor(LEGACY_WIN, { pd: "", ids: null }, null);
+    const inCredits = windowWhere(sql`${erpCredits.creditDate}`, sql`${erpCredits.id}`, s);
+    const inExpenses = windowWhere(sql`${erpExpenses.expenseDate}`, sql`${erpExpenses.id}`, s);
+    const [[c], [e]] = await Promise.all([
+      db.select({ n: sql<number>`count(*)::int` }).from(erpCredits).where(inCredits),
+      db.select({ n: sql<number>`count(*)::int` }).from(erpExpenses).where(inExpenses),
     ]);
+    const wide = tooWide(Number(c?.n ?? 0) + Number(e?.n ?? 0), s);
+    const [credits, expenses] = wide
+      ? [[], []]
+      : await Promise.all([
+          db.select({ c: erpCredits, godown: erpGodowns.name }).from(erpCredits).innerJoin(erpGodowns, eq(erpGodowns.id, erpCredits.godownId)).where(inCredits),
+          db.select({ e: erpExpenses, godown: erpGodowns.name }).from(erpExpenses).innerJoin(erpGodowns, eq(erpGodowns.id, erpExpenses.godownId)).where(inExpenses),
+        ]);
+    /* The sheet's own words: money given in is a credit, an expense paid out is a debit. */
     const rows: ListRow[] = [
-      ...credits.map((r) => ({ id: r.c.id, v: { date: r.c.creditDate, kind: "Funds given", who: r.c.employeeName, what: r.c.note, amount: r.c.amountPaise, mode: r.c.mode, godown: r.godown, status: "—" }, flags: [] })),
-      ...expenses.map((r) => ({ id: r.e.id, v: { date: r.e.expenseDate, kind: "Expense", who: r.e.expenseBy, what: [r.e.category, r.e.particular, r.e.note].filter(Boolean).join(" · "), amount: r.e.amountPaise, mode: r.e.mode, godown: r.godown, status: r.e.status === "Verify" ? "Verified" : r.e.status }, flags: [] })),
+      ...credits.map((r) => ({ id: r.c.id, v: { date: r.c.creditDate, kind: "Credit", who: r.c.employeeName, what: r.c.note, amount: r.c.amountPaise, mode: r.c.mode, godown: r.godown, status: "—" }, flags: [] })),
+      ...expenses.map((r) => ({ id: r.e.id, v: { date: r.e.expenseDate, kind: "Debit", who: r.e.expenseBy, what: [r.e.category, r.e.particular, r.e.note].filter(Boolean).join(" · "), amount: r.e.amountPaise, mode: r.e.mode, godown: r.godown, status: r.e.status === "Verify" ? "Verified" : r.e.status }, flags: [] })),
     ].sort((a, b) => String(b.v.date).localeCompare(String(a.v.date)));
     return {
       spec: {
@@ -1279,9 +1294,10 @@ const legacyPetty: ScreenModule = {
         chips: "kind",
         newMenu: newMenu(),
         readOnly: true,
-        noDataLine: "No old records. Funds given and expenses entered before the Petty Cash module are kept here, read-only.",
+        noDataLine: "No old records in this period. Credits and expenses from before the Petty Cash module are kept here, read-only.",
       },
       rows,
+      tooWide: wide,
     };
   },
 };
