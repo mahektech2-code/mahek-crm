@@ -1,4 +1,4 @@
-# Push to main, and about three minutes later it is live.
+# Push to main, and about five minutes later it is live.
 #
 # The build runs HERE, on GitHub's runners, and never on the droplet: `next
 # build` runs tsc over the whole codebase and wants more memory than a 1 GiB
@@ -33,6 +33,14 @@ env:
 jobs:
   # The same checks that guard a PR. A green build is not evidence the rules
   # still hold, and this deploys straight to the app the accounts team uses.
+  #
+  # BESIDE THE BUILD, NOT IN FRONT OF IT. `build` used to need this, so the
+  # image waited three and a half minutes for checks the PR had already passed
+  # on the same code, and only then started its own six. Now both start at
+  # once and `deploy` needs both: a red test still stops anything reaching the
+  # droplet, it just no longer holds the image build back while it says so.
+  # What a red test costs now is one pushed image nobody deploys, which the
+  # next good deploy's prune takes out with the rest.
   test:
     runs-on: ubuntu-latest
     steps:
@@ -45,12 +53,18 @@ jobs:
       # The docs index is generated, never committed, and three files import
       # it. tsc run directly skips the npm pre-hooks that build it.
       - run: node scripts/docs-index.mjs
+      # `next typegen` writes the route types `next build` would have checked
+      # (.next/types, in tsconfig's include). The image build no longer
+      # type-checks — see `typescript` in next.config.ts — so this is the one
+      # check on the deploy path, and it has to be the whole one: tsc alone
+      # finds no .next/types on a fresh checkout and checks the routes not at
+      # all. A second, and needs no database.
+      - run: npx next typegen
       - run: npx tsc --noEmit
       - run: npx eslint src
       - run: npm test
 
   build:
-    needs: test
     runs-on: ubuntu-latest
     outputs:
       image: ${{ steps.tag.outputs.image }}
@@ -176,7 +190,7 @@ jobs:
           provenance: false
 
   deploy:
-    needs: build
+    needs: [test, build]
     runs-on: ubuntu-latest
     environment: production
     steps:
@@ -236,16 +250,27 @@ jobs:
       # schema for the seconds between this step and the swap below. A
       # destructive migration would need the reverse order and a release that
       # stops writing to the column first.
+      #
+      # THE DROPLET PULLS THE NEW IMAGE WHILE THIS RUNS. Pulling changes
+      # nothing that is serving — `docker pull` only fills the local image
+      # store, and the swap below is what starts it — so there is no reason for
+      # the minute it takes to wait behind the migrations, or they behind it.
+      # `docker compose pull app` in the swap then finds the image already
+      # there. A pull that fails is reported and left to that step, which pulls
+      # again and fails the deploy properly if the registry really is refusing.
       - name: Migrate, through the tunnel
         if: steps.freshness.outputs.current == 'true'
         env:
           PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
         run: |
+          ssh deploy@${{ secrets.DROPLET_HOST }} "docker pull -q ${{ needs.build.outputs.image }}" > /tmp/pull.log 2>&1 &
+          pull=$!
           ssh -f -N -L 5433:127.0.0.1:5432 \
             -o ExitOnForwardFailure=yes \
             deploy@${{ secrets.DROPLET_HOST }}
           export DATABASE_URL="postgres://mahek:${PGPASSWORD}@127.0.0.1:5433/mahekone"
           npm run deploy:db
+          if wait "$pull"; then echo "image already on the droplet"; else echo "::warning::the early pull failed; the swap will pull again"; cat /tmp/pull.log; fi
 
       # ---------------------------------------------------------------- swap
       - name: Pull and restart

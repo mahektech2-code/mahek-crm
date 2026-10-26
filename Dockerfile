@@ -67,6 +67,11 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # connection attempt, it must fail loudly instead of quietly finding something.
 ENV DATABASE_URL=postgres://build:build@build-time-no-database.invalid:5432/build
 
+# Type-checked elsewhere, before anything deploys: see `typescript` in
+# next.config.ts. Here it would only make the push wait 71 seconds for an
+# answer the deploy's `test` job is already giving.
+ENV NEXT_BUILD_SKIP_TYPECHECK=1
+
 # The docs index is built, not committed (see .gitignore): it cuts the code the
 # documentation quotes out of THIS source. `npx next build` skips npm's
 # `prebuild` hook, so it is run by name rather than relied on.

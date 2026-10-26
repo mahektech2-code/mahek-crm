@@ -69,14 +69,16 @@ sequenceDiagram
   participant Dr as Droplet
   participant Pr as job: prune
   Dev->>T: push to main
-  T->>T: npm ci, tsc --noEmit, eslint src, npm test
-  T->>Bld: needs: test
+  Dev->>Bld: push to main (at the same time)
+  T->>T: npm ci, next typegen, tsc --noEmit, eslint src, npm test
   Bld->>Bld: tag = first 12 chars of the SHA
   Bld->>Reg: wait out any garbage collection (if DO_API_TOKEN)
   Bld->>Reg: docker login (DOCR_USERNAME, DOCR_TOKEN)
   Bld->>Reg: build-push :sha and :latest (GHA cache)
+  T->>Dp: needs: test
   Bld->>Dp: needs: build
   Dp->>Dp: is main still at this SHA? if not, skip
+  Dp->>Dr: docker pull the new tag (in the background)
   Dp->>Dr: ssh -L 5433:127.0.0.1:5432
   Dp->>Dr: npm run deploy:db through the tunnel<br/>(migrate, catalogue, hire)
   Dp->>Dr: sed IMAGE= in .env, compose pull app, restart.sh
@@ -88,17 +90,17 @@ sequenceDiagram
 `} />
 
 <Steps>
-<Step title="Test">
-`npm ci`, `npx tsc --noEmit`, `npx eslint src`, `npm test` (the pure suites). The full CI — migrations from scratch, integration journeys, the handset's lint, types and engine tests, the link crawl — runs separately in `ci.yml` on every PR.
+<Step title="Test, beside the build">
+`npm ci`, `npx next typegen`, `npx tsc --noEmit`, `npx eslint src`, `npm test` (the pure suites). It runs at the same time as the build rather than before it, and `deploy` needs both — a red test still stops the deploy, without making the image wait for it. `next typegen` is there because the image build no longer type-checks: it writes the route types `next build` would have checked, so this is the whole check rather than most of it. The full CI — migrations from scratch, integration journeys, the handset's lint, types and engine tests, the link crawl — runs separately in `ci.yml` on every PR.
 </Step>
 <Step title="Build on GitHub's runners">
-The droplet never builds: at 1 GiB it cannot. `DATABASE_URL` is set to a deliberately unresolvable host during `next build`, because `src/db/index.ts` throws without one and the build must never reach a real database. `GIT_SHA` becomes `NEXT_DEPLOYMENT_ID`, so a browser holding the previous build's chunks is told to reload rather than failing on a missing file.
+The droplet never builds: at 1 GiB it cannot. `DATABASE_URL` is set to a deliberately unresolvable host during `next build`, because `src/db/index.ts` throws without one and the build must never reach a real database. `NEXT_BUILD_SKIP_TYPECHECK=1` skips the type check inside the build (71 of its 170 seconds) because the test job beside it runs one. `GIT_SHA` becomes `NEXT_DEPLOYMENT_ID`, so a browser holding the previous build's chunks is told to reload rather than failing on a missing file.
 </Step>
 <Step title="Refuse a stale commit">
 `concurrency: deploy-production` with `cancel-in-progress` usually handles two quick merges, but a run that has already built may still reach the deploy job. It asks GitHub where `main` is now and skips if it has moved past — deploying would put an older commit back.
 </Step>
 <Step title="Migrate through a tunnel">
-`deploy:db` is `db:deploy` (migrations via `scripts/migrate-deploy.mjs`), then `catalogue:deploy` (the idempotent product import), then `hire:deploy`. It runs on the runner against `127.0.0.1:5433`, forwarded to the droplet's loopback Postgres. Migrations run **before** the new image starts, so new code never meets an old schema; old code briefly meets the new one, which is why migrations here are additive.
+The droplet starts pulling the new image in the background first — a pull changes nothing that is serving — so the swap finds it already there. `deploy:db` is `db:deploy` (migrations via `scripts/migrate-deploy.mjs`), then `catalogue:deploy` (the idempotent product import), then `hire:deploy`. It runs on the runner against `127.0.0.1:5433`, forwarded to the droplet's loopback Postgres. Migrations run **before** the new image starts, so new code never meets an old schema; old code briefly meets the new one, which is why migrations here are additive.
 </Step>
 <Step title="Swap the image">
 `IMAGE=` in `/opt/mahekone/.env` is rewritten to the new tag, `docker compose pull app`, then `restart.sh` brings everything up and waits for healthy. A few seconds of downtime; a save in flight sees an error and is retried.
