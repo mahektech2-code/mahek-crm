@@ -253,35 +253,6 @@ jobs:
             fi
           done
 
-  # THE IMAGE IS BUILT ON EVERY PR, and pushed nowhere.
-  #
-  # Production is a container now, and a Dockerfile that only ever runs during
-  # a deploy is a Dockerfile you find out about while deploying. The two things
-  # this catches are the ones that actually break: a `COPY` whose source moved,
-  # and a standalone trace that lands `server.js` somewhere other than where
-  # the runtime stage expects it — neither of which `next build` on its own
-  # would notice.
-  image:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-buildx-action@v4
-      - id: node
-        uses: ./.github/actions/node-image
-      - name: Build the production image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          push: false
-          load: true
-          tags: mahekone:ci
-          build-args: |
-            NODE_IMAGE=${{ steps.node.outputs.image }}
-      # Building proves it compiles. This proves the runtime stage can find
-      # what it needs to start at all.
-      - name: It has a server to run
-        run: docker run --rm --entrypoint sh mahekone:ci -c 'test -f server.js && test -d .next/static && test -d public'
-
   # THE DEPLOYMENT, RUN SOMEWHERE THAT IS NOT PRODUCTION.
   #
   # Five bugs shipped in a row because this path had never executed anywhere
@@ -289,8 +260,8 @@ jobs:
   # in scope here and all three would have gone red in this job:
   #
   #   - the image built without DATABASE_URL, so `next build` died collecting
-  #     page data for a route that imports src/db (the `image` job caught that
-  #     one already, on its first run)
+  #     page data for a route that imports src/db (a separate `image` job
+  #     caught that one, on its first run)
   #   - postgres published no port, so the migration tunnel forwarded to a
   #     closed one and drizzle-kit reported a bare exit 1 that read exactly
   #     like a broken migration
@@ -301,6 +272,13 @@ jobs:
   # compose file, Caddyfile, .env and restart.sh sitting flat together — so
   # this exercises the layout the droplet actually has rather than a
   # convenient approximation of it.
+  #
+  # THIS IS ALSO WHERE THE PR'S IMAGE IS BUILT, ONCE. There used to be an
+  # `image` job beside it that built the same Dockerfile with the same
+  # arguments and checked the runtime stage had a server in it — two runners
+  # spending four minutes each on one image. Its check is a step here now, and
+  # everything it caught this job catches too: an image that does not build
+  # cannot be brought up.
   stack:
     runs-on: ubuntu-latest
     steps:
@@ -323,6 +301,17 @@ jobs:
           tags: mahekone:ci
           build-args: |
             NODE_IMAGE=${{ steps.node.outputs.image }}
+          # READ main's layer cache, which deploy.yml writes, and write none.
+          # A PR's cache is visible only to that PR, so writing one would spend
+          # the repository's 10 GB on layers nothing else can read — and
+          # evict main's, which every PR can.
+          cache-from: type=gha
+
+      # Building proves it compiles. This proves the runtime stage can find
+      # what it needs to start at all, and says so in one line rather than as
+      # a container that never comes up.
+      - name: It has a server to run
+        run: docker run --rm --entrypoint sh mahekone:ci -c 'test -f server.js && test -d .next/static && test -d public'
 
       - name: Lay it out the way the droplet is
         run: |
@@ -342,30 +331,29 @@ jobs:
 
       # The compose file is the droplet's own, so it names Docker Hub images and
       # stays that way (renaming them there would recreate the live database
-      # container on the next deploy). CI pre-pulls the same images from the
-      # public mirror and gives them the names compose asks for, so the stack
-      # starts without an anonymous Docker Hub pull — see the Dockerfile.
-      - name: Fetch the stack's images from the mirror
+      # container on the next deploy). CI pre-pulls the same images and gives
+      # them the names compose asks for, so the stack starts without asking a
+      # registry for anything.
+      - name: Fetch the stack's images
         working-directory: /tmp/stack
-        # The mirror answers "toomanyrequests: Rate exceeded" now and then, and a
-        # refused pull is not a fault in the change under test — so each pull is
-        # tried five times, waiting 10, 20, 40 and 80 seconds between, before the
-        # job is allowed to fail.
+        # Each round asks the public mirror and then Docker Hub, and backs off
+        # only when both refuse — a refused pull is not a fault in the change
+        # under test. It used to try the mirror five times, 10, 20, 40 and 80
+        # seconds apart, before Docker Hub once; through October 2026 the
+        # mirror refused every pull, so that was 2m30s per image, 5m10s of
+        # every run, before Docker Hub served each in seconds.
         run: |
-          pull() {
-            for wait in 10 20 40 80 0; do
-              docker pull "$1" && return 0
-              [ "$wait" = 0 ] && return 1
-              echo "pull of $1 refused; trying again in ${wait}s"; sleep "$wait"
-            done
-          }
           for img in $(grep -E '^\s+image: [a-z]' docker-compose.yml | awk '{print $2}' | grep -v '\$'); do
-            if pull "public.ecr.aws/docker/library/$img"; then
-              docker tag "public.ecr.aws/docker/library/$img" "$img"
-            else
-              echo "::warning::the mirror refused $img; pulling it from Docker Hub"
-              pull "$img" || exit 1
-            fi
+            got=""
+            for wait in 10 20 40 80 0; do
+              if docker pull -q "public.ecr.aws/docker/library/$img"; then
+                docker tag "public.ecr.aws/docker/library/$img" "$img"; got=1; break
+              fi
+              if docker pull -q "$img"; then got=1; break; fi
+              [ "$wait" = 0 ] && break
+              echo "both registries refused $img; trying again in ${wait}s"; sleep "$wait"
+            done
+            [ -n "$got" ] || { echo "::error::$img could not be pulled from any registry"; exit 1; }
           done
           docker images
 
@@ -419,18 +407,18 @@ jobs:
           PKGS=$(grep -oP 'apt-get install -y -qq \K.*' deploy/bootstrap.sh | head -1)
           echo "packages: $PKGS"
           # Pulled first, with retries: the mirror's "toomanyrequests" is a
-          # refused download, not an answer about these packages.
-          # Docker Hub is the fallback when the mirror keeps refusing.
-          img=public.ecr.aws/docker/library/ubuntu:24.04
+          # refused download, not an answer about these packages. Each round
+          # asks the mirror and then Docker Hub, and backs off only when both
+          # refuse.
+          img=""
           for wait in 10 20 40 80 0; do
-            docker pull "$img" && break
-            if [ "$wait" = 0 ]; then
-              img=docker.io/library/ubuntu:24.04
-              docker pull "$img" || exit 1
-              break
-            fi
-            echo "pull refused; trying again in ${wait}s"; sleep "$wait"
+            for candidate in public.ecr.aws/docker/library/ubuntu:24.04 docker.io/library/ubuntu:24.04; do
+              if docker pull -q "$candidate"; then img="$candidate"; break 2; fi
+            done
+            [ "$wait" = 0 ] && break
+            echo "both registries refused ubuntu:24.04; trying again in ${wait}s"; sleep "$wait"
           done
+          [ -n "$img" ] || { echo "::error::ubuntu:24.04 could not be pulled from any registry"; exit 1; }
           docker run --rm "$img" sh -c "
             apt-get update -qq >/dev/null 2>&1
             apt-get install -s $PKGS >/dev/null

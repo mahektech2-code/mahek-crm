@@ -2,9 +2,14 @@
 # The Dockerfile names ECR Public's mirror by default (Docker Hub's anonymous
 # limit used to fail jobs on shared runner IPs), and the mirror now answers
 # "429 toomanyrequests: Data limit exceeded" instead. A `FROM` cannot fall back
-# on its own, so the mirror is asked first, with backoff, and Docker Hub only
-# when it keeps refusing; the answer goes to the build as NODE_IMAGE. Only
-# both refusing fails the job — a refused download is not a fault in the code.
+# on its own, so each round asks the mirror and then Docker Hub, and backs off
+# only when both refuse; the answer goes to the build as NODE_IMAGE. Only both
+# refusing every round fails the job — a refused download is not a fault in the
+# code.
+#
+# The mirror used to be asked four times, 10 + 20 + 40 seconds apart, before
+# Docker Hub was asked once — and through October 2026 it refused every time,
+# so this step cost 1m11s of every image build to answer "Docker Hub".
 name: Node base image
 description: Pick a registry that will serve node:24-alpine to this runner
 outputs:
@@ -17,19 +22,15 @@ runs:
     - id: pick
       shell: bash
       run: |
-        reachable() {
-          for wait in 10 20 40 0; do
-            docker buildx imagetools inspect "$1" >/dev/null && return 0
-            [ "$wait" = 0 ] && return 1
-            echo "$1 refused; trying again in ${wait}s"; sleep "$wait"
+        for wait in 10 20 40 0; do
+          for candidate in public.ecr.aws/docker/library/node:24-alpine docker.io/library/node:24-alpine; do
+            if docker buildx imagetools inspect "$candidate" >/dev/null; then
+              echo "image=$candidate" >> "$GITHUB_OUTPUT"
+              echo "Building FROM $candidate"
+              exit 0
+            fi
           done
-        }
-        for candidate in public.ecr.aws/docker/library/node:24-alpine docker.io/library/node:24-alpine; do
-          if reachable "$candidate"; then
-            echo "image=$candidate" >> "$GITHUB_OUTPUT"
-            echo "Building FROM $candidate"
-            exit 0
-          fi
-          echo "::warning::$candidate could not be reached; trying the next registry"
+          [ "$wait" = 0 ] && break
+          echo "both registries refused node:24-alpine; trying again in ${wait}s"; sleep "$wait"
         done
         echo "::error::node:24-alpine could not be reached on any registry"; exit 1
