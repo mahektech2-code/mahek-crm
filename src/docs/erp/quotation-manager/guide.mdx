@@ -2,12 +2,13 @@ The **Quotation manager** is the purchase desk's rate sheet. Each **row** is one
 
 Everything on it can be changed in place: the cells, the date and party of a row, and the columns themselves.
 
-<Wireframe url="/erp/quotation-manager" nav={["Dashboard", "#Purchase", "Requirements", "Purchase orders", "Quotation manager"]} active="Quotation manager" caption="The Quotation manager">
+<Wireframe url="/erp/quotation-manager" nav={["Dashboard", "#Purchase", "Requirements", "Purchase orders", "Purchases", "Lot testing", "Quotation manager"]} active="Quotation manager" caption="The Quotation manager">
   <WfBar>
-    <WfTitle sub="Supplier rates by date, party and material, kept like the desk's sheet.">Quotation manager</WfTitle>
+    <WfTitle sub="Supplier rates by date, party and material, kept like the desk's sheet: every row, column and cell editable.">Quotation manager</WfTitle>
+    <WfSpacer /><WfButton>Export CSV</WfButton><WfButton>Add column</WfButton><WfButton primary>Add row</WfButton><Hotspot n={1} />
   </WfBar>
-  <WfBar><WfInput placeholder="Search party" /><WfText muted>Last 6 months</WfText><WfSpacer /><WfButton>Export CSV</WfButton><WfButton>+ Column</WfButton><WfButton primary>+ Row</WfButton><Hotspot n={1} /></WfBar>
-  <WfBar><WfText muted>Colour the selected cells:</WfText><WfPill tone="warn">PO made in Tally & PO mailed</WfPill><WfPill tone="danger">PO / order cancelled</WfPill><WfPill tone="info">Material picked up by transporter</WfPill><Hotspot n={2} /></WfBar>
+  <WfBar><WfInput placeholder="Search party" /><WfText muted>Last 6 months</WfText><WfSpacer /><WfText muted>All changes saved</WfText><WfButton>Undo</WfButton></WfBar>
+  <WfBar><WfText muted>Mark selected</WfText><WfPill>Ready to buy</WfPill><WfButton primary>Purchase it</WfButton><WfPill tone="danger">PO / order cancelled</WfPill><WfPill tone="info">Material picked up by transporter</WfPill><WfText muted>Clear mark</WfText><Hotspot n={2} /></WfBar>
   <WfTable
     columns={["Date", "Party", "Material A", "Material B", "Broker name"]}
     rows={[
@@ -19,8 +20,8 @@ Everything on it can be changed in place: the cells, the date and party of a row
 </Wireframe>
 
 <Hotspots items={[
-  <span key="1"><b>Rows and columns.</b> + Row adds a quotation dated today; + Column adds something to quote for. Hover a column heading for move left, edit, insert after and move right.</span>,
-  <span key="2"><b>Marks.</b> Select cells, then press a mark. Ready to buy (grey) is a manager's; Purchase it turns a grey rate yellow. A mark on the date or party marks the whole quotation.</span>,
+  <span key="1"><b>Rows and columns.</b> Add row adds a quotation dated today; Add column adds something to quote for. Hover a column heading for move left, edit, insert after and move right.</span>,
+  <span key="2"><b>Marks.</b> Select cells, then press a mark. Ready to buy (grey) is shown only to a manager or administrator; Purchase it turns a grey rate yellow. A mark on the date or party marks the whole quotation.</span>,
 ]} />
 
 ## Working the grid
@@ -47,6 +48,8 @@ The **Party** column, and any text column such as **Broker name**, open a menu r
 Only a manager or an administrator marks a rate Ready to buy or takes the mark off. A rate that isn't grey can't be bought.
 
 **Right-click** any cell for everything it offers: edit, Ready to buy, Purchase it, the PO note, cancelled, picked up, clear and copy.
+
+**PO / order cancelled** and **Material picked up by transporter** can be put on by anybody, except over a grey or yellow rate, which only a manager changes. Marking a bought rate cancelled takes its line off the purchase order, as Undo purchase does; marking it picked up keeps the PO.
 
 ## Rows
 

@@ -1,12 +1,14 @@
-Transport is four list modules in `screens/logistics.ts`: `transportList` built for three scopes (`transport`, `pendingLr`, `trackLr`) and `paidFreight`. The record they read, `erp_transports`, is written in exactly one place — the dispatch verification in `screens/sales.ts` — and updated by the `update` action and the AI LR review. (`calcs/logistics.ts`, despite its name, holds the complaint form's calculators; see [Complaints and credit notes](/docs/erp/complaints-and-credit-notes/developer).)
+The Logistics screen is a bespoke route, `src/app/erp/transport`: its first seven tabs are the desk, drawn from `lib/erp/logistics.ts` and written through `actions/erp-logistics.ts`; **All bills** and **Paid freight** are ordinary list modules from `screens/logistics.ts` drawn by the same route. `screens/logistics.ts` also keeps `transportList` modules for `pendingLr` and `trackLr` so a dashboard tile or an alert naming them still resolves, but the desk draws those tabs itself. The record, `erp_transports`, is opened in one place — `openTransports` in `screens/sales.ts`, called by dispatch verification and by `syncDispatchedTransports`, its net. (`calcs/logistics.ts`, despite its name, holds the complaint form's calculators; see [Complaints and credit notes](/docs/erp/complaints-and-credit-notes/developer).)
 
 ## Map of the code
 
 | Layer | File | What lives there |
 |---|---|---|
-| Registry | `src/lib/erp/registry.ts` | `transport` screen with views `pendingLr`, `trackLr`, `transport`, `paidFreight` |
-| Screens | `src/lib/erp/screens/logistics.ts` | `MATERIAL_STAGES`, `onTheRoad`, `transportList`, `paidFreight` (also `videos`, documented elsewhere) |
-| Record opened | `src/lib/erp/screens/sales.ts` | `verify` inserts `erp_transports` with `onConflictDoNothing` |
+| Registry | `src/lib/erp/registry.ts` | `transport` screen with nine views: `transport` (Today), `toTransport`, `pendingLr`, `trackLr`, `delivered`, `lrMessages`, `transporters`, `allBills`, `paidFreight` |
+| Page | `src/app/erp/transport/page.tsx`, `parts/*.tsx` | `BOARD` — the seven desk tabs; anything else is a list module drawn by `ListScreen` |
+| Screens | `src/lib/erp/screens/logistics.ts` | `MATERIAL_STAGES`, `onTheRoad`, `transportList` (`transport`, `allBills`, `pendingLr`, `trackLr`), `paidFreight` (also `videos`, documented elsewhere) |
+| Record opened | `src/lib/erp/screens/sales.ts` | `verify` → `openTransports` (joins a row of the same order and bill still at the gate, else inserts one); `syncDispatchedTransports` for any verified line on no row |
+| Desk reads and writes | `src/lib/erp/logistics.ts` | `consignments`, `uploadedLrs`, `suggestBills`, `uploadLrs`, `editLr`, `voidLr`, `attachLr`, `detachLr`, `updateConsignment`, `raiseIssue`, `markDelivered`, `reopen`, `saveTransporter`, `notifyCustomers`, `afterDispatch` |
 | LR photo reading | `src/lib/erp/ai-photos.ts` | `readLr`, `recordLrReading`, `lrReviewForm`, `applyLr`, `rejectPhotoReading` |
 | Gate | `src/lib/erp/ai.ts` | `featureState("photos", true)`, `pendingFor("photos")` |
 | Order book | `src/lib/erp/book.ts` | `syncBookOrders` after a stage change |
@@ -103,7 +105,7 @@ Extra expenses are written by ONE function, `setExtraExpenses`, whichever screen
 ## Access
 
 - **Module:** <ModuleRef k="erp.transport" />; every tab comes with it. The Upload LRs modal also opens for <ModuleRef k="erp.dispatch" />.
-- **Powers:** only `viewSalesAmounts`, for the Monthly sales column of All bills.
+- **Powers:** `viewSalesAmounts`, for the Monthly sales column of All bills, and `viewCost`, for Payment type on Paid freight.
 
 ## Tests that pin this
 

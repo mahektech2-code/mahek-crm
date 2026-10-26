@@ -1,4 +1,4 @@
-Traceability is a bespoke, read-only route. `lib/erp/traceability.ts` resolves a code and walks the chain with raw SQL; the pure pieces (ids, code cleaning, which refill lots a box holds) are in `engines/trace.ts`; `trace-links.ts` is the one place a link into the trace or the label sheet is spelled. A second, narrower trace — `lib/erp/trace.ts`, from a bill — serves the complaint panel and Ask the ERP. The only writes nearby are the label-printed stamp and the dispatch desk, both in `actions/erp-trace.ts`.
+Traceability is a bespoke, read-only route. `lib/erp/traceability.ts` resolves a code and walks the chain with raw SQL; the pure pieces (ids, code cleaning, which refill lots a box holds) are in `engines/trace.ts`; `trace-links.ts` is the one place a link into the trace or the label sheet is spelled. A second, narrower trace — `lib/erp/trace.ts`, from a bill — serves the complaint panel and Ask the ERP. The only writes nearby are the label-printed stamp, giving old stock its box ids, and the dispatch desk, all in `actions/erp-trace.ts`.
 
 ## Map of the code
 
@@ -9,7 +9,7 @@ Traceability is a bespoke, read-only route. `lib/erp/traceability.ts` resolves a
 | Rules (pure) | `src/lib/erp/engines/trace.ts` | `unitId`, `normaliseCode`, `looksLikeUnitId`, `boxLots`, `UNIT_STATUS`, `UNIT_STATUS_LABEL`, `manualMove`, `scanVerdict`, `scanGate`, `qcRefusal`, `packLabel` |
 | Links | `src/lib/erp/trace-links.ts` | `erpTraceHref`, `erpLabelsHref` (pure, client-safe) |
 | Complaint trace | `src/lib/erp/trace.ts` | `traceBill`, `traceFromOrders` |
-| Writes | `src/lib/actions/erp-trace.ts` | `erpMarkLabelsPrinted` (and the dispatch desk's four) |
+| Writes | `src/lib/actions/erp-trace.ts` | `erpMarkLabelsPrinted`, `erpGiveIds` (box ids for old stock, from the label sheet), and the dispatch desk's five |
 | Label sheet | `src/app/erp/print-labels/page.tsx` | Reuses `boxLots` and `packLabel` to print refill lots beside each QR |
 
 ## A request, end to end

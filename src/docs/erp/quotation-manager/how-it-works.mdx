@@ -29,7 +29,7 @@ The screen offers only what is allowed, and the server refuses the rest whatever
 
 ## The other marks
 
-**PO / order cancelled** (red) and **Material picked up by transporter** (blue) are put on by anybody. A cancelled rate is left out of the latest and lowest rates.
+**PO / order cancelled** (red) and **Material picked up by transporter** (blue) are put on by anybody — except over a Ready to buy or bought rate, which only a manager changes. A bought rate marked cancelled gives up its PO line exactly as Undo purchase does; one marked picked up keeps it, and a picked-up rate still counts as bought when a requirement links its PO number. A cancelled rate is left out of the latest and lowest rates.
 
 ## The period
 
@@ -37,7 +37,7 @@ The screen opens on the last six months. Choose three months, every date, or you
 
 ## Who can use it
 
-Anybody given the **Quotation manager** screen on the ERP. It needs no power. A preview of the ERP as somebody else is read only.
+Anybody given the **Quotation manager** screen on the ERP. It needs no power; marking or unmarking Ready to buy, and changing a bought rate other than undoing it, need the manager or admin level on the ERP grant. A preview of the ERP as somebody else is read only.
 
 ## Where the code and the intent disagree today
 

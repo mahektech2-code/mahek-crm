@@ -10,7 +10,7 @@
 | Callers (dispatch desk) | `src/lib/actions/erp-trace.ts` | `erpDispatchVerify` runs the same `orderDetails` `verify` bulk handler |
 | Callers (transport) | `src/lib/erp/screens/logistics.ts` | Transport `update`, when the material stage changes |
 | Accounts decision | `src/lib/services/order-approval-service.ts` | Calls `afterBookDecision(orderId)` after approve and decline |
-| Lead conversion | `src/lib/erp/book.ts` → `src/lib/services/lead-conversion-service.ts` | `syncOne` calls `convertIfNowQualified` for a booked order that is not cancelled or declined; ERP → Customers' `new` form (`src/lib/erp/screens/masters.ts`) owns the lead by the named salesperson where the name matches a user |
+| Lead conversion | `src/lib/erp/book.ts` → `src/lib/services/lead-conversion-service.ts` | `syncOne` calls `convertIfNowQualified` for a booked order that is not cancelled or declined; ERP → Sales parties' `new` form (`src/lib/erp/screens/masters.ts`) owns the lead by the named salesperson where the name matches a user |
 | Sheet projection | `src/lib/services/sheet-projection-service.ts` | `projectSheet` returns **before** `projectCustomers` when live — no customer, order or bill |
 | Sheet retirement (pure) | `src/lib/engines/sheet-retirement.ts` | `sheetSwitches`, `retiredReason`, `sourceRetired` — read by `runJob`, `triggerJob`, `runBillImportAction`, the Sheets and Sheet import screens, `freshness.ts` and `integrationStatus` |
 | Party projection | `src/lib/jobs.ts` | `runProjection` skips `projectParties` when `erp.orders.partySheet` is off |

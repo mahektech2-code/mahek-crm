@@ -52,6 +52,14 @@ The office allocates lots, but the godown picks boxes off a shelf. Refusing a pe
 A scan runs in one transaction under the box's row lock and the lots' locks. Two people scanning the same box at two desks get one success and one *already scanned*.
 </Rule>
 
+<Rule title="A lot label stands in only where there are no boxes">
+Stock packed before box ids existed carries only its lot's label — the packing batch (FP…) or, for loose cans, the FG lot (FG…). Scanned at the desk, such a label is judged as a lot: the lot the line was given is a match and says how many to load from it; a lot of the same SKU on a line still short of its allocation is allocated, as many as the line still needs and the lot has free at that godown; anything else says what differs. A base-liquid or raw-material lot is refused as not packed stock, and a lot whose boxes **do** carry their own labels is refused — there the box is what is counted. A lot scan writes the scan row and, where it allocates, the batch code under the lot's lock; it marks no box.
+</Rule>
+
+<Rule title="The Factory app scans through the same desk">
+The Mahek Factory phone app loads a lorry by transporter: every Ready line at the godown not yet dispatch-verified, grouped by the transporter named on it. The loader scans and never chooses an order — the app picks one whose allocated lot the box is from, then the soonest due, then the lowest order number, and an approved override names its own line. Every scan is then judged and written by this desk's own scan, so a box loaded from the phone is a box counted here.
+</Rule>
+
 ## Overrides take two people
 
 <Rule title="Only a product or pack-size mismatch can be overridden">
@@ -74,7 +82,7 @@ A line must have every box scanned before it can be dispatch-verified **if any l
 Refusing every line without box labels would have stopped dispatch on the day scanning shipped. Old stock runs down on its own; new packing batches always mint their boxes.
 </Callout>
 
-Mark dispatch-verified then marks each scanned box **dispatched** with the date, the line Verified and Dispatched, and opens the bill's transport record. It is the same action as on [Orders → Billing & dispatch](/docs/erp/orders), with the same rules, from whichever screen it is pressed.
+Mark dispatch-verified then marks each scanned box **dispatched** with the date, the line Verified and Dispatched, and puts the lines verified together on one consignment on [Logistics](/docs/erp/transport). From the desk it verifies every billed line of the order still waiting, on the date picked. It is the same action as on [Orders → Billing & dispatch](/docs/erp/orders), with the same rules, from whichever screen it is pressed.
 
 ## What is recorded
 
@@ -93,7 +101,7 @@ The [Traceability](/docs/erp/traceability) dashboard counts today's mismatches, 
 |---|---|
 | Open the desk, scan, take off, request an override | The Dispatch desk screen |
 | Approve or decline an override | The Dispatch desk and *Approve dispatch overrides* — and not your own request, unless an ERP administrator |
-| Allocate a lot by hand | The Orders screen as well |
+| Allocate a lot by hand | The Orders screen as well, and only while the line is not billed |
 | Mark dispatch-verified from the desk | The Orders screen as well |
 | Print dispatch labels | The Orders screen or the Dispatch desk |
 

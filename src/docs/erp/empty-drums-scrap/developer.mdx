@@ -10,6 +10,7 @@ One pure engine, one service that both the ERP screens and the factory phone cal
 | Record panel | `src/app/erp/_ui/panels/scrap.tsx` | the `scrap` panel |
 | Phone | `src/lib/actions/factory.ts`, `src/app/factory/_ui/factory-app.tsx`, `factory-mobile/src/factory-app.tsx` | ops `drumLookup` and `emptyDrum`; the `drum` route |
 | GRN and supplier | `src/lib/erp/screens/purchase.ts`, `src/lib/erp/screens/masters.ts` | `erp_inward.drum_ownership`, `erp_suppliers.drum_ownership` |
+| Petty Cash | `src/lib/erp/money.ts` | `recordScrapMoney` / `cancelScrapMoney` — `recordReceipt` and `voidReceipt` write and cancel the same money as a Petty Cash receipt in the account named under **Received into** |
 | Alert | `src/lib/erp/engines/alerts.ts` | `drumVariances` |
 | Powers | `src/lib/erp/powers.ts` | `scrapSale`, `scrapAccounts`, `scrapApprove` |
 

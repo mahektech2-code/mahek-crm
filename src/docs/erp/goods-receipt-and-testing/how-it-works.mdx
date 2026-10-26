@@ -2,7 +2,7 @@ This is where a purchase stops being a promise and becomes stock. The rules here
 
 <Flow caption="From the gate to stock" chart={`
 flowchart TD
-  G["Goods receipt against an approved PO<br/>one PR number for the delivery"] --> L{"Each line: does the item<br/>have a testing list?"}
+  G["Goods receipt against an open PO<br/>one PR number for the delivery"] --> L{"Each line: does the item<br/>have a testing list?"}
   L -- "Yes" --> T["Purchase test<br/>evidence per required test"]
   T --> V{"Verifier"}
   V -- "Verify" --> RG["Register row<br/>at the PO line's rate and GST"]
@@ -16,12 +16,12 @@ flowchart TD
 
 ## Nothing is received without a PO
 
-<Rule title="A receipt names an approved PO, and every line one of its items">
-Goods inward starts from the item that arrived: the receipt is searched by item, and offers only the open lines of purchase orders that are Approved, Sent or Partly received. Every line names its PO and one of its lines, and one receipt may carry several POs — but only of one vendor, because a GRN is one vendor's delivery; the save refuses a second vendor. "Receive goods" on a PO, and "Add more" on a PR, still name the one PO in the header. There is no typed supplier and no typed item. A hand-entered register row names an approved PO's line in the same way.
+<Rule title="A receipt names an open PO, and every line one of its items">
+Goods inward starts from the item that arrived: the receipt is searched by item, and offers only the open lines of purchase orders that are Approved, Sent or Partly received. Every line names its PO and one of its lines, and one receipt may carry several POs — but only of one vendor, because a GRN is one vendor's delivery; the save refuses a second vendor. "Receive goods" on a PO, and "Add more" on a PR, still name the one PO in the header. There is no typed supplier and no typed item. A hand-entered register row names an open PO's line in the same way.
 </Rule>
 
 <Callout kind="why">
-In Mahek Plus anything could be received from anybody. Tying every receipt to an approved PO means every lot in stock was asked for by a department and approved by somebody who was not the person who wanted it.
+In Mahek Plus anything could be received from anybody. Tying every receipt to a PO means every lot in stock answers a requirement a department raised, bought the way its item's purchase rule says. No PO is approved any more — see [Purchase orders](/docs/erp/purchase-orders/how-it-works).
 </Callout>
 
 <Rule title="A little over, never a lot over">
@@ -43,7 +43,7 @@ The buttons survive only as the way out for a line that went nowhere — almost 
 ## Testing
 
 <Rule title="Evidence for exactly the tests the item requires">
-The test asks for what the item's testing list names: a pH photo, a smell (Good, Moderate, Bad), a colour photo, oil-paint, fast-paint, NC-paint and primer photos, a density reading between 0.5 and 1.5 with its photo, a thermocol-pass photo. Recording a test is the department's job: anyone holding Lot testing.
+The test asks for what the item's testing list names: a pH photo, a smell (Good, Moderate, Bad), a colour photo, oil-paint, fast-paint, NC-paint and primer photos, a density reading between 0.5 and 1.5 with its photo, a thermocol-pass photo — and a photo of any other test the Testing list names. Recording a test is the department's job: anyone holding Lot testing.
 </Rule>
 
 <Rule title="Only the verifier decides, and only on complete evidence">
@@ -108,16 +108,16 @@ With our own vehicle and no approved rate per kilometre, the receipt is refused 
 
 ## Drum labels
 
-The Drum labels tab is the register's chemical lots **at your working godown only**, with the short label name from the "Short label name (Item=Label)" reference list, ready to download for the label printer.
+The Drum labels tab is the register's chemical lots **at your working godown only**, with the short label name from the "Short label name (Item=Label)" reference list. Each row's **Print drum label** draws the lot's label from the register — 80 × 80 mm, one per drum — so the printer is never sent typed text; the list can also be downloaded. The label page opens for anybody holding the Purchases screen or Stock on hand.
 
 ## Who can do what
 
 | Act | Needs |
 |---|---|
-| Receive goods, add lines, transport and costs | The Purchases screen |
+| Receive goods, add lines, transport and costs, print a drum label | The Purchases screen |
 | Record test evidence | The Lot testing screen |
 | Verify / Mark not verified | Verify quality tests |
-| See rates, GST, amounts, landing cost, the stage; enter a rate; record the bill; change status | See purchase money |
+| See rates, GST, amounts, landing cost, the stage; enter a rate; record the bill (one row or the ticked rows); change status | See purchase money |
 | Set Purchase Verified | Set a purchase to Purchase Verified |
 | Back to pending | Set a verified purchase back to Pending |
 

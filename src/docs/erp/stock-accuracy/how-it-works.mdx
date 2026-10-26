@@ -3,11 +3,11 @@ Inventory Accuracy Control puts a count of the shelf in front of every purchase,
 ## The rules
 
 <Rule title="A requirement waits for its blind count to be entered — and for nothing else">
-With <Setting k="erp.stockCheck.onRequirement" /> on, every raw-material requirement opens a count of its item at its godown when it is raised, in the same transaction. Until that count is **entered**, the requirement cannot have a method decided, a vendor chosen, a quotation added or selected, or a PO raised — every one of those is refused on the server, not only drawn disabled. Once the count is in, the requirement moves on to its purchase method **whether it matched or not**.
+With <Setting k="erp.stockCheck.onRequirement" /> on, every raw-material requirement opens a count of its item at its godown when it is raised, in the same transaction. Until that count is **entered**, the requirement cannot have its PO linked or created — refused on the server, not only drawn disabled. Once the count is in, the requirement moves on to its purchase method **whether it matched or not**.
 </Rule>
 
 <Rule title="A difference is a flag and a notification, never a hold">
-A count that differs from the book flags the requirement (**Stock difference — red flag**) and notifies everybody with the stock-control power, every ERP administrator, and whoever raised the requirement. A recount that confirms the difference notifies them again. Nothing about a red flag holds a requirement, a quotation or a PO approval; the recount, the investigation and any adjustment run on the side.
+A count that differs from the book flags the requirement (**Stock difference — red flag**) and notifies everybody with the stock-control power, every ERP administrator, and whoever raised the requirement. A recount that confirms the difference notifies them again. Nothing about a red flag holds a requirement or its PO; the recount, the investigation and any adjustment run on the side.
 </Rule>
 
 <Callout kind="why">
@@ -55,7 +55,7 @@ An adjustment is requested with a coded reason and a sentence, and posts only wh
 </Rule>
 
 <Rule title="A quantity the shelf does not need is flagged">
-The count says what is on the shelf; the item's maximum level says what should be. Asking for more than the difference by over <Setting k="erp.stockCheck.unexpectedQtyPercent" />% — or for anything while the shelf is above its maximum — flags the requirement **More than the shelf needs**. It is a warning for whoever chooses the vendor; nothing has to be confirmed.
+The count says what is on the shelf; the item's maximum level says what should be. Asking for more than the difference by over <Setting k="erp.stockCheck.unexpectedQtyPercent" />% — or for anything while the shelf is above its maximum — flags the requirement **More than the shelf needs**. It is a warning for whoever makes the PO; nothing has to be confirmed.
 </Rule>
 
 ## Daily cycle counting
@@ -65,6 +65,16 @@ Each hour the ERP makes sure today's cycle counts are open — at most <Setting 
 </Rule>
 
 ABC is by the value that moved through the shelf over 90 days: the shelves making up the first 80% are A, the next 15% B, the rest C. A full count of a godown is due every <Setting k="erp.stockCheck.fullCountDays" /> days and the dashboard says when; a manager opens it with **Ask for a count**.
+
+## Stock checks from the floor
+
+<Rule title="Anybody may check any stock, blind, and a check moves nothing">
+A stock check covers all four stages — raw material, semi-finished, filled cans and packed boxes. The book is read when the figure arrives, judged by the same rule as a count, and stored beside it. A mismatch waits on the **Stock checks** tab and the dashboard until a manager or somebody with the stock-control power reviews it. Only a raw-material mismatch can be raised into a formal count, and only that count's approved adjustment ever moves the book.
+</Rule>
+
+<Rule title="On the Factory phone, each department checks its own stock">
+Mixing & Blending checks raw chemicals and SFG; Filling empty cans and drums, filled cans and packed boxes; Packing empty boxes and packing stationery; Dispatch filled cans and packed boxes; Quality raw chemicals and SFG. Somebody in several departments checks what any of them may; the whole floor and administrators check everything. The server filters the list by the same rule and refuses a check of anything else.
+</Rule>
 
 ## Missing records
 
@@ -87,6 +97,6 @@ Each is a missing **transaction**: the goods are where they are, and the book ha
 
 ## Where the code and the intent disagree today
 
-- **Raw materials only.** Counts cover raw-material stock — the stage purchases are raised for. Semi-finished, finished and packed stock are not yet counted here.
+- **Formal counts are raw materials only.** Counts, red flags and adjustments cover raw-material stock — the stage purchases are raised for. Semi-finished, finished and packed stock can be **checked** from the floor, but a mismatch there can only be marked reviewed: there is no formal count or adjustment to raise it into.
 - **Pending out is zero.** Every consuming record in this ERP is written as the stock is used, so nothing is waiting to leave the book; the column is kept for a ledger that is not.
 - **Requirements raised before the setting** are not held, by design, and neither are requirements for finished goods, which are made rather than bought.

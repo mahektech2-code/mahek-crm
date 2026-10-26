@@ -10,23 +10,26 @@ flowchart TD
   B -- "No" --> A
   B -- "Yes" --> C["Ready"]
   C --> D["Lots allocated<br/>(scanned at the desk,<br/>or by hand for old stock)"]
-  D --> E{"Approved,<br/>Tally bill no, rate?"}
-  E -- "No" --> D
+  A --> E{"Approved,<br/>Tally bill no, rate?"}
+  C --> E
+  D --> E
   E -- "Yes" --> F["Bill it<br/>(in Billing and dispatch)"]
   F --> G{"Every box scanned?"}
   G -- "No" --> F
   G -- "Yes" --> H["Mark dispatch-verified<br/>Dispatched, transport record opens"]
-  F -.->|"Undo billing"| C
+  F -.->|"Undo billing"| U["Unbilled again,<br/>at the status it had"]
 `} />
 
-A line can also be put on **Hold From Office** or **Cancel** from Edit. Neither is ever Ready, so neither reaches the desk.
+<Rule title="A status moves either way">
+Until a line is dispatch-verified it can be put at any status — Ready, Under Process, Hold From Office or Cancel — back as well as forward, from its record, the bulk bar or Edit. Two checks stay because they protect stock rather than the order of steps: **Ready** needs the stock on the shelf, and **Cancel** needs the line unbilled and its batch codes released, since an allocated lot is counted out of stock until it is let go. A dispatch-verified line stays where it is. When several lines are moved together, the ones that pass move and the rest are named.
+</Rule>
 
 ## Statuses, and why a date replaced three of them
 
 | Status | Meaning |
 |---|---|
 | **Under Process** | Taken, being prepared. |
-| **Ready** | The goods are on the shelf. Only a Ready line takes lots, appears at the Dispatch desk, or can be billed. |
+| **Ready** | The goods are on the shelf. Only a Ready line takes lots or is offered at the Dispatch desk. Billing does not need it. |
 | **Hold From Office** | The office has stopped it. |
 | **Cancel** | Not going. |
 
@@ -102,7 +105,7 @@ A line whose billing party was **Pending** when it was taken carries *Pending cu
 A line whose allocated lots carry box ids leaves only when every box on it has been scanned at the Dispatch desk (setting: <Setting k="erp.dispatch.requireScan" />). Stock packed before box ids existed has nothing to scan, so it is not held back. The dispatch date may not be before the order date.
 </Rule>
 
-Verifying sets the line **Verified** and **Dispatched** with the date, turns every box scanned onto it into a **dispatched** box, freezes its lots (no change of quantity or release afterwards), and puts the lines verified together on one record on [Transport](/docs/erp/transport): a record of the same order and bill still at the gate, otherwise a new one. An order sent in two goes is two records.
+Verifying sets the line **Verified** and **Dispatched** with the date, turns every box scanned onto it into a **dispatched** box, freezes its lots (no change of quantity or release afterwards), and puts the lines verified together on one record on [Logistics](/docs/erp/transport): a record of the same order and bill still at the gate, otherwise a new one. An order sent in two goes is two records.
 
 ## The bill's figures
 
@@ -151,7 +154,7 @@ A draft becomes an order only through the normal order form, with every rule abo
 | Act | Needs |
 |---|---|
 | Open Orders and all seven tabs | The Orders screen |
-| Take, edit, ready, bill, undo billing, delete lines | The Orders screen |
+| Take, edit, change status, bill, undo billing, delete lines | The Orders screen |
 | Set the rate / discount | *See sales rate* / *See sales amounts* |
 | Approved By Admin | *Approve orders from pending customers*, and only while the ERP is not taking orders |
 | Mark not verified | ERP administrator |
@@ -159,7 +162,9 @@ A draft becomes an order only through the normal order form, with every rule abo
 
 ## Where the code and the intent disagree today
 
-- **A Ready line is not Pending.** Pending is the lines not yet Ready (Under Process or Hold From Office) and not billed; marking a line Ready moves it to *Under process & ready*. Mahek Plus's Pending view had no status test, so a Ready line sat on both tabs until it was billed.
+- **Pending is only what the office is holding.** A line Under Process or Ready is on *Under process & ready*, never on Pending; what is left on Pending is Hold From Office (or any status nobody has worked yet), not billed. Mahek Plus's Pending view had no status test, so a line sat on both tabs until it was billed.
+- **Lines copied in from the Taken Order tab look like any other line.** They carry `source = sheet` and the order book never writes them, but the Orders tabs draw them with nothing to tell them apart from an order taken in the ERP.
 - **Pending hides a whole order once any line of it is billed.** An order with one billed line and one unbilled line vanishes from Pending; the unbilled line is only on *Under process & ready* and *All lines*.
 - **A line marked Not Verify can never be verified again.** Mark dispatch-verified accepts only a blank or Pending verification; the only way back is to undo billing and bill it again.
 - **The "Ready but not billed" alert dates Ready from the line's last change**, not from when it became Ready — any edit restarts the clock.
+- **Billing & dispatch's empty list still says "A ready, fully allocated line arrives here once billed"**, though billing asks for neither.

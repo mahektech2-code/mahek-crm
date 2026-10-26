@@ -85,4 +85,5 @@ Complaints use a narrower trace of their own, from a **bill and the goods on it*
 ## Where the code and the intent disagree today
 
 - **A numeric lot or bill number is read as an order number first.** If an order with that number exists, the trace opens the order, and the lot or bill cannot be reached by typing its number.
+- **One exception card still uses the old button name.** *Boxes scanned, not yet dispatched* says they are "waiting for Do Verified"; the button is **Mark dispatch-verified**.
 - **There are two traces.** The screen's trace and the complaint trace are written separately and walk the same chain differently — the complaint trace has no SFG QC step and does not split a boundary box between its refill lots. A fix to one does not reach the other.

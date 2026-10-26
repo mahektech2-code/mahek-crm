@@ -7,10 +7,10 @@ The **Logistics** screen follows every bill from the factory gate to the party's
 Every bill that has left the factory, grouped by transporter. Tick bills and say when they reach the transporter: **Reaches today**, **Reaches tomorrow**, or a day. Correct the **Boxes** count if it is wrong (it is read off the bill's lines). When the transporter has them, press **Reached transporter** — or **All reached** for a whole transporter.
 </Step>
 <Step title="2. The dispatch team uploads the LRs">
-Once the goods are with the transporter, the dispatch team collects the LRs and uploads them with the **Upload LRs** button, which opens a form over the Logistics screen or the Dispatch desk: a photo of each and its number, transporter, destination and box count. **Add several photos** makes one row per photo. Each photo is read as it uploads: the LR number, date, transporter, destination, boxes and freight are filled in for you, marked *read*, and a number worth a second look is marked *check* in amber with a line saying why. Anything you have already typed is left alone — check what was read against the photo before you upload. Nothing is attached to a bill yet. At the transporter's godown the dispatch team can do the same from the **Mahek Factory** phone app: **Upload LR** on the home screen takes the photo, reads it the same way, takes the number typed or scanned from the LR's barcode, and puts the LR in the same list.
+Once the goods are with the transporter, the dispatch team collects the LRs and uploads them with the **Upload LRs** button, which opens a form over the Logistics screen or the Dispatch desk: a photo of each and its number, date, transporter, destination, box count and freight. Nothing on it is required — a photo alone is enough. **Add several photos** makes one row per photo. Each photo is read as it uploads: the LR number, date, transporter, destination, boxes and freight are filled in for you, marked *read*, and a number worth a second look is marked *check* in amber with a line saying why. Anything you have already typed is left alone — check what was read against the photo before you upload. Nothing is attached to a bill yet. At the transporter's godown the dispatch team can do the same from the **Mahek Factory** phone app: **Upload LR** on the home screen takes the photo, reads it the same way, takes the number typed or scanned from the LR's barcode, and puts the LR in the same list.
 </Step>
 <Step title="3. LR desk — attach each LR to its bills">
-On the left, the LRs waiting to be attached. Pick one: the bills it most likely carries rise to the top, with why (same transporter, destination matches, box count). Tick the bills, set the expected delivery and the next call to the transporter, and press **Attach LR & tell customer**. The customer gets a WhatsApp with the LR number, the transporter, the boxes and a tracking link.
+On the left, the LRs waiting to be attached. An LR uploaded without its number says *Number not typed*: read it off the photo and add it with **Edit** first, because the customer is told it. A wrong upload is **Void**ed with a reason. Pick an LR: the bills it most likely carries rise to the top, with why (same transporter, destination matches, box count). The list holds bills already at the transporter; tick **Also show … not yet marked at the transporter** for the rest. Tick the bills, set the expected delivery and the next call to the transporter, and press **Attach LR & tell customer** (just **Attach LR** when the customer is not to be told). The customer gets a WhatsApp with the LR number, the transporter, the boxes and a tracking link.
 </Step>
 <Step title="4. On the road — ring and update">
 One card per LR, with the transporter's number. **Call today** lists the ones owed a call. After the call press **Update status** (In transit, Near destination, At destination — the customer is told), **Called — no change** (the next call is booked, nobody is messaged) or **Report a problem** (delayed, damaged, short…).
@@ -20,11 +20,11 @@ When the party has the goods, press **Delivered ✓**, give the day and who rece
 </Step>
 </Steps>
 
-<Wireframe url="/erp/transport?view=pendingLr" nav={["Dashboard", "#Orders", "Dispatch desk", "#Logistics", "Logistics"]} active="Logistics" caption="The LR desk: an uploaded LR on the left, the bills it carries on the right">
+<Wireframe url="/erp/transport?view=pendingLr" nav={["Dashboard", "#Sales", "Dispatch desk", "#Logistics", "Logistics"]} active="Logistics" caption="The LR desk: an uploaded LR on the left, the bills it carries on the right">
   <WfBar>
     <WfTitle sub="From the factory gate to the party's door.">Logistics</WfTitle>
   </WfBar>
-  <WfTabs items={["Today", "To transporter", "LR desk", "On the road", "Delivered", "Customer messages", "Transporters"]} active="LR desk" />
+  <WfTabs items={["Today", "To transporter", "LR desk", "On the road", "Delivered", "Customer messages", "Transporters", "All bills", "Paid freight"]} active="LR desk" />
   <Hotspot n={1} />
   <WfTable
     highlight={0}

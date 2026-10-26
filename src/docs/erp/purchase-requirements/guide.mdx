@@ -1,10 +1,10 @@
-A purchase requirement is a department saying "we need this bought". It is the first step of every purchase: nothing reaches a purchase order, the gate or stock without one. One requirement can carry every item a department needs this month. Each item is counted blind first, then gets its PO by its purchase rule: a **Quotation** item links the PO number the Quotation manager made, a **Direct purchase** item creates its PO here at the item's price. No PO is approved.
+A purchase requirement is a department saying "we need this bought". It is the first step of every purchase: nothing reaches a purchase order, the gate or stock without one. One requirement can carry every item a department needs this month. Each item is counted blind first, then gets its PO by its purchase rule: a **Quotation** item is bought on the Quotation manager, which writes its PO, a **Direct purchase** item creates its PO here at the item's price. No PO is approved.
 
 ## The screen at a glance
 
-<Wireframe url="/erp/requisitions" nav={["Dashboard", "#Purchase", "Purchase requirements", "Purchase orders", "Purchases", "Lot testing"]} active="Purchase requirements" caption="Purchase requirements, grouped by stage">
+<Wireframe url="/erp/requisitions" nav={["Dashboard", "#Purchase", "Requirements", "Purchase orders", "Purchases", "Lot testing", "Quotation manager"]} active="Requirements" caption="Requirements, one group per requirement number, filtered by stage">
   <WfBar>
-    <WfTitle sub="What a department needs bought, through blind count and stock verification to the PO. The item's purchase rule decides how the PO comes.">Purchase requirements</WfTitle>
+    <WfTitle sub="What each department needs bought, through blind count and stock verification to the PO and the goods.">Requirements</WfTitle>
     <WfSpacer /><WfButton primary>New requirement</WfButton><Hotspot n={1} />
   </WfBar>
   <WfBar><WfInput placeholder="Search" /><WfPill tone="brand">Create PO 3</WfPill><WfPill>Waiting for PO number 2</WfPill><WfPill>Blind count 1</WfPill><WfPill>Waiting for goods 4</WfPill><Hotspot n={2} /></WfBar>
@@ -21,7 +21,7 @@ A purchase requirement is a department saying "we need this bought". It is the f
 
 <Hotspots items={[
   <span key="1"><b>New requirement.</b> Raise one requirement for every item your department needs — add items one by one or paste a list.</span>,
-  <span key="2"><b>Stage chips.</b> Every requirement is grouped by where it has got to. The chip counts how many wait at each stage.</span>,
+  <span key="2"><b>Stage chips.</b> Each chip counts the items waiting at that stage and filters the list to them. The list itself is grouped by requirement number, with the date, department and godown in the group's heading.</span>,
   <span key="3"><b>Stage.</b> Worked out from the requirement itself — nobody types it. The record says what happens next in a sentence.</span>,
   <span key="4"><b>The PO.</b> Once a requirement is on a purchase order, its number appears here and opens it.</span>,
 ]} />
@@ -72,7 +72,7 @@ Then the PO comes by the item's **purchase rule**, copied from the item when you
 | Stage | What it means | What you do |
 |---|---|---|
 | **Blind count** | The count has not been entered | Count the stock |
-| **Waiting for PO number** | Quotation: bought on the Quotation manager | Type the PO number in the record and **Link PO** |
+| **Waiting for PO number** | Quotation: bought on the Quotation manager | Buy it there, picking this requirement in **Purchase it** — or type the PO number made there in the record and **Link PO** |
 | **Create PO** | Direct purchase: no quotation | **Create PO** in the record |
 | **Create or link PO** | Buyer decision | Either of the two |
 | **Waiting for goods / Partly received** | On a PO | Receive the goods against its PO number |
@@ -81,11 +81,11 @@ Then the PO comes by the item's **purchase rule**, copied from the item when you
 
 ## Getting the PO
 
-Both happen in the requirement's own record. Nothing is approved: the PO is ready to receive against straight away.
+Nothing is approved: the PO is ready to receive against straight away.
 
 <Steps>
-<Step title="Quotation — Link PO">
-On the Quotation manager the admin marks the rate **Ready to buy** and the desk presses **Purchase it** with the number of drums. The PO number is made for them — **PO-1243**. In the requirement's record, type that number in **PO number**: the vendor, material, rate, drums and who bought it are fetched and checked against the requirement. Press **Link PO to requirement**. A wrong number can be **unlinked** until goods arrive.
+<Step title="Quotation — bought on the Quotation manager">
+A manager marks the rate **Ready to buy** and the desk presses **Purchase it** with the number of drums. Its dialog asks **For requirement** — pick this one, and the PO is written onto it there and then, already **Sent**, under the number the dialog made (**PO-1243**); there is nothing to link. If the purchase was made without picking it, type that number in the requirement's record under **PO number**: the vendor, material, rate, drums and who bought it are fetched and checked against the requirement. Press **Link PO to requirement**. A wrong number can be **unlinked** until goods arrive.
 </Step>
 <Step title="Direct purchase — Create PO">
 Press **Create PO**. It opens over the requirement's record, in three pages: **Vendor** (the item's default vendor first, the quantity, and **Also on this PO** — the other requirements ready for a PO, with no vendor yet or with this one, to put on the same PO with their own quantities), **Delivery** (where, by when, payment terms, freight, remarks) and **Review**. The rate is the item's price in Masters → Raw materials — nobody types an amount. An item with no price is ordered at **₹0**, and the Review page says so.
@@ -99,7 +99,7 @@ Press **Create PO**. It opens over the requirement's record, in three pages: **V
 ## Common questions
 
 <Faq q="Why is there a PO number box on one item and a Create PO button on another?">
-The item's purchase rule decides. A Quotation item is bought on the Quotation manager, which makes its PO number; a Direct purchase item is created here at its price. A Buyer-decision item offers both.
+The item's purchase rule decides. A Quotation item is bought on the Quotation manager, which makes its PO; a Direct purchase item is created here at its price. A Buyer-decision item offers both.
 </Faq>
 
 <Faq q="The PO number is refused.">

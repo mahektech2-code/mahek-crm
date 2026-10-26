@@ -34,26 +34,26 @@ flowchart LR
 Somebody other than the person who raised it presses **Approve**. If the return is worth more than the owner-approval limit, the owner approves it next. The last approval issues the **debit note**. It reduces what is owed to the vendor and moves no stock.
 </Step>
 <Step title="Prepare the goods return outward">
-Choose the godown the goods leave from. Add the transporter, vehicle, LR, packing and a document if you have them. Stock is still unchanged at this point.
+**Prepare goods return outward**: choose the godown the goods leave from and the dispatch date. Add the transporter, vehicle, LR, packing and a document if you have them. Stock is still unchanged at this point.
 </Step>
 <Step title="Confirm the dispatch">
-**Confirm dispatch** takes the quantity out of that lot's stock. It is refused if the godown no longer holds enough. Stock never goes negative.
+**Confirm dispatch (stock minus)** takes the quantity out of that lot's stock. It is refused if the godown no longer holds enough. Stock never goes negative.
 </Step>
 </Steps>
 
 <Wireframe url="/erp/vendor-returns" nav={["Dashboard", "#Material returns", "Vendor returns", "Customer returns"]} active="Vendor returns" caption="Vendor returns → Purchase returns">
   <WfBar>
-    <WfTitle sub="Against the original GRN lot.">Vendor returns</WfTitle>
+    <WfTitle sub="Material sent back to a supplier, its debit note and the outward.">Vendor returns</WfTitle>
     <WfSpacer />
     <WfButton primary>Raise purchase return</WfButton>
   </WfBar>
   <WfTabs items={["Purchase returns", "Debit notes", "Return outward"]} active="Purchase returns" />
   <WfTable
     highlight={0}
-    columns={["Return", "Stage", "Vendor", "Material", "Batch", "Quantity"]}
+    columns={["Return", "Stage", "Vendor", "Material", "Batch", "Quantity", "Unit", "Reason"]}
     rows={[
-      ["PRN-4", <span key="a">Awaiting approval <Hotspot n={1} /></span>, "Supplier A", "Material A", "SUPA-TOL-31", "200 Kg"],
-      ["PRN-3", "Debit note issued · to dispatch", "Supplier B", "Material B", "SUPB-XYL-12", "50 Litre"],
+      ["PRN-4", <span key="a">Awaiting approval <Hotspot n={1} /></span>, "Supplier A", "Material A", "SUPA-TOL-31", "200", "Kg", "Quality defect"],
+      ["PRN-3", "Debit note issued · to dispatch", "Supplier B", "Material B", "SUPB-XYL-12", "50", "Litre", "Wrong material"],
     ]}
   />
 </Wireframe>

@@ -5,7 +5,8 @@ The Masters are six screen modules in `lib/erp/screens/masters.ts` (raw material
 | Layer | File | What lives there |
 |---|---|---|
 | Screen modules | `src/lib/erp/screens/masters.ts` | `rawMaterials`, `suppliers`, `productsScreen`, `customersScreen`, `godowns`, `refListsScreen` |
-| Value lists | `src/lib/erp/refs.ts` | `REF_LISTS` (open, in `erp_ref_values`), `refValues`, and the fixed lists (`RM_UNITS`, `BOX_TYPES`, `GRADES`, `REGIONS`…) |
+| Value lists | `src/lib/erp/refs.ts` | `REF_LISTS` (open, in `erp_ref_values`), `refValues`, `refOptions` (configured values plus those in use on the party book), and the fixed lists (`RM_UNITS`, `BOX_TYPES`, `GRADES`, `REGIONS`…) |
+| Renaming a party | `src/lib/customer-rename.ts` | `renameValues`, `sheetKeys` — the one rule for `customers.sheet_name`, shared with the CRM's `updateCustomer` |
 | Purchase rule | `src/lib/erp/engines/purchase-flow.ts` | `PURCHASE_METHODS`, `methodLabel`, `methodByLabel` |
 | Shared helpers | `src/lib/erp/screens/common.ts` | `godownOptions` (Item Lost Record only with `lostStock`), `godownIdByName`, `materials` |
 | Customer status | `src/lib/erp/screens/masters.ts` | `partyStatus`, `loadCustomers`, `saveCustomerDetails` |
@@ -29,7 +30,7 @@ Notes on what it does:
   material_type: "From the materialType reference list.",
   density: "Chemicals only; kg ÷ density = litres.",
   testing_list: "Chemicals only; the tests every lot must evidence.",
-  price_paise: "Packing rate for cans and drums. Written only with viewPurchaseMoney.",
+  price_paise: "Packing rate for cans and drums, and the rate Create PO puts on a PO line (itemPricePaise; null orders at 0). Written only with viewPurchaseMoney.",
   purchase_method: "direct · quotation · buyer — copied onto each requirement as it is raised.",
   preferred_supplier_id: "The default vendor for a direct purchase.",
   active: "Retire sets false; never deleted.",
@@ -44,7 +45,7 @@ Notes on what it does:
   material_type: "Always Can today.",
 }} />
 
-`erp_raw_materials.group_id` names the group (0263). Photos are attachments under `erp_raw_material` and `erp_material_group`, read under the Raw materials screen (`lib/erp/attachments.ts`) and written by `setPhotos` in `lib/erp/can-photos.ts`, which binds only the person's own fresh uploads and marks the rest removed. The tab is `screens/can-groups.ts`; "Group cans by name" is its `groupByName` tool, run through `erpRunTool`. `erp-can-groups.test.ts` pins it.
+`erp_raw_materials.group_id` names the group (0263). Photos are attachments under `erp_raw_material` and `erp_material_group`, read under the Raw materials screen (`lib/erp/attachments.ts`) and written by `setPhotos` in `lib/erp/can-photos.ts`, which binds only the person's own fresh uploads and marks the rest removed. Their fields carry `upload: "material-photo"`, which `app/api/erp/attachments/route.ts` maps to 20 MB (`UPLOAD_MB`); every other ERP upload keeps `attachments.maxSizeMb`. The tab is `screens/can-groups.ts`; "Group cans by name" is its `groupByName` tool, run through `erpRunTool`. `erp-can-groups.test.ts` pins it.
 
 ## Suppliers
 
@@ -73,9 +74,11 @@ Notes on what it does:
   grade: "A+ · A · B+ · B · C (GRADES).",
 }} />
 
-New customers are inserted as `kind = 'lead'`, `status = 'active'`, `lead_source = 'erp'`, `owner_id` = the creator, with the profile's `pending_activation = true`, in one transaction. Activate / Deactivate / Mark pending each check `customerStatus` in the handler; Deactivate writes `customers.status = 'deactivated'` with `deactivation_reason = 'Deactivated in the ERP'` and `status_decided_at`.
+New customers are inserted as `kind = 'lead'`, `status = 'active'`, `lead_source = 'erp'`, `owner_id` = the tagged sales person's account where the name matches one (`salesAmId`), else the creator, with the profile's `pending_activation = true`, in one transaction. Activate / Deactivate / Mark pending each check `customerStatus` in the handler; Deactivate writes `customers.status = 'deactivated'` with `deactivation_reason = 'Deactivated in the ERP'` and `status_decided_at`.
 
 <Code file="src/lib/erp/screens/masters.ts" symbol="saveCustomerDetails" collapsed />
+
+A rename writes the old name to `customers.sheet_name` once (`renameValues`), and every name matcher on the sheet side — the party projection, delivery parties, the salesperson rebuild, the profile seed — asks for either name (`sheetKeys`).
 
 ## Godowns
 

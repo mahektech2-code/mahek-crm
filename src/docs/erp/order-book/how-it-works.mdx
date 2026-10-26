@@ -7,7 +7,7 @@ Targets, the Call Log's reorder dates, the buying cycle, outstanding, collection
 </Callout>
 
 <Rule title="Exactly one author at a time">
-Off, the ERP writes nothing into the book: the ERP runs on its own, and orders and bills keep arriving from the Taken Order and Order Details sheets. On, every ERP order is written into the book, and the order sheet's Order Details, Payment Status and Taken Order tabs are no longer read: the projection writes **no** customer, **no** order and **no** bill. A new party is created in ERP → Customers or Accounts → Add customer. The Sales Party tab is a different source with its own switch (below).
+Off, the ERP writes nothing into the book: the ERP runs on its own, and orders and bills keep arriving from the Taken Order and Order Details sheets. On, every ERP order is written into the book, and the order sheet's Order Details, Payment Status and Taken Order tabs are no longer read: the projection writes **no** customer, **no** order and **no** bill. A new party is created in ERP → Sales parties or Accounts → Add customer. The Sales Party tab is a different source with its own switch (below).
 </Rule>
 
 ## What the switch changes
@@ -26,7 +26,7 @@ Off, the ERP writes nothing into the book: the ERP runs on its own, and orders a
 ## The Sales Party tab has its own switch
 
 <Rule title="The party master can outlive the order tabs">
-<Setting k="erp.orders.partySheet" /> is on by default. On, the Sales Party tab is still read every half hour and fills each party's salesperson and back-office seats, deactivations, and any phone, GST, credit days or price list nobody has typed into MahekOne. Off, the tab is retired: it is no longer read or published, and all of that is kept in MahekOne — Accounts → Add customer, the customer record, the account-manager dialog, ERP → Customers. The two switches are independent.
+<Setting k="erp.orders.partySheet" /> is on by default. On, the Sales Party tab is still read every half hour and fills each party's salesperson and back-office seats, deactivations, and any phone, GST, credit days or price list nobody has typed into MahekOne. Off, the tab is retired: it is no longer read or published, and all of that is kept in MahekOne — Accounts → Add customer, the customer record, the account-manager dialog, ERP → Sales parties. The two switches are independent.
 </Rule>
 
 | `erp.orders.live` | `erp.orders.partySheet` | Order tabs | Sales Party tab | The half-hourly publish |
