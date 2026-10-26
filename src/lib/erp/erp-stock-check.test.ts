@@ -229,7 +229,8 @@ describe("a red flag is recounted, investigated and adjusted — never silently"
     const ok = await mod("stockAdjustments").actions!.approve(await as(admin), adj.id, {});
     assert.ok(ok.ok, ok.ok ? "" : ok.error);
     assert.equal(await rmItemStockAt("rm_xyl", BHW), 441);
-    assert.equal(await rmItemStockAt("rm_xyl", "erpg_item_lost_record"), 59, "written off to Item Lost Record");
+    // Written off is gone: Item Lost Record holds no stock anybody reads — the transfer below is the record.
+    assert.equal(await rmItemStockAt("rm_xyl", "erpg_item_lost_record"), 0, "written-off stock is not stock");
     const lots = (await db.execute(sql`select lot_no, quantity::float8 as q from erp_transfers where item_id = 'rm_xyl' order by lot_no`)) as unknown as { lot_no: string; q: number }[];
     assert.deepEqual([...lots], [{ lot_no: "AS-XYL-1", q: 59 }]);
     const root = await rootCount("rm_xyl");
