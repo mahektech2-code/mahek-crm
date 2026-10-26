@@ -15,6 +15,7 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
+  auditLog,
   bills,
   complaints,
   complaintStatusHistory,
@@ -40,6 +41,7 @@ import { setTestUser } from "@/lib/auth";
 import { erpContext } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
 import * as L from "@/lib/erp/logistics";
+import { erpAudit } from "@/lib/erp/server";
 import * as T from "@/lib/erp/trips";
 import { createComplaint } from "@/lib/services/complaint-create";
 
@@ -621,5 +623,25 @@ describe("vehicle trips and the transport payment shared by litres (Order-to-Del
     assert.equal(c.phase, "delivered");
     assert.equal(c.deliveredBy, admin.name);
     assert.equal(c.deliveryProof, "POD 7781");
+  });
+});
+
+describe("a bulk action is audited one row per record", () => {
+  test("300 bills marked at once write 300 rows, not one key past the index limit", async () => {
+    const ctx = await as(admin);
+    const ids = Array.from({ length: 300 }, () => id("etr"));
+    await erpAudit(ctx, "erp.logistics.atTransport", "erp_transport", [...ids, ids[0]].join(","), null, { bulk: true });
+    const rows = await db.select().from(auditLog).where(eq(auditLog.action, "erp.logistics.atTransport"));
+    const mine = rows.filter((r) => ids.includes(r.entityId ?? ""));
+    assert.equal(mine.length, 300, "one row each, the repeated id once");
+    assert.ok(mine.every((r) => r.actorId === admin.id && r.actorApp === "erp"));
+  });
+
+  test("a single id is still one row, as written", async () => {
+    const ctx = await as(admin);
+    const one = id("etr");
+    await erpAudit(ctx, "erp.logistics.packages", "erp_transport", one, null, null);
+    const rows = await db.select().from(auditLog).where(eq(auditLog.entityId, one));
+    assert.equal(rows.length, 1);
   });
 });
