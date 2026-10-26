@@ -547,6 +547,12 @@ jobs:
               const quota = Number(tier.included_storage_bytes);
               const readAt = Date.parse(reg.storage_usage_bytes_updated_at);
               if (!(used > 0) || !(quota > 0) || !Number.isFinite(readAt) || manifests.length === 0) {
+                // Say WHICH answer was missing, and the shape that came back
+                // (key names only — none of these carry a credential), so the
+                // next run can be read rather than guessed at.
+                const keys = f => { try { const j = require(f); return Object.keys(j).map(k => `${k}{${j[k] && typeof j[k] === "object" ? Object.keys(j[k]).slice(0, 12).join(",") : typeof j[k]}}`).join(" "); } catch (e) { return String(e.message); } };
+                console.error(`registry: used=${reg.storage_usage_bytes} quota=${tier.included_storage_bytes} readAt=${reg.storage_usage_bytes_updated_at} manifests=${manifests.length}`);
+                console.error(`shapes: registry ${keys("/tmp/registry.json")} | subscription ${keys("/tmp/subscription.json")} | digests ${keys("/tmp/manifests.json")}`);
                 console.error("::warning::Could not read how full the registry is, so a collection is started as before.");
                 console.log("yes");
                 process.exit(0);
