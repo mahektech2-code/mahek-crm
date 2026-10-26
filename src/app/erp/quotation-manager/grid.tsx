@@ -201,7 +201,8 @@ export function QuoteGrid({
                   : `Bought on ${made[0].poNo}. Enter this PO number on the purchase requirement.`,
               );
             else ui.toast(`Bought on ${made.length} new PO numbers.`);
-            /* The requirements a purchase took are no longer waiting: fetch the dialog's choices afresh. */
+            /* The requirements a purchase took are no longer waiting, and the PO it made can take the vendor's next
+               material: fetch the dialog's choices afresh. */
             if (made.some((m) => m.ordered)) router.refresh();
           }
         }
@@ -1652,6 +1653,14 @@ function PurchaseDialog({
 }) {
   const reqs = useMemo(() => choices.openRequirements.filter((r) => r.materialId === materialId), [choices, materialId]);
   const first = reqs[0] ?? null;
+  /* The party's open POs from here that do not already carry this material — newest first. A purchase
+     defaults to the one made today, so several materials bought from one party in a sitting are one PO.
+     Matched by the party's name, as the server finds the vendor; the server checks the vendor again. */
+  const joinable = useMemo(() => {
+    const who = party.trim().toLowerCase();
+    return who ? choices.openPos.filter((p) => p.vendor.trim().toLowerCase() === who && !(materialId && p.materialIds.includes(materialId))) : [];
+  }, [choices, party, materialId]);
+  const [addTo, setAddTo] = useState(joinable.find((p) => p.date === today)?.poNo ?? "");
   const unit = (materialId && choices.units[materialId]) || "";
   const [d, setD] = useState(drums ? String(drums) : "");
   const [reqId, setReqId] = useState(first?.id ?? "");
@@ -1679,7 +1688,7 @@ function PurchaseDialog({
   function save() {
     setTried(true);
     if (drumsBad || noMaterial || qtyBad || godownBad || dueBad) return;
-    onSave(n, ordering ? { requisitionId: reqId || null, qty: q, godown, deliveryDate: due } : null);
+    onSave(n, ordering ? { requisitionId: reqId || null, qty: q, godown, deliveryDate: due, addTo: addTo || null } : null);
   }
   return (
     <ErpDialog onClose={onClose} label={editing ? "Edit purchase" : "Purchase it"} width={540} tall={false}>
@@ -1716,9 +1725,21 @@ function PurchaseDialog({
             {tried && drumsBad ? <span className="text-meta text-danger">Enter how many drums, a whole number.</span> : null}
           </Field>
           <Field label="PO number">
-            <div className="flex h-8.5 items-center rounded-control border border-line bg-canvas px-2.5 font-mono text-sm text-ink">
-              {poNo || <span className="font-sans text-muted">Made when you save</span>}
-            </div>
+            {ordering && joinable.length ? (
+              <Select value={addTo} onChange={(e) => setAddTo(e.target.value)} className="w-full">
+                <option value="">New PO number</option>
+                {joinable.map((p) => (
+                  <option key={p.poNo} value={p.poNo}>
+                    Add to {p.poNo}
+                    {p.items.length ? ` · ${p.items.join(", ")}` : ""}
+                  </option>
+                ))}
+              </Select>
+            ) : (
+              <div className="flex h-8.5 items-center rounded-control border border-line bg-canvas px-2.5 font-mono text-sm text-ink">
+                {poNo || <span className="font-sans text-muted">Made when you save</span>}
+              </div>
+            )}
           </Field>
           {ordering && !noMaterial ? (
             <>
@@ -1757,7 +1778,9 @@ function PurchaseDialog({
           <p className="col-span-2 text-meta text-muted">
             {editing
               ? "This purchase keeps its PO number and its purchase order; changing the drums changes the order's line too."
-              : "Saving gives this purchase the next PO number, turns the cell yellow and puts the purchase order in Purchase orders — sent, ready for goods to be received against it."}
+              : addTo
+                ? `Saving adds this purchase to ${addTo} as another line and turns the cell yellow — one PO for the vendor, ready for goods to be received against it.`
+                : "Saving gives this purchase the next PO number, turns the cell yellow and puts the purchase order in Purchase orders — sent, ready for goods to be received against it."}
           </p>
           <button type="submit" className="hidden" />
         </form>

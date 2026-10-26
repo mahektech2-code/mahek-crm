@@ -7,7 +7,7 @@ import type { ErpContext } from "./access";
 import { erpAudit, nextNumber } from "./server";
 import { poLabel } from "./engines/purchase-flow";
 import { refusalResult } from "./screens/common";
-import { orderFromQuote, purchaseChoices, syncQuotePoDrums, withdrawQuotePo, type PurchaseChoices, type QuoteOrder } from "./screens/requirement-po";
+import { joinablePoNumber, orderFromQuote, purchaseChoices, syncQuotePoDrums, withdrawQuotePo, type PurchaseChoices, type QuoteOrder } from "./screens/requirement-po";
 import {
   cleanCell,
   isQuoteStatus,
@@ -317,9 +317,18 @@ export async function applyQuoteOps(ctx: ErpContext, ops: QuoteOp[]): Promise<Re
             }
             let made: MintedPo | null = null;
             if (after === "po" && !(set.poNo !== undefined ? set.poNo : prev?.poNo)) {
-              set.poNo = poLabel(await nextNumber(tx, "po"));
-              made = { rowId: o.rowId, columnId: o.columnId, poNo: set.poNo };
-              minted.push(made);
+              /* Unless the dialog put it on an open PO of the same vendor's —
+                 several materials bought from one party are one PO, as on
+                 paper. `orderFromQuote` then adds the line, refusing another
+                 vendor's PO or one that already carries this material. */
+              const joining = o.order?.addTo ? await joinablePoNumber(tx, o.order.addTo) : null;
+              if (o.order?.addTo && !joining) throw new QuoteRefusal(`${o.order.addTo} is no longer an open purchase order from the Quotation manager — pick it again or take a new number.`);
+              if (joining) set.poNo = joining;
+              else {
+                set.poNo = poLabel(await nextNumber(tx, "po"));
+                made = { rowId: o.rowId, columnId: o.columnId, poNo: set.poNo };
+                minted.push(made);
+              }
             }
             /* PURCHASE IT WRITES THE PURCHASE ORDER: the same number, in Purchase orders, ready to receive. */
             const poNow = set.poNo !== undefined ? set.poNo : (prev?.poNo ?? null);
