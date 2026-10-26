@@ -1,27 +1,31 @@
-The Orders screen is seven tabs, each its own server module: five built in `screens/sales.ts` (`orderList` for four scopes, plus `batchCodes` and `orderDetails`) and the inbox in `screens/inbox.ts`. Every list reads one function, `orderLines()`, so a line cannot be Ready on one tab and something else on another. The arithmetic is pure in `engines/sales.ts`; every write ends with `syncBookOrders`, which projects the change into MahekOne's order book (covered on [the order book page](/docs/erp/order-book/developer)).
+The Orders screen is ten tabs, each its own server module: nine built in `screens/sales.ts` (`orderList` for seven scopes, plus `batchCodes` and `orderDetails`) and the inbox in `screens/inbox.ts`. The Order-to-Delivery rules — the separate status words, whole-order billing, invoice change detection, duplicates and moving a line out — are pure in `engines/order-flow.ts`. Every list reads one function, `orderLines()`, so a line cannot be Ready on one tab and something else on another. The arithmetic is pure in `engines/sales.ts`; every write ends with `syncBookOrders`, which projects the change into MahekOne's order book (covered on [the order book page](/docs/erp/order-book/developer)).
 
 ## Map of the code
 
 | Layer | File | What lives there |
 |---|---|---|
-| Registry | `src/lib/erp/registry.ts` | The `orders` screen and its seven views: `pendingOrders`, `readyOrders`, `orderDetails`, `batchCodes`, `labels`, `orders`, `orderInbox` |
+| Registry | `src/lib/erp/registry.ts` | The `orders` screen and its views, in flow order: `verifyOrders` (To verify), `readyOrders` (Production), `toBill` (Ready to bill), `invoiceCheck` (Invoice check), `labels` (Dispatch stickers), `orderDetails` (Billing & dispatch), `pendingOrders` (On hold), `batchCodes`, `orders` (All lines), `orderInbox` |
 | Page | `src/app/erp/[slug]/page.tsx` | Generic list page; `?view=` picks the tab |
-| Lines | `src/lib/erp/screens/sales.ts` | `orderLines`, `priceBook`, `orderForm`, `editForm`, `allocateForm`, `orderList`, `lineHandlers`, `statusActions`, `doStatus`, `doReady`, `doBill`, `doUnbill`, `doApprove`, `saveOrder`, `saveEdit`, `saveAllocation`, `stockShortfalls`, `billBlockers` |
-| Batch codes / billing | `src/lib/erp/screens/sales.ts` | `batchCodes`, `orderDetails`, `detailRows`, `allocationCosts`, `verify`, `extra` |
+| Lines | `src/lib/erp/screens/sales.ts` | `orderLines`, `priceBook`, `orderForm`, `editForm`, `allocateForm`, `orderList`, `inScope`, `lineHandlers`, `statusActions`, `doStatus`, `doReady`, `tellReadyToBill`, `doApprove`, `saveOrder`, `saveEdit`, `saveAllocation`, `stockShortfalls`, `billBlockersFor`, `lineDomains` |
+| The order's checks | `src/lib/erp/screens/sales.ts` | `doVerifyOrder`, `doCorrectOrder`, `reopenOrderCheck` (back office); `doBill`, `doUnbill`, `doChangeInvoice`, `invoiceTakenBy` (the bill); `doApproveInvoice`, `doRejectInvoice`, `invoiceForCheck`, `reopenInvoiceCheck`, `invoiceSnapshot` (the invoice check); `addReview`, `reviewsFor`, `reviewLine`; `holdersOf`, `tell` (notifications); `doStickers`, `doMoveOut` |
+| Order-to-Delivery rules (pure) | `src/lib/erp/engines/order-flow.ts` | `ORDER_SOURCES`, `orderStatusOf`, `productionOf`, `billingOf`, `dispatchOf`, `logisticsOf`, `orderBillBlockers`, `invoiceKey`, `invoiceChanges`, `likelyDuplicate`, `splitForMove` |
+| Batch codes / billing | `src/lib/erp/screens/sales.ts` | `batchCodes`, `orderDetails`, `detailRows`, `allocationCosts`, `verify`, `DISPATCH_PROMPT`, `openTransports`, `extra` |
 | Arithmetic (pure) | `src/lib/erp/engines/sales.ts` | `orderType`, `boxQuantity`, `labelCount`, `allocationState`, `allocationTarget`, `billFigures`, `lotCosting`, `margin`, `standingInstructions`, `targetReached`, `readyStockCheck` |
 | Form calculators | `src/lib/erp/calcs/sales.ts` | `order.boxes`, `order.listRate`, `alloc.*` — what the browser shows before save; the server recomputes |
 | Dispatch hooks | `src/lib/erp/dispatch.ts` | `scanGateFor`, `markDispatched`, `scannedOnAllocation` |
 | Order book | `src/lib/erp/book.ts` | `syncBookOrders`, `orderNosOf`, `erpOrdersLive` |
 | Inbox | `src/lib/erp/screens/inbox.ts`, `src/lib/erp/ai-orders.ts` | `inboxScreen`; `draftFromText`, `resolveDraft`, `draftForm`, `markConverted`, `closeInbox`, `screenWhatsApp` |
 | Label sheet | `src/app/erp/print-labels/page.tsx`, `labels.tsx`, `label-css.ts`, `printer.tsx` | `?batch=`, `?lot=`, `?ids=` (box, 50 mm), `?sfg=`, `?purchase=`, `?order=` (80 mm), `&copies=`; `erpMarkLabelsPrinted` |
-| Label data | `src/lib/erp/label-data.ts` | `boxLabels`, `sfgLabel`, `purchaseLabel`, `dispatchLabels`, `qrFor` |
+| Label data | `src/lib/erp/label-data.ts` | `boxLabels`, `sfgLabel`, `purchaseLabel`, `dispatchLabels` (approved, undispatched lines only: customer, product, invoice no, order no), `qrFor` |
 | Label rules (pure) | `src/lib/erp/engines/labels.ts`, `src/lib/erp/engines/tspl.ts` | `fitPt`, `boxFoot`, `lotSize`, `printRuns`; `tsplJob`, `packBitmap`, `rasterFromRgba`, `qrGrid` |
 | Writes | `src/lib/actions/erp.ts` | `erpRunAction`, `erpRunBulk`, `erpSubmitForm`, `erpLoadForm` |
+| Trips | `src/lib/erp/trips.ts` | `assignTripsAtDispatch`, called by `openTransports` inside the dispatch transaction |
+| Migration | `drizzle/0285_erp_order_to_delivery.sql` | `erp_orders.order_source`, `order_check*`, `linked_from_order_no`, `invoice_date`; `erp_order_details.invoice_check*`, `stickers_*`, `vehicle_no`, `driver`, `dispatch_remark`; `erp_order_reviews`; trips and transport payments |
 | Jobs | `src/lib/jobs.ts` | `erpInboxStep` in `runHourly` |
 
 ## A request, end to end
 
-<Flow caption="Bill it on Under process and ready" chart={`
+<Flow caption="Bill it on Ready to bill" chart={`
 sequenceDiagram
   autonumber
   participant UI as ListScreen (client)
@@ -29,17 +33,20 @@ sequenceDiagram
   participant Mod as sales.ts lineHandlers
   participant DB as Postgres
   participant Book as book.ts
-  UI->>Act: erpRunAction("readyOrders", "bill", id)
-  Act->>Act: requireErpWrite("readyOrders")
-  Act->>Mod: actions.bill(ctx, id)
-  Mod->>Mod: orderLines() then billBlockers(line)
+  UI->>Act: erpRunAction("toBill", "bill", id, invoiceNo, invoiceDate)
+  Act->>Act: requireErpWrite("toBill")
+  Act->>Mod: actions.bill(ctx, id, values)
+  Mod->>Mod: readInvoice, wholeOrders, billBlockersFor(order)
   alt something missing
-    Mod-->>UI: Not yet - a Tally bill no., a rate
+    Mod-->>UI: Order 1256 cannot be billed yet - it needs ...
+  else invoice no. on another order
+    Mod-->>UI: Invoice X is already on order N
   else nothing missing
-    Mod->>DB: one transaction - entry_status Done and insert erp_order_details
+    Mod->>DB: one transaction - tally no and date on every live line, entry_status Done, erp_order_details (invoice_check Pending), erp_order_reviews submitted
     Mod->>DB: audit erp.order.bill
-    Mod->>Book: syncBookOrders(order numbers)
-    Mod-->>UI: 1 line billed
+    Mod->>Book: syncBookOrders(order number)
+    Mod->>Mod: tell(holders of checkInvoices)
+    Mod-->>UI: Order 1256 billed - waiting for the invoice check
   end
 `} />
 
@@ -53,7 +60,29 @@ Which lines each tab shows:
 
 <Code file="src/lib/erp/screens/sales.ts" symbol="inScope" />
 
-`labels` falls to the last branch, so it lists exactly what `readyOrders` lists.
+Each scope has its own rule, exported for the badges in `counts.ts`: `isToVerifyLine`, `isToBillLine`, `isInvoiceToCheckLine`, `isStickerLine`, `isPendingLine`, `isWorkingLine`.
+
+The status words every list prints come from one function over the line:
+
+<Code file="src/lib/erp/screens/sales.ts" symbol="lineDomains" />
+<Code file="src/lib/erp/engines/order-flow.ts" symbol="orderStatusOf" />
+<Code file="src/lib/erp/engines/order-flow.ts" symbol="dispatchOf" />
+
+## Taking an order
+
+`saveOrder` requires `source` (one of `ORDER_SOURCES`). A new order whose party, date and goods match an existing one is refused on the `dupOk` field unless it carries the confirmation; the rule is pure:
+
+<Code file="src/lib/erp/engines/order-flow.ts" symbol="likelyDuplicate" />
+
+A line added to an existing order (`orderFixed`) is refused when the order is billed, and otherwise calls `reopenOrderCheck`.
+
+## The back office's check
+
+<Code file="src/lib/erp/screens/sales.ts" symbol="doVerifyOrder" collapsed />
+<Code file="src/lib/erp/screens/sales.ts" symbol="doCorrectOrder" collapsed />
+<Code file="src/lib/erp/screens/sales.ts" symbol="reopenOrderCheck" />
+
+`saveEdit` compares quantity, delivery party, rate and discount before and after; an unbilled line that changed one calls `reopenOrderCheck`, a billed one calls `reopenInvoiceCheck`. Deleting a line calls `reopenOrderCheck` too.
 
 ## Prices
 
@@ -70,6 +99,8 @@ Which lines each tab shows:
 <Code file="src/lib/erp/screens/sales.ts" symbol="stockShortfalls" />
 
 <Code file="src/lib/erp/screens/sales.ts" symbol="doReady" />
+
+`doReady` refuses lines whose `order_check` is not `Verified`, then the stock; `tellReadyToBill` notifies `verifyOrders` holders once every live line of an order is Ready.
 
 ## Status, either way
 
@@ -90,15 +121,27 @@ Which lines each tab shows:
 
 ## Billing
 
-<Code file="src/lib/erp/screens/sales.ts" symbol="billBlockers" />
+<Code file="src/lib/erp/engines/order-flow.ts" symbol="orderBillBlockers" />
 
-<Code file="src/lib/erp/screens/sales.ts" symbol="doBill" />
+<Code file="src/lib/erp/screens/sales.ts" symbol="doBill" collapsed />
 
-## Dispatch verification
+`invoiceTakenBy` compares `upper(regexp_replace(tally_bill_no, '\s', '', 'g'))` across every other order not cancelled — the same key as `invoiceKey`. Goods that go later leave through `doMoveOut`, which splits the line with `splitForMove` and inserts the moved cans under a new `nextNumber(tx, "order")` with `linked_from_order_no`.
+
+## The invoice check
+
+<Code file="src/lib/erp/screens/sales.ts" symbol="invoiceForCheck" />
+
+<Code file="src/lib/erp/screens/sales.ts" symbol="reopenInvoiceCheck" collapsed />
+
+<Code file="src/lib/erp/engines/order-flow.ts" symbol="invoiceChanges" />
+
+`invoiceSnapshot` is what the checker approved and what a later change is measured against; `saveEdit`, `doChangeInvoice` and the `gst` action take it before writing and pass it to `reopenInvoiceCheck`. Every step is appended to `erp_order_reviews` through `addReview`; `reviewsFor` / `reviewLine` draw the record's **Check history**.
+
+## Dispatch
 
 <Code file="src/lib/erp/screens/sales.ts" symbol="verify" collapsed />
 
-The Dispatch desk's **Mark dispatch-verified** calls this same bulk handler through `erpDispatchVerify` in `actions/erp-trace.ts`, after `requireErpWrite("orderDetails")`, so every rule here — the scan gate included — holds from both doors.
+`verify` expands the ids to whole orders (`wholeOrders`), refuses an order with an unbilled live line, an invoice not `Approved`, or any line still gated by `scanGateFor`, then writes `vehicle_no` (upper-cased), `driver` and `dispatch_remark` with the dispatch. `openTransports` opens or joins the consignment and calls `assignTripsAtDispatch` with the vehicle. The Dispatch desk's **Confirm dispatch** calls this same bulk handler through `erpDispatchVerify` in `actions/erp-trace.ts`, after `requireErpWrite("orderDetails")`, so every rule here holds from both doors. `DISPATCH_PROMPT` is the one prompt both the row and the bulk bar ask.
 
 ## The bill's figures
 
@@ -118,15 +161,21 @@ Accepting a draft is `draftForm(orderForm(ctx), id)`: the ordinary order form wi
 
 ## Tables
 
-<DbTable name="erp_orders" only={["order_no", "order_date", "godown_id", "billing_customer_id", "delivery_customer_id", "sku_id", "qty_cans", "status", "dispatch_on", "rate_paise", "discount_bp", "tally_bill_no", "transport_cost_paise", "entry_status", "party_status", "source", "source_ref"]} note={{
+<DbTable name="erp_orders" only={["order_no", "order_date", "godown_id", "billing_customer_id", "delivery_customer_id", "sku_id", "qty_cans", "status", "dispatch_on", "rate_paise", "discount_bp", "tally_bill_no", "invoice_date", "transport_cost_paise", "entry_status", "party_status", "order_source", "order_check", "order_checked_by_id", "order_checked_at", "order_check_note", "linked_from_order_no", "source", "source_ref"]} note={{
   order_no: "From erp_series 'order' under a row lock (nextNumber). Shared by every line of one order.",
   qty_cans: "Always cans. Boxes are derived (boxQuantity).",
-  status: "Under Process, Ready, Hold From Office, Cancel. Today / Tomorrow / Delay were moved to dispatch_on by 0183.",
+  status: "Under Process, Ready, Hold From Office, Cancel. The first two are the production domain, the last two the order's. Today / Tomorrow / Delay were moved to dispatch_on by 0183.",
   rate_paise: "Per can, or per litre on a drum line. Ex-GST.",
   discount_bp: "Basis points: 1000 is 10%.",
+  tally_bill_no: "The Tally invoice, the same on every live line of the order; unique across orders, compared without case or spaces (index erp_orders_tally_idx).",
+  invoice_date: "The Tally invoice's date, written with the number.",
+  transport_cost_paise: "Freight charged to the customer — added to the bill. Not the transport payment (erp_transport_payments).",
   entry_status: "Done or Not Done — whether the line is BILLED. Set together with the erp_order_details row.",
   party_status: "Pending when the billing party was pending on entry; Approved By Admin once approved in the ERP.",
-  source: "erp for a line taken in the ERP; sheet for one copied in from the Taken Order tab (0272). syncBookOrders writes only erp lines; the Orders tabs read both alike.",
+  order_source: "WhatsApp, Phone, Sales Order or Other. Null on lines taken before 0285.",
+  order_check: "Pending, Verified or Correction — the back office's check, shared by every line. 0285 set existing rows to Verified.",
+  linked_from_order_no: "The order a moved line came out of (doMoveOut).",
+  source: "erp for a line taken in the ERP; sheet for one copied in from the Taken Order tab (0272). syncBookOrders writes only erp lines.",
   source_ref: "The Taken Order tab's line key, unique, so the copy can be re-run.",
 }} />
 
@@ -138,8 +187,18 @@ Accepting a draft is `draftForm(orderForm(ctx), id)`: the ordinary order form wi
 <DbTable name="erp_order_details" note={{
   order_id: "One row per billed line; deleting it is Undo billing.",
   gst_bp: "1800 or 0 — decides the billing company.",
-  verification: "Verified, Not Verify, Pending or null.",
-  dispatch_date: "Set by Mark dispatch-verified. Drives the month a line's sale counts in.",
+  verification: "Verified, Not Verify, Pending or null — the dispatch, not the invoice check.",
+  dispatch_date: "Set by Confirm dispatch. Drives the month a line's sale counts in.",
+  invoice_check: "Pending, Approved or Rejected. 0285 set existing rows to Approved.",
+  invoice_checked_by_id: "The checker; never created_by_id (the biller) unless an ERP administrator.",
+  stickers_at: "Stickers are on — recorded, never required.",
+  vehicle_no: "Upper-cased at Confirm dispatch; the trip is matched on it.",
+}} />
+
+<DbTable name="erp_order_reviews" note={{
+  kind: "order (the back office's check) or invoice (the invoice check).",
+  result: "submitted, verified, correction, approved, rejected, reset. Appended, never edited.",
+  snapshot: "What was checked: the lines, or the invoiceSnapshot.",
 }} />
 
 <DbTable name="erp_order_inbox" note={{
@@ -151,17 +210,18 @@ Accepting a draft is `draftForm(orderForm(ctx), id)`: the ordinary order form wi
 ## Access
 
 - **Module:** <ModuleRef k="erp.orders" />. All seven tabs come with it; none is grantable alone.
-- **Powers** read here: `viewSalesRate`, `viewSalesAmounts`, `viewCost` (columns and fields, via `visibleCols` / `withoutHidden` — values are stripped server-side), `approveParty` (Approved By Admin, and only while `erpOrdersLive()` is false). `notVerify` checks `ctx.administrator`.
+- **Powers** read here: `viewSalesRate`, `viewSalesAmounts`, `viewCost` (columns and fields, via `visibleCols` / `withoutHidden` — values are stripped server-side), `approveParty` (Approved By Admin, and only while `erpOrdersLive()` is false), `verifyOrders` (Verify order, Send back for correction; told when an order is Ready to bill), `checkInvoices` (Approve / Reject invoice; told of new and changed invoices; refused on a bill whose `created_by_id` is the checker unless `ctx.administrator`). `notVerify` checks `ctx.administrator`.
 - Every write is `requireErpWrite(<tab key>)`; a preview refuses all of them.
 
 ## Tests that pin this
 
 | Suite | File | What it pins |
 |---|---|---|
+| `npm run test` | `src/lib/erp/engines/order-flow.test.ts` | Production has two values; the order, billing, dispatch and logistics words; whole-order bill blockers; invoice keys; invoice changes; likely duplicates; splitting a line in whole boxes |
 | `npm run test` | `src/lib/erp/engines/sales.test.ts` | Order type, whole boxes, label count, allocation state, bill figures, lot costing and margin, `readyStockCheck` spending in order |
-| `npm run test:integration` | `src/lib/erp/erp-sales.test.ts` | Boxes must be whole; the rate from the list Accounts applies, never the tag; a dash borrows no rate; no list, no rate, and a typed one kept; list discounts shown, not applied; the form's fills; no rate without the power; what a line weighs; Ready refused without stock; a status moves either way; allocation only once Ready and never past need or lot stock; Bill it in one step; dispatch verification freezes lots; the bill arithmetic; dispatch-on wording; releasing an allocation |
+| `npm run test:integration` | `src/lib/erp/erp-sales.test.ts` | Boxes must be whole; the rate from the list Accounts applies, never the tag; a dash borrows no rate; no list, no rate, and a typed one kept; list discounts shown, not applied; the form's fills; no rate without the power; what a line weighs; Ready refused until verified and without stock; a status moves either way; allocation only once Ready; a line moved to a linked order; whole-order billing with a unique invoice; the invoice check and its maker-checker rule; changes sending an invoice back; stickers; dispatch with a vehicle freezing lots; the bill arithmetic; the status words; duplicates, corrections and material changes |
 | `npm run test:integration` | `src/lib/erp/erp-ai-reading.test.ts` — `orders from messages (AI-2)` | The sender's number finds the customer, past purchases break a tie, *peti* become cans; unclear lines are left to choose |
-| `npm run test:integration` | `src/lib/erp/erp-traceability.test.ts` | Mark dispatch-verified waits for every box |
+| `npm run test:integration` | `src/lib/erp/erp-traceability.test.ts` | Confirm dispatch waits for every box |
 
 ## Changing it safely
 
@@ -184,9 +244,12 @@ A new money column takes a `pw:` on its `Col` so `visibleCols` drops it and `wit
 
 | Gap | Where |
 |---|---|
-| Pending hides every line of an order once any line of it is billed (`detailedOrders` keys on order number) | `screens/sales.ts` `inScope` |
+| On hold (the old Pending) hides every line of an order once any line of it is billed (`detailedOrders` keys on order number) | `screens/sales.ts` `inScope` |
+| Hold From Office and Cancel are still values of `erp_orders.status`; the order domain is a reading of them | `engines/order-flow.ts` `orderStatusOf`, `productionOf` |
+| Rows that existed before 0285 read `order_check = Verified` and `invoice_check = Approved` with nobody named | `drizzle/0285_erp_order_to_delivery.sql` |
+| Ready to bill lists Ready lines, so an order with one line still Under Process appears; `billBlockersFor` then names it | `screens/sales.ts` `isToBillLine` |
 | `allocateForm` / `saveAllocation` have no row action on any Orders tab; reachable only from the Dispatch desk | `screens/sales.ts` `orderList`; `app/erp/dispatch/desk.tsx` |
-| A line set **Not Verify** cannot be verified again (verify accepts only null or Pending) | `screens/sales.ts` `verify` |
+| A line set **Not Verify** cannot be dispatched again (verify accepts only null or Pending) | `screens/sales.ts` `verify` |
 | `saveEdit`'s reset of `entry_status` when a Done line's quantity moves is unreachable: a billed line's quantity is refused first | `screens/sales.ts` `saveEdit` |
 | `orderLines` does not read `source`, so lines copied from the Taken Order tab are drawn on every tab unmarked | `screens/sales.ts` `orderLines` |
 | The `readyUnbilled` alert dates Ready from `updated_at` | `lib/erp/alerts.ts` `currentCandidates` |

@@ -4,7 +4,7 @@ Scanning is also how the lots on an order get set aside: the box you scan decide
 
 ## The queue
 
-When you open the desk with no order chosen, you see every order with a **Ready** line that has not been dispatch-verified yet, the soonest to leave first.
+When you open the desk with no order chosen, you see every order with a **Ready** line that has not been dispatched yet, the soonest to leave first.
 
 <Wireframe url="/erp/dispatch" nav={["Dashboard", "Alerts", "#Sales", "Orders", "Dispatch desk", "#Traceability", "Traceability"]} active="Dispatch desk" caption="The Dispatch desk queue">
   <WfBar>
@@ -31,7 +31,7 @@ When you open the desk with no order chosen, you see every order with a **Ready*
   <span key="3"><b>Upload LRs.</b> The same Upload LRs dialog as the [Logistics](/docs/erp/transport) LR desk, so a lorry receipt photographed at the gate can be uploaded from here.</span>,
 ]} />
 
-An order reaches the queue the moment one of its lines is marked **Ready** on [Orders](/docs/erp/orders). It does not have to be billed yet — you can scan while the office bills it. With nothing Ready, the queue says *No order is Ready and waiting to leave.*
+An order reaches the queue the moment one of its lines is marked **Ready** on [Orders](/docs/erp/orders). It does not have to be billed yet — you can scan while the office bills it and the checker approves the invoice. With nothing Ready, the queue says *No order is Ready and waiting to leave.*
 
 ## Scanning an order
 
@@ -53,9 +53,13 @@ An order reaches the queue the moment one of its lines is marked **Ready** on [O
       ["PU Sealer – 4 Liter (4 Can/Box) · No lot allocated yet — scanning allocates", "4 L", "0 / 2 boxes", <span key="b"><WfPill tone="warn">To scan</WfPill> <Hotspot n={4} /></span>],
     ]}
   />
-  <WfCard title="Dispatch verification">
-    <WfText muted>PU Sealer – 4 Liter: 2 of 2 still to scan. Mark dispatch-verified waits for every box.</WfText>
-    <WfBar><WfInput placeholder="2026-10-10" /><WfButton primary>Mark dispatch-verified</WfButton><Hotspot n={5} /></WfBar>
+  <WfCard title="Confirm dispatch">
+    <WfText muted>PU Sealer – 4 Liter: 2 of 2 still to scan. Dispatch waits for every box.</WfText>
+    <WfInput placeholder="2026-10-10" />
+    <WfInput placeholder="Vehicle / tempo / truck no." />
+    <WfInput placeholder="Driver or transporter" />
+    <WfInput placeholder="Remark or exception (optional)" />
+    <WfBar><WfButton primary>Confirm dispatch</WfButton><Hotspot n={5} /></WfBar>
   </WfCard>
 </Wireframe>
 
@@ -64,7 +68,7 @@ An order reaches the queue the moment one of its lines is marked **Ready** on [O
   <span key="2"><b>Progress.</b> Boxes scanned across the order's Ready lines.</span>,
   <span key="3"><b>A stopped box.</b> What was wrong, in words, with the way to ask for an override when the box is the wrong product or pack size.</span>,
   <span key="4"><b>Each line.</b> Its lots, its pack and how many boxes are scanned. The badge says Dispatched, Not Ready, All scanned, To scan, or Scan optional.</span>,
-  <span key="5"><b>Mark dispatch-verified.</b> Once every box is scanned and the lines are billed, this marks the order dispatched.</span>,
+  <span key="5"><b>Confirm dispatch.</b> Once the invoice is approved and every box is scanned, this dispatches the whole order with the date and the vehicle.</span>,
 ]} />
 
 <Steps>
@@ -83,13 +87,13 @@ The loaders can scan on the **Mahek Factory** phone app instead. Its home screen
 <Step title="Deal with anything stopped">
 A red panel says why. See [What stops a box](#what-stops-a-box) below.
 </Step>
-<Step title="Verify once everything is scanned">
-When every box is scanned and the lines are billed, pick the dispatch date and press **Mark dispatch-verified**. The boxes become **dispatched**, the order leaves the queue, and the lines verified together reach [Logistics](/docs/erp/transport) as one consignment. If nothing is billed yet, the panel says *Nothing is billed and waiting. Bill the lines on Orders → Under process & ready, then verify here.*
+<Step title="Confirm dispatch once everything is scanned">
+When the invoice is approved and every box is scanned, pick the dispatch date, type the **vehicle / tempo / truck no.**, the **driver or transporter** and any remark, and press **Confirm dispatch**. The whole order leaves: the boxes become **dispatched**, the order leaves the queue, and it reaches [Logistics](/docs/erp/transport) as one consignment, on the trip of that vehicle for the day. If nothing is billed yet, the panel says *Nothing is billed and waiting. Bill the order on Orders → Ready to bill; it is dispatched once its invoice is approved.* While the invoice waits for the checker, or was rejected, the panel says that instead.
 </Step>
 </Steps>
 
-<Callout kind="note" title="Who can press Mark dispatch-verified">
-Verifying is the office's step on **Orders → Billing & dispatch**. The desk offers the same button to people who also hold the Orders screen. Anybody else sees *Billing & dispatch is not on your account, so somebody in the office verifies.*
+<Callout kind="note" title="Who can press Confirm dispatch">
+Confirming dispatch is the office's step on **Orders → Billing & dispatch**. The desk offers the same button to people who also hold the Orders screen. Anybody else sees *Billing & dispatch is not on your account, so somebody in the office confirms the dispatch.*
 </Callout>
 
 ## What stops a box
@@ -135,27 +139,30 @@ Once approved, scan the same box. It goes onto the line it stood in for, the mes
 
 ## Taking a box off
 
-A box scanned by mistake can be taken off the order before dispatch: press **Take off** beside it in the list of boxes scanned. It goes back into stock as **In stock**; the lot it set aside stays on the order. Once the order is verified, a box cannot be taken off.
+A box scanned by mistake can be taken off the order before dispatch: press **Take off** beside it in the list of boxes scanned. It goes back into stock as **In stock**; the lot it set aside stays on the order. Once the order is dispatched, a box cannot be taken off.
 
 ## Stock packed before box labels
 
-Stock packed before box ids existed has no box label to scan. Scan its lot label instead (above), or — for people who hold the Orders screen, while the line is not billed and not yet allocated in full — use **Allocate a lot by hand (no box labels)**: pick the lot and the quantity as you would have before. Lines whose lots have no box ids read *packed before box ids: no scan needed* with the badge **Scan optional**, and Mark dispatch-verified does not wait for scans on them.
+Stock packed before box ids existed has no box label to scan. Scan its lot label instead (above), or — for people who hold the Orders screen, while the line is not billed and not yet allocated in full — use **Allocate a lot by hand (no box labels)**: pick the lot and the quantity as you would have before. Lines whose lots have no box ids read *packed before box ids: no scan needed* with the badge **Scan optional**, and Confirm dispatch does not wait for scans on them.
 
 An old packing batch can be given box ids on **Stock on hand → Packed** with **Give these boxes ids** (see [Stock](/docs/erp/stock)). It is never done for you: once a batch has box ids the desk stops taking its lot label and asks for every box, so ids nobody has stuck on the boxes would stop the batch here.
 
-## Printing dispatch labels
+## Printing dispatch stickers
 
-**Dispatch labels** prints the 80 × 80 mm label that goes on each piece leaving on the order: one for every box on a boxed line and one for every can on a loose one. Each says who it is delivered to and their area, who is billed, the goods, the order quantity, the type, the weight, the remark and the transporter — and the **lot size**, which is the number of labels on the whole order, so the pieces can be counted on and off the lorry against one figure. A cancelled line gets no label. The dispatch label carries no QR: the box's own 50 mm label is what the desk scans.
+**Dispatch labels** at the top of the desk prints the 80 × 80 mm **dispatch sticker** that goes on each piece leaving on the order: one for every box on a boxed line and one for every can on a loose one. Each carries only the **customer** (who it is delivered to), the **product**, the **invoice number** and the **order number**. It carries no QR and no lot or box code: the box's own 50 mm label is what the desk scans, and the two stickers are never combined. Stickers print only once the invoice has been approved by the checker, and not after the order has left — before that the sheet says there is nothing to print yet.
 
-The label sheet has three buttons. **Send to printer** sends the labels straight to a USB label printer; **Save print file** saves the same printer commands as a `.prn` file; **Print…** opens the browser's print dialog. All three print exactly what the sheet shows. See [Orders → Labels](/docs/erp/orders) for how the label printer is set up.
+The sheet has three buttons. **Send to printer** sends the stickers straight to a USB label printer; **Save print file** saves the same printer commands as a `.prn` file; **Print…** opens the browser's print dialog. All three print exactly what the sheet shows. See [Orders → Dispatch stickers and labels](/docs/erp/orders) for how the label printer is set up.
 
 ## Questions people ask
 
 <Faq q="The order is not in the queue.">
-None of its lines is Ready yet, or every Ready line is already dispatch-verified. Mark the lines Ready on Orders.
+None of its lines is Ready yet, or the order has already been dispatched. Mark the lines Ready on Orders — after the back office has verified the order.
 </Faq>
-<Faq q="Mark dispatch-verified is greyed out.">
-Either a line still has boxes to scan (the panel above the button says how many), or nothing on the order is billed yet. Bill the lines on Orders → Under process & ready first.
+<Faq q="Confirm dispatch is greyed out.">
+The panel above the button says why: nothing on the order is billed yet (bill it on Orders → Ready to bill), its invoice is waiting for the checker or was rejected (Orders → Invoice check), or a line still has boxes to scan.
+</Faq>
+<Faq q="Do I have to type the vehicle number?">
+It is not required, but a bill with no vehicle goes on no trip, and Logistics lists it as *vehicle missing* so somebody can add it there.
 </Faq>
 <Faq q="I scanned a box from a different lot than the one on the order. Is that wrong?">
 No. As long as it is the same SKU, it takes the place of a box of the allocated lot, and the order's lots are updated to say so.
