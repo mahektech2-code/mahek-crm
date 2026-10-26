@@ -8,7 +8,8 @@ import { purchaseFigures, shortLabel } from "./engines/purchase";
 import { packLabel } from "./engines/trace";
 import { refValues } from "./refs";
 import { orderLines } from "./screens/sales";
-import { sfgLots } from "./stock";
+import { fgLots, packLots, sfgLots } from "./stock";
+import { boxHeadroom, looseHeadroom } from "./units";
 
 /* ---------------------------------------------------------------------------
  * WHAT EACH LABEL SAYS, read from the record. A label is never typed: every
@@ -95,12 +96,40 @@ export async function boxLabels(q: BoxQuery): Promise<BoxLabelRow[]> {
         lot: u.lotCode,
         unitWord: box ? "Box" : "Unit",
         seq: Number(u.seq),
-        of: box && pack?.boxes ? pack.boxes : null,
+        /* A box numbered past the batch's own count was given its id after the batch, for stock a count added: "Box 11 of 10" says nothing. */
+        of: box && pack?.boxes && Number(u.seq) <= pack.boxes ? pack.boxes : null,
         date: pack?.date ?? fillOf.get(u.lotCode) ?? null,
       },
       qr: qrFor(u.id),
     };
   });
+}
+
+/** Stock on a shelf that carries no id to print, per godown — and, for an FG lot, what it would be labelled as. */
+export type Unlabelled = { godownId: string; godown: string; room: number; finishedGoodId: string | null; sku: string | null };
+
+/**
+ * WHAT A BATCH OR A LOT COULD PRINT AND CANNOT: boxes of a batch packed
+ * before box ids, or cans of an FG lot nobody has labelled loose. The label
+ * sheet reads only ids, so without this it is an empty page with nothing on
+ * it saying why. The room is the screens' own — the same headroom the
+ * Packed and Finished goods stock rows offer, and the actions refuse past.
+ */
+export async function unlabelledStock(q: { batch: string } | { lot: string }): Promise<Unlabelled[]> {
+  const out: Unlabelled[] = [];
+  if ("batch" in q) {
+    for (const l of await packLots(db, { lots: [q.batch] })) {
+      const h = await boxHeadroom(db, { batchNo: l.batchNo, godownId: l.godownId, ledgerStock: l.stock });
+      if (h.room) out.push({ godownId: l.godownId, godown: l.godown, room: h.room, finishedGoodId: null, sku: l.sku });
+    }
+    return out;
+  }
+  for (const l of await fgLots(db, { lots: [q.lot] })) {
+    if (l.stock <= 0) continue;
+    const h = await looseHeadroom(db, { lotCode: l.lotCode, finishedGoodId: l.finishedGoodId, godownId: l.godownId, ledgerStock: l.stock });
+    if (h.room) out.push({ godownId: l.godownId, godown: l.godown, room: h.room, finishedGoodId: l.finishedGoodId, sku: l.skuId ? l.sku : null });
+  }
+  return out;
 }
 
 export type SfgLabelRow = { label: SfgLabel; qr: Qr };

@@ -35,7 +35,7 @@ The Stock group answers "what do we have, where is it, and where did it go?". **
 
 On the **Raw material** tab a chemical is one row per lot, as on every other tab. A can, box, drum or stationery item is **one row per godown with its total**: its Lot no column says how many lots it holds, and the arrow beside its name opens them underneath, oldest first, each with its own rate. Filling and packing do not record which lot of cans or boxes they used, so those lots are drawn down oldest first. The item's total is exact. Each lot's share of it is an estimate. **By lot** in the toolbar lists every lot as its own row instead. Searching a lot number finds the item it belongs to and opens it. The tabs above the list narrow it to one type: Chemical, Can, Box and so on.
 
-The available view lists only lots with stock above zero. An item's total is shown whenever it is not zero, so a can or box drawn below zero shows a negative total. Every row opens to the actions that apply: **Trace this lot**, **Print box labels** on a packing batch, and on a finished-goods lot **Label loose units** and **Print loose labels**.
+The available view lists only lots with stock above zero. An item's total is shown whenever it is not zero, so a can or box drawn below zero shows a negative total. Every row opens to the actions that apply: **Trace this lot**, **Print box labels** on a packing batch (and **Give these boxes ids** first on one packed before box ids), and on a finished-goods lot **Label loose units** and **Print loose labels**.
 
 ### The ⋯ menu: Stock inquiry and Adjust stock
 
@@ -71,6 +71,23 @@ The prompt starts at the cans that do not have an id yet. A lot with no loose SK
 "20 unit ids created · print them from 'Print loose labels'". Cans that will be boxed are not labelled here; they get their box's id when the packing batch completes.
 </Step>
 </Steps>
+
+### Labelling boxes packed before box ids
+
+A packing batch saved in the ERP gets one id per box the moment it is complete. A batch packed before box ids existed — everything brought over from the old sheets — has none, so **Print box labels** would have nothing to print.
+
+<Steps>
+<Step title="Open the batch on the Packed tab and press Give these boxes ids">
+Only the boxes still in stock at that godown get one, numbered from 1. Boxes that left long ago are not given ids.
+</Step>
+<Step title="Print the labels and stick one on each box">
+"3 box ids created · print the labels and stick one on each box". The same offer appears on the label sheet itself when a batch or a lot there has nothing to print.
+</Step>
+</Steps>
+
+<Callout kind="warn">
+Until its boxes have ids, the dispatch desk takes the batch's own lot QR. Once they have ids it takes only box labels, so give a batch ids when you are about to label its boxes, not before.
+</Callout>
 
 ### The entry logs
 

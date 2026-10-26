@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { getConfig } from "@/lib/config/store";
 import { erpContext } from "@/lib/erp/access";
 import { copiesOf, LABEL_MM, MAX_COPIES, type LabelKind } from "@/lib/erp/engines/labels";
-import { boxLabels, dispatchLabels, purchaseLabel, sfgLabel } from "@/lib/erp/label-data";
+import { boxLabels, dispatchLabels, purchaseLabel, sfgLabel, unlabelledStock, type Unlabelled } from "@/lib/erp/label-data";
 import type { PrinterSetup } from "@/lib/erp/engines/tspl";
 import { erpDispatchHref } from "@/lib/erp/trace-links";
 import { Button, Input } from "@/components/ui/primitives";
@@ -11,6 +11,7 @@ import { Page } from "../_ui/page-head";
 import { linkClass } from "../_ui/look";
 import { LABEL_CSS } from "./label-css";
 import { BoxLabelView, DispatchLabelView, PurchaseLabelView, SfgLabelView } from "./labels";
+import { GiveIds } from "./give-ids";
 import { LabelPrinter } from "./printer";
 
 /**
@@ -18,7 +19,10 @@ import { LabelPrinter } from "./printer";
  * label printer never receives free text.
  *
  *   ?batch=FP40NA     box labels, 50 × 50 mm — every box of a packing batch
+ *                     (one packed before box ids is offered ids for the
+ *                     boxes still in stock, which is what it then prints)
  *   ?lot=FG12NA       box labels for the labelled loose units of an FG lot
+ *                     (and cans still unlabelled are offered ids)
  *   ?ids=BX-…,BX-…    box labels for a selection
  *   ?sfg=12ASTOL1     the SFG lot's label, 80 × 80 mm (&godown= picks the godown)
  *   ?purchase=<id>    the purchased lot's label, 80 × 80 mm, one per drum
@@ -68,6 +72,7 @@ export default async function ErpLabels({ searchParams }: { searchParams: Promis
   let fileName = "labels.prn";
   let unitIds: string[] = [];
   let copiesShown: number | null = null;
+  let unlabelled: Unlabelled[] = [];
   const views: React.ReactNode[] = [];
 
   if (kind === "dispatch" && order != null) {
@@ -97,8 +102,14 @@ export default async function ErpLabels({ searchParams }: { searchParams: Promis
       for (let i = 0; i < copiesShown; i++) views.push(<PurchaseLabelView key={i} l={r.label} qr={r.qr} copy={i + 1} />);
     }
   } else {
-    const rows = batch ? await boxLabels({ batch }) : lot ? await boxLabels({ lot }) : ids.length ? await boxLabels({ ids }) : [];
+    const [rows, short] = await Promise.all([
+      batch ? boxLabels({ batch }) : lot ? boxLabels({ lot }) : ids.length ? boxLabels({ ids }) : Promise.resolve([]),
+      batch ? unlabelledStock({ batch }) : lot ? unlabelledStock({ lot }) : Promise.resolve([]),
+    ]);
+    unlabelled = short;
     title = batch ? `Box labels · batch ${batch}` : lot ? `Loose labels · lot ${lot}` : "Box labels";
+    if (batch) empty = `No box of batch ${batch} carries an id${short.length ? " yet" : ", and none is in stock to give one"}.`;
+    if (lot) empty = `No can of lot ${lot} on the shelf carries its own id${short.length ? " yet" : ", and none is in stock to give one"}.`;
     fileName = `box-labels-${batch || lot || "selection"}.prn`;
     unitIds = rows.map((r) => r.label.id);
     for (const r of rows) views.push(<BoxLabelView key={r.label.id} l={r.label} qr={r.qr} />);
@@ -156,6 +167,23 @@ export default async function ErpLabels({ searchParams }: { searchParams: Promis
           .no-print { display: none !important; }
         }
       `}</style>
+      {unlabelled.map((u) =>
+        batch ? (
+          <GiveIds key={u.godownId} kind="batch" code={batch} godownId={u.godownId} godown={u.godown} room={u.room} can={!ctx.viewingAs && (ctx.screens.has("packStock") || ctx.screens.has("packBatches"))} />
+        ) : (
+          <GiveIds
+            key={u.godownId}
+            kind="lot"
+            code={lot}
+            godownId={u.godownId}
+            godown={u.godown}
+            room={u.room}
+            can={!ctx.viewingAs && (ctx.screens.has("fgStock") || ctx.screens.has("fgFill"))}
+            finishedGoodId={u.finishedGoodId!}
+            sku={u.sku}
+          />
+        ),
+      )}
       <div className="label-sheet">{views}</div>
     </Page>
   );

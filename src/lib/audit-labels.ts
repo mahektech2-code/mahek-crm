@@ -1150,6 +1150,7 @@ export const VERBS: Record<string, string> = {
   qcApprove: "passed QC on",
   qcReject: "failed QC on",
   labelLoose: "labelled loose units of",
+  labelBoxes: "gave box ids to",
   labelPrint: "printed labels for",
 };
 
