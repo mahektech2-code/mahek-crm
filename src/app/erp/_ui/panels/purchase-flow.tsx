@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Button, Callout, cx, Input, Select, SectionLabel } from "@/components/ui/primitives";
+import { Button, Callout, checkboxClass, cx, Input, Select, SectionLabel } from "@/components/ui/primitives";
 import { ComboBox } from "@/components/ui/combo-box";
 import { stamp } from "@/lib/format";
 import { inr, inrRate, qty } from "@/lib/erp/ui";
@@ -53,6 +53,8 @@ type CreateData = {
   godowns: string[];
   terms: string[];
   money: boolean;
+  /** Other requirements this PO can carry — `PoCompanion` on the server. */
+  others: { id: string; reqNo: string | null; item: string; qty: string; unit: string; vendor: string | null; hasPrice: boolean; ratePaise: number | null }[];
 };
 type Flow = {
   id: string;
@@ -225,19 +227,32 @@ function CreatePoModal({ id, d, onClose }: { id: string; d: CreateData; onClose:
     remarks: "",
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
+  /* The other items on this PO: offered where they have no vendor yet or the one picked, the vendor's own ticked. */
+  const [also, setAlso] = useState<Record<string, { on: boolean; qty: string }>>(() =>
+    Object.fromEntries(d.others.map((o) => [o.id, { on: !!d.vendor && o.vendor === d.vendor, qty: o.qty }])),
+  );
   const { run, pending } = useAct();
   const set = (k: keyof typeof v, val: string) => setV((x) => ({ ...x, [k]: val }));
   const qty = Number(v.qty);
   const rate = d.ratePaise ?? 0;
-  const amount = Number.isFinite(qty) ? Math.round(rate * qty) : 0;
+  const eligible = d.others.filter((o) => !o.vendor || o.vendor === v.vendor);
+  const ticked = eligible.filter((o) => also[o.id]?.on);
+  const lineAmount = (q: number, r: number) => (Number.isFinite(q) ? Math.round(r * q) : 0);
+  const amount = lineAmount(qty, rate) + ticked.reduce((a, o) => a + lineAmount(Number(also[o.id].qty), o.ratePaise ?? 0), 0);
   const gst = Math.round((amount * d.gstPercent) / 100);
   const freight = Math.round((Number(v.freight) || 0) * 100);
   const vendorOk = d.vendors.some((x) => x.name === v.vendor);
+  function pickVendor(name: string) {
+    setV((x) => ({ ...x, vendor: name, terms: termsOf(name) ?? x.terms }));
+    setAlso((a) => ({ ...a, ...Object.fromEntries(d.others.filter((o) => o.vendor === name).map((o) => [o.id, { on: true, qty: a[o.id]?.qty ?? o.qty }])) }));
+  }
   function check(p: number): boolean {
     const e: Record<string, string> = {};
     if (p === 0) {
       if (!vendorOk) e.vendor = "Pick a vendor from the list";
       if (!(qty > 0)) e.qty = "Quantity is required";
+      const short = ticked.find((o) => !(Number(also[o.id].qty) > 0));
+      if (short) e.also = `${short.item}: quantity is required`;
     }
     if (p === 1) {
       if (!v.deliverTo) e.deliverTo = "Where is it delivered?";
@@ -250,14 +265,14 @@ function CreatePoModal({ id, d, onClose }: { id: string; d: CreateData; onClose:
   }
   function submit() {
     run(
-      () => erpRunAction("requisitions", "createPo", id, v),
+      () => erpRunAction("requisitions", "createPo", id, { ...v, also: JSON.stringify(ticked.map((o) => ({ id: o.id, qty: also[o.id].qty }))) }),
       (r) => {
         if (r.ok) onClose();
         else {
           const f = r.fieldErrors ?? [];
           if (f.length) {
             setErrors(Object.fromEntries(f.map((x) => [x.field, x.message])));
-            setPage(f.some((x) => x.field === "vendor" || x.field === "qty") ? 0 : 1);
+            setPage(f.some((x) => x.field === "vendor" || x.field === "qty" || x.field === "also") ? 0 : 1);
           }
         }
       },
@@ -282,7 +297,7 @@ function CreatePoModal({ id, d, onClose }: { id: string; d: CreateData; onClose:
                 label="Vendor"
                 value={v.vendor}
                 options={d.vendors.map((x) => x.name)}
-                onChange={(name) => setV((x) => ({ ...x, vendor: name, terms: termsOf(name) ?? x.terms }))}
+                onChange={pickVendor}
                 placeholder="Search the vendors"
                 emptyHint="No vendor by that name"
               />
@@ -299,6 +314,43 @@ function CreatePoModal({ id, d, onClose }: { id: string; d: CreateData; onClose:
                 {err("qty") ?? <span className="text-meta text-muted">From the requirement; change it if the vendor packs differently.</span>}
               </label>
             </div>
+            {eligible.length ? (
+              <div className="grid gap-1.5">
+                <span className={labelClass}>Also on this PO</span>
+                <div className="overflow-hidden rounded-control border border-line">
+                  {eligible.map((o) => (
+                    <div key={o.id} className="flex items-center gap-3 border-b border-divider px-3 py-2 last:border-b-0">
+                      <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+                        <input
+                          type="checkbox"
+                          className={checkboxClass}
+                          checked={!!also[o.id]?.on}
+                          onChange={(e) => setAlso((a) => ({ ...a, [o.id]: { on: e.target.checked, qty: a[o.id]?.qty ?? o.qty } }))}
+                        />
+                        <span className="min-w-0 text-sm text-ink">
+                          {o.item}
+                          <span className="block text-meta text-muted">{[o.reqNo, o.vendor ? `vendor ${o.vendor}` : "no vendor yet"].filter(Boolean).join(" · ")}</span>
+                        </span>
+                      </label>
+                      <Input
+                        inputMode="decimal"
+                        aria-label={`Quantity of ${o.item}`}
+                        className="w-24"
+                        value={also[o.id]?.qty ?? o.qty}
+                        disabled={!also[o.id]?.on}
+                        onChange={(e) => setAlso((a) => ({ ...a, [o.id]: { on: true, qty: e.target.value } }))}
+                      />
+                      <span className="w-10 text-meta text-muted">{o.unit}</span>
+                    </div>
+                  ))}
+                </div>
+                {err("also") ?? (
+                  <span className="text-meta text-muted">
+                    Other requirements ready for a PO, with no vendor yet or with {v.vendor || "the vendor picked"}. Each is ordered at its own price in Raw materials.
+                  </span>
+                )}
+              </div>
+            ) : null}
           </div>
         ) : page === 1 ? (
           <div className="grid gap-3">
@@ -335,7 +387,10 @@ function CreatePoModal({ id, d, onClose }: { id: string; d: CreateData; onClose:
                   </dd>
                 </div>
               </dl>
-              <div className="px-3 pb-2.5 text-meta text-muted">The rate is the price on the item in Masters → Raw materials. An item with no price there is ordered at ₹0.</div>
+              <div className="px-3 pb-2.5 text-meta text-muted">
+                The rate is the price on the item in Masters → Raw materials. An item with no price there is ordered at ₹0.
+                {ticked.length ? ` The ${ticked.length === 1 ? "other item is" : `${ticked.length} other items are`} each ordered at ${ticked.length === 1 ? "its" : "their"} own price — the review shows every line.` : ""}
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <label className="grid gap-1">
@@ -395,27 +450,40 @@ function CreatePoModal({ id, d, onClose }: { id: string; d: CreateData; onClose:
                 <span className="text-right">Rate</span>
                 <span className="text-right">Total</span>
               </div>
-              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 px-3 py-2">
-                <span className="text-ink">{d.item}</span>
-                <span className="text-right tabular-nums">
-                  {count(v.qty)} {d.unit}
-                </span>
-                <span className="text-right tabular-nums">{d.money ? (d.hasPrice ? inrRate(rate) : "₹0") : "—"}</span>
-                <span className="text-right font-semibold tabular-nums">{d.money ? inr(amount + gst + freight) : "—"}</span>
-              </div>
+              {[
+                { key: id, item: d.item, q: v.qty, unit: d.unit, hasPrice: d.hasPrice, r: rate },
+                ...ticked.map((o) => ({ key: o.id, item: o.item, q: also[o.id].qty, unit: o.unit, hasPrice: o.hasPrice, r: o.ratePaise ?? 0 })),
+              ].map((l) => {
+                const a = lineAmount(Number(l.q), l.r);
+                return (
+                  <div key={l.key} className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 border-b border-divider px-3 py-2 last:border-b-0">
+                    <span className="text-ink">{l.item}</span>
+                    <span className="text-right tabular-nums">
+                      {count(l.q)} {l.unit}
+                    </span>
+                    <span className="text-right tabular-nums">{d.money ? (l.hasPrice ? inrRate(l.r) : "₹0") : "—"}</span>
+                    <span className="text-right font-semibold tabular-nums">{d.money ? inr(a + Math.round((a * d.gstPercent) / 100)) : "—"}</span>
+                  </div>
+                );
+              })}
               {d.money ? (
                 <div className="border-t border-divider bg-canvas px-3 py-2 text-right text-body">
                   Amount {inr(amount)} · GST {d.gstPercent}% {inr(gst)}
-                  {freight ? ` · freight ${inr(freight)}` : ""}
+                  {freight ? ` · freight ${inr(freight)}` : ""} · <span className="font-semibold text-ink">total {inr(amount + gst + freight)}</span>
                 </div>
               ) : null}
             </div>
-            {!d.hasPrice ? (
-              <Callout tone="warn" className="mb-0 block">
-                <div className="font-semibold text-warn-ink">No price on this item in Raw materials</div>
-                <div className="text-meta text-body">The PO is created at ₹0. Add the price on the item to order it at a rate next time.</div>
-              </Callout>
-            ) : null}
+            {(() => {
+              const unpriced = [...(d.hasPrice ? [] : [d.item]), ...ticked.filter((o) => !o.hasPrice).map((o) => o.item)];
+              return unpriced.length ? (
+                <Callout tone="warn" className="mb-0 block">
+                  <div className="font-semibold text-warn-ink">No price in Raw materials for {unpriced.length === 1 ? unpriced[0] : `${unpriced.length} items`}</div>
+                  <div className="text-meta text-body">
+                    {unpriced.length === 1 ? "It is" : `${unpriced.join(", ")} are`} ordered at ₹0. Add the price on the item to order it at a rate next time.
+                  </div>
+                </Callout>
+              ) : null;
+            })()}
             <Callout tone="brand" className="mb-0 block text-brand-hover">
               On save the PO number is made from the PO series. No approval — it is ready to send to the vendor and receive against.
             </Callout>

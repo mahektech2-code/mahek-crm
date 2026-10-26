@@ -43,7 +43,7 @@ import { erpNavCounts } from "@/lib/erp/counts";
 import { invalidateConfig } from "@/lib/config/store";
 import { approvedPo } from "@/lib/erp/po-fixture";
 import { applyQuoteOps } from "@/lib/erp/quotes";
-import { lookupRequirementPo } from "@/lib/erp/screens/requirement-po";
+import { lookupRequirementPo, purchaseChoices } from "@/lib/erp/screens/requirement-po";
 import type { GrnItem } from "@/lib/erp/engines/grn-pick";
 import type { ShareOutcome } from "@/lib/erp/ui";
 
@@ -868,6 +868,43 @@ describe("Purchase it on the Quotation manager writes the purchase order", () =>
     assert.equal(back.status, "Pending", "a requirement somebody raised is never cancelled by an undo");
   });
 
+  test("a second material from the same party goes on the same PO, and undoing one keeps the other", async () => {
+    const a = await as(admin);
+    await db.insert(erpQuoteRows).values([
+      { id: "eqr_asianm", quoteDate: "2026-10-19", party: "Asian Solvents", supplierId: "sup_a" },
+      { id: "eqr_asianm2", quoteDate: "2026-10-19", party: "Asian Solvents", supplierId: "sup_a" },
+      { id: "eqr_bharatm", quoteDate: "2026-10-19", party: "Bharat Chemicals", supplierId: "sup_b" },
+    ]);
+    await db.insert(erpQuoteCells).values([
+      { rowId: "eqr_asianm", columnId: "eqc_toluene", value: "104", status: "ready" },
+      { rowId: "eqr_asianm", columnId: "eqc_mekdrum", value: "92", status: "ready" },
+      { rowId: "eqr_asianm2", columnId: "eqc_toluene", value: "103", status: "ready" },
+      { rowId: "eqr_bharatm", columnId: "eqc_mekdrum", value: "89", status: "ready" },
+    ]);
+    const first = await applyQuoteOps(a, [{ op: "cell", rowId: "eqr_asianm", columnId: "eqc_toluene", status: "po", drums: 2, order: order() }]);
+    assert.ok(first.ok, JSON.stringify(first));
+    const poNo = first.data.minted[0].poNo;
+    const offered = (await purchaseChoices(a)).openPos.find((p) => p.poNo === poNo);
+    assert.ok(offered && offered.vendor === "Asian Solvents" && offered.materialIds.includes("rm_tol"), "the dialog offers it for the party's next material");
+
+    const second = await applyQuoteOps(a, [{ op: "cell", rowId: "eqr_asianm", columnId: "eqc_mekdrum", status: "po", drums: 1, order: order({ qty: 150, addTo: poNo }) }]);
+    assert.ok(second.ok, JSON.stringify(second));
+    assert.equal(second.data.minted[0].poNo, poNo, "no new number");
+    const po = await poOf(poNo);
+    const lines = await db.select().from(erpPoLines).where(eq(erpPoLines.poId, po.id)).orderBy(erpPoLines.sortOrder);
+    assert.deepEqual(lines.map((l) => [l.rawMaterialId, l.quantity]), [["rm_tol", 300], ["rm_mek", 150]]);
+
+    const again = await applyQuoteOps(a, [{ op: "cell", rowId: "eqr_asianm2", columnId: "eqc_toluene", status: "po", drums: 1, order: order({ addTo: poNo }) }]);
+    assert.ok(!again.ok, "a PO carries a material once");
+    const other = await applyQuoteOps(a, [{ op: "cell", rowId: "eqr_bharatm", columnId: "eqc_mekdrum", status: "po", drums: 1, order: order({ addTo: poNo }) }]);
+    assert.ok(!other.ok, "never onto another vendor's PO");
+
+    assert.ok((await applyQuoteOps(a, [{ op: "cell", rowId: "eqr_asianm", columnId: "eqc_toluene", status: "ready", poNo: null }])).ok);
+    const kept = await poOf(poNo);
+    assert.equal(kept.status, "Sent", "the PO stays for the material still on it");
+    assert.deepEqual((await db.select().from(erpPoLines).where(eq(erpPoLines.poId, kept.id))).map((l) => l.rawMaterialId), ["rm_mek"]);
+  });
+
   test("a row whose party is not a supplier is refused, and nothing is bought", async () => {
     const a = await as(admin);
     await db.insert(erpQuoteRows).values({ id: "eqr_stranger", quoteDate: "2026-10-18", party: "Somebody New" });
@@ -877,5 +914,48 @@ describe("Purchase it on the Quotation manager writes the purchase order", () =>
     const [cell] = await db.select().from(erpQuoteCells).where(sql`row_id = 'eqr_stranger'`);
     assert.equal(cell.status, "ready");
     assert.equal(cell.poNo, null);
+  });
+});
+
+describe("Create PO puts the vendor's other items on the same PO", () => {
+  test("one requirement of several items becomes one PO; an item already given another vendor is refused", async () => {
+    /* Items of this test's own, so nothing another test did to an item's vendor or price moves it. */
+    await db.insert(erpRawMaterials).values([
+      { id: "rm_lid", serialNo: 90, name: "Tin Lid", code: "LID1", unit: "Unit", materialType: "Box", testingList: [], purchaseMethod: "direct", preferredSupplierId: "sup_a", pricePaise: 300 },
+      { id: "rm_seal", serialNo: 91, name: "Seal Ring", code: "SEAL1", unit: "Unit", materialType: "Box", testingList: [], purchaseMethod: "direct" },
+    ]);
+    const c = await as(clerk);
+    const raised = await mod("requisitions").forms!.new(c, { date: TODAY, requiredBy: "2099-12-01", department: "Production Head", godown: "Bhiwandi", priority: "Medium" }, [
+      { item: "Tin Lid", required: "100" },
+      { item: "Seal Ring", required: "300" },
+      { item: "Plain Carton", required: "40" },
+    ]);
+    assert.ok(raised.ok, JSON.stringify(raised));
+    const mine = await db.select().from(erpRequisitions).where(sql`required_by = '2099-12-01'`);
+    const of = (rm: string) => mine.find((r) => r.rawMaterialId === rm)!;
+    assert.equal(new Set(mine.map((r) => r.reqNo)).size, 1, "one requirement number for its items");
+    assert.deepEqual([of("rm_lid").supplierId, of("rm_seal").supplierId, of("rm_plain").supplierId], ["sup_a", null, "sup_b"]);
+
+    const a = await as(admin);
+    const { rows } = await mod("requisitions").load(a);
+    const panel = rows.find((r) => r.id === of("rm_lid").id)!.panel as { data: { entry: { create: { others: { id: string; vendor: string | null }[] } } } };
+    const offered = new Map(panel.data.entry.create.others.map((o) => [o.id, o.vendor]));
+    assert.ok(offered.has(of("rm_seal").id) && offered.get(of("rm_plain").id) === "Bharat Chemicals", "Create PO offers the requirement's other items, with the vendor each already has");
+
+    const base = { vendor: "Asian Solvents", qty: "100", deliverTo: "Bhiwandi", deliveryDate: "2099-12-01", terms: "30 days credit" };
+    const wrong = await mod("requisitions").actions!.createPo(a, of("rm_lid").id, { ...base, also: JSON.stringify([{ id: of("rm_plain").id, qty: "40" }]) });
+    assert.ok(!wrong.ok && wrong.fieldErrors?.[0].field === "also" && /Bharat Chemicals/.test(wrong.fieldErrors[0].message), JSON.stringify(wrong));
+
+    const r = await mod("requisitions").actions!.createPo(a, of("rm_lid").id, { ...base, also: JSON.stringify([{ id: of("rm_seal").id, qty: "250" }]) });
+    assert.ok(r.ok && /2 items/.test(r.message ?? ""), JSON.stringify(r));
+    const poId = (r.data as { poId: string }).poId;
+    const lines = await db.select().from(erpPoLines).where(eq(erpPoLines.poId, poId)).orderBy(erpPoLines.sortOrder);
+    assert.deepEqual(lines.map((l) => [l.rawMaterialId, l.quantity, l.ratePaise]), [["rm_lid", 100, 300], ["rm_seal", 250, 0]], "each at its own item's price");
+    for (const rm of ["rm_lid", "rm_seal"]) {
+      const [x] = await db.select().from(erpRequisitions).where(eq(erpRequisitions.id, of(rm).id));
+      assert.equal(x.status, "Order Placed");
+      assert.equal(x.supplierId, "sup_a");
+    }
+    assert.equal((await db.select().from(erpRequisitions).where(eq(erpRequisitions.id, of("rm_plain").id)))[0].status, "Pending", "the item left off stays waiting");
   });
 });

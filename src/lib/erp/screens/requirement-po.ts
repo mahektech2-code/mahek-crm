@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { erpGodowns, erpPoLines, erpPurchaseOrders, erpQuoteColumns, erpQuoteRows, erpRawMaterials, erpRequisitions, erpSuppliers } from "@/db/schema";
 import { getConfig } from "@/lib/config/store";
@@ -58,6 +58,27 @@ function routeAllows(v: ReqView, want: "link" | "create"): Result<never> | null 
   return want === "link"
     ? err("This item is a direct purchase — create its PO here; it is not bought on the Quotation manager.", "rule_violation")
     : err("This item is bought by quotation — buy it on the Quotation manager and link the PO number it made.", "rule_violation");
+}
+
+/**
+ * Whether Create PO may take this requirement, for this person — the same two
+ * checks the action itself makes, so what the dialog offers to put on a PO and
+ * what saving it accepts are one rule.
+ */
+export function createPoReady(ctx: ErpContext, v: ReqView): boolean {
+  return !poRefusal(ctx, v) && !routeAllows(v, "create");
+}
+
+/** The other items Create PO puts on the same PO: `values.also`, JSON `[{ id, qty }]`. */
+function readAlso(raw: string | undefined): { id: string; qty: number }[] | null {
+  if (!raw?.trim()) return [];
+  try {
+    const xs = JSON.parse(raw) as unknown;
+    if (!Array.isArray(xs)) return null;
+    return xs.map((x) => ({ id: String((x as { id?: unknown }).id ?? ""), qty: Number((x as { qty?: unknown }).qty) }));
+  } catch {
+    return null;
+  }
 }
 
 /** Every Quotation manager cell recorded under this PO number, with what each needs to be checked. */
@@ -294,6 +315,14 @@ export async function itemPricePaise(rawMaterialId: string): Promise<number | nu
  * Creates the PO for a direct-purchase requirement. The rate is the item's
  * price in Raw materials and is never read from the request; no price is ₹0.
  * No approval: the PO is Approved, ready to send and receive against.
+ *
+ * AND THE VENDOR'S OTHER ITEMS ON THE SAME PO. It used to make a PO of one
+ * item, always: a requirement of four packing materials for one vendor became
+ * four POs, or one PO and three items still waiting — PO-16 carried the 10 L
+ * cans while the .50 L cans for the same vendor, ready the same minute, sat
+ * behind it. `values.also` names the other requirements to put on it, each
+ * checked exactly as this one is, at its own item's price; one already given
+ * to another vendor is refused rather than moved.
  */
 export async function createRequirementPo(ctx: ErpContext, id: string, values: Record<string, string>): Promise<Result<unknown>> {
   if (!ctx.screens.has("purchaseOrders")) return err("Purchase orders is not on your account.", "not_permitted");
@@ -316,10 +345,26 @@ export async function createRequirementPo(ctx: ErpContext, id: string, values: R
   if (freight < 0) return fieldErr("freight", "Minus Quantity Not Allowed");
   const rate = (await itemPricePaise(v!.r.rawMaterialId!)) ?? 0;
   const gstBp = (await getConfig())["erp.purchase.poGstPercent"] * 100;
+  const alsoIn = readAlso(values.also);
+  if (!alsoIn) return fieldErr("also", "The other items could not be read — open Create PO again");
+  const others: { v: ReqView; qty: number; rate: number }[] = [];
+  if (alsoIn.length) {
+    if (new Set(alsoIn.map((a) => a.id)).size !== alsoIn.length || alsoIn.some((a) => a.id === id)) return fieldErr("also", "An item is on the PO twice");
+    const views = new Map((await requirementViews({ ids: alsoIn.map((a) => a.id) })).map((x) => [x.r.id, x]));
+    for (const a of alsoIn) {
+      const o = views.get(a.id);
+      const why = poRefusal(ctx, o) ?? routeAllows(o!, "create");
+      if (why) return fieldErr("also", `${o?.item ?? "An item"}: ${why.ok ? "" : why.error}`);
+      if (o!.r.supplierId && o!.r.supplierId !== vendor.id) return fieldErr("also", `${o!.item} is for ${o!.supplier ?? "another vendor"}, not ${vendor.name}`);
+      if (!Number.isFinite(a.qty) || a.qty <= 0) return fieldErr("also", `${o!.item}: quantity is required`);
+      others.push({ v: o!, qty: a.qty, rate: (await itemPricePaise(o!.r.rawMaterialId!)) ?? 0 });
+    }
+  }
   const poId = erpId("po");
   let number = 0;
   const res = await inTx(async (tx) => {
     await lockRequirement(tx, id);
+    for (const o of others) await lockRequirement(tx, o.v.r.id);
     number = await nextNumber(tx, "po");
     await tx.insert(erpPurchaseOrders).values({
       id: poId,
@@ -339,16 +384,33 @@ export async function createRequirementPo(ctx: ErpContext, id: string, values: R
       createdById: ctx.user.id,
       updatedById: ctx.user.id,
     });
-    await tx.insert(erpPoLines).values({ id: erpId("pol"), poId, requisitionId: id, rawMaterialId: v!.r.rawMaterialId!, quantity: qty, unit: v!.r.unit, ratePaise: rate, gstBp, sortOrder: 0 });
+    const lines = [{ v: v!, qty, rate }, ...others];
+    await tx.insert(erpPoLines).values(
+      lines.map((l, i) => ({ id: erpId("pol"), poId, requisitionId: l.v.r.id, rawMaterialId: l.v.r.rawMaterialId!, quantity: l.qty, unit: l.v.r.unit, ratePaise: l.rate, gstBp, sortOrder: i })),
+    );
     await tx
       .update(erpRequisitions)
       .set({ method: "direct", supplierId: vendor.id, status: "Order Placed", vendorSelectedAt: new Date(), vendorSelectedById: ctx.user.id, updatedAt: new Date(), updatedById: ctx.user.id })
-      .where(eq(erpRequisitions.id, id));
+      .where(inArray(erpRequisitions.id, lines.map((l) => l.v.r.id)));
     await refreshPurchaseOrder(tx, poId);
-    const t = poTotals([{ quantity: qty, ratePaise: rate, gstBp }], freight);
-    return ok({ poId }, `${poLabel(number)} created · ${vendor.name} · ${inr(t.totalPaise)}${rate ? "" : " — no price on the item"} · send it to the vendor`);
+    const t = poTotals(lines.map((l) => ({ quantity: l.qty, ratePaise: l.rate, gstBp })), freight);
+    const unpriced = lines.filter((l) => !l.rate).length;
+    return ok(
+      { poId },
+      lines.length === 1
+        ? `${poLabel(number)} created · ${vendor.name} · ${inr(t.totalPaise)}${rate ? "" : " — no price on the item"} · send it to the vendor`
+        : `${poLabel(number)} created · ${vendor.name} · ${lines.length} items · ${inr(t.totalPaise)}${unpriced ? ` — ${unpriced === 1 ? "an item has" : `${unpriced} items have`} no price` : ""} · send it to the vendor`,
+    );
   });
-  if (res.ok) await erpAudit(ctx, "erp.requisition.createPo", "erp_requisition", id, null, { poId, number, vendor: vendor.name, ratePaise: rate, qty });
+  if (res.ok)
+    await erpAudit(ctx, "erp.requisition.createPo", "erp_requisition", id, null, {
+      poId,
+      number,
+      vendor: vendor.name,
+      ratePaise: rate,
+      qty,
+      ...(others.length ? { alsoOnPo: others.map((o) => ({ requisition: o.v.r.id, item: o.v.item, qty: o.qty, ratePaise: o.rate })) } : {}),
+    });
   return res;
 }
 
@@ -365,8 +427,30 @@ export async function createRequirementPo(ctx: ErpContext, id: string, values: R
  * Undoing the purchase takes the PO back while nothing has been received.
  * =================================================================== */
 
-/** What the purchase dialog asks besides the drums. */
-export type QuoteOrder = { requisitionId?: string | null; qty: number; godown: string; deliveryDate: string };
+/**
+ * What the purchase dialog asks besides the drums. `addTo` is an open PO of the
+ * same vendor's, made on the Quotation manager, to put this purchase on as
+ * another line instead of taking a new number — several materials bought from
+ * one party are one PO, as they are on paper.
+ */
+export type QuoteOrder = { requisitionId?: string | null; qty: number; godown: string; deliveryDate: string; addTo?: string | null };
+
+/** The statuses a Quotation manager PO can still take another line in: sent or approved, and not finished with. */
+const JOINABLE_PO = ["Approved", "Sent", "Partly received"];
+
+/** An open Quotation manager PO a purchase may be added to, for the dialog. */
+export type OpenQuotePo = { poNo: string; supplierId: string; vendor: string; items: string[]; materialIds: string[]; date: string };
+
+/** The stored PO number a purchase may be added to, or null where it is not an open Quotation manager PO. */
+export async function joinablePoNumber(tx: Tx, poNo: string): Promise<string | null> {
+  const [po] = (await tx.execute(sql`
+    select qm_po_no as n from erp_purchase_orders
+     where upper(qm_po_no) = ${normalisePoNo(poNo)} and source = 'quotation_manager'
+       and status in (${sql.join(JOINABLE_PO.map((x) => sql`${x}`), sql`, `)})
+     limit 1
+  `)) as unknown as { n: string }[];
+  return po?.n ?? null;
+}
 
 /** The remark a requirement raised by a Quotation manager purchase carries, so undoing the purchase cancels it. */
 export const QM_RAISED_REMARK = "Raised by a purchase on the Quotation manager";
@@ -380,6 +464,8 @@ export type PurchaseChoices = {
   /** Each raw material's purchase unit. */
   units: Record<string, string>;
   openRequirements: OpenRequirement[];
+  /** Open Quotation manager POs a purchase may be added to, newest first — the dialog shows the row's vendor's. */
+  openPos: OpenQuotePo[];
 };
 
 /** Why a requirement cannot take a Quotation manager purchase; null where it can. */
@@ -420,11 +506,26 @@ export async function purchaseChoices(ctx: ErpContext): Promise<PurchaseChoices>
       requiredBy: v.r.requiredBy,
     }))
     .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
+  const pos = (await db.execute(sql`
+    select o.qm_po_no as "poNo", o.supplier_id as "supplierId", s.name as vendor, o.po_date::text as date,
+           coalesce(array_agg(m.name order by l.sort_order) filter (where m.name is not null), '{}') as items,
+           coalesce(array_agg(l.raw_material_id) filter (where l.raw_material_id is not null), '{}') as "materialIds"
+      from erp_purchase_orders o
+      join erp_suppliers s on s.id = o.supplier_id
+      left join erp_po_lines l on l.po_id = o.id
+      left join erp_raw_materials m on m.id = l.raw_material_id
+     where o.source = 'quotation_manager' and o.qm_po_no is not null
+       and o.status in (${sql.join(JOINABLE_PO.map((x) => sql`${x}`), sql`, `)})
+     group by o.id, s.name
+     order by o.created_at desc
+     limit 200
+  `)) as unknown as OpenQuotePo[];
   return {
     godowns: gds.map((g) => g.name),
     defaultGodown: ctx.workingGodown?.name ?? null,
     units: Object.fromEntries(mats.map((m) => [m.id, purchaseUnit(m.unit, m.type)])),
     openRequirements,
+    openPos: pos.map((p) => ({ ...p, items: Array.isArray(p.items) ? p.items.map(String) : [], materialIds: Array.isArray(p.materialIds) ? p.materialIds.map(String) : [] })),
   };
 }
 
