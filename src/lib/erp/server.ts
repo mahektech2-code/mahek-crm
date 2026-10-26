@@ -91,19 +91,26 @@ export async function erpAudit(
   before?: unknown,
   after?: unknown,
 ): Promise<void> {
-  await db.insert(auditLog).values({
+  /* A bulk action passes its ids joined by commas, and they are written ONE ROW
+     EACH. Joined into one entity_id, "All reached" on 244 bills was a 5 kB key
+     — past the btree limit on audit_entity_idx, so the insert threw after the
+     work had already committed and the screen reported a failure. One row per
+     record is also what "who changed this bill" actually asks for. */
+  const ids = entityId?.includes(",") ? [...new Set(entityId.split(",").map((s) => s.trim()).filter(Boolean))] : [entityId];
+  const rows: (typeof auditLog.$inferInsert)[] = (ids.length ? ids : [null]).map((id) => ({
     id: `aud_${randomUUID().slice(0, 12)}`,
     /* The person signed in — never whoever a preview is showing the ERP as. */
     actorId: ctx.actor.id,
     action,
     entityType,
-    entityId,
+    entityId: id,
     /* The hat in force is the previewed one while previewing, so it is not the actor's. */
     actorRole: ctx.viewingAs ? null : (ctx.level ?? null),
     actorApp: "erp",
     beforeState: (before ?? null) as never,
     afterState: (after ?? null) as never,
-  });
+  }));
+  for (let i = 0; i < rows.length; i += 500) await db.insert(auditLog).values(rows.slice(i, i + 500));
 }
 
 /* ------------------------------------------------------------ small parsers */
