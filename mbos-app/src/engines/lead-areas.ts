@@ -45,16 +45,31 @@ export function areaRule(
   const choices: AreaChoice[] = [];
   for (const t of territory.areas) {
     const parent = t.parent?.trim() || null;
+    /* A TOWN's parent is "District, State" and a DISTRICT's is its state —
+       the reviewed location tree the office now allocates from. A town picks
+       itself like a city; a district, like a state, still asks for the town.
+       Read as a state, which is what an unknown kind fell through to, a
+       district chip filed the lead in a state called "Thane". */
+    const at = parent ? parent.lastIndexOf(',') : -1;
+    const townState = parent && at >= 0 ? parent.slice(at + 1).trim() : null;
+    const townDistrict = parent && at >= 0 ? parent.slice(0, at).trim() : parent;
     const choice: AreaChoice =
       t.kind === 'city'
         ? { key: '', label: parent ? `${t.value} · ${parent}` : t.value, city: t.value, area: null, state: parent }
-        : t.kind === 'beat'
-          ? { key: '', label: parent ? `${t.value} · ${parent}` : t.value, city: parent, area: t.value, state: null }
-          : { key: '', label: t.value, city: null, area: null, state: t.value };
+        : t.kind === 'town'
+          ? { key: '', label: townDistrict ? `${t.value} · ${townDistrict}` : t.value, city: t.value, area: null, state: townState }
+          : t.kind === 'district'
+            ? { key: '', label: parent ? `${t.value} district · ${parent}` : `${t.value} district`, city: null, area: null, state: parent }
+            : t.kind === 'beat'
+              ? { key: '', label: parent ? `${t.value} · ${parent}` : t.value, city: parent, area: t.value, state: null }
+              : { key: '', label: t.value, city: null, area: null, state: t.value };
     choice.key = `${t.kind}|${t.value}|${parent ?? ''}`.toLowerCase();
     /* A state allocated twice — once as his working area and once as a
        manager's region row — is one choice, not two identical chips. */
-    const dedupe = choice.city === null && choice.area === null ? `state|${t.value}`.toLowerCase() : choice.key;
+    const dedupe =
+      choice.city === null && choice.area === null && t.kind !== 'district'
+        ? `state|${t.value}`.toLowerCase()
+        : choice.key;
     if (seen.has(dedupe)) continue;
     seen.add(dedupe);
     choices.push(choice);

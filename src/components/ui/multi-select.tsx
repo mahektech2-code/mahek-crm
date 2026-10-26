@@ -41,6 +41,7 @@ export function MultiSelect({
   className,
   title,
   everythingIsAll = true,
+  triggerLabel,
 }: {
   /** Not drawn — read by screen readers and used as the trigger's accessible name. */
   label: string;
@@ -58,6 +59,12 @@ export function MultiSelect({
    * says "2 selected" rather than the placeholder.
    */
   everythingIsAll?: boolean;
+  /**
+   * Fixed words on the closed trigger, in place of the summary. A picker
+   * that draws its picks as chips beside the trigger passes "Add states" —
+   * the summary would only repeat the chip next to it.
+   */
+  triggerLabel?: string;
 }) {
   const [at, setAt] = React.useState<{ top: number; left: number; width: number } | null>(
     null,
@@ -126,8 +133,9 @@ export function MultiSelect({
     ? options.filter((o) => o.label.toLowerCase().includes(term.trim().toLowerCase()))
     : options;
 
-  const summary =
-    selected.length === 0 || (everythingIsAll && selected.length === options.length)
+  const summary = triggerLabel
+    ? triggerLabel
+    : selected.length === 0 || (everythingIsAll && selected.length === options.length)
       ? placeholder
       : selected.length === 1
         ? (options.find((o) => o.value === selected[0])?.label ?? placeholder)

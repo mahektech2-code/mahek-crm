@@ -129,10 +129,46 @@ export function placeLabel(tree: TreeIndex, id: string): string {
   return up ? `${n.name} (${up.name})` : n.name;
 }
 
-/** Does one allocated territory reach one picked place? */
+/**
+ * A `town` row's parent is "District, State" — `townParent` in
+ * `territory-rules.ts`, restated here because an engine imports no SQL.
+ */
+function townPath(parent: string): { district: string; state: string } {
+  const at = parent.lastIndexOf(",");
+  return at < 0
+    ? { district: parent.trim(), state: "" }
+    : { district: parent.slice(0, at).trim(), state: parent.slice(at + 1).trim() };
+}
+
+/**
+ * Does one allocated territory reach one picked place?
+ *
+ * It does where the territory sits INSIDE the place: a state's holiday is
+ * every district and town in it, a district's is every town in it, and a
+ * town's is that town. A holiday for one town never reaches somebody given the
+ * whole district, for the same reason it never reached somebody given the
+ * whole state — the day is that town's, and he works all the others.
+ */
 export function territoryReaches(t: TerritoryRow, place: PlaceNode, tree: TreeIndex): boolean {
   const state = place.kind === "state" ? place : tree.ancestor(place.id, "state");
   const stateName = state?.name ?? "";
+
+  /* District and town rows name nodes of this same tree, so they are compared
+     on its own path rather than through the typed-city lookups below. */
+  if (t.kind === "district" || t.kind === "town") {
+    const path =
+      t.kind === "district"
+        ? { district: t.value, state: t.parent }
+        : { ...townPath(t.parent), town: t.value };
+    if (!stateName || !sameState(path.state, stateName)) return false;
+    if (place.kind === "state") return true;
+    const district = place.kind === "district" ? place : tree.ancestor(place.id, "district");
+    if (!district || !sameName(path.district, district.name)) return false;
+    if (place.kind === "district") return true;
+    if (place.kind === "city") return "town" in path && sameName(path.town, place.name);
+    return false;
+  }
+
   const statesOfCity = (name: string) => tree.cityStates.get(placeKey(name)) ?? new Set<string>();
   /* A city is in this state where its row says so, or — where the row states
      no parent — where the tree knows that city name only inside it. */

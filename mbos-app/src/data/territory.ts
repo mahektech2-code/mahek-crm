@@ -37,7 +37,9 @@ export async function myAreas(): Promise<MyAreas> {
 
 /** How an area reads on a chip: "Pune, Maharashtra" for a city, "Goa" for a state. */
 export function areaLabel(a: Area): string {
-  return a.parent ? a.value + ', ' + a.parent : a.value;
+  /* A district says so: Thane district and the town of Thane are both areas. */
+  const name = a.kind === 'district' ? a.value + ' district' : a.value;
+  return a.parent ? name + ', ' + a.parent : name;
 }
 
 export type TerritoryRequest = {

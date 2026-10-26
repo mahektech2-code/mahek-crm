@@ -87,3 +87,27 @@ describe("holiday audience", () => {
     assert.equal(audienceLabel(rule({ level: "people", include: ["a", "b"] }), tree), "2 named people");
   });
 });
+
+describe("holiday audience — district and town allocations", () => {
+  /* Picked from the tree itself by the "Where they work" dialog, so they are
+     compared on the tree's own path: a district's state, a town's district. */
+  const TREE_PEOPLE: HolidayPerson[] = [
+    { id: "dist", territories: [{ kind: "district", value: "Cuttack", parent: "Odisha" }] },
+    { id: "town", territories: [{ kind: "town", value: "Choudwar", parent: "Cuttack, Odisha" }] },
+    { id: "elsewhere", territories: [{ kind: "district", value: "Nagpur", parent: "Maharashtra" }] },
+  ];
+
+  test("a state's holiday reaches a district and a town inside it", () => {
+    assert.deepEqual(who(resolveHoliday(rule({ level: "state", placeIds: ["od"] }), TREE_PEOPLE, tree)), ["dist", "town"]);
+  });
+
+  test("a district's holiday reaches that district and the towns in it", () => {
+    assert.deepEqual(who(resolveHoliday(rule({ level: "district", placeIds: ["d-ctc"] }), TREE_PEOPLE, tree)), ["dist", "town"]);
+    assert.deepEqual(who(resolveHoliday(rule({ level: "district", placeIds: ["d-kh"] }), TREE_PEOPLE, tree)), []);
+  });
+
+  test("a town's holiday reaches that town and not the whole district around it", () => {
+    assert.deepEqual(who(resolveHoliday(rule({ level: "city", placeIds: ["c-chw"] }), TREE_PEOPLE, tree)), ["town"]);
+    assert.deepEqual(who(resolveHoliday(rule({ level: "city", placeIds: ["c-ctc"] }), TREE_PEOPLE, tree)), []);
+  });
+});

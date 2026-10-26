@@ -1,4 +1,7 @@
-import { stateKey, stateVariants } from "@/lib/india-states";
+import { canonicalState, stateKey, stateVariants } from "@/lib/india-states";
+import { matchesTerritory, type TerritoryKind } from "@/lib/territory-rules";
+import { treeNamesFor } from "@/lib/place-tree";
+import { placeIndexFor } from "@/lib/services/place-tree-service";
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
@@ -1429,7 +1432,22 @@ export async function leadManagerCandidates(
      comma-separated field is what is compared. */
   const leadState = stateKey(region);
   const leadCity = (city ?? "").split(",")[0].trim().toLowerCase();
+  /* A district or town row is matched on the reviewed tree, so the lead's
+     town is placed there first — read only when somebody holds such a row. */
+  const index = await placeIndexFor(territories);
+  const onTree = index
+    ? treeNamesFor(index, { state: canonicalState(region) || null, city: leadCity || null })
+    : null;
   const covers = (t: (typeof territories)[number]): boolean => {
+    if (t.kind === "district" || t.kind === "town") {
+      return (
+        !!onTree &&
+        matchesTerritory(
+          { kind: t.kind as TerritoryKind, value: t.region, parent: t.parent ?? "" },
+          { state: onTree.state, district: onTree.district, town: onTree.town },
+        )
+      );
+    }
     if (t.kind === "state" || t.kind === "region") {
       return leadState !== "" && stateVariants(t.region).includes(leadState);
     }

@@ -15,6 +15,7 @@ import {
 } from "@/lib/engines/holiday-audience";
 import { EVERYBODY } from "@/lib/services/holiday-calendar";
 import { placeKey } from "@/lib/place-parse";
+import { territoryLabel, type TerritoryKind } from "@/lib/territory-rules";
 
 /* ---------------------------------------------------------------------------
  * THE HOLIDAY CALENDAR, wired to data.
@@ -252,7 +253,9 @@ function statesOf(territories: TerritoryRow[], tree: TreeIndex): string[] {
   const out = new Set<string>();
   for (const t of territories) {
     if (t.kind === "state" || t.kind === "region") out.add(t.value);
-    else if (t.kind === "city" && t.parent.trim()) out.add(t.parent);
+    else if ((t.kind === "city" || t.kind === "district") && t.parent.trim()) out.add(t.parent);
+    /* A town's parent is "District, State" — the state is the last part. */
+    else if (t.kind === "town" && t.parent.includes(",")) out.add(t.parent.slice(t.parent.lastIndexOf(",") + 1).trim());
     else {
       const name = t.kind === "beat" ? t.parent : t.value;
       for (const s of tree.cityStates.get(placeKey(name)) ?? []) out.add(s);
@@ -300,7 +303,10 @@ export async function holidayCalendar(year: number, teamIds: string[] | null): P
   });
 
   const territoryLine = (ts: TerritoryRow[]) =>
-    ts.filter((t) => t.kind !== "region").map((t) => (t.parent.trim() ? `${t.value} (${t.parent})` : t.value)).join(" · ");
+    ts
+      .filter((t) => t.kind !== "region")
+      .map((t) => territoryLabel({ kind: t.kind as TerritoryKind, value: t.value, parent: t.parent }))
+      .join(" · ");
 
   return {
     year,

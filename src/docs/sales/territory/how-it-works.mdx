@@ -5,7 +5,7 @@
 | | Region | Working area |
 |---|---|---|
 | Held by | A manager | A salesman |
-| Kinds | state | state, city, beat |
+| Kinds | state | state, district, town (city and beat from before districts) |
 | Decides | Which salesmen the manager's Sales Dashboard shows | Which of his own shops his phone carries |
 | Empty means | National — the whole country | **No book on the phone** |
 | Set by | A national manager, with **Set the patch** | A manager, with **Where they work** |
@@ -20,27 +20,35 @@ The two look alike from a distance. Somebody who reads the territory as the secu
 
 ## A territory is a hierarchy, picked from the top
 
-A city belongs to a state and a beat to a city. Every working-area row remembers what it was picked **under**:
+A district belongs to a state and a town to a district. Every working-area row remembers what it was picked **under**:
 
 | Kind | Picked under |
 |---|---|
 | state | — |
-| city | a state |
-| beat | a city |
+| district | a state |
+| town | a district, and that district's state |
+| city *(before districts)* | a state |
+| beat *(before districts)* | a city |
+
+A town names its district's state as well, because two districts can share a name — there is an Aurangabad in Maharashtra and another in Bihar, each with an Aurangabad town.
 
 <Rule title="Down a branch is AND, across branches is OR">
-Maharashtra plus Pune inside it means **Pune**. The narrowest pick in each branch is the allocation; the wider ones are the path to it. Saving prunes to those leaves on the server, because stored as both, the rule would OR them and hand him the whole state — the opposite of what picking a city meant.
+Maharashtra plus Thane district inside it means **Thane district**; Thane plus Kalyan inside it means **Kalyan**. The narrowest pick in each branch is the allocation; the wider ones are the path to it. Saving prunes to those leaves on the server, because stored as both, the rule would OR them and hand him the whole state — the opposite of what picking a district meant.
 </Rule>
 
-<Rule title="A city needs its state">
-A city sent without the state it sits in is refused: *"Pick the state first — … needs to sit inside one."* A row written before the hierarchy existed has no parent and still means "this place wherever it is", so nothing allocated last month silently stops matching.
+<Rule title="A place needs the one it sits in">
+A district sent without its state, or a town without its district, is refused: *"Pick the state first — … needs to sit inside one."* A row written before the hierarchy existed has no parent and still means "this place wherever it is", so nothing allocated last month silently stops matching.
 </Rule>
 
-States are matched on **every spelling** — the book holds "Gujrat" beside "Gujarat", and a chip saying Gujarat must cover both. Cities and beats are matched trimmed and case-insensitive.
+States are matched on **every spelling** — the book holds "Gujrat" beside "Gujarat", and a chip saying Gujarat must cover both. Districts and towns are matched on the shop's place in the **reviewed location tree**, never on what was typed. An earlier city or beat is matched as it always was, on the typed text, trimmed and case-insensitive.
 
-### The picker is a tree because a flat list was unusable
+### The picker reads the reviewed location tree
 
-Customer records hold whatever was typed as the city, and on a real book that is several hundred values, many of them whole postal addresses. Nesting under states makes them **reachable**: a state's worth is a list somebody can search. Every node carries its shop count, biggest first, so the city somebody means is at the top. Shops naming no state are counted and said out loud: no territory can reach them.
+The districts and towns on offer are the reviewed location tree — state, district, town — that every customer list already filters by. They used to be whatever was typed as the city on each record: several hundred values a state, many of them whole postal addresses. Every node carries its shop count, biggest first.
+
+A state's own count is the shops whose typed state is that state, because that is what a whole-state pick has always matched. A shop the tree placed no further than its state is reached by a whole-state pick and by no district, and the dialog says how many there are. Shops naming no state at all are counted and said out loud: no territory can reach them.
+
+A lead raised on a phone inside a district is placed on the tree **as it is saved**, by the same matcher that let it in, so it does not drop off its own salesman's phone until the nightly pass.
 
 ## No territory now means no book — and that was a reversal
 
@@ -62,7 +70,7 @@ A shop a salesman created as a lead on his own phone stays on it whatever his ar
 
 <Flow caption="Saving a new working area" chart={`
 flowchart TD
-  A["Manager saves Where they work"] --> B["Refuse kinds that are not places,<br/>and cities without a state"]
+  A["Manager saves Where they work"] --> B["Refuse kinds that are not places,<br/>and places without the one they sit in"]
   B --> C["Prune to the narrowest pick in each branch"]
   C --> D{"Same as before?"}
   D -- "Yes" --> N["Nothing changed"]

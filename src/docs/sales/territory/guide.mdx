@@ -1,6 +1,6 @@
 Territory answers **who covers which part of the book**. Pick a role — field sales, sales account manager, back-office account manager or sales manager — and the screen shows everybody holding that role, the cities their shops are in, and a map of every shop. It is also where the gaps show: shops with nobody in a role, and shops with no pin on the map.
 
-Deciding **where a salesman works** — which states, cities or beats reach his phone — is done from the [Salesmen](/docs/sales/salesmen) screen, with **Where they work**. This page explains both, because the two are read together.
+Deciding **where a salesman works** — which states, districts or towns reach his phone — is done from the [Salesmen](/docs/sales/salesmen) screen, with **Where they work**. This page explains both, because the two are read together.
 
 ## The screen at a glance
 
@@ -83,10 +83,13 @@ Deciding **where a salesman works** — which states, cities or beats reach his 
 Go to [Salesmen](/docs/sales/salesmen) and press **Where they work** on his row.
 </Step>
 <Step title="Pick the states first">
-*Pick the states they cover.* Each state shows how many shops it holds, biggest first.
+*Pick the states they cover* — a dropdown where you can tick several. Each state shows how many shops it holds.
 </Step>
-<Step title="Narrow to cities, and beats, if you want to">
-*Narrow to cities, if you want to.* Picking Pune inside Maharashtra means **Pune only** — the narrowest pick in a branch is what he works.
+<Step title="Narrow to districts, if you want to">
+*Narrow to districts, if you want to* — a second dropdown, listing the districts of the states you picked, biggest first. A state with no district picked means **the whole state**; picking Thane inside Maharashtra means **Thane district only**.
+</Step>
+<Step title="Narrow to towns, if you want to">
+Each district you picked opens its towns underneath, with a shop count on each. Tick none and he works the whole district; tick Kalyan and Bhiwandi and he works those two towns. The narrowest pick in a branch is what he works.
 </Step>
 <Step title="Save">
 His phone drops the shops outside the new area on its next sync and he is told *"Where you work has changed"*. Nothing is taken out of his book — only off his phone.
@@ -114,8 +117,11 @@ A shop he raised himself as a lead on his phone stays on his phone wherever it i
 <Faq q="Does giving a salesman a city let him see another salesman's shops there?">
 No. An area only narrows his own book. Whose shops are whose is decided separately.
 </Faq>
-<Faq q="A city appears as a whole postal address.">
-Cities come from what was typed into the customer records, and some of them are addresses. The tree puts the real cities with the most shops at the top.
+<Faq q="Where do the districts and towns come from?">
+From the reviewed location tree — the same state, district and town every customer list filters by — not from what was typed as the city on the record. A shop the tree could place only as far as its state (the town typed on it matched two places, or none) is reached by a whole-state pick and by no district; the dialog counts those shops.
+</Faq>
+<Faq q="He was given a city before districts existed. Is it gone?">
+No. It goes on meaning what it meant, and the dialog lists it under *Picked before districts existed*, where you can keep it or take it off.
 </Faq>
 <Faq q="A salesman asked for different cities on his phone.">
 His request lands on [Approvals](/docs/sales/approvals). Approving it says yes; you still change his area here on Salesmen.
