@@ -52,6 +52,29 @@ export const PHASE_LABEL: Record<Phase, string> = {
   delivered: "Delivered",
 };
 
+/**
+ * WHICH WAY THE FREIGHT IS PAID, read the way it is actually stored. The CRM
+ * writes `paid` / `to_pay` (its form's enum), the history import wrote "To Pay",
+ * and the ERP screens compared against "Paid" — which matched none of the 453
+ * paid-freight parties on prod, so Paid freight was an empty tab while 248
+ * lines a month waited on it. Every comparison goes through here.
+ */
+export function freightKey(term: string | null | undefined): "paid" | "to_pay" | "tbb" | null {
+  const k = (term ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (k === "paid") return "paid";
+  if (k === "to_pay" || k === "topay") return "to_pay";
+  if (k === "tbb") return "tbb";
+  return null;
+}
+
+export const isPaidFreight = (term: string | null | undefined): boolean => freightKey(term) === "paid";
+
+/** The words for a screen: "Paid", "To Pay", "TBB", or what was stored when it is none of those. */
+export function freightWord(term: string | null | undefined): string | null {
+  const k = freightKey(term);
+  return k === "paid" ? "Paid" : k === "to_pay" ? "To Pay" : k === "tbb" ? "TBB" : term?.trim() || null;
+}
+
 export function isStage(s: string | null | undefined): s is Stage {
   return !!s && (STAGES as readonly string[]).includes(s);
 }

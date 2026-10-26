@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { attachRefusal, callDue, lrRowHasAnything, lrUploadName, customerMessage, dueWord, packagesOf, phaseOf, rankForLr, runningLate, trackingLink, waLink, watiParams, type MessageFacts } from "./logistics";
+import { attachRefusal, callDue, freightWord, isPaidFreight, lrRowHasAnything, lrUploadName, customerMessage, dueWord, packagesOf, phaseOf, rankForLr, runningLate, trackingLink, waLink, watiParams, type MessageFacts } from "./logistics";
 
 test("the phase is the stage and the LR together, never stored", () => {
   assert.equal(phaseOf({ lrNo: null, materialStage: "Dispatched" }), "toTransport");
@@ -95,4 +95,14 @@ test("no upload field is required: any one detail makes a row an LR, and an empt
   assert.equal(lrRowHasAnything({ packages: 0 }), true, "zero boxes is still something typed");
   assert.equal(lrUploadName("7781"), "LR 7781");
   assert.equal(lrUploadName(null), "LR (number not typed)");
+});
+
+test("paid freight is read however it was stored", () => {
+  for (const v of ["paid", "Paid", " PAID "]) assert.ok(isPaidFreight(v), v);
+  for (const v of ["to_pay", "To Pay", "TO-PAY", "TBB", "", null]) assert.ok(!isPaidFreight(v), String(v));
+  assert.equal(freightWord("paid"), "Paid");
+  assert.equal(freightWord("to_pay"), "To Pay");
+  assert.equal(freightWord("To Pay"), "To Pay");
+  assert.equal(freightWord("Courier"), "Courier", "anything else is shown as stored");
+  assert.equal(freightWord(null), null);
 });

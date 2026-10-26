@@ -6,6 +6,7 @@ import type { ErpContext } from "./access";
 import { visibleAlerts } from "./alerts";
 import { incompletePackIds } from "./counts";
 import { ALERT_LABEL, type AlertKind } from "./engines/alerts";
+import { isPaidFreight } from "./engines/logistics";
 import { erpLink } from "./registry";
 import { today } from "./screens/common";
 import { purchaseOrderViews, requirementWork } from "./screens/purchase-flow";
@@ -372,7 +373,7 @@ export async function dashboardSections(ctx: ErpContext, godownName: string | nu
   const logistics: Tile[] = [];
   if (has("paidFreight")) {
     const { rows } = await details();
-    const n = rows.filter((r) => r.l.billing.freightTerm === "Paid" && r.d.extraExpensesPaise == null).length;
+    const n = rows.filter((r) => isPaidFreight(r.l.billing.freightTerm) && r.d.extraExpensesPaise == null).length;
     logistics.push({ l: "Paid freight without extra expense", v: String(n), href: tileHref("paidFreight", null, "") });
   }
   if (has("transport")) {
