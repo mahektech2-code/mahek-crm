@@ -444,6 +444,16 @@ describe("register and stock", () => {
     assert.ok(!r.ok && r.fieldErrors?.[0].message.startsWith("! Please Change 4 Digit PR Num"));
   });
 
+  test("a typed PR number of 0 is refused rather than saved as PR 0", async () => {
+    const ctx = await as(admin);
+    const po = await approvedPo("Asian Solvents", [{ item: "Toluene", quantity: 10 }]);
+    for (const pr of ["0", "-3"]) {
+      const r = await mod("register").forms!.new(ctx, { pr, date: TODAY, po: po.po, poLine: po.lines["Toluene"], qty: "10", unit: "Litre", godown: "Bhiwandi" }, []);
+      assert.ok(!r.ok && r.fieldErrors?.[0].field === "pr", JSON.stringify(r));
+    }
+    assert.equal((await db.select().from(erpPurchases).where(eq(erpPurchases.prNumber, 0))).length, 0);
+  });
+
   test("editing a posted purchase moves its stock entry with it", async () => {
     const ctx = await as(admin);
     const [tol] = await db.select().from(erpPurchases).where(eq(erpPurchases.lotNo, "ASTOL1001"));
