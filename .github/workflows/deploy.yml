@@ -440,9 +440,23 @@ jobs:
         env:
           DO_API_TOKEN: ${{ secrets.DO_API_TOKEN }}
           LIVE: ${{ steps.live.outputs.live }}
-          # Enough to roll back to and few enough to fit: ~130 MB each against
-          # 500 MB. `latest` shares its blobs with the newest tag, so it is free.
-          KEEP: "3"
+          # ONE, besides `latest` and whatever production is on — and the
+          # rollback did not get shorter. It was three, which is what 500 MB
+          # holds at ~130 MB an image, and that is the problem: with three kept
+          # the registry is nearly full again straight after a collection, so
+          # every deploy had to start one, and a collection refuses pushes for
+          # up to a quarter of an hour while it waits for push tokens to
+          # expire. The next merge inside that window waited for it — 7m55s on
+          # 26 October, two merges fourteen minutes apart.
+          #
+          # A rollback never needed the registry's copies. The droplet keeps
+          # its own newest three images plus the live one (see "Pull and
+          # restart"), and rolling back is `docker compose up -d app` on a tag
+          # it already holds. Kept here: the image production is on, so a
+          # rebuilt droplet can pull it, and the one deployed before it.
+          KEEP: "1"
+          # Collect when the next pushes might not fit; see the last step.
+          REGISTRY_API: https://api.digitalocean.com/v2/registry
         run: |
           set -euo pipefail
 
@@ -487,50 +501,108 @@ jobs:
             process.stdout.write(del.length ? del.join("\n") + "\n" : "");
           ' > /tmp/delete.txt
 
-          # NOTHING DELETED MEANS NOTHING TO COLLECT, so no collection is
-          # started. A garbage collection puts the registry in read-only mode
-          # for as long as it runs, and starting one that has no unreferenced
-          # blobs to free spends that window for nothing.
-          if [ ! -s /tmp/delete.txt ]; then
-            echo "Nothing to prune, so nothing to collect."
-            exit 0
+          if [ -s /tmp/delete.txt ]; then
+            echo "Deleting $(wc -l < /tmp/delete.txt) tag(s)."
+            # The guard is belt and braces beside the trailing newline above:
+            # either alone fixes this, and a file that has lost its terminator
+            # some other way must not quietly drop a tag again.
+            while read -r tag || [ -n "${tag}" ]; do
+              [ -z "${tag}" ] && continue
+              doctl registry repository delete-tag app "${tag}" --force || true
+            done < /tmp/delete.txt
+          else
+            echo "Nothing to prune."
           fi
 
-          echo "Deleting $(wc -l < /tmp/delete.txt) tag(s)."
-          # The guard is belt and braces beside the trailing newline above:
-          # either alone fixes this, and a file that has lost its terminator
-          # some other way must not quietly drop a tag again.
-          while read -r tag || [ -n "${tag}" ]; do
-            [ -z "${tag}" ] && continue
-            doctl registry repository delete-tag app "${tag}" --force || true
-          done < /tmp/delete.txt
+          # COLLECT ONLY WHEN THE NEXT PUSHES MIGHT NOT FIT.
+          #
+          # Deleting a tag frees nothing until a collection runs, and a
+          # collection refuses pushes for as long as it is pending — about a
+          # quarter of an hour, because DigitalOcean waits for every push token
+          # issued before it to expire. Started after every deploy, it made the
+          # NEXT deploy wait whenever two merges were close together. So the
+          # registry is asked how full it is, and a collection is started only
+          # when what is free would not hold the pushes it has not counted yet
+          # plus the next two — sized by what a push actually adds, the layers
+          # the newest image has that the one before it does not.
+          #
+          # Anything that cannot be read is answered "collect", which is what
+          # this did on every deploy before: an unknown never risks a push
+          # failing on `denied: quota exceeded`. Garbage from tags deleted on
+          # earlier deploys waits here for the collection that frees it, which
+          # is why this is asked even when nothing was deleted this time.
+          need=yes
+          auth="Authorization: Bearer ${DO_API_TOKEN}"
+          if curl -fsS -H "${auth}" "${REGISTRY_API}" > /tmp/registry.json \
+            && curl -fsS -H "${auth}" "${REGISTRY_API}/subscription" > /tmp/subscription.json \
+            && name="$(node -p 'require("/tmp/registry.json").registry.name')" \
+            && curl -fsS -H "${auth}" "${REGISTRY_API}/${name}/repositories/app/digests?per_page=200" > /tmp/manifests.json; then
+            need="$(node -e '
+              const reg = require("/tmp/registry.json").registry || {};
+              const tier = (require("/tmp/subscription.json").subscription || {}).tier || {};
+              const manifests = (require("/tmp/manifests.json").manifests || [])
+                .filter(m => m.updated_at)
+                .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+              const used = Number(reg.storage_usage_bytes);
+              const quota = Number(tier.included_storage_bytes);
+              const readAt = Date.parse(reg.storage_usage_bytes_updated_at);
+              if (!(used > 0) || !(quota > 0) || !Number.isFinite(readAt) || manifests.length === 0) {
+                console.error("::warning::Could not read how full the registry is, so a collection is started as before.");
+                console.log("yes");
+                process.exit(0);
+              }
+              // What a push adds: the blobs an image has that the one before
+              // it does not, the largest over the newest three pairs. With no
+              // blob list, or no older image to compare with, the whole image,
+              // which only ever collects sooner.
+              const blobs = m => new Map((m.blobs || []).map(b => [b.digest, Number(b.compressed_size_bytes) || 0]));
+              const whole = m => Number(m.compressed_size_bytes) || 0;
+              let push = manifests.length === 1 ? whole(manifests[0]) : 0;
+              for (let i = 0; i < Math.min(3, manifests.length - 1); i++) {
+                const mine = blobs(manifests[i]);
+                const before = blobs(manifests[i + 1]);
+                let added = 0;
+                for (const [d, size] of mine) if (!before.has(d)) added += size;
+                push = Math.max(push, mine.size === 0 ? whole(manifests[i]) : added);
+              }
+              const unseen = manifests.filter(m => Date.parse(m.updated_at) > readAt).length;
+              const wanted = (unseen + 2) * push;
+              const free = quota - used;
+              const mb = b => `${Math.round(b / 1e6)} MB`;
+              console.error(`registry: ${mb(used)} of ${mb(quota)} as of ${reg.storage_usage_bytes_updated_at}, ${unseen} push(es) since; a push adds up to ${mb(push)}; ${mb(free)} free, ${mb(wanted)} wanted.`);
+              console.log(push > 0 && free >= wanted ? "no" : "yes");
+            ')" || need=yes
+          else
+            echo "::warning::The registry API did not answer, so a collection is started as before."
+          fi
+
+          if [ "${need}" != "yes" ]; then
+            echo "::notice::Room for the next pushes, so no garbage collection — the next deploy will not wait for one."
+            exit 0
+          fi
 
           # STARTED AND LEFT, never waited on.
           #
           # Deleting a tag frees NOTHING on DigitalOcean until a collection
-          # runs, so one is started here — and that is the whole of this step's
-          # job. The wait that used to follow was 15 minutes 30 seconds of a
-          # 20-minute deploy, every single time, all of it after production was
-          # already serving the new image. DigitalOcean will not begin
-          # collecting until every write-scoped push token issued before the
-          # request has expired, and their TTL is about a quarter of an hour;
-          # the collection itself then takes 25 seconds. The loop was watching
-          # somebody else's clock.
+          # runs, so one is started here. The wait that used to follow was 15
+          # minutes 30 seconds of a 20-minute deploy, every single time, all of
+          # it after production was already serving the new image.
+          # DigitalOcean will not begin collecting until every write-scoped
+          # push token issued before the request has expired, and their TTL is
+          # about a quarter of an hour; the collection itself then takes 25
+          # seconds. The loop was watching somebody else's clock.
           #
           # It protected nothing, which is the part worth writing down. The
           # `401 Unauthorized` on push that the wait was written for is
           # prevented by ORDER — this job runs after `build` has pushed, not
-          # before it — and that was already true. Sitting here cannot stop the
-          # next push landing inside the collection window: a push cancels this
-          # run (see `concurrency` at the top) while DigitalOcean's collection
-          # carries on regardless. The wait was pure observation of an outcome
-          # nothing downstream reads.
+          # before it — and the NEXT deploy's build waits out a pending
+          # collection itself ("Wait for any registry garbage collection").
           #
           # What is given up is the log line saying whether it succeeded.
           # `doctl registry garbage-collection list` answers that on demand,
           # and a collection that fails is picked back up by the next deploy
-          # that deletes a tag — which is exactly where the old `failed` branch
-          # pointed anyway.
+          # that finds the registry full — which is exactly where the old
+          # `failed` branch pointed anyway.
           if doctl registry garbage-collection start --include-untagged-manifests --force; then
             echo "::notice::Garbage collection started. It runs on DigitalOcean's side and takes about fifteen minutes to begin; nothing here waits for it."
           else

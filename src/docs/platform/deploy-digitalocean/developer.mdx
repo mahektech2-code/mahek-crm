@@ -85,8 +85,8 @@ sequenceDiagram
   Dr->>Dr: remove local images beyond the newest 3
   Dp->>Dr: curl https://DOMAIN/login until 200 (5 min)
   Dp->>Pr: needs: deploy
-  Pr->>Reg: keep latest + live + newest 3, delete the rest
-  Pr->>Reg: start garbage collection
+  Pr->>Reg: keep latest + live + the one before, delete the rest
+  Pr->>Reg: start garbage collection only if the next pushes might not fit
 `} />
 
 <Steps>
@@ -193,7 +193,7 @@ sed -i 's|^IMAGE=.*|IMAGE=registry.digitalocean.com/mahekone/app:<sha>|' .env
 docker compose up -d app
 ```
 
-The registry keeps the newest three tags plus `latest` and whatever production is on; the droplet keeps its newest three images. A rollback across a migration is a different thing — **restore the dump** instead (see [Backups](/docs/platform/backups/developer)).
+The droplet keeps its newest three images plus the live one, and `docker compose up -d app` uses a tag it already holds without asking the registry. The registry keeps `latest`, the live tag and the one before it. A rollback across a migration is a different thing — **restore the dump** instead (see [Backups](/docs/platform/backups/developer)).
 
 ### Running a job by hand against production
 
@@ -232,7 +232,8 @@ The host clock is **UTC**. `backup.sh --install-cron` writes its own three lines
 
 The free registry holds **500 MB** and an image is about 130 MB. When it is full, the push fails with `denied: quota exceeded`, the `build` job goes red, and `deploy` is **skipped** — which reads as nothing having happened rather than as a storage problem.
 
-- The `prune` job runs **after** the deploy: keep `latest`, the live tag (read from the droplet's `.env`) and the newest three; delete the rest; start a garbage collection.
+- The `prune` job runs **after** the deploy: keep `latest`, the live tag (read from the droplet's `.env`) and the one before it; delete the rest.
+- It starts a garbage collection **only when the next pushes might not fit**: it reads the registry's usage and plan from the API, measures what a push adds (layers the newest image has that the previous one does not), and collects when free space would not hold the pushes the usage reading has not counted yet plus the next two. Anything it cannot read means "collect". A pending collection refuses pushes for up to ~15 minutes, so collecting after every deploy made the next close merge wait for it.
 - It runs last because DigitalOcean will not start collecting until every write-scoped push token has expired; collecting right before this run's own push produced `401 Unauthorized`. The `build` job instead **waits** (up to 10 minutes) for any collection still running.
 - **Registry prune** (`registry-prune.yml`) is the same thing by hand, with a `keep` input.
 
