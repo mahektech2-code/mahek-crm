@@ -151,7 +151,7 @@ after(async () => {
 
 /** The two lines of Shree Paints' first order: 20 loose cans and 24 boxed ones. */
 const orderFor = async (sku: string) =>
-  (await db.select().from(erpOrders).where(sql`${erpOrders.skuId} = ${sku} and ${erpOrders.billingCustomerId} = 'cus_shree' and ${erpOrders.qtyCans} in (20, 24)`))[0];
+  (await db.select().from(erpOrders).where(sql`${erpOrders.skuId} = ${sku} and ${erpOrders.billingCustomerId} = 'cus_shree' and ${erpOrders.qtyCans} in (20, 24)`).orderBy(erpOrders.orderNo))[0];
 
 describe("taking an order", () => {
   test("boxes must come out whole", async () => {

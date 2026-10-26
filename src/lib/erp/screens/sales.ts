@@ -1717,7 +1717,8 @@ async function saveOrder(ctx: ErpContext, h: Record<string, string>, ls: Record<
   const billing = await partyByName(text(h.billing));
   if (!billing) return fieldErr("billing", "Billing party is required");
   if (partyStatus(billing) === "Deactive") return fieldErr("billing", "This party is deactivated");
-  const source = text(h.source);
+  /* A draft read off a WhatsApp message came by WhatsApp, whatever the form was sent with. */
+  const source = text(h.source) ?? (text(h.inboxId) ? "WhatsApp" : null);
   if (!source || !(ORDER_SOURCES as readonly string[]).includes(source)) return fieldErr("source", "Say how the order was received");
   const delivery = (await partyByName(text(h.delivery))) ?? billing;
   if (!ls.length) return err("Add at least one SKU.");
