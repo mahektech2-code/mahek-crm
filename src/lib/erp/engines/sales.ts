@@ -6,6 +6,8 @@
  * Money is paise. A rate is per can, or per litre on a drum line.
  * ------------------------------------------------------------------------- */
 
+import { freightWord } from "./logistics";
+
 export type OrderType = "Drum" | "Can" | "Box";
 
 /** The order line's type, from the SKU's box type (spec §11.2 "Type"). */
@@ -113,7 +115,8 @@ export function addDaysIso(iso: string, days: number): string {
 
 /** "{instructions} - {delivery type} - {payment type} - {weight type}", from the delivery party (spec §11.2). */
 export function standingInstructions(p: { instructions: string | null; deliveryType: string | null; paymentType: string | null; weightType: string | null }): string {
-  const parts = [p.instructions, p.deliveryType, p.paymentType, p.weightType].map((x) => (x ?? "").trim());
+  /* The payment type in words — the CRM stores `to_pay`, and the header printed it raw. */
+  const parts = [p.instructions, p.deliveryType, freightWord(p.paymentType), p.weightType].map((x) => (x ?? "").trim());
   /* A party with none of the four says nothing, rather than "- - -". */
   return parts.some(Boolean) ? parts.join(" - ") : "";
 }
