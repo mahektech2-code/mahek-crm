@@ -75,7 +75,22 @@ ENV NEXT_BUILD_SKIP_TYPECHECK=1
 # The docs index is built, not committed (see .gitignore): it cuts the code the
 # documentation quotes out of THIS source. `npx next build` skips npm's
 # `prebuild` hook, so it is run by name rather than relied on.
-RUN node scripts/docs-index.mjs && npx next build
+# THE SAME KEY EVERY BUILD, so a deploy stops breaking the saves in every open
+# tab. Next salts each Server Action's id with this key and, left unset, makes
+# up a fresh random one per build — so EVERY action id changed on EVERY deploy,
+# including the ones whose code did not, and every tab open across it had its
+# next save refused ("Server Action … was not found"). Fixed, an id changes only
+# when its own file does. A build SECRET rather than an ARG: an ARG is written
+# into the image history for anybody holding the image to read. Optional — a
+# build without it falls back to Next's random key and still works, it just
+# breaks open tabs again (see src/lib/version-skew.ts).
+RUN --mount=type=secret,id=actions_key \
+    if [ -s /run/secrets/actions_key ]; then \
+      export NEXT_SERVER_ACTIONS_ENCRYPTION_KEY="$(cat /run/secrets/actions_key)"; \
+    else \
+      echo "warning: no actions_key secret; Server Action ids will change on every deploy" >&2; \
+    fi \
+    && node scripts/docs-index.mjs && npx next build
 
 # ------------------------------------------------------------------- runtime
 FROM ${NODE_IMAGE} AS runner

@@ -165,6 +165,11 @@ jobs:
           build-args: |
             GIT_SHA=${{ github.sha }}
             NODE_IMAGE=${{ steps.node.outputs.image }}
+          # Fixes the Server Action ids across builds — see the RUN in the
+          # Dockerfile. A secret mount, never a build-arg, so it is not in the
+          # image history. Unset, the build warns and carries on.
+          secrets: |
+            actions_key=${{ secrets.NEXT_SERVER_ACTIONS_ENCRYPTION_KEY }}
           # GITHUB'S CACHE, NOT THE REGISTRY'S.
           #
           # This was `type=registry,mode=max`, which stores every layer of

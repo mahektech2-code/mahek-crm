@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { NotificationCenter } from "@/components/shell/notification-center";
+import { VersionGuard } from "@/components/shell/version-guard";
 
 export const metadata: Metadata = {
   title: "MahekOne - CRM",
@@ -34,6 +35,8 @@ export default function RootLayout({
         {children}
         {/* The live bell: polls, pops and chimes in every app. */}
         <NotificationCenter />
+        {/* A tab older than the server: reload it before a save is refused. */}
+        <VersionGuard />
       </body>
     </html>
   );

@@ -118,8 +118,16 @@ const nextConfig: NextConfig = {
    * the factory phone: a station phone keeps a page open for days, and it
    * compares its own build with the one the server answers in, so it can
    * reload itself once its queue is empty — never in the middle of a job.
+   *
+   * MAHEK_BUILD is the same value for every other app: `VersionGuard` compares
+   * it with `/api/version` to reload a tab left open across a deploy. Next 16
+   * puts the deployment id only on asset URLs, never on the page, so it has to
+   * be inlined here to be readable in the browser at all.
    */
-  env: { FACTORY_BUILD: process.env.NEXT_DEPLOYMENT_ID ?? "dev" },
+  env: {
+    FACTORY_BUILD: process.env.NEXT_DEPLOYMENT_ID ?? "dev",
+    MAHEK_BUILD: process.env.NEXT_DEPLOYMENT_ID ?? "dev",
+  },
 
   /*
    * Set by the app rather than by Caddy, because the Caddyfile is copied to

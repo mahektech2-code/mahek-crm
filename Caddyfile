@@ -63,6 +63,18 @@
 
 	# The app publishes no port to the host; this is the only route to it.
 	reverse_proxy app:3000 {
+		# A DEPLOY IS A FEW SECONDS WITH NO APP, and a save made in them used
+		# to fail outright. `restart.sh` recreates the one app container: the
+		# old one stops, the new one boots, and for that gap every request got
+		# a 502 — which reads, to somebody pressing Save, as the button doing
+		# nothing, and refreshing a moment later "fixed" it. With this Caddy
+		# holds a request it cannot connect with and tries again every quarter
+		# second for up to 30 seconds, so the save waits out the restart
+		# instead of being lost. Caddy only retries a request it never managed
+		# to SEND, so a POST is never run twice.
+		lb_try_duration 30s
+		lb_try_interval 250ms
+
 		# Server Actions and dictation uploads are POSTs that take a while.
 		# Two minutes of Opus audio is a slow request, not a hung one.
 		#

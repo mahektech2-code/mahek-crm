@@ -21,7 +21,7 @@ import { ShareDialog } from "./share-dialog";
 import { CardGrid } from "@/components/ui/card-grid";
 import { LineTable } from "./line-table";
 import { ErpVoice } from "./voice";
-import { ERP_KIT, KitContext, useKit, type ScreenKit } from "./kit";
+import { ERP_KIT, KitContext, safeKit, useKit, type ScreenKit } from "./kit";
 
 /* ---------------------------------------------------------------------------
  * The ERP's overlays, held once for the whole app: the form dialog, the prompt
@@ -60,13 +60,15 @@ export function useErpUi(): Ui {
 export function ErpUiProvider({
   children,
   voice = false,
-  kit = ERP_KIT,
+  kit: rawKit = ERP_KIT,
 }: {
   children: React.ReactNode;
   voice?: boolean;
   /** The app whose server actions, uploads and vocabulary the screens use. The ERP's unless another app says so. */
   kit?: ScreenKit;
 }) {
+  // The provider calls its kit directly too, so it gets the throw-safe one.
+  const kit = safeKit(rawKit);
   const router = useRouter();
   const { push } = useToast();
   const [confirmState, setConfirmState] = useState<Confirm | null>(null);

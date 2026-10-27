@@ -9743,6 +9743,33 @@ step the person types is kept on the audit row and the timeline, not in the
 lead's next-action slot, because that slot becomes the Sales Manager's
 verification call on conversion, exactly as before.
 
+**A SAVE THAT DID NOTHING, AND WORKED AFTER A REFRESH, WAS A DEPLOY.** Two
+causes, both on the same day as every deploy, and with hundreds of people
+working at once there is always somebody mid-save. First, Next names every
+Server Action by an id it salts with a key it made up fresh for each build, so
+every id changed on every deploy — whether its code had or not — and a tab
+open across one posted ids the new server had never heard of. Next refuses
+those with a 404, and the ERP dialogs awaited the call with no catch, so the
+button sat busy with nothing on the screen. Second, `restart.sh` recreates the
+one app container, and for the seconds between the old one stopping and the
+new one listening every request was a 502.
+
+So: the build passes a fixed `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` (a GitHub
+secret, mounted into the Docker build as a SECRET and never an ARG, because an
+ARG is in the image history), and an id now moves only when its own file does.
+Caddy's `lb_try_duration` holds a request it cannot connect with and retries
+until the new container answers — only a request it never sent, so no POST
+runs twice. `VersionGuard` in the root layout asks `/api/version` when a tab
+comes back into view and on a jittered few minutes, reloads an IDLE tab that is
+behind (never one with a dialog open or focus in a field), and where a save was
+refused anyway says so in words over whatever the screen did. And
+`safeKit` turns a thrown action into an `Err` every ERP and HRMS dialog
+already draws. `lib/version-skew.ts` is the vocabulary the three share.
+
+**Caddyfile and docker-compose.yml are NOT shipped by a deploy.** They live on
+the droplet at /opt/mahekone and are copied by hand; a change to either here
+does nothing until it is copied up and Caddy reloaded.
+
 ## Testing
 
 `npm run test` runs the engine tests: pure, fast, no database. They pin the
