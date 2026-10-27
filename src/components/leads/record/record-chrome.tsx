@@ -15,6 +15,7 @@ import type { LeadRecord } from "@/lib/services/lead-console-service";
 import type { ActionOwnerCandidate } from "@/lib/services/lead-actions-service";
 import { NextActionModal } from "@/components/leads/actions/due-screen";
 import { AdvanceStage } from "./advance-stage";
+import { AnswerLink, ConvertButton } from "./convert-to-prospect";
 
 /* ---------------------------------------------------------------------------
  * The lead record's frame, drawn the way the Leads frame draws everything
@@ -418,12 +419,15 @@ export function GateCard({
                 <Link href={`${base}?tab=${fix.tab}`} className="text-xs whitespace-nowrap">
                   {fix.label}
                 </Link>
+              ) : to === "prospect" ? (
+                <AnswerLink />
               ) : null}
             </li>
           );
         })}
       </ul>
       <div className="mt-3 flex flex-wrap gap-2">
+        {to === "prospect" ? <ConvertButton label="Convert to Prospect…" size="sm" /> : null}
         <AdvanceStage
           customerId={record.customerId}
           to={nextRung ?? null}

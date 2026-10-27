@@ -190,6 +190,7 @@ const files = [
   // The telecaller's calling desk itself: three calls, Ready for Prospect, and
   // that asking for a Prospect is not being one.
   "src/lib/lead-calling-desk.test.ts",
+  "src/lib/lead-prospect-conversion.test.ts",
   // The calling desk's voice assistant: that it writes only a draft, refuses
   // outside its scope before reading anything, and that Call 1/2/3 voice
   // proposals save and narrow through the unmodified existing path.

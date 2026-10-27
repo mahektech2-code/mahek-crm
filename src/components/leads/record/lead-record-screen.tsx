@@ -84,13 +84,14 @@ import {
 } from "./record-chrome";
 import { priorityLabel, priorityTone } from "@/lib/lead-priority";
 import type { DeskLeadRecord } from "@/lib/services/lead-calling-desk-service";
-import { nextCallNumber, type CallOutcome } from "@/lib/engines/lead-calling-desk";
+import { isWorkingStage, nextCallNumber, type CallOutcome } from "@/lib/engines/lead-calling-desk";
 import { LogCallDialog } from "@/components/leads/calling-desk/dialogs";
 import { timelineActor, type TimelineActorKind } from "./timeline-actor";
 import { RelationshipChain } from "./relationship-chain";
 import type { LeadActionFacts } from "@/lib/engines/lead-role-action";
 import type { LeadGateActionFacts } from "@/lib/engines/lead-gate-action";
 import { PrimaryGateAction } from "./move-forward";
+import { ConvertButton, ConvertProvider } from "./convert-to-prospect";
 import type { VantageViewer } from "@/lib/lead-vantage";
 
 /**
@@ -329,11 +330,17 @@ export function LeadRecordScreen({
   desk = null,
   defaultNextDate = null,
   openCall = false,
+  prospectReasons = [],
+  directPromotion = true,
 }: {
   /** Which app is drawing this. See `lib/lead-workspace.ts`. */
   workspace: LeadWorkspace;
   /** The shop front photographed on the handset when the lead was raised. */
   photoIds?: string[];
+  /** `leads.prospectReasons`: the coded list the conversion's seventh answer is chosen from. */
+  prospectReasons?: { code: string; label: string }[];
+  /** `leads.callingDeskDirectPromotion`: whether converting promotes now or asks the Sales Manager. */
+  directPromotion?: boolean;
   record: LeadRecord;
   /** Raw off the URL. Resolved below, because a URL is not a promise. */
   tab: string | null;
@@ -561,7 +568,42 @@ export function LeadRecordScreen({
 
   const callsMade = deskCalls ? deskCalls.calls.filter((c) => !c.earlier).length : 0;
 
+  /*
+   * CONVERTING A SUSPECT. The move is the Telecaller's, through the Calling
+   * desk's own action, so the control is drawn for a Suspect and DISABLED, with
+   * the reason on hover, for anybody the action would refuse. Disabled is a
+   * courtesy: `convertLeadToProspect` checks the desk, the capability and all
+   * seven answers again on the server.
+   */
+  const showConvert = isWorkingStage(record.stage) && !park && !closed;
+  const convertBlocked: string | null = !desk
+    ? "Converting a Suspect is the Telecaller's, from the Calling desk. A Sales Manager moves it with Move to Prospect once all seven answers are in."
+    : !canWork
+      ? "Working a lead is the salesman's and the manager's."
+      : desk.requestState === "awaiting" || desk.requestState === "followup"
+        ? "This lead is already with the Sales Manager. It is not a Prospect until they verify it."
+        : null;
+
   return (
+    <ConvertProvider
+      record={{
+        customerId: record.customerId,
+        name: record.name,
+        salesType: record.salesType,
+        customerType: record.customerType,
+        monthlyLitres: record.monthlyLitres,
+        competitor: record.competitor,
+        requiredProductId: record.requiredProductId,
+        requiredProductName: record.requiredProductName,
+        contactPerson: record.contactPerson,
+        nextAction: record.nextAction,
+        nextActionDate: record.nextActionDate,
+      }}
+      reasons={prospectReasons}
+      directPromotion={directPromotion}
+      day={day}
+      blocked={showConvert ? convertBlocked : "Only a Suspect is converted."}
+    >
     <div className="flex flex-col gap-4 p-6">
       {/* ------------------------------------------------------- header */}
       <header className="flex flex-col gap-3">
@@ -617,6 +659,7 @@ export function LeadRecordScreen({
             >
               Message
             </Link>
+            {showConvert ? <ConvertButton /> : null}
             <PrimaryGateAction
               workspace={workspace}
               base={base}
@@ -1088,6 +1131,7 @@ export function LeadRecordScreen({
         onClose={() => setVerifying(false)}
       />
     </div>
+    </ConvertProvider>
   );
 }
 
@@ -1340,6 +1384,7 @@ function GateRail({
       )}
 
       <div className="flex flex-wrap items-center gap-2 border-t border-divider pt-3">
+        {nextRung === "prospect" ? <ConvertButton label="Convert to Prospect…" size="sm" /> : null}
         <AdvanceStage
           customerId={record.customerId}
           to={nextRung ?? null}

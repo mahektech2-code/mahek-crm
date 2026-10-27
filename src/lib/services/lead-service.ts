@@ -42,6 +42,7 @@ import {
   type MoveDirection,
 } from "../engines/lead-ladder";
 import { NURTURE_SOURCE_TYPE } from "../engines/lead-nurture";
+import { PROSPECT_ANSWERS, prospectAnswerFaults } from "../engines/lead-prospect-answers";
 import {
   stageLabel,
   verificationAnswers,
@@ -689,6 +690,8 @@ export type LeadMoveRefusalCode =
   | "override_reason"
   | "lost_reason"
   | "prospect_reason"
+  | "prospect_answers"
+  | "prospect_no_override"
   | "revert_not_permitted";
 
 export type LeadMoveDecision =
@@ -961,6 +964,54 @@ export async function evaluateLeadStageMove(input: {
         missing: PROSPECT_CONDITIONS.filter((c) => c.id === "prospect_reason"),
       };
     }
+
+    /*
+     * ALL SEVEN, VALID, ON EVERY DOOR — and NO WAY ROUND THEM.
+     *
+     * This function is the one every route to Prospect passes: the stage
+     * button, the calling desk's conversion, the Sales Manager's verification,
+     * the board and the handset. So the rule is enforced HERE and not only in
+     * the dialog that happens to ask: the gate below asks whether each answer is
+     * PRESENT (and calls any finite number an answer, zero litres included),
+     * this asks whether each is a real one. And for a Prospect two of the
+     * gate's own escape hatches are shut:
+     *   - a manager's override, which passes a gate that is closed, and
+     *   - `leads.requireNextAction` switched off, which lifts the next action.
+     * Both exist for the later rungs; neither applies to the first promotion.
+     */
+    if (input.override) {
+      return {
+        ok: false,
+        code: "prospect_no_override",
+        message:
+          "A Suspect cannot be moved to Prospect past a closed gate, whoever asks. Answer all seven questions first.",
+        missing: [],
+      };
+    }
+    const faults = prospectAnswerFaults(
+      {
+        customerType: input.gate.customerType ?? null,
+        monthlyLitres: input.gate.monthlyLitres ?? null,
+        competitor: input.gate.competitor ?? null,
+        requiredProductId: input.gate.requiredProductId ?? null,
+        contactPerson: input.gate.contactPerson ?? null,
+        nextAction: input.gate.nextAction ?? null,
+        nextActionDate: input.gate.nextActionDate ?? null,
+        reasonCode: input.reasonCode ?? null,
+      },
+      { reasonCodes: codes },
+    );
+    if (faults.length > 0) {
+      return {
+        ok: false,
+        code: "prospect_answers",
+        message: `A Prospect needs all seven answers, each a real one. ${faults.map((f) => f.message).join(" ")}`,
+        missing: faults.map((f) => ({
+          id: PROSPECT_ANSWERS.find((a) => a.field === f.field || (f.field === "nextActionDate" && a.field === "nextAction"))?.id ?? f.field,
+          says: f.message,
+        })),
+      };
+    }
   }
 
   const verdict = gateTo(
@@ -974,9 +1025,10 @@ export async function evaluateLeadStageMove(input: {
   /* §24 is the engine's, the SETTING is a manager's, and lifting it is done by
      id rather than by rebuilding the list — a filter on "conditions about the
      next action" would take out anything that ever mentions one. */
-  const missing = config["leads.requireNextAction"]
-    ? verdict.missing
-    : verdict.missing.filter((c) => c.id !== "next_action");
+  const missing =
+    config["leads.requireNextAction"] || to === "prospect"
+      ? verdict.missing
+      : verdict.missing.filter((c) => c.id !== "next_action");
 
   if (missing.length === 0) {
     return { ok: true, kind: "passed", overriddenConditions: [] };

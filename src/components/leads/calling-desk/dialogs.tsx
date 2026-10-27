@@ -853,6 +853,11 @@ export function RequestDialog({
   const needsContact = !lead.contactPerson?.trim();
   const [customerType, setCustomerType] = React.useState("");
   const [contactPerson, setContactPerson] = React.useState("");
+  /* THE SEVENTH ANSWER, asked where the lead has none: what happens next and the
+     day. A Prospect is never made without it, and the server refuses without it. */
+  const hasNextStep = Boolean(lead.nextAction?.text?.trim() && lead.nextAction?.date);
+  const [nextText, setNextText] = React.useState("");
+  const [nextDate, setNextDate] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -876,6 +881,10 @@ export function RequestDialog({
       setError("Say who to ask for when the Sales Manager rings.");
       return;
     }
+    if (!hasNextStep && (!nextText.trim() || !nextDate)) {
+      setError("Say what happens next, and the day it happens.");
+      return;
+    }
     setBusy(true);
     setError(null);
     let result;
@@ -887,6 +896,8 @@ export function RequestDialog({
         salesType: needsSalesType ? (salesType as "direct" | "third_party") : undefined,
         customerType: needsType ? (customerType as never) : undefined,
         contactPerson: needsContact ? contactPerson.trim() : undefined,
+        nextAction: hasNextStep ? undefined : nextText.trim(),
+        nextActionDate: hasNextStep ? undefined : nextDate,
       });
     } finally {
       setBusy(false);
@@ -966,6 +977,14 @@ export function RequestDialog({
           <Input value={contactPerson} onChange={(e) => setContactPerson(e.target.value)} />
         </FieldLabel>
       ) : null}
+      {!hasNextStep ? (
+        <FieldLabel label="What happens next, and when?" className="mb-3">
+          <div className="grid grid-cols-[1fr_150px] gap-2">
+            <Input value={nextText} onChange={(e) => setNextText(e.target.value)} placeholder="e.g. Call back with the price list" />
+            <Input type="date" value={nextDate} onChange={(e) => setNextDate(e.target.value)} />
+          </div>
+        </FieldLabel>
+      ) : null}
 
       <FieldLabel label="What they said" className="mb-3">
         <Textarea
@@ -1027,6 +1046,11 @@ export function ConvertDialog({
   const needsContact = !lead.contactPerson?.trim();
   const [customerType, setCustomerType] = React.useState("");
   const [contactPerson, setContactPerson] = React.useState("");
+  /* THE SEVENTH ANSWER, asked where the lead has none: what happens next and the
+     day. A Prospect is never made without it, and the server refuses without it. */
+  const hasNextStep = Boolean(lead.nextAction?.text?.trim() && lead.nextAction?.date);
+  const [nextText, setNextText] = React.useState("");
+  const [nextDate, setNextDate] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -1050,6 +1074,10 @@ export function ConvertDialog({
       setError("Say who the Contact Person is.");
       return;
     }
+    if (!hasNextStep && (!nextText.trim() || !nextDate)) {
+      setError("Say what happens next, and the day it happens.");
+      return;
+    }
     setBusy(true);
     setError(null);
     let result;
@@ -1066,6 +1094,8 @@ export function ConvertDialog({
           : undefined,
         customerType: needsType ? (customerType as never) : undefined,
         contactPerson: needsContact ? contactPerson.trim() : undefined,
+        nextAction: hasNextStep ? undefined : nextText.trim(),
+        nextActionDate: hasNextStep ? undefined : nextDate,
       });
     } finally {
       setBusy(false);
@@ -1144,6 +1174,14 @@ export function ConvertDialog({
       {needsContact ? (
         <FieldLabel label="Contact Person" className="mb-3">
           <Input value={contactPerson} onChange={(e) => setContactPerson(e.target.value)} />
+        </FieldLabel>
+      ) : null}
+      {!hasNextStep ? (
+        <FieldLabel label="What happens next, and when?" className="mb-3">
+          <div className="grid grid-cols-[1fr_150px] gap-2">
+            <Input value={nextText} onChange={(e) => setNextText(e.target.value)} placeholder="e.g. Call back with the price list" />
+            <Input type="date" value={nextDate} onChange={(e) => setNextDate(e.target.value)} />
+          </div>
         </FieldLabel>
       ) : null}
 

@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { auditLog, calls, customers, users } from "@/db/schema";
+import { auditLog, calls, customers, products, users } from "@/db/schema";
 import { canAny, hatsFor, requireCapability } from "@/lib/access-control";
 import {
   approverFor,
@@ -47,6 +47,13 @@ import {
   type DeskValues,
 } from "@/lib/engines/lead-calling-desk";
 import { gateTo } from "@/lib/engines/lead-gates";
+import {
+  PROSPECT_ANSWERS,
+  mergeProspectAnswers,
+  prospectAnswerFaults,
+  type ProspectAnswers,
+  type ProspectFault,
+} from "@/lib/engines/lead-prospect-answers";
 import { ladderFor } from "@/lib/engines/lead-ladder";
 import { leadGateInput, leadManagerCandidatesFor, leadRow } from "@/lib/services/lead-service";
 import { QUAL_NEXT } from "@/lib/services/lead-qualification-flow-service";
@@ -644,7 +651,7 @@ export async function logQualificationCall(
 const requestSchema = z.object({
   customerId: z.string().min(1),
   /** §5's coded reason, from `leads.prospectReasons`. Validated against it below. */
-  reasonCode: z.string().trim().min(1, "Say why this is worth pursuing."),
+  reasonCode: z.string("Say why this is worth pursuing.").trim().min(1, "Say why this is worth pursuing."),
   note: z.string().trim().max(2000).optional(),
   /* The two things the Prospect gate wants that are not desk answers. Asked
      here, once, if the record does not already hold them. */
@@ -653,6 +660,16 @@ const requestSchema = z.object({
   /* Asked only where the lead has not been told how it will be sold. Never
      defaulted: which ladder a lead climbs decides which gates apply. */
   salesType: z.enum(["direct", "third_party"]).optional(),
+  /* THE OTHER FIVE OF THE SEVEN, supplied by the record page's dialog where the
+     record does not already hold them validly. All optional here and all
+     DEMANDED in `preparePromotion`: the schema only shapes what may arrive, the
+     refusal is the one place that says what is missing. Nothing supplied ever
+     replaces a valid value already on the record. */
+  monthlyLitres: z.number().finite().max(10_000_000).optional(),
+  competitor: z.string().trim().max(200).optional(),
+  requiredProductId: z.string().trim().min(1).max(100).optional(),
+  nextAction: z.string().trim().max(300).optional(),
+  nextActionDate: z.string().trim().max(10).optional(),
 });
 
 /**
@@ -712,6 +729,10 @@ async function preparePromotion(
         above was asked with, so a caller's real write can never name a different one. */
     nextActionOwnerId: string;
     day: string;
+    /** All seven answers as they will stand, each one valid. */
+    answers: ProspectAnswers;
+    /** The ones the record lacked and this request supplied: the only ones written. */
+    write: Partial<ProspectAnswers>;
   }>
 > {
   const found = await reachable(p.customerId);
@@ -732,11 +753,71 @@ async function preparePromotion(
     );
   }
 
+  /*
+   * ALL SEVEN, AND EVERY ONE OF THEM VALID: no exceptions.
+   *
+   * What the record already holds counts (nobody retypes a call's answers) as
+   * long as it is a real answer; what it lacks must arrive with this request.
+   * One fault, however many, refuses the whole act: no stage moves, no request
+   * is filed, and every missing or invalid field is named at once so the form
+   * can mark them all. `prospectProgress` below stays as a second reading of
+   * the desk's own three, and the section 28 gate after it as the third.
+   */
+  const config0 = await getConfig();
+  const today0 = await today();
+  const { merged: answers, write } = mergeProspectAnswers(
+    {
+      customerType: lead.customerType,
+      monthlyLitres: lead.leadMonthlyVolumeLitres,
+      competitor: lead.leadCompetitor,
+      requiredProductId: lead.leadRequiredProductId,
+      contactPerson: lead.contactPerson,
+      nextAction: lead.leadNextAction,
+      nextActionDate: lead.leadNextActionDate,
+    },
+    {
+      customerType: p.customerType ?? null,
+      monthlyLitres: p.monthlyLitres ?? null,
+      competitor: p.competitor ?? null,
+      requiredProductId: p.requiredProductId ?? null,
+      contactPerson: p.contactPerson ?? null,
+      nextAction: p.nextAction ?? null,
+      nextActionDate: p.nextActionDate ?? null,
+      reasonCode: p.reasonCode,
+    },
+    { today: today0 },
+  );
+  const faults: ProspectFault[] = prospectAnswerFaults(answers, {
+    today: today0,
+    reasonCodes: config0["leads.prospectReasons"].map((r) => r.code),
+    requireFutureDate: Boolean(write.nextActionDate),
+  });
+  /* A product id must be one the catalogue holds: a typed id is not a product. */
+  if (answers.requiredProductId && !faults.some((f) => f.field === "requiredProductId")) {
+    const [found] = await db
+      .select({ id: products.id })
+      .from(products)
+      .where(eq(products.id, answers.requiredProductId))
+      .limit(1);
+    if (!found) faults.push({ field: "requiredProductId", message: "Pick a product from the catalogue." });
+  }
+  if (faults.length > 0) {
+    const labels = [
+      ...new Set(
+        faults.map((f) => PROSPECT_ANSWERS.find((a) => a.field === f.field || (f.field === "nextActionDate" && a.field === "nextAction"))?.label ?? f.field),
+      ),
+    ];
+    return err(
+      `Not ready for Prospect yet. Still needed: ${labels.join(", ")}. ${faults.map((f) => f.message).join(" ")}`,
+      "validation",
+      faults.map<FieldError>((f) => ({ field: f.field, message: f.message })),
+    );
+  }
   const values: DeskValues = {
     decisionMaker: lead.leadDecisionMaker,
-    monthlyLitres: lead.leadMonthlyVolumeLitres,
-    requiredProductId: lead.leadRequiredProductId,
-    competitor: lead.leadCompetitor,
+    monthlyLitres: answers.monthlyLitres === null ? null : Number(answers.monthlyLitres),
+    requiredProductId: answers.requiredProductId,
+    competitor: answers.competitor,
   };
   const progress = prospectProgress(values);
   if (!progress.complete) {
@@ -887,8 +968,11 @@ async function preparePromotion(
       {
         ...gate,
         salesType,
-        customerType: gate.customerType || p.customerType || null,
-        contactPerson: gate.contactPerson?.trim() ? gate.contactPerson : (p.contactPerson ?? null),
+        customerType: answers.customerType,
+        contactPerson: answers.contactPerson,
+        monthlyLitres: answers.monthlyLitres === null ? null : Number(answers.monthlyLitres),
+        competitor: answers.competitor,
+        requiredProductId: answers.requiredProductId,
         prospectReasonRecorded: true,
         nextAction: nextAction.action,
         nextActionDate: nextAction.date,
@@ -916,7 +1000,32 @@ async function preparePromotion(
     managerId,
     nextActionOwnerId,
     day,
+    answers,
+    write,
   });
+}
+
+/**
+ * What a conversion or a request writes from the dialog: ONLY what the record
+ * lacked validly (`write`), never a value somebody already gave. The customer
+ * type and the contact keep their own two lines in the callers; this adds the
+ * three the dialog can now supply. The typed next step is not written here: the
+ * lead's one next-action slot becomes the Sales Manager's verification, so the
+ * typed step is kept on the audit row and the timeline instead.
+ */
+function answerColumns(write: Partial<ProspectAnswers>): Partial<typeof customers.$inferInsert> {
+  const set: Partial<typeof customers.$inferInsert> = {};
+  if (write.monthlyLitres !== undefined && write.monthlyLitres !== null) {
+    set.leadMonthlyVolumeLitres = Number(write.monthlyLitres);
+  }
+  if (write.competitor) set.leadCompetitor = write.competitor.trim();
+  if (write.requiredProductId) set.leadRequiredProductId = write.requiredProductId;
+  return set;
+}
+
+/** The typed next step, in words, for the audit row and the timeline. */
+function nextStepWords(a: ProspectAnswers): string {
+  return `${a.nextAction ?? ""}${a.nextActionDate ? ` on ${a.nextActionDate}` : ""}`.trim();
 }
 
 /**
@@ -960,7 +1069,7 @@ export async function requestProspect(
 
     const prepared = await preparePromotion(p, ctx, { action: "Sales manager verification", date: due });
     if (!prepared.ok) return prepared;
-    const { lead, req, salesType, setsSalesType, managerId, nextActionOwnerId } = prepared.data;
+    const { lead, req, salesType, setsSalesType, managerId, nextActionOwnerId, answers, write } = prepared.data;
     const resubmitted = req.state === "returned";
 
     const now = new Date();
@@ -986,8 +1095,9 @@ export async function requestProspect(
       if (setsSalesType) set.leadSalesType = salesType;
       const relabelled = funnelStageFor(lead.leadStage, salesType);
       if (relabelled) set.leadStage = relabelled;
-      if (!lead.customerType && p.customerType) set.customerType = p.customerType;
-      if (!lead.contactPerson?.trim() && p.contactPerson) set.contactPerson = p.contactPerson;
+      if (write.customerType) set.customerType = write.customerType as NonNullable<typeof customers.$inferInsert["customerType"]>;
+      if (write.contactPerson) set.contactPerson = write.contactPerson.trim();
+      Object.assign(set, answerColumns(write));
       /* The seat is FILLED, never moved, and `lead_manager_decided_at` is left
          alone: nobody chose this person, the region did. */
       if (managerId !== lead.leadManagerId && !lead.leadManagerDecidedAt) set.leadManagerId = managerId;
@@ -1003,7 +1113,7 @@ export async function requestProspect(
         actorUserId: ctx.user.id,
         summary: `${resubmitted ? "Resubmitted for verification" : "Prospect requested — sent to the Sales Manager"}: ${
           config["leads.prospectReasons"].find((r) => r.code === p.reasonCode)?.label ?? p.reasonCode
-        }${p.note ? ` · ${p.note}` : ""}. Not a Prospect until the Sales Manager confirms.`,
+        }${p.note ? ` · ${p.note}` : ""}. Their next step: ${nextStepWords(answers)}. Not a Prospect until the Sales Manager confirms.`,
       });
 
       await tx.insert(auditLog).values({
@@ -1015,7 +1125,7 @@ export async function requestProspect(
         actorRole: ctx.authorisedBy,
         actorApp: ctx.authorisedIn,
         beforeState: { prospectRequestState: req.state ?? null },
-        afterState: { prospectRequestState: "awaiting", reason: p.reasonCode },
+        afterState: { prospectRequestState: "awaiting", reason: p.reasonCode, nextStep: nextStepWords(answers) },
       });
 
       if (setsSalesType) {
@@ -1131,7 +1241,7 @@ export async function convertLeadToProspect(
     const due = addDays(day, config["leads.verificationDueDays"]);
     const prepared = await preparePromotion(p, ctx, { action: QUAL_NEXT.verify, date: due });
     if (!prepared.ok) return prepared;
-    const { lead, salesType, setsSalesType, managerId } = prepared.data;
+    const { lead, salesType, setsSalesType, managerId, answers, write } = prepared.data;
 
     const now = new Date();
     await db.transaction(async (tx) => {
@@ -1142,8 +1252,9 @@ export async function convertLeadToProspect(
       if (setsSalesType) set.leadSalesType = salesType;
       const relabelled = funnelStageFor(lead.leadStage, salesType);
       if (relabelled) set.leadStage = relabelled;
-      if (!lead.customerType && p.customerType) set.customerType = p.customerType;
-      if (!lead.contactPerson?.trim() && p.contactPerson) set.contactPerson = p.contactPerson;
+      if (write.customerType) set.customerType = write.customerType as NonNullable<typeof customers.$inferInsert["customerType"]>;
+      if (write.contactPerson) set.contactPerson = write.contactPerson.trim();
+      Object.assign(set, answerColumns(write));
       /* The seat is FILLED, never moved, and `lead_manager_decided_at` is left
          alone: nobody chose this person, the region did. */
       if (managerId !== lead.leadManagerId && !lead.leadManagerDecidedAt) set.leadManagerId = managerId;
@@ -1214,7 +1325,7 @@ export async function convertLeadToProspect(
       actorRole: ctx.authorisedBy,
       actorApp: ctx.authorisedIn,
       beforeState: { leadStage: lead.leadStage },
-      afterState: { leadStage: "prospect", reason: p.reasonCode },
+      afterState: { leadStage: "prospect", reason: p.reasonCode, nextStep: nextStepWords(answers) },
     });
 
     /* The manager is told, because verification is now theirs to do and the

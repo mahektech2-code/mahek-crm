@@ -126,6 +126,9 @@ const ask = (customerId: string, extra: Partial<Parameters<typeof requestProspec
     reasonCode: "regular_requirement",
     customerType: "manufacturer",
     note: "Wants a trial first.",
+    /* The seventh answer: a Prospect is never made without a next step. */
+    nextAction: "Call back with the price list",
+    nextActionDate: tomorrow,
     ...extra,
   });
 
@@ -135,6 +138,8 @@ const convert = (customerId: string, extra: Partial<Parameters<typeof convertLea
     reasonCode: "regular_requirement",
     customerType: "manufacturer",
     note: "Wants a trial first.",
+    nextAction: "Call back with the price list",
+    nextActionDate: tomorrow,
     ...extra,
   });
 
