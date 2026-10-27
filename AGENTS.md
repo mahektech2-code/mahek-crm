@@ -9683,6 +9683,23 @@ Postgres enum cannot be used in the transaction that adds it, and drizzle runs e
 pending migration in one. `review-status.ts` states the allowed statuses and kinds
 once and `review-logic.test.ts` reads the migration and fails if the two drift.
 
+**A PROSPECT NEEDS ALL SEVEN ANSWERS, EACH A REAL ONE, ON EVERY DOOR.** Business
+type, monthly litres, competitor, product, contact person, next action and the
+coded reason. `lib/engines/lead-prospect-answers.ts` is the one reading of what
+makes each an answer: the record page's Convert dialog draws its field errors
+from it, `preparePromotion` refuses on it (so `convertLeadToProspect` and
+`requestProspect` both do, whichever way `leads.callingDeskDirectPromotion` is
+set), and `evaluateLeadStageMove` refuses on it for every other route — the
+stage button, the verification, the board, the handset. The gate's own `has()`
+calls any finite number an answer (zero litres passed it), which is why this is
+stricter. For a Prospect, and only for a Prospect, two of the gate's escape
+hatches are shut: a manager's override, and `leads.requireNextAction` switched
+off. A value already on the record counts while it is valid and is never
+overwritten by what the dialog supplies; an invalid one yields to it. The next
+step the person types is kept on the audit row and the timeline, not in the
+lead's next-action slot, because that slot becomes the Sales Manager's
+verification call on conversion, exactly as before.
+
 ## Testing
 
 `npm run test` runs the engine tests: pure, fast, no database. They pin the

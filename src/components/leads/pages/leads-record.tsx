@@ -289,6 +289,8 @@ export async function Body({
          back the FOOT of the ladder, which offered to move a parked
          qualification back to Suspect. */
       nextVerdict={next}
+      prospectReasons={config["leads.prospectReasons"]}
+      directPromotion={config["leads.callingDeskDirectPromotion"]}
       nextRung={next.noNextRung ? null : next.to}
       park={park}
       mustDecide={mustDecide}
