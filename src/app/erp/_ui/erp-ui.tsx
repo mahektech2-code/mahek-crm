@@ -18,6 +18,8 @@ import { Field, PhotoTile } from "./field";
 import { checkField, optsFor } from "./form-check";
 import { GrnDialog } from "./grn-dialog";
 import { ShareDialog } from "./share-dialog";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
+import { IMPACT_FIELD } from "@/lib/impact/types";
 import { CardGrid } from "@/components/ui/card-grid";
 import { LineTable } from "./line-table";
 import { ErpVoice } from "./voice";
@@ -77,6 +79,7 @@ export function ErpUiProvider({
   const [formKey, setFormKey] = useState(0);
   const [resultDialog, setResultDialog] = useState<{ screen: string; d: NonNullable<ToolResult["dialog"]> } | null>(null);
   const [share, setShare] = useState<{ screen: string; a: ActionSpec; recordId: string; after?: () => void; key: number } | null>(null);
+  const [impact, setImpact] = useState<{ screen: string; a: ActionSpec; recordId: string; after?: () => void; key: number } | null>(null);
 
   const toast = useCallback((t: string, tone: "info" | "error" = "info") => push(t, tone), [push]);
 
@@ -115,6 +118,12 @@ export function ErpUiProvider({
       if (a.why) return;
       if (a.share) {
         setShare({ screen, a, recordId, after, key: Date.now() });
+        return;
+      }
+      /* A delete that reaches other records says what moves with it, and asks
+         for the name, instead of a bare "are you sure". */
+      if (a.impact) {
+        setImpact({ screen, a, recordId, after, key: Date.now() });
         return;
       }
       if (a.href) {
@@ -246,6 +255,22 @@ export function ErpUiProvider({
               toast(msg);
               router.refresh();
               share.after?.();
+            }}
+          />
+        ) : null}
+        {impact?.a.impact ? (
+          <ImpactDialog
+            key={impact.key}
+            kind={impact.a.impact.kind}
+            id={impact.a.impact.id}
+            confirmLabel={impact.a.l}
+            onClose={() => setImpact(null)}
+            onConfirm={async (confirmation) => {
+              const res = await kit.runAction(impact.screen, impact.a.id, impact.recordId, {
+                [IMPACT_FIELD]: JSON.stringify(confirmation),
+              });
+              if (res.ok) finish(res, impact.after, impact.screen);
+              return res;
             }}
           />
         ) : null}

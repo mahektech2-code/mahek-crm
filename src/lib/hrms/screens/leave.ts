@@ -41,6 +41,8 @@ import { personFrom, personOption, scopeFor } from "./attendance";
 import { fromOld, HOLIDAY_CATEGORIES, LEAVE_WAITING } from "../values";
 import { powerHolderUserIds, tell, tellEmployees } from "../services/notify";
 import { mirrorToField, removeEverywhere, renameEverywhere } from "@/lib/services/holiday-calendar";
+import { confirmImpact } from "@/lib/impact/registry";
+import { readConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * Leave & holidays (spec §7), overtime (§8) and the monthly attendance
@@ -1076,7 +1078,8 @@ const holidaysScreen: HrmsScreenModule = {
             },
           });
         }
-        a.push({ id: "delete", l: "Delete", why: has(ctx, "admin") ? undefined : "Only an HRMS administrator can delete a holiday", confirm: `Delete ${h.name} on ${fdShort(h.date)}?` });
+        /* A holiday is in two calendars and on the phones: the impact modal says so. */
+        a.push({ id: "delete", l: "Delete", why: has(ctx, "admin") ? undefined : "Only an HRMS administrator can delete a holiday", impact: { kind: "holiday", id: h.id } });
         return {
           id: h.id,
           v: { date: h.date, day: weekdayOf(h.date), category: h.category, name: h.name, tagged, remark: h.remark ?? "", monthLbl: monLabel(monthOf(h.date)), year: h.date.slice(0, 4) },
@@ -1115,10 +1118,13 @@ const holidaysScreen: HrmsScreenModule = {
       await hrmsAudit(ctx, "hrms.holiday.edit", "hrms_holidays", id, { name: h.name, category: h.category, remark: h.remark }, after);
       return okVoid("Holiday updated");
     },
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       if (!has(ctx, "admin")) return err("Only an HRMS administrator can delete a holiday", "not_permitted");
       const [h] = await db.select().from(hrmsHolidays).where(eq(hrmsHolidays.id, id));
       if (!h) return err("That holiday no longer exists.", "not_found");
+      /* The person saw what this takes with it, and it is still true. */
+      const refusal = await confirmImpact("holiday", id, readConfirmation(values));
+      if (refusal) return refusal;
       await inTx(async (tx) => {
         await removeEverywhere(tx, id);
         return okVoid("");

@@ -21,6 +21,7 @@ import { appAccess, mbosDevices, mbosUserTerritories, places, users } from "@/db
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { setTestUser } from "@/lib/auth";
 import { removeHoliday, saveHoliday, setHolidayPerson } from "@/lib/actions/sales";
+import { impactReport } from "@/lib/impact/registry";
 import { buildBootstrap, buildPull, type MbosPrincipal } from "@/lib/services/mbos-service";
 import { holidayCalendar } from "@/lib/services/holiday-service";
 import { setWorkingTerritories } from "@/lib/services/territory-service";
@@ -188,8 +189,25 @@ test("editing keeps one row, and removing tombstones the phones", async () => {
   const dup = await saveHoliday({ ...base, onDate: DAY, name: "raja parba", level: "company" });
   assert.equal(dup.ok, false);
 
-  const gone = await removeHoliday(holidayId);
-  assert.ok(gone.ok);
+  /* Removing it says first what goes with it, and asks for the name. */
+  const report = await impactReport("holiday", holidayId);
+  assert.ok(report.ok, report.ok ? "" : report.error);
+  const where = report.data.items.map((i) => `${i.app}:${i.effect}`);
+  assert.ok(where.includes("HRMS:deleted"), where.join(", "));
+  assert.ok(where.includes("Sales Dashboard:deleted"), where.join(", "));
+  /* Groups that touch nobody are left off rather than shown as "0 …". */
+  assert.ok(report.data.items.every((i) => i.count > 0 || i.effect === "kept"));
+  assert.equal(report.data.confirmWord, "Raja Parba");
+
+  const bare = await removeHoliday(holidayId);
+  assert.equal(bare.ok, false, "no confirmation, no removal");
+  const misspelt = await removeHoliday(holidayId, { typed: "Raja", fingerprint: report.data.fingerprint });
+  assert.equal(misspelt.ok, false);
+  const stale = await removeHoliday(holidayId, { typed: "Raja Parba", fingerprint: "1:stale" });
+  assert.equal(stale.ok ? "ok" : stale.code, "conflict", "a picture that is no longer true is refused as a conflict");
+
+  const gone = await removeHoliday(holidayId, { typed: "raja  parba", fingerprint: report.data.fingerprint });
+  assert.ok(gone.ok, gone.ok ? "" : gone.error);
   const [tomb] = await db.execute<{ n: number }>(sql`select count(*)::int as n from mbos_deletions where entity = 'holidays' and entity_id = ${holidayId}`);
   assert.equal(tomb?.n, 1);
 });

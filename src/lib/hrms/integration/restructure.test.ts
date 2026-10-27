@@ -15,6 +15,8 @@ import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appAccess, appModuleAccess, employeeReporting, employees, hrmsHolidays, mbosApprovals, mbosAttendanceDays, mbosHolidays, mbosLeaveRequests, hrmsAssetAssignments, hrmsAssetStock, hrmsAttendance, hrmsHelp, hrmsLeaveRequests, hrmsNotifications, hrmsUserPowers, mbosDeletions, mbosDocuments, notifications, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
+import { impactReport } from "@/lib/impact/registry";
+import { IMPACT_FIELD } from "@/lib/impact/types";
 import { hrmsContext, requireHrmsWrite, HrmsNotPermitted } from "@/lib/hrms/access";
 import { hrmsScreenModule } from "@/lib/hrms/screens";
 import { hrmsSearch } from "@/lib/actions/hrms-screens";
@@ -367,7 +369,15 @@ describe("one record across HRMS and the field app", () => {
     const [m] = await db.select().from(mbosHolidays).where(eq(mbosHolidays.id, h.id));
     assert.equal(m?.name, "Diwali");
     const admin = await account("Ajay Admin", null, "admin");
-    const d = await mod("holidays").actions!.delete(await as(admin), h.id, {});
+    const ctx2 = await as(admin);
+    /* Refused without the confirmation the impact modal hands back. */
+    const bare = await mod("holidays").actions!.delete(ctx2, h.id, {});
+    assert.equal(bare.ok, false);
+    const report = await impactReport("holiday", h.id);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    const d = await mod("holidays").actions!.delete(ctx2, h.id, {
+      [IMPACT_FIELD]: JSON.stringify({ typed: "Diwali", fingerprint: report.data.fingerprint }),
+    });
     assert.equal(d.ok, true, JSON.stringify(d));
     assert.equal((await db.select().from(mbosHolidays).where(eq(mbosHolidays.id, h.id))).length, 0);
     assert.equal((await db.select().from(mbosDeletions).where(eq(mbosDeletions.entityId, h.id))).length, 1);

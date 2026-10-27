@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/toast";
 import { Modal } from "@/components/ui/modal";
-import { ConfirmDialog } from "@/components/ui/overlays";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { cx } from "@/components/ui/primitives";
 import { calendarDate } from "@/lib/business-date";
 import { removeHoliday, setHolidayPerson } from "@/lib/actions/sales";
@@ -152,29 +152,25 @@ export function HolidaysScreen({
         }}
       />
 
-      <ConfirmDialog
-        open={removing !== null}
-        title={removing ? `Remove ${removing.name}?` : ""}
-        body={
-          removing
-            ? `${longDay(removing.onDate)} stops being a holiday for the ${removing.members.length} ${removing.members.length === 1 ? "person" : "people"} it reaches, on the office's screens and on their phones at the next sync. HRMS's copy goes too.`
-            : ""
-        }
-        confirmLabel="Remove the holiday"
-        destructive
-        onClose={() => setRemoving(null)}
-        onConfirm={async () => {
-          if (!removing) return;
-          const r = await removeHoliday(removing.id);
-          setRemoving(null);
-          if (!r.ok) {
-            setError(r.error);
-            return;
-          }
-          toast.push(r.message ?? "Removed.");
-          router.refresh();
-        }}
-      />
+      {/* What removing it takes with it — HRMS's copy, the field calendar and
+          the phones — read off the database, with the name typed to confirm. */}
+      {removing ? (
+        <ImpactDialog
+          key={removing.id}
+          kind="holiday"
+          id={removing.id}
+          confirmLabel="Remove the holiday"
+          onClose={() => setRemoving(null)}
+          onConfirm={async (confirmation) => {
+            const r = await removeHoliday(removing.id, confirmation);
+            if (r.ok) {
+              toast.push(r.message ?? "Removed.");
+              router.refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
     </div>
   );
 }

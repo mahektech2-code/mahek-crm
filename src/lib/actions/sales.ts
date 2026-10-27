@@ -84,6 +84,8 @@ import { ADMIN } from "@/lib/admin-routes";
 import { notifyUsers } from "../notify";
 import { announce } from "@/lib/services/announcement-service";
 import { mirrorToHrms, removeEverywhere } from "@/lib/services/holiday-calendar";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 import {
   previewAudience,
   rebuildHolidayMembers,
@@ -1775,7 +1777,7 @@ function shortDay(iso: string): string {
 }
 
 /** Taking a day back off the calendar. */
-export async function removeHoliday(id: string): Promise<Result> {
+export async function removeHoliday(id: string, confirmation?: ImpactConfirmation): Promise<Result> {
   try {
     const user = await requireSalesAccess(SALES_MANAGER("sales.holidays"));
 
@@ -1785,6 +1787,11 @@ export async function removeHoliday(id: string): Promise<Result> {
       .where(eq(mbosHolidays.id, id))
       .limit(1);
     if (!row) return err("That day is no longer on the calendar.", "not_found");
+    /* The person saw what this takes with it — HRMS, the field calendar, the
+       phones — and that list is still true. A server action is a URL, so the
+       modal is not the only thing that can call this. */
+    const refusal = await confirmImpact("holiday", id, confirmation);
+    if (refusal) return refusal;
 
     /* Reference data, gone — from HRMS's calendar as well, and tombstoned:
        without one the deleted row simply has no `updated_at` for the delta to
