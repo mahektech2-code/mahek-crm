@@ -53,16 +53,16 @@ The **can use** must be a raw material of type Can or Drum — it is the packing
 
 <Flow caption="A customer's three ERP statuses" chart={`
 flowchart LR
-  N["New customer<br/>saved in the ERP"] --> P["Pending"]
-  P -- "Activate<br/>(status power)" --> A["Active"]
+  N["Added in Accounts<br/>Add customer"] --> A["Active"]
+  P["Pending"] -- "Activate<br/>(status power)" --> A
   A -- "Mark pending" --> P
   A -- "Deactivate" --> D["Deactive<br/>= deactivated in MahekOne"]
   P -- "Deactivate" --> D
   D -- "Activate" --> A
 `} />
 
-<Rule title="A new customer is a lead, and Pending">
-A customer created in the ERP is a MahekOne **lead** — as it stays, everywhere in MahekOne, until its second order — with an ERP profile marking it **pending activation**. Its orders can be taken but cannot move until an admin or the office activates it, or — once [the ERP takes the orders](/docs/erp/order-book) — until Accounts approves the order. Once the ERP takes the orders, its second ERP order makes it a customer.
+<Rule title="Customers are opened in Accounts">
+The ERP has no **New customer**. A customer is opened in **Accounts → Customers → Add customer**, which makes it a customer at once — Accounts opening an account is the business deciding to invoice that shop, so it does not wait for a second order. It is on this list as **Active** as soon as it is saved. A lead from Lead Management or the field is different: it stays a lead until its second order, and its second ERP order makes it a customer. **Pending** is now only on parties the ERP opened before this change.
 </Rule>
 
 <Rule title="Deactivating is the customer's own status">

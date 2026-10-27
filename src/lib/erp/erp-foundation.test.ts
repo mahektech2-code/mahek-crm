@@ -152,10 +152,20 @@ describe("raw materials", () => {
 });
 
 describe("customers", () => {
-  test("a new customer is created Pending, and only a status-holder activates it", async () => {
+  test("the ERP creates no customers — they are opened in Accounts", async () => {
+    const refused = await mod("customers").forms!.new(await as(admin), { name: "Shree Paints", city: "Pune", mobile: "9876543210", credit: "30" }, []);
+    assert.ok(!refused.ok && refused.code === "not_permitted", JSON.stringify(refused));
+    assert.equal((await db.select().from(customers).where(eq(customers.name, "Shree Paints"))).length, 0);
+    const list = await mod("customers").load(await as(admin));
+    assert.equal(list.spec.newForm, undefined, "no New customer button");
+  });
+
+  test("a party opened before that is Pending, and only a status-holder activates it", async () => {
     const ctx = await as(clerk);
-    const made = await mod("customers").forms!.new(ctx, { name: "Shree Paints", city: "Pune", mobile: "9876543210", credit: "30" }, []);
-    assert.ok(made.ok);
+    /* A party the ERP opened before it stopped creating them: a lead with a pending profile. */
+    const pid = `cus_${randomUUID().slice(0, 8)}`;
+    await db.insert(customers).values({ id: pid, name: "Shree Paints", city: "Pune", phone: "9876543210", kind: "lead", leadSource: "erp" } as typeof customers.$inferInsert);
+    await db.insert(erpCustomerProfiles).values({ customerId: pid, pendingActivation: true });
     const [row] = await loadCustomers(eq(customers.name, "Shree Paints"));
     assert.equal(partyStatus(row), "Pending");
 

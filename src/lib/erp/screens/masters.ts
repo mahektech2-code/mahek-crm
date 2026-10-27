@@ -894,44 +894,19 @@ export async function customerForm(id: string) {
   return customerEditForm(id);
 }
 
-async function customerNewForm(ctx: ErpContext): Promise<FormSpec> {
-  const [areas, states, salesPeople] = await Promise.all([refOptions("area"), refOptions("state"), salesPeopleNames()]);
-  const tags = await priceTags();
-  return {
-    screen: "customers",
-    id: "new",
-    title: "New customer",
-    sub: "Created as Pending. An admin activates it before its orders can move.",
-    submit: "Create customer",
-    header: [
-      { k: "name", l: "Business name", t: "text", req: true, sec: "Business" },
-      { k: "mobile", l: "Mobile", t: "text", req: true },
-      { k: "city", l: "City", t: "text", req: true, sec: "Where" },
-      { k: "area", l: "Area", t: "select", opts: areas },
-      { k: "state", l: "State", t: "select", opts: states },
-      { k: "sales", l: "Tagged sales person", t: "select", opts: salesPeople, sec: "Account" },
-      { k: "priceList", l: "Price list", t: "select", opts: tags },
-      { k: "credit", l: "Credit days", t: "num", def: "30", min: 0 },
-    ],
-    data: { self: ctx.user.name },
-  };
-}
-
-async function salesPeopleNames(): Promise<string[]> {
-  const rows = await db
-    .select({ name: users.name })
-    .from(users)
-    .where(eq(users.active, true))
-    .orderBy(asc(users.name));
-  return rows.map((r) => r.name);
-}
-
-async function priceTags(): Promise<string[]> {
-  const rows = (await db.execute(
-    sql`select distinct price_tag as t from customers where price_tag is not null order by 1`,
-  )) as unknown as { t: string }[];
-  return rows.map((r) => r.t);
-}
+/**
+ * A CUSTOMER IS OPENED IN ACCOUNTS, NOT HERE.
+ *
+ * The ERP had its own "New customer", and what it made was a LEAD (pending,
+ * until its second order) — so a party the order desk opened was invisible on
+ * Accounts → Customers, the one place its credit days and price list can be
+ * set. Accounts' "Add customer" (`lib/actions/customer-create.ts`) opens an
+ * account we invoice, `kind = 'customer'`, with its seats decided; it is on
+ * this list the moment it exists. A lead from Lead Management still becomes a
+ * customer on its second order. The refusal is in `forms.new` as well as the
+ * missing button, because a form posts to a URL whether or not a button leads to it.
+ */
+export const CUSTOMER_CREATE_REFUSAL = "Customers are added in Accounts → Customers → Add customer.";
 
 function customerFields(r: CustomerRow, canSeeTarget: boolean): { l: string; v: string; der?: boolean }[] {
   return [
@@ -957,7 +932,6 @@ const customersScreen: ScreenModule = {
   key: "customers",
   async load(ctx) {
     const rows = await loadCustomers();
-    const newForm = await customerNewForm(ctx);
     const canStatus = ctx.powers.has("customerStatus");
     const cols: ColSpec[] = [
       { k: "name", l: "Customer", t: "b" },
@@ -973,7 +947,7 @@ const customersScreen: ScreenModule = {
     ];
     const why = canStatus ? "" : "Only an admin or the office changes a customer's status";
     return {
-      spec: { screen: "customers", cols, hidden: [], groups: ["status"], chips: "status", newForm, newLabel: "New customer" },
+      spec: { screen: "customers", cols, hidden: [], groups: ["status"], chips: "status", noDataLine: "No customers yet. Customers are added in Accounts → Customers → Add customer." },
       rows: rows.map((r) => {
         const st = partyStatus(r);
         const actions: ActionSpec[] = [];
@@ -1011,63 +985,8 @@ const customersScreen: ScreenModule = {
     edit: async () => null,
   },
   forms: {
-    async new(ctx, h) {
-      const name = text(h.name);
-      if (!name) return fieldErr("name", "Business name is required");
-      const city = text(h.city);
-      if (!city) return fieldErr("city", "City is required");
-      const mobile = (h.mobile ?? "").replace(/\D/g, "");
-      if (mobile.length !== 10) return fieldErr("mobile", "INVALID");
-      const dup = await db.select({ id: customers.id }).from(customers).where(sql`lower(${customers.name}) = lower(${name})`);
-      if (dup.length) return fieldErr("name", "Duplicate Entry!");
-      let salesAmId: string | null = null;
-      const salesName = text(h.sales);
-      if (salesName) {
-        const [u] = await db.select({ id: users.id }).from(users).where(eq(users.name, salesName));
-        salesAmId = u?.id ?? null;
-      }
-      const id = erpId("cust");
-      /*
-       * A NEW PARTY IS A LEAD until its second order, which is what `kind`
-       * means everywhere in MahekOne (`lead-conversion-service.ts`; the book
-       * asks the same rule when an ERP order lands). The ERP profile is what
-       * puts it on this list before then, and `pending_activation` is the
-       * source's "Pending".
-       *
-       * OWNED BY ITS SALESPERSON where the form names one who signs in, and by
-       * whoever typed it only where it does not. A lead's book IS its owner —
-       * `ASSIGNED_TO_SQL` and `CREDITED_TO_SQL` both read `owner_id` for a lead —
-       * and conversion carries that owner into the sales seat. Owned by the
-       * order desk, every party created there was the desk person's book and
-       * revenue, and became so permanently the day it converted.
-       */
-      await db.transaction(async (tx) => {
-        await tx.insert(customers).values({
-          id,
-          name,
-          city,
-          area: text(h.area),
-          phone: mobile,
-          kind: "lead",
-          status: "active",
-          creditDays: int(h.credit) ?? 30,
-          priceTag: text(h.priceList),
-          salesAmId,
-          salesPersonName: salesName,
-          ownerId: salesAmId ?? ctx.user.id,
-          leadSource: "erp",
-          createdById: ctx.user.id,
-          updatedById: ctx.user.id,
-        } as typeof customers.$inferInsert);
-        await tx.insert(erpCustomerProfiles).values({
-          customerId: id,
-          state: text(h.state),
-          pendingActivation: true,
-          updatedById: ctx.user.id,
-        });
-      });
-      await erpAudit(ctx, "erp.customer.create", "customer", id, null, { name, city });
-      return okVoid(`${name} created as Pending · an admin activates it`);
+    async new() {
+      return err(CUSTOMER_CREATE_REFUSAL, "not_permitted");
     },
     /* Refused here as well as undrawn — a form posts to a URL whether or not a button leads to it. */
     async edit() {
