@@ -1,5 +1,5 @@
 import type { BusinessDate } from "../business-date";
-import { shortDateWithYear } from "../format";
+import { money, shortDateWithYear } from "../format";
 import { addDays, daysBetween } from "../business-date";
 import { DEFAULT_TIER_WEIGHTS, type Config, type QueueReasonKind } from "../config/registry";
 import { salesTypeLabel, type LeadSalesType } from "../lead-labels";
@@ -840,7 +840,7 @@ export function noAnswerState(
 
 /** Rupees, for a label. The screen formats money everywhere else. */
 function formatPaise(paise: number): string {
-  return `₹${Math.round(paise / 100).toLocaleString("en-IN")}`;
+  return `${money(paise)}`;
 }
 
 /**

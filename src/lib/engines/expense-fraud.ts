@@ -23,6 +23,7 @@
  * ------------------------------------------------------------------------- */
 
 import type { PolicyException, Severity } from "./expense-policy";
+import { money } from "../format";
 
 /* ---------------------------------------------------------- §I47 duplicates */
 
@@ -112,7 +113,7 @@ export function duplicateCandidates(
         reason:
           claim.claimedPaise === other.claimedPaise
             ? "The same photograph of the same bill is already claimed."
-            : `The same photograph of the same bill is already claimed, for a different amount — ₹${Math.round(other.claimedPaise / 100)}.`,
+            : `The same photograph of the same bill is already claimed, for a different amount — ${money(other.claimedPaise)}.`,
       });
       continue;
     }
@@ -126,7 +127,7 @@ export function duplicateCandidates(
         reason:
           claim.claimedPaise === other.claimedPaise
             ? `Bill ${claim.billNumber ?? claim.reference} is already claimed.`
-            : `Bill ${claim.billNumber ?? claim.reference} is already claimed, for ₹${Math.round(other.claimedPaise / 100)} rather than ₹${Math.round(claim.claimedPaise / 100)}.`,
+            : `Bill ${claim.billNumber ?? claim.reference} is already claimed, for ${money(other.claimedPaise)} rather than ${money(claim.claimedPaise)}.`,
       });
       continue;
     }
@@ -288,7 +289,7 @@ export function spendAnomalies(
   minHistoryDays = 5,
 ): PolicyException[] {
   const out: PolicyException[] = [];
-  const rupees = (p: number) => `₹${Math.round(p / 100).toLocaleString("en-IN")}`;
+  const rupees = (p: number) => `${money(p)}`;
 
   const own = median(ownHistoryPaise);
   if (

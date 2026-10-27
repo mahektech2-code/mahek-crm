@@ -35,27 +35,45 @@ const MONTHS_LONG = [
   "December",
 ];
 
-/** 1_84_20_000 paise -> "₹18,42,000" (Indian grouping, rupees, no paise). */
+/**
+ * Paise as rupees, Indian grouping: whole rupees bare, paise to two places
+ * where there are any — "18,42,000", "18,42,000.50".
+ *
+ * IT USED TO ROUND TO THE RUPEE, so ₹1,234.56 typed into a box was stored to
+ * the paisa and shown everywhere as ₹1,235 — a figure nobody typed, and one
+ * that does not add up against the bill it came from. The paise show whenever
+ * the record has them; an amount with none reads as it always did.
+ */
+function rupeeText(absPaise: number): string {
+  const whole = Math.floor(absPaise / 100);
+  const frac = absPaise % 100;
+  return groupIndian(whole) + (frac ? "." + String(frac).padStart(2, "0") : "");
+}
+
+/** 18_42_000_50 paise -> "₹18,42,000.50"; 18_42_000_00 -> "₹18,42,000". */
 export function money(paise: number | null | undefined): string {
   if (paise == null) return "₹0";
-  const rupees = Math.round(paise / 100);
-  return "₹" + groupIndian(Math.abs(rupees)) + (rupees < 0 ? "" : "");
+  return "₹" + rupeeText(Math.abs(Math.round(paise)));
 }
 
 /** Same as money() but keeps a leading minus. */
 export function signedMoney(paise: number): string {
-  const rupees = Math.round(paise / 100);
-  return (rupees < 0 ? "−₹" : "₹") + groupIndian(Math.abs(rupees));
+  const p = Math.round(paise);
+  return (p < 0 ? "−₹" : "₹") + rupeeText(Math.abs(p));
 }
 
-/** Compact form used in tight cells: ₹18.4L, ₹2.6Cr. */
+/**
+ * Compact form used in tight cells: ₹18.4L, ₹2.6Cr. Below a thousand rupees
+ * it is the exact figure, paise and all — "₹12.50", never a rounded "₹13".
+ */
 export function moneyShort(paise: number): string {
-  const r = Math.round(paise / 100);
+  const p = Math.round(paise);
+  const r = p / 100;
   const abs = Math.abs(r);
   if (abs >= 10_000_000) return `₹${(r / 10_000_000).toFixed(2)}Cr`;
   if (abs >= 100_000) return `₹${(r / 100_000).toFixed(2)}L`;
   if (abs >= 1_000) return `₹${(r / 1_000).toFixed(1)}k`;
-  return `₹${r}`;
+  return "₹" + (p < 0 ? "-" : "") + rupeeText(Math.abs(p));
 }
 
 /** 1842000 -> "18,42,000" */

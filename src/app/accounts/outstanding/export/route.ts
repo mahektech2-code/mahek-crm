@@ -5,6 +5,7 @@ import { listUserApps } from "@/lib/access";
 import { toCsv } from "@/lib/csv";
 import { groupOutstanding } from "@/lib/engines/outstanding";
 import { listBills } from "@/lib/services/payment-service";
+import { rupeesFromPaise } from "@/lib/format";
 
 /**
  * WHO OWES WHAT, BILL BY BILL, AS A FILE.
@@ -67,9 +68,9 @@ export async function GET(request: Request) {
         b.billNo,
         b.billDate,
         b.dueDate,
-        String(Math.round(b.amount / 100)),
-        String(Math.round(b.paid / 100)),
-        String(Math.round(b.balance / 100)),
+        rupeesFromPaise(b.amount),
+        rupeesFromPaise(b.paid),
+        rupeesFromPaise(b.balance),
         b.overdueDays ? String(b.overdueDays) : "",
         billWord(b),
       ]),

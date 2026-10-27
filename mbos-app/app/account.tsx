@@ -29,6 +29,7 @@ import {
 import { PERIODS, periodRange, type PeriodKey } from '../src/engines/statement';
 import { useStore } from '../src/state/store';
 import { inrFromPaise, isoDate, plural, shopName } from '../src/lib/format';
+import { typedFromPaise } from '../src/lib/money-input';
 import { color as C, radius, tabular, weight } from '../src/theme/tokens';
 import { Stagger, Swap, animateLayoutFor } from '../src/components/ui/motion';
 
@@ -618,7 +619,7 @@ function Bills({ view }: { view: AccountView }) {
   const [shown, setShown] = React.useState(STEP);
 
   const list = view.bills.filter(
-    (b) => billMatches(b, filter) && matchesText([b.billNo, b.billDate, Math.round(b.amountPaise / 100), ...b.lines.map((l) => l.product)], q),
+    (b) => billMatches(b, filter) && matchesText([b.billNo, b.billDate, typedFromPaise(b.amountPaise), ...b.lines.map((l) => l.product)], q),
   );
   const balance = list.filter((b) => b.paymentPosition !== 'unstated').reduce((s, b) => s + Math.max(0, b.balancePaise), 0);
   const billed = list.reduce((s, b) => s + b.amountPaise, 0);
@@ -798,7 +799,7 @@ function Payments({ view }: { view: AccountView }) {
   const [shown, setShown] = React.useState(STEP);
 
   const list = view.receipts.filter(
-    (r) => receiptMatches(r, filter) && matchesText([r.reference, r.receiptNo, r.mode, r.receivedAt, Math.round(r.amountPaise / 100)], q),
+    (r) => receiptMatches(r, filter) && matchesText([r.reference, r.receiptNo, r.mode, r.receivedAt, typedFromPaise(r.amountPaise)], q),
   );
   const confirmed = list.filter((r) => r.status === 'confirmed').reduce((s, r) => s + r.amountPaise, 0);
 

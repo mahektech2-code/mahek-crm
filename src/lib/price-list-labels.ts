@@ -7,6 +7,8 @@
  * code is never a label — `for_godown` on a screen is a bug.
  * ------------------------------------------------------------------------- */
 
+
+import { money } from "@/lib/format";
 import type {
   PriceDeliveryBasis,
   PriceDiscountKind,
@@ -188,7 +190,7 @@ export function discountTermSentence(term: {
       return `${pctText} for prompt payment`;
     case "quantity":
       if (term.thresholdLitres) return `${pctText} from ${term.thresholdLitres.toLocaleString("en-IN")} litres`;
-      if (term.thresholdPaise) return `${pctText} on orders of ₹${Math.round(term.thresholdPaise / 100).toLocaleString("en-IN")} and above`;
+      if (term.thresholdPaise) return `${pctText} on orders of ${money(term.thresholdPaise)} and above`;
       return `${pctText} by quantity`;
     case "other":
       return pctText;

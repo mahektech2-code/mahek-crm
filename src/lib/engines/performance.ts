@@ -1,5 +1,6 @@
 import type { BusinessDate } from "../business-date";
 import type { Config } from "../config/registry";
+import { money } from "../format";
 
 /* ---------------------------------------------------------------------------
  * E10 — Salesman performance.
@@ -629,13 +630,13 @@ export function rankPerformance<T extends PerformanceRankInput>(
 function gapSentence(key: ComponentKey, gap: number): string {
   switch (key) {
     case "revenue":
-      return `₹${(gap / 100).toLocaleString("en-IN", { maximumFractionDigits: 0 })} short of the revenue target.`;
+      return `${money(gap)} short of the revenue target.`;
     case "volume":
       return `${Math.round(gap / 1000).toLocaleString("en-IN")} litres short of the volume target.`;
     case "newCustomers":
       return `${gap} more new ${gap === 1 ? "customer" : "customers"} needed this month.`;
     case "collection":
-      return `₹${(gap / 100).toLocaleString("en-IN", { maximumFractionDigits: 0 })} still to collect.`;
+      return `${money(gap)} still to collect.`;
     case "activity":
       return `${gap} more ${gap === 1 ? "visit or call" : "visits or calls"} to make.`;
     default:

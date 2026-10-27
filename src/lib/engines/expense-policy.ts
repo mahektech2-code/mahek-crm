@@ -418,8 +418,19 @@ export function worstSeverity(exceptions: readonly PolicyException[]): Severity 
 
 /* ------------------------------------------------------------------ money */
 
+/* Paise where there are any, never rounded to the rupee — "₹212.50" is what
+   the policy pays, and a reason quoting "₹213" disagrees with the figure
+   beside it. Written out here rather than imported: this engine is copied to
+   the handset, which cannot reach the office's `lib/format`. */
 function rupees(paise: number): string {
-  return `₹${Math.round(paise / 100).toLocaleString("en-IN")}`;
+  const p = Math.round(paise);
+  const abs = Math.abs(p);
+  const frac = abs % 100;
+  return (
+    (p < 0 ? "−" : "") +
+    `₹${Math.floor(abs / 100).toLocaleString("en-IN")}` +
+    (frac ? "." + String(frac).padStart(2, "0") : "")
+  );
 }
 
 function km(metres: number): string {

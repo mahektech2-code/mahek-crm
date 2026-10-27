@@ -20,7 +20,7 @@ import {
 } from "@/components/ledger/customer-statement";
 import type { AccountServing } from "@/lib/services/distributor-service";
 import { downloadCsv, toCsv } from "@/lib/csv";
-import { longDate, money } from "@/lib/format";
+import { longDate, money, rupeesFromPaise } from "@/lib/format";
 import { Banner, Empty, Pager, Pill, ScreenHeader, Table, plural } from "../parts";
 
 /* ---------------------------------------------------------------------------
@@ -147,13 +147,13 @@ export function LedgerScreen({
           e.detail,
           [
             ...(e.links ?? []).map(
-              (l) => `${l.label} ₹${Math.round(l.amount / 100)}${deadStatus(l.status) ? " (" + l.status + ")" : ""}`,
+              (l) => `${l.label} ${money(l.amount)}${deadStatus(l.status) ? " (" + l.status + ")" : ""}`,
             ),
-            ...(e.onAccount ? [`On account ₹${Math.round(e.onAccount / 100)}`] : []),
+            ...(e.onAccount ? [`On account ${money(e.onAccount)}`] : []),
           ].join("; "),
-          e.debit ? String(Math.round(e.debit / 100)) : "",
-          e.credit ? String(Math.round(e.credit / 100)) : "",
-          String(Math.round(e.balance / 100)),
+          e.debit ? rupeesFromPaise(e.debit) : "",
+          e.credit ? rupeesFromPaise(e.credit) : "",
+          rupeesFromPaise(e.balance),
         ]),
       ),
       [from, to],

@@ -6,6 +6,8 @@
  * and a change printed in POINTS for a rate and PERCENT for a count (P6).
  * ------------------------------------------------------------------------- */
 
+import { signedMoney } from "@/lib/format";
+
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 export function groupIndian(n: number): string {
@@ -16,19 +18,21 @@ export function groupIndian(n: number): string {
   return rest.replace(/\B(?=(\d{2})+(?!\d))/g, ",") + "," + last3;
 }
 
-/** Paise → "₹2,40,500", sign kept. */
+/** Paise → "₹2,40,500", or "₹2,40,500.50" where it has paise; sign kept. */
 export function inr(paise: number): string {
-  const neg = paise < 0;
-  return (neg ? "−₹" : "₹") + groupIndian(Math.round(Math.abs(paise) / 100));
+  return signedMoney(paise);
 }
 
-/** Paise → "₹3.48 Cr" / "₹41.2 L" / "₹84,600", sign kept. */
+/**
+ * Paise → "₹3.48 Cr" / "₹41.2 L" / "₹84,600", sign kept. Below a lakh it is
+ * the exact figure, paise and all — the headline shortening is for big money.
+ */
 export function crore(paise: number): string {
   const r = paise / 100;
   const neg = r < 0;
   const a = Math.abs(r);
-  const t =
-    a >= 1e7 ? (a / 1e7).toFixed(2) + " Cr" : a >= 1e5 ? (a / 1e5).toFixed(1) + " L" : groupIndian(a);
+  if (a < 1e5) return signedMoney(paise);
+  const t = a >= 1e7 ? (a / 1e7).toFixed(2) + " Cr" : (a / 1e5).toFixed(1) + " L";
   return (neg ? "−₹" : "₹") + t;
 }
 

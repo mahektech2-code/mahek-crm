@@ -1,3 +1,5 @@
+
+import { rupeesFromPaise } from "@/lib/format";
 import type { TargetRow } from "@/lib/services/sales-target-service";
 
 /**
@@ -6,7 +8,7 @@ import type { TargetRow } from "@/lib/services/sales-target-service";
  * doors onto one feature cannot export two different files.
  */
 export function targetsCsv(rows: TargetRow[], existing: Record<string, number>) {
-  const rupees = (p: number | null) => (p === null ? "" : Math.round(p / 100));
+  const rupees = (p: number | null) => (p === null ? "" : rupeesFromPaise(p));
   const pct = (bp: number | null) => (bp === null ? "" : Math.round(bp / 100));
   return [
     [

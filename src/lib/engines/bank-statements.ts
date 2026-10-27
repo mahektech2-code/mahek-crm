@@ -21,6 +21,9 @@
  *    a balance that breaks, a figure the reading was unsure of.
  * ------------------------------------------------------------------------- */
 
+
+import { signedMoney } from "../format";
+
 /* ------------------------------------------------------------- rows read */
 
 /** One line as read from the PDF, in paise. */
@@ -273,13 +276,8 @@ export function dayDiff(a: string, b: string): number {
   return Math.round((Date.UTC(+a.slice(0, 4), +a.slice(5, 7) - 1, +a.slice(8, 10)) - Date.UTC(+b.slice(0, 4), +b.slice(5, 7) - 1, +b.slice(8, 10))) / 86_400_000);
 }
 
-const inr = (p: number) => {
-  const r = Math.round(p / 100);
-  const s = String(Math.abs(r));
-  const head = s.slice(0, -3);
-  const body = (head ? head.replace(/\B(?=(\d{2})+(?!\d))/g, ",") + "," : "") + s.slice(-3);
-  return `${r < 0 ? "−" : ""}₹${body}`;
-};
+/* Paise where there are any — a statement line is never rounded. */
+const inr = (p: number) => signedMoney(p);
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 /** "2026-10-17" → "17 Oct". */

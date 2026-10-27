@@ -1,4 +1,5 @@
 import type { BlueprintDefinition, GrowthStep } from "@/lib/hire/blueprint-types";
+import { signedMoney } from "@/lib/format";
 
 /* ---------------------------------------------------------------------------
  * The offer letter and growth plan, PURE — the builder's live preview in the
@@ -8,11 +9,8 @@ import type { BlueprintDefinition, GrowthStep } from "@/lib/hire/blueprint-types
  * ------------------------------------------------------------------------- */
 
 export function rupees(paise: number): string {
-  const r = Math.round(paise / 100);
-  const t = String(Math.abs(r));
-  const l3 = t.slice(-3);
-  const rest = t.slice(0, -3);
-  return `${r < 0 ? "−" : ""}₹${rest ? rest.replace(/\B(?=(\d{2})+(?!\d))/g, ",") + "," + l3 : l3}`;
+  /* Paise where there are any — `signedMoney` is the one copy of the rule. */
+  return signedMoney(paise);
 }
 
 export type LadderRow = { grade: string; when: string; pay: string; basicPaise: number };

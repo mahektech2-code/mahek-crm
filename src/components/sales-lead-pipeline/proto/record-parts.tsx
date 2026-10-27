@@ -10,6 +10,7 @@ import { stageAgeLong } from "@/lib/sales-lead-pipeline/stage-age";
 import type { Lead } from "@/lib/sales-lead-pipeline/types";
 import { useLeadPipeline } from "../provider";
 import { PBadge, PCard, PEmpty, PPriorityBadge, PSalesTypeBadge, PSectionLabel, PStageBadge, fmtDay, managerAction, pbtn } from "./ui";
+import { money as inrText } from "@/lib/format";
 
 /* ---------------------------------------------------------------------------
  * THE LEAD RECORD, in the prototype's own pieces.
@@ -20,7 +21,7 @@ import { PBadge, PCard, PEmpty, PPriorityBadge, PSalesTypeBadge, PSectionLabel, 
  * this file: it is chosen by `workspace === "crm"` and nothing else.
  * ------------------------------------------------------------------------- */
 
-const money = (paise?: number) => (paise ? "₹" + Math.round(paise / 100).toLocaleString("en-IN") : undefined);
+const money = (paise?: number) => (paise ? inrText(paise) : undefined);
 
 function MetaCell({ label, value }: { label: string; value?: string }) {
   return (
