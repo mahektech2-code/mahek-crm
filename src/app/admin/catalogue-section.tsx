@@ -30,12 +30,14 @@ import {
   removeAlias,
   moveFormulation,
   renameLevel,
+  renameSku,
   runCatalogueImport,
   runPackingImport,
   setFormulationOfferedForMix,
   setLevelActive,
   setSkuActive,
   updateSku,
+  updateSkuPacking,
 } from "@/lib/actions/catalogue";
 import { pinnedCell, pinnedHead } from "@/components/ui/pinned";
 import type { CatalogueData } from "./catalogue-data";
@@ -340,7 +342,7 @@ function SkuTab({
                   <Td>{s.externalCode ?? ((s.externalIds ?? []).join(", ") || "—")}</Td>
                   <Td className={pinnedCell("right", i, openId === s.id)} align="right">
                     <Button variant="ghost" onClick={() => setOpenId(s.id === openId ? null : s.id)}>
-                      {openId === s.id ? "Close" : "Open"}
+                      {openId === s.id ? "Close" : "Edit"}
                     </Button>
                   </Td>
                 </Tr>
@@ -393,6 +395,8 @@ function SkuTab({
         key={open?.id ?? "none"}
         sku={open}
         goods={data.hierarchy.goods}
+        packItems={data.packItems}
+        boxTypes={data.boxTypes}
         canWrite={canWrite}
         refresh={refresh}
         onClose={() => setOpenId(null)}
@@ -406,6 +410,8 @@ function SkuTab({
 type SkuDetailProps = {
   sku: CatalogueData["skus"][number] | null;
   goods: CatalogueData["hierarchy"]["goods"];
+  packItems: CatalogueData["packItems"];
+  boxTypes: string[];
   canWrite: boolean;
   refresh: () => void;
   onClose: () => void;
@@ -423,6 +429,8 @@ function SkuDetail(props: SkuDetailProps) {
 function SkuDetailBody({
   sku,
   goods,
+  packItems,
+  boxTypes,
   canWrite,
   refresh,
   onClose,
@@ -439,6 +447,17 @@ function SkuDetailBody({
     sku.weightGrams == null ? "" : String(sku.weightGrams / 1000),
   );
   const [cansPerBox, setCansPerBox] = React.useState(String(sku.cansPerBox));
+  const [name, setName] = React.useState(sku.name);
+  const [packing, setPacking] = React.useState(sku.packing ?? "");
+  const [litresPerCan, setLitresPerCan] = React.useState(
+    sku.millilitresPerCan == null ? "" : String(sku.millilitresPerCan / 1000),
+  );
+  const startCanUse = packItems.find((m) => m.name === sku.canUse)?.id ?? "";
+  const startBoxRate = sku.boxRatePaise == null ? "" : String(sku.boxRatePaise / 100);
+  const [canUseId, setCanUseId] = React.useState(startCanUse);
+  const [emptyBoxes, setEmptyBoxes] = React.useState(String(sku.emptyBoxesRequired ?? 0));
+  const [boxType, setBoxType] = React.useState(sku.boxType ?? "");
+  const [boxRate, setBoxRate] = React.useState(startBoxRate);
   const [goodId, setGoodId] = React.useState("");
   const [alias, setAlias] = React.useState("");
   const { busy, run } = useAction(refresh);
@@ -469,16 +488,41 @@ function SkuDetailBody({
             disabled={!canWrite || busy}
             title={canWrite ? undefined : "Configuration is changed by a manager."}
             onClick={() =>
-              run(() =>
-                updateSku(sku.id, {
+              run(async () => {
+                /* The name first: a rename that is refused (another SKU has it)
+                   stops the rest rather than half-saving the row. */
+                if (name.trim() !== sku.name) {
+                  const r = await renameSku(sku.id, name);
+                  if (!r.ok) return r;
+                }
+                const ml = Math.round(Number(litresPerCan) * 1000);
+                const a = await updateSku(sku.id, {
                   sellingPricePaise: price === "" ? null : Math.round(Number(price) * 100),
                   packingCostPaise: packingCost === "" ? null : Math.round(Number(packingCost) * 100),
                   weightGrams: weight === "" ? null : Math.round(Number(weight) * 1000),
                   cansPerBox: Number(cansPerBox) || 1,
                   weightBasis: (Number(cansPerBox) || 1) > 1 ? "box" : "can",
+                  ...(packing.trim() ? { packing: packing.trim() } : {}),
+                  ...(ml > 0 ? { millilitresPerCan: ml } : {}),
                   ...(goodId ? { finishedGoodId: goodId } : {}),
-                }),
-              )
+                });
+                if (!a.ok) return a;
+                const packingChanged =
+                  canUseId !== startCanUse ||
+                  String(sku.emptyBoxesRequired ?? 0) !== emptyBoxes ||
+                  (sku.boxType ?? "") !== boxType ||
+                  startBoxRate !== boxRate;
+                if (packingChanged) {
+                  const b = await updateSkuPacking(sku.id, {
+                    canUseMaterialId: canUseId || null,
+                    emptyBoxesRequired: Number(emptyBoxes) || 0,
+                    boxType: boxType || null,
+                    boxRatePaise: boxRate === "" ? null : Math.round(Number(boxRate) * 100),
+                  });
+                  if (!b.ok) return b;
+                }
+                return { ok: true, message: "Saved." };
+              })
             }
           >
             Save
@@ -490,30 +534,72 @@ function SkuDetailBody({
         <div className="grid grid-cols-3 gap-x-6 gap-y-3">
           <Fact label="Raw name in the source" value={sku.rawName ?? "—"} />
           <Fact
-            label="Canonical name"
-            value={sku.name}
-            hint="The join key legacy orders and bills match on. It is not editable — a rename would detach every line that carried the old spelling. Add an alias instead."
-          />
-          <Fact
             label="Legacy Product ID"
             value={sku.externalCode ?? ((sku.externalIds ?? []).join(", ") || "—")}
             hint="Reference only. Not sequential, not a count, and not our primary key."
           />
-          <Fact
-            label="Can use"
-            value={sku.canUse ?? "Not set"}
-            hint="The can or drum this SKU is filled into. Set in ERP → Products → Edit packing, or imported from Mahek Plus."
-          />
-          <Fact
-            label="Box"
-            value={
-              sku.boxType
-                ? `${sku.boxType}${sku.emptyBoxesRequired ? ` · ${sku.emptyBoxesRequired} empty box${sku.emptyBoxesRequired === 1 ? "" : "es"} required` : ""}`
-                : sku.canUse
-                  ? "Loose — no box"
-                  : "Not set"
-            }
-          />
+        </div>
+
+        <div className="mt-4 grid grid-cols-3 gap-3">
+          <Field
+            label="Name"
+            className="col-span-2"
+            hint="Renaming keeps the old name as an alias, so old orders, bills and price lists still find this SKU."
+          >
+            <Input value={name} disabled={!canWrite} onChange={(e) => setName(e.target.value)} />
+          </Field>
+          <Field label="Packing" hint="As printed: Loose, 6 Can/Box…">
+            <Input value={packing} disabled={!canWrite} onChange={(e) => setPacking(e.target.value)} />
+          </Field>
+          <Field label="Litres per can" hint="The pack size; litres and boxes are worked out from it.">
+            <Input
+              type="number"
+              step="0.001"
+              min={0}
+              value={litresPerCan}
+              disabled={!canWrite}
+              onChange={(e) => setLitresPerCan(e.target.value)}
+            />
+          </Field>
+          <Field label="Can use" hint="The can or drum it is filled into — the ERP's packing.">
+            <Select value={canUseId} disabled={!canWrite} onChange={(e) => setCanUseId(e.target.value)}>
+              <option value="">Not set</option>
+              {packItems.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Box type" hint="Blank for a loose can.">
+            <Select value={boxType} disabled={!canWrite} onChange={(e) => setBoxType(e.target.value)}>
+              <option value="">No box</option>
+              {boxTypes.map((b) => (
+                <option key={b} value={b}>
+                  {b}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Empty boxes required" hint="Counted out of stock when a batch is packed.">
+            <Input
+              type="number"
+              min={0}
+              value={emptyBoxes}
+              disabled={!canWrite}
+              onChange={(e) => setEmptyBoxes(e.target.value)}
+            />
+          </Field>
+          <Field label="Box rate (₹)" hint="Used in the ERP's packing costing.">
+            <Input
+              type="number"
+              step="0.01"
+              min={0}
+              value={boxRate}
+              disabled={!canWrite}
+              onChange={(e) => setBoxRate(e.target.value)}
+            />
+          </Field>
         </div>
 
         <div className="mt-4 grid grid-cols-4 gap-3">

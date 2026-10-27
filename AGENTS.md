@@ -3974,14 +3974,18 @@ sell that" must never look alike. Where `products.searchOnOrderForms` is off
 the box is hidden rather than shown and made useless, because a search that
 finds nothing reads as a broken catalogue rather than as a policy.
 
-**A SKU's name is the join key, so it is never edited.** Legacy orders and bills
-reference the description as TEXT, not by ID, so `products.name` is the
-normalised name and it is unique across the catalogue. A rename would silently
-detach every historical line carrying the old spelling — a name that has to
-change becomes a new SKU plus an alias. `product_aliases` is what makes an old
-spelling keep resolving; aliases are read on the way in and never offered on an
-order form. The raw name is kept beside the normalised one for reconciling
-against records that still hold the original string.
+**A SKU's name is the join key, so a rename leaves the old name behind as an
+alias.** Legacy orders and bills reference the description as TEXT, not by ID, so
+`products.name` is the normalised name and it is unique across the catalogue. It
+used to be never edited at all, because a bare rename would silently detach every
+historical line carrying the old spelling. `renameSku` is what made it editable:
+the old name is written to `product_aliases` in the same transaction, so every
+reader that resolves a name — they all read aliases — keeps finding the row. The
+catalogue import matches aliases too and leaves a renamed SKU's name alone, or a
+re-run would revert the rename or create a second SKU under the old name. Never
+`update products set name` anywhere else. Aliases are read on the way in and never
+offered on an order form. The raw name is kept beside the normalised one for
+reconciling against records that still hold the original string.
 
 **Quantity is cans, and it is shown as cans, litres and boxes.** Cans are what the telecaller counts and what the customer
 says, so cans are what is stored; litres and boxes are derived in

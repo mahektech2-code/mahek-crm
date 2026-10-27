@@ -2,12 +2,14 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import {
   auditLog,
   catalogueExceptions,
+  erpProductPacking,
+  erpRawMaterials,
   finishedGoods,
   productAliases,
   productBrands,
@@ -26,6 +28,7 @@ import {
 import { err as fail, ok, type Result } from "@/lib/result";
 import { ADMIN } from "@/lib/admin-routes";
 import type { PackingImportReport } from "@/lib/erp/packing-import";
+import { BOX_TYPES } from "@/lib/erp/refs";
 
 /* ---------------------------------------------------------------------------
  * Writes to the catalogue.
@@ -221,6 +224,100 @@ export async function updateSku(
     await audit(user.id, "catalogue.sku", productId, before, values);
     refresh();
     return ok({ name: before.name }, "Saved.");
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : "That did not save.");
+  }
+}
+
+/**
+ * RENAMING A SKU KEEPS ITS OLD NAME ANSWERING.
+ *
+ * The name is the join key: legacy orders, bills and price lists name a SKU as
+ * TEXT. That is why it was never editable — a rename would have detached every
+ * line carrying the old spelling. What makes it safe is the alias: the old name
+ * is written to `product_aliases` in the same transaction, and every reader that
+ * resolves a name reads aliases too, so the history keeps finding this row. The
+ * catalogue import matches aliases as well and leaves a renamed SKU's name alone
+ * (`catalogue-import.ts`), so a re-run neither reverts the rename nor creates a
+ * second SKU under the old name.
+ */
+export async function renameSku(productId: string, name: string): Promise<Result<{ name: string }>> {
+  try {
+    const user = await actor();
+    const clean = canonicalName(name);
+    if (clean.length < 3) return fail("A SKU name needs at least three characters.");
+
+    const [before] = await db.select().from(products).where(eq(products.id, productId));
+    if (!before) return fail("No such product.", "not_found");
+    if (clean === before.name) return ok({ name: clean }, "Nothing changed.");
+
+    // One string, one SKU: the new name may not be another SKU's name or answer for one.
+    const key = matchKey(clean);
+    const others = await db.select({ name: products.name }).from(products).where(ne(products.id, productId));
+    const taken = others.find((o) => matchKey(o.name) === key);
+    if (taken) return fail(`"${taken.name}" is already another SKU.`, "conflict");
+    const aliases = await db.select().from(productAliases);
+    const answering = aliases.find((a) => a.productId !== productId && matchKey(a.name) === key);
+    if (answering) return fail(`"${answering.name}" already answers for another SKU — remove that alias first.`, "conflict");
+
+    await db.transaction(async (tx) => {
+      /* The new name stops being one of its own aliases — it is the name now. */
+      const own = aliases.filter((a) => a.productId === productId && matchKey(a.name) === key).map((a) => a.id);
+      if (own.length) await tx.delete(productAliases).where(inArray(productAliases.id, own));
+      await tx
+        .insert(productAliases)
+        .values({ id: newId("pal"), productId, name: before.name, reason: `Renamed to ${clean}`, createdById: user.id })
+        .onConflictDoNothing();
+      await tx.update(products).set({ name: clean, updatedAt: new Date() }).where(eq(products.id, productId));
+    });
+    await audit(user.id, "catalogue.rename", productId, { name: before.name }, { name: clean });
+    refresh();
+    return ok({ name: clean }, `Renamed. "${before.name}" still finds it.`);
+  } catch (e) {
+    const message = e instanceof Error && /products_name/.test(e.message) ? "Another SKU already has that name." : e instanceof Error ? e.message : "That did not save.";
+    return fail(message);
+  }
+}
+
+const packingPatch = z.object({
+  /** Null: no can or drum set. */
+  canUseMaterialId: z.string().nullable(),
+  emptyBoxesRequired: z.number().int().min(0).max(500),
+  boxType: z.string().nullable(),
+  boxRatePaise: z.number().int().min(0).nullable(),
+});
+
+/**
+ * A SKU's ERP packing — the can or drum it is filled into and the box it ships
+ * in — edited from the catalogue. The same rules as ERP → Products → Edit
+ * packing, and the same row, so the two editors cannot disagree.
+ */
+export async function updateSkuPacking(
+  productId: string,
+  patch: z.input<typeof packingPatch>,
+): Promise<Result<undefined>> {
+  try {
+    const user = await actor();
+    const parsed = packingPatch.safeParse(patch);
+    if (!parsed.success) return fail("Those packing values are not valid.");
+    const v = parsed.data;
+    const [p] = await db.select({ id: products.id }).from(products).where(eq(products.id, productId));
+    if (!p) return fail("No such product.", "not_found");
+    if (v.canUseMaterialId) {
+      const [m] = await db
+        .select({ id: erpRawMaterials.id })
+        .from(erpRawMaterials)
+        .where(and(eq(erpRawMaterials.id, v.canUseMaterialId), inArray(erpRawMaterials.materialType, ["Can", "Drum"])));
+      if (!m) return fail("The can use must be a raw material of type Can or Drum.");
+    }
+    if (v.boxType && !BOX_TYPES.includes(v.boxType)) return fail("That is not one of the box types.");
+
+    const [before] = await db.select().from(erpProductPacking).where(eq(erpProductPacking.productId, productId));
+    const values = { ...v, updatedAt: new Date(), updatedById: user.id };
+    await db.insert(erpProductPacking).values({ productId, ...values }).onConflictDoUpdate({ target: erpProductPacking.productId, set: values });
+    await audit(user.id, "catalogue.packing", productId, before ?? null, v);
+    refresh();
+    return ok(undefined, "Saved.");
   } catch (e) {
     return fail(e instanceof Error ? e.message : "That did not save.");
   }
