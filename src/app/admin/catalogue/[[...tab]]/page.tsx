@@ -7,8 +7,10 @@ import {
   listDuplicates,
   listExceptions,
   listHierarchy,
+  listPackItems,
   listSkus,
 } from "@/lib/services/catalogue-service";
+import { BOX_TYPES } from "@/lib/erp/refs";
 import { SOURCE_DISCREPANCIES } from "@/db/catalogue-seed";
 import { AdminPage } from "../../_shell/admin-page";
 import { adminContext } from "../../_shell/context";
@@ -37,7 +39,7 @@ export default async function CataloguePage({
   const status = one("status") ?? "all";
   const index = tabIndexOf(ADMIN_TABS.catalogue, tab?.[0]);
 
-  const [config, summary, skuPage, hierarchy, categories, duplicates, exceptions, aliases] = await Promise.all([
+  const [config, summary, skuPage, hierarchy, categories, duplicates, exceptions, aliases, packItems] = await Promise.all([
     getConfig(),
     catalogueSummary(),
     listSkus({
@@ -52,6 +54,7 @@ export default async function CataloguePage({
     listDuplicates(),
     listExceptions(),
     listAliases(),
+    listPackItems(),
   ]);
 
   return (
@@ -78,6 +81,8 @@ export default async function CataloguePage({
           duplicates,
           exceptions,
           aliases,
+          packItems,
+          boxTypes: BOX_TYPES,
           filters: { query: one("q"), formulationId: one("formulation"), status, open: one("open") },
           priceSource: config["products.priceSource"],
           discrepancies: SOURCE_DISCREPANCIES,

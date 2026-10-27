@@ -268,6 +268,8 @@ const files = [
   // The third verifier: a lead a Salesman raised or holds goes to the person
   // `leads.fieldVerifierEmail` names, by the seat the Sales Manager already has.
   "src/lib/field-verifier-routing.test.ts",
+  // Editing a SKU end to end: a rename keeps the old name as an alias and survives a re-import; the ERP packing row.
+  "src/lib/catalogue-edit.test.ts",
   // Saving where a salesman works can hand him the shops in those places — only the count shown, only with customer.reassign.
   "src/lib/area-handover.test.ts",
   "src/lib/org-chart-verifier-routing.test.ts",

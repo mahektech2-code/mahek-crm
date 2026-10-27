@@ -44,6 +44,8 @@ export type SkuRow = {
   canUse: string | null;
   boxType: string | null;
   emptyBoxesRequired: number | null;
+  /** The ERP's box rate for its packing costing, paise. */
+  boxRatePaise: number | null;
   aliases: string[];
 };
 
@@ -118,6 +120,9 @@ export async function listSkus(opts: {
       )`,
       boxType: sql<string | null>`(select pk.box_type from erp_product_packing pk where pk.product_id = ${products.id})`,
       emptyBoxesRequired: sql<number | null>`(select pk.empty_boxes_required from erp_product_packing pk where pk.product_id = ${products.id})`,
+      boxRatePaise: sql<number | null>`(select pk.box_rate_paise from erp_product_packing pk where pk.product_id = ${products.id})`.mapWith((v) =>
+        v == null ? null : Number(v),
+      ),
       aliases: sql<string[]>`coalesce((
         select array_agg(a.name order by a.name) from product_aliases a where a.product_id = ${products.id}
       ), '{}')`,
@@ -282,4 +287,16 @@ export async function catalogueSummary() {
     .from(sql`(select 1) as one`);
 
   return { ...row, ...levels };
+}
+
+/**
+ * What a SKU can be filled into: the ERP's raw materials of type Can or Drum,
+ * the same list ERP → Products → Edit packing offers, so the two editors
+ * cannot offer different answers.
+ */
+export async function listPackItems(): Promise<{ id: string; name: string }[]> {
+  return (await db.execute(sql`
+    select id, name from erp_raw_materials
+     where active and material_type in ('Can', 'Drum')
+     order by name`)) as unknown as { id: string; name: string }[];
 }

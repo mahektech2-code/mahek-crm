@@ -228,6 +228,15 @@ export async function importCatalogue(
   // already point at its id and a second row would split that history in two.
   const existingSkus = await db.select().from(products);
   const skuByKey = new Map(existingSkus.map((p) => [matchKey(p.name), p]));
+  /* A SKU renamed in the Admin Console keeps its old name as an alias, and the
+     document still carries the old name — so it is found through the alias,
+     and its name is left as somebody chose it rather than reverted. */
+  const skuById = new Map(existingSkus.map((p) => [p.id, p]));
+  const renamedByKey = new Map(
+    (await db.select().from(productAliases))
+      .filter((a) => skuById.has(a.productId))
+      .map((a) => [matchKey(a.name), skuById.get(a.productId)!]),
+  );
 
   const needsCanonicalId: ImportReport["needsCanonicalId"] = [];
   /** Which product each legacy ID now belongs to — closes the held rows it answers. */
@@ -242,7 +251,9 @@ export async function importCatalogue(
     if (s.duplicated) needsCanonicalId.push({ name: s.name, externalIds: s.externalIds });
 
     const want = skuValues(s, { finishedGoodId, brandId, formulationId, displayOrder: i });
-    const row = skuByKey.get(matchKey(s.name));
+    const byName = skuByKey.get(matchKey(s.name));
+    const row = byName ?? renamedByKey.get(matchKey(s.name));
+    const renamed = !byName && !!row;
 
     if (!row) {
       const newId = id("prd");
@@ -260,6 +271,10 @@ export async function importCatalogue(
     // re-activated everything would quietly put every retired product back.
     const update = { ...want, active: undefined };
     delete (update as { active?: boolean }).active;
+    if (renamed) {
+      delete (update as { name?: string }).name;
+      delete (update as { rawName?: string | null }).rawName;
+    }
 
     // Likewise the canonical ID. If somebody has chosen which legacy ID this
     // name really is, the import must not reset the row to unresolved and

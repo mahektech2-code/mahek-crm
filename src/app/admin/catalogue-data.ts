@@ -5,6 +5,7 @@ import type {
   listDuplicates,
   listExceptions,
   listHierarchy,
+  listPackItems,
   listSkus,
 } from "@/lib/services/catalogue-service";
 import type { ImportReport } from "@/lib/services/catalogue-import";
@@ -36,6 +37,9 @@ export type CatalogueData = {
   priceSource: string;
   /** Where the source document contradicts its own counts. */
   discrepancies: string[];
+  /** The cans and drums a SKU can be filled into, and the box types — the ERP's own lists. */
+  packItems: Unwrap<typeof listPackItems>;
+  boxTypes: string[];
   /** Only ever set by running an import in this session. */
   lastReport: ImportReport | null;
 };
