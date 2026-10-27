@@ -51,6 +51,10 @@ export function Eyebrow({ children, className }: { children: React.ReactNode; cl
     the block form; this is for a `<label>`, `<span>` or `<th>` that needs it. */
 export const labelClass = "text-xs font-medium tracking-label text-muted uppercase";
 
+/** The heading row of a grid drawn from boxes rather than a <table>: the v4
+    navy band, white uppercase, the same as every table head in the ERP. */
+export const gridHeadClass = "sticky top-0 z-3 border-b border-ink bg-ink text-2xs font-bold tracking-label text-white uppercase";
+
 /** A form field's name, as the v4 design sets it: sentence case, 12px, semibold.
     `labelClass` stays the uppercase heading of a column or a dialog section. */
 export const fieldLabelClass = "text-xs font-semibold text-muted";

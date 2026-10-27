@@ -5,7 +5,7 @@ import { erpLink } from "@/lib/erp/registry";
 import { CardGrid } from "@/components/ui/card-grid";
 import { Card, cx, buttonClass } from "@/components/ui/primitives";
 import { Badge } from "../../_ui/badge";
-import { eyebrowClass, labelClass, LinkButton, SubTitle } from "../../_ui/look";
+import { gridHeadClass, LinkButton, SubTitle } from "../../_ui/look";
 import { erpLogisticsReopen } from "@/lib/actions/erp-logistics";
 import { callDue, daysBetween, runningLate, shortDay } from "@/lib/erp/engines/logistics";
 import type { Consignment } from "@/lib/erp/logistics";
@@ -56,12 +56,9 @@ export function Overview({
       <CardGrid min={200} gap="gap-3">
         {steps.map((s, i) => (
           <NavLink key={s.n} href={s.href} className="group relative no-underline hover:no-underline">
-            <Card className={cx("h-full px-4 py-3 transition-colors group-hover:border-brand", s.tone === "warn" && "border-warn/60", s.tone === "brand" && "border-brand/50")}>
-              <div className={cx("flex items-center gap-2", eyebrowClass)}>
-                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-canvas text-2xs text-body">{s.n}</span>
-                {s.l}
-              </div>
-              <div className="mt-1 text-xl leading-7 font-semibold text-ink tabular-nums">{s.v}</div>
+            <Card className={cx("h-full rounded-[10px] px-4 py-3.5 transition-colors group-hover:border-line-strong", s.tone === "warn" && "border-warn/60", s.tone === "brand" && "border-brand/50")}>
+              <div className="text-meta text-muted">{s.l}</div>
+              <div className={cx("mt-1 text-3xl leading-9 font-bold tracking-tight tabular-nums", s.tone === "warn" && s.v ? "text-warn-ink" : s.tone === "success" && s.v ? "text-success" : "text-ink")}>{s.v}</div>
               <div className={cx("text-xs", s.tone === "warn" ? "text-warn-ink" : s.tone === "brand" ? "text-brand-hover" : "text-muted")}>{s.sub}</div>
             </Card>
             {i < steps.length - 1 ? <span className="absolute top-1/2 -right-3 z-1 hidden -translate-y-1/2 text-muted xl:block">›</span> : null}
@@ -159,8 +156,8 @@ export function Delivered({ rows, canWrite }: { rows: Consignment[]; canWrite: b
           {plural(sorted.length, "bill")} delivered in the last 45 days{avg != null ? ` · ${avg} days from dispatch to delivery on average` : ""}.
         </div>
       ) : null}
-      <Card className="overflow-hidden">
-        <div className={cx("grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_76px_76px_44px_minmax(0,1fr)_64px] gap-3 border-b border-divider bg-canvas px-4 py-2", labelClass)}>
+      <Card className="overflow-clip">
+        <div className={cx("grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)_76px_76px_44px_minmax(0,1fr)_64px] gap-3 px-4 py-2", gridHeadClass)}>
           <span>Bill</span>
           <span>Party</span>
           <span>LR</span>

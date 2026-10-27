@@ -202,6 +202,12 @@
     width: 100%;
   }
 
+  /* A pinned heading needs something behind it, or the rows show through it.
+     In the base layer, so a heading that names its own background keeps it. */
+  thead th {
+    background-color: var(--color-surface);
+  }
+
   ::-webkit-scrollbar {
     width: 10px;
     height: 10px;
@@ -611,4 +617,36 @@
 .docs-code pre,
 .docs-fence {
   font-family: var(--font-mono);
+}
+
+/* ---------------------------------------------------------------------------
+   EVERY TABLE KEEPS ITS HEADINGS IN VIEW.
+
+   A sticky heading sticks to its nearest scrolling box, and nearly every table
+   in MahekOne sits in one that never scrolls up and down: an overflow-x-auto
+   for wide tables, an overflow-hidden card for rounded corners. Either one
+   captured the heading, the page scrolled past it, and three screens down
+   nobody could tell which column was which.
+
+   So the box that directly holds a table becomes the table's own scroller, in
+   both directions, no taller than the window: a long table scrolls inside
+   itself with its heading row pinned at the top; a short one is unchanged.
+   One rule here, rather than a hundred wrappers fixed one at a time, so a
+   table written next month is covered without anybody remembering to.
+
+   Unlayered on purpose: it has to win over the overflow-hidden and
+   overflow-x-auto utilities on those wrappers. Screen only — paper prints the
+   whole table, headings once, as it always did.
+--------------------------------------------------------------------------- */
+@media screen {
+  div:has(> table > thead) {
+    overflow: auto;
+    max-height: calc(100dvh - 8rem);
+  }
+
+  thead > tr > th {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+  }
 }
