@@ -5,6 +5,7 @@ import {
   discountAuthority,
   exFromIncl,
   inclFromEx,
+  listInclFromEx,
   inferDerivation,
   pickSlab,
   priceLine,
@@ -260,5 +261,30 @@ describe("the inclusive price is kept to the paisa", () => {
   test("a half paisa rounds up, the same way migration 0288 rounds it in Postgres", () => {
     // 193,325 × 1.18 = 228,123.5 exactly; the binary 1.18 used to make it .49999.
     assert.equal(inclFromEx(193_325, 1800), 228_124);
+  });
+
+  test("a paisa either side of a rupee is the rupee, and two paise are not", () => {
+    // Odisha Paid: Odisha To Pay's ₹1,933.05 ex-GST plus 1,017 paise a litre on
+    // a 20 L can is ₹2,136.45, which is ₹2,521.01 inclusive — the list prints 2,521.
+    assert.equal(inclFromEx(213_645, 1800), 252_100);
+    for (let ex = 1_000; ex < 60_000; ex++) {
+      const exact = Math.round((ex * 11_800) / 10_000);
+      const off = exact % 100;
+      const got = inclFromEx(ex, 1800);
+      if (off === 1 || off === 99) assert.equal(got % 100, 0, `ex ${ex}`);
+      else assert.equal(got, exact, `ex ${ex}`);
+    }
+  });
+});
+
+describe("a derived list shows the rupee, as the office prints it", () => {
+  test("a 210 L drum on an Odisha-style rule stays on the printed rupee, and a typed list keeps its paise", () => {
+    // ₹12 a litre inclusive is 1,016.95 paise ex-GST, stored as 1,017: on a
+    // 210 L drum that is 12.6 paise of drift, and the list prints whole rupees.
+    const parentEx = exFromIncl(4_700_000, 1800);
+    const drumEx = deriveRate(parentEx, 210_000, { kind: "per_litre_paise", paise: 1017 })!;
+    assert.notEqual(inclFromEx(drumEx, 1800) % 100, 0);
+    assert.equal(listInclFromEx(drumEx, 1800, true), 4_700_000 + 252_000);
+    assert.equal(listInclFromEx(193_300, 1800, false), 228_094);
   });
 });

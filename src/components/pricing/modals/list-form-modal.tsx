@@ -35,7 +35,7 @@ import {
   toDerivation,
   type DerivationDraft,
 } from "@/components/pricing/derivation";
-import { deriveRate, inclFromEx } from "@/lib/engines/price-math";
+import { deriveRate, inclFromEx, listInclFromEx } from "@/lib/engines/price-math";
 
 type ListShape = PriceListDetail["list"];
 
@@ -117,7 +117,7 @@ function ListFormBody({
           const moved = deriveRate(sampleExPaise, 20_000, derived);
           if (moved == null) return null;
           return `A 20 L can at ${money(inclFromEx(sampleExPaise, gstBp))} becomes ${money(
-            inclFromEx(moved, gstBp),
+            listInclFromEx(moved, gstBp, true),
           )}.`;
         })()
       : null;
