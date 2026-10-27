@@ -369,7 +369,8 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
     assert.ok(await onStickers(), "Ready, unbilled, no invoice check — on Dispatch stickers");
     const labels = await dispatchLabels(line.orderNo);
     assert.equal(labels.length, 1);
-    assert.equal(labels[0].label.invoiceNo, null, "before billing the sticker leaves the invoice number blank");
+    assert.equal(labels[0].label.orderNo, line.orderNo, "the sticker carries the order, which is known before the bill");
+    assert.equal(labels[0].label.lotSize, labels[0].copies, "the pieces on the whole order: one sticker each");
     assert.ok((await a.stickers(ctx, line.id, {})).ok);
     const [after1] = await db.select().from(erpOrders).where(eq(erpOrders.id, line.id));
     assert.ok(after1.stickersAt, "recorded on the line, which has no bill yet");
