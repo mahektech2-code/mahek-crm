@@ -68,7 +68,7 @@ An order reaches the queue the moment one of its lines is marked **Ready** on [O
   <span key="2"><b>Progress.</b> Boxes scanned across the order's Ready lines.</span>,
   <span key="3"><b>A stopped box.</b> What was wrong, in words, with the way to ask for an override when the box is the wrong product or pack size.</span>,
   <span key="4"><b>Each line.</b> Its lots, its pack and how many boxes are scanned. The badge says Dispatched, Not Ready, All scanned, To scan, or Scan optional.</span>,
-  <span key="5"><b>Confirm dispatch.</b> Once the invoice is approved and every box is scanned, this dispatches the whole order with the date and the vehicle.</span>,
+  <span key="5"><b>Confirm dispatch.</b> Once the order is billed and every box is scanned, this dispatches the whole order with the date and the vehicle.</span>,
 ]} />
 
 <Steps>
@@ -88,7 +88,7 @@ The loaders can scan on the **Mahek Factory** phone app instead. Its home screen
 A red panel says why. See [What stops a box](#what-stops-a-box) below.
 </Step>
 <Step title="Confirm dispatch once everything is scanned">
-When the invoice is approved and every box is scanned, pick the dispatch date, type the **vehicle / tempo / truck no.**, the **driver or transporter** and any remark, and press **Confirm dispatch**. The whole order leaves: the boxes become **dispatched**, the order leaves the queue, and it reaches [Logistics](/docs/erp/transport) as one consignment, on the trip of that vehicle for the day. If nothing is billed yet, the panel says *Nothing is billed and waiting. Bill the order on Orders → Ready to bill; it is dispatched once its invoice is approved.* While the invoice waits for the checker, or was rejected, the panel says that instead.
+When the order is billed and every box is scanned, pick the dispatch date, type the **vehicle / tempo / truck no.**, the **driver or transporter** and any remark, and press **Confirm dispatch**. The whole order leaves: the boxes become **dispatched**, the order leaves the queue, and it reaches [Logistics](/docs/erp/transport) as one consignment, on the trip of that vehicle for the day. If nothing is billed yet, the panel says *Nothing is billed and waiting. Bill the order on Orders → Ready to bill.* The invoice check is optional and a pending one holds nothing; only an invoice the checker **rejected** holds the order, and the panel says so.
 </Step>
 </Steps>
 
@@ -149,7 +149,7 @@ An old packing batch can be given box ids on **Stock on hand → Packed** with *
 
 ## Printing dispatch stickers
 
-**Dispatch labels** at the top of the desk prints the 80 × 80 mm **dispatch sticker** that goes on each piece leaving on the order: one for every box on a boxed line and one for every can on a loose one. Each carries only the **customer** (who it is delivered to), the **product**, the **invoice number** and the **order number**. It carries no QR and no lot or box code: the box's own 50 mm label is what the desk scans, and the two stickers are never combined. Stickers print only once the invoice has been approved by the checker, and not after the order has left — before that the sheet says there is nothing to print yet.
+**Dispatch labels** at the top of the desk prints the 80 × 80 mm **dispatch sticker** that goes on each piece leaving on the order: one for every box on a boxed line and one for every can on a loose one. Each carries only the **customer** (who it is delivered to), the **product**, the **invoice number** and the **order number** — the invoice number is left blank on a sticker printed before billing, to be written on. It carries no QR and no lot or box code: the box's own 50 mm label is what the desk scans, and the two stickers are never combined. Stickers print as soon as a line is under process or ready — before billing and without waiting for the invoice check — and not after the order has left.
 
 The sheet has three buttons. **Send to printer** sends the stickers straight to a USB label printer; **Save print file** saves the same printer commands as a `.prn` file; **Print…** opens the browser's print dialog. All three print exactly what the sheet shows. See [Orders → Dispatch stickers and labels](/docs/erp/orders) for how the label printer is set up.
 

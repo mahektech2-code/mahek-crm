@@ -363,7 +363,7 @@ async function readLines(f: LineFilter): Promise<OrderLine[]> {
       invoiceCheckNote: erpOrderDetails.invoiceCheckNote,
       billedById: erpOrderDetails.createdById,
       gstBp: erpOrderDetails.gstBp,
-      stickersAt: erpOrderDetails.stickersAt,
+      stickersAt: sql<Date | null>`coalesce(${erpOrders.stickersAt}, ${erpOrderDetails.stickersAt})`,
       vehicleNo: erpOrderDetails.vehicleNo,
       /* The bill's transport record, for the logistics word — one row by primary key. */
       transport: sql<{ stage: string | null; hasLr: boolean; issue: string | null } | null>`(select json_build_object('stage', t.material_stage, 'hasLr', (t.lr_id is not null or coalesce(t.lr_no, '') <> ''), 'issue', t.issue) from erp_transports t where t.id = "erp_order_details"."transport_id")`,
@@ -1066,9 +1066,17 @@ export function isInvoiceToCheckLine(l: OrderLine): boolean {
   return l.inDetails && !l.dispatched && l.o.status !== "Cancel" && l.invoiceCheck !== "Approved";
 }
 
-/** Dispatch stickers due: the invoice approved, the goods not gone yet. */
+/**
+ * Dispatch stickers due: every line being made or ready, billed or not, until
+ * it leaves. It used to wait for the invoice check's approval, and Mahek
+ * stickers the boxes while they are still on the floor — so the tab stood
+ * empty while the godown stickered by hand. The check stays, optional: a
+ * pending one holds nothing here. A billed line counts whatever its status
+ * now says; an old sheet line finished outside the ERP (entry Done, never
+ * billed here) does not.
+ */
 export function isStickerLine(l: OrderLine): boolean {
-  return l.inDetails && !l.dispatched && l.o.status !== "Cancel" && l.invoiceCheck === "Approved";
+  return l.o.status !== "Cancel" && !l.dispatched && (isWorkingLine(l) || l.inDetails);
 }
 
 function inScope(scope: Scope, l: OrderLine, detailedOrders: Set<number>): boolean {
@@ -1104,7 +1112,7 @@ const NO_DATA: Record<Scope, string> = {
   verifyOrders: "Every order has been verified by the back office.",
   toBill: "No Ready material waiting for its bill.",
   invoiceCheck: "No invoice waiting for its check.",
-  labels: "No approved invoice waiting for its dispatch stickers.",
+  labels: "Nothing under process or ready is waiting for its dispatch stickers.",
 };
 
 /** The invoice prompt, asked when an order is billed and when its invoice is changed. */
@@ -1220,7 +1228,7 @@ function orderList(scope: Scope): ScreenModule {
           const blockers = billBlockersFor(order);
           const d = lineDomains(l, gates.get(l.o.id) ?? null);
           const ownBill = live.some((x) => x.inDetails && x.billedById === ctx.user.id);
-          const printable = l.inDetails && l.invoiceCheck === "Approved" && !l.dispatched;
+          const printable = isStickerLine(l);
           const actions: ActionSpec[] = labels
             ? [
                 { id: "labels", l: `Print dispatch stickers · order ${l.o.orderNo}`, primary: true, href: erpLabelsHref({ order: l.o.orderNo }) },
@@ -1254,7 +1262,7 @@ function orderList(scope: Scope): ScreenModule {
                         why: blockers.length ? `Needs ${blockers.join("; ")}` : "",
                         prompt: invoicePrompt(
                           `Bill order ${l.o.orderNo}`,
-                          `Enter the invoice made in Tally for the whole order — ${live.length} line${live.length === 1 ? "" : "s"}. It then waits for the invoice check before it can be dispatched.`,
+                          `Enter the invoice made in Tally for the whole order — ${live.length} line${live.length === 1 ? "" : "s"}. The invoice check is optional; only a rejected invoice holds dispatch.`,
                           { invoiceNo: l.o.tallyBillNo ?? "", invoiceDate: today() },
                         ),
                       } as ActionSpec,
@@ -1298,7 +1306,7 @@ function orderList(scope: Scope): ScreenModule {
                 { id: "select", l: "Show the whole order", href: erpLink(scope, { f: order.map((x) => x.o.id).join(","), fl: `Order ${l.o.orderNo}` }) },
                 { id: "customer", l: "View customer", href: erpLink("customers", { open: l.billing.id }) },
                 ...(l.o.status === "Ready" && !l.dispatched ? [{ id: "scan", l: "Scan boxes at dispatch", href: erpDispatchHref(l.o.orderNo) } as ActionSpec] : []),
-                ...(l.o.status !== "Cancel" ? [{ id: "labels", l: "Print dispatch stickers", href: printable ? erpLabelsHref({ order: l.o.orderNo }) : undefined, why: printable ? "" : l.dispatched ? "It has left" : "After the invoice is approved" } as ActionSpec] : []),
+                ...(l.o.status !== "Cancel" ? [{ id: "labels", l: "Print dispatch stickers", href: printable ? erpLabelsHref({ order: l.o.orderNo }) : undefined, why: printable ? "" : l.dispatched ? "It has left" : "Once it is under process or ready" } as ActionSpec] : []),
                 { id: "trace", l: "Trace this order", href: erpTraceHref(orderTraceCode(l.o.orderNo)) },
                 {
                   id: "delete",
@@ -1659,7 +1667,7 @@ async function doBill(ctx: ErpContext, id: string, values: Record<string, string
   await erpAudit(ctx, "erp.order.bill", "erp_order", live.map((l) => l.o.id).join(","), null, { invoiceNo: inv.no, invoiceDate: inv.date });
   await syncBookOrders([no]);
   await tell(await holdersOf("checkInvoices"), `Invoice to check · order ${no}`, `${live[0].billing.name}: invoice ${inv.no}, ${plural(live.length)}.`, erpLink("invoiceCheck", {}));
-  return okVoid(`Order ${no} billed · invoice ${inv.no} · waiting for the invoice check`);
+  return okVoid(`Order ${no} billed · invoice ${inv.no}`);
 }
 
 /** Taking an order back out of billing, until it has been dispatch-verified. Its invoice check goes with it. */
@@ -1762,11 +1770,16 @@ async function doRejectInvoice(ctx: ErpContext, id: string, values: Record<strin
 
 async function doStickers(ctx: ErpContext, ids: string[]) {
   const ls = (await lines(ids)).filter((l) => isStickerLine(l) && !l.stickersAt);
-  if (!ls.length) return err("Only an approved invoice not yet dispatched takes its stickers.", "rule_violation");
-  await db
-    .update(erpOrderDetails)
-    .set({ stickersAt: new Date(), stickersById: ctx.user.id, updatedAt: new Date(), updatedById: ctx.user.id })
-    .where(inArray(erpOrderDetails.orderId, ls.map((l) => l.o.id)));
+  if (!ls.length) return err("Only a line under process, ready or billed, and not yet dispatched, takes its stickers.", "rule_violation");
+  const ids2 = ls.map((l) => l.o.id);
+  const at = new Date();
+  /* On the LINE, because stickers now go on before billing and a line has no
+     order-details row until it is billed; mirrored onto the bill where there
+     is one, which the Billing & dispatch tab reads. */
+  await db.transaction(async (tx) => {
+    await tx.update(erpOrders).set({ stickersAt: at, stickersById: ctx.user.id, updatedAt: at, updatedById: ctx.user.id }).where(inArray(erpOrders.id, ids2));
+    await tx.update(erpOrderDetails).set({ stickersAt: at, stickersById: ctx.user.id, updatedAt: at, updatedById: ctx.user.id }).where(inArray(erpOrderDetails.orderId, ids2));
+  });
   await erpAudit(ctx, "erp.detail.stickers", "erp_order_detail", ls.map((l) => l.o.id).join(","));
   return okVoid(`Dispatch stickers recorded · ${plural(ls.length)}`);
 }
@@ -2380,16 +2393,17 @@ const orderDetails: ScreenModule = {
           if (d.verification === "Verified" && !d.vehicleNo) flags.push("noVehicle");
           if (r.monthId && targetReached(monthSale, target)) flags.push("targetReached");
           const verifiable = !d.verification || d.verification === "Pending";
-          const approved = d.invoiceCheck === "Approved";
+          /* The invoice check is optional: only a REJECTED invoice holds the goods — the checker found the bill wrong. */
+          const approved = d.invoiceCheck !== "Rejected";
           const actions: ActionSpec[] = [
             {
               id: "verify",
               l: d.verification === "Verified" ? "Dispatched" : "Confirm dispatch",
               primary: verifiable && !gate && approved,
-              why: d.verification === "Verified" ? "Already dispatched" : !approved ? (d.invoiceCheck === "Rejected" ? "The invoice was rejected; correct it first" : "Waiting for the invoice check") : gate ? `Boxes to scan: ${gate}` : "",
+              why: d.verification === "Verified" ? "Already dispatched" : !approved ? "The invoice was rejected; correct it first" : gate ? `Boxes to scan: ${gate}` : "",
               prompt: DISPATCH_PROMPT(`Order ${l.o.orderNo} leaves whole — every billed line of it.`),
             },
-            { id: "stickers", l: "Stickers are on", why: d.verification === "Verified" ? "It has left" : !approved ? "After the invoice is approved" : d.stickersAt ? "Already recorded" : "" },
+            { id: "stickers", l: "Stickers are on", why: d.verification === "Verified" ? "It has left" : d.stickersAt ? "Already recorded" : "" },
             ...(ctx.administrator && d.verification !== "Not Verify" ? [{ id: "notVerify", l: "Mark not verified", confirm: "Mark this line not verified?" } as ActionSpec] : []),
             {
               id: "extra",

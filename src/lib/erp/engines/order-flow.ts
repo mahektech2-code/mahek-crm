@@ -71,7 +71,8 @@ export function billingOf(f: Pick<OrderFacts, "status" | "billed" | "invoiceChec
 export function dispatchOf(f: Pick<OrderFacts, "status" | "billed" | "invoiceCheck" | "toScan" | "dispatched">): string | null {
   if (f.status === "Cancel") return null;
   if (f.dispatched) return "Dispatched";
-  if (!f.billed || f.invoiceCheck !== "Approved") return "Pending";
+  /* The invoice check is optional: a pending one holds nothing, a rejected invoice holds the goods. */
+  if (!f.billed || f.invoiceCheck === "Rejected") return "Pending";
   if (f.toScan) return "Scanning / Verification Pending";
   return "Ready to Dispatch";
 }

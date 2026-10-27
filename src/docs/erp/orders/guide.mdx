@@ -45,8 +45,8 @@ How these orders then reach MahekOne's order book — the CRM, targets and outst
 | **To verify** | Orders the back office has not verified yet, or sent back for correction. Holders of *Verify orders* verify them here. |
 | **Production** | Lines that are **Under Process** or **Ready** and not yet billed — the godown's working list. |
 | **Ready to bill** | Ready lines of verified orders, not yet billed. The back office makes the bill in Tally from here. |
-| **Invoice check** | Billed orders waiting for the invoice checker, or rejected and waiting to be corrected. |
-| **Dispatch stickers** | Orders whose invoice is approved and whose goods have not left: print and apply their stickers. |
+| **Invoice check** | Billed orders for the invoice checker — optional: a pending check holds nothing, only a rejected invoice holds dispatch. |
+| **Dispatch stickers** | Every line under process or ready, billed or not, until its goods leave: print and apply their stickers. No invoice check needed. |
 | **Billing & dispatch** | Every billed line, with its invoice check, dispatch, vehicle and the bill's figures. Dispatch is confirmed here. |
 | **On hold** | Lines the office is holding — **Hold From Office** — that have not reached billing. |
 | **Batch codes** | Every lot set aside for an order line, and how many. |
@@ -140,7 +140,7 @@ You cannot check a bill you entered yourself: *You entered this bill, so somebod
 
 ## Dispatch stickers
 
-On **Dispatch stickers**, press **Print dispatch stickers** for an order whose invoice is approved. Each sticker carries the **customer**, the **product**, the **invoice no.** and the **order no.** — nothing else, and no lot or box code; the box's own label carries those. Once they are on the boxes, press **Stickers are on** to record it. Stickers cannot be printed before approval or after the goods have left.
+On **Dispatch stickers**, press **Print dispatch stickers** for any order under process or ready — before billing too. Each sticker carries the **customer**, the **product**, the **invoice no.** and the **order no.** — nothing else, and no lot or box code; the box's own label carries those. Once they are on the boxes, press **Stickers are on** to record it. Before billing the invoice no. is left blank on the sticker, to be written on. Stickers cannot be printed after the goods have left.
 
 ## Billing & dispatch
 
@@ -167,7 +167,7 @@ On **Dispatch stickers**, press **Print dispatch stickers** for an order whose i
 | **Extra expenses** | Records extra freight on the line, once. It is added to the line's cost, and to the bill's record on Logistics. |
 | **Change GST** | 18% or 0%, until the line is dispatched. 18% bills from *Mahek Marketing India*, 0% from *Mylac*. An approved invoice goes back to the checker. |
 | **Mark not verified** | ERP administrators only. Sets the line's verification to *Not Verify*. |
-| **Print dispatch stickers** | Opens the sticker sheet for the order: one 80 × 80 mm sticker for every box or can, once the invoice is approved. |
+| **Print dispatch stickers** | Opens the sticker sheet for the order: one 80 × 80 mm sticker for every box or can, once the line is under process or ready. |
 | **Scan its boxes / Dispatch desk** | Opens the order at the Dispatch desk. |
 | **Trace this order** | Opens [Traceability](/docs/erp/traceability) on the order. |
 
@@ -179,7 +179,7 @@ Besides the columns, a billed line shows the Tally invoice and its date, the inv
 
 ## Dispatch stickers and labels
 
-The **Dispatch stickers** tab lists every line whose invoice is approved and whose goods have not left, with its parties, invoice, area, transporter and **Stickers** — one a box on a boxed line, one a can otherwise. Open a line and press **Print dispatch stickers** for the whole order, or press **Export** to take the list as a file.
+The **Dispatch stickers** tab lists every line under process or ready, or billed, whose goods have not left, with its parties, invoice, area, transporter and **Stickers** — one a box on a boxed line, one a can otherwise. Open a line and press **Print dispatch stickers** for the whole order, or press **Export** to take the list as a file.
 
 ### The four labels
 
@@ -190,7 +190,7 @@ Every label is drawn from the record. Nothing on a label is typed.
 | **Box label** | 50 × 50 mm | A packing batch, Boxes & labels, FG stock (loose units) | The box's QR and id, the pack size, cans per box, the product, the batch and box number, the packing date |
 | **SFG label** | 80 × 80 mm | SFG batches, Stock → Semi-finished | The product, the lot code (also the QR), batches, batch size, date, location, inventory id |
 | **Purchase label** | 80 × 80 mm | Purchase barcode, the purchase register | The item, the lot (also the QR), purchase date, quantity, litres, density, drums, litres per drum, PR number, PR bill no, testing id, remark. One per drum to begin with; change **Copies** for more or fewer. |
-| **Dispatch sticker** | 80 × 80 mm | Orders, the Dispatch stickers tab, the Dispatch desk — after the invoice is approved | The customer (delivery party), the product, the invoice no. and the order no. Never a lot or box code. |
+| **Dispatch sticker** | 80 × 80 mm | Orders, the Dispatch stickers tab, the Dispatch desk — once the line is under process or ready | The customer (delivery party), the product, the invoice no. and the order no. Never a lot or box code. |
 
 A long name is set smaller so it fits; only a name too long for the smallest size is cut with "…".
 
