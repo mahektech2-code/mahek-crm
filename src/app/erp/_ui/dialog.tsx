@@ -48,7 +48,7 @@ export function ErpDialog({
     <BodyPortal>
       <div
         {...backdrop}
-        className="animate-fade-in fixed inset-0 z-[60] flex items-center justify-center bg-[rgba(22,22,22,0.35)] p-4 sm:p-6"
+        className="ui-scrim animate-fade-in fixed inset-0 z-[60] flex items-center justify-center bg-[rgba(22,22,22,0.35)] p-4 sm:p-6"
         role="dialog"
         aria-modal="true"
         aria-label={label}
@@ -59,7 +59,7 @@ export function ErpDialog({
           /* `whitespace-normal`: a dialog inherits from where it was mounted, and a
              list row carries `nowrap` (see Modal). */
           className={cx(
-            "flex max-h-[92vh] flex-col overflow-hidden rounded-card bg-surface whitespace-normal shadow-[0_12px_40px_rgba(22,22,22,0.18)]",
+            "ui-dialog flex max-h-[92vh] flex-col overflow-hidden rounded-card bg-surface whitespace-normal shadow-[0_12px_40px_rgba(22,22,22,0.18)]",
             tall && "h-[min(820px,92vh)]",
           )}
         >
@@ -87,7 +87,7 @@ export function DialogHeader({ children, onClose, aside }: { children: React.Rea
 
 /** A dialog's title — the one size every ERP dialog names itself in. */
 export function DialogTitle({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <div className={cx("text-xl leading-7 font-semibold text-ink", className)}>{children}</div>;
+  return <div className={cx("text-xl leading-7 font-bold tracking-tight text-ink", className)}>{children}</div>;
 }
 
 /** The scrolling middle of a dialog. */

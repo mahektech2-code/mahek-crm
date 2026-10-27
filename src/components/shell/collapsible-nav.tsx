@@ -288,6 +288,7 @@ export function CollapsibleNav({
               }
               aria-expanded={isOpen}
               aria-controls={panelId}
+              data-nav-group={activeGroup === group.label ? "here" : ""}
               className={cx(
                 "relative mb-px flex min-h-9 w-full cursor-pointer items-center gap-2.5 rounded-[4px] py-1.5 pr-2 pl-2.5 text-left text-sm",
                 /*
@@ -330,7 +331,7 @@ export function CollapsibleNav({
             </button>
 
             {isOpen ? (
-              <div id={panelId} className="mb-1">
+              <div id={panelId} data-nav-panel className="mb-1">
                 {group.items.map((item) => (
                   <Row
                     key={item.href}
@@ -374,6 +375,7 @@ function Row({
       href={item.href}
       aria-current={active ? "page" : undefined}
       title={railed ? item.label : undefined}
+      data-nav-row={nested ? "nested" : "top"}
       className={cx(
         "relative mb-px flex items-center gap-2.5 rounded-[4px] border-l-[3px] text-sm no-underline hover:no-underline",
         railed
@@ -389,9 +391,9 @@ function Row({
       )}
     >
       {active ? (
-        <span className="pointer-events-none absolute inset-0 rounded-[4px] bg-brand-soft" />
+        <span data-nav-fill className="pointer-events-none absolute inset-0 rounded-[4px] bg-brand-soft" />
       ) : null}
-      <span className="relative z-1 flex flex-none">
+      <span data-nav-icon className="relative z-1 flex flex-none">
         {renderIcon(item.icon, nested ? 16 : 18)}
       </span>
       {railed ? null : (
@@ -414,6 +416,7 @@ function Row({
 function Badge({ count, tone }: { count: number; tone: "danger" | "warn" }) {
   return (
     <span
+      data-nav-badge={tone}
       className={cx(
         "relative z-1 h-[18px] min-w-5 flex-none rounded-[9px] px-1.5 text-center text-[11px] leading-[18px] font-medium tabular-nums",
         tone === "danger" ? "bg-danger-soft text-danger" : "bg-warn-line text-warn-ink",

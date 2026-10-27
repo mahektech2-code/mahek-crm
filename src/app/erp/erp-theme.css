@@ -1,0 +1,448 @@
+/* ---------------------------------------------------------------------------
+   THE ERP'S LOOK — MahekOne ERP v4.
+
+   One stylesheet, and only a look: it changes no element, no handler and no
+   order of anything, so every screen does exactly what it did and is drawn
+   the way the v4 design draws it — a navy ink, a cool slate canvas, Geist,
+   softer corners, a lavender header and navy table heads.
+
+   WHY IT IS SCOPED THROUGH `:root:has([data-erp-v4])`. A stylesheet imported
+   by a layout stays in the document after a client navigation away from it,
+   so a bare `th { … }` here would follow somebody from the ERP into the CRM.
+   Every rule names the marker the ERP shell carries, and the moment the shell
+   leaves the page the rules match nothing. It is asked on `:root`, not on the
+   shell, because dialogs, menus and toasts are portalled to `<body>`, outside
+   the shell, and they have to be drawn in the same hand as the page.
+
+   The shared components carry marker classes (`ui-btn`, `ui-badge`,
+   `ui-control`, `ui-dialog`, `ui-scrim`) and the sidebar carries `data-nav-*`
+   hooks. Those markers style nothing on their own; only this file reads them.
+   The hex values live here because this IS the design token sheet for the
+   ERP — `erp-design.test.ts` keeps them out of the screens.
+--------------------------------------------------------------------------- */
+
+:root:has([data-erp-v4]) {
+  --color-canvas: #edf1f7;
+  --color-surface: #ffffff;
+  --color-page: #f7f9fc;
+
+  --color-line: #dce3ee;
+  --color-line-strong: #d3dbe7;
+  --color-divider: #e8edf4;
+
+  --color-ink: #0f1b33;
+  --color-heading: #0f1b33;
+  --color-body: #33415c;
+  --color-muted: #5e6b85;
+  --color-faint: #9aa5ba;
+
+  --color-brand: #6835fb;
+  --color-brand-hover: #5223e0;
+  --color-brand-deep: #4419c4;
+  --color-brand-soft: #f1ecff;
+  --color-brand-softer: #dcd1fc;
+  --color-brand-lime: #c6ff34;
+
+  --color-danger: #b3261e;
+  --color-danger-soft: #fcebea;
+  --color-success: #1d7a45;
+  --color-success-soft: #e7f4ec;
+  --color-warn: #d9930d;
+  --color-warn-ink: #8a5c05;
+  --color-warn-soft: #fdf3dc;
+  --color-warn-line: #f3dfa8;
+  --color-info: #2b5cbf;
+  --color-info-soft: #edf2fc;
+
+  --radius-control: 7px;
+  --radius-card: 8px;
+  --tracking-label: 0.05em;
+  --shadow-pop: 0 12px 32px rgba(15, 27, 51, 0.16);
+  --rowh: 40px;
+
+  --font-sans: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+:root:has([data-erp-v4]) body {
+  font-family: var(--font-sans);
+  font-variation-settings: normal;
+  background: var(--color-canvas);
+  color: var(--color-body);
+}
+
+/* --------------------------------------------------------------- headings */
+
+:root:has([data-erp-v4]) [data-erp-v4] h1 {
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--color-ink);
+}
+
+:root:has([data-erp-v4]) h2 {
+  font-weight: 700;
+  color: var(--color-ink);
+}
+
+:root:has([data-erp-v4]) h3 {
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+/* ---------------------------------------------------------------- buttons */
+
+:root:has([data-erp-v4]) .ui-btn {
+  font-weight: 600;
+  border-radius: 7px;
+}
+
+:root:has([data-erp-v4]) .ui-btn-secondary,
+:root:has([data-erp-v4]) .ui-btn-ghost {
+  border-color: #d3dbe7;
+  color: var(--color-ink);
+}
+
+:root:has([data-erp-v4]) .ui-btn-secondary:not(:disabled):hover,
+:root:has([data-erp-v4]) .ui-btn-ghost:not(:disabled):hover {
+  background: #f1f4f9;
+  border-color: #b8c2d3;
+}
+
+:root:has([data-erp-v4]) .ui-btn-secondary:not(:disabled):active,
+:root:has([data-erp-v4]) .ui-btn-ghost:not(:disabled):active {
+  background: #e9eef5;
+}
+
+:root:has([data-erp-v4]) .ui-btn-secondary:disabled,
+:root:has([data-erp-v4]) .ui-btn-ghost:disabled {
+  color: var(--color-faint);
+}
+
+:root:has([data-erp-v4]) .ui-btn-dark {
+  border-color: #3a3546;
+}
+
+/* --------------------------------------------------------- inputs, selects */
+
+:root:has([data-erp-v4]) .ui-control {
+  border-radius: 7px;
+}
+
+:root:has([data-erp-v4]) .ui-control:not(.border-danger):not(.border-warn):not(.border-brand) {
+  border-color: #d3dbe7;
+}
+
+:root:has([data-erp-v4]) .ui-control:focus {
+  border-color: var(--color-brand);
+  box-shadow: 0 0 0 3px #e0d6fd;
+}
+
+:root:has([data-erp-v4]) .ui-control::placeholder {
+  color: var(--color-faint);
+}
+
+/* ----------------------------------------------------------------- badges */
+
+:root:has([data-erp-v4]) .ui-badge {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* ----------------------------------------------------------------- tables
+
+   The v4 table: a navy head with white uppercase headings, the sorted one in
+   coral; 40px rows on a hairline, a lavender wash under the pointer. */
+
+:root:has([data-erp-v4]) th {
+  background: var(--color-ink);
+  color: #ffffff;
+  border-bottom-color: var(--color-ink);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+:root:has([data-erp-v4]) th button {
+  color: inherit;
+}
+
+:root:has([data-erp-v4]) th button:hover {
+  color: #dcd1fc;
+}
+
+:root:has([data-erp-v4]) th[aria-sort] button,
+:root:has([data-erp-v4]) th[aria-sort] button svg {
+  color: #ff7a59;
+}
+
+:root:has([data-erp-v4]) th button svg {
+  color: #b8c2d3;
+}
+
+/* A table's first and last heading round into the card around it. */
+:root:has([data-erp-v4]) thead tr:first-child th:first-child {
+  border-top-left-radius: 7px;
+}
+
+:root:has([data-erp-v4]) thead tr:first-child th:last-child {
+  border-top-right-radius: 7px;
+}
+
+:root:has([data-erp-v4]) th input[type="checkbox"] {
+  border-color: #5e6b85;
+}
+
+:root:has([data-erp-v4]) tbody tr {
+  border-bottom-color: var(--color-divider);
+}
+
+:root:has([data-erp-v4]) tbody tr.cursor-pointer:hover {
+  background: #f7f5fe;
+}
+
+:root:has([data-erp-v4]) td {
+  font-size: 13px;
+}
+
+/* A group's heading row in a grouped list: the v4 slate band, set bold. */
+:root:has([data-erp-v4]) tbody tr.bg-canvas:has(> td[colspan]) {
+  background: #dde4ef;
+  border-bottom-color: #c9d3e2;
+}
+
+:root:has([data-erp-v4]) tbody tr.bg-canvas:has(> td[colspan]) td span {
+  color: #000000;
+  font-weight: 700;
+}
+
+/* ---------------------------------------------------------------- dialogs */
+
+:root:has([data-erp-v4]) .ui-scrim {
+  background: rgba(15, 27, 51, 0.4);
+}
+
+:root:has([data-erp-v4]) .ui-dialog {
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgba(15, 27, 51, 0.28);
+}
+
+:root:has([data-erp-v4]) .ui-dialog-title {
+  font-size: 17px;
+  line-height: 22px;
+  font-weight: 700;
+}
+
+/* --------------------------------------------------------------- the sidebar
+
+   A white rail; rows 36px with a 7px corner, the screen you are on washed in
+   lavender; a group's screens hang off a hairline and carry no icon of their
+   own. Counts are slate, the alert count red. */
+
+:root:has([data-erp-v4]) [data-nav-row],
+:root:has([data-erp-v4]) [data-nav-group] {
+  border-radius: 7px;
+  font-size: 13.5px;
+  color: #4a5872;
+}
+
+:root:has([data-erp-v4]) [data-nav-row] {
+  border-left-color: transparent;
+}
+
+:root:has([data-erp-v4]) [data-nav-row]:hover,
+:root:has([data-erp-v4]) [data-nav-group]:hover {
+  background: #f1f4f9;
+  color: var(--color-ink);
+}
+
+:root:has([data-erp-v4]) [data-nav-row][aria-current="page"] {
+  color: #5223e0;
+  font-weight: 600;
+}
+
+:root:has([data-erp-v4]) [data-nav-fill] {
+  background: #ece6ff;
+  border-radius: 7px;
+}
+
+:root:has([data-erp-v4]) [data-nav-group="here"] {
+  color: #5223e0;
+  font-weight: 600;
+}
+
+:root:has([data-erp-v4]) [data-nav-panel] {
+  margin: 1px 0 6px 18px;
+  padding-left: 8px;
+  border-left: 1px solid var(--color-line);
+}
+
+:root:has([data-erp-v4]) [data-nav-row="nested"] {
+  min-height: 32px;
+  padding-left: 10px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+:root:has([data-erp-v4]) [data-nav-row="nested"] [data-nav-icon] {
+  display: none;
+}
+
+:root:has([data-erp-v4]) [data-nav-badge] {
+  background: #eef2f7;
+  color: #33415c;
+  font-weight: 600;
+}
+
+:root:has([data-erp-v4]) [data-nav-badge="danger"] {
+  background: #fbeae8;
+  color: #c0362c;
+}
+
+/* ------------------------------------------------------------- scrollbars */
+
+:root:has([data-erp-v4]) ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+:root:has([data-erp-v4]) ::-webkit-scrollbar-thumb {
+  background: #d3dbe7;
+  border-radius: 5px;
+}
+
+:root:has([data-erp-v4]) ::selection {
+  background: #dcd1fc;
+}
+
+/* ----------------------------------------------------------------- header
+
+   The v4 header is lavender. Its controls sit on it without a fill of their
+   own: a plum glyph, a lavender hairline where one is drawn at all, a deeper
+   lavender under the pointer. The search box is the one white thing on it. */
+
+:root:has([data-erp-v4]) [data-erp-header] {
+  color: #1e1446;
+}
+
+:root:has([data-erp-v4]) [data-erp-header] :is(button, a) {
+  color: #5a4e8c;
+  border-radius: 7px;
+}
+
+:root:has([data-erp-v4]) [data-erp-header] :is(button, a).border {
+  border-color: #dcd1fc;
+}
+
+:root:has([data-erp-v4]) [data-erp-header] :is(button, a).bg-surface {
+  background: transparent;
+}
+
+:root:has([data-erp-v4]) [data-erp-header] :is(button, a):hover {
+  background: #e4dbff;
+  color: #1e1446;
+}
+
+/* Feedback, the shortcut key and the bell carry no box in v4 — only Ask and
+   Working at are outlined. */
+:root:has([data-erp-v4]) [data-erp-header] button[title="Report a problem or suggest something"],
+:root:has([data-erp-v4]) [data-erp-header] button[aria-label="Keyboard shortcuts"],
+:root:has([data-erp-v4]) [data-erp-header] button[aria-label^="Notifications"] {
+  border-color: transparent;
+}
+
+:root:has([data-erp-v4]) [data-erp-header] input {
+  height: 34px;
+  border-radius: 8px;
+  border-color: #dcd1fc;
+  background: #ffffff;
+  font-size: 13px;
+}
+
+:root:has([data-erp-v4]) [data-erp-header] input:focus {
+  border-color: var(--color-brand);
+  box-shadow: 0 0 0 3px #e0d6fd;
+}
+
+:root:has([data-erp-v4]) [data-erp-header] kbd,
+:root:has([data-erp-v4]) [data-erp-header] input ~ span span {
+  border-color: #dcd1fc;
+  background: transparent;
+}
+
+:root:has([data-erp-v4]) [data-working-at] button {
+  background: transparent;
+  color: var(--color-ink);
+  font-weight: 600;
+}
+
+:root:has([data-erp-v4]) [data-working-at] button svg {
+  color: var(--color-brand);
+}
+
+:root:has([data-erp-v4]) [data-erp-header] [data-account-avatar] {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--color-brand);
+  color: #ffffff;
+  font-size: 12px;
+}
+
+/* The name and level are in the account menu itself; the v4 header shows the
+   avatar alone. */
+:root:has([data-erp-v4]) [data-erp-header] [data-account-identity],
+:root:has([data-erp-v4]) [data-erp-header] [data-account-identity] + svg {
+  display: none;
+}
+
+:root:has([data-erp-v4]) [data-erp-header] button:has(> [data-account-avatar]) {
+  padding: 0;
+  border-radius: 50%;
+}
+
+:root:has([data-erp-v4]) [data-erp-header] button:has(> [data-account-avatar]):hover {
+  background: transparent;
+}
+
+:root:has([data-erp-v4]) [data-erp-header] button[aria-label="Switch app"]:not([aria-expanded="true"]) {
+  border-color: transparent;
+}
+
+:root:has([data-erp-v4]) [data-erp-header] button[aria-label="Switch app"][aria-expanded="true"] {
+  background: #e4dbff;
+  border-color: transparent;
+}
+
+/* ---------------------------------------------------------------- printing
+
+   Paper gets ink, not a navy band: a printed or exported table head is set
+   black on white, as it always was. */
+
+@media print {
+  :root:has([data-erp-v4]) th {
+    background: #ffffff;
+    color: #000000;
+    border-bottom-color: #000000;
+  }
+
+  :root:has([data-erp-v4]) body {
+    background: #ffffff;
+  }
+}
+
+/* The header now shares the window with a full-height sidebar, so on a
+   tablet its search box gives way first rather than pushing the bell and the
+   avatar off the edge. */
+@media (max-width: 1100px) {
+  :root:has([data-erp-v4]) [data-erp-header] div:has(> input) {
+    min-width: 96px;
+  }
+
+  :root:has([data-erp-v4]) [data-erp-header] {
+    gap: 6px;
+  }
+}

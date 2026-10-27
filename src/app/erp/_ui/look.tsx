@@ -51,6 +51,10 @@ export function Eyebrow({ children, className }: { children: React.ReactNode; cl
     the block form; this is for a `<label>`, `<span>` or `<th>` that needs it. */
 export const labelClass = "text-xs font-medium tracking-label text-muted uppercase";
 
+/** A form field's name, as the v4 design sets it: sentence case, 12px, semibold.
+    `labelClass` stays the uppercase heading of a column or a dialog section. */
+export const fieldLabelClass = "text-xs font-semibold text-muted";
+
 /** Anything that floats over the page: a menu, a picker's list, a suggestion box. */
 export const popoverClass = "rounded-card border border-line bg-surface shadow-pop";
 

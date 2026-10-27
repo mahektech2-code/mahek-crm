@@ -46,6 +46,10 @@
   --color-info: #2b5cbf;
   --color-info-soft: #edf2fc;
 
+  /* The ERP v4 accent for a headline figure on a navy card, and the sorted
+     column of a navy table head. */
+  --color-coral: #ff7a59;
+
   /* The page behind an evidence-heavy app, one step lighter than canvas. */
   --color-page: #fcfcfd;
   --color-heading: #1a1e28;

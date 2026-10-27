@@ -24,6 +24,7 @@ import { CHECK_COL, fitColumns } from "./fit-columns";
 import { ColumnsMenu, toolbarToggleClass } from "./columns-menu";
 import { useColumnChoice } from "./use-column-choice";
 import { NewMenu } from "./new-menu";
+import { CardGrid } from "@/components/ui/card-grid";
 
 /* ---------------------------------------------------------------------------
  * The generic ERP list, drawn the way the CRM draws a list: the page header
@@ -70,19 +71,19 @@ export function ListTabs({ label, tabs, toggle }: { label: string; tabs: ListTab
        Each is a NavLink, prefetched on hover like the sidebar: a plain Link
        prefetched every tab in view the moment the page drew — four requests
        for each real click on production, on the one shared core. */
-    <nav aria-label={`${label} lists`} className="mb-4 flex flex-wrap items-center border-b border-line">
+    <nav aria-label={`${label} lists`} className="mb-4 flex flex-wrap items-center gap-x-5 border-b border-line">
       {tabs.map((t) => (
         <NavLink
           key={t.key}
           href={t.href}
           aria-current={t.active ? "page" : undefined}
           className={cx(
-            "-mb-px flex items-center gap-1.5 border-b-2 px-4 py-2.5 text-sm whitespace-nowrap",
-            t.active ? "border-brand font-medium text-ink" : "border-transparent text-muted hover:text-body",
+            "-mb-px flex items-center gap-1.5 border-b-2 py-2 text-sm whitespace-nowrap",
+            t.active ? "border-brand font-semibold text-ink" : "border-transparent font-medium text-muted hover:text-body",
           )}
         >
           {t.label}
-          {t.count ? <span className="rounded-full bg-warn px-1.5 text-2xs leading-[18px] font-medium text-white">{t.count}</span> : null}
+          {t.count ? <span className="min-w-4.5 rounded-full bg-warn-soft px-1.5 text-center text-2xs leading-[17px] font-bold text-warn-ink">{t.count}</span> : null}
         </NavLink>
       ))}
       <span className="flex-1" />
@@ -139,6 +140,76 @@ export function FigureStrip({ items }: { items: NonNullable<ListSpec["strip"]> }
 }
 
 /** The coloured edge a flagged row carries, in the CRM's tokens. */
+/** The dot and the bar of a figure card, by the tone its value is drawn in. */
+const STAT_FILL: Record<Tone, string> = {
+  success: "bg-success",
+  danger: "bg-danger",
+  warn: "bg-warn",
+  info: "bg-info",
+  brand: "bg-brand",
+  neutral: "bg-faint",
+  muted: "bg-faint",
+};
+
+/**
+ * THE CHIPS, AS FIGURE CARDS — the v4 list head. The same choice the chip tabs
+ * offer, one card per value with its count and its share of the whole, the
+ * total first and the rest largest first. Picking a card is picking the chip.
+ */
+export function StatCards({
+  total,
+  chips,
+  value,
+  tones,
+  onPick,
+}: {
+  total: number;
+  chips: { v: string; n: number }[];
+  value: string;
+  tones: Record<string, Tone>;
+  onPick: (v: string) => void;
+}) {
+  const cards = [
+    { v: "", l: "Total", n: total, fill: "bg-ink", share: "All records", pct: 100 },
+    ...[...chips]
+      .sort((a, b) => b.n - a.n)
+      .map((c) => {
+        const pct = total ? Math.round((c.n / total) * 100) : 0;
+        return { v: c.v, l: c.v, n: c.n, fill: STAT_FILL[tones[c.v] ?? "neutral"], share: `${pct}% of total`, pct: Math.max(2, pct) };
+      }),
+  ];
+  return (
+    <CardGrid min={150} gap="gap-3" className="mb-3">
+      {cards.map((c) => {
+        const on = c.v === value;
+        return (
+          <button
+            key={c.v || "all"}
+            type="button"
+            title={c.l}
+            aria-pressed={on}
+            onClick={() => onPick(c.v)}
+            className={cx(
+              "flex min-w-0 cursor-pointer flex-col gap-1.5 rounded-[10px] border bg-surface px-4 pt-3.5 pb-3 text-left",
+              on ? "border-brand ring-3 ring-brand-soft" : "border-line hover:border-line-strong",
+            )}
+          >
+            <span className="flex min-w-0 items-center gap-2 text-meta font-semibold text-muted">
+              <span className={cx("h-1.75 w-1.75 flex-none rounded-full", c.fill)} />
+              <span className="truncate">{c.l}</span>
+            </span>
+            <span className="text-2xl leading-7.5 font-bold tracking-tight text-ink tabular-nums">{nf(c.n)}</span>
+            <span className="block h-1 overflow-hidden rounded-full bg-divider">
+              <span className={cx("block h-full rounded-full", c.fill)} style={{ width: `${c.pct}%` }} />
+            </span>
+            <span className="text-xs text-faint">{c.share}</span>
+          </button>
+        );
+      })}
+    </CardGrid>
+  );
+}
+
 const EDGE: Partial<Record<Tone, string>> = {
   danger: "shadow-[inset_3px_0_0_var(--color-danger)]",
   warn: "shadow-[inset_3px_0_0_var(--color-warn)]",
@@ -199,7 +270,8 @@ export function ListScreen({
   bare?: boolean;
 }) {
   const ui = useErpUi();
-  const { flags: FLAG, place, exportList, listIds, loadForm } = useKit();
+  const { flags: FLAG, place, exportList, listIds, loadForm, tones, look } = useKit();
+  const v4 = look === "v4";
   const router = useRouter();
   const path = usePathname();
   const params = useSearchParams();
@@ -404,68 +476,9 @@ export function ListScreen({
     setQuery({ sort: { k, d: on && view.srt!.d > 0 ? -1 : 1 } });
   };
 
-  const Frame = bare ? BareFrame : Page;
-  return (
-    <Frame
-      title={label}
-      sub={sub}
-      actions={
-        <>
-          {/* One export for every list: it used to sit beside a "Download"
-              that did exactly the same thing on the stock and label lists. */}
-          {lp.all ? (
-            <Button variant="secondary" onClick={exportCsv} title="Download these rows, as filtered, as CSV">
-              <Icon n="dl" />
-              Export
-            </Button>
-          ) : null}
-          {(spec.tools ?? []).map((t) => (
-            <Button
-              key={t.id}
-              variant={t.primary ? "primary" : "secondary"}
-              disabled={!!t.why}
-              title={t.why}
-              onClick={() => ui.tool(spec.screen, t)}
-            >
-              {t.l}
-            </Button>
-          ))}
-          {spec.newMenu?.length && !spec.readOnly ? (
-            <NewMenu items={spec.newMenu} />
-          ) : hasNew ? (
-            <Button variant="primary" onClick={() => openNew()} onPointerEnter={warmNew} onFocus={warmNew}>
-              <ShellIcon name="plus" size={16} />
-              {spec.newLabel ?? "New"}
-            </Button>
-          ) : null}
-        </>
-      }
-    >
-
-      {sections?.length ? <SectionTabs label={label} sections={sections} /> : null}
-      {tabs && (tabs.length > 1 || (sections?.length && tabs.length)) ? <ListTabs label={label} tabs={tabs} toggle={toggle} /> : null}
-
-      {above}
-
-      {spec.strip?.length ? <FigureStrip items={spec.strip} /> : null}
-
-      {/* Not overflow-hidden: the filter bar's menus open over the rows, and on a short list they would be cut off at the card's edge. */}
-      <Card className="relative">
-        {/* The next page is on its way: a bar along the top, and the rows it replaces dimmed, so a click visibly took. */}
-        {pending ? <span aria-hidden className="absolute inset-x-0 top-0 z-10 h-0.5 animate-pulse rounded-t-card bg-brand" /> : null}
-        {chips.length >= 2 && chips.length <= MAX_TABS ? (
-          <Tabs
-            className="px-4"
-            value={chip}
-            onChange={pickChip}
-            tabs={[{ key: "", label: "All", count: lp.beforeChip }, ...chips.map((c) => ({ key: c.v, label: c.v, count: c.n }))]}
-          />
-        ) : null}
-
-        {/* An empty list has nothing to search, group or choose columns of:
-            the toolbar is drawn once there is something to work on. */}
-        {lp.all > 0 || filter || win ? (
-        <div className="flex flex-wrap items-center gap-2.5 border-b border-divider px-4 py-3">
+  const toolbar =
+    lp.all > 0 || filter || win ? (
+        <div className={cx("flex flex-wrap items-center gap-2.5", v4 ? "mb-3" : "border-b border-divider px-4 py-3")}>
           <div className="relative w-[300px] max-w-full">
             <ShellIcon name="search" size={16} className="pointer-events-none absolute top-2.25 left-2.5 text-muted" />
             <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search this list" aria-label="Search this list" className="pr-7 pl-7.5" />
@@ -560,7 +573,76 @@ export function ListScreen({
             </span>
           ) : null}
         </div>
+    ) : null;
+
+  const Frame = bare ? BareFrame : Page;
+  return (
+    <Frame
+      title={label}
+      sub={sub}
+      actions={
+        <>
+          {/* One export for every list: it used to sit beside a "Download"
+              that did exactly the same thing on the stock and label lists. */}
+          {lp.all ? (
+            <Button variant="secondary" onClick={exportCsv} title="Download these rows, as filtered, as CSV">
+              <Icon n="dl" />
+              Export
+            </Button>
+          ) : null}
+          {(spec.tools ?? []).map((t) => (
+            <Button
+              key={t.id}
+              variant={t.primary ? "primary" : "secondary"}
+              disabled={!!t.why}
+              title={t.why}
+              onClick={() => ui.tool(spec.screen, t)}
+            >
+              {t.l}
+            </Button>
+          ))}
+          {spec.newMenu?.length && !spec.readOnly ? (
+            <NewMenu items={spec.newMenu} />
+          ) : hasNew ? (
+            <Button variant="primary" onClick={() => openNew()} onPointerEnter={warmNew} onFocus={warmNew}>
+              <ShellIcon name="plus" size={16} />
+              {spec.newLabel ?? "New"}
+            </Button>
+          ) : null}
+        </>
+      }
+    >
+
+      {sections?.length ? <SectionTabs label={label} sections={sections} /> : null}
+      {tabs && (tabs.length > 1 || (sections?.length && tabs.length)) ? <ListTabs label={label} tabs={tabs} toggle={toggle} /> : null}
+
+      {above}
+
+      {spec.strip?.length ? <FigureStrip items={spec.strip} /> : null}
+
+      {/* v4: the chips are figure cards, and the search and filters stand on
+          the page above the table rather than inside its card. */}
+      {v4 && chips.length >= 2 && chips.length <= MAX_TABS ? (
+        <StatCards total={lp.beforeChip} chips={chips} value={chip} tones={tones} onPick={pickChip} />
+      ) : null}
+      {v4 ? toolbar : null}
+
+      {/* Not overflow-hidden: the filter bar's menus open over the rows, and on a short list they would be cut off at the card's edge. */}
+      <Card className="relative">
+        {/* The next page is on its way: a bar along the top, and the rows it replaces dimmed, so a click visibly took. */}
+        {pending ? <span aria-hidden className="absolute inset-x-0 top-0 z-10 h-0.5 animate-pulse rounded-t-card bg-brand" /> : null}
+        {chips.length >= 2 && chips.length <= MAX_TABS && !v4 ? (
+          <Tabs
+            className="px-4"
+            value={chip}
+            onChange={pickChip}
+            tabs={[{ key: "", label: "All", count: lp.beforeChip }, ...chips.map((c) => ({ key: c.v, label: c.v, count: c.n }))]}
+          />
         ) : null}
+
+        {/* An empty list has nothing to search, group or choose columns of:
+            the toolbar is drawn once there is something to work on. */}
+        {v4 ? null : toolbar}
 
         {spec.fold?.note && !query.parts && lp.all > 0 ? <div className="border-b border-divider px-4 py-2 text-meta text-muted">{spec.fold.note}</div> : null}
 

@@ -4,7 +4,7 @@ import { useContext, useId, useState } from "react";
 import type { FieldSpec } from "@/lib/erp/ui";
 import { Badge, Button, controlClass, cx, type Tone } from "@/components/ui/primitives";
 import { nf } from "@/lib/erp/ui";
-import { labelClass, popoverClass } from "./look";
+import { fieldLabelClass, popoverClass } from "./look";
 import { DictateButton, joinDictation } from "@/components/ui/dictate";
 import { Icon } from "./icons";
 import { ErpVoice } from "./voice";
@@ -69,7 +69,7 @@ export function Field({
   const Wrap = grouped ? "div" : "label";
   return (
     <Wrap className={cx("block min-w-0", f.wide && "col-span-full")} {...(grouped ? { role: "group", "aria-label": f.l } : {})}>
-      <span className={cx("mb-1 flex items-center gap-1.5", labelClass)}>
+      <span className={cx("mb-1 flex items-center gap-1.5", fieldLabelClass)}>
         {f.l}
         {tag ? (
           <Badge tone={tagTone} className="tracking-normal normal-case">

@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { ListRow, ListSpec } from "@/lib/erp/ui";
 import { cellText } from "@/lib/erp/ui";
 import { Badge, Button, cx, SectionLabel } from "@/components/ui/primitives";
-import { insetClass, labelClass } from "./look";
+import { eyebrowClass, insetClass } from "./look";
 import { FlagBadge, flagsBesideStatus, StatusBadge } from "./badge";
 import { useKit } from "./kit";
 import { Icon } from "./icons";
@@ -117,10 +117,10 @@ export function RecordDialog({ screen, kind, row, onClose }: { screen: ListSpec;
         {active === "panel" ? panel : null}
         {active === "details" ? (
           <>
-            <dl className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-x-6 gap-y-4">
+            <dl className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-2.5">
               {shown.map((f, i) => (
-                <div key={`${f.l}:${i}`} className="min-w-0">
-                  <dt className={cx(labelClass, "flex items-center gap-1.5")}>
+                <div key={`${f.l}:${i}`} className="min-w-0 rounded-card border border-line px-3.5 py-3">
+                  <dt className={cx(eyebrowClass, "flex items-center gap-1.5 text-faint")}>
                     {f.l}
                     {f.der ? (
                       <Badge tone="neutral" className="tracking-normal normal-case">
@@ -128,11 +128,11 @@ export function RecordDialog({ screen, kind, row, onClose }: { screen: ListSpec;
                       </Badge>
                     ) : null}
                   </dt>
-                  <dd className="mt-0.5">
+                  <dd className="mt-1">
                     {f.status && f.v !== "—" ? (
                       <StatusBadge value={f.v} />
                     ) : (
-                      <span className={cx("block text-sm break-words tabular-nums", f.v === "—" ? "text-line-strong" : "text-ink")}>{f.v}</span>
+                      <span className={cx("block text-md font-semibold break-words tabular-nums", f.v === "—" ? "text-line-strong" : "text-ink")}>{f.v}</span>
                     )}
                   </dd>
                 </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AppFrame } from "@/components/shell/app-frame";
 import { AccountMenu } from "@/components/shell/account-menu";
@@ -9,7 +10,7 @@ import { CollapsibleNav, type NavRowGroup, type NavRowItem } from "@/components/
 import { FeedbackButton } from "@/components/shell/feedback-button";
 import { Icon as ShellIcon } from "@/components/shell/icons";
 import { NotificationBell } from "@/components/shell/notification-bell";
-import { Button, SectionLabel, cx } from "@/components/ui/primitives";
+import { Button, cx } from "@/components/ui/primitives";
 import { Modal } from "@/components/ui/overlays";
 import { ToastProvider, useToast } from "@/components/ui/toast";
 import { erpLocateWorkingGodown, erpSetWorkingGodown, erpStartViewAs, erpStopViewAs, type ErpLocateResult } from "@/lib/actions/erp";
@@ -25,7 +26,7 @@ import { nf } from "@/lib/erp/ui";
 import { GodownPicker } from "./godown-picker";
 import { Icon } from "./icons";
 import { ErpUiProvider } from "./erp-ui";
-import { IconButton, eyebrowClass } from "./look";
+import { IconButton } from "./look";
 
 /* ---------------------------------------------------------------------------
  * The ERP's shell, and it is the CRM's shell.
@@ -212,12 +213,15 @@ export function ErpShell({
   return (
     <ToastProvider>
       <ErpUiProvider voice={voice}>
+        {/* `data-erp-v4` is what erp-theme.css answers to: the ERP's look, and nothing else's. */}
+        <div data-erp-v4 className="contents">
         <AppFrame
           /* Used on a tablet at the godown gate as much as at a desk: no 1100px floor. */
           floor={false}
+          sidebarFirst
           header={
-            <header className="z-30 flex h-14 flex-none items-center gap-5 border-b border-line bg-surface px-4">
-              <div className="flex w-[216px] flex-none items-center">
+            <header data-erp-header className="z-30 flex h-14 flex-none items-center gap-3 border-b border-brand-softer bg-brand-soft px-3">
+              <div className="flex flex-none items-center">
                 <HeaderLead
                   apps={apps}
                   current="erp"
@@ -225,6 +229,7 @@ export function ErpShell({
                   onToggleSidebar={() => setCollapsed((c) => !c)}
                   href="/erp"
                   label="MAHEK ERP"
+                  wordmark={false}
                 />
               </div>
 
@@ -234,7 +239,7 @@ export function ErpShell({
                 endpoint="/api/erp/search"
                 placeholder={ask ? "Search lots, PRs, POs, boxes, orders — or ask a question" : "Search customers, lots, PRs, POs, boxes, orders…"}
                 ask={ask ? ERP_ASK.title : undefined}
-                className="max-w-[440px]"
+                className="max-w-[520px]"
               />
 
               <div className="flex-1" />
@@ -246,11 +251,10 @@ export function ErpShell({
                     Feedback button and the account chip are drawn as icons. */}
                 <FeedbackButton compact className="xl:hidden" />
                 <FeedbackButton className="hidden xl:flex" />
-                <IconButton label="Keyboard shortcuts" bordered onClick={() => setShortcutsOpen(true)} className="text-meta font-medium">
+                <IconButton label="Keyboard shortcuts" onClick={() => setShortcutsOpen(true)} className="text-meta font-medium">
                   ?
                 </IconButton>
                 <NotificationBell notifications={notifications} />
-                <span className="mx-1 h-6 w-px bg-divider" />
                 <AccountMenu user={user} hat={hat} variant="header" nameFromXl />
               </div>
             </header>
@@ -259,9 +263,18 @@ export function ErpShell({
             <aside
               className={cx(
                 "flex flex-none flex-col border-r border-line bg-surface transition-[width] duration-150",
-                collapsed ? "w-14" : "w-[216px]",
+                collapsed ? "w-16" : "w-[232px]",
               )}
             >
+              <Link href="/erp" title="MahekOne ERP" className="flex h-14 flex-none items-center gap-2.5 px-4 no-underline hover:no-underline">
+                {/* eslint-disable-next-line @next/next/no-img-element -- a 256px static mark, nothing for the optimiser to do */}
+                <img src="/brand/mahek-logo.png" alt="Mahek" width={30} height={30} className="h-7.5 w-7.5 flex-none rounded-full bg-surface object-contain" />
+                {collapsed ? null : (
+                  <span className="text-md font-bold tracking-tight whitespace-nowrap text-ink">
+                    MahekOne <span className="font-medium text-faint">ERP</span>
+                  </span>
+                )}
+              </Link>
               <CollapsibleNav
                 storageKey="erp.nav.open"
                 ariaLabel="ERP sections"
@@ -284,6 +297,7 @@ export function ErpShell({
           {preview?.current ? <PreviewBanner current={preview.current} /> : null}
           {children}
         </AppFrame>
+        </div>
 
         <Modal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} title="Keyboard shortcuts" width={460}>
           <div className="flex flex-col">
@@ -325,15 +339,25 @@ function PreviewAs({ preview }: { preview: { targets: PreviewTargets; current: E
     else void erpStartViewAs({ kind: kind as "designation" | "user", id }).then(done);
   };
   return (
-    <div className="flex-none border-t border-divider px-3 pt-2.5 pb-2">
-      <SectionLabel className="mb-1.5">View the ERP as</SectionLabel>
+    <div className="flex-none border-t border-line p-2">
+      <label
+        className={cx(
+          "flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-1.5",
+          preview.current ? "border-brand bg-brand-soft" : "border-line bg-page",
+        )}
+      >
+        <span className="flex flex-none text-faint">
+          <ShellIcon name="eye" size={15} />
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col leading-4">
+          <span className="text-2xs text-faint">View the ERP as</span>
       <select
         value={value}
         onChange={(e) => pick(e.target.value)}
         aria-label="Preview access as"
         className={cx(
-          "h-8.5 w-full cursor-pointer rounded-control border bg-surface px-2 text-meta",
-          preview.current ? "border-brand text-brand-hover" : "border-line text-body",
+          "-ml-1 w-full min-w-0 cursor-pointer truncate border-0 bg-transparent text-meta font-semibold outline-none",
+          preview.current ? "text-brand-hover" : "text-ink",
         )}
       >
         <option value="">Myself</option>
@@ -359,6 +383,8 @@ function PreviewAs({ preview }: { preview: { targets: PreviewTargets; current: E
           </optgroup>
         ) : null}
       </select>
+        </span>
+      </label>
     </div>
   );
 }
@@ -522,8 +548,8 @@ function WorkingAt({
     );
   }
   return (
-    <div className="flex h-7.5 items-center gap-1.5 rounded-control border border-line pr-1 pl-2">
-      <span className={cx(eyebrowClass, "hidden whitespace-nowrap xl:inline")}>Working at</span>
+    <div data-working-at className="flex h-9 items-center gap-1.5 rounded-lg border border-brand-softer pr-1 pl-2.5">
+      <span className="hidden text-2xs whitespace-nowrap text-muted xl:inline">Working at</span>
       <GodownPicker
         look="chip"
         value={working?.id ?? ""}

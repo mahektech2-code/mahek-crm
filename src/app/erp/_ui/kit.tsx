@@ -49,6 +49,8 @@ export type ScreenKit = {
   tones: Record<string, Tone>;
   /** What the list's location filter calls its places ("godown", "office"). */
   place: { one: string; many: string };
+  /** "v4": the ERP's v4 list head — chips as figure cards, filters on the page. Absent, the original look. */
+  look?: "v4";
 };
 
 export const ERP_KIT: ScreenKit = {
@@ -64,6 +66,7 @@ export const ERP_KIT: ScreenKit = {
   flags: FLAG,
   tones: ST_TONE,
   place: { one: "godown", many: "godowns" },
+  look: "v4",
 };
 
 export const KitContext = createContext<ScreenKit>(ERP_KIT);
