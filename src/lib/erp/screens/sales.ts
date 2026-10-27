@@ -777,6 +777,167 @@ async function editForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
   };
 }
 
+/**
+ * THE WHOLE ORDER IN ONE MODAL. "Edit" changes one line, and an order of seven
+ * SKUs was seven trips through it — with no way to add a line or take one off
+ * from the same place. This is the New order form opened on the order as it
+ * stands: its delivery, transporter and dispatch day above, every live line
+ * below, each line carrying its own id so the save knows which row it is.
+ * What the order was raised as — its date, godown, billing party and source —
+ * is shown and fixed; a different billing party is a different order.
+ */
+async function editOrderForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
+  const [one] = await lines([id]);
+  if (!one) return null;
+  const all = (await orderLines({ orderNos: [one.o.orderNo] })).filter((l) => l.o.status !== "Cancel");
+  if (!all.length) return null;
+  const first = all[0];
+  const billed = all.some((l) => l.inDetails);
+  const base = await orderForm(ctx, {
+    orderNo: first.o.orderNo,
+    date: first.o.orderDate,
+    godown: first.godown,
+    billing: first.billing.name,
+    delivery: first.delivery.name,
+    transporter: first.o.transporter ?? "",
+    source: first.o.orderSource ?? "",
+  });
+  const seeRate = ctx.powers.has("viewSalesRate");
+  const seeAmounts = ctx.powers.has("viewSalesAmounts");
+  return withFills({
+    ...base,
+    id: "editOrder",
+    recordId: id,
+    title: `Edit order ${first.o.orderNo} · ${first.billing.name}`,
+    sub: [
+      billed
+        ? "Billed: the delivery party and quantities are fixed and no line can be added; a change to a rate or discount sends the invoice back to the checker."
+        : first.o.orderCheck === "Verified"
+          ? "Verified: a change to a quantity, the delivery party, a rate or a discount — or a line added or removed — sends the order back to the back office."
+          : "Change any line, add a SKU, or remove a line.",
+      all.some((l) => l.allocations > 0) ? "A line with lots allocated keeps its SKU and cannot be removed until its batch codes are released." : "",
+    ]
+      .filter(Boolean)
+      .join(" "),
+    submit: "Save order",
+    init: { ...base.init, dispatchOn: first.o.dispatchOn ?? "", delivery: first.delivery.name, transporter: first.o.transporter ?? "" },
+    header: base.header.map((f) => (f.k === "delivery" ? { ...f, readOnly: billed } : f.k === "dispatchOn" || f.k === "transporter" ? { ...f, readOnly: false } : f)),
+    initLines: all.map((l) => ({
+      lineId: l.o.id,
+      sku: l.sku.name,
+      qty: String(l.o.qtyCans),
+      ...(seeRate ? { rate: rupeesField(l.o.ratePaise) } : {}),
+      ...(seeAmounts ? { discount: l.o.discountBp == null ? "" : String(l.o.discountBp / 100) } : {}),
+      remark: l.o.remark ?? "",
+    })),
+  });
+}
+
+/**
+ * Saves the whole-order modal: lines that came back with their id are edited
+ * through `saveEdit` — the same rules, audit and re-verification as editing one
+ * line — lines with no id are added through `saveOrder`, and lines that did not
+ * come back are removed. Everything that can be refused is checked BEFORE the
+ * first write, so a refusal on line five does not leave lines one to four saved.
+ */
+async function saveEditOrder(ctx: ErpContext, h: Record<string, string>, ls: Record<string, string>[], id?: string): Promise<Result<unknown>> {
+  if (!id) return err("No order named.", "not_found");
+  const [one] = await lines([id]);
+  if (!one) return err("That order no longer exists.", "not_found");
+  const all = (await orderLines({ orderNos: [one.o.orderNo] })).filter((l) => l.o.status !== "Cancel");
+  const byId = new Map(all.map((l) => [l.o.id, l]));
+  const billed = all.some((l) => l.inDetails);
+  if (!ls.length) return err("An order keeps at least one line. To drop the whole order, cancel it.", "rule_violation");
+
+  const kept: { i: number; l: OrderLine; v: Record<string, string> }[] = [];
+  const added: { i: number; v: Record<string, string> }[] = [];
+  const replaced: OrderLine[] = [];
+  for (let i = 0; i < ls.length; i++) {
+    const v = ls[i];
+    const l = v.lineId ? byId.get(v.lineId) : undefined;
+    if (v.lineId && !l) return err("A line on this order changed while it was open. Close it and open the order again.", "rule_violation");
+    if (!l) {
+      added.push({ i, v });
+      continue;
+    }
+    if ((v.sku ?? "") !== l.sku.name) {
+      if (l.inDetails) return fieldErr(`l${i}.sku`, "This line is billed; its SKU is fixed");
+      if (l.allocations) return fieldErr(`l${i}.sku`, "Lots are allocated to this line, so its SKU is fixed");
+      replaced.push(l);
+      added.push({ i, v });
+      continue;
+    }
+    const qty = int(v.qty);
+    if (qty == null || qty <= 0) return fieldErr(`l${i}.qty`, "Minus Quantity Not Allowed");
+    if (l.inDetails && qty !== l.o.qtyCans) return fieldErr(`l${i}.qty`, "This line is billed; its quantity is fixed");
+    if (!boxQuantity(qty, l.sku.cpb, !l.boxed).valid) return fieldErr(`l${i}.qty`, "INVALID");
+    const d = num(v.discount);
+    if (ctx.powers.has("viewSalesAmounts") && d != null && (d < 0 || d > 100)) return fieldErr(`l${i}.discount`, "Discount must be between 0 and 100");
+    kept.push({ i, l, v });
+  }
+  const keptIds = new Set(kept.map((k) => k.l.o.id));
+  const removed = [...all.filter((l) => !keptIds.has(l.o.id) && !replaced.includes(l))];
+  for (const l of [...removed, ...replaced]) {
+    if (l.inDetails) return err(`${l.sku.name} is billed and cannot be taken off; undo its billing first.`, "rule_violation");
+    if (l.allocations) return err(`${l.sku.name} has lots allocated; release its batch codes before taking it off.`, "rule_violation");
+  }
+  if (added.length && billed) return err(`Order ${one.o.orderNo} is billed. One order is one bill — take a new order for these goods.`, "rule_violation");
+
+  /* Added lines first: saveOrder checks every one of them before it writes any. */
+  if (added.length) {
+    const head = all[0] ?? one;
+    const res = await saveOrder(
+      ctx,
+      {
+        orderFixed: String(one.o.orderNo),
+        date: head.o.orderDate,
+        godown: head.godown,
+        billing: head.billing.name,
+        delivery: text(h.delivery) ?? head.delivery.name,
+        transporter: h.transporter ?? "",
+        dispatchOn: h.dispatchOn ?? "",
+        source: head.o.orderSource ?? "",
+      },
+      added.map((a) => a.v),
+    );
+    if (!res.ok) {
+      const fe = res.fieldErrors?.[0];
+      const m = fe?.field.match(/^l(\d+)\.(.+)$/);
+      return m ? fieldErr(`l${added[Number(m[1])].i}.${m[2]}`, fe!.message) : res;
+    }
+  }
+  for (const { i, l, v } of kept) {
+    const res = await saveEdit(
+      ctx,
+      {
+        status: l.o.status,
+        dispatchOn: h.dispatchOn ?? "",
+        delivery: text(h.delivery) ?? l.delivery.name,
+        transporter: h.transporter ?? "",
+        qty: v.qty ?? "",
+        rate: v.rate ?? rupeesField(l.o.ratePaise),
+        discount: v.discount ?? (l.o.discountBp == null ? "" : String(l.o.discountBp / 100)),
+        transport: rupeesField(l.o.transportCostPaise),
+        remark: v.remark ?? "",
+      },
+      l.o.id,
+    );
+    if (!res.ok) {
+      const fe = res.fieldErrors?.[0];
+      return fe ? fieldErr(`l${i}.${fe.field}`, fe.message) : res;
+    }
+  }
+  for (const l of [...removed, ...replaced]) {
+    await db.delete(erpOrders).where(eq(erpOrders.id, l.o.id));
+    await erpAudit(ctx, "erp.order.delete", "erp_order", l.o.id, l.o, null);
+    await reopenOrderCheck(ctx, l.o.orderNo, `${l.sku.name} removed`);
+  }
+  if (removed.length || replaced.length) await syncBookOrders([one.o.orderNo]);
+  const n = (k: number, w: string) => (k ? `${k} ${w}` : "");
+  const said = [n(kept.length, "kept"), n(added.length - replaced.length, "added"), n(replaced.length, "SKU changed"), n(removed.length, "removed")].filter(Boolean).join(" · ");
+  return okVoid(`Order ${one.o.orderNo} saved${said ? ` — ${said}` : ""}`);
+}
+
 async function allocateForm(ctx: ErpContext, id: string): Promise<FormSpec | null> {
   const [l] = await orderLines({ ids: [id] });
   if (!l) return null;
@@ -1066,6 +1227,8 @@ function orderList(scope: Scope): ScreenModule {
                 { id: "stickers", l: "Stickers are on", why: l.stickersAt ? "Already recorded" : "" },
               ]
             : [
+                /* First, so it earns a footer button rather than a place under More: the whole order, in one modal. */
+                { id: "editOrder", l: "Edit order", loadsForm: true, why: l.o.status === "Cancel" ? "This line is cancelled" : "" },
                 ...(verifier && !billed && l.o.status !== "Cancel"
                   ? [
                       { id: "verifyOrder", l: "Verify order", primary: l.o.orderCheck !== "Verified", why: l.o.orderCheck === "Verified" ? "Already verified" : "", confirm: `Verify order ${l.o.orderNo} — ${l.billing.name}, ${live.length} line${live.length === 1 ? "" : "s"} — against what the customer asked for?` } as ActionSpec,
@@ -1114,7 +1277,7 @@ function orderList(scope: Scope): ScreenModule {
                     ]
                   : []),
                 ...(approver && l.o.partyStatus === "Pending" ? [{ id: "approve", l: "Approved By Admin" } as ActionSpec] : []),
-                { id: "edit", l: "Edit", loadsForm: true },
+                { id: "edit", l: "Edit this line", loadsForm: true },
                 { id: "more", l: "Add another", loadsForm: true, why: billed ? "The order is billed; one order is one bill" : "" },
                 ...(!l.inDetails && l.o.status !== "Cancel"
                   ? [
@@ -1689,6 +1852,7 @@ function lineHandlers(scope: Scope): Pick<ScreenModule, "actions" | "bulk" | "fo
     },
     formLoaders: {
       edit: editForm,
+      editOrder: editOrderForm,
       allocate: allocateForm,
       async more(ctx, id) {
         const [l] = await lines([id]);
@@ -1700,6 +1864,7 @@ function lineHandlers(scope: Scope): Pick<ScreenModule, "actions" | "bulk" | "fo
       ...(scope === "orders" ? { new: (ctx, h, ls) => saveOrder(ctx, h, ls) } : {}),
       more: (ctx, h, ls) => saveOrder(ctx, h, ls),
       edit: (ctx, h, _l, id) => saveEdit(ctx, h, id),
+      editOrder: (ctx, h, ls, id) => saveEditOrder(ctx, h, ls, id),
       allocate: (ctx, h, _l, id) => saveAllocation(ctx, h, id),
     },
   };
