@@ -7,7 +7,7 @@ import { productLine, type BoxLabel, type DispatchLabel, type PurchaseLabel, typ
 import { purchaseFigures, shortLabel } from "./engines/purchase";
 import { packLabel } from "./engines/trace";
 import { refValues } from "./refs";
-import { orderLines } from "./screens/sales";
+import { isStickerLine, orderLines } from "./screens/sales";
 import { fgLots, packLots, sfgLots } from "./stock";
 import { boxHeadroom, looseHeadroom } from "./units";
 
@@ -216,13 +216,13 @@ export type DispatchLabelRow = { label: DispatchLabel; lineId: string; copies: n
  * is the one on the Dispatch stickers tab.
  */
 export async function dispatchLabels(orderNo: number): Promise<DispatchLabelRow[]> {
-  const lines = (await orderLines({ orderNos: [orderNo] })).filter((l) => l.o.status !== "Cancel" && l.inDetails && l.invoiceCheck === "Approved" && !l.dispatched && l.o.tallyBillNo);
+  const lines = (await orderLines({ orderNos: [orderNo] })).filter(isStickerLine);
   if (!lines.length) return [];
   /* Entered order, not newest first: the stickers come off the roll as the order was written. */
   lines.sort((a, b) => a.o.createdAt.getTime() - b.o.createdAt.getTime());
   return lines.map((l) => ({
     lineId: l.o.id,
     copies: Math.max(0, Math.round(l.labels)),
-    label: { kind: "dispatch", orderNo: l.o.orderNo, invoiceNo: l.o.tallyBillNo!, customer: l.delivery.name, product: l.sku.name },
+    label: { kind: "dispatch", orderNo: l.o.orderNo, invoiceNo: l.o.tallyBillNo ?? null, customer: l.delivery.name, product: l.sku.name },
   }));
 }

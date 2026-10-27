@@ -31,7 +31,7 @@ flowchart TD
 | **Production** | Lines **Under Process** or **Ready** and not yet billed. |
 | **Ready to bill** | Ready lines of verified orders, not yet billed — the material waiting for its bill. |
 | **Invoice check** | Billed orders whose invoice is waiting for the checker, or was rejected. |
-| **Dispatch stickers** | Approved invoices whose goods have not left: what the stickers are printed for. |
+| **Dispatch stickers** | Lines under process or ready, or billed, whose goods have not left: what the stickers are printed for. |
 | **Billing & dispatch** | Every billed line: the invoice check, the dispatch, the vehicle, the bill's figures. |
 | **On hold** | What the office is holding — Hold From Office, or a status nobody has worked yet. |
 | **Batch codes** | Every lot allocated to a line. |
@@ -157,13 +157,13 @@ Every step — sent to check, verified, sent back, approved, rejected, back to c
 ## Dispatch stickers
 
 <Rule title="The dispatch sticker carries four things, and only after approval">
-One sticker for every box or can: the **customer** (the delivery party), the **product**, the **invoice number** and the **order number** — nothing else, and no lot or box code. Those are on the box's own label, made by the box-id system, and the two never share a sticker. Stickers are printed only once the invoice is approved and until the goods leave. **Stickers are on** records that they were applied; it is not required to dispatch.
+One sticker for every box or can: the **customer** (the delivery party), the **product**, the **invoice number** and the **order number** — nothing else, and no lot or box code. Those are on the box's own label, made by the box-id system, and the two never share a sticker. Stickers are printed from the moment a line is under process or ready — before billing, with the invoice number left blank — until the goods leave. **Stickers are on** records that they were applied; it is not required to dispatch.
 </Rule>
 
 ## Confirm dispatch
 
-<Rule title="An order leaves whole, after its invoice is approved">
-**Confirm dispatch** asks for the **dispatch date**, the **vehicle / tempo / truck number**, the **driver or transporter** and any **remark or exception**. It dispatches every billed line of the order together, and refuses while the invoice is waiting for the check or was rejected, while any line of the order is not on the bill, or while any line still has boxes to scan (setting: <Setting k="erp.dispatch.requireScan" />). The date may not be before the order date.
+<Rule title="An order leaves whole, once it is billed">
+**Confirm dispatch** asks for the **dispatch date**, the **vehicle / tempo / truck number**, the **driver or transporter** and any **remark or exception**. It dispatches every billed line of the order together, and refuses while the invoice was rejected by the checker (a pending check holds nothing), while any line of the order is not on the bill, or while any line still has boxes to scan (setting: <Setting k="erp.dispatch.requireScan" />). The date may not be before the order date.
 </Rule>
 
 Confirming sets the lines **Verified** and **Dispatched**, turns every scanned box **dispatched**, freezes the lots, and puts the order on one record on [Logistics](/docs/erp/transport). Bills recorded with the same vehicle on the same day join one **trip** there.

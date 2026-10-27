@@ -1,6 +1,6 @@
 The Dispatch desk exists to answer one question at the lorry: **is this box allowed on this order?** Before it, the only check between the shelf and the customer was a person reading a label. Now every box carries its own id in a QR, and every scan is judged against the order's lines — product, pack size, quantity, godown and the box's own state — before it counts. A wrong box is stopped, and the only way past is a second person agreeing in writing.
 
-The desk is also where the order leaves: once its invoice has been approved by the invoice checker and every box is scanned, **Confirm dispatch** records the date and the vehicle and sends the whole order to [Logistics](/docs/erp/transport).
+The desk is also where the order leaves: once the order is billed and every box is scanned, **Confirm dispatch** records the date and the vehicle and sends the whole order to [Logistics](/docs/erp/transport).
 
 ## What a box is
 
@@ -74,10 +74,10 @@ A mismatch override is the company deciding to send something the customer did n
 
 Only one override per box per order line can be open (waiting or approved) at a time. The same power also lets a person reject a box, or mark one returned by the customer, on Boxes & labels.
 
-## Confirm dispatch waits for the invoice and for every box
+## Confirm dispatch waits for the bill and for every box
 
 <Rule title="The invoice gate">
-An order is dispatched only once its Tally invoice has been **approved** by the invoice checker on [Orders → Invoice check](/docs/erp/orders). While it waits, or after it is rejected, the desk says so and the button stays off.
+An order is dispatched once its Tally invoice is entered. The invoice check on [Orders → Invoice check](/docs/erp/orders) is optional: a pending check holds nothing, but an invoice the checker **rejected** holds the order until it is corrected, and the desk says so.
 </Rule>
 
 <Rule title="The scan gate">
@@ -97,7 +97,7 @@ It then marks each scanned box **dispatched** with the date, the lines Verified 
 ## The dispatch sticker is not the box label
 
 <Rule title="Two stickers, two systems">
-The **box label** (50 mm, with its QR) is made by the box-id system and is what the desk scans. The **dispatch sticker** (80 mm) carries only the customer, the product, the invoice number and the order number — never a lot or box code — and is printed only once the invoice is approved. The two are never combined.
+The **box label** (50 mm, with its QR) is made by the box-id system and is what the desk scans. The **dispatch sticker** (80 mm) carries only the customer, the product, the invoice number and the order number — never a lot or box code — and is printed as soon as the line is under process or ready, before billing. The two are never combined.
 </Rule>
 
 ## What is recorded
@@ -119,7 +119,7 @@ The [Traceability](/docs/erp/traceability) dashboard counts today's mismatches, 
 | Approve or decline an override | The Dispatch desk and *Approve dispatch overrides* — and not your own request, unless an ERP administrator |
 | Allocate a lot by hand | The Orders screen as well, and only while the line is not billed |
 | Confirm dispatch from the desk | The Orders screen as well |
-| Print dispatch stickers (after the invoice is approved) | The Orders screen or the Dispatch desk |
+| Print dispatch stickers (once under process or ready) | The Orders screen or the Dispatch desk |
 
 <SettingsTable keys={["erp.dispatch.requireScan"]} />
 

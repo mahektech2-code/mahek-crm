@@ -20,6 +20,7 @@ The Orders screen is ten tabs, each its own server module: nine built in `screen
 | Label rules (pure) | `src/lib/erp/engines/labels.ts`, `src/lib/erp/engines/tspl.ts` | `fitPt`, `boxFoot`, `lotSize`, `printRuns`; `tsplJob`, `packBitmap`, `rasterFromRgba`, `qrGrid` |
 | Writes | `src/lib/actions/erp.ts` | `erpRunAction`, `erpRunBulk`, `erpSubmitForm`, `erpLoadForm` |
 | Trips | `src/lib/erp/trips.ts` | `assignTripsAtDispatch`, called by `openTransports` inside the dispatch transaction |
+| Migration | `drizzle/0286_erp_stickers_on_the_line.sql` | `erp_orders.stickers_at`, `stickers_by_id` — stickers recorded on the line, since they go on before billing; copied from `erp_order_details` |
 | Migration | `drizzle/0285_erp_order_to_delivery.sql` | `erp_orders.order_source`, `order_check*`, `linked_from_order_no`, `invoice_date`; `erp_order_details.invoice_check*`, `stickers_*`, `vehicle_no`, `driver`, `dispatch_remark`; `erp_order_reviews`; trips and transport payments |
 | Jobs | `src/lib/jobs.ts` | `erpInboxStep` in `runHourly` |
 

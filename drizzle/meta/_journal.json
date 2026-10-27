@@ -1982,6 +1982,13 @@
       "when": 1793200000000,
       "tag": "0285_erp_order_to_delivery",
       "breakpoints": true
+    },
+    {
+      "idx": 283,
+      "version": "7",
+      "when": 1793300000000,
+      "tag": "0286_erp_stickers_on_the_line",
+      "breakpoints": true
     }
   ]
 }

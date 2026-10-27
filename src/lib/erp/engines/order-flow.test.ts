@@ -40,7 +40,8 @@ test("billing, dispatch and logistics are each their own word", () => {
   assert.equal(billingOf({ ...base, billed: true, invoiceCheck: "Pending" }), "Verification Pending");
   assert.equal(billingOf({ ...base, billed: true, invoiceCheck: "Rejected" }), "Correction Required");
   assert.equal(billingOf({ ...base, billed: true, invoiceCheck: "Approved" }), "Approved");
-  assert.equal(dispatchOf({ ...base, billed: true, invoiceCheck: "Pending" }), "Pending", "dispatch waits for the invoice check");
+  assert.equal(dispatchOf({ ...base, billed: true, invoiceCheck: "Pending" }), "Ready to Dispatch", "the invoice check is optional: a pending one holds nothing");
+  assert.equal(dispatchOf({ ...base, billed: true, invoiceCheck: "Rejected" }), "Pending", "a rejected invoice holds the goods");
   assert.equal(dispatchOf({ ...base, billed: true, invoiceCheck: "Approved", toScan: "2 of 3" }), "Scanning / Verification Pending");
   assert.equal(dispatchOf({ ...base, billed: true, invoiceCheck: "Approved" }), "Ready to Dispatch");
   assert.equal(dispatchOf({ ...base, billed: true, invoiceCheck: "Approved", dispatched: true }), "Dispatched");

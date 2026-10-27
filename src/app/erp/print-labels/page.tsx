@@ -77,7 +77,7 @@ export default async function ErpLabels({ searchParams }: { searchParams: Promis
 
   if (kind === "dispatch" && order != null) {
     title = `Dispatch stickers · order ${order}`;
-    empty = "No dispatch stickers for this order yet. They are printed once its invoice is approved by the checker, and not after it has left.";
+    empty = "No dispatch stickers for this order. They are printed once a line is under process or ready, and not after it has left.";
     fileName = `dispatch-order-${order}.prn`;
     for (const r of await dispatchLabels(order))
       for (let i = 0; i < r.copies; i++) views.push(<DispatchLabelView key={`${r.lineId}:${i}`} l={r.label} lineId={r.lineId} copy={i + 1} />);

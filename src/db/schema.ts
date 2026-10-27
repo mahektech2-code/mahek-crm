@@ -12362,6 +12362,9 @@ export const erpOrders = pgTable(
     linkedFromOrderNo: integer("linked_from_order_no"),
     /** The Tally invoice's date, recorded beside its number. */
     invoiceDate: date("invoice_date"),
+    /** Dispatch stickers recorded on the LINE: they go on before billing, when there is no order-details row yet (0286). */
+    stickersAt: timestamp("stickers_at", { withTimezone: true }),
+    stickersById: text("stickers_by_id").references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     createdById: text("created_by_id").references(() => users.id),

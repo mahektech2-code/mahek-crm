@@ -62,9 +62,8 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
   const totalScanned = open.reduce((a, l) => a + Math.min(l.scanned, l.target), 0);
   const gated = board.lines.filter((l) => l.gate && !l.dispatched);
   const billedWaiting = board.lines.filter((l) => l.billed && !l.dispatched);
-  /* PRD step 6: the order leaves only once its invoice has been approved by the checker. */
-  const invoiceWaiting = billedWaiting.filter((l) => l.invoiceCheck !== "Approved");
-  const invoiceRejected = billedWaiting.some((l) => l.invoiceCheck === "Rejected");
+  /* The invoice check is optional: a pending check holds nothing, a rejected invoice holds the order. */
+  const invoiceWaiting = billedWaiting.filter((l) => l.invoiceCheck === "Rejected");
   const pendingOverrides = board.overrides.filter((o) => o.status === "Pending");
 
   const scan = (raw: string) => {
@@ -251,15 +250,15 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
           <Card className="px-4 py-3">
             <SubTitle className="mb-0">Confirm dispatch</SubTitle>
             {!billedWaiting.length ? (
-              <div className="mt-1 text-meta text-muted">Nothing is billed and waiting. Bill the order on Orders → Ready to bill; it is dispatched once its invoice is approved.</div>
+              <div className="mt-1 text-meta text-muted">Nothing is billed and waiting. Bill the order on Orders → Ready to bill.</div>
             ) : invoiceWaiting.length ? (
               <div className="mt-1 text-meta text-warn-ink">
-                Invoice {board.invoiceNo ?? ""} {invoiceRejected ? "was rejected by the checker — it is corrected on Orders → Invoice check." : "is waiting for the invoice check. Dispatch waits for its approval."}
+                Invoice {board.invoiceNo ?? ""} was rejected by the checker — it is corrected on Orders → Invoice check.
               </div>
             ) : gated.length ? (
               <div className="mt-1 text-meta text-warn-ink">{gated.map((l) => `${l.skuName}: ${l.gate}`).join("; ")}. Dispatch waits for every box.</div>
             ) : (
-              <div className="mt-1 text-meta text-success">Invoice {board.invoiceNo ?? ""} approved, and every box is scanned and checked.</div>
+              <div className="mt-1 text-meta text-success">Invoice {board.invoiceNo ?? ""} entered, and every box is scanned and checked.</div>
             )}
             {canVerify ? (
               <div className="mt-3 flex flex-col gap-2">

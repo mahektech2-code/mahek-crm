@@ -218,7 +218,8 @@ export function DispatchLabelView({ l, lineId, copy }: { l: DispatchLabel; lineI
         </div>
       </div>
       <div className="facts">
-        <Cell k="Invoice no" v={l.invoiceNo} />
+        {/* Blank before billing, so the number can be written on by hand. */}
+        <Cell k="Invoice no" v={l.invoiceNo ?? ""} />
         <Cell k="Order no" v={String(l.orderNo)} />
       </div>
     </div>

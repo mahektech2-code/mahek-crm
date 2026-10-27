@@ -40,6 +40,7 @@ import { erpContext } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
 import { fgLots, packLots } from "@/lib/erp/stock";
 import { dueOf, orderForm } from "@/lib/erp/screens/sales";
+import { dispatchLabels } from "@/lib/erp/label-data";
 import { withFills, type FieldSpec } from "@/lib/erp/ui";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -330,10 +331,11 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
     assert.equal(msg(await mod("orders").forms!.more(ctx, { orderFixed: String(l.orderNo), source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: LOOSE, qty: "1" }])), `Order ${l.orderNo} is billed. One order is one bill — take a new order for these goods.`);
   });
 
-  test("dispatch waits for the independent invoice check, and the checker is not the person who billed", async () => {
+  test("the invoice check is optional, and the checker is not the person who billed", async () => {
     const ctx = await as(admin);
     const loose = await orderFor(looseId);
-    assert.match(msg(await mod("orderDetails").actions!.verify(ctx, loose.id, { date: "2026-09-22" })), /waiting for the invoice check/);
+    const pending = (await mod("orderDetails").load(ctx)).rows.find((r) => r.id === loose.id);
+    assert.equal(pending?.actions?.find((x) => x.id === "verify")?.why, "", "a pending invoice check holds nothing at dispatch");
     await db.insert(erpUserPowers).values({ userId: clerk.id, power: "checkInvoices" });
     await db.update(erpOrderDetails).set({ createdById: clerk.id }).where(eq(erpOrderDetails.orderId, loose.id));
     assert.equal(msg(await mod("orders").actions!.approveInvoice(await as(clerk), loose.id, {})), "You entered this bill, so somebody else checks it.");
@@ -352,6 +354,31 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
     assert.equal(d.driver, "Ramesh");
     const [bc] = await db.select().from(erpBatchCodes).where(eq(erpBatchCodes.orderId, loose.id));
     assert.equal(msg(await mod("batchCodes").actions!.release(ctx, bc.id, {})), "The order has been dispatch-verified.");
+  });
+
+  test("dispatch stickers go on while the goods are under process or ready, before any bill", async () => {
+    const ctx = await as(admin);
+    assert.ok((await mod("orders").forms!.new(ctx, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: LOOSE, qty: "7" }])).ok);
+    const [line] = await db.select().from(erpOrders).where(and(eq(erpOrders.skuId, looseId), eq(erpOrders.qtyCans, 7)));
+    const onStickers = async () => (await mod("labels").load(ctx)).rows.some((r) => r.id === line.id);
+    const a = mod("orders").actions!;
+    if (line.status !== "Under Process" && line.status !== "Ready") assert.equal(await onStickers(), false, "a line nobody is working is not stickered yet");
+    assert.ok((await a.verifyOrder(ctx, line.id, {})).ok);
+    const r = await a.ready(ctx, line.id, {});
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    assert.ok(await onStickers(), "Ready, unbilled, no invoice check — on Dispatch stickers");
+    const labels = await dispatchLabels(line.orderNo);
+    assert.equal(labels.length, 1);
+    assert.equal(labels[0].label.invoiceNo, null, "before billing the sticker leaves the invoice number blank");
+    assert.ok((await a.stickers(ctx, line.id, {})).ok);
+    const [after1] = await db.select().from(erpOrders).where(eq(erpOrders.id, line.id));
+    assert.ok(after1.stickersAt, "recorded on the line, which has no bill yet");
+    assert.ok((await mod("orders").forms!.edit(ctx, { status: "Ready", delivery: "Shree Paints", qty: "7", rate: "400", transport: "0" }, [], line.id)).ok);
+    assert.ok((await a.verifyOrder(ctx, line.id, {})).ok, "an edit sends the order back to the back office");
+    const b = await a.bill(ctx, line.id, { invoiceNo: `MMI/26-27/${tag}`, invoiceDate: TODAY });
+    assert.ok(b.ok, b.ok ? "" : b.error);
+    assert.ok(await onStickers(), "billed with the check still pending — still on the tab until it leaves");
+    assert.equal((await a.stickers(ctx, line.id, {})).ok, false, "and billing did not lose the record that they are on");
   });
 
   test("an order is billed only once Ready, one invoice is one order, and a changed invoice goes back to the checker", async () => {
@@ -382,7 +409,7 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
       history.map((h) => `${h.kind}:${h.result}`),
       ["order:submitted", "order:verified", "invoice:submitted", "invoice:rejected", "invoice:submitted", "invoice:approved", "invoice:reset", "invoice:approved"],
     );
-    assert.ok((await mod("labels").load(ctx)).rows.some((r) => r.id === line.id), "an approved invoice is on Dispatch stickers");
+    assert.ok((await mod("labels").load(ctx)).rows.some((r) => r.id === line.id), "a billed line not yet gone is on Dispatch stickers");
     assert.ok((await a.stickers(ctx, line.id, {})).ok);
     assert.ok((await det()).stickersAt, "the stickers are recorded");
     assert.match(say(await mod("orderDetails").actions!.verify(ctx, line.id, { date: TODAY })), /no vehicle recorded/, "a lot-less line leaves without lots");

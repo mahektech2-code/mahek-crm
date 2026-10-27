@@ -82,8 +82,8 @@ export type PurchaseLabel = {
 export type DispatchLabel = {
   kind: "dispatch";
   orderNo: number;
-  /** The Tally invoice number, recorded at billing and approved by the checker. */
-  invoiceNo: string;
+  /** The Tally invoice number — null when the sticker goes on before billing. */
+  invoiceNo: string | null;
   customer: string;
   product: string;
 };
