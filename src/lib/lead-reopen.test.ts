@@ -406,6 +406,7 @@ describe("C — the Telecaller", () => {
       customerId: lead.id,
       reasonCode: "regular_requirement",
       customerType: "manufacturer",
+      gstin: "27ABCDE1234F1Z5",
       note: "Back after a loss.",
     });
     assert.equal(converted.ok, true, converted.ok ? "" : converted.error);

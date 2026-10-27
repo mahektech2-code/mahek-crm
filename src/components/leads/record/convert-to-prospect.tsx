@@ -45,6 +45,8 @@ export type ConvertRecord = {
   requiredProductId: string | null;
   requiredProductName: string | null;
   contactPerson: string | null;
+  /** The one `customers.gstin` column. */
+  gstin: string | null;
   nextAction: string | null;
   nextActionDate: string | null;
 };
@@ -109,7 +111,7 @@ export function ConvertButton({ label = "Convert to Prospect", size }: { label?:
       variant="primary"
       size={size}
       disabled={ctx.blocked !== null}
-      title={ctx.blocked ?? "Answer the seven questions a Prospect needs, then convert."}
+      title={ctx.blocked ?? "Answer the questions a Prospect needs, then convert."}
       onClick={ctx.open}
     >
       {label}
@@ -167,6 +169,7 @@ function ConvertDialog({
   const [competitor, setCompetitor] = React.useState("");
   const [productId, setProductId] = React.useState<string | null>(null);
   const [contact, setContact] = React.useState("");
+  const [gstin, setGstin] = React.useState("");
   const [nextAction, setNextAction] = React.useState("");
   const [nextDate, setNextDate] = React.useState("");
   const [reason, setReason] = React.useState("");
@@ -184,6 +187,7 @@ function ConvertDialog({
     competitor: record.competitor,
     requiredProductId: record.requiredProductId,
     contactPerson: record.contactPerson,
+    gstin: record.gstin,
     nextAction: record.nextAction,
     nextActionDate: record.nextActionDate,
   };
@@ -193,6 +197,7 @@ function ConvertDialog({
     competitor: competitor || null,
     requiredProductId: productId,
     contactPerson: contact || null,
+    gstin: gstin.trim() || null,
     nextAction: nextAction || null,
     nextActionDate: nextDate || null,
     reasonCode: reason || null,
@@ -202,7 +207,15 @@ function ConvertDialog({
 
   /* Which of the seven the RECORD already answers validly — shown, not asked. */
   const recordOnly = mergeProspectAnswers(record7, {}, opts).merged;
-  const onRecord = (f: ProspectAnswerField): boolean => f !== "reasonCode" && faultFor(f, recordOnly, opts) === null;
+  /* A BLANK is not "on the record", even for a field where blank is a valid
+     answer (the optional ones): the box must stay open so it can be filled. */
+  const hasValue = (f: ProspectAnswerField): boolean => {
+    const v = (recordOnly as Record<string, unknown>)[f];
+    return v !== null && v !== undefined && String(v).trim() !== "";
+  };
+  const onRecord = (f: ProspectAnswerField): boolean => f !== "reasonCode" && faultFor(f, recordOnly, opts) === null && hasValue(f);
+  const requiredCount = PROSPECT_ANSWERS.filter((a) => !a.optional).length;
+  const optionalCount = PROSPECT_ANSWERS.length - requiredCount;
   const nextOnRecord = onRecord("nextAction") && onRecord("nextActionDate");
 
   const errs: Partial<Record<string, string>> = {};
@@ -228,7 +241,7 @@ function ConvertDialog({
     setError(null);
     if (Object.keys(errs).length > 0) {
       setError(
-        `Not ready: ${missingCount === 0 ? "choose a sales type" : `${missingCount} of the 7 answers ${missingCount === 1 ? "is" : "are"} missing or not valid`}. Nothing has been changed.`,
+        `Not ready: ${missingCount === 0 ? "choose a sales type" : `${missingCount} of the ${PROSPECT_ANSWERS.length} answers ${missingCount === 1 ? "is" : "are"} missing or not valid`}. Nothing has been changed.`,
       );
       return;
     }
@@ -238,13 +251,14 @@ function ConvertDialog({
     try {
       result = await convertLeadToProspect({
         customerId: record.customerId,
-        reasonCode: reason,
+        reasonCode: reason || undefined,
         note: note.trim() || undefined,
         customerType: write.customerType ? (write.customerType as never) : undefined,
         monthlyLitres: write.monthlyLitres !== undefined && write.monthlyLitres !== null ? Number(write.monthlyLitres) : undefined,
         competitor: write.competitor?.trim() || undefined,
         requiredProductId: write.requiredProductId || undefined,
         contactPerson: write.contactPerson?.trim() || undefined,
+        gstin: write.gstin?.trim() || undefined,
         nextAction: write.nextAction?.trim() || undefined,
         nextActionDate: write.nextActionDate || undefined,
         /* "Private Limited(User)" is a label for a Direct sale: it climbs the Direct ladder. */
@@ -276,12 +290,12 @@ function ConvertDialog({
     router.refresh();
   }
 
-  const row = (n: number, field: ProspectAnswerField, label: string, done: boolean, body: React.ReactNode, err?: string) => (
+  const row = (n: number, field: ProspectAnswerField, label: string, done: boolean, body: React.ReactNode, err?: string, optional = false) => (
     <div className="grid grid-cols-[26px_1fr] gap-2.5 border-t border-divider py-2.5 first:border-t-0">
       <span
         className={cx(
           "mt-0.5 flex h-[22px] w-[22px] items-center justify-center rounded-full text-[11px] font-bold",
-          done ? "bg-success-soft text-success" : err ? "border border-danger bg-danger-soft text-danger" : "border border-warn-line bg-warn-soft text-warn-ink",
+          done ? "bg-success-soft text-success" : err ? "border border-danger bg-danger-soft text-danger" : optional ? "border border-line bg-divider text-muted" : "border border-warn-line bg-warn-soft text-warn-ink",
         )}
       >
         {done ? "✓" : n}
@@ -289,8 +303,8 @@ function ConvertDialog({
       <div className="min-w-0" data-field={field}>
         <div className="mb-1 flex items-baseline justify-between gap-3 text-xs font-bold text-ink">
           <span>{label}</span>
-          <span className={cx("text-[11px] font-semibold", done ? "text-success" : err ? "text-danger" : "text-warn-ink")}>
-            {done ? "on the record" : "needed"}
+          <span className={cx("text-[11px] font-semibold", done ? "text-success" : err ? "text-danger" : optional ? "text-muted" : "text-warn-ink")}>
+            {done ? "on the record" : optional ? "optional" : "needed"}
           </span>
         </div>
         {body}
@@ -314,7 +328,7 @@ function ConvertDialog({
       title={
         <div>
           <div>Convert to Prospect</div>
-          <div className="mt-0.5 text-[13px] font-normal text-muted">{record.name} · all seven answers are needed</div>
+          <div className="mt-0.5 text-[13px] font-normal text-muted">{record.name} · {requiredCount} answers are needed · {optionalCount} optional</div>
         </div>
       }
       footer={
@@ -422,6 +436,18 @@ function ConvertDialog({
       )}
       {row(
         5,
+        "gstin",
+        "What is their GST number?",
+        onRecord("gstin"),
+        onRecord("gstin") ? (
+          readOnly(record.gstin)
+        ) : (
+          <Input value={gstin} onChange={(e) => setGstin(e.target.value)} placeholder="15 characters, as printed" maxLength={20} aria-label="GST number" aria-invalid={Boolean(shown("gstin"))} />
+        ),
+        shown("gstin"),
+      )}
+      {row(
+        6,
         "contactPerson",
         "Who should we ask for when we call?",
         onRecord("contactPerson"),
@@ -431,9 +457,10 @@ function ConvertDialog({
           <Input value={contact} onChange={(e) => setContact(e.target.value)} placeholder="Contact person's name" aria-label="Contact person" aria-invalid={Boolean(shown("contactPerson"))} />
         ),
         shown("contactPerson"),
+        true,
       )}
       {row(
-        6,
+        7,
         "nextAction",
         "What happens next, and when?",
         nextOnRecord,
@@ -448,7 +475,7 @@ function ConvertDialog({
         shown("nextAction") ?? shown("nextActionDate"),
       )}
       {row(
-        7,
+        8,
         "reasonCode",
         "Why is this lead worth following up?",
         false,
@@ -464,6 +491,7 @@ function ConvertDialog({
           <Textarea rows={2} className="mt-2" placeholder="Add a note (optional)" value={note} onChange={(e) => setNote(e.target.value)} aria-label="Note" />
         </>,
         shown("reasonCode"),
+        true,
       )}
 
       {error ? (

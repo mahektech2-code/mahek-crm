@@ -893,7 +893,12 @@ export async function saveProspectFields(
        the Sales Manager pipeline both send them. It is the four that belong to
        the Telecaller's Qualification (GST number, application, credit days,
        buyer) that wait for the Sales Manager to open it. */
-    const asked = QUALIFICATION_ONLY_FIELDS.filter((k) => f[k] !== undefined);
+    /* A GST number is a PROSPECT answer now (required to become one), so it may be
+       written while the lead is still a Suspect. From Prospect on it is again the
+       Qualification collector's: the gate that opens Qualification is the Sales
+       Manager's verification, and nothing changes the number under it. */
+    const beforeProspect = !lead.leadStage || ["suspect", "new", "contacted"].includes(lead.leadStage);
+    const asked = QUALIFICATION_ONLY_FIELDS.filter((k) => f[k] !== undefined && !(k === "gstin" && beforeProspect));
     if (asked.length) {
       const access = qualificationAccess(lead.leadStage);
       if (!access.writable) return err(access.reason, "rule_violation");

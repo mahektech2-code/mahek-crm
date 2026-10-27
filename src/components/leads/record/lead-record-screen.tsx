@@ -595,6 +595,7 @@ export function LeadRecordScreen({
         competitor: record.competitor,
         requiredProductId: record.requiredProductId,
         requiredProductName: record.requiredProductName,
+        gstin: record.gstin,
         contactPerson: record.contactPerson,
         nextAction: record.nextAction,
         nextActionDate: record.nextActionDate,

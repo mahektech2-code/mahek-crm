@@ -34,19 +34,28 @@ export type ProspectAnswerField =
   | "competitor"
   | "requiredProductId"
   | "contactPerson"
+  | "gstin"
   | "nextAction"
   | "nextActionDate"
   | "reasonCode";
 
-/** The seven, in the order the gate lists them. `id` is the gate condition's own. */
-export const PROSPECT_ANSWERS: readonly { id: string; field: ProspectAnswerField; label: string }[] = [
+/**
+ * The answers a Prospect is asked, in the order the gate lists them. `id` is the
+ * gate condition's own. `optional` ones stay on the form and stay editable, and a
+ * BLANK one never blocks a Prospect: who to ask for and why the lead is worth
+ * following up are things a Telecaller often does not know yet, and refusing the
+ * Prospect for want of them taught people to type a dash. A value that IS given
+ * is still checked, so a typed "-" is a fault rather than an answer.
+ */
+export const PROSPECT_ANSWERS: readonly { id: string; field: ProspectAnswerField; label: string; optional?: boolean }[] = [
   { id: "customer_type", field: "customerType", label: "Business type" },
   { id: "monthly_litres", field: "monthlyLitres", label: "Monthly requirement (litres)" },
   { id: "competitor", field: "competitor", label: "Competitor" },
   { id: "required_product", field: "requiredProductId", label: "Product" },
-  { id: "contact_person", field: "contactPerson", label: "Contact person" },
+  { id: "gstin", field: "gstin", label: "GST number" },
+  { id: "contact_person", field: "contactPerson", label: "Contact person", optional: true },
   { id: "next_action", field: "nextAction", label: "Next action" },
-  { id: "prospect_reason", field: "reasonCode", label: "Reason" },
+  { id: "prospect_reason", field: "reasonCode", label: "Reason", optional: true },
 ] as const;
 
 export type ProspectAnswers = {
@@ -55,6 +64,7 @@ export type ProspectAnswers = {
   competitor: string | null;
   requiredProductId: string | null;
   contactPerson: string | null;
+  gstin: string | null;
   nextAction: string | null;
   nextActionDate: string | null;
   reasonCode: string | null;
@@ -136,7 +146,8 @@ export function faultFor(
     }
     case "contactPerson": {
       const v = str(a.contactPerson);
-      if (!v) return bad("Who should we ask for when we call?");
+      /* OPTIONAL: blank passes. A name that is given is still checked below. */
+      if (!v) return null;
       if (v.length < 2 || !/\p{L}/u.test(v)) return bad("Write the contact person's name.");
       return v.length > 200 ? bad("Keep the name under 200 characters.") : null;
     }
@@ -152,9 +163,19 @@ export function faultFor(
       if (!isRealDay(v)) return bad("Give the day as a real date.");
       return o.requireFutureDate && o.today && v < o.today ? bad("The next step cannot be in the past. Pick today or a later day.") : null;
     }
+    case "gstin": {
+      /* REQUIRED at Prospect (it is optional when the lead is first raised).
+         The same limit `saveProspectFields` keeps on the one `customers.gstin`
+         column — no stricter format is invented here, so a number somebody has
+         already saved is never turned away by a rule they were not held to. */
+      const v = str(a.gstin);
+      if (!v) return bad("What is their GST number?");
+      return v.length > 20 ? bad("A GST number is at most 20 characters.") : null;
+    }
     case "reasonCode": {
       const v = str(a.reasonCode);
-      if (!v) return bad("Say why this lead is worth following up.");
+      /* OPTIONAL: blank passes. A code that is given must still be a listed one. */
+      if (!v) return null;
       return o.reasonCodes && !o.reasonCodes.includes(v) ? bad("Pick one of the listed reasons.") : null;
     }
   }
@@ -167,6 +188,7 @@ export function prospectAnswerFaults(a: ProspectAnswers, o: FaultOptions): Prosp
     "monthlyLitres",
     "competitor",
     "requiredProductId",
+    "gstin",
     "contactPerson",
     "nextAction",
     "nextActionDate",
@@ -186,6 +208,7 @@ const FIELDS: ProspectAnswerField[] = [
   "monthlyLitres",
   "competitor",
   "requiredProductId",
+  "gstin",
   "contactPerson",
   "nextAction",
   "nextActionDate",
@@ -213,6 +236,7 @@ export function mergeProspectAnswers(
     competitor: null,
     requiredProductId: null,
     contactPerson: null,
+    gstin: null,
     nextAction: null,
     nextActionDate: null,
     reasonCode: null,
@@ -228,7 +252,9 @@ export function mergeProspectAnswers(
 
   for (const f of FIELDS) {
     if (f === "nextAction" || f === "nextActionDate") continue;
-    const recordOk = f !== "reasonCode" && faultFor(f, rec, o) === null;
+    /* A BLANK is not "on the record" even where blank is a valid answer: an
+       optional field the record lacks must still take what the dialog supplied. */
+    const recordOk = f !== "reasonCode" && faultFor(f, rec, o) === null && !isBlank(rec[f]);
     if (recordOk) continue;
     const given = sup[f];
     if (!isBlank(given)) {

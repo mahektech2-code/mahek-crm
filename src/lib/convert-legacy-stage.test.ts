@@ -70,7 +70,7 @@ async function makeLead(over: Partial<typeof customers.$inferInsert> = {}) {
 
 const row = async (leadId: string) => (await db.select().from(customers).where(eq(customers.id, leadId)))[0];
 const convert = (customerId: string, salesType?: "direct" | "third_party") =>
-  convertLeadToProspect({ customerId, reasonCode: "regular_requirement", customerType: "manufacturer", nextAction: "Call back with the price list", nextActionDate: "2026-12-01", salesType });
+  convertLeadToProspect({ customerId, reasonCode: "regular_requirement", customerType: "manufacturer", gstin: "27ABCDE1234F1Z5", nextAction: "Call back with the price list", nextActionDate: "2026-12-01", salesType });
 
 before(() => assert.match(process.env.DATABASE_URL ?? "", /mahekone_test/, "Run `npm run test:db` first."));
 after(async () => {
@@ -137,7 +137,7 @@ describe("a lead at the legacy stage is relabelled, not refused", () => {
   test("the request path (direct promotion off) relabels the same way", async () => {
     const lead = await makeLead({ leadStage: "contacted" });
     setTestUser(tele);
-    const r = await requestProspect({ customerId: lead.id, reasonCode: "regular_requirement", customerType: "manufacturer", nextAction: "Call back with the price list", nextActionDate: "2026-12-01", salesType: "direct" });
+    const r = await requestProspect({ customerId: lead.id, reasonCode: "regular_requirement", customerType: "manufacturer", gstin: "27ABCDE1234F1Z5", nextAction: "Call back with the price list", nextActionDate: "2026-12-01", salesType: "direct" });
     assert.equal(r.ok, true, r.ok ? "" : r.error);
     assert.equal((await row(lead.id)).leadStage, "suspect", "still awaiting verification, now under a name the ladder knows");
   });

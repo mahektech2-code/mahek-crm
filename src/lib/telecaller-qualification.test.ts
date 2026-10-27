@@ -378,7 +378,7 @@ describe("Suspect → Prospect: the Telecaller promotes, the Sales Manager verif
     return lead;
   };
   const convert = (customerId: string) =>
-    convertLeadToProspect({ customerId, reasonCode: "regular_requirement", customerType: "manufacturer", nextAction: "Call back with the price list", nextActionDate: "2026-12-01" });
+    convertLeadToProspect({ customerId, reasonCode: "regular_requirement", customerType: "manufacturer", gstin: "27ABCDE1234F1Z5", nextAction: "Call back with the price list", nextActionDate: "2026-12-01" });
 
   test("the promotion is unverified, the owner is untouched, and the verification is the manager's", async () => {
     const lead = await promote();
@@ -986,7 +986,7 @@ describe("the whole workflow, start to finish", () => {
     assert.equal(call.ok && call.data.result, "ready", call.ok ? "" : call.error);
 
     // 2. Promotion: unverified, and owed by the manager.
-    const promoted = await convertLeadToProspect({ customerId: leadId, reasonCode: "regular_requirement", customerType: "manufacturer", nextAction: "Call back with the price list", nextActionDate: "2026-12-01", salesType: "direct", contactPerson: "Ganesh" });
+    const promoted = await convertLeadToProspect({ customerId: leadId, reasonCode: "regular_requirement", customerType: "manufacturer", gstin: "27ABCDE1234F1Z5", nextAction: "Call back with the price list", nextActionDate: "2026-12-01", salesType: "direct", contactPerson: "Ganesh" });
     assert.equal(promoted.ok, true, promoted.ok ? "" : promoted.error);
     let lead = await row(leadId);
     assert.equal(lead.leadStage, "prospect");

@@ -154,6 +154,7 @@ const fullProspectFields = () => ({
   leadEstimatedPotentialPaise: 9_000_000,
   leadCompetitor: "Local thinner",
   leadRequiredProductId: productId,
+  gstin: "27ABCDE1234F1Z5",
   contactPerson: "Ganesh",
   leadDecisionMaker: "Owner",
 });
@@ -420,6 +421,7 @@ describe("M — every mutation persists, and the screen is told what the databas
         potentialPaise: 9_000_000,
         competitor: "Local thinner",
         requiredProductId: productId,
+        gstin: "27ABCDE1234F1Z5",
       },
     });
     assert.equal(r.ok, true, r.ok ? "" : r.error);

@@ -955,7 +955,9 @@ export async function evaluateLeadStageMove(input: {
      less usefully. */
   if (to === "prospect") {
     const codes = config["leads.prospectReasons"].map((r) => r.code);
-    if (!input.reasonCode || !codes.includes(input.reasonCode)) {
+    /* The reason is OPTIONAL: blank passes. One that is given must still be a
+       listed code — a free-text reason is how "good potential" got recorded. */
+    if (input.reasonCode && !codes.includes(input.reasonCode)) {
       return {
         ok: false,
         code: "prospect_reason",
@@ -984,7 +986,7 @@ export async function evaluateLeadStageMove(input: {
         ok: false,
         code: "prospect_no_override",
         message:
-          "A Suspect cannot be moved to Prospect past a closed gate, whoever asks. Answer all seven questions first.",
+          "A Suspect cannot be moved to Prospect past a closed gate, whoever asks. Answer the required questions first.",
         missing: [],
       };
     }
@@ -995,6 +997,7 @@ export async function evaluateLeadStageMove(input: {
         competitor: input.gate.competitor ?? null,
         requiredProductId: input.gate.requiredProductId ?? null,
         contactPerson: input.gate.contactPerson ?? null,
+        gstin: input.gate.gstin ?? null,
         nextAction: input.gate.nextAction ?? null,
         nextActionDate: input.gate.nextActionDate ?? null,
         reasonCode: input.reasonCode ?? null,
@@ -1005,7 +1008,7 @@ export async function evaluateLeadStageMove(input: {
       return {
         ok: false,
         code: "prospect_answers",
-        message: `A Prospect needs all seven answers, each a real one. ${faults.map((f) => f.message).join(" ")}`,
+        message: `A Prospect needs its required answers, each a real one. ${faults.map((f) => f.message).join(" ")}`,
         missing: faults.map((f) => ({
           id: PROSPECT_ANSWERS.find((a) => a.field === f.field || (f.field === "nextActionDate" && a.field === "nextAction"))?.id ?? f.field,
           says: f.message,
