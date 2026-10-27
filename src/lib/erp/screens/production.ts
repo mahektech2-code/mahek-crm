@@ -59,6 +59,8 @@ import { bindErpFiles } from "../attachments";
 import { refValues } from "../refs";
 import { boxHeadroom, cancelBatchBoxes, ensureBatchBoxes, labelBatchBoxes, looseHeadroom, mintLooseUnits, trimLooseUnits } from "../units";
 import { erpLabelsHref, erpTraceHref } from "../trace-links";
+import { confirmImpact } from "@/lib/impact/registry";
+import { readConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * Production (spec §7–§9): semi-finished batches from raw-material lots, FG
@@ -341,7 +343,8 @@ const sfgBatches: ScreenModule = {
             id: "delete",
             l: "Delete",
             why: ctx.administrator ? "" : "Only an administrator deletes a posted batch line",
-            confirm: `Delete this line of SFG ${x.l.sfgNo}? Its stock entry stays in the log, flagged as deleted.`,
+            /* Raw material back, SFG out, and what else the lot carries: the impact modal says so. */
+            impact: { kind: "erp-sfg-line", id: x.l.id },
           },
         ];
         if (!posted.has(x.l.id)) actions.unshift({ id: "post", l: "Post to inventory", primary: true });
@@ -509,13 +512,29 @@ const sfgBatches: ScreenModule = {
       await erpAudit(ctx, "erp.sfg.post", "erp_sfg_line", id);
       return okVoid("Posted to SFG inventory");
     },
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       if (!ctx.administrator) return err("Only an administrator deletes a posted batch line.", "not_permitted");
       const [before] = await db.select().from(erpSfgLines).where(eq(erpSfgLines.id, id));
       if (!before) return err("That line no longer exists.", "not_found");
-      await db.delete(erpSfgLines).where(eq(erpSfgLines.id, id));
-      await erpAudit(ctx, "erp.sfg.delete", "erp_sfg_line", id, before, null);
-      return okVoid("Line deleted · its entry stays in the SFG log, flagged");
+      const refusal = await confirmImpact("erp-sfg-line", id, readConfirmation(values));
+      if (refusal) return refusal;
+      /* The line's own SFG entry goes with it. It used to stay, flagged as an
+         orphan, so the deleted line's raw material came back while its SFG
+         stayed in stock — counted in both stages. Where that SFG has already
+         been filled or moved on, the line cannot be taken back at all. */
+      return inTx(async (tx) => {
+        await lockLot(tx, "sfg", before.lotCode, before.godownId);
+        const [entry] = await tx.select().from(erpSfgEntries).where(and(eq(erpSfgEntries.sourceType, "sfg"), eq(erpSfgEntries.sourceId, id)));
+        if (entry) {
+          const stock = await sfgLotStock(before.lotCode, before.godownId, tx);
+          if (stock - Number(entry.quantity) < -1e-9)
+            return refuse(err(`SFG lot ${before.lotCode} has already been filled into cans or moved on; this line can no longer be taken back.`, "rule_violation"));
+          await tx.delete(erpSfgEntries).where(eq(erpSfgEntries.id, entry.id));
+        }
+        await tx.delete(erpSfgLines).where(eq(erpSfgLines.id, id));
+        await erpAudit(ctx, "erp.sfg.delete", "erp_sfg_line", id, before, null);
+        return okVoid(entry ? "Line deleted · its raw material is back in stock and its SFG has left stock" : "Line deleted · its raw material is back in stock");
+      });
     },
   },
 };
@@ -851,7 +870,7 @@ const fgFill: ScreenModule = {
           { id: "select", l: "Show the whole fill", href: `?f=${encodeURIComponent(fillsOf.get(x.f.fgNum)!.join(","))}&fl=${encodeURIComponent(`FG ${x.f.fgNum}`)}` },
           { id: "trace", l: "Trace this lot", href: erpTraceHref(x.f.lotCode) },
           { id: "adjust", l: "Edit cans adjusted", prompt: { title: "Cans adjusted", sub: `${x.fg} · ${x.f.lotCode}`, submit: "Save", fields: [{ k: "adjusted", l: "Cans lost or adjusted", t: "num", req: true, min: 0, max: x.f.cans }], init: { adjusted: String(x.f.canAdjusted) } } },
-          { id: "delete", l: "Delete", why: ctx.administrator ? "" : "Only an administrator deletes a posted filling", confirm: `Delete FG filling ${x.f.lotCode}? Its stock entry stays in the log, flagged as deleted.` },
+          { id: "delete", l: "Delete", why: ctx.administrator ? "" : "Only an administrator deletes a posted filling", impact: { kind: "erp-fg-fill", id: x.f.id } },
         ];
         if (!posted.has(x.f.id)) actions.unshift({ id: "post", l: "Post to inventory", primary: true });
         return {
@@ -923,13 +942,30 @@ const fgFill: ScreenModule = {
         return okVoid(`${nf(after.cans - adjusted)} cans in stock`);
       });
     },
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       if (!ctx.administrator) return err("Only an administrator deletes a posted filling.", "not_permitted");
       const [before] = await db.select().from(erpFgFills).where(eq(erpFgFills.id, id));
       if (!before) return err("That filling no longer exists.", "not_found");
-      await db.delete(erpFgFills).where(eq(erpFgFills.id, id));
-      await erpAudit(ctx, "erp.fg.delete", "erp_fg_fill", id, before, null);
-      return okVoid("Filling deleted · its entry stays in the FG log, flagged");
+      const refusal = await confirmImpact("erp-fg-fill", id, readConfirmation(values));
+      if (refusal) return refusal;
+      /* As with an SFG line: the filling's FG entry goes with it, and the
+         loose-can labels its lot can no longer cover are cancelled — refused
+         where the cans have already been packed, allocated or moved. */
+      return inTx(async (tx) => {
+        await lockLot(tx, "fg", before.lotCode, before.godownId);
+        const [entry] = await tx.select().from(erpFgEntries).where(and(eq(erpFgEntries.sourceType, "fill"), eq(erpFgEntries.sourceId, id)));
+        if (entry) {
+          const stock = await fgLotStock(before.finishedGoodId, before.lotCode, before.godownId, tx);
+          const left = stock - Number(entry.quantity);
+          if (left < -1e-9)
+            return refuse(err(`Cans of FG lot ${before.lotCode} have already been packed, allocated or moved on; this filling can no longer be taken back.`, "rule_violation"));
+          await tx.delete(erpFgEntries).where(eq(erpFgEntries.id, entry.id));
+          await trimLooseUnits(tx, { lotCode: before.lotCode, finishedGoodId: before.finishedGoodId, godownId: before.godownId, ledgerStock: left, byId: ctx.user.id, why: `Filling ${before.lotCode} deleted` });
+        }
+        await tx.delete(erpFgFills).where(eq(erpFgFills.id, id));
+        await erpAudit(ctx, "erp.fg.delete", "erp_fg_fill", id, before, null);
+        return okVoid(entry ? "Filling deleted · its SFG and empty cans are back in stock and its cans have left FG stock" : "Filling deleted · its SFG and empty cans are back in stock");
+      });
     },
   },
 };
@@ -1030,7 +1066,14 @@ async function boxedSkus(): Promise<SkuInfo[]> {
 async function syncPackEntry(tx: Tx, batchNo: string, byId: string | null = null) {
   const lines = await tx.select().from(erpPackLines).where(eq(erpPackLines.batchNo, batchNo)).orderBy(asc(erpPackLines.createdAt));
   const [entry] = await tx.select().from(erpPackEntries).where(and(eq(erpPackEntries.sourceType, "batch"), eq(erpPackEntries.sourceId, batchNo)));
-  if (!lines.length) return;
+  /* The batch's last line deleted: nothing is packed any more. This returned
+     early, leaving the batch's boxes in packing stock and their ids on the
+     shelf — an entry with no line behind it, counted as stock for good. */
+  if (!lines.length) {
+    if (entry) await tx.delete(erpPackEntries).where(eq(erpPackEntries.id, entry.id));
+    await cancelBatchBoxes(tx, batchNo, byId);
+    return;
+  }
   const first = lines[0];
   const [sku] = await tx.select({ cpb: products.cansPerBox }).from(products).where(eq(products.id, first.skuId));
   const st = batchState(first.boxes, sku?.cpb ?? 1, lines.map((l) => ({ id: l.id, cans: l.cans })));
@@ -1160,7 +1203,7 @@ const packBatches: ScreenModule = {
           id: "delete",
           l: "Delete",
           why: ctx.administrator ? "" : "Only an administrator deletes a packing line",
-          confirm: `Delete this line of ${x.l.batchNo}? The batch stops being complete and its boxes leave stock.`,
+          impact: { kind: "erp-pack-line", id: x.l.id },
         });
         return {
           id: x.l.id,
@@ -1211,8 +1254,12 @@ const packBatches: ScreenModule = {
     more: (ctx, h) => savePack(ctx, h),
   },
   actions: {
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       if (!ctx.administrator) return err("Only an administrator deletes a packing line.", "not_permitted");
+      const [exists] = await db.select({ id: erpPackLines.id }).from(erpPackLines).where(eq(erpPackLines.id, id));
+      if (!exists) return err("That line no longer exists.", "not_found");
+      const refusal = await confirmImpact("erp-pack-line", id, readConfirmation(values));
+      if (refusal) return refusal;
       return inTx(async (tx) => {
         const [before] = await tx.select().from(erpPackLines).where(eq(erpPackLines.id, id));
         if (!before) return refuse(err("That line no longer exists.", "not_found"));

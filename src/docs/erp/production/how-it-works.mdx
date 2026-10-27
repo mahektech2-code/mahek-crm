@@ -99,9 +99,9 @@ Every cost figure on these screens is visible only with the **cost and margin** 
 
 ## Deleting
 
-Deleting a posted SFG line, a filling or a packing line is an **ERP administrator's** act.
+Deleting a posted SFG line, a filling or a packing line is an **ERP administrator's** act. Delete opens a window that says, before anything happens, what moves with it — the stock that comes back, the stock that leaves, the labels cancelled, the other lines kept and any Factory jobs waiting on the lot — and asks for the batch or lot number to be typed.
 
-- An **SFG line** or a **filling** goes; its stock entry stays in the stage's log, flagged as orphaned, and the dashboard counts "Orphaned inventory entries" until somebody deals with it.
+- An **SFG line** gives its raw material back and takes its own SFG out of stock with it. A **filling** gives its SFG and empty cans back, takes its cans out of FG stock, and cancels the loose-can labels the lot can no longer cover. Either is refused once what it made has already been filled, packed, allocated or moved on — undo those first.
 - A **packing line** un-completes its batch: the batch's boxes leave packing stock and their ids are cancelled. It is refused once boxes of the batch have moved on.
 
 ## Who can do what
@@ -120,5 +120,4 @@ Deleting a posted SFG line, a filling or a packing line is an **ERP administrato
 
 ## Where the code and the intent disagree today
 
-- Deleting a posted SFG line or filling gives its **input** back (the raw material, the SFG) while its **output** entry stays in stock, flagged as orphaned — so until somebody corrects it, the deleted document's stock is counted in both stages. The stated rule is that deleting a consuming document gives the stock back on its own.
 - Filling into **drums** does not reduce any drum stock: drum availability is counted company-wide as drums bought on chemical purchases less drums sold, and fills are not subtracted.

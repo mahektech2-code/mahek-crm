@@ -22,6 +22,9 @@ import {
   type PriceParsedHeader,
 } from "@/db/schema";
 import { requireCapability } from "@/lib/access-control";
+import { removeDraftList, requirePriceDesk } from "@/lib/services/price-desk";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 import { placeKey } from "@/lib/engines/price-resolution";
 import { publishPriceList } from "@/lib/actions/price-lists";
 import { bindAttachments, createAttachment } from "@/lib/services/attachment-service";
@@ -580,23 +583,40 @@ export async function duplicatePriceList(
 
 export type BulkOutcome = { id: string; name: string; ok: boolean; message: string };
 
-/** Drafts only. A published list is what somebody was charged and is withdrawn, never deleted. */
-export async function deleteDraftPriceLists(ids: string[]): Promise<Result<{ outcomes: BulkOutcome[] }>> {
+/**
+ * Drafts only. A published list is what somebody was charged and is withdrawn, never deleted.
+ *
+ * ONE CONFIRMATION FOR THE SELECTION, not one per list: the impact kind is
+ * `price-list-drafts` and its id is these ids joined by commas, in the order
+ * sent — the screen builds the same string from the same array — so the
+ * person reads the whole selection's picture once and confirms it once.
+ *
+ * The desk check is `requirePriceDesk`, the same as deleting one draft. It
+ * asked for the capability alone, so an Accounts clerk narrowed off the Price
+ * lists screen could delete in bulk what they could not delete one at a time.
+ */
+export async function deleteDraftPriceLists(
+  ids: string[],
+  confirmation?: ImpactConfirmation,
+): Promise<Result<{ outcomes: BulkOutcome[] }>> {
   try {
-    const ctx = await requireCapability("pricelist.manage");
+    const ctx = await requirePriceDesk();
     const rows = ids.length ? await db.select().from(priceLists).where(inArray(priceLists.id, ids)) : [];
+    if (!rows.length) return err("None of those price lists exists any more.", "not_found");
+    const refusal = await confirmImpact("price-list-drafts", ids.join(","), confirmation);
+    if (refusal) return refusal;
     const outcomes: BulkOutcome[] = [];
-    for (const row of rows) {
-      if (row.status !== "draft") {
-        outcomes.push({ id: row.id, name: row.name, ok: false, message: `${row.status} — withdraw it instead` });
-        continue;
-      }
-      await db.transaction(async (tx) => {
+    await db.transaction(async (tx) => {
+      for (const row of rows) {
+        if (row.status !== "draft") {
+          outcomes.push({ id: row.id, name: row.name, ok: false, message: `${row.status} — withdraw it instead` });
+          continue;
+        }
         await audit(tx, ctx, { action: "pricelist.delete", entityId: row.id, before: { name: row.name } });
-        await tx.delete(priceLists).where(eq(priceLists.id, row.id));
-      });
-      outcomes.push({ id: row.id, name: row.name, ok: true, message: "Deleted" });
-    }
+        await removeDraftList(tx, row.id);
+        outcomes.push({ id: row.id, name: row.name, ok: true, message: "Deleted" });
+      }
+    });
     refresh();
     const done = outcomes.filter((o) => o.ok).length;
     return ok({ outcomes }, `${done} draft${done === 1 ? "" : "s"} deleted.`);

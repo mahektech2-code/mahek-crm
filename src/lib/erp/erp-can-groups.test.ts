@@ -17,6 +17,8 @@ import { erpContext } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
 import { canReadErpAttachment } from "@/lib/erp/attachments";
 import type { ToolResult } from "@/lib/erp/ui";
+import { impactReport } from "@/lib/impact/registry";
+import { IMPACT_FIELD } from "@/lib/impact/types";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const mod = (k: string) => {
@@ -160,8 +162,17 @@ describe("can photos and groups", () => {
   test("deleting a group leaves its cans on the books, not grouped", async () => {
     const c = await ctx();
     const [naked] = await db.select().from(erpMaterialGroups).where(eq(erpMaterialGroups.name, "Naked"));
-    const res = await mod("canGroups").actions!.delete(c, naked.id, {});
-    assert.ok(res.ok);
+    /* Refused until the impact modal's confirmation comes with it. */
+    assert.equal((await mod("canGroups").actions!.delete(c, naked.id, {})).ok, false);
+    const report = await impactReport("erp-can-group", naked.id);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    assert.equal(report.data.confirmWord, "Naked");
+    const members = report.data.items.find((i) => i.effect === "unlinked");
+    assert.ok(members && members.count >= 1 && members.examples?.includes("Naked 20 Liter"), JSON.stringify(report.data.items));
+    const res = await mod("canGroups").actions!.delete(c, naked.id, {
+      [IMPACT_FIELD]: JSON.stringify({ typed: "naked", fingerprint: report.data.fingerprint }),
+    });
+    assert.ok(res.ok, JSON.stringify(res));
     const left = await db.select().from(erpRawMaterials).where(eq(erpRawMaterials.name, "Naked 20 Liter"));
     assert.equal(left[0].groupId, null);
     const view = await mod("canGroups").load(c);

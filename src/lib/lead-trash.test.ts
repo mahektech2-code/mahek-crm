@@ -10,14 +10,31 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, customers, leadTrashEvents, mbosDeletions, users } from "@/db/schema";
+import { appAccess, customers, leadTrashEvents, mbosDeletions, mbosDevices, mbosTasks, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { scopedToUsers } from "@/lib/access-control";
 import { getCustomer } from "@/lib/queries";
-import { listTrash, restoreLeads, trashLeads } from "@/lib/services/lead-trash-service";
+import { listTrash, restoreLeads, trashLeads as trashLeadsUnconfirmed, TRASHED_TASK_NOTE } from "@/lib/services/lead-trash-service";
+import { impactReport } from "@/lib/impact/registry";
+import { LEAD_TRASH_KIND, leadTrashKey } from "@/lib/impact/kinds/lead-key";
+import type { ImpactReport } from "@/lib/impact/types";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
+
+/** What the impact modal shows for this batch, as the signed-in person. */
+async function reportFor(ids: string[]): Promise<ImpactReport> {
+  const r = await impactReport(LEAD_TRASH_KIND, leadTrashKey(ids));
+  assert.ok(r.ok, r.ok ? "" : r.error);
+  return r.data;
+}
+
+/** Moving to the trash as the modal does it: read the report, type its word, send its fingerprint. */
+async function trashLeads(input: { ids: string[]; reason: string }) {
+  if (input.reason.trim().length < 3) return trashLeadsUnconfirmed(input);
+  const report = await reportFor(input.ids);
+  return trashLeadsUnconfirmed(input, { typed: report.confirmWord, fingerprint: report.fingerprint });
+}
 
 let admin: typeof users.$inferSelect;
 let manager: typeof users.$inferSelect;
@@ -66,11 +83,25 @@ after(async () => {
 
 test("a telecaller cannot delete a lead; a manager can, with a reason, and a billed customer is refused by name", async () => {
   setTestUser(telecaller);
-  await assert.rejects(() => trashLeads({ ids: [leadId], reason: "Duplicate" }));
+  await assert.rejects(() => trashLeadsUnconfirmed({ ids: [leadId], reason: "Duplicate" }));
+  const denied = await impactReport(LEAD_TRASH_KIND, leadId);
+  assert.equal(denied.ok ? "ok" : denied.code, "not_permitted", "nor read what it would move");
 
   setTestUser(manager);
   const short = await trashLeads({ ids: [leadId], reason: "x" });
   assert.equal(short.ok, false, "a reason is required");
+
+  /* The modal names the one that will move, and the one that will not, and why. */
+  const report = await reportFor([customerId, leadId]);
+  assert.equal(report.confirmWord, "Duplicate Paints");
+  assert.deepEqual(report.blockers, []);
+  const refused = report.items.find((i) => i.label === "lead that will not move");
+  assert.deepEqual(refused?.examples, ["Billed Shop is a customer we have billed — deactivate it instead"]);
+  assert.equal(report.items.find((i) => i.app === "Admin Console")?.count, 1);
+  const bare = await trashLeadsUnconfirmed({ ids: [leadId, customerId], reason: "Duplicate of Real Lead" });
+  assert.equal(bare.ok, false, "no confirmation, no move");
+  const stale = await trashLeadsUnconfirmed({ ids: [leadId, customerId], reason: "Duplicate of Real Lead" }, { typed: "Duplicate Paints", fingerprint: "1:stale" });
+  assert.equal(stale.ok ? "ok" : stale.code, "conflict");
 
   const r = await trashLeads({ ids: [leadId, customerId], reason: "Duplicate of Real Lead" });
   assert.equal(r.ok, true, r.ok ? "" : r.error);
@@ -148,4 +179,39 @@ test("only an administrator lists the trash and restores; a restore brings the l
   assert.equal(again.ok, false);
   const [still] = await db.select().from(customers).where(and(eq(customers.id, otherLeadId)));
   assert.ok(still.deletedAt, "nothing in that batch moved");
+});
+
+test("a lead's phones and open field tasks are named first; its tasks close, and a restore reopens exactly those", async () => {
+  await db.execute(sql`truncate table mbos_tasks, mbos_devices restart identity cascade`);
+  await db.insert(mbosDevices).values({ id: id("dev"), userId: telecaller.id, deviceId: id("install") });
+  const open = id("task");
+  const mine = id("task");
+  await db.insert(mbosTasks).values([
+    { id: open, title: "Validation call", assignedToUserId: telecaller.id, customerId: leadId, status: "open" },
+    /* Cancelled by somebody, for a reason of their own: a restore must leave it. */
+    { id: mine, title: "Old chase", assignedToUserId: telecaller.id, customerId: leadId, status: "cancelled", completionNote: "Not needed" },
+  ]);
+
+  setTestUser(manager);
+  const report = await reportFor([leadId]);
+  const phones = report.items.find((i) => i.effect === "phones");
+  assert.equal(phones?.app, "MBOS handsets");
+  assert.deepEqual(phones?.examples, ["Priya"]);
+  const tasks = report.items.find((i) => i.effect === "changed" && /open field task/.test(i.label));
+  assert.deepEqual(tasks?.examples, ["Validation call · Priya"]);
+  assert.equal(report.verb, "Move to trash");
+
+  const r = await trashLeads({ ids: [leadId], reason: "Test entry" });
+  assert.equal(r.ok, true, r.ok ? "" : r.error);
+  const [closed] = await db.select().from(mbosTasks).where(eq(mbosTasks.id, open));
+  assert.equal(closed.status, "cancelled");
+  assert.equal(closed.completionNote, TRASHED_TASK_NOTE);
+
+  setTestUser(admin);
+  assert.equal((await restoreLeads({ ids: [leadId] })).ok, true);
+  const [back] = await db.select().from(mbosTasks).where(eq(mbosTasks.id, open));
+  assert.equal(back.status, "open", "the task the trash closed is reopened");
+  assert.equal(back.completionNote, null);
+  const [left] = await db.select().from(mbosTasks).where(eq(mbosTasks.id, mine));
+  assert.equal(left.status, "cancelled", "one somebody cancelled stays cancelled");
 });

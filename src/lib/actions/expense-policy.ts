@@ -24,6 +24,7 @@ import {
 } from "@/lib/services/expense-policy-service";
 import { today } from "@/lib/recompute";
 import { err as fail, ok, okVoid, type Result } from "@/lib/result";
+import { confirmImpact } from "@/lib/impact/registry";
 import { ADMIN } from "@/lib/admin-routes";
 
 /* ---------------------------------------------------------------------------
@@ -290,7 +291,13 @@ export async function saveRule(input: unknown): Promise<Result<{ ruleId: string 
 
 export async function deleteRule(input: unknown): Promise<Result> {
   const user = await author();
-  const parsed = z.object({ policyId: z.string(), ruleId: z.string() }).safeParse(input);
+  const parsed = z
+    .object({
+      policyId: z.string(),
+      ruleId: z.string(),
+      confirmation: z.object({ typed: z.string(), fingerprint: z.string() }).nullish(),
+    })
+    .safeParse(input);
   if (!parsed.success) return fail("That rule cannot be removed.", "validation");
 
   const guard = await editableDraft(parsed.data.policyId);
@@ -301,6 +308,13 @@ export async function deleteRule(input: unknown): Promise<Result> {
     .from(expensePolicyRules)
     .where(eq(expensePolicyRules.id, parsed.data.ruleId))
     .limit(1);
+  /* It used to answer "Rule removed." for a rule that was not on this version
+     at all, having deleted nothing. */
+  if (!before || before.policyId !== parsed.data.policyId) {
+    return fail("That rule is not on this version any more.", "not_found");
+  }
+  const refusal = await confirmImpact("expense-rule", parsed.data.ruleId, parsed.data.confirmation);
+  if (refusal) return refusal;
 
   await db
     .delete(expensePolicyRules)
@@ -311,7 +325,7 @@ export async function deleteRule(input: unknown): Promise<Result> {
       ),
     );
 
-  await audit(user.id, "expense_policy.rule_removed", parsed.data.ruleId, before ?? null, null);
+  await audit(user.id, "expense_policy.rule_removed", parsed.data.ruleId, before, null);
   refresh();
   return okVoid("Rule removed.");
 }

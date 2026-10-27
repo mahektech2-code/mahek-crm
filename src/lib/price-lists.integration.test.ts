@@ -27,6 +27,7 @@ import {
   finishedGoods,
   priceListDocuments,
   priceListParseRows,
+  priceListScopes,
   priceLists,
   productBrands,
   productFormulations,
@@ -49,12 +50,15 @@ import {
   createDerivedList,
   createPriceList,
   decidePriceRequest,
+  deleteDraftPriceList,
   publishDocument,
   publishPriceList,
+  removeScope,
   requestSpecialPrice,
   setRate,
   withdrawPriceList,
 } from "@/lib/actions/price-lists";
+import { impactReport } from "@/lib/impact/registry";
 import {
   coverageReport,
   customerPricing,
@@ -289,13 +293,125 @@ describe("publishing a price list", () => {
       inclTwenty: 228_600,
       inclFive: 58_400,
     });
+    await makeCustomer({ name: "Sharda Traders", city: "Thane", region: "Maharashtra" });
     assert.equal((await withdrawPriceList(listId, "")).ok, false);
-    const done = await withdrawPriceList(listId, "Printed with the wrong freight term");
+
+    /* Before it goes, it says by name which shops it prices — here nothing
+       else names the one shop, so it is left with no list at all — and that
+       the ERP's sales order is reached too. */
+    const report = await impactReport("price-list-withdrawal", listId);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    const stranded = report.data.items.find((i) => i.label === "shop left with no price list");
+    assert.equal(stranded?.app, "CRM");
+    assert.equal(stranded?.effect, "unlinked");
+    assert.deepEqual(stranded?.examples, ["Sharda Traders"]);
+    assert.ok(report.data.items.some((i) => i.app === "ERP" && i.count === 1), "the ERP's sales order prices the same shop");
+    assert.ok(report.data.items.some((i) => i.label === "rules saying who it is for" && i.effect === "kept"));
+    assert.equal(report.data.confirmWord, "Maharashtra");
+
+    const bare = await withdrawPriceList(listId, "Printed with the wrong freight term");
+    assert.equal(bare.ok, false, "no confirmation, no withdrawal");
+    const done = await withdrawPriceList(listId, "Printed with the wrong freight term", {
+      typed: "maharashtra",
+      fingerprint: report.data.fingerprint,
+    });
     assert.ok(done.ok, done.ok ? "" : done.error);
     const [row] = await db.select().from(priceLists).where(eq(priceLists.id, listId));
     assert.equal(row.status, "withdrawn");
     assert.equal(row.withdrawReason, "Printed with the wrong freight term");
     assert.equal(row.effectiveTo, addDays(TODAY, -1));
+
+    const again = await impactReport("price-list-withdrawal", listId);
+    assert.ok(again.ok && again.data.blockers.length === 1, "a withdrawn list cannot be withdrawn twice");
+  });
+
+  test("withdrawing a city's list names the list each shop falls to, and a shop added since is a conflict", async () => {
+    await publishStateList({ name: "Maharashtra", state: key("Maharashtra"), inclTwenty: 228_600, inclFive: 58_400 });
+    const thane = await createPriceList({ name: "Thane", effectiveFrom: addDays(TODAY, -10) });
+    assert.ok(thane.ok);
+    await setRate({ priceListId: thane.data.id, productId: nano20.id, rateInclGstPaise: 225_000 });
+    await addScope({ priceListId: thane.data.id, scopeKind: "city", scopeValue: "Thane", scopeLabel: "Thane" });
+    assert.ok((await publishPriceList(thane.data.id)).ok);
+    await makeCustomer({ name: "Sharda Traders", city: "Thane", region: "Maharashtra" });
+
+    const report = await impactReport("price-list-withdrawal", thane.data.id);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    const moved = report.data.items.find((i) => i.label === "shop priced from another list instead");
+    assert.equal(moved?.effect, "changed");
+    assert.deepEqual(moved?.examples, ["Sharda Traders → Maharashtra"]);
+    assert.equal(report.data.items.find((i) => i.label.startsWith("shop left")), undefined);
+
+    await makeCustomer({ name: "Naupada Paints", city: "Thane", region: "Maharashtra" });
+    const stale = await withdrawPriceList(thane.data.id, "Merged into the state list", {
+      typed: "Thane",
+      fingerprint: report.data.fingerprint,
+    });
+    assert.equal(stale.ok ? "ok" : stale.code, "conflict", "the picture confirmed no longer holds");
+    const [row] = await db.select().from(priceLists).where(eq(priceLists.id, thane.data.id));
+    assert.equal(row.status, "published");
+  });
+
+  test("removing a rule names the shops that stop being priced from the list", async () => {
+    const listId = await publishStateList({ name: "Maharashtra", state: key("Maharashtra"), inclTwenty: 228_600, inclFive: 58_400 });
+    const shop = await makeCustomer({ name: "Sharda Traders", city: "Thane", region: "Maharashtra" });
+    const [scope] = await db.select().from(priceListScopes).where(eq(priceListScopes.priceListId, listId));
+
+    const report = await impactReport("price-list-scope", scope.id);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    assert.ok(report.data.items.some((i) => i.app === "Accounts" && i.effect === "deleted" && i.count === 1));
+    assert.deepEqual(report.data.items.find((i) => i.label === "shop left with no price list")?.examples, ["Sharda Traders"]);
+
+    assert.equal((await removeScope(scope.id)).ok, false, "no confirmation, no removal");
+    const done = await removeScope(scope.id, { typed: report.data.confirmWord, fingerprint: report.data.fingerprint });
+    assert.ok(done.ok, done.ok ? "" : done.error);
+    assert.equal(await resolveForCustomer(shop.id, TODAY), null);
+  });
+
+  test("deleting a draft unlinks the list derived from it and sends its document back for review", async () => {
+    const parent = await createPriceList({ name: "Odisha To Pay", effectiveFrom: TODAY });
+    assert.ok(parent.ok);
+    await setRate({ priceListId: parent.data.id, productId: nano20.id, rateInclGstPaise: 228_100 });
+    await addScope({ priceListId: parent.data.id, scopeKind: "everybody", scopeValue: "" });
+    const child = await createDerivedList({
+      name: "Odisha Paid",
+      effectiveFrom: TODAY,
+      parentListId: parent.data.id,
+      derivation: { kind: "per_litre_paise", paise: 1200 },
+    });
+    assert.ok(child.ok, child.ok ? "" : child.error);
+    const documentId = id("pld");
+    await db.insert(priceListDocuments).values({
+      id: documentId,
+      fileHash: randomUUID(),
+      filename: "Odisha To Pay.pdf",
+      parseStatus: "published",
+      priceListId: parent.data.id,
+      uploadedById: manager.id,
+    });
+    await db.update(priceLists).set({ documentId }).where(eq(priceLists.id, parent.data.id));
+
+    const report = await impactReport("price-list-draft", parent.data.id);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    const where = report.data.items.map((i) => `${i.app}:${i.label}:${i.effect}:${i.count}`);
+    assert.ok(where.includes("Accounts:rates on it:deleted:1"), where.join(", "));
+    assert.ok(where.includes("Accounts:rules saying who it is for:deleted:1"), where.join(", "));
+    assert.ok(where.includes("Accounts:list derived from it:unlinked:1"), where.join(", "));
+    assert.ok(where.includes("Accounts:imported document it was read from:changed:1"), where.join(", "));
+    assert.ok(report.data.items.some((i) => i.effect === "kept" && i.app === "CRM"), "a draft priced nobody, and says so");
+
+    assert.equal((await deleteDraftPriceList(parent.data.id)).ok, false, "no confirmation, no delete");
+    /* Before the fix this threw on the derived list's key and the draft could not be deleted at all. */
+    const gone = await deleteDraftPriceList(parent.data.id, { typed: "odisha to pay", fingerprint: report.data.fingerprint });
+    assert.ok(gone.ok, gone.ok ? "" : gone.error);
+
+    const [kept] = await db.select().from(priceLists).where(eq(priceLists.id, child.data.id));
+    assert.equal(kept.parentListId, null, "the derived list keeps its rates and loses only the pointer");
+    const [doc] = await db.select().from(priceListDocuments).where(eq(priceListDocuments.id, documentId));
+    assert.equal(doc.parseStatus, "needs_review", "the document can be read in again");
+    assert.equal(doc.priceListId, null);
+
+    const published = await impactReport("price-list-draft", child.data.id);
+    assert.ok(published.ok && published.data.blockers.length === 0, "the derived list is still a draft of its own");
   });
 
   test("a telecaller cannot publish a price list, whatever the screen drew", async () => {

@@ -8,6 +8,8 @@ import { erpAudit, erpId, num, stampLine, text, type ScreenModule } from "../ser
 import type { ColSpec, ListRow } from "../ui";
 import { nf } from "../ui";
 import { sfgForm } from "./production";
+import { confirmImpact } from "@/lib/impact/registry";
+import { readConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * RECIPES: how much of each raw material one batch of an SFG product takes.
@@ -123,7 +125,7 @@ export const recipesScreen: ScreenModule = {
               why,
               prompt: { title: "Quantity per batch (litres)", sub: `${x.product} · ${x.item} · in litres`, submit: "Save", fields: [{ k: "qty", l: "Quantity per batch (litres)", t: "num", req: true, min: 0.001 }], init: { qty: String(x.r.qtyPerBatch) } },
             },
-            { id: "remove", l: "Remove from recipe", why, confirm: `Take ${x.item} out of ${x.product}'s recipe?` },
+            { id: "remove", l: "Remove from recipe", why, impact: { kind: "erp-recipe-line", id: x.r.id } },
           ],
           fields: [{ l: "Unit", v: "Litres (Ltr)" }, { l: "The whole recipe (litres per batch)", v: (byProduct.get(x.product) ?? []).map((y) => `${y.item} ${nf(Number(y.r.qtyPerBatch))} Ltr`).join(" · ") }],
           by: stampLine(x.by, x.r.updatedAt).replace(/^Created/, "Set"),
@@ -183,10 +185,13 @@ export const recipesScreen: ScreenModule = {
       await erpAudit(ctx, "erp.recipe.qty", "erp_recipe", id, null, { qty });
       return okVoid(`Recipe updated · ${nf(qty)} Ltr per batch`);
     },
-    async remove(ctx, id) {
+    async remove(ctx, id, values) {
       if (!mayWrite(ctx)) return err("A manager sets a recipe.", "not_permitted");
       const [r] = await db.select().from(erpRecipes).where(and(eq(erpRecipes.id, id)));
       if (!r) return err("That recipe line no longer exists.", "not_found");
+      /* A recipe line is the batch sheet on the Factory phones too: the modal says what that changes. */
+      const refusal = await confirmImpact("erp-recipe-line", id, readConfirmation(values));
+      if (refusal) return refusal;
       await db.delete(erpRecipes).where(eq(erpRecipes.id, id));
       await erpAudit(ctx, "erp.recipe.remove", "erp_recipe", id, r, null);
       return okVoid("Taken out of the recipe");

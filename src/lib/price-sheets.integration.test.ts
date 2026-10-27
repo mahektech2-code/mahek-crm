@@ -43,6 +43,7 @@ import {
   savePriceSheet,
 } from "@/lib/actions/price-sheets";
 import { sheetForList } from "@/lib/services/price-sheet-service";
+import { impactReport } from "@/lib/impact/registry";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -276,8 +277,21 @@ describe("duplicating and the bulk actions", () => {
     const live = await savePriceSheet({ mode: "create", sheet: sheetOf(PRICES), scopes: [{ kind: "everybody" }], publish: {} });
     const draft = await savePriceSheet({ mode: "create", sheet: sheetOf(PRICES, { name: "A draft" }) });
     assert.ok(live.ok && draft.ok);
-    const r = await deleteDraftPriceLists([live.data.listId, draft.data.listId]);
-    assert.ok(r.ok);
+    const ids = [live.data.listId, draft.data.listId];
+
+    /* One picture for the whole selection: the draft and its rates go, the
+       published list ticked with it is named as left alone. */
+    const report = await impactReport("price-list-drafts", ids.join(","));
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    const where = report.data.items.map((i) => `${i.label}:${i.effect}:${i.count}`);
+    assert.ok(where.includes("draft price list:deleted:1"), where.join(", "));
+    assert.ok(where.includes("rates on it:deleted:4"), where.join(", "));
+    assert.ok(where.includes("published list ticked with them:kept:1"), where.join(", "));
+    assert.equal(report.data.confirmWord, "A draft");
+
+    assert.equal((await deleteDraftPriceLists(ids)).ok, false, "no confirmation, no delete");
+    const r = await deleteDraftPriceLists(ids, { typed: "a draft", fingerprint: report.data.fingerprint });
+    assert.ok(r.ok, r.ok ? "" : r.error);
     assert.deepEqual(r.data.outcomes.map((o) => o.ok).sort(), [false, true]);
     assert.equal((await db.select().from(priceLists).where(eq(priceLists.id, live.data.listId))).length, 1);
     assert.equal((await db.select().from(priceLists).where(eq(priceLists.id, draft.data.listId))).length, 0);

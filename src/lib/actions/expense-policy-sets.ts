@@ -28,6 +28,8 @@ import { ensurePolicyRow } from "@/lib/services/expense-policy-service";
 import { repriceRecentExpenseDays, writeHometowns } from "@/lib/services/hometown-service";
 import { notifyUsers } from "@/lib/notify";
 import { err as fail, ok, okVoid, type Result } from "@/lib/result";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 import { ADMIN } from "@/lib/admin-routes";
 
 /* ---------------------------------------------------------------------------
@@ -378,7 +380,7 @@ export async function setPolicySetActive(input: { id: string; active: boolean })
   );
 }
 
-export async function deletePolicySet(input: { id: string }): Promise<Result> {
+export async function deletePolicySet(input: { id: string; confirmation?: ImpactConfirmation }): Promise<Result> {
   const user = await author();
   const current = await readPolicySet(input.id);
   if (!current) return fail("That policy no longer exists.", "not_found");
@@ -390,10 +392,17 @@ export async function deletePolicySet(input: { id: string }): Promise<Result> {
       "rule_violation",
     );
   }
+  /* Its people go back to standard and their recent days are re-worked: the
+     person saw who, by name, and how many days. */
+  const refusal = await confirmImpact("expense-policy-set", input.id, input.confirmation);
+  if (refusal) return refusal;
   const members = await peopleOn(input.id, false);
   await db.transaction(async (tx) => {
     await tx.delete(expensePolicySets).where(eq(expensePolicySets.id, input.id));
     await tx.execute(sql`delete from expense_policies where id = ${input.id} and status = 'archived'`);
+    /* A copy names its source in a plain text column, and a source that is
+       gone would leave it naming nothing. */
+    await tx.execute(sql`update expense_policy_sets set cloned_from_id = null where cloned_from_id = ${input.id}`);
   });
   await audit(
     user.id,

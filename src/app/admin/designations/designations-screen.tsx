@@ -4,7 +4,8 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Card, CardHeader, Checkbox, EmptyState, Field, Input, Select, Td, Th, Tr, cx } from "@/components/ui/primitives";
-import { ConfirmDialog, Modal, RowMenu } from "@/components/ui/overlays";
+import { Modal, RowMenu } from "@/components/ui/overlays";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { useToast } from "@/components/ui/toast";
 import { getModule, isAlwaysOpen, moduleGroupsForApp, moduleKeysForApp } from "@/lib/modules";
 import { ERP_POWERS, ERP_POWER_LABEL, type ErpPower } from "@/lib/erp/powers";
@@ -189,25 +190,25 @@ export function DesignationsScreen({ roster }: { roster: DesignationWithMembers[
         />
       ) : null}
 
-      <ConfirmDialog
-        open={!!deleting}
-        title={deleting ? `Delete ${deleting.name}?` : ""}
-        body={
-          deleting?.members.length
-            ? `${deleting.members.length} ${deleting.members.length === 1 ? "person holds" : "people hold"} it. They keep every screen and power they have now — only the name goes, and edits stop reaching them.`
-            : "Nobody holds it. It is removed from the Access screen's list."
-        }
-        confirmLabel="Delete"
-        destructive
-        onClose={() => setDeleting(null)}
-        onConfirm={async () => {
-          if (!deleting) return;
-          const r = await deleteErpDesignation(deleting.id);
-          push(r.ok ? (r.message ?? "Deleted.") : r.error, r.ok ? "info" : "error");
-          setDeleting(null);
-          if (r.ok) router.refresh();
-        }}
-      />
+      {/* Who holds it, that they keep every screen and power, and what a
+          departmental one stops narrowing — with the name typed to confirm. */}
+      {deleting ? (
+        <ImpactDialog
+          key={deleting.id}
+          kind="erp-designation"
+          id={deleting.id}
+          confirmLabel="Delete"
+          onClose={() => setDeleting(null)}
+          onConfirm={async (confirmation) => {
+            const r = await deleteErpDesignation(deleting.id, confirmation);
+            if (r.ok) {
+              push(r.message ?? "Deleted.");
+              router.refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
     </AdminPage>
   );
 }

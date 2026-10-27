@@ -42,6 +42,7 @@ import {
 } from "@/components/ui/primitives";
 import { ConfirmDialog, RowMenu, Tabs } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { useRouter } from "next/navigation";
 import type { PriceListDetail as Detail, PricingApp, PricingOptions, RateRow, ScopeView } from "@/lib/price-list-views";
 import {
@@ -89,7 +90,7 @@ export function PriceListDetailScreen({
   options: PricingOptions;
 }) {
   const router = useRouter();
-  const { run } = useToast();
+  const { run, push } = useToast();
   const list = detail.list;
   const draft = list.status === "draft";
   const published = list.status === "published";
@@ -120,14 +121,6 @@ export function PriceListDetailScreen({
     const direction = sort.direction === "asc" ? 1 : -1;
     return [...detail.rates].sort((a, b) => direction * compareRates(a, b, sort.column));
   }, [detail.rates, sort]);
-
-  async function dropScope(scope: ScopeView) {
-    const r = await run(removeScope(scope.id));
-    if (r.ok) {
-      setScopeToRemove(null);
-      router.refresh();
-    }
-  }
 
   async function dropTerm(id: string) {
     const r = await run(removeDiscountTerm(id));
@@ -781,19 +774,25 @@ export function PriceListDetailScreen({
         listName={list.name}
         options={options}
       />
-      <ConfirmDialog
-        open={scopeToRemove !== null}
-        title="Take this rule off the list?"
-        body={
-          scopeToRemove
-            ? `${scopeToRemove.customersMatched} shop${scopeToRemove.customersMatched === 1 ? "" : "s"} are priced from this list through it. They fall back to whatever else names them.`
-            : ""
-        }
-        confirmLabel="Remove it"
-        destructive
-        onConfirm={() => (scopeToRemove ? dropScope(scopeToRemove) : undefined)}
-        onClose={() => setScopeToRemove(null)}
-      />
+      {/* Which shops stop being priced from this list through the rule, and
+          the list each falls to — worked out by the resolver, by name. */}
+      {scopeToRemove ? (
+        <ImpactDialog
+          key={scopeToRemove.id}
+          kind="price-list-scope"
+          id={scopeToRemove.id}
+          confirmLabel="Remove it"
+          onClose={() => setScopeToRemove(null)}
+          onConfirm={async (confirmation) => {
+            const r = await removeScope(scopeToRemove.id, confirmation);
+            if (r.ok) {
+              push(r.message ?? "Removed.");
+              router.refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
       <ConfirmDialog
         open={termToRemove !== null}
         title="Remove this discount?"

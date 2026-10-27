@@ -1,4 +1,4 @@
-Price lists are one feature mounted in four apps — the CRM, the Sales Dashboard, Accounts and the Founder Dashboard — through shared components in `src/components/pricing/` and one service, `price-list-service.ts`. The CRM mount is **read-only for everybody**: `priceListDoorCanManage(user, "crm")` answers no before it asks any capability. Which list applies to a shop is the pure `resolvePriceList`; the money arithmetic is `price-math.ts`; every write is in `lib/actions/price-lists.ts` behind `requirePriceDesk()` — the capability **and** the desk module it was worn at.
+Price lists are one feature mounted in four apps — the CRM, the Sales Dashboard, Accounts and the Founder Dashboard — through shared components in `src/components/pricing/` and one service, `price-list-service.ts`. The CRM mount is **read-only for everybody**: `priceListDoorCanManage(user, "crm")` answers no before it asks any capability. Which list applies to a shop is the pure `resolvePriceList`; the money arithmetic is `price-math.ts`; every write is in `lib/actions/price-lists.ts` behind `requirePriceDesk()` (in `lib/services/price-desk.ts`) — the capability **and** the desk module it was worn at.
 
 ## Map of the code
 
@@ -11,7 +11,8 @@ Price lists are one feature mounted in four apps — the CRM, the Sales Dashboar
 | Resolution (pure) | `src/lib/engines/price-resolution.ts` | `SCOPE_SPECIFICITY`, `placeKey`, `resolvePriceList` |
 | Arithmetic (pure) | `src/lib/engines/price-math.ts` | `inclFromEx`, `exFromIncl`, `roundToRupee`, `deriveRate`, `pickSlab`, `discountAuthority`, `priceLine`, `rateChange` |
 | Reads | `src/lib/services/price-list-service.ts` | `listPriceLists`, `priceListDetail`, `resolveForCustomer`, `customerPricing`, `ratesForCustomer`, `coverageReport`, `varianceReport`, `listRequests`, `pricingCounts` |
-| Writes | `src/lib/actions/price-lists.ts` | `requirePriceDesk`; create / update / publish / withdraw / version / derive; rates and scopes; documents; `requestSpecialPrice`, `decidePriceRequest`, `withdrawPriceRequest`, `assignCustomerList` |
+| Desk check | `src/lib/services/price-desk.ts` | `requirePriceDesk`; `removeDraftList`, the one delete both action files share |
+| Writes | `src/lib/actions/price-lists.ts` | create / update / publish / withdraw / version / derive; rates and scopes; documents; `requestSpecialPrice`, `decidePriceRequest`, `withdrawPriceRequest`, `assignCustomerList` |
 | Document reading | `src/lib/price-list-parse.ts`, `price-list-extract.ts`, `price-list-match.ts`, `services/price-list-parse-service.ts` | PDF/photo → rows → SKUs |
 | Order form | `src/lib/services/interaction-service.ts` | `ratesForCustomer` for the billing customer, `discountAuthority` on every line |
 
@@ -56,7 +57,7 @@ The level passed to `discountAuthority` is the person's level **in the CRM** (`l
 
 <Code file="src/lib/price-list-door.ts" symbol="priceListDoorCanManage" />
 
-<Code file="src/lib/actions/price-lists.ts" symbol="requirePriceDesk" />
+<Code file="src/lib/services/price-desk.ts" symbol="requirePriceDesk" />
 
 | Action | Guard |
 |---|---|

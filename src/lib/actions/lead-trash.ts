@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 import { fromThrown, type Result } from "@/lib/result";
 import {
   restoreLeads as restoreLeadsService,
@@ -23,15 +24,22 @@ function refresh() {
   }
 }
 
-export async function trashLeads(input: {
-  ids: string[];
-  reason: string;
-}): Promise<Result<{ moved: number; failed: TrashRefusal[] }>> {
+export async function trashLeads(
+  input: {
+    ids: string[];
+    reason: string;
+  },
+  /** From the impact modal — the service refuses without it (`confirmImpact`). */
+  confirmation?: ImpactConfirmation,
+): Promise<Result<{ moved: number; failed: TrashRefusal[] }>> {
   try {
-    const r = await trashLeadsService({
-      ids: Array.isArray(input?.ids) ? input.ids.map(String) : [],
-      reason: String(input?.reason ?? ""),
-    });
+    const r = await trashLeadsService(
+      {
+        ids: Array.isArray(input?.ids) ? input.ids.map(String) : [],
+        reason: String(input?.reason ?? ""),
+      },
+      confirmation,
+    );
     if (r.ok) refresh();
     return r;
   } catch (e) {

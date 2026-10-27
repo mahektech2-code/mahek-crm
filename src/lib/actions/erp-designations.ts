@@ -30,6 +30,8 @@ import { erpHeldBy, getErpDesignation } from "@/lib/services/erp-designation-ser
 import { writeErpPowers, writeModules } from "@/lib/services/access-writes";
 import { notifyUsers } from "@/lib/notify";
 import { err, fieldErr, ok, type Result } from "@/lib/result";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 import { ADMIN } from "@/lib/admin-routes";
 
 /* ---------------------------------------------------------------------------
@@ -234,7 +236,10 @@ export async function saveErpDesignation(input: DesignationInput): Promise<Resul
  * simply stop holding the name — deleting a job title must never take a
  * screen away from anybody, and the dialog says so before it is pressed.
  */
-export async function deleteErpDesignation(id: string): Promise<Result<{ unlinked: number }>> {
+export async function deleteErpDesignation(
+  id: string,
+  confirmation?: ImpactConfirmation,
+): Promise<Result<{ unlinked: number }>> {
   let me;
   try {
     me = await actor();
@@ -243,6 +248,10 @@ export async function deleteErpDesignation(id: string): Promise<Result<{ unlinke
   }
   const d = await getErpDesignation(id);
   if (!d) return err("That designation no longer exists.", "not_found");
+  /* The holders were named, and told they keep their access — and that a
+     departmental one stops narrowing them. Still true, or asked again. */
+  const refusal = await confirmImpact("erp-designation", id, confirmation);
+  if (refusal) return refusal;
   const links = await db.select({ userId: erpUserDesignations.userId }).from(erpUserDesignations).where(eq(erpUserDesignations.designationId, id));
   await db.transaction(async (tx) => {
     await tx.delete(erpUserDesignations).where(eq(erpUserDesignations.designationId, id));

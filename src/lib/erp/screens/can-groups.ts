@@ -8,6 +8,8 @@ import { erpAudit, erpId, multi, text, type ScreenModule } from "../server";
 import type { ActionSpec, FieldSpec, FormSpec, ListRow, ToolResult } from "../ui";
 import { MAX_GROUP_PHOTOS, planCanGroups } from "../engines/can-groups";
 import { groupsWithMembers, photoUrl, photosOf, setPhotos } from "../can-photos";
+import { confirmImpact } from "@/lib/impact/registry";
+import { readConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * CAN GROUPS: the Raw materials screen's second tab. Each group is a set of
@@ -182,7 +184,8 @@ const canGroups: ScreenModule = {
           {
             id: "delete",
             l: "Delete group",
-            confirm: `Delete ${g.name}? Its ${g.members.length} can${g.members.length === 1 ? "" : "s"} stay${g.members.length === 1 ? "s" : ""} on the books, just not in a group, and the group's photos are taken off.`,
+            /* Its cans stay on the books, ungrouped; its photos come off. */
+            impact: { kind: "erp-can-group", id: g.id },
           },
         ];
         return {
@@ -231,9 +234,11 @@ const canGroups: ScreenModule = {
       await erpAudit(ctx, "erp.canGroup.rename", "erp_material_group", id, { name: g.name }, { name });
       return okVoid(`Renamed to ${name}`);
     },
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       const [g] = await db.select().from(erpMaterialGroups).where(eq(erpMaterialGroups.id, id));
       if (!g) return err("That group no longer exists.", "not_found");
+      const refusal = await confirmImpact("erp-can-group", id, readConfirmation(values));
+      if (refusal) return refusal;
       await db.transaction(async (tx) => {
         await tx.update(erpRawMaterials).set({ groupId: null, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpRawMaterials.groupId, id));
         await setPhotos(tx as unknown as typeof db, "erp_material_group", id, [], ctx.actor.id);

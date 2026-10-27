@@ -6,6 +6,7 @@ import { db } from "@/db";
 import {
   customers,
   erpBatchCodes,
+  erpFollowups,
   erpGodowns,
   erpOrderDetails,
   erpOrderReviews,
@@ -74,6 +75,8 @@ import {
 } from "../engines/order-flow";
 import { assignTripsAtDispatch } from "../trips";
 import { loadCustomers, partyStatus, type CustomerRow } from "./masters";
+import { confirmImpact } from "@/lib/impact/registry";
+import { readConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * Sales orders (spec §11): the taken-order line, its lot allocations, the
@@ -1312,7 +1315,8 @@ function orderList(scope: Scope): ScreenModule {
                   id: "delete",
                   l: "Delete",
                   why: l.inDetails ? "It is billed" : l.allocations ? "Release its batch codes first" : "",
-                  confirm: `Delete this line of order ${l.o.orderNo}?`,
+                  /* The order book, the back office's check and the floor's loading job move with it. */
+                  impact: { kind: "erp-order-line", id: l.o.id },
                 },
               ];
           const history = (reviews.get(l.o.orderNo) ?? []).slice(0, 6);
@@ -1851,12 +1855,21 @@ function lineHandlers(scope: Scope): Pick<ScreenModule, "actions" | "bulk" | "fo
       stickers: (ctx, id) => doStickers(ctx, [id]),
       moveOut: (ctx, id, values) => doMoveOut(ctx, id, values),
       approve: (ctx, id) => doApprove(ctx, [id]),
-      async delete(ctx, id) {
+      async delete(ctx, id, values) {
         const [l] = await lines([id]);
         if (!l) return err("That line no longer exists.", "not_found");
         if (l.inDetails) return err("A billed line is not deleted; undo its billing first.", "rule_violation");
         if (l.allocations) return err("Release its batch codes first; they hold stock.", "rule_violation");
-        await db.delete(erpOrders).where(eq(erpOrders.id, id));
+        /* Also refuses — as a sentence, not a foreign-key error — a line a box
+           was scanned against, a dispatch override names, or a return came back on. */
+        const refusal = await confirmImpact("erp-order-line", id, readConfirmation(values));
+        if (refusal) return refusal;
+        await db.transaction(async (tx) => {
+          /* Mahek Plus's retired follow-up remark held the line by a foreign
+             key, so a line that carried one could never be deleted at all. */
+          await tx.delete(erpFollowups).where(eq(erpFollowups.orderId, id));
+          await tx.delete(erpOrders).where(eq(erpOrders.id, id));
+        });
         await erpAudit(ctx, "erp.order.delete", "erp_order", id, l.o, null);
         await reopenOrderCheck(ctx, l.o.orderNo, `${l.sku.name} deleted`);
         await syncBookOrders([l.o.orderNo]);

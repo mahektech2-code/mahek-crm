@@ -45,6 +45,7 @@ import {
 import { ConfirmDialog, FilterPills, RowMenu, SelectionBar, type MenuItem } from "@/components/ui/overlays";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { PricingSubNav } from "@/components/pricing/sub-nav";
 import { MenuButton } from "@/components/pricing/menu-button";
 import type { PriceListSummary, PricingApp, PricingCounts, PricingOptions } from "@/lib/price-list-views";
@@ -94,7 +95,7 @@ export function PriceListsScreen({
 }) {
   const router = useRouter();
   const search = useSearchParams();
-  const { run } = useToast();
+  const { run, push } = useToast();
   const [status, setStatus] = React.useState<StatusFilter>("all");
   const [freight, setFreight] = React.useState<"all" | PriceFreightTerm>("all");
   const [query, setQuery] = React.useState("");
@@ -169,24 +170,21 @@ export function PriceListsScreen({
     a.click();
   }
 
-  async function removeDraft(list: PriceListSummary) {
-    const r = await run(deleteDraftPriceList(list.id));
-    if (r.ok) {
-      setDeleting(null);
-      router.refresh();
-    }
-  }
-
-  async function runBulk(kind: "publish" | "delete") {
+  async function publishBulk() {
     const ids = tickedDrafts.map((l) => l.id);
     setBulk(null);
-    const r = await run(kind === "publish" ? publishDraftPriceLists(ids) : deleteDraftPriceLists(ids));
+    const r = await run(publishDraftPriceLists(ids));
     if (r.ok) {
-      setOutcomes({ title: kind === "publish" ? "Publishing the drafts" : "Deleting the drafts", rows: r.data.outcomes });
+      setOutcomes({ title: "Publishing the drafts", rows: r.data.outcomes });
       setTicked(new Set());
       router.refresh();
     }
   }
+
+  /* The bulk delete is confirmed once for the whole selection: the modal is
+     opened on these ids joined by commas, and the action joins the same array
+     the same way, so the picture confirmed is the picture checked. */
+  const bulkDeleteIds = tickedDrafts.map((l) => l.id);
 
   function openImport() {
     setImportKey((k) => k + 1);
@@ -595,26 +593,50 @@ export function PriceListsScreen({
         />
       ) : null}
       {withdrawing ? <WithdrawModal open onClose={() => setWithdrawing(null)} listId={withdrawing.id} listName={withdrawing.name} /> : null}
+      {/* What deleting a draft takes with it — its rates and rules, the
+          document it was read from, the lists derived from it — read off the
+          database, with the list's name typed to confirm. */}
+      {deleting ? (
+        <ImpactDialog
+          key={deleting.id}
+          kind="price-list-draft"
+          id={deleting.id}
+          confirmLabel="Delete the draft"
+          onClose={() => setDeleting(null)}
+          onConfirm={async (confirmation) => {
+            const r = await deleteDraftPriceList(deleting.id, confirmation);
+            if (r.ok) {
+              push(r.message ?? "Draft deleted.");
+              router.refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
+      {bulk === "delete" && bulkDeleteIds.length ? (
+        <ImpactDialog
+          key={bulkDeleteIds.join(",")}
+          kind="price-list-drafts"
+          id={bulkDeleteIds.join(",")}
+          confirmLabel="Delete them"
+          onClose={() => setBulk(null)}
+          onConfirm={async (confirmation) => {
+            const r = await deleteDraftPriceLists(bulkDeleteIds, confirmation);
+            if (r.ok) {
+              setOutcomes({ title: "Deleting the drafts", rows: r.data.outcomes });
+              setTicked(new Set());
+              router.refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
       <ConfirmDialog
-        open={deleting !== null}
-        title={`Delete ${deleting?.name ?? ""}?`}
-        body="A draft has never priced anything, so this really does delete it — the rates, the scopes and the discount terms go with it."
-        confirmLabel="Delete the draft"
-        destructive
-        onConfirm={() => (deleting ? removeDraft(deleting) : undefined)}
-        onClose={() => setDeleting(null)}
-      />
-      <ConfirmDialog
-        open={bulk !== null}
-        title={bulk === "publish" ? `Publish ${tickedDrafts.length} draft${tickedDrafts.length === 1 ? "" : "s"}?` : `Delete ${tickedDrafts.length} draft${tickedDrafts.length === 1 ? "" : "s"}?`}
-        body={
-          bulk === "publish"
-            ? `Each goes into force through the same checks as publishing it alone: ${tickedDrafts.map((l) => l.name).join(", ")}. Anything else ticked is left alone.`
-            : `A draft has never priced anything, so these really are deleted: ${tickedDrafts.map((l) => l.name).join(", ")}. Published lists that are ticked are left alone.`
-        }
-        confirmLabel={bulk === "publish" ? "Publish them" : "Delete them"}
-        destructive={bulk === "delete"}
-        onConfirm={() => (bulk ? runBulk(bulk) : undefined)}
+        open={bulk === "publish"}
+        title={`Publish ${tickedDrafts.length} draft${tickedDrafts.length === 1 ? "" : "s"}?`}
+        body={`Each goes into force through the same checks as publishing it alone: ${tickedDrafts.map((l) => l.name).join(", ")}. Anything else ticked is left alone.`}
+        confirmLabel="Publish them"
+        onConfirm={() => publishBulk()}
         onClose={() => setBulk(null)}
       />
       {outcomes ? (

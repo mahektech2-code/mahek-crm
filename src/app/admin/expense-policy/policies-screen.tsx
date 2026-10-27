@@ -18,7 +18,8 @@ import {
   Tr,
   cx,
 } from "@/components/ui/primitives";
-import { ConfirmDialog, Modal, RowMenu, SelectionBar, Tabs } from "@/components/ui/overlays";
+import { Modal, RowMenu, SelectionBar, Tabs } from "@/components/ui/overlays";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { useToast } from "@/components/ui/toast";
 import {
   assignPolicySet,
@@ -98,7 +99,7 @@ export function PoliciesScreen({
   initialTab: "policies" | "people";
 }) {
   const router = useRouter();
-  const { run } = useToast();
+  const { run, push } = useToast();
   const [tab, setTab] = React.useState<"policies" | "people">(initialTab);
   const [creating, setCreating] = React.useState<{ fromId: string } | null>(null);
   const [duplicating, setDuplicating] = React.useState<PolicySummary | null>(null);
@@ -272,23 +273,26 @@ export function PoliciesScreen({
         />
       ) : null}
 
-      <ConfirmDialog
-        open={!!deleting}
-        title={`Delete "${deleting?.name ?? ""}"?`}
-        body={
-          deleting?.memberCount
-            ? `${deleting.memberCount} ${deleting.memberCount === 1 ? "person goes" : "people go"} back to the standard policy. A policy that has already priced a day cannot be deleted — switch it off instead.`
-            : "It is on nobody. A policy that has already priced a day cannot be deleted — switch it off instead."
-        }
-        confirmLabel="Delete"
-        destructive
-        onClose={() => setDeleting(null)}
-        onConfirm={async () => {
-          if (!deleting) return;
-          const r = await run(deletePolicySet({ id: deleting.id }));
-          if (r.ok) router.refresh();
-        }}
-      />
+      {/* Who goes back to standard, which of their days are re-worked, and
+          the phones that follow — or, for a policy that has priced a day, why
+          it cannot go. The policy's name is typed to confirm. */}
+      {deleting ? (
+        <ImpactDialog
+          key={deleting.id}
+          kind="expense-policy-set"
+          id={deleting.id}
+          confirmLabel="Delete"
+          onClose={() => setDeleting(null)}
+          onConfirm={async (confirmation) => {
+            const r = await deletePolicySet({ id: deleting.id, confirmation });
+            if (r.ok) {
+              push(r.message ?? "Deleted.");
+              router.refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
     </AdminPage>
   );
 }

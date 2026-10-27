@@ -16,8 +16,14 @@ import { refValues } from "@/lib/erp/refs";
 import {
   appAccess,
   erpFgFills,
+  erpFgEntries,
+  erpFgLevels,
   erpPackEntries,
+  erpPackLines,
   erpProductPacking,
+  erpRecipes,
+  erpRmLevels,
+  erpSfgEntries,
   erpRawMaterials,
   erpSfgLines,
   erpSuppliers,
@@ -37,6 +43,8 @@ import { runErpAlerts } from "@/lib/erp/alerts";
 import { erpNavCounts } from "@/lib/erp/counts";
 import "@/lib/erp/calcs";
 import { runCalc } from "@/lib/erp/calc";
+import { impactReport } from "@/lib/impact/registry";
+import { IMPACT_FIELD, type ImpactReport } from "@/lib/impact/types";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const TODAY = "2026-09-20";
@@ -405,5 +413,127 @@ describe("low stock reaches the people who would buy", () => {
     const count = mine.length;
     await runErpAlerts();
     assert.equal((await db.select().from(notifications).where(eq(notifications.userId, clerk.id))).length, count, "an alert already open tells nobody again");
+  });
+});
+
+/* ------------------------------------------------------------------ deletes */
+
+/** The report the modal shows, and the payload the modal sends back with it. */
+async function impact(kind: string, recordId: string): Promise<{ report: ImpactReport; values: Record<string, string> }> {
+  const r = await impactReport(kind, recordId);
+  assert.ok(r.ok, r.ok ? "" : r.error);
+  return { report: r.data, values: { [IMPACT_FIELD]: JSON.stringify({ typed: r.data.confirmWord, fingerprint: r.data.fingerprint }) } };
+}
+const item = (r: ImpactReport, effect: string, label: RegExp) => r.items.find((i) => i.effect === effect && label.test(i.label));
+
+describe("a production delete says what moves first, and takes its own stock with it", () => {
+  test("an SFG line whose SFG has been filled is refused, and says why before anybody types", async () => {
+    const ctx = await as(admin);
+    const [first] = await db.select().from(erpSfgLines).where(eq(erpSfgLines.lotCode, "1ASTOL1"));
+    const { report, values } = await impact("erp-sfg-line", first.id);
+    assert.match(report.blockers[0] ?? "", /already been filled into cans or moved on/);
+    const r = await mod("sfgBatches").actions!.delete(ctx, first.id, values);
+    assert.equal(r.ok ? "ok" : r.code, "rule_violation");
+    assert.equal((await db.select().from(erpSfgLines).where(eq(erpSfgLines.id, first.id))).length, 1);
+  });
+
+  test("an SFG line gives its raw material back AND takes its SFG out — no orphaned entry", async () => {
+    const ctx = await as(admin);
+    const rmBefore = await rmLotStock("ASTOL1", "erpg_bhiwandi");
+    const made = await mod("sfgBatches").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", product: SFG, batches: "1" }, [{ item: "Toluene", lot: "ASTOL1", qty: "100" }]);
+    assert.ok(made.ok, JSON.stringify(made));
+    const [line] = await db.select().from(erpSfgLines).orderBy(sql`created_at desc`).limit(1);
+    assert.equal(await rmLotStock("ASTOL1", "erpg_bhiwandi"), rmBefore - 100);
+
+    const { report, values } = await impact("erp-sfg-line", line.id);
+    assert.equal(report.confirmWord, `SFG ${line.sfgNo}`);
+    assert.deepEqual(report.blockers, []);
+    assert.equal(item(report, "changed", /Toluene \(lot ASTOL1\) go back into raw-material stock/)?.count, 100);
+    assert.equal(item(report, "deleted", new RegExp(`leave SFG lot ${line.lotCode}`))?.count, 100);
+
+    assert.equal((await mod("sfgBatches").actions!.delete(ctx, line.id, {})).ok, false, "no confirmation, no delete");
+    const stale = await mod("sfgBatches").actions!.delete(ctx, line.id, { [IMPACT_FIELD]: JSON.stringify({ typed: `SFG ${line.sfgNo}`, fingerprint: "1:stale" }) });
+    assert.equal(stale.ok ? "ok" : stale.code, "conflict");
+    const r = await mod("sfgBatches").actions!.delete(ctx, line.id, values);
+    assert.ok(r.ok, JSON.stringify(r));
+    assert.equal(await rmLotStock("ASTOL1", "erpg_bhiwandi"), rmBefore);
+    assert.equal((await sfgLots()).some((l) => l.lotCode === line.lotCode), false, "its SFG left stock with it");
+    assert.equal((await db.select().from(erpSfgEntries).where(eq(erpSfgEntries.sourceId, line.id))).length, 0);
+  });
+
+  test("a filling gives back its SFG and cans, takes its own cans out, and is refused once they were packed", async () => {
+    const ctx = await as(admin);
+    /* FG2BH's cans went into FP1BH: that filling cannot be taken back. */
+    const [packed] = await db.select().from(erpFgFills).where(eq(erpFgFills.lotCode, "FG2BH"));
+    assert.match((await impact("erp-fg-fill", packed.id)).report.blockers[0] ?? "", /already been packed into boxes/);
+
+    const sfgBefore = (await sfgLots()).find((l) => l.lotCode === "1ASTOL1")!.stock;
+    assert.ok((await mod("fgFill").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", sfg: SFG, sfgLot: "1ASTOL1", fg: FG, size: "5", canUse: "Tin can 5L", cans: "2" }, [])).ok);
+    const [fill] = await db.select().from(erpFgFills).orderBy(sql`created_at desc`).limit(1);
+    const { report, values } = await impact("erp-fg-fill", fill.id);
+    assert.equal(report.confirmWord, fill.lotCode);
+    assert.equal(item(report, "changed", /back into SFG lot 1ASTOL1/)?.count, 10);
+    assert.equal(item(report, "changed", /empty Tin can 5L/)?.count, 2);
+    assert.equal(item(report, "deleted", new RegExp(`leave FG lot ${fill.lotCode}`))?.count, 2);
+    const r = await mod("fgFill").actions!.delete(ctx, fill.id, values);
+    assert.ok(r.ok, JSON.stringify(r));
+    assert.equal((await sfgLots()).find((l) => l.lotCode === "1ASTOL1")!.stock, sfgBefore);
+    assert.equal((await fgLots()).some((l) => l.lotCode === fill.lotCode), false);
+    assert.equal((await db.select().from(erpFgEntries).where(eq(erpFgEntries.sourceId, fill.id))).length, 0);
+  });
+
+  test("deleting the LAST line of a complete batch takes its boxes out and cancels their ids", async () => {
+    const ctx = await as(admin);
+    assert.ok((await mod("fgFill").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", sfg: SFG, sfgLot: "1ASTOL1", fg: FG, size: "5", canUse: "Tin can 5L", cans: "4" }, [])).ok);
+    const [fill] = await db.select().from(erpFgFills).orderBy(sql`created_at desc`).limit(1);
+    assert.ok((await mod("packBatches").forms!.new(ctx, { date: TODAY, godown: "Bhiwandi", fg: FG, sku: BOXED, boxes: "1", lot: fill.lotCode, cans: "4" }, [])).ok);
+    const [line] = await db.select().from(erpPackLines).where(eq(erpPackLines.fgLotCode, fill.lotCode));
+    assert.equal((await packLots()).find((l) => l.batchNo === line.batchNo)?.stock, 1);
+
+    const { report, values } = await impact("erp-pack-line", line.id);
+    assert.equal(report.confirmWord, line.batchNo);
+    assert.equal(item(report, "changed", new RegExp(`back into FG lot ${fill.lotCode}`))?.count, 4);
+    assert.equal(item(report, "deleted", /leave packing stock/)?.count, 1);
+    assert.equal(item(report, "changed", /box id/)?.count, 1);
+    assert.equal(item(report, "changed", /empty Box6 boxes/)?.count, 1);
+    const r = await mod("packBatches").actions!.delete(ctx, line.id, values);
+    assert.ok(r.ok, JSON.stringify(r));
+    assert.equal((await packLots()).some((l) => l.batchNo === line.batchNo), false, "no entry left counting the boxes");
+    assert.equal((await db.select().from(erpPackEntries).where(eq(erpPackEntries.batchNo, line.batchNo))).length, 0);
+    const units = (await db.execute(sql`select status from erp_units where lot_code = ${line.batchNo}`)) as unknown as { status: string }[];
+    assert.deepEqual(units.map((u) => u.status), ["cancelled"]);
+  });
+
+  test("removing a recipe line names the Factory's batch sheet, and a level names its re-order line and requirements", async () => {
+    const ctx = await as(admin);
+    const [rcp] = await db.select().from(erpRecipes);
+    const recipe = await impact("erp-recipe-line", rcp.id);
+    assert.equal(recipe.report.confirmWord, "Toluene");
+    assert.match(item(recipe.report, "changed", /batch sheet/)?.note ?? "", /only line/);
+    assert.ok((item(recipe.report, "kept", /SFG batch/)?.count ?? 0) >= 1);
+    assert.equal((await mod("recipes").actions!.remove(ctx, rcp.id, {})).ok, false);
+    assert.ok((await mod("recipes").actions!.remove(ctx, rcp.id, recipe.values)).ok);
+    assert.equal((await db.select().from(erpRecipes)).length, 0);
+
+    const [can] = await db.select().from(erpRmLevels).where(eq(erpRmLevels.rawMaterialId, "rm_can"));
+    const level = await impact("erp-rm-level", can.id);
+    assert.equal(level.report.confirmWord, "Tin can 5L");
+    assert.equal(item(level.report, "deleted", /Re-order raw items/)?.count, 1);
+    assert.equal(item(level.report, "changed", /open requirement/)?.count, 1);
+    assert.ok((await mod("rmLevels").actions!.delete(ctx, can.id, level.values)).ok);
+    assert.equal((await db.select().from(erpRmLevels).where(eq(erpRmLevels.id, can.id))).length, 0);
+
+    const [boxed] = await db.select().from(erpFgLevels);
+    const fgLevel = await impact("erp-fg-level", boxed.id);
+    assert.equal(item(fgLevel.report, "deleted", /Re-order finished goods/)?.count, 1);
+    assert.equal((await mod("fgLevels").actions!.delete(ctx, boxed.id, {})).ok, false);
+    assert.ok((await mod("fgLevels").actions!.delete(ctx, boxed.id, fgLevel.values)).ok);
+  });
+
+  test("a clerk cannot read what an administrator's delete would touch", async () => {
+    await as(clerk);
+    const [line] = await db.select().from(erpSfgLines).limit(1);
+    const r = await impactReport("erp-sfg-line", line.id);
+    assert.equal(r.ok ? "ok" : r.code, "not_permitted");
   });
 });
