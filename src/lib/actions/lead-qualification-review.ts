@@ -2,6 +2,7 @@
 
 import { assertLeadInScope } from "@/lib/services/lead-scope";
 import { requireQualificationApprover } from "@/lib/services/lead-verifier";
+import { assertDesignatedQualificationApprover } from "@/lib/services/qualification-approver";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
@@ -183,6 +184,23 @@ export async function reviewLeadQualification(
     const approver = await requireQualificationApprover(customerId);
     if (!approver.ok) return err(approver.message, "not_permitted");
     const ctx = approver.ctx;
+
+    /*
+     * ONLY THE DESIGNATED APPROVER CONFIRMS OR REJECTS. The gate above is a wide
+     * net — it lets in anybody holding `lead.verify` and the lead's Sales Manager
+     * seat — which is right for the screens that draw a control and wrong for
+     * the decision itself. Confirming a Qualification opens the door to a sample,
+     * so it is one named person's judgement: whoever the review is handed to
+     * (`designatedQualificationApprover`, the same answer `settleQualificationState`
+     * uses). An administrator is refused like anybody else unless it is their
+     * lead to review, and where nobody is designated, everybody is refused.
+     *
+     * It sits HERE, in the one action that writes the verdict, so the Qualify
+     * screen, the Sales Manager pipeline and the Qualification Review all reach
+     * it and none of them can arrive without it.
+     */
+    const designated = await assertDesignatedQualificationApprover(customerId, ctx.user.id);
+    if (!designated.ok) return err(designated.message, "not_permitted");
 
     /*
      * VERIFIED MEANS THE EIGHT ANSWERS ARE IN AND THE GST NUMBER IS VALIDATED.

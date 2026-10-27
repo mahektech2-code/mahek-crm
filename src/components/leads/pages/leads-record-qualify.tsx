@@ -11,6 +11,7 @@ import { distributorProfileFor } from "@/lib/services/lead-record-service";
 import { distributorOptions } from "@/lib/services/distributor-service";
 import { qualificationAccess } from "@/lib/lead-qualification-access";
 import { QualifyScreen, type QualifyValues } from "@/components/leads/record/qualify/qualify-screen";
+import { ReviewEntry } from "@/components/leads/review/review-entry";
 
 
 /**
@@ -98,6 +99,8 @@ export async function Body({
     [record.companyName, record.city].filter(Boolean).join(" · ") || record.mobile || "";
 
   return (
+    <>
+    <ReviewEntry workspace={workspace} customerId={record.customerId} />
     <QualifyScreen workspace={workspace}
       /* Keyed on the lead, so navigating between two of these remounts with
          fresh draft state rather than having an effect reset it — the React
@@ -160,5 +163,6 @@ export async function Body({
        */
       canReview={await canVerifyLeadById(user, id)}
     />
+    </>
   );
 }
