@@ -164,11 +164,19 @@ export function SalesManagerRecordScreen({ initialTab, timeline }: { initialTab?
 
   return (
     <PPage>
-      <div className="mb-2.5 text-[12.5px] text-muted">
-        <Link href={links.base} className="text-brand">
-          Sales Manager desk
+      <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2 text-[12.5px] text-muted">
+        <span>
+          <Link href={links.base} className="text-brand">
+            Sales Manager desk
+          </Link>
+          {lead.ownerId ? ` / ${personName(lead.owner)}` : ""} / {lead.name}
+        </span>
+        {/* Every Suspect, Prospect and Qualification answer on one page, with the
+            approver's decision. This workspace's own route: the record's usual one
+            is behind a module a Sales Manager seat may not hold. */}
+        <Link href={`${links.base}/${lead.id}/review`} className="font-medium text-brand">
+          Qualification review
         </Link>
-        {lead.ownerId ? ` / ${personName(lead.owner)}` : ""} / {lead.name}
       </div>
 
       {lead.lost ? (

@@ -261,6 +261,7 @@ export function VerificationQueueScreen({
           key={calling.customerId}
           customerId={calling.customerId}
           customerName={calling.name}
+          reviewHref={leadHref(workspace, `leads/${calling.customerId}/review`)}
           detail={
             [calling.companyName, calling.city].filter(Boolean).join(" · ") ||
             calling.mobile ||

@@ -13,14 +13,24 @@ import { QualificationReviewScreen } from "@/components/leads/review/qualificati
 export async function Body({
   workspace,
   params,
+  closeBase,
 }: {
   workspace: LeadWorkspace;
   params: Promise<{ id: string }>;
+  /** Where the Sales Manager's own record lives, when this is mounted in their workspace. */
+  closeBase?: string;
 }) {
   const { id } = await params;
   const user = await requireUser();
   const model = await loadQualificationReview(id, user);
   if (!model) notFound();
   /* Keyed on the lead, so moving between two remounts with fresh draft state. */
-  return <QualificationReviewScreen key={model.customerId} workspace={workspace} model={model} />;
+  return (
+    <QualificationReviewScreen
+      key={model.customerId}
+      workspace={workspace}
+      model={model}
+      closeHref={closeBase ? `${closeBase}/${model.customerId}` : undefined}
+    />
+  );
 }
