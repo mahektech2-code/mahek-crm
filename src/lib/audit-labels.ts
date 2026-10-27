@@ -551,6 +551,8 @@ const DESCRIBE: Record<string, Describer> = {
   "hrms.salary.pay": () => ({ says: ["marked a salary as paid"], changes: false }),
   "hrms.advance.give": (c) => ({ says: ["gave a salary advance", ...(num(c.a.amount) ? ["of", strong(rupees(c.a.amount)!)] : [])], changes: false }),
   "catalogue.packing_import": (c) => ({ says: ["imported ERP packing from Mahek Plus", ...(num(c.a.packingSet) !== null ? [`(${num(c.a.packingSet)} SKUs, ${num(c.a.withCanUse) ?? 0} with a Can Use, ${num(c.a.materialsCreated) ?? 0} packing materials added)`] : [])], changes: false }),
+  "catalogue.brandMoved": (c) => ({ says: ["moved a brand line", ...(str(c.a.formulation) ? ["to", strong(str(c.a.formulation)!)] : []), ...(num(c.a.skus) !== null ? [`with its ${num(c.a.goods) ?? 0} finished goods and ${num(c.a.skus)} SKUs`] : [])], changes: false }),
+  "catalogue.goodMoved": (c) => ({ says: ["moved a finished good", ...(str(c.a.brand) ? ["to", strong(str(c.a.brand)!)] : []), ...(num(c.a.skus) !== null ? [`with its ${num(c.a.skus)} SKUs`] : [])], changes: false }),
   "catalogue.import": (c) => ({ says: ["imported the product catalogue", ...(num(c.a.created) !== null ? [`(${num(c.a.created)} new, ${num(c.a.updated) ?? 0} changed)`] : [])], changes: false }),
   "import.bills": () => ({ says: ["imported bills from a file"], changes: false }),
 

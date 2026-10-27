@@ -17,11 +17,11 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, erpProductPacking, erpRawMaterials, productAliases, products, users } from "@/db/schema";
+import { appAccess, erpProductPacking, erpRawMaterials, finishedGoods, productAliases, productBrands, productFormulations, products, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { importCatalogue } from "@/lib/services/catalogue-import";
-import { renameSku, updateSku, updateSkuPacking } from "@/lib/actions/catalogue";
+import { moveBrandLine, moveFinishedGood, renameLevel, renameSku, setLevelActive, updateSku, updateSkuPacking } from "@/lib/actions/catalogue";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -122,5 +122,103 @@ describe("the rest of the row", () => {
     assert.ok(!notACan.ok, "a chemical is not a can");
     const badBox = await updateSkuPacking(sku.id, { canUseMaterialId: can, emptyBoxesRequired: 0, boxType: "Shoebox", boxRatePaise: null });
     assert.ok(!badBox.ok, "not one of the box types");
+  });
+});
+
+/*
+ * A CHANGE HIGHER UP THE TREE REACHES EVERYTHING UNDER IT.
+ *
+ * The formulation is stored on the brand, each finished good and each SKU, and
+ * the ERP's FG filling reads it off the finished good — so a move that wrote
+ * only the brand would leave the ERP filling the old tree. And the handset
+ * pulls SKUs by their own `updated_at`, so a rename that touched only the
+ * brand row would never reach a phone.
+ */
+describe("the tree above a SKU", () => {
+  const skusOf = (col: "brandId" | "finishedGoodId", v: string) => db.select().from(products).where(eq(products[col], v));
+
+  test("moving a brand line carries its finished goods and SKUs to the new formulation", async () => {
+    const [brand] = await db.select().from(productBrands).where(eq(productBrands.id, sku.brandId!));
+    const [to] = await db.select().from(productFormulations).where(sql`${productFormulations.id} <> ${brand.formulationId}`).limit(1);
+    const before = await skusOf("brandId", brand.id);
+    const r = await moveBrandLine(brand.id, to.id);
+    assert.ok(r.ok, JSON.stringify(r));
+    assert.equal((await db.select().from(productBrands).where(eq(productBrands.id, brand.id)))[0].formulationId, to.id);
+    const goods = await db.select().from(finishedGoods).where(eq(finishedGoods.brandId, brand.id));
+    assert.ok(goods.length && goods.every((g) => g.formulationId === to.id), "every finished good follows — the ERP's FG filling reads this");
+    const after = await skusOf("brandId", brand.id);
+    assert.ok(after.length && after.every((p) => p.formulationId === to.id), "every SKU follows");
+    assert.ok(after.every((p) => p.updatedAt > before.find((b) => b.id === p.id)!.updatedAt), "and is touched, so the next handset pull carries it");
+    assert.equal(r.ok && r.data.skus, after.length);
+    assert.equal((await moveBrandLine(brand.id, to.id)).ok, false, "moving to where it already is says so");
+  });
+
+  test("moving a finished good takes the new brand line and that brand's formulation", async () => {
+    const [good] = await db.select().from(finishedGoods).where(eq(finishedGoods.id, sku.finishedGoodId!));
+    const [to] = await db.select().from(productBrands).where(sql`${productBrands.id} <> ${good.brandId} and ${productBrands.formulationId} <> ${good.formulationId}`).limit(1);
+    const r = await moveFinishedGood(good.id, to.id);
+    assert.ok(r.ok, JSON.stringify(r));
+    const [g] = await db.select().from(finishedGoods).where(eq(finishedGoods.id, good.id));
+    assert.equal(g.brandId, to.id);
+    assert.equal(g.formulationId, to.formulationId);
+    const after = await skusOf("finishedGoodId", good.id);
+    assert.ok(after.length && after.every((p) => p.brandId === to.id && p.formulationId === to.formulationId));
+  });
+
+  test("renaming or retiring a level touches every SKU under it, for the handsets", async () => {
+    const brandId = sku.brandId!;
+    const before = await skusOf("brandId", brandId);
+    assert.ok((await renameLevel("brand", brandId, "Renamed Brand Line")).ok);
+    const renamed = await skusOf("brandId", brandId);
+    assert.ok(renamed.every((p) => p.updatedAt > before.find((b) => b.id === p.id)!.updatedAt));
+    assert.ok((await setLevelActive("brand", brandId, false)).ok);
+    const retired = await skusOf("brandId", brandId);
+    assert.ok(retired.every((p) => p.updatedAt > renamed.find((b) => b.id === p.id)!.updatedAt));
+  });
+});
+
+/*
+ * EVERY DEPLOY RUNS THE IMPORT, so an edit that does not survive it does not
+ * survive the next deploy. It used to write the seed back over packing, cans
+ * per box, weight, packing cost and where a SKU or finished good is filed, and
+ * a renamed level stopped matching its slug and was created again.
+ */
+describe("a console edit survives the deploy-time import", () => {
+  test("a SKU's edited packing and filing are kept", async () => {
+    const want = sku.cansPerBox === 2 ? 3 : 2;
+    assert.ok((await updateSku(sku.id, { cansPerBox: want, packingCostPaise: 4321 })).ok);
+    const report = await importCatalogue();
+    const [after] = await db.select().from(products).where(eq(products.id, sku.id));
+    assert.equal(after.cansPerBox, want, "the import did not put the seed's back");
+    assert.equal(after.packingCostPaise, 4321);
+    assert.ok(report.kept >= 1 && report.changes.some((c) => c.action === "kept" && c.name === sku.name), "and it says so");
+  });
+
+  test("a renamed brand line is found under its old name, not created again", async () => {
+    const brandsBefore = (await db.select().from(productBrands)).length;
+    assert.ok((await renameLevel("brand", sku.brandId!, "Renamed Brand Line")).ok);
+    await importCatalogue();
+    assert.equal((await db.select().from(productBrands)).length, brandsBefore, "no second brand under the seed's name");
+    const [b] = await db.select().from(productBrands).where(eq(productBrands.id, sku.brandId!));
+    assert.equal(b.name, "Renamed Brand Line", "and the rename stands");
+    const [after] = await db.select().from(products).where(eq(products.id, sku.id));
+    assert.equal(after.brandId, sku.brandId, "its SKUs were not filed back under a new copy");
+  });
+
+  test("a moved brand line stays moved", async () => {
+    const [brand] = await db.select().from(productBrands).where(eq(productBrands.id, sku.brandId!));
+    const [to] = await db.select().from(productFormulations).where(sql`${productFormulations.id} <> ${brand.formulationId}`).limit(1);
+    assert.ok((await moveBrandLine(brand.id, to.id)).ok);
+    await importCatalogue();
+    assert.equal((await db.select().from(productBrands).where(eq(productBrands.id, brand.id)))[0].formulationId, to.id);
+    assert.ok((await db.select().from(finishedGoods).where(eq(finishedGoods.brandId, brand.id))).every((g) => g.formulationId === to.id));
+    assert.ok((await db.select().from(products).where(eq(products.brandId, brand.id))).every((p) => p.formulationId === to.id));
+  });
+
+  test("a row nobody edited still takes the seed's correction", async () => {
+    await db.update(products).set({ packingCostPaise: 1 }).where(eq(products.id, other.id));
+    await importCatalogue();
+    const [after] = await db.select().from(products).where(eq(products.id, other.id));
+    assert.notEqual(after.packingCostPaise, 1, "an unedited row is still the seed's to correct");
   });
 });

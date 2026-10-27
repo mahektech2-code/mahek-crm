@@ -9770,6 +9770,25 @@ already draws. `lib/version-skew.ts` is the vocabulary the three share.
 the droplet at /opt/mahekone and are copied by hand; a change to either here
 does nothing until it is copied up and Caddy reloaded.
 
+**A CATALOGUE EDIT STICKS, AND IT REACHES EVERYTHING.** Every deploy runs the
+catalogue import (`catalogue:deploy`), and it used to write the generated seed
+back over any SKU, finished good, brand or formulation that differed —
+packing, cans per box, weight, packing cost, and where each is filed — and to
+find the upper levels by slug, so a level renamed in the Admin Console would
+have been created again under its old name. No harm had landed only because
+every console edit so far happened to match the seed. Now a console edit sets
+`edited_at` and the import leaves that row alone (reported as `kept`), and a
+rename keeps the old slug in `former_slugs` so the import still finds it.
+
+The formulation is stored three times — brand, finished good, SKU — and the
+ERP's FG filling reads it off the FINISHED GOOD, so `moveBrandLine` and
+`moveFinishedGood` write all of them in one transaction. The handset pulls
+SKUs by their own `updated_at` and shows brand and formulation by name, so a
+rename, retire or move of a level touches every SKU under it. Catalogue saves
+revalidate every app, not just the console and the CRM, and drop the
+reference cache. What deliberately does NOT move: fills, stock, orders and
+bills already made keep what they were made against.
+
 ## Testing
 
 `npm run test` runs the engine tests: pure, fast, no database. They pin the

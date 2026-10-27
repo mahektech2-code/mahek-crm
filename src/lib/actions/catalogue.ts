@@ -26,9 +26,9 @@ import {
   type ImportReport,
 } from "@/lib/services/catalogue-import";
 import { err as fail, ok, type Result } from "@/lib/result";
-import { ADMIN } from "@/lib/admin-routes";
 import type { PackingImportReport } from "@/lib/erp/packing-import";
 import { BOX_TYPES } from "@/lib/erp/refs";
+import { forget } from "@/lib/reference-cache";
 
 /* ---------------------------------------------------------------------------
  * Writes to the catalogue.
@@ -79,13 +79,41 @@ async function audit(
  * scope, as in the integration tests — must not turn a save that happened into
  * an error message saying it did not.
  */
+/**
+ * A CATALOGUE EDIT IS SEEN EVERYWHERE ON THE NEXT LOAD.
+ *
+ * It used to revalidate the console and the CRM and nothing else, on the
+ * belief that only those two read products. The ERP, Accounts, the Sales
+ * Dashboard and the factory all do. Every app root is revalidated now — an
+ * admin save is rare, so the cost is nothing — and the 30-second reference
+ * cache (the CRM's starter product list) is dropped so the order form does
+ * not show the old name for half a minute after the console said "Saved".
+ */
 function refresh() {
   try {
-    revalidatePath(ADMIN.home, "layout");
-    revalidatePath("/crm");
+    revalidatePath("/", "layout");
   } catch {
     // No request scope, so nothing is cached to drop.
   }
+  forget();
+}
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * THE HANDSET ONLY HEARS ABOUT A SKU WHOSE OWN ROW MOVED.
+ *
+ * The MBOS pull sends products by `products.updated_at`, and the phone shows
+ * each SKU's brand and formulation by NAME. Renaming or retiring a brand line,
+ * formulation or finished good wrote only that level's row, so every phone
+ * went on showing the old name — until somebody signed out and back in, which
+ * nobody does. Every SKU underneath is touched with the level, so the next
+ * pull carries them.
+ */
+async function touchSkusUnder(tx: Tx | typeof db, level: "formulation" | "brand" | "good", rowId: string): Promise<number> {
+  const col = level === "formulation" ? products.formulationId : level === "brand" ? products.brandId : products.finishedGoodId;
+  const rows = await tx.update(products).set({ updatedAt: new Date() }).where(eq(col, rowId)).returning({ id: products.id });
+  return rows.length;
 }
 
 /* ------------------------------------------------------------------ import */
@@ -205,7 +233,8 @@ export async function updateSku(
     const [before] = await db.select().from(products).where(eq(products.id, productId));
     if (!before) return fail("No such product.", "not_found");
 
-    const values: Record<string, unknown> = { ...parsed.data, updatedAt: new Date() };
+    /* `editedAt` keeps the deploy-time catalogue import off this row from now on. */
+    const values: Record<string, unknown> = { ...parsed.data, updatedAt: new Date(), editedAt: new Date() };
 
     // Moving a SKU to another finished good moves it to that good's brand and
     // formulation too. Leaving the three to be set independently is how a SKU
@@ -387,10 +416,19 @@ export async function renameLevel(
 
     // The slug follows the name, and it is unique — two brands cannot become
     // the same brand by being renamed into each other.
-    await db
-      .update(table)
-      .set({ name: clean, slug: matchKey(clean), updatedAt: new Date() } as never)
-      .where(eq(table.id, rowId));
+    await db.transaction(async (tx) => {
+      /* The old slug is kept so the deploy-time import still finds this row
+         under the seed's name, and `editedAt` stops it renaming it back. */
+      const stamp = level === "category" ? {} : {
+        editedAt: new Date(),
+        formerSlugs: sql`case when ${before.slug} = any(former_slugs) or ${before.slug} = ${matchKey(clean)} then former_slugs else array_append(former_slugs, ${before.slug}) end`,
+      };
+      await tx
+        .update(table)
+        .set({ name: clean, slug: matchKey(clean), updatedAt: new Date(), ...stamp } as never)
+        .where(eq(table.id, rowId));
+      if (level !== "category") await touchSkusUnder(tx, level, rowId);
+    });
     await audit(user.id, `catalogue.${level}`, rowId, { name: before.name }, { name: clean });
     refresh();
     return ok({ name: clean }, `Renamed to ${clean}.`);
@@ -426,10 +464,13 @@ export async function setLevelActive(
       );
     }
 
-    await db
-      .update(table)
-      .set({ active, updatedAt: new Date() } as never)
-      .where(eq(table.id, rowId));
+    await db.transaction(async (tx) => {
+      await tx
+        .update(table)
+        .set({ active, updatedAt: new Date() } as never)
+        .where(eq(table.id, rowId));
+      if (level !== "category") await touchSkusUnder(tx, level, rowId);
+    });
     await audit(user.id, `catalogue.${level}Active`, rowId, { active: before.active }, { active });
     refresh();
     return ok(
@@ -438,6 +479,79 @@ export async function setLevelActive(
         ? `${before.name} is active again.`
         : `${before.name} is retired. The SKUs underneath it keep working — retire those separately if that is what you meant.`,
     );
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : "That did not save.");
+  }
+}
+
+/**
+ * MOVING A BRAND LINE TO ANOTHER FORMULATION, and everything under it.
+ *
+ * The console could rename every level and move only a SKU, so "Astar Nano is
+ * really M245" had no answer short of a database edit. The formulation is
+ * stored at three levels — the brand, each finished good, each SKU — and they
+ * are written together in one transaction, because a brand under M245 whose
+ * goods still say M5x4 is precisely the tree the ERP's FG filling reads wrong:
+ * it offers finished goods by `finished_goods.formulation_id`.
+ *
+ * What it does NOT move is history: fills, stock and orders already made keep
+ * what they were made against. Sales mix figures re-read the formulation, so
+ * this month's mix moves with the brand on the next performance rebuild.
+ */
+export async function moveBrandLine(brandId: string, formulationId: string): Promise<Result<{ goods: number; skus: number }>> {
+  try {
+    const user = await actor();
+    const [brand] = await db.select().from(productBrands).where(eq(productBrands.id, brandId));
+    if (!brand) return fail("No such brand line.", "not_found");
+    const [to] = await db.select().from(productFormulations).where(eq(productFormulations.id, formulationId));
+    if (!to) return fail("No such formulation.", "not_found");
+    if (brand.formulationId === formulationId) return fail(`${brand.name} is already under ${to.name}.`, "rule_violation");
+    const [from] = brand.formulationId ? await db.select().from(productFormulations).where(eq(productFormulations.id, brand.formulationId)) : [];
+
+    const moved = await db.transaction(async (tx) => {
+      const now = new Date();
+      /* `editedAt` on all three: the deploy-time import would otherwise file them back. */
+      await tx.update(productBrands).set({ formulationId, updatedAt: now, editedAt: now }).where(eq(productBrands.id, brandId));
+      const goods = await tx.update(finishedGoods).set({ formulationId, updatedAt: now, editedAt: now }).where(eq(finishedGoods.brandId, brandId)).returning({ id: finishedGoods.id });
+      const skus = await tx.update(products).set({ formulationId, updatedAt: now, editedAt: now }).where(eq(products.brandId, brandId)).returning({ id: products.id });
+      return { goods: goods.length, skus: skus.length };
+    });
+    await audit(user.id, "catalogue.brandMoved", brandId, { formulation: from?.name ?? null }, { formulation: to.name, ...moved });
+    refresh();
+    return ok(moved, `${brand.name} moved to ${to.name} — ${moved.goods} finished good${moved.goods === 1 ? "" : "s"} and ${moved.skus} SKU${moved.skus === 1 ? "" : "s"} with it.`);
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : "That did not save.");
+  }
+}
+
+/**
+ * MOVING A FINISHED GOOD TO ANOTHER BRAND LINE. It takes the brand's
+ * formulation as well — a good cannot sit under a brand and a different
+ * liquid — and every SKU of it follows, in one transaction.
+ */
+export async function moveFinishedGood(goodId: string, brandId: string): Promise<Result<{ skus: number }>> {
+  try {
+    const user = await actor();
+    const [good] = await db.select().from(finishedGoods).where(eq(finishedGoods.id, goodId));
+    if (!good) return fail("No such finished good.", "not_found");
+    const [to] = await db.select().from(productBrands).where(eq(productBrands.id, brandId));
+    if (!to) return fail("No such brand line.", "not_found");
+    if (good.brandId === brandId) return fail(`${good.name} is already under ${to.name}.`, "rule_violation");
+    const [from] = await db.select().from(productBrands).where(eq(productBrands.id, good.brandId));
+
+    const moved = await db.transaction(async (tx) => {
+      const now = new Date();
+      await tx.update(finishedGoods).set({ brandId, formulationId: to.formulationId, updatedAt: now, editedAt: now }).where(eq(finishedGoods.id, goodId));
+      const skus = await tx
+        .update(products)
+        .set({ brandId, formulationId: to.formulationId, updatedAt: now, editedAt: now })
+        .where(eq(products.finishedGoodId, goodId))
+        .returning({ id: products.id });
+      return { skus: skus.length };
+    });
+    await audit(user.id, "catalogue.goodMoved", goodId, { brand: from?.name ?? null }, { brand: to.name, ...moved });
+    refresh();
+    return ok(moved, `${good.name} moved to ${to.name} — ${moved.skus} SKU${moved.skus === 1 ? "" : "s"} with it.`);
   } catch (e) {
     return fail(e instanceof Error ? e.message : "That did not save.");
   }
