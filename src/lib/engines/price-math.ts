@@ -12,9 +12,15 @@
  * MONEY IS PAISE AND THE STORED RATE IS EX-GST. The PDFs print inclusive and
  * the order sheet bills ex-GST; times 1.18 lands on the PDF to the rupee across
  * every sample, which is what makes the stored side a decision rather than a
- * guess. Rounding is to the RUPEE on the way to inclusive, because that is what
- * the office prints, and `exFromIncl` divides without rounding so the round
- * trip through a printed figure loses nothing that a printed figure had.
+ * guess. The inclusive figure is kept to the PAISA — it was rounded to the
+ * rupee, so ₹1,933 ex-GST read as ₹2,281 inclusive when it is ₹2,280.94 — and
+ * `exFromIncl` divides without rounding so the round trip through a printed
+ * figure loses nothing that a printed figure had.
+ *
+ * Both conversions are whole-number arithmetic (× 11,800 ÷ 10,000, never
+ * × 1.18): the binary 1.18 is a hair under 1.18, so a product landing on a
+ * half paisa rounded the wrong way, and migration 0288 does this same sum in
+ * Postgres and has to agree with it to the paisa.
  * ------------------------------------------------------------------------- */
 
 import type { PriceDerivation } from "@/db/schema";
@@ -28,11 +34,20 @@ export function roundToRupee(paise: number): number {
 }
 
 /**
- * GST-inclusive per can from ex-GST, rounded to the rupee — the figure the
- * office prints and the shop is told.
+ * GST-inclusive per can from ex-GST, TO THE PAISA.
+ *
+ * One exception, and it is not rounding: where a WHOLE-RUPEE inclusive price
+ * converts back to exactly this ex-GST rate, that rupee is the figure. That is
+ * a rate taken from a printed list — ₹2,281 printed is stored as ₹1,933.05
+ * ex-GST, and at the paisa that stored rate cannot tell ₹2,281.00 from
+ * ₹2,280.99, so the printed figure wins rather than reading ₹2,281.01. A rate
+ * typed ex-GST, ₹1,933.00, converts back from no whole rupee and shows its
+ * exact ₹2,280.94.
  */
 export function inclFromEx(exPaise: number, gstBp: number): number {
-  return roundToRupee(Math.round(exPaise * (1 + gstBp / BP)));
+  const exact = Math.round((exPaise * (BP + gstBp)) / BP);
+  const rupee = roundToRupee(exact);
+  return exFromIncl(rupee, gstBp) === exPaise ? rupee : exact;
 }
 
 /**
@@ -42,7 +57,7 @@ export function inclFromEx(exPaise: number, gstBp: number): number {
  * the rupee is decided where the money is, never here.
  */
 export function exFromIncl(inclPaise: number, gstBp: number): number {
-  return Math.round(inclPaise / (1 + gstBp / BP));
+  return Math.round((inclPaise * BP) / (BP + gstBp));
 }
 
 /**

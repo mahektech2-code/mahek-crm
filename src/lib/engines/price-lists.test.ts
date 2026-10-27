@@ -237,3 +237,28 @@ describe("price resolution", () => {
     assert.equal(r, null);
   });
 });
+
+describe("the inclusive price is kept to the paisa", () => {
+  test("a rate typed ex-GST shows its exact inclusive figure, not a rounded rupee", () => {
+    // ₹1,933.00 ex-GST at 18% is ₹2,280.94 — it read ₹2,281.
+    assert.equal(inclFromEx(193_300, 1800), 228_094);
+    assert.equal(inclFromEx(10_000, 1800), 11_800);
+    assert.equal(inclFromEx(1_017, 1200), 1_139);
+  });
+
+  test("every printed whole-rupee figure comes back exactly, at every GST rate", () => {
+    // ₹2,281 printed is stored as ₹1,933.05 ex-GST; at the paisa that cannot
+    // tell ₹2,281.00 from ₹2,280.99, and the printed figure must win.
+    for (const gst of [500, 1200, 1800, 2800]) {
+      for (let rupees = 1; rupees <= 6000; rupees++) {
+        const printed = rupees * 100;
+        assert.equal(inclFromEx(exFromIncl(printed, gst), gst), printed, `₹${rupees} at ${gst / 100}%`);
+      }
+    }
+  });
+
+  test("a half paisa rounds up, the same way migration 0288 rounds it in Postgres", () => {
+    // 193,325 × 1.18 = 228,123.5 exactly; the binary 1.18 used to make it .49999.
+    assert.equal(inclFromEx(193_325, 1800), 228_124);
+  });
+});
