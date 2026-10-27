@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { Button, Card, checkboxClass, controlClass, cx } from "@/components/ui/primitives";
 import { Badge } from "../../_ui/badge";
-import { labelClass, LinkButton, SubTitle } from "../../_ui/look";
+import { gridHeadClass, LinkButton, SubTitle } from "../../_ui/look";
 import { erpLogisticsAtTransport, erpLogisticsDue, erpLogisticsPackages } from "@/lib/actions/erp-logistics";
 import { addDays, shortDay } from "@/lib/erp/engines/logistics";
 import type { Consignment } from "@/lib/erp/logistics";
@@ -71,7 +71,7 @@ export function ToTransport({ rows, today, canWrite }: { rows: Consignment[]; to
         const boxes = sumPackages(bills);
         const dueToday = bills.filter((b) => b.transportDueOn && b.transportDueOn <= today).length;
         return (
-          <Card key={transporter} className="overflow-hidden">
+          <Card key={transporter} className="overflow-clip">
             <div className="flex flex-wrap items-center gap-3 border-b border-divider bg-canvas px-4 py-2.5">
               {canWrite ? <input type="checkbox" checked={all} onChange={() => setMany(ids, !all)} className={checkboxClass} aria-label={`Tick every bill for ${transporter}`} /> : null}
               <div className="min-w-0">
@@ -89,7 +89,7 @@ export function ToTransport({ rows, today, canWrite }: { rows: Consignment[]; to
                 ) : null}
               </div>
             </div>
-            <div className={cx("grid grid-cols-[28px_minmax(120px,1fr)_minmax(160px,1.6fr)_110px_96px_90px_130px] gap-3 border-b border-divider px-4 py-1.5", labelClass)}>
+            <div className={cx("grid grid-cols-[28px_minmax(120px,1fr)_minmax(160px,1.6fr)_110px_96px_90px_130px] gap-3 px-4 py-1.5", gridHeadClass)}>
               <span />
               <span>Bill</span>
               <span>Goes to</span>

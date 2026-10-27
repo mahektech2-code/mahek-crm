@@ -81,6 +81,7 @@ function prospectReady(over: Partial<LeadGateInput> = {}): LeadGateInput {
     monthlyLitres: 400,
     competitor: "Asian Paints",
     requiredProductId: "p1",
+    gstin: "27ABCDE1234F1Z5",
     contactPerson: "Ramesh",
     prospectReasonRecorded: true,
     ...NEXT_ACTION,
@@ -88,24 +89,45 @@ function prospectReady(over: Partial<LeadGateInput> = {}): LeadGateInput {
   };
 }
 
-describe("§6 — the seven a suspect owes before it is a prospect", () => {
-  test("all seven answered opens the gate", () => {
+describe("§6 — what a suspect owes before it is a prospect: six required, two optional", () => {
+  test("every required answer opens the gate", () => {
     const v = gateTo(prospectReady(), "prospect");
     assert.deepEqual(v.missing, []);
     assert.equal(v.open, true);
   });
 
-  test("the conditions are the seven — no decision maker, and no rupee estimate", () => {
+  test("the conditions — the GST number is one; no decision maker, and no rupee estimate", () => {
     assert.deepEqual(PROSPECT_CONDITIONS.map((c) => c.id), [
       "customer_type",
       "monthly_litres",
       "competitor",
       "required_product",
+      "gstin",
       "contact_person",
       "next_action",
       "prospect_reason",
     ]);
-    assert.equal(PROSPECT_CONDITIONS.length, 7);
+    assert.equal(PROSPECT_CONDITIONS.length, 8);
+  });
+
+  test("exactly two are optional: who to ask for, and why it is worth following up", () => {
+    assert.deepEqual(PROSPECT_CONDITIONS.filter((c) => c.optional).map((c) => c.id), ["contact_person", "prospect_reason"]);
+  });
+
+  test("blank contact person and blank reason do NOT block a Prospect — they stay askable", () => {
+    const v = gateTo(prospectReady({ contactPerson: null, prospectReasonRecorded: false }), "prospect");
+    assert.equal(v.open, true);
+    assert.deepEqual(v.missing, []);
+    assert.equal(gateTo(prospectReady({ contactPerson: "" }), "prospect").open, true);
+  });
+
+  test("the GST number is REQUIRED at Prospect — blank, null or whitespace each refuse, and name it", () => {
+    for (const v of [null, "", "   "]) {
+      const g = gateTo(prospectReady({ gstin: v }), "prospect");
+      assert.equal(g.open, false);
+      assert.deepEqual(g.missing.map((c) => c.id), ["gstin"]);
+    }
+    assert.equal(gateTo(prospectReady({ gstin: "27ABCDE1234F1Z5" }), "prospect").open, true);
   });
 
   test("a Prospect still needs Product and the monthly requirement in litres", () => {
@@ -136,9 +158,8 @@ describe("§6 — the seven a suspect owes before it is a prospect", () => {
     ["monthly_litres", { monthlyLitres: null }],
     ["competitor", { competitor: "   " }],
     ["required_product", { requiredProductId: null }],
-    ["contact_person", { contactPerson: null }],
+    ["gstin", { gstin: null }],
     ["next_action", { nextAction: null, nextActionDate: null, nextActionOwnerId: null }],
-    ["prospect_reason", { prospectReasonRecorded: false }],
   ];
 
   for (const [id, gap] of KNOCKOUTS) {
@@ -151,8 +172,9 @@ describe("§6 — the seven a suspect owes before it is a prospect", () => {
   }
 
   test("a blank string is not an answer", () => {
-    assert.ok(missingIds(prospectReady({ contactPerson: "" }), "prospect").includes("contact_person"));
+    assert.ok(missingIds(prospectReady({ gstin: "" }), "prospect").includes("gstin"));
     assert.ok(missingIds(prospectReady({ customerType: "  " }), "prospect").includes("customer_type"));
+    assert.ok(!missingIds(prospectReady({ contactPerson: "" }), "prospect").includes("contact_person"), "optional: blank is fine");
   });
 });
 

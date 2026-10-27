@@ -23,23 +23,22 @@ const SECTION_ICON: Record<string, string> = { Overview: "dashboard", Expenses: 
 
 /** The four sub-modules: an icon, the name, and a count pill — filled when it is the one you are on. */
 export function SectionNav({ sections }: { sections: Tab[] }) {
+  /* v4: the four sections are a segmented switch; the tabs under one are underlined. */
   return (
-    <nav aria-label="Petty Cash sections" className="mb-5 flex flex-wrap items-center gap-2 border-b border-line">
+    <nav aria-label="Petty Cash sections" className="mb-4 inline-flex flex-wrap gap-0.5 rounded-lg bg-divider p-[3px]">
       {sections.map((t) => (
         <NavLink
           key={t.key}
           href={t.href}
           aria-current={t.active ? "page" : undefined}
           className={cx(
-            "-mb-px flex items-center gap-2.5 border-b-2 px-4 pt-2 pb-3 text-md whitespace-nowrap",
-            t.active ? "border-brand font-semibold text-brand-hover" : "border-transparent font-medium text-muted hover:text-body",
+            "flex items-center gap-2 rounded-md px-3.5 py-1.5 text-meta whitespace-nowrap no-underline hover:no-underline",
+            t.active ? "bg-surface font-semibold text-ink shadow-[0_1px_2px_rgba(20,20,30,0.08)]" : "font-medium text-muted hover:text-ink",
           )}
         >
-          <span className={cx("flex h-5 w-5 items-center justify-center rounded-[5px] border", t.active ? "border-brand bg-brand-soft" : "border-line")}>
-            <Icon name={SECTION_ICON[t.label] ?? "grid"} size={13} />
-          </span>
+          <Icon name={SECTION_ICON[t.label] ?? "grid"} size={13} />
           {t.label}
-          {t.count ? <span className={cx("rounded-full px-2 text-xs leading-5 font-semibold tabular-nums", t.active ? "bg-brand text-white" : "bg-divider text-body")}>{t.count}</span> : null}
+          {t.count ? <span className={cx("rounded-full px-1.5 text-2xs leading-[17px] font-bold tabular-nums", t.active ? "bg-brand text-white" : "bg-warn-soft text-warn-ink")}>{t.count}</span> : null}
         </NavLink>
       ))}
     </nav>

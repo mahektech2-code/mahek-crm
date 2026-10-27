@@ -114,6 +114,8 @@ export function IntakeForm({
   const [f, setF] = React.useState({
     name: "",
     companyName: "",
+    /* OPTIONAL when a lead is raised; it becomes required at Prospect. */
+    gstin: "",
     contactPerson: "",
     phone: "",
     city: "",
@@ -149,6 +151,9 @@ export function IntakeForm({
         salesType: answer === "undecided" || answer === null ? null : answer,
         name: f.name,
         companyName: f.companyName || undefined,
+        /* Asked only of a Direct customer (the block below), so a number typed and then
+           hidden by switching the sales type is never sent. */
+        gstin: answer === "direct" ? f.gstin.trim() || undefined : undefined,
         contactPerson: f.contactPerson || undefined,
         phone: f.phone,
         city: f.city,
@@ -224,6 +229,7 @@ export function IntakeForm({
                 ...s,
                 name: "",
                 companyName: "",
+                gstin: "",
                 contactPerson: "",
                 phone: "",
                 address: "",
@@ -321,6 +327,28 @@ export function IntakeForm({
 
           {answer === null ? null : (
             <>
+              {/*
+                THE CUSTOMER'S GST NUMBER — a Direct customer is the one we bill, so
+                this is where the number belongs. OPTIONAL here (a first call often
+                has none); it becomes REQUIRED when the lead is made a Prospect.
+                The one `customers.gstin` column, never a copy.
+              */}
+              {answer === "direct" ? (
+                <section>
+                  <SectionTitle>Customer</SectionTitle>
+                  <div className="grid grid-cols-1 gap-x-4 gap-y-3.5 sm:grid-cols-3">
+                    <F label="GST number" error={errors.gstin}>
+                      <Input
+                        value={f.gstin}
+                        onChange={(e) => set("gstin")(e.target.value)}
+                        placeholder="Optional now · needed at Prospect"
+                        maxLength={20}
+                        invalid={Boolean(errors.gstin)}
+                      />
+                    </F>
+                  </div>
+                </section>
+              ) : null}
               {duplicate ? (
                 <Banner
                   tone="danger"

@@ -4,13 +4,14 @@ import { useContext, useId, useState } from "react";
 import type { FieldSpec } from "@/lib/erp/ui";
 import { Badge, Button, controlClass, cx, type Tone } from "@/components/ui/primitives";
 import { nf } from "@/lib/erp/ui";
-import { labelClass, popoverClass } from "./look";
+import { fieldLabelClass, popoverClass } from "./look";
 import { DictateButton, joinDictation } from "@/components/ui/dictate";
 import { Icon } from "./icons";
 import { ErpVoice } from "./voice";
 import { useKit } from "./kit";
 import { PinField } from "./pin-field";
 import { matchOptions, nearEnd, PAGE } from "./option-match";
+import { shrinkImage } from "@/lib/shrink-image";
 
 /* ---------------------------------------------------------------------------
  * One form field, drawn as the CRM draws every field: an uppercase label (with
@@ -69,7 +70,7 @@ export function Field({
   const Wrap = grouped ? "div" : "label";
   return (
     <Wrap className={cx("block min-w-0", f.wide && "col-span-full")} {...(grouped ? { role: "group", "aria-label": f.l } : {})}>
-      <span className={cx("mb-1 flex items-center gap-1.5", labelClass)}>
+      <span className={cx("mb-1 flex items-center gap-1.5", fieldLabelClass)}>
         {f.l}
         {tag ? (
           <Badge tone={tagTone} className="tracking-normal normal-case">
@@ -426,7 +427,8 @@ function useUpload(kind: "photo" | "video", upload: FieldSpec["upload"], onChang
     setUpErr("");
     try {
       const body = new FormData();
-      body.set("file", file);
+      /* A photo is made to fit first, so its size is never the reason it fails. */
+      body.set("file", kind === "photo" ? await shrinkImage(file) : file);
       body.set("kind", kind);
       if (upload) body.set("upload", upload);
       const res = await fetch(uploadUrl, { method: "POST", body });

@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { DialogBody, DialogFooter, DialogHeader, ErpDialog, TabBar, DialogTitle } from "../../_ui/dialog";
 import { Button, Card, Checkbox, controlClass, cx, Field, Input, SectionLabel } from "@/components/ui/primitives";
 import { Badge } from "../../_ui/badge";
-import { IconButton, labelClass, LinkButton, linkClass, SubTitle } from "../../_ui/look";
+import { gridHeadClass, IconButton, labelClass, LinkButton, linkClass, SubTitle } from "../../_ui/look";
 import { erpLogisticsTransporter } from "@/lib/actions/erp-logistics";
 import { checkGstin } from "@/lib/engines/lead-scan";
 import type { Transporter, TransporterGodown } from "@/lib/erp/logistics";
@@ -61,8 +61,8 @@ export function Transporters({ rows, tree, labels, load, canWrite }: { rows: Tra
           </Button>
         ) : null}
       </div>
-      <Card className="overflow-hidden">
-        <div className={cx("grid gap-3 border-b border-divider bg-canvas px-4 py-2", COLS, labelClass)}>
+      <Card className="overflow-clip">
+        <div className={cx("grid gap-3 px-4 py-2", COLS, gridHeadClass)}>
           <span>Transporter</span>
           <span>Godowns</span>
           <span>Main contact</span>

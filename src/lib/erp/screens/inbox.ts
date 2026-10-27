@@ -40,6 +40,7 @@ export const inboxScreen: ScreenModule = {
         cols,
         hidden: [],
         groups: ["status"],
+        chat: { who: "party", text: "text", when: "received", via: "source" },
         newForm: state.on
           ? {
               screen: "orderInbox",

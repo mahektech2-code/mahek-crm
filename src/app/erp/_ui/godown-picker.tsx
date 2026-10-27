@@ -25,6 +25,7 @@ export function GodownPicker({
   align = "right",
   placeholder,
   noneLine,
+  caption,
 }: {
   value: string;
   label: string;
@@ -34,6 +35,8 @@ export function GodownPicker({
   align?: "left" | "right";
   placeholder?: string;
   noneLine?: string;
+  /** A small line set over the label — "Working at" in the header. */
+  caption?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -58,7 +61,14 @@ export function GodownPicker({
         )}
       >
         <Icon n="pin" s={14} />
-        <span className="truncate">{label}</span>
+        {caption ? (
+          <span className="flex min-w-0 flex-col text-left leading-3.5">
+            <span className="text-2xs font-normal text-muted">{caption}</span>
+            <span className="truncate">{label}</span>
+          </span>
+        ) : (
+          <span className="truncate">{label}</span>
+        )}
         <Icon n="down" s={14} />
       </button>
       {open ? (

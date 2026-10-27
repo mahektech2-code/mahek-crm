@@ -151,6 +151,7 @@ export function CollapsibleNav({
   ariaLabel,
   badgeToneFor,
   showSizes = true,
+  flyout = false,
 }: {
   /** `crm.nav.open`, `sales.nav.open` — one per app. */
   storageKey: string;
@@ -175,6 +176,11 @@ export function CollapsibleNav({
    * things waiting, and the number answers a question nobody asks.
    */
   showSizes?: boolean;
+  /**
+   * Railed, each group is ONE icon that opens its screens in a menu beside the
+   * rail, rather than every screen drawn as its own icon. The ERP's v4 design.
+   */
+  flyout?: boolean;
 }) {
   const pathname = usePathname();
 
@@ -207,6 +213,39 @@ export function CollapsibleNav({
    * what is left of the grouping — the order is unchanged, so the rail is the
    * same list with its labels taken away rather than a different one.
    */
+  if (railed && flyout) {
+    return (
+      <nav aria-label={ariaLabel} className="flex-1 overflow-y-auto px-1.5 pt-2 pb-4">
+        {pinned.map((item) => (
+          <Row key={item.href} item={item} active={isActive(item)} count={countFor(item)} renderIcon={renderIcon} badgeToneFor={badgeToneFor} railed />
+        ))}
+        {groups.map((group) =>
+          group.flat && group.items.length === 1 ? (
+            <Row
+              key={group.label}
+              item={group.items[0]}
+              active={isActive(group.items[0])}
+              count={countFor(group.items[0])}
+              renderIcon={renderIcon}
+              badgeToneFor={badgeToneFor}
+              railed
+            />
+          ) : (
+            <RailGroup
+              key={group.label}
+              group={group}
+              here={activeGroup === group.label}
+              isActive={isActive}
+              countFor={countFor}
+              renderIcon={renderIcon}
+              badgeToneFor={badgeToneFor}
+            />
+          ),
+        )}
+      </nav>
+    );
+  }
+
   if (railed) {
     return (
       <nav aria-label={ariaLabel} className="flex-1 overflow-y-auto px-1.5 pt-2 pb-4">
@@ -288,6 +327,7 @@ export function CollapsibleNav({
               }
               aria-expanded={isOpen}
               aria-controls={panelId}
+              data-nav-group={activeGroup === group.label ? "here" : ""}
               className={cx(
                 "relative mb-px flex min-h-9 w-full cursor-pointer items-center gap-2.5 rounded-[4px] py-1.5 pr-2 pl-2.5 text-left text-sm",
                 /*
@@ -330,7 +370,7 @@ export function CollapsibleNav({
             </button>
 
             {isOpen ? (
-              <div id={panelId} className="mb-1">
+              <div id={panelId} data-nav-panel className="mb-1">
                 {group.items.map((item) => (
                   <Row
                     key={item.href}
@@ -348,6 +388,76 @@ export function CollapsibleNav({
         );
       })}
     </nav>
+  );
+}
+
+/**
+ * One group on a railed sidebar: its icon, and a menu of its screens that
+ * opens beside the rail. The menu closes on a pick, a click elsewhere or Esc.
+ */
+function RailGroup({
+  group,
+  here,
+  isActive,
+  countFor,
+  renderIcon,
+  badgeToneFor,
+}: {
+  group: NavRowGroup;
+  here: boolean;
+  isActive: (i: NavRowItem) => boolean;
+  countFor: (item: NavRowItem) => number;
+  renderIcon: (name: string, size: number) => React.ReactNode;
+  badgeToneFor?: (item: NavRowItem, count: number) => "danger" | "warn";
+}) {
+  const [top, setTop] = React.useState<number | null>(null);
+  const waiting = group.items.reduce((n, i) => n + countFor(i), 0);
+  React.useEffect(() => {
+    if (top === null) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setTop(null);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [top]);
+  return (
+    <>
+      <button
+        type="button"
+        title={group.label}
+        aria-label={group.label}
+        aria-haspopup="menu"
+        aria-expanded={top !== null}
+        data-nav-group={here ? "here" : ""}
+        onClick={(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          setTop((t) => (t === null ? r.top : null));
+        }}
+        className={cx(
+          "relative mb-px flex min-h-9 w-full cursor-pointer items-center justify-center rounded-[4px]",
+          here || top !== null ? "bg-brand-soft text-brand-hover" : "text-body hover:bg-canvas hover:text-ink",
+        )}
+      >
+        {renderIcon(group.icon, 18)}
+        {waiting > 0 ? <span className="absolute top-1.5 right-2.5 h-[7px] w-[7px] rounded-full bg-warn" aria-hidden /> : null}
+      </button>
+      {top !== null ? (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setTop(null)} />
+          <div
+            role="menu"
+            aria-label={group.label}
+            style={{ top }}
+            className="animate-fade-in fixed left-[68px] z-50 flex w-60 flex-col gap-px rounded-lg border border-line bg-surface p-1.5 shadow-pop"
+          >
+            <div className="px-2.5 pt-1.5 pb-1.5 text-[11px] font-semibold tracking-label text-faint uppercase">{group.label}</div>
+            {group.items.map((item) => (
+              <div key={item.href} onClick={() => setTop(null)}>
+                <Row item={item} active={isActive(item)} count={countFor(item)} renderIcon={renderIcon} badgeToneFor={badgeToneFor} nested />
+              </div>
+            ))}
+          </div>
+        </>
+      ) : null}
+    </>
   );
 }
 
@@ -374,6 +484,7 @@ function Row({
       href={item.href}
       aria-current={active ? "page" : undefined}
       title={railed ? item.label : undefined}
+      data-nav-row={nested ? "nested" : "top"}
       className={cx(
         "relative mb-px flex items-center gap-2.5 rounded-[4px] border-l-[3px] text-sm no-underline hover:no-underline",
         railed
@@ -389,9 +500,9 @@ function Row({
       )}
     >
       {active ? (
-        <span className="pointer-events-none absolute inset-0 rounded-[4px] bg-brand-soft" />
+        <span data-nav-fill className="pointer-events-none absolute inset-0 rounded-[4px] bg-brand-soft" />
       ) : null}
-      <span className="relative z-1 flex flex-none">
+      <span data-nav-icon className="relative z-1 flex flex-none">
         {renderIcon(item.icon, nested ? 16 : 18)}
       </span>
       {railed ? null : (
@@ -414,6 +525,7 @@ function Row({
 function Badge({ count, tone }: { count: number; tone: "danger" | "warn" }) {
   return (
     <span
+      data-nav-badge={tone}
       className={cx(
         "relative z-1 h-[18px] min-w-5 flex-none rounded-[9px] px-1.5 text-center text-[11px] leading-[18px] font-medium tabular-nums",
         tone === "danger" ? "bg-danger-soft text-danger" : "bg-warn-line text-warn-ink",

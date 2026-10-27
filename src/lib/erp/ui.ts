@@ -347,7 +347,22 @@ export type ListSpec = {
    * the row value holding the image's URL (empty draws a placeholder),
    * `title` the bold line, `lines` the muted ones beneath.
    */
-  cards?: { img: string; title: string; lines: string[]; empty: string };
+  cards?: {
+    img: string;
+    title: string;
+    lines: string[];
+    empty: string;
+    /** A video: the picture area is a navy frame with a play button. */
+    play?: boolean;
+    /** Offer a Cards / Table switch, so the table's columns and sorting stay a click away. */
+    toggle?: boolean;
+  };
+  /**
+   * Draw the rows as a conversation: senders down the left, their messages in
+   * the middle, the picked message's draft and actions on the right. Always
+   * offered beside the table, never instead of it.
+   */
+  chat?: { who: string; text: string; when: string; via: string };
   /** Columns withheld by a power, named so the screen can say which. */
   hidden: { l: string; power: string }[];
   groups?: string[];

@@ -651,7 +651,8 @@ export async function logQualificationCall(
 const requestSchema = z.object({
   customerId: z.string().min(1),
   /** §5's coded reason, from `leads.prospectReasons`. Validated against it below. */
-  reasonCode: z.string("Say why this is worth pursuing.").trim().min(1, "Say why this is worth pursuing."),
+  /* OPTIONAL: blank passes. One that is given is checked against the list. */
+  reasonCode: z.string().trim().optional(),
   note: z.string().trim().max(2000).optional(),
   /* The two things the Prospect gate wants that are not desk answers. Asked
      here, once, if the record does not already hold them. */
@@ -668,6 +669,9 @@ const requestSchema = z.object({
   monthlyLitres: z.number().finite().max(10_000_000).optional(),
   competitor: z.string().trim().max(200).optional(),
   requiredProductId: z.string().trim().min(1).max(100).optional(),
+  /* REQUIRED at Prospect (optional when raised) — demanded in `preparePromotion`
+     like the rest, and the same 20-character limit `saveProspectFields` keeps. */
+  gstin: z.string().trim().max(20).optional(),
   nextAction: z.string().trim().max(300).optional(),
   nextActionDate: z.string().trim().max(10).optional(),
 });
@@ -772,6 +776,7 @@ async function preparePromotion(
       competitor: lead.leadCompetitor,
       requiredProductId: lead.leadRequiredProductId,
       contactPerson: lead.contactPerson,
+      gstin: lead.gstin,
       nextAction: lead.leadNextAction,
       nextActionDate: lead.leadNextActionDate,
     },
@@ -781,9 +786,10 @@ async function preparePromotion(
       competitor: p.competitor ?? null,
       requiredProductId: p.requiredProductId ?? null,
       contactPerson: p.contactPerson ?? null,
+      gstin: p.gstin ?? null,
       nextAction: p.nextAction ?? null,
       nextActionDate: p.nextActionDate ?? null,
-      reasonCode: p.reasonCode,
+      reasonCode: p.reasonCode ?? null,
     },
     { today: today0 },
   );
@@ -848,7 +854,7 @@ async function preparePromotion(
   }
 
   const config = await getConfig();
-  if (!config["leads.prospectReasons"].some((r) => r.code === p.reasonCode)) {
+  if (p.reasonCode && !config["leads.prospectReasons"].some((r) => r.code === p.reasonCode)) {
     return err("Pick one of the listed reasons.", "validation", [
       { field: "reasonCode", message: "Say why this is worth pursuing." },
     ]);
@@ -970,6 +976,7 @@ async function preparePromotion(
         salesType,
         customerType: answers.customerType,
         contactPerson: answers.contactPerson,
+        gstin: answers.gstin,
         monthlyLitres: answers.monthlyLitres === null ? null : Number(answers.monthlyLitres),
         competitor: answers.competitor,
         requiredProductId: answers.requiredProductId,
@@ -1020,6 +1027,10 @@ function answerColumns(write: Partial<ProspectAnswers>): Partial<typeof customer
   }
   if (write.competitor) set.leadCompetitor = write.competitor.trim();
   if (write.requiredProductId) set.leadRequiredProductId = write.requiredProductId;
+  /* Written only where the record held none (`write` is what the record lacked),
+     so an existing GST number — and the validation made against it — is never
+     overwritten by the dialog. */
+  if (write.gstin) set.gstin = write.gstin.trim();
   return set;
 }
 
@@ -1079,7 +1090,7 @@ export async function requestProspect(
         prospectRequestState: "awaiting",
         prospectRequestedAt: now,
         prospectRequestedById: ctx.user.id,
-        prospectRequestReason: p.reasonCode,
+        prospectRequestReason: p.reasonCode || null,
         prospectRequestNote: p.note || null,
         /* The verification is the manager's next action, so it lands on their
            list and not on the desk's. */
@@ -1112,7 +1123,7 @@ export async function requestProspect(
         occurredAt: now,
         actorUserId: ctx.user.id,
         summary: `${resubmitted ? "Resubmitted for verification" : "Prospect requested — sent to the Sales Manager"}: ${
-          config["leads.prospectReasons"].find((r) => r.code === p.reasonCode)?.label ?? p.reasonCode
+          config["leads.prospectReasons"].find((r) => r.code === p.reasonCode)?.label ?? p.reasonCode ?? "no reason given"
         }${p.note ? ` · ${p.note}` : ""}. Their next step: ${nextStepWords(answers)}. Not a Prospect until the Sales Manager confirms.`,
       });
 
@@ -1300,7 +1311,7 @@ export async function convertLeadToProspect(
     const moved = await advanceLeadStage({
       customerId: p.customerId,
       to: "prospect",
-      reasonCode: p.reasonCode,
+      reasonCode: p.reasonCode || undefined,
       note: p.note,
       /* THE NEXT STEP IS THE SALES MANAGER'S VERIFICATION, not the Telecaller's
          qualification: Qualification does not open until a manager has verified

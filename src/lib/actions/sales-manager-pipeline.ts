@@ -65,7 +65,8 @@ function refresh() {
 
 const convertSchema = z.object({
   customerId: z.string().min(1),
-  reasonCode: z.string().trim().min(1).max(80),
+  /* OPTIONAL: blank passes. One that is given is checked by `advanceLeadStage`. */
+  reasonCode: z.string().trim().max(80).optional(),
   fields: z.object({
     customerType: z.enum(["dealer", "manufacturer", "distributor", "retailer", "private_limited_user"]).nullish(),
     monthlyLitres: litresSchema.nullish(),
@@ -73,6 +74,8 @@ const convertSchema = z.object({
     competitor: z.string().trim().max(200).nullish(),
     requiredProductId: z.string().min(1).nullish(),
     contactPerson: z.string().trim().max(200).nullish(),
+    /* REQUIRED at Prospect, so asked here; the same limit `saveProspectFields` keeps. */
+    gstin: z.string().trim().max(20).nullish(),
     decisionMaker: z.string().trim().max(200).nullish(),
   }),
 });
@@ -116,7 +119,7 @@ export async function convertProspect(input: ConvertProspectInput): Promise<Resu
     const moved = await advanceLeadStage({
       customerId,
       to: "prospect",
-      reasonCode,
+      reasonCode: reasonCode || undefined,
       nextAction: {
         action: "Manager verification call",
         date: addDays(day, config["leads.verificationDueDays"]),

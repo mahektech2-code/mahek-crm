@@ -69,6 +69,7 @@ async function makeSuspect(over: Partial<typeof customers.$inferInsert>) {
       id: id("cus"),
       name: `Suspect ${randomUUID().slice(0, 6)}`,
       contactPerson: "Ramesh",
+      gstin: "27ABCDE1234F1Z5",
       phone: String(9000000000 + Math.floor(Math.random() * 999999999)),
       city: "Nashik",
       kind: "lead",

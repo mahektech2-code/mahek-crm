@@ -70,6 +70,12 @@ export function AppFrame({
    * answer there. Every other app keeps the floor.
    */
   floor = true,
+  /**
+   * `sidebarFirst` runs the sidebar the full height of the window, its own
+   * top carrying the wordmark, with the header beside it over the screen —
+   * the ERP's v4 design. Every other app keeps the header across the top.
+   */
+  sidebarFirst = false,
 }: {
   header: React.ReactNode;
   /** Omitted by the apps whose navigation is in the header. */
@@ -79,7 +85,23 @@ export function AppFrame({
   fade?: boolean;
   scroll?: boolean;
   floor?: boolean;
+  sidebarFirst?: boolean;
 }) {
+  const main = (
+    <main
+      className={cx(
+        "relative min-h-0 min-w-0 flex-1 print:block",
+        scroll && "overflow-y-auto",
+        fade && "animate-fade-in",
+      )}
+    >
+      {bleed ? (
+        children
+      ) : (
+        <div className="mx-auto w-full max-w-measure print:max-w-none">{children}</div>
+      )}
+    </main>
+  );
   return (
     <div
       className={cx(
@@ -87,23 +109,20 @@ export function AppFrame({
         floor && "min-w-shell-floor",
       )}
     >
-      {/* Off the paper: an exported PDF is the screen, not the app around it. */}
-      <div className="contents print:hidden">{header}</div>
+      {sidebarFirst ? null : (
+        /* Off the paper: an exported PDF is the screen, not the app around it. */
+        <div className="contents print:hidden">{header}</div>
+      )}
       <div className="flex min-h-0 flex-1 print:block">
         <div className="contents print:hidden">{sidebar}</div>
-        <main
-          className={cx(
-            "relative min-w-0 flex-1 print:block",
-            scroll && "overflow-y-auto",
-            fade && "animate-fade-in",
-          )}
-        >
-          {bleed ? (
-            children
-          ) : (
-            <div className="mx-auto w-full max-w-measure print:max-w-none">{children}</div>
-          )}
-        </main>
+        {sidebarFirst ? (
+          <div className="flex min-w-0 flex-1 flex-col print:block">
+            <div className="contents print:hidden">{header}</div>
+            {main}
+          </div>
+        ) : (
+          main
+        )}
       </div>
     </div>
   );

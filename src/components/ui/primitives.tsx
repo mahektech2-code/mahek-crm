@@ -62,7 +62,7 @@ const BUTTON_SIZES: Record<ButtonSize, string> = {
 /** `Button`'s look as a class, for a link (`<a>`, `Link`) that is an action. A
     button inside a link is invalid HTML, and a link with its own border drifts. */
 export function buttonClass({ variant = "secondary", size = "md", className }: { variant?: ButtonVariant; size?: ButtonSize; className?: string } = {}): string {
-  return cx(BUTTON_BASE, BUTTON_VARIANTS[variant], BUTTON_SIZES[size], "cursor-pointer no-underline hover:no-underline", className);
+  return cx(BUTTON_BASE, `ui-btn ui-btn-${variant}`, BUTTON_VARIANTS[variant], BUTTON_SIZES[size], "cursor-pointer no-underline hover:no-underline", className);
 }
 
 export function Button({
@@ -79,6 +79,7 @@ export function Button({
       {...props}
       className={cx(
         BUTTON_BASE,
+        `ui-btn ui-btn-${variant}`,
         BUTTON_VARIANTS[variant],
         BUTTON_SIZES[size],
         props.disabled ? "" : "cursor-pointer",
@@ -123,7 +124,7 @@ export function Badge({
     <span
       title={title}
       className={cx(
-        "inline-flex h-5 items-center rounded-[3px] px-1.5 text-[11px] font-medium whitespace-nowrap",
+        "ui-badge inline-flex h-5 items-center rounded-[3px] px-1.5 text-[11px] font-medium whitespace-nowrap",
         BADGE_TONES[tone],
         className,
       )}
@@ -594,7 +595,7 @@ export function controlClass({
   className,
 }: { invalid?: boolean; warn?: boolean; className?: string } = {}): string {
   return cx(
-    "rounded-control border bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand",
+    "ui-control rounded-control border bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand",
     says(className, "w") ? null : "w-full",
     invalid ? "border-danger" : warn ? "border-warn" : "border-line",
     className,
@@ -623,6 +624,7 @@ export function Select({
     <select
       {...props}
       className={cx(
+        "ui-control",
         "max-w-full rounded-control border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand",
         says(className, "h") ? null : "h-8.5",
         className,

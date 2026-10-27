@@ -11,6 +11,7 @@ import { getConfig } from "@/lib/config/store";
 import { featureState } from "@/lib/erp/ai";
 import { listNotifications } from "@/lib/queries";
 import { ErpShell, type NavGroup } from "./_ui/erp-shell";
+import "./erp-theme.css";
 
 /**
  * The ERP's shell.
@@ -66,6 +67,11 @@ export default async function ErpLayout({ children }: { children: React.ReactNod
   }).filter((g) => g.screens.length > 0);
 
   return (
+    <>
+    {/* The v4 design is set in Geist. React hoists a precedence stylesheet into
+        the head, once, however many ERP pages ask for it. */}
+    {/* eslint-disable-next-line @next/next/no-page-custom-font */}
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&display=swap" precedence="default" />
     <ErpShell
       nav={nav}
       badges={badges}
@@ -86,5 +92,6 @@ export default async function ErpLayout({ children }: { children: React.ReactNod
     >
       {children}
     </ErpShell>
+    </>
   );
 }
