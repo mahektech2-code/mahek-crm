@@ -7,10 +7,11 @@ import type { DispatchBoard } from "@/lib/erp/dispatch";
 import type { ScanVerdict } from "@/lib/erp/engines/trace";
 import { erpTraceHref } from "@/lib/erp/trace-links";
 import { erpDispatchDecideOverride, erpDispatchRequestOverride, erpDispatchScan, erpDispatchUnscan, erpDispatchVerify } from "@/lib/actions/erp-trace";
-import { Button, Card, cx, Input, Progress, Textarea } from "@/components/ui/primitives";
+import { Button, Card, cx, Input, Textarea } from "@/components/ui/primitives";
+import { fd } from "@/lib/erp/ui";
 import { useErpUi } from "../_ui/erp-ui";
 import { Badge } from "../_ui/badge";
-import { labelClass, LinkButton, linkClass, SubTitle } from "../_ui/look";
+import { LinkButton, linkClass, SubTitle } from "../_ui/look";
 
 /**
  * The scanning desk. A hand scanner types the code and an Enter into the box,
@@ -97,9 +98,30 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
+      <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="flex flex-col gap-5">
-          <Card className="px-5 py-4">
+          <Card className="overflow-hidden rounded-[10px]">
+            {/* v4: who it is for, and how far through the boxes, said large. */}
+            <div className="flex items-start justify-between gap-4 border-b border-divider px-5 py-4">
+              <div className="min-w-0">
+                <div className="truncate text-xl leading-7 font-bold text-ink">{board.delivery}</div>
+                <div className="mt-0.5 text-meta text-muted">
+                  Order <span className="font-mono">{board.orderNo}</span>
+                  {board.delivery !== board.billing ? ` · billed to ${board.billing}` : ""}
+                  {board.area ? ` · ${board.area}` : ""}
+                  {board.transporter ? ` · ${board.transporter}` : ""}
+                  {board.dispatchOn ? ` · leaves ${fd(board.dispatchOn)}` : ""}
+                </div>
+              </div>
+              <div className="flex-none text-right">
+                <div className="text-3xl leading-8 font-bold tracking-tight tabular-nums">
+                  <span className="text-ink">{totalScanned}</span>
+                  <span className="text-line-strong">/{totalTarget}</span>
+                </div>
+                <div className="text-xs text-muted">scanned</div>
+              </div>
+            </div>
+            <div className="px-5 py-4">
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -114,20 +136,69 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
                 autoFocus
                 disabled={!open.length}
                 placeholder={open.length ? "Scan a box or lot QR, or type its code and press Enter" : "Nothing on this order is Ready to dispatch"}
-                className="h-12 flex-1 rounded-control border-2 border-brand bg-surface px-3 font-mono text-lg text-ink outline-none"
+                className="h-12 flex-1 rounded-lg border-2 border-brand bg-surface px-3.5 font-mono text-lg text-ink outline-none placeholder:text-faint"
               />
               <Button variant="primary" disabled={pending || !code.trim()} className="h-12">
                 Scan
               </Button>
             </form>
-            <div className="mt-3 flex items-center gap-3">
-              <span className="text-sm text-body">
+            <div className="mt-3.5 flex items-center gap-3">
+              <span className="h-2 flex-1 overflow-hidden rounded-full bg-divider">
+                <span className="block h-full rounded-full bg-brand transition-[width]" style={{ width: `${totalTarget ? Math.round((100 * totalScanned) / totalTarget) : 0}%` }} />
+              </span>
+              <span className="flex-none text-meta text-body tabular-nums">
                 {totalScanned} of {totalTarget} scanned
               </span>
-              <div className="flex-1">
-                <Progress value={totalTarget ? Math.round((100 * totalScanned) / totalTarget) : 0} />
-              </div>
             </div>
+            </div>
+            {board.lines.map((l) => (
+              <div key={l.id} className={cx("flex items-center gap-4 border-t border-divider px-5 py-3", l.cancelled && "opacity-60")}>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold text-ink">{l.skuName}</span>
+                  <span className="block truncate text-meta text-muted">
+                    {l.packLabel} · {l.alloc.length ? `Lots ${l.alloc.map((a) => `${a.lotCode} × ${a.qty}`).join(", ")}` : "No lot allocated yet — scanning allocates"}
+                    {!l.unitsExist && l.alloc.length ? " · packed before box ids: no scan needed" : ""}
+                  </span>
+                  {/* Scanning allocates. Stock packed before box labels has
+                      nothing to scan, so its lot is allocated here by hand —
+                      the one place left that does it. */}
+                  {canAllocate && !l.cancelled && !l.dispatched && !l.billed && l.alloc.reduce((a, x) => a + x.qty, 0) < l.target ? (
+                    <LinkButton
+                      onClick={() => ui.act("orders", { id: "allocate", l: "Allocate a lot by hand", loadsForm: true }, l.id)}
+                      className="mt-0.5 text-meta"
+                      title="For stock packed before box labels, which has nothing to scan"
+                    >
+                      Allocate a lot by hand (no box labels)
+                    </LinkButton>
+                  ) : null}
+                </span>
+                <span className="flex-none text-sm text-ink tabular-nums">
+                  {l.scanned} / {l.target} <span className="text-muted">{l.boxed ? "boxes" : "units"}</span>
+                </span>
+                <span className="flex-none">
+                  {l.dispatched ? (
+                    <Badge label="Dispatched" tone="success" />
+                  ) : l.cancelled ? (
+                    <Badge label="Not Ready" tone="muted" />
+                  ) : l.scanned >= l.target && l.target > 0 ? (
+                    <Badge label="All scanned" tone="success" />
+                  ) : l.gate ? (
+                    <Badge label="To scan" tone="warn" />
+                  ) : (
+                    <Badge label="Scan optional" tone="neutral" />
+                  )}
+                </span>
+                <span
+                  aria-hidden
+                  className={cx(
+                    "flex h-5.5 w-5.5 flex-none items-center justify-center rounded-full text-xs",
+                    l.dispatched || (l.scanned >= l.target && l.target > 0) ? "bg-success text-white" : "bg-divider text-line-strong",
+                  )}
+                >
+                  ✓
+                </span>
+              </div>
+            ))}
           </Card>
 
           {error ? <Panel tone="bad" title="Not scanned" text={error} /> : null}
@@ -171,56 +242,7 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
           ) : null}
 
           <Card className="overflow-hidden">
-            <div className={cx("grid grid-cols-[1fr_80px_150px_110px] gap-3 border-b border-divider bg-canvas px-4 py-2", labelClass)}>
-              <span>Line</span>
-              <span>Pack</span>
-              <span>Scanned</span>
-              <span>State</span>
-            </div>
-            {board.lines.map((l) => (
-              <div key={l.id} className={cx("grid grid-cols-[1fr_80px_150px_110px] items-center gap-3 border-b border-divider px-4 py-2.5 last:border-0", l.cancelled && "opacity-60")}>
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-medium text-ink">{l.skuName}</span>
-                  <span className="block truncate text-meta text-muted">
-                    {l.alloc.length ? `Lots ${l.alloc.map((a) => `${a.lotCode} × ${a.qty}`).join(", ")}` : "No lot allocated yet — scanning allocates"}
-                    {!l.unitsExist && l.alloc.length ? " · packed before box ids: no scan needed" : ""}
-                  </span>
-                  {/* Scanning allocates. Stock packed before box labels has
-                      nothing to scan, so its lot is allocated here by hand —
-                      the one place left that does it. */}
-                  {canAllocate && !l.cancelled && !l.dispatched && !l.billed && l.alloc.reduce((a, x) => a + x.qty, 0) < l.target ? (
-                    <LinkButton
-                      onClick={() => ui.act("orders", { id: "allocate", l: "Allocate a lot by hand", loadsForm: true }, l.id)}
-                      className="mt-0.5 text-meta"
-                      title="For stock packed before box labels, which has nothing to scan"
-                    >
-                      Allocate a lot by hand (no box labels)
-                    </LinkButton>
-                  ) : null}
-                </span>
-                <span className="text-sm text-body">{l.packLabel}</span>
-                <span className="text-sm tabular-nums">
-                  {l.scanned} / {l.target} {l.boxed ? "boxes" : "units"}
-                </span>
-                <span>
-                  {l.dispatched ? (
-                    <Badge label="Dispatched" tone="success" />
-                  ) : l.cancelled ? (
-                    <Badge label="Not Ready" tone="muted" />
-                  ) : l.scanned >= l.target && l.target > 0 ? (
-                    <Badge label="All scanned" tone="success" />
-                  ) : l.gate ? (
-                    <Badge label="To scan" tone="warn" />
-                  ) : (
-                    <Badge label="Scan optional" tone="neutral" />
-                  )}
-                </span>
-              </div>
-            ))}
-          </Card>
-
-          <Card className="overflow-hidden">
-            <SubTitle className="mb-0 border-b border-divider bg-canvas px-4 py-2">Boxes on this order ({board.units.length})</SubTitle>
+            <SubTitle className="mb-0 border-b border-divider px-4 py-3">Boxes on this order ({board.units.length})</SubTitle>
             {board.units.length ? (
               board.units.map((u) => (
                 <div key={u.id} className="flex items-center gap-3 border-b border-divider px-4 py-1.5 text-meta last:border-0">
@@ -281,7 +303,7 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
           </Card>
 
           <Card className="overflow-hidden">
-            <SubTitle className="mb-0 border-b border-divider bg-canvas px-4 py-2">Overrides {pendingOverrides.length ? `· ${pendingOverrides.length} waiting` : ""}</SubTitle>
+            <SubTitle className="mb-0 border-b border-divider px-4 py-3">Overrides {pendingOverrides.length ? `· ${pendingOverrides.length} waiting` : ""}</SubTitle>
             {board.overrides.length ? (
               board.overrides.map((o) => {
                 const mine = o.requestedById === me && !administrator;
@@ -328,7 +350,7 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
           </Card>
 
           <Card className="overflow-hidden">
-            <SubTitle className="mb-0 border-b border-divider bg-canvas px-4 py-2">Scan log</SubTitle>
+            <SubTitle className="mb-0 border-b border-divider px-4 py-3">Scan log</SubTitle>
             {board.scans.length ? (
               board.scans.map((s, i) => (
                 <div key={i} className="border-b border-divider px-4 py-1.5 last:border-0">

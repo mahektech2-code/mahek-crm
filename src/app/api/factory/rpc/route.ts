@@ -47,6 +47,7 @@ const OPS = {
   readLr: A.factoryReadLr,
   saveLr: A.factorySaveLr,
   saveLrPhotos: A.factorySaveLrPhotos,
+  uploadTrouble: A.factoryUploadTrouble,
   stockKit: A.factoryStockKit,
   stockCheck: A.factoryStockCheck,
   countSave: A.factoryCountSave,

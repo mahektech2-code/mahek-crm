@@ -227,9 +227,10 @@ export default async function PettyCashPage({ searchParams }: { searchParams: Pr
     const month = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"][Number(day.slice(5, 7)) - 1];
     return shell(
       <>
-        <Panel className="mb-5">
+        {/* v4: the overview's tabs stand on the page, underlined, with no card round them. */}
+        <div className="mb-5 [&>nav]:px-0">
           <SubTabs tabs={tabs} />
-        </Panel>
+        </div>
         <AccountCards accounts={o.accounts.map((a) => ({ id: a.id, name: a.name, kind: a.kind, last4: a.last4, balance: a.balance, unmatched: a.unmatched }))} day={day} />
         <CardGrid min="panel">
           <Panel>

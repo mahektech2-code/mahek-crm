@@ -98,13 +98,13 @@ export function AccountMenu({
   }, [open]);
 
   const avatar = (
-    <span className="flex h-7.5 w-7.5 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-xs font-semibold text-[#5223E0]">
+    <span data-account-avatar className="flex h-7.5 w-7.5 flex-none items-center justify-center rounded-[4px] bg-brand-soft text-xs font-semibold text-[#5223E0]">
       {user.initials}
     </span>
   );
 
   const identity = (
-    <span className={cx("min-w-0 flex-1 text-left", nameFromXl && "hidden xl:block")}>
+    <span data-account-identity className={cx("min-w-0 flex-1 text-left", nameFromXl && "hidden xl:block")}>
       <span className="block truncate text-[13px] leading-4 font-medium text-ink">
         {user.name}
       </span>

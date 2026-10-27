@@ -102,7 +102,7 @@ export function Modal({
     <BodyPortal>
       <div
         {...backdrop}
-        className="animate-fade-in fixed inset-0 z-[70] flex items-center justify-center bg-[rgba(22,22,22,0.35)] p-6"
+        className="ui-scrim animate-fade-in fixed inset-0 z-[70] flex items-center justify-center bg-[rgba(22,22,22,0.35)] p-6"
         role="dialog"
         aria-modal="true"
       >
@@ -119,9 +119,9 @@ export function Modal({
            * Normal is the CSS default, so nothing that works today can be
            * relying on the opposite.
            */
-          className="max-h-[88vh] overflow-hidden rounded-[6px] bg-surface whitespace-normal shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
+          className="ui-dialog max-h-[88vh] overflow-hidden rounded-[6px] bg-surface whitespace-normal shadow-[0_8px_24px_rgba(22,22,22,0.12)]"
         >
-          <div className="border-b border-divider px-5 py-4 text-lg font-semibold text-ink">
+          <div className="ui-dialog-title border-b border-divider px-5 py-4 text-lg font-semibold text-ink">
             {title}
           </div>
           <div className="max-h-[62vh] overflow-y-auto px-5 py-4">{children}</div>

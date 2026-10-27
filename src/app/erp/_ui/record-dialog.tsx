@@ -1,10 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import type { ListRow, ListSpec } from "@/lib/erp/ui";
+import type { ListRow, ListSpec, Tone } from "@/lib/erp/ui";
 import { cellText } from "@/lib/erp/ui";
 import { Badge, Button, cx, SectionLabel } from "@/components/ui/primitives";
-import { insetClass, labelClass } from "./look";
+import { eyebrowClass, insetClass } from "./look";
 import { FlagBadge, flagsBesideStatus, StatusBadge } from "./badge";
 import { useKit } from "./kit";
 import { Icon } from "./icons";
@@ -43,9 +43,22 @@ export const PANEL_TAB: Record<string, string> = {
   money: "Summary",
 };
 
-export function RecordDialog({ screen, kind, row, onClose }: { screen: ListSpec; kind: string; row: ListRow; onClose: () => void }) {
+export function RecordDialog({
+  screen,
+  kind,
+  row,
+  onClose,
+  stages,
+}: {
+  screen: ListSpec;
+  kind: string;
+  row: ListRow;
+  onClose: () => void;
+  /** v4: the list's status values in order, drawn as a stage bar over the record. */
+  stages?: { key: string; values: string[] };
+}) {
   const ui = useErpUi();
-  const { flags: words } = useKit();
+  const { flags: words, tones } = useKit();
   const flags = flagsBesideStatus(row, screen.cols, words);
   const titleCol = screen.cols.find((c) => c.t === "b") ?? screen.cols[0];
   const title = row.title ?? (titleCol ? cellText(titleCol, row.v[titleCol.k]) : "");
@@ -114,13 +127,14 @@ export function RecordDialog({ screen, kind, row, onClose }: { screen: ListSpec;
       </DialogHeader>
       {tabs.length > 1 ? <TabBar tabs={tabs} active={active} onChange={setTab} /> : null}
       <DialogBody>
+        {stages && active !== "blocked" ? <StageBar values={stages.values} at={String(row.v[stages.key] ?? "")} tones={tones} /> : null}
         {active === "panel" ? panel : null}
         {active === "details" ? (
           <>
-            <dl className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-x-6 gap-y-4">
+            <dl className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-2.5">
               {shown.map((f, i) => (
-                <div key={`${f.l}:${i}`} className="min-w-0">
-                  <dt className={cx(labelClass, "flex items-center gap-1.5")}>
+                <div key={`${f.l}:${i}`} className="min-w-0 rounded-card border border-line px-3.5 py-3">
+                  <dt className={cx(eyebrowClass, "flex items-center gap-1.5 text-faint")}>
                     {f.l}
                     {f.der ? (
                       <Badge tone="neutral" className="tracking-normal normal-case">
@@ -128,11 +142,11 @@ export function RecordDialog({ screen, kind, row, onClose }: { screen: ListSpec;
                       </Badge>
                     ) : null}
                   </dt>
-                  <dd className="mt-0.5">
+                  <dd className="mt-1">
                     {f.status && f.v !== "—" ? (
                       <StatusBadge value={f.v} />
                     ) : (
-                      <span className={cx("block text-sm break-words tabular-nums", f.v === "—" ? "text-line-strong" : "text-ink")}>{f.v}</span>
+                      <span className={cx("block text-md font-semibold break-words tabular-nums", f.v === "—" ? "text-line-strong" : "text-ink")}>{f.v}</span>
                     )}
                   </dd>
                 </div>
@@ -207,5 +221,27 @@ export function RecordDialog({ screen, kind, row, onClose }: { screen: ListSpec;
         </DialogFooter>
       ) : null}
     </ErpDialog>
+  );
+}
+
+/**
+ * The v4 stage bar: one segment per stage, those behind the record in brand,
+ * the one it is at in lime (red where that stage is a problem), the rest grey.
+ * Drawn only where the record's status is one of the stages.
+ */
+function StageBar({ values, at, tones }: { values: string[]; at: string; tones: Record<string, Tone> }) {
+  const cur = values.indexOf(at);
+  if (cur < 0 || values.length < 2) return null;
+  return (
+    <ol className="grid gap-2.5" style={{ gridTemplateColumns: `repeat(${values.length}, minmax(0, 1fr))` }}>
+      {values.map((v, i) => (
+        <li key={v} className="flex min-w-0 flex-col gap-2">
+          <span className={cx("h-1 rounded-full", i < cur ? "bg-brand" : i === cur ? (tones[v] === "danger" ? "bg-danger" : "bg-brand-lime") : "bg-divider")} />
+          <span className={cx("truncate text-meta", i > cur ? "text-faint" : "text-ink", i === cur ? "font-bold" : "font-medium")} title={v}>
+            {v}
+          </span>
+        </li>
+      ))}
+    </ol>
   );
 }

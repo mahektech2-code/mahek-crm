@@ -5,7 +5,7 @@ import { FilterPills } from "@/components/ui/overlays";
 import { Button, Card, checkboxClass, cx, Field, Input, Textarea } from "@/components/ui/primitives";
 import { Badge } from "../../_ui/badge";
 import { DialogBody, DialogFooter, DialogHeader, ErpDialog, DialogTitle } from "../../_ui/dialog";
-import { labelClass, LinkButton, SubTitle } from "../../_ui/look";
+import { gridHeadClass, labelClass, LinkButton, SubTitle } from "../../_ui/look";
 import { erpTransportPaymentRecord, erpTransportPaymentReverse, erpTripAddBills, erpTripRemoveBill, erpTripSave } from "@/lib/actions/erp-logistics";
 import { PHASE_LABEL, shortDay } from "@/lib/erp/engines/logistics";
 import { allocateByLitres, COST_STATUS_TONE, perLitreWords } from "@/lib/erp/engines/transport-cost";
@@ -121,7 +121,7 @@ export function Trips({ trips, unassigned, today, transporters, canWrite }: { tr
         const live = t.payments.filter((p) => p.status !== "reversed");
         const free = t.bills.filter((b) => b.sharePaise == null);
         return (
-          <Card key={t.id} className={cx("overflow-hidden", t.costStatus === "Reconciliation Required" && "border-danger/50")}>
+          <Card key={t.id} className={cx("overflow-clip", t.costStatus === "Reconciliation Required" && "border-danger/50")}>
             <div className="flex flex-wrap items-start gap-3 border-b border-divider bg-canvas px-4 py-2.5">
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
@@ -220,7 +220,7 @@ const GRID = "grid grid-cols-[28px_minmax(110px,1fr)_minmax(160px,1.8fr)_80px_mi
 
 function BillHead({ tick = false, share = false }: { tick?: boolean; share?: boolean }) {
   return (
-    <div className={cx(GRID, "border-b border-divider px-4 py-1.5", labelClass)}>
+    <div className={cx(GRID, "px-4 py-1.5", gridHeadClass)}>
       <span />
       <span>Bill</span>
       <span>Goes to</span>
@@ -427,7 +427,7 @@ function PaymentDialog({ trip, today, onClose }: { trip: TripView; today: string
           </Field>
         </div>
         <div className="rounded-control border border-line">
-          <div className={cx("grid grid-cols-[28px_minmax(0,1.6fr)_80px_110px] gap-3 border-b border-divider px-3 py-1.5", labelClass)}>
+          <div className={cx("grid grid-cols-[28px_minmax(0,1.6fr)_80px_110px] gap-3 px-3 py-1.5", gridHeadClass)}>
             <span />
             <span>Bill</span>
             <span>Litres</span>

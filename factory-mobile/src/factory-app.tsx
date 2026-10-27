@@ -58,11 +58,23 @@ import { CHECK_ITEMS, DOWN, MIX_BATCH_MAX, OFFLINE_HOURS, REJ, SUBMISSION_VERSIO
 import { clock12, hhmm } from "@/lib/factory/time";
 import { calendarDate } from "@/lib/business-date";
 import type { Me } from "./types";
-import { APP_BUILD, call, dropSession, NotReceived, uploadPhoto } from "./api";
+import { APP_BUILD, call, dropSession, NotReceived, sendPhoto, uploadPhoto, type PhotoSend } from "./api";
 import { Btn, Div, Input, Root, Span } from "./web";
 import { art, ic, qr } from "./art";
 import { avStyle, btn, card, initials, mono, msg, MsgBox, Pill, artWell, type Msg } from "./kit";
 import { CameraScanner, shrinkPhoto } from "./camera";
+
+/**
+ * What a photo that did not upload is CALLED on the screen. "No network" only
+ * where there was none — it used to be said of every failure, a fault in the
+ * app included, which sent people to check Wi-Fi that was working. Every one
+ * of these has already been reported to the server's log.
+ */
+function photoProblem(r: Extract<PhotoSend, { ok: false }>, again: string): { title: string; text: string; fix: string } {
+  if (r.kind === "network") return { title: "No network", text: "The photo is not uploaded yet. " + r.why, fix: `Check the Wi-Fi, then press ${again}. The photo is kept.` };
+  if (r.kind === "refused") return { title: "The photo was not taken", text: r.why, fix: "Take the photo again. This has been reported." };
+  return { title: "The photo did not upload", text: r.why, fix: `Press ${again}. If it fails again, take the photo again — this has been reported.` };
+}
 import { promptDue, snoozeUntil } from "./update";
 import { checkForUpdate, downloadAndInstall, openInBrowser } from "./updater";
 import { dropPhoto, forget, keepPhoto, kvGet, kvSet, keptPhoto, load, mintKey, readNet, save, watchNet, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type LorryUi, LORRY0, type TilesSheet, mintDrumKey, type BoxOk, type LrEntry, type StockEntry, type QcEntry, mintCheckKey, type RecipeSheet, type FillSheet, type PackSheet, type ReqEntry, mintReqKey } from "./model";
@@ -1048,13 +1060,9 @@ export class FactoryApp extends Component<Props, State> {
       return this.toast("The camera did not open. Try again.");
     }
     this.setLr((l) => ({ ...l, photo: uri, fileId: null, readingId: null, uploading: true, err: null, saved: null }));
-    let id: string | null;
-    try {
-      id = await uploadPhoto(uri, "lr.jpg");
-    } catch {
-      return this.setLr((l) => ({ ...l, uploading: false, err: { title: "No network", text: "The photo is not uploaded yet.", fix: "Check the Wi-Fi, then press Upload LR. The photo is kept." } }));
-    }
-    if (!id) return this.setLr((l) => ({ ...l, uploading: false, err: { title: "The photo was refused", text: "It could not be read as a picture.", fix: "Take the photo again." } }));
+    const sent = await sendPhoto(uri, "lr.jpg", "LR photo");
+    if (!sent.ok) return this.setLr((l) => ({ ...l, uploading: false, err: photoProblem(sent, "Upload LR") }));
+    const id = sent.id;
     this.setLr((l) => ({ ...l, fileId: id, uploading: false }));
     if (this.state.lr?.canRead) await this.lrRead(id);
   }
@@ -1102,13 +1110,11 @@ export class FactoryApp extends Component<Props, State> {
     const l = this.state.lr;
     if (!l?.photo) return;
     this.setLr((z) => ({ ...z, uploading: true, err: null }));
-    try {
-      const id = await uploadPhoto(l.photo, "lr.jpg");
-      this.setLr((z) => ({ ...z, uploading: false, fileId: id }));
-      if (id && this.state.lr?.canRead) await this.lrRead(id);
-    } catch {
-      this.setLr((z) => ({ ...z, uploading: false, err: { title: "No network", text: "The photo is not uploaded yet.", fix: "Check the Wi-Fi, then press Upload LR again." } }));
-    }
+    const sent = await sendPhoto(l.photo, "lr.jpg", "LR photo");
+    if (!sent.ok) return this.setLr((z) => ({ ...z, uploading: false, err: photoProblem(sent, "Upload LR again") }));
+    const id = sent.id;
+    this.setLr((z) => ({ ...z, uploading: false, fileId: id }));
+    if (this.state.lr?.canRead) await this.lrRead(id);
   }
 
   nextLr() {
@@ -1178,17 +1184,17 @@ export class FactoryApp extends Component<Props, State> {
     const todo = l0.tray.filter((t) => !t.fileId);
     /* Kept here, not read back from state: React has not applied the last upload's update by the time the batch ends. */
     const got = l0.tray.filter((t) => t.fileId).map((t) => t.fileId!);
-    let offline = false;
+    let firstFail: Extract<PhotoSend, { ok: false }> | null = null;
     for (let i = 0; i < todo.length; i += 3) {
       await Promise.all(
         todo.slice(i, i + 3).map(async (t) => {
           mark(t.uri, { state: "uploading" });
-          try {
-            const id = await uploadPhoto(t.uri, "lr.jpg");
-            if (id) got.push(id);
-            mark(t.uri, id ? { state: "up", fileId: id } : { state: "failed" });
-          } catch {
-            offline = true;
+          const sent = await sendPhoto(t.uri, "lr.jpg", "LR photo");
+          if (sent.ok) {
+            got.push(sent.id);
+            mark(t.uri, { state: "up", fileId: sent.id });
+          } else {
+            firstFail ??= sent;
             mark(t.uri, { state: "failed" });
           }
         }),
@@ -1196,7 +1202,8 @@ export class FactoryApp extends Component<Props, State> {
     }
     const ids = got;
     if (!ids.length) {
-      return this.setLr((l) => ({ ...l, batchBusy: false, err: offline ? { title: "No network", text: "The photos are not uploaded yet.", fix: "Check the Wi-Fi and press Upload again. The photos are kept." } : { title: "The photos were refused", text: "They could not be read as pictures.", fix: "Take them again." } }));
+      const why = firstFail ?? { ok: false as const, kind: "network" as const, why: "" };
+      return this.setLr((l) => ({ ...l, batchBusy: false, err: photoProblem(why, "Upload again") }));
     }
     try {
       const r = await call("saveLrPhotos", ids);

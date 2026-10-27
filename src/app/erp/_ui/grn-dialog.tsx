@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { Button, Callout, Progress, SectionLabel, controlClass, cx } from "@/components/ui/primitives";
 import { DialogBody, DialogTitle, DialogFooter, DialogHeader, ErpDialog, StepBar } from "./dialog";
 import { Badge } from "./badge";
-import { LinkButton, labelClass } from "./look";
+import { LinkButton, fieldLabelClass } from "./look";
 import { runCalc } from "@/lib/erp/calc";
 import "@/lib/erp/calcs";
 import { fd, nf, resolveField, whenHolds, type FieldSpec, type FormSpec } from "@/lib/erp/ui";
@@ -163,7 +163,7 @@ export function GrnDialog({ spec, onClose, onSaved }: { spec: FormSpec; onClose:
       <DialogBody>
         {step === "item" ? (
           <section className="grid gap-2">
-            <label htmlFor="grn-item" className={labelClass}>
+            <label htmlFor="grn-item" className={fieldLabelClass}>
               Item received
             </label>
             <input

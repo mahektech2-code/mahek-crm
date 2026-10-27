@@ -51,6 +51,7 @@ import {
   type MoneyKit,
   type Upload,
 } from "./money-ui";
+import { shrinkImage } from "@/lib/shrink-image";
 
 const PAY_MODES = ["NEFT", "RTGS", "IMPS", "UPI", "Cheque", "Cash", "Card"];
 
@@ -883,7 +884,7 @@ export function BillsDialog({ kit, target, onClose }: { kit: MoneyKit; target: B
     const added: BillLine[] = [];
     for (const f of [...files].slice(0, 20)) {
       const body = new FormData();
-      body.set("file", f);
+      body.set("file", await shrinkImage(f));
       body.set("kind", "photo");
       const res = await fetch("/api/erp/attachments", { method: "POST", body });
       const j = (await res.json()) as { id?: string };

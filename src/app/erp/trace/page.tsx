@@ -131,9 +131,51 @@ function ScanBadge({ result }: { result: string }) {
   return <Badge label={l} tone={t} />;
 }
 
+/** v4: the whole chain on one line — where it came from, it, where it went. */
+function Chain({ r }: { r: TraceResult }) {
+  type Link = { stage: string; title: string; sub?: string; href?: string; me?: boolean };
+  const links: Link[] = [
+    ...[...r.back].reverse().map((b) => ({ stage: b.stage, title: b.title, sub: b.facts[0] ? `${b.facts[0].v}` : b.rows[0]?.text })),
+    { stage: r.kind, title: r.title, sub: r.sub, me: true },
+    ...r.forward.map((f) => ({ stage: f.stage, title: f.rows[0]?.text ?? "", sub: f.rows[0]?.sub, href: f.rows[0]?.href })),
+    ...r.customers.slice(0, 1).map((c) => ({ stage: "Order", title: `${c.orderNo}${c.bill ? ` · ${c.bill}` : ""}`, sub: c.customer, href: c.href })),
+  ].filter((l) => l.title);
+  if (links.length < 2) return null;
+  return (
+    <ol className="flex items-stretch gap-0 overflow-x-auto pb-1">
+      {links.map((l, i) => (
+        <li key={`${l.stage}:${i}`} className="flex flex-none items-stretch">
+          {i > 0 ? (
+            <span aria-hidden className="flex w-6 items-center justify-center text-line-strong">
+              ›
+            </span>
+          ) : null}
+          <div
+            className={cx(
+              "flex w-[184px] flex-col gap-1 rounded-[10px] border bg-surface px-3.5 py-3",
+              l.me ? "border-brand ring-3 ring-brand-soft" : "border-line",
+            )}
+          >
+            <span className={cx(eyebrowClass, l.me ? "text-brand" : "text-faint")}>{l.stage}</span>
+            {l.href ? (
+              <NavLink href={l.href} className={linkClass("brand", "truncate font-mono text-sm font-semibold")}>
+                {l.title}
+              </NavLink>
+            ) : (
+              <span className="truncate font-mono text-sm font-semibold text-ink">{l.title}</span>
+            )}
+            {l.sub ? <span className="line-clamp-2 text-xs text-muted">{l.sub}</span> : null}
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 function TraceView({ r }: { r: TraceResult }) {
   return (
     <div className="flex flex-col gap-5">
+      <Chain r={r} />
       <Card className="px-5 py-4">
         <SectionTitle className="mb-0 font-mono">{r.title}</SectionTitle>
         <div className="mt-0.5 text-meta text-muted">{r.sub}</div>
@@ -262,11 +304,12 @@ function TraceView({ r }: { r: TraceResult }) {
 
       {r.history.length ? (
         <section>
-          <SubTitle>History</SubTitle>
-          <Card className="overflow-hidden">
+          <Card className="overflow-hidden rounded-[10px]">
+            <SubTitle className="mb-0 border-b border-divider px-4.5 py-3.5">Movements</SubTitle>
             {r.history.map((h, i) => (
-              <div key={i} className="flex gap-3 border-t border-divider px-4 py-1.5 text-meta first:border-0">
-                <span className="w-32 flex-none text-muted">{stamp(h.at)}</span>
+              <div key={i} className="flex items-center gap-3.5 border-t border-divider px-4.5 py-2.5 text-meta first:border-0">
+                <span className="w-32 flex-none text-faint">{stamp(h.at)}</span>
+                <span aria-hidden className="h-[7px] w-[7px] flex-none rounded-full bg-brand" />
                 <span className="flex-1 text-ink">{h.text}</span>
                 <span className="text-muted">{h.by ?? ""}</span>
               </div>

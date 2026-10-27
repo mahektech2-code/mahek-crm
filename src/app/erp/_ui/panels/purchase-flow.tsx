@@ -11,7 +11,7 @@ import type { LinkPreview } from "@/lib/erp/screens/requirement-po";
 import { registerPanel, type PanelProps } from "../panels";
 import { resultError, useAct } from "../use-act";
 import { DialogBody, DialogTitle, DialogFooter, DialogHeader, ErpDialog, StepBar } from "../dialog";
-import { eyebrowClass, insetClass, labelClass, linkClass } from "../look";
+import { gridHeadClass, eyebrowClass, insetClass, labelClass, linkClass } from "../look";
 import { Stepper } from "./parts";
 
 /* ---------------------------------------------------------------------------
@@ -443,8 +443,8 @@ function CreatePoModal({ id, d, onClose }: { id: string; d: CreateData; onClose:
                 </div>
               ))}
             </dl>
-            <div className="overflow-hidden rounded-control border border-line">
-              <div className={cx("grid grid-cols-[1fr_auto_auto_auto] gap-x-4 border-b border-divider bg-canvas px-3 py-2", eyebrowClass)}>
+            <div className="overflow-clip rounded-control border border-line">
+              <div className={cx("grid grid-cols-[1fr_auto_auto_auto] gap-x-4 px-3 py-2", gridHeadClass)}>
                 <span>Item</span>
                 <span className="text-right">Quantity</span>
                 <span className="text-right">Rate</span>

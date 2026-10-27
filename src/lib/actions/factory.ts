@@ -409,6 +409,27 @@ export async function factoryReadLr(fileId: string): Promise<LrReading> {
   return readLr(fc, fileId);
 }
 /** Up to twenty LR photos stored at once; their reading runs after the answer, and never holds it up. */
+/**
+ * A photo that did not upload, told by the phone that failed to send it. It
+ * writes nothing but the server's log — one line a failure, saying who, which
+ * build, what, why and how big — because a photo that never arrived otherwise
+ * leaves no trace on this side at all. A signed-out phone is still heard.
+ */
+export async function factoryUploadTrouble(reports: unknown): Promise<{ ok: true }> {
+  const fc = await factoryContext();
+  const who = fc ? `${fc.user.name} (${fc.user.id})` : "signed out";
+  const list = Array.isArray(reports) ? reports.slice(0, 20) : [];
+  for (const r of list) {
+    const x = (r ?? {}) as Record<string, unknown>;
+    const clip = (v: unknown, n = 300) => (typeof v === "string" ? v.slice(0, n) : v == null ? null : String(v).slice(0, n));
+    console.warn(
+      "[factory] upload trouble",
+      JSON.stringify({ who, what: clip(x.what, 60), kind: clip(x.kind, 20), why: clip(x.why), bytes: typeof x.bytes === "number" ? x.bytes : null, at: clip(x.at, 40), build: clip(x.build, 40) }),
+    );
+  }
+  return { ok: true };
+}
+
 export async function factorySaveLrPhotos(fileIds: string[]): Promise<LrBatchSave> {
   const fc = await factoryContext();
   if (!fc) return { ok: false, ...SIGNED_OUT };
