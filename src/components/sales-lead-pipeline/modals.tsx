@@ -156,6 +156,8 @@ function ConvertModal({ lead, onClose }: ModalProps) {
   const { doConvert, refs, workspace } = useLeadPipeline();
   const [reason, setReason] = React.useState("");
   const [showAll, setShowAll] = React.useState(false);
+  /* REQUIRED at Prospect. Where the lead already has one it is shown, not asked. */
+  const [gstin, setGstin] = React.useState("");
   const [customerType, setCustomerType] = React.useState(lead.customerType ?? "");
   const [productId, setProductId] = React.useState<string | null>(lead.productId ?? null);
   const [rows, setRows] = React.useState<Record<string, FindingRowState>>(() =>
@@ -218,14 +220,15 @@ function ConvertModal({ lead, onClose }: ModalProps) {
   };
 
   const missing: string[] = [];
-  if (!reason) missing.push("a reason");
+  /* The reason and the contact person are OPTIONAL: asked, never required. */
   if (!customerType) missing.push("the customer type");
+  if (!lead.gstin && !gstin.trim()) missing.push("the GST number");
   for (const f of CONVERSION_FIELDS) {
     /* Neither is needed for a Prospect: the decision maker is asked if known,
        and the rupee estimate is no longer a question — the monthly requirement
        in litres is the one monthly figure the gate wants. Both stay on the card
        to confirm or correct where somebody recorded them. */
-    if (f.key === "decisionMaker" || f.key === "potentialPaise") continue;
+    if (f.key === "decisionMaker" || f.key === "potentialPaise" || f.key === "contact") continue;
     if (f.key === "product") {
       if (!productId) missing.push(f.label);
     } else if (!f.get(lead) && !valueFor(f)) missing.push(f.label);
@@ -247,7 +250,9 @@ function ConvertModal({ lead, onClose }: ModalProps) {
     if (contact) fields.contactPerson = contact;
     const decision = valueFor(CONVERSION_FIELDS.find((f) => f.key === "decisionMaker")!);
     if (decision) fields.decisionMaker = decision;
-    void doConvert({ reasonCode: reason, fields });
+    /* Written only where the lead had none — an existing number is never replaced. */
+    if (!lead.gstin && gstin.trim()) fields.gstin = gstin.trim();
+    void doConvert({ reasonCode: reason || undefined, fields });
   };
 
   const reasons = showAll ? refs.prospectReasons : refs.prospectReasons.slice(0, 5);
@@ -340,9 +345,17 @@ function ConvertModal({ lead, onClose }: ModalProps) {
           );
         })}
 
+        <Field label="GST number" className="mb-3.5">
+          {lead.gstin ? (
+            <div className="mt-1 text-[13px] text-ink">{lead.gstin} <span className="text-muted">· on the record</span></div>
+          ) : (
+            <Input value={gstin} onChange={(e) => setGstin(e.target.value)} placeholder="Needed for a Prospect" maxLength={20} />
+          )}
+        </Field>
+
         <Callout tone="brand">Next action is set once converted: a Manager verification call, on your list.</Callout>
 
-        <Field label="Conversion reason">
+        <Field label="Conversion reason (optional)">
           <div className="mt-1.5 flex flex-col gap-1.5">
             {reasons.map((r) => (
               <RadioCard key={r.code} name="pr" label={r.label} checked={reason === r.code} onChange={() => setReason(r.code)} />

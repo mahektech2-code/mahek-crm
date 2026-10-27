@@ -37,6 +37,8 @@ export type Condition = {
   says: string;
   /** Which of §11's five groups it belongs to. Absent on customer conditions. */
   group?: "legal" | "capability" | "commercial" | "territory" | "commitment";
+  /** Asked and editable, but never blocks the rung it belongs to when blank. */
+  optional?: boolean;
 };
 
 /**
@@ -57,9 +59,10 @@ export const PROSPECT_CONDITIONS: readonly Condition[] = [
   { id: "monthly_litres", says: "How many litres a month do they use?" },
   { id: "competitor", says: "Which brand are they using now?" },
   { id: "required_product", says: "Which of our products do they need?" },
-  { id: "contact_person", says: "Who should we ask for when we call?" },
+  { id: "gstin", says: "What is their GST number?" },
+  { id: "contact_person", says: "Who should we ask for when we call?", optional: true },
   { id: "next_action", says: "What happens next, and when?" },
-  { id: "prospect_reason", says: "Say why this lead is worth following up" },
+  { id: "prospect_reason", says: "Say why this lead is worth following up", optional: true },
 ] as const;
 
 /**
@@ -457,12 +460,15 @@ function conditionsToEnter(to: LeadStage, i: LeadGateInput): Condition[] {
     /* ------------------------------------------------------------ §5 §6 */
     case "prospect": {
       out.push(
-        ...missingFrom(PROSPECT_CONDITIONS, (c) => {
+        /* OPTIONAL conditions (who to ask for, why it is worth following up) are
+           drawn and editable everywhere but never block a Prospect. */
+        ...missingFrom(PROSPECT_CONDITIONS.filter((c) => !c.optional), (c) => {
           switch (c.id) {
             case "customer_type": return has(i.customerType);
             case "monthly_litres": return has(i.monthlyLitres);
             case "competitor": return has(i.competitor);
             case "required_product": return has(i.requiredProductId);
+            case "gstin": return has(i.gstin);
             case "contact_person": return has(i.contactPerson);
             case "next_action": return nextActionMet(i);
             case "prospect_reason": return Boolean(i.prospectReasonRecorded);

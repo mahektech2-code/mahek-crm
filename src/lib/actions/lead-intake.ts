@@ -153,6 +153,8 @@ const captureSchema = z.object({
 
   name: z.string().trim().min(2, "The shop needs a name.").max(200),
   companyName: z.string().trim().max(200).optional(),
+  /** OPTIONAL here (a call often has none yet); the Prospect gate is where it becomes required. The one `customers.gstin` column, and the same 20-character limit `saveProspectFields` keeps. */
+  gstin: z.string().trim().max(20, "A GST number is at most 20 characters.").optional(),
   contactPerson: z.string().trim().max(120).optional(),
   /** The customer's own address, where they gave one. Optional: a phone call often has none. */
   email: z.string().trim().max(200).email("That is not an email address.").optional().or(z.literal("")),
@@ -569,6 +571,7 @@ export async function captureLead(
         id: customerId,
         name: v.name,
         companyName: v.companyName || null,
+        gstin: v.gstin || null,
         contactPerson: v.contactPerson || null,
         email: v.email || null,
         phone: v.phone,

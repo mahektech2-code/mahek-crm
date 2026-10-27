@@ -451,11 +451,14 @@ export function buildReviewRows(src: ReviewSource, ctx: ReviewContext): ReviewRo
     monthly_litres: "monthlyLitres",
     competitor: "competitor",
     required_product: "requiredProductId",
+    gstin: "gstin",
     contact_person: "contactPerson",
   };
   for (const c of PROSPECT_CONDITIONS) {
     const answered = !src.unmetProspect.has(c.id);
-    const head = { key: `prospect:${c.id}`, section: "prospect" as const, id: c.id, label: c.says, answered, required: true };
+    /* Optional conditions (who to ask for, why it is worth following up) are drawn and
+       editable like the rest, but are not "required" and never read as a blocker. */
+    const head = { key: `prospect:${c.id}`, section: "prospect" as const, id: c.id, label: c.says, answered, required: !c.optional };
     if (c.id === "next_action") {
       const text = src.nextAction?.trim();
       rows.push({

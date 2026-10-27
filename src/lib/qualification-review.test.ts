@@ -93,10 +93,22 @@ describe("every CURRENT question is on the review", () => {
   test("all eight Qualification questions", () => {
     assert.deepEqual(rows.filter((r) => r.section === "qualification").map((r) => r.id), QUALIFICATION_CONDITIONS.map((c) => c.id));
   });
-  test("the counts are the current ones: 11, 7 and 8", () => {
+  test("the counts are the current ones: 11, 8 (GST number added) and 8", () => {
     assert.equal(DESK_FIELDS.length, 11);
-    assert.equal(PROSPECT_CONDITIONS.length, 7);
+    assert.equal(PROSPECT_CONDITIONS.length, 8);
     assert.equal(QUALIFICATION_CONDITIONS.length, 8);
+  });
+  test("the two optional Prospect questions are drawn, but are not 'required'", () => {
+    const rows = buildReviewRows(EMPTY, READER);
+    for (const id of ["contact_person", "prospect_reason"]) assert.equal(rows.find((r) => r.key === `prospect:${id}`)!.required, false, id);
+    for (const id of ["gstin", "customer_type", "monthly_litres", "competitor", "required_product", "next_action"]) {
+      assert.equal(rows.find((r) => r.key === `prospect:${id}`)!.required, true, id);
+    }
+  });
+  test("the Prospect GST question is the same stored answer as the Suspect one", () => {
+    const f = fieldOf(buildReviewRows(FULL, APPROVER), "prospect:gstin", "gstin");
+    assert.equal(f.editKey, null);
+    assert.ok(f.sameAs);
   });
   test("labels are the existing definitions, not a second wording", () => {
     for (const f of DESK_FIELDS) assert.equal(rows.find((r) => r.key === `suspect:${f.key}`)?.label, f.label);
@@ -151,7 +163,7 @@ describe("answered is the GATE's verdict, and missing answers are flagged", () =
   });
   test("a blank lead shows every required answer as missing", () => {
     const t = reviewTally(buildReviewRows(EMPTY, APPROVER));
-    assert.ok(t.missingRequired >= PROSPECT_CONDITIONS.length + QUALIFICATION_CONDITIONS.length);
+    assert.ok(t.missingRequired >= PROSPECT_CONDITIONS.filter((c) => !c.optional).length + QUALIFICATION_CONDITIONS.length);
   });
 });
 

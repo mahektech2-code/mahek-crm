@@ -68,7 +68,7 @@ async function bareLead(over: Partial<typeof customers.$inferInsert> = {}) {
   return row;
 }
 
-/** All seven, as the dialog would send them for a lead that has none on the record. */
+/** Every answer (the two optional ones included), as the dialog would send them for a lead that has none on the record. */
 const full = (customerId: string): Parameters<typeof convertLeadToProspect>[0] => ({
   customerId,
   reasonCode: "regular_requirement",
@@ -77,6 +77,7 @@ const full = (customerId: string): Parameters<typeof convertLeadToProspect>[0] =
   competitor: "Ashoka",
   requiredProductId: productId,
   contactPerson: "Mr Shashi Gupta",
+  gstin: "27ABCDE1234F1Z5",
   nextAction: "Call back with the price list",
   nextActionDate: FUTURE,
 });
@@ -121,8 +122,8 @@ after(async () => {
   await db.$client.end();
 });
 
-describe("all seven valid", () => {
-  test("a lead with nothing on the record converts when the request carries all seven", async () => {
+describe("all valid", () => {
+  test("a lead with nothing on the record converts when the request carries every answer", async () => {
     const lead = await bareLead();
     const r = await convertLeadToProspect(full(lead.id));
     assert.equal(r.ok, true, r.ok ? "" : r.error);
@@ -155,10 +156,9 @@ describe("any one answer missing blocks, and nothing is written", () => {
     ["monthly litres", ["monthlyLitres"], /litres/i],
     ["competitor", ["competitor"], /brand/i],
     ["product", ["requiredProductId"], /product/i],
-    ["contact person", ["contactPerson"], /ask for/i],
+    ["GST number", ["gstin"], /gst/i],
     ["next action", ["nextAction", "nextActionDate"], /next/i],
     ["next action day only", ["nextActionDate"], /when|date|day/i],
-    ["reason", ["reasonCode"], /reason|worth/i],
   ];
   for (const [name, keys, message] of drop) {
     test(name, async () => {
@@ -177,7 +177,7 @@ describe("any one answer missing blocks, and nothing is written", () => {
     const r = await convertLeadToProspect({ customerId: lead.id, reasonCode: "regular_requirement" });
     assert.equal(r.ok, false);
     const fields = new Set((!r.ok ? (r.fieldErrors ?? []) : []).map((f) => f.field));
-    for (const f of ["customerType", "monthlyLitres", "competitor", "requiredProductId", "contactPerson", "nextAction", "nextActionDate"]) {
+    for (const f of ["customerType", "monthlyLitres", "competitor", "requiredProductId", "gstin", "nextAction", "nextActionDate"]) {
       assert.ok(fields.has(f), `${f} is named`);
     }
     await assertUntouched(lead.id);
@@ -187,7 +187,7 @@ describe("any one answer missing blocks, and nothing is written", () => {
 describe("blank and invalid answers block", () => {
   const bad: Array<[string, Record<string, unknown>]> = [
     ["whitespace competitor", { competitor: "     " }],
-    ["whitespace contact person", { contactPerson: "   " }],
+    ["a GST number past the 20-character limit", { gstin: "x".repeat(21) }],
     ["whitespace next action", { nextAction: "   " }],
     ["one-letter competitor", { competitor: "x" }],
     ["a contact person that is only digits", { contactPerson: "9820011234" }],
@@ -228,6 +228,7 @@ describe("what the record already holds counts, and is not overwritten", () => {
     const lead = await bareLead({
       customerType: "manufacturer",
       contactPerson: "Ganesh",
+      gstin: "27ABCDE1234F1Z5",
       leadMonthlyVolumeLitres: 200,
       leadCompetitor: "Local thinner",
       leadRequiredProductId: productId,
@@ -249,10 +250,11 @@ describe("what the record already holds counts, and is not overwritten", () => {
     assert.equal(after.contactPerson, "Ganesh");
   });
 
-  test("a record with all valid answers still needs the reason", async () => {
+  test("a record with all valid answers needs nothing more — the reason is optional", async () => {
     const lead = await bareLead({
       customerType: "manufacturer",
       contactPerson: "Ganesh",
+      gstin: "27ABCDE1234F1Z5",
       leadMonthlyVolumeLitres: 200,
       leadCompetitor: "Local thinner",
       leadRequiredProductId: productId,
@@ -261,7 +263,69 @@ describe("what the record already holds counts, and is not overwritten", () => {
       leadNextActionOwnerId: desk.id,
     });
     const r = await convertLeadToProspect({ customerId: lead.id, reasonCode: "" } as never);
-    assert.equal(r.ok, false);
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.equal((await row(lead.id)).leadStage, "prospect");
+  });
+
+  test("an existing GST number is never overwritten by one the dialog supplies", async () => {
+    const lead = await bareLead({
+      customerType: "manufacturer",
+      contactPerson: "Ganesh",
+      gstin: "27ABCDE1234F1Z5",
+      leadMonthlyVolumeLitres: 200,
+      leadCompetitor: "Local thinner",
+      leadRequiredProductId: productId,
+      leadNextAction: "Call 2",
+      leadNextActionDate: FUTURE,
+      leadNextActionOwnerId: desk.id,
+    });
+    const r = await convertLeadToProspect({ customerId: lead.id, reasonCode: "regular_requirement", gstin: "29ZZZZZ9999Z1Z1" });
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.equal((await row(lead.id)).gstin, "27ABCDE1234F1Z5");
+  });
+});
+
+describe("who to ask for and why it is worth following up are OPTIONAL — and the GST number is not", () => {
+  test("a request with neither converts; the contact stays empty and no reason is recorded", async () => {
+    const lead = await bareLead();
+    const payload = { ...full(lead.id) } as Record<string, unknown>;
+    delete payload.contactPerson;
+    delete payload.reasonCode;
+    const r = await convertLeadToProspect(payload as never);
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    const after = await row(lead.id);
+    assert.equal(after.leadStage, "prospect");
+    assert.equal(after.contactPerson, null);
+    assert.equal((await moves(lead.id))[0]!.reasonCode, null);
+  });
+
+  test("blank strings for both convert too", async () => {
+    const lead = await bareLead();
+    const r = await convertLeadToProspect({ ...full(lead.id), contactPerson: "", reasonCode: "" } as never);
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+  });
+
+  test("a GIVEN reason must still be a listed one, and a given contact a real name", async () => {
+    const a = await bareLead();
+    assert.equal((await convertLeadToProspect({ ...full(a.id), reasonCode: "because" } as never)).ok, false);
+    const b = await bareLead();
+    assert.equal((await convertLeadToProspect({ ...full(b.id), contactPerson: "9820011234" } as never)).ok, false);
+  });
+
+  test("the GST number is written onto the one column when the record had none", async () => {
+    const lead = await bareLead();
+    assert.equal(lead.gstin ?? null, null);
+    const r = await convertLeadToProspect(full(lead.id));
+    assert.equal(r.ok, true, r.ok ? "" : r.error);
+    assert.equal((await row(lead.id)).gstin, "27ABCDE1234F1Z5");
+  });
+
+  test("without a GST number the Suspect cannot be a Prospect, by any door", async () => {
+    const lead = await bareLead({ customerType: "retailer", contactPerson: "Ganesh", leadMonthlyVolumeLitres: 200, leadCompetitor: "Local thinner", leadRequiredProductId: productId, leadNextAction: "Call 2", leadNextActionDate: FUTURE, leadNextActionOwnerId: desk.id });
+    const viaDesk = await convertLeadToProspect({ customerId: lead.id, reasonCode: "regular_requirement" });
+    assert.equal(viaDesk.ok, false);
+    const viaMove = await advanceLeadStage({ customerId: lead.id, to: "prospect", reasonCode: "regular_requirement" });
+    assert.equal(viaMove.ok, false);
     assert.equal((await row(lead.id)).leadStage, "suspect");
   });
 });
@@ -311,6 +375,7 @@ describe("no other door gets round it", () => {
     const lead = await bareLead({
       customerType: "retailer",
       contactPerson: "Ganesh",
+      gstin: "27ABCDE1234F1Z5",
       leadMonthlyVolumeLitres: 300,
       leadCompetitor: "Ashoka",
       leadRequiredProductId: productId,
@@ -327,6 +392,7 @@ describe("no other door gets round it", () => {
     const lead = await bareLead({
       customerType: "retailer",
       contactPerson: "Ganesh",
+      gstin: "27ABCDE1234F1Z5",
       leadMonthlyVolumeLitres: 0,
       leadCompetitor: "Ashoka",
       leadRequiredProductId: productId,
@@ -358,6 +424,7 @@ describe("no other door gets round it", () => {
     const lead = await bareLead({
       customerType: "retailer",
       contactPerson: "Ganesh",
+      gstin: "27ABCDE1234F1Z5",
       leadMonthlyVolumeLitres: 300,
       leadCompetitor: "Ashoka",
       leadRequiredProductId: productId,

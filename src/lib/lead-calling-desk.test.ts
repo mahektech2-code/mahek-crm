@@ -125,8 +125,9 @@ const ask = (customerId: string, extra: Partial<Parameters<typeof requestProspec
     customerId,
     reasonCode: "regular_requirement",
     customerType: "manufacturer",
+    gstin: "27ABCDE1234F1Z5",
     note: "Wants a trial first.",
-    /* The seventh answer: a Prospect is never made without a next step. */
+    /* A Prospect is never made without a next step, or a GST number. */
     nextAction: "Call back with the price list",
     nextActionDate: tomorrow,
     ...extra,
@@ -137,6 +138,7 @@ const convert = (customerId: string, extra: Partial<Parameters<typeof convertLea
     customerId,
     reasonCode: "regular_requirement",
     customerType: "manufacturer",
+    gstin: "27ABCDE1234F1Z5",
     note: "Wants a trial first.",
     nextAction: "Call back with the price list",
     nextActionDate: tomorrow,
@@ -731,6 +733,7 @@ describe("Test X — Convert to Prospect: the calling desk's own direct promotio
       customerId: lead.id,
       reasonCode: "regular_requirement",
       customerType: "manufacturer",
+      gstin: "27ABCDE1234F1Z5",
     });
     assert.equal(r.ok, true, r.ok ? "" : r.error);
     assert.equal(r.ok && r.data.promoted, false, "nothing was converted directly");
