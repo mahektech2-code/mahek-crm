@@ -203,7 +203,7 @@ export function ListScreen({
   const router = useRouter();
   const path = usePathname();
   const params = useSearchParams();
-  const [local, setLocal] = useState<ListQuery>({ q: "", chip: "", gf: "", grp: true, sort: null, page: 1, size: 25, ids: filter?.ids ?? null, pd: "", parts: false });
+  const [local, setLocal] = useState<ListQuery>({ q: "", chip: "", gf: "", grp: true, sort: null, page: 1, size: 25, ids: filter?.ids ?? null, pd: "", parts: false, fx: {} });
   /* While the server cuts the next page the current one stays, dimmed — never a blank table between two pages. */
   const [pending, startTransition] = useTransition();
   /* The search box answers as it is typed; the server is asked once the typing pauses. */
@@ -379,9 +379,9 @@ export function ListScreen({
   };
   const clearAll = () => {
     setQInput("");
-    if (server) go({ ...server.query, q: "", chip: "", gf: "", page: 1, ids: null }, (p) => (p.delete("f"), p.delete("fl")));
+    if (server) go({ ...server.query, q: "", chip: "", gf: "", fx: {}, page: 1, ids: null }, (p) => (p.delete("f"), p.delete("fl")));
     else {
-      setLocal((l) => ({ ...l, q: "", chip: "", gf: "", page: 1 }));
+      setLocal((l) => ({ ...l, q: "", chip: "", gf: "", fx: {}, page: 1 }));
       if (filter) router.replace(home);
     }
   };
@@ -390,7 +390,13 @@ export function ListScreen({
   const [emptyTitle, emptyBody] = splitFirstSentence(spec.noDataLine ?? "Nothing here yet.");
   /* A register read through a window: the period picker, and what to say when the period is empty or too long. */
   const win = server?.window ?? null;
-  const noMatchBits = [q ? `“${q}”` : "", chip, filter ? filter.label.toLowerCase() : "", gf].filter(Boolean).join(" · ");
+  const noMatchBits = [q ? `“${q}”` : "", chip, filter ? filter.label.toLowerCase() : "", gf, ...Object.values(query.fx)].filter(Boolean).join(" · ");
+  const pickFx = (k: string, v: string) => {
+    const fx = { ...query.fx };
+    if (v) fx[k] = v;
+    else delete fx[k];
+    setQuery({ fx, page: 1 });
+  };
   const pickChip = (v: string) => setQuery({ chip: v, page: 1 });
 
   const sortBy = (k: string) => {
@@ -480,6 +486,24 @@ export function ListScreen({
               ))}
             </Select>
           ) : null}
+          {(lp.facets ?? []).map((f) =>
+            f.opts.length > 1 || query.fx[f.k] ? (
+              <Select
+                key={f.k}
+                value={query.fx[f.k] ?? ""}
+                onChange={(e) => pickFx(f.k, e.target.value)}
+                aria-label={`Filter by ${lowerFirst(f.l)}`}
+                className={cx("max-w-[220px] cursor-pointer", query.fx[f.k] && "border-brand bg-brand-soft text-brand-hover")}
+              >
+                <option value="">All {lowerFirst(f.l)}</option>
+                {f.opts.map((o) => (
+                  <option key={o.v} value={o.v}>
+                    {o.v} · {nf(o.n)}
+                  </option>
+                ))}
+              </Select>
+            ) : null,
+          )}
           {spec.godownKey ? (
             <GodownPicker
               value={gf}

@@ -39,15 +39,29 @@ export type ListQuery = {
   pd: string;
   /** A folding list (`ListSpec.fold`) read part by part — every lot its own row — instead of as totals. */
   parts: boolean;
+  /** The column filters (`ListSpec.filters`): column key → the value it must show, as the list draws it. */
+  fx: Record<string, string>;
 };
 
 export const PAGE_SIZES = [25, 50, 100] as const;
 
 /** The query keys a list owns in the URL, beside the page's own (`view`, `open`, `f`, `fl`, `new`). */
-export const LIST_QUERY_KEYS = ["q", "chip", "gf", "grp", "sort", "page", "size", "pd", "parts"] as const;
+export const LIST_QUERY_KEYS = ["q", "chip", "gf", "grp", "sort", "page", "size", "pd", "parts", "fx"] as const;
 
 type Raw = Record<string, string | string[] | undefined>;
 const one = (raw: Raw, k: string) => (typeof raw[k] === "string" ? (raw[k] as string) : "");
+
+/** The column filters as they travel: a JSON object of strings. Anything else is no filter, never an error page. */
+function parseFx(s: string): Record<string, string> {
+  if (!s) return {};
+  try {
+    const o: unknown = JSON.parse(s);
+    if (!o || typeof o !== "object" || Array.isArray(o)) return {};
+    return Object.fromEntries(Object.entries(o).filter((e): e is [string, string] => typeof e[1] === "string" && e[1] !== ""));
+  } catch {
+    return {};
+  }
+}
 
 export function parseListQuery(raw: Raw): ListQuery {
   const s = /^(.+)\.(a|d)$/.exec(one(raw, "sort"));
@@ -65,6 +79,7 @@ export function parseListQuery(raw: Raw): ListQuery {
     ids: f ? f.split(",") : null,
     pd: validPeriod(one(raw, "pd")) ? one(raw, "pd") : "",
     parts: one(raw, "parts") === "1",
+    fx: parseFx(one(raw, "fx")),
   };
 }
 
@@ -80,6 +95,8 @@ export function listQueryParams(q: ListQuery): Record<string, string> {
   if (q.size !== 25) out.size = String(q.size);
   if (q.pd) out.pd = q.pd;
   if (q.parts) out.parts = "1";
+  const fx = Object.keys(q.fx).sort().filter((k) => q.fx[k]);
+  if (fx.length) out.fx = JSON.stringify(Object.fromEntries(fx.map((k) => [k, q.fx[k]])));
   return out;
 }
 
@@ -104,6 +121,8 @@ export type ListPage = {
   /** Rows before the chip is applied: the "All" tab's count. */
   beforeChip: number;
   chips: { v: string; n: number }[];
+  /** Each column filter's choices, counted over the rows every OTHER filter leaves. */
+  facets: Facet[];
   sort: ListSort | null;
   /** The group label of each row on the page, by id. */
   groupOf: Record<string, string>;
@@ -119,6 +138,8 @@ export type ListPage = {
    */
   window?: { pd: string; label: string; dateLabel: string; tooWide: { n: number; cap: number } | null };
 };
+
+export type Facet = { k: string; l: string; opts: { v: string; n: number }[] };
 
 export function colOf(cols: ColSpec[], k: string): ColSpec {
   return (
@@ -158,13 +179,23 @@ export function subMatches(cols: ColSpec[], r: ListRow, q: string, flagWords: Re
   return !!ql && (r.sub ?? []).some((x) => rowWords(cols, x, flagWords).includes(ql));
 }
 
+/** The column filters a spec offers, among the columns it actually draws (a column withheld by a power is not filterable). */
+function filterCols(spec: Pick<ListSpec, "cols" | "filters">): ColSpec[] {
+  return (spec.filters ?? []).flatMap((k) => spec.cols.filter((c) => c.k === k));
+}
+
+/** Rows whose column `c` shows `v` — matched on the words the list draws, so the choice and the cell cannot disagree. */
+function byFilter(rows: ListRow[], c: ColSpec, v: string): ListRow[] {
+  return rows.filter((r) => cellText(c, r.v[c.k]) === v);
+}
+
 /** The rows the filters, chip and search leave, sorted and grouped — every page of them. */
 export function queryRows(
-  spec: Pick<ListSpec, "cols" | "chips" | "godownKey" | "sortDefault" | "groups" | "fold">,
+  spec: Pick<ListSpec, "cols" | "chips" | "godownKey" | "sortDefault" | "groups" | "fold" | "filters">,
   rows: ListRow[],
   query: ListQuery,
   flagWords: Record<string, [string, Tone]>,
-): { list: ListRow[]; beforeChip: ListRow[]; sort: ListSort | null; gk: string[] | null; gOf: (r: ListRow) => string; by: Map<string, ListRow[]> | null } {
+): { list: ListRow[]; beforeFx: ListRow[]; beforeChip: ListRow[]; sort: ListSort | null; gk: string[] | null; gOf: (r: ListRow) => string; by: Map<string, ListRow[]> | null } {
   const cols = spec.cols;
   let all = unfold(spec, rows, query);
   if (query.ids) {
@@ -173,6 +204,8 @@ export function queryRows(
     all = all.filter((r) => ids.has(r.id) || (r.sub ?? []).some((x) => ids.has(x.id)));
   }
   if (spec.godownKey && query.gf) all = all.filter((r) => String(r.v[spec.godownKey!] ?? "") === query.gf);
+  const beforeFx = all;
+  for (const c of filterCols(spec)) if (query.fx[c.k]) all = byFilter(all, c, query.fx[c.k]);
   const beforeChip = all;
   if (spec.chips && query.chip) all = all.filter((r) => String(r.v[spec.chips!] ?? "") === query.chip);
   const ql = query.q.trim().toLowerCase();
@@ -188,7 +221,7 @@ export function queryRows(
   }
   const gk = spec.groups && query.grp ? spec.groups : null;
   const gOf = (r: ListRow) => (gk ?? []).map((k) => cellText(colOf(cols, k), r.v[k])).join(" · ");
-  if (!gk) return { list: all, beforeChip, sort, gk, gOf, by: null };
+  if (!gk) return { list: all, beforeFx, beforeChip, sort, gk, gOf, by: null };
   /* Each group contiguous, in the order its first row appears. Pushed onto
      its own array — spreading a fresh copy per row was quadratic, and on a
      group of eight thousand that is the whole page load. */
@@ -199,7 +232,7 @@ export function queryRows(
     if (at) at.push(r);
     else by.set(g, [r]);
   }
-  return { list: Array.from(by.values()).flat(), beforeChip, sort, gk, gOf, by };
+  return { list: Array.from(by.values()).flat(), beforeFx, beforeChip, sort, gk, gOf, by };
 }
 
 /** The status-value chips over the rows before a chip is picked. */
@@ -211,6 +244,28 @@ export function chipCounts(spec: Pick<ListSpec, "chips">, rows: ListRow[]): { v:
     if (v) n.set(v, (n.get(v) ?? 0) + 1);
   }
   return Array.from(n, ([v, c]) => ({ v, n: c }));
+}
+
+/**
+ * Each column filter's choices. A filter's counts are taken over the rows the
+ * OTHER filters leave, so picking a product narrows the QC choices to that
+ * product's — and a choice still picked is offered even where nothing now has
+ * it, or the select would silently show "All" while the list is filtered.
+ */
+export function facetCounts(spec: Pick<ListSpec, "cols" | "filters">, rows: ListRow[], fx: Record<string, string>): Facet[] {
+  const cs = filterCols(spec);
+  return cs.map((c) => {
+    let rs = rows;
+    for (const o of cs) if (o.k !== c.k && fx[o.k]) rs = byFilter(rs, o, fx[o.k]);
+    const n = new Map<string, number>();
+    for (const r of rs) {
+      const v = cellText(c, r.v[c.k]);
+      if (v && v !== "—") n.set(v, (n.get(v) ?? 0) + 1);
+    }
+    if (fx[c.k] && !n.has(fx[c.k])) n.set(fx[c.k], 0);
+    const opts = Array.from(n, ([v, x]) => ({ v, n: x })).sort((a, b) => a.v.localeCompare(b.v, undefined, { numeric: true }));
+    return { k: c.k, l: c.l, opts };
+  });
 }
 
 export function badgeWidths(cols: ColSpec[], rows: ListRow[], flagWords: Record<string, [string, Tone]>): Record<string, number> {
@@ -270,6 +325,7 @@ export function pageOf(spec: ListSpec, rows: ListRow[], query: ListQuery, flagWo
     page,
     beforeChip: r.beforeChip.length,
     chips: chipCounts(spec, r.beforeChip),
+    facets: facetCounts(spec, r.beforeFx, query.fx),
     sort: r.sort,
     groupOf,
     groups,
