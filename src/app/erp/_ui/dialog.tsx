@@ -162,7 +162,7 @@ export function StepBar({
   onChange: (i: number) => void;
 }) {
   return (
-    <ol className="flex flex-none items-center gap-1 overflow-x-auto border-b border-line px-5 py-2.5">
+    <ol className="flex flex-none items-center gap-1.5 overflow-x-auto border-b border-line px-5 py-2.5">
       {steps.map((s, i) => {
         const on = i === active;
         const done = i < active;
@@ -170,21 +170,20 @@ export function StepBar({
         const bad = errored?.has(i);
         return (
           <li key={`${s}:${i}`} className="flex flex-none items-center gap-1">
-            {i > 0 ? <span className={cx("h-px w-5", i <= reached ? "bg-brand" : "bg-line")} /> : null}
             <button
               type="button"
               disabled={!can}
               onClick={() => can && onChange(i)}
               className={cx(
-                "flex h-8 items-center gap-2 rounded-full pr-3 pl-1 text-meta whitespace-nowrap",
+                "flex h-8 items-center gap-2 rounded-lg pr-3 pl-1.5 text-meta whitespace-nowrap",
                 can ? "cursor-pointer hover:bg-canvas" : "cursor-default",
-                on ? "font-semibold text-ink" : done ? "text-body" : "text-muted",
+                on ? "bg-brand-soft font-semibold text-brand-hover" : "font-medium text-body",
               )}
             >
               <span
                 className={cx(
-                  "flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold tabular-nums",
-                  bad ? "bg-danger text-white" : on ? "bg-brand text-white" : done ? "bg-brand-soft text-brand-hover" : "bg-divider text-muted",
+                  "flex h-5.5 w-5.5 items-center justify-center rounded-full text-xs font-semibold tabular-nums",
+                  bad ? "bg-danger text-white" : on || done ? "bg-brand text-white" : "bg-divider text-muted",
                 )}
               >
                 {bad ? "!" : done ? "✓" : i + 1}

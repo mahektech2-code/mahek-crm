@@ -446,3 +446,21 @@
     gap: 6px;
   }
 }
+
+/* The bell's unread count is the brand purple in v4, not red. */
+:root:has([data-erp-v4]) [data-erp-header] button[aria-label^="Notifications"] > span.bg-danger {
+  background: var(--color-brand);
+  color: #ffffff;
+  font-weight: 700;
+}
+
+/* The pop-out of a railed sidebar group: its rows sit flush, no hairline. */
+:root:has([data-erp-v4]) [role="menu"] [data-nav-row="nested"] {
+  padding-left: 10px;
+}
+
+/* The bar that rises when rows are ticked: navy, 9px corners. */
+:root:has([data-erp-v4]) .fixed.bottom-6.bg-ink {
+  border-radius: 9px;
+  box-shadow: 0 12px 32px rgba(15, 27, 51, 0.3);
+}

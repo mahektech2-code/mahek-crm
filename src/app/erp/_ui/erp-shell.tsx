@@ -230,6 +230,11 @@ export function ErpShell({
                   href="/erp"
                   label="MAHEK ERP"
                   wordmark={false}
+                  toggleIcon={
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <path d="M4 5h16v14H4zM9 5v14" />
+                    </svg>
+                  }
                 />
               </div>
 
@@ -287,6 +292,7 @@ export function ErpShell({
                    open alert is something the ERP could not explain. */
                 badgeToneFor={(item) => (item.href === erpLink("alerts") ? "danger" : "warn")}
                 showSizes={false}
+                flyout
               />
               {/* The account is in the header, top right; a second copy of it
                   here was the same name, the same menu, twice on one screen. */}
@@ -548,10 +554,10 @@ function WorkingAt({
     );
   }
   return (
-    <div data-working-at className="flex h-9 items-center gap-1.5 rounded-lg border border-brand-softer pr-1 pl-2.5">
-      <span className="hidden text-2xs whitespace-nowrap text-muted xl:inline">Working at</span>
+    <div data-working-at className="flex h-9 items-center gap-1 rounded-lg border border-brand-softer pr-1 pl-1">
       <GodownPicker
         look="chip"
+        caption="Working at"
         value={working?.id ?? ""}
         label={working?.name ?? "Choose one"}
         items={godowns.map((g) => ({ v: g.id, l: g.name }))}

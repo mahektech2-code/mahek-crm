@@ -30,6 +30,7 @@ export function HeaderLead({
   href,
   label,
   wordmark = true,
+  toggleIcon,
 }: {
   /** Every web app this person opens — what the switcher lists. */
   apps: AppDefinition[];
@@ -43,6 +44,8 @@ export function HeaderLead({
   label: string;
   /** False where the wordmark is drawn elsewhere — the ERP carries it atop its sidebar. */
   wordmark?: boolean;
+  /** The sidebar toggle's glyph, where an app draws its own (the ERP's panel icon). */
+  toggleIcon?: React.ReactNode;
 }) {
   return (
     <div className="flex flex-none items-center gap-2">
@@ -55,7 +58,7 @@ export function HeaderLead({
         aria-expanded={!collapsed}
         className="flex h-7 w-7 flex-none cursor-pointer items-center justify-center rounded-[4px] text-muted hover:bg-canvas hover:text-body"
       >
-        <Icon name="menu" size={18} />
+        {toggleIcon ?? <Icon name="menu" size={18} />}
       </button>
       {wordmark ? (
       <Link href={href} className="flex min-w-0 items-center gap-2 no-underline hover:no-underline">

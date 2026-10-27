@@ -301,12 +301,13 @@ const videos: ScreenModule = {
           : undefined,
         newLabel: "Add video",
         noDataLine: "No help videos yet.",
+        cards: { img: "thumb", title: "title", lines: ["tags", "description"], empty: "", play: true, toggle: true },
       },
       rows: rows.map((r) => {
         const yt = r.v.youtubeUrl ? youtubeId(r.v.youtubeUrl) : null;
         return {
           id: r.v.id,
-          v: { title: r.v.title, tags: r.v.tags.join(", "), description: r.v.description, source: r.v.source === "youtube" ? "YouTube" : "File" },
+          v: { title: r.v.title, tags: r.v.tags.join(", "), description: r.v.description, source: r.v.source === "youtube" ? "YouTube" : "File", thumb: "" },
           flags: [],
           title: r.v.title,
           header: r.v.tags.join(" · "),

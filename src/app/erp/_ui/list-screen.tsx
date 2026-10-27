@@ -48,6 +48,8 @@ import { CardGrid } from "@/components/ui/card-grid";
 
 /** More status values than this and they are a dropdown, not a row of tabs. */
 const MAX_TABS = 7;
+/** v4: up to six chips are figure cards; the seventh turns them into a row of round chips. */
+const MAX_STATS = 6;
 
 /** A tab of a screen with several lists (`views` in the registry): a link, because each tab is its own server read. */
 export type ListTab = {
@@ -210,6 +212,160 @@ export function StatCards({
   );
 }
 
+/** v4: a list's chips as round pills — navy when picked, the count beside each. */
+function ChipRow({ total, chips, value, onPick }: { total: number; chips: { v: string; n: number }[]; value: string; onPick: (v: string) => void }) {
+  return (
+    <div className="mb-3 flex flex-wrap gap-1.5">
+      {[{ v: "", n: total, l: "All" }, ...chips.map((c) => ({ ...c, l: c.v }))].map((c) => {
+        const on = c.v === value;
+        return (
+          <button
+            key={c.v || "all"}
+            type="button"
+            aria-pressed={on}
+            onClick={() => onPick(c.v)}
+            className={cx(
+              "flex h-7.5 cursor-pointer items-center gap-1.5 rounded-full border px-3 text-meta",
+              on ? "border-ink bg-ink font-semibold text-white" : "border-line bg-surface font-medium text-body hover:border-line-strong",
+            )}
+          >
+            {c.l}
+            <span className="opacity-60 tabular-nums">{nf(c.n)}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+const EMPTY_TILE = {
+  brand: "bg-brand-soft text-brand",
+  warn: "bg-warn-soft text-warn-ink",
+  muted: "bg-divider text-muted",
+} as const;
+
+/** v4: the square tile over an empty list's sentence. */
+function EmptyTile({ icon, tone = "brand" }: { icon: string; tone?: keyof typeof EMPTY_TILE }) {
+  return (
+    <span className={cx("flex h-12 w-12 items-center justify-center rounded-[10px]", EMPTY_TILE[tone])}>
+      <Icon n={icon} s={22} />
+    </span>
+  );
+}
+
+/**
+ * v4: a message list drawn as a conversation — who wrote down the left, what
+ * they wrote in the middle, and the picked message's draft on the right with
+ * the same actions its record carries. Nothing here that the record does not.
+ */
+function ChatView({ chat, screen, rows, onOpen }: { chat: NonNullable<ListSpec["chat"]>; screen: string; rows: ListRow[]; onOpen: (id: string) => void }) {
+  const ui = useErpUi();
+  const who = (r: ListRow) => String(r.v[chat.who] ?? r.title ?? "—");
+  const people = [...new Set(rows.map(who))];
+  const [pick, setPick] = useState<{ who: string; id: string | null }>({ who: people[0] ?? "", id: null });
+  const current = people.includes(pick.who) ? pick.who : (people[0] ?? "");
+  const thread = rows.filter((r) => who(r) === current).slice().reverse();
+  const msg = thread.find((r) => r.id === pick.id) ?? thread[thread.length - 1];
+  const initials = (n: string) =>
+    n
+      .split(/\s+/)
+      .filter((w) => /^[A-Za-z]/.test(w))
+      .slice(0, 2)
+      .map((w) => w[0]!.toUpperCase())
+      .join("") || "?";
+  return (
+    <div className="grid h-[min(640px,72vh)] grid-cols-1 overflow-hidden md:grid-cols-[minmax(220px,290px)_minmax(0,1fr)] xl:grid-cols-[290px_minmax(0,1fr)_300px]">
+      <div className="overflow-y-auto border-r border-divider">
+        {people.map((p) => {
+          const mine = rows.filter((r) => who(r) === p);
+          const waiting = mine.filter((r) => r.flags.includes("requested")).length;
+          const last = mine[0];
+          return (
+            <button
+              key={p}
+              type="button"
+              onClick={() => setPick({ who: p, id: null })}
+              className={cx("flex w-full cursor-pointer items-start gap-3 border-b border-divider px-3.5 py-3 text-left", p === current ? "bg-page" : "hover:bg-page")}
+            >
+              <span className="flex h-9 w-9 flex-none items-center justify-center rounded-full bg-brand-soft text-xs font-bold text-brand-hover">{initials(p)}</span>
+              <span className="min-w-0 flex-1">
+                <span className="flex items-baseline justify-between gap-2">
+                  <span className="truncate text-sm font-semibold text-ink">{p}</span>
+                  <span className="flex-none text-xs text-faint">{last ? cellText({ k: chat.when, l: "", t: "d" }, last.v[chat.when]) : ""}</span>
+                </span>
+                <span className="mt-0.5 flex items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate text-meta text-muted">{last ? String(last.v[chat.text] ?? "") : ""}</span>
+                  {waiting ? <span className="flex h-4.5 min-w-4.5 flex-none items-center justify-center rounded-full bg-brand px-1 text-2xs font-bold text-white">{waiting}</span> : null}
+                </span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="flex min-h-0 flex-col">
+        <div className="border-b border-divider px-4.5 py-3">
+          <div className="truncate text-md font-semibold text-ink">{current}</div>
+          {msg?.header ? <div className="font-mono text-xs text-faint">{msg.header}</div> : null}
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col items-start gap-2.5 overflow-y-auto bg-page px-4.5 py-4">
+          {thread.map((r) => (
+            <button
+              key={r.id}
+              type="button"
+              onClick={() => setPick({ who: current, id: r.id })}
+              className={cx(
+                "max-w-[85%] cursor-pointer rounded-[10px] border bg-surface px-3.5 py-2.5 text-left",
+                r.id === msg?.id ? "border-brand ring-3 ring-brand-soft" : "border-line hover:border-line-strong",
+              )}
+            >
+              <span className="block text-sm whitespace-pre-wrap text-ink">{String(r.v[chat.text] ?? "")}</span>
+              <span className="mt-1 flex items-center justify-end gap-2 text-xs text-faint">
+                {String(r.v[chat.via] ?? "")} · {cellText({ k: chat.when, l: "", t: "d" }, r.v[chat.when])}
+                {r.v.status ? <StatusBadge value={r.v.status} /> : null}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="hidden min-h-0 flex-col border-l border-divider xl:flex">
+        <div className="border-b border-divider px-4.5 py-3 text-md font-semibold text-ink">Draft order</div>
+        {msg ? (
+          <>
+            <div className="flex items-center justify-between gap-2 border-b border-divider px-4.5 py-3">
+              <span className="truncate text-sm font-semibold text-ink">{msg.title ?? current}</span>
+              {msg.v.status ? <StatusBadge value={msg.v.status} /> : null}
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {(msg.fields ?? []).filter((f) => f.der).length ? (
+                (msg.fields ?? [])
+                  .filter((f) => f.der)
+                  .map((f) => (
+                    <div key={f.l} className="border-b border-divider px-4.5 py-2.5 text-meta">
+                      <span className="block font-semibold text-ink">{f.v.split(" — ")[0]}</span>
+                      {f.v.includes(" — ") ? <span className="block text-muted">{f.v.split(" — ").slice(1).join(" — ")}</span> : null}
+                    </div>
+                  ))
+              ) : (
+                <div className="px-4.5 py-4 text-meta text-muted">Nothing in this message was drafted as a line.</div>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2 border-t border-divider px-4.5 py-3">
+              <Button variant="secondary" onClick={() => onOpen(msg.id)}>
+                Open
+              </Button>
+              {(msg.actions ?? []).map((a) => (
+                <Button key={a.id} variant={a.primary ? "primary" : "secondary"} disabled={!!a.why} title={a.why || undefined} onClick={() => ui.act(screen, a, msg.id)} className={a.primary ? "flex-1" : undefined}>
+                  {a.l}
+                </Button>
+              ))}
+            </div>
+          </>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 const EDGE: Partial<Record<Tone, string>> = {
   danger: "shadow-[inset_3px_0_0_var(--color-danger)]",
   warn: "shadow-[inset_3px_0_0_var(--color-warn)]",
@@ -272,6 +428,9 @@ export function ListScreen({
   const ui = useErpUi();
   const { flags: FLAG, place, exportList, listIds, loadForm, tones, look } = useKit();
   const v4 = look === "v4";
+  const [asTable, setAsTable] = useState(false);
+  const showCards = !!spec.cards && !(spec.cards.toggle && asTable);
+  const showChat = v4 && !!spec.chat && !asTable;
   const router = useRouter();
   const path = usePathname();
   const params = useSearchParams();
@@ -365,7 +524,7 @@ export function ListScreen({
     const ro = new ResizeObserver(([e]) => setAvail(Math.floor(e.contentRect.width)));
     ro.observe(el);
     return () => ro.disconnect();
-  }, [spec.cards]);
+  }, [showCards]);
   const [chosenCols, setChosenCols] = useColumnChoice(`${path}|${spec.screen}`);
   /* A group key that is not a declared column still gets words, not its
      identifier: "monthLbl" reads "Month". */
@@ -476,6 +635,15 @@ export function ListScreen({
     setQuery({ sort: { k, d: on && view.srt!.d > 0 ? -1 : 1 } });
   };
 
+  /* v4: the record's stage bar runs over this list's own status values, in
+     the order the status vocabulary lists them — its lifecycle order. */
+  const toneOrder = Object.keys(tones);
+  const rank = (v: string) => {
+    const i = toneOrder.indexOf(v);
+    return i < 0 ? toneOrder.length : i;
+  };
+  const stages = spec.chips && chips.length >= 2 ? { key: spec.chips, values: chips.map((c) => c.v).sort((a, b) => rank(a) - rank(b)).slice(0, 7) } : undefined;
+
   const toolbar =
     lp.all > 0 || filter || win ? (
         <div className={cx("flex flex-wrap items-center gap-2.5", v4 ? "mb-3" : "border-b border-divider px-4 py-3")}>
@@ -551,8 +719,13 @@ export function ListScreen({
             <button
               onClick={() => setQuery({ grp: !query.grp, page: 1 })}
               aria-pressed={!!gk}
-              className={toolbarToggleClass(!!gk)}
+              className={v4 ? toolbarToggleClass(false) : toolbarToggleClass(!!gk)}
             >
+              {v4 ? (
+                <span aria-hidden className={cx("relative block h-[15px] w-6.5 flex-none rounded-full transition-colors", gk ? "bg-brand" : "bg-line-strong")}>
+                  <span className={cx("absolute top-0.5 block h-[11px] w-[11px] rounded-full bg-surface transition-all", gk ? "left-[13px]" : "left-0.5")} />
+                </span>
+              ) : null}
               Group by {spec.groups.map((k) => lowerFirst(colOf(k).l)).join(" · ")}
             </button>
           ) : null}
@@ -565,7 +738,25 @@ export function ListScreen({
             </span>
           ) : null}
           <span className="flex-1" />
-          {!spec.cards && cols.length > 1 ? <ColumnsMenu cols={lineCols} fit={fit} chosen={chosenCols} onChoose={setChosenCols} /> : null}
+          {spec.cards?.toggle || (v4 && spec.chat) ? (
+            <span role="group" aria-label="Show as" className="flex gap-0.5 rounded-[7px] bg-divider p-0.5">
+              {[
+                { v: false, l: spec.chat ? "Chat" : "Cards" },
+                { v: true, l: "Table" },
+              ].map((o) => (
+                <button
+                  key={o.l}
+                  type="button"
+                  aria-pressed={asTable === o.v}
+                  onClick={() => setAsTable(o.v)}
+                  className={cx("cursor-pointer rounded-[5px] px-2.5 py-1 text-meta", asTable === o.v ? "bg-surface font-semibold text-ink shadow-[0_1px_2px_rgba(20,20,30,0.08)]" : "font-medium text-muted hover:text-ink")}
+                >
+                  {o.l}
+                </button>
+              ))}
+            </span>
+          ) : null}
+          {!showCards && !showChat && cols.length > 1 ? <ColumnsMenu cols={lineCols} fit={fit} chosen={chosenCols} onChoose={setChosenCols} /> : null}
           {spec.hidden.length ? (
             <span className="flex items-center gap-1.5 text-meta text-muted" title={`Not on your account: ${spec.hidden.map((x) => x.l).join(", ")}`}>
               <Icon n="lock" s={14} />
@@ -622,8 +813,10 @@ export function ListScreen({
 
       {/* v4: the chips are figure cards, and the search and filters stand on
           the page above the table rather than inside its card. */}
-      {v4 && chips.length >= 2 && chips.length <= MAX_TABS ? (
+      {v4 && chips.length >= 2 && chips.length <= MAX_STATS ? (
         <StatCards total={lp.beforeChip} chips={chips} value={chip} tones={tones} onPick={pickChip} />
+      ) : v4 && chips.length > MAX_STATS && chips.length <= MAX_TABS ? (
+        <ChipRow total={lp.beforeChip} chips={chips} value={chip} onPick={pickChip} />
       ) : null}
       {v4 ? toolbar : null}
 
@@ -650,13 +843,15 @@ export function ListScreen({
 
         {win?.tooWide ? (
           <EmptyState
+            icon={v4 ? <EmptyTile tone="warn" icon="lock" /> : undefined}
             title="That period is too long to show"
             body={`${win.label} holds ${nf(win.tooWide.n)} rows, and this list reads at most ${nf(win.tooWide.cap)} at a time. Pick a shorter period, or search within one.`}
           />
         ) : lp.all === 0 && win ? (
-          <EmptyState title={`Nothing in ${lowerFirst(win.label)}`} body={`No rows have a ${lowerFirst(win.dateLabel)} in this period. Pick a longer one to see older rows.`} />
+          <EmptyState icon={v4 ? <EmptyTile icon="search" /> : undefined} title={`Nothing in ${lowerFirst(win.label)}`} body={`No rows have a ${lowerFirst(win.dateLabel)} in this period. Pick a longer one to see older rows.`} />
         ) : lp.all === 0 ? (
           <EmptyState
+            icon={v4 ? <EmptyTile icon="file" /> : undefined}
             title={emptyTitle}
             body={emptyBody}
             action={
@@ -669,6 +864,7 @@ export function ListScreen({
           />
         ) : total === 0 ? (
           <EmptyState
+            icon={v4 ? <EmptyTile tone="muted" icon="search" /> : undefined}
             title="Nothing matches"
             body={`No rows match ${noMatchBits}.`}
             action={
@@ -679,7 +875,9 @@ export function ListScreen({
           />
         ) : (
           <div className={cx("transition-opacity", pending && "pointer-events-none opacity-60")} aria-busy={pending || undefined}>
-            {spec.cards ? (
+            {showChat && spec.chat ? (
+              <ChatView chat={spec.chat} screen={spec.screen} rows={pageRows} onOpen={setOpenId} />
+            ) : showCards && spec.cards ? (
               <div className="grid grid-cols-2 gap-3 p-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
                 {pageRows.map((r) => {
                   const src = String(r.v[spec.cards!.img] ?? "");
@@ -687,10 +885,16 @@ export function ListScreen({
                     <button
                       key={r.id}
                       onClick={() => setOpenId(r.id)}
-                      className="flex cursor-pointer flex-col overflow-hidden rounded-card border border-line bg-surface text-left hover:border-brand"
+                      className={cx("flex cursor-pointer flex-col overflow-hidden border border-line bg-surface text-left hover:border-brand", v4 ? "rounded-[10px]" : "rounded-card")}
                     >
-                      <span className="flex aspect-[3/2] items-center justify-center bg-canvas">
-                        {src ? (
+                      <span className={cx("flex items-center justify-center", spec.cards!.play ? "aspect-video bg-ink" : "aspect-[3/2] bg-canvas")}>
+                        {spec.cards!.play && !src ? (
+                          <span aria-hidden className="flex h-11 w-11 items-center justify-center rounded-full bg-brand-lime text-ink">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M7 4v16l13-8z" />
+                            </svg>
+                          </span>
+                        ) : src ? (
                           // eslint-disable-next-line @next/next/no-img-element -- a private attachment, read through the scoped endpoint
                           <img src={src} alt={String(r.v[spec.cards!.title] ?? "")} className="h-full w-full object-cover" loading="lazy" />
                         ) : (
@@ -865,6 +1069,7 @@ export function ListScreen({
             )}
             <div className="overflow-hidden rounded-b-card">
               <Pager
+                look={v4 ? "v4" : undefined}
                 total={total}
                 page={pg}
                 perPage={size}
@@ -883,7 +1088,10 @@ export function ListScreen({
           {chosen.length < total ? (
             <button
               onClick={selectAll}
-              className="cursor-pointer text-meta text-line-strong underline-offset-2 hover:text-white hover:underline"
+              className={cx(
+                "cursor-pointer text-meta underline-offset-2 hover:underline",
+                v4 ? "font-semibold text-brand-lime" : "text-line-strong hover:text-white",
+              )}
             >
               Select all {nf(total)}
             </button>
@@ -896,7 +1104,7 @@ export function ListScreen({
         </SelectionBar>
       ) : null}
 
-      {open ? <RecordDialog key={open.id} screen={spec} kind={label} row={open} onClose={closeRec} /> : null}
+      {open ? <RecordDialog key={open.id} screen={spec} kind={label} row={open} onClose={closeRec} stages={v4 ? stages : undefined} /> : null}
     </Frame>
   );
 }
