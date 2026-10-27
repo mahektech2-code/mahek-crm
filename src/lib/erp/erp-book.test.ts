@@ -282,14 +282,13 @@ describe("once the ERP takes the orders", () => {
     await db.delete(sheetSyncRuns).where(eq(sheetSyncRuns.id, run));
   });
 
-  test("a party made at the order desk is its salesperson's, and becomes a customer on its second ERP order", async () => {
+  test("a lead that orders through the ERP becomes a customer on its second ERP order", async () => {
     const rahul = await makeUser(`Rahul Field ${tag}`, "associate", "accounts");
     const ctx = await as(admin);
-    const made = await mod("customers").forms!.new(ctx, { name: `Desk Party ${tag}`, city: "Thane", mobile: "9876500077", sales: rahul.name, credit: "30" }, []);
-    assert.ok(made.ok, JSON.stringify(made));
-    const [lead] = await db.select().from(customers).where(eq(customers.name, `Desk Party ${tag}`));
-    assert.equal(lead.kind, "lead");
-    assert.equal(lead.ownerId, rahul.id, "owned by the salesperson the form named, not by whoever typed it");
+    /* A lead from Lead Management, owned by its salesman — the ERP no longer opens parties itself. */
+    const leadId = id("cus");
+    await db.insert(customers).values({ id: leadId, name: `Desk Party ${tag}`, city: "Thane", phone: "9876500077", kind: "lead", ownerId: rahul.id, creditDays: 30 } as typeof customers.$inferInsert);
+    const [lead] = await db.select().from(customers).where(eq(customers.id, leadId));
     assert.ok((await mod("customers").actions!.activate(ctx, lead.id, {})).ok);
 
     await take(`Desk Party ${tag}`, 21);
