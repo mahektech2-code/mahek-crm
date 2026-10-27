@@ -1116,6 +1116,7 @@ export function LeadRecordScreen({
         key={record.customerId}
         customerId={record.customerId}
         customerName={record.name}
+        reviewHref={`${base}/review`}
         detail={detail}
         known={[
           record.competitor ? { label: "Using", value: record.competitor } : null,
@@ -1475,17 +1476,26 @@ function QualificationPanel({
       title="Qualification"
       hint={`What has to be known before anybody gives them a sample. ${answered.length} of ${conditions.length} answered — the same list the gate refuses on, so ticking to the bottom cannot leave you refused.`}
       action={
-        <Link
-          href={`${base}/qualify`}
-          title={
-            canWork
-              ? "Answer them at full size"
-              : "You can view this, but you cannot work this lead."
-          }
-          className="inline-flex h-[30px] items-center rounded-[4px] border border-line bg-surface px-3 text-[13px] text-body no-underline hover:bg-canvas hover:no-underline"
-        >
-          Open the checklist
-        </Link>
+        <div className="flex flex-col items-end gap-1.5">
+          <Link
+            href={`${base}/review`}
+            title="Every Suspect, Prospect and Qualification answer on one page, with the approver's decision"
+            className="inline-flex h-[30px] items-center rounded-[4px] border border-line bg-surface px-3 text-[13px] text-body no-underline hover:bg-canvas hover:no-underline"
+          >
+            Open the review
+          </Link>
+          <Link
+            href={`${base}/qualify`}
+            title={
+              canWork
+                ? "Answer them at full size"
+                : "You can view this, but you cannot work this lead."
+            }
+            className="inline-flex h-[30px] items-center rounded-[4px] border border-line bg-surface px-3 text-[13px] text-body no-underline hover:bg-canvas hover:no-underline"
+          >
+            Open the checklist
+          </Link>
+        </div>
       }
     >
       <div className="grid grid-cols-1 gap-x-6 gap-y-1.5 md:grid-cols-2">
@@ -1754,6 +1764,13 @@ function VerificationPanel({
             className="inline-flex h-[30px] items-center rounded-[4px] border border-line bg-surface px-3 text-[13px] text-body no-underline hover:bg-canvas hover:no-underline"
           >
             Full screen
+          </Link>
+          <Link
+            href={`${base}/review`}
+            title="Every Suspect, Prospect and Qualification answer on one page"
+            className="inline-flex h-[30px] items-center rounded-[4px] border border-line bg-surface px-3 text-[13px] text-body no-underline hover:bg-canvas hover:no-underline"
+          >
+            See all answers
           </Link>
           <Button
             size="sm"

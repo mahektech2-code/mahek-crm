@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
-import { parseRupees, stamp } from "@/lib/format";
+import { stamp } from "@/lib/format";
 import { cx, Input, Select, Textarea } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
 import { Banner, Button } from "@/components/console/parts";
@@ -36,7 +36,7 @@ const STATE_COPY: Record<
   QualificationReviewModel["state"],
   { tone: "info" | "warn" | "danger"; title: string }
 > = {
-  not_open: { tone: "info", title: "Qualification is not open on this lead" },
+  not_open: { tone: "info", title: "Read only — Qualification has not opened yet" },
   in_progress: { tone: "warn", title: "Qualification is still being completed" },
   pending: { tone: "info", title: "Waiting for the approver's decision" },
   sent_back: { tone: "danger", title: "Rejected — the Salesman owes a correction" },
@@ -54,10 +54,14 @@ function startValue(f: ReviewField): string {
 export function QualificationReviewScreen({
   workspace,
   model,
+  closeHref,
 }: {
   workspace: LeadWorkspace;
   model: QualificationReviewModel;
+  /** Where Close goes back to, where this is not the CRM record's own Qualify screen. */
+  closeHref?: string;
 }) {
+  const closeTo = closeHref ?? leadHref(workspace, `${model.customerId}/qualify`);
   const router = useRouter();
   const toast = useToast();
   const canEdit = model.viewer.canDecide;
@@ -162,7 +166,7 @@ export function QualificationReviewScreen({
               </p>
             </div>
             <Link
-              href={leadHref(workspace, `${model.customerId}/qualify`)}
+              href={closeTo}
               aria-label="Close the review"
               className="-mr-1 rounded px-2 text-[20px] leading-none text-muted hover:text-ink"
             >
@@ -425,7 +429,7 @@ export function QualificationReviewScreen({
           </span>
           <div className="flex items-center gap-2">
             <Link
-              href={leadHref(workspace, `${model.customerId}/qualify`)}
+              href={closeTo}
               className="inline-flex h-8.5 items-center rounded-[4px] border border-line bg-surface px-3 text-[13px] font-medium text-ink hover:bg-divider"
             >
               Close

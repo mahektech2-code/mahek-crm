@@ -43,6 +43,7 @@ export function VerificationForm({
   detail,
   /** What the salesman already established, shown so it is not asked twice. */
   known,
+  reviewHref,
   open,
   onClose,
   onDone,
@@ -51,6 +52,8 @@ export function VerificationForm({
   customerName: string;
   detail?: string;
   known?: Array<{ label: string; value: string }>;
+  /** The lead's Qualification Review, which draws every Suspect, Prospect and Qualification answer on one page. */
+  reviewHref?: string;
   open: boolean;
   onClose: () => void;
   onDone?: () => void;
@@ -113,6 +116,18 @@ export function VerificationForm({
               </span>
             ))}
           </div>
+        ) : null}
+        {reviewHref ? (
+          /* A new tab, so the call in progress — and what has been typed into it —
+             is not lost by going to read the lead's answers. */
+          <a
+            href={reviewHref}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-2 inline-block text-[12px] font-medium text-brand hover:underline"
+          >
+            Open every Suspect, Prospect and Qualification answer for this lead ↗
+          </a>
         ) : null}
       </div>
 
