@@ -4,6 +4,7 @@ import { createContext, useContext } from "react";
 import type { FormSpec, Tone } from "@/lib/erp/ui";
 import { FLAG, ST_TONE } from "@/lib/erp/ui";
 import type { Result } from "@/lib/result";
+import { actionFailure } from "@/lib/version-skew";
 import { erpListExport, erpListIds, erpLoadForm, erpRunAction, erpRunBulk, erpRunTool, erpSubmitForm } from "@/lib/actions/erp";
 
 /* ---------------------------------------------------------------------------
@@ -67,6 +68,46 @@ export const ERP_KIT: ScreenKit = {
 
 export const KitContext = createContext<ScreenKit>(ERP_KIT);
 
+/*
+ * A CALL THAT THROWS ANSWERS LIKE ONE THAT REFUSED. Every dialog here awaits
+ * the kit and reads `res.ok`; none of them catches, so an action that threw —
+ * a tab older than the deploy, a dropped connection — left the button busy for
+ * ever with no sentence on the screen, and the save looked like it had simply
+ * not happened. Wrapped once here, every caller gets an `Err` it already knows
+ * how to draw. Cached per kit so `useKit()` hands back the same object each
+ * render.
+ */
+const SAFE = new WeakMap<ScreenKit, ScreenKit>();
+
+function guard<A extends unknown[], T>(fn: (...a: A) => Promise<Result<T>>): (...a: A) => Promise<Result<T>> {
+  return async (...a) => {
+    try {
+      return await fn(...a);
+    } catch (e) {
+      return { ok: false, error: actionFailure(e) };
+    }
+  };
+}
+
+export function safeKit(kit: ScreenKit): ScreenKit {
+  let safe = SAFE.get(kit);
+  if (!safe) {
+    safe = {
+      ...kit,
+      runAction: guard(kit.runAction),
+      runBulk: guard(kit.runBulk),
+      submitForm: guard(kit.submitForm),
+      loadForm: guard(kit.loadForm),
+      runTool: kit.runTool && guard(kit.runTool),
+      exportList: kit.exportList && guard(kit.exportList),
+      listIds: kit.listIds && guard(kit.listIds),
+    };
+    SAFE.set(kit, safe);
+    SAFE.set(safe, safe); // wrapping a wrapped kit hands it straight back
+  }
+  return safe;
+}
+
 export function useKit(): ScreenKit {
-  return useContext(KitContext);
+  return safeKit(useContext(KitContext));
 }
