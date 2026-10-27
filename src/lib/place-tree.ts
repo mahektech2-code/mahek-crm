@@ -184,6 +184,26 @@ export function matchTypedPlace(index: PlaceIndex, typed: TypedPlace): PlaceIds 
   return hit ? idsUpFrom(index, hit) : { state: state.id };
 }
 
+/**
+ * The same match, said as NAMES — the state, district and town a typed place
+ * sits in, for a rule that compares names rather than ids.
+ *
+ * It is how a lead raised on a handset is checked against an allocation of
+ * districts and towns BEFORE it is written: the territory clause reads the
+ * shop's `resolved_*_id` columns, and those are filled by this same matcher
+ * once the row exists (`placeShopsNow`). One matcher at both ends is what
+ * keeps the gate from letting in a lead its own author then cannot see — so
+ * the caller passes the town the ROW will carry, and nothing the row will not.
+ */
+export function treeNamesFor(
+  index: PlaceIndex,
+  typed: { state: string | null; city: string | null },
+): { state: string | null; district: string | null; town: string | null } {
+  const ids = matchTypedPlace(index, { region: typed.state, city: typed.city, address: null });
+  const name = (id: string | undefined) => (id ? (index.byId.get(id)?.name ?? null) : null);
+  return { state: name(ids.state), district: name(ids.district), town: name(ids.city) };
+}
+
 /** Address parts, last first, with the pincode taken off — "Maharashtra 416119" reads as "Maharashtra". */
 function addressParts(address: string | null): string[] {
   if (!address) return [];

@@ -1,4 +1,4 @@
-Sales Bills is a server page over three reads in `payment-service.ts` — `billLedgerPage` (one sorted, paged slice), `billLedgerTotals` (sums over the filter) and `openBillAges` (the open rows for the aging strip) — banded by `bucketise`. Bills are written by the sheet projection (`sheet-projection-service.ts`), by accounts, and by the receivables import; `paid_amount`, `status` and the customer's outstanding are caches in `lib/recompute.ts`.
+Sales Bills is a server page over three reads in `payment-service.ts` — `billLedgerPage` (one sorted, paged slice), `billLedgerTotals` (sums over the filter) and `openBillAges` (the open rows for the aging strip) — banded by `bucketise`. Bills are written by the sheet projection (`sheet-projection-service.ts`) while the sheet takes the orders, by the ERP's order book (`lib/erp/book.ts` `syncOne`) once <Setting k="erp.orders.live" /> is on, by accounts, and by the receivables import; `paid_amount`, `status` and the customer's outstanding are caches in `lib/recompute.ts`.
 
 ## Map of the code
 
@@ -11,7 +11,8 @@ Sales Bills is a server page over three reads in `payment-service.ts` — `billL
 | Reads | `src/lib/services/payment-service.ts` | `BillFilters`, `listBills`, `billLedgerPage`, `billLedgerTotals`, `openBillAges`, `earliestBillDate`, `agingSummary` |
 | Bands | `src/lib/services/accounts-home-service.ts` | `bucketise(rows, bounds)` |
 | Due date and band | `src/lib/engines/escalation.ts` | `effectiveDueDate`, `agingBucket` |
-| Writers | `src/lib/services/sheet-projection-service.ts` | `projectBillsFromOrders`, `projectBills`, `positionFor`, `receivedPerPaymentTab` |
+| Writers | `src/lib/services/sheet-projection-service.ts` | `projectBillsFromOrders`, `projectBills`, `positionFor`, `receivedPerPaymentTab` — none of them run once `erp.orders.live` is on (`projectSheet` returns first) |
+| Writers (ERP live) | `src/lib/erp/book.ts` | `syncOne` — one bill per ERP order (`external_ref` `ERPBILL-<n>`), `stated`, once a line is dispatch-verified; numbered by `freeBillNo` |
 | Caches | `src/lib/recompute.ts` | `recomputeBillPaid`, `recomputeAllBillPaid`, `recomputeBillStatuses`, `recomputeOutstanding` |
 | Export | `src/app/accounts/bills/export/route.ts` | The whole filtered year as CSV |
 
@@ -49,6 +50,8 @@ sequenceDiagram
 
 <Code file="src/lib/services/sheet-projection-service.ts" symbol="projectBillsFromOrders" collapsed />
 
+The sheet projection writes nothing once `erp.orders.live` is on; the ERP's bills are documented on [the order book](/docs/erp/order-book/developer).
+
 <Callout kind="rule">
 The projection writes `payment_position` on **insert only**, and never writes `paid_amount`, `status`, a receipt or `outstanding`. A bill a person has spoken for must not be returned to silence by the next scheduled pass. `billUnchanged` also skips rewriting a bill the sheet still agrees with.
 </Callout>
@@ -62,7 +65,7 @@ The projection writes `payment_position` on **insert only**, and never writes `p
 ## The table
 
 <DbTable name="bills" note={{
-  bill_no: "Unique across the table (bills_no_key). Tally number, Tally/order number, or ORD-order number.",
+  bill_no: "Unique across the table (bills_no_key). Sheet: Tally number, Tally/order number, or ORD-order number. ERP: freeBillNo — Tally number, then Tally/ERP followed by the order number, then ERP-order number.",
   order_id: "The order this bill is. Its lines are the bill's lines.",
   due_date: "Null means bill date + credit period (order term, customer term, bills.defaultCreditDays).",
   amount: "Paise. Sum of the order's line final amounts.",
@@ -70,7 +73,7 @@ The projection writes `payment_position` on **insert only**, and never writes `p
   status: "Cache from paid_amount against amount.",
   payment_position: "stated or unstated. Sheet writes it on insert only.",
   payment_decided_at: "When a person decided — the mark the projection never overrides.",
-  external_ref: "SHEETPAY-order number for sheet bills.",
+  external_ref: "SHEETPAY-order number for sheet bills, ERPBILL-order number for the ERP's.",
 }} />
 
 <DbEnum name="bill_status" />

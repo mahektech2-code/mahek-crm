@@ -1,15 +1,15 @@
 Mahek's team still types much of its work into Google Sheets — the orders as they are billed, the payment status of each order, orders as they are first taken, the party list, the employee list, and the older field app's shop master and activity log. MahekOne **reads** those workbooks on a schedule and publishes what it finds into its own database, so the CRM, Accounts and the field app see the same customers, orders and bills the team is typing. Alongside the sync, the same schedule runs the **jobs** that keep every derived figure current: buying cycles, outstanding balances, follow-up stages, salesman scores, the next day's calling lists.
 
-This page explains what is read, how often, the rules that keep a spreadsheet from overriding a decision somebody made in MahekOne, and what runs each night. The [developer tab](/docs/platform/sheets-and-jobs/developer) has the endpoint, the modes and the commands.
+This page explains what is read, how often, the rules that keep a spreadsheet from overriding a decision somebody made in MahekOne, how the order sheet is retired as orders move to the ERP, and what runs each night. The [developer tab](/docs/platform/sheets-and-jobs/developer) has the endpoint, the modes and the commands.
 
 ## What MahekOne reads
 
 | Workbook / tab | What it holds | What MahekOne does with it |
 |---|---|---|
-| Order sheet → **Order Details** | Every billed order line | Customers, orders and **bills** (one bill per order) |
-| Order sheet → **Payment Status** | Whether each order was received or not | Held as **evidence** for accounts — it never records money |
-| Order sheet → **Taken Order** | Orders as first taken, before billing | Holds a customer back from order-chasing calls while their order is still open |
-| **Sales Party** sheet | The party list: who sells to whom, phone numbers, areas | Fills in customer details and the salesperson's name |
+| Order sheet → **Order Details** | Every billed order line | Customers, orders and **bills** (one bill per order) — until the ERP takes the orders |
+| Order sheet → **Payment Status** | Whether each order was received or not | Held as **evidence** for accounts (it never records money) — until the ERP takes the orders |
+| Order sheet → **Taken Order** | Orders as first taken, before billing | Holds a customer back from order-chasing calls while their order is still open — until the ERP takes the orders |
+| **Sales Party** sheet | The party list: who sells to whom, phone numbers, areas | Fills in customer details and the salesperson's name — until its own switch retires it |
 | **Employee** workbook → Employee Details | The employee master | The HRMS employee list (a mirror nobody edits in MahekOne) |
 | EMP 2.0 → **Activity** | The older field app's visit log | Attached to customers' histories |
 | EMP 2.0 → **Customer Details** | The older app's shop master | Run by hand only — creates shops and leads |
@@ -49,11 +49,11 @@ A row deleted from the sheet is **withdrawn** — marked as gone — never silen
 ## The rules that keep a sheet in its place
 
 <Rule title="The sheet never writes money">
-No sync records a payment, sets what was paid on a bill, or changes what a customer owes. Whether money arrived is for a person to record. A bill imported from the sheet starts with **no payment position at all** — held out of outstanding, the ageing strip, the collections list and the reminders — until somebody records or confirms a payment against it, or the accounts team's receivables report names it.
+No sync records a payment, sets what was paid on a bill, or changes what a customer owes. Whether money arrived is for a person to record. A bill imported from the sheet is **owed** from its due date, because nothing has been recorded against it — unless the Payment Status tab says the money was **received**, in which case it is held out of outstanding, the ageing strip, the collections list and the reminders until accounts confirm the receipt.
 </Rule>
 
-<Callout kind="why" title="Why not just assume?">
-The order sheet records what was billed, never what was received. Assuming everything was owed would put the whole order book — crores — on the collections list; assuming everything was paid would hide real debt with nobody's name behind the decision. The honest third answer is "nobody has said yet", and that is what an imported bill carries.
+<Callout kind="why" title="Why owed, when the sheet never says so?">
+The order sheet records what was billed, never what was received. For a while an imported bill carried "nobody has said yet" and counted as neither paid nor owed; in October 2026 Mahek decided that kept a month of real credit sales off Outstanding and the collections list, so a bill nobody has spoken for is now owed like any other. The Payment Status tab saying *Received* is the one exception, because that is a record of the money arriving rather than silence. See [Bills](/docs/crm/bills/how-it-works).
 </Callout>
 
 <Rule title="The sheet wins every column except a decision somebody made">
@@ -63,6 +63,23 @@ For almost everything — a phone number, an area, a bill amount — the sheet i
 <Rule title="One sync per source at a time">
 If a sync of one sheet is still running when the next is due, the new one is skipped and says so ("already running"). A run stuck for more than ten minutes is treated as dead, so one hung run never blocks every later one.
 </Rule>
+
+## Retiring the order sheet
+
+Orders are moving to the ERP, and the order sheet is retired by two switches rather than one, because its two halves end on different days.
+
+| Switch | When it is on (or off) | What stops |
+|---|---|---|
+| <Setting k="erp.orders.live" /> | On: the ERP takes the orders | The Order Details, Payment Status and Taken Order tabs are no longer read; the publish step creates no customer, order or bill from them |
+| <Setting k="erp.orders.partySheet" /> | Off: the office keeps parties in MahekOne | The Sales Party tab is no longer read or published; seats, deactivations, phones, GST, credit days and price lists are kept in MahekOne |
+
+<Rule title="A retired tab is not read, whoever asks">
+The schedule, the Admin Console and the command line all reach the same job runner, which answers a retired read with the reason and records a run carrying it — so the schedule keeps getting a success, and the job history says why nothing was read. Once the ERP takes the orders, Admin Console → Sheets and Accounts → Sheet import show a banner and draw their import buttons disabled with the reason. A retired source reads **Retired · last read … ago** on the Command Centre, is never called *Stale*, and has nothing to run; Admin Console → Integrations lists it as **Retired**.
+</Rule>
+
+<Callout kind="note">
+Nothing is deleted. The staged rows and everything the sheet published stay, because bill detail, delivery-party linking and the price-list variance report still read them for the months the sheet was the source. The cut-over itself — what is switched, in what order, and the one-off steps somebody performs — is on [the ERP and the order book](/docs/erp/order-book/how-it-works#going-live).
+</Callout>
 
 ### When the rule changes, not the sheet
 
@@ -74,8 +91,8 @@ All times India time. The server's scheduler runs these; an Apps Script trigger 
 
 | When | What runs |
 |---|---|
-| Every 30 minutes | Read the four order-workbook tabs, publish customers/orders/bills, read and publish field activity, punch-out reminders |
-| Every hour | Salesman scores for this month, handset sweeps and escalations (overdue tasks, approvals, samples), check-in selfie deletion, WhatsApp automation and delivery receipts, complaint deadline escalation, ERP alerts and inbox, the Top customers report if the 1st's run was missed |
+| Every 30 minutes | Read the four order-workbook tabs, publish customers/orders/bills, read and publish field activity, punch-out reminders. A retired tab answers without being read |
+| Every hour | Who the Call Log holds back for an open order (the Taken Order tab, or the ERP's open lines once it takes the orders), salesman scores for this month, handset sweeps and escalations (overdue tasks, approvals, samples), check-in selfie deletion, WhatsApp automation and delivery receipts, complaint deadline escalation, ERP alerts and inbox, the Top customers report if the 1st's run was missed |
 | 01:43 nightly | Full compare of the order workbook and field activity, publish, then **every recompute** |
 | 02:15 nightly | Database backup — after the nightly has settled ([Backups](/docs/platform/backups)) |
 | 10:00 on the 1st | The Top customers report for the month just finished |
@@ -91,6 +108,8 @@ Every derived figure in MahekOne is a cache rebuilt from the records underneath.
 - Tomorrow's calling lists, the month-end customer-health snapshot, salesman scores for this and last month, copying targets forward.
 - Automatic end-of-day reports.
 
+The Call Log's open-order hold is not in this list: it is rebuilt every hour.
+
 <Callout kind="why">
 A figure that somebody can edit by hand is a figure that can disagree with the orders and payments behind it. A figure that is always rebuilt cannot drift — so if one looks wrong, the fix is to run the rebuild, never to type over the number.
 </Callout>
@@ -103,7 +122,7 @@ The employee workbook is small (tens of rows), so it is read with a **full compa
 
 | Who | Where | What |
 |---|---|---|
-| Accounts (holders of the sheet import permission) | Admin Console → Sheets | Full compare of the order sheet, Payment Status read, publish |
+| Accounts (holders of the sheet import permission) | Admin Console → Sheets | Full compare of the order sheet, Payment Status read, publish — refused with the reason once the ERP takes the orders |
 | Platform administrators | Admin Console → Jobs | The nightly, the hourly, the day-boundary pass (end-of-day reports and rolling reminders off non-working days), and the sheet passes |
 | A developer | The command line | Any job by name, including reparses and one-off imports |
 
@@ -116,4 +135,5 @@ Every run, scheduled or by hand, is recorded — what ran, when, how many record
 - **Two schedulers may be configured.** The server's crontab is the documented schedule; the Apps Script trigger files in the repository still describe themselves as the half-hourly cycle. Both are safe together, but which one a deployment actually runs is only visible on the server and in the workbook (`deploy/sheet-sync.sh`, `scripts/sheet-sync-trigger.gs`).
 - **The nightly endpoint reports only its first step.** Running the nightly through the sync endpoint returns the result of the first job in the pass rather than all of them; the full list is in the job history (`src/app/api/sheets/sync/route.ts`).
 - **Rolling reminders off non-working days is never scheduled.** It lives only in the day-boundary pass, which no schedule calls; it runs when an administrator presses it (`runDayBoundary` in `src/lib/jobs.ts`).
+- **The schedule keeps calling retired tabs.** Until `deploy/sheet-sync.sh` is trimmed, the half-hourly and nightly cycles go on asking for the order tabs after the ERP takes the orders; each answers successfully, reads nothing and records why. Trimming it is a step somebody performs at the cut-over.
 - **The EMP 2.0 shop master has no schedule.** It is run by hand only, so changes in that workbook do not reach MahekOne until somebody runs it.

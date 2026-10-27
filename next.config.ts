@@ -64,6 +64,23 @@ const nextConfig: NextConfig = {
    */
   images: { unoptimized: true },
 
+  /*
+   * THE IMAGE BUILD DOES NOT TYPE-CHECK, because something before it already
+   * has — and it is the slowest place to do it.
+   *
+   * `next build` runs the TypeScript checker after compiling, and on GitHub's
+   * runners that is 71 of the build's 170 seconds. It was being paid three
+   * times per change: CI's `build` job, the deploy's `test` job, and again
+   * inside the Docker build, which then pushes and swaps nothing until it is
+   * done. Only the Dockerfile sets this, and only for the build inside it.
+   *
+   * Nothing goes unchecked. CI's `build` job is a plain `npm run build` with
+   * this unset, and the deploy's `test` job runs `next typegen && tsc
+   * --noEmit` — the route types included — beside the image build, with
+   * `deploy` needing both. A type error still stops a deploy; it just no
+   * longer makes the image wait for the answer.
+   */
+  typescript: { ignoreBuildErrors: process.env.NEXT_BUILD_SKIP_TYPECHECK === "1" },
 
   /*
    * Version-skew protection: without it, a browser tab left open across a

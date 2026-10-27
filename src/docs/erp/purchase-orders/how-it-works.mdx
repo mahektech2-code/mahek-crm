@@ -1,58 +1,61 @@
-A purchase order is the point where a decision about money is made by somebody other than the person who wants the goods. Everything about it follows from three rules: **no purchase without a PO**, **a PO is raised for approval and approved by somebody else**, and **what has been received against it is read from the gate, never typed**.
+A purchase order is the point where the business commits to paying a vendor. Everything about it follows from three rules: **no purchase without a PO**, **a PO is made the way the item's purchase rule says, and is not approved**, and **what has been received against it is read from the gate, never typed**.
 
 ## The life of a PO
 
 <Flow caption="Purchase order statuses" chart={`
 flowchart TD
-  R["Raised from ready requirements<br/>Pending approval"] -- "Approve<br/>(not your own)" --> A["Approved<br/>requirements: Order Placed"]
-  R -- "Send back with a reason" --> X["Rejected<br/>requirements back to Ready for PO"]
-  A -- "Share<br/>WhatsApp, email, link" --> S["Sent"]
-  A -- "goods received<br/>without being marked sent" --> PR
+  C["Create PO on a requirement<br/>or New PO on this screen"] --> A["Approved<br/>requirements: Order Placed"]
+  Q["Purchase it on the Quotation manager<br/>or Link PO on a requirement"] --> S["Sent"]
+  A -- "Share<br/>WhatsApp, email, link" --> S
+  A -- "goods received<br/>without being shared" --> PR
   S -- "some goods received" --> PR["Partly received"]
   PR -- "all lines in full" --> RC["Received<br/>requirements: Received"]
   S -- "all lines in full" --> RC
   PR -- "Close short with a reason" --> CL["Closed<br/>requirements: Received"]
-  R -- "Cancel (nothing received)" --> CN["Cancelled<br/>requirements back to Ready for PO"]
-  A -- "Cancel" --> CN
-  S -- "Cancel" --> CN
+  A -- "Cancel (nothing received)" --> CN["Cancelled<br/>requirements back to waiting for a PO"]
+  S -- "Cancel, unlink or undo the purchase" --> CN
+  L["Pending approval<br/>(raised before approval was dropped)"] -- "Approve" --> A
+  L -- "Send back with a reason" --> X["Rejected"]
 `} />
 
-## Raising
+## Making a PO
 
-<Rule title="A PO is built from requirements, never typed">
-A PO line is a requirement that is Ready for PO, for this PO's vendor, not already on another live PO. There is no free-typed item or supplier: a PO can only buy what a department asked for, from the vendor that was chosen for it.
+<Rule title="The item's purchase rule decides how the PO is made">
+A **Quotation** item is bought on the Quotation manager: **Purchase it** writes the PO there and then, already **Sent**, and a requirement can also **Link PO** to a number the Quotation manager made. A **Direct purchase** item gets its PO from **Create PO** on the requirement, **Approved** and ready to send. A **Buyer decision** item may do either. See [Purchase requirements](/docs/erp/purchase-requirements/how-it-works).
 </Rule>
 
-<Rule title="The rate of a quotation item is the quotation's">
-A requirement bought by quotation must be ordered at the selected quotation's rate. Negotiation is recorded on the quotation, where it can be compared, rather than hidden on the PO.
-</Rule>
-
-<Rule title="Money is needed to raise one">
-Raising or editing a PO needs the **purchase money** power, because it sets rates.
-</Rule>
-
-The form fills itself from what is known: delivery date from the quotation's delivery days (or the requirement's required-by date), payment terms from the quotation (or the vendor's credit days), freight from the quotation, GST at eighteen per cent unless changed. The delivery date may not be before the PO date. The value is the sum of each line's quantity × rate plus its GST, plus freight once for the whole PO.
-
-## Approving
-
-<Rule title="Raised for approval, approved by somebody else">
-Approve and Send back need the **Approve purchase orders** power, given in Admin Console → Access and nowhere else. Whoever raised a PO cannot approve it unless they are an ERP administrator.
+<Rule title="No PO is approved">
+Every route writes the PO ready to send and to receive against. Nobody approves it, and nothing waits on an approver.
 </Rule>
 
 <Callout kind="why">
-The person who wants the goods should not be the person who commits the business to paying for them. Making the PO a separate, approved record is what gives every purchase a second pair of eyes — and a name against the decision in the audit log.
+The checks that stand before a PO now sit earlier: the requirement's blind count and its comparison with the book, and, for a quotation item, the Quotation manager, where only a rate a manager has marked **Ready to buy** can be bought by anybody who is not a manager. Older POs still at Pending approval finish on the old path, below.
 </Callout>
 
-<Rule title="Every line must be approvable by you">
-A PO carries several materials. Where an ERP administrator has named who approves a material, a PO carrying it can be decided only by somebody named for **every** line; where no approver is named, the power decides as before.
+<Rule title="A PO is built from requirements, never typed">
+Every PO line answers a requirement for that PO's vendor, and a requirement may be on only one live PO. There is no free-typed item or supplier. A Quotation manager purchase with no requirement waiting raises one for itself, so the rule holds there too.
 </Rule>
 
-Approving moves the PO's requirements to **Order Placed**. Sending back marks the PO Rejected and returns its requirements to Ready for PO with their vendor, so they can be raised again with the correction.
+<Rule title="Where the rate comes from">
+On **Create PO** the rate is the item's price in Masters → Raw materials, never read from the form; an item with no price is ordered at ₹0. On a Quotation manager PO it is the rate in the bought cell. On **New PO** and **Edit** on this screen the rate and GST are typed per line, and a rate must be above zero.
+</Rule>
+
+<Rule title="Typing a rate needs money">
+**New PO** and **Edit** on this screen need the **View purchase money** power, because the rates are typed there. **Create PO** on a requirement needs the Purchase orders screen but not the power — the rate is the item's price, and without the power it is used without being shown. **Link PO** needs neither.
+</Rule>
+
+Create PO and a Quotation manager PO take GST at <Setting k="erp.purchase.poGstPercent" />%; New PO starts each line at eighteen per cent, changeable. The form fills itself from what is known: delivery date from the requirement's required-by date, payment terms from the vendor's credit days. The delivery date may not be before the PO date. The value is the sum of each line's quantity × rate plus its GST, plus freight once for the whole PO.
+
+**New PO** offers only requirements that are ready for a PO and already carry a vendor: a direct-purchase item whose master names a default vendor is given it when the requirement is raised, and a requirement whose PO was cancelled keeps its vendor. **Edit** is offered on an Approved PO with nothing received, until it is shared.
+
+## POs raised before approval was dropped
+
+A PO still at **Pending approval** keeps its old path until it is decided. **Approve** and **Send back** need the **Approve purchase orders** power, given in Admin Console → Access and nowhere else, and whoever raised the PO cannot approve it unless they are an ERP administrator. Approving moves its requirements to Order Placed; sending back marks the PO Rejected and returns its requirements to waiting for a PO, with their vendor. Such a PO is not shared, printed or received against until it is approved.
 
 ## Sharing
 
-<Rule title="Only an approved PO goes to anybody">
-Share is offered on Approved, Sent, Partly received and Received POs. A Pending approval PO is refused: "A PO is approved before it goes to anybody."
+<Rule title="Share is offered once a PO is ready">
+Share is offered on Approved, Sent, Partly received and Received POs. Only a PO still at Pending approval from before is refused: "A PO is approved before it goes to anybody."
 </Rule>
 
 <Rule title="The PDF carries the rates, so sharing needs purchase money">
@@ -73,8 +76,8 @@ Each person a PO goes to is recorded — how, the number or email, the message, 
 
 ## Receiving
 
-<Rule title="Only an approved PO is received against">
-Goods inward names an approved, sent or partly received PO and one of its lines. Nothing is received against a PO awaiting approval, closed, cancelled or rejected. See [Goods receipt](/docs/erp/goods-receipt-and-testing/how-it-works).
+<Rule title="Only an open PO is received against">
+Goods inward names an Approved, Sent or Partly received PO and one of its lines. Nothing is received against a PO that is received in full, closed, cancelled, or still awaiting approval from before. See [Goods receipt](/docs/erp/goods-receipt-and-testing/how-it-works).
 </Rule>
 
 <Rule title="What has been received is read, never stored">
@@ -89,21 +92,23 @@ A line may receive up to <Setting k="erp.purchase.receiptTolerancePercent" />% m
 
 | | Close short | Cancel |
 |---|---|---|
-| When | Partly received | Pending approval, Approved or Sent, nothing received |
-| Its requirements | Count as Received | Return to Ready for PO, with their vendor |
+| When | Partly received | Approved or Sent (or a leftover Pending approval), nothing received |
+| Its requirements | Count as Received | Return to waiting for a PO, with their vendor |
 | Reason | Required | Required |
 
 <Callout kind="why">
 A PO with goods against it has become a purchase. Cancelling it would make goods in the godown belong to nothing, so it is closed short instead and the reason says why the rest never came.
 </Callout>
 
+A Quotation manager PO is also taken back by **Unlink** on its requirement's record, or by undoing the purchase on the Quotation manager — both refused once goods have been received.
+
 ## On the dashboard
 
-POs awaiting approval ("you approve these" for an approver), POs to send to the vendor, POs awaiting delivery, deliveries overdue, and — with purchase money — the open PO value (approved, not yet fully received). The sidebar badge counts POs waiting on approval or on being sent.
+POs to send to the vendor (Approved, not shared yet), POs awaiting delivery, deliveries overdue, and — with purchase money — the open PO value. A "POs awaiting approval" tile shows only while a PO raised before approval was dropped is still waiting. The sidebar badge counts Approved POs, plus those leftover Pending approval POs for somebody holding the approve power.
 
 ## Settings
 
-<SettingsTable keys={["erp.purchase.receiptTolerancePercent", "erp.purchase.poWatiTemplate"]} />
+<SettingsTable keys={["erp.purchase.poGstPercent", "erp.purchase.receiptTolerancePercent", "erp.purchase.poWatiTemplate"]} />
 
 ## Where the code and the intent disagree today
 
@@ -111,3 +116,5 @@ POs awaiting approval ("you approve these" for an approver), POs to send to the 
 - WhatsApp through Wati carries the PO's link, not the PDF itself: the template has no document header.
 - **Close short** and **Cancel PO** need only the screen — no power — although each changes what its requirements say.
 - The company name on the PDF and the message is fixed in the code.
+- The screen's own subtitle still reads "Raised from requirements, approved, sent and received against", and the **Approve purchase orders** power is still described as approving a PO "before it can go to the vendor" — both from before approval was dropped.
+- **New PO** and **Edit** let a rate be typed, so a direct-purchase line's rate can be changed away from the item's price before the PO is shared.

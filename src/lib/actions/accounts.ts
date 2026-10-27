@@ -80,6 +80,14 @@ export async function runBillImportAction(
 ): Promise<Result<{ ran: string[] }>> {
   try {
     const ctx = await requireCapability("sheet.import");
+    /* Once the ERP takes the orders this import has nothing to bring in: the
+       order tab writes no customers, orders or bills, so the button is refused
+       with the reason rather than run to a quiet "nothing had changed". */
+    const { getConfig } = await import("@/lib/config/store");
+    if ((await getConfig())["erp.orders.live"]) {
+      const { ORDER_TABS_RETIRED } = await import("@/lib/engines/sheet-retirement");
+      return { ok: false, error: ORDER_TABS_RETIRED, code: "rule_violation" };
+    }
     if (!ownerEmail.trim()) {
       return {
         ok: false,

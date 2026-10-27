@@ -19,12 +19,12 @@ import { PgDialect } from "drizzle-orm/pg-core";
  * reads afresh, and a statement run on a transaction never comes here at all.
  * ------------------------------------------------------------------------- */
 
-const store = new AsyncLocalStorage<Map<string, Promise<unknown>>>();
+const store = new AsyncLocalStorage<Map<string, unknown>>();
 const dialect = new PgDialect();
 
 /** Runs a page's reads with identical statements answered once. */
 export function withReadMemo<T>(fn: () => Promise<T>): Promise<T> {
-  return store.getStore() ? fn() : store.run(new Map(), fn);
+  return store.getStore() ? fn() : store.run(new Map<string, unknown>(), fn);
 }
 
 /**
@@ -33,9 +33,14 @@ export function withReadMemo<T>(fn: () => Promise<T>): Promise<T> {
  * only — every caller in `stock.ts` maps them into objects of its own.
  */
 export function readOnce<T>(q: SQL, run: () => Promise<T>): Promise<T> {
+  if (!store.getStore()) return run();
+  return readOnceAt(statementKey(q), run);
+}
+
+/** `readOnce` under a statement key the caller has already worked out (`statementShape`). */
+export function readOnceAt<T>(key: string, run: () => Promise<T>): Promise<T> {
   const memo = store.getStore();
   if (!memo) return run();
-  const key = statementKey(q);
   let p = memo.get(key) as Promise<T> | undefined;
   if (!p) {
     p = run();
@@ -73,4 +78,23 @@ export function readOnceKeyed<T>(key: string, run: () => Promise<T>): Promise<T>
     p.catch(() => memo.delete(k));
   }
   return p;
+}
+
+/**
+ * A map the whole page shares under `name`, or null outside a page. For a read
+ * asked for BY ID through several doors, each with its own list: the open
+ * order lines, this month's dispatches and the returns each name customers,
+ * mostly the same ones, and each used to read its list afresh — the
+ * dashboard read the customer book five times to draw itself once.
+ */
+export function pageMap<V>(name: string): Map<string, V> | null {
+  const memo = store.getStore();
+  if (!memo) return null;
+  const k = `map\u0000${name}`;
+  let m = memo.get(k) as Map<string, V> | undefined;
+  if (!m) {
+    m = new Map<string, V>();
+    memo.set(k, m);
+  }
+  return m;
 }

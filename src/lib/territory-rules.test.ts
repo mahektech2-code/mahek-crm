@@ -7,8 +7,12 @@ import {
   matchesTerritory,
   placeNewLead,
   territoryClause,
+  territoryLeaves,
+  townParent,
   type Territory,
 } from "./territory-rules";
+import { indexPlaces, type PlaceNode } from "./place-tree";
+import { placeKey } from "./place-parse";
 
 /**
  * THE RULE ITSELF, exercised without a database.
@@ -178,4 +182,144 @@ test("A BEAT is matched on the area, inside its city", () => {
   const beat: Territory = { kind: "beat", value: "Sadar", parent: "Nagpur" };
   assert.equal(matchesTerritory(beat, { city: "Nagpur", area: "sadar" }), true);
   assert.equal(matchesTerritory(beat, { city: "Pune", area: "Sadar" }), false);
+});
+
+/* ------------------------------------------------ the tree: district and town */
+
+/** A small tree: two Aurangabads, one in each state, each with its own town. */
+const node = (id: string, kind: PlaceNode["kind"], name: string, parentId: string | null): PlaceNode => ({
+  id,
+  kind,
+  name,
+  key: placeKey(name),
+  parentId,
+});
+const TREE = indexPlaces([
+  node("mh", "state", "Maharashtra", null),
+  node("mh-thane", "district", "Thane", "mh"),
+  node("mh-kalyan", "city", "Kalyan", "mh-thane"),
+  node("mh-bhiwandi", "city", "Bhiwandi", "mh-thane"),
+  node("mh-pune", "district", "Pune", "mh"),
+  node("mh-pune-city", "city", "Pune", "mh-pune"),
+  node("mh-aur", "district", "Aurangabad", "mh"),
+  node("mh-aur-city", "city", "Aurangabad", "mh-aur"),
+  node("br", "state", "Bihar", null),
+  node("br-aur", "district", "Aurangabad", "br"),
+  node("br-aur-city", "city", "Aurangabad", "br-aur"),
+]);
+
+test("A DISTRICT IS MATCHED ON THE TREE, never on what the sheet typed", () => {
+  /* The typed `city` column is 1,165 spellings with postal addresses among
+     them; a district reads the shop's reviewed place instead, and names its
+     state so Aurangabad in Bihar is not Aurangabad in Maharashtra. */
+  const clause = render([{ kind: "district", value: "Thane", parent: "Maharashtra" }]);
+  assert.match(clause, /resolved_district_id in/);
+  assert.match(clause, /'thane'/);
+  assert.match(clause, /'maharashtra'/);
+  assert.doesNotMatch(clause, /lower\(trim\(coalesce\(customers\.city/);
+});
+
+test("a town is matched under its district AND its state", () => {
+  const clause = render([{ kind: "town", value: "Kalyan", parent: townParent("Thane", "Maharashtra") }]);
+  assert.match(clause, /resolved_city_id in/);
+  assert.match(clause, /'kalyan'/);
+  assert.match(clause, /'thane'/);
+  assert.match(clause, /'maharashtra'/);
+});
+
+test("a town that does not name its state matches nothing rather than every namesake", () => {
+  assert.equal(render([{ kind: "town", value: "Aurangabad", parent: "Aurangabad" }]), "(false)");
+});
+
+test("a tree row names the table it is asked about, like every other kind", () => {
+  const q = dialect.sqlToQuery(territoryClause([{ kind: "district", value: "Thane", parent: "Maharashtra" }], "c"));
+  assert.match(q.sql, /\bc\.resolved_district_id\b/);
+});
+
+test("THE NARROWEST PICK IN A BRANCH IS STORED — down to the town", () => {
+  const leaves = territoryLeaves<Territory>([
+    { kind: "state", value: "Maharashtra", parent: "" },
+    { kind: "district", value: "Thane", parent: "Maharashtra" },
+    { kind: "town", value: "Kalyan", parent: townParent("Thane", "Maharashtra") },
+    { kind: "district", value: "Pune", parent: "Maharashtra" },
+    { kind: "state", value: "Goa", parent: "" },
+  ]);
+  assert.deepEqual(
+    leaves.map((t) => `${t.kind}:${t.value}`),
+    ["town:Kalyan", "district:Pune", "state:Goa"],
+  );
+});
+
+test("a town under Aurangabad in Maharashtra does not prune Aurangabad in Bihar", () => {
+  /* Pruning by bare value — what this used to do — would have dropped the
+     Bihar district and silently handed the salesman less than was picked. */
+  const leaves = territoryLeaves<Territory>([
+    { kind: "district", value: "Aurangabad", parent: "Maharashtra" },
+    { kind: "town", value: "Aurangabad", parent: townParent("Aurangabad", "Maharashtra") },
+    { kind: "district", value: "Aurangabad", parent: "Bihar" },
+  ]);
+  assert.deepEqual(
+    leaves.map((t) => `${t.kind}:${t.value}:${t.parent}`),
+    ["town:Aurangabad:Aurangabad, Maharashtra", "district:Aurangabad:Bihar"],
+  );
+});
+
+test("a typed city picked before districts still prunes its state", () => {
+  const leaves = territoryLeaves<Territory>([
+    { kind: "state", value: "Maharashtra", parent: "" },
+    { kind: "city", value: "Pune", parent: "Maharashtra" },
+  ]);
+  assert.deepEqual(leaves.map((t) => t.kind), ["city"]);
+});
+
+test("matchesTerritory reads a district and a town off the tree's names", () => {
+  const kalyan = { city: "kalyan west", state: "Maharashtra", district: "Thane", town: "Kalyan" };
+  assert.equal(matchesTerritory({ kind: "district", value: "Thane", parent: "Maharashtra" }, kalyan), true);
+  assert.equal(matchesTerritory({ kind: "district", value: "Thane", parent: "Gujarat" }, kalyan), false);
+  assert.equal(
+    matchesTerritory({ kind: "town", value: "Kalyan", parent: townParent("Thane", "Maharashtra") }, kalyan),
+    true,
+  );
+  assert.equal(
+    matchesTerritory({ kind: "town", value: "Bhiwandi", parent: townParent("Thane", "Maharashtra") }, kalyan),
+    false,
+  );
+});
+
+test("A LEAD IN A TOWN OF HIS DISTRICT IS LET IN, and filed under its state", () => {
+  const thane: Territory[] = [{ kind: "district", value: "Thane", parent: "Maharashtra" }];
+  /* No state from the phone and none from the book: the district names it. */
+  const inside = placeNewLead(thane, { city: "Kalyan" }, false, TREE);
+  assert.deepEqual(inside, { ok: true, state: "Maharashtra" });
+
+  const outside = placeNewLead(thane, { city: "Pune" }, false, TREE);
+  assert.equal(outside.ok, false);
+  if (!outside.ok) assert.deepEqual(outside.areas, ["Thane district (Maharashtra)"]);
+});
+
+test("a town allocation lets in that town and not its neighbour", () => {
+  const kalyan: Territory[] = [{ kind: "town", value: "Kalyan", parent: townParent("Thane", "Maharashtra") }];
+  assert.equal(placeNewLead(kalyan, { city: "Kalyan" }, false, TREE).ok, true);
+  assert.equal(placeNewLead(kalyan, { city: "Bhiwandi" }, false, TREE).ok, false);
+});
+
+test("a lead with no town falls back to its area, as the row it becomes does", () => {
+  const thane: Territory[] = [{ kind: "district", value: "Thane", parent: "Maharashtra" }];
+  assert.equal(placeNewLead(thane, { city: null, area: "Bhiwandi" }, false, TREE).ok, true);
+});
+
+test("without the tree a district cannot match, so the lead is refused rather than guessed in", () => {
+  const thane: Territory[] = [{ kind: "district", value: "Thane", parent: "Maharashtra" }];
+  assert.equal(placeNewLead(thane, { city: "Kalyan" }, false).ok, false);
+});
+
+test("an older handset that sends a district as the state is not taken at its word", () => {
+  /* Builds before districts offered every unknown kind as a state chip, so the
+     lead arrives saying state "Thane". It is a town in Thane district all the
+     same, and the one state his allocation names is the state it is in. */
+  const thane: Territory[] = [{ kind: "district", value: "Thane", parent: "Maharashtra" }];
+  assert.deepEqual(placeNewLead(thane, { city: "Kalyan", state: "Thane" }, false, TREE), {
+    ok: true,
+    state: "Maharashtra",
+  });
 });

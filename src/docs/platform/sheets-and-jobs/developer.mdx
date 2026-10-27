@@ -1,4 +1,4 @@
-Scheduled work in MahekOne has no in-process scheduler. **The droplet's crontab** runs `deploy/sheet-sync.sh`, which calls **one HTTP endpoint**, `GET /api/sheets/sync?mode=…`, with a bearer `CRON_SECRET`. The route maps the mode to a **job name** and runs it through `runJob` in `src/lib/jobs.ts`. Every job writes a `job_runs` row; every sheet read additionally writes a `sheet_sync_runs` row and is guarded so only one run per source is in flight. The same jobs run from the Admin Console and from `npm run jobs -- <name>`.
+Scheduled work in MahekOne has no in-process scheduler. **The droplet's crontab** runs `deploy/sheet-sync.sh`, which calls **one HTTP endpoint**, `GET /api/sheets/sync?mode=…`, with a bearer `CRON_SECRET`. The route maps the mode to a **job name** and runs it through `runJob` in `src/lib/jobs.ts`. Every job writes a `job_runs` row; every sheet read additionally writes a `sheet_sync_runs` row and is guarded so only one run per source is in flight. The same jobs run from the Admin Console and from `npm run jobs -- <name>`. Before any of that, `runJob` asks `lib/engines/sheet-retirement.ts` whether the job reads a retired tab — see [Retirement](#retirement).
 
 ## Map of the code
 
@@ -7,16 +7,17 @@ Scheduled work in MahekOne has no in-process scheduler. **The droplet's crontab*
 | Google client | `src/lib/sheets.ts` | Service-account JWT → read-only token, `readTab`, `listTabs`, `sheetsConfigured` |
 | Sync core | `src/lib/services/sheet-sync-core.ts` | `runSync` (one run per source, run row, stale-run rule), `hashRow`, `readWindows`, `watermark`, `SyncAlreadyRunningError` |
 | Order Details, Payment Status | `src/lib/services/sheet-sync-service.ts` | `syncOrderSheet`, `syncPaymentSheet` → `sheet_order_rows`, `sheet_payment_rows` |
-| Taken Order | `src/lib/services/taken-order-sync-service.ts`, `src/lib/taken-order-parse.ts` | → `sheet_taken_order_rows`, then `recomputeOrderSystemHolds` |
-| Sales Party | `src/lib/services/party-sync-service.ts`, `party-projection-service.ts` | → `sheet_party_rows`, `projectParties` |
-| Projection | `src/lib/services/sheet-projection-service.ts` | `projectSheet` → `projectCustomers`, `projectOrders`, `projectBillsFromOrders` / `projectBills`; `revertSheetSettledBills` |
+| Taken Order | `src/lib/services/taken-order-sync-service.ts`, `src/lib/taken-order-parse.ts` | → `sheet_taken_order_rows`, then `recomputeOrderSystemHolds` (also rebuilt hourly by `recompute-order-holds`) |
+| Sales Party | `src/lib/services/party-sync-service.ts`, `party-projection-service.ts` | → `sheet_party_rows`, `projectParties` (skipped by `runProjection` when `erp.orders.partySheet` is off) |
+| Projection | `src/lib/services/sheet-projection-service.ts` | `projectSheet` → `projectCustomers`, `projectOrders`, `projectBillsFromOrders` / `projectBills` — all skipped when `erp.orders.live` is on; `revertSheetSettledBills` |
+| Retirement (pure) | `src/lib/engines/sheet-retirement.ts` | `sheetSwitches`, `retiredReason`, `sourceRetired`, the three reason sentences |
 | Field activity | `src/lib/services/field-activity-sync-service.ts`, `field-activity-projection-service.ts` | → `sheet_field_activity_rows`, timeline events |
 | EMP 2.0 shop master | `src/lib/services/customer-master-sync-service.ts`, `customer-master-projection-service.ts` | → `sheet_customer_master_rows`, `projectCustomerMaster` (by hand only) |
 | Employees | `src/lib/services/employee-sync-service.ts`, `src/lib/hr-parse.ts` | → `employees` (full compare), via `/api/hrms/sync` or the open HRMS screen |
 | Endpoint | `src/app/api/sheets/sync/route.ts` | `JOBS` mode map, auth, 409 on a running source |
 | Jobs | `src/lib/jobs.ts`, `src/lib/mbos-jobs.ts` | `runJob`, `runNightly`, `runHourly`, `runDayBoundary`, every named job |
 | CLI | `scripts/run-job.ts`, `src/lib/job-args.ts` | `npm run jobs -- <name> [--owner=… --bills --dry-run …]` |
-| Callers | `deploy/sheet-sync.sh`, `scripts/sheet-sync-trigger.gs`, `scripts/field-activity-sync-trigger.gs`, `.github/workflows/sheet-sync*.yml` | Who hits the endpoint |
+| Callers | `deploy/sheet-sync.sh`, `scripts/sheet-sync-trigger.gs`, `scripts/field-activity-sync-trigger.gs` | Who hits the endpoint |
 | Console | `src/app/admin/sheets/`, `src/app/admin/jobs/page.tsx`, `triggerJob` in `src/lib/actions/crm.ts` | Run by hand |
 
 ## The endpoint
@@ -106,10 +107,10 @@ A hash over the row's cells, **sorted by column name**, so inserting a column in
 }} />
 
 - `orders.status` is kept wherever `approved_at` is set (accounts approved or declined it).
-- The four manager seats on a customer are kept wherever `am_decided_at` is set (a deliberate reassignment); the party projection **and** the nightly `recomputeSalesPeople` both honour it.
+- The four manager seats on a customer are kept wherever `am_decided_at` is set (a deliberate reassignment); the party projection **and** `recomputeSalesPeople` both honour it. (`recomputeSalesPeople` is not scheduled: its one caller is `recomputeEverything`, which only the seed runs.)
 
 <Callout kind="money" title="The sheet never writes money">
-No path writes a receipt, `paid_amount`, a bill status or outstanding from a sheet. New bills are inserted with `payment_position = 'unstated'` (held out of outstanding, ageing, collections, slow-payer and reminders) and only on INSERT. A person's receipt or the receivables report states them. `revert-sheet-paid` exists to undo receipts an older importer wrote with `source = 'sheet_import'`, and touches nothing else.
+No path writes a receipt, `paid_amount`, a bill status or outstanding from a sheet. New bills are inserted `stated` — owed from their due date — unless the Payment Status tab says Received, when `positionFor` inserts them `unstated` (held out of outstanding, ageing, collections, slow-payer and reminders). The position is written on INSERT only; a person's receipt or the receivables report decides it afterwards. `revert-sheet-paid` exists to undo receipts an older importer wrote with `source = 'sheet_import'`, and touches nothing else.
 </Callout>
 
 ## The job runner
@@ -131,7 +132,7 @@ No path writes a receipt, `paid_amount`, a bill status or outstanding from a she
 
 | Pass | Called by | Steps, in order |
 |---|---|---|
-| `hourly` | `sheet-sync.sh hourly` (`:22` UTC) | `erp-alerts`, `erp-inbox`, `mbos-hourly` (task/approval/sample escalations, push receipts, **selfie sweep**, attendance verdicts, holidays), `top-customers-report` catch-up, `whatsapp-automation`, `sweep-unconfirmed`, `whatsapp-receipts`, `wa-reply-media`, `escalate-complaint-sla`, `recompute-performance` (this month only) |
+| `hourly` | `sheet-sync.sh hourly` (`:22` UTC) | `erp-alerts`, `erp-inbox`, `erp-cycle-counts`, `erp-dispatch-transports`, `mbos-hourly` (task/approval/sample escalations, push receipts, **selfie sweep**, attendance verdicts, holidays), `top-customers-report` catch-up, `whatsapp-automation`, `sweep-unconfirmed`, `whatsapp-receipts`, `wa-reply-media`, `escalate-complaint-sla`, `recompute-performance` (this month only), **`recompute-order-holds`** (the Call Log's open-order hold — the nightly does not rebuild it) |
 | `nightly` | `sheet-sync.sh nightly` after reconcile and project | `mbos-nightly`, `hrms-leave-credit`, `erp-alerts`, `erp-digest`, `expense-month-snapshot`, `link-delivery-parties`, `field-activity-shops`, `recompute-cycles`, `recompute-sales-managers`, `self-raised-verifier-seats`, `resolve-typed-places`, `recompute-inactivity`, `recompute-followups`, `sweep-orphan-attachments`, `recompute-slow-payers`, `snapshot-queue`, `snapshot-customer-health`, `recompute-performance` (this and last month), `seed-targets`, `copy-forward-sales-targets`, `auto-eod`, `call-intel-train` |
 | `day-boundary` | Admin Console → Jobs only | `auto-eod`, `roll-reminders` |
 
@@ -146,13 +147,27 @@ No path writes a receipt, `paid_amount`, a bill status or outstanding from a she
 
 `sheet-sync.sh` refuses to run if `DOMAIN`, `CRON_SECRET` or `SYNC_OWNER_EMAIL` is missing from `/opt/mahekone/.env`, and logs a `000` (no answer in 310 s) as "the server may still be running it" — the request reached the app and the job runs to completion server-side.
 
+### Retirement
+
+<Code file="src/lib/engines/sheet-retirement.ts" symbol="retiredReason" />
+
+| Job | Retired when |
+|---|---|
+| `sheet-append`, `sheet-reconcile`, `sheet-payments`, `taken-order-sync` | `erp.orders.live` is on |
+| `party-sync` | `erp.orders.partySheet` is off |
+| `project-sheet` | both — with only `erp.orders.live` on it still publishes the party master |
+| Anything else, including `sheet-reparse` and `taken-order-reparse` | never — a reparse touches Google not at all |
+
+`runJob` checks first and, for a retired job, writes a `job_runs` row whose `detail` is the reason, so `/api/sheets/sync` answers 200 and the cron log stays quiet. `triggerJob` (`lib/actions/crm.ts`) and `runBillImportAction` (`lib/actions/accounts.ts`) refuse with the same sentence. `freshness.ts` turns a retired source `unjudged` with `job: null`, `integrationStatus` reports `Retired`, and the console's "imported order rows need attention" count is zero once the ERP is live. No staging table is deleted.
+
+<SettingsTable keys={["erp.orders.live", "erp.orders.partySheet"]} />
+
 ### The other callers
 
 | Caller | Status | Notes |
 |---|---|---|
 | `scripts/sheet-sync-trigger.gs` | Optional | Apps Script time-driven trigger bound to the order workbook, every 30 minutes, the same read modes then `project`, with a 4.5-minute budget (Apps Script gives up near 60 s per fetch). Script properties: `SYNC_URL`, `CRON_SECRET`, `SYNC_OWNER_EMAIL` |
 | `scripts/field-activity-sync-trigger.gs` | Optional | The same for the EMP 2.0 workbook — a trigger belongs to the document it is bound to |
-| `Sheet sync`, `Sheet sync (nightly)` workflows | Manual | `workflow_dispatch` only; a "sync now" button from a browser. GitHub `schedule:` was dropped because it delivered roughly one tick in ten |
 | HRMS screen | While open | Polls the employee sync every minute; the action refuses to run twice within 20 seconds |
 | `/api/hrms/sync` | External | Same `CRON_SECRET`; no schedule calls it |
 
@@ -166,7 +181,7 @@ Run any of these with `npm run jobs -- <name>` (local `.env.local`) or `npm run 
 | Order workbook | `sheet-append`, `sheet-reconcile`, `sheet-reparse`, `sheet-payments`, `taken-order-sync`, `taken-order-reparse`, `party-sync`, `project-sheet`, `revert-sheet-paid` |
 | Field and shop master | `field-activity-append`, `field-activity-sync`, `field-activity-project`, `field-activity-rematch`, `field-activity-reparse`, `field-activity-shops`, `customer-master-sync`, `customer-master-project` |
 | Employees | `hrms-sync`, `hrms-reparse`, `hrms-leave-credit` |
-| Caches | `recompute-cycles`, `recompute-sales-managers`, `recompute-inactivity`, `recompute-followups`, `recompute-slow-payers`, `recompute-performance`, `snapshot-queue`, `build-queues`, `snapshot-customer-health`, `expense-month-snapshot`, `seed-targets`, `copy-forward-sales-targets` |
+| Caches | `recompute-order-holds`, `recompute-cycles`, `recompute-sales-managers`, `recompute-inactivity`, `recompute-followups`, `recompute-slow-payers`, `recompute-performance`, `snapshot-queue`, `build-queues`, `snapshot-customer-health`, `expense-month-snapshot`, `seed-targets`, `copy-forward-sales-targets` |
 | Places | `geocode-customers`, `resolve-places-lookup`, `resolve-places`, `place-tree-import`, `resolve-typed-places`, `self-raised-verifier-seats`, `link-delivery-parties` |
 | Messaging and sweeps | `whatsapp-automation`, `whatsapp-receipts`, `sweep-unconfirmed`, `wa-reply-media`, `escalate-complaint-sla`, `auto-eod`, `roll-reminders`, `punch-out-reminders`, `top-customers-report`, `sweep-orphan-attachments` |
 | ERP | `erp-alerts`, `erp-inbox`, `erp-digest`, `erp-book-sync`, `erp-seed-profiles`, `erp-packing-import` |
@@ -178,6 +193,7 @@ Run any of these with `npm run jobs -- <name>` (local `.env.local`) or `npm run 
 npm run jobs -- nightly
 npm run jobs -- project-sheet --owner=example@mahek.in --bills
 npm run jobs -- taken-order-reparse             # the RULE changed, not the sheet
+npm run jobs -- recompute-order-holds           # the Call Log's open-order hold, now
 npm run jobs -- revert-sheet-paid --dry-run
 npm run jobs -- customer-master-project --dry-run
 
@@ -187,7 +203,7 @@ npm run jobs:prod:sheets -- customer-master-sync   # .env.local first, .env.prod
 
 Arguments are parsed by `src/lib/job-args.ts`: an unknown option, an `--owner` with no value, or a value given to a switch is **refused**, never silently dropped.
 
-From the console, `triggerJob` lets a platform administrator run `nightly`, `hourly`, `day-boundary` and the one-offs; holders of `sheet.import` (the accounts desk) may run `sheet-reconcile`, `sheet-payments` and `project-sheet`.
+From the console, `triggerJob` lets a platform administrator run `nightly`, `hourly`, `day-boundary` and the one-offs; holders of `sheet.import` (the accounts desk) may run `sheet-reconcile`, `sheet-payments` and `project-sheet` — each refused with its reason once retired.
 
 ## Tests that pin it
 
@@ -196,6 +212,8 @@ From the console, `triggerJob` lets a platform administrator run `nightly`, `hou
 | `npm run test` | `src/lib/taken-order-parse.test.ts` | The open/dispatched rule, `Cancel` releases |
 | `npm run test` | `src/lib/hr-parse.test.ts`, `src/lib/field-activity-parse.test.ts`, `src/lib/customer-master-parse.test.ts` | Cell parsing, dates read two ways |
 | `npm run test` | `src/lib/sheet-net-amount.test.ts`, `src/lib/sync-dependencies.test.ts` | Bill amounts; mode ordering |
+| `npm run test` | `src/lib/engines/sheet-retirement.test.ts` | Which jobs and freshness rows each combination of the two switches retires |
+| `npm run test:integration` | `src/lib/erp/erp-book.test.ts` — "once the ERP takes the orders" | Retired jobs answer with their reason; the hourly step rebuilds the hold |
 | `npm run test:integration` | `src/lib/journeys.test.ts` and the sheet suites in `scripts/run-integration.mjs` | Decisions survive a sync; `sync_conflicts` written once; no money from the sheet |
 
 ## Changing it safely
@@ -214,7 +232,7 @@ The `JOBS` map in the route, a `case` in `runJob`, and the line in `sheet-sync.s
 Hash-driven syncs never revisit an unchanged row; without a reparse the new rule never lands.
 </Step>
 <Step title="Never let a projection write money">
-No receipts, no `paid_amount`, no `status` or outstanding — and `payment_position = 'unstated'` on insert only.
+No receipts, no `paid_amount`, no `status` or outstanding — and `payment_position` on insert only.
 </Step>
 </Steps>
 
@@ -225,5 +243,6 @@ No receipts, no `paid_amount`, no `status` or outstanding — and `payment_posit
 | The route returns only the first `JobResult` of a multi-step job (`const [result]`), so `?mode=nightly` reports `mbos-nightly` alone | `src/app/api/sheets/sync/route.ts` |
 | `roll-reminders` runs only in `runDayBoundary`, which no schedule calls | `src/lib/jobs.ts` |
 | `customer-master-sync` / `-project` have no mode in the route and no schedule | `src/app/api/sheets/sync/route.ts` |
+| Once a tab is retired, `sheet-sync.sh` still calls its modes until somebody trims it; each answers 200 and does nothing | `deploy/sheet-sync.sh` |
 | Two possible half-hourly schedulers (crontab and Apps Script); which one a deployment runs is not recorded anywhere in the app | `deploy/sheet-sync.sh`, `scripts/sheet-sync-trigger.gs` |
 | The Apps Script header still calls itself the half-hourly cycle "instead of" the crontab that `DEPLOY.md` now documents | `scripts/sheet-sync-trigger.gs`; `DEPLOY.md` |

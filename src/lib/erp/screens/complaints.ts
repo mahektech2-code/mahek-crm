@@ -13,6 +13,7 @@ import { err, fieldErr, okVoid, type Result } from "@/lib/result";
 import { createComplaint } from "@/lib/services/complaint-create";
 import type { ErpContext } from "../access";
 import { erpAudit, paise, stampLine, text, type ScreenModule } from "../server";
+import { newFormIn } from "../lazy-forms";
 import type { ActionSpec, ColSpec, FormSpec, ListRow } from "../ui";
 import { fd, inr } from "../ui";
 import { today } from "./common";
@@ -355,7 +356,7 @@ function toRow(ctx: ErpContext, x: Row, files: Map<string, string[]>, canIssue: 
 function complaintList(scope: ComplaintScope): ScreenModule {
   return {
     key: scope,
-    async load(ctx) {
+    async load(ctx, s) {
       const rows = await complaintRows(scope === "issueCn" ? eq(complaints.requestCn, true) : scope === "complaints" ? eq(complaints.requestCn, false) : undefined);
       const fileRows = rows.length
         ? await db
@@ -391,7 +392,7 @@ function complaintList(scope: ComplaintScope): ScreenModule {
           groups: scope === "requests" ? ["status"] : undefined,
           chips: "status",
           bulk: decider ? [{ id: "accept", l: "Accept" }, { id: "reject", l: "Reject", confirm: "Reject every selected complaint?" }] : undefined,
-          newForm: await requestForm(ctx),
+          ...(await newFormIn(s, () => requestForm(ctx))),
           newLabel: "Raise product quality complaint",
           noDataLine: scope === "issueCn" ? "No credit notes asked for." : scope === "complaints" ? "No complaints without a credit note." : "No product quality complaints yet.",
         },

@@ -16,7 +16,7 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, customers, mbosUserTerritories, users } from "@/db/schema";
+import { appAccess, customers, mbosUserTerritories, places, users } from "@/db/schema";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { ingestSyncBatch } from "@/lib/actions/mbos";
 import { customerIdsInScope, type MbosPrincipal } from "@/lib/services/mbos-service";
@@ -156,5 +156,85 @@ describe("A lead may only be raised inside the salesman's own area", () => {
     const boss = await person("admin", []);
     const [result] = await ingestSyncBatch(boss, [lead({ city: "Kolkata" })]);
     assert.equal(result.status, "accepted", JSON.stringify(result));
+  });
+});
+
+describe("A district or a town is matched on the reviewed tree", () => {
+  /* A slice of the tree: Thane district with two towns, and Pune district.
+     Truncated with CASCADE because `customers.resolved_*_id` points here. */
+  async function tree() {
+    await db.execute(sql`truncate table places restart identity cascade`);
+    await db.insert(places).values([
+      { id: "pl_mh", kind: "state", name: "Maharashtra", key: "maharashtra", parentId: null },
+      { id: "pl_thane", kind: "district", name: "Thane", key: "thane", parentId: "pl_mh" },
+      { id: "pl_kalyan", kind: "city", name: "Kalyan", key: "kalyan", parentId: "pl_thane" },
+      { id: "pl_bhiwandi", kind: "city", name: "Bhiwandi", key: "bhiwandi", parentId: "pl_thane" },
+      { id: "pl_pune_d", kind: "district", name: "Pune", key: "pune", parentId: "pl_mh" },
+      { id: "pl_pune", kind: "city", name: "Pune", key: "pune", parentId: "pl_pune_d" },
+    ]);
+  }
+
+  /** A shop already on his book, placed where the tree puts it. */
+  async function shop(owner: string, town: "pl_kalyan" | "pl_bhiwandi" | "pl_pune") {
+    const district = town === "pl_pune" ? "pl_pune_d" : "pl_thane";
+    const [row] = await db
+      .insert(customers)
+      .values({
+        id: id("cus"),
+        name: `Shop in ${town}`,
+        phone: String(9700000000 + Math.floor(Math.random() * 99_999_999)),
+        city: "typed anything",
+        region: "Maharashtra",
+        kind: "customer",
+        ownerId: owner,
+        salesAmId: owner,
+        resolvedStateId: "pl_mh",
+        resolvedDistrictId: district,
+        resolvedCityId: town,
+      })
+      .returning({ id: customers.id });
+    return row.id;
+  }
+
+  test("a lead in a town of his district is let in, placed at once, and on his book", async () => {
+    await tree();
+    const rahul = await person("associate", [{ kind: "district", region: "Thane", parent: "Maharashtra" }]);
+    const item = lead({ city: "Kalyan" });
+    const [result] = await ingestSyncBatch(rahul, [item]);
+    assert.equal(result.status, "accepted", JSON.stringify(result));
+    const row = await stored(item.entityId);
+    assert.equal(row.territoryRegion, "Maharashtra");
+    /* Placed now, not by the nightly pass — the district reaches it only
+       through this column. */
+    assert.equal(row.resolvedCityId, "pl_kalyan");
+    assert.equal(row.resolvedDistrictId, "pl_thane");
+    assert.ok((await customerIdsInScope(rahul)).includes(item.entityId));
+  });
+
+  test("a lead in another district is refused, and the refusal names his district", async () => {
+    await tree();
+    const rahul = await person("associate", [{ kind: "district", region: "Thane", parent: "Maharashtra" }]);
+    const item = lead({ city: "Pune" });
+    const [result] = await ingestSyncBatch(rahul, [item]);
+    assert.equal(result.status, "rejected", JSON.stringify(result));
+    assert.match(JSON.stringify(result), /outside your area \(Thane district \(Maharashtra\)\)/);
+    assert.equal(await stored(item.entityId), undefined);
+  });
+
+  test("his book is narrowed by district and by town, on the tree's own place", async () => {
+    await tree();
+    const dist = await person("associate", [{ kind: "district", region: "Thane", parent: "Maharashtra" }]);
+    const kalyanForDist = await shop(dist.user.id, "pl_kalyan");
+    const puneForDist = await shop(dist.user.id, "pl_pune");
+    const distBook = await customerIdsInScope(dist);
+    assert.ok(distBook.includes(kalyanForDist));
+    assert.ok(!distBook.includes(puneForDist));
+
+    const town = await person("associate", [{ kind: "town", region: "Kalyan", parent: "Thane, Maharashtra" }]);
+    const kalyan = await shop(town.user.id, "pl_kalyan");
+    const bhiwandi = await shop(town.user.id, "pl_bhiwandi");
+    const townBook = await customerIdsInScope(town);
+    assert.ok(townBook.includes(kalyan));
+    assert.ok(!townBook.includes(bhiwandi), "a neighbouring town in the same district is not his");
   });
 });

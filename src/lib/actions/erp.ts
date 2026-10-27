@@ -19,6 +19,7 @@ import { listCsv, parseListQuery, queryRows } from "@/lib/erp/list-query";
 import { withReadMemo } from "@/lib/erp/read-memo";
 import { scopeFor } from "@/lib/erp/window";
 import { erpAudit } from "@/lib/erp/server";
+import { lazyForm } from "@/lib/erp/lazy-forms";
 
 /* ---------------------------------------------------------------------------
  * The ERP's writes, all through five doors.
@@ -108,10 +109,12 @@ export async function erpSubmitForm(
 export async function erpLoadForm(screen: string, action: string, id: string): Promise<Result<FormSpec>> {
   try {
     const ctx = await requireErpForm(screen);
-    const loader = screenModule(screen)?.formLoaders?.[action];
-    if (!loader) return err("That form is not available.", "not_found");
-    const spec = await loader(ctx, id);
-    if (!spec) return err("That record no longer exists.", "not_found");
+    const mod = screenModule(screen);
+    if (!mod) return err("That form is not available.", "not_found");
+    const loader = mod.formLoaders?.[action];
+    /* No loader of its own: a form the list left on the server because it was heavy (`lazy-forms.ts`). */
+    const spec = loader ? await loader(ctx, id) : await lazyForm(ctx, mod, action, id);
+    if (!spec) return err(loader ? "That record no longer exists." : "That form is not available any more. Reload the page.", "not_found");
     return ok(spec);
   } catch (e) {
     return refused(e);
@@ -129,7 +132,7 @@ export async function erpListExport(screen: string, query: Record<string, string
     const mod = screenModule(screen);
     if (!mod) return err("That list is not available.", "not_found");
     const q = parseListQuery(query);
-    const { spec, rows, tooWide } = await withReadMemo(() => mod.load(ctx, scopeFor(mod.window, q, null)));
+    const { spec, rows, tooWide } = await withReadMemo(() => mod.load(ctx, { ...scopeFor(mod.window, q, null), forms: "defer" }));
     if (tooWide) return err(`That period holds ${tooWide.n.toLocaleString("en-IN")} rows — pick a shorter one to export.`, "rule_violation");
     return ok(listCsv(spec, rows, q, FLAG));
   } catch (e) {
@@ -143,7 +146,7 @@ export async function erpListIds(screen: string, query: Record<string, string>):
     const mod = screenModule(screen);
     if (!mod) return err("That list is not available.", "not_found");
     const q = parseListQuery(query);
-    const { spec, rows } = await withReadMemo(() => mod.load(ctx, scopeFor(mod.window, q, null)));
+    const { spec, rows } = await withReadMemo(() => mod.load(ctx, { ...scopeFor(mod.window, q, null), forms: "defer" }));
     return ok(queryRows(spec, rows, q, FLAG).list.map((r) => r.id));
   } catch (e) {
     return refused(e);

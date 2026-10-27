@@ -76,6 +76,7 @@ The stage move promotes when the destination is at or past this rung. The order 
 | CRM call with an order | `interaction-service.ts` — spreads `conversionColumns` into the customer update when `hasOrderedBefore` |
 | Accounts approving an order | `order-approval-service.ts` → `convertIfNowQualified`, outside the approval transaction |
 | Handset order | `actions/mbos.ts` → `convertLeadOnSecondOrder` |
+| ERP order (`erp.orders.live` on) | `erp/book.ts` `syncOne` → `convertIfNowQualified`, after the book is written, for an order not cancelled or declined; a failure is swallowed and the next order asks again |
 | Stage move | `applyLeadStageMove` — `promoted` sets `kind`, `lead_converted_at`, `sales_am_id`, clears `lead_manager_id` |
 
 ## The gates

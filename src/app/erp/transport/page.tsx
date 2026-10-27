@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { NavLink } from "@/components/shell/nav-link";
 import { notFound, redirect } from "next/navigation";
 import { erpContext } from "@/lib/erp/access";
 import { erpScreenBySlug } from "@/lib/erp/registry";
@@ -9,6 +9,7 @@ import { consignments, lrUploadKit, messages, placeOptions, transporters, upload
 import { today as businessToday } from "@/lib/erp/screens/common";
 import { syncDispatchedTransports } from "@/lib/erp/screens/sales";
 import { ListScreen, ListTabs } from "../_ui/list-screen";
+import { lightPage, lightRow, lightSpec } from "@/lib/erp/lazy-forms";
 import { pageOf, parseListQuery } from "@/lib/erp/list-query";
 import { withReadMemo } from "@/lib/erp/read-memo";
 import { scopeFor, windowInfo } from "@/lib/erp/window";
@@ -22,6 +23,8 @@ import { OnRoad } from "./parts/on-road";
 import { Delivered, Overview } from "./parts/overview";
 import { ToTransport } from "./parts/to-transport";
 import { Transporters } from "./parts/transporters";
+import { Trips } from "./parts/trips";
+import { billsWithoutTrip, trips as readTrips } from "@/lib/erp/trips";
 import { UploadLrsButton } from "./parts/upload-lrs-button";
 
 /**
@@ -34,6 +37,7 @@ import { UploadLrsButton } from "./parts/upload-lrs-button";
  *   On the road      one card per LR: ring, update, report a problem, deliver
  *   Delivered        closed, with how long it took
  *   Customer messages every WhatsApp the flow wrote, and those to send by hand
+ *   Trips & freight  vehicle trips, and the transport payment shared by litres
  *   Transporters     who to ring, and their tracking page
  *   All bills / Paid freight   the registers, as lists
  *
@@ -42,7 +46,7 @@ import { UploadLrsButton } from "./parts/upload-lrs-button";
  */
 export const dynamic = "force-dynamic";
 
-const BOARD = new Set(["transport", "toTransport", "pendingLr", "trackLr", "delivered", "lrMessages", "transporters"]);
+const BOARD = new Set(["transport", "toTransport", "pendingLr", "trackLr", "delivered", "lrMessages", "trips", "transporters"]);
 
 export default async function LogisticsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const ctx = await erpContext();
@@ -64,17 +68,18 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
     /* One page travels, as on every other ERP list (`[slug]/page.tsx`), read through the register's window. */
     const query = parseListQuery(raw);
     const open = one("open");
-    const scope = scopeFor(mod.window, query, open ?? null);
+    const scope = { ...scopeFor(mod.window, query, open ?? null), forms: "defer" as const };
     const { spec, rows, tooWide } = await withReadMemo(() => mod.load(ctx, scope));
-    const page = { ...pageOf(spec, rows, query, FLAG), ...(mod.window ? { window: windowInfo(mod.window, scope, tooWide ?? null) } : {}) };
+    const page = lightPage(mod, { ...pageOf(spec, rows, query, FLAG), ...(mod.window ? { window: windowInfo(mod.window, scope, tooWide ?? null) } : {}) });
+    const found = open ? (rows.find((r) => r.id === open) ?? null) : null;
     return (
       <ListScreen
         key={`${view}|${f ?? ""}|${open ?? ""}`}
         initialNew={null}
-        spec={spec}
+        spec={lightSpec(spec)}
         rows={page.rows}
         server={{ ...page, query }}
-        openRow={open ? (rows.find((r) => r.id === open) ?? null) : null}
+        openRow={found ? lightRow(mod, found) : null}
         label={screen.label}
         sub={screen.sub}
         tabs={tabs}
@@ -94,10 +99,11 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
     consignments(),
     view === "pendingLr" || view === "transport" ? uploadedLrs() : Promise.resolve([]),
     view === "lrMessages" || view === "transport" ? messages({ limit: view === "transport" ? 500 : 300 }) : Promise.resolve([]),
-    view === "transporters" || view === "pendingLr" ? transporters() : Promise.resolve([]),
+    view === "transporters" || view === "pendingLr" || view === "trips" ? transporters() : Promise.resolve([]),
     canWrite ? lrUploadKit() : Promise.resolve(null),
   ]);
   const [tree, labels] = view === "transporters" ? await Promise.all([placeOptions(), refValues("consignmentLabel")]) : [[], []];
+  const [tripRows, noTrip] = view === "trips" ? await Promise.all([readTrips(), billsWithoutTrip()]) : [[], []];
   /* A dashboard tile opens a tab narrowed to the bills it counted. */
   const ids = one("f")?.split(",");
   const rows = ids ? all.filter((c) => ids.includes(c.id)) : all;
@@ -115,9 +121,9 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
       <ListTabs label={screen.label} tabs={tabs} />
       {ids ? (
         <div className="mb-3 flex items-center gap-2 text-meta text-muted">
-          Showing {ids.length} bill{ids.length === 1 ? "" : "s"}: {one("fl") ?? "filtered"} · <Link href={at(view)} className={linkClass()}>
+          Showing {ids.length} bill{ids.length === 1 ? "" : "s"}: {one("fl") ?? "filtered"} · <NavLink href={at(view)} className={linkClass()}>
             Show everything
-          </Link>
+          </NavLink>
         </div>
       ) : null}
 
@@ -148,6 +154,7 @@ export default async function LogisticsPage({ searchParams }: { searchParams: Pr
       ) : null}
       {view === "delivered" ? <Delivered rows={rows.filter((c) => c.phase === "delivered")} canWrite={canWrite} /> : null}
       {view === "lrMessages" ? <Messages rows={outbox} canWrite={canWrite} wati={cfg["erp.logistics.watiTemplate"].trim() || null} /> : null}
+      {view === "trips" ? <Trips trips={tripRows} unassigned={noTrip} today={today} transporters={dir.filter((t) => t.active).map((t) => t.name)} canWrite={canWrite} /> : null}
       {view === "transporters" ? (
         <Transporters
           rows={dir}

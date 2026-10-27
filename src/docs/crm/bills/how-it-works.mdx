@@ -1,10 +1,14 @@
-Sales Bills is the ledger of what Mahek billed. Bills arrive from the order sheet (a sales bill **is** the order), from accounts entering them, and from Tally's receivables report. What a bill is worth is the sheet's; what has been paid against it is only ever the app's, rebuilt from confirmed receipts. This tab explains where bills come from, how they are numbered, how paid and owed are decided, and how the ledger is cut and paged.
+Sales Bills is the ledger of what Mahek billed. Bills arrive from the order sheet (a sales bill **is** the order) until the ERP takes the orders, from the ERP when goods leave once it does, from accounts entering them, and from Tally's receivables report. What a bill is worth is its source's; what has been paid against it is only ever the app's, rebuilt from confirmed receipts. This tab explains where bills come from, how they are numbered, how paid and owed are decided, and how the ledger is cut and paged.
 
 ## A sales bill is the order
 
 <Rule title="One bill per order, valued as the sum of its lines">
-Bills are projected from the order sheet's Order Details tab, one per order. The amount is the **sum of every line's final amount** — final amount is per line, and about half of orders have more than one line. The bill date is the dispatch date, or the order date where there is none. Opening a bill number shows the order's lines.
+While the sheet takes the orders, bills are projected from the order sheet's Order Details tab, one per order. The amount is the **sum of every line's final amount** — final amount is per line, and about half of orders have more than one line. The bill date is the dispatch date, or the order date where there is none. Opening a bill number shows the order's lines.
 </Rule>
+
+<Callout kind="note" title="Once the ERP takes the orders">
+With <Setting k="erp.orders.live" /> on, the Order Details tab is no longer read and writes no bill. Each ERP order gets one bill the first time a line of it is dispatch-verified, owed from the start — see [the ERP and the order book](/docs/erp/order-book/how-it-works). The sheet's bills already in the ledger stay as they are.
+</Callout>
 
 <Callout kind="why">
 The Order Details tab carries a Tally bill number on almost every line and the amount on all of them; that ledger is what Sales Bills is meant to show. Sourcing bills from the Payment Status tab alone left the screen empty whenever that tab had not been pulled — bills missing because of a second document rather than because there were none.

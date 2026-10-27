@@ -84,7 +84,11 @@ It takes the quantity out of a lot at one godown (read as an outflow) and posts 
 ### Item Lost Record: a write-off is a movement
 
 <Rule title="Stock is written off into a real, reserved godown">
-**Item Lost Record** is a godown in every ledger, so a loss is recorded as stock that moved there rather than stock that simply vanished. Only somebody with the **write-off** power is offered it, and only as a destination; stock is never moved out of it. Boxes transferred there are marked **Written off**.
+**Item Lost Record** is a reserved godown, so a loss is recorded as a transfer there — a movement with a date, a lot and a person — rather than stock that simply vanished. Only somebody with the **write-off** power is offered it, and only as a destination; stock is never moved out of it. Boxes transferred there are marked **Written off**.
+</Rule>
+
+<Rule title="Written-off stock is not stock">
+What Item Lost Record holds is gone, so every stock reading leaves it out: Stock on hand never lists it as a godown, the dashboard's "All godowns" does not count it, and no "is there enough" check or re-order reading adds it in. The record of a write-off is the transfer itself — the Item transfers list and the Stock inquiry's "Written off" lines.
 </Rule>
 
 <Callout kind="why">
@@ -112,15 +116,16 @@ One item, in detail: the lots holding it now, and every movement in a period wit
 
 | Act | Needs |
 |---|---|
-| See stock and the logs | The Stock screen (all four stages and their logs come with it) |
+| See stock and the logs | The Stock on hand screen (all four stages and their logs come with it) |
 | See rate and value | Cost and margin |
-| Label loose units, print labels | The Stock or Boxes & labels screen (labels: whoever works boxes, packing, dispatch or orders) |
+| Label loose units, print labels | The Stock on hand or Boxes & labels screen (labels: whoever works boxes, packing, dispatch or orders) |
+| Give an old batch's boxes ids | The Stock on hand screen, or Packing batches from the label sheet |
 | Hold and release boxes | Boxes & labels |
 | Reject or mark returned | Dispatch-override power |
 | Transfer | Item transfers |
 | Write off to Item Lost Record | Write off to Item Lost Record |
 | Adjust stock (Add or Remove) | The stock-control power |
-| Stock inquiry | The Stock screen |
+| Stock inquiry | The Stock on hand screen |
 
 ## Settings
 

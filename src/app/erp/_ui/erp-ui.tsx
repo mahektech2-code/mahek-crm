@@ -10,7 +10,7 @@ import { DialogBody, DialogTitle, DialogFooter, DialogHeader, ErpDialog, StepBar
 import { pageOfError, planPages, plural } from "./form-pages";
 import { useToast } from "@/components/ui/toast";
 import type { ActionSpec, BulkSpec, FieldSpec, FormSpec, PromptSpec, ToolResult, ToolSpec } from "@/lib/erp/ui";
-import { resolveField, whenHolds } from "@/lib/erp/ui";
+import { fillOf, resolveField, whenHolds } from "@/lib/erp/ui";
 import { runCalc } from "@/lib/erp/calc";
 import "@/lib/erp/calcs";
 import type { Result } from "@/lib/result";
@@ -449,7 +449,7 @@ function FormDialog({
     let out = l;
     for (const f of spec.line ?? []) {
       if (!f.fillBy || !f.fillBy.by.includes(changed)) continue;
-      const v = f.fillBy.map[f.fillBy.by.map((k) => ({ ...hdr, ...out })[k] ?? "").join("|")];
+      const v = fillOf(f, { ...hdr, ...out });
       if (v != null) out = { ...out, [f.k]: v };
     }
     return out;
@@ -565,11 +565,17 @@ function FormDialog({
         }}
         onChange={(v) => {
           let nh = { ...h, [f.k]: v };
-          /* A header field filled from another (a PO item fills the item it names). */
+          /* A header field filled from another (a PO item fills the item it
+             names). It moves too, so the lines reading it refill: the billing
+             party fills its price list, and the list fills each line's rate. */
+          const moved = [f.k];
           for (const g of spec.header) {
             if (!g.fillBy || !g.fillBy.by.includes(f.k)) continue;
-            const x = g.fillBy.map[g.fillBy.by.map((k) => nh[k] ?? "").join("|")];
-            if (x != null) nh = { ...nh, [g.k]: x };
+            const x = fillOf(g, nh);
+            if (x != null) {
+              nh = { ...nh, [g.k]: x };
+              moved.push(g.k);
+            }
           }
           /* A pick that brings its own lines (an SFG product its recipe). */
           const from = spec.linesFrom?.by === f.k ? spec.linesFrom.map[v] : undefined;
@@ -586,7 +592,7 @@ function FormDialog({
             else confirm(`Replace these lines with ${v}'s ${from.length === 1 ? "line" : `${from.length} lines`}? What you have entered on them is cleared.`, lay);
           }
           setH(nh);
-          if (!from?.length && spec.line?.some((x) => x.fillBy?.by.includes(f.k))) setLines((s) => s.map((x) => fillLine(x, nh, f.k)));
+          if (!from?.length && spec.line?.some((x) => x.fillBy?.by.some((k) => moved.includes(k)))) setLines((s) => s.map((x) => moved.reduce((l, k) => fillLine(l, nh, k), x)));
           setErrs((s) => ({ ...s, [`h.${f.k}`]: "" }));
         }}
       />

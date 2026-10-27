@@ -21,6 +21,10 @@ The narrowing is resolved inside every read rather than passed in, because a fil
 A salesman sees **his own** customers and leads — the ones whose salesperson he is. His allocated places can only remove shops from that, never add another salesman's. The two are easy to confuse; the territory is not the security boundary.
 </Rule>
 
+<Rule title="The shops in his areas can come with them">
+Saving his areas also makes him the salesperson for the shops in those places that sit in somebody else's book — the dialog lists how many and whose book each comes out of before Save, and the tick can be taken off. It moves only the number shown, records each move with the reason *Territory reassigned*, and tells everybody affected. Because moving a shop moves its sales and targets, only Accounts or an administrator can do it; a sales manager saving areas is told the shops stay where they are. Deactivated accounts never move.
+</Rule>
+
 <Rule title="No area means no book">
 A salesman with nothing allocated sees **no customers** on his handset. Managers and administrators are exempt.
 </Rule>
@@ -30,14 +34,14 @@ No area used to mean no narrowing — every shop he could see. That is safe agai
 </Callout>
 
 <Rule title="A territory is a hierarchy, and the narrowest pick wins">
-Places nest — a city in a state, a beat in a city. Down one branch, picks combine as AND: Maharashtra plus Pune inside it means **Pune**. Across branches they combine as OR: Pune plus Nashik is both. The office keeps only the leaves of what you picked, so "Maharashtra, Pune" can never quietly hand him the whole state.
+Places nest — a district in a state, a town in a district. Down one branch, picks combine as AND: Maharashtra plus Thane district inside it means **Thane district**. Across branches they combine as OR: Thane plus Pune is both. The office keeps only the leaves of what you picked, so "Maharashtra, Thane" can never quietly hand him the whole state.
 </Rule>
 
 <Rule title="Shops that leave his area leave his phone">
 A sync says what exists; only a removal notice says what stopped. Changing where he works sends removal notices for the shops that left **his own** book, so a salesman moved from one state to another does not walk to a shop that is no longer his.
 </Rule>
 
-The place tree is built from the cities the book actually holds, with a shop count on every node, biggest first — so the city somebody means is near the top of what is otherwise a long tail of addresses.
+The districts and towns come from the reviewed location tree every customer list filters by, with a shop count on every node, biggest first. A city allocated before districts existed keeps its meaning and is listed in the dialog as an earlier pick.
 
 ## Hometown
 

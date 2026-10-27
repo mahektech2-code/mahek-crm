@@ -11,7 +11,7 @@ flowchart TD
   B -- "Yes" --> U{"Unreachable?"}
   U -- "Yes" --> L
   U -- "No" --> W["Remove what a window silences:<br/>quiet after an order · held by a promise ·<br/>on the lead funnel · told us 'no' recently"]
-  W --> S{"Held back as a whole?<br/>do not contact · skipped · called today ·<br/>open order on the sheet · retry waiting · WhatsApp cooldown"}
+  W --> S{"Held back as a whole?<br/>do not contact · skipped · called today ·<br/>open order (sheet or ERP) · retry waiting · WhatsApp cooldown"}
   S -- "Yes" --> H["Held-back strip,<br/>with the reason"]
   W -- "nothing left" --> H
   S -- "No" --> R["Rank by the strongest reason,<br/>then by what the call is worth"]
@@ -140,7 +140,7 @@ These are checked in this order, and the first one that applies is the sentence 
 | 1 | **Marked do not contact** | No — a standing instruction |
 | 2 | **Skipped today**, with the reason given | No |
 | 3 | **Already called today** by anybody (setting: <Setting k="queue.excludeCalledToday" />) | No — the contact has happened |
-| 4 | **Active in the order system** — an open line on the Taken Order tab (setting: <Setting k="queue.excludeActiveInOrderSystem" />) | No — they have already ordered |
+| 4 | **Active in the order system** — an open line on the Taken Order tab, or, once the ERP takes the orders, an ERP order not yet dispatch-verified; rebuilt every hour (setting: <Setting k="queue.excludeActiveInOrderSystem" />) | No — they have already ordered |
 | 5 | **Waiting before the next no-answer retry** | No |
 | 6 | **WhatsApp confirmed sent** within <Setting k="queue.whatsappCooldownDays" /> days | **Yes** |
 

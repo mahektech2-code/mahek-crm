@@ -43,6 +43,10 @@ A recipe is always in litres — even for a raw material bought in kilograms —
 A lot with no QC decision is **Pending**. FG filling offers approved lots only, and the save refuses any other. Deciding needs the **Approve or reject SFG QC** power; a reject needs a reason. The decision records the same evidence a purchase lot test does, for each test on the Testing list, and none of it is required — the approver's word is the decision. Rejecting an approved lot stops further filling; what was already filled stays where it is, traceable to the lot that failed.
 </Rule>
 
+<Rule title="On the Factory phone, every test must pass">
+The Mahek Factory app makes the same decision on the same record, and there the Testing list is asked test by test, Pass or Fail: approving needs every active test answered and every answer a Pass, and rejecting needs a reason. Who decides there is the Mixing & Blending department, not the power. The phone reads the Testing list again when it saves, so a phone holding an older list cannot approve past a test added since.
+</Rule>
+
 The verdict is kept against the **lot code**, so a transfer of the lot to another godown carries it. An SFG lot is in SFG stock from the moment the batch is saved — QC decides whether it may be **filled**, not whether it exists.
 
 ## FG filling
@@ -105,7 +109,7 @@ Deleting a posted SFG line, a filling or a packing line is an **ERP administrato
 | Act | Needs |
 |---|---|
 | Make SFG batches, fills, packing batches | The screen |
-| Approve or reject SFG QC | Approve or reject SFG QC |
+| Approve or reject SFG QC | Approve or reject SFG QC (on the Factory phone: the Mixing & Blending department) |
 | Set, change, remove a recipe line | ERP manager level (or administrator) |
 | Delete a posted line | ERP administrator |
 | See rates, costing, stock value | See cost and margin |

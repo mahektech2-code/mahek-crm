@@ -74,18 +74,14 @@ export const LABEL_CSS = `
 .lb-pur .ids { display: flex; flex-direction: column; gap: 0.9mm; font-size: 6.5pt; line-height: 1; white-space: nowrap; }
 .lb-pur .remark { font-size: 7.5pt; line-height: 1.2; }
 
-/* ---- the dispatch label, 80 x 80 ---- */
-.lb-dis .to { display: flex; flex-direction: column; gap: 1.5mm; }
-.lb-dis .meta { display: flex; flex-direction: row; justify-content: space-between; align-items: baseline; gap: 3mm; font-size: 7pt; line-height: 1; white-space: nowrap; }
+/* ---- the dispatch sticker, 80 x 80: customer, product, invoice no, order no ---- */
+.lb-dis { justify-content: space-between; }
+.lb-dis .k { font-size: 7pt; line-height: 1; text-transform: uppercase; letter-spacing: 0.04em; }
+.lb-dis .to { display: flex; flex-direction: column; gap: 1.2mm; }
 .lb-dis .party { font-weight: 800; line-height: 1.05; }
-.lb-dis .area { font-weight: 700; font-size: 12pt; line-height: 1; }
-.lb-dis .billed { font-size: 8pt; line-height: 1; }
-.lb-dis .goods { display: flex; flex-direction: column; gap: 2.2mm; border-top: 0.5mm solid #000; padding-top: 2.2mm; }
+.lb-dis .goods { display: flex; flex-direction: column; gap: 1.2mm; border-top: 0.5mm solid #000; padding-top: 2.2mm; }
 .lb-dis .sku { font-weight: 800; line-height: 1.1; }
-.lb-dis .facts { display: flex; flex-direction: row; justify-content: space-between; align-items: flex-end; gap: 3mm; }
-.lb-dis .facts .cell .v { white-space: nowrap; }
+.lb-dis .facts { display: flex; flex-direction: row; justify-content: space-between; align-items: flex-end; gap: 3mm; border-top: 0.5mm solid #000; padding-top: 2.2mm; }
+.lb-dis .facts .cell .v { white-space: nowrap; font-weight: 800; font-size: 13pt; }
 .lb-dis .facts .cell:last-child { align-items: flex-end; }
-.lb-dis .remark { font-size: 7.5pt; line-height: 1.15; }
-.lb-dis .carrier { display: flex; flex-direction: column; gap: 0.9mm; border-top: 0.5mm solid #000; padding-top: 2mm; }
-.lb-dis .carrier .v { font-weight: 800; line-height: 1.05; }
 `;

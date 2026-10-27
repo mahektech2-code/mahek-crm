@@ -69,36 +69,38 @@ sequenceDiagram
   participant Dr as Droplet
   participant Pr as job: prune
   Dev->>T: push to main
-  T->>T: npm ci, tsc --noEmit, eslint src, npm test
-  T->>Bld: needs: test
+  Dev->>Bld: push to main (at the same time)
+  T->>T: npm ci, next typegen, tsc --noEmit, eslint src, npm test
   Bld->>Bld: tag = first 12 chars of the SHA
   Bld->>Reg: wait out any garbage collection (if DO_API_TOKEN)
   Bld->>Reg: docker login (DOCR_USERNAME, DOCR_TOKEN)
   Bld->>Reg: build-push :sha and :latest (GHA cache)
+  T->>Dp: needs: test
   Bld->>Dp: needs: build
   Dp->>Dp: is main still at this SHA? if not, skip
+  Dp->>Dr: docker pull the new tag (in the background)
   Dp->>Dr: ssh -L 5433:127.0.0.1:5432
   Dp->>Dr: npm run deploy:db through the tunnel<br/>(migrate, catalogue, hire)
   Dp->>Dr: sed IMAGE= in .env, compose pull app, restart.sh
   Dr->>Dr: remove local images beyond the newest 3
   Dp->>Dr: curl https://DOMAIN/login until 200 (5 min)
   Dp->>Pr: needs: deploy
-  Pr->>Reg: keep latest + live + newest 3, delete the rest
-  Pr->>Reg: start garbage collection
+  Pr->>Reg: keep latest + live + the one before, delete the rest
+  Pr->>Reg: start garbage collection only if the next pushes might not fit
 `} />
 
 <Steps>
-<Step title="Test">
-`npm ci`, `npx tsc --noEmit`, `npx eslint src`, `npm test` (the pure suites). The full CI — migrations from scratch, integration journeys, the handset's lint, types and engine tests, the link crawl — runs separately in `ci.yml` on every PR.
+<Step title="Test, beside the build">
+`npm ci`, `npx next typegen`, `npx tsc --noEmit`, `npx eslint src`, `npm test` (the pure suites). It runs at the same time as the build rather than before it, and `deploy` needs both — a red test still stops the deploy, without making the image wait for it. `next typegen` is there because the image build no longer type-checks: it writes the route types `next build` would have checked, so this is the whole check rather than most of it. The full CI — migrations from scratch, integration journeys, the handset's lint, types and engine tests, the link crawl — runs separately in `ci.yml` on every PR.
 </Step>
 <Step title="Build on GitHub's runners">
-The droplet never builds: at 1 GiB it cannot. `DATABASE_URL` is set to a deliberately unresolvable host during `next build`, because `src/db/index.ts` throws without one and the build must never reach a real database. `GIT_SHA` becomes `NEXT_DEPLOYMENT_ID`, so a browser holding the previous build's chunks is told to reload rather than failing on a missing file.
+The droplet never builds: at 1 GiB it cannot. `DATABASE_URL` is set to a deliberately unresolvable host during `next build`, because `src/db/index.ts` throws without one and the build must never reach a real database. `NEXT_BUILD_SKIP_TYPECHECK=1` skips the type check inside the build (71 of its 170 seconds) because the test job beside it runs one. `GIT_SHA` becomes `NEXT_DEPLOYMENT_ID`, so a browser holding the previous build's chunks is told to reload rather than failing on a missing file.
 </Step>
 <Step title="Refuse a stale commit">
 `concurrency: deploy-production` with `cancel-in-progress` usually handles two quick merges, but a run that has already built may still reach the deploy job. It asks GitHub where `main` is now and skips if it has moved past — deploying would put an older commit back.
 </Step>
 <Step title="Migrate through a tunnel">
-`deploy:db` is `db:deploy` (migrations via `scripts/migrate-deploy.mjs`), then `catalogue:deploy` (the idempotent product import), then `hire:deploy`. It runs on the runner against `127.0.0.1:5433`, forwarded to the droplet's loopback Postgres. Migrations run **before** the new image starts, so new code never meets an old schema; old code briefly meets the new one, which is why migrations here are additive.
+The droplet starts pulling the new image in the background first — a pull changes nothing that is serving — so the swap finds it already there. `deploy:db` is `db:deploy` (migrations via `scripts/migrate-deploy.mjs`), then `catalogue:deploy` (the idempotent product import), then `hire:deploy`. It runs on the runner against `127.0.0.1:5433`, forwarded to the droplet's loopback Postgres. Migrations run **before** the new image starts, so new code never meets an old schema; old code briefly meets the new one, which is why migrations here are additive.
 </Step>
 <Step title="Swap the image">
 `IMAGE=` in `/opt/mahekone/.env` is rewritten to the new tag, `docker compose pull app`, then `restart.sh` brings everything up and waits for healthy. A few seconds of downtime; a save in flight sees an error and is retried.
@@ -124,8 +126,7 @@ Names only; the values are in the repository's settings (Settings → Secrets an
 | `DOCR_USERNAME`, `DOCR_TOKEN` | secret | build | Registry-scoped push credentials |
 | `DO_API_TOKEN` | secret | build, prune, registry-prune | **Account** token: list tags, garbage-collect. Optional — without it the prune warns and is skipped |
 | `DOMAIN` | secret | deploy | The site name, e.g. `one.mahekindia.com` |
-| `CRON_SECRET` | secret | sheet-sync, sheet-sync-nightly | For the manual sync workflows |
-| `SYNC_URL`, `SYNC_OWNER_EMAIL` | variables | sheet-sync workflows | The sync endpoint and projection owner |
+| `CRON_SECRET`, `SYNC_URL`, `SYNC_OWNER_EMAIL` | — | none | Once used by the manual sheet-sync workflows, removed when the ERP took the orders. The droplet's `.env` still holds `CRON_SECRET` and `SYNC_OWNER_EMAIL` for `deploy/sheet-sync.sh`; these repository copies can be deleted |
 | `MBOS_*`, `R2_*` | secret | mbos-apk | See [Handset release](/docs/platform/handset-release/developer) |
 
 `deploy`, `ship-sync-schedule` run in the `production` environment.
@@ -192,7 +193,7 @@ sed -i 's|^IMAGE=.*|IMAGE=registry.digitalocean.com/mahekone/app:<sha>|' .env
 docker compose up -d app
 ```
 
-The registry keeps the newest three tags plus `latest` and whatever production is on; the droplet keeps its newest three images. A rollback across a migration is a different thing — **restore the dump** instead (see [Backups](/docs/platform/backups/developer)).
+The droplet keeps its newest three images plus the live one, and `docker compose up -d app` uses a tag it already holds without asking the registry. The registry keeps `latest`, the live tag and the one before it. A rollback across a migration is a different thing — **restore the dump** instead (see [Backups](/docs/platform/backups/developer)).
 
 ### Running a job by hand against production
 
@@ -231,7 +232,8 @@ The host clock is **UTC**. `backup.sh --install-cron` writes its own three lines
 
 The free registry holds **500 MB** and an image is about 130 MB. When it is full, the push fails with `denied: quota exceeded`, the `build` job goes red, and `deploy` is **skipped** — which reads as nothing having happened rather than as a storage problem.
 
-- The `prune` job runs **after** the deploy: keep `latest`, the live tag (read from the droplet's `.env`) and the newest three; delete the rest; start a garbage collection.
+- The `prune` job runs **after** the deploy: keep `latest`, the live tag (read from the droplet's `.env`) and the one before it; delete the rest.
+- It starts a garbage collection **only when the next pushes might not fit**: it reads the registry's usage and plan from the API, measures what a push adds (layers the newest image has that the previous one does not), and collects when free space would not hold the pushes the usage reading has not counted yet plus the next two. Anything it cannot read means "collect". A pending collection refuses pushes for up to ~15 minutes, so collecting after every deploy made the next close merge wait for it.
 - It runs last because DigitalOcean will not start collecting until every write-scoped push token has expired; collecting right before this run's own push produced `401 Unauthorized`. The `build` job instead **waits** (up to 10 minutes) for any collection still running.
 - **Registry prune** (`registry-prune.yml`) is the same thing by hand, with a `keep` input.
 

@@ -43,7 +43,11 @@ function currentStamp(): Promise<string> {
 
 /** The statement's answer as of the ledgers' last committed write, from the pool. */
 export async function ledgerRead<T>(q: SQL, run: () => Promise<T>): Promise<T> {
-  const { key, params } = statementShape(q);
+  return ledgerReadShaped(statementShape(q), run);
+}
+
+/** `ledgerRead` for a statement whose shape the caller has already worked out — building it is not free on a long statement. */
+export async function ledgerReadShaped<T>({ key, params }: { key: string; params: number }, run: () => Promise<T>): Promise<T> {
   if (!kept.admits(params)) return run();
   const stamp = await currentStamp();
   const at = kept.get(key, stamp);
@@ -61,4 +65,36 @@ export async function ledgerRead<T>(q: SQL, run: () => Promise<T>): Promise<T> {
 /** What the cache holds now. */
 export function ledgerCacheSize(): { entries: number; rows: number } {
   return kept.size();
+}
+
+/* ---------------------------------------------------------------------------
+ * WHAT IS WORKED OUT FROM THE LEDGERS, KEPT UNDER THE SAME STAMP.
+ *
+ * Rows are only half the cost. Every lot's rate is a walk over its fills, its
+ * batch lines and its raw-material lots (`fgRates`, `sfgRates`,
+ * `packBatchCosting`), done again in JavaScript on every page — and a page
+ * asked for the lots it shows, so the statement named thousands of them and
+ * was too long to keep at all. Each lot's figure depends only on that lot's
+ * own rows, so the whole book's answer, worked out once, is every page's
+ * answer until a write moves the stamp.
+ *
+ * Keyed by NAME, from a fixed set in `stock.ts` — never by anything a page
+ * passes — so it holds at most one answer per name and is bounded by the
+ * names, not by traffic. An answer read under a stamp that has since moved is
+ * worked out again; a failed one is not kept.
+ * ------------------------------------------------------------------------- */
+
+const derived = new Map<string, { stamp: string; value: Promise<unknown> }>();
+
+/** `build()` as of the ledgers' last committed write: worked out once per stamp, shared by every page until then. */
+export async function ledgerDerived<T>(name: string, build: () => Promise<T>): Promise<T> {
+  const stamp = await currentStamp();
+  const at = derived.get(name);
+  if (at && at.stamp === stamp) return at.value as Promise<T>;
+  const value = build();
+  derived.set(name, { stamp, value });
+  value.catch(() => {
+    if (derived.get(name)?.value === value) derived.delete(name);
+  });
+  return value;
 }

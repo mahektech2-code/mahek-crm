@@ -23,6 +23,18 @@ When Logistics opens, and every hour, any line dispatch-verified in the last <Se
 It is read from the stage and the LR every time, so the desk, the old list and the order book cannot disagree about one bill. A bill moved to *In Transit* with no LR is still *waiting for its LR*: the customer cannot be told anything about a lorry nobody can name.
 </Rule>
 
+<Rule title="Every bill carries a delivery status in the PRD's words">
+Beside the phase, each bill says where it stands as the Order-to-Delivery PRD names it — derived, never typed:
+
+| Status | When |
+|---|---|
+| **Logistics Pending** | Going to the transporter, or waiting for its LR |
+| **In Transit** | Has an LR and is on the road |
+| **Delivery Pending Confirmation** | Stage *Reached Destination Area*, or its expected day has passed, and nobody has confirmed delivery |
+| **Delivered** | *Close - Received to Party* — only ever the explicit Delivered act |
+| **Exception** | An open problem, whatever the stage |
+</Rule>
+
 ## The LR is uploaded by one team and attached by another
 
 <Rule title="Collecting and attaching are two jobs">
@@ -38,6 +50,45 @@ An LR is one consignment to one consignee, so the bills under it must go to one 
 </Rule>
 
 The desk *suggests* the bills an LR carries — same transporter, destination naming the bill's area or party, box count matching, already at the transporter — and attaches nothing by itself.
+
+## Vehicle trips and the transport payment
+
+<Rule title="Dispatch names the vehicle; the trip follows">
+Mark dispatch-verified records the vehicle number. Each bill record it opens or joins takes that number and joins the **trip** of that vehicle on that dispatch date — matched with spaces and case ignored, so *MH04 AB 1234* and *mh04ab1234* are one vehicle — or opens a new trip. One trip carries bills for any number of customers. A bill dispatched with no vehicle joins no trip and is listed under *Bills on no trip* until Logistics puts it on one. Logistics can create a trip, edit its vehicle, driver, transporter and day (every bill on it takes the new vehicle number), add bills and take them off.
+</Rule>
+
+<Rule title="A transport payment is shared out by dispatched litres only">
+Logistics records the **confirmed** transport amount once, against a trip, and ticks the bills it covers. It is shared out by dispatched litres — never by boxes, weight or the number of bills:
+
+- **Cost per litre** = the amount ÷ the ticked bills' litres;
+- **A bill's share** = its litres × the cost per litre.
+
+₹1,000 over 1,000 litres is ₹1 a litre, and a 250-litre bill carries ₹250. The shares are worked in paise and always add up to the amount exactly: each is rounded down, and the paise left over go one each to the bills that lost most to the rounding (on a tie, the larger bill, then the bill's id), so the same inputs always give the same split. The payment dialog previews the split with the same function the save writes with.
+</Rule>
+
+<Rule title="The same cost cannot reach a bill twice">
+A bill holds at most one live share, enforced by the database as well as the screen. A payment is refused when a ticked bill already carries one, when a bill is not on the trip, or when a bill's litres are zero or missing — naming the order, so its litres can be corrected. A payment that covers only part of a trip must say which part. A wrong payment is **reversed** with a reason: the payment and its shares stay, marked reversed, and the bills can be shared again. Moving a bill that carries a share to another trip is refused until its payment is reversed.
+</Rule>
+
+<Callout kind="money" title="Logistics records the payment; it does not make it">
+Recording a payment says the amount is confirmed — paid, or agreed to be paid — by whoever pays transporters. Nothing on the screen says Logistics paid it, and nothing here moves money. This is our cost to the transporter; the freight charged to the customer on the bill (Transportation cost on the order line, extra expenses on Paid freight) is a different figure and is never mixed with it.
+</Callout>
+
+| Transport cost status (per trip) | When |
+|---|---|
+| **Not Recorded** | No live payment |
+| **Recorded** | A live payment not yet shared out |
+| **Allocation Pending** | Shared out, but some bill on the trip carries no share |
+| **Allocated** | Every bill on the trip carries a share |
+| **Reconciliation Required** | A share no longer matches — a bill's litres changed after the split, or the shares do not add up to the payment. Reverse it and record it again. |
+
+Every trip change, payment and reversal writes an event on each bill it touches (not shown to the customer) and an audit row.
+
+## Delivery is confirmed by somebody
+
+<Rule title="Only the Delivered act closes a bill, and it records who">
+Delivered needs the day; who received it and a proof or reference (a POD number, a signed copy) are asked, not demanded. The person who presses it is recorded as having confirmed the delivery. A delivery nobody can confirm stays open: report it as a problem — **Unconfirmed** — alongside *Delayed*, *Damaged*, *Short received*, *Held at transport*, *Wrong address* and **Refused**. Reopening a delivered bill clears who confirmed it and the proof.
+</Rule>
 
 ## Telling the customer
 
@@ -65,4 +116,12 @@ A confirmed WhatsApp in the CRM's log is contact, and quiets the customer on the
 - A consignment is *running late* the day after its expected delivery, or, with none, after <Setting k="erp.logistics.lateAfterDays" /> days from dispatch.
 - The customer's link `/track/<token>` needs no sign-in. It shows the steps shared with the customer — never call notes, problem notes, prices or staff names.
 
+The **Today** tab lists bills from the last three days with no vehicle recorded, so they can be put on a trip.
+
 The hourly ERP checks still raise an **LR missing** alert for a bill that left more than <Setting k="erp.ai.alerts.stuckLrDays" /> days ago with no LR.
+
+## Where the code and the intent disagree today
+
+- **A trip is matched on the vehicle and the dispatch date only.** A tempo that does two runs in a day puts both runs' bills on one trip; split them by creating a second trip and moving the bills.
+- **Litres are the bill record's own figure**, read off its lines when it opened. A line edited after dispatch does not move it, and the split uses what the record says.
+- **Bills dispatched before trips existed have no vehicle.** They are not flagged on Today (only the last three days are) but they are listed under Bills on no trip for 30 days.

@@ -31,11 +31,14 @@ import {
 import { requireUser } from "@/lib/auth";
 import { canOpenModule } from "@/lib/access";
 import {
+  ASSIGNED_TO_SQL,
   assertCustomerInScope,
+  canFor,
   isPlatformAdmin,
   levelInApp,
   requireCapability,
 } from "@/lib/access-control";
+import { applyAccountManagerChange } from "@/lib/services/account-manager-service";
 import { salesGateRefusal, scopeCovers } from "@/lib/sales-gate";
 import { inCrmSalesManagerWorkspace } from "@/lib/services/crm-sales-manager-scope";
 import { getConfig, updateSettings } from "@/lib/config/store";
@@ -67,6 +70,7 @@ import {
   type Territory,
   type TerritoryKind,
 } from "@/lib/services/territory-service";
+import { territoryLeaves, territoryName } from "@/lib/territory-rules";
 import { bookIdsIgnoringTerritory } from "@/lib/services/mbos-service";
 import {
   assignableOwner,
@@ -1967,9 +1971,140 @@ async function shopsLeavingTheBook(
   return before.filter((id) => !after.has(id));
 }
 
+/**
+ * THE SHOPS IN HIS AREAS THAT SIT IN SOMEBODY ELSE'S BOOK — what saving with
+ * the hand-over ticked moves to him.
+ *
+ * Allocating an area is a narrowing and stays one; Mahek's practice is that
+ * the person given an area also takes the shops in it, so the dialog offers
+ * that as a second, named act. "Whose book" is `ASSIGNED_TO_SQL`, the one
+ * definition every list reads, and "in these areas" is `territoryClause`, the
+ * one his handset reads — so what moves is exactly what his phone would then
+ * show. A deactivated account is left where it is: somebody closed it.
+ */
+async function shopsElsewhere(salesmanId: string, wanted: Territory[]) {
+  if (!wanted.length) return [];
+  return (await db.execute(sql`
+    select customers.id, customers.kind, coalesce(u.name, 'Nobody') as holder
+      from customers
+      left join users u on u.id = ${ASSIGNED_TO_SQL}
+     where ${territoryClause(wanted)}
+       and customers.status <> 'deactivated'
+       and coalesce(${ASSIGNED_TO_SQL}, '') <> ${salesmanId}`)) as unknown as { id: string; kind: string; holder: string }[];
+}
+
+export type AreaHandover = {
+  total: number;
+  /** Whose books they are in now, biggest first. */
+  from: { name: string; customers: number; leads: number }[];
+  /** Moving a shop moves its revenue and targets, so it is `customer.reassign` — Accounts' and admin's. */
+  canMove: boolean;
+};
+
+/** What the dialog shows before Save: the shops in these areas held by somebody else, and from whom. */
+export async function previewAreaHandover(input: {
+  salesmanId: string;
+  territories: { kind: string; value: string; parent?: string }[];
+}): Promise<Result<AreaHandover>> {
+  try {
+    const user = await requireSalesAccess(SALES_MANAGER("sales.people", "sales.territory"));
+    if (await salesmanOutsideScope(input.salesmanId)) return err(NOT_YOUR_TEAM, "not_permitted");
+    const areas = areasAsked(input.territories);
+    if (!areas.ok) return areas;
+    const shops = await shopsElsewhere(input.salesmanId, areas.data);
+    const by = new Map<string, { name: string; customers: number; leads: number }>();
+    for (const x of shops) {
+      const row = by.get(x.holder) ?? { name: x.holder, customers: 0, leads: 0 };
+      if (x.kind === "lead") row.leads++;
+      else row.customers++;
+      by.set(x.holder, row);
+    }
+    return ok({
+      total: shops.length,
+      from: [...by.values()].sort((a, b) => b.customers + b.leads - (a.customers + a.leads)),
+      canMove: await canFor(user, "customer.reassign"),
+    });
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+/**
+ * The areas a "Where … works" dialog sent, as they will be stored — checked
+ * and pruned to the leaves. One reading for the save and the hand-over
+ * preview, so what was previewed is what is saved.
+ */
+function areasAsked(raw: { kind: string; value: string; parent?: string }[]): Result<Territory[]> {
+  /* Only the kinds this screen owns. A `region` arriving here would clear a
+     manager's patch as a side effect of allocating a salesman a city — see
+     `setWorkingTerritories`, which refuses them for the same reason. */
+  const asked = raw
+    .filter((t) => t.kind !== "region" && t.value.trim())
+    .map((t) => ({
+      kind: t.kind as TerritoryKind,
+      value: t.value.trim(),
+      parent: t.parent?.trim() ?? "",
+    }));
+
+  const bad = asked.filter(
+    (t) => !(TERRITORY_KINDS as readonly string[]).includes(t.kind),
+  );
+  if (bad.length) {
+    return err(`Not a kind of place: ${bad.map((b) => b.kind).join(", ")}.`, "validation");
+  }
+
+  /*
+   * A CITY WITHOUT ITS STATE IS NOT AN ALLOCATION, and the action says so
+   * rather than trusting the dialog to have asked in the right order. A
+   * server action is a URL: the screen that nests these is not the only
+   * thing that can post to it, and a bare "Pune" is genuinely ambiguous —
+   * there is an Aurangabad in Maharashtra and another in Bihar.
+   */
+  const orphan = asked.filter((t) => PARENT_KIND[t.kind] && !t.parent);
+  if (orphan.length) {
+    return err(
+      `Pick the ${PARENT_KIND[orphan[0].kind]} first — ${orphan
+        .map((o) => o.value)
+        .join(", ")} needs to sit inside one.`,
+      "validation",
+    );
+  }
+  /* A town names its district AND its state — see `townParent`. One naming
+     only the district would match nothing, silently. */
+  const halfTown = asked.find((t) => t.kind === "town" && !/,\s*\S/.test(t.parent));
+  if (halfTown) {
+    return err(
+      `${halfTown.value} needs its district and state — pick it under a district.`,
+      "validation",
+    );
+  }
+
+  /*
+   * THE NARROWEST PICK IN A BRANCH IS THE ALLOCATION, and the wider ones
+   * above it are the path to it rather than a second grant.
+   *
+   * Maharashtra plus Pune inside it has to mean Pune. Stored as both, the
+   * clause would OR them and hand him the whole state — the opposite of what
+   * somebody who took the trouble to pick a city meant, and invisible on
+   * every screen afterwards because "Maharashtra, Pune" reads like a
+   * narrowing. So a state with districts or cities under it is dropped, a
+   * district with towns under it is dropped, a city with beats under it is
+   * dropped, and what is stored is the leaves. `territoryLeaves` compares
+   * whole paths, so a town under Aurangabad in Maharashtra does not prune
+   * Aurangabad district in Bihar.
+   */
+  return ok(territoryLeaves(asked));
+}
+
 export async function setSalesmanTerritories(input: {
   salesmanId: string;
   territories: { kind: string; value: string; parent?: string }[];
+  /**
+   * Also make him the salesperson for the shops in these areas that sit in
+   * other books — the number the dialog showed, so a set that grew between
+   * looking and saving is refused rather than moved unseen.
+   */
+  handOver?: number;
 }): Promise<Result<void>> {
   try {
     const user = await requireSalesAccess(SALES_MANAGER("sales.people", "sales.territory"));
@@ -1984,103 +2119,93 @@ export async function setSalesmanTerritories(input: {
       .limit(1);
     if (!person) return err("That account is not on MahekOne.", "not_found");
 
-    /* Only the kinds this screen owns. A `region` arriving here would clear a
-       manager's patch as a side effect of allocating a salesman a city — see
-       `setWorkingTerritories`, which refuses them for the same reason. */
-    const asked = input.territories
-      .filter((t) => t.kind !== "region" && t.value.trim())
-      .map((t) => ({
-        kind: t.kind as TerritoryKind,
-        value: t.value.trim(),
-        parent: t.parent?.trim() ?? "",
-      }));
-
-    const bad = asked.filter(
-      (t) => !(TERRITORY_KINDS as readonly string[]).includes(t.kind),
-    );
-    if (bad.length) {
-      return err(`Not a kind of place: ${bad.map((b) => b.kind).join(", ")}.`, "validation");
-    }
-
-    /*
-     * A CITY WITHOUT ITS STATE IS NOT AN ALLOCATION, and the action says so
-     * rather than trusting the dialog to have asked in the right order. A
-     * server action is a URL: the screen that nests these is not the only
-     * thing that can post to it, and a bare "Pune" is genuinely ambiguous —
-     * there is an Aurangabad in Maharashtra and another in Bihar.
-     */
-    const orphan = asked.filter((t) => PARENT_KIND[t.kind] && !t.parent);
-    if (orphan.length) {
-      return err(
-        `Pick the ${PARENT_KIND[orphan[0].kind]} first — ${orphan
-          .map((o) => o.value)
-          .join(", ")} needs to sit inside one.`,
-        "validation",
-      );
-    }
-
-    /*
-     * THE NARROWEST PICK IN A BRANCH IS THE ALLOCATION, and the wider ones
-     * above it are the path to it rather than a second grant.
-     *
-     * Maharashtra plus Pune inside it has to mean Pune. Stored as both, the
-     * clause would OR them and hand him the whole state — the opposite of what
-     * somebody who took the trouble to pick a city meant, and invisible on
-     * every screen afterwards because "Maharashtra, Pune" reads like a
-     * narrowing. So a state with cities under it is dropped, and a city with
-     * beats under it is dropped, and what is stored is the leaves.
-     */
-    const parents = new Set(asked.map((t) => t.parent).filter(Boolean));
-    const wanted = asked.filter((t) => !parents.has(t.value));
+    const areas = areasAsked(input.territories);
+    if (!areas.ok) return areas;
+    const wanted = areas.data;
 
     const before = await territoriesFor(input.salesmanId);
     const key = (t: { kind: string; value: string; parent?: string }) =>
       `${t.kind}:${(t.parent ?? "").toLowerCase()}:${t.value.toLowerCase()}`;
     const had = before.filter((t) => t.kind !== "region").map(key).sort();
     const now = wanted.map(key).sort();
-    if (JSON.stringify(had) === JSON.stringify(now)) return okVoid("Nothing changed.");
+    const areasChanged = JSON.stringify(had) !== JSON.stringify(now);
 
-    /* The shops that leave his book, read BEFORE the change — afterwards they
-       are simply not his and there is nothing left to name. See `tombstone`:
-       a pull says what exists, and only a tombstone says what stopped, so
-       without this the shops he no longer works stay on the phone for ever. */
-    const leaving = await shopsLeavingTheBook(input.salesmanId, wanted);
+    /* THE HAND-OVER moves revenue and targets between people, so it is
+       `customer.reassign` (Accounts' and admin's) on top of the screen's own
+       gate, and it moves only what the dialog counted. */
+    let handover: { ids: string[]; ctx: Awaited<ReturnType<typeof requireCapability>> } | null = null;
+    if (input.handOver != null) {
+      const ctx = await requireCapability("customer.reassign");
+      const shops = await shopsElsewhere(input.salesmanId, wanted);
+      if (shops.length !== input.handOver) {
+        return err(
+          `The shops in these places changed since the dialog counted them — ${shops.length} now, ${input.handOver} shown. Look again before saving.`,
+          "conflict",
+        );
+      }
+      if (shops.length) handover = { ids: shops.map((x) => x.id), ctx };
+    }
+    if (!areasChanged && !handover) return okVoid("Nothing changed.");
 
-    await setWorkingTerritories(input.salesmanId, wanted, user.id);
+    if (areasChanged) {
+      /* The shops that leave his book, read BEFORE the change — afterwards they
+         are simply not his and there is nothing left to name. See `tombstone`:
+         a pull says what exists, and only a tombstone says what stopped, so
+         without this the shops he no longer works stay on the phone for ever. */
+      const leaving = await shopsLeavingTheBook(input.salesmanId, wanted);
 
-    for (const id of leaving) {
-      await tombstone("customers", id, "territory", input.salesmanId);
+      await setWorkingTerritories(input.salesmanId, wanted, user.id);
+
+      for (const id of leaving) {
+        await tombstone("customers", id, "territory", input.salesmanId);
+      }
+
+      await db.insert(auditLog).values({
+        id: gen("aud"),
+        actorId: user.id,
+        action: "mbos.salesman.territories",
+        entityType: "user",
+        entityId: input.salesmanId,
+        beforeState: { territories: had } as never,
+        afterState: { territories: now } as never,
+      });
+
+      /*
+       * His book changes under him, and a book that shrinks silently reads as a
+       * broken sync — which is the report the office gets rather than a question
+       * about territory.
+       */
+      await tell(
+        input.salesmanId,
+        wanted.length ? "Where you work has changed" : "Your handset has no area set",
+        wanted.length
+          ? `Your handset now shows your customers in ${wanted.map(territoryName).join(", ")}. Everything else is still yours — it is just not on this list.`
+          : "No area is set for you, so your customer list will be empty until the office sets one. Nothing of yours is lost.",
+        "/customers",
+      );
     }
 
-    await db.insert(auditLog).values({
-      id: gen("aud"),
-      actorId: user.id,
-      action: "mbos.salesman.territories",
-      entityType: "user",
-      entityId: input.salesmanId,
-      beforeState: { territories: had } as never,
-      afterState: { territories: now } as never,
-    });
-
-    /*
-     * His book changes under him, and a book that shrinks silently reads as a
-     * broken sync — which is the report the office gets rather than a question
-     * about territory.
-     */
-    await tell(
-      input.salesmanId,
-      wanted.length ? "Where you work has changed" : "Your handset has no area set",
-      wanted.length
-        ? `Your handset now shows your customers in ${wanted.map((t) => t.value).join(", ")}. Everything else is still yours — it is just not on this list.`
-        : "No area is set for you, so your customer list will be empty until the office sets one. Nothing of yours is lost.",
-      "/customers",
-    );
+    let moved = "";
+    if (handover) {
+      const reasons = ((await getConfig())["people.amChangeReasons"] as string[]) ?? [];
+      const reason = reasons.includes("Territory reassigned") ? "Territory reassigned" : "Other";
+      const result = await applyAccountManagerChange(
+        {
+          customerIds: handover.ids,
+          salesAmId: input.salesmanId,
+          sales: { reasonCode: reason, note: `In the areas allocated to ${person.name}.` },
+        },
+        { userId: user.id, name: user.name, authorisedBy: handover.ctx.authorisedBy, authorisedIn: handover.ctx.authorisedIn },
+      );
+      if (!result.ok) return err(`${areasChanged ? "The areas are saved, but the shops did not move: " : ""}${result.error}`, result.code);
+      moved = ` ${handover.ids.length.toLocaleString("en-IN")} shops in them are now in ${person.name}'s book.`;
+    }
 
     revalidatePath("/sales/people");
     return okVoid(
-      wanted.length
-        ? `${person.name} works ${wanted.map((t) => t.value).join(", ")}.`
-        : `${person.name} has no area set, so their handset shows no customers at all.`,
+      (wanted.length
+        ? `${person.name} works ${wanted.map(territoryName).join(", ")}.`
+        : `${person.name} has no area set, so their handset shows no customers at all.`) + moved,
     );
   } catch (e) {
     return err(

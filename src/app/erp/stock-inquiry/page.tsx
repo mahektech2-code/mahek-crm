@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { NavLink } from "@/components/shell/nav-link";
 import { redirect } from "next/navigation";
 import { erpContext } from "@/lib/erp/access";
 import { calendarDate } from "@/lib/business-date";
@@ -47,9 +47,9 @@ export default async function StockInquiryPage({ searchParams }: { searchParams:
       sub="One item in detail: where it is now, and every movement in and out."
       actions={
         <PageLinks>
-          <Link href={erpLink(SCREEN_OF[stage])} className={linkClass()}>
+          <NavLink href={erpLink(SCREEN_OF[stage])} className={linkClass()}>
             Back to Stock on hand
-          </Link>
+          </NavLink>
         </PageLinks>
       }
     >
@@ -109,9 +109,9 @@ export default async function StockInquiryPage({ searchParams }: { searchParams:
                     {inq.lots.map((l) => (
                       <Tr key={`${l.lot}|${l.godownId}`}>
                         <Td>
-                          <Link href={erpTraceHref(l.lot)} className={linkClass("brand", "font-mono text-meta")}>
+                          <NavLink href={erpTraceHref(l.lot)} className={linkClass("brand", "font-mono text-meta")}>
                             {l.lot}
-                          </Link>
+                          </NavLink>
                         </Td>
                         <Td>{l.godown}</Td>
                         <Td className="text-muted">{l.since}</Td>

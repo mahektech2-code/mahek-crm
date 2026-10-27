@@ -25,6 +25,8 @@ import { erpContext } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
 import { decideOverride, requestOverride, scanOntoOrder, unscanUnit } from "@/lib/erp/dispatch";
 import { traceCode, traceDashboard } from "@/lib/erp/traceability";
+import { boxLabels, unlabelledStock } from "@/lib/erp/label-data";
+import { erpGiveIds } from "@/lib/actions/erp-trace";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 /* The dashboard counts the real today, so the documents are dated it too. */
@@ -147,20 +149,21 @@ describe("production makes boxes with ids", () => {
 describe("the dispatch desk", () => {
   test("an order for 3 boxes of Nano 1 L, Ready and allocated to FP1BH", async () => {
     const a = await as(admin);
-    assert.ok((await mod("orders").forms!.new(a, { date: TODAY, godown: "Bhiwandi", billing: "ABC Paints" }, [{ sku: BOX1, qty: "12", rate: "100" }])).ok);
+    assert.ok((await mod("orders").forms!.new(a, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "ABC Paints" }, [{ sku: BOX1, qty: "12", rate: "100" }])).ok);
     const [o] = (await db.execute(sql`select id, order_no as no from erp_orders`)) as unknown as { id: string; no: number }[];
     orderNo = Number(o.no);
     lineId = o.id;
+    assert.ok((await mod("orders").actions!.verifyOrder(a, lineId, {})).ok);
     assert.ok((await mod("orders").actions!.ready(a, lineId, {})).ok);
     assert.ok((await mod("orders").forms!.allocate(a, { lot: "FP1BH", qty: "3" }, [], lineId)).ok);
-    assert.ok((await mod("orders").forms!.edit(a, { status: "Ready", delivery: "ABC Paints", qty: "12", rate: "100", bill: "INV-261008-00456", transport: "0" }, [], lineId)).ok);
-    assert.ok((await mod("orders").actions!.bill(a, lineId, {})).ok);
+    assert.ok((await mod("orders").actions!.bill(a, lineId, { invoiceNo: "INV-261008-00456", invoiceDate: TODAY })).ok);
+    assert.ok((await mod("orders").actions!.approveInvoice(a, lineId, {})).ok);
   });
 
   test("Do Verified waits for every box to be scanned", async () => {
     const a = await as(admin);
     const r = await mod("orderDetails").bulk!.verify(a, [lineId], { date: TODAY });
-    assert.match(msg(r), /Scan the boxes first/);
+    assert.match(msg(r), /still to scan at the Dispatch desk/);
   });
 
   test("a matching box counts; the same box again, an unknown code and a box of the wrong pack size are stopped", async () => {
@@ -226,8 +229,9 @@ describe("a lot label at the desk (stock packed before box ids)", () => {
     assert.ok((await mod("packBatches").forms!.new(a, { date: TODAY, godown: "Bhiwandi", fg: FG1, sku: BOX1, boxes: "2", lot: "FG1BH" }, [])).ok);
     await db.execute(sql`delete from erp_unit_events where unit_id in (select id from erp_units where lot_code = 'FP5BH')`);
     await db.execute(sql`delete from erp_units where lot_code = 'FP5BH'`);
-    assert.ok((await mod("orders").forms!.new(a, { date: TODAY, godown: "Bhiwandi", billing: "ABC Paints" }, [{ sku: BOX1, qty: "8", rate: "100" }])).ok);
+    assert.ok((await mod("orders").forms!.new(a, { source: "Phone", date: TODAY, godown: "Bhiwandi", billing: "ABC Paints" }, [{ sku: BOX1, qty: "8", rate: "100" }])).ok);
     const [o] = (await db.execute(sql`select id, order_no as no from erp_orders order by order_no desc limit 1`)) as unknown as { id: string; no: number }[];
+    assert.ok((await mod("orders").actions!.verifyOrder(a, o.id, {})).ok);
     assert.ok((await mod("orders").actions!.ready(a, o.id, {})).ok);
 
     const c = await as(clerk);
@@ -283,5 +287,64 @@ describe("tracing", () => {
     const ex = Object.fromEntries(d.exceptions.map((x) => [x.l, x.n]));
     assert.equal(ex["Pack-size / product mismatches today"], 1);
     assert.equal(ex["Duplicate scans today"], 2);
+  });
+});
+
+/* After the tracing tests, whose counts of today's refills and lots this would change. */
+describe("ids for stock packed or filled before box ids", () => {
+  const BHW = "erpg_bhiwandi";
+  const seqs = async (lot: string) => ((await db.execute(sql`select seq from erp_units where lot_code = ${lot} and status = 'available' order by seq`)) as unknown as { seq: number }[]).map((r) => Number(r.seq));
+  const packRow = async (batch: string) => {
+    const { rows } = await mod("packStock").load(await as(admin));
+    return rows.find((r) => r.id === `${batch}|${BHW}`)!;
+  };
+
+  before(async () => {
+    const a = await as(admin);
+    assert.ok((await mod("fgFill").forms!.new(a, { date: TODAY, godown: "Bhiwandi", sfg: SFG, sfgLot: "S1DRUM1", fg: FG1, size: "1", cans: "24" }, [])).ok); // FG4BH
+    const pack = (boxes: string) => mod("packBatches").forms!.new(a, { date: TODAY, godown: "Bhiwandi", fg: FG1, sku: BOX1, boxes, lot: "FG4BH" }, []);
+    assert.ok((await pack("3")).ok, "FP6BH");
+    assert.ok((await pack("2")).ok, "FP7BH");
+    /* Both stand for batches imported from before box ids: nothing ever minted theirs. */
+    await db.execute(sql`delete from erp_unit_events where unit_id in (select id from erp_units where lot_code in ('FP6BH', 'FP7BH'))`);
+    await db.execute(sql`delete from erp_units where lot_code in ('FP6BH', 'FP7BH')`);
+  });
+
+  test("such a batch prints nothing, says so, and its boxes are given ids once, numbered from one", async () => {
+    const a = await as(admin);
+    assert.deepEqual(await boxLabels({ batch: "FP6BH" }), []);
+    assert.deepEqual((await unlabelledStock({ batch: "FP6BH" })).map((u) => [u.godownId, u.room]), [[BHW, 3]]);
+    const before = await packRow("FP6BH");
+    assert.deepEqual(before.actions!.slice(0, 2).map((x) => [x.id, !!x.primary]), [["labelBoxes", true], ["labels", false]]);
+
+    assert.ok((await mod("packStock").actions!.labelBoxes(a, `FP6BH|${BHW}`, {})).ok);
+    assert.deepEqual(await seqs("FP6BH"), [1, 2, 3]);
+    assert.match(msg(await mod("packStock").actions!.labelBoxes(a, `FP6BH|${BHW}`, {})), /already carries an id/);
+
+    const labels = await boxLabels({ batch: "FP6BH" });
+    assert.deepEqual(labels.map((l) => [l.label.seq, l.label.of]), [[1, 3], [2, 3], [3, 3]]);
+    assert.deepEqual(await unlabelledStock({ batch: "FP6BH" }), []);
+    assert.deepEqual((await packRow("FP6BH")).actions!.slice(0, 1).map((x) => [x.id, !!x.primary]), [["labels", true]]);
+  });
+
+  test("only the boxes still on the shelf get one, asked from the label sheet", async () => {
+    const a = await as(admin);
+    assert.ok((await mod("packStock").actions!.adjust(a, `FP7BH|${BHW}`, { dir: "Remove", qty: "1", reason: "Damaged" })).ok);
+    assert.deepEqual((await unlabelledStock({ batch: "FP7BH" })).map((u) => u.room), [1]);
+    const given = await erpGiveIds({ batch: "FP7BH", godownId: BHW });
+    assert.ok(given.ok, msg(given));
+    assert.deepEqual(await seqs("FP7BH"), [1]);
+    assert.deepEqual((await boxLabels({ batch: "FP7BH" })).map((l) => [l.label.seq, l.label.of]), [[1, 2]]);
+  });
+
+  test("an FG lot's cans are labelled loose from the label sheet, within the lot's headroom", async () => {
+    const [u] = await unlabelledStock({ lot: "FG4BH" });
+    assert.equal(u.room, 4, "24 cans filled, 20 boxed");
+    assert.equal(u.sku, LOOSE1);
+    const give = (count: number) => erpGiveIds({ lot: "FG4BH", finishedGoodId: u.finishedGoodId!, godownId: BHW, count });
+    assert.match(msg(await give(5)), /Only 4 more/);
+    assert.ok((await give(3)).ok);
+    assert.equal((await boxLabels({ lot: "FG4BH" })).length, 3);
+    assert.deepEqual((await unlabelledStock({ lot: "FG4BH" })).map((x) => x.room), [1]);
   });
 });

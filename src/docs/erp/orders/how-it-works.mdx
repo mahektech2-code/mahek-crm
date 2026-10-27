@@ -1,161 +1,220 @@
-The Orders screen is the factory's half of a sale. The CRM and the field team decide **that** a customer wants goods; this screen decides **which goods, from which lots, on which bill, leaving on which day**. Every rule below exists so that a line cannot claim stock that is not there, a bill cannot be raised for goods not set aside, and goods cannot leave without each box being checked.
+The Orders screen is the factory's half of a sale. The CRM and the field team decide **that** a customer wants goods; this screen decides **which goods, from which lots, on which bill, leaving on which day**. Every rule below exists so that an order is checked before it is made, a line cannot claim stock that is not there, a bill cannot leave before somebody independent has checked it, and goods cannot leave without each box being checked.
 
-How these lines become MahekOne's order book — what the CRM, targets and outstanding read — is explained on [The ERP and MahekOne's order book](/docs/erp/order-book).
+The flow follows Mahek's Order-to-Delivery process (PRD v1.2): the order is entered, verified by the back office, made, billed in Tally, checked by an invoice checker, stickered, scanned and dispatched, then handed to [Logistics](/docs/erp/transport). How these lines become MahekOne's order book — what the CRM, targets and outstanding read — is explained on [The ERP and MahekOne's order book](/docs/erp/order-book).
 
-## The life of an order line
+## The life of an order
 
-<Flow caption="One order line, from taken to dispatched" chart={`
+<Flow caption="One order, from taken to dispatched" chart={`
 flowchart TD
-  A["Taken<br/>Under Process"] --> B{"Stock on the shelf<br/>after other Ready lines?"}
-  B -- "No" --> A
-  B -- "Yes" --> C["Ready"]
-  C --> D["Lots allocated<br/>(scanned at the desk,<br/>or by hand for old stock)"]
-  D --> E{"Approved,<br/>Tally bill no, rate?"}
-  E -- "No" --> D
-  E -- "Yes" --> F["Bill it<br/>(in Billing and dispatch)"]
-  F --> G{"Every box scanned?"}
-  G -- "No" --> F
-  G -- "Yes" --> H["Mark dispatch-verified<br/>Dispatched, transport record opens"]
-  F -.->|"Undo billing"| C
+  A["Taken<br/>WhatsApp, Phone or Sales Order"] --> V{"Back office<br/>verifies the order?"}
+  V -- "Send back for correction" --> C["Correction required"] --> V
+  V -- "Verified" --> P["Production: Under Process"]
+  P --> R{"Stock on the shelf<br/>after other Ready lines?"}
+  R -- "No" --> P
+  R -- "Yes" --> RD["Ready"]
+  RD --> B{"Every live line Ready,<br/>rates, approved party?"}
+  B -- "A line goes later" --> M["Move to a new order<br/>(linked order number)"]
+  B -- "Yes" --> BI["Bill it: Tally invoice no. and date<br/>for the whole order"]
+  BI --> IC{"Invoice checker<br/>approves?"}
+  IC -- "Reject, with reason" --> FX["Correct the invoice"] --> IC
+  IC -- "Approved" --> ST["Print and apply dispatch stickers"]
+  ST --> SC{"Every box scanned?"}
+  SC -- "No" --> ST
+  SC -- "Yes" --> D["Confirm dispatch: date, vehicle, driver<br/>the whole order leaves, Logistics opens"]
 `} />
 
-A line can also be put on **Hold From Office** or **Cancel** from Edit. Neither is ever Ready, so neither reaches the desk.
+## The tabs, one step each
 
-## Statuses, and why a date replaced three of them
-
-| Status | Meaning |
+| Tab | What it lists |
 |---|---|
-| **Under Process** | Taken, being prepared. |
-| **Ready** | The goods are on the shelf. Only a Ready line takes lots, appears at the Dispatch desk, or can be billed. |
-| **Hold From Office** | The office has stopped it. |
-| **Cancel** | Not going. |
+| **To verify** | Orders not cancelled, not billed, whose back-office check is Pending or sent back for correction. |
+| **Production** | Lines **Under Process** or **Ready** and not yet billed. |
+| **Ready to bill** | Ready lines of verified orders, not yet billed — the material waiting for its bill. |
+| **Invoice check** | Billed orders whose invoice is waiting for the checker, or was rejected. |
+| **Dispatch stickers** | Approved invoices whose goods have not left: what the stickers are printed for. |
+| **Billing & dispatch** | Every billed line: the invoice check, the dispatch, the vehicle, the bill's figures. |
+| **On hold** | What the office is holding — Hold From Office, or a status nobody has worked yet. |
+| **Batch codes** | Every lot allocated to a line. |
+| **All lines** | The register: every line, by order date. |
 
-<Callout kind="why" title="Dispatch on is a date, not a status">
-The source system also had *Today*, *Tomorrow* and *Delay* as statuses — dates written as words. *Tomorrow* is wrong the day after somebody sets it, and only a person remembering fixes it. Each line now carries **Dispatch on**, and the lists say *Dispatch today*, *Dispatch tomorrow* or *Dispatch late* from it. A dispatched or cancelled line says nothing.
-</Callout>
+## Separate status words
 
-## Prices
+<Rule title="Order, production, billing, dispatch and logistics are each their own word">
+A line carries several teams' answers at once, and none may overwrite another (PRD rule 4). Every list and record shows them side by side:
 
-<Rule title="The rate and discount come from the billing party's price list">
-The party's price-list tag names a list; the **latest published version** of that list is used. The rate is the SKU's row on it — or, failing that, a row for another SKU of the same finished good. It is the list's **ex-GST** rate, because GST is added on the bill. The discount is the list's unconditional discount term (one with no litre or rupee threshold).
+| Domain | Values |
+|---|---|
+| **Order** | Verification Pending, Correction Required, Verified, On Hold, Cancelled, Closed (delivered) |
+| **Production** | Under Process, Ready — and nothing else. There is no *Partially Ready*. |
+| **Billing** | Invoice Pending, Verification Pending, Approved, Correction Required |
+| **Dispatch** | Pending, Scanning / Verification Pending, Ready to Dispatch, Dispatched |
+| **Logistics** | Logistics Pending, In Transit, Delivery Pending Confirmation, Delivered / Closed, Exception — once the goods have left |
+
+Production completing marks nothing billed, and dispatch closes nothing in Logistics.
 </Rule>
 
-<Rule title="Somebody who cannot see the rate cannot set it">
-The Rate field is offered only to holders of *See sales rate*, and Discount only to holders of *See sales amounts*. For anybody else the price list decides both, whatever the form sends. A line with no rate is saved, and the save message names the price list that had none.
+<Callout kind="note" title="How a status is stored">
+**Under Process**, **Ready**, **Hold From Office** and **Cancel** still live in one column, because the godown, the order book and the Factory app read it. Under Process and Ready are shown as Production; Hold From Office and Cancel are shown as the Order's *On Hold* and *Cancelled*.
+</Callout>
+
+## Taking an order
+
+<Rule title="Every order says how it came">
+**Order received by** is required: WhatsApp, Phone, Sales Order or Other. With it the order keeps who entered it and when, the dispatch date the customer asked for (**Dispatch on**) and their instructions (**Remark / customer instructions**).
+</Rule>
+
+<Rule title="A likely duplicate is asked about, not refused">
+An order for the same billing party, on the same order date, with exactly the same goods in the same quantities as one already taken is stopped with *Order 1234 for this party on this day has exactly these goods*. Answering **Not a duplicate** saves it. A different day is a reorder and different goods are a second order, so neither is asked about.
+</Rule>
+
+## The back office verifies the order
+
+<Rule title="Production starts on a verified order">
+Somebody holding *Verify orders (back office)* checks the entered order against what the customer asked for, then presses **Verify order** or **Send back for correction** with what needs correcting. The person who took the order is told. **Ready** is refused until the order is verified: *order 1256 is not verified by the back office yet*.
+</Rule>
+
+<Rule title="A material change goes back to the back office">
+Before billing, changing a verified order's quantity, delivery party, rate or discount, or adding or deleting a line, puts the order back to Verification Pending, and the check history says what changed. Correcting an order that was sent back sends it to verify again. A remark or a transporter is not a material change.
 </Rule>
 
 ## Ready means the goods are there
 
 <Rule title="Ready is refused without stock">
-A line is marked Ready only where its godown holds what it still needs — **boxes** from packing stock for a boxed SKU, **cans** from FG stock for a loose one — after subtracting what every line **already Ready and not yet allocated** will take. Lines marked Ready together are judged in order, each spending what it needs, so two lines can never both claim the last box. Ready through the Edit form is checked the same way.
+A line is marked Ready only where its godown holds what it still needs — **boxes** from packing stock for a boxed SKU, **cans** from FG stock for a loose one — after subtracting what every line **already Ready and not yet allocated** will take. Lines marked Ready together are judged in order, each spending what it needs, so two lines can never both claim the last box.
 </Rule>
 
-<Callout kind="why">
-Ready is the promise the office makes to the customer and the godown makes to the office. A list of Ready lines the shelf cannot fill is how a lorry is loaded short and nobody knows until it arrives.
+When every live line of an order is Ready, the back office is told the order is **Ready to bill**.
+
+<Rule title="A status moves either way">
+Until a line is dispatched it can be put at any status, back as well as forward. Ready needs the order verified and the stock on the shelf; **Cancel** needs the line unbilled and its batch codes released. When several lines are moved together, the ones that pass move and the rest are named.
+</Rule>
+
+<Callout kind="why" title="Dispatch on is a date, not a status">
+The source system had *Today*, *Tomorrow* and *Delay* as statuses. Each line now carries **Dispatch on**, and the lists say *Dispatch today*, *Dispatch tomorrow* or *Dispatch late* from it.
+</Callout>
+
+## Prices
+
+<Rule title="The rate comes from the price list the Accounts app applies to the billing party">
+Which list applies is decided exactly as the Accounts app decides it: the narrowest list for the customer, their salesman, beat, area, city, district, state, customer type, or everybody. The rate is the SKU's flat row on that list, or a row for another SKU of the same finished good; a dash is no rate. It is the **ex-GST** rate, read as of today.
+</Rule>
+
+<Rule title="A list's discounts are shown, never applied">
+Every discount a list carries depends on something, so the form prints them under **List discounts** and the discount on a line is only what somebody typed.
+</Rule>
+
+<Rule title="Somebody who cannot see the rate cannot set it">
+Rate is offered only to holders of *See sales rate*, Discount only to *See sales amounts*. For anybody else the list decides the rate and no discount is given.
+</Rule>
+
+<Callout kind="money" title="Freight on a line is what the customer is charged">
+A line's **Freight charged to the customer** is added to the bill. It is not the transport payment, which Logistics records against the vehicle trip and shares out by litres — see [Logistics](/docs/erp/transport).
 </Callout>
 
 ## Allocation: setting the stock aside
 
 <Rule title="An allocation takes stock the moment it is written">
-Each **batch code** row says "this many boxes (or cans) of this lot are this line's". It is written under the lot's lock, so two people cannot allocate the same last box. The line's allocation state is:
-
-- **Done** — the allocations add up to exactly what the line needs;
-- **Add More Quantity** — they fall short;
-- **Remove Some Quantity** — they come to more.
-
-A boxed line allocates **boxes** from packing batches; a loose line allocates **cans** from FG lots.
+Each **batch code** row says "this many boxes (or cans) of this lot are this line's", written under the lot's lock. A line is **Done**, **Add More Quantity** or **Remove Some Quantity** against what it needs.
 </Rule>
 
-Allocation happens at the [Dispatch desk](/docs/erp/dispatch): each box scanned onto a line allocates one unit of its lot, or takes the place of a different lot of the same SKU. A hand allocation is offered there only for stock packed before box ids existed. A line must be Ready, and a boxed line must come to a whole number of boxes, before it takes any allocation.
+Allocation happens at the [Dispatch desk](/docs/erp/dispatch), by scanning boxes. Releasing an allocation gives the stock back; it is refused once the line is billed and while boxes are scanned against it.
 
-Releasing an allocation gives the stock back. It is refused once the line is billed (the bill was raised on those lots) and while boxes are scanned against it.
+## One order, one complete bill
 
-## Billing is one step
+<Rule title="Bill it bills the whole order">
+One order number is one Tally invoice (PRD rule 1). **Bill it** needs:
 
-<Rule title="Bill it needs three things, and neither Ready nor lots">
-1. approval, if the billing party was Pending when the order was taken;
-2. a **Tally bill no.**;
-3. a **rate**.
+1. the order **verified** by the back office;
+2. **every line not cancelled Ready**;
+3. a **rate** on every line;
+4. approval, if the billing party was Pending.
 
-A line may be billed while it is Under Process and with no lots allocated, as the office billed in the Taken Order sheet. Allocating lots is what takes the stock, so a line billed without them takes none.
-
-Bill it then marks the line billed and writes its billing-and-dispatch record **in one transaction**.
+It asks for the **Tally invoice no.** and **invoice date**, writes them on every live line and bills them in one transaction. A billed order takes no more lines.
 </Rule>
 
-<Callout kind="why" title="Why one step">
-The source system asked for *Done* (the office has entered the bill) and then *Add To Order Details* (copy the row to the next sheet) — two presses for one fact, because billing lived in another spreadsheet. Two presses meant a line could be "done" and missing from the billing list.
-</Callout>
-
-Once billed, a line's quantity and delivery party are fixed. **Undo billing** is allowed until the line is dispatch-verified.
-
-### Pending customers
-
-A line whose billing party was **Pending** when it was taken carries *Pending customer* and cannot be billed until approved. While <Setting k="erp.orders.live" /> is off, the ERP's own **Approved By Admin** action does that, for holders of the *Approve orders from pending customers* power. Once it is on, Accounts approve the order in their queue and the ERP offers no second door — see [the order book](/docs/erp/order-book).
-
-## Dispatch verification
-
-<Rule title="Mark dispatch-verified needs every box scanned — lots are optional">
-A line whose allocated lots carry box ids leaves only when every box on it has been scanned at the Dispatch desk (setting: <Setting k="erp.dispatch.requireScan" />). Stock packed before box ids existed has nothing to scan, so it is not held back. The dispatch date may not be before the order date.
+<Rule title="One invoice number is one order">
+An invoice number already on another order is refused, naming that order. Numbers are compared without case or spaces, so *mmi/26-27/ 1119* is *MMI/26-27/1119*.
 </Rule>
 
-Verifying sets the line **Verified** and **Dispatched** with the date, turns every box scanned onto it into a **dispatched** box, freezes its lots (no change of quantity or release afterwards), and puts the lines verified together on one record on [Transport](/docs/erp/transport): a record of the same order and bill still at the gate, otherwise a new one. An order sent in two goes is two records.
+<Rule title="Goods that go later go on a new order">
+A line that will not leave with this bill is **moved to a new order** — the whole line, or part of it in whole boxes, as long as it has no batch codes. The new order number is linked both ways: the new line says *Moved out of order 1256*, the old order says *Continued on order 1260*. There is no partly-ready order.
+</Rule>
+
+**Undo billing** takes the whole order back out of billing until it is dispatched; its invoice check goes with it. **Change invoice** changes the number or date on a billed order.
+
+## The independent invoice check
+
+<Rule title="Somebody else checks the invoice">
+Somebody holding *Check invoices before dispatch* compares the invoice with the order — customer, order number, goods, quantities, invoice number, rate and discount — then presses **Approve invoice** or **Reject invoice** with a reason. Nobody checks a bill they entered themselves, unless they are an ERP administrator: *You entered this bill, so somebody else checks it.* The checker is told of every new bill; whoever billed is told of a rejection.
+</Rule>
+
+<Rule title="A change after the check sends it back">
+After approval or rejection, a change to the invoice number or date, a rate, a discount or the GST puts the invoice back to Verification Pending, and the checker is told what changed. A remark or a transporter is not looked at by the checker and does not.
+</Rule>
+
+Every step — sent to check, verified, sent back, approved, rejected, back to check — is appended to the order's **Check history**, shown on its record with who and when.
+
+## Dispatch stickers
+
+<Rule title="The dispatch sticker carries four things, and only after approval">
+One sticker for every box or can: the **customer** (the delivery party), the **product**, the **invoice number** and the **order number** — nothing else, and no lot or box code. Those are on the box's own label, made by the box-id system, and the two never share a sticker. Stickers are printed only once the invoice is approved and until the goods leave. **Stickers are on** records that they were applied; it is not required to dispatch.
+</Rule>
+
+## Confirm dispatch
+
+<Rule title="An order leaves whole, after its invoice is approved">
+**Confirm dispatch** asks for the **dispatch date**, the **vehicle / tempo / truck number**, the **driver or transporter** and any **remark or exception**. It dispatches every billed line of the order together, and refuses while the invoice is waiting for the check or was rejected, while any line of the order is not on the bill, or while any line still has boxes to scan (setting: <Setting k="erp.dispatch.requireScan" />). The date may not be before the order date.
+</Rule>
+
+Confirming sets the lines **Verified** and **Dispatched**, turns every scanned box **dispatched**, freezes the lots, and puts the order on one record on [Logistics](/docs/erp/transport). Bills recorded with the same vehicle on the same day join one **trip** there.
 
 ## The bill's figures
-
-Every figure is worked out from the line each time it is read; the billing record stores only what dispatch adds (GST rate, extra expenses, dispatch date and verification).
 
 | Figure | How it is worked out |
 |---|---|
 | **Amount** | cans × rate — or litres × rate on a drum line |
 | **Discounted amount** | amount × discount % |
-| **Final amount** | (amount − discount + transport cost) plus GST on that |
+| **Final amount** | (amount − discount + freight charged) plus GST on that |
 | **Company** | 18% GST bills from Mahek Marketing India; 0% from Mylac |
-| **Lot-code costing** | the average cost per can (per litre on a drum) of the allocated lots × cans (or litres), plus extra expenses. Blank if any lot has no cost. |
-| **Margin** | amount − discount − lot costing − credit notes on this bill and goods (taken back to before GST) |
+| **Lot-code costing** | average cost per can (per litre on a drum) of the allocated lots × cans, plus extra expenses |
+| **Margin** | amount − discount − lot costing − credit notes (taken back to before GST) |
 | **Monthly sale** | the customer's amount across every line dispatched in the same month |
-| **Monthly target** | the customer's target for that month from the CRM's [Monthly targets](/docs/crm/targets) |
+| **Monthly target** | the customer's target from the CRM's [Monthly targets](/docs/crm/targets) |
 | **Due date** | dispatch date + the customer's credit days |
-
-<Callout kind="money">
-A credit note comes off the bill **with** GST and the margin is **before** GST, so the credit note is taken back to the line's own GST rate before it is subtracted. Credit notes are read where they are issued — the complaint — so nothing copies them onto the order line first. See [Complaints and credit notes](/docs/erp/complaints-and-credit-notes).
-</Callout>
 
 ## What each person sees
 
 | Power | What it reveals |
 |---|---|
-| *See sales rate* | The Rate column and field, the live price-list rate in the record |
-| *See sales amounts* | Discount, bill total, amount, discounted amount, final amount, monthly sale, monthly target; the average-bill figure on Billing & dispatch |
-| *See cost and margin* | Costing on batch codes, lot-code costing, cost per can, credit-note amount, margin, payment type |
-
-A column a person cannot see is removed on the server — the value never reaches the browser — and the toolbar says how many are hidden.
+| *See sales rate* | The Rate column and field, the live price-list rate |
+| *See sales amounts* | Discount, bill total, amount, discounted amount, final amount, monthly sale and target |
+| *See cost and margin* | Costing, cost per can, credit-note amount, margin, payment type |
 
 ## The WhatsApp inbox
 
-The inbox turns a customer's message into a **draft**, never an order. A model reads the words; who the customer is, which SKU each mention means and how many cans it comes to are decided by rules:
+The inbox turns a customer's message into a **draft**, never an order: the customer, each SKU and the quantity in cans are decided by rules after a model reads the words. A draft becomes an order only through the normal order form, with every rule above. It needs <Setting k="erp.ai.orders.enabled" />, a provider key, and to be under <Setting k="erp.ai.orders.monthlyCap" /> readings a month. More is on [Alerts and the AI helpers](/docs/erp/alerts-and-ai).
 
-- **The customer** — by the WhatsApp contact the reply came from, then by the sender's number, then by name (only when the match is sure).
-- **The SKU** — by name, with SKUs this customer has bought before given a lift. Where several fit, the line is left for the person to choose and lists them.
-- **The quantity** — converted to cans from what was said (box, *peti*, carton, drum, litres).
-
-A draft becomes an order only through the normal order form, with every rule above. Replies are screened every hour and on demand: only those with a digit in them are read, each reply once. The feature needs <Setting k="erp.ai.orders.enabled" />, a provider key, and to be under its monthly allowance of <Setting k="erp.ai.orders.monthlyCap" /> readings. More on the AI side is on [Alerts and the AI helpers](/docs/erp/alerts-and-ai).
-
-<SettingsTable keys={["erp.orders.live", "erp.dispatch.requireScan", "erp.ai.orders.enabled", "erp.ai.orders.monthlyCap"]} />
+<SettingsTable keys={["erp.orders.live", "erp.orders.partySheet", "erp.dispatch.requireScan", "erp.ai.orders.enabled", "erp.ai.orders.monthlyCap"]} />
 
 ## Who can do what
 
 | Act | Needs |
 |---|---|
-| Open Orders and all seven tabs | The Orders screen |
-| Take, edit, ready, bill, undo billing, delete lines | The Orders screen |
+| Open Orders and all its tabs | The Orders screen |
+| Take, edit, change status, bill, undo billing, change invoice, move to a new order, delete lines | The Orders screen |
+| Verify order, send back for correction | *Verify orders (back office)* |
+| Approve or reject an invoice | *Check invoices before dispatch* — and not on a bill you entered, unless an ERP administrator |
 | Set the rate / discount | *See sales rate* / *See sales amounts* |
-| Approved By Admin | *Approve orders from pending customers*, and only while the ERP is not taking orders |
+| Approved By Admin | *Approve orders from pending customers*, only while the ERP is not taking orders |
 | Mark not verified | ERP administrator |
-| Mark dispatch-verified from the Dispatch desk | The Orders screen as well as the Dispatch desk |
+| Confirm dispatch from the Dispatch desk | The Orders screen as well as the Dispatch desk |
 
 ## Where the code and the intent disagree today
 
-- **A Ready line is not Pending.** Pending is the lines not yet Ready (Under Process or Hold From Office) and not billed; marking a line Ready moves it to *Under process & ready*. Mahek Plus's Pending view had no status test, so a Ready line sat on both tabs until it was billed.
-- **Pending hides a whole order once any line of it is billed.** An order with one billed line and one unbilled line vanishes from Pending; the unbilled line is only on *Under process & ready* and *All lines*.
-- **A line marked Not Verify can never be verified again.** Mark dispatch-verified accepts only a blank or Pending verification; the only way back is to undo billing and bill it again.
-- **The "Ready but not billed" alert dates Ready from the line's last change**, not from when it became Ready — any edit restarts the clock.
+- **Hold and Cancel are stored as statuses.** They are shown as the order domain, but live in the same column as Under Process and Ready, so the Factory app and the order book read them as before.
+- **Orders already in the ERP when the checks arrived read as passed.** Every line and bill that existed before migration 0285 reads *Verified* and *Approved*, with nobody named, so orders in flight were not held.
+- **On hold is the old Pending tab.** It still lists what is neither Under Process nor Ready nor cancelled, and still hides a whole order once any line of it is billed.
+- **Lines copied in from the Taken Order tab look like any other line.** They carry `source = sheet`, and the order book never writes them, but the tabs draw them unmarked.
+- **A line marked Not Verify can never be dispatched again.** Confirm dispatch accepts only a blank or Pending verification; the way back is to undo billing and bill again.
+- **The "Ready but not billed" alert dates Ready from the line's last change**, not from when it became Ready.
+- **Ready to bill lists lines, not whole orders.** A Ready line of a verified order is listed even when another line of the same order is still Under Process; Bill it then names what holds the bill.

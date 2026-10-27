@@ -790,7 +790,7 @@ export const DOC_APPS: DocApp[] = [
       {
         slug: "masters",
         title: "Masters",
-        summary: "Raw materials, suppliers, products, sales parties, godowns, price lists and reference lists.",
+        summary: "Raw materials and can groups, purchase parties, products and their packing, sales parties, godowns and reference lists.",
         group: "Masters",
         modules: ["erp.rawMaterials", "erp.suppliers", "erp.products", "erp.customers", "erp.godowns", "erp.refLists"],
         written: ALL,
@@ -806,7 +806,7 @@ export const DOC_APPS: DocApp[] = [
       {
         slug: "purchase-orders",
         title: "Purchase orders",
-        summary: "No purchase without a PO: raising, approving, sending and printing one.",
+        summary: "No purchase without a PO: made by the item's purchase rule with no approval, then shared, printed, received against or closed short.",
         group: "Purchase",
         modules: ["erp.purchaseOrders"],
         written: ALL,
@@ -814,7 +814,7 @@ export const DOC_APPS: DocApp[] = [
       {
         slug: "quotation-manager",
         title: "Quotation manager",
-        summary: "The purchase desk's rate sheet: suppliers' rates by date and material, edited like a spreadsheet, coloured for PO made, cancelled and picked up.",
+        summary: "The purchase desk's rate sheet: suppliers' rates by date and material, edited like a spreadsheet — Ready to buy, Purchase it (which writes the PO), cancelled and picked up.",
         group: "Purchase",
         modules: ["erp.quoteManager"],
         written: ALL,
@@ -846,7 +846,7 @@ export const DOC_APPS: DocApp[] = [
       {
         slug: "stock-accuracy",
         title: "Stock accuracy and counting",
-        summary: "Inventory Accuracy Control: a blind count before every purchase method and every day, red flags that notify without stopping the purchase, recounts, causes, approved adjustments and missing records.",
+        summary: "Inventory Accuracy Control: a blind count before every purchase method and every day, stock checks from the floor, red flags that notify without stopping the purchase, recounts, causes, approved adjustments and missing records.",
         group: "Make and store",
         modules: ["erp.stockCheck"],
         written: ALL,
@@ -854,7 +854,7 @@ export const DOC_APPS: DocApp[] = [
       {
         slug: "stock-levels",
         title: "Minimum levels and reordering",
-        summary: "Raw-material and finished-goods minimums, and raising a requirement from a shortfall.",
+        summary: "Raw-material levels planned from history, finished-goods minimums, and raising a requirement from a shortfall.",
         group: "Make and store",
         modules: ["erp.rmLevels", "erp.fgLevels"],
         written: ALL,
@@ -862,7 +862,7 @@ export const DOC_APPS: DocApp[] = [
       {
         slug: "orders",
         title: "Orders, billing and the WhatsApp inbox",
-        summary: "From an order being taken to its bill: pending, ready, billing, batch codes, labels and the inbox.",
+        summary: "From an order being taken to its bill: pending, under process and ready, billing and dispatch, batch codes, labels and the WhatsApp inbox.",
         group: "Sell and ship",
         modules: ["erp.orders"],
         written: ALL,
@@ -894,7 +894,7 @@ export const DOC_APPS: DocApp[] = [
       {
         slug: "complaints-and-credit-notes",
         title: "Complaints and credit notes",
-        summary: "The customer's complaints and credit notes — the same records the CRM keeps.",
+        summary: "Product quality complaints and the credit notes asked for on them — the same records the CRM keeps.",
         group: "Sell and ship",
         modules: ["erp.requests"],
         written: ALL,
@@ -910,7 +910,7 @@ export const DOC_APPS: DocApp[] = [
       {
         slug: "empty-drums-scrap",
         title: "Empty drums, scrap sale and vendor returns",
-        summary: "Drums recorded empty off their GRN label and weighed; Mahek's sold as scrap oldest first, suppliers' returned; scrap receivables matched in Petty Cash.",
+        summary: "Drums recorded empty off their GRN label and weighed; Mahek's sold as scrap oldest first, suppliers' returned; scrap receipts recorded on Scrap sales and written into Petty Cash.",
         group: "Money",
         modules: ["erp.emptyDrums", "erp.drumReturns", "erp.scrapSales"],
         written: ALL,
@@ -918,7 +918,7 @@ export const DOC_APPS: DocApp[] = [
       {
         slug: "petty-cash",
         title: "Petty Cash: expenses, receipts, cash, bank and advances",
-        summary: "Every rupee outside the order book entered once: expenses as they are paid, production petty cash, advances to employees, receipts, transfers, account statements and bank statement matching.",
+        summary: "Every rupee outside the order book entered once: expenses as they are paid, production petty cash, advances to employees, receipts, transfers and account statements; the bank's own statement is matched in Accounts.",
         group: "Money",
         modules: ["erp.expenses"],
         written: ALL,
@@ -926,7 +926,7 @@ export const DOC_APPS: DocApp[] = [
       {
         slug: "alerts-and-ai",
         title: "Alerts and the AI helpers",
-        summary: "The overnight alerts, and the AI that reads orders, bills, complaints and photographs.",
+        summary: "The hourly alerts, and the AI that reads orders, bills, complaints and photographs, reviews stock levels and counts, and answers questions.",
         group: "Money",
         modules: ["erp.alerts"],
         written: ALL,

@@ -12,8 +12,14 @@ import { calendarDate } from "@/lib/business-date";
 /**
  * The PURCHASE ORDER as the vendor receives it — printed, or saved as a PDF
  * from the browser's print dialog. Only an approved PO has one: a PO awaiting
- * approval is not an order anybody may send. Rates are on the paper because
- * the paper goes to the vendor, so it needs the purchase-money power to open.
+ * approval is not an order anybody may send.
+ *
+ * THE RATES ARE ON THE PAPER ONLY FOR WHOEVER MAY SEE PURCHASE MONEY. It used
+ * to refuse the page outright without that power — so a Production Head who
+ * raised a PO from his own requisitions could not print the order he had just
+ * made, and read "carries its rates" as the rates being missing. Without the
+ * power the same paper prints with the item, the quantity, the vendor and the
+ * delivery, and every money column is left off rather than drawn blank.
  */
 export default async function PurchaseOrderPrint({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -31,15 +37,7 @@ export default async function PurchaseOrderPrint({ params }: { params: Promise<{
         </a>
       </div>
     );
-  if (!ctx.powers.has("viewPurchaseMoney"))
-    return (
-      <div className="p-6 text-sm text-body">
-        The printed PO carries its rates, and purchase money is not on your account.{" "}
-        <a href={back} className={linkClass("brand")}>
-          Back to the PO
-        </a>
-      </div>
-    );
+  const money = ctx.powers.has("viewPurchaseMoney");
   const t = poTotals(p.lines, p.po.freightPaise);
   return (
     <div className="mx-auto grid w-full max-w-[860px] gap-4 p-6">
@@ -50,6 +48,9 @@ export default async function PurchaseOrderPrint({ params }: { params: Promise<{
         </a>
         <PrintButton />
       </div>
+      {money ? null : (
+        <p className="text-meta text-muted print:hidden">Printed without rates — purchase money is not on your account. Accounts print and share the copy with rates.</p>
+      )}
       <article className="po-paper grid gap-5 rounded-card border border-line bg-white p-8 text-meta text-ink">
         <header className="flex items-start justify-between gap-6">
           <div>
@@ -81,10 +82,14 @@ export default async function PurchaseOrderPrint({ params }: { params: Promise<{
               <Th>#</Th>
               <Th>Item</Th>
               <Th align="right">Quantity</Th>
-              <Th align="right">Rate</Th>
-              <Th align="right">Amount</Th>
-              <Th align="right">GST</Th>
-              <Th align="right">Total</Th>
+              {money ? (
+                <>
+                  <Th align="right">Rate</Th>
+                  <Th align="right">Amount</Th>
+                  <Th align="right">GST</Th>
+                  <Th align="right">Total</Th>
+                </>
+              ) : null}
             </tr>
           </thead>
           <tbody>
@@ -97,37 +102,43 @@ export default async function PurchaseOrderPrint({ params }: { params: Promise<{
                   <Td align="right" className="tabular-nums">
                     {nf(l.quantity)} {l.unit}
                   </Td>
-                  <Td align="right" className="tabular-nums">{inrRate(l.ratePaise)}</Td>
-                  <Td align="right" className="tabular-nums">{inr(f.amountPaise)}</Td>
-                  <Td align="right" className="tabular-nums">
-                    {l.gstBp / 100}% · {inr(f.gstPaise)}
-                  </Td>
-                  <Td align="right" className="tabular-nums">{inr(f.totalPaise)}</Td>
+                  {money ? (
+                    <>
+                      <Td align="right" className="tabular-nums">{inrRate(l.ratePaise)}</Td>
+                      <Td align="right" className="tabular-nums">{inr(f.amountPaise)}</Td>
+                      <Td align="right" className="tabular-nums">
+                        {l.gstBp / 100}% · {inr(f.gstPaise)}
+                      </Td>
+                      <Td align="right" className="tabular-nums">{inr(f.totalPaise)}</Td>
+                    </>
+                  ) : null}
                 </Tr>
               );
             })}
           </tbody>
         </table>
-        <section className="ml-auto grid w-72 gap-1 tabular-nums">
-          <div className="flex justify-between">
-            <span className="text-body">Amount</span>
-            <span>{inr(t.amountPaise)}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-body">GST</span>
-            <span>{inr(t.gstPaise)}</span>
-          </div>
-          {t.freightPaise ? (
+        {money ? (
+          <section className="ml-auto grid w-72 gap-1 tabular-nums">
             <div className="flex justify-between">
-              <span className="text-body">Freight</span>
-              <span>{inr(t.freightPaise)}</span>
+              <span className="text-body">Amount</span>
+              <span>{inr(t.amountPaise)}</span>
             </div>
-          ) : null}
-          <div className="flex justify-between border-t border-ink pt-1 text-base font-semibold">
-            <span>Total</span>
-            <span>{inr(t.totalPaise)}</span>
-          </div>
-        </section>
+            <div className="flex justify-between">
+              <span className="text-body">GST</span>
+              <span>{inr(t.gstPaise)}</span>
+            </div>
+            {t.freightPaise ? (
+              <div className="flex justify-between">
+                <span className="text-body">Freight</span>
+                <span>{inr(t.freightPaise)}</span>
+              </div>
+            ) : null}
+            <div className="flex justify-between border-t border-ink pt-1 text-base font-semibold">
+              <span>Total</span>
+              <span>{inr(t.totalPaise)}</span>
+            </div>
+          </section>
+        ) : null}
         {p.po.remarks ? (
           <section>
             <SectionLabel>Note</SectionLabel>

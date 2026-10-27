@@ -3,6 +3,7 @@ import { and, count, desc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm"
 import { db } from "@/db";
 import { customers, hrmsActivities, hrmsCalling, hrmsJourneys } from "@/db/schema";
 import { getConfig } from "@/lib/config/store";
+import { CUSTOMER_EDIT_REFUSAL } from "@/lib/customer-edit-gate";
 import { recomputeInactivity } from "@/lib/recompute";
 import { HRMS_EVENT, writeTimelineEvent, writeTimelineEvents } from "@/lib/timeline";
 import type { ActionSpec, ColSpec, Contact, FieldSpec, FormSpec, ListRow, RowField } from "@/lib/erp/ui";
@@ -211,8 +212,6 @@ const CUSTOMER_COLS: ColSpec[] = [
   { k: "f", l: "Flags", t: "f" },
 ];
 
-const RATINGS = ["High Value", "Medium Value", "Low Value"];
-
 const WITHDRAW_WHY = "Only the person who asked, this customer’s back office, or someone who decides deactivations can withdraw the request";
 const DECIDE_WHY = "Accepting or rejecting a deactivation needs the “Decide customer deactivations” power";
 const REACTIVATE_WHY = "Making a customer active again needs the “Decide customer deactivations” power";
@@ -260,7 +259,7 @@ function customerActions(ctx: HrmsContext, c: Cust, st: CustStatus, calledToday:
       why: !decide ? REACTIVATE_WHY : c.status === "inactive" ? STOPPED_BUYING : undefined,
       confirm: `Make ${c.name} active again?`,
     });
-  if (has(ctx, "salesAll")) a.push({ id: "edit", l: "Edit", loadsForm: true });
+  /* No "Edit": a customer's details, the tagged employee included, are edited in Accounts only (lib/customer-edit-gate.ts). */
   return a;
 }
 
@@ -316,31 +315,6 @@ function nameScope(ctx: HrmsContext, ids: Set<string> | null, people: Person[]):
 /** Holders of the power to decide deactivations — told when one is asked for. */
 /* Who decides deactivations: holders of the power and HRMS administrators, active accounts only. */
 const deciders = () => powerHolderUserIds("custStatus");
-
-async function editCustomerForm(c: Cust): Promise<FormSpec> {
-  const [segments, people] = await Promise.all([refList("Customer segmentation"), allPeople()]);
-  const sales = people.filter((p) => isActive(p) && isSales(p) && !p.dateOfLeaving).map((p) => p.name);
-  return {
-    screen: "customers",
-    id: "edit",
-    title: "Edit customer",
-    sub: `${c.name} · the Sales desk’s own fields. Who sells to and who back-offices a customer is changed where accounts reassign it.`,
-    submit: "Save customer",
-    recordId: c.id,
-    init: {
-      rating: c.rating ?? "",
-      segmentation: c.segmentation ?? "",
-      tagged: c.taggedEmployeeName ?? "",
-      instr: c.specialInstructions ?? "",
-    },
-    header: [
-      { k: "rating", l: "Rating", t: "select", opts: RATINGS },
-      { k: "segmentation", l: "Segmentation", t: "select", opts: segments },
-      { k: "tagged", l: "Tagged employee", t: "select", opts: sales, hint: "Active sales staff with no date of leaving." },
-      { k: "instr", l: "Special instructions", t: "area" },
-    ],
-  };
-}
 
 const NOT_LINKED = "Your account is not linked to an employee record yet. Ask HR to link it on the Access screen.";
 
@@ -591,34 +565,15 @@ const customersScreen: HrmsScreenModule = {
       return okVoid(`${c.name} is active again`);
     },
   },
+  /* Refused here as well as undrawn — a form posts to a URL whether or not a button leads to it. */
   formLoaders: {
-    async edit(ctx, id) {
-      if (!has(ctx, "salesAll")) return null;
-      const c = await oneCustomer(id);
-      return c ? editCustomerForm(c) : null;
+    async edit() {
+      return null;
     },
   },
   forms: {
-    async edit(ctx, h, _lines, recordId) {
-      if (!has(ctx, "salesAll")) return err("Editing customers needs Sales desk access for everyone.", "not_permitted");
-      const c = recordId ? await oneCustomer(recordId) : null;
-      if (!c) return err("That customer no longer exists.", "not_found");
-      const rating = text(h.rating);
-      if (rating && !RATINGS.includes(rating)) return fieldErr("rating", `Pick a rating from the list: ${RATINGS.join(", ")}`);
-      const after = { rating, segmentation: text(h.segmentation), taggedEmployeeName: text(h.tagged), specialInstructions: text(h.instr) };
-      await db
-        .update(customers)
-        .set({ ...after, updatedAt: new Date(), updatedById: ctx.user.id })
-        .where(eq(customers.id, c.id));
-      await hrmsAudit(
-        ctx,
-        "hrms.customer.edit",
-        "customer",
-        c.id,
-        { rating: c.rating, segmentation: c.segmentation, taggedEmployeeName: c.taggedEmployeeName, specialInstructions: c.specialInstructions },
-        after,
-      );
-      return okVoid(`${c.name} saved`);
+    async edit() {
+      return err(CUSTOMER_EDIT_REFUSAL, "not_permitted");
     },
   },
 };

@@ -4,7 +4,7 @@ Alerts are three files: the pure rules in `engines/alerts.ts`, the run that gath
 
 | Layer | File | What lives there |
 |---|---|---|
-| Rules (pure) | `src/lib/erp/engines/alerts.ts` | `AlertKind`, `ALERT_LABEL`, `Candidate`, `Thresholds`, one function per rule (`rateJumps`, `ratesMissing`, `sfgLosses`, `fillLosses`, `writeOffs`, `packsStuck`, `testsStuck`, `thinMargins`, `slowFulfilment`, `readyUnbilled`, `lrsMissing`, `cnsNotIssued`, `duplicateExpenses`, `cashNegative`, `belowLevel`) |
+| Rules (pure) | `src/lib/erp/engines/alerts.ts` | `AlertKind`, `ALERT_LABEL`, `Candidate`, `Thresholds`, one function per rule (`rateJumps`, `ratesMissing`, `sfgLosses`, `fillLosses`, `writeOffs`, `packsStuck`, `testsStuck`, `thinMargins`, `slowFulfilment`, `readyUnbilled`, `lrsMissing`, `cnsNotIssued`, `duplicateExpenses`, `cashNegative`, `belowLevel`, `drumVariances`) |
 | The run | `src/lib/erp/alerts.ts` | `thresholds`, `currentCandidates`, `runErpAlerts`, `tellRequisitioners`, `visibleAlerts` |
 | Screen | `src/lib/erp/screens/alerts.ts` | `alertsScreen` — list, `run` form (manager), `ack`, `resolve` |
 | Summary | `src/lib/erp/digest.ts` | `plainDigest`, `writeErpDigest`; read by `latestDigest` in `dashboard.ts` |
@@ -12,9 +12,10 @@ Alerts are three files: the pure rules in `engines/alerts.ts`, the run that gath
 | AI plumbing | `src/lib/erp/ai.ts` | `featureState`, `readImages`, `readText`, `logSuggestion`, `decideSuggestion`, `outcomeOf`, `pendingSuggestion`, `pendingFor` |
 | Supplier bills (AI-1) | `src/lib/erp/ai-bills.ts` | `readBill`, `recordBillReading`, `billReviewForm`, `applyBill`, `rejectBill` — wired into `screens/purchase.ts` |
 | Order messages (AI-2) | `src/lib/erp/ai-orders.ts`, `screens/inbox.ts` | See [Orders, developer](/docs/erp/orders/developer) |
-| Ask the ERP (AI-5) | `src/lib/erp/ai-ask.ts` | `askTools`, `askErp`; called by `erpAsk` in `actions/erp.ts` from the shell's search box |
+| Ask the ERP (AI-5) | `src/lib/erp/ai-ask.ts`, `src/app/api/erp/ask/route.ts` | `askTools`, `askErp`; the route is what the header's Ask the ERP drawer (`AskPanel` with `ERP_ASK` from `components/shell/ask-setups.ts`) posts to, with the conversation so far. `SmartSearch` offers the question from the search box (`looksLikeQuestion` in `lib/search-hit.ts`) |
 | Complaints (AI-6) | `src/lib/erp/ai-complaints.ts`, `trace.ts` | See [Complaints, developer](/docs/erp/complaints-and-credit-notes/developer) |
-| Levels (AI-7) | `src/lib/erp/suggest.ts` | See [Levels, developer](/docs/erp/stock-levels/developer) |
+| Levels (AI-7) | `src/lib/erp/suggest.ts`, `src/lib/erp/level-planner.ts` | The look-back suggestion (<Setting k="erp.ai.reorder.lookbackDays" /> days), and the nightly raw-material planner whose AI review is feature `levels`. See [Levels, developer](/docs/erp/stock-levels/developer) |
+| Discrepancy assistant | `src/lib/erp/screens/stock-check.ts` | Feature `stockCheck`: `readText` over the causes the rules found for a red-flagged count. See [Stock accuracy, developer](/docs/erp/stock-accuracy/developer) |
 | Photos (AI-8) | `src/lib/erp/ai-photos.ts` | LR: `readLr`, `recordLrReading`, `lrReviewForm`, `applyLr`; tests: `readTestPhotos`, `recordTestReading`, `testReviewForm`, `decideTestReading` |
 | Dictation | `src/app/erp/_ui/voice.ts`, `src/app/erp/layout.tsx` | Draws the microphone where `erp.ai.voice.enabled` |
 
@@ -47,7 +48,7 @@ sequenceDiagram
 
 <Code file="src/lib/erp/engines/alerts.ts" symbol="belowLevel" />
 
-`duplicateExpenses` and `cashNegative` read `erp_expenses` and the balances from `erp_credits` less `erp_expenses`.
+`duplicateExpenses` reads active Petty Cash expenses from `erp_money_txns` (not those saved with `duplicate_override`); `cashNegative` reads each non-bank `erp_money_accounts` balance — its opening plus every transaction on it. `drumVariances` reads `erp_empty_drums` against the declared tare.
 
 ## The run
 
@@ -92,7 +93,7 @@ The "raise once" guarantee is the partial unique index `erp_alerts_open_key` on 
 }} />
 
 <DbTable name="erp_ai_suggestions" note={{
-  feature: "bills, orders, ask, photos, complaints. featureState counts rows per feature since the 1st for the monthly cap.",
+  feature: "bills, orders, ask, photos, complaints, stockCheck, levels. featureState counts rows per feature since the 1st for the monthly cap.",
   proposed: "What the model and the rules proposed, flags included.",
   confidence: "high, check or not found, per field.",
   outcome: "pending, accepted, edited, rejected.",
@@ -146,4 +147,4 @@ A new question is a tool in `askTools` that calls `fromScreen` on an existing sc
 | `erp_alerts_open_key` exists only in the migration, not in `schema.ts` | `drizzle/0180_erp_alerts_and_ai.sql`; `db/schema.ts` `erpAlerts` |
 | The digest's writing model is `voice.languageModel`, not `erp.ai.textModel` | `digest.ts` `writeErpDigest` |
 | `readyUnbilled` uses the line's `updated_at` as "Ready since" | `alerts.ts` `currentCandidates` |
-| `belowLevel` for raw materials is fed by rows below the maximum | `screens/movement.ts` `rmReorderRows` |
+| `erpAsk` in `actions/erp.ts` is still exported but nothing calls it; the drawer posts to `/api/erp/ask` | `lib/actions/erp.ts` `erpAsk` |

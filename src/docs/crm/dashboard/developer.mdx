@@ -112,7 +112,6 @@ Add flag ages to `registry.ts` under `dashboard.*` with a `Config` type entry.
 
 | Gap | Where |
 |---|---|
-| Approved orders are filtered by a literal `('captured','confirmed','dispatched')`, missing `in_transit` and `delivered` from `PURCHASE_STATUSES` | `eod-service.ts` `eodMetricsForRange` (`orders_count`, `orders_value`, `target_achieved`) |
 | `payments_confirmed` sums `payments` lines by `recorded_by_id` with no join to `payment_receipts.status` — reported and rejected money is counted as collected | `eod-service.ts` `eodMetricsForRange` |
 | `target_amount` / `target_achieved` join on `cu.owner_id` rather than `ASSIGNED_TO_SQL` or the sales-attribution rule | `eod-service.ts` |
 | `overSixtyDays` is unscoped, uses `current_date` (session zone) and does not exclude `unstated` bills | `dashboard/page.tsx` |

@@ -7,8 +7,8 @@ Petty Cash is one ERP screen (`expenses`, so its grant `erp.expenses` is the one
 | Registry | `src/lib/erp/registry.ts` | The `expenses` screen, its tabs and their sections |
 | Two-level tabs | `src/app/erp/_ui/screen-tabs.ts`, `list-screen.tsx` | `screenTabs` returns `sections`; `SectionTabs` draws them |
 | Rules (pure) | `src/lib/erp/engines/money.ts` | legs, balances, statements, advances, duplicates, bank parsing and matching |
-| Reads and writes | `src/lib/erp/money.ts` | `saveExpense`, `saveReceipt`, `saveTransfer`, advances, bank lines, `moneyOverview` |
-| Screens | `src/lib/erp/screens/money.ts` | every tab's module and form |
+| Reads and writes | `src/lib/erp/money.ts` | `saveExpense`, `saveReceipt`, `saveTransfer`, advances, bank lines, `moneyOverview` (also read by the ERP dashboard's Petty Cash section), `recordScrapMoney` |
+| Screens | `src/lib/erp/screens/money.ts` | every tab's module and form, and `newMenu` — the header's **New ▾** items |
 | Page | `src/app/erp/expenses/page.tsx` | routes every tab |
 | Screens | `src/app/erp/expenses/screens.tsx` | lists, statement, drawer, advance page, bank view |
 | Dialogs | `src/app/erp/expenses/money-dialogs.tsx` | expense, petty cash, receipt, transfer, advance, bills |
@@ -38,7 +38,13 @@ Petty Cash is one ERP screen (`expenses`, so its grant `erp.expenses` is the one
 
 <DbTable name="erp_bank_matches" />
 
-The old `erp_credits` and `erp_expenses` are kept and read only by the Old records tab.
+The old `erp_credits` and `erp_expenses` are kept and read only by the Old records tab. A bank PDF uploaded on Accounts → Bank statement management lands in `bank_statement_uploads` and, once imported, its lines in `erp_bank_lines` — still the one store of bank lines — where `erp_bank_matches` points each at a Petty Cash transaction, a customer receipt or a vendor payout.
+
+## Known gaps, with file references
+
+| Gap | Where |
+|---|---|
+| `screens/money.ts` builds a **Correct** action and its form for expenses, receipts and transfers, but the transaction drawer Petty Cash draws (`TxnDrawerView`) offers only review and cancel, and the dialogs' actions take no id — nothing can correct a transaction | `screens/money.ts` (`id: "edit"`); `app/erp/expenses/screens.tsx` `TxnDrawerView`; `actions/erp-money.ts` |
 
 ## Tests
 

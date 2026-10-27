@@ -21,6 +21,7 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appAccess, customerContacts, customers, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
+import { setTestCustomerEditApp } from "@/lib/customer-edit-gate";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import {
   addCustomerContact,
@@ -92,10 +93,13 @@ beforeEach(async () => {
   admin = await makeUser("Ada Admin", "admin", [{ app: "crm", role: "admin" }, { app: "accounts", role: "admin" }]);
   clerk = await makeUser("Tara Telecaller", "associate", [{ app: "crm", role: "associate" }]);
   setTestUser(admin);
+  /* Details are edited in Accounts only; these tests stand there unless they say otherwise. */
+  setTestCustomerEditApp("accounts");
 });
 
 after(async () => {
   setTestUser(null);
+  setTestCustomerEditApp(null);
   await db.$client.end();
 });
 
@@ -289,9 +293,10 @@ describe("E — the full edit form", () => {
     assert.equal((await updateCustomer(c.id, { whatsappDest: "group" })).ok, false);
   });
 
-  test("the credit limit is the ledger desk's, but other details are anybody's", async () => {
+  test("the credit limit is the ledger desk manager's, but other details are any Accounts user's", async () => {
     const c = await makeCustomer({ salesAmId: clerk.id, ownerId: clerk.id });
-    setTestUser(clerk);
+    const accountsClerk = await makeUser("Arun Accounts", "associate", [{ app: "accounts", role: "associate" }]);
+    setTestUser(accountsClerk);
     const refused = await updateCustomer(c.id, { creditLimitPaise: 100 });
     assert.equal(refused.ok, false);
     assert.equal(refused.ok ? "" : refused.code, "not_permitted");
@@ -369,5 +374,47 @@ describe("B — a contact's birthday", () => {
     assert.ok(e.ok);
     assert.match(e.data.today, /^\d{4}-\d{2}-\d{2}$/);
     assert.equal(e.data.birthdayHeadsUpDays, 7);
+  });
+});
+
+describe("F — a customer's details are edited in Accounts, and read everywhere else", () => {
+  test("the same admin is refused from the CRM and allowed from Accounts", async () => {
+    const c = await makeCustomer();
+    setTestCustomerEditApp("crm");
+    const fromCrm = await updateCustomer(c.id, { email: "crm@x.in" });
+    assert.equal(fromCrm.ok, false);
+    assert.equal(fromCrm.ok ? "" : fromCrm.code, "not_permitted");
+    assert.match(fromCrm.ok ? "" : fromCrm.error, /Accounts app/);
+    assert.equal((await record(c.id)).email, null, "nothing written");
+    setTestCustomerEditApp("accounts");
+    assert.ok((await updateCustomer(c.id, { email: "acc@x.in" })).ok);
+  });
+
+  test("contacts are details too: added, changed and removed only from Accounts", async () => {
+    const c = await makeCustomer();
+    setTestCustomerEditApp("crm");
+    assert.equal((await addCustomerContact(c.id, { name: "Not here", phone: "9811100020" })).ok, false);
+    setTestCustomerEditApp("accounts");
+    const added = await addCustomerContact(c.id, { name: "Here", phone: "9811100021" });
+    assert.ok(added.ok);
+    const row = added.data.find((x) => x.name === "Here")!;
+    setTestCustomerEditApp("crm");
+    assert.equal((await updateCustomerContact(row.id, { name: "Moved", phone: "9811100021" })).ok, false);
+    assert.equal((await removeCustomerContact(row.id)).ok, false);
+    assert.equal((await designateCustomerContact(row.id, "primary", true)).ok, false);
+    assert.ok((await loadCustomerContacts(c.id)).ok, "reading them is not editing them");
+  });
+
+  test("standing in Accounts is not enough without the Accounts app", async () => {
+    const c = await makeCustomer({ salesAmId: clerk.id, ownerId: clerk.id });
+    setTestUser(clerk);
+    setTestCustomerEditApp("accounts");
+    assert.equal((await updateCustomer(c.id, { email: "x@x.in" })).ok, false);
+  });
+
+  test("no app on the request is no edit", async () => {
+    const c = await makeCustomer();
+    setTestCustomerEditApp(null);
+    assert.equal((await updateCustomer(c.id, { email: "x@x.in" })).ok, false);
   });
 });

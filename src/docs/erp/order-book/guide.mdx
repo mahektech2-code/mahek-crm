@@ -12,7 +12,9 @@ The ERP and the order sheet must never both be writing orders. The day the team 
 | Where the CRM's orders and bills come from | The order sheet, every thirty minutes | The ERP, the moment an order changes |
 | An order from a **Pending** customer | Approved inside the ERP with "Approved By Admin" | Waits in **Accounts → Order approvals** like any other order needing a check |
 | What holds a customer off the Call Log | An open line on the Taken Order tab | An ERP order of theirs not yet dispatch-verified |
-| Customers (names, phones, credit terms) | From the party sheet | Still from the party sheet — unchanged |
+| New customers | Created from the order sheet, or by hand | Created in Accounts → Add customer — the ERP and the order sheet create none |
+| Customer details (seats, phones, credit terms) | From the Sales Party sheet | Still from the Sales Party sheet, until the owner retires it with its own switch — then kept in MahekOne |
+| Sheet import in Accounts and the Admin Console | Runs | Shows "The order sheet is retired" and its buttons are disabled |
 
 ## What you will see in Accounts and the CRM
 
@@ -35,7 +37,7 @@ Every ERP order number becomes **one** order in MahekOne, numbered `ERP-` follow
 As soon as the first line of an order is **dispatch-verified** in the ERP, one bill appears for that order. It carries the Tally bill number the order desk entered; if that number is already taken by an older bill, it becomes the Tally number followed by `/ERP` and the order number, or `ERP-` and the order number. Its amount is the value of the lines that have left so far, and its date is the earliest dispatch date.
 
 <Callout kind="money">
-An ERP bill is a real invoice the business raised, so it counts as **owed** from the moment it appears: it is on [Outstanding](/docs/crm/outstanding), in the aging, and on the collections worklist like any bill. That is different from a sheet bill, which nobody had vouched for either way. Recording and confirming payments against it works exactly as on [Bills](/docs/crm/bills).
+An ERP bill is a real invoice the business raised, so it counts as **owed** from the moment it appears: it is on [Outstanding](/docs/crm/outstanding), in the aging, and on the collections worklist like any bill. A sheet bill is owed from its due date as well, unless the sheet's Payment Status tab said the money was received. Recording and confirming payments against it works exactly as on [Bills](/docs/crm/bills).
 </Callout>
 
 ## Approving an order from a Pending customer
@@ -62,6 +64,9 @@ Once the ERP takes the orders, the ERP's own "Approved By Admin" button disappea
 <Step title="Stop typing orders into the sheet">
 Agree the cut-off time with the order desk.
 </Step>
+<Step title="Bring the sheet's open orders across">
+Whoever runs MahekOne's jobs turns the sheet's still-open orders (already copied into the ERP) into ERP orders, and closes the copied ones the sheet showed Ready and Done so they do not hold their customers off the Call Log. There is no button for this.
+</Step>
 <Step title="The owner switches the ERP on">
 Admin Console → Settings → ERP → Production & orders → "The ERP takes the orders".
 </Step>
@@ -84,7 +89,11 @@ If no payment had been recorded, the bill goes with the lines that made it, and 
 </Faq>
 
 <Faq q="Why is a customer we just took an order from still on today's Call Log?">
-The hold that keeps customers with an open order off the Call Log is rebuilt by the scheduled passes, not at the moment an order is saved. It catches up on the next pass.
+The hold that keeps customers with an open order off the Call Log is rebuilt every hour, not at the moment an order is saved. It catches up within the hour.
+</Faq>
+
+<Faq q="A party we created in the ERP is still a lead.">
+A party is a lead until its second order. Once the ERP takes the orders, its second ERP order (not cancelled or declined) makes it a customer, and the sales person tagged when it was created — where that name is a MahekOne user — becomes its sales account manager.
 </Faq>
 
 <Faq q="The bill number has '/ERP' in it.">

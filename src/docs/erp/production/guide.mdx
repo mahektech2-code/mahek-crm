@@ -12,24 +12,25 @@ flowchart LR
 
 An SFG batch blends raw-material lots into one lot of semi-finished liquid. One line per raw-material lot consumed.
 
-<Wireframe url="/erp/sfg-batches" nav={["Dashboard", "#Production", "SFG batches", "FG filling", "Packing batches", "Recipes"]} active="SFG batches" caption="SFG batches, grouped by godown">
+<Wireframe url="/erp/sfg-batches" nav={["Dashboard", "#Production", "SFG batches", "FG filling", "Packing batches", "Recipes"]} active="SFG batches" caption="SFG batches, one group per SFG number">
   <WfBar>
-    <WfTitle sub="Liquid made from raw-material lots. One line per lot consumed.">SFG batches</WfTitle>
+    <WfTitle sub="Liquid made from raw-material lots.">SFG batches</WfTitle>
     <WfSpacer /><WfButton primary>New SFG batch</WfButton><Hotspot n={1} />
   </WfBar>
+  <WfBar><WfText>SFG 12 · 6 Oct · <b>Nano Thinner</b> · 2 batches · Godown A · 12SDSOA1230</WfText><WfPill tone="warn">QC Pending</WfPill><Hotspot n={2} /></WfBar>
   <WfTable
     highlight={0}
-    columns={["SFG no", "Date", "SFG product", "Batches", "Raw item", "RM lot", "Qty per batch", "Total use", "Litres adjusted", "SFG lot code", "QC"]}
+    columns={["Raw item", "RM lot", "Qty per batch", "Total use", "Litres adjusted"]}
     rows={[
-      ["12", "6 Oct", <b key="a">Nano Thinner</b>, "2", "Solvent A", "SDSOA1230", "150", "300", "4", "12SDSOA1230", <span key="b"><WfPill tone="warn">Pending</WfPill> <Hotspot n={2} /></span>],
-      ["12", "6 Oct", <b key="c">Nano Thinner</b>, "2", "Solvent C", "SDSOC1224", "50", <span key="d">110 <WfPill tone="warn">Above the recipe</WfPill> <Hotspot n={3} /></span>, "0", "12SDSOA1230", "Pending"],
+      ["Solvent A", "SDSOA1230", "150", "300", "4"],
+      ["Solvent C", "SDSOC1224", "50", <span key="d">110 <WfPill tone="warn">Above the recipe</WfPill> <Hotspot n={3} /></span>, "0"],
     ]}
   />
 </Wireframe>
 
 <Hotspots items={[
   <span key="1"><b>New SFG batch.</b> Pick the SFG product and its recipe lays out the raw materials for you.</span>,
-  <span key="2"><b>QC.</b> Pending until somebody with the QC power approves or rejects the lot. Only an approved lot can be filled.</span>,
+  <span key="2"><b>The batch's heading.</b> Each SFG number is one group: its date, product, batches, godown, lot code and QC are drawn once above the lots it drew. QC is Pending until somebody with the QC power approves or rejects the lot. Only an approved lot can be filled.</span>,
   <span key="3"><b>Above the recipe.</b> This raw material was used more than the recipe allows for this many batches. It asks somebody to look; it never stops the batch.</span>,
 ]} />
 
@@ -48,11 +49,13 @@ An SFG batch blends raw-material lots into one lot of semi-finished liquid. One 
 </Step>
 </Steps>
 
-If a lot has less than a line needs, the save is refused with "Low Stock!" — including when two lines of the same save draw on the same lot. **Add another** adds another lot to the same batch.
+If a lot has less than a line needs, the save is refused with "Low Stock!" — including when two lines of the same save draw on the same lot. **Add another** adds another lot to the same batch, **Show the whole SFG** lists only that batch's lines, **Print SFG label** prints the lot's 80 × 80 mm label, and **Trace this lot** opens [Traceability](/docs/erp/traceability).
 
 ### SFG QC
 
-Somebody with the QC power opens a line and presses **QC approve** or **QC reject**. Both ask, for each test on the Testing list, the same evidence as Lot testing — a photo per test, the smell, the pH and density readings, a video — and a note. The readings sit on one row and every photograph is a tile: tap a tile to take or upload its picture, and × takes it off. None of it is required; a reject still needs the reason it failed. What was recorded shows in the line's record under QC evidence. Rejecting an approved lot stops any further filling from it; what was already filled stays traceable to it. A rejected lot is flagged "Failed SFG QC".
+Somebody with the QC power opens a line and presses **QC approve** or **QC reject**. Both ask, for each test on the Testing list, the same evidence as Lot testing — a photo per test, the smell, the pH and density readings, a video — and a note. The readings sit on one row and every photograph is a tile: tap a tile to take or upload its picture, and × takes it off. None of it is required; a reject still needs the reason it failed. What was recorded shows in the line's record under QC evidence. On an approved lot the reject button reads **Withdraw QC approval (reject)**: it stops any further filling from it; what was already filled stays traceable to it. A rejected lot is flagged "Failed SFG QC".
+
+The same decision can also be made on the Mahek Factory phone, by Mixing & Blending. There each test on the Testing list is answered **Pass** or **Fail**: approving needs every test answered and every one a Pass, and a reject needs the reason.
 
 To decide several at once, tick the lines — a ticked line stands for its whole batch, **Select all** on a batch's header takes the batch, the box at the top takes the page, and **Select all** on the bar at the foot takes everything the search and filters leave — then press **QC approve** or **QC reject** on that bar. A batch already at that verdict is skipped and counted. Only somebody with the QC power sees the boxes.
 
@@ -97,7 +100,7 @@ Pick the **Finished lot** and how many **Cans from this lot** — blank takes as
 "FP40NA saved · 24 cans still to draw from another lot". Add another takes the next lot.
 </Step>
 <Step title="Complete">
-When the cans used match the boxes exactly: "FP40NA complete · 50 boxes of … in packing stock, each with its own box id · print their labels from the batch". **Print box labels** is now the batch's main button.
+When the cans used match the boxes exactly: "FP40NA complete · 50 boxes of … in packing stock, each with its own box id · print their labels from the batch". **Print box labels** is now the batch's main button; **Trace this batch** and **Show the whole batch** sit beside it.
 </Step>
 </Steps>
 
@@ -109,6 +112,7 @@ Until the lines draw exactly boxes × cans per box, the batch's boxes are **not*
 
 A recipe is what **one batch** of an SFG product takes, in litres, of each raw material.
 
+- **Set a recipe** adds an SFG product's raw materials and litres per batch; **Change quantity** and **Remove from recipe** are on each line.
 - **Start a batch** on a recipe line opens a new SFG batch with the recipe's lines already listed — you still pick each lot.
 - A batch line that used more than the recipe allows (plus a tolerance) is flagged **Above the recipe** on the SFG batches list. Nothing is refused.
 - Setting, changing and removing a recipe line is for ERP managers. Everybody holding the screen can read it.

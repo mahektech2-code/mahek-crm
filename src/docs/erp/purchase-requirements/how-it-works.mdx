@@ -5,7 +5,9 @@ Then the item's **purchase rule** decides how the PO comes, and **no PO is appro
 <Flow caption="Where a requirement goes" chart={`
 flowchart TD
   R["Requirement raised<br/>the item's purchase rule is copied on"] --> C["Blind count entered<br/>compared with the reconciled book"] --> M{"Purchase rule"}
-  M -- "Quotation" --> QM["Bought on the Quotation manager<br/>Purchase it makes the PO number"] --> L["Link PO on the requirement<br/>details fetched and checked"]
+  M -- "Quotation" --> QM["Bought on the Quotation manager<br/>Purchase it writes the PO, Sent"]
+  QM -- "requirement picked in the dialog" --> G
+  QM -- "not picked" --> L["Link PO on the requirement<br/>details fetched and checked"]
   M -- "Direct purchase" --> CP["Create PO on the requirement<br/>at the item's price, no quotation"]
   M -- "Buyer decision" --> E["Either"]
   E --> L
@@ -52,7 +54,7 @@ Changing an item's rule later never re-routes a requirement already in flight.
 
 | Item's rule | How the PO comes |
 |---|---|
-| **Quotation** | The admin marks the rate Ready to buy on the Quotation manager and the desk presses Purchase it with the drums; the **PO number is made** from the ERP's PO series. On the requirement it is typed into the PO number box, looked up and checked (same material, a bought cell, a Purchase party), then **Link PO** keeps the PO here under that number, **Sent**, at the cell's rate and drums and GST <Setting k="erp.purchase.poGstPercent" />%. It can be **unlinked** until goods arrive |
+| **Quotation** | A manager marks the rate Ready to buy on the Quotation manager and the desk presses Purchase it with the drums; the **PO number is made** from the ERP's PO series and the **PO is written** in the same save, **Sent**, at the cell's rate and drums and GST <Setting k="erp.purchase.poGstPercent" />% — against the requirement picked in its dialog, or one raised for it where none was picked. A purchase not put against this requirement can still be linked to it: the number is typed into the PO number box, looked up and checked (same material, a bought cell, a Purchase party), then **Link PO** adds the line to the PO kept under that number. It can be **unlinked** until goods arrive |
 | **Direct purchase** | No quotation. **Create PO** — three pages over the requirement's record — at the item's **price in Raw materials**, never typed; no price is ₹0. The PO is **Approved**, ready to send |
 | **Buyer decision** | Either of the two |
 
@@ -67,12 +69,12 @@ Supplier rates are kept on the **Quotation manager**, so a requirement no longer
 ## Who may do what to an item
 
 <Rule title="The Admin Console decides, and nothing on an item overrides it">
-Anyone holding Requirements may request any item their department asks for; anyone holding Purchase orders (and purchase money) may raise its PO. Both are granted in Admin Console → Access, directly or through a designation. There is no per-item list of who may request or buy it.
+Anyone holding Requirements may request any item their department asks for and link its PO number; anyone also holding Purchase orders may **Create PO** — the rate is the item's price, so purchase money is not needed to create it, only to see it. Both are granted in Admin Console → Access, directly or through a designation. There is no per-item list of who may request or buy it.
 </Rule>
 
 ## The stage is derived, never typed
 
-A requirement's stage is worked out from its own record each time it is read: its method, vendor and the PO it is on, with what that PO has ordered and received. The stored status moves only with the flow — Pending, then **Order Placed** when it is put on a PO, then **Received** — and there is no button to type one. A status somebody types can say Received with nothing at the gate.
+A requirement's stage is worked out from its own record each time it is read: its method, vendor and the PO it is on, with what that PO has ordered and received. The stored status moves only with the flow — Pending, then **Order Placed** when it is put on a PO, then **Received**, and back to Pending when its PO is cancelled or unlinked — and there is no button to type one. A status somebody types can say Received with nothing at the gate.
 
 Requirements raised before purchase orders existed show their old status with "(before POs)" and are flagged "Before POs"; nothing back-fills a PO for them.
 

@@ -7,7 +7,7 @@ flowchart LR
   K -- yes --> M[Purchase method]
   K -- no --> F[Red flag on the requirement]
   F -- purchase carries on --> M
-  M --> V[Vendor / quotation] --> A[PO approval] --> PO[PO sent] --> G[Receipt / GRN]
+  M --> PO[PO by the item's rule - no approval] --> G[Receipt / GRN]
   subgraph S[Side track - never holds the purchase]
     N[Notify stock control, ERP admins, requirement raiser]
     X[Recount / investigate / adjust when somebody gets to it] --> D[Resolved]
@@ -16,16 +16,16 @@ flowchart LR
   F -.-> X
 `} />
 
-## The five tabs
+## The six tabs
 
-<Wireframe url="/erp/stock-check" nav={["Dashboard", "#Stock", "Stock", "Stock accuracy", "Boxes & labels", "Item transfers"]} active="Stock accuracy" caption="Stock accuracy → To count">
+<Wireframe url="/erp/stock-check" nav={["Dashboard", "#Stock", "Stock on hand", "Stock accuracy", "Boxes & labels", "Item transfers"]} active="Stock accuracy" caption="Stock accuracy → To count">
   <WfBar>
-    <WfTitle sub="Inventory Accuracy Control: a blind count before every purchase and every day, a red flag that notifies stock control without stopping anything, and stock that moves only through an approved adjustment.">Stock accuracy</WfTitle>
+    <WfTitle sub="Blind counts, floor checks, red flags and approved adjustments.">Stock accuracy</WfTitle>
     <WfSpacer />
     <WfButton primary>Ask for a count</WfButton>
     <Hotspot n={1} />
   </WfBar>
-  <WfTabs items={["To count", "Red flags", "Adjustments", "Missing records", "Every count"]} active="To count" />
+  <WfTabs items={["To count", "Stock checks", "Red flags", "Adjustments", "Missing records", "Every count"]} active="To count" />
   <WfTable
     highlight={0}
     columns={["Count", "Due", "Kind", "Item", "Godown", "Unit", "Why", "Counter"]}
@@ -44,10 +44,26 @@ flowchart LR
 | Tab | What it lists |
 |---|---|
 | **To count** | Counts waiting for somebody to count them, oldest due first. A recount is marked **Independent recount**. |
+| **Stock checks** | Quick checks of any item, made on the Mahek Factory phone or here, over the last 90 days — matched, or a mismatch waiting to be reviewed. See [Stock checks](#stock-checks). |
 | **Red flags** | Checks whose count differs from the book beyond the item's tolerance, until they are resolved. Nothing on this tab holds a purchase. |
 | **Adjustments** | Every adjustment ever requested — waiting, approved or rejected — with its reason. |
 | **Missing records** | Batches, fills, receipts and transfers across the ERP that should have a stock entry and do not. |
 | **Every count** | The full history, with who counted, the book at the time and how each was resolved. |
+
+## Stock checks
+
+A stock check is a quick count of **any** item — a raw material, a semi-finished product, filled cans or packed boxes — made whenever somebody wants to check a shelf. Most come from the Mahek Factory phone, where each department checks the stock it handles; **Record a stock check** enters one here.
+
+<Steps>
+<Step title="Record a stock check">
+Pick the **Kind of stock**, the **Item** and the **Godown**, and type what you **Counted** — zero if there is none. Add **Where** (bay, rack or bin) and, if you like, why it might differ.
+</Step>
+<Step title="Save check">
+Only now is the book read and compared, by the same rule a count uses: "Matches the book: counted 480, book 482 Ltr", or "Mismatch: counted 450, book 500 Ltr (−50)".
+</Step>
+</Steps>
+
+A check moves no stock. A mismatch waits on this tab, and on the dashboard as **Stock check mismatches**, until a manager or somebody with the stock-control power presses **Mark reviewed** with what they found. On a raw material they can instead **Open a formal count**: a blind count of that shelf on **To count**, with the red flag, recount and approved adjustment that come with it.
 
 ## Counting
 
@@ -102,12 +118,12 @@ A requirement raised while the stock check is switched on sits at **Blind count*
 
 | What you see | What it means |
 |---|---|
-| Stage **Blind count** | The count has not been entered yet. Press **Count the stock**. Method, vendor, quotations and the PO wait for this, and only this. |
+| Stage **Blind count** | The count has not been entered yet. Press **Count the stock**. The PO — linked or created — waits for this, and only this. |
 | Flag **Stock difference — red flag** | The count differs from the book. Stock control has been notified; the purchase carries on. **Open the red flag** shows it. |
-| Flag **More than the shelf needs** | The count matched, but more is asked for than the shelf needs to reach its maximum level. Nothing to confirm — it is a warning. |
+| Flag **More than the shelf needs** | The count matched, but more is asked for than the shelf needs to reach its maximum level. Nothing to confirm — it is a warning for whoever makes the PO. |
 
 There is no urgent-purchase request any more: once the count is entered nothing holds the requirement, so there is nothing to bypass.
 
 ## On the dashboard
 
-The **Inventory Accuracy Control** strip at the top of the dashboard shows requirements waiting for their count, counts to do, requirements being bought, and then the side track — red flags, recounts, investigations and adjustments to approve. Every number opens the records behind it. The **Inventory accuracy** section adds missing records, how often counts are right first time, the most frequent cause of adjustments, and when the next full count is due.
+The **Inventory Accuracy Control** strip at the top of the dashboard shows requirements waiting for their count, counts to do, requirements being bought, and then the side track — red flags, recounts, investigations and adjustments to approve. Every number opens the records behind it. The **Inventory accuracy** section adds stock check mismatches, missing records, how often counts are right first time, the most frequent cause of adjustments, and when the next full count is due.

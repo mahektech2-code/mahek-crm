@@ -544,7 +544,15 @@ export type CreatePoChoices = {
 
 const VERDICT: Record<string, "passed" | "red" | "waiting"> = { clear: "passed", over_justified: "passed", flagged: "red", to_count: "waiting" };
 
-function flowPanel(v: ReqView, st: Stage, money: boolean, choices: CreatePoChoices, prices: Map<string, number | null>) {
+/**
+ * Another requirement Create PO can put on the same PO: every one this person
+ * may create a PO for (`createPoReady`, the check saving makes too), with the
+ * vendor it already has, if any — the dialog offers those with no vendor or
+ * the one picked, and ticks the ones already given that vendor.
+ */
+export type PoCompanion = { id: string; reqNo: string | null; item: string; qty: string; unit: string; vendor: string | null; hasPrice: boolean; ratePaise: number | null };
+
+function flowPanel(v: ReqView, st: Stage, money: boolean, choices: CreatePoChoices, prices: Map<string, number | null>, companions: PoCompanion[]) {
   const route = poRouteOf({ rule: v.rule, method: v.method });
   const g = v.stock;
   const c = g?.comparison ?? null;
@@ -626,6 +634,7 @@ function flowPanel(v: ReqView, st: Stage, money: boolean, choices: CreatePoChoic
                       godowns: choices.godowns,
                       terms: choices.terms,
                       money,
+                      others: companions.filter((c) => c.id !== v.r.id),
                     }
                   : null,
             }
@@ -664,6 +673,14 @@ const requisitions: ScreenModule = {
     const prices = new Map(priceRows.map((x) => [x.id, x.p == null ? null : Number(x.p)]));
     const money = ctx.powers.has("viewPurchaseMoney");
     const day = today();
+    /* The requirements Create PO could put on one PO with any other — read once for the list. */
+    const { createPoReady } = await import("./requirement-po");
+    const companions: PoCompanion[] = views
+      .filter((v) => createPoReady(ctx, v))
+      .map((v) => {
+        const price = prices.get(v.r.rawMaterialId!) ?? null;
+        return { id: v.r.id, reqNo: v.r.reqNo ? requirementLabel(v.r.reqNo) : null, item: v.item, qty: String(v.r.requiredQty), unit: v.r.unit, vendor: v.supplier ?? null, hasPrice: price != null, ratePaise: money ? (price ?? 0) : null };
+      });
     const cols: ColSpec[] = [
       { k: "reqNo", l: "Requirement", t: "mono" },
       { k: "date", l: "Date", t: "d" },
@@ -733,7 +750,7 @@ const requisitions: ScreenModule = {
           title: v.item,
           header: `${r.reqNo ? `${requirementLabel(r.reqNo)} · ` : ""}${nf(r.requiredQty)} ${r.unit} · ${v.godown}${r.department ? ` · ${r.department}` : ""} · ${st.next}`,
           actions,
-          panel: flowPanel(v, st, money, choices, prices),
+          panel: flowPanel(v, st, money, choices, prices, companions),
           by: stampLine(v.by, r.createdAt),
         };
       });
@@ -1399,7 +1416,7 @@ const purchaseOrders: ScreenModule = {
           id: "share",
           l: "Share…",
           primary: s === "Approved",
-          why: money ? "" : "The PO carries its rates, and purchase money is not on your account",
+          why: money ? "" : "Sharing sends the PO with its rates to the vendor, so it needs purchase money on your account — Print / PDF gives you a copy without rates",
           share: shareSpecs.get(p.po.id),
         });
       }

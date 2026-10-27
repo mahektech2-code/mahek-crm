@@ -118,15 +118,23 @@ function metricsFrom(all: FreshSource[]): Metric[] {
     {
       key: "order-sheet",
       label: "Order sheet",
-      value: order.lastSuccessAt ? clockOrDay(order.lastSuccessAt) : "Never",
+      // Order Details is judged every half hour, so the only way it reads
+      // "unjudged" is retirement once the ERP takes the orders (freshness.ts
+      // `retired`) — and the tile says so, rather than "synced every 30
+      // minutes" over a date that only gets older.
+      value: order.state === "unjudged" ? "Retired" : order.lastSuccessAt ? clockOrDay(order.lastSuccessAt) : "Never",
       sub:
-        order.state === "failing"
-          ? `failing — ${order.detail}`
-          : order.lastSuccessAt
-            ? order.state === "behind"
-              ? `last read ${ageWords(order.lastSuccessAt)} ago · expected every 30 minutes`
-              : "synced every 30 minutes"
-            : "no read recorded on this database",
+        order.state === "unjudged"
+          ? order.lastSuccessAt
+            ? `the ERP takes the orders · last read ${ageWords(order.lastSuccessAt)} ago`
+            : "the ERP takes the orders"
+          : order.state === "failing"
+            ? `failing — ${order.detail}`
+            : order.lastSuccessAt
+              ? order.state === "behind"
+                ? `last read ${ageWords(order.lastSuccessAt)} ago · expected every 30 minutes`
+                : "synced every 30 minutes"
+              : "no read recorded on this database",
       kind: "Now",
       tone: order.tone,
     },

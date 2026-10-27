@@ -1,5 +1,6 @@
 "use server";
 
+import { customerEditRefusal } from "@/lib/customer-edit-gate";
 import { renameValues } from "@/lib/customer-rename";
 import { revalidatePath } from "next/cache";
 import { placeShopsNow } from "@/lib/services/place-tree-service";
@@ -649,6 +650,8 @@ const customerDetailSchema = z.object({
   potentialMonthlyPaise: z.number().int().min(0).max(1_000_000_000_000).nullable().optional(),
   rating: blankable(60),
   segmentation: blankable(60),
+  /* The employee HRMS's Sales desk files this party under — its edit moved here with the rest. */
+  taggedEmployeeName: blankable(120),
   dealerCode: blankable(60),
   customerSince: z
     .string()
@@ -745,6 +748,8 @@ export async function updateCustomer(
 ): Promise<Result> {
   try {
     const ctx = await resolveScope();
+    const editRefusal = await customerEditRefusal(ctx.user.id);
+    if (editRefusal) return err(editRefusal, "not_permitted");
     const parsed = customerSchema.partial().merge(customerDetailSchema).safeParse(raw);
     if (!parsed.success) {
       const issue = parsed.error.issues[0];
@@ -828,6 +833,7 @@ export async function updateCustomer(
     }
     put("rating", blank(d.rating));
     put("segmentation", blank(d.segmentation));
+    put("taggedEmployeeName", blank(d.taggedEmployeeName));
     put("dealerCode", blank(d.dealerCode));
     put("customerSince", blank(d.customerSince));
     put("specialInstructions", blank(d.specialInstructions));
@@ -2318,6 +2324,13 @@ export async function triggerJob(
         "not_permitted",
       );
     }
+    /* A retired tab is refused here rather than run to a quiet "0 records":
+       the job runner would no-op it anyway, but a person who pressed a button
+       is owed the reason, not a toast that reads like a sync with nothing new. */
+    const { getConfig } = await import("@/lib/config/store");
+    const { retiredReason, sheetSwitches } = await import("@/lib/engines/sheet-retirement");
+    const retired = retiredReason(job, sheetSwitches(await getConfig()));
+    if (retired) return err(retired, "rule_violation");
     const { runJob } = await import("@/lib/jobs");
     const results = await runJob(job, ctx.user.id, options);
     refreshAll();

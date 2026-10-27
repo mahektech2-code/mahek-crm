@@ -74,7 +74,7 @@ sequenceDiagram
 `} />
 
 - **Why is a column, not a sentence.** Each move stores a reason code from <Setting k="people.amChangeReasons" />, the from and to (with names, so the history reads after a person leaves), and who did it.
-- **The sheet keeps its hands off.** A decided account is skipped by the order sheet's party projection and by the nightly rebuild of salesperson names; a disagreement is written down as a sync conflict instead of silently restated.
+- **The sheet keeps its hands off.** A decided account is skipped by the order sheet's party projection and by the rebuild of salesperson names (which nothing schedules today); a disagreement is written down as a sync conflict instead of silently restated. Once the Sales Party tab is retired (<Setting k="erp.orders.partySheet" /> off), the projection stops altogether and the seats are kept in MahekOne alone.
 - **Untouched seats are not sent.** Changing only the back-office person does not stamp a decision on the sales seat.
 - **An emptied seat means nobody** — not whoever ran the import.
 - A change that changes nothing notifies nobody.

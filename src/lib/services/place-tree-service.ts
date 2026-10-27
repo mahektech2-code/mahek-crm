@@ -11,8 +11,10 @@ import {
   indexPlaces,
   matchTypedPlace,
   type PlaceChainStep,
+  type PlaceIndex,
   type PlaceNode,
 } from "@/lib/place-tree";
+import { TERRITORY_REGION_SQL, qualify } from "@/lib/territory-sql";
 
 /* ---------------------------------------------------------------------------
  * THE REVIEWED LOCATION TREE, written into `places` and onto every customer.
@@ -213,6 +215,48 @@ export async function importPlaceTree(
   };
 }
 
+/** The whole tree, indexed for the matcher. A few thousand rows, read in one query. */
+export async function loadPlaceIndex(): Promise<PlaceIndex> {
+  const nodes = (await db.execute<{
+    id: string;
+    kind: PlaceKind;
+    name: string;
+    key: string;
+    parent_id: string | null;
+    shops: number;
+  }>(sql`select places.id, places.kind, places.name, places.key, places.parent_id, places.shops from places`)) as unknown as Array<{
+    id: string;
+    kind: PlaceKind;
+    name: string;
+    key: string;
+    parent_id: string | null;
+    shops: number;
+  }>;
+  return indexPlaces(
+    nodes.map<PlaceNode>((n) => ({
+      id: n.id,
+      kind: n.kind,
+      name: n.name,
+      key: n.key,
+      parentId: n.parent_id,
+      shops: Number(n.shops),
+    })),
+  );
+}
+
+/**
+ * The tree, but only where an allocation needs it — a district or a town row
+ * is matched on the tree, and a typed state or city row is not, so somebody
+ * allocated only those costs no read at all.
+ */
+export async function placeIndexFor(
+  territories: readonly { kind: string }[],
+): Promise<PlaceIndex | undefined> {
+  return territories.some((t) => t.kind === "district" || t.kind === "town")
+    ? loadPlaceIndex()
+    : undefined;
+}
+
 export type TypedResolveRun = {
   considered: number;
   toArea: number;
@@ -235,39 +279,23 @@ export async function resolveTypedPlaces(
   if (opts.ids && !opts.ids.length) {
     return { considered: 0, toArea: 0, toCity: 0, toStateOnly: 0, unplaced: 0, detail: "nothing to place" };
   }
-  const nodes = (await db.execute<{
-    id: string;
-    kind: PlaceKind;
-    name: string;
-    key: string;
-    parent_id: string | null;
-    shops: number;
-  }>(sql`select places.id, places.kind, places.name, places.key, places.parent_id, places.shops from places`)) as unknown as Array<{
-    id: string;
-    kind: PlaceKind;
-    name: string;
-    key: string;
-    parent_id: string | null;
-    shops: number;
-  }>;
-  const index = indexPlaces(
-    nodes.map<PlaceNode>((n) => ({
-      id: n.id,
-      kind: n.kind,
-      name: n.name,
-      key: n.key,
-      parentId: n.parent_id,
-      shops: Number(n.shops),
-    })),
-  );
+  const index = await loadPlaceIndex();
 
+  /* The state is read the way a territory reads it: `territory_region` where
+     something filled it — a lead raised on a handset is filed there, with
+     nothing in `region` — and the sheet's `region` otherwise. Reading `region`
+     alone left every handset lead to be placed by its town name only, and the
+     lead gate, which places the same lead under its resolved state, could then
+     let in a lead the territory clause did not find. */
   const shops = (await db.execute<{
     id: string;
     region: string | null;
     city: string | null;
     address: string | null;
   }>(sql`
-    select customers.id, customers.region, customers.city, customers.address
+    select customers.id,
+           ${sql.raw(qualify(TERRITORY_REGION_SQL, "customers"))} as region,
+           customers.city, customers.address
       from customers
      where customers.place_decided_at is null
        and (customers.resolved_state_id is null or customers.place_source = 'sheet')

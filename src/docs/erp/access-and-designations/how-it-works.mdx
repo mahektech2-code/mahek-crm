@@ -1,4 +1,4 @@
-The ERP decides what somebody may do in three layers, all set in the Admin Console, and each answers a different question. Keeping them apart is what lets the owner say "the godown team opens Stock" without also saying "the godown team sees what we paid for it".
+The ERP decides what somebody may do in three layers, all set in the Admin Console, and each answers a different question. Keeping them apart is what lets the owner say "the godown team opens Stock on hand" without also saying "the godown team sees what we paid for it".
 
 | Layer | Question | Where it is set |
 |---|---|---|
@@ -31,7 +31,7 @@ A grant that ticks every screen stores no list at all, so a screen built next mo
 | Level | What it adds |
 |---|---|
 | **Associate** | Works the screens ticked. Reads help videos; reads recipes. |
-| **Manager** | Also adds and removes help videos, sets recipes, verifies expenses and runs the alert checks. |
+| **Manager** | Also adds and removes help videos, sets recipes, runs the alert checks, marks a rate Ready to buy on the Quotation manager, opens counts and reviews stock-check mismatches, and confirms or cancels a return outward. |
 | **Admin** (ERP administrator) | Every power without a tick, every godown without being assigned, may delete posted production lines, may preview the ERP as anybody. |
 
 A platform administrator is also an ERP administrator. Everything an administrator does is still audited under their own name.
@@ -42,15 +42,15 @@ The source system tied these to the AppSheet admin role and three email addresse
 
 | Power | What it lets somebody do |
 |---|---|
-| See purchase money | Rates, GST, amounts and bill status on purchases, quotations and POs; adding quotations; raising POs; entering a purchase rate |
+| See purchase money | Rates, GST, amounts and bill status on purchases and POs; New PO and Edit on Purchase orders; sharing and printing a PO; entering a purchase rate |
 | See cost and margin | Costing on batches, fills, packing and stock; margin on order lines; the box rate on products |
-| See sales rate | The rate on orders and on price lists |
+| See sales rate | The rate on orders |
 | See sales amounts | Discount, amount and final amount on orders; a customer's monthly target on Sales parties |
 | Verify quality tests | "Verify" / "Mark not verified" on a purchase test — which creates the register row |
 | Set a purchase to Purchase Verified | The only status the verifier sets on the register |
 | Set a verified purchase back to Pending | "Back to pending" on the register |
-| Decide how a requirement is bought (the buyer) | For a "Buyer decides" item: direct purchase or quotations, per requirement |
-| Approve purchase orders | Approve or send back a PO — never one you raised, unless you are an administrator |
+| Decide how a requirement is bought (the buyer) | Kept for the older buyer decision; no button offers it now, since a Buyer-decision item offers both Create PO and Link PO to anybody on the requirement |
+| Approve purchase orders | Approve or send back a PO still at Pending approval from before approval was dropped — never one you raised, unless you are an administrator. No new PO needs it |
 | Write off to Item Lost Record | Pick the reserved write-off godown on a transfer |
 | Activate or deactivate customers | Activate, Deactivate and Mark pending on Sales parties |
 | Approve orders from pending customers | "Approved By Admin" on an order — only while the sheet still takes orders |
@@ -58,6 +58,13 @@ The source system tied these to the AppSheet admin role and three email addresse
 | Administer the ERP: godowns and ERP powers | Register and edit godowns, assign their staff, switch a godown off |
 | Approve or reject SFG QC | Only an approved SFG lot can be filled |
 | Approve dispatch overrides; reject or return boxes | Let a mismatched box go with a reason; mark boxes rejected or returned |
+| Adjust stock, resolve discrepancies and approve adjustments | Add or Remove stock by hand from Stock on hand; told of every red-flagged count; resolve it; approve or reject a stock adjustment (never your own) |
+| Sell scrap and return vendor drums | Scrap sales, returnable drum outwards, non-drum scrap, classifying an empty drum of unknown ownership |
+| Record scrap buyers' receipts and match them to scrap sales | Money from scrap buyers, matched to their sales |
+| Approve drum corrections and adjustments | Opening drum stock, drum write-offs, ownership changes, out-of-limit weights, cancelling a drum entry, scrap sale or return (never your own) |
+| Approve material returns | Approve a purchase return or a customer return's credit note, confirm or reverse a goods return outward, cancel a return (never your own) |
+| Decide returned material (QC) | Reuse, rework, chemical scrap or waste for a customer return in quarantine |
+| Accountant for Petty Cash | Approve or send back expenses, petty cash and bills against advances; settle advances; cancel any transaction; set up accounts; import and match bank statements (never your own) |
 
 <Rule title="A power hides a column on the server, not on the screen">
 Somebody without "See purchase money" is never sent the rate. The list says how many columns were withheld and which power reveals them. Every write that needs a power checks it again in the save, because a hidden button is not a permission.
@@ -119,7 +126,7 @@ The browser's location prompt is never raised unasked: the location button besid
 
 ## Previewing as somebody
 
-An ERP administrator can see the ERP as a designation or as one person sees it. It is **read-only**: every save refuses while it is on, though a form may be opened to see its fields. A preview of a designation has nobody behind it, so lists that belong to a person ("My customers", "my expenses") show the administrator's own, and the banner says so. The preview lasts at most four hours and is honoured only while the person holding it is still an ERP administrator. Audit rows always name the person actually signed in.
+An ERP administrator can see the ERP as a designation or as one person sees it. It is **read-only**: every save refuses while it is on, though a form may be opened to see its fields. A preview of a designation has nobody behind it, so lists that belong to a person (such as "my expenses") show the administrator's own, and the banner says so. The preview lasts at most four hours and is honoured only while the person holding it is still an ERP administrator. Audit rows always name the person actually signed in.
 
 ## Settings that change this
 
@@ -128,4 +135,4 @@ An ERP administrator can see the ERP as a designation or as one person sees it. 
 ## Where the code and the intent disagree today
 
 - The own-vehicle refusal on goods receipt says "an admin sets it in ERP settings", but the rate is a MahekOne setting in the Admin Console; the ERP's own Settings screen shows only the working location and powers.
-- The Settings screen's subtitle ("Your working location and profile.") differs from the sidebar's description of the same screen ("Your working location and what your account can do.").
+- Two powers are kept for decisions no button asks for any more: **Decide how a requirement is bought** and **Approve purchase orders** (only leftover Pending approval POs). The second still describes itself on the Settings screen as approving a PO "before it can go to the vendor".

@@ -160,4 +160,4 @@ Do it in a migration that names only real `erp.<key>` modules and real powers â€
 |---|---|
 | A designation's department is read live and is not part of the match, so editing a designation's department reaches customised holders too | `designations.ts` `designationShape`; `access.ts` `resolveFor` |
 | The own-vehicle refusal points at "ERP settings", but the rate lives in the Admin Console settings | `screens/purchase.ts` `readPrCosts` |
-| Settings page subtitle differs from the registry's description of the screen | `app/erp/settings/page.tsx`; `registry.ts` |
+| `purchaseBuyer` guards only `requisitions.actions.decide`, and `approvePurchaseOrder` only leftover Pending approval POs; no button offers the first, and nothing writes Pending approval any more | `screens/purchase-flow.ts`; `powers.ts` |

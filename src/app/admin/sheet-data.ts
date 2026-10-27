@@ -30,6 +30,8 @@ export type SheetData = {
   /** Who imported customers can be assigned to, and whether this person may run it. */
   owners: Array<{ id: string; name: string; email: string; role: string }>;
   canImport: boolean;
+  /** Why the order tabs are no longer read (the ERP takes the orders), or null while they are. */
+  retired: string | null;
 };
 
 export const SHEET_SUBTITLE =

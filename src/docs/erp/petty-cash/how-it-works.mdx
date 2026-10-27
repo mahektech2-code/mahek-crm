@@ -39,7 +39,7 @@ A wrong transaction is cancelled with a reason. It stays on record and counts in
 ## Who may do what
 
 - **Module:** <ModuleRef k="erp.expenses" />. Holding it opens all four parts and every tab.
-- Anybody with the module records expenses, petty cash, receipts, transfers and advances, submits bills, and corrects or cancels what they entered before it is approved.
+- Anybody with the module records expenses, petty cash, receipts, transfers and advances, submits bills, and cancels what they entered before it is approved.
 - The **Accountant for Petty Cash** power reviews, settles advances, cancels anything, sets up the accounts and their opening balances. The bank's own statement PDFs are imported and matched on Accounts › Bank statement management, by the Accounts manager.
 
 ## Alerts
@@ -55,3 +55,4 @@ Both clear themselves once the condition is gone — see [alerts](/docs/erp/aler
 
 - A customer's receipt here records the bills it pays as written. It does not write the CRM ledger: Accounts still confirm customer money there.
 - An employee submits bills from the ERP. There is no factory-phone screen for it yet.
+- Correcting a transaction is written — whoever entered it until it is approved, then the accountant, and never the amount or account of one matched to a bank line — but the transaction record Petty Cash draws offers no **Correct** button, so a wrong entry is cancelled and entered again.

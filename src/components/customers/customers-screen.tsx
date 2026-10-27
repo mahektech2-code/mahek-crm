@@ -1238,10 +1238,11 @@ export function CustomersScreen({
                             label: isCrm ? "Open record" : "Open account",
                             onSelect: () => router.push(recordHref(r.id)),
                           },
-                          {
-                            label: "Edit details",
-                            onSelect: () => setEditing(r),
-                          },
+                          /* Customer details are edited in Accounts only
+                             (lib/customer-edit-gate.ts); the CRM reads them. */
+                          ...(app === "accounts"
+                            ? [{ label: "Edit details", onSelect: () => setEditing(r) }]
+                            : []),
                           /*
                             CONVERTING IS OFFERED ON A LEAD AND NOWHERE ELSE.
 
@@ -2148,6 +2149,7 @@ type DetailValues = {
   potentialMonthly: string;
   rating: string;
   segmentation: string;
+  taggedEmployeeName: string;
   dealerCode: string;
   customerSince: string;
   specialInstructions: string;
@@ -2179,6 +2181,7 @@ export function detailValuesOf(c: CustomerEditorData["customer"]): DetailValues 
     potentialMonthly: rupeesOf(c.potentialMonthlyPaise),
     rating: c.rating ?? "",
     segmentation: c.segmentation ?? "",
+    taggedEmployeeName: c.taggedEmployeeName ?? "",
     dealerCode: c.dealerCode ?? "",
     customerSince: c.customerSince ?? "",
     specialInstructions: c.specialInstructions ?? "",
@@ -2475,6 +2478,9 @@ function CustomerFormBody({
             </Field>
             <Field label="Segment">
               <Input value={detail.segmentation} onChange={setD("segmentation")} />
+            </Field>
+            <Field label="Tagged employee" hint="Who HRMS's Sales desk files this party under.">
+              <Input value={detail.taggedEmployeeName} onChange={setD("taggedEmployeeName")} />
             </Field>
             <Field label="Email">
               <Input type="email" value={detail.email} onChange={setD("email")} placeholder="For statements and invoices" />

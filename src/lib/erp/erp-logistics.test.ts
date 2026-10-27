@@ -15,6 +15,7 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
+  auditLog,
   bills,
   complaints,
   complaintStatusHistory,
@@ -40,6 +41,8 @@ import { setTestUser } from "@/lib/auth";
 import { erpContext } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
 import * as L from "@/lib/erp/logistics";
+import { erpAudit } from "@/lib/erp/server";
+import * as T from "@/lib/erp/trips";
 import { createComplaint } from "@/lib/services/complaint-create";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -71,12 +74,16 @@ let clerk: typeof users.$inferSelect;
 /** Takes an order of `qty` cans on `date` all the way to dispatch-verified, through the real handlers. */
 async function dispatch(date: string, qty: number, bill: string, dispatched: string) {
   const ctx = await as(admin);
-  assert.ok((await mod("orders").forms!.new(ctx, { date, godown: "Bhiwandi", billing: "Shree Paints" }, [{ sku: SKU, qty: String(qty), rate: "300" }])).ok);
+  assert.ok((await mod("orders").forms!.new(ctx, { date, godown: "Bhiwandi", billing: "Shree Paints", source: "Phone" }, [{ sku: SKU, qty: String(qty), rate: "300" }])).ok);
   const [o] = await db.select().from(erpOrders).where(sql`${erpOrders.orderDate} = ${date} and ${erpOrders.qtyCans} = ${qty}`);
+  /* The back office's order check (0285) is the orders suite's subject; here it has simply passed. */
+  await db.execute(sql`update erp_orders set order_check = 'Verified' where order_no = ${o.orderNo}`);
   await mod("orders").actions!.ready(ctx, o.id, {});
   assert.ok((await mod("orders").forms!.allocate(ctx, { lot: "FG1BH", qty: String(qty) }, [], o.id)).ok);
   await mod("orders").forms!.edit(ctx, { status: "Ready", delivery: "Shree Paints", qty: String(qty), rate: "300", bill, transport: "0" }, [], o.id);
-  assert.ok((await mod("orders").actions!.bill(ctx, o.id, {})).ok);
+  assert.ok((await mod("orders").actions!.bill(ctx, o.id, { invoiceNo: bill, invoiceDate: dispatched })).ok);
+  /* Likewise the independent invoice check (0285): approved, so dispatch may go. */
+  await db.execute(sql`update erp_order_details set invoice_check = 'Approved' where order_id in (select id from erp_orders where order_no = ${o.orderNo})`);
   assert.ok((await mod("orderDetails").actions!.verify(ctx, o.id, { date: dispatched })).ok);
   return o;
 }
@@ -84,7 +91,7 @@ async function dispatch(date: string, qty: number, bill: string, dispatched: str
 before(async () => {
   await db.execute(sql`
     truncate users, customers, erp_customer_profiles, erp_orders, erp_batch_codes, erp_order_details, erp_fg_entries,
-             erp_pack_entries, erp_transports, erp_lrs, erp_transport_events, erp_transport_messages, erp_transporters, erp_requests, erp_followups, erp_credits, erp_expenses, erp_videos,
+             erp_pack_entries, erp_transport_allocations, erp_transport_payments, erp_trips, erp_order_reviews, erp_transports, erp_lrs, erp_transport_events, erp_transport_messages, erp_transporters, erp_requests, erp_followups, erp_credits, erp_expenses, erp_videos,
              erp_user_powers, erp_godown_staff, erp_user_settings, audit_log restart identity cascade`);
   await db.execute(sql`update erp_series set last = 0`);
   admin = await makeUser("Kavita Admin", "admin");
@@ -433,14 +440,17 @@ describe("every dispatch reaches Logistics (0279)", () => {
   /** An order of one line per quantity, every line allocated and billed — not yet verified. */
   async function billed(date: string, qtys: number[], bill: string) {
     const ctx = await as(admin);
-    assert.ok((await mod("orders").forms!.new(ctx, { date, godown: "Bhiwandi", billing: "Shree Paints" }, qtys.map((q) => ({ sku: SKU, qty: String(q), rate: "300" })))).ok);
+    assert.ok((await mod("orders").forms!.new(ctx, { date, godown: "Bhiwandi", billing: "Shree Paints", source: "Phone" }, qtys.map((q) => ({ sku: SKU, qty: String(q), rate: "300" })))).ok);
     const ls = await db.select().from(erpOrders).where(sql`${erpOrders.orderDate} = ${date}`).orderBy(erpOrders.createdAt);
+    /* The order check and the invoice check (0285) are the orders suite's subject; here both have passed. */
+    await db.execute(sql`update erp_orders set order_check = 'Verified' where order_no = ${ls[0].orderNo}`);
     for (const o of ls) {
       await mod("orders").actions!.ready(ctx, o.id, {});
       assert.ok((await mod("orders").forms!.allocate(ctx, { lot, qty: String(o.qtyCans) }, [], o.id)).ok);
-      await mod("orders").forms!.edit(ctx, { status: "Ready", delivery: "Shree Paints", qty: String(o.qtyCans), rate: "300", bill, transport: "0" }, [], o.id);
-      assert.ok((await mod("orders").actions!.bill(ctx, o.id, {})).ok);
     }
+    /* One order is one bill: billing records the invoice against the whole order. */
+    assert.equal(msg(await mod("orders").actions!.bill(ctx, ls[0].id, { invoiceNo: bill, invoiceDate: date })), "ok");
+    await db.execute(sql`update erp_order_details set invoice_check = 'Approved' where order_id in (select id from erp_orders where order_no = ${ls[0].orderNo})`);
     return ls;
   }
   const lineOf = async (orderId: string) => (await db.select().from(erpOrderDetails).where(eq(erpOrderDetails.orderId, orderId)))[0];
@@ -461,29 +471,30 @@ describe("every dispatch reaches Logistics (0279)", () => {
     assert.ok((await L.consignments()).some((x) => x.id === fresh.id), "it is on the board");
   });
 
-  test("lines verified together are one consignment; a line verified after it left is another", async () => {
+  test("an order leaves whole: verifying any of its lines verifies every billed line, on one consignment", async () => {
+    /* PRD rule 1 — one order is one complete bill — and rule 2: what cannot go now is moved to a new
+       linked order, so an order is never sent in two goes and never opens a second consignment. */
     const [a, b, c] = await billed("2026-09-03", [3, 5, 2], "MMI/26-27/902");
     const ctx = await as(admin);
-    assert.equal(msg(await mod("orderDetails").bulk!.verify(ctx, [a.id, b.id], { date: "2026-09-04" })), "ok");
+    assert.equal(msg(await mod("orderDetails").bulk!.verify(ctx, [a.id], { date: "2026-09-04" })), "ok");
     const first = (await lineOf(a.id)).transportId!;
+    assert.ok(first);
     assert.equal((await lineOf(b.id)).transportId, first);
-    assert.equal((await db.select().from(erpTransports).where(eq(erpTransports.id, first)))[0].packages, 8);
-    /* Reached the transporter, then the last line is verified: it cannot ride on a consignment already gone. */
-    assert.ok((await L.markAtTransport(ctx, [first])).ok);
-    assert.equal(msg(await mod("orderDetails").actions!.verify(ctx, c.id, { date: "2026-09-05" })), "ok");
-    const second = (await lineOf(c.id)).transportId!;
-    assert.notEqual(second, first);
-    const [t2] = await db.select().from(erpTransports).where(eq(erpTransports.id, second));
-    assert.equal(t2.packages, 2, "only the line that left on it is counted");
-    assert.deepEqual((await L.billLines(a.orderNo, second)).map((l) => l.id), [c.id]);
+    assert.equal((await lineOf(c.id)).transportId, first);
+    assert.equal((await db.select().from(erpTransports).where(eq(erpTransports.id, first)))[0].packages, 10);
+    assert.deepEqual(
+      (await L.billLines(a.orderNo, first)).map((l) => l.id).sort(),
+      [a.id, b.id, c.id].sort(),
+    );
   });
 
-  test("a line still at the gate takes a later line of the same bill", async () => {
+  test("the rest of an order already gone is not verified a second time", async () => {
     const [a, b] = await billed("2026-09-06", [1, 1], "MMI/26-27/903");
     const ctx = await as(admin);
     assert.equal(msg(await mod("orderDetails").actions!.verify(ctx, a.id, { date: "2026-09-07" })), "ok");
-    assert.equal(msg(await mod("orderDetails").actions!.verify(ctx, b.id, { date: "2026-09-07" })), "ok");
     assert.equal((await lineOf(a.id)).transportId, (await lineOf(b.id)).transportId);
+    assert.notEqual(msg(await mod("orderDetails").actions!.verify(ctx, b.id, { date: "2026-09-07" })), "ok");
+    assert.equal((await db.select().from(erpTransports).where(eq(erpTransports.orderNo, a.orderNo))).length, 1);
   });
 
   test("a verified line on no consignment is caught by the sync, once", async () => {
@@ -503,5 +514,134 @@ describe("every dispatch reaches Logistics (0279)", () => {
     assert.equal(t.packages, 6);
     assert.deepEqual((await L.eventsFor([t.id])).map((e) => e.kind), ["opened"]);
     assert.equal(await syncDispatchedTransports(null, 3650), 0, "nothing left to hand over");
+  });
+});
+
+describe("vehicle trips and the transport payment shared by litres (Order-to-Delivery PRD 10–12)", () => {
+  /** A bill record as dispatch leaves it, written straight in: these tests are about what Logistics does next. */
+  async function bill(orderNo: number, party: string, litres: number | null) {
+    const tid = id("etrn");
+    await db.insert(erpTransports).values({ id: tid, orderNo, billDate: "2026-09-10", billingCustomerId: party, billNo: `MMI/T/${orderNo}`, litres, materialStage: "Dispatched" });
+    return tid;
+  }
+
+  test("dispatch names a vehicle: bills of two customers on one vehicle one day share a trip; another day or no vehicle does not", async () => {
+    await db.insert(customers).values({ id: "cus_om", name: "Om Hardware", city: "Pune", phone: "9876500002", kind: "customer" }).onConflictDoNothing();
+    const a = await bill(9101, "cus_shree", 250);
+    const b = await bill(9102, "cus_om", 500);
+    const c = await bill(9103, "cus_shree", 250);
+    const d = await bill(9104, "cus_om", 40);
+    await db.transaction((tx) =>
+      T.assignTripsAtDispatch(
+        tx,
+        [
+          { transportId: a, date: "2026-09-10", vehicleNo: "MH04 AB 1234", driver: "Sunil", transporter: "VRL" },
+          { transportId: b, date: "2026-09-10", vehicleNo: "mh04ab1234", driver: null, transporter: null },
+          { transportId: c, date: "2026-09-11", vehicleNo: "MH04 AB 1234", driver: null, transporter: null },
+          { transportId: d, date: "2026-09-10", vehicleNo: null, driver: null, transporter: null },
+        ],
+        admin.id,
+      ),
+    );
+    const rows = await db.select().from(erpTransports).where(sql`${erpTransports.orderNo} between 9101 and 9104`);
+    const byNo = new Map(rows.map((r) => [r.orderNo, r]));
+    assert.ok(byNo.get(9101)!.tripId);
+    assert.equal(byNo.get(9101)!.tripId, byNo.get(9102)!.tripId, "same vehicle, same day: one trip for both customers");
+    assert.notEqual(byNo.get(9103)!.tripId, byNo.get(9101)!.tripId, "the next day is another trip");
+    assert.equal(byNo.get(9104)!.tripId, null, "no vehicle, no trip");
+    assert.equal(byNo.get(9102)!.vehicleNo, "mh04ab1234");
+    const missing = await T.billsWithoutTrip(3650);
+    assert.ok(missing.some((x) => x.id === d));
+  });
+
+  test("₹1,000 over 1,000 L is shared ₹250 / ₹500 / ₹250; the same bills cannot be shared twice; reversing frees them", async () => {
+    const ctx = await as(admin);
+    const x = await bill(9201, "cus_shree", 250);
+    const y = await bill(9202, "cus_om", 500);
+    const z = await bill(9203, "cus_shree", 250);
+    const made = await T.saveTrip(ctx, { tripDate: "2026-09-12", vehicleNo: "MH12 XY 9", transporter: "VRL", transportIds: [x, y, z] });
+    assert.ok(made.ok, msg(made));
+    const tripId = made.ok ? made.data.id : "";
+
+    const part = await T.recordTransportPayment(ctx, { tripId, amountPaise: 100000, transportIds: [x, y] });
+    assert.equal(part.ok, false, "a payment for part of the trip must say which part");
+
+    const paid = await T.recordTransportPayment(ctx, { tripId, amountPaise: 100000, paidOn: "2026-09-12", paidTo: "VRL", reference: "UTR1", transportIds: [x, y, z] });
+    assert.ok(paid.ok, msg(paid));
+    const shares = (await db.execute(sql`select transport_id as t, amount_paise as a from erp_transport_allocations where not reversed`)) as unknown as { t: string; a: number }[];
+    const share = new Map(shares.map((r) => [r.t, Number(r.a)]));
+    assert.deepEqual([share.get(x), share.get(y), share.get(z)], [25000, 50000, 25000]);
+
+    const again = await T.recordTransportPayment(ctx, { tripId, amountPaise: 5000, transportIds: [x] , scope: "again"});
+    assert.equal(again.ok, false);
+    assert.match(msg(again), /already carries a transport payment/);
+
+    const move = await T.removeFromTrip(ctx, x);
+    assert.equal(move.ok, false, "a bill carrying a share stays on its trip");
+
+    let [view] = await T.trips({ ids: [tripId] });
+    assert.equal(view.costStatus, "Allocated");
+    assert.equal(view.payments[0].costPerLitrePaise, 100);
+
+    /* A bill whose litres are corrected after the split needs reconciling. */
+    await db.update(erpTransports).set({ litres: 260 }).where(eq(erpTransports.id, z));
+    [view] = await T.trips({ ids: [tripId] });
+    assert.equal(view.costStatus, "Reconciliation Required");
+
+    const paymentId = paid.ok ? paid.data.id : "";
+    assert.equal((await T.reverseTransportPayment(ctx, paymentId, "")).ok, false, "a reversal says why");
+    assert.ok((await T.reverseTransportPayment(ctx, paymentId, "wrong amount")).ok);
+    [view] = await T.trips({ ids: [tripId] });
+    assert.equal(view.costStatus, "Not Recorded");
+    const redo = await T.recordTransportPayment(ctx, { tripId, amountPaise: 101000, transportIds: [x, y, z] });
+    assert.ok(redo.ok, msg(redo));
+    const audit = (await db.execute(sql`select action from audit_log where action like 'erp.transportPayment.%' order by at`)) as unknown as { action: string }[];
+    assert.deepEqual(audit.map((a) => a.action), ["erp.transportPayment.record", "erp.transportPayment.reverse", "erp.transportPayment.record"]);
+  });
+
+  test("zero or missing litres are refused, naming the bill", async () => {
+    const ctx = await as(admin);
+    const ok1 = await bill(9301, "cus_shree", 100);
+    const none = await bill(9302, "cus_om", null);
+    const made = await T.saveTrip(ctx, { tripDate: "2026-09-13", vehicleNo: "MH14 Z 1", transportIds: [ok1, none] });
+    assert.ok(made.ok);
+    const r = await T.recordTransportPayment(ctx, { tripId: made.ok ? made.data.id : "", amountPaise: 1000, transportIds: [ok1, none] });
+    assert.equal(r.ok, false);
+    assert.match(msg(r), /Order 9302 has no dispatched litres/);
+  });
+
+  test("delivery records who confirmed it and the proof, and an Unconfirmed problem keeps it open", async () => {
+    const ctx = await as(admin);
+    const t = await bill(9401, "cus_shree", 10);
+    const issue = await L.raiseIssue(ctx, [t], { issue: "Unconfirmed", note: "party not answering", notify: false });
+    assert.ok(issue.ok, msg(issue));
+    let [c] = await L.consignments({ ids: [t] });
+    assert.notEqual(c.phase, "delivered");
+    const done = await L.markDelivered(ctx, [t], { date: "2026-09-15", receivedBy: "Ramesh", proof: "POD 7781", notify: false });
+    assert.ok(done.ok, msg(done));
+    [c] = await L.consignments({ ids: [t] });
+    assert.equal(c.phase, "delivered");
+    assert.equal(c.deliveredBy, admin.name);
+    assert.equal(c.deliveryProof, "POD 7781");
+  });
+});
+
+describe("a bulk action is audited one row per record", () => {
+  test("300 bills marked at once write 300 rows, not one key past the index limit", async () => {
+    const ctx = await as(admin);
+    const ids = Array.from({ length: 300 }, () => id("etr"));
+    await erpAudit(ctx, "erp.logistics.atTransport", "erp_transport", [...ids, ids[0]].join(","), null, { bulk: true });
+    const rows = await db.select().from(auditLog).where(eq(auditLog.action, "erp.logistics.atTransport"));
+    const mine = rows.filter((r) => ids.includes(r.entityId ?? ""));
+    assert.equal(mine.length, 300, "one row each, the repeated id once");
+    assert.ok(mine.every((r) => r.actorId === admin.id && r.actorApp === "erp"));
+  });
+
+  test("a single id is still one row, as written", async () => {
+    const ctx = await as(admin);
+    const one = id("etr");
+    await erpAudit(ctx, "erp.logistics.packages", "erp_transport", one, null, null);
+    const rows = await db.select().from(auditLog).where(eq(auditLog.entityId, one));
+    assert.equal(rows.length, 1);
   });
 });

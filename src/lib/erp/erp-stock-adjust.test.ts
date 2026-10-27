@@ -111,6 +111,11 @@ describe("adjusting stock from its row", () => {
     assert.ok(a.posted?.transfer, "posted as a write-off transfer");
     const [t] = (await db.execute(sql`select g.reserved from erp_transfers t join erp_godowns g on g.id = t.to_godown_id where t.id = ${a.posted!.transfer!}`)) as unknown as { reserved: boolean }[];
     assert.equal(t.reserved, true, "to Item Lost Record");
+    /* Written off is gone: no stock read returns the lot at Item Lost Record, so
+       Stock on hand never lists it and no total counts it. */
+    assert.ok(!(await fgLots()).some((l) => l.godownId === "erpg_item_lost_record"), "Item Lost Record holds no stock anybody reads");
+    const { rows } = await mod("fgStock").load(await as(controller), unscoped());
+    assert.ok(!rows.some((r) => String(r.v.godown ?? "") === "Item Lost Record"), "and Stock on hand does not list it");
   });
 
   test("never below zero", async () => {

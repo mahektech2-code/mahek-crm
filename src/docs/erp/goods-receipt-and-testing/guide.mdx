@@ -2,10 +2,10 @@ When a lorry arrives at the gate, three things happen in the ERP: the goods are 
 
 ## Receiving goods at the gate
 
-<Wireframe url="/erp/register" nav={["Dashboard", "#Purchase", "Purchase requirements", "Purchase orders", "Purchases", "Lot testing"]} active="Purchases" caption="Purchases → Goods receipt (GRN)">
+<Wireframe url="/erp/register" nav={["Dashboard", "#Purchase", "Requirements", "Purchase orders", "Purchases", "Lot testing", "Quotation manager"]} active="Purchases" caption="Purchases → Goods receipt (GRN)">
   <WfBar>
-    <WfTitle sub="Goods received against a PO and the lots they become.">Purchases</WfTitle>
-    <WfSpacer /><WfButton primary>New goods receipt</WfButton><Hotspot n={1} />
+    <WfTitle sub="Goods received against a PO, and the lots they become.">Purchases</WfTitle>
+    <WfSpacer /><WfButton primary>Receive goods</WfButton><Hotspot n={1} />
   </WfBar>
   <WfTabs items={["Goods receipt (GRN)", "Register", "Drum labels"]} active="Goods receipt (GRN)" />
   <WfTable
@@ -18,9 +18,11 @@ When a lorry arrives at the gate, three things happen in the ERP: the goods are 
 </Wireframe>
 
 <Hotspots items={[
-  <span key="1"><b>New goods receipt.</b> Or press <b>Receive goods</b> on the purchase order itself — the PO and its pending items are then already filled in.</span>,
+  <span key="1"><b>Receive goods.</b> Or press <b>Receive goods</b> on the purchase order itself — the PO and its pending items are then already filled in.</span>,
   <span key="2"><b>Sent to.</b> Where each line went the moment it was saved: <b>Testing</b> for an item with a testing list, <b>Purchase</b> (the register) for everything else.</span>,
 ]} />
+
+Each line of a receipt is grouped under its PR number, with its POs, date, supplier, godown and transport in the group's heading. The tabs open on **this month** — the period picker in the toolbar shows more — and a line not yet sent anywhere always shows.
 
 <Steps>
 <Step title="Search the item that arrived">
@@ -33,7 +35,7 @@ Only the POs still waiting for that item are offered, oldest due date first, eac
 Press **Add another item from this truck** and search again. Only the same vendor's open POs are offered — one GRN is one vendor's delivery — and they may be different POs of that vendor. For a chemical, enter the **Drums** on each line.
 </Step>
 <Step title="Enter what actually came">
-For a chemical bought in kilograms, enter the **Weight with drum** off the scale and the **Empty drum weight** (per drum); the **Weight without drum** is worked out for you, whatever anybody typed elsewhere. For anything else, the **Quantity received** starts at what is pending — change it to what actually arrived.
+For a chemical bought in kilograms, enter the **Weight with drum** off the scale and the **Empty drum weight** (per drum); the **Weight without drum** is worked out for you, whatever anybody typed elsewhere. For anything else, the **Quantity received** starts at what is pending — change it to what actually arrived. For a chemical, **Drums belong to** starts as the supplier's usual answer; change it where this delivery's drums are returnable, or are ours to keep — see [Empty drums and scrap](/docs/erp/empty-drums-scrap).
 </Step>
 <Step title="Transport and landing cost">
 How the goods came: **Supplier Transport**, **Mahek Own Vehicle**, **Third-Party Transport** or **No Transport Charges**. For supplier or third-party transport enter the cost from their bill; for our own vehicle enter the **kilometres** and the **tempo number** — the cost is worked out from the approved rate per kilometre. Add any **other direct inward cost** (loading, unloading, octroi) and what it was.
@@ -59,8 +61,8 @@ A line may take a little more than was ordered — drums never weigh exactly —
 
 Every chemical lot is tested before it reaches the register. The tester records evidence for the tests the item requires; only the **verifier** decides.
 
-<Wireframe url="/erp/testing" nav={["Dashboard", "#Purchase", "Purchases", "Lot testing"]} active="Lot testing" caption="Lot testing">
-  <WfBar><WfTitle sub="Evidence for the tests each chemical requires. Only the verifier can verify.">Lot testing</WfTitle></WfBar>
+<Wireframe url="/erp/testing" nav={["Dashboard", "#Purchase", "Requirements", "Purchase orders", "Purchases", "Lot testing", "Quotation manager"]} active="Lot testing" caption="Lot testing">
+  <WfBar><WfTitle sub="Test evidence for each chemical lot, for the verifier to verify.">Lot testing</WfTitle><WfSpacer /><WfButton primary>Record a test</WfButton></WfBar>
   <WfTable
     highlight={0}
     columns={["Verification", "Date", "PR no", "Item", "Tests required", "Smell", "Density", "Tester", "Godown"]}
@@ -88,6 +90,7 @@ Open the test and press **Record evidence**. The form asks only for the tests th
 | Oil Paint, Fast Paints, Nc Paints, Primer | A photo of each |
 | Density | The density value (0.5 to 1.5) and its photo |
 | Tharmakol Pass | Thermocol-pass photo |
+| Any other test on the Testing list | A photo of it |
 </Step>
 <Step title="The verifier decides">
 **Verify** is refused while any required evidence is missing ("Evidence missing: …"). Verifying creates the lot's register row, once.
@@ -113,6 +116,8 @@ Every lot bought, with what it cost. A row arrives on its own — from a receipt
 | **Back to pending** | The reopen power (an admin) | Sets a verified purchase back to Pending |
 | **Read supplier bill** | Purchase money, AI bills on | Reads a photo or PDF of the bill and matches it to this PR's rows for you to review |
 | **New purchase**, **Edit**, **Add another** | The screen | Enter a lot by hand against a PO, correct a row, or add another lot to the PR |
+| **Print drum label** | The screen | Opens the lot's drum label to print — see below |
+| **Mark bill received** | Purchase money | On the rows you have ticked: records every selected purchase's bill as received at once |
 
 <Callout kind="money">
 A lot is in stock only once it has a rate above zero. A row from a PO already has the PO's rate, so it is in stock the moment it is saved. "Not posted: rate missing" in the Inventory column says why one is not.
@@ -122,12 +127,12 @@ Flags on a row: **Purchase rate empty**, **Rate differs from PO** (the bill move
 
 ## Drum labels
 
-A list of chemical purchases at **your working godown**, with each lot's short label name, litres, drums, litres per drum, density and PR bill number — the figures printed on a drum label. Download it for the label printer.
+A list of chemical purchases at **your working godown**, with each lot's short label name, litres, drums, litres per drum, density and PR bill number — the figures printed on a drum label. **Print drum label** on a row (also on the register) opens that lot's label, 80 × 80 mm and one per drum, to send to the label printer, save as a printer file or print from the browser. The list can still be downloaded.
 
 ## Common questions
 
 <Faq q="The PO I need is not in the receipt form.">
-It is already fully received, or it was closed or cancelled — or the requirement has not been linked to its Quotation manager PO number yet. Only a PO with something pending can be received against.
+It is already fully received, or it was closed or cancelled — or no PO has been made for the item yet: bought on the Quotation manager, or created on the requirement. Only a PO with something pending can be received against.
 </Faq>
 
 <Faq q="'! Please Change 4 Digit PR Num Manually or Generate New PR Num!'">
@@ -135,7 +140,7 @@ The lot number (party code, item code and PR number) is already used by another 
 </Faq>
 
 <Faq q="Own vehicle says there is no approved rate per kilometre.">
-Nobody has set the rate yet. Until an administrator sets it in the Admin Console's ERP settings, an own-vehicle receipt cannot be saved — choose the transport that applies or ask for the rate.
+Nobody has set the rate yet. Until an administrator sets <Setting k="erp.purchase.ownVehicleRatePerKmPaise" /> in the Admin Console's settings, an own-vehicle receipt cannot be saved — choose the transport that applies or ask for the rate.
 </Faq>
 
 <Faq q="A test was verified by mistake.">

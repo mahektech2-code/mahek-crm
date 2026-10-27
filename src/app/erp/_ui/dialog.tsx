@@ -238,7 +238,7 @@ export function MoreMenu({ items, label = "More" }: { items: MoreItem[]; label?:
       {open ? (
         <div
           role="menu"
-          className={cx("animate-fade-in absolute right-0 bottom-full z-10 mb-2 flex max-h-[60vh] w-max max-w-[340px] min-w-[220px] flex-col overflow-y-auto py-1", popoverClass)}
+          className={cx("animate-fade-in absolute left-0 bottom-full z-10 mb-2 flex max-h-[60vh] w-max max-w-[340px] min-w-[220px] flex-col overflow-y-auto py-1", popoverClass)}
         >
           {items.map((it) => (
             <button

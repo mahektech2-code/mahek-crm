@@ -1,12 +1,16 @@
-Transport is four list modules in `screens/logistics.ts`: `transportList` built for three scopes (`transport`, `pendingLr`, `trackLr`) and `paidFreight`. The record they read, `erp_transports`, is written in exactly one place — the dispatch verification in `screens/sales.ts` — and updated by the `update` action and the AI LR review. (`calcs/logistics.ts`, despite its name, holds the complaint form's calculators; see [Complaints and credit notes](/docs/erp/complaints-and-credit-notes/developer).)
+The Logistics screen is a bespoke route, `src/app/erp/transport`: its first eight tabs are the desk, drawn from `lib/erp/logistics.ts` and written through `actions/erp-logistics.ts`; **All bills** and **Paid freight** are ordinary list modules from `screens/logistics.ts` drawn by the same route. `screens/logistics.ts` also keeps `transportList` modules for `pendingLr` and `trackLr` so a dashboard tile or an alert naming them still resolves, but the desk draws those tabs itself. The record, `erp_transports`, is opened in one place — `openTransports` in `screens/sales.ts`, called by dispatch verification and by `syncDispatchedTransports`, its net. (`calcs/logistics.ts`, despite its name, holds the complaint form's calculators; see [Complaints and credit notes](/docs/erp/complaints-and-credit-notes/developer).)
 
 ## Map of the code
 
 | Layer | File | What lives there |
 |---|---|---|
-| Registry | `src/lib/erp/registry.ts` | `transport` screen with views `pendingLr`, `trackLr`, `transport`, `paidFreight` |
-| Screens | `src/lib/erp/screens/logistics.ts` | `MATERIAL_STAGES`, `onTheRoad`, `transportList`, `paidFreight` (also `videos`, documented elsewhere) |
-| Record opened | `src/lib/erp/screens/sales.ts` | `verify` inserts `erp_transports` with `onConflictDoNothing` |
+| Registry | `src/lib/erp/registry.ts` | `transport` screen with ten views: `transport` (Today), `toTransport`, `pendingLr`, `trackLr`, `delivered`, `lrMessages`, `trips` (Trips & freight), `transporters`, `allBills`, `paidFreight` |
+| Page | `src/app/erp/transport/page.tsx`, `parts/*.tsx` | `BOARD` — the eight desk tabs; anything else is a list module drawn by `ListScreen`. `parts/trips.tsx` is Trips & freight |
+| Trips and the transport payment | `src/lib/erp/trips.ts` | `assignTripsAtDispatch` (called by `openTransports` inside the verify transaction), `trips`, `billsWithoutTrip`, `saveTrip`, `addToTrip`, `removeFromTrip`, `recordTransportPayment`, `reverseTransportPayment` |
+| Transport cost rules | `src/lib/erp/engines/transport-cost.ts` | `allocateByLitres` (largest remainder, paise), `tripCostStatus`, `needsReconciling`, `deliveryStatus` — pure, and run in the payment dialog as well as the save |
+| Screens | `src/lib/erp/screens/logistics.ts` | `MATERIAL_STAGES`, `onTheRoad`, `transportList` (`transport`, `allBills`, `pendingLr`, `trackLr`), `paidFreight` (also `videos`, documented elsewhere) |
+| Record opened | `src/lib/erp/screens/sales.ts` | `verify` → `openTransports` (joins a row of the same order and bill still at the gate, else inserts one); `syncDispatchedTransports` for any verified line on no row |
+| Desk reads and writes | `src/lib/erp/logistics.ts` | `consignments` (with trip, vehicle, who confirmed delivery and the proof), `uploadedLrs`, `suggestBills`, `uploadLrs`, `editLr`, `voidLr`, `attachLr`, `detachLr`, `updateConsignment`, `raiseIssue`, `markDelivered`, `reopen`, `saveTransporter`, `notifyCustomers`, `afterDispatch` |
 | LR photo reading | `src/lib/erp/ai-photos.ts` | `readLr`, `recordLrReading`, `lrReviewForm`, `applyLr`, `rejectPhotoReading` |
 | Gate | `src/lib/erp/ai.ts` | `featureState("photos", true)`, `pendingFor("photos")` |
 | Order book | `src/lib/erp/book.ts` | `syncBookOrders` after a stage change |
@@ -44,6 +48,23 @@ sequenceDiagram
 <Code file="src/lib/erp/screens/logistics.ts" symbol="transportList" collapsed />
 
 The `update` action still writes `track_status` (`Track` / `Don't Track`) from `onTheRoad`, but nothing reads it: every list derives the answer.
+
+## Trips and the transport payment
+
+<Code file="src/lib/erp/engines/transport-cost.ts" symbol="allocateByLitres" />
+
+<Code file="src/lib/erp/engines/transport-cost.ts" symbol="tripCostStatus" />
+
+<Code file="src/lib/erp/engines/transport-cost.ts" symbol="deliveryStatus" />
+
+<Code file="src/lib/erp/trips.ts" symbol="assignTripsAtDispatch" collapsed />
+
+<Code file="src/lib/erp/trips.ts" symbol="recordTransportPayment" collapsed />
+
+- **Writes:** `erpTripSave`, `erpTripAddBills`, `erpTripRemoveBill`, `erpTransportPaymentRecord`, `erpTransportPaymentReverse` in `actions/erp-logistics.ts`, each through `requireErpWrite("transport")`.
+- **Events:** each trip change, payment and reversal writes an `erp_transport_events` row of kind `trip` (`shared = false`) on every bill it touches, and an `audit_log` row (`erp.trip.*`, `erp.transportPayment.*`).
+- **One live share per bill:** the partial unique index `erp_transport_allocations_live_key` on `transport_id where not reversed` — the service checks first so the refusal can name the order.
+- **Delivery:** `markDelivered` writes `delivered_by_id` (the person confirming) and `delivery_proof`; `reopen` clears both. `ISSUES` in `engines/logistics.ts` gained `Refused` and `Unconfirmed`.
 
 ## Paid freight
 
@@ -86,9 +107,18 @@ Extra expenses are written by ONE function, `setExtraExpenses`, whichever screen
   lr_id: "The uploaded LR it travels under; lr_no mirrors its number.",
   reminder_date: "The next call to the transporter.",
   track_token: "The customer's tracking link.",
+  trip_id: "The vehicle trip (erp_trips) — set by assignTripsAtDispatch from the vehicle number dispatch recorded, or by Logistics.",
+  vehicle_no: "The vehicle dispatch recorded; a trip's vehicle is written over it when the bill joins or the trip is edited.",
+  delivered_by_id: "Who pressed Delivered — the confirmation (0285).",
 }} />
 
 <DbTable name="erp_lrs" />
+
+<DbTable name="erp_trips" />
+
+<DbTable name="erp_transport_payments" />
+
+<DbTable name="erp_transport_allocations" />
 
 <DbTable name="erp_transport_events" />
 
@@ -103,7 +133,7 @@ Extra expenses are written by ONE function, `setExtraExpenses`, whichever screen
 ## Access
 
 - **Module:** <ModuleRef k="erp.transport" />; every tab comes with it. The Upload LRs modal also opens for <ModuleRef k="erp.dispatch" />.
-- **Powers:** only `viewSalesAmounts`, for the Monthly sales column of All bills.
+- **Powers:** `viewSalesAmounts`, for the Monthly sales column of All bills, and `viewCost`, for Payment type on Paid freight.
 
 ## Tests that pin this
 
@@ -111,4 +141,5 @@ Extra expenses are written by ONE function, `setExtraExpenses`, whichever screen
 |---|---|---|
 | `npm run test` | `src/lib/erp/engines/lr-read.test.ts` | Reading an LR photo: the number's shape against the transporter's earlier ones, the transporter matched to the desk's spelling, labels stripped, freight terms, dates refused |
 | `npm run test` | `src/lib/erp/engines/logistics.test.ts` | Phases, due words, LR suggestions, one LR one party, customer messages built only from facts |
-| `npm run test:integration` | `src/lib/erp/erp-logistics.test.ts` | The whole road: due, at the transporter, upload, attach, update, problem, delivered, reopen; what the customer is told and what the public link hides |
+| `npm run test` | `src/lib/erp/engines/transport-cost.test.ts` | ₹1,000 over 1,000 L, equal thirds adding up, remainders, zero litres refused, cost and delivery statuses |
+| `npm run test:integration` | `src/lib/erp/erp-logistics.test.ts` | The whole road: due, at the transporter, upload, attach, update, problem, delivered, reopen; what the customer is told and what the public link hides; trips by vehicle and day, the litre split, no second share, reversal, reconciliation, who confirmed delivery |

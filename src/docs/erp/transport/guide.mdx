@@ -1,30 +1,33 @@
-The **Logistics** screen follows every bill from the factory gate to the party's door: on its way to the transporter's godown at Bhiwandi, waiting for its lorry receipt (LR), on the road, and delivered. The customer gets a WhatsApp at every step. A bill appears here by itself the moment it is dispatch-verified — nobody has to add it. An order sent in two goes shows as two bills.
+The **Logistics** screen follows every bill from the factory gate to the party's door: on its way to the transporter's godown at Bhiwandi, waiting for its lorry receipt (LR), on the road, and delivered. The customer gets a WhatsApp at every step. A bill appears here by itself the moment it is dispatch-verified — nobody has to add it. Every bill also says where it stands in plain words: **Logistics Pending**, **In Transit**, **Delivery Pending Confirmation**, **Delivered** or **Exception**. One tempo or truck carrying several bills is a **trip**, and the transport payment for it is recorded once and shared out by litres on **Trips & freight**.
 
 ## The flow, step by step
 
 <Steps>
 <Step title="1. To transporter — follow the goods to Bhiwandi">
-Every bill that has left the factory, grouped by transporter. Tick bills and say when they reach the transporter: **Reaches today**, **Reaches tomorrow**, or a day. Correct the **Boxes** count if it is wrong (it is read off the bill's lines). When the transporter has them, press **Reached transporter** — or **All reached** for a whole transporter.
+Every bill that has left the factory, grouped by transporter. Under each bill is the vehicle dispatch recorded and its trip — or *No vehicle recorded* in amber. Tick bills and say when they reach the transporter: **Reaches today**, **Reaches tomorrow**, or a day. Correct the **Boxes** count if it is wrong (it is read off the bill's lines). When the transporter has them, press **Reached transporter** — or **All reached** for a whole transporter.
 </Step>
 <Step title="2. The dispatch team uploads the LRs">
-Once the goods are with the transporter, the dispatch team collects the LRs and uploads them with the **Upload LRs** button, which opens a form over the Logistics screen or the Dispatch desk: a photo of each and its number, transporter, destination and box count. **Add several photos** makes one row per photo. Each photo is read as it uploads: the LR number, date, transporter, destination, boxes and freight are filled in for you, marked *read*, and a number worth a second look is marked *check* in amber with a line saying why. Anything you have already typed is left alone — check what was read against the photo before you upload. Nothing is attached to a bill yet. At the transporter's godown the dispatch team can do the same from the **Mahek Factory** phone app: **Upload LR** on the home screen takes the photo, reads it the same way, takes the number typed or scanned from the LR's barcode, and puts the LR in the same list.
+Once the goods are with the transporter, the dispatch team collects the LRs and uploads them with the **Upload LRs** button, which opens a form over the Logistics screen or the Dispatch desk: a photo of each and its number, date, transporter, destination, box count and freight. Nothing on it is required — a photo alone is enough. **Add several photos** makes one row per photo. Each photo is read as it uploads: the LR number, date, transporter, destination, boxes and freight are filled in for you, marked *read*, and a number worth a second look is marked *check* in amber with a line saying why. Anything you have already typed is left alone — check what was read against the photo before you upload. Nothing is attached to a bill yet. At the transporter's godown the dispatch team can do the same from the **Mahek Factory** phone app: **Upload LR** on the home screen takes the photo, reads it the same way, takes the number typed or scanned from the LR's barcode, and puts the LR in the same list.
 </Step>
 <Step title="3. LR desk — attach each LR to its bills">
-On the left, the LRs waiting to be attached. Pick one: the bills it most likely carries rise to the top, with why (same transporter, destination matches, box count). Tick the bills, set the expected delivery and the next call to the transporter, and press **Attach LR & tell customer**. The customer gets a WhatsApp with the LR number, the transporter, the boxes and a tracking link.
+On the left, the LRs waiting to be attached. An LR uploaded without its number says *Number not typed*: read it off the photo and add it with **Edit** first, because the customer is told it. A wrong upload is **Void**ed with a reason. Pick an LR: the bills it most likely carries rise to the top, with why (same transporter, destination matches, box count). The list holds bills already at the transporter; tick **Also show … not yet marked at the transporter** for the rest. Tick the bills, set the expected delivery and the next call to the transporter, and press **Attach LR & tell customer** (just **Attach LR** when the customer is not to be told). The customer gets a WhatsApp with the LR number, the transporter, the boxes and a tracking link.
 </Step>
 <Step title="4. On the road — ring and update">
-One card per LR, with the transporter's number. **Call today** lists the ones owed a call. After the call press **Update status** (In transit, Near destination, At destination — the customer is told), **Called — no change** (the next call is booked, nobody is messaged) or **Report a problem** (delayed, damaged, short…).
+One card per LR, with the transporter's number. **Call today** lists the ones owed a call. After the call press **Update status** (In transit, Near destination, At destination — the customer is told), **Called — no change** (the next call is booked, nobody is messaged) or **Report a problem** (delayed, damaged, short, held, wrong address, **refused**, **unconfirmed**…). A bill with a problem shows **Exception** until the problem is solved or the bill is delivered.
 </Step>
 <Step title="5. Delivered">
-When the party has the goods, press **Delivered ✓**, give the day and who received it. The customer gets a thank-you message, and the bill moves to **Delivered**.
+When the party has confirmed they have the goods, press **Delivered ✓**, give the day, who received it and — if you have one — a **proof or reference** (a POD number, a signed copy, a photo's name). Your name is recorded as the person who confirmed it. The customer gets a thank-you message, and the bill moves to **Delivered**. If the party has not confirmed yet, do not close it: **Report a problem → Unconfirmed** keeps it open and visible.
+</Step>
+<Step title="6. Trips & freight — the vehicle and its transport payment">
+When dispatch records a vehicle number, every bill leaving in that vehicle on that day goes on the same **trip**, whatever customers they are for. Bills with no vehicle wait under **Bills on no trip**: tick them and press **New trip with … bills**, or open a trip and **Add bills**. When the transport payment is confirmed, open the trip and press **Record transport payment**: type the total once, tick the bills it covers, and the screen shows the eligible litres, the cost per litre and each bill's share before you save. The shares always add up to the amount exactly. Logistics records the confirmed payment — it does not make it. A wrong one is **Reverse**d with a reason, and its bills can be shared again.
 </Step>
 </Steps>
 
-<Wireframe url="/erp/transport?view=pendingLr" nav={["Dashboard", "#Orders", "Dispatch desk", "#Logistics", "Logistics"]} active="Logistics" caption="The LR desk: an uploaded LR on the left, the bills it carries on the right">
+<Wireframe url="/erp/transport?view=pendingLr" nav={["Dashboard", "#Sales", "Dispatch desk", "#Logistics", "Logistics"]} active="Logistics" caption="The LR desk: an uploaded LR on the left, the bills it carries on the right">
   <WfBar>
     <WfTitle sub="From the factory gate to the party's door.">Logistics</WfTitle>
   </WfBar>
-  <WfTabs items={["Today", "To transporter", "LR desk", "On the road", "Delivered", "Customer messages", "Transporters"]} active="LR desk" />
+  <WfTabs items={["Today", "To transporter", "LR desk", "On the road", "Delivered", "Customer messages", "Trips & freight", "Transporters", "All bills", "Paid freight"]} active="LR desk" />
   <Hotspot n={1} />
   <WfTable
     highlight={0}
@@ -47,14 +50,15 @@ When the party has the goods, press **Delivered ✓**, give the day and who rece
 
 | Tab | What it is for |
 |---|---|
-| **Today** | The four steps as counts, the calls owed today, and what needs attention: problems, lorries running late, bills at the transporter two days with no LR, messages not sent. |
+| **Today** | The four steps as counts, the calls owed today, and what needs attention: problems, lorries running late, bills at the transporter two days with no LR, bills from the last three days with no vehicle recorded, messages not sent. |
 | **To transporter** | Bills on their way to the transporter's godown. |
 | **LR desk** | Uploaded LRs, attached to their bills. |
 | **On the road** | One card per LR until delivery. |
-| **Delivered** | Closed in the last 45 days, with how long each took. **Reopen** if one was closed by mistake. |
+| **Delivered** | Closed in the last 45 days, with how long each took, who received it, the proof and who confirmed it. **Reopen** if one was closed by mistake. |
 | **Customer messages** | Every WhatsApp the flow wrote. Those that could not go through Wati wait here: **Open in WhatsApp** (the text is already typed), send, then **Mark sent**. |
+| **Trips & freight** | One card per vehicle trip: its vehicle, driver, transporter and day, the bills it carried for every customer, their litres, and the transport payment shared out over them. Filters: **Vehicle missing**, **Cost not shared out**, **Reconciliation required** (a bill's litres changed after the split, so the payment should be reversed and recorded again). |
 | **Transporters** | Each transport company: its head office GST number (optional), what it calls its consignment number (LR, GR, CN…), its online tracking page, and its godowns. The godowns are listed on the transporter's form; **+ Add a godown** or **Edit** opens the godown in its own window. Each godown needs all four of State → District → City → Area — each list shows only what is under the one above it, and **+ Add a … not listed** at the foot of the district, city and area lists types a new one, added under the one above when you save (a state is always picked from the list). Each godown can carry its own GST number — it is optional — and because GST is registered per state, a number that is given must start with the code for the godown's state. It also takes its pin on the map — use **Find in map** and click the spot, type the latitude and longitude, or use the device's location when standing there — and the people there, a name and a phone number each. A godown saved before this asks for its city and area the next time the transporter is edited. Click a row to see it all; a card on the road rings the first person with a number. |
-| **All bills / Paid freight** | The registers as lists. Paid freight is where the freight amount for *Paid* bills is entered. |
+| **All bills / Paid freight** | The registers as lists. All bills also shows each bill's trip, vehicle and share of the transport cost. Paid freight is where the extra expense for *Paid*-freight bills is entered — the amount billed to the customer, not the transport payment, which is on Trips & freight. |
 
 ## Questions people ask
 
@@ -69,6 +73,12 @@ Tick all three on the LR desk. The customer gets one message naming the three bi
 </Faq>
 <Faq q="I attached the wrong bill to an LR.">
 Open the bill (click its number) — or use the consignment's page — and take it off the LR with a reason. It goes back to waiting for its LR.
+</Faq>
+<Faq q="One tempo carried bills for three customers. How is the ₹1,000 we paid split?">
+By litres only. On **Trips & freight**, open the trip, press **Record transport payment**, type ₹1,000 and tick the three bills. If they carry 250, 500 and 250 litres, that is ₹1 a litre: ₹250, ₹500 and ₹250. Boxes, weight and the number of bills play no part. A bill with no litres stops the split and is named, so its litres can be corrected first.
+</Faq>
+<Faq q="The payment covers only some of the bills on the trip.">
+Tick only those bills, and say in **Which part of the trip this covers** what the payment is for. The rest stay unshared, so nothing is paid for twice — and a bill already carrying a share cannot be ticked again until that payment is reversed.
 </Faq>
 <Faq q="What does the customer's tracking link show?">
 The bill, the LR, the transporter and the steps so far. Never prices, call notes or staff names.

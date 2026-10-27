@@ -1801,6 +1801,9 @@ async function savePurchase(ctx: ErpContext, h: Record<string, string>, id?: str
     await erpAudit(ctx, "erp.purchase.edit", "erp_purchase", id, before, common);
     return okVoid("Purchase saved");
   }
+  /* A typed PR number is used as typed, so 0 or a negative would be a lot nobody can find by its PR. */
+  const typedPr = int(h.pr);
+  if (typedPr != null && typedPr < 1) return fieldErr("pr", "A PR number is 1 or more — leave it blank to draw the next one");
   /* NO PURCHASE WITHOUT A PO: the party and the item are the PO line's, never typed. */
   const tolerance = (await getConfig())["erp.purchase.receiptTolerancePercent"];
   const rx = await receivable(tolerance);
@@ -1817,7 +1820,7 @@ async function savePurchase(ctx: ErpContext, h: Record<string, string>, id?: str
   let result: Result<{ id: string; lotNo: string }> | null = null;
   await db
     .transaction(async (tx) => {
-      const pr = int(h.pr) ?? (await nextNumber(tx, "pr"));
+      const pr = typedPr ?? (await nextNumber(tx, "pr"));
       result = await createPurchase(tx, ctx, {
         ...common,
         ...terms,

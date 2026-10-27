@@ -16,6 +16,7 @@ import { db } from "@/db";
 import {
   appAccess,
   appSettings,
+  auditLog,
   bills,
   customers,
   erpCustomerProfiles,
@@ -27,6 +28,8 @@ import {
   productBrands,
   productFormulations,
   products,
+  sheetOrderRows,
+  sheetSyncRuns,
   users,
 } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
@@ -37,6 +40,10 @@ import { bookStatus, bookStatusForStage, syncAllBookOrders, syncBookOrders } fro
 import { approveOrder, declineOrder } from "@/lib/services/order-approval-service";
 import { projectSheet } from "@/lib/services/sheet-projection-service";
 import { recomputeOrderSystemHolds } from "@/lib/recompute";
+import { customerProducts } from "@/lib/services/product-service";
+import { varianceReport } from "@/lib/services/price-list-service";
+import { runJob } from "@/lib/jobs";
+import { ORDER_TABS_RETIRED, PARTY_TAB_RETIRED } from "@/lib/engines/sheet-retirement";
 
 const tag = randomUUID().slice(0, 6);
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -70,11 +77,12 @@ const book = async (orderNo: number) => (await db.select().from(orders).where(eq
 
 let admin: typeof users.$inferSelect;
 let ledger: typeof users.$inferSelect;
+let skuId: string;
 
 /** One ERP order of `qty` cans for `party`, through the real handlers. */
 async function take(party: string, qty: number) {
   const ctx = await as(admin);
-  const r = await mod("orders").forms!.new(ctx, { date: "2026-09-10", godown: "Bhiwandi", billing: party }, [{ sku: SKU, qty: String(qty), rate: "300" }]);
+  const r = await mod("orders").forms!.new(ctx, { source: "Phone", date: "2026-09-10", godown: "Bhiwandi", billing: party }, [{ sku: SKU, qty: String(qty), rate: "300" }]);
   assert.ok(r.ok, JSON.stringify(r));
   const [o] = await db.select().from(erpOrders).where(sql`${erpOrders.qtyCans} = ${qty}`);
   return o;
@@ -82,19 +90,21 @@ async function take(party: string, qty: number) {
 /** Ready → allocated → billed → dispatch-verified. */
 async function send(o: typeof erpOrders.$inferSelect, bill: string, date: string) {
   const ctx = await as(admin);
+  assert.ok((await mod("orders").actions!.verifyOrder(ctx, o.id, {})).ok);
   assert.ok((await mod("orders").actions!.ready(ctx, o.id, {})).ok);
   assert.ok((await mod("orders").forms!.allocate(ctx, { lot: "FG1BH", qty: String(o.qtyCans) }, [], o.id)).ok);
-  assert.ok((await mod("orders").forms!.edit(ctx, { status: "Ready", delivery: "Shree Paints", qty: String(o.qtyCans), rate: "300", bill, transport: "0" }, [], o.id)).ok);
-  const billed = await mod("orders").actions!.bill(ctx, o.id, {});
+  const billed = await mod("orders").actions!.bill(ctx, o.id, { invoiceNo: bill, invoiceDate: date });
   assert.ok(billed.ok, JSON.stringify(billed));
-  assert.ok((await mod("orderDetails").actions!.verify(ctx, o.id, { date })).ok);
+  assert.ok((await mod("orders").actions!.approveInvoice(ctx, o.id, {})).ok);
+  const sent = await mod("orderDetails").actions!.verify(ctx, o.id, { date });
+  assert.ok(sent.ok, JSON.stringify(sent));
 }
 
 before(async () => {
   await db.execute(sql`
     truncate users, customers, orders, bills, erp_customer_profiles, erp_orders, erp_batch_codes, erp_order_details,
              erp_fg_entries, erp_transports, erp_user_powers, erp_godown_staff, erp_user_settings, audit_log restart identity cascade`);
-  await db.execute(sql`delete from app_settings where key = 'erp.orders.live'`);
+  await db.execute(sql`delete from app_settings where key in ('erp.orders.live', 'erp.orders.partySheet')`);
   invalidateConfig();
   await db.execute(sql`update erp_series set last = 0`);
   admin = await makeUser("Kavita Admin", "admin");
@@ -102,7 +112,7 @@ before(async () => {
   const fId = id("form");
   const bId = id("brand");
   const fgId = id("fg");
-  const skuId = id("sku");
+  skuId = id("sku");
   await db.insert(productFormulations).values({ id: fId, name: `ERPB Primer ${tag}`, slug: `erpb-${tag}` });
   await db.insert(productBrands).values({ id: bId, name: `ERPB ${tag}`, slug: `erpb-b-${tag}`, formulationId: fId });
   await db.insert(finishedGoods).values({ id: fgId, name: `ERPB Primer 1 L ${tag}`, slug: `erpb-fg-${tag}`, brandId: bId, formulationId: fId, millilitres: 1000 });
@@ -117,7 +127,7 @@ before(async () => {
 });
 
 after(async () => {
-  await db.execute(sql`delete from app_settings where key = 'erp.orders.live'`);
+  await db.execute(sql`delete from app_settings where key in ('erp.orders.live', 'erp.orders.partySheet')`);
   invalidateConfig();
   setTestUser(null);
   await db.$client.end();
@@ -204,7 +214,7 @@ describe("a Pending customer goes to the Accounts queue", () => {
     const b = await book(o.orderNo);
     assert.equal(b.status, "pending_approval");
     const ctx = await as(admin);
-    const blocked = await mod("orders").actions!.bill(ctx, o.id, {});
+    const blocked = await mod("orders").actions!.bill(ctx, o.id, { invoiceNo: "MMI/PENDING/1", invoiceDate: "2026-09-10" });
     assert.match(blocked.ok ? "" : (blocked.error ?? ""), /approval for this Pending customer/);
     assert.ok(!(await mod("orders").actions!.approve(ctx, o.id, {})).ok, "the ERP's own approval is gone while the ERP is live");
     setTestUser(ledger);
@@ -212,6 +222,7 @@ describe("a Pending customer goes to the Accounts queue", () => {
     const [after] = await db.select().from(erpOrders).where(eq(erpOrders.id, o.id));
     assert.equal(after.partyStatus, "Approved By Admin");
     /* The next ERP write re-states the order; the approval is not undone by it. */
+    assert.ok((await mod("orders").actions!.verifyOrder(await as(admin), o.id, {})).ok);
     assert.ok((await mod("orders").actions!.ready(await as(admin), o.id, {})).ok);
     assert.equal((await book(o.orderNo)).status, "confirmed");
   });
@@ -249,6 +260,86 @@ describe("the sheet and the Call Log", () => {
     await recomputeOrderSystemHolds();
     const [held] = await db.select().from(customers).where(eq(customers.id, "cus_shree"));
     assert.equal(held.activeInOrderSystem, true);
+  });
+});
+
+/*
+ * THE CUT-OVER. Everything that read the sheet's half of the book, or only the
+ * sheet's, and would have gone quiet or wrong the day the ERP took the orders.
+ */
+describe("once the ERP takes the orders", () => {
+  test("live, the order tab creates no customers either", async () => {
+    const run = id("syn");
+    await db.insert(sheetSyncRuns).values({ id: run, source: "order_details", spreadsheetId: "sheet1", tabTitle: "Order Details", status: "ok", startedAt: new Date(), finishedAt: new Date() });
+    await db.insert(sheetOrderRows).values({
+      id: id("sor"), syncId: run, rowNumber: 2, lineKey: `late-${tag}`, raw: {}, rowHash: tag, status: "present",
+      orderNumber: "99001", billingPartyName: `Typed After Cutover ${tag}`, orderDate: "2026-09-20",
+    } as typeof sheetOrderRows.$inferInsert);
+    const r = await projectSheet({});
+    assert.equal(r.customers.created, 0);
+    const made = await db.select().from(customers).where(like(customers.name, `Typed After Cutover%`));
+    assert.equal(made.length, 0, "a party typed into Order Details after the cut-over is not a customer");
+    await db.delete(sheetSyncRuns).where(eq(sheetSyncRuns.id, run));
+  });
+
+  test("a lead that orders through the ERP becomes a customer on its second ERP order", async () => {
+    const rahul = await makeUser(`Rahul Field ${tag}`, "associate", "accounts");
+    const ctx = await as(admin);
+    /* A lead from Lead Management, owned by its salesman — the ERP no longer opens parties itself. */
+    const leadId = id("cus");
+    await db.insert(customers).values({ id: leadId, name: `Desk Party ${tag}`, city: "Thane", phone: "9876500077", kind: "lead", ownerId: rahul.id, creditDays: 30 } as typeof customers.$inferInsert);
+    const [lead] = await db.select().from(customers).where(eq(customers.id, leadId));
+    assert.ok((await mod("customers").actions!.activate(ctx, lead.id, {})).ok);
+
+    await take(`Desk Party ${tag}`, 21);
+    const [afterOne] = await db.select().from(customers).where(eq(customers.id, lead.id));
+    assert.equal(afterOne.kind, "lead", "a first order is the tail of a trial, not a relationship");
+
+    await take(`Desk Party ${tag}`, 22);
+    const [afterTwo] = await db.select().from(customers).where(eq(customers.id, lead.id));
+    assert.equal(afterTwo.kind, "customer");
+    assert.equal(afterTwo.salesAmId, rahul.id, "the sales seat is the salesperson's");
+    const audit = await db.select().from(auditLog).where(eq(auditLog.entityId, lead.id));
+    assert.ok(audit.some((a) => a.action === "customer.convertedFromLead"));
+  });
+
+  test("product history reads the ERP's orders, delivered ones included", async () => {
+    const history = await customerProducts("cus_shree");
+    const row = history.find((p) => p.productId === skuId);
+    assert.ok(row, "the SKU Shree Paints ordered through the ERP is in their history");
+    assert.ok(row.totalOrderCount >= 2);
+  });
+
+  test("the price-list variance report reads the ERP's own lines and not the ones copied from the sheet", async () => {
+    const copied = await take("Shree Paints", 23);
+    await db.update(erpOrders).set({ source: "sheet", sourceRef: `copied-${tag}` }).where(eq(erpOrders.id, copied.id));
+    const v = await varianceReport("2026-09");
+    const mine = v.rows.filter((r) => r.productId === skuId && r.customerId === "cus_shree");
+    assert.ok(mine.length > 0, "ERP lines are in the month");
+    assert.ok(mine.every((r) => r.billedExPaise === 30000));
+    assert.equal(mine.filter((r) => r.cans === 23).length, 0, "a line the sheet already reports is not counted twice");
+    await db.delete(erpOrders).where(eq(erpOrders.id, copied.id));
+  });
+
+  test("the hourly pass rebuilds the Call Log hold, and a retired tab is not read by anybody", async () => {
+    await db.update(customers).set({ activeInOrderSystem: false }).where(eq(customers.id, "cus_shree"));
+    const [holds] = await runJob("recompute-order-holds");
+    assert.match(holds.detail, /held/);
+    const [shree] = await db.select().from(customers).where(eq(customers.id, "cus_shree"));
+    assert.equal(shree.activeInOrderSystem, true, "the open 9-can order holds them again without the Taken Order sync");
+
+    // No Google credentials here: a read that ran would throw, so a detail is proof it did not.
+    const [taken] = await runJob("taken-order-sync");
+    assert.equal(taken.detail, ORDER_TABS_RETIRED);
+    await db
+      .insert(appSettings)
+      .values({ key: "erp.orders.partySheet", value: false, valueType: "boolean", category: "erp", label: "The Sales Party sheet is the party master" })
+      .onConflictDoUpdate({ target: appSettings.key, set: { value: false } });
+    invalidateConfig();
+    const [party] = await runJob("party-sync");
+    assert.equal(party.detail, PARTY_TAB_RETIRED);
+    await db.execute(sql`delete from app_settings where key = 'erp.orders.partySheet'`);
+    invalidateConfig();
   });
 });
 

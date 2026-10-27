@@ -73,7 +73,7 @@ The `raise` loader sends the row's department through `reorderDepartment`:
 
 ## The planner
 
-Raw-material levels are planned nightly by `runLevelPlanner` (`src/lib/erp/level-planner.ts`) from the pure engine `src/lib/erp/engines/stock-plan.ts`. The engine takes two daily series per item per godown — production use and posted purchases — and the date, and returns the minimum, the maximum and everything the drawer shows.
+Raw-material levels are planned nightly by `runLevelPlanner` (`src/lib/erp/level-planner.ts`) from the pure engine `src/lib/erp/engines/stock-plan.ts`. The engine takes two daily series per item per godown — production use and posted purchases — and the date, and returns the minimum, the maximum and everything the record shows.
 
 <Code file="src/lib/erp/engines/stock-plan.ts" symbol="planLevel" collapsed />
 
@@ -96,7 +96,7 @@ It runs in `runNightly` before the alert pass, in `deploy:db` (`scripts/erp-leve
 
 ## Suggestions
 
-Finished-goods levels, and raw materials the planner has not read, still use the 90-day suggestion:
+Finished-goods levels, and raw materials the planner has not read, still use the look-back suggestion (`erp.ai.reorder.lookbackDays`):
 
 <Code file="src/lib/erp/engines/production.ts" symbol="suggestLevel" />
 

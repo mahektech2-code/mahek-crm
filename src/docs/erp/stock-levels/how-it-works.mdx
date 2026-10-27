@@ -59,7 +59,7 @@ From a raw-material row the **Raise requirement** action opens the ordinary new 
 | Priority | For Stock |
 | Department | The person's own team where they raise for only one; otherwise the team that asks for that material category |
 
-Everything after that — the purchase rule, quotations, the PO — is the normal purchase flow. See [Purchase requirements](/docs/erp/purchase-requirements).
+Everything after that — the blind count, the purchase rule, the PO — is the normal purchase flow. See [Purchase requirements](/docs/erp/purchase-requirements).
 
 ## Planned levels
 
@@ -107,7 +107,7 @@ Average daily dispatch over the look-back, times the cover days, rounded up to w
 - **Minimum** — <Setting k="erp.ai.reorder.minCoverDays" /> days of cover
 - **Maximum** — <Setting k="erp.ai.reorder.maxCoverDays" /> days of cover
 
-The feature is switched by <Setting k="erp.ai.reorder.enabled" />. A person applies a suggestion with a button. Raw-material levels use the planner above instead; this 90-day suggestion is shown for one only where the planner has not read the item yet.
+The feature is switched by <Setting k="erp.ai.reorder.enabled" />. A person applies a suggestion with a button. Raw-material levels use the planner above instead; this look-back suggestion is shown for one only where the planner has not read the item yet.
 </Rule>
 
 ## The hourly alert and who is told
@@ -131,6 +131,6 @@ Every change is written to the audit log with the before and after values.
 
 ## Where the code and the intent disagree today
 
-- **Finished-goods levels are not planned yet.** Only raw materials get the planner; a finished-goods level is still typed by hand or set from its 90-day suggestion.
+- **Finished-goods levels are not planned yet.** Only raw materials get the planner; a finished-goods level is still typed by hand or set from its look-back suggestion.
 - **Drum and stationery levels never get a suggestion**, though the bulk **Apply suggestions** button is offered on them and answers *No suggestion to apply*.
 - **Drums ignore the godown.** A drum level at two godowns shows the same Available at both.

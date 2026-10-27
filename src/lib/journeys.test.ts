@@ -7197,11 +7197,14 @@ describe("the sheet fills a blank and never corrects a person", () => {
     await stagePartyRowWithDetail("MOVED PAINTS", { area: "Chinchwad" });
 
     const { updateCustomer } = await import("@/lib/actions/crm");
+    const { setTestCustomerEditApp } = await import("@/lib/customer-edit-gate");
+    /* Details are edited in Accounts (customer-edit-gate.ts), so the ledger desk makes the correction. */
+    setTestUser(deepa);
+    setTestCustomerEditApp("accounts");
+    const savedCity = await updateCustomer(customer.id, { city: "Bhiwandi" });
+    setTestCustomerEditApp(null);
     setTestUser(priya);
-    assert.equal(
-      (await updateCustomer(customer.id, { city: "Bhiwandi" })).ok,
-      true,
-    );
+    assert.equal(savedCity.ok, true);
 
     await projectParties();
 
@@ -7221,11 +7224,13 @@ describe("the sheet fills a blank and never corrects a person", () => {
     await stagePartyRowWithDetail("TERMS PAINTS", { creditDays: 15 });
 
     const { updateCustomer } = await import("@/lib/actions/crm");
+    const { setTestCustomerEditApp } = await import("@/lib/customer-edit-gate");
+    setTestUser(deepa);
+    setTestCustomerEditApp("accounts");
+    const savedTerm = await updateCustomer(customer.id, { creditTermDays: 45 });
+    setTestCustomerEditApp(null);
     setTestUser(priya);
-    assert.equal(
-      (await updateCustomer(customer.id, { creditTermDays: 45 })).ok,
-      true,
-    );
+    assert.equal(savedTerm.ok, true);
 
     await projectParties();
 

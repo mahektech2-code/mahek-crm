@@ -1403,23 +1403,28 @@ export async function projectBills(
 export async function projectSheet(
   options: ProjectionOptions = {},
 ): Promise<ProjectionReport> {
-  const customerResult = await projectCustomers(options);
-
   /*
    * THE ERP TAKES THE ORDERS once `erp.orders.live` is on, and from then the
-   * sheet is history rather than a source: it writes no order and no bill. Two
-   * authors of one book is every order counted twice. Customers still come
-   * from the party tab — the sheet is simply right about those.
+   * Order Details tab is history rather than a source: it writes no order, no
+   * bill — and no CUSTOMER. Two authors of one book is every order counted
+   * twice, and `projectCustomers` reads its parties off this same tab, so it
+   * used to run first and go on creating customers from whatever was still
+   * typed into Order Details after the cut-over. A party is created in the ERP
+   * (or in Accounts) now. The Sales Party tab is a different source with its
+   * own switch, `erp.orders.partySheet`, and is published by `projectParties`
+   * after this returns.
    */
   if ((await getConfig())["erp.orders.live"]) {
     const none = { created: 0, updated: 0, payments: 0, paidWithoutDate: 0, blankStatus: 0, clashed: 0, unstated: 0, skipped: true };
     return {
-      customers: customerResult,
+      customers: { created: 0, updated: 0, adoptedLeads: 0, withoutPhone: 0, unassigned: 0 },
       orders: { created: 0, updated: 0, lines: 0 },
       bills: none,
-      skipped: [{ reason: "the ERP takes the orders (erp.orders.live), so the sheet writes no orders or bills", count: 0 }],
+      skipped: [{ reason: "the ERP takes the orders (erp.orders.live), so the order tab writes no customers, orders or bills", count: 0 }],
     };
   }
+
+  const customerResult = await projectCustomers(options);
 
   const { orders: orderResult, skipped } = await projectOrders(options);
 

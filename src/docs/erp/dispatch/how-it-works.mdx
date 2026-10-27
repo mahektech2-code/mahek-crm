@@ -1,5 +1,7 @@
 The Dispatch desk exists to answer one question at the lorry: **is this box allowed on this order?** Before it, the only check between the shelf and the customer was a person reading a label. Now every box carries its own id in a QR, and every scan is judged against the order's lines — product, pack size, quantity, godown and the box's own state — before it counts. A wrong box is stopped, and the only way past is a second person agreeing in writing.
 
+The desk is also where the order leaves: once its invoice has been approved by the invoice checker and every box is scanned, **Confirm dispatch** records the date and the vehicle and sends the whole order to [Logistics](/docs/erp/transport).
+
 ## What a box is
 
 A **box** is one physical unit with its own id — `BX-…` for a box from a packing batch, `LU-…` for a labelled loose can or drum from an FG lot. The id is what the QR carries. The lot it came from is linked data, so one lot makes many boxes and one order can carry boxes of several lots. Every change to a box is appended to its history and never edited. Minting and labelling boxes is on [Stock](/docs/erp/stock); tracing one is on [Traceability](/docs/erp/traceability).
@@ -7,7 +9,7 @@ A **box** is one physical unit with its own id — `BX-…` for a box from a pac
 | Box state | Meaning |
 |---|---|
 | In stock | On the shelf, can be scanned |
-| Scanned for dispatch | On an order, waiting for Mark dispatch-verified |
+| Scanned for dispatch | On an order, waiting for Confirm dispatch |
 | Dispatched | Gone |
 | On hold | Cannot be scanned until released |
 | Rejected / Returned / Written off / Cancelled | Cannot be scanned |
@@ -52,6 +54,14 @@ The office allocates lots, but the godown picks boxes off a shelf. Refusing a pe
 A scan runs in one transaction under the box's row lock and the lots' locks. Two people scanning the same box at two desks get one success and one *already scanned*.
 </Rule>
 
+<Rule title="A lot label stands in only where there are no boxes">
+Stock packed before box ids existed carries only its lot's label — the packing batch (FP…) or, for loose cans, the FG lot (FG…). Scanned at the desk, such a label is judged as a lot: the lot the line was given is a match and says how many to load from it; a lot of the same SKU on a line still short of its allocation is allocated, as many as the line still needs and the lot has free at that godown; anything else says what differs. A base-liquid or raw-material lot is refused as not packed stock, and a lot whose boxes **do** carry their own labels is refused — there the box is what is counted. A lot scan writes the scan row and, where it allocates, the batch code under the lot's lock; it marks no box.
+</Rule>
+
+<Rule title="The Factory app scans through the same desk">
+The Mahek Factory phone app loads a lorry by transporter: every Ready line at the godown not yet dispatch-verified, grouped by the transporter named on it. The loader scans and never chooses an order — the app picks one whose allocated lot the box is from, then the soonest due, then the lowest order number, and an approved override names its own line. Every scan is then judged and written by this desk's own scan, so a box loaded from the phone is a box counted here.
+</Rule>
+
 ## Overrides take two people
 
 <Rule title="Only a product or pack-size mismatch can be overridden">
@@ -64,17 +74,31 @@ A mismatch override is the company deciding to send something the customer did n
 
 Only one override per box per order line can be open (waiting or approved) at a time. The same power also lets a person reject a box, or mark one returned by the customer, on Boxes & labels.
 
-## Mark dispatch-verified waits for every box
+## Confirm dispatch waits for the invoice and for every box
+
+<Rule title="The invoice gate">
+An order is dispatched only once its Tally invoice has been **approved** by the invoice checker on [Orders → Invoice check](/docs/erp/orders). While it waits, or after it is rejected, the desk says so and the button stays off.
+</Rule>
 
 <Rule title="The scan gate">
-A line must have every box scanned before it can be dispatch-verified **if any lot allocated to it has box ids**. A line whose lots have none — stock packed before box ids existed — is not held back, because there is nothing to scan. The whole gate is switched by <Setting k="erp.dispatch.requireScan" />.
+A line must have every box scanned before it can be dispatched **if any lot allocated to it has box ids**. The order leaves whole, so one line still to scan holds every line of it. A line whose lots have none — stock packed before box ids existed — is not held back, because there is nothing to scan. The whole gate is switched by <Setting k="erp.dispatch.requireScan" />.
 </Rule>
 
 <Callout kind="why" title="Why old stock is let through">
 Refusing every line without box labels would have stopped dispatch on the day scanning shipped. Old stock runs down on its own; new packing batches always mint their boxes.
 </Callout>
 
-Mark dispatch-verified then marks each scanned box **dispatched** with the date, the line Verified and Dispatched, and opens the bill's transport record. It is the same action as on [Orders → Billing & dispatch](/docs/erp/orders), with the same rules, from whichever screen it is pressed.
+<Rule title="An order leaves whole, with its vehicle">
+**Confirm dispatch** asks for the date, the **vehicle / tempo / truck number**, the **driver or transporter** and any **remark or exception**, and dispatches every billed line of the order together — one order is one bill, so there is no part to leave behind. An order with a line not on its bill is refused; goods that go later are moved to a new order before billing. The date may not be before the order date.
+</Rule>
+
+It then marks each scanned box **dispatched** with the date, the lines Verified and Dispatched, and puts the order on one record on [Logistics](/docs/erp/transport). The vehicle number is saved in capitals, and bills recorded with the same vehicle on the same day join one **trip** there. It is the same action as on [Orders → Billing & dispatch](/docs/erp/orders), with the same rules, from whichever screen it is pressed.
+
+## The dispatch sticker is not the box label
+
+<Rule title="Two stickers, two systems">
+The **box label** (50 mm, with its QR) is made by the box-id system and is what the desk scans. The **dispatch sticker** (80 mm) carries only the customer, the product, the invoice number and the order number — never a lot or box code — and is printed only once the invoice is approved. The two are never combined.
+</Rule>
 
 ## What is recorded
 
@@ -93,9 +117,9 @@ The [Traceability](/docs/erp/traceability) dashboard counts today's mismatches, 
 |---|---|
 | Open the desk, scan, take off, request an override | The Dispatch desk screen |
 | Approve or decline an override | The Dispatch desk and *Approve dispatch overrides* — and not your own request, unless an ERP administrator |
-| Allocate a lot by hand | The Orders screen as well |
-| Mark dispatch-verified from the desk | The Orders screen as well |
-| Print dispatch labels | The Orders screen or the Dispatch desk |
+| Allocate a lot by hand | The Orders screen as well, and only while the line is not billed |
+| Confirm dispatch from the desk | The Orders screen as well |
+| Print dispatch stickers (after the invoice is approved) | The Orders screen or the Dispatch desk |
 
 <SettingsTable keys={["erp.dispatch.requireScan"]} />
 

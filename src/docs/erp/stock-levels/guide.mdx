@@ -11,9 +11,9 @@ The numbers on this page that come from settings — how far back the suggestion
 
 ## The screen at a glance
 
-<Wireframe url="/erp/rm-levels" nav={["Dashboard", "Alerts", "#Stock", "Stock", "Boxes & labels", "Item transfers", "Raw-material levels", "Finished-goods levels"]} active="Raw-material levels" caption="Raw-material levels, opened on its Below minimum tab">
+<Wireframe url="/erp/rm-levels" nav={["Dashboard", "Alerts", "#Stock", "Stock on hand", "Stock accuracy", "Boxes & labels", "Item transfers", "Raw-material levels", "Finished-goods levels"]} active="Raw-material levels" caption="Raw-material levels, opened on its Below minimum tab">
   <WfBar>
-    <WfTitle sub="Minimum and maximum per godown. Raise a requisition from any item below its minimum.">Raw-material levels</WfTitle>
+    <WfTitle sub="Minimum and maximum per godown, and what is below it.">Raw-material levels</WfTitle>
     <WfSpacer />
     <WfButton primary>New level</WfButton>
     <Hotspot n={1} />
@@ -22,11 +22,11 @@ The numbers on this page that come from settings — how far back the suggestion
   <WfBar><WfText muted>Grouped by godown and material type</WfText><Hotspot n={2} /></WfBar>
   <WfTable
     highlight={0}
-    columns={["Item", "Available", "Re-order %", "Min", "Godown", "Material type", "Flags"]}
+    columns={["Item", "Available", "Days of stock", "Re-order %", "Min", "Godown", "Material type", "Flags"]}
     rows={[
-      [<span key="a"><b>Toluene</b> <Hotspot n={3} /></span>, "120", "-60", "200", "Godown A", "Chemical", <WfPill key="b" tone="danger">Below level</WfPill>],
-      [<b key="c">Tin can 5L</b>, "340", "-15", "300", "Godown A", "Can", <WfPill key="d" tone="danger">Below level</WfPill>],
-      [<b key="e">Box6</b>, "55", "-8", "40", "Godown A", "Box", <span key="f"><WfPill tone="danger">Below level</WfPill> <Hotspot n={4} /></span>],
+      [<span key="a"><b>Toluene</b> <Hotspot n={3} /></span>, "120", "6", "-60", "200", "Godown A", "Chemical", <WfPill key="b" tone="danger">Below level</WfPill>],
+      [<b key="c">Tin can 5L</b>, "340", "13", "-15", "300", "Godown A", "Can", <WfPill key="d" tone="danger">Below level</WfPill>],
+      [<b key="e">Box6</b>, "55", "16", "-8", "40", "Godown A", "Box", <span key="f"><WfPill tone="danger">Below level</WfPill> <Hotspot n={4} /></span>],
     ]}
   />
   <WfPanel title="Toluene" side>
@@ -142,7 +142,7 @@ Edit the minimum or maximum and the level is yours: the planner never changes it
 
 ## Suggested levels
 
-For finished goods, when the suggestion feature is on (currently <Setting k="erp.ai.reorder.enabled" />), each level shows what the ERP would set it to, worked out from how much that godown actually used:
+For finished goods — and for a raw-material level the planner has not read yet — when the suggestion feature is on (currently <Setting k="erp.ai.reorder.enabled" />), each level shows what the ERP would set it to, worked out from how much that godown actually used:
 
 | Kind of item | Use is read from |
 |---|---|
@@ -151,7 +151,7 @@ For finished goods, when the suggestion feature is on (currently <Setting k="erp
 | Box | The packing batches at that godown (boxes used per box packed) |
 | Finished-goods SKU | The dispatch-verified orders that left that godown |
 
-The suggestion is the average daily use over the last <Setting k="erp.ai.reorder.lookbackDays" /> days, times <Setting k="erp.ai.reorder.minCoverDays" /> days' cover for the minimum and <Setting k="erp.ai.reorder.maxCoverDays" /> days' cover for the maximum, rounded up. Open the row to read the **Suggestion basis** — for example *Used 12.5 L/day over 90 days; 14–30 days' cover.* — and, where the last 30 days ran much faster or slower than that, a **Recent use** line saying so.
+The suggestion is the average daily use over the last <Setting k="erp.ai.reorder.lookbackDays" /> days, times <Setting k="erp.ai.reorder.minCoverDays" /> days' cover for the minimum and <Setting k="erp.ai.reorder.maxCoverDays" /> days' cover for the maximum, rounded up. Open the row to read the **Suggestion basis** — for example *Used 12.5 L/day over <Setting k="erp.ai.reorder.lookbackDays" /> days; <Setting k="erp.ai.reorder.minCoverDays" />–<Setting k="erp.ai.reorder.maxCoverDays" /> days' cover.* — and, where the last 30 days ran much faster or slower than that, a **Recent use** line saying so.
 
 Nothing changes until somebody presses a button:
 

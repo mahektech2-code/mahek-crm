@@ -1,4 +1,4 @@
-`lib/erp/stock.ts` is the one statement of "current stock, lot wise" per stage; every list, form, validation and dashboard tile calls it. The Stock screen's eight tabs are screen modules spread over `screens/purchase.ts` (`rmStock`, `rmLog`) and `screens/production.ts` (`sfgStock`, `fgStock`, `packStock` and their logs). Boxes are `screens/units.ts` over the register in `lib/erp/units.ts`; transfers are `screens/movement.ts`; label sheets are the route `app/erp/print-labels`.
+`lib/erp/stock.ts` is the one statement of "current stock, lot wise" per stage; every list, form, validation and dashboard tile calls it. All four reads join only unreserved godowns (`not g.reserved`), so stock written off to Item Lost Record is never counted. The Stock on hand screen's eight tabs are screen modules spread over `screens/purchase.ts` (`rmStock`, `rmLog`) and `screens/production.ts` (`sfgStock`, `fgStock`, `packStock` and their logs). Boxes are `screens/units.ts` over the register in `lib/erp/units.ts`; transfers are `screens/movement.ts`; label sheets are the route `app/erp/print-labels`.
 
 ## Map of the code
 
@@ -8,7 +8,7 @@
 | Stock tabs | `src/lib/erp/screens/purchase.ts`, `src/lib/erp/screens/production.ts` | `rmStock`/`rmLog`, `sfgStock`, `fgStock` (+ `labelLoose`), `packStock`, `logScreen(…)` |
 | Raw material by item | `src/lib/erp/engines/stock-fold.ts`, `src/lib/erp/list-query.ts` | `foldRmLots` (chemicals by lot, every other type one total per item and godown), `ListRow.sub`, `ListSpec.fold`, `unfold` and `?parts=1` for By lot |
 | Registry | `src/lib/erp/registry.ts` | Screen `stock`: tabs `rmStock`, `sfgStock`, `fgStock`, `packStock`, each with an `alt` log toggle |
-| Box register | `src/lib/erp/units.ts` | `unitEvent`, `ensureBatchBoxes`, `cancelBatchBoxes`, `mintLooseUnits`, `looseHeadroom`, `trimLooseUnits`, `moveUnitsForTransfer` |
+| Box register | `src/lib/erp/units.ts` | `unitEvent`, `ensureBatchBoxes`, `cancelBatchBoxes`, `labelBatchBoxes`, `mintLooseUnits`, `looseHeadroom`, `boxHeadroom`, `trimLooseUnits`, `moveUnitsForTransfer` |
 | Box rules (pure) | `src/lib/erp/engines/trace.ts` | `unitId`, `boxLots`, `UNIT_STATUS`, `UNIT_STATUS_LABEL`, `manualMove` |
 | Boxes screen | `src/lib/erp/screens/units.ts` | `unitScreen("units" \| "allUnits")`, `move` |
 | Labels | `src/app/erp/print-labels/page.tsx`, `src/lib/actions/erp-trace.ts` | `?batch=`, `?lot=`, `?ids=`, `?order=`; `erpMarkLabelsPrinted` |
@@ -23,7 +23,7 @@
 
 <Code file="src/lib/erp/stock.ts" symbol="packingUse" />
 
-The other stages follow the same shape — an `inflow` CTE over the stage's entries, an `outflow` CTE over the consuming documents:
+The other stages follow the same shape — an `inflow` CTE over the stage's entries, an `outflow` CTE over the consuming documents, joined to `erp_godowns` with `not g.reserved`:
 
 | Stage | `inflow` | `outflow` |
 |---|---|---|
@@ -83,6 +83,10 @@ sequenceDiagram
 
 <Code file="src/lib/erp/units.ts" symbol="ensureBatchBoxes" />
 
+<Code file="src/lib/erp/units.ts" symbol="labelBatchBoxes" />
+
+<Code file="src/lib/erp/label-data.ts" symbol="unlabelledStock" />
+
 <Code file="src/lib/erp/units.ts" symbol="trimLooseUnits" />
 
 <DbTable name="erp_units" note={{
@@ -121,6 +125,9 @@ sequenceDiagram
 <Steps>
 <Step title="A new consuming document">
 Add it to the stage's `outflow` CTE in `stock.ts` — never write a negative entry — and take `lockLot` in its save.
+</Step>
+<Step title="Keep the reserved godown out of every read">
+A new stock read joins `erp_godowns` with `not g.reserved`. Item Lost Record balances the ledger; counting it would put written-off stock back on every total.
 </Step>
 <Step title="A new producing document">
 Write exactly one inflow entry per source (`source_type`, `source_id`) and re-sync it on every edit, like `syncPurchaseEntry` and `syncSfgEntry`. Add the source type to the orphan count in `dashboard.ts` and to the log.

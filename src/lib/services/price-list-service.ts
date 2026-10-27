@@ -666,6 +666,22 @@ export async function customerGeo(customerId: string): Promise<CustomerGeo | nul
   return row ? toGeo(row) : null;
 }
 
+/**
+ * Several named shops' geography in one read, for a screen that prices many
+ * parties at once — the ERP's order form resolves every billing party it
+ * offers. Not narrowed by the CRM's scope: the ERP decides who may see its own
+ * parties, and a list resolved for fewer of them would leave rates blank.
+ */
+export async function geographyOf(customerIds: string[]): Promise<Map<string, CustomerGeo>> {
+  const out = new Map<string, CustomerGeo>();
+  for (let i = 0; i < customerIds.length; i += 1000) {
+    const ids = customerIds.slice(i, i + 1000);
+    const rows = await db.execute<GeoRow>(sql`${GEO_SELECT} where c.id in (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`);
+    for (const r of rows) out.set(r.customerId, toGeo(r));
+  }
+  return out;
+}
+
 /** The whole book's geography, for the reports that resolve every shop. */
 async function bookGeography(): Promise<CustomerGeo[]> {
   const ids = await userIdsInScope();
@@ -960,12 +976,20 @@ export async function coverageReport(todayIso: string): Promise<CoverageReport> 
 /* ------------------------------------------------------------- variance */
 
 /**
- * What was BILLED against what the list says, off the order sheet.
+ * What was BILLED against what the list says, off the order sheet and the ERP.
  *
  * The sheet's Rate is ex-GST per can, which is the same figure a list stores,
  * so the two are comparable without converting anything. Each row is resolved
  * as of its own order date, because a list published since would otherwise
  * make last month look like a month of discounting.
+ *
+ * THE ERP'S OWN LINES ARE READ BESIDE THE SHEET'S, and only its own: the rate
+ * on an ERP line is the same ex-GST figure (the ERP was built off the sheet's
+ * columns), and once `erp.orders.live` is on the sheet stops being typed, so a
+ * report reading the sheet alone would show every month after the cut-over as
+ * empty. A line copied in from the sheet (`source = 'sheet'`) is already here
+ * as its Order Details row, and reading it twice would double the month.
+ * Cancelled lines are not a price anybody agreed to.
  */
 export async function varianceReport(month: string): Promise<VarianceReport> {
   const { scopes, lists } = await activeScopesAndLists();
@@ -983,19 +1007,35 @@ export async function varianceReport(month: string): Promise<VarianceReport> {
     billedExPaise: number;
     sheetDiscountBp: number | null;
   }>(sql`
-    select o.order_date::text as "orderDate", o.order_number as "orderNumber",
-           o.matched_customer_id as "customerId",
-           coalesce(c.name, o.billing_party_name, 'Unknown') as "customerName",
-           o.matched_product_id as "productId",
-           coalesce(p.name, o.description, 'Unknown') as "productName",
-           o.cans, o.rate_paise as "billedExPaise", o.discount_bp as "sheetDiscountBp"
-      from sheet_order_rows o
-      left join customers c on c.id = o.matched_customer_id
-      left join products p on p.id = o.matched_product_id
-     where o.status = 'present'
-       and o.rate_paise is not null
-       and o.order_date >= ${from}::date and o.order_date < ${to}::date
-     order by o.order_date asc, o.id asc
+    select * from (
+      select o.order_date::text as "orderDate", o.order_number as "orderNumber",
+             o.matched_customer_id as "customerId",
+             coalesce(c.name, o.billing_party_name, 'Unknown') as "customerName",
+             o.matched_product_id as "productId",
+             coalesce(p.name, o.description, 'Unknown') as "productName",
+             o.cans, o.rate_paise as "billedExPaise", o.discount_bp as "sheetDiscountBp", o.id as "lineId"
+        from sheet_order_rows o
+        left join customers c on c.id = o.matched_customer_id
+        left join products p on p.id = o.matched_product_id
+       where o.status = 'present'
+         and o.rate_paise is not null
+         and o.order_date >= ${from}::date and o.order_date < ${to}::date
+      union all
+      select e.order_date::text, e.order_no::text,
+             e.billing_customer_id,
+             coalesce(c.name, 'Unknown'),
+             e.sku_id,
+             coalesce(p.name, 'Unknown'),
+             e.qty_cans, e.rate_paise, e.discount_bp, e.id
+        from erp_orders e
+        left join customers c on c.id = e.billing_customer_id
+        left join products p on p.id = e.sku_id
+       where e.source = 'erp'
+         and e.status <> 'Cancel'
+         and e.rate_paise is not null
+         and e.order_date >= ${from}::date and e.order_date < ${to}::date
+    ) x
+     order by x."orderDate" asc, x."lineId" asc
      limit 2000
   `);
 

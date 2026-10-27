@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { NavLink } from "@/components/shell/nav-link";
 import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 import type { DispatchBoard } from "@/lib/erp/dispatch";
@@ -50,6 +50,9 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
   const [error, setError] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const [date, setDate] = useState(today);
+  const [vehicle, setVehicle] = useState("");
+  const [driver, setDriver] = useState("");
+  const [remark, setRemark] = useState("");
   const [note, setNote] = useState<Record<string, string>>({});
   const [flash, setFlash] = useState<string | null>(null);
   const [pending, start] = useTransition();
@@ -59,6 +62,9 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
   const totalScanned = open.reduce((a, l) => a + Math.min(l.scanned, l.target), 0);
   const gated = board.lines.filter((l) => l.gate && !l.dispatched);
   const billedWaiting = board.lines.filter((l) => l.billed && !l.dispatched);
+  /* PRD step 6: the order leaves only once its invoice has been approved by the checker. */
+  const invoiceWaiting = billedWaiting.filter((l) => l.invoiceCheck !== "Approved");
+  const invoiceRejected = billedWaiting.some((l) => l.invoiceCheck === "Rejected");
   const pendingOverrides = board.overrides.filter((o) => o.status === "Pending");
 
   const scan = (raw: string) => {
@@ -136,9 +142,9 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
                 <div className="px-5 py-3">
                   <div className="text-base text-ink">{last.verdict.message}</div>
                   <div className="mt-1 font-mono text-meta text-muted">
-                    <Link href={erpTraceHref(last.code)} className={linkClass()}>
+                    <NavLink href={erpTraceHref(last.code)} className={linkClass()}>
                       {last.code}
-                    </Link>
+                    </NavLink>
                   </div>
                   {last.verdict.result === "mismatch" && last.verdict.mismatch ? (
                     <div className="mt-3 border-t border-divider pt-3">
@@ -219,9 +225,9 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
             {board.units.length ? (
               board.units.map((u) => (
                 <div key={u.id} className="flex items-center gap-3 border-b border-divider px-4 py-1.5 text-meta last:border-0">
-                  <Link href={erpTraceHref(u.id)} className={linkClass("brand", "font-mono")}>
+                  <NavLink href={erpTraceHref(u.id)} className={linkClass("brand", "font-mono")}>
                     {u.id}
-                  </Link>
+                  </NavLink>
                   <span className="min-w-0 flex-1 truncate text-body">
                     {u.sku} · lot {u.lotCode}
                     {u.by ? ` · ${u.by}` : ""}
@@ -243,23 +249,35 @@ export function DispatchDesk({ board, me, canDecide, administrator, canVerify, c
 
         <div className="flex flex-col gap-5">
           <Card className="px-4 py-3">
-            <SubTitle className="mb-0">Dispatch verification</SubTitle>
+            <SubTitle className="mb-0">Confirm dispatch</SubTitle>
             {!billedWaiting.length ? (
-              <div className="mt-1 text-meta text-muted">Nothing is billed and waiting. Bill the lines on Orders → Under process &amp; ready, then verify here.</div>
+              <div className="mt-1 text-meta text-muted">Nothing is billed and waiting. Bill the order on Orders → Ready to bill; it is dispatched once its invoice is approved.</div>
+            ) : invoiceWaiting.length ? (
+              <div className="mt-1 text-meta text-warn-ink">
+                Invoice {board.invoiceNo ?? ""} {invoiceRejected ? "was rejected by the checker — it is corrected on Orders → Invoice check." : "is waiting for the invoice check. Dispatch waits for its approval."}
+              </div>
             ) : gated.length ? (
-              <div className="mt-1 text-meta text-warn-ink">{gated.map((l) => `${l.skuName}: ${l.gate}`).join("; ")}. Dispatch verification waits for every box.</div>
+              <div className="mt-1 text-meta text-warn-ink">{gated.map((l) => `${l.skuName}: ${l.gate}`).join("; ")}. Dispatch waits for every box.</div>
             ) : (
-              <div className="mt-1 text-meta text-success">Every box is scanned and checked.</div>
+              <div className="mt-1 text-meta text-success">Invoice {board.invoiceNo ?? ""} approved, and every box is scanned and checked.</div>
             )}
             {canVerify ? (
-              <div className="mt-3 flex items-center gap-2">
-                <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="min-w-0 flex-1" />
-                <Button size="sm" variant="primary" disabled={pending || !billedWaiting.length || gated.length > 0} onClick={() => act(() => erpDispatchVerify(board.orderNo, date))}>
-                  Mark dispatch-verified
+              <div className="mt-3 flex flex-col gap-2">
+                <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} aria-label="Dispatch date" />
+                <Input value={vehicle} onChange={(e) => setVehicle(e.target.value)} placeholder="Vehicle / tempo / truck no." aria-label="Vehicle number" />
+                <Input value={driver} onChange={(e) => setDriver(e.target.value)} placeholder="Driver or transporter" aria-label="Driver or transporter" />
+                <Input value={remark} onChange={(e) => setRemark(e.target.value)} placeholder="Remark or exception (optional)" aria-label="Dispatch remark" />
+                <Button
+                  size="sm"
+                  variant="primary"
+                  disabled={pending || !billedWaiting.length || invoiceWaiting.length > 0 || gated.length > 0}
+                  onClick={() => act(() => erpDispatchVerify(board.orderNo, { date, vehicle, driver, remark }))}
+                >
+                  Confirm dispatch
                 </Button>
               </div>
             ) : (
-              <div className="mt-2 text-meta text-muted">Billing &amp; dispatch is not on your account, so somebody in the office verifies.</div>
+              <div className="mt-2 text-meta text-muted">Billing &amp; dispatch is not on your account, so somebody in the office confirms the dispatch.</div>
             )}
           </Card>
 

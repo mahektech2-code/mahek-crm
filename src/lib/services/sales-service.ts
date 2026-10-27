@@ -23,12 +23,7 @@ import { sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { APP_TIMEZONE } from "../business-date";
 import { today } from "../recompute";
-import {
-  TERRITORY_BEAT_SQL,
-  TERRITORY_REGION_SQL,
-  qualify,
-  stateKeySql,
-} from "@/lib/territory-sql";
+import { TERRITORY_REGION_SQL, qualify, stateKeySql } from "@/lib/territory-sql";
 import { placeFilterOptions, placeFilterSql, placeNameSql } from "@/lib/services/place-filter-service";
 import type { PlaceFilterOptions, PlaceFilterValues } from "@/lib/place-filters";
 import { rankShopCities } from "@/lib/journey-days";
@@ -5833,42 +5828,52 @@ export async function knownRegions(): Promise<string[]> {
 }
 
 /**
- * THE PLACES THE BOOK ACTUALLY USES, as the tree they form.
+ * THE PLACES A SALESMAN CAN BE GIVEN, as the tree they form — state, then
+ * district, then town.
  *
- * A city belongs to a state and a beat to a city, so this is one query grouped
- * rather than three flat lists. Flat lists are what the dialog had, and on this
- * book that meant every city value in the country under one heading — several
- * hundred of them, most of them not cities at all but whole postal addresses
- * the sheet dropped into the column ("06, MAHADEV TOWERS CO-OP HSG SOC, LTD,
- * LBS MARG, HARINIWAS CIRCLE, Thane, Maharashtra, 400602"). Nesting does not
- * clean that data and cannot; what it does is make it reachable, because a
- * state's worth of it is a list somebody can search and the country's is not.
+ * Districts and towns come from the reviewed location tree (`places`, and the
+ * `resolved_*_id` columns every shop carries), which is what every list of
+ * shops in MahekOne already narrows by. They used to come from
+ * `customers.city`, which is whatever the sheet typed: 1,165 spellings of a few
+ * hundred places, a third of them whole postal addresses ("06, MAHADEV TOWERS
+ * CO-OP HSG SOC, LTD, LBS MARG, HARINIWAS CIRCLE, Thane, Maharashtra, 400602")
+ * offered as cities. Grouping them under a state made that list reachable; it
+ * could never make it clean, and a district is how Mahek actually divides the
+ * country.
  *
- * Read off `customers` rather than kept as a list of their own, exactly as
- * `knownRegions` is and for the same reason: a separate list would offer places
- * no customer is in, and a territory that matches nothing is a book that goes
- * quietly empty.
+ * THE STATE'S OWN COUNT IS STILL THE TYPED STATE, because that is what a
+ * whole-state pick matches (`territoryClause`) and has matched since the day
+ * territories shipped — moving it onto the tree would quietly move shops in
+ * and out of every allocation already made. So a state's figure and the sum of
+ * its districts can differ by the handful of shops whose pin and sheet
+ * disagree, and the dialog never adds the two together.
  *
- * Trimmed and deduplicated case-insensitively, because "Nagpur", "nagpur " and
- * "NAGPUR" are one city typed by three people — and the filter that reads these
- * compares the same way, so the dialog must not offer three chips that behave
- * as one. States are folded by `canonicalState`, the same fold the clause
- * matches on, so a chip and the filter behind it cannot disagree about which
- * customers a place has.
+ * Every node is built from shops that are placed in it, so the dialog cannot
+ * offer a district no customer is in — the rule `knownRegions` keeps for the
+ * same reason: a territory that matches nothing is a book that goes quietly
+ * empty.
  */
-export type BeatNode = { beat: string; shops: number };
+export type TownNode = { town: string; shops: number };
 
-export type PlaceNode = {
-  city: string;
-  beats: BeatNode[];
-  /** How many shops carry it. The dialog prints it — a city of 1 is usually a typo. */
+export type DistrictNode = {
+  district: string;
+  towns: TownNode[];
+  /** Shops the tree places in it — what a whole-district pick reaches. */
   shops: number;
 };
 
 export type StateNode = {
   state: string;
-  cities: PlaceNode[];
+  districts: DistrictNode[];
+  /** Shops whose typed state is this one — what a whole-state pick reaches. */
   shops: number;
+  /**
+   * SHOPS HERE THAT NO DISTRICT CAN REACH, counted and never hidden: placed
+   * only as far as the state, because the town they typed matched two places
+   * or none, or not placed on the tree at all. A whole-state pick still reaches
+   * them; nothing finer does, and the dialog says so.
+   */
+  undistricted: number;
 };
 
 export type PlaceTree = {
@@ -5877,8 +5882,8 @@ export type PlaceTree = {
    * SHOPS THAT NAME NO STATE, counted and never hidden.
    *
    * They cannot be allocated: every branch of the tree starts at a state, and a
-   * row with nothing in `region` matches no state row. Under the old rule they
-   * reached whoever held their book anyway; under the new one they reach
+   * row with no state, typed or placed, matches no row here. Under the old rule
+   * they reached whoever held their book anyway; under the new one they reach
    * nobody, which is a real consequence of switching the default off and is
    * therefore said out loud on the screen rather than left to be discovered.
    */
@@ -5886,7 +5891,79 @@ export type PlaceTree = {
 };
 
 export async function knownPlaces(): Promise<PlaceTree> {
-  return placeTreeFrom(sql``);
+  const [typed, placed] = await Promise.all([
+    db.execute<{ region: string | null; unplaced: boolean; shops: number }>(sql`
+      select ${sql.raw(qualify(TERRITORY_REGION_SQL, "c"))} as region,
+             (c.resolved_state_id is null) as unplaced,
+             count(*)::int as shops
+        from customers c
+       where c.deleted_at is null
+       group by 1, 2
+    `),
+    db.execute<{ state: string; district: string | null; town: string | null; shops: number }>(sql`
+      select s.name as state, d.name as district, t.name as town, count(*)::int as shops
+        from customers c
+        join places s on s.id = c.resolved_state_id
+        left join places d on d.id = c.resolved_district_id
+        left join places t on t.id = c.resolved_city_id
+       where c.deleted_at is null
+       group by 1, 2, 3
+    `),
+  ]);
+
+  /* Keyed on the fold, valued on the first spelling seen, so the tree carries
+     one node per state however many ways the sheet spelled it. */
+  const states = new Map<string, StateNode>();
+  const stateNode = (name: string) => {
+    const key = stateKey(name);
+    let node = states.get(key);
+    if (!node) {
+      node = { state: name, districts: [], shops: 0, undistricted: 0 };
+      states.set(key, node);
+    }
+    return node;
+  };
+
+  let statelessShops = 0;
+  for (const r of typed) {
+    const name = canonicalState(r.region);
+    if (!name) {
+      if (r.unplaced) statelessShops += r.shops;
+      continue;
+    }
+    const node = stateNode(name);
+    node.shops += r.shops;
+    if (r.unplaced) node.undistricted += r.shops;
+  }
+
+  for (const r of placed) {
+    const node = stateNode(canonicalState(r.state) || r.state);
+    if (!r.district) {
+      node.undistricted += r.shops;
+      continue;
+    }
+    let district = node.districts.find((d) => d.district === r.district);
+    if (!district) {
+      district = { district: r.district, towns: [], shops: 0 };
+      node.districts.push(district);
+    }
+    district.shops += r.shops;
+    if (r.town) district.towns.push({ town: r.town, shops: r.shops });
+  }
+
+  /* Biggest first inside a parent: the district somebody means is almost
+     always one of the few with real shop counts. */
+  for (const node of states.values()) {
+    node.districts.sort((a, b) => b.shops - a.shops || a.district.localeCompare(b.district));
+    for (const d of node.districts) {
+      d.towns.sort((a, b) => b.shops - a.shops || a.town.localeCompare(b.town));
+    }
+  }
+
+  return {
+    states: [...states.values()].sort((a, b) => a.state.localeCompare(b.state)),
+    statelessShops,
+  };
 }
 
 /**
@@ -5909,80 +5986,6 @@ export async function leadPlaceOptions(
     where: sql`c.lead_stage is not null and c.lead_archived = ${archived} and ${notConverted()} ${leadsVisible(scope)}`,
     picks,
   });
-}
-
-/**
- * The grouping both of them are, in one place.
- *
- * Two copies of this query is two answers to "what places are there", and the
- * one that drifts is whichever screen nobody is looking at — which is the
- * failure `territory-sql.ts` already carries a file-length note about.
- */
-async function placeTreeFrom(where: SQL): Promise<PlaceTree> {
-  const rows = await db.execute<{
-    region: string | null;
-    city: string | null;
-    beat: string | null;
-    shops: number;
-  }>(sql`
-    select ${sql.raw(qualify(TERRITORY_REGION_SQL, "c"))} as region,
-           nullif(trim(c.city), '') as city,
-           ${sql.raw(qualify(TERRITORY_BEAT_SQL, "c"))} as beat,
-           count(*)::int as shops
-      from customers c
-      ${where}
-     group by 1, 2, 3
-  `);
-
-  /* Keyed on the fold, valued on the first spelling seen, so the tree carries
-     one node per place however many ways the sheet spelled it. */
-  const states = new Map<string, StateNode>();
-  let statelessShops = 0;
-
-  for (const r of rows) {
-    const state = canonicalState(r.region);
-    if (!state) {
-      statelessShops += r.shops;
-      continue;
-    }
-
-    const sKey = stateKey(state);
-    let node = states.get(sKey);
-    if (!node) {
-      node = { state, cities: [], shops: 0 };
-      states.set(sKey, node);
-    }
-    node.shops += r.shops;
-
-    if (!r.city) continue;
-    const cKey = r.city.toLowerCase();
-    let city = node.cities.find((c) => c.city.toLowerCase() === cKey);
-    if (!city) {
-      city = { city: r.city, beats: [], shops: 0 };
-      node.cities.push(city);
-    }
-    city.shops += r.shops;
-
-    if (r.beat) {
-      const beat = city.beats.find((b) => b.beat.toLowerCase() === r.beat!.toLowerCase());
-      if (beat) beat.shops += r.shops;
-      else city.beats.push({ beat: r.beat, shops: r.shops });
-    }
-  }
-
-  /* Biggest first inside a state: the city somebody means is almost always one
-     of the few with real shop counts, and the long tail is address strings. */
-  for (const node of states.values()) {
-    node.cities.sort((a, b) => b.shops - a.shops || a.city.localeCompare(b.city));
-    for (const c of node.cities) {
-      c.beats.sort((a, b) => b.shops - a.shops || a.beat.localeCompare(b.beat));
-    }
-  }
-
-  return {
-    states: [...states.values()].sort((a, b) => a.state.localeCompare(b.state)),
-    statelessShops,
-  };
 }
 
 /* ══════════════════════════════════════════════════ one salesman's record */

@@ -6,12 +6,12 @@ Around the ERP there are also a handful of **AI helpers** that read things for y
 
 <Wireframe url="/erp/alerts" nav={["Dashboard", "Alerts", "#Masters", "Raw materials", "…"]} active="Alerts" caption="Alerts, for a manager">
   <WfBar>
-    <WfTitle sub="Unusual activity the ERP noticed overnight and through the day. Each alert names the records and the figures behind it.">Alerts</WfTitle>
+    <WfTitle sub="Unusual activity, with the records and figures behind each alert.">Alerts</WfTitle>
     <WfSpacer />
     <WfButton primary>Run checks now</WfButton>
     <Hotspot n={1} />
   </WfBar>
-  <WfBar><WfPill>LR missing 2</WfPill><WfPill>Stock below re-order level 3</WfPill><WfPill>Purchase rate jump 1</WfPill><WfPill>Petty cash below zero 1</WfPill><Hotspot n={2} /></WfBar>
+  <WfBar><WfPill>LR missing 2</WfPill><WfPill>Stock below re-order level 3</WfPill><WfPill>Purchase rate jump 1</WfPill><WfPill>Cash account below zero 1</WfPill><Hotspot n={2} /></WfBar>
   <WfTable
     highlight={0}
     columns={["Raised", "Status", "Alert", "What is unusual", "Note"]}
@@ -70,15 +70,16 @@ If you resolve an alert whose condition is still true, the next hourly run raise
 | **Ready but not billed** | A line has been Ready and fully allocated for hours with no Tally bill number | Orders |
 | **LR missing** | A bill left days ago with no LR number | Logistics → LR desk |
 | **Credit note not issued** | A credit-note request was accepted days ago and not issued | Complaints & credit notes |
-| **Duplicate-looking expense** | One person recorded the same amount for the same particular twice within a few days | Petty cash → Expenses |
-| **Petty cash below zero** | Somebody has spent more than they were given at a godown in one mode | Petty cash → Expenses |
+| **Duplicate-looking expense** | The same amount was paid to the same payee for the same category twice within a few days | Petty Cash → Expenses |
+| **Cash account below zero** | Cash in Hand or Petty Cash shows more paid out than was ever put in — a transfer into it, or a receipt, is missing | Petty Cash → Cash & Bank → Accounts |
 | **Stock below re-order level** | A followed level is short | Raw-material or Finished-goods levels |
+| **Empty drum heavier or lighter than declared** | An emptied drum weighed more or less than the empty weight its supplier declared on the GRN, beyond the limits | Empty drums → Tare variance |
 
 The thresholds behind each are on the [How it works](/docs/erp/alerts-and-ai/how-it-works) tab, read live.
 
 ## The morning summary
 
-The ERP **dashboard** opens with a short paragraph about yesterday: how many orders were taken, lines dispatched, inward lines received, SFG batches made, and which alerts are open. It carries **counts only** — never a rate, amount, cost or margin — so everybody who can open the dashboard may read it. It is written overnight; where an AI writer is available it puts the figures into sentences (the line says *summarised by AI from the figures below*), and otherwise a plain sentence built from the same figures stands in.
+The ERP **dashboard** opens with a short paragraph about yesterday: how many orders were taken, lines dispatched, inward lines received, SFG batches made, and which alerts are open. It carries **counts only** — never a rate, amount, cost or margin — so everybody who can open the dashboard may read it. It is written overnight; where an AI writer is available it puts the figures into sentences, and otherwise a plain sentence built from the same figures stands in. The dashboard does not say which of the two you are reading.
 
 ## The AI helpers, and where they are
 
@@ -88,18 +89,20 @@ Every helper follows the same rules: it **reads**, you **check**, and nothing is
 |---|---|---|---|---|
 | **Read a supplier bill** | Purchases → Register (for people who can see purchase money) | A photo or PDF of the supplier's bill | Supplier and GSTIN, which register row each line is, quantities and rates, a bill number already used | [Goods receipt, testing and the register](/docs/erp/goods-receipt-and-testing) |
 | **Draft an order from a message** | Orders → WhatsApp inbox | A pasted or spoken message, or WhatsApp replies | The customer, each SKU and its quantity in cans | [Orders](/docs/erp/orders) |
-| **Read LR photo** | Transport | A lorry receipt | The LR number; a transporter mismatch or a repeated LR is flagged | [Transport](/docs/erp/transport) |
+| **Read an LR photo** | Logistics → Upload LRs (also on the Dispatch desk, and the Factory app's LR upload) | A lorry receipt | The LR number, date, transporter, destination, boxes and freight filled in for you; a number not shaped like that transporter's is marked *check* | [Logistics and LRs](/docs/erp/transport) |
 | **Read test photos** | Lot testing | The density meter, pH and test photos | Density and pH; a density far from the master is flagged. It never sets the verification. | [Goods receipt, testing and the register](/docs/erp/goods-receipt-and-testing) |
 | **Suggest a summary** | Complaints & credit notes | The complaint's description | A one-line summary | [Complaints and credit notes](/docs/erp/complaints-and-credit-notes) |
-| **Suggested levels** | Raw-material and Finished-goods levels | — (arithmetic on recent use, no AI model) | The suggested minimum and maximum | [Minimum levels and reordering](/docs/erp/stock-levels) |
-| **Ask the ERP** | The search box at the top of every ERP screen | Your question | The answer and the links under it | Below |
+| **Level planner review** | Raw-material levels | The nightly plan worked out from history, against the season ahead | The planned minimum and maximum, and the reason given for any change; a level a person set is never moved | [Minimum levels and reordering](/docs/erp/stock-levels) |
+| **Suggested levels** | Raw-material and Finished-goods levels, where the planner has not read the item | — (arithmetic on recent use, no AI model) | The suggested minimum and maximum | [Minimum levels and reordering](/docs/erp/stock-levels) |
+| **Discrepancy assistant** | Stock accuracy, on a red-flagged count | The records the rules found that could explain the difference | Which pending or missing records might account for it; it never creates an entry | [Stock accuracy and counting](/docs/erp/stock-accuracy) |
+| **Ask the ERP** | The search box at the top of every ERP screen, and the **Ask the ERP** button beside it | Your question | The answer and the links under it | Below |
 | **Dictation** | The microphone on note and remark boxes | What you say | The text before it goes into the box | — |
 
 ### Ask the ERP
 
-Type a question in the ERP's search box **ending with a question mark** and press Enter — *how many lines are Ready at Godown A?* or *which bills have no LR?* The answer comes back in one to three sentences, in the language you asked in, with the figure first, and with links to the lists it read.
+Type a question into the ERP's search box at the top — *how many lines are Ready at Godown A?* or *which bills have no LR?* The box searches as you type and offers **Ask the ERP** as a row; when what you typed reads as a question — it ends with a question mark, or starts with a word like *how*, *which* or *kitne* — that row moves to the top and Enter asks it. The answer opens in the Ask the ERP drawer, which the button of the same name in the header also opens, with a few example questions to start from and room for a follow-up. The answer comes back in one to three sentences, in the language you asked in, with the figure first, and with links to the lists it read.
 
-It only ever answers from **the screens you can open**, and only with **the columns you can see**: if you cannot see sales amounts, it cannot tell you them. If the question needs a screen you do not have, it says so. It never changes anything.
+It only ever answers from **the screens you can open**, and only with **the columns you can see**: if you cannot see sales amounts, it cannot tell you them. If the question needs a screen you do not have, it says so, and it declines anything outside your access — another department's records, company revenue, profit or margin — rather than working it out from what it can see. A total it gives covers only the rows your screens showed. It never changes anything.
 
 ## Questions people ask
 

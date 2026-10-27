@@ -1,73 +1,74 @@
 Petty Cash is one ERP module for every rupee that moves outside the order book: what we pay, what comes in, money moved between our own accounts, and lump sums handed to employees. It has four parts across the top — **Overview**, **Expenses**, **Receipts** and **Cash & Bank** — and each part keeps its lists as tabs underneath. Every real movement of money is entered **once**, gets one number (`TXN-26-00423`), and changes the balances once.
 
-<Wireframe url="/erp/expenses" nav={["Dashboard", "Purchase", "#Money", "Petty Cash"]} active="Petty Cash" caption="Petty Cash, opening on Overview › Today">
+<Wireframe url="/erp/expenses" nav={["Dashboard", "#Petty Cash", "Petty Cash"]} active="Petty Cash" caption="Petty Cash, opening on Overview › Today">
   <WfBar>
-    <WfTitle sub="Expenses, receipts, cash and bank — each transaction entered once.">Petty Cash</WfTitle>
+    <WfTitle sub="Expenses, receipts, cash and bank — each transaction entered once">Petty Cash</WfTitle>
     <WfSpacer />
-    <WfButton primary>New expense</WfButton>
-    <WfButton>New receipt</WfButton>
+    <WfButton primary>New ▾</WfButton>
+    <Hotspot n={1} />
   </WfBar>
   <WfTabs items={["Overview", "Expenses", "Receipts", "Cash & Bank"]} active="Overview" />
-  <Hotspot n={1} />
-  <WfTabs items={["Today", "All transactions"]} active="Today" />
+  <Hotspot n={2} />
+  <WfTabs items={["Today", "Reports", "Audit trail"]} active="Today" />
   <WfTable
     columns={["Kotak Bank", "ICICI Bank", "Cash in Hand", "Petty Cash"]}
     rows={[["₹12,16,460", "₹8,41,220", "₹63,450", "₹5,470"]]}
   />
-  <Hotspot n={2} />
+  <Hotspot n={3} />
   <WfTable
     columns={["Needs somebody", "", ""]}
-    rows={[["Expenses to review", "3", "₹71,410"], ["Advances open", "2", "₹2,400 with employees"], ["Bank lines not matched", "4", "₹1,92,400"]]}
+    rows={[["Expenses waiting for approval", "3", "₹71,410"], ["Advances open", "2", "₹2,400"], ["Receipts not matched to bank", "4", "₹1,92,400"]]}
   />
-  <Hotspot n={3} />
+  <Hotspot n={4} />
 </Wireframe>
 
 <Hotspots items={[
-  <span key="1"><b>The four parts.</b> Each opens its own tabs underneath: Expenses has Paid, Production petty cash, Advances, Needs review and Cancelled.</span>,
-  <span key="2"><b>Balances.</b> Every account's balance is its opening plus every transaction on it. Nothing is typed in.</span>,
-  <span key="3"><b>Needs somebody.</b> Each line opens the list behind it.</span>,
+  <span key="1"><b>New.</b> One button for every kind of entry: Expense, Petty cash expense, Receipt, Transfer and Advance. Each opens its form over the screen.</span>,
+  <span key="2"><b>The four parts.</b> Each opens its own tabs underneath. Overview has Today, Reports and Audit trail; Expenses has Paid, Production petty cash, Advances, Needs approval, Cancelled and All; Receipts has All, Bank, Cash and Not matched to bank; Cash & Bank has Transfers, Petty Cash statements, Accounts and Old records.</span>,
+  <span key="3"><b>Balances.</b> Every account's balance is its opening plus every transaction on it. Nothing is typed in.</span>,
+  <span key="4"><b>Needs somebody.</b> Expenses and petty cash waiting for approval, anything sent back, advances open or late with their bills, receipts not yet on the bank's statement, possible duplicates — and, for the accountant, bank lines not matched. Each line opens the list behind it. Beside it, Today shows this month's cash received by customer and petty cash by category.</span>,
 ]} />
 
 ## Recording money going out
 
 <Steps>
-  <Step title="An office expense">**Expenses › Paid**, then **New expense**. An expense is entered when it is paid — there is no "not paid yet". Give the date it was paid, the category, the amount, who was paid, the invoice number, what it was for, and **Paid from**: the account the money left, how (NEFT, UPI, Cheque, Cash…) and the UTR or cheque number. Photograph the bill.</Step>
-  <Step title="Production petty cash">**Expenses › Production petty cash**, then **New petty cash expense**. The same form, for the Production Head's small spends. Paid from can also be **Cash a customer paid** or **Cash withdrawn from a bank** — then pick which receipt or withdrawal the cash came out of, and only cash with something left is offered.</Step>
-  <Step title="If it says it is a duplicate">The same invoice number from the same payee, or for the same amount, is refused with the earlier transaction named. Open that one. If this really is a different invoice, tick **This is a different invoice with the same number** and save again.</Step>
+  <Step title="An office expense">**New ▾ → Expense** (it opens over **Expenses › Paid**). An expense is entered when it is paid — there is no "not paid yet". Give the date it was paid, the category, the amount, who was paid, the invoice number, what it was for, and **Paid from**: the account the money left, how (NEFT, UPI, Cheque, Cash…) and the UTR or cheque number. Photograph the bill.</Step>
+  <Step title="Production petty cash">**New ▾ → Petty cash expense** (over **Expenses › Production petty cash**). The same form, for the Production Head's small spends. Paid from can also be **Cash a customer paid** or **Cash withdrawn from a bank** — then pick which receipt or withdrawal the cash came out of, and only cash with something left is offered.</Step>
+  <Step title="If it says it is a duplicate">The same invoice number from the same payee, or for the same amount, is refused with the earlier transaction named. Open that one. If this really is a different invoice, tick **This is a different invoice** and save again.</Step>
 </Steps>
 
 ## Giving an employee a lump sum (advances)
 
 <Steps>
-  <Step title="Give the advance">**Expenses › Advances**, then **Give an advance**: who, how much, what for, the day their bills are due, and the account it is given from. It is not an expense yet — the money has moved into their hands.</Step>
+  <Step title="Give the advance">**New ▾ → Advance** opens **Give an advance**: who it is given to, how much, the date, what for, the day their bills are due, how it was handed over and the account it is paid from. It is not an expense yet — the money has moved into their hands.</Step>
   <Step title="They submit their bills">Open the advance and press **Submit bills**. One line per bill: date, category, who was paid, bill number, amount and a photo. A spend with no bill needs a sentence saying why.</Step>
-  <Step title="The accountant reviews">Each bill appears on **Needs review**. **Approve**, or **Send back** with what needs fixing.</Step>
+  <Step title="The accountant reviews">Each bill appears on **Expenses › Needs approval**. **Approve**, or **Send back** with what needs fixing.</Step>
   <Step title="Settle">When nothing is waiting, **Settle**. Anything unspent comes back into an account; anything spent beyond the advance is paid to the employee. Both are one transaction.</Step>
 </Steps>
 
 ## Money coming in
 
-**Receipts › All receipts**, then **New receipt**: when, which account it came into, the amount, how it came and its reference, and who paid — a customer from the list, or a name. A cash receipt shows, when opened, **how this cash was used**: deposited, spent as petty cash, or still in hand. Scrap buyers' payments are recorded on **Receipts › Scrap buyers** and appear here too.
+**New ▾ → Receipt**: the date, who it was received from — a customer from the list, or a name — the amount, which account it came into, what it was for, how it came and its reference. For a customer, the receipt is applied to their open invoices, oldest first; with none open, the whole amount stays on account. **Receipts** lists them as **All**, **Bank**, **Cash** and **Not matched to bank**. A cash receipt shows, when opened, **how this cash was used**: deposited, spent as petty cash, or still in hand. Scrap buyers' payments are recorded on [Scrap sales → Receipts](/docs/erp/empty-drums-scrap) and appear here too.
 
 ## Moving money between our own accounts
 
-**Cash & Bank › Transfers**, then **New transfer**: from, to, amount and how. A withdrawal is Bank → Cash in Hand; a deposit is Cash in Hand → Bank. A transfer changes both balances and is never income or expense. A deposit of a customer's cash can name the receipt it came from.
+**New ▾ → Transfer** (listed on **Cash & Bank › Transfers**): from, to, amount and how. A withdrawal is Bank → Cash in Hand; a deposit is Cash in Hand → Bank. A transfer changes both balances and is never income or expense. A deposit of a customer's cash can name the receipt it came from.
 
 ## Petty Cash statements, and the bank's own statement
 
-**Cash & Bank › Petty Cash statements** is our own record of each account — Kotak Bank, ICICI Bank, Cash in Hand, Petty Cash: what was entered going in and out, and the balance it leaves. On a bank account each row says **✓ Bank** once the bank's own statement shows that money, or **Not in bank yet**.
+**Cash & Bank › Petty Cash statements** is our own record of each account — Kotak Bank, ICICI Bank, Cash in Hand, Petty Cash, one tab each inside it: the opening balance, what was entered going in and out, and the closing balance it leaves. **Cash & Bank › Accounts** lists the accounts themselves, which the accountant sets up with their opening balances. On a bank account each row says **✓ Bank** once the bank's own statement shows that money, or **Not in bank yet**.
 
 The bank's own statement is not kept here. It is uploaded as a PDF on **Accounts › Bank statement management**, read by AI, and each line matched there — to a customer receipt, a vendor payout, or a Petty Cash expense or transfer. A line marked there as an expense, a charge or a transfer is entered on Petty Cash for you, and ticked here.
 
 <Faq q="I need to change an expense.">
-Open it and press **Correct**. Whoever entered it can correct it until it is approved; after that, the accountant. A transaction matched to a bank line cannot change its amount or account until the match is undone.
+The transaction's record on the Petty Cash screens has no **Correct** button yet, though the rule for one is written (whoever entered it until it is approved, then the accountant). Today the way to fix a wrong entry is to **Cancel this transaction** with a reason and enter it again.
 </Faq>
 <Faq q="I entered something wrong.">
-Open it and **Cancel** with a reason. It stays on record, marked cancelled, and stops counting everywhere. Nothing is deleted.
+Open it and press **Cancel this transaction**, with a reason. It stays on record, marked cancelled, and stops counting everywhere. Nothing is deleted. It is refused while a bank line is matched to it or cash from it has been paid onward, and a scrap receipt is cancelled from Scrap sales instead.
 </Faq>
 <Faq q="Approve is greyed out.">
 Only the accountant for Petty Cash approves, and nobody approves what they entered themselves.
 </Faq>
 <Faq q="Where did the old petty cash go?">
-Funds given and expenses entered before this module are on **Cash & Bank › Old records**, read-only.
+The old expense sheet — credits (money given in) and debits (expenses paid out) from October 2022 — is on **Cash & Bank › Old records**, read-only. It opens on this financial year; pick a longer period to see more.
 </Faq>

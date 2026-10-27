@@ -66,6 +66,7 @@ import {
 import { latestReopen } from "../services/lead-reopen-service";
 import { gstinChangeClear, materialOf, reviewVoidPatch } from "../lead-review-void";
 import { convertLeadOnSecondOrder } from "../services/lead-conversion-service";
+import { orderCountsSql } from "../order-status";
 import { canAny, grantingHat, hatsFor } from "../access-control";
 import { handsetSampleRefusal } from "../sales-gate";
 import {
@@ -110,6 +111,7 @@ import {
   type MbosPrincipal,
 } from "../services/mbos-service";
 import { territoriesFor } from "../services/territory-service";
+import { placeIndexFor, placeShopsNow } from "../services/place-tree-service";
 import { placeNewLead } from "../territory-rules";
 import { TERRITORY_REGION_SQL } from "../territory-sql";
 import {
@@ -5247,10 +5249,12 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
        group by 1
        order by count(*) desc
        limit 1`);
+    const territories = await territoriesFor(principal.user.id);
     const placement = placeNewLead(
-      await territoriesFor(principal.user.id),
+      territories,
       { city: p.city, area: p.area, state: p.state, bookState: book?.state ?? null },
       territoryExempt(principal),
+      await placeIndexFor(territories),
     );
     if (!placement.ok) {
       return {
@@ -5468,6 +5472,13 @@ async function handleLead(principal: MbosPrincipal, item: SyncItem): Promise<Han
    * it. After the record, deliberately: a lead is never lost to a photograph.
    */
   await bindMbosMedia(p.shopPhotoId, "mbos_lead", item.entityId, principal.user.id);
+
+  /* Placed on the location tree now rather than by the nightly pass. A
+     district or town allocation reaches a shop through its place on the tree,
+     so an unplaced lead would leave its own salesman's handset on the very
+     next pull — the gate above let it in on the strength of that same match.
+     Never fails the write: a lead is not lost to its town not being found. */
+  if (item.op === "create") await placeShopsNow([item.entityId]);
 
   /*
    * §R — where the account began. Outside the insert's own transaction and
@@ -8636,10 +8647,12 @@ async function handleCustomerCreate(
      group by 1
      order by count(*) desc
      limit 1`);
+  const fieldTerritories = await territoriesFor(principal.user.id);
   const placement = placeNewLead(
-    await territoriesFor(principal.user.id),
+    fieldTerritories,
     { city, state: null, bookState: bookState?.state ?? null },
     true,
+    await placeIndexFor(fieldTerritories),
   );
   const territoryRegion = placement.ok ? placement.state : (bookState?.state ?? null);
 
@@ -8692,6 +8705,10 @@ async function handleCustomerCreate(
         .onConflictDoNothing();
     }
   });
+
+  /* On the location tree at once, for the reason the lead path gives: a
+     district or town allocation reaches it only through its place there. */
+  await placeShopsNow([item.entityId]);
 
   await notifyManagers(
     principal.user.id,
@@ -9023,13 +9040,16 @@ export async function recomputeHealthScore(customerId: string): Promise<void> {
            c.cycle_days as "cycleDays",
            c.visit_frequency_days as "visitFrequencyDays",
            c.outstanding as "outstanding",
+           -- What counts is lib/order-status.ts: three statuses spelled out here
+           -- dropped an order once it was in transit or delivered, so a
+           -- customer whose ERP orders had arrived read as buying less.
            coalesce((select sum(o.total_amount) from orders o
                       where o.customer_id = c.id
-                        and o.status in ('captured','confirmed','dispatched')
+                        and ${orderCountsSql("o")}
                         and o.ordered_at >= now() - interval '90 days'), 0) as "recentValue",
            coalesce((select sum(o.total_amount) from orders o
                       where o.customer_id = c.id
-                        and o.status in ('captured','confirmed','dispatched')
+                        and ${orderCountsSql("o")}
                         and o.ordered_at >= now() - interval '180 days'
                         and o.ordered_at <  now() - interval '90 days'), 0) as "priorValue",
            (select count(*)::int from bills b where b.customer_id = c.id) as "billsTotal",

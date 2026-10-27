@@ -35,6 +35,8 @@ type LineRow = {
   id: string;
   orderNo: number;
   status: string;
+  /** The independent invoice check on the billed line — dispatch waits for Approved. */
+  invoiceCheck: string | null;
   qty: number;
   skuId: string;
   sku: string;
@@ -50,13 +52,13 @@ type LineRow = {
   fgId: string | null;
 };
 
-async function lineRows(ex: Ex, orderNo: number): Promise<LineRow[]> {
+async function lineRows(ex: Ex, orderNos: number[]): Promise<LineRow[]> {
   return q<LineRow>(ex, sql`
     select o.id, o.order_no as "orderNo", o.status, o.qty_cans::float8 as qty, p.id as "skuId", p.name as sku, p.cans_per_box as cpb,
            coalesce(pk.empty_boxes_required, 0)::int as empty,
            coalesce(p.millilitres_per_can, fg.millilitres)::float8 / 1000 as litres,
            b.id as "productId", b.name as product, o.godown_id as "godownId", g.name as godown,
-           d.verification, d.order_id is not null as billed, p.finished_good_id as "fgId"
+           d.verification, d.order_id is not null as billed, d.invoice_check as "invoiceCheck", p.finished_good_id as "fgId"
       from erp_orders o
       join products p on p.id = o.sku_id
       left join finished_goods fg on fg.id = p.finished_good_id
@@ -64,37 +66,52 @@ async function lineRows(ex: Ex, orderNo: number): Promise<LineRow[]> {
       left join erp_product_packing pk on pk.product_id = p.id
       join erp_godowns g on g.id = o.godown_id
       left join erp_order_details d on d.order_id = o.id
-     where o.order_no = ${orderNo}
-     order by p.name
+     where o.order_no in ${orderNos}
+     order by o.order_no, p.name
   `);
 }
 
 async function scanLines(ex: Ex, orderNo: number): Promise<ScanLine[]> {
-  const rows = await lineRows(ex, orderNo);
-  if (!rows.length) return [];
+  return (await scanLinesFor(ex, [orderNo])).get(orderNo) ?? [];
+}
+
+/**
+ * Several orders' lines, by order number, in three statements whatever the
+ * count. The Billing & dispatch list asks this of every order on it, and it
+ * used to ask one order at a time — three round trips each, in a row, so
+ * eighty-eight orders was 264 statements before the list could be drawn.
+ */
+async function scanLinesFor(ex: Ex, orderNos: number[]): Promise<Map<number, ScanLine[]>> {
+  const out = new Map<number, ScanLine[]>();
+  if (!orderNos.length) return out;
+  const rows = await lineRows(ex, orderNos);
+  if (!rows.length) return out;
   const ids = rows.map((r) => r.id);
   const [alloc, scanned] = await Promise.all([
     q<{ id: string; order: string; lot: string; qty: number }>(ex, sql`select id, order_id as "order", lot_code as lot, quantity::float8 as qty from erp_batch_codes where order_id in ${ids} order by created_at`),
     q<{ order: string; lot: string; n: number }>(ex, sql`select order_id as "order", lot_code as lot, count(*)::int as n from erp_units where order_id in ${ids} and status in ('scanned', 'dispatched') group by 1, 2`),
   ]);
   const scannedLot = new Map(scanned.map((s) => [`${s.order}|${s.lot}`, Number(s.n)]));
-  return rows.map((r) => {
+  const allocOf = new Map<string, typeof alloc>();
+  for (const x of alloc) allocOf.set(x.order, [...(allocOf.get(x.order) ?? []), x]);
+  const scannedOf = new Map<string, number>();
+  for (const x of scanned) scannedOf.set(x.order, (scannedOf.get(x.order) ?? 0) + Number(x.n));
+  for (const r of rows) {
     const boxed = Number(r.empty) > 0;
     const { boxes } = boxQuantity(Number(r.qty), Number(r.cpb), !boxed);
     /* Scans of one lot are spread over that lot's allocation rows in order, so two rows of one lot both read right. */
     const left = new Map<string, number>();
-    const a = alloc
-      .filter((x) => x.order === r.id)
-      .map((x) => {
-        const key = `${r.id}|${x.lot}`;
-        const have = left.has(key) ? left.get(key)! : (scannedLot.get(key) ?? 0);
-        const used = Math.min(have, Number(x.qty));
-        left.set(key, have - used);
-        return { id: x.id, lotCode: x.lot, qty: Number(x.qty), scanned: used };
-      });
-    return {
+    const a = (allocOf.get(r.id) ?? []).map((x) => {
+      const key = `${r.id}|${x.lot}`;
+      const have = left.has(key) ? left.get(key)! : (scannedLot.get(key) ?? 0);
+      const used = Math.min(have, Number(x.qty));
+      left.set(key, have - used);
+      return { id: x.id, lotCode: x.lot, qty: Number(x.qty), scanned: used };
+    });
+    const no = Number(r.orderNo);
+    const line: ScanLine = {
       id: r.id,
-      orderNo: Number(r.orderNo),
+      orderNo: no,
       skuId: r.skuId,
       skuName: r.sku,
       productId: r.productId,
@@ -104,14 +121,16 @@ async function scanLines(ex: Ex, orderNo: number): Promise<ScanLine[]> {
       godownName: r.godown,
       boxed,
       target: allocationTarget(boxed, boxes, Number(r.qty)),
-      scanned: scanned.filter((s) => s.order === r.id).reduce((n, s) => n + Number(s.n), 0),
+      scanned: scannedOf.get(r.id) ?? 0,
       alloc: a,
       dispatched: r.verification === "Verified",
       /* Only a Ready line is at the desk; one under process, held or cancelled takes no box. */
       cancelled: r.status !== "Ready",
       finishedGoodId: r.fgId,
     };
-  });
+    out.set(no, [...(out.get(no) ?? []), line]);
+  }
+  return out;
 }
 
 async function unitFor(ex: Ex, code: string, lock: boolean): Promise<ScanUnit | null> {
@@ -157,7 +176,9 @@ export type DispatchBoard = {
   area: string | null;
   transporter: string | null;
   dispatchOn: string | null;
-  lines: (ScanLine & { billed: boolean; verification: string | null; gate: string | null; unitsExist: boolean })[];
+  lines: (ScanLine & { billed: boolean; verification: string | null; invoiceCheck: string | null; gate: string | null; unitsExist: boolean })[];
+  /** The Tally invoice on the order, once billed. */
+  invoiceNo: string | null;
   units: { id: string; lineId: string; sku: string; lotCode: string; status: string; scannedAt: string | null; by: string | null }[];
   scans: { at: string; code: string; result: string; message: string; by: string | null }[];
   overrides: { id: string; unitId: string; lineId: string; ordered: string; scanned: string; mismatch: string; reason: string; status: string; requestedBy: string | null; requestedById: string | null; at: string; decidedBy: string | null; note: string | null }[];
@@ -170,11 +191,12 @@ export async function dispatchBoard(orderNo: number): Promise<DispatchBoard | nu
   const ids = lines.map((l) => l.id);
   const [head, rows, units, scans, overrides, withUnits, cfg] = await Promise.all([
     q<Row>(db, sql`
-      select bc.name as billing, dc.name as delivery, coalesce(dc.area, dc.city) as area, o.transporter, o.dispatch_on::text as "dispatchOn"
+      select bc.name as billing, dc.name as delivery, coalesce(dc.area, dc.city) as area, o.transporter, o.dispatch_on::text as "dispatchOn",
+             (select max(o2.tally_bill_no) from erp_orders o2 where o2.order_no = o.order_no and o2.entry_status = 'Done') as "invoiceNo"
         from erp_orders o join customers bc on bc.id = o.billing_customer_id left join customers dc on dc.id = o.delivery_customer_id
        where o.order_no = ${orderNo} limit 1
     `),
-    lineRows(db, orderNo),
+    lineRows(db, [orderNo]),
     q<Row>(db, sql`
       select u.id, u.order_id as "lineId", p.name as sku, u.lot_code as "lotCode", u.status, u.scanned_at as "scannedAt", us.name as by
         from erp_units u join products p on p.id = u.sku_id left join users us on us.id = u.scanned_by_id
@@ -205,9 +227,10 @@ export async function dispatchBoard(orderNo: number): Promise<DispatchBoard | nu
     area: h.area == null ? null : String(h.area),
     transporter: h.transporter == null ? null : String(h.transporter),
     dispatchOn: h.dispatchOn == null ? null : String(h.dispatchOn),
+    invoiceNo: h.invoiceNo == null ? null : String(h.invoiceNo),
     lines: lines.map((l) => {
       const unitsExist = withUnits.has(l.id);
-      return { ...l, billed: !!meta.get(l.id)?.billed, verification: meta.get(l.id)?.verification ?? null, unitsExist, gate: scanGate({ requireScan, lotsHaveUnits: unitsExist, target: l.target, scanned: l.scanned }) };
+      return { ...l, billed: !!meta.get(l.id)?.billed, verification: meta.get(l.id)?.verification ?? null, invoiceCheck: meta.get(l.id)?.invoiceCheck ?? null, unitsExist, gate: scanGate({ requireScan, lotsHaveUnits: unitsExist, target: l.target, scanned: l.scanned }) };
     }),
     units: units.map((u) => ({ id: String(u.id), lineId: String(u.lineId), sku: String(u.sku), lotCode: String(u.lotCode), status: String(u.status), scannedAt: u.scannedAt == null ? null : new Date(u.scannedAt as string).toISOString(), by: u.by == null ? null : String(u.by) })),
     scans: scans.map((s) => ({ at: new Date(s.at as string).toISOString(), code: String(s.code), result: String(s.result), message: String(s.message), by: s.by == null ? null : String(s.by) })),
@@ -269,7 +292,8 @@ export async function loadingLines(ex: Ex, godownId: string): Promise<LoadingLin
   if (!meta.length) return [];
   const byId = new Map(meta.map((m) => [m.id, m]));
   const nos = [...new Set(meta.map((m) => Number(m.no)))];
-  const all = (await Promise.all(nos.map((no) => scanLines(ex, no)))).flat().filter((l) => byId.has(l.id) && !l.cancelled && !l.dispatched);
+  const lines = await scanLinesFor(ex, nos);
+  const all = nos.flatMap((no) => lines.get(no) ?? []).filter((l) => byId.has(l.id) && !l.cancelled && !l.dispatched);
   const withUnits = await lotsWithUnitsFor(ex, all.map((l) => l.id));
   return all.map((l) => {
     const m = byId.get(l.id)!;
@@ -502,9 +526,10 @@ export async function scanGateFor(ex: Ex, orderIds: string[]): Promise<Map<strin
   const cfg = await getConfig();
   const withUnits = await lotsWithUnitsFor(ex, orderIds);
   const nos = await q<{ no: number }>(ex, sql`select distinct order_no as no from erp_orders where id in ${orderIds}`);
-  for (const { no } of nos)
-    for (const l of await scanLines(ex, Number(no)))
-      if (orderIds.includes(l.id)) out.set(l.id, scanGate({ requireScan: cfg["erp.dispatch.requireScan"], lotsHaveUnits: withUnits.has(l.id), target: l.target, scanned: l.scanned }));
+  const asked = new Set(orderIds);
+  for (const lines of (await scanLinesFor(ex, nos.map((n) => Number(n.no)))).values())
+    for (const l of lines)
+      if (asked.has(l.id)) out.set(l.id, scanGate({ requireScan: cfg["erp.dispatch.requireScan"], lotsHaveUnits: withUnits.has(l.id), target: l.target, scanned: l.scanned }));
   return out;
 }
 

@@ -10,8 +10,9 @@ Everything in the ERP follows the paint from the supplier to the customer. Each 
 
 <Flow caption="From a department's need to money in the bank" chart={`
 flowchart TD
-  A["A department needs something<br/>Purchase requirements"] --> B["How is it bought?<br/>direct · quotation · buyer decides"]
-  B --> C["Purchase order<br/>raised, approved, sent to the vendor"]
+  A["A department needs something<br/>Purchase requirements"] --> A2["Blind count of the shelf<br/>Stock accuracy"]
+  A2 --> B["How is it bought?<br/>direct · quotation · buyer decides"]
+  B --> C["Purchase order<br/>linked from the Quotation manager, or created"]
   C --> D["Goods arrive at the gate<br/>Goods receipt (GRN) against the PO"]
   D --> E{"Does the item<br/>need testing?"}
   E -- "Yes, a chemical" --> F["Lot testing<br/>evidence, then the verifier decides"]
@@ -32,21 +33,23 @@ flowchart TD
 
 Read it top to bottom and you have the whole ERP:
 
-1. **Buy.** A department raises a [purchase requirement](/docs/erp/purchase-requirements). The item's purchase rule decides whether the store buys it directly, collects quotations first, or lets the buyer decide.
-2. **Order.** Nothing is bought without a [purchase order](/docs/erp/purchase-orders). Somebody other than the person who raised it approves it, and then it is sent to the vendor.
+1. **Buy.** A department raises a [purchase requirement](/docs/erp/purchase-requirements). What is on the shelf is [counted blind](/docs/erp/stock-accuracy) first, and the item's purchase rule then decides whether the store buys it directly, buys it at a rate from the [Quotation manager](/docs/erp/quotation-manager), or lets the buyer decide.
+2. **Order.** Nothing is bought without a [purchase order](/docs/erp/purchase-orders). A quotation item links the PO the Quotation manager made; a direct-purchase item has one created on the requirement. No PO waits for an approval on either route.
 3. **Receive and test.** Goods are received at the gate [against the PO](/docs/erp/goods-receipt-and-testing). A chemical goes to the tester; everything else goes straight into the register and into stock.
 4. **Make.** [Production](/docs/erp/production) mixes raw-material lots into semi-finished liquid (SFG), fills approved SFG into cans or drums (FG), and packs loose cans into boxes.
-5. **Stock.** [Stock](/docs/erp/stock) shows what is in every godown at every stage, every box by its own id, and every movement between godowns — including write-offs.
+5. **Stock.** [Stock](/docs/erp/stock) shows what is in every godown at every stage, every box by its own id, and every movement between godowns — including write-offs. [Stock accuracy](/docs/erp/stock-accuracy) counts it against the book.
 6. **Sell and ship.** [Orders](/docs/erp/orders) are made ready and billed, the [dispatch desk](/docs/erp/dispatch) scans every box onto its order, and [transport](/docs/erp/transport) follows the consignment until the customer has it.
-7. **Money.** Once the ERP takes the orders, every bill lands in MahekOne's own ledger — see [the order book](/docs/erp/order-book). [Petty cash](/docs/erp/petty-cash) records funds given to people and what they spent.
+7. **Money.** Once the ERP takes the orders, every bill lands in MahekOne's own ledger — see [the order book](/docs/erp/order-book). [Petty Cash](/docs/erp/petty-cash) records what was paid and received, in cash and through the bank, each transaction once.
+
+Beside the main line sit the returns: material going back to a supplier or coming back from a customer is on [Material returns](/docs/erp/material-returns), and every emptied drum and what is sold as scrap is on [Empty drums and scrap](/docs/erp/empty-drums-scrap).
 
 ## The dashboard
 
 The dashboard is the first screen you see. It answers one question: **what needs attention now?**
 
-<Wireframe url="/erp" nav={["Dashboard", "Alerts", "#Masters", "Raw materials", "Purchase parties", "#Purchase", "Purchase requirements", "Purchase orders", "Purchases", "Lot testing", "#Production", "SFG batches", "FG filling", "#Stock", "Stock", "Boxes & labels"]} active="Dashboard" caption="The dashboard for somebody who works purchase and stock">
+<Wireframe url="/erp" nav={["Dashboard", "Alerts", "#Purchase", "Requirements", "Purchase orders", "Purchases", "Lot testing", "Quotation manager", "#Stock", "Stock on hand", "Stock accuracy", "Boxes & labels"]} active="Dashboard" caption="The dashboard for somebody who works purchase and stock">
   <WfBar>
-    <WfTitle sub="Good morning · Monday, 6 Oct 2026 · stock and godown figures for Godown A. Every figure opens the records behind it.">Dashboard</WfTitle>
+    <WfTitle sub="Good morning, Storekeeper · Monday, 6 Oct 2026 · Godown A">Dashboard</WfTitle>
     <Hotspot n={1} />
   </WfBar>
   <WfCard tone="brand">
@@ -54,19 +57,23 @@ The dashboard is the first screen you see. It answers one question: **what needs
     <WfText>On 2026-10-05: 6 orders taken, 14 lines dispatched, 3 inward lines received and 2 SFG batches made. No alerts are open.</WfText>
     <Hotspot n={2} />
   </WfCard>
+  <WfCard title="Stock accuracy · 92% counted right first time · 30 days">
+    <WfText>1 Requirement · 2 · 2 Blind count · 3 · 3 Buying · 1 · 4 Red flag · 0 · 5 Recount · 0 · 6 Investigate · 0 · 7 Approve · 1</WfText>
+    <Hotspot n={3} />
+  </WfCard>
   <WfBar>
     <WfCard title="Purchase">
       <WfText>Urgent open requirements · 2</WfText>
-      <WfText>POs awaiting approval · 1</WfText>
+      <WfText>POs to send to the vendor · 1</WfText>
       <WfText>Goods received awaiting routing · 0</WfText>
       <WfText>Tests awaiting verification · 3</WfText>
-      <Hotspot n={3} />
+      <Hotspot n={4} />
     </WfCard>
     <WfCard title="Stock">
       <WfText>Raw material lots · 48</WfText>
       <WfText>SFG lots · 12 · 3,400 Ltr</WfText>
       <WfText>Boxed lots · 9 · 210 boxes</WfText>
-      <Hotspot n={4} />
+      <Hotspot n={5} />
     </WfCard>
     <WfCard title="Production and re-order">
       <WfText>Incomplete packing batches · 1</WfText>
@@ -77,10 +84,11 @@ The dashboard is the first screen you see. It answers one question: **what needs
 </Wireframe>
 
 <Hotspots items={[
-  <span key="1"><b>Greeting and scope.</b> Today's date, and which godown the stock figures are for — your working location, or "all godowns" if you have none. If money figures are not on your account, the line says so.</span>,
-  <span key="2"><b>Yesterday in one paragraph.</b> Counts only: orders taken, lines dispatched, goods received, SFG batches made, and the open alerts. Everybody who opens the dashboard may read it, because it carries no rate or amount. When it says "summarised by AI", a writing model has put the same figures into sentences.</span>,
-  <span key="3"><b>A section per area you hold.</b> Each line is a count of records that need somebody. A count above zero that matters is coloured.</span>,
-  <span key="4"><b>Every line opens its records.</b> Click a line and the list it counts opens filtered to exactly those rows, with a pill naming the filter. Clear the pill to see the whole list.</span>,
+  <span key="1"><b>Greeting and scope.</b> Your first name, today's date, and which godown the stock figures are for — your working location, or "All godowns" if you have none. If money figures are not on your account, a line under the title says so.</span>,
+  <span key="2"><b>Yesterday in one paragraph.</b> Counts only: orders taken, lines dispatched, goods received, SFG batches made, and the open alerts. Everybody who opens the dashboard may read it, because it carries no rate or amount. It is the newest paragraph the nightly pass wrote, and the date says which day it is about.</span>,
+  <span key="3"><b>Stock accuracy.</b> Drawn only if you hold Stock accuracy. It is the Inventory Accuracy Control as the flow it is — requirements waiting for their blind count, counts to do, purchases carrying on, red flags, recounts, investigations and adjustments to approve — with how often a count matched the book first time over the last 30 days. Every step opens its records. See [Stock accuracy](/docs/erp/stock-accuracy).</span>,
+  <span key="4"><b>A section per area you hold.</b> Each line is a count of records that need somebody. A count above zero that matters is coloured.</span>,
+  <span key="5"><b>Every line opens its records.</b> Click a line and the list it counts opens filtered to exactly those rows, with a pill naming the filter. Clear the pill to see the whole list.</span>,
 ]} />
 
 ### What the sections are
@@ -88,13 +96,16 @@ The dashboard is the first screen you see. It answers one question: **what needs
 | Section | Appears when you hold | What it counts |
 |---|---|---|
 | **Alerts** | Alerts | Open unusual-activity alerts by kind — see [Alerts and AI](/docs/erp/alerts-and-ai) |
-| **Purchase** | Requirements, Purchase orders, Purchases, Testing | Urgent and late requirements, POs waiting for approval or to be sent or delivered, goods awaiting routing, tests waiting for the verifier, purchases with no rate or no bill |
+| **Stock checks** | Stock accuracy | Floor checks that differ from the book, documents with no stock entry, the commonest cause of approved adjustments, and whether a full count is due — the control's own steps are the strip above |
+| **Purchase** | Requirements, Purchase orders, Purchases, Testing | Requirements waiting for a blind count, a PO number or a PO to be created; urgent and late requirements; POs to send, awaiting delivery or overdue; goods awaiting routing; tests waiting for the verifier; purchases with no rate or no bill |
 | **Stock** | Any stock tab | Lots and quantity at each stage; stock value only with the cost power |
 | **Production and re-order** | Production screens, Transfers, Levels | Incomplete packing batches, production today and this month, transfers today, write-offs this month, items below their minimum |
-| **Sales** | Orders, Billing & dispatch | Orders by status, allocation short, ready to bill, dispatch today and late, pending-customer orders, dispatched today and this month |
-| **Logistics** | Logistics | LRs to attach, consignments on the road, calls due today |
-| **Requests and credit notes** | Complaints & credit notes | Complaints by status, credit notes to issue, average response time |
-| **Petty cash** | Petty cash | What each person holds per godown and mode, expenses waiting to be verified |
+| **Sales** | Orders, Billing & dispatch | Orders by status, allocation short, ready to bill, dispatch today and late, missing bill numbers or rates, pending-party orders, labels to print, dispatch verification, dispatched today and this month |
+| **Logistics** | Logistics | Going to the transporter, waiting for the LR (and LRs uploaded to attach), on the road, transporter calls due, problems on the road, customer messages to send |
+| **Requests and credit notes** | Complaints & credit notes | Product-quality complaints by status, credit notes to issue, average response time |
+| **Empty drums and scrap** | Empty drums, Returnable drum outward, Scrap sales | Mahek-owned empty drums available, drums to classify, vendor-returnable drums pending, scrap sold this month and still owed |
+| **Material returns** | Vendor returns, Customer returns | Purchase returns pending, customer returns awaiting QC, what was recovered, scrapped or wasted; debit and credit note value only with the money power |
+| **Petty Cash** | Petty Cash | Each cash and bank account's balance, what is waiting for review (with the power to approve), advances still open |
 | **Customers** | Sales parties (with the status power) | Customers pending activation |
 
 <Callout kind="note" title="Godown figures and company figures">
@@ -105,9 +116,9 @@ Stock and godown figures follow your **working location**: change it in the head
 
 Every ERP screen has the same parts, so once you know one you know them all.
 
-- **The header** — the search box ("Search customers, orders, lots, PRs, bills, LRs…"), the **Working at** godown chip with a button that finds your godown from where you are standing, the notification bell, and the app switcher.
+- **The header** — the app switcher, one box to search or ask ("Search customers, lots, PRs, POs, boxes, orders…"; when Ask is switched on, a question typed into it goes to the ERP's answer drawer), the **Working at** godown chip with a button that finds your godown from where you are standing, Feedback, the <Kbd>?</Kbd> shortcuts button, the notification bell and your account.
 - **The sidebar** — the screens you hold, grouped by area. A number beside a screen is work waiting there: tests the verifier has not decided, pending LRs, boxes with no label yet.
-- **The list** — search, a godown filter, grouping with totals, chips for the commonest filter, and a download button on most lists.
+- **The list** — search, a godown filter, grouping with totals, chips for the commonest filter, and an **Export** button that downloads the rows as filtered, as CSV.
 - **The record dialog** — click a row to open it. It shows every field, the record's history line ("Created by … on …") and the actions you may take. An action you may not take is drawn greyed out with the reason beside it.
 - **The form dialog** — new records and edits open in a dialog in the middle of the screen. A long form is split into pages — the steps across the top — and ends on a Review page that says back what will be saved; a document's lines are a page of their own. Next checks the page you are on, and Save goes back to any page that still needs fixing. Fields marked as derived are calculated as you type, exactly as the server will calculate them when you save.
 
@@ -125,15 +136,17 @@ Every ERP screen has the same parts, so once you know one you know them all.
 | Group | Screens | Who usually works it |
 |---|---|---|
 | **Dashboard, Alerts** | Dashboard, Alerts | Everyone (Alerts only if given) |
-| **Masters** | Raw materials, Purchase parties, Products, Sales parties, Godowns, Reference lists | The office, the store, the owner — see [Masters](/docs/erp/masters) |
-| **Purchase** | Purchase requirements (with Quotations), Purchase orders, Purchases (Goods receipt, Register, Drum labels), Lot testing | Production departments, the store, the buyer, the PO approver, the tester |
+| **Masters** | Raw materials (All materials, Can groups), Purchase parties, Products, Sales parties, Godowns, Reference lists | The office, the store, the owner — see [Masters](/docs/erp/masters) |
+| **Purchase** | Requirements, Purchase orders, Purchases (Goods receipt, Register, Drum labels), Lot testing, Quotation manager | Production departments, the store, the buyer, the tester |
 | **Production** | SFG batches, FG filling, Packing batches, Recipes | Mixing & Blending, Refilling, Packing, the Production Head |
-| **Stock** | Stock, Boxes & labels, Item transfers, Raw-material levels, Finished-goods levels | The store and the godowns |
-| **Orders** | Orders (seven tabs), Dispatch desk | The order desk and the godown |
+| **Stock** | Stock on hand, Stock accuracy, Boxes & labels, Item transfers, Raw-material levels, Finished-goods levels | The store and the godowns |
+| **Sales** | Orders (seven tabs), Dispatch desk | The order desk and the godown |
 | **Traceability** | Traceability | Quality, the owner |
-| **Logistics** | Transport | Back office |
+| **Logistics** | Logistics (nine tabs) | Back office |
 | **Complaints & credit notes** | Complaints & credit notes | The office, the owner |
-| **Petty cash** | Petty cash (Expenses, Funds given) | Godown staff, and managers to verify |
+| **Material returns** | Vendor returns, Customer returns | The store, quality, the office |
+| **Empty drums & scrap** | Empty drums, Returnable drum outward, Scrap sales | The store, the office |
+| **Petty Cash** | Petty Cash (Overview, Expenses, Receipts, Cash & Bank) | Whoever enters payments and receipts, and managers to approve |
 | **Help videos, Settings** | Help videos, Settings | Everyone; Settings is always open |
 
 ## Common questions
@@ -142,7 +155,7 @@ Every ERP screen has the same parts, so once you know one you know them all.
 It always matches the rows it opens on — the tile and the list are the same function. If you then clear the filter pill, or your godown filter is set to a different godown, the list shows more than the tile counted.
 </Faq>
 
-<Faq q="The dashboard says 'Nothing on your account has figures to show yet'.">
+<Faq q="The dashboard says 'Nothing on your account has figures yet'.">
 None of the screens you hold has recorded any work yet, or you hold only screens without dashboard figures. Sections appear by themselves as soon as there is something to count.
 </Faq>
 
@@ -151,7 +164,7 @@ Money columns are given separately from screens. Purchase money, cost and margin
 </Faq>
 
 <Faq q="Why is the summary at the top of the dashboard missing?">
-It is written by the ERP's nightly pass, for the day before. Until the first one has been written, or if the job did not run, there is nothing to show and the box is simply not drawn.
+It is written by the ERP's nightly pass, for the day before. Until the first one has been written there is nothing to show and the box is simply not drawn. If a night's job did not run, the box still shows the newest paragraph there is — read its date.
 </Faq>
 
 <Faq q="Where do I set my godown?">

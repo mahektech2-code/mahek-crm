@@ -25,7 +25,7 @@ import {
   type EodInput,
 } from "../engines/eod";
 import { today } from "../recompute";
-import { billedInMonthSql } from "../order-status";
+import { billedInMonthSql, orderCountsSql } from "../order-status";
 import {
   monthKey,
   rangeBoundaryWindow,
@@ -121,13 +121,15 @@ export async function eodMetricsForRange(
       (select count(*) from orders o where o.user_id = ${userId}
         and o.ordered_at >= ${w.start}::timestamptz and o.ordered_at < ${w.end}::timestamptz
         and o.status <> 'cancelled')::int as orders_captured,
-      -- The sale. Only approved orders, because only those are money.
+      -- The sale. Only approved orders, because only those are money — and
+      -- what counts is lib/order-status.ts, so an order is not dropped the day
+      -- it is marked in transit or delivered.
       (select count(*) from orders o where o.user_id = ${userId}
         and o.ordered_at >= ${w.start}::timestamptz and o.ordered_at < ${w.end}::timestamptz
-        and o.status in ('captured','confirmed','dispatched'))::int as orders_count,
+        and ${orderCountsSql("o")})::int as orders_count,
       (select coalesce(sum(o.total_amount),0) from orders o where o.user_id = ${userId}
         and o.ordered_at >= ${w.start}::timestamptz and o.ordered_at < ${w.end}::timestamptz
-        and o.status in ('captured','confirmed','dispatched')) as orders_value,
+        and ${orderCountsSql("o")}) as orders_value,
       (select count(*) from follow_up_attempts a where a.user_id = ${userId}
         and a.attempted_at >= ${w.start}::timestamptz and a.attempted_at < ${w.end}::timestamptz)::int as follow_ups,
       (select count(*) from follow_up_attempts a where a.user_id = ${userId}
@@ -231,7 +233,7 @@ export async function eodMetricsForRange(
       from orders o
       where o.user_id = ${userId}
         and o.ordered_at >= ${w.start}::timestamptz and o.ordered_at < ${w.end}::timestamptz
-        and o.status in ('captured','confirmed','dispatched')
+        and ${orderCountsSql("o")}
     ),
     lines as (
       select (li ->> 'product') as product_name, (li ->> 'quantity')::int as qty
