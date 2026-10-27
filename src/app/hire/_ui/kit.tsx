@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 import { cx } from "@/components/ui/primitives";
+import { signedMoney } from "@/lib/format";
 
 /* ---------------------------------------------------------------------------
  * Hire's design kit (design brief §4–§5). No hooks, so server and client
@@ -388,12 +389,8 @@ export const hs = (h: number) => (h < 24 ? `${Math.max(1, Math.round(h))}h` : `$
 /** ₹ with Indian grouping, from paise. */
 export function inr(paise: number | null | undefined): string {
   if (paise == null) return "—";
-  const rupees = Math.round(paise / 100);
-  const neg = rupees < 0;
-  const t = String(Math.abs(rupees));
-  const l3 = t.slice(-3);
-  const rest = t.slice(0, -3);
-  return `${neg ? "−" : ""}₹${rest ? rest.replace(/\B(?=(\d{2})+(?!\d))/g, ",") + "," + l3 : l3}`;
+  /* Paise where there are any — `signedMoney` is the one copy of the rule. */
+  return signedMoney(paise);
 }
 
 export const fmtScore = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));

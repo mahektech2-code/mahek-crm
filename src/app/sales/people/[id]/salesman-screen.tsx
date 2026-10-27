@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { money, shortDate, stamp } from "@/lib/format";
+import { money, rupeesFromPaise, shortDate, stamp } from "@/lib/format";
 import { readAttendanceVerdict } from "@/lib/attendance-labels";
 import type { PerformanceRow, SalesmanRecord } from "@/lib/services/sales-service";
 import type { DayEvidence as DayEvidenceType } from "@/lib/services/day-evidence-service";
@@ -143,12 +143,12 @@ export function SalesmanScreen({
                 [
                   "Order value (Rs)",
                   Math.round((thisMonth?.orderValuePaise ?? 0) / 100),
-                  lastMonth ? Math.round(lastMonth.orderValuePaise / 100) : "",
+                  lastMonth ? rupeesFromPaise(lastMonth.orderValuePaise) : "",
                 ],
                 [
                   "Collected (Rs)",
                   Math.round((thisMonth?.collectedPaise ?? 0) / 100),
-                  lastMonth ? Math.round(lastMonth.collectedPaise / 100) : "",
+                  lastMonth ? rupeesFromPaise(lastMonth.collectedPaise) : "",
                 ],
                 ["Visits", thisMonth?.visits ?? 0, lastMonth?.visits ?? ""],
                 ["Verified visits", thisMonth?.verifiedVisits ?? 0, lastMonth?.verifiedVisits ?? ""],

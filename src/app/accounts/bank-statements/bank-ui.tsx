@@ -21,7 +21,8 @@ export function inr(paise: number | null | undefined, opts: { paise?: boolean; s
   const s = String(whole);
   const head = s.slice(0, -3);
   const body = (head ? head.replace(/\B(?=(\d{2})+(?!\d))/g, ",") + "," : "") + s.slice(-3);
-  const tail = opts.paise ? `.${String(frac).padStart(2, "0")}` : "";
+  /* Paise always show where there are any; `paise: true` shows ".00" too. */
+  const tail = opts.paise || frac ? `.${String(frac).padStart(2, "0")}` : "";
   return `${neg ? "−" : opts.sign ? "+" : ""}₹${body}${tail}`;
 }
 

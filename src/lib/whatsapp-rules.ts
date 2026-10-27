@@ -4,6 +4,9 @@
  * runner both use these, so what the founder reads is what the runner does.
  * ------------------------------------------------------------------------- */
 
+
+import { money as inrText } from "@/lib/format";
+
 export type RuleStatus = "off" | "preview" | "live";
 
 export type Rule = {
@@ -66,10 +69,9 @@ export function validateWindow(w: WindowSettings): string[] {
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+/* Paise where there are any — the one copy of the rule is `lib/format`. */
 function money(paise: number): string {
-  const r = Math.round(paise / 100);
-  const s = String(r);
-  return "₹" + (s.length <= 3 ? s : s.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ",") + "," + s.slice(-3));
+  return inrText(paise);
 }
 
 /** A rule read back as one sentence — the founder checks this, not the fields. */

@@ -1,5 +1,6 @@
 import type { BusinessDate } from "../business-date";
 import { daysBetween } from "../business-date";
+import { money } from "../format";
 
 /* ---------------------------------------------------------------------------
  * E11 — is this money we have already been told about?
@@ -199,5 +200,5 @@ function dayGap(days: number): string {
 }
 
 function rupees(paise: number): string {
-  return `₹${Math.round(paise / 100).toLocaleString("en-IN")}`;
+  return `${money(paise)}`;
 }

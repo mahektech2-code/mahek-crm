@@ -1186,7 +1186,7 @@ export async function saveInteraction(
         }),
         note: [
           Number(outcomeDetail.promisedAmount) > 0
-            ? `Promised ${money(Math.round(Number(outcomeDetail.promisedAmount)) * 100)}.`
+            ? `Promised ${money(Math.round(Number(outcomeDetail.promisedAmount) * 100))}.`
             : "",
           input.notes?.trim() || (Number(outcomeDetail.promisedAmount) > 0 ? "" : "Payment promised"),
         ]

@@ -1,5 +1,7 @@
 "use server";
 
+
+import { money } from "@/lib/format";
 import { assertLeadInScope } from "@/lib/services/lead-scope";
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
@@ -541,9 +543,8 @@ export async function agreeCommercialTerms(
 
 /** One line an approver reads before deciding. Never parsed by anything. */
 function termsSentence(t: z.infer<typeof termsSchema>): string {
-  const money = Math.round(t.creditLimitPaise / 100).toLocaleString("en-IN");
   return (
-    `${t.discountPercent}% discount, credit limit ₹${money}` +
+    `${t.discountPercent}% discount, credit limit ${money(t.creditLimitPaise)}` +
     (t.exclusivity ? ", territory exclusivity granted" : "")
   );
 }

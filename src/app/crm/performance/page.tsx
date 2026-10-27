@@ -2,7 +2,7 @@ import { requireUser } from "@/lib/auth";
 import { MonthNav } from "@/components/ui/month-nav";
 import { ExportMenu } from "@/components/ui/export-menu";
 import { monthName } from "@/components/ui/month";
-import { money } from "@/lib/format";
+import { money, rupeesFromPaise } from "@/lib/format";
 import { activitySub, collectionSub } from "@/lib/performance-labels";
 import { today } from "@/lib/recompute";
 import { BP, focusLines } from "@/lib/engines/performance";
@@ -86,7 +86,7 @@ export default async function Page({
                 ...reading.score.components.map((c) => {
                   const unit =
                     c.key === "revenue" || c.key === "collection"
-                      ? (v: number) => Math.round(v / 100)
+                      ? (v: number) => rupeesFromPaise(v)
                       : c.key === "volume"
                         ? (v: number) => Math.round(v / 1000)
                         : (v: number) => v;

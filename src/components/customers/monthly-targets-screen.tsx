@@ -459,9 +459,9 @@ export function MonthlyTargetsScreen({
                 ...rows.map((r) => [
                   r.customerName,
                   r.city ?? "",
-                  Math.round(r.target / 100),
-                  Math.round(r.achieved / 100),
-                  Math.round(r.gap / 100),
+                  rupeesFromPaise(r.target),
+                  rupeesFromPaise(r.achieved),
+                  rupeesFromPaise(r.gap),
                   r.percent,
                   r.billTarget ?? "",
                   r.billsAchieved,

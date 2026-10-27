@@ -10,7 +10,7 @@
  * PURE and client-safe.
  * ------------------------------------------------------------------------- */
 
-import { groupIndian } from "@/lib/format";
+import { groupIndian, rupeesFromPaise } from "@/lib/format";
 
 /** Column types, from the design: bold, text, number, money, date, status, flags, phone, email, map, mono. */
 export type ColType = "b" | "t" | "n" | "m" | "d" | "s" | "f" | "ph" | "em" | "map" | "mono";
@@ -548,19 +548,31 @@ export function fdLong(v: CellValue | undefined): string {
 
 /** Paise → a rupees string for pre-filling a form. */
 export function rupeesField(p: number | null | undefined): string {
-  return p == null ? "" : String(p / 100);
+  return p == null ? "" : rupeesFromPaise(p);
 }
 
-/** Paise → "₹18,42,000", with a true minus. */
+/**
+ * Paise → "₹18,42,000", or "₹18,42,000.50" where it has paise, with a true
+ * minus. An amount used to be rounded to the rupee here, so a bill of
+ * ₹10,450.60 read as ₹10,451 in every ERP list and record — the paise were
+ * stored and never shown.
+ */
 export function inr(paise: CellValue | undefined): string {
   if (paise == null || paise === "") return "";
   const n = Number(paise);
   if (!Number.isFinite(n)) return String(paise);
-  const r = Math.round(n / 100);
-  return (r < 0 ? "−" : "") + "₹" + groupIndian(Math.abs(r));
+  const p = Math.round(n);
+  const abs = Math.abs(p);
+  const frac = abs % 100;
+  return (
+    (p < 0 ? "−" : "") +
+    "₹" +
+    groupIndian(Math.floor(abs / 100)) +
+    (frac ? "." + String(frac).padStart(2, "0") : "")
+  );
 }
 
-/** A RATE in paise → "₹11.50": a rate keeps its paise, where an amount is rounded to the rupee. */
+/** A RATE in paise → "₹11.50" — always two places once it has paise, like `inr`. */
 export function inrRate(paise: CellValue | undefined): string {
   if (paise == null || paise === "") return "";
   const n = Number(paise);

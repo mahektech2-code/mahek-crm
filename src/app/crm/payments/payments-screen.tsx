@@ -284,7 +284,7 @@ export function PaymentsScreen({
                       STAGE_LABEL[r.stage] ?? r.stage,
                       r.overdueBillCount,
                       r.daysOverdue,
-                      Math.round(r.totalOverdue / 100),
+                      rupeesFromPaise(r.totalOverdue),
                       r.nextAction,
                     ]),
                   ),

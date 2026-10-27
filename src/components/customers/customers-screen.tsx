@@ -67,7 +67,7 @@ import {
 } from "@/lib/actions/crm";
 import { convertToThirdParty, revertThirdParty } from "@/lib/actions/third-party";
 import { ThirdPartyDialog } from "@/components/crm/third-party-dialog";
-import { money, phoneDisplay, shortDate, stamp, today } from "@/lib/format";
+import { money, phoneDisplay, rupeesFromPaise, shortDate, stamp, today } from "@/lib/format";
 import {
   NextCallCell,
   type StoredNextStep,
@@ -595,7 +595,7 @@ export function CustomersScreen({
           r.leadSource ?? "",
           r.status,
           r.lastOrderDate ?? "",
-          Math.round(r.outstanding / 100),
+          rupeesFromPaise(r.outstanding),
           // The word where there is no date, so a CSV row can never imply a
           // call is coming when the answer was "nobody can reach them".
           r.nextStep

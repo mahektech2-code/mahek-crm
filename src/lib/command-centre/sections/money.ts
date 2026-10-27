@@ -8,7 +8,7 @@ import { rejectReceiptAction, confirmReceiptAction } from "@/lib/actions/payment
 import { billCreditDaysSql } from "@/lib/bill-terms";
 import { getConfig } from "@/lib/config/store";
 import { agingBucket } from "@/lib/engines/escalation";
-import { addDays } from "@/lib/format";
+import { addDays, rupeesFromPaise } from "@/lib/format";
 import { today } from "@/lib/recompute";
 import { accountsHome, agingAcrossTheBook, bucketise } from "@/lib/services/accounts-home-service";
 import { pendingCreditNotes } from "@/lib/services/credit-note-service";
@@ -323,7 +323,7 @@ function receiptRow(r: PendingReceipt, city: string, staleHours: number): Row {
 async function receiptsPage(query: TableQuery): Promise<TablePage> {
   const [all, config] = await Promise.all([pendingReceipts(), getConfig()]);
   const s = slice(all, query, (r, q) =>
-    [r.customerName, r.mode, r.reference ?? "", r.reportedBy ?? "", String(Math.round(r.amount / 100))]
+    [r.customerName, r.mode, r.reference ?? "", r.reportedBy ?? "", rupeesFromPaise(r.amount)]
       .join(" ")
       .toLowerCase()
       .includes(q),

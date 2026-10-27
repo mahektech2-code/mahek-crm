@@ -20,9 +20,10 @@ import {
   ProtoTabs,
   ProtoTimeline,
 } from "./proto/record-parts";
+import { money as inrText } from "@/lib/format";
 
 
-const money = (paise?: number) => (paise ? "₹" + Math.round(paise / 100).toLocaleString("en-IN") : "—");
+const money = (paise?: number) => (paise ? inrText(paise) : "—");
 
 export type Tab = "overview" | "sample" | "negotiation" | "profile" | "approval" | "order" | "comms" | "timeline";
 

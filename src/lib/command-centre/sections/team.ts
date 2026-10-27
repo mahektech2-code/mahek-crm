@@ -24,6 +24,7 @@ import {
   type TableQuery,
 } from "../provider";
 import { change, crore, fmtDate, inr, monthLabel, monthLong, monthShort, num, plural } from "../format";
+import { rupeesFromPaise } from "@/lib/format";
 import type {
   ActSpec,
   Callout,
@@ -781,7 +782,7 @@ async function targetRecord(ctx: Ctx, userId: string): Promise<RecordView> {
   ]);
   const acts: ActSpec[] = [];
   const init = {
-    revenue: c?.revenueTargetPaise == null ? "" : String(Math.round(c.revenueTargetPaise / 100)),
+    revenue: c?.revenueTargetPaise == null ? "" : rupeesFromPaise(c.revenueTargetPaise),
     reason: "",
     note: "",
   };

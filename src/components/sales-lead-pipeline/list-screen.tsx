@@ -8,9 +8,10 @@ import { LeadStatusBadges } from "./badges";
 import { personName } from "@/lib/sales-lead-pipeline/reference";
 import type { ListData } from "@/lib/sales-lead-pipeline/types";
 import { pipelineLinks, type PipelineWorkspace } from "@/lib/sales-lead-pipeline/workspace";
+import { money as inrText } from "@/lib/format";
 
 
-const money = (paise?: number) => (paise ? "₹" + Math.round(paise / 100).toLocaleString("en-IN") : "—");
+const money = (paise?: number) => (paise ? inrText(paise) : "—");
 
 /**
  * A stage filter is a comma list, because the tiles above the table count
