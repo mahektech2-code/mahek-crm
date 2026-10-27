@@ -8,6 +8,7 @@ import { lrRowHasAnything } from "@/lib/erp/engines/logistics";
 import { useAct } from "./common";
 import { labelClass, LinkButton } from "../../_ui/look";
 import { cleanWhole } from "@/lib/format";
+import { shrinkImage } from "@/lib/shrink-image";
 
 /**
  * STEP 3 — the dispatch team's upload. Photograph every LR collected from the
@@ -100,7 +101,7 @@ export function LrUpload({ today, transporters, canRead = false, onDone }: { tod
     patch(key, { uploading: true, error: "", fileName: file.name, preview: file.type.startsWith("image/") ? URL.createObjectURL(file) : null });
     try {
       const body = new FormData();
-      body.set("file", file);
+      body.set("file", await shrinkImage(file));
       body.set("kind", "photo");
       const res = await fetch("/api/erp/attachments", { method: "POST", body });
       const j = (await res.json()) as { id?: string; error?: string };

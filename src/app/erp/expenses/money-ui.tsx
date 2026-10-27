@@ -5,6 +5,7 @@ import { Button, checkboxClass, controlClass, cx, PaiseInput, Td, Th, Tr } from 
 import { fd, fdLong, inr } from "@/lib/erp/ui";
 import { ErpDialog, DialogHeader, DialogTitle } from "../_ui/dialog";
 import { eyebrowClass, labelClass, linkClass } from "../_ui/look";
+import { shrinkImage } from "@/lib/shrink-image";
 
 /* ---------------------------------------------------------------------------
  * PETTY CASH'S OWN PIECES, drawn as the mockups draw them
@@ -214,7 +215,7 @@ export function FileBox({ value, onChange, empty = "Drop a photo or PDF", dashed
     setWhy("");
     try {
       const body = new FormData();
-      body.set("file", file);
+      body.set("file", await shrinkImage(file));
       body.set("kind", "photo");
       const res = await fetch("/api/erp/attachments", { method: "POST", body });
       const j = (await res.json()) as { id?: string; error?: string };

@@ -11,6 +11,7 @@ import { ErpVoice } from "./voice";
 import { useKit } from "./kit";
 import { PinField } from "./pin-field";
 import { matchOptions, nearEnd, PAGE } from "./option-match";
+import { shrinkImage } from "@/lib/shrink-image";
 
 /* ---------------------------------------------------------------------------
  * One form field, drawn as the CRM draws every field: an uppercase label (with
@@ -426,7 +427,8 @@ function useUpload(kind: "photo" | "video", upload: FieldSpec["upload"], onChang
     setUpErr("");
     try {
       const body = new FormData();
-      body.set("file", file);
+      /* A photo is made to fit first, so its size is never the reason it fails. */
+      body.set("file", kind === "photo" ? await shrinkImage(file) : file);
       body.set("kind", kind);
       if (upload) body.set("upload", upload);
       const res = await fetch(uploadUrl, { method: "POST", body });
