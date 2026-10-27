@@ -456,3 +456,52 @@ describe("numbers and releases", () => {
     assert.equal(dueOf(null, false, "Ready", "2026-10-05"), null);
   });
 });
+
+describe("editing the whole order in one modal", () => {
+  test("the form opens on every live line, and one save edits, adds and removes", async () => {
+    const ctx = await as(admin);
+    const made = await mod("orders").forms!.new(ctx, { source: "Phone", date: "2026-09-21", godown: "Bhiwandi", billing: "Shree Paints", dupOk: "Yes — it is a separate order" }, [
+      { sku: LOOSE, qty: "5", rate: "300" },
+      { sku: BOXED, qty: "8" },
+    ]);
+    assert.ok(made.ok, msg(made));
+    const rows = await db.select().from(erpOrders).where(eq(erpOrders.orderDate, "2026-09-21"));
+    assert.equal(rows.length, 2);
+    const orderNo = rows[0].orderNo;
+    const loose = rows.find((r) => r.qtyCans === 5)!;
+    const boxed = rows.find((r) => r.qtyCans === 8)!;
+
+    const form = await mod("orders").formLoaders!.editOrder!(ctx, loose.id);
+    assert.ok(form);
+    assert.equal(form.initLines?.length, 2, "every line of the order, not just the one clicked");
+    assert.deepEqual(new Set(form.initLines!.map((l) => l.lineId)), new Set([loose.id, boxed.id]));
+    assert.equal(form.initLines!.find((l) => l.lineId === loose.id)?.rate, "300", "the saved rate, not the list's");
+
+    const saved = await mod("orders").forms!.editOrder!(ctx, { delivery: "Shree Paints", transporter: "Shree Roadways", dispatchOn: "2026-09-25" }, [
+      { lineId: loose.id, sku: LOOSE, qty: "9", rate: "310", remark: "Urgent" },
+      { sku: DASHED, qty: "12" },
+    ], loose.id);
+    assert.ok(saved.ok, msg(saved));
+    const after = await db.select().from(erpOrders).where(eq(erpOrders.orderNo, orderNo));
+    assert.equal(after.length, 2, "one kept, one added, one removed");
+    const kept = after.find((r) => r.id === loose.id)!;
+    assert.equal(kept.qtyCans, 9);
+    assert.equal(kept.ratePaise, 31000);
+    assert.equal(kept.remark, "Urgent");
+    assert.equal(kept.transporter, "Shree Roadways");
+    assert.equal(kept.dispatchOn, "2026-09-25");
+    assert.ok(!after.some((r) => r.id === boxed.id), "the line left off the form is removed");
+    assert.ok(after.some((r) => r.skuId === dashedId && r.qtyCans === 12), "the new line joins the same order");
+  });
+
+  test("it refuses before it writes anything", async () => {
+    const ctx = await as(admin);
+    const [line] = await db.select().from(erpOrders).where(and(eq(erpOrders.orderDate, "2026-09-21"), eq(erpOrders.qtyCans, 9)));
+    assert.match(msg(await mod("orders").forms!.editOrder!(ctx, {}, [], line.id)), /at least one line/);
+    assert.match(msg(await mod("orders").forms!.editOrder!(ctx, {}, [{ lineId: "ODID-nope", sku: LOOSE, qty: "1" }], line.id)), /changed while it was open/);
+    const bad = await mod("orders").forms!.editOrder!(ctx, {}, [{ lineId: line.id, sku: LOOSE, qty: "0" }], line.id);
+    assert.equal(bad.ok ? "" : bad.fieldErrors?.[0]?.field, "l0.qty", "the error lands on the line it is about");
+    const [still] = await db.select().from(erpOrders).where(eq(erpOrders.id, line.id));
+    assert.equal(still.qtyCans, 9, "nothing written");
+  });
+});
