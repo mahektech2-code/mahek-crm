@@ -64,6 +64,7 @@ test("dates: month id, fulfil days, due date", () => {
 
 test("standing instructions and the target flag (A-20)", () => {
   assert.equal(standingInstructions({ instructions: "Call first", deliveryType: "Door Delivery", paymentType: "Paid", weightType: null }), "Call first - Door Delivery - Paid - ");
+  assert.equal(standingInstructions({ instructions: null, deliveryType: "Godown Delivery", paymentType: "to_pay", weightType: null }), " - Godown Delivery - To Pay - ", "the stored code is shown in words");
   assert.equal(standingInstructions({ instructions: null, deliveryType: null, paymentType: null, weightType: null }), "");
   assert.equal(targetReached(100, 100), true);
   assert.equal(targetReached(100, null), false);
