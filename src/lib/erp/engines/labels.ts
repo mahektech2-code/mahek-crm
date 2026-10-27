@@ -7,7 +7,7 @@
  *   box       50 × 50 mm   a packed box (or a labelled loose can), with its QR
  *   sfg       80 × 80 mm   a semi-finished lot, QR = the lot code
  *   purchase  80 × 80 mm   a raw-material lot on its drum, QR = the lot number
- *   dispatch  80 × 80 mm   the dispatch sticker: one per box or can leaving on an approved invoice
+ *   dispatch  80 × 80 mm   the dispatch sticker: one per box or can leaving on an order line
  *
  * A label is cut to a fixed size and nobody is there to scroll it, so every
  * value that can be long is given a type size that FITS rather than a size
@@ -74,18 +74,28 @@ export type PurchaseLabel = {
 };
 
 /**
- * THE DISPATCH STICKER (Order-to-Delivery PRD, rule 5 and step 7): the
- * customer, the product, the invoice number and the order number — and nothing
- * else. It carries no lot code and no box code: those are on the box's own
- * label, made by the box-id system, and the two are never one sticker.
+ * THE DISPATCH STICKER: who it goes to, what it is, how much, and who carries
+ * it. The invoice number is not on it: a sticker goes on before the bill is
+ * entered (Under Process or Ready), and the order number is what ties the two.
  */
 export type DispatchLabel = {
   kind: "dispatch";
   orderNo: number;
-  /** The Tally invoice number — null when the sticker goes on before billing. */
-  invoiceNo: string | null;
-  customer: string;
-  product: string;
+  date: string;
+  /** The order line's own id, shortened for the label. */
+  lineRef: string;
+  delivery: string;
+  area: string | null;
+  billing: string;
+  sku: string;
+  qty: number;
+  /** Box | Can | Drum. */
+  type: string;
+  weightKg: number | null;
+  /** Labels on the whole order: how many pieces the transporter is handed. */
+  lotSize: number;
+  remark: string | null;
+  transporter: string | null;
 };
 
 export type Label = BoxLabel | SfgLabel | PurchaseLabel | DispatchLabel;

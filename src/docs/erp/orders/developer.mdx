@@ -16,7 +16,7 @@ The Orders screen is ten tabs, each its own server module: nine built in `screen
 | Order book | `src/lib/erp/book.ts` | `syncBookOrders`, `orderNosOf`, `erpOrdersLive` |
 | Inbox | `src/lib/erp/screens/inbox.ts`, `src/lib/erp/ai-orders.ts` | `inboxScreen`; `draftFromText`, `resolveDraft`, `draftForm`, `markConverted`, `closeInbox`, `screenWhatsApp` |
 | Label sheet | `src/app/erp/print-labels/page.tsx`, `labels.tsx`, `label-css.ts`, `printer.tsx` | `?batch=`, `?lot=`, `?ids=` (box, 50 mm), `?sfg=`, `?purchase=`, `?order=` (80 mm), `&copies=`; `erpMarkLabelsPrinted` |
-| Label data | `src/lib/erp/label-data.ts` | `boxLabels`, `sfgLabel`, `purchaseLabel`, `dispatchLabels` (approved, undispatched lines only: customer, product, invoice no, order no), `qrFor` |
+| Label data | `src/lib/erp/label-data.ts` | `boxLabels`, `sfgLabel`, `purchaseLabel`, `dispatchLabels` (lines `isStickerLine` passes: delivery and billing party, order no and date, product, qty, type, weight, lot size, remark, transporter), `qrFor` |
 | Label rules (pure) | `src/lib/erp/engines/labels.ts`, `src/lib/erp/engines/tspl.ts` | `fitPt`, `boxFoot`, `lotSize`, `printRuns`; `tsplJob`, `packBitmap`, `rasterFromRgba`, `qrGrid` |
 | Writes | `src/lib/actions/erp.ts` | `erpRunAction`, `erpRunBulk`, `erpSubmitForm`, `erpLoadForm` |
 | Trips | `src/lib/erp/trips.ts` | `assignTripsAtDispatch`, called by `openTransports` inside the dispatch transaction |
