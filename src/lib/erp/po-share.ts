@@ -201,7 +201,7 @@ export async function poShareSpecs(views: PoView[], money: boolean): Promise<Map
 
 /** Send: what the Share window sent, done. */
 export async function sharePo(ctx: ErpContext, poId: string, values: Record<string, string | undefined>): Promise<Result<unknown>> {
-  if (!ctx.powers.has("viewPurchaseMoney")) return err("The PO carries its rates, and purchase money is not on your account.", "not_permitted");
+  if (!ctx.powers.has("viewPurchaseMoney")) return err("Sharing sends the PO with its rates to the vendor, so it needs purchase money on your account — Print / PDF gives you a copy without rates.", "not_permitted");
   const [p] = await purchaseOrderViews({ ids: [poId] });
   if (!p) return err("That PO no longer exists.", "not_found");
   const name = poName(p.po);
