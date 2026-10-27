@@ -28,6 +28,8 @@ import {
   moveCategory,
   nameHeldRow,
   removeAlias,
+  moveBrandLine,
+  moveFinishedGood,
   moveFormulation,
   renameLevel,
   renameSku,
@@ -797,6 +799,12 @@ function GoodsTab({
                 active={g.active}
                 canWrite={canWrite}
                 refresh={refresh}
+                move={{
+                  label: "Brand line",
+                  current: g.brandId,
+                  options: data.hierarchy.brands.map((b) => ({ id: b.id, name: b.formulation ? `${b.name} · ${b.formulation}` : b.name })),
+                  run: (to) => moveFinishedGood(g.id, to),
+                }}
                 cells={
                   <>
                     <Td>{g.brand ?? "—"}</Td>
@@ -856,6 +864,12 @@ function BrandsTab({
                   active={b.active}
                   canWrite={canWrite}
                   refresh={refresh}
+                  move={{
+                    label: "Formulation",
+                    current: b.formulationId,
+                    options: data.hierarchy.formulations.map((f) => ({ id: f.id, name: f.name })),
+                    run: (to) => moveBrandLine(b.id, to),
+                  }}
                   cells={
                     <>
                       <Td>{b.formulation ?? "—"}</Td>
@@ -1021,7 +1035,19 @@ function MixOffer({
   );
 }
 
-/** One renamable, retirable row of any of the three upper levels. */
+/**
+ * Where a brand line or finished good can be MOVED to: the level above it. It
+ * takes everything under it along — see `moveBrandLine`/`moveFinishedGood` —
+ * so the ERP, the order forms and the handsets all read the new tree.
+ */
+type MoveSpec = {
+  label: string;
+  current: string | null;
+  options: { id: string; name: string }[];
+  run: (to: string) => Promise<{ ok: boolean; message?: string; error?: string }>;
+};
+
+/** One renamable, retirable, and (for brands and goods) movable row of the three upper levels. */
 function LevelRow({
   index,
   level,
@@ -1031,6 +1057,7 @@ function LevelRow({
   cells,
   canWrite,
   refresh,
+  move,
 }: {
   index: number;
   level: "formulation" | "brand" | "good";
@@ -1040,10 +1067,14 @@ function LevelRow({
   cells: React.ReactNode;
   canWrite: boolean;
   refresh: () => void;
+  move?: MoveSpec;
 }) {
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState(name);
+  const [moving, setMoving] = React.useState(false);
+  const [target, setTarget] = React.useState("");
   const { busy, run } = useAction(refresh);
+  const targetName = move?.options.find((o) => o.id === target)?.name;
 
   return (
     <Tr>
@@ -1070,7 +1101,37 @@ function LevelRow({
       {cells}
       <Td className={pinnedCell("right", index)} align="right">
         <span className="flex items-center justify-end gap-1">
-          {editing ? (
+          {moving && move ? (
+            <>
+              <Select value={target} onChange={(e) => setTarget(e.target.value)} aria-label={`Move ${name} to which ${move.label.toLowerCase()}`}>
+                <option value="">{move.label}…</option>
+                {move.options
+                  .filter((o) => o.id !== move.current)
+                  .map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.name}
+                    </option>
+                  ))}
+              </Select>
+              <Button
+                variant="ghost"
+                disabled={busy || !target}
+                title={targetName ? `Moves ${name} and everything under it to ${targetName}.` : `Pick the ${move.label.toLowerCase()} first.`}
+                onClick={async () => {
+                  const r = await run(() => move.run(target));
+                  if (r.ok) {
+                    setMoving(false);
+                    setTarget("");
+                  }
+                }}
+              >
+                Move
+              </Button>
+              <Button variant="ghost" onClick={() => setMoving(false)}>
+                Cancel
+              </Button>
+            </>
+          ) : editing ? (
             <>
               <Button
                 variant="ghost"
@@ -1099,6 +1160,19 @@ function LevelRow({
               >
                 Rename
               </Button>
+              {move ? (
+                <Button
+                  variant="ghost"
+                  disabled={!canWrite}
+                  title={canWrite ? `Move ${name} — and everything under it — to another ${move.label.toLowerCase()}.` : "Configuration is changed by a manager."}
+                  onClick={() => {
+                    setTarget("");
+                    setMoving(true);
+                  }}
+                >
+                  Move
+                </Button>
+              ) : null}
               <Button
                 variant="ghost"
                 disabled={!canWrite || busy}
@@ -1880,7 +1954,7 @@ function ImportReportCard({ report }: { report: NonNullable<CatalogueData["lastR
     <Card className="mt-4 overflow-hidden">
       <CardHeader
         title={report.applied ? "What the import changed" : "What a real run would change"}
-        hint={`${report.created} created · ${report.updated} updated · ${report.unchanged} unchanged`}
+        hint={`${report.created} created · ${report.updated} updated · ${report.unchanged} unchanged${report.kept ? ` · ${report.kept} kept as edited here` : ""}`}
       />
       {report.changes.length === 0 ? (
         <EmptyState

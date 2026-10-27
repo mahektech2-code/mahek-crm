@@ -44,7 +44,8 @@ const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 export type ImportChange = {
   level: "formulation" | "brand" | "finished good" | "SKU" | "exception";
   name: string;
-  action: "created" | "updated";
+  /** `kept`: the seed differs, but somebody edited the row in the console, so it is left as they set it. */
+  action: "created" | "updated" | "kept";
   /** Field-level detail for an update, so a re-run's report is readable. */
   fields?: string[];
 };
@@ -55,6 +56,8 @@ export type ImportReport = {
   created: number;
   updated: number;
   unchanged: number;
+  /** The seed differs, but the row was edited in the Admin Console, so it was left alone. */
+  kept: number;
   changes: ImportChange[];
   /** Names that still need a human to choose which legacy ID is canonical. */
   needsCanonicalId: Array<{ name: string; externalIds: number[] }>;
@@ -68,6 +71,19 @@ export type ImportReport = {
 };
 
 type Diff = { fields: string[] };
+
+/**
+ * A LEVEL IS FOUND BY ITS SLUG, OR BY ANY SLUG IT ANSWERED TO BEFORE A RENAME.
+ * The seed still carries the old name; without `former_slugs` the import would
+ * miss the renamed row and create a second one under the old name, then file
+ * the SKUs back under it.
+ */
+function bySlug<T extends { slug: string; formerSlugs: string[] }>(rows: T[]): Map<string, T> {
+  const m = new Map<string, T>();
+  for (const r of rows) for (const f of r.formerSlugs ?? []) m.set(f, r);
+  for (const r of rows) m.set(r.slug, r);
+  return m;
+}
 
 /** Only the fields that actually differ, so "updated" means something. */
 function diff<T extends Record<string, unknown>>(row: T, want: Partial<T>): Diff {
@@ -96,11 +112,13 @@ export async function importCatalogue(
   const dryRun = opts.dryRun ?? false;
   const changes: ImportChange[] = [];
   let unchanged = 0;
+  /** Rows the seed would change but somebody edited in the console. */
+  let kept = 0;
 
   /* ---- level 1: formulations ---- */
 
   const existingForms = await db.select().from(productFormulations);
-  const formBySlug = new Map(existingForms.map((f) => [f.slug, f]));
+  const formBySlug = bySlug(existingForms);
   const formIdByName = new Map<string, string>();
 
   for (const [i, f] of FORMULATIONS.entries()) {
@@ -122,7 +140,10 @@ export async function importCatalogue(
     }
     formIdByName.set(f.name, row.id);
     const d = diff(row, { name: f.name });
-    if (d.fields.length) {
+    if (d.fields.length && row.editedAt) {
+      changes.push({ level: "formulation", name: f.name, action: "kept", fields: d.fields });
+      kept++;
+    } else if (d.fields.length) {
       changes.push({ level: "formulation", name: f.name, action: "updated", fields: d.fields });
       if (!dryRun) {
         await db
@@ -136,7 +157,7 @@ export async function importCatalogue(
   /* ---- level 2: brand lines ---- */
 
   const existingBrands = await db.select().from(productBrands);
-  const brandBySlug = new Map(existingBrands.map((b) => [b.slug, b]));
+  const brandBySlug = bySlug(existingBrands);
   const brandIdByName = new Map<string, string>();
 
   for (const [i, b] of BRANDS.entries()) {
@@ -157,7 +178,10 @@ export async function importCatalogue(
     }
     brandIdByName.set(b.name, row.id);
     const d = diff(row, { name: b.name, formulationId });
-    if (d.fields.length) {
+    if (d.fields.length && row.editedAt) {
+      changes.push({ level: "brand", name: b.name, action: "kept", fields: d.fields });
+      kept++;
+    } else if (d.fields.length) {
       changes.push({ level: "brand", name: b.name, action: "updated", fields: d.fields });
       if (!dryRun) {
         await db
@@ -171,7 +195,7 @@ export async function importCatalogue(
   /* ---- level 3: finished goods ---- */
 
   const existingGoods = await db.select().from(finishedGoods);
-  const goodBySlug = new Map(existingGoods.map((g) => [g.slug, g]));
+  const goodBySlug = bySlug(existingGoods);
   const goodIdByName = new Map<string, string>();
 
   for (const [i, g] of FINISHED_GOODS.entries()) {
@@ -204,7 +228,10 @@ export async function importCatalogue(
       formulationId,
       millilitres: g.millilitres,
     });
-    if (d.fields.length) {
+    if (d.fields.length && row.editedAt) {
+      changes.push({ level: "finished good", name: g.name, action: "kept", fields: d.fields });
+      kept++;
+    } else if (d.fields.length) {
       changes.push({ level: "finished good", name: g.name, action: "updated", fields: d.fields });
       if (!dryRun) {
         await db
@@ -285,7 +312,10 @@ export async function importCatalogue(
       : update;
 
     const d = diff(row, wanted);
-    if (d.fields.length) {
+    if (d.fields.length && row.editedAt) {
+      changes.push({ level: "SKU", name: s.name, action: "kept", fields: d.fields });
+      kept++;
+    } else if (d.fields.length) {
       changes.push({ level: "SKU", name: s.name, action: "updated", fields: d.fields });
       if (!dryRun) {
         await db
@@ -368,6 +398,7 @@ export async function importCatalogue(
     created: changes.filter((c) => c.action === "created").length,
     updated: changes.filter((c) => c.action === "updated").length,
     unchanged,
+    kept,
     changes,
     needsCanonicalId,
     held: EXCEPTIONS.map((e) => ({ externalId: e.externalId, reason: e.reason })),

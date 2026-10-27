@@ -2966,6 +2966,10 @@ export const productFormulations = pgTable(
     displayOrder: integer("display_order").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    /** Set when somebody edits this row in the Admin Console: the deploy-time catalogue import leaves it alone from then on (0287). */
+    editedAt: timestamp("edited_at", { withTimezone: true }),
+    /** Slugs it answered to before a rename, so the import finds it rather than recreating the old name (0287). */
+    formerSlugs: text("former_slugs").array().notNull().default(sql`'{}'::text[]`),
   },
   (t) => [
     uniqueIndex("product_formulations_slug_key").on(t.slug),
@@ -2992,6 +2996,10 @@ export const productBrands = pgTable(
     displayOrder: integer("display_order").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    /** Set when somebody edits this row in the Admin Console: the deploy-time catalogue import leaves it alone from then on (0287). */
+    editedAt: timestamp("edited_at", { withTimezone: true }),
+    /** Slugs it answered to before a rename (0287). */
+    formerSlugs: text("former_slugs").array().notNull().default(sql`'{}'::text[]`),
   },
   (t) => [
     uniqueIndex("product_brands_slug_key").on(t.slug),
@@ -3017,6 +3025,10 @@ export const finishedGoods = pgTable(
     displayOrder: integer("display_order").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    /** Set when somebody edits this row in the Admin Console: the deploy-time catalogue import leaves it alone from then on (0287). */
+    editedAt: timestamp("edited_at", { withTimezone: true }),
+    /** Slugs it answered to before a rename (0287). */
+    formerSlugs: text("former_slugs").array().notNull().default(sql`'{}'::text[]`),
   },
   (t) => [
     uniqueIndex("finished_goods_slug_key").on(t.slug),
@@ -3097,6 +3109,8 @@ export const products = pgTable(
     displayOrder: integer("display_order").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    /** Set when somebody edits this row in the Admin Console: the deploy-time catalogue import leaves it alone from then on (0287). */
+    editedAt: timestamp("edited_at", { withTimezone: true }),
   },
   (t) => [
     index("products_active_idx").on(t.active, t.displayOrder),

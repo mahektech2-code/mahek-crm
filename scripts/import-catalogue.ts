@@ -20,7 +20,7 @@ async function main() {
       .map(([k, n]) => `  ${String(n).padStart(4)} ${k}`)
       .join("\n"),
   );
-  console.log(`\n  ${r.created} created · ${r.updated} updated · ${r.unchanged} unchanged`);
+  console.log(`\n  ${r.created} created · ${r.updated} updated · ${r.unchanged} unchanged · ${r.kept} kept as edited in the console`);
 
   const shown = r.changes.slice(0, 20);
   for (const c of shown) {
