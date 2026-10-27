@@ -1416,7 +1416,7 @@ const purchaseOrders: ScreenModule = {
           id: "share",
           l: "Share…",
           primary: s === "Approved",
-          why: money ? "" : "The PO carries its rates, and purchase money is not on your account",
+          why: money ? "" : "Sharing sends the PO with its rates to the vendor, so it needs purchase money on your account — Print / PDF gives you a copy without rates",
           share: shareSpecs.get(p.po.id),
         });
       }
