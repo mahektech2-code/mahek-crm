@@ -8,7 +8,7 @@ import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/toast";
 import { Modal } from "@/components/ui/overlays";
 import { MultiSelect } from "@/components/ui/multi-select";
-import { setSalesmanTerritories } from "@/lib/actions/sales";
+import { previewAreaHandover, setSalesmanTerritories, type AreaHandover } from "@/lib/actions/sales";
 import type { DistrictNode, PlaceTree, Salesman, StateNode } from "@/lib/services/sales-service";
 import { Button, Pill } from "@/components/console/parts";
 
@@ -42,6 +42,14 @@ import { Button, Pill } from "@/components/console/parts";
  * rather than a second grant — stored as both, the clause would OR them and
  * hand him the whole state. `setSalesmanTerritories` does the pruning, on the
  * server, because a server action is a URL.
+ *
+ * **The shops in those places can come with them, and the dialog says whose
+ * they are first.** Narrowing alone hands him nothing, and Mahek's practice is
+ * that whoever is given an area takes its shops. So the shops in the picked
+ * places that sit in somebody else's book are counted on the server, named by
+ * whose book they are in, and moved to him on Save unless the tick is taken
+ * off — through `customer.reassign`, so only Accounts or an admin can do it,
+ * and only the number shown, so a set that grew meanwhile is refused.
  *
  * **What was picked before districts existed is kept, and shown.** A typed
  * city allocated last month goes on meaning exactly what it meant; it is
@@ -92,6 +100,26 @@ export function Territories({
   const [picked, setPicked] = React.useState<Pick[]>([]);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  /* What saving would also move into his book, counted on the server for exactly these picks. */
+  const [preview, setPreview] = React.useState<{ key: string; data: AreaHandover | null }>({ key: "", data: null });
+  const [giveShops, setGiveShops] = React.useState(true);
+  const pickKey = JSON.stringify(picked.map((p) => [p.kind, p.value, p.parent]));
+
+  React.useEffect(() => {
+    if (!open || !picked.length) return;
+    let live = true;
+    const t = setTimeout(async () => {
+      const r = await previewAreaHandover({ salesmanId: salesman.id, territories: picked });
+      if (live) setPreview({ key: pickKey, data: r.ok ? r.data : null });
+    }, 350);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [open, picked, pickKey, salesman.id]);
+
+  const handover = preview.key === pickKey ? preview.data : null;
+  const counting = open && picked.length > 0 && preview.key !== pickKey;
 
   function begin() {
     /* What is STORED is the leaves, so a town arrives with no district or
@@ -123,6 +151,7 @@ export function Territories({
 
     setPicked(all);
     setError(null);
+    setGiveShops(true);
     setOpen(true);
   }
 
@@ -249,6 +278,7 @@ export function Territories({
       result = await setSalesmanTerritories({
         salesmanId: salesman.id,
         territories: picked,
+        handOver: handover && handover.canMove && giveShops && handover.total > 0 ? handover.total : undefined,
       });
     } finally {
       setBusy(false);
@@ -326,8 +356,8 @@ export function Territories({
               <Button tone="quiet" onClick={() => setOpen(false)}>
                 Cancel
               </Button>
-              <Button tone="primary" onClick={save} disabled={busy}>
-                {busy ? "Saving…" : "Save"}
+              <Button tone="primary" onClick={save} disabled={busy || counting}>
+                {busy ? "Saving…" : counting ? "Counting…" : "Save"}
               </Button>
             </div>
           </div>
@@ -335,8 +365,8 @@ export function Territories({
       >
         <p className="text-[13px] text-pretty text-muted">
           This narrows what their handset shows to their own customers and leads in these
-          places. It does not give them anybody else&apos;s — who may see a record is decided
-          by whose book it is in, and nothing here changes that.
+          places. Shops here that are in somebody else&apos;s book are listed at the bottom,
+          and move into theirs when you save unless you untick it.
         </p>
 
         {nothing ? (
@@ -461,6 +491,48 @@ export function Territories({
               </div>
             ) : null}
 
+            {/* THE HAND-OVER, named before it happens: how many, and out of whose book. */}
+            {picked.length ? (
+              <div className="mt-5 rounded-[4px] border border-line px-3 py-2.5 text-[13px] text-pretty">
+                {!handover ? (
+                  <p className="text-muted">
+                    {counting ? "Counting the shops in these places…" : "Could not count the shops in these places."}
+                  </p>
+                ) : handover.total > 0 ? (
+                  <>
+                    <p className="text-body">
+                      <span className="font-medium text-ink">
+                        {count(handover.total)} {handover.total === 1 ? "shop" : "shops"} in these places{" "}
+                        {handover.total === 1 ? "is" : "are"} in other books
+                      </span>{" "}
+                      — {handover.from.map(fromWords).join(", ")}.
+                    </p>
+                    {handover.canMove ? (
+                      <label className="mt-2 flex cursor-pointer items-start gap-2">
+                        <input
+                          type="checkbox"
+                          checked={giveShops}
+                          onChange={(e) => setGiveShops(e.target.checked)}
+                          className="mt-[3px] size-3.5 shrink-0 accent-[#5223E0]"
+                        />
+                        <span className="text-body">
+                          Make {salesman.name} their salesperson when I save. Their sales and
+                          targets move with them, and everybody affected is told.
+                        </span>
+                      </label>
+                    ) : (
+                      <p className="mt-1 text-muted">
+                        Only Accounts or an admin can move them into {salesman.name}&apos;s book, so
+                        saving sets the areas and leaves the shops where they are.
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-muted">Every shop in these places is already in {salesman.name}&apos;s book.</p>
+                )}
+              </div>
+            ) : null}
+
             {/* THE ANSWER, said back before it is written. A list of ticks is
                 not a review; a sentence naming what it comes to is. */}
             <div
@@ -506,6 +578,15 @@ export function Territories({
       </Modal>
     </>
   );
+}
+
+/** "151 leads from Seema Roy" — one holder's share of a hand-over. */
+function fromWords(f: AreaHandover["from"][number]): string {
+  const parts = [
+    f.customers ? `${count(f.customers)} ${f.customers === 1 ? "customer" : "customers"}` : "",
+    f.leads ? `${count(f.leads)} ${f.leads === 1 ? "lead" : "leads"}` : "",
+  ].filter(Boolean);
+  return `${parts.join(" and ")} from ${f.name === "Nobody" ? "nobody's book" : f.name}`;
 }
 
 /** The numbered step heading — the dialog is a sequence and it should look like one. */

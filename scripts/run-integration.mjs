@@ -267,6 +267,8 @@ const files = [
   // The third verifier: a lead a Salesman raised or holds goes to the person
   // `leads.fieldVerifierEmail` names, by the seat the Sales Manager already has.
   "src/lib/field-verifier-routing.test.ts",
+  // Saving where a salesman works can hand him the shops in those places — only the count shown, only with customer.reassign.
+  "src/lib/area-handover.test.ts",
   "src/lib/org-chart-verifier-routing.test.ts",
   // A lead still at the legacy `new` / `contacted` stage converts to Prospect once the desk
   // gives it a sales type: it is relabelled as the Suspect it is, not refused as off-ladder.
