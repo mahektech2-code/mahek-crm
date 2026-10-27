@@ -2,7 +2,7 @@ import Link from "next/link";
 import { MonthNav } from "@/components/ui/month-nav";
 import { ExportMenu } from "@/components/ui/export-menu";
 import { monthName } from "@/components/ui/month";
-import { money, moneyShort } from "@/lib/format";
+import { money, moneyShort, rupeesFromPaise } from "@/lib/format";
 import {
   activityLine,
   bpPercent,
@@ -128,14 +128,14 @@ export default async function Page({
                       r.userName,
                       r.hasTarget ? (r.score.totalBp / 100).toFixed(1) : "",
                       r.hasTarget ? r.rating : "No target set",
-                      Math.round(r.actuals.revenuePaise / 100),
+                      rupeesFromPaise(r.actuals.revenuePaise),
                       by("revenue"),
                       Math.round(r.actuals.millilitres / 1000),
                       by("volume"),
                       r.mix.achievementBp === null ? "" : Math.round(r.mix.achievementBp / 100),
                       r.actuals.newCustomers,
-                      Math.round(r.actuals.collectionPaise / 100),
-                      Math.round(r.actuals.overdueAtStartPaise / 100),
+                      rupeesFromPaise(r.actuals.collectionPaise),
+                      rupeesFromPaise(r.actuals.overdueAtStartPaise),
                       r.actuals.overdueAtStartPaise > 0
                         ? Math.round((r.actuals.collectionPaise / r.actuals.overdueAtStartPaise) * 100)
                         : "",

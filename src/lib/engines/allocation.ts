@@ -1,4 +1,5 @@
 import type { BusinessDate } from "../business-date";
+import { money } from "../format";
 
 /* ---------------------------------------------------------------------------
  * E8 — Payment Allocation
@@ -86,7 +87,7 @@ export function oldestFirst(bills: readonly AllocatableBill[]): AllocatableBill[
 }
 
 const rupees = (paise: number) =>
-  `₹${Math.round(paise / 100).toLocaleString("en-IN")}`;
+  `${money(paise)}`;
 
 export function allocate(
   bills: readonly AllocatableBill[],

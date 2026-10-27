@@ -1,3 +1,5 @@
+
+import { money } from "@/lib/format";
 import type { BlueprintDefinition, CalcRule, Question, Stage } from "../blueprint-types";
 import { validateBlueprint, type Issue } from "./validator";
 
@@ -103,14 +105,14 @@ export function diffBlueprints(a: BlueprintDefinition, b: BlueprintDefinition): 
   for (const d of a.documents) if (!bd.has(d.key)) push(`Document · ${d.label}`, "removed", `${d.mandatory ? "Mandatory" : "Optional"}`, "—");
 
   /* Offer: grades and the growth ladder */
-  const grade = (g: BlueprintDefinition["offer"]["grades"][number]) => `₹${Math.round(g.basicMinPaise / 100).toLocaleString("en-IN")}–₹${Math.round(g.basicMaxPaise / 100).toLocaleString("en-IN")}`;
+  const grade = (g: BlueprintDefinition["offer"]["grades"][number]) => `${money(g.basicMinPaise)}–${money(g.basicMaxPaise)}`;
   const ag = new Map(a.offer.grades.map((g) => [g.key, g]));
   for (const g of b.offer.grades) {
     const o = ag.get(g.key);
     if (!o) push(`Grade · ${g.label}`, "added", "—", grade(g));
     else if (grade(o) !== grade(g)) push(`Grade · ${g.label}`, "changed", grade(o), grade(g));
   }
-  const step = (s: BlueprintDefinition["offer"]["growth"][number]) => `${s.fromGrade}→${s.toGrade}: ${s.incrementType === "percentage" ? `${s.value}%` : `₹${Math.round(s.value / 100).toLocaleString("en-IN")}`}`;
+  const step = (s: BlueprintDefinition["offer"]["growth"][number]) => `${s.fromGrade}→${s.toGrade}: ${s.incrementType === "percentage" ? `${s.value}%` : `${money(s.value)}`}`;
   const ga = a.offer.growth.map(step).join(" · ") || "—";
   const gb = b.offer.growth.map(step).join(" · ") || "—";
   if (ga !== gb) push("Growth path", "changed", ga, gb, "One definition, read by the briefing and the offer letter alike.");

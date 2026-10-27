@@ -24,8 +24,19 @@ const MONTH_NAMES = [
  * from its number.
  */
 export function inr(n: number): string {
-  const negative = Math.round(n) < 0;
-  return (negative ? '\u2212' : '') + '₹' + grouped(n);
+  /* PAISE SHOW WHERE THERE ARE ANY. This rounded to the rupee, so a bill of
+     ₹10,450.60 read as ₹10,451 on every screen — the record held the paise
+     and the salesman collecting it was shown a figure nobody billed. Whole
+     amounts read as they always did. */
+  const paise = Math.round(n * 100);
+  const abs = Math.abs(paise);
+  const frac = abs % 100;
+  return (
+    (paise < 0 ? '\u2212' : '') +
+    '₹' +
+    grouped(Math.floor(abs / 100)) +
+    (frac ? '.' + String(frac).padStart(2, '0') : '')
+  );
 }
 
 /**
@@ -54,7 +65,8 @@ export function compactInr(rupees: number): string {
   if (n >= 10_000_000) return '₹' + trim(n / 10_000_000) + 'Cr';
   if (n >= 100_000) return '₹' + trim(n / 100_000) + 'L';
   if (n >= 1_000) return '₹' + trim(n / 1_000) + 'K';
-  return inr(n);
+  /* Under a thousand the exact figure fits, paise and all. */
+  return inr(Math.abs(rupees));
 }
 
 /**

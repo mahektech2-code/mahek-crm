@@ -2201,7 +2201,7 @@ export async function askForFirstOrder(
             `expected ${p.expectedDate}`,
             p.expectedCans != null ? `${p.expectedCans} cans` : null,
             p.expectedValuePaise != null
-              ? `about ${Math.round(p.expectedValuePaise / 100)} rupees`
+              ? `about ${money(p.expectedValuePaise)}`
               : null,
           ]
             .filter(Boolean)

@@ -1,4 +1,5 @@
 import type { BusinessDate } from "../business-date";
+import { signedMoney } from "../format";
 
 /* ---------------------------------------------------------------------------
  * E6 — EOD Aggregator
@@ -105,13 +106,8 @@ export type EodReport = {
 
 /** Indian digit grouping: 1,84,500 — not 184,500. */
 export function formatMoney(paise: number): string {
-  const rupees = Math.round(paise / 100);
-  const s = String(Math.abs(rupees));
-  const grouped =
-    s.length <= 3
-      ? s
-      : s.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ",") + "," + s.slice(-3);
-  return `${rupees < 0 ? "−" : ""}₹${grouped}`;
+  /* Paise where there are any — `signedMoney` is the one copy of the rule. */
+  return signedMoney(paise);
 }
 
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];

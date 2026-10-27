@@ -30,6 +30,7 @@ import {
 import { STAGE_LABEL } from "@/lib/sales-lead-pipeline/reference";
 import type { Lead } from "@/lib/sales-lead-pipeline/types";
 import { cleanDecimal, cleanWhole, parseDecimal, rupeesFromPaise } from "@/lib/format";
+import { money as inrText } from "@/lib/format";
 
 /**
  * Every Sales-Manager-side dialog, as one file: each is one small form and one
@@ -1301,7 +1302,7 @@ function DistributorTermsModal({ lead, onClose }: ModalProps) {
       ? [
           exclusive && "exclusivity",
           pct! > t.discountPercent && `a discount above ${t.discountPercent}%`,
-          paise! > t.creditLimitPaise && `a credit limit above ₹${Math.round(t.creditLimitPaise / 100).toLocaleString("en-IN")}`,
+          paise! > t.creditLimitPaise && `a credit limit above ${inrText(t.creditLimitPaise)}`,
         ].filter(Boolean)
       : [];
 

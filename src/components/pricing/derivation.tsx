@@ -18,7 +18,7 @@
 
 import * as React from "react";
 import type { PriceDerivation } from "@/db/schema";
-import { deriveRate, inclFromEx, pctLabel } from "@/lib/engines/price-math";
+import { deriveRate, inclFromEx, listInclFromEx, pctLabel } from "@/lib/engines/price-math";
 import { money, parseRupees } from "@/lib/format";
 import { Field, Input, MoneyInput, Radio } from "@/components/ui/primitives";
 
@@ -64,8 +64,9 @@ export function derivationExample(
   if (!derivation) return null;
   const moved = deriveRate(sample.exPaise, sample.millilitresPerCan, derivation);
   if (moved == null) return null;
+  /* The child is a derived list, so it shows the rupee — `listInclFromEx`. */
   return `${sample.name} at ${money(inclFromEx(sample.exPaise, gstBp))} becomes ${money(
-    inclFromEx(moved, gstBp),
+    listInclFromEx(moved, gstBp, true),
   )}.`;
 }
 

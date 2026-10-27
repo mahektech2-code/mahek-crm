@@ -9,6 +9,7 @@ import {
   distanceLabel,
   hoursInWords,
   compactInr,
+  compactInrFromPaise,
   inr,
   inrFromPaise,
   shopName,
@@ -146,10 +147,22 @@ test('rupees are grouped the Indian way', () => {
    was dropped on the way to the screen. */
 test('a negative figure keeps its minus sign', () => {
   assert.equal(inr(-5000), '\u2212₹5,000');
-  assert.equal(inrFromPaise(-123456), '\u2212₹1,235');
+  assert.equal(inrFromPaise(-123456), '\u2212₹1,234.56');
   assert.equal(compactInr(-512000), '\u2212₹5.1L');
-  assert.equal(inr(-0.4), '₹0');
+  assert.equal(inr(-0.004), '₹0');
   assert.equal(inr(0), '₹0');
+});
+
+/* The paise were stored and never shown: a bill of ₹10,450.60 read ₹10,451,
+   so the salesman collecting it was quoted a figure nobody billed. */
+test('an amount with paise shows them, and a whole amount does not', () => {
+  assert.equal(inrFromPaise(1045060), '₹10,450.60');
+  assert.equal(inrFromPaise(1045005), '₹10,450.05');
+  assert.equal(inrFromPaise(1045000), '₹10,450');
+  assert.equal(inr(12.5), '₹12.50');
+  assert.equal(inr(-0.4), '\u2212₹0.40');
+  assert.equal(compactInr(212.5), '₹212.50');
+  assert.equal(compactInrFromPaise(51200000), '₹5.1L');
 });
 
 /* ------------------------------------------------------------- data size */

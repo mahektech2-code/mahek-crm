@@ -1,5 +1,6 @@
 import type { BusinessDate } from "../business-date";
 import { addDays, daysBetween } from "../business-date";
+import { money } from "../format";
 import type { Config } from "../config/registry";
 
 /* ---------------------------------------------------------------------------
@@ -297,7 +298,7 @@ export function reportedQuiet(
 ): string | null {
   if (!s.reportedPayment) return null;
   const age = daysBetween(s.reportedPayment.on, today);
-  const amount = `₹${Math.round(s.reportedPayment.amount / 100).toLocaleString("en-IN")}`;
+  const amount = `${money(s.reportedPayment.amount)}`;
 
   /*
    * A HOLD DOES NOT EXPIRE, and that is the whole difference between the two.

@@ -4,6 +4,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { listUserApps } from "@/lib/access";
 import { toCsv } from "@/lib/csv";
 import { listBills } from "@/lib/services/payment-service";
+import { rupeesFromPaise } from "@/lib/format";
 
 /**
  * THE WHOLE YEAR AS A FILE, built on the server.
@@ -80,9 +81,9 @@ export async function GET(request: Request) {
       r.customerName,
       r.billDate,
       r.dueDate,
-      String(Math.round(r.amount / 100)),
-      String(Math.round(r.paid / 100)),
-      String(Math.round(r.balance / 100)),
+      rupeesFromPaise(r.amount),
+      rupeesFromPaise(r.paid),
+      rupeesFromPaise(r.balance),
       r.overdueDays ? String(r.overdueDays) : "",
       r.balance > 0 ? r.bucket : "",
       statusWord(r),

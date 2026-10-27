@@ -23,7 +23,7 @@ import { useToast } from "@/components/ui/toast";
 import { Button, Callout, Checkbox, Field, Td, Th, Tr } from "@/components/ui/primitives";
 import type { PriceListDetail } from "@/lib/price-list-views";
 import { bulkRevise } from "@/lib/actions/price-lists";
-import { deriveRate, inclFromEx, roundToRupee } from "@/lib/engines/price-math";
+import { deriveRate, listInclFromEx, roundToRupee } from "@/lib/engines/price-math";
 import { money } from "@/lib/format";
 import {
   DerivationFields,
@@ -70,6 +70,8 @@ function ReviseBody({
   const [newId, setNewId] = React.useState<string | null>(null);
 
   const gstBp = detail.list.gstBp;
+  /* A derived list shows the rupee — `listInclFromEx`. */
+  const derived = detail.list.derivation != null;
   const derivation = toDerivation(draft);
 
   /* Five rows, the same arithmetic the server will run. */
@@ -142,7 +144,7 @@ function ReviseBody({
           It is a DRAFT. Check the figures, then publish it — nothing is priced
           from it until you do.
         </Callout>
-        <SampleTable rows={written} gstBp={gstBp} />
+        <SampleTable rows={written} gstBp={gstBp} derived={derived} />
       </Modal>
     );
   }
@@ -197,7 +199,7 @@ function ReviseBody({
             <div className="mb-1.5 text-xs font-medium tracking-[0.04em] text-muted uppercase">
               What it would do
             </div>
-            <SampleTable rows={preview} gstBp={gstBp} />
+            <SampleTable rows={preview} gstBp={gstBp} derived={derived} />
           </div>
         ) : null}
       </div>
@@ -208,9 +210,12 @@ function ReviseBody({
 function SampleTable({
   rows,
   gstBp,
+  derived,
 }: {
   rows: Array<{ productName: string; fromEx: number; toEx: number }>;
   gstBp: number;
+  /** A derived list shows the rupee — `listInclFromEx`. */
+  derived: boolean;
 }) {
   return (
     <div className="overflow-auto rounded-[4px] border border-line">
@@ -228,9 +233,9 @@ function SampleTable({
               <Td className="max-w-[260px] truncate" title={r.productName}>
                 {r.productName}
               </Td>
-              <Td align="right">{money(inclFromEx(r.fromEx, gstBp))}</Td>
+              <Td align="right">{money(listInclFromEx(r.fromEx, gstBp, derived))}</Td>
               <Td align="right" className="font-medium text-ink">
-                {money(inclFromEx(r.toEx, gstBp))}
+                {money(listInclFromEx(r.toEx, gstBp, derived))}
               </Td>
             </Tr>
           ))}

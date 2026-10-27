@@ -1,3 +1,5 @@
+
+import { money as inrText } from "@/lib/format";
 import type { GateAction, Lead } from "./types";
 
 /**
@@ -14,7 +16,7 @@ import type { GateAction, Lead } from "./types";
  * date reads against today, and how far a checklist has got.
  */
 
-const paise = (p?: number) => (p ? "₹" + Math.round(p / 100).toLocaleString("en-IN") : "");
+const paise = (p?: number) => (p ? inrText(p) : "");
 
 export type FindingField = {
   key: string;
