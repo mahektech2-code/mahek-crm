@@ -355,6 +355,12 @@ export type ListSpec = {
    */
   groupHead?: string[];
   chips?: string;
+  /**
+   * Columns offered as filters on the toolbar: one "All …" select each, its
+   * choices the values the column draws, counted. A key not among `cols` (a
+   * column withheld by a power) is simply not offered.
+   */
+  filters?: string[];
   sortDefault?: [string, 1 | -1];
   bulk?: BulkSpec[];
   /** Key of the godown column the godown filter applies to. */

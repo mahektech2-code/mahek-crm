@@ -85,6 +85,7 @@ export const recipesScreen: ScreenModule = {
       spec: {
         screen: "recipes",
         cols,
+        filters: ["product", "item"],
         hidden: [],
         groups: ["product"],
         readOnly: !writer,

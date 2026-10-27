@@ -136,3 +136,33 @@ describe("a list that folds rows under a total", () => {
     assert.deepEqual(queryRows({ ...fspec, fold: undefined }, FOLD, Q({ parts: true }), FLAGS).list.map((r) => r.id), ["t", "can"]);
   });
 });
+
+describe("column filters", () => {
+  const fspec: ListSpec = { ...spec, filters: ["item", "status", "nope"] };
+
+  test("a filter keeps the rows whose column shows the value, and survives the URL", () => {
+    const q = Q({ fx: { item: "Toluene" }, grp: false });
+    assert.deepEqual(queryRows(fspec, ROWS, q, FLAGS).list.map((r) => r.id), ["a", "d"]);
+    assert.deepEqual(parseListQuery(listQueryParams(q)), q);
+    assert.deepEqual(parseListQuery({ fx: "not json" }).fx, {});
+  });
+
+  test("each filter is counted over what the other filters leave, and a key the spec does not draw is not offered", () => {
+    const p = pageOf(fspec, ROWS, Q({ fx: { status: "Open" } }), FLAGS);
+    assert.deepEqual(p.facets.map((f) => f.k), ["item", "status"]);
+    assert.deepEqual(p.facets[0].opts, [{ v: "Acetone", n: 1 }, { v: "Toluene", n: 2 }]);
+    assert.deepEqual(p.facets[1].opts, [{ v: "Done", n: 1 }, { v: "Open", n: 3 }]);
+    assert.equal(p.total, 3);
+    assert.equal(p.beforeChip, 3, "the chip's All count follows the filters");
+  });
+
+  test("a picked value nothing has any more is still offered, at zero", () => {
+    const p = pageOf(fspec, ROWS, Q({ fx: { item: "Xylene", status: "Open" } }), FLAGS);
+    assert.deepEqual(p.facets[0].opts.find((o) => o.v === "Xylene"), { v: "Xylene", n: 0 });
+    assert.equal(p.total, 0);
+  });
+
+  test("a filter the spec does not offer is ignored", () => {
+    assert.equal(queryRows(spec, ROWS, Q({ fx: { item: "Toluene" } }), FLAGS).list.length, 4);
+  });
+});
