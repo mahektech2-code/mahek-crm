@@ -382,7 +382,16 @@ describe("Seema's own lead is never hers to verify", () => {
     const leadId = made.data.customerId;
     await db
       .update(customers)
-      .set({ leadStage: "prospect", leadDecisionMaker: "Owner" })
+      .set({
+        leadStage: "prospect",
+        leadDecisionMaker: "Owner",
+        /* Verified on its answers, so it has them. */
+        customerType: "retailer",
+        gstin: "27ABCDE1234F1Z5",
+        leadMonthlyVolumeLitres: 300,
+        leadCompetitor: "Local thinner",
+        leadRequiredProductId: productId,
+      })
       .where(eq(customers.id, leadId));
 
     asPritesh();
