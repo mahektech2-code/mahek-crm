@@ -611,13 +611,29 @@ export const VERIFICATION_FINDINGS: readonly {
 }[] = [
   { id: "competitor", label: "Which brand they use now", lands: "competitor" },
   { id: "monthly_litres", label: "What they use in a month", lands: "monthly_requirement" },
-  { id: "potential", label: "How much they can buy in a month", lands: "potential" },
+  /*
+   * NO COLUMN, deliberately. This finding is the ₹ figure, and the only
+   * `potential` column on `mbos_lead_validations` is `growth_potential` — the
+   * answer to "Could that grow?", a sentence about a different thing. Landing
+   * the one on the other put a rupee value in the growth column and hid the
+   * growth question. The answer is kept as a structured check row instead,
+   * which is how every finding without a column is kept.
+   */
+  { id: "potential", label: "How much they can buy in a month", lands: null },
   { id: "required_product", label: "Which of our products they need", lands: null },
   { id: "contact_person", label: "Who to ask for when we call", lands: null },
   { id: "decision_maker", label: "Who decides to buy", lands: null },
   { id: "credit_days", label: "The credit they want", lands: null },
   { id: "application", label: "What they will use it on", lands: null },
   { id: "customer_type", label: "What kind of business this is", lands: null },
+  /*
+   * A TENTH, AND DRAWN ONLY WHERE IT IS A DIFFERENT PERSON. The buyer is who
+   * places the order where that is not who signs it off; when the two are the
+   * same man there is nothing to check twice, so the page leaves this row out
+   * (see `buyerNeedsCheck`). It is in the list regardless so the action accepts
+   * a check recorded against it.
+   */
+  { id: "buyer", label: "Who places the order", lands: null },
 ] as const;
 
 /** Whether a field code arriving from a screen is one of the nine. */

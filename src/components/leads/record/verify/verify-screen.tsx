@@ -4,8 +4,9 @@ import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { stamp } from "@/lib/format";
-import { cx, Input, Textarea } from "@/components/ui/primitives";
+import { stamp, stampDate } from "@/lib/format";
+import { lastAnswer, lastFinding, type Remembered } from "@/lib/verification-history";
+import { Button, cx, Input, Select, Textarea } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
 import {
   VERIFICATION_OUTCOMES,
@@ -14,14 +15,13 @@ import {
   salesTypeLabel,
   stageLabel,
   verificationResultLabel,
-  verificationResultOf,
   type VerificationOutcome,
 } from "@/lib/lead-labels";
 import type { LeadStage } from "@/lib/lead-labels";
 import { recordLeadValidationCall } from "@/lib/actions/leads";
 import type { ManagerCall } from "@/lib/services/lead-console-service";
-import { Banner, Button, Pill, ScreenHeader } from "@/components/console/parts";
-import { plural } from "@/components/console/words";
+import { Pill, ScreenHeader } from "@/components/console/parts";
+import { Modal } from "@/components/ui/modal";
 
 /* ---------------------------------------------------------------------------
  * §8 — the verification call, at full size.
@@ -76,6 +76,14 @@ export type Finding = {
 type Verdict = "confirmed" | "corrected" | "unverified";
 
 type Answer = { verdict: Verdict | null; corrected: string; reason: string };
+
+type CheckPayload = {
+  field: string;
+  verdict: Verdict;
+  original: string | null;
+  corrected?: string;
+  reason?: string;
+};
 
 const BLANK: Answer = { verdict: null, corrected: "", reason: "" };
 
@@ -282,15 +290,29 @@ export function VerifyScreen({
        * writes rows and touches no `customers` column, which is the whole
        * point of the table.
        */
-      const corrections = findings.flatMap((f) => {
+      /* EVERY ANSWERED FINDING, as a row of its own — a confirmation and an
+         "unable to verify" too, not only a correction. Without a column to land
+         in, a row is the only structured place either could be kept. */
+      const corrections = findings.flatMap((f): CheckPayload[] => {
         const a = answers[f.id];
-        if (a?.verdict !== "corrected") return [];
+        if (!a?.verdict) return [];
+        if (a.verdict === "corrected") {
+          return [
+            {
+              field: f.id,
+              verdict: "corrected" as const,
+              original: f.reported,
+              corrected: a.corrected.trim(),
+              reason: a.reason.trim(),
+            },
+          ];
+        }
         return [
           {
             field: f.id,
+            verdict: a.verdict,
             original: f.reported,
-            corrected: a.corrected.trim(),
-            reason: a.reason.trim(),
+            reason: a.verdict === "unverified" ? a.reason.trim() || undefined : undefined,
           },
         ];
       });
@@ -329,441 +351,382 @@ export function VerifyScreen({
     needsNote ||
     needsFailureReason;
 
+
+  const record = leadHref(workspace, `leads/${customerId}`);
+  const closeDialog = () => router.push(record);
+
+  /* What the newest earlier call recorded, so reopening shows it. Read-only. */
+  const last = priorCalls[0] ?? null;
+  const savedFinding = (f: Finding) => lastFinding(priorCalls, f);
+
+  const allFindings = [...landed, ...unlanded];
+  const progressTotal = allFindings.length + 1;
+  const progressDone = answered + (verdict ? 1 : 0);
+  const questionCount = sections.reduce((t, x) => t + x.questions.length, 0);
+  const sectionStart = sections.map((_, i) =>
+    sections.slice(0, i).reduce((t, x) => t + x.questions.length, allFindings.length),
+  );
+  const verdictN = allFindings.length + questionCount + 1;
+
   return (
-    <div className="p-6">
+    <>
       <ScreenHeader
         entity
         title="Verification call"
         subtitle={
           <>
-            <Link href={leadHref(workspace, `leads/${customerId}`)} className="no-underline">
+            <Link href={record} className="no-underline">
               {leadName}
             </Link>
             {detail ? ` · ${detail}` : ""} · {salesTypeLabel(salesType)} · {stageLabel(stage)}
           </>
         }
-        actions={
-          <Link
-            href={leadHref(workspace, `leads/${customerId}`)}
-            className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
-          >
-            ← Back to the record
-          </Link>
-        }
       />
 
-      {canVerify ? null : (
-        <Banner
-          tone="warn"
-          title="You can read this call and you cannot make one"
-          body="The verification call is a sales manager's — `lead.verify`, checked in the action and not only by greying the button. Everything below is drawn so the answers already on the record can be read."
-        />
-      )}
-
-      {priorCalls.length ? (
-        <Banner
-          tone="info"
-          title={`${plural(priorCalls.length, "call")} already made`}
-          /* WHAT THE LAST CALL CAME TO, and not merely when it was. A manager
-             about to ring the same shop is deciding whether to ask the same
-             questions again, and "verified, and three of his figures were
-             wrong" is a different afternoon to "verified". The words are
-             DERIVED from that call's own correction rows rather than read off a
-             stored fourth outcome — nothing here can disagree with the rows
-             below it, because it is the rows. */
-          body={`The newest was ${stamp(priorCalls[0].calledAt)} by ${priorCalls[0].managerName ?? "a manager"} and came to “${verificationResultLabel(
-            verificationResultOf(
-              priorCalls[0].verified,
-              /* ONLY THE CORRECTIONS, and the day this comment predicted has
-                 arrived. It used to count every row, on the reasoning that a
-                 confirmation on a validation call was never worth one — true
-                 of this door and never true of the other. `0155` gave the table
-                 three verdicts, and a field check made in the shop can carry a
-                 `validation_id`, so an unfiltered count would read a manager's
-                 confirmations back to him as figures he had corrected.
-                 A filter here rather than a second definition, as promised. */
-              priorCalls[0].corrections.filter((c) => c.verdict === "corrected").length,
-            ),
-          )}”. A lead is routinely validated twice and the first call is usually the one that matters, so this writes a new row rather than editing that one.`}
-        />
-      ) : null}
-
-      <p className="mb-4 max-w-[760px] text-[13px] text-pretty text-muted">
-        Read each finding out and record what the shop says back. Nothing here is written over the
-        salesman&rsquo;s own answers — his stay on the lead and the shop&rsquo;s are stored beside
-        them, because the two disagreeing is the single most useful thing this call produces. Every
-        correction is kept as a record of its own, with what he had, what the shop says, why the two
-        differ and who was told.
-        {" "}
-        {answered} of {findings.length} findings answered.
-      </p>
-
-      {/* ------------------------------------------ the salesman's findings */}
-
-      <section className="mb-4 rounded-[6px] border border-line bg-surface px-5 py-4">
-        <div className="mb-1 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-          What the salesman reported
+      <Modal
+        open
+        onClose={closeDialog}
+        width={640}
+        title={
+          <div>
+            <div>Verification call</div>
+            <div className="mt-0.5 text-[13px] font-normal text-muted">
+              {leadName} · {allFindings.length} answers to check ·{" "}
+              {questionCount} questions
+              {last ? ` · last call ${stamp(last.calledAt)}` : ""}
+            </div>
+          </div>
+        }
+        footer={
+          <>
+            {error ? (
+              <span role="alert" className="mr-auto max-w-[320px] text-[11.5px] leading-snug text-danger">
+                {error}
+              </span>
+            ) : (
+              <span className="mr-auto max-w-[320px] text-[11.5px] leading-snug text-muted">
+                {canVerify
+                  ? "Records this call. The salesman’s own answers are never changed."
+                  : "View only — you can read this call but not make one."}
+              </span>
+            )}
+            <Button variant="secondary" onClick={closeDialog}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              disabled={blocked}
+              title={
+                !canVerify
+                  ? "The verification call is a sales manager's. Yours is not one of the hats that carries it."
+                  : !verdict
+                    ? "Say what the call established before recording it."
+                    : unreasonedCorrections.length
+                      ? "A correction has to say what the shop said and why the two differ."
+                      : needsFailureReason
+                        ? "Closing a lead needs one of the configured reasons."
+                        : needsNote
+                          ? verdict === "not_qualified"
+                            ? "Say what the shop actually said."
+                            : "Say what the salesman should do about it."
+                          : undefined
+              }
+              onClick={submit}
+            >
+              {busy
+                ? "Recording…"
+                : verdict === "not_qualified"
+                  ? "Record and close the lead"
+                  : "Record the call"}
+            </Button>
+          </>
+        }
+      >
+        <div className="mb-2 flex items-center gap-2.5 text-xs text-muted">
+          <span>
+            <b className="text-ink">
+              {progressDone} of {progressTotal}
+            </b>{" "}
+            answers in
+          </span>
+          <div className="h-[5px] flex-1 overflow-hidden rounded-[3px] bg-divider">
+            <div
+              className="h-full bg-brand"
+              style={{ width: `${(progressDone / progressTotal) * 100}%` }}
+            />
+          </div>
         </div>
-        <p className="mb-3 max-w-[620px] text-[12px] text-pretty text-muted">
-          Read-only. Confirm it, correct it, or say the customer could not confirm it — the third
-          is an answer rather than a blank, and it is stored as one.
-        </p>
 
-        {findings.length === 0 ? (
-          <p className="text-[13px] text-muted">
-            The salesman has recorded nothing about this shop yet, so there is nothing to check.
-            The twelve questions below are still worth asking.
-          </p>
-        ) : (
-          <div className="flex flex-col gap-3.5">
-            {landed.map((f) => (
-              <FindingRow
-                key={f.id}
-                finding={f}
-                answer={answerFor(f.id)}
-                disabled={!canVerify}
-                onChange={(patch) => setAnswer(f.id, patch)}
-              />
-            ))}
-          </div>
-        )}
-      </section>
+        {allFindings.map((f, i) => {
+          const a = answerFor(f.id);
+          return (
+            <FindingRow
+              key={f.id}
+              n={i + 1}
+              finding={f}
+              answer={a}
+              saved={savedFinding(f)}
+              disabled={!canVerify}
+              onChange={(patch) => setAnswer(f.id, patch)}
+            />
+          );
+        })}
 
-      {/* --------------------------------- the findings with nowhere to land */}
+        {sections.map((s, si) => (
+          <React.Fragment key={s.id}>
+            <div className="mt-3 border-t border-divider pt-3 text-[11px] font-semibold tracking-[0.04em] text-muted uppercase">
+              {s.title}
+            </div>
+            {s.questions.map((q, qi) => {
+              const before = lastAnswer(priorCalls, q.id);
+              const typed = Boolean((questions[q.id] ?? "").trim());
+              return (
+                <Row
+                  key={q.id}
+                  n={sectionStart[si] + qi + 1}
+                  label={q.ask}
+                  done={typed}
+                  tag={typed ? "answered" : "optional"}
+                  tone={typed ? "done" : "optional"}
+                >
+                  {before ? (
+                    <Known text={before.text} caption={`Last answered ${stampDate(before.at)}`} />
+                  ) : null}
+                  <Textarea
+                    rows={2}
+                    disabled={!canVerify}
+                    value={questions[q.id] ?? ""}
+                    onChange={(e) => setQuestions((s2) => ({ ...s2, [q.id]: e.target.value }))}
+                  />
+                </Row>
+              );
+            })}
+          </React.Fragment>
+        ))}
 
-      {unlanded.length ? (
-        <section className="mb-4 rounded-[6px] border border-warn bg-surface px-5 py-4">
-          <div className="mb-1 flex flex-wrap items-center gap-2">
-            <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-              Asked, and recorded only in words
-            </span>
-            <Pill tone="warn">No column</Pill>
-          </div>
-          <p className="mb-3 max-w-[620px] text-[12px] text-pretty text-muted">
-            <code>mbos_lead_validations</code> carries a column for each of §8&rsquo;s twelve
-            answers and none for these {unlanded.length}. A CORRECTION here is still a record of
-            its own &mdash; it goes to <code>lead_verification_corrections</code> with what the
-            salesman had, what the shop says and why, so &ldquo;how many leads had the wrong
-            contact person&rdquo; is a question somebody can ask. What is left in words is a
-            confirmation or an &ldquo;unable to verify&rdquo; on one of these {unlanded.length}:
-            those have no column and no correction row, so they are kept in the call&rsquo;s own
-            note at the bottom of this page. Neither is written over the salesman&rsquo;s columns,
-            which is the one thing this call must never do.
-          </p>
-          <div className="flex flex-col gap-3.5">
-            {unlanded.map((f) => (
-              <FindingRow
-                key={f.id}
-                finding={f}
-                answer={answerFor(f.id)}
-                disabled={!canVerify}
-                onChange={(patch) => setAnswer(f.id, patch)}
-              />
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {/* ---------------------------------------------------- the questions */}
-
-      <section className="mb-4 rounded-[6px] border border-line bg-surface px-5 py-4">
-        <div className="mb-1 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-          The rest of the call
+        <div className="mt-3 border-t border-divider pt-3 text-[11px] font-semibold tracking-[0.04em] text-muted uppercase">
+          Result of the call
         </div>
-        <p className="mb-4 max-w-[620px] text-[12px] text-pretty text-muted">
-          {consumed.size
-            ? `${plural(consumed.size, "question")} are answered by the findings above and are not asked twice — two controls writing one column is how one of them silently wins. `
-            : ""}
-          Nothing here is required. A gate refuses a MOVE; this is a record of a conversation, and
-          a customer who would not say what he uses in a month is a fact about the call rather than
-          an error in the form.
-          {" "}
-          An answer of &ldquo;no&rdquo; belongs in the box rather than left blank: a blank column
-          says nobody asked, which is a different fact and reads as one.
-        </p>
-
-        <div className="flex flex-col gap-5">
-          {sections.map((s) => (
-            <div key={s.id}>
-              <div className="mb-0.5 text-[13px] font-medium text-ink">{s.title}</div>
-              <p className="mb-2.5 max-w-[620px] text-[12px] text-pretty text-muted">{s.says}</p>
-              <div className="grid grid-cols-1 gap-x-8 gap-y-3 lg:grid-cols-2">
-                {s.questions.map((q) => (
-                  <label key={q.id} className="block">
-                    <span className="mb-1 block text-[13px] text-body">{q.ask}</span>
-                    <Textarea
-                      rows={2}
+        {(() => {
+          return (
+            <Row
+              n={verdictN}
+              label="How did the call go?"
+              done={Boolean(verdict)}
+              tag={verdict ? "answered" : "needed"}
+              tone={verdict ? "done" : "needed"}
+            >
+              <div className="flex flex-col gap-2">
+                {VERIFICATION_OUTCOMES.map((o) => (
+                  <label
+                    key={o.code}
+                    title={o.says}
+                    className="flex cursor-pointer items-center gap-2 text-[13px] text-body"
+                  >
+                    <input
+                      type="radio"
+                      name="call-verdict"
+                      className="h-[14px] w-[14px] accent-[#6835FB]"
                       disabled={!canVerify}
-                      value={questions[q.id] ?? ""}
-                      onChange={(e) =>
-                        setQuestions((s2) => ({
-                          ...s2,
-                          [q.id]: e.target.value,
-                        }))
-                      }
+                      checked={verdict === o.code}
+                      onChange={() => setVerdict(o.code)}
                     />
+                    <span className={o.code === "not_qualified" ? "text-danger" : undefined}>
+                      {o.label}
+                    </span>
+                    {o.code === "verified" && correctedCount > 0 ? (
+                      <Pill tone="warn">{verificationResultLabel("verified_with_corrections")}</Pill>
+                    ) : null}
                   </label>
                 ))}
               </div>
-            </div>
-          ))}
-        </div>
-      </section>
 
-      {/* ------------------------------------------------------ the verdict */}
+              {verdict === "not_qualified" ? (
+                <label className="mt-3 block">
+                  <span className="mb-1 block text-[12px] text-muted">What the call found</span>
+                  <Select
+                    className="w-full"
+                    disabled={!canVerify}
+                    value={failureReason}
+                    onChange={(e) => setFailureReason(e.target.value)}
+                  >
+                    <option value="">Pick one…</option>
+                    {failureReasons.map((r) => (
+                      <option key={r.code} value={r.code}>
+                        {r.label}
+                      </option>
+                    ))}
+                  </Select>
+                </label>
+              ) : null}
+            </Row>
+          );
+        })()}
 
-      <section className="mb-4 rounded-[6px] border border-line bg-surface px-5 py-4">
-        <div className="mb-1 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-          What this call establishes
-        </div>
-        <p className="mb-3 max-w-[620px] text-[12px] text-pretty text-muted">
-          The only thing on this page the rest of the funnel reads. Two of the three are about our
-          own salesman and one is about the shop, and telling them apart is the whole of this
-          choice: a call that went badly, or a salesman nobody could reach, is a follow-up.
-          &ldquo;There is no opportunity here&rdquo; is for a lead that turns out to be false, and
-          it closes the record.
-        </p>
-
-        <div className="flex flex-col gap-2.5">
-          {VERIFICATION_OUTCOMES.map((o) => (
-            <label
-              key={o.code}
-              className="flex cursor-pointer items-start gap-2 text-[13px] text-body"
+        {(() => {
+          const required = verdict === "follow_up" || verdict === "not_qualified";
+          return (
+            <Row
+              n={verdictN + 1}
+              label={
+                verdict === "not_qualified" ? "What did the shop say?" : "What should the salesman do?"
+              }
+              done={Boolean(note.trim())}
+              tag={note.trim() ? "answered" : required ? "needed" : "optional"}
+              tone={note.trim() ? "done" : required ? "needed" : "optional"}
             >
-              <input
-                type="radio"
-                name="call-verdict"
-                className="mt-[3px] h-[14px] w-[14px] accent-[#6835FB]"
+              <Textarea
+                rows={2}
                 disabled={!canVerify}
-                checked={verdict === o.code}
-                onChange={() => setVerdict(o.code)}
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
               />
-              <span>
-                <span className={o.code === "not_qualified" ? "text-danger" : undefined}>
-                  {o.label}
-                </span>
-                {/* WHAT IT COSTS, SAID BEFORE THE BUTTON IS PRESSED. A closure
-                    explained only in the toast that follows it is one somebody
-                    finds out about from the salesman whose lead went. */}
-                <span className="mt-0.5 block max-w-[620px] text-[12px] text-pretty text-muted">
-                  {o.says}
-                  {o.code === "verified" && correctedCount > 0 ? (
-                    <>
-                      {" "}
-                      <strong className="text-body">
-                        This call will read as &ldquo;
-                        {verificationResultLabel("verified_with_corrections")}
-                        &rdquo;
-                      </strong>{" "}
-                      &mdash; you have corrected {plural(correctedCount, "finding")}. Nothing extra
-                      is stored for it: it is read off the correction rows themselves, so the count
-                      and the words can never disagree.
-                    </>
-                  ) : null}
-                </span>
-              </span>
-            </label>
-          ))}
-          {verdict === null ? (
-            <span className="text-[12px] text-muted">
-              Nothing is chosen. There is no default here on purpose — a form that starts on
-              &ldquo;verified&rdquo; is a gate somebody opens by pressing save.
-            </span>
-          ) : null}
-        </div>
-
-        {/* §26's codes, offered only under the outcome that spends one. Drawn
-            all the time it would be a reason field on a call that closes
-            nothing, which is how a lead ends up carrying a lost reason it was
-            never lost for. The list is the CONFIGURED one, handed down by the
-            page — a reason list typed into a screen is the same mistake as a
-            product list typed into a screen. */}
-        {verdict === "not_qualified" ? (
-          <label className="mt-3.5 block max-w-[520px]">
-            <span className="mb-1 block text-[13px] text-body">
-              What the call found — required
-            </span>
-            <select
-              className="h-9 w-full rounded-[4px] border border-line bg-surface px-2 text-[13px] text-body"
-              disabled={!canVerify}
-              value={failureReason}
-              onChange={(e) => setFailureReason(e.target.value)}
-            >
-              <option value="">Pick what the call found</option>
-              {failureReasons.map((r) => (
-                <option key={r.code} value={r.code}>
-                  {r.label}
-                </option>
-              ))}
-            </select>
-            <span className="mt-1 block text-[12px] text-muted">
-              The lead closes as <strong>Verification failed</strong> either way &mdash; that
-              code is fixed, and is deliberately not &ldquo;wrong lead&rdquo;, which means
-              something else. This is the second question, and it is the half anybody can act
-              on: denied visits are a salesman problem, duplicates are an intake problem.
-            </span>
-          </label>
-        ) : null}
-
-        <label className="mt-3.5 block">
-          <span className="mb-1 block text-[13px] text-body">
-            {verdict === "not_qualified"
-              ? "What the shop actually said — required"
-              : `What the salesman should do about it${verdict === "follow_up" ? " — required" : " — optional"}`}
-          </span>
-          <Textarea
-            rows={3}
-            disabled={!canVerify}
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-          />
-          <span className="mt-1 block text-[12px] text-muted">
-            {verdict === "not_qualified"
-              ? "The shop’s own words, because this is the whole of what anybody reading the closure in March will have. It goes to the salesman as well — the lead he was working has just gone, and this says why."
-              : "This sentence is what lands on his list, so it has to be an instruction rather than a verdict."}
-          </span>
-        </label>
-
-        {composedNote.trim() ? (
-          <div className="mt-3 rounded-[4px] border border-divider bg-canvas px-3 py-2">
-            <div className="mb-1 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-              Stored on the call, exactly as written
-            </div>
-            <pre className="m-0 font-sans text-[12px] whitespace-pre-wrap text-body">
-              {composedNote}
-            </pre>
-          </div>
-        ) : null}
-      </section>
-
-      {error ? (
-        <p className="mb-3 text-[13px] text-danger" role="alert">
-          {error}
-        </p>
-      ) : null}
-
-      <div className="flex flex-wrap items-center gap-3">
-        <Button
-          tone="primary"
-          disabled={blocked}
-          title={
-            !canVerify
-              ? "The verification call is a sales manager's. Yours is not one of the hats that carries it."
-              : !verdict
-                ? "Say what the call established before recording it."
-                : unreasonedCorrections.length
-                  ? "A correction has to say what the shop said and why the two differ."
-                  : needsFailureReason
-                  ? "Closing a lead needs one of the configured reasons."
-                  : needsNote
-                    ? verdict === "not_qualified"
-                      ? "Closing a lead as a false opportunity has to say what the shop actually said."
-                      : "A call that could not confirm the visit has to say what the salesman should do about it."
-                    : undefined
-          }
-          onClick={submit}
-        >
-          {busy
-            ? "Recording…"
-            : verdict === "not_qualified"
-              ? "Record the call and close the lead"
-              : "Record the call"}
-        </Button>
-        <Link
-          href={leadHref(workspace, `leads/${customerId}`)}
-          className="inline-flex h-9 items-center rounded-[4px] border border-line bg-surface px-3.5 text-sm text-body no-underline hover:bg-canvas hover:no-underline"
-        >
-          Cancel
-        </Link>
-        {unreasonedCorrections.length ? (
-          <span className="text-[13px] text-warn-ink">
-            {plural(unreasonedCorrections.length, "correction")} still needs the shop&rsquo;s own
-            answer and a reason.
-          </span>
-        ) : null}
-      </div>
-    </div>
+            </Row>
+          );
+        })()}
+      </Modal>
+    </>
   );
 }
 
 /* ------------------------------------------------------------------ parts */
 
-/**
- * One finding, its verdict, and — only on a correction — the two fields that
- * make a correction a record rather than an overwrite.
- *
- * Confirm and "could not verify" reveal nothing, because neither has anything
- * more to say: the first restates a value already on the screen and the second
- * is the whole of its own answer. Drawing a corrected-value box under all three
- * would invite somebody to type into it under a verdict that discards it.
- */
+type Tone = "done" | "needed" | "optional" | "error";
+
+/** One numbered question: a badge, its label, a status tag, then the answer. */
+function Row({
+  n,
+  label,
+  done,
+  tag,
+  tone,
+  children,
+}: {
+  n: number;
+  label: string;
+  done: boolean;
+  tag: string;
+  tone: Tone;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="grid grid-cols-[26px_1fr] gap-2.5 border-t border-divider py-2.5 first:border-t-0">
+      <span
+        className={cx(
+          "mt-0.5 flex h-[22px] w-[22px] items-center justify-center rounded-full text-[11px] font-bold",
+          done
+            ? "bg-success-soft text-success"
+            : tone === "optional"
+              ? "border border-line bg-divider text-muted"
+              : "border border-warn-line bg-warn-soft text-warn-ink",
+        )}
+      >
+        {done ? "✓" : n}
+      </span>
+      <div className="min-w-0">
+        <div className="mb-1 flex items-baseline justify-between gap-3 text-xs font-bold text-ink">
+          <span>{label}</span>
+          <span
+            className={cx(
+              "shrink-0 text-[11px] font-semibold",
+              tone === "done"
+                ? "text-success"
+                : tone === "optional"
+                  ? "text-muted"
+                  : "text-warn-ink",
+            )}
+          >
+            {tag}
+          </span>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/** A value that is already on the record: grey, read-only. */
+function Known({ text, caption }: { text: React.ReactNode; caption?: string }) {
+  return (
+    <div className="mb-1.5 flex min-h-[34px] items-center justify-between gap-3 rounded-[4px] border border-line bg-canvas px-2.5 text-[13px] text-ink">
+      <span>{text}</span>
+      {caption ? <span className="shrink-0 text-[11px] text-muted">{caption}</span> : null}
+    </div>
+  );
+}
+
 function FindingRow({
+  n,
   finding,
   answer,
+  saved,
   disabled,
   onChange,
 }: {
+  n: number;
   finding: Finding;
   answer: Answer;
+  /** What the newest earlier call recorded for this finding, if anything. */
+  saved: Remembered | null;
   disabled: boolean;
   onChange: (patch: Partial<Answer>) => void;
 }) {
-  const verdicts: Array<{ v: Verdict; label: string; tone: string }> = [
-    { v: "confirmed", label: "Confirm", tone: "border-success" },
-    { v: "corrected", label: "Correct", tone: "border-warn" },
-    { v: "unverified", label: "Unable to verify", tone: "border-divider" },
+  const verdicts: Array<{ v: Verdict; label: string }> = [
+    { v: "confirmed", label: "Confirm" },
+    { v: "corrected", label: "Correct" },
+    { v: "unverified", label: "Unable to verify" },
   ];
+  const tag =
+    answer.verdict === "confirmed"
+      ? "confirmed"
+      : answer.verdict === "corrected"
+        ? "corrected"
+        : answer.verdict === "unverified"
+          ? "unable to verify"
+          : "to check";
 
   return (
-    <div
-      className={cx(
-        "border-l-[3px] pl-3",
-        answer.verdict === "confirmed"
-          ? "border-success"
-          : answer.verdict === "corrected"
-            ? "border-warn"
-            : answer.verdict === "unverified"
-              ? "border-line-strong"
-              : "border-divider",
-      )}
+    <Row
+      n={n}
+      label={finding.label}
+      done={answer.verdict !== null}
+      tag={tag}
+      tone={answer.verdict ? "done" : "needed"}
     >
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <span className="text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-          {finding.label}
-        </span>
-        <span className="text-[14px] font-medium text-ink">
-          {finding.reported ?? <span className="text-muted">He recorded nothing</span>}
-        </span>
-      </div>
+      <Known
+        text={finding.reported ?? <span className="text-muted">Not recorded</span>}
+        caption="Salesman"
+      />
+      {saved ? <Known text={saved.text} caption={`Last answered ${stampDate(saved.at)}`} /> : null}
 
-      <div className="mt-1.5 flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap gap-1.5">
         {verdicts.map((o) => (
-          <label
+          <button
             key={o.v}
-            className="flex cursor-pointer items-center gap-1.5 text-[13px] text-body"
+            type="button"
+            disabled={disabled}
+            onClick={() => onChange({ verdict: answer.verdict === o.v ? null : o.v })}
+            aria-pressed={answer.verdict === o.v}
+            className={cx(
+              "h-8 cursor-pointer rounded-[4px] border px-3 text-[13px] disabled:cursor-not-allowed disabled:opacity-60",
+              answer.verdict === o.v
+                ? o.v === "confirmed"
+                  ? "border-success bg-success-soft text-ink"
+                  : o.v === "corrected"
+                    ? "border-warn bg-warn-soft text-ink"
+                    : "border-line-strong bg-canvas text-ink"
+                : "border-line bg-surface text-body hover:bg-canvas",
+            )}
           >
-            <input
-              type="radio"
-              name={`finding-${finding.id}`}
-              className="h-[14px] w-[14px] accent-[#6835FB]"
-              disabled={disabled}
-              checked={answer.verdict === o.v}
-              onChange={() => onChange({ verdict: o.v })}
-            />
             {o.label}
-          </label>
+          </button>
         ))}
-        {answer.verdict === null ? (
-          <span className="text-[12px] text-muted">Not asked yet</span>
-        ) : null}
       </div>
 
       {answer.verdict === "corrected" ? (
-        <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">
+        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
           <label className="block">
-            <span className="mb-1 block text-[12px] text-muted">
-              What the shop actually says
-            </span>
+            <span className="mb-1 block text-[12px] text-muted">What the shop says</span>
             <Input
               disabled={disabled}
               value={answer.corrected}
@@ -771,9 +734,7 @@ function FindingRow({
             />
           </label>
           <label className="block">
-            <span className="mb-1 block text-[12px] text-muted">
-              Why the two differ
-            </span>
+            <span className="mb-1 block text-[12px] text-muted">Why it differs</span>
             <Input
               disabled={disabled}
               value={answer.reason}
@@ -782,10 +743,8 @@ function FindingRow({
           </label>
         </div>
       ) : answer.verdict === "unverified" ? (
-        <label className="mt-2 block max-w-[520px]">
-          <span className="mb-1 block text-[12px] text-muted">
-            Why not — optional, and it is stored with the answer rather than instead of it
-          </span>
+        <label className="mt-2 block">
+          <span className="mb-1 block text-[12px] text-muted">Why not (optional)</span>
           <Input
             disabled={disabled}
             value={answer.reason}
@@ -793,6 +752,6 @@ function FindingRow({
           />
         </label>
       ) : null}
-    </div>
+    </Row>
   );
 }

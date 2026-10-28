@@ -4,6 +4,8 @@ import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { money } from "@/lib/format";
 import { VERIFICATION_FINDINGS } from "@/lib/lead-labels";
+import { DESK_FIELDS } from "@/lib/engines/lead-calling-desk";
+import { buyerNeedsCheck } from "@/lib/verification-buyer";
 import { today } from "@/lib/recompute";
 import { getConfig } from "@/lib/config/store";
 import { leadRecord, managerCalls } from "@/lib/services/lead-console-service";
@@ -97,10 +99,22 @@ export async function Body({
     decision_maker: record.decisionMaker,
     credit_days: record.creditDaysWanted != null ? `${record.creditDaysWanted} days` : null,
     application: record.application,
-    customer_type: record.customerType,
+    /* The stored code is an enum value; the salesman and the manager both
+       know it by the label the Calling Desk and the intake form draw. An
+       unknown code is shown as it is rather than hidden. */
+    customer_type: record.customerType
+      ? (DESK_FIELDS.find((f) => f.key === "customerType")?.options?.find(
+          (o) => o.value === record.customerType,
+        )?.label ?? record.customerType)
+      : null,
+    buyer: record.buyer,
   };
 
-  const findings: Finding[] = VERIFICATION_FINDINGS.map((f) => ({
+  /* The buyer is a tenth finding only where it is somebody other than the
+     decision maker — compared on the two STORED values, never on the labels
+     drawn above. */
+  const showBuyer = buyerNeedsCheck(record.buyer, record.decisionMaker);
+  const findings: Finding[] = VERIFICATION_FINDINGS.filter((f) => f.id !== "buyer" || showBuyer).map((f) => ({
     id: f.id,
     label: f.label,
     reported: reported[f.id] ?? null,

@@ -108,7 +108,7 @@ export function Modal({
       >
         <div
           onClick={(e) => e.stopPropagation()}
-          style={{ width }}
+          style={{ width, maxWidth: "100%" }}
           /*
            * `whitespace-normal` because a dialog inherits from wherever it was
            * MOUNTED, not from where it appears. Opened from a button inside a
