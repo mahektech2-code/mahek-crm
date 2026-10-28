@@ -57,7 +57,7 @@ import type { Me } from "@/lib/actions/factory";
 import { call, NotReceived, PAGE_BUILD, watchBuild } from "./api";
 import { art, ic, qr } from "./art";
 import { avStyle, btn, card, initials, mono, msg, MsgBox, Pill, artWell, type Msg } from "./kit";
-import { buzz, CameraScanner, GunInput, shrinkPhoto } from "./camera";
+import { buzz, CameraScanner, GunInput, ScanField, shrinkPhoto } from "./camera";
 import { dropPhoto, forget, keepPhoto, keptPhoto, load, mintKey, readNet, save, type Flow, type KpSheet, type Net, type PeopleSheet, type QItem, type ReasonSheet, type Res, type State, type TilesSheet, type Feed, mintDrumKey, type StockEntry, type QcEntry, mintCheckKey, type RecipeSheet, type FillSheet, type PackSheet, type ReqEntry, mintReqKey, type LorryUi, LORRY0 } from "./model";
 
 /* ---------------------------------------------------------------------------
@@ -657,14 +657,12 @@ export class FactoryApp extends Component<Props, State> {
     return out;
   }
 
-  /** A code typed off the label: read like a scan, judged like one. */
-  submitTyped() {
+  /** A code typed off the label, or sent by a gun into the Type box: read like a scan, judged like one. */
+  submitTyped(raw: string) {
     const sc = this.state.scan;
-    const raw = (sc?.typed ?? "").trim();
+    raw = raw.trim();
     if (!sc || !raw) return;
-    const code = sc.purpose === "lr" ? raw : typedCode(raw, this.state.db);
-    /* The text stays: a code the server refuses comes back to the box to fix, not to an empty one. */
-    this.intake(code);
+    this.intake(sc.purpose === "lr" ? raw : typedCode(raw, this.state.db));
   }
 
   /**
@@ -682,7 +680,14 @@ export class FactoryApp extends Component<Props, State> {
       return this.toast("Not counted. Tap the card first, then scan it again.", "warn");
     }
     this.scanQ.push(code);
+    this.showChecking();
     void this.pumpScans();
+  }
+
+  /** How many scans are still with the server, on the band: the loader does not wait for them. */
+  showChecking() {
+    const n = this.scanQ.length + (this.scanRunning ? 1 : 0);
+    this.setState((st) => (st.scan && (st.scan.checking ?? 0) !== n ? { scan: { ...st.scan, checking: n } } : null));
   }
 
   /** The loading scan screen is waiting on the loader: a refusal, a lorry to pick, an override, or how many to load from a lot. */
@@ -697,6 +702,7 @@ export class FactoryApp extends Component<Props, State> {
     try {
       while (this.scanQ.length && this.state.scan?.purpose === "load" && !this.halted()) {
         await this.doScan(this.scanQ.shift()!);
+        this.showChecking();
         await new Promise<void>((done) => this.setState({}, done));
         if (!this.halted()) continue;
         /* What came in behind it is not counted: the loader is told how many, to scan them again. */
@@ -706,6 +712,7 @@ export class FactoryApp extends Component<Props, State> {
       }
     } finally {
       this.scanRunning = false;
+      this.showChecking();
     }
   }
 
@@ -3173,7 +3180,6 @@ export class FactoryApp extends Component<Props, State> {
     const st = this.state, T = this.T(), sc = st.scan!, P = sc.purpose, m = sc.meta, db = st.db;
     const rmName = m.item && db?.rm[m.item] ? db.rm[m.item].n : "";
     const what = { badge: "your company badge", home: "a task sheet, order, lot or box label", rm: "the " + rmName + " drum", sfg: "the base-liquid tank", pm: "the empty-can stack", fg: "the filled-can pallet", load: "the box label going on the lorry", drum: "the GRN label on the empty drum", lr: "the LR receipt" }[P];
-    const typed = sc.typed ?? "", ready = !!typed.trim();
     const noCam = st.cam === "none" || st.cam === "denied";
     const lr = P === "lr";
     return (
@@ -3181,10 +3187,15 @@ export class FactoryApp extends Component<Props, State> {
         {noCam && <div style={{ padding: "10px 12px", borderRadius: "12px", background: "rgba(255,231,168,0.12)", color: "#FFE7A8", fontSize: "14px", lineHeight: "20px" }}>{st.cam === "denied" ? T.camOffType : T.noCamType}</div>}
         <div style={{ fontSize: "22px", lineHeight: "28px", fontWeight: 700 }}>{lr ? T.typeLr : T.typeTitle}</div>
         {!!what && <div style={{ fontSize: "15px", color: "#C2C8D2" }}>{T.lookingFor + ": " + what}</div>}
-        {/* A scanning gun types here and presses Enter after every code: the box takes the focus back once a card is closed. */}
-        <input key={sc.res || st.lorry.res ? "card" : "type"} value={typed} onChange={(e) => this.setState({ scan: { ...sc, typed: String(e.target.value).toUpperCase().slice(0, 60) } })} onKeyDown={(e) => e.key === "Enter" && this.submitTyped()} autoFocus autoComplete="off" aria-label={lr ? T.typeLr : T.typeCode} style={{ width: "100%", height: "64px", minHeight: "64px", boxSizing: "border-box", marginTop: "6px", borderRadius: "16px", border: "2px solid #C6FF34", background: "rgba(255,255,255,0.06)", color: "#FFFFFF", padding: "0 16px", ...mono, fontSize: "24px", fontWeight: 600, letterSpacing: "1px", outline: "none" }} />
-        <div style={{ fontSize: "13px", lineHeight: "18px", color: "#9BA3B2" }}>{lr ? T.typeLrEg : T.typeEg}</div>
-        <button onClick={() => this.submitTyped()} style={{ width: "100%", height: "56px", marginTop: "6px", border: "none", borderRadius: "14px", background: ready ? "#C6FF34" : "rgba(255,255,255,0.12)", color: ready ? "#0E1016" : "#9BA3B2", fontSize: "17px", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", cursor: ready ? "pointer" : "default" }}>{ic("enterKey", 20, ready ? "#0E1016" : "#9BA3B2")}{lr ? T.checkLr : T.checkCode}</button>
+        {/* A scanning gun types here: the box keeps its own text, sends each code the moment the gun stops, and takes the focus back once a card is closed. */}
+        <ScanField
+          key={sc.res || st.lorry.res ? "card" : "type"}
+          label={lr ? T.typeLr : T.typeCode}
+          onCode={(c) => this.submitTyped(c)}
+          style={{ width: "100%", height: "64px", minHeight: "64px", boxSizing: "border-box", marginTop: "6px", borderRadius: "16px", border: "2px solid #C6FF34", background: "rgba(255,255,255,0.06)", color: "#FFFFFF", padding: "0 16px", ...mono, fontSize: "24px", fontWeight: 600, letterSpacing: "1px", outline: "none" }}
+          hint=<div style={{ fontSize: "13px", lineHeight: "18px", color: "#9BA3B2" }}>{lr ? T.typeLrEg : T.typeEg}</div>
+          button={(ready) => ({ style: { width: "100%", height: "56px", marginTop: "6px", border: "none", borderRadius: "14px", background: ready ? "#C6FF34" : "rgba(255,255,255,0.12)", color: ready ? "#0E1016" : "#9BA3B2", fontSize: "17px", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", cursor: ready ? "pointer" : "default" }, content: <>{ic("enterKey", 20, ready ? "#0E1016" : "#9BA3B2")}{lr ? T.checkLr : T.checkCode}</> })}
+        />
         <button onClick={() => this.scanInstead()} style={{ width: "100%", height: "54px", border: "1.5px solid rgba(255,255,255,0.28)", background: "transparent", borderRadius: "14px", color: "#FFFFFF", fontSize: "16px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", cursor: "pointer" }}>{ic(st.cam === "denied" ? "camOn" : "scanFrame", 22, "#FFFFFF")}{st.cam === "denied" ? T.camOn : T.scanInstead}</button>
         {labels.length > 0 && (
           <>
@@ -3224,6 +3235,7 @@ export class FactoryApp extends Component<Props, State> {
           {typing ? <span style={{ width: "48px", height: "48px", flex: "none" }} /> : <button onClick={() => this.setState({ scan: { ...sc, torch: !sc.torch } })} aria-label="Torch" style={{ width: "48px", height: "48px", borderRadius: "50%", border: "none", background: sc.torch ? "#C6FF34" : "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("torch", 23, "#FFFFFF")}</button>}
         </div>
         {P === "load" && !!sc.feed && this.renderFeed(sc.feed)}
+        {P === "load" && !!sc.checking && <div style={{ flex: "none", alignSelf: "center", margin: "0 12px 4px 12px", padding: "4px 12px", borderRadius: "12px", background: "rgba(255,255,255,0.14)", fontSize: "14px", fontWeight: 700 }}>{"Checking " + sc.checking + (sc.checking === 1 ? " scan…" : " scans…") + " keep scanning"}</div>}
         {typing ? this.renderTyping(labels) : (
           <>
         <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "0 24px", position: "relative" }}>

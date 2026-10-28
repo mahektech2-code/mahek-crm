@@ -76,11 +76,17 @@ export async function POST(request: Request) {
   }
   const fn = OPS[body.op as FactoryOp] as ((...a: unknown[]) => Promise<unknown>) | undefined;
   if (!fn) return NextResponse.json({ error: "unknown-op" }, { status: 404, headers: { "x-factory-build": BUILD } });
+  const t0 = performance.now();
   try {
     const jar = await cookies();
     const before = jar.get(SESSION)?.value ?? "";
     const value = await fn(...(Array.isArray(body.args) ? body.args : []));
-    const headers: Record<string, string> = { "x-factory-build": BUILD, "cache-control": "no-store" };
+    /* How long the server took, said on every answer and logged when it is slow:
+       a scan has one second to be judged, and the phone cannot tell its own
+       wait from the server's. */
+    const ms = Math.round(performance.now() - t0);
+    if (ms > 500) console.warn("[factory rpc slow]", body.op, ms + "ms");
+    const headers: Record<string, string> = { "x-factory-build": BUILD, "cache-control": "no-store", "server-timing": "op;dur=" + ms };
     /* The native app keeps its session itself (proxy.ts reads it back from
        `x-factory-session`), so a sign-in or sign-out says what it now is. A
        browser ignores this and keeps using its cookie. */

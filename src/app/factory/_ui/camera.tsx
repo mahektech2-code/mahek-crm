@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 
 /* ---------------------------------------------------------------------------
  * The camera behind the scan frame.
@@ -201,4 +201,62 @@ export function buzz(kind: keyof typeof BUZZ) {
   try {
     navigator.vibrate?.(BUZZ[kind]);
   } catch {}
+}
+
+/**
+ * The Type box. Its text lives HERE and not in the app's state, so a gun
+ * typing a label a letter at a time redraws this box and nothing else. A
+ * gun's burst (letters under 80 ms apart) is sent the moment it stops, Enter
+ * or not; somebody typing by hand presses Enter or the button. The box
+ * empties as it sends, ready for the next label. The phone app's twin is in
+ * factory-mobile/src/camera.tsx.
+ */
+export function ScanField({ onCode, style, label, hint, button }: { onCode: (code: string) => void; style: CSSProperties; label: string; hint: ReactNode; button: (ready: boolean) => { style: CSSProperties; content: ReactNode } }) {
+  const [text, setText] = useState("");
+  const last = useRef(0);
+  const burst = useRef(true);
+  const idle = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(idle.current), []);
+
+  const send = (raw: string) => {
+    clearTimeout(idle.current);
+    const code = raw.trim();
+    burst.current = true;
+    last.current = 0;
+    setText("");
+    if (code) onCode(code);
+  };
+  const b = button(!!text.trim());
+  return (
+    <>
+      <input
+        autoFocus
+        autoComplete="off"
+        aria-label={label}
+        value={text}
+        onChange={(e) => {
+          const v = e.target.value;
+          const now = Date.now();
+          /* One slow letter and it is a person, not a gun: they press Enter. */
+          if (!v || (last.current && now - last.current > 80)) burst.current = !v;
+          last.current = v ? now : 0;
+          const up = v.toUpperCase().slice(0, 60);
+          setText(up);
+          clearTimeout(idle.current);
+          if (burst.current && up.trim().length >= 3) idle.current = setTimeout(() => send(up), 120);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === "Tab") {
+            e.preventDefault();
+            send(text);
+          }
+        }}
+        style={style}
+      />
+      {hint}
+      <button onClick={() => send(text)} style={b.style}>
+        {b.content}
+      </button>
+    </>
+  );
 }
