@@ -40,7 +40,7 @@ import { shiftDays } from "@/lib/erp/period";
 import { ERP_SCREENS } from "@/lib/erp/registry";
 import { lazyForm, lightRow, lightSpec } from "@/lib/erp/lazy-forms";
 import { NEW_FORM_ACTION } from "@/lib/erp/ui";
-import { sfgRates } from "@/lib/erp/stock";
+import { fgLevelAvailable, rmLevelAvailable, sfgRates } from "@/lib/erp/stock";
 import { scanGateFor } from "@/lib/erp/dispatch";
 
 const TODAY = calendarDate(new Date());
@@ -253,6 +253,44 @@ describe("a page costs what it draws", () => {
       assert.notEqual(after, before, "the raw material's new rate reaches the batch made from it");
     } finally {
       await db.execute(sql`update erp_purchases set rate_paise = rate_paise / 2 where lot_no = 'SSST1'`);
+    }
+  });
+
+  test("an order write keeps the stock ledgers, and the reads that name orders still move with it", async () => {
+    setTestUser(admin);
+    const client = db.$client as unknown as { unsafe: (...a: unknown[]) => unknown };
+    const unsafe = client.unsafe;
+    const seen: string[] = [];
+    client.unsafe = (...a: unknown[]) => {
+      seen.push(String(a[0]));
+      return unsafe.apply(db.$client, a);
+    };
+    const ledgerReads = async (fn: () => Promise<unknown>) => {
+      seen.length = 0;
+      await withReadMemo(fn);
+      return seen.filter((q) => !q.includes("erp_ledger_ticks"));
+    };
+    try {
+      const stock = async () => {
+        await fgLevelAvailable();
+        await sfgRates(["1SSST"]);
+      };
+      await ledgerReads(stock);
+      assert.deepEqual(await ledgerReads(stock), [], "nothing moved, so nothing is read again");
+      /* Ready, verify, bill, stickers: a status click is a write to erp_orders and nothing else. */
+      await db.execute(sql`update erp_orders set updated_at = updated_at where id = ${OLD_OPEN}`);
+      assert.deepEqual(await ledgerReads(stock), [], "an order write moves no stock, so no ledger is read again");
+      await db.execute(sql`update erp_purchases set rate_paise = rate_paise where lot_no = 'SSST1'`);
+      assert.ok((await ledgerReads(stock)).length > 0, "a raw-material write does move the costing");
+
+      /* Drums sold reads the order book, so an order write has to reach it. */
+      await ledgerReads(() => rmLevelAvailable());
+      await db.execute(sql`update erp_orders set updated_at = updated_at where id = ${OLD_OPEN}`);
+      const again = await ledgerReads(() => rmLevelAvailable());
+      assert.equal(again.length, 1, "only the read that names orders is asked again");
+      assert.match(again[0], /erp_orders/);
+    } finally {
+      client.unsafe = unsafe;
     }
   });
 

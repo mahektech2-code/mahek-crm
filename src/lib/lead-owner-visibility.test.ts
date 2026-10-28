@@ -4,8 +4,9 @@
  * A Sales Manager raises a lead and it must not turn up in a Telecaller's list,
  * counts or search just because it exists. The leak was `seatVisible`'s "nobody
  * owns it" arm, written for managers (who assign unowned leads) and applied to
- * every associate too: a lead raised by a Sales Manager carries no owner by
- * default, so every Telecaller saw it on `/crm/leads`.
+ * every associate too: a lead raised by a Sales Manager used to carry no owner
+ * by default, so every Telecaller saw it on `/crm/leads`. (She owns what she
+ * raises now, but a lead can still be deliberately unassigned — the case below.)
  *
  *   A  a Sales Manager's lead, owned by them or unowned with their seat, is not
  *      in a Telecaller's list, search, tile counts, desk or record;
@@ -134,7 +135,9 @@ describe("A: a Sales Manager's lead is not a Telecaller's", () => {
 
   test("unowned, with the Sales Manager's seat: the case that leaked", async () => {
     setTestUser(seema);
-    const r = await raise();
+    /* Deliberately unassigned: raising a lead now makes the creator its owner, so the unowned-with-a-seat
+       state this test guards has to be asked for. */
+    const r = await raise({ ownerId: null });
     assert.ok(r.ok);
     const leadId = r.data.customerId;
     const c = await row(leadId);

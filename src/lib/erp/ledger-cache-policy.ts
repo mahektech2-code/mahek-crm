@@ -21,7 +21,10 @@
 
 export type CachePolicy = { maxRows: number; maxParams: number };
 
-export const LEDGER_CACHE_POLICY: CachePolicy = { maxRows: 60_000, maxParams: 200 };
+export const LEDGER_CACHE_POLICY: CachePolicy = { maxRows: 50_000, maxParams: 200 };
+
+/** The second cache, for the few reads that name an order table (`ledger-cache.ts`) — small answers, and the two together keep the old 60,000-row ceiling. */
+export const LEDGER_CACHE_POLICY_ORDERS: CachePolicy = { maxRows: 10_000, maxParams: 200 };
 
 type Entry<V> = { stamp: string; value: V; rows: number };
 

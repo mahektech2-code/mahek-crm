@@ -27,6 +27,7 @@ import {
 } from "@/lib/services/lead-console-service";
 import { vantageViewer } from "@/lib/services/lead-vantage-service";
 import { DESK_MODULE, ownerChoices } from "@/lib/services/lead-desk-assignment-service";
+import { workableLeadIds } from "@/lib/services/lead-reach-service";
 import { LeadsScreen } from "@/components/leads/leads-screen";
 
 
@@ -274,6 +275,9 @@ export async function Body({
          may not make about his own work", which is this act exactly — see the
          action for why `lead.override` and `lead.work` were the wrong two. */
       canPrioritise={await canLead(user, "lead.verify")}
+      /* Which rows this person may log a call or a visit on. Enabled/disabled only — the actions check again. */
+      canReassignSalesman={await canOpenModule(user.id, "crm.sales-manager")}
+      workableIds={(await canLead(user, "lead.work")) ? await workableLeadIds(page.rows.map((r) => r.id), user.id) : []}
       /* Deleting moves a lead to the trash — a manager's, checked again in
          `trashLeads`. Restoring is the Admin Console's alone. */
       canTrash={await canFor(user, "lead.trash")}

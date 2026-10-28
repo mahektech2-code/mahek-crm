@@ -2,7 +2,7 @@ import "server-only";
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { readOnceAt, statementShape } from "./read-memo";
-import { ledgerDerived, ledgerReadShaped } from "./ledger-cache";
+import { ledgerDerived, ledgerReadShaped, noteLedgerRead } from "./ledger-cache";
 import { fillFigures, packCosting, boxFigures, sfgRate } from "./engines/production";
 import { landingFigures, shareInwardCost } from "./engines/purchase";
 
@@ -62,6 +62,8 @@ async function rows<T>(q: ReturnType<typeof sql>, ex: Ex = db, keep = true): Pro
   if (ex === db) {
     /* Worked out once: on a long statement, building its text is a cost of its own. */
     const shape = statementShape(q);
+    /* Whatever is being worked out from this read reads what it reads — orders or not (`ledger-cache.ts`). */
+    noteLedgerRead(shape.key);
     const read = async () => (await db.execute(q)) as unknown as T[];
     return readOnceAt(shape.key, keep ? () => ledgerReadShaped(shape, read) : read);
   }

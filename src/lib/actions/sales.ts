@@ -2489,14 +2489,19 @@ export async function reassignLead(input: {
   salesmanId: string;
 }): Promise<Result> {
   try {
-    const user = await requireSalesOrCrmSalesManager();
+    /* A holder of the CRM Sales Manager screen may reassign from the Leads Page too, not only
+       inside that workspace — for a lead in THEIR OWN book (checked below with the per-person
+       scope, never the territory read scope). Anybody else keeps exactly the door they had. */
+    const sm = (await inCrmSalesManagerWorkspace()) ? null : await requireUser();
+    const crmSalesManager = sm !== null && (await canOpenModule(sm.id, "crm.sales-manager"));
+    const user = crmSalesManager && sm ? sm : await requireSalesOrCrmSalesManager();
 
     const lead = await requireLead(input.leadId);
     if (!lead) return err("That lead is no longer here.", "not_found");
     /* In the CRM Sales Manager workspace the lead has to be in THEIR book, the
        same rule the list that offered it was drawn from. Elsewhere this is a
        no-op here and the Sales Dashboard's own checks stand. */
-    if (await inCrmSalesManagerWorkspace()) {
+    if ((await inCrmSalesManagerWorkspace()) || crmSalesManager) {
       await assertCustomerInScope({
         kind: lead.kind,
         ownerId: lead.ownerId,

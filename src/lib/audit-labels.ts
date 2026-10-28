@@ -1117,6 +1117,7 @@ export const VERBS: Record<string, string> = {
   resubmit: "resubmitted",
   return: "sent back",
   call: "called",
+  visit: "visited",
   convertToProspect: "made a prospect of",
   migrate: "migrated",
   reassigned: "reassigned",
