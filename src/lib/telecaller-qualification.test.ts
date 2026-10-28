@@ -23,7 +23,7 @@ import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { captureLead } from "@/lib/actions/lead-intake";
 import { assignDeskLead, bulkAssignDeskLeads } from "@/lib/actions/lead-desk-assignment";
-import { convertLeadToProspect, logQualificationCall } from "@/lib/actions/lead-calling-desk";
+import { convertLeadToProspect, logQualificationCall as realLogQualificationCall } from "@/lib/actions/lead-calling-desk";
 import {
   recordLeadValidationCall,
   saveLeadQualification,
@@ -50,6 +50,11 @@ import { QUAL_NEXT, sampleEligibility } from "@/lib/services/lead-qualification-
 import { qualificationComplete, qualificationReadyForReview, gateTo } from "@/lib/engines/lead-gates";
 import type { MbosPrincipal } from "@/lib/services/mbos-service";
 import type { SyncItem } from "@/lib/mbos/types";
+
+/* Every call needs a remark now; the tests that are not about that supply one. */
+const logQualificationCall = (i: Parameters<typeof realLogQualificationCall>[0]) =>
+  realLogQualificationCall({ notes: "Spoke to the contact.", ...i });
+
 
 /* ---------------------------------------------------------------------------
  * THE TELECALLER-OWNED QUALIFICATION WORKFLOW, end to end.

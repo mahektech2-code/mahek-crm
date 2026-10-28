@@ -3,6 +3,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appAccess, customers, mbosVisits, users } from "@/db/schema";
 import { canOpen } from "@/lib/access";
+import { calendarDate } from "@/lib/business-date";
 import { visitOutcomeLabel } from "@/lib/lead-activity";
 import { managerNameByEmployeeName } from "@/lib/services/org-service";
 
@@ -103,7 +104,7 @@ export function visitRange(
   input: { from?: string; to?: string },
   now: Date,
 ): { ok: true; from: Date; to: Date; fromDay: string; toDay: string } | { ok: false; error: string } {
-  const istDay = (d: Date) => new Date(d.getTime() + 330 * 60_000).toISOString().slice(0, 10);
+  const istDay = (d: Date) => calendarDate(d);
   const toDay = input.to || istDay(now);
   const fromDay = input.from || istDay(new Date(dayStart(toDay).getTime() - (TEAM_VISIT_DEFAULT_DAYS - 1) * DAY));
   if (!ymd.test(fromDay) || !ymd.test(toDay) || Number.isNaN(dayStart(fromDay).getTime()) || Number.isNaN(dayStart(toDay).getTime())) {

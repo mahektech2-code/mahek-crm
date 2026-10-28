@@ -31,7 +31,7 @@ import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { advanceLeadStage } from "@/lib/actions/leads";
 import {
   convertLeadToProspect,
-  logQualificationCall,
+  logQualificationCall as realLogQualificationCall,
   reopenDeskLead,
 } from "@/lib/actions/lead-calling-desk";
 import { reopenSalesManagerLead } from "@/lib/actions/lead-reopen";
@@ -41,6 +41,11 @@ import { VERIFICATION_FAILED_CODE } from "@/lib/lead-labels";
 import { buildPull, type MbosPrincipal } from "@/lib/services/mbos-service";
 import { ingestSyncBatch } from "@/lib/actions/mbos";
 import type { SyncItem } from "@/lib/mbos/types";
+
+/* Every call needs a remark now; the tests that are not about that supply one. */
+const logQualificationCall = (i: Parameters<typeof realLogQualificationCall>[0]) =>
+  realLogQualificationCall({ notes: "Spoke to the contact.", ...i });
+
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const DAY = "2026-10-01";
@@ -315,7 +320,7 @@ describe("B — the Sales Manager", () => {
 
 describe("C — the Telecaller", () => {
   const tomorrow = LATER;
-  /** A suspect that ran out of calls and was closed Lost by the desk's own rule. */
+  /** A suspect that had three calls and was then closed Lost by a person (no count of calls closes a lead). */
   async function lostAtCallThree() {
     const lead = await makeLead();
     setTestUser(desk);
@@ -333,7 +338,8 @@ describe("C — the Telecaller", () => {
       next: { kind: "call", text: "x", date: tomorrow },
     });
     const three = await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: {} });
-    assert.equal(three.ok && three.data.result, "lost", "the compulsory competitor was never learned");
+    assert.equal(three.ok && three.data.result, "next", "three calls close nothing");
+    await loseAs(desk, lead.id);
     assert.equal((await row(lead.id)).leadStage, "lost");
     return lead;
   }
@@ -366,7 +372,7 @@ describe("C — the Telecaller", () => {
     assert.equal(listed?.phase, "call1", "it shows on the desk as a lead to ring");
   });
 
-  test("the first call after a reopen is Call 1 again, and the three-call rule applies afresh", async () => {
+  test("the first call after a reopen is Call 1 again — the round is counted afresh", async () => {
     const lead = await lostAtCallThree();
     assert.equal((await reopenDeskLead({ customerId: lead.id, reasonCode: "followup_requested" })).ok, true);
 
@@ -385,7 +391,8 @@ describe("C — the Telecaller", () => {
     // A second full round closes it again, and again it can come back.
     await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: {}, next: { kind: "call", text: "x", date: tomorrow } });
     const last = await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: {} });
-    assert.equal(last.ok && last.data.result, "lost");
+    assert.equal(last.ok && last.data.result, "next");
+    await loseAs(desk, lead.id);
     assert.equal((await reopenDeskLead({ customerId: lead.id, reasonCode: "followup_requested" })).ok, true);
     assert.equal((await deskLeadRecord(lead.id, DAY))?.phase, "call1");
   });
