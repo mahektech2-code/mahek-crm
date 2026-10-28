@@ -22,8 +22,11 @@ import { businessDate } from "@/lib/business-date";
 import type { NurtureConfig } from "@/lib/engines/lead-nurture";
 import { qualifiedForSample } from "@/lib/engines/lead-ladder";
 import {
-  FEEDBACK_FIELDS,
+  ACTIVE_FEEDBACK_FIELDS,
   REASON_CODE_NEEDING_REMARKS,
+  SAMPLE_SENDING_MODES,
+  isMeaningfulAnswer,
+  trialReviewProblem,
   type LeadSalesType,
   type LeadStage,
   type SampleState,
@@ -202,13 +205,36 @@ async function nurtureConfig(): Promise<NurtureConfig> {
 
 /* ------------------------------------------------------------ §15 requesting */
 
+const SENDING_MODE_CODES = SAMPLE_SENDING_MODES.map((m) => m.code) as [string, ...string[]];
+
+/**
+ * STEP 1 OF SAMPLE / TRIAL ASKS THREE THINGS, and answering "Sample requested?"
+ * No is a different action (`declineSampleRequest`) because it writes no sample.
+ *
+ * The product is the catalogue's; the sending date is the day it is PLANNED to
+ * go, not a dispatch; the mode is Courier or Hand Delivery and nothing else.
+ *
+ * Quantity, application and reason are NOT asked any more and are not required.
+ * They stay optional here for exactly one reason: a handset in the field cannot
+ * be recalled and goes on sending them, and refusing a request that carries
+ * extra answers would lose a sample somebody really asked for. Nothing invents
+ * them when they are absent: the columns are nullable and read as "not asked".
+ */
 const requestSchema = z.object({
   productId: z.string().min(1),
-  /** CANS. Every quantity in MahekOne is cans; litres are derived. */
-  quantityCans: z.number().int().positive().max(10000),
-  application: z.string().trim().min(1).max(500),
-  reasonCode: z.string().trim().min(1).max(60),
+  /** A plain `YYYY-MM-DD`: the day it is planned to go. */
+  sendingDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  sendingMode: z.enum(SENDING_MODE_CODES),
+  /** Legacy, optional, never asked. CANS when present. */
+  quantityCans: z.number().int().positive().max(10000).optional(),
+  application: z.string().trim().max(500).optional(),
+  reasonCode: z.string().trim().max(60).optional(),
 });
+
+function isRealDate(ymd: string): boolean {
+  const d = new Date(`${ymd}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === ymd;
+}
 
 /**
  * A salesman asking for stock to give away.
@@ -232,12 +258,22 @@ export async function requestSample(
     if (!parsed.success) {
       const first = parsed.error.issues[0];
       return err(
-        "A sample needs a product, a quantity and what it is going to be used on.",
+        "A sample needs a product, the day it is to be sent and whether it goes by courier or by hand.",
         "validation",
         first ? [{ field: String(first.path[0] ?? "productId"), message: first.message }] : undefined,
       );
     }
+    if (!isRealDate(parsed.data.sendingDate)) {
+      return err("That is not a date MahekOne can read.", "validation", [
+        { field: "sendingDate", message: "Pick the day it is to be sent." },
+      ]);
+    }
     const ctx = await requireCapability("lead.work");
+    if (parsed.data.sendingDate < (await today())) {
+      return err("The sending date cannot be in the past.", "validation", [
+        { field: "sendingDate", message: "Pick today or a day to come." },
+      ]);
+    }
 
     const [customer] = await db
       .select({
@@ -339,9 +375,11 @@ export async function requestSample(
            either way it is the person who has to answer for the stock. */
         salesmanId: ctx.user.id,
         productId: parsed.data.productId,
-        quantityCans: parsed.data.quantityCans,
-        application: parsed.data.application,
-        reasonCode: parsed.data.reasonCode,
+        quantityCans: parsed.data.quantityCans ?? null,
+        application: parsed.data.application?.trim() || null,
+        reasonCode: parsed.data.reasonCode?.trim() || null,
+        plannedSendDate: parsed.data.sendingDate,
+        sendingMode: parsed.data.sendingMode,
         requestedDate: day,
         leadStageAtRequest: customer.leadStage,
         state: "requested",
@@ -359,7 +397,7 @@ export async function requestSample(
            The rung is NOT restated here: it is on the sample row, and a
            sentence frozen into an approval at request time would go on saying
            "Suspect" long after the lead had moved. */
-        reason: `${parsed.data.quantityCans} can(s) of ${product.name} for ${parsed.data.application}`,
+        reason: `${product.name}, to go by ${modeWord(parsed.data.sendingMode)} on ${parsed.data.sendingDate}`,
         requestedAt: now,
         /* §15 is one step. Unlike a distributor appointment there is nothing
            here that could route past the manager — the cost is stock, and the
@@ -377,7 +415,7 @@ export async function requestSample(
         sourceRecordId: sampleId,
         occurredAt: now,
         actorUserId: ctx.user.id,
-        summary: `Sample asked for: ${parsed.data.quantityCans} × ${product.name} for ${parsed.data.application}`,
+        summary: `Sample asked for: ${product.name}, to go by ${modeWord(parsed.data.sendingMode)} on ${parsed.data.sendingDate}`,
       });
 
       await raiseNurtureTasks(tx, {
@@ -412,6 +450,68 @@ export async function requestSample(
           "Sample requested. The lead is not qualified yet, so the manager is " +
             "asked to approve it knowing that.",
     );
+  } catch (e) {
+    return fromThrown(e);
+  }
+}
+
+function modeWord(code: string): string {
+  return SAMPLE_SENDING_MODES.find((m) => m.code === code)?.label ?? code;
+}
+
+/* ------------------------------------------- Step 1, "Sample requested?" No */
+
+/**
+ * THE LEAD'S ANSWER TO "SAMPLE REQUESTED?" WAS NO.
+ *
+ * It starts no sample, raises no approval and moves nothing: Step 2 stays
+ * locked because there is no sample for it to be about. What it does is leave a
+ * dated, attributed line on the lead's history, because "nobody has asked for a
+ * sample yet" and "somebody asked and the customer said no" are different
+ * stories to whoever picks the lead up next. Asking again later is always
+ * possible: there is no lifetime limit on samples and this is not one.
+ */
+export async function declineSampleRequest(customerId: string): Promise<Result<null>> {
+  try {
+    const ctx = await requireCapability("lead.work");
+    const [customer] = await db
+      .select({
+        id: customers.id,
+        kind: customers.kind,
+        ownerId: customers.ownerId,
+        salesAmId: customers.salesAmId,
+        backOfficeAmId: customers.backOfficeAmId,
+        salesManagerId: customers.salesManagerId,
+      })
+      .from(customers)
+      .where(eq(customers.id, customerId));
+    if (!customer) return err("That customer no longer exists.", "not_found");
+    await assertLeadInScope(customerId, customer);
+
+    const now = new Date();
+    await db.transaction(async (tx) => {
+      await writeTimelineEvent(tx, {
+        customerId,
+        eventType: MBOS_EVENT.sampleNotRequested,
+        sourceApp: "crm",
+        sourceRecordId: `${customerId}:${now.toISOString()}`,
+        occurredAt: now,
+        actorUserId: ctx.user.id,
+        summary: "Sample requested? No: no sample is being asked for",
+      });
+      await tx.insert(auditLog).values({
+        id: id("aud"),
+        actorId: ctx.user.id,
+        actorRole: ctx.authorisedBy,
+        actorApp: ctx.authorisedIn,
+        action: "sample.not_requested",
+        entityType: "customers",
+        entityId: customerId,
+        afterState: { requested: false } as never,
+      });
+    });
+    refresh();
+    return ok(null, "Recorded: no sample is being asked for.");
   } catch (e) {
     return fromThrown(e);
   }
@@ -569,8 +669,10 @@ export async function decideSample(
 /* ----------------------------------------------------------- §15 dispatching */
 
 const dispatchSchema = z.object({
-  courierName: z.string().trim().min(1).max(120),
-  trackingNumber: z.string().trim().min(1).max(120),
+  /* Required for a courier and meaningless for a sample carried by hand: see
+     the check in `dispatchSample`, which reads the mode Step 1 recorded. */
+  courierName: z.string().trim().max(120).default(""),
+  trackingNumber: z.string().trim().max(120).default(""),
   /** A plain `YYYY-MM-DD`. What was promised, not what happened. */
   expectedDeliveryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 });
@@ -596,6 +698,17 @@ export async function dispatchSample(
     const loaded = await loadForTransition(sampleId, "dispatched");
     if (!loaded.ok) return loaded.error;
 
+    /* A COURIER LEAVES A DOCKET; A SAMPLE CARRIED BY HAND DOES NOT. Step 1 records
+       which, and the docket is demanded only where there is one to write. A
+       sample with no recorded mode (everything raised before the question
+       existed) is read as a courier, exactly as it always was. */
+    const byHand = loaded.sample.sendingMode === "hand_delivery";
+    if (!byHand && (!parsed.data.courierName || !parsed.data.trackingNumber)) {
+      return err("A courier dispatch needs the courier and the docket.", "validation", [
+        { field: "courierName", message: "Name the courier and give the docket number." },
+      ]);
+    }
+
     const now = new Date();
     const day = await today();
     const config = await nurtureConfig();
@@ -607,8 +720,8 @@ export async function dispatchSample(
           state: "dispatched",
           dispatchedAt: now,
           dispatchedById: ctx.user.id,
-          courierName: parsed.data.courierName,
-          trackingNumber: parsed.data.trackingNumber,
+          courierName: parsed.data.courierName || null,
+          trackingNumber: parsed.data.trackingNumber || null,
           expectedDeliveryDate: parsed.data.expectedDeliveryDate,
           updatedAt: now,
           updatedById: ctx.user.id,
@@ -622,7 +735,9 @@ export async function dispatchSample(
         sourceRecordId: sampleId,
         occurredAt: now,
         actorUserId: ctx.user.id,
-        summary: `Sample sent with ${parsed.data.courierName}, docket ${parsed.data.trackingNumber}, due ${parsed.data.expectedDeliveryDate}`,
+        summary: byHand
+          ? `Sample handed over by hand, due ${parsed.data.expectedDeliveryDate}`
+          : `Sample sent with ${parsed.data.courierName}, docket ${parsed.data.trackingNumber}, due ${parsed.data.expectedDeliveryDate}`,
       });
 
       await raiseNurtureTasks(tx, {
@@ -790,21 +905,23 @@ export async function recordSampleFeedback(
 ): Promise<Result<null>> {
   try {
     const parsed = feedbackSchema.safeParse(input);
-    if (!parsed.success) return err("Say how the trial went.", "validation");
+    if (!parsed.success) return err("Pick the verdict and say how the trial went.", "validation");
 
-    const known = new Set(FEEDBACK_FIELDS.map((f) => f.id));
+    /* ONLY THE THREE QUESTIONS A REVIEW ASKS TODAY. Performance, Application,
+       Drying and Price are not asked any more and a web form cannot send them;
+       the answers already stored under them stay readable (`FEEDBACK_FIELDS`). */
+    const known = new Set(ACTIVE_FEEDBACK_FIELDS.map((f) => f.id as string));
     const unknown = Object.keys(parsed.data.fields).find((k) => !known.has(k));
     if (unknown) {
       return err(`"${unknown}" is not one of the trial questions.`, "validation");
     }
-    /* An empty form is not feedback. Somebody pressing save on seven blank
-       boxes has recorded that a call happened, which is a different fact and
-       one this table cannot tell apart from an answer of "no comment". */
-    const said = Object.values(parsed.data.fields).some((v) => v && v.trim().length > 0);
-    if (!said) {
-      return err("Write down at least one thing they said about it.", "validation", [
-        { field: "quality", message: "Something they said." },
-      ]);
+    /* An empty form is not feedback. Somebody pressing save on blank boxes has
+       recorded that a call happened, which is a different fact and one this table
+       cannot tell apart from an answer of "no comment". The rule is the pure
+       `trialReviewProblem`, which the forms and the handset read too. */
+    const problem = trialReviewProblem(parsed.data.fields, parsed.data.trialOutcome);
+    if (problem) {
+      return err(problem, "validation", [{ field: "quality", message: "Something they said." }]);
     }
 
     /*
@@ -833,12 +950,12 @@ export async function recordSampleFeedback(
      */
     if (parsed.data.trialOutcome === "rejected") {
       const f = parsed.data.fields;
-      const why = [f.otherComments, f.priceFeedback, f.competitorComparison].some(
-        (v) => v && v.trim().length > 0,
+      const why = [f.otherComments, f.competitorComparison, f.quality].some((v) =>
+        isMeaningfulAnswer(v),
       );
       if (!why) {
         return err(
-          "A rejected trial has to say why — the price, the comparison against what they use now, or in your own words. Without it the next sample goes out exactly the same.",
+          "A rejected trial has to say why: the quality, how it compares with the brand they use, or in your own words. Without it the next sample goes out exactly the same.",
           "validation",
           [{ field: "otherComments", message: "Why did they turn it down?" }],
         );
@@ -904,12 +1021,11 @@ export async function recordSampleFeedback(
            * performance, and a rejection reason is only meaningful on a
            * rejection.
            */
-          satisfaction:
-            [f.quality, f.performance].filter((v) => v?.trim()).join(" · ") || null,
+          satisfaction: f.quality?.trim() || null,
           rejectionReason:
             parsed.data.trialOutcome === "rejected"
-              ? [f.otherComments, f.priceFeedback, f.competitorComparison]
-                  .find((v) => v?.trim())
+              ? [f.otherComments, f.competitorComparison, f.quality]
+                  .find((v) => isMeaningfulAnswer(v))
                   ?.trim() || null
               : null,
           reviewedById: ctx.user.id,

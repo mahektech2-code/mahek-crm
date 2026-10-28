@@ -17,7 +17,7 @@
  * that answers "may we". One is the map and the other is the toll.
  */
 
-import type { LeadSalesType, LeadStage } from "./lead-labels";
+import type { LeadSalesType, LeadStage } from "../lead-labels";
 
 /**
  * The ladder a lead raised before any of this existed is on.
@@ -39,18 +39,20 @@ export const LEGACY_LADDER: readonly LeadStage[] = [
 /**
  * §3A — Mahek to the shop.
  *
- * `sample_received` is its own rung rather than a date on the sample, because
- * the specification chases it separately: a sample dispatched and not received
- * is a courier problem, and one received and not reviewed is a customer
- * problem. They are different calls to different people.
+ * SAMPLE / TRIAL IS ONE RUNG WITH TWO STEPS INSIDE IT: Step 1, Sample Request;
+ * Step 2, Sample Received & Review. It used to be three rungs, and a sample
+ * dispatched and not received is still a courier problem while one received and
+ * not reviewed is still a customer problem — but that difference is a fact about
+ * the SAMPLE (`mbos_samples.state`), which keeps every one of its dates, chases
+ * and owners. It is not a place the LEAD stands, so the ladder no longer pretends
+ * it is. `sample_received` and `sample_review` stay in the enum for the history
+ * they already wrote; `foldStage` reads a lead sitting on one as sitting here.
  */
 export const DIRECT_LADDER: readonly LeadStage[] = [
   "suspect",
   "prospect",
   "qualification",
   "sample_trial",
-  "sample_received",
-  "sample_review",
   "negotiation",
   "first_order",
   "delivery",
@@ -62,18 +64,16 @@ export const DIRECT_LADDER: readonly LeadStage[] = [
 /**
  * §3C — Mahek to a distributor to the shop.
  *
- * The same climb as a direct customer minus `sample_received`, which §3C drops:
- * the sample goes through the distributor, so the date we could stand behind is
- * when it was reviewed rather than when it landed. What makes it a different
- * ladder at all is not the rungs — it is that the gates ask who invoices the
- * shop, and `lead-gates.ts` is where that is asked.
+ * The same climb as a direct customer, with the same single Sample / Trial rung
+ * and the same two steps inside it. What makes it a different ladder at all is
+ * not the rungs — it is that the gates ask who invoices the shop, and
+ * `lead-gates.ts` is where that is asked.
  */
 export const THIRD_PARTY_LADDER: readonly LeadStage[] = [
   "suspect",
   "prospect",
   "qualification",
   "sample_trial",
-  "sample_review",
   "negotiation",
   "first_order",
   "delivery",
@@ -111,6 +111,22 @@ export const TERMINAL_STAGES: readonly LeadStage[] = [
   "active_distributor",
 ] as const;
 
+/**
+ * THE TWO RUNGS THAT USED TO FOLLOW SAMPLE / TRIAL, kept in the enum for history.
+ *
+ * A lead stored at either one was moved there by an older build and is still
+ * standing in the same place from the salesman's point of view: somewhere in the
+ * single Sample / Trial rung. `foldStage` is the compatibility mapping: nothing
+ * is rewritten, no transition row is touched, and a lead whose last recorded
+ * stage is `sample_review` simply reads as Sample / Trial wherever the ladder is
+ * asked where it is.
+ *
+ * A stored stage as the ladder reads it: the two retired sample rungs are Sample / Trial.
+ */
+export function foldStage(stage: LeadStage): LeadStage {
+  return stage === "sample_received" || stage === "sample_review" ? "sample_trial" : stage;
+}
+
 /** The rungs a lead climbs, given what kind of sale it is. */
 export function ladderFor(salesType: LeadSalesType | null | undefined): readonly LeadStage[] {
   switch (salesType) {
@@ -127,7 +143,7 @@ export function ladderFor(salesType: LeadSalesType | null | undefined): readonly
 
 /** Where on its own ladder a lead is standing, or -1 if it is off it. */
 export function rungOf(stage: LeadStage, salesType: LeadSalesType | null | undefined): number {
-  return ladderFor(salesType).indexOf(stage);
+  return ladderFor(salesType).indexOf(foldStage(stage));
 }
 
 /**
@@ -143,7 +159,7 @@ export function nextStage(
   salesType: LeadSalesType | null | undefined,
 ): LeadStage | null {
   const ladder = ladderFor(salesType);
-  const i = ladder.indexOf(stage);
+  const i = ladder.indexOf(foldStage(stage));
   if (i === -1) return ladder[0] ?? null;
   return ladder[i + 1] ?? null;
 }
@@ -154,7 +170,7 @@ export function previousStage(
   salesType: LeadSalesType | null | undefined,
 ): LeadStage | null {
   const ladder = ladderFor(salesType);
-  const i = ladder.indexOf(stage);
+  const i = ladder.indexOf(foldStage(stage));
   if (i <= 0) return null;
   return ladder[i - 1] ?? null;
 }
@@ -202,9 +218,12 @@ export function directionOf(
 ): MoveDirection {
   if (from === to) return "same";
   if (to === "lost") return "out";
+  /* Folded, so a lead stored at a retired sample rung that moves to `negotiation`
+     is "up", and one asking for `sample_review` is "same", never "off_ladder". */
   const ladder = ladderFor(salesType);
-  const a = ladder.indexOf(from);
-  const b = ladder.indexOf(to);
+  const a = ladder.indexOf(foldStage(from));
+  const b = ladder.indexOf(foldStage(to));
+  if (a !== -1 && a === b) return "same";
   if (a === -1 || b === -1) return "off_ladder";
   return b > a ? "up" : "down";
 }

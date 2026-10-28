@@ -4,13 +4,14 @@ import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { AppFrame, BackLink, useCameFrom } from '../src/components/shell/AppFrame';
 import { Badge, Card, Choice, DashedButton, Input, PrimaryButton, SecondaryButton, SectionLabel, T } from '../src/components/ui/primitives';
 import { skuText } from '../src/components/ui/sku';
-import { BottomSheet } from '../src/components/ui/overlays';
+import { BottomSheet, Calendar } from '../src/components/ui/overlays';
 import { color as C, radius, weight, type BadgeTone } from '../src/theme/tokens';
 import {
   chaseFor,
   isAwaitingReview,
   isSampleOverdue,
   listFunnelSamples,
+  recordNoSample,
   requestLeadSample,
   reviewChaseDays,
   sampleReasons,
@@ -21,7 +22,7 @@ import { chaseCountSentence } from '../src/lib/sample-chase';
 import { VoiceField } from '../src/components/ui/dictate';
 import { getLead } from '../src/data/leads';
 import { getCustomer, listCustomersPage, searchProducts, type Customer } from '../src/data/customers';
-import { isoDate, plural } from '../src/lib/format';
+import { dmy, isoDate, plural } from '../src/lib/format';
 import { type CodedOption } from '../src/engines/funnel';
 import { useStore } from '../src/state/store';
 import { PressableScale, Pop, Presence, Stagger, animateLayoutFor, useShake } from '../src/components/ui/motion';
@@ -336,14 +337,20 @@ export default function SamplesScreen() {
         onClose={() => setAskOpen(false)}
         onSubmit={async (form) => {
           if (!picked) return notify('Which shop is the trial for?', 'warn');
+          /* Step 1's first question. No starts nothing: it is written on the lead's
+             trail and the sheet closes. */
+          if (form.requested === 'no') {
+            await recordNoSample({ leadId: params.lead ?? null });
+            setAskOpen(false);
+            return notify('Noted. No sample is being asked for.');
+          }
           const r = await requestLeadSample({
             customerId: picked.id,
             leadId: params.lead ?? null,
             productId: form.productId,
             productName: form.productName,
-            cans: form.cans,
-            application: form.application,
-            reasonCode: form.reasonCode,
+            sendingDate: form.sendingDate,
+            sendingMode: form.sendingMode,
           });
           if (!r.ok) return notify(r.message, 'error');
           setAskOpen(false);
@@ -387,11 +394,11 @@ function RequestSheet({
   onPickShop: (shop: { id: string; name: string } | null) => void;
   onClose: () => void;
   onSubmit: (form: {
+    requested: 'yes' | 'no';
     productId: string | null;
     productName: string;
-    cans: number;
-    application: string;
-    reasonCode: string;
+    sendingDate: string;
+    sendingMode: 'courier' | 'hand_delivery';
   }) => Promise<void> | void;
 }) {
   const [shopQuery, setShopQuery] = React.useState('');
@@ -400,9 +407,11 @@ function RequestSheet({
   const [query, setQuery] = React.useState('');
   const [hits, setHits] = React.useState<{ id: string; name: string; formulation: string | null; sku: string | null }[]>([]);
   const [product, setProduct] = React.useState<{ id: string; name: string } | null>(null);
-  const [cans, setCans] = React.useState('1');
-  const [application, setApplication] = React.useState('');
-  const [reasonCode, setReasonCode] = React.useState<string | null>(null);
+  /* SAMPLE / TRIAL, STEP 1 OF 2: Sample requested?, Product, Sending date, Sending mode. */
+  const [requested, setRequested] = React.useState<'yes' | 'no' | null>(null);
+  const [sendingDate, setSendingDate] = React.useState<string | null>(null);
+  const [calOpen, setCalOpen] = React.useState(false);
+  const [sendingMode, setSendingMode] = React.useState<'courier' | 'hand_delivery' | null>(null);
   const [err, setErr] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
   /* A ref, not the state, guards the write — see `submit`. */
@@ -453,20 +462,21 @@ function RequestSheet({
        the `saving` state, which is a render behind a fast second tap. */
     if (savingRef.current) return;
     if (!shop) return refuse('Which shop is the trial for?');
-    if (!product) return refuse('Which product is the sample for?');
-    const cansWhole = parseWhole(cans) ?? 0;
-    if (!(cansWhole > 0)) return refuse('How many cans?');
-    if (!application.trim()) return refuse('What will they use it on? This is needed.');
-    if (!reasonCode) return refuse('Say why they want a trial.');
+    if (!requested) return refuse('Has a sample been requested? Answer Yes or No.');
+    if (requested === 'yes') {
+      if (!product) return refuse('Pick the product from the list.');
+      if (!sendingDate) return refuse('Choose the day it is to be sent.');
+      if (!sendingMode) return refuse('Courier or Hand Delivery?');
+    }
     savingRef.current = true;
     setSaving(true);
     try {
       await onSubmit({
-        productId: product.id,
-        productName: product.name,
-        cans: cansWhole,
-        application: application.trim(),
-        reasonCode,
+        requested,
+        productId: product?.id ?? null,
+        productName: product?.name ?? '',
+        sendingDate: sendingDate ?? '',
+        sendingMode: sendingMode ?? 'courier',
       });
     } finally {
       savingRef.current = false;
@@ -479,6 +489,7 @@ function RequestSheet({
       <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>
         Request a sample
       </T>
+      <T s="caption" style={{ marginTop: 2 }}>Sample / Trial · Step 1 of 2 · Sample Request</T>
       {/* WHOSE TRIAL IT IS, on the sheet, before anything is typed. The sheet
           named the product, the cans, the application and the reason and never
           once named the shop — so there was nothing on any screen that could
@@ -533,6 +544,21 @@ function RequestSheet({
       )}
 
       <View style={{ marginTop: 14 }}>
+        <SectionLabel style={{ marginBottom: 6 }}>Sample requested?</SectionLabel>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <Choice label="Yes" selected={requested === 'yes'} onPress={() => { setRequested('yes'); setErr(null); }} style={{ paddingHorizontal: 16 }} />
+          <Choice label="No" selected={requested === 'no'} onPress={() => { setRequested('no'); setErr(null); }} style={{ paddingHorizontal: 16 }} />
+        </View>
+        {requested === 'no' ? (
+          <T s="caption" style={{ marginTop: 6 }}>
+            Nothing is started. The answer is noted on this lead, and Step 2 stays locked.
+          </T>
+        ) : null}
+      </View>
+
+      {requested === 'yes' ? (
+        <>
+      <View style={{ marginTop: 14 }}>
         <SectionLabel style={{ marginBottom: 6 }}>Which product</SectionLabel>
         {product ? (
           <Choice
@@ -563,42 +589,31 @@ function RequestSheet({
         )}
       </View>
 
-      <View style={{ marginTop: 12 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>How many cans</SectionLabel>
-        <Input
-          value={cans}
-          onChangeText={(v) => { setCans(cleanWhole(v)); setErr(null); }}
-          keyboardType="number-pad"
-          wholeHint="Whole cans only."
-        />
-      </View>
-
-      <View style={{ marginTop: 12 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>What they will use it on</SectionLabel>
-        {/* Prose, so it gets the microphone: this is the sample's own "why he
-            wants it", typed one-handed in a shop by somebody who speaks the
-            answer far better than he writes it. */}
-        <VoiceField
-          value={application}
-          onChangeText={(v) => { setApplication(v); setErr(null); }}
-          placeholder="Spray booth, furniture polish, wooden doors"
-        />
-      </View>
-
-      <View style={{ marginTop: 12 }}>
-        <SectionLabel style={{ marginBottom: 6 }}>Why they want a trial</SectionLabel>
-        <View style={{ gap: 8 }}>
-          {reasons.map((o) => (
+          <View style={{ marginTop: 12 }}>
+            <SectionLabel style={{ marginBottom: 6 }}>Sample sending date</SectionLabel>
             <Choice
-              key={o.code}
-              label={o.label}
-              selected={reasonCode === o.code}
-              onPress={() => { setReasonCode(o.code); setErr(null); }}
-              style={{ alignItems: 'flex-start', paddingHorizontal: 14 }}
+              label={sendingDate ? dmy(sendingDate) : 'Choose a day'}
+              selected={Boolean(sendingDate)}
+              onPress={() => setCalOpen(!calOpen)}
+              style={{ alignItems: 'flex-start', paddingHorizontal: 14, minHeight: 52 }}
             />
-          ))}
-        </View>
-      </View>
+            <T s="caption" style={{ marginTop: 6 }}>The day it is planned to go. This does not mark it as sent.</T>
+            {calOpen ? (
+              <View style={{ marginTop: 10 }}>
+                <Calendar selected={sendingDate ?? ''} onPick={(iso) => { setSendingDate(iso); setCalOpen(false); setErr(null); }} />
+              </View>
+            ) : null}
+          </View>
+
+          <View style={{ marginTop: 12 }}>
+            <SectionLabel style={{ marginBottom: 6 }}>Sending mode</SectionLabel>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <Choice label="Courier" selected={sendingMode === 'courier'} onPress={() => { setSendingMode('courier'); setErr(null); }} style={{ paddingHorizontal: 16 }} />
+              <Choice label="Hand Delivery" selected={sendingMode === 'hand_delivery'} onPress={() => { setSendingMode('hand_delivery'); setErr(null); }} style={{ paddingHorizontal: 16 }} />
+            </View>
+          </View>
+        </>
+      ) : null}
 
       <Presence show={!!err}>
         <Animated.View
@@ -610,7 +625,7 @@ function RequestSheet({
       <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
         <SecondaryButton label="Cancel" onPress={onClose} style={{ flex: 1, borderRadius: radius.xl }} />
         <PrimaryButton
-          label={saving ? 'Sending…' : 'Request sample'}
+          label={saving ? 'Sending…' : requested === 'no' ? 'Note: no sample' : 'Request sample'}
           disabled={saving}
           onPress={submit}
           style={{ flex: 1, borderRadius: radius.xl }}

@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { shortDate, stamp } from "@/lib/format";
-import { FEEDBACK_FIELDS, sampleStateLabel, type SampleState } from "@/lib/lead-labels";
+import { ACTIVE_FEEDBACK_FIELDS, sampleStateLabel, trialReviewProblem, type SampleState } from "@/lib/lead-labels";
 import { recordSampleFeedback } from "@/lib/actions/lead-samples";
 import { LeadTabs } from "../../leads/lead-tabs";
 import {
@@ -104,8 +104,9 @@ export function ChasesScreen({
 
   const [acting, setActing] = React.useState<Acting | null>(null);
   const [fields, setFields] = React.useState<Record<string, string>>({});
-  const [outcome, setOutcome] = React.useState<"approved" | "rejected" | "more_testing">(
-    "approved",
+  /* No default: a verdict is mandatory, and one nobody chose is not one. */
+  const [outcome, setOutcome] = React.useState<"approved" | "rejected" | "more_testing" | null>(
+    null,
   );
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -113,7 +114,7 @@ export function ChasesScreen({
   function begin(row: ChaseRow) {
     setActing({ row });
     setFields({});
-    setOutcome("approved");
+    setOutcome(null);
     setError(null);
   }
 
@@ -123,7 +124,7 @@ export function ChasesScreen({
     setError(null);
     let result;
     try {
-      result = await recordSampleFeedback(acting.row.id, { fields, trialOutcome: outcome });
+      result = await recordSampleFeedback(acting.row.id, { fields, trialOutcome: outcome! });
     } finally {
       setBusy(false);
     }
@@ -395,54 +396,54 @@ export function ChasesScreen({
             </div>
 
             <p className="mb-3 text-[13px] text-body">
-              Seven answers rather than one box. The whole point of a trial is the
-              comparison, and &ldquo;good&rdquo; cannot be read back six weeks later as
-              &ldquo;better drying than what they use, price is the problem&rdquo;.
+              Step 2 of 2 · The sample has been received, so the review is open. Quality, how it
+              compares with the brand they use now, anything else, and the verdict.
             </p>
 
-            <div className="grid max-h-[40vh] grid-cols-2 gap-x-4 gap-y-2.5 overflow-y-auto pr-1">
-              {FEEDBACK_FIELDS.map((f) => (
+            <div className="grid max-h-[40vh] grid-cols-1 gap-y-2.5 overflow-y-auto pr-1">
+              {ACTIVE_FEEDBACK_FIELDS.map((f) => (
                 <label key={f.id} className="block">
                   <span className="mb-1 block text-[13px] text-body">{f.label}</span>
-                  <input
+                  <textarea
+                    rows={2}
                     value={fields[f.id] ?? ""}
                     onChange={(e) => setFields((prev) => ({ ...prev, [f.id]: e.target.value }))}
-                    className="h-9 w-full rounded-[4px] border border-line bg-surface px-2.5 text-sm text-ink outline-none focus:border-brand"
+                    className="w-full rounded-[4px] border border-line bg-surface px-2.5 py-1.5 text-sm text-ink outline-none focus:border-brand"
                   />
                 </label>
               ))}
             </div>
 
             <div className="mt-4 border-t border-divider pt-3">
-              <span className="mb-1 block text-[13px] font-medium text-ink">The verdict</span>
+              <span className="mb-1 block text-[13px] font-medium text-ink">Verdict · required</span>
               <div className="flex flex-wrap gap-2">
                 <Button
                   size="sm"
                   tone={outcome === "approved" ? "primary" : "default"}
                   onClick={() => setOutcome("approved")}
                 >
-                  They liked it
-                </Button>
-                <Button
-                  size="sm"
-                  tone={outcome === "rejected" ? "danger" : "default"}
-                  onClick={() => setOutcome("rejected")}
-                >
-                  They did not
+                  Approved
                 </Button>
                 <Button
                   size="sm"
                   tone={outcome === "more_testing" ? "primary" : "default"}
                   onClick={() => setOutcome("more_testing")}
                 >
-                  They want to test it further
+                  More Testing Required
+                </Button>
+                <Button
+                  size="sm"
+                  tone={outcome === "rejected" ? "danger" : "default"}
+                  onClick={() => setOutcome("rejected")}
+                >
+                  Rejected
                 </Button>
               </div>
               <p className="mt-1.5 text-[12px] text-muted">
                 {outcome === "more_testing"
                   ? "A real third answer, not a shrug — a trial on a different substrate happened and produced an opinion, and filing that as pending would lose the fact of it."
                   : outcome === "rejected"
-                    ? "A refusal with the seven answers behind it is worth far more than a lead quietly going cold. The reason is kept on the sample."
+                    ? "A refusal with its reason behind it is worth far more than a lead quietly going cold. The reason is kept on the sample."
                     : "Negotiation opens on an approved trial — that is what authorises the commercial conversation, rather than the salesman deciding he is ready for one."}
               </p>
             </div>
@@ -455,12 +456,8 @@ export function ChasesScreen({
               </Button>
               <Button
                 tone="primary"
-                disabled={busy || !Object.values(fields).some((v) => v.trim())}
-                title={
-                  Object.values(fields).some((v) => v.trim())
-                    ? undefined
-                    : "Answer at least one of them. A verdict with nothing behind it is the notes field this replaced."
-                }
+                disabled={busy || Boolean(trialReviewProblem(fields, outcome))}
+                title={trialReviewProblem(fields, outcome) ?? undefined}
                 onClick={() => void submit()}
               >
                 {busy ? "Saving…" : "Record the review"}

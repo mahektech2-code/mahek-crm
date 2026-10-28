@@ -2142,6 +2142,19 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE documents ADD COLUMN publishedAt INTEGER;`,
   ],
 
+  /*
+   * SAMPLE / TRIAL, STEP 1 — WHEN IT IS PLANNED TO GO, AND HOW.
+   *
+   * `plannedSendDate` is a day (`YYYY-MM-DD`) and `sendingMode` is `courier` or
+   * `hand_delivery`. Neither says the sample has been sent; they are the answers
+   * to the request form's third and fourth questions. NULL on every sample raised
+   * before they were asked, and nothing fills them in.
+   */
+  [
+    `ALTER TABLE samples ADD COLUMN plannedSendDate TEXT;`,
+    `ALTER TABLE samples ADD COLUMN sendingMode TEXT;`,
+  ],
+
 ];
 
 /**

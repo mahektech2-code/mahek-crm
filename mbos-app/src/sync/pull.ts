@@ -1094,6 +1094,10 @@ async function upsertSamples(rows: unknown[] | undefined, now: number): Promise<
          notes, and it is why the SELECT and this list have to land together. */
       reviewChaseCount?: number | null;
       lastReviewChaseAt?: string | number | null;
+      /* Step 1 of Sample / Trial. Optional for the reason above: a server that
+         predates the columns sends neither. */
+      plannedSendDate?: string | null;
+      sendingMode?: string | null;
     };
     await run(
       `INSERT INTO samples (id, customerId, productId, productName, cans, reason,
@@ -1103,8 +1107,9 @@ async function upsertSamples(rows: unknown[] | undefined, now: number): Promise<
                             trialStartedAt, trialCompletedAt, satisfaction,
                             additionalRequirement, rejectionReason,
                             reviewChaseCount, lastReviewChaseAt,
+                            plannedSendDate, sendingMode,
                             clientCreatedAt, serverCreatedAt, deviceId, syncState)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced')
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'server', 'synced')
        ON CONFLICT(id) DO UPDATE SET
          productId = excluded.productId, productName = excluded.productName,
          cans = excluded.cans, reason = excluded.reason, state = excluded.state,
@@ -1119,7 +1124,9 @@ async function upsertSamples(rows: unknown[] | undefined, now: number): Promise<
          additionalRequirement = excluded.additionalRequirement,
          rejectionReason = excluded.rejectionReason,
          reviewChaseCount = excluded.reviewChaseCount,
-         lastReviewChaseAt = excluded.lastReviewChaseAt, syncState = 'synced'
+         lastReviewChaseAt = excluded.lastReviewChaseAt,
+         plannedSendDate = excluded.plannedSendDate, sendingMode = excluded.sendingMode,
+         syncState = 'synced'
        WHERE ${noPending('samples')}`,
       [
         s.id,
@@ -1154,6 +1161,8 @@ async function upsertSamples(rows: unknown[] | undefined, now: number): Promise<
         s.rejectionReason ?? null,
         s.reviewChaseCount ?? null,
         s.lastReviewChaseAt ? localInstant(s.lastReviewChaseAt) : null,
+        s.plannedSendDate ?? null,
+        s.sendingMode ?? null,
         now,
         now,
       ],

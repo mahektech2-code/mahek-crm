@@ -26,8 +26,7 @@ import {
   VERIFICATION_FAILED_CODE,
   labelOf,
   salesTypeLabel,
-  stageLabel,
-} from "@/lib/lead-labels";
+  stageLabel, historicalStageLabel } from "@/lib/lead-labels";
 import type { LostLeadRow, LostLeadTiles } from "@/lib/services/lead-lost-service";
 
 /* ---------------------------------------------------------------------------
@@ -304,7 +303,7 @@ export function LostLeadsScreen({
                     </Cell>
                     <Cell truncate={150}>
                       {l.fromStage ? (
-                        <Pill tone="neutral">{stageLabel(l.fromStage)}</Pill>
+                        <Pill tone="neutral">{historicalStageLabel(l.fromStage)}</Pill>
                       ) : (
                         <span className="text-muted" title="No closing transition is on record for this lead — it predates the transitions table.">
                           Not recorded

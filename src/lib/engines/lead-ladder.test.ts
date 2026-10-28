@@ -22,6 +22,7 @@ import {
   THIRD_PARTY_LADDER,
   bandOf,
   directionOf,
+  foldStage,
   isOnTheBookAt,
   isParked,
   isTerminal,
@@ -98,14 +99,12 @@ describe("the ladders", () => {
     ]);
   });
 
-  test("§3A — the direct ladder, in order", () => {
+  test("§3A — the direct ladder, in order: ONE Sample / Trial rung", () => {
     assert.deepEqual(DIRECT_LADDER, [
       "suspect",
       "prospect",
       "qualification",
       "sample_trial",
-      "sample_received",
-      "sample_review",
       "negotiation",
       "first_order",
       "delivery",
@@ -115,13 +114,12 @@ describe("the ladders", () => {
     ]);
   });
 
-  test("§3C — the third-party ladder is the direct one without sample_received", () => {
+  test("§3C — the third-party ladder is the direct one: the same single Sample / Trial rung", () => {
     assert.deepEqual(THIRD_PARTY_LADDER, [
       "suspect",
       "prospect",
       "qualification",
       "sample_trial",
-      "sample_review",
       "negotiation",
       "first_order",
       "delivery",
@@ -129,11 +127,30 @@ describe("the ladders", () => {
       "second_order",
       "customer",
     ]);
-    assert.equal(THIRD_PARTY_LADDER.includes("sample_received"), false);
-    assert.deepEqual(
-      DIRECT_LADDER.filter((s) => s !== "sample_received"),
-      [...THIRD_PARTY_LADDER],
-    );
+    /* Neither shop ladder carries a rung for either step of the sample. */
+    for (const retired of ["sample_received", "sample_review"] as const) {
+      assert.equal(THIRD_PARTY_LADDER.includes(retired), false, retired);
+      assert.equal(DIRECT_LADDER.includes(retired), false, retired);
+    }
+    assert.deepEqual([...DIRECT_LADDER], [...THIRD_PARTY_LADDER]);
+    assert.equal(DIRECT_LADDER.filter((s) => s === "sample_trial").length, 1);
+  });
+
+  /* The two retired rungs are history, not places a lead stands. They stay in the
+     enum so every stored stage and every transition row still reads, and
+     `foldStage` is the compatibility mapping. */
+  test("a lead stored at a retired sample rung reads as Sample / Trial", () => {
+    assert.equal(foldStage("sample_received"), "sample_trial");
+    assert.equal(foldStage("sample_review"), "sample_trial");
+    assert.equal(foldStage("negotiation"), "negotiation");
+    for (const type of ["direct", "third_party"] as const) {
+      assert.equal(rungOf("sample_review", type), rungOf("sample_trial", type));
+      assert.equal(nextStage("sample_received", type), "negotiation");
+      assert.equal(previousStage("sample_review", type), "qualification");
+      assert.equal(directionOf("sample_review", "negotiation", type), "up");
+      assert.equal(directionOf("sample_review", "sample_trial", type), "same");
+      assert.equal(directionOf("sample_review", "qualification", type), "down");
+    }
   });
 
   test("§3B — the distributor ladder has no sample rungs and two approvals", () => {
@@ -198,8 +215,9 @@ describe("the ladders", () => {
 describe("nextStage and previousStage", () => {
   test("one rung up, and null at the top", () => {
     assert.equal(nextStage("suspect", "direct"), "prospect");
-    assert.equal(nextStage("sample_trial", "direct"), "sample_received");
-    assert.equal(nextStage("sample_trial", "third_party"), "sample_review");
+    /* Sample / Trial is followed by Negotiation on BOTH shop ladders. */
+    assert.equal(nextStage("sample_trial", "direct"), "negotiation");
+    assert.equal(nextStage("sample_trial", "third_party"), "negotiation");
     assert.equal(nextStage("customer", "direct"), null);
     assert.equal(nextStage("active_distributor", "distributor"), null);
   });

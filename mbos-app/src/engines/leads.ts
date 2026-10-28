@@ -21,6 +21,7 @@ import {
   THIRD_PARTY_LADDER,
   TERMINAL_STAGES,
   bandOf,
+  foldStage,
   isOnTheBookAt,
   isParked,
   isUndecidedSuspect,
@@ -474,6 +475,12 @@ export const ALL_RUNGS: readonly FunnelRung[] = Array.from(
     ...THIRD_PARTY_LADDER,
     ...DISTRIBUTOR_LADDER,
     ...TERMINAL_STAGES,
+    /* Sample Received and Sample Review are not rungs any more (Sample / Trial is
+       one rung with two steps) but a lead an older build left on either still
+       carries the value, so it stays findable. They read as Qualified, as they
+       always did, and `foldedRung` draws them under Sample / Trial. */
+    'sample_received',
+    'sample_review',
     /* Neither is on a ladder. `lost` leaves from any rung and `on_hold`
        displaces one — see `isParked` — and both are somewhere a lead is
        genuinely standing, so both have to be findable. */
@@ -938,7 +945,8 @@ export function sampleAsk(
       missing: [],
     };
   }
-  const here = ladder.indexOf(lead.stage as FunnelRung);
+  /* Folded: a lead stored at a retired sample rung is inside Sample / Trial. */
+  const here = ladder.indexOf(foldStage(lead.stage as FunnelRung));
   if (here >= at) return { ok: true };
   const v = verdict();
   if (v.open) return { ok: true };

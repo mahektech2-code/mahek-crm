@@ -155,7 +155,8 @@ export async function leadBoard(
    */
   const [counted, book] = await Promise.all([
     db.execute<{ stage: string; total: number }>(sql`
-      select c.lead_stage::text as stage, count(*)::int as total
+      /* The retired sample rungs are read as Sample / Trial: see lead-funnel-service. */
+      select case when c.lead_stage::text in ('sample_received', 'sample_review') then 'sample_trial' else c.lead_stage::text end as stage, count(*)::int as total
         from customers c
         ${where}
         ${narrowed}
@@ -187,7 +188,7 @@ export async function leadBoard(
     with ranked as (
       select c.id,
              row_number() over (
-               partition by c.lead_stage
+               partition by case when c.lead_stage::text in ('sample_received', 'sample_review') then 'sample_trial' else c.lead_stage::text end
                    order by c.lead_next_follow_up_date asc nulls last,
                             c.lead_last_activity_date asc nulls last,
                             c.id desc
@@ -202,7 +203,7 @@ export async function leadBoard(
            c.lead_next_action_date::text as "nextActionDate",
            (c.lead_next_action_date is not null
               and c.lead_next_action_date < ${day}::date) as "nextActionOverdue",
-           c.lead_stage::text as stage,
+           case when c.lead_stage::text in ('sample_received', 'sample_review') then 'sample_trial' else c.lead_stage::text end as stage,
 
            c.lead_sales_type::text as "salesType",
            c.customer_type::text as "customerType",

@@ -316,16 +316,26 @@ export function gateAction(facts: LeadGateActionFacts): LeadGateAction {
             control: "sample_desk",
             says: "A request is a salesman asking. Until a manager says yes there is nothing for the godown to pack.",
           };
-        /* The parcel has overtaken the rung — the shop has it, or has tried
-           it, and nobody moved the lead. That is a move and not a chase. */
+        /* STEP 2 OF THIS RUNG. Sample Received & Review is not a rung of its own:
+           the shop has it, and what is owed now is the review. */
         case "received":
         case "trial_done":
+          return {
+            label: "Record the trial review",
+            tone: "brand",
+            control: "sample_desk",
+            says: "Quality, how it compares with the brand they use, anything else, and the verdict. A trial nobody reviewed is stock given away for nothing, which is why it is chased until there is an answer.",
+          };
+        /* Reviewed: the only move left is the one the gate decides. It is asked
+           here with the same verb whatever the verdict was, and the gate refuses
+           More Testing and Rejected with the reason; asking it in both places is
+           the second opinion this file is written against. */
         case "reviewed":
           return {
-            label: "Move the rung on",
-            tone: "warn",
+            label: "Move to Negotiation",
+            tone: "brand",
             control: "advance",
-            says: "The sample is further along than the lead is. The rung is behind the parcel, which is how a trial goes quiet with everybody assuming somebody else is holding it.",
+            says: "An approved sample is what authorises a commercial conversation, not the salesman deciding he is ready for one.",
           };
         /* Refused, called off, or never asked for. All three leave this rung
            standing on nothing, and a fresh request is the only way out. */

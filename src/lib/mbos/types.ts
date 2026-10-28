@@ -175,6 +175,12 @@ export const SYNC_ENTITY_TYPES = [
    * record is for: has anybody been in touch, and how often.
    */
   "lead_communication",
+  /**
+   * Sample / Trial, Step 1: "Sample requested?" answered No. It starts no sample;
+   * it is a dated line on the lead's history that the office has to be able to
+   * read, so it travels. Idempotent on the handset's id.
+   */
+  "sample_not_requested",
   "approval",
   /**
    * The salesman's answer to a proposed day: agreed, or refused with a reason

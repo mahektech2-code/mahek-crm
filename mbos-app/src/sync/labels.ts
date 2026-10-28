@@ -27,6 +27,7 @@ export const ENTITY_LABEL: Record<string, string> = {
   lead: 'Lead',
   lead_validation: 'Lead check call',
   lead_communication: 'Message to a lead',
+  sample_not_requested: 'No sample asked for',
   internal_note: 'Note for the office',
   approval: 'Request for approval',
   competitor: 'Other brand note',

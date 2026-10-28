@@ -18,8 +18,7 @@ import {
   stageLabel,
   type CodedOption,
   type LeadSalesType,
-  type LeadStage,
-} from "@/lib/lead-labels";
+  type LeadStage, historicalStageLabel } from "@/lib/lead-labels";
 import type {
   ParkedFrom,
   StreamEntry,
@@ -310,13 +309,13 @@ function Parked({ parked, stage }: { parked: ParkedFrom; stage: LeadStage }) {
     <div className="mb-4 rounded-[6px] border-l-[3px] border-warn bg-warn-soft px-4 py-3">
       <div className="text-[13px] font-semibold text-ink">
         {parked.fromStage
-          ? `Parked from ${stageLabel(parked.fromStage)}`
+          ? `Parked from ${historicalStageLabel(parked.fromStage)}`
           : "Parked, and the rung it came from was not recorded"}
       </div>
       <p className="mt-1 mb-0 max-w-[820px] text-[13px] text-pretty text-body">
         {parked.fromStage ? (
           <>
-            On hold takes the stage column, so {stageLabel(parked.fromStage)} survives only on the
+            On hold takes the stage column, so {historicalStageLabel(parked.fromStage)} survives only on the
             transition below that parked it. That is the rung a reopen has to move this lead back
             to — there is nowhere else to read it from.
           </>
@@ -400,7 +399,7 @@ function Transition({
     <>
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-[13px] font-semibold text-ink">
-          {p.fromStage ? `${stageLabel(p.fromStage)} → ${stageLabel(p.toStage)}` : `Raised at ${stageLabel(p.toStage)}`}
+          {p.fromStage ? `${historicalStageLabel(p.fromStage)} → ${historicalStageLabel(p.toStage)}` : `Raised at ${historicalStageLabel(p.toStage)}`}
         </span>
         <Pill tone={DIRECTION_TONE[direction]}>{DIRECTION_WORD[direction]}</Pill>
         {/* A move that passed a shut gate is NOT the same event as one that did

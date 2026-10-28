@@ -1,6 +1,7 @@
 import { all, newId, one, run } from '../db';
 import { getConfig } from './config';
 import { raiseApproval } from './requests';
+import { enqueue } from '../sync/queue';
 import { insertAndQueue, stamp, updateAndQueue } from './write';
 import { isoDate } from '../lib/format';
 import { rejectionReasonFrom, sampleAsk } from '../engines/leads';
@@ -9,10 +10,13 @@ import { leadGateInput } from './lead-funnel';
 import { stageOf } from '../lib/wire';
 import { chaseSchedule, type ChaseCount, type ChaseSchedule } from '../lib/sample-chase';
 import {
+  ACTIVE_FEEDBACK_FIELDS,
   FEEDBACK_FIELDS,
   gateTo,
+  isMeaningfulAnswer,
   REASON_CODE_NEEDING_REMARKS,
   SAMPLE_CANCEL_REASONS,
+  trialReviewProblem,
   type CodedOption,
 } from '../engines/funnel';
 
@@ -57,6 +61,9 @@ export type FunnelSample = {
   courierName: string | null;
   courierDocket: string | null;
   expectedDeliveryDate: string | null;
+  /** Step 1 of Sample / Trial: the day it is planned to go (not a dispatch), and `courier` / `hand_delivery`. */
+  plannedSendDate?: string | null;
+  sendingMode?: string | null;
   deliveredAt: number | null;
   deliveryPhotoId: string | null;
   receivedConfirmedAt: number | null;
@@ -377,20 +384,25 @@ export async function requestLeadSample(args: {
   leadId?: string | null;
   productId: string | null;
   productName: string;
-  cans: number;
-  application: string;
-  reasonCode: string;
+  /** Step 1's third question: the day it is PLANNED to go, `YYYY-MM-DD`. Not a dispatch. */
+  sendingDate: string;
+  /** Step 1's fourth: `courier` or `hand_delivery`, and nothing else. */
+  sendingMode: 'courier' | 'hand_delivery';
   followUpDate?: string | null;
 }): Promise<SampleResult<string>> {
-  if (!args.productName.trim()) return { ok: false, message: 'Which product is the trial of?' };
-  if (!(args.cans > 0)) return { ok: false, message: 'How many cans?' };
-  if (!args.application.trim()) {
-    return {
-      ok: false,
-      message: 'What will they use it on? Without this, nobody can judge the trial.',
-    };
+  /* Four questions, and "Sample requested?" is the one asked before this is called:
+     answering No never reaches here (see `recordNoSample`). The catalogue is the
+     only thing that may name a product, so a free-typed name with no id is
+     refused. */
+  if (!args.productId || !args.productName.trim()) {
+    return { ok: false, message: 'Pick the product from the list.' };
   }
-  if (!args.reasonCode) return { ok: false, message: 'Say why they want a trial.' };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(args.sendingDate)) {
+    return { ok: false, message: 'Choose the day it is to be sent.' };
+  }
+  if (args.sendingMode !== 'courier' && args.sendingMode !== 'hand_delivery') {
+    return { ok: false, message: 'Courier or Hand Delivery?' };
+  }
 
   const lead = await getLead(args.customerId);
   if (lead) {
@@ -417,24 +429,17 @@ export async function requestLeadSample(args: {
       leadId,
       productId: args.productId,
       productName: args.productName.trim(),
-      cans: args.cans,
-      reasonCode: args.reasonCode,
-      application: args.application.trim(),
-      /* `reason` is what this app has always sent as `feedbackNotes`. It
-         carries the application now rather than a sentence somebody typed,
-         because the code says why and the application says what it is for. */
-      reason: args.application.trim(),
+      plannedSendDate: args.sendingDate,
+      sendingMode: args.sendingMode,
       requestedAt: Date.now(),
       state: 'Requested',
       trialOutcome: 'pending',
       followUpDate: followUp,
     },
     payloadExtras: {
-      quantityCans: args.cans,
       requestedDate: isoDate(new Date()),
-      feedbackNotes: args.application.trim(),
-      reasonCode: args.reasonCode,
-      application: args.application.trim(),
+      plannedSendDate: args.sendingDate,
+      sendingMode: args.sendingMode,
       leadId: leadId ?? undefined,
     },
   });
@@ -443,11 +448,40 @@ export async function requestLeadSample(args: {
     type: 'sample',
     subjectType: 'sample',
     subjectId: id,
-    reason: args.reasonCode,
+    reason: `${args.productName.trim()}, to go by ${args.sendingMode === 'courier' ? 'Courier' : 'Hand Delivery'} on ${args.sendingDate}`,
     deviceId: base.deviceId,
   });
 
   return { ok: true, value: id };
+}
+
+/**
+ * Step 1, "Sample requested?" answered No.
+ *
+ * It starts nothing and sends nothing to the approvals queue. What it leaves is
+ * a dated line on this lead's trail on the phone, because "nobody has asked for
+ * a sample" and "somebody asked and the customer said no" are different stories.
+ * It is local to this handset's trail; the office keeps its own history and is
+ * not told by this, which is why the Sales Manager and CRM screens write theirs
+ * through their own action. Asking again later is always possible.
+ */
+export async function recordNoSample(args: { leadId: string | null }): Promise<SampleResult<null>> {
+  if (!args.leadId) return { ok: true, value: null };
+  /* Queued first: the id is the office's idempotency key, so a retry from a
+     dropped connection writes the one line. Offline it simply waits in the
+     outbox with everything else. */
+  await enqueue({
+    entityType: 'sample_not_requested',
+    entityId: newId('snr'),
+    op: 'create',
+    payload: { customerId: args.leadId },
+  });
+  await run(
+    `INSERT INTO lead_events (id, leadId, kind, summary, detail, fromStage, toStage, actor, occurredAt)
+     VALUES (?, ?, 'sample_not_requested', 'Sample requested? No: no sample is being asked for', NULL, NULL, NULL, 'You', ?)`,
+    [newId('le'), args.leadId, Date.now()],
+  );
+  return { ok: true, value: null };
 }
 
 /**
@@ -499,8 +533,12 @@ export async function markDispatched(
   id: string,
   args: { courierName: string; courierDocket: string; expectedDeliveryDate: string },
 ): Promise<SampleResult<null>> {
-  if (!args.courierName.trim()) return { ok: false, message: 'Who is carrying it?' };
-  if (!args.courierDocket.trim()) {
+  /* A COURIER LEAVES A DOCKET; A SAMPLE CARRIED BY HAND DOES NOT. Step 1 recorded
+     which. A sample with no recorded mode reads as a courier, as it always did. */
+  const mode = await one<{ sendingMode: string | null }>('SELECT sendingMode FROM samples WHERE id = ?', [id]);
+  const byHand = mode?.sendingMode === 'hand_delivery';
+  if (!byHand && !args.courierName.trim()) return { ok: false, message: 'Who is carrying it?' };
+  if (!byHand && !args.courierDocket.trim()) {
     return { ok: false, message: 'Add the docket number. Without it, nobody can track it.' };
   }
   if (!args.expectedDeliveryDate) return { ok: false, message: 'When should it get there?' };
@@ -600,15 +638,15 @@ export async function markTried(id: string): Promise<SampleResult<null>> {
  * refuses on, rather than a second reading of it typed into a screen — the
  * half that drifts is always the half somebody is reading.
  */
-export const REJECTION_FEEDBACK_FIELDS = ['otherComments', 'priceFeedback', 'competitorComparison'] as const;
+export const REJECTION_FEEDBACK_FIELDS = ['otherComments', 'competitorComparison', 'quality'] as const;
 
 export const REJECTION_NEEDS_WHY =
-  'Say why they did not like it. Write about the price, how it compares with what they use now, or in your own words. Without this, the next sample will go the same way.';
+  'Say why they did not like it. Write about the quality, how it compares with the brand they use now, or in your own words. Without this, the next sample will go the same way.';
 
 export function rejectionSaidWhy(
   fields: Partial<Record<(typeof FEEDBACK_FIELDS)[number]['id'], string>>,
 ): boolean {
-  return REJECTION_FEEDBACK_FIELDS.some((id) => (fields[id] ?? '').trim().length > 0);
+  return REJECTION_FEEDBACK_FIELDS.some((id) => isMeaningfulAnswer(fields[id]));
 }
 
 /**
@@ -637,10 +675,10 @@ export async function recordFeedback(
     photoId?: string | null;
   },
 ): Promise<SampleResult<null>> {
-  const said = FEEDBACK_FIELDS.filter((f) => (args.fields[f.id] ?? '').trim());
-  if (!said.length) {
-    return { ok: false, message: 'Write down at least one thing they said about it.' };
-  }
+  /* THE SAME PURE RULE the office and the web forms read: a verdict, and at least
+     one of Quality, Vs. the Brand and Anything Else saying something. */
+  const problem = trialReviewProblem(args.fields, args.trialOutcome === 'pending' ? 'more_testing' : args.trialOutcome);
+  if (problem) return { ok: false, message: problem };
 
   /*
    * A REJECTED SAMPLE HAS TO SAY WHY, and this end was not asking.
@@ -663,6 +701,8 @@ export async function recordFeedback(
   if (args.trialOutcome === 'rejected' && !rejectionSaidWhy(args.fields)) {
     return { ok: false, message: REJECTION_NEEDS_WHY };
   }
+  const rejectionReasonText =
+    rejectionReasonFrom(args.fields) ?? (args.fields.quality ?? '').trim() ?? null;
 
   const base = await stamp('samplefb');
   const at = Date.now();
@@ -729,7 +769,7 @@ export async function recordFeedback(
       /* See `rejectionReasonFrom`: the office refuses a rejected trial without
          this field, and derives nothing from the three boxes itself. */
       ...(args.trialOutcome === 'rejected'
-        ? { rejectionReason: rejectionReasonFrom(args.fields) }
+        ? { rejectionReason: rejectionReasonText || null }
         : {}),
       feedback: {
         quality: row.quality,

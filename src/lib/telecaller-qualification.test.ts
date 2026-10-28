@@ -886,7 +886,7 @@ describe("a third-party lead names who invoices it", () => {
 /* ============================================================== SAMPLE */
 
 describe("Sample / Trial: only a reviewed Qualification is eligible", () => {
-  const ask = (leadId: string) => requestSample(leadId, { productId, quantityCans: 2, application: "Wood polish", reasonCode: "trial" });
+  const ask = (leadId: string) => requestSample(leadId, { productId, sendingDate: "2099-12-31", sendingMode: "courier" });
   const samplesOf = (leadId: string) => db.select().from(mbosSamples).where(eq(mbosSamples.customerId, leadId));
 
   test("no review, incomplete and clarification each refuse — and leave no sample, no approval", async () => {
@@ -1043,5 +1043,5 @@ describe("the whole workflow, start to finish", () => {
   });
 
   const ask = (leadId: string) =>
-    requestSample(leadId, { productId, quantityCans: 2, application: "Wood polish", reasonCode: "trial" });
+    requestSample(leadId, { productId, sendingDate: "2099-12-31", sendingMode: "courier" });
 });

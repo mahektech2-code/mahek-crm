@@ -55,13 +55,14 @@ function tally(
   };
 }
 
-test("the shared funnel is ten rungs, and the two it leaves out are named", () => {
+test("the shared funnel is eight rungs, with ONE Sample / Trial, and the two it leaves out are named", () => {
   const order = sharedRungOrder();
-  assert.equal(order.length, 10);
+  assert.equal(order.length, 8);
   for (const s of OPERATIONAL_STAGES) assert.ok(!order.includes(s));
-  /* The union of the two shop ladders, which is what makes it ten rather than
-     the nine an intersection would give. */
-  assert.ok(order.includes("sample_received"));
+  assert.equal(order.filter((s) => s === "sample_trial").length, 1);
+  /* Step 2 of the sample is not a rung, so the funnel draws neither retired one. */
+  assert.ok(!order.includes("sample_received"));
+  assert.ok(!order.includes("sample_review"));
 });
 
 test("every rung of both shop ladders is drawn somewhere", () => {
@@ -71,19 +72,19 @@ test("every rung of both shop ladders is drawn somewhere", () => {
   }
 });
 
-test("a rung one track does not carry says so rather than reading as empty", () => {
+test("both shop tracks carry the one Sample / Trial rung, so a zero there is a real zero", () => {
   const f = sharedFunnel([
-    tally("direct", DIRECT_LADDER, { sample_received: 4 }),
+    tally("direct", DIRECT_LADDER, { sample_trial: 4 }),
     tally("third_party", THIRD_PARTY_LADDER, {}),
   ]);
-  const row = f.rungs.find((r) => r.stage === "sample_received")!;
+  const row = f.rungs.find((r) => r.stage === "sample_trial")!;
   const direct = row.segments.find((s) => s.salesType === "direct")!;
   const third = row.segments.find((s) => s.salesType === "third_party")!;
   assert.equal(direct.carried, true);
   assert.equal(direct.count, 4);
-  /* Zero AND not carried — §3C drops this rung, so "nobody is standing here"
-     would be the wrong reading of the same number. */
-  assert.equal(third.carried, false);
+  /* Carried by both: since Sample Received and Sample Review stopped being rungs
+     there is no rung one shop track lacks, so nobody is standing there. */
+  assert.equal(third.carried, true);
   assert.equal(third.count, 0);
 });
 

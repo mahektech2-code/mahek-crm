@@ -20,7 +20,13 @@ import type { VerifyAnswerKey, VerifyFindingKey } from "@/lib/verify-intel-schem
 function useProtoWidth(sales: number, crm: number): number {
   return useLeadPipeline().workspace === "crm" ? crm : sales;
 }
-import { FEEDBACK_FIELDS, FIRST_ORDER_QUESTIONS, VERIFICATION_FAILED_CODE } from "@/lib/lead-labels";
+import {
+  ACTIVE_FEEDBACK_FIELDS,
+  FIRST_ORDER_QUESTIONS,
+  SAMPLE_SENDING_MODES,
+  VERIFICATION_FAILED_CODE,
+  trialReviewProblem,
+} from "@/lib/lead-labels";
 import {
   CONVERSION_FIELD_KEYS,
   SALESMAN_FINDING_FIELDS,
@@ -790,14 +796,34 @@ function OnFileRow({ label, value }: { label: string; value?: string }) {
   );
 }
 
+function StepBadge({ step, of, name }: { step: number; of: number; name: string }) {
+  return (
+    <div className="mb-3 flex items-center gap-2 text-[12px] font-medium tracking-[0.04em] text-muted uppercase">
+      <span className="rounded-full bg-brand-soft px-2 py-0.5 text-brand-ink">
+        Step {step} of {of}
+      </span>
+      <span>{name}</span>
+    </div>
+  );
+}
+
+/**
+ * SAMPLE / TRIAL, STEP 1 OF 2 — SAMPLE REQUEST.
+ *
+ * Four questions, in this order: Sample requested?, Product, Sending date and
+ * Sending mode. Answering No starts nothing and records the decision on the
+ * lead's history; Yes needs the other three. The date is the day it is PLANNED
+ * to go and the mode is Courier or Hand Delivery: neither approves, dispatches
+ * or receives anything, and the manager's approval still stands between this
+ * and the godown. Quantity, application and reason are not asked any more.
+ */
 function RequestSampleModal({ lead, onClose }: ModalProps) {
-  const { doRequestSample, refs } = useLeadPipeline();
+  const { doRequestSample, doDeclineSample } = useLeadPipeline();
+  const [requested, setRequested] = React.useState<"yes" | "no" | null>(null);
   const [productId, setProductId] = React.useState<string | null>(lead.productId ?? null);
-  const [qty, setQty] = React.useState("");
-  const [application, setApplication] = React.useState(lead.application ?? "");
-  const [reason, setReason] = React.useState(refs.sampleReasons[0]?.code ?? "");
-  const cans = wholeNumber(qty);
-  const ready = Boolean(productId && cans && cans > 0 && application.trim() && reason);
+  const [date, setDate] = React.useState("");
+  const [mode, setMode] = React.useState<"courier" | "hand_delivery" | null>(null);
+  const ready = requested === "no" || (requested === "yes" && Boolean(productId && date && mode));
 
   return (
     <Modal
@@ -806,38 +832,62 @@ function RequestSampleModal({ lead, onClose }: ModalProps) {
       width={520}
       title={
         <div>
-          <div>Proceed to Sample / Trial</div>
-          <div className="mt-0.5 text-[13px] font-normal text-muted">{lead.name} · Product and Application carry forward — only Quantity and Reason are new</div>
+          <div>Sample / Trial</div>
+          <div className="mt-0.5 text-[13px] font-normal text-muted">{lead.name}</div>
         </div>
       }
       footer={
         <Footer
           onClose={onClose}
-          label="Send for approval"
+          label={requested === "no" ? "Record: no sample" : "Send for approval"}
           disabled={!ready}
-          onSave={() => void doRequestSample({ productId: productId!, quantityCans: cans!, application: application.trim(), reasonCode: reason })}
+          onSave={() =>
+            void (requested === "no"
+              ? doDeclineSample()
+              : doRequestSample({ productId: productId!, sendingDate: date, sendingMode: mode! }))
+          }
         />
       }
     >
       <FormError />
-      <div className="mb-3">
-        <div className="mb-1 text-xs font-medium tracking-[0.04em] text-muted uppercase">Product</div>
-        <ProductField customerId={lead.id} productId={productId} productName={lead.product ?? null} disabled={false} onPick={setProductId} />
-      </div>
-      <Field label="Application" className="mb-3">
-        <Input value={application} onChange={(e) => setApplication(e.target.value)} placeholder="What they will use it on" />
+      <StepBadge step={1} of={2} name="Sample Request" />
+      <Field label="Sample requested?" className="mb-3">
+        <div className="mt-1.5 flex gap-2">
+          <RadioCard name="sr" label="Yes" checked={requested === "yes"} onChange={() => setRequested("yes")} />
+          <RadioCard name="sr" label="No" checked={requested === "no"} onChange={() => setRequested("no")} />
+        </div>
       </Field>
-      <Field label="Sample quantity (cans)" className="mb-3">
-        <Input inputMode="numeric" placeholder="e.g. 2" value={qty} onChange={(e) => setQty(cleanWhole(e.target.value))} />
-      </Field>
-      <Field label="Reason for sample" className="mb-3">
-        <Select value={reason} onChange={(e) => setReason(e.target.value)}>
-          {refs.sampleReasons.map((r) => (
-            <option key={r.code} value={r.code}>{r.label}</option>
-          ))}
-        </Select>
-      </Field>
-      <Callout tone="brand">A sample request goes to a manager for approval before the godown packs anything.</Callout>
+      {requested === "no" ? (
+        <Callout tone="brand">
+          Nothing is started. The answer is written on this lead&apos;s history, and Step 2 stays locked because there is no
+          sample for it to be about. A sample can be asked for later.
+        </Callout>
+      ) : null}
+      {requested === "yes" ? (
+        <>
+          <div className="mb-3">
+            <div className="mb-1 text-xs font-medium tracking-[0.04em] text-muted uppercase">Product name</div>
+            <ProductField customerId={lead.id} productId={productId} productName={lead.product ?? null} disabled={false} onPick={setProductId} />
+          </div>
+          <Field label="Sample sending date" hint="The day it is planned to go. This does not mark it as sent." className="mb-3">
+            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          </Field>
+          <Field label="Sending mode" className="mb-3">
+            <div className="mt-1.5 flex gap-2">
+              {SAMPLE_SENDING_MODES.map((m) => (
+                <RadioCard
+                  key={m.code}
+                  name="sm"
+                  label={m.label}
+                  checked={mode === m.code}
+                  onChange={() => setMode(m.code as "courier" | "hand_delivery")}
+                />
+              ))}
+            </div>
+          </Field>
+          <Callout tone="brand">A sample request goes to a manager for approval before the godown packs anything.</Callout>
+        </>
+      ) : null}
     </Modal>
   );
 }
@@ -890,7 +940,9 @@ function DispatchSampleModal({ lead, onClose }: ModalProps) {
   const { doDispatchSample } = useLeadPipeline();
   const [courier, setCourier] = React.useState("");
   const [docket, setDocket] = React.useState("");
-  const [expected, setExpected] = React.useState("");
+  const [expected, setExpected] = React.useState(lead.sample?.plannedSendDate ?? "");
+  /* Step 1 recorded how it is to go. A sample carried by hand leaves no docket. */
+  const byHand = lead.sample?.sendingMode === "hand_delivery";
   return (
     <Modal
       open
@@ -906,70 +958,140 @@ function DispatchSampleModal({ lead, onClose }: ModalProps) {
         <Footer
           onClose={onClose}
           label="Mark dispatched"
-          disabled={!courier.trim() || !docket.trim() || !expected}
+          disabled={(!byHand && (!courier.trim() || !docket.trim())) || !expected}
           onSave={() => void doDispatchSample({ courierName: courier.trim(), trackingNumber: docket.trim(), expectedDeliveryDate: expected })}
         />
       }
     >
       <FormError />
-      <Field label="Courier" className="mb-3">
-        <Input value={courier} onChange={(e) => setCourier(e.target.value)} />
-      </Field>
-      <Field label="Docket / tracking number" className="mb-3">
-        <Input value={docket} onChange={(e) => setDocket(e.target.value)} />
-      </Field>
-      <Field label="Delivery promised for" hint="What the courier promised — the delivery is watched against it.">
+      {byHand ? (
+        <Callout tone="brand">Hand delivery: there is no courier or docket to record, only the day it is due.</Callout>
+      ) : (
+        <>
+          <Field label="Courier" className="mb-3">
+            <Input value={courier} onChange={(e) => setCourier(e.target.value)} />
+          </Field>
+          <Field label="Docket / tracking number" className="mb-3">
+            <Input value={docket} onChange={(e) => setDocket(e.target.value)} />
+          </Field>
+        </>
+      )}
+      <Field label={byHand ? "Delivery due on" : "Delivery promised for"} hint={byHand ? "The delivery is watched against it." : "What the courier promised — the delivery is watched against it."}>
         <Input type="date" value={expected} onChange={(e) => setExpected(e.target.value)} />
       </Field>
     </Modal>
   );
 }
 
+/**
+ * SAMPLE / TRIAL, STEP 2 OF 2 — SAMPLE RECEIVED & REVIEW.
+ *
+ * The first question is whether the sample has been received. No keeps the
+ * review locked and marks nothing; Yes confirms receipt through the existing
+ * action (which refuses anything not yet approved and dispatched) and only then
+ * opens the review: Quality, Vs. the Brand, Anything Else and the verdict. The
+ * lead does not move rung here — Negotiation is its own explicit move.
+ */
 function SampleReviewModal({ lead, onClose }: ModalProps) {
   const width = useProtoWidth(540, 500);
-  const { doSampleReview } = useLeadPipeline();
+  const { doSampleReview, doMarkSampleReceived, busy } = useLeadPipeline();
+  const state = lead.sample?.state;
+  const received = state === "received" || state === "trial_done";
+  const arrivable = state === "dispatched";
+  const [answer, setAnswer] = React.useState<"yes" | "no" | null>(received ? "yes" : null);
   const [fields, setFields] = React.useState<Record<string, string>>({});
-  const [outcome, setOutcome] = React.useState<"approved" | "more_testing" | "rejected">("approved");
-  const said = Object.values(fields).some((v) => v.trim());
-  const why = [fields.otherComments, fields.priceFeedback, fields.competitorComparison].some((v) => v?.trim());
-  const blocked = !said || (outcome === "rejected" && !why);
+  const [outcome, setOutcome] = React.useState<"approved" | "more_testing" | "rejected" | null>(null);
+  const problem = trialReviewProblem(fields, outcome) ??
+    (outcome === "rejected" && !ACTIVE_FEEDBACK_FIELDS.some((f) => (fields[f.id] ?? "").trim().length >= 3)
+      ? "A rejected trial has to say why."
+      : null);
 
   return (
     <Modal
       open
       onClose={onClose}
       width={width}
-      title={lead.name}
+      title={
+        <div>
+          <div>Sample / Trial</div>
+          <div className="mt-0.5 text-[13px] font-normal text-muted">{lead.name}</div>
+        </div>
+      }
       footer={
-        <Footer
-          onClose={onClose}
-          label="Save review"
-          disabled={blocked}
-          onSave={() =>
-            void doSampleReview(
-              Object.fromEntries(Object.entries(fields).filter(([, v]) => v.trim())),
-              outcome,
-            )
-          }
-        />
+        received ? (
+          <Footer
+            onClose={onClose}
+            label="Save review"
+            disabled={Boolean(problem) || busy}
+            onSave={() =>
+              void doSampleReview(
+                Object.fromEntries(Object.entries(fields).filter(([, v]) => v.trim())),
+                outcome!,
+              )
+            }
+          />
+        ) : (
+          <Footer onClose={onClose} label="Close" disabled={false} onSave={onClose} />
+        )
       }
     >
       <FormError />
-      {FEEDBACK_FIELDS.map((f) => (
-        <Field key={f.id} label={f.label} className="mb-2.5">
-          <Input value={fields[f.id] ?? ""} onChange={(e) => setFields((s) => ({ ...s, [f.id]: e.target.value }))} />
-        </Field>
-      ))}
-      <Field label="Trial result" className="mt-3">
-        <div className="mt-1.5 flex flex-col gap-1.5">
-          <RadioCard name="tr" label="Approved" checked={outcome === "approved"} onChange={() => setOutcome("approved")} />
-          <RadioCard name="tr" label="More testing required" checked={outcome === "more_testing"} onChange={() => setOutcome("more_testing")} />
-          <RadioCard name="tr" label="Rejected" checked={outcome === "rejected"} onChange={() => setOutcome("rejected")} />
+      <StepBadge step={2} of={2} name="Sample Received & Review" />
+      <Field label="Has the sample been received?" className="mb-3">
+        <div className="mt-1.5 flex gap-2">
+          <RadioCard
+            name="rc"
+            label="Yes"
+            checked={answer === "yes"}
+            onChange={() => setAnswer("yes")}
+          />
+          <RadioCard name="rc" label="No" checked={answer === "no"} onChange={() => setAnswer("no")} />
         </div>
       </Field>
-      {!said ? <p className="mt-2 text-[12.5px] text-muted">Write down at least one thing they said about it.</p> : null}
-      {outcome === "rejected" && !why ? (
-        <p className="mt-2 text-[12.5px] text-muted">A rejected trial has to say why — the price, the comparison, or in your own words.</p>
+
+      {answer === "no" ? (
+        <Callout tone="brand">
+          The review is locked. Nothing is marked received or reviewed, and the lead cannot go to Negotiation until the
+          sample has arrived and been reviewed.
+        </Callout>
+      ) : null}
+
+      {answer === "yes" && !received ? (
+        arrivable ? (
+          <div className="mb-3">
+            <Button variant="primary" disabled={busy} onClick={() => void doMarkSampleReceived({ keepOpen: true })}>
+              Confirm the sample has arrived
+            </Button>
+            <p className="mt-2 text-[12.5px] text-muted">The review questions open as soon as the receipt is recorded.</p>
+          </div>
+        ) : (
+          <Callout tone="brand">
+            This sample cannot be marked received yet — it has to be approved and sent first (it is{" "}
+            {state ? state.replace("_", " ") : "not requested"}).
+          </Callout>
+        )
+      ) : null}
+
+      {received ? (
+        <>
+          {ACTIVE_FEEDBACK_FIELDS.map((f) => (
+            <Field key={f.id} label={f.label} className="mb-2.5">
+              <Textarea
+                rows={2}
+                value={fields[f.id] ?? ""}
+                onChange={(e) => setFields((v) => ({ ...v, [f.id]: e.target.value }))}
+              />
+            </Field>
+          ))}
+          <Field label="Verdict" className="mt-3">
+            <div className="mt-1.5 flex flex-col gap-1.5">
+              <RadioCard name="tr" label="Approved" checked={outcome === "approved"} onChange={() => setOutcome("approved")} />
+              <RadioCard name="tr" label="More Testing Required" checked={outcome === "more_testing"} onChange={() => setOutcome("more_testing")} />
+              <RadioCard name="tr" label="Rejected" checked={outcome === "rejected"} onChange={() => setOutcome("rejected")} />
+            </div>
+          </Field>
+          {problem ? <p className="mt-2 text-[12.5px] text-muted">{problem}</p> : null}
+        </>
       ) : null}
     </Modal>
   );

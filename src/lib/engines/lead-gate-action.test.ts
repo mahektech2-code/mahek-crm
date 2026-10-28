@@ -152,6 +152,18 @@ describe("§5's forks are the ones the table names", () => {
     }
   });
 
+  /* STEP 2 of the one rung is read off the SAMPLE's state, not a second rung. */
+  test("on Sample / Trial a received sample asks for the review and a reviewed one for Negotiation", () => {
+    for (const state of ["received", "trial_done"] as SampleState[]) {
+      const a = gateAction(facts("sample_trial", { sampleState: state }));
+      assert.equal(a.control, "sample_desk", state);
+      assert.match(a.label, /trial review/i);
+    }
+    const reviewed = gateAction(facts("sample_trial", { sampleState: "reviewed" }));
+    assert.equal(reviewed.control, "advance");
+    assert.match(reviewed.label, /Negotiation/);
+  });
+
   test("Sample Received is the trial review, at the desk that holds the stock", () => {
     const a = gateAction(facts("sample_received"));
     assert.equal(a.control, "sample_desk");

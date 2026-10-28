@@ -81,6 +81,7 @@ import {
   VERIFICATION_FAILED_CODE,
 } from "../lead-labels";
 import {
+  foldStage,
   isUndecidedSuspect,
   ladderFor,
   nextStage,
@@ -894,6 +895,8 @@ async function dispatchItem(
       return handleInternalNote(principal, item);
     case "lead_communication":
       return handleLeadCommunication(principal, item);
+    case "sample_not_requested":
+      return handleSampleNotRequested(principal, item);
     case "approval":
       return handleApproval(principal, item);
     case "plan_day":
@@ -3193,6 +3196,17 @@ const sampleSchema = z.object({
    */
   reasonCode: z.string().trim().min(1).max(60).nullish(),
   application: z.string().trim().max(500).nullish(),
+  /*
+   * SAMPLE / TRIAL STEP 1: the day it is PLANNED to go, and how. Neither is an
+   * event, and neither marks the sample approved, sent or received. A build that
+   * predates the questions sends neither, and both stay null: the server never
+   * invents an answer nobody gave. Anything that is not one of the two modes is
+   * dropped rather than refused, the same trade the reason code makes above: an
+   * APK cannot be recalled and a request from a real shop must not be lost to a
+   * spelling.
+   */
+  plannedSendDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
+  sendingMode: z.string().max(30).nullish(),
 });
 
 /**
@@ -3748,7 +3762,8 @@ async function openNegotiation(
 
   const salesType = row.leadSalesType as LeadSalesType | null;
   const ladder = ladderFor(salesType);
-  const here = ladder.indexOf(row.leadStage as LeadStage);
+  /* Folded: a lead stored at a retired sample rung is inside Sample / Trial. */
+  const here = ladder.indexOf(foldStage(row.leadStage as LeadStage));
   const there = ladder.indexOf("negotiation");
   if (there < 0 || here < 0 || here >= there) return { opened: false, missing: null };
 
@@ -3992,6 +4007,8 @@ async function handleSample(principal: MbosPrincipal, item: SyncItem): Promise<H
          */
         reasonCode: p.reasonCode ?? null,
         application: p.application ?? null,
+        plannedSendDate: p.plannedSendDate ?? null,
+        sendingMode: p.sendingMode === "courier" || p.sendingMode === "hand_delivery" ? p.sendingMode : null,
         feedbackNotes: p.feedbackNotes ?? null,
         clientCreatedAt: new Date(item.clientCreatedAt),
         createdById: principal.user.id,
@@ -5657,6 +5674,42 @@ async function handleInternalNote(
 }
 
 /* --------------------------------------------- §10.4 reaching out, from the field */
+
+const sampleNotRequestedSchema = z.object({
+  customerId: z.string(),
+});
+
+/**
+ * "SAMPLE REQUESTED?" WAS NO, said standing in the shop.
+ *
+ * It creates no sample and no approval. What it writes is the same dated,
+ * attributed line the desk's `declineSampleRequest` writes, so the office reads
+ * one history whichever end the answer was given at. THE HANDSET'S ID IS THE
+ * SOURCE ROW: the timeline's natural key is (app, kind, source row), so the same
+ * answer arriving twice off a 2G connection writes one line, and an outbox retry
+ * can never double it. It is a record of a decision, so it is accepted for any
+ * lead in the sender's scope and never refused for the lead's rung.
+ */
+async function handleSampleNotRequested(
+  principal: MbosPrincipal,
+  item: SyncItem,
+): Promise<Handled> {
+  const parsed = sampleNotRequestedSchema.safeParse(item.payload);
+  if (!parsed.success) return validationRejection(parsed.error);
+
+  const found = await scopedCustomer(principal, parsed.data.customerId);
+  if (!found.ok) return { kind: "rejected", value: found.value };
+
+  await writeTimeline(db, {
+    customerId: found.customer.id,
+    eventType: MBOS_EVENT.sampleNotRequested,
+    sourceRecordId: item.entityId,
+    occurredAt: new Date(item.clientCreatedAt),
+    actorUserId: principal.user.id,
+    summary: "Sample requested? No: no sample is being asked for",
+  });
+  return { kind: "accepted", value: { serverId: item.entityId } };
+}
 
 const leadCommunicationSchema = z.object({
   customerId: z.string(),

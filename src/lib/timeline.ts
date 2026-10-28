@@ -237,6 +237,8 @@ export const MBOS_EVENT = {
   sampleRequested: "sample_requested",
   sampleDecided: "sample_request_decided",
   sampleCancelled: "sample_cancelled",
+  /** Step 1's first question answered No: recorded, because "nobody asked" and "somebody decided not to" differ. */
+  sampleNotRequested: "sample_not_requested",
 
   /* §12 — appointing a distributor, at each signature. */
   distributorSubmitted: "distributor_submitted",

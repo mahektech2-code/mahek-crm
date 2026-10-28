@@ -293,10 +293,9 @@ export const LEAD_TILES: readonly LeadTile[] = [
   {
     id: "sample",
     label: "In sample",
-    /* Three rungs, because stock has left the godown at all three and the
-       question — has anybody written down what the customer thought — is the
-       same one at each. */
-    hint: "Sample sent, waiting for feedback.",
+    /* ONE rung, Sample / Trial. The stage list still names the two retired stored
+       stages so a lead an older build left on either is counted, not lost. */
+    hint: "Sample asked for, sent or with the customer, waiting for feedback.",
     tone: "warn",
     params: { stage: "sample_trial,sample_received,sample_review" },
   },

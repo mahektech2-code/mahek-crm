@@ -44,8 +44,8 @@ export const PHASE_LABEL: Record<DeskPhase, string> = {
   prospect: "Prospect",
   qualification: "Qualification",
   sample_trial: "Sample / Trial",
-  sample_received: "Sample Received",
-  sample_review: "Sample Review",
+  sample_received: "Sample / Trial",
+  sample_review: "Sample / Trial",
   negotiation: "Negotiation",
   first_order: "1st Order",
   delivery: "Delivery",
@@ -88,8 +88,8 @@ export const LADDER_LABEL: Record<LadderKey, string> = {
   prospect: "Prospect",
   qualification: "Qualification",
   sample_trial: "Sample / Trial",
-  sample_received: "Sample Received",
-  sample_review: "Sample Review",
+  sample_received: "Sample / Trial",
+  sample_review: "Sample / Trial",
   negotiation: "Negotiation",
   first_order: "1st Order",
   delivery: "Delivery",
@@ -264,15 +264,28 @@ export function stageStatus(f: StageStatusFacts): { text: string; who: string | 
         who: desk,
       };
     case "sample_trial":
+      /* Step 1 or Step 2 of the one stage, read off the sample. */
+      if (f.sampleState === "reviewed") {
+        return {
+          text:
+            f.trialOutcome === "approved"
+              ? "Trial approved — ready for negotiation"
+              : f.trialOutcome === "more_testing"
+                ? "More testing required — another sample needed"
+                : "Trial rejected — decide whether to close it",
+          who: mgr,
+        };
+      }
       return {
         text:
           f.sampleState === "dispatched"
             ? "Sample dispatched — waiting for the customer to receive it"
-            : f.sampleState === "received"
+            : f.sampleState === "received" || f.sampleState === "trial_done"
               ? "Sample received — trial review due"
               : "Sample requested — awaiting dispatch",
         who: mgr,
       };
+    /* The retired steps, read as the one stage they sit inside. */
     case "sample_received":
       return { text: "Sample received — trial review due", who: mgr };
     case "sample_review":

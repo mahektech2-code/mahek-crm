@@ -136,9 +136,9 @@ test("the service asks the same questions the real screens ask, and narrows by t
 test("the actions add no permission of their own, and never call the database around an existing action", () => {
   const actions = text("src/lib/actions/sales-manager-pipeline.ts");
   assert.match(actions, /^"use server";/);
-  /* Only the six thin orchestrations exist; anything else is a second copy of a signature. */
+  /* Only the seven thin orchestrations exist; anything else is a second copy of a signature. */
   const exported = [...actions.matchAll(/export async function (\w+)/g)].map((m) => m[1]).sort();
-  assert.deepEqual(exported, ["convertProspect", "markLeadLost", "receiveSampleForLead", "requestSampleForLead", "reviewSampleForLead", "verifyProspect"]);
+  assert.deepEqual(exported, ["convertProspect", "declineSampleForLead", "markLeadLost", "receiveSampleForLead", "requestSampleForLead", "reviewSampleForLead", "verifyProspect"]);
   /* No writes of its own to the tables the real actions own. */
   assert.equal(/db\.(insert|update|delete)\(/.test(actions), false, "an orchestration that writes has become a second implementation");
   assert.equal(/gateTo|gateForNext/.test(actions), false, "the gate is decided by the action it calls");
