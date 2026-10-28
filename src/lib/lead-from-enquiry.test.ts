@@ -42,7 +42,7 @@ import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { captureLead } from "@/lib/actions/lead-intake";
 import { leadFromEnquiryContextAction } from "@/lib/actions/enquiries";
 import { assignDeskLead } from "@/lib/actions/lead-desk-assignment";
-import { logQualificationCall as realLogQualificationCall } from "@/lib/actions/lead-calling-desk";
+import { logQualificationCall as realLogQualificationCall, requestProspect } from "@/lib/actions/lead-calling-desk";
 import { bandOf } from "@/lib/engines/lead-ladder";
 import { modulesForApp } from "@/lib/modules";
 import { createEnquiryFromWebsite } from "@/lib/services/enquiry-service";
@@ -495,7 +495,7 @@ describe("D — the desk is granted, not inherited", () => {
     assert.equal(await canOpenModule(noGrant.id, DESK_MODULE), false, "an administrator elsewhere holds nothing here");
   });
 
-  test("the desk's writes refuse somebody without it, though they hold lead.work like every CRM associate", async () => {
+  test("what follows a call still needs the desk, though they hold lead.work like every CRM associate; a call itself needs the lead in their scope", async () => {
     const enquiryId = await makeEnquiry("QUOTE");
     const made = await createLead(enquiryId, { ownerId: null });
     assert.ok(made.ok);
@@ -503,10 +503,14 @@ describe("D — the desk is granted, not inherited", () => {
     await db.update(customers).set({ ownerId: crmOnly.id }).where(eq(customers.id, leadId));
 
     setTestUser(crmOnly);
-    const r = await logQualificationCall({ customerId: leadId, outcome: "no_answer", answers: {}, noAnswerReason: "busy" });
+    const r = await requestProspect({ customerId: leadId });
     assert.equal(r.ok, false);
     assert.equal(!r.ok && r.code, "not_permitted");
     assert.match(!r.ok ? r.error : "", /Calling desk/);
+
+    /* The call itself asks the lead's scope, not the desk: the owner may log it. */
+    const call = await logQualificationCall({ customerId: leadId, outcome: "no_answer", answers: {}, noAnswerReason: "busy" });
+    assert.equal(call.ok, true, call.ok ? "" : call.error);
   });
 
   test("the module is off by default, so the Access screen does not tick it along with the whole CRM", () => {
