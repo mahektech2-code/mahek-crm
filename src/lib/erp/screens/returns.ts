@@ -24,6 +24,8 @@ import type { ErpContext } from "../access";
 import { bindErpFiles } from "../attachments";
 import { bookBillRef } from "../book";
 import { scrapStock } from "../drums";
+import { confirmImpact } from "@/lib/impact/registry";
+import { readConfirmation } from "@/lib/impact/types";
 import {
   CHEMICAL_SCRAP,
   CUSTOMER_RETURN_REASONS,
@@ -65,7 +67,7 @@ import { newFormIn } from "../lazy-forms";
 import type { LoadScope } from "../window";
 import { fgLotStock, lockLot, packLotStock, rmLots } from "../stock";
 import type { ActionSpec, ColSpec, FieldSpec, ListRow, RowField } from "../ui";
-import { fd, inr, nf } from "../ui";
+import { fd, impactPart, inr, nf } from "../ui";
 import { godownIdByName, godownOptions, inTx, refuse, today, type Tx } from "./common";
 
 /* ---------------------------------------------------------------------------
@@ -97,7 +99,7 @@ const why = (b: boolean, reason: string) => (b ? "" : reason);
  * VENDOR RETURNS
  * ================================================================== */
 
-type VendorRow = {
+export type VendorRow = {
   id: string;
   no: number;
   date: string;
@@ -141,7 +143,8 @@ type VendorRow = {
   outDate: string | null;
 };
 
-async function vendorRows(where = sql`true`, ex: Tx | typeof db = db): Promise<VendorRow[]> {
+/** Exported for the impact report (`impact/kinds/erp-returns.ts`), which reads the rows the acts read. */
+export async function vendorRows(where = sql`true`, ex: Tx | typeof db = db): Promise<VendorRow[]> {
   const rows = (await ex.execute(sql`
     select r.id, r.return_no as no, r.return_date::text as date, r.status, r.purchase_id as "purchaseId", r.supplier_id as "supplierId",
            s.name as supplier, r.raw_material_id as rm, m.name as item, r.lot_no as lot, r.pr_number as pr, p.bill_number as bill,
@@ -247,16 +250,17 @@ function vendorActions(ctx: ErpContext, r: VendorRow, stockGodowns: string[]): A
     });
   if (r.outStatus === "draft") {
     out.push({ id: "confirmOutward", l: "Confirm dispatch (stock minus)", primary: true, why: why(can || ctx.level === "manager", "A manager or somebody who approves returns confirms the dispatch"), confirm: `Confirm ${returnOutwardLabel(r.outNo!)} left ${r.outGodown}? ${nf(r.stockQty)} ${r.unit === "Pcs" ? "Pcs" : "L"} of lot ${r.lot} comes out of stock now.` });
-    out.push({ id: "cancelOutward", l: "Cancel outward", why: why(can || ctx.level === "manager", "A manager or somebody who approves returns cancels it"), prompt: { title: "Cancel the outward", sub: "It was never confirmed, so no stock moved.", submit: "Cancel outward", fields: [{ k: "reason", l: "Why", t: "area", req: true }] } });
+    out.push({ id: "cancelOutward", l: "Cancel outward", why: why(can || ctx.level === "manager", "A manager or somebody who approves returns cancels it"), prompt: { title: "Cancel the outward", sub: "It was never confirmed, so no stock moved.", submit: "Cancel outward", fields: [{ k: "reason", l: "Why", t: "area", req: true }] }, impact: { kind: "erp-return-outward-cancel", id: r.id } });
   }
   if (r.outStatus === "confirmed")
-    out.push({ id: "reverseOutward", l: "Reverse the dispatch", why: why(can, "Reversing a confirmed dispatch needs the returns power"), prompt: { title: `Reverse ${returnOutwardLabel(r.outNo!)}`, sub: "The goods came back or the dispatch was recorded by mistake. The stock comes back to the lot; the outward is kept, marked cancelled.", submit: "Reverse", fields: [{ k: "reason", l: "Why", t: "area", req: true }] } });
+    out.push({ id: "reverseOutward", l: "Reverse the dispatch", why: why(can, "Reversing a confirmed dispatch needs the returns power"), prompt: { title: `Reverse ${returnOutwardLabel(r.outNo!)}`, sub: "The goods came back or the dispatch was recorded by mistake. The stock comes back to the lot; the outward is kept, marked cancelled.", submit: "Reverse", fields: [{ k: "reason", l: "Why", t: "area", req: true }] }, impact: { kind: "erp-return-outward-reverse", id: r.id } });
   if (stage !== "cancelled" && stage !== "rejected" && stage !== "dispatched")
     out.push({
       id: "cancel",
       l: "Cancel return",
       why: can || (own && r.status === "pending") ? "" : "Cancelling an approved return needs the returns power",
       prompt: { title: `Cancel ${purchaseReturnLabel(r.no)}`, sub: r.dnId ? `Debit note ${debitNoteLabel(r.dnNo!)} is cancelled with it, and kept.` : "Nothing has moved yet.", submit: "Cancel return", fields: [{ k: "reason", l: "Why", t: "area", req: true }] },
+      impact: { kind: "erp-vendor-return", id: r.id },
     });
   if (r.dnId) out.push({ id: "openDn", l: `Open ${debitNoteLabel(r.dnNo!)}`, href: erpLink("debitNotes", { open: r.dnId }) });
   return out;
@@ -475,6 +479,8 @@ const vendorReturns: ScreenModule = {
       if (!approves(ctx) && ctx.level !== "manager") return err("A manager or somebody who approves returns cancels it.", "not_permitted");
       const reason = text(v.reason);
       if (!reason) return fieldErr("reason", "Say why");
+      const refusal = await confirmImpact("erp-return-outward-cancel", id, readConfirmation(v));
+      if (refusal) return refusal;
       const done = await db
         .update(erpReturnOutwards)
         .set({ status: "cancelled", cancelReason: reason, cancelledById: ctx.actor.id, cancelledAt: new Date() })
@@ -488,6 +494,8 @@ const vendorReturns: ScreenModule = {
       if (!approves(ctx)) return err("Reversing a confirmed dispatch needs the returns power.", "not_permitted");
       const reason = text(v.reason);
       if (!reason || reason.length < 10) return fieldErr("reason", "Say why (10 characters or more)");
+      const refusal = await confirmImpact("erp-return-outward-reverse", id, readConfirmation(v));
+      if (refusal) return refusal;
       const done = await db
         .update(erpReturnOutwards)
         .set({ status: "cancelled", cancelReason: reason, cancelledById: ctx.actor.id, cancelledAt: new Date() })
@@ -500,6 +508,8 @@ const vendorReturns: ScreenModule = {
     async cancel(ctx, id, v) {
       const reason = text(v.reason);
       if (!reason) return fieldErr("reason", "Say why");
+      const refusal = await confirmImpact("erp-vendor-return", id, readConfirmation(v));
+      if (refusal) return refusal;
       let before = "";
       const res = await inTx(async (tx) => {
         const [r] = await vendorRows(sql`r.id = ${id}`, tx);
@@ -667,10 +677,10 @@ const returnOutwards: ScreenModule = {
         const actions: ActionSpec[] = [];
         if (status === "draft") {
           actions.push({ id: "confirm", l: "Confirm dispatch (stock minus)", primary: true, why: why(can, "A manager or somebody who approves returns confirms the dispatch"), confirm: `Confirm ${returnOutwardLabel(Number(r.no))} left ${r.godown}? ${nf(Number(r.stockQty))} of lot ${r.lot} comes out of stock now.` });
-          actions.push({ id: "cancel", l: "Cancel outward", why: why(can, "A manager or somebody who approves returns cancels it"), prompt: { title: "Cancel the outward", submit: "Cancel outward", fields: [{ k: "reason", l: "Why", t: "area", req: true }] } });
+          actions.push({ id: "cancel", l: "Cancel outward", why: why(can, "A manager or somebody who approves returns cancels it"), prompt: { title: "Cancel the outward", submit: "Cancel outward", fields: [{ k: "reason", l: "Why", t: "area", req: true }] }, impact: { kind: "erp-return-outward-cancel", id: String(r.returnId) } });
         }
         if (status === "confirmed")
-          actions.push({ id: "reverse", l: "Reverse the dispatch", why: why(approves(ctx), "Reversing a confirmed dispatch needs the returns power"), prompt: { title: "Reverse the dispatch", sub: "The stock comes back to the lot; the outward is kept, marked cancelled.", submit: "Reverse", fields: [{ k: "reason", l: "Why", t: "area", req: true }] } });
+          actions.push({ id: "reverse", l: "Reverse the dispatch", why: why(approves(ctx), "Reversing a confirmed dispatch needs the returns power"), prompt: { title: "Reverse the dispatch", sub: "The stock comes back to the lot; the outward is kept, marked cancelled.", submit: "Reverse", fields: [{ k: "reason", l: "Why", t: "area", req: true }] }, impact: { kind: "erp-return-outward-reverse", id: String(r.returnId) } });
         actions.push({ id: "openReturn", l: `Open ${purchaseReturnLabel(Number(r.returnNo))}`, href: erpLink("vendorReturns", { open: String(r.returnId) }) });
         return {
           id: String(r.returnId),
@@ -709,7 +719,7 @@ const returnOutwards: ScreenModule = {
  * CUSTOMER RETURNS
  * ================================================================== */
 
-type CustomerRow = {
+export type CustomerRow = {
   id: string;
   no: number;
   date: string;
@@ -758,9 +768,9 @@ type CustomerRow = {
   createdAt: Date;
 };
 
-type DecisionRow = { id: string; returnId: string; kind: Disposition; qty: number; litres: number; godown: string | null; scrapKg: number | null; status: string; note: string | null; by: string | null; at: Date; reworkNo: number | null; reworkStatus: string | null; wasteNo: number | null; wasteStatus: string | null };
+export type DecisionRow = { id: string; returnId: string; kind: Disposition; qty: number; litres: number; godown: string | null; scrapKg: number | null; status: string; note: string | null; by: string | null; at: Date; reworkNo: number | null; reworkStatus: string | null; wasteNo: number | null; wasteStatus: string | null };
 
-async function customerRows(where = sql`true`, ex: Tx | typeof db = db): Promise<CustomerRow[]> {
+export async function customerRows(where = sql`true`, ex: Tx | typeof db = db): Promise<CustomerRow[]> {
   const rows = (await ex.execute(sql`
     select r.id, r.return_no as no, r.return_date::text as date, r.status, r.customer_id as "customerId", c.name as customer,
            r.order_id as "orderId", o.order_no as "orderNo", o.tally_bill_no as "billNo", r.batch_code_id as "batchCodeId",
@@ -789,7 +799,7 @@ async function customerRows(where = sql`true`, ex: Tx | typeof db = db): Promise
   return rows.map((r) => ({ ...r, no: Number(r.no), orderNo: Number(r.orderNo), cansPerBox: Number(r.cansPerBox) || 1, millilitres: Number(r.millilitres) || 0 }));
 }
 
-async function decisionRows(where = sql`true`, ex: Tx | typeof db = db): Promise<DecisionRow[]> {
+export async function decisionRows(where = sql`true`, ex: Tx | typeof db = db): Promise<DecisionRow[]> {
   return (await ex.execute(sql`
     select d.id, d.customer_return_id as "returnId", d.kind, d.quantity::float8 as qty, d.litres::float8 as litres, g.name as godown,
            d.scrap_kg::float8 as "scrapKg", d.status, d.note, u.name as by, d.decided_at as at,
@@ -807,7 +817,7 @@ async function decisionRows(where = sql`true`, ex: Tx | typeof db = db): Promise
 const cStage = (r: CustomerRow, ds: DecisionRow[]) =>
   customerReturnStage({ status: r.status, received: r.received, disposed: ds.filter((d) => d.status === "active").reduce((a, d) => a + d.qty, 0) });
 
-const decisionLine = (d: DecisionRow, unit: string) =>
+export const decisionLine = (d: DecisionRow, unit: string) =>
   `${dispositionLabel(d.kind)} · ${nf(d.qty)} ${unit}${d.godown ? ` · ${d.godown}` : ""}${d.scrapKg ? ` · ${nf(d.scrapKg)} kg` : ""}${d.reworkNo ? ` · ${reworkLabel(d.reworkNo)}` : ""}${d.wasteNo ? ` · ${wasteLabel(d.wasteNo)}` : ""} · ${fd(d.at.toISOString?.() ?? String(d.at))}${d.status === "reversed" ? " · reversed" : ""}`;
 
 const unallocatedDays = async () => Number((await getConfig())["erp.returns.unallocatedDays"] ?? 180);
@@ -939,9 +949,11 @@ function customerActions(ctx: ErpContext, r: CustomerRow, ds: DecisionRow[], god
           { k: "reason", l: "Why", t: "area", req: true },
         ],
       },
+      /* The report is about the decision picked: what it put into stock, scrap, rework or waste comes back out. */
+      impact: { kind: "erp-qc-decision", id: r.id, withValue: "decision" },
     });
   if (r.status === "open" && !ds.some((d) => d.status === "active") && r.cnStatus !== "issued")
-    out.push({ id: "cancel", l: "Cancel return", why: can || (own && r.received == null) ? "" : "Cancelling a received return needs the returns power", prompt: { title: `Cancel ${customerReturnLabel(r.no)}`, sub: r.complaintId ? "Its credit-note request is refused with it." : "", submit: "Cancel return", fields: [{ k: "reason", l: "Why", t: "area", req: true }] } });
+    out.push({ id: "cancel", l: "Cancel return", why: can || (own && r.received == null) ? "" : "Cancelling a received return needs the returns power", prompt: { title: `Cancel ${customerReturnLabel(r.no)}`, sub: r.complaintId ? "Its credit-note request is refused with it." : "", submit: "Cancel return", fields: [{ k: "reason", l: "Why", t: "area", req: true }] }, impact: { kind: "erp-customer-return", id: r.id } });
   return out;
 }
 
@@ -1213,11 +1225,16 @@ const customerActionHandlers: ScreenModule["actions"] = {
     const [r] = await customerRows(sql`r.id = ${id}`);
     const d = ds.find((x) => decisionLine(x, (r?.unit ?? "").toLowerCase()) === v.decision);
     if (!d) return fieldErr("decision", "Choose the decision to reverse.");
+    if (!decidesQc(ctx)) return err("Reversing a QC decision needs the returns QC power.", "not_permitted");
+    const refusal = await confirmImpact("erp-qc-decision", impactPart(id, v.decision), readConfirmation(v));
+    if (refusal) return refusal;
     return reverseDecision(ctx, d.id, text(v.reason) ?? "");
   },
   async cancel(ctx, id, v) {
     const reason = text(v.reason);
     if (!reason) return fieldErr("reason", "Say why");
+    const refusal = await confirmImpact("erp-customer-return", id, readConfirmation(v));
+    if (refusal) return refusal;
     const res = await inTx(async (tx) => {
       const [r] = await customerRows(sql`r.id = ${id}`, tx);
       if (!r || r.status !== "open") return err("That return is not open.", "conflict");

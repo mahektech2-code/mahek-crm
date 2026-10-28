@@ -48,6 +48,8 @@ import { fgLevelAvailable, rmLevelAvailable, rmLots } from "../stock";
 import { godownIdByName, godownOptions, has, inTx, materials, refuse, today, type Col, type Tx } from "./common";
 import { countLabel, gatesFor, notifyStockFlag, openCount, type GateInfo } from "../stock-check";
 import { openRequirementCounts, writeCounted } from "./stock-check";
+import { confirmImpact } from "@/lib/impact/registry";
+import { readConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * THE PURCHASE FLOW'S FIRST FOUR STEPS (docs: AGENTS.md, "The purchase flow"):
@@ -643,9 +645,32 @@ function flowPanel(v: ReqView, st: Stage, money: boolean, choices: CreatePoChoic
   };
 }
 
-/** Cancels one requirement item with a reason — the ERP's own Cancel, for the factory floor. */
+/**
+ * Cancels one requirement item with a reason — the ERP's own Cancel, for the
+ * factory floor. The floor is offline-first and asks on its own screen, so it
+ * does not carry the ERP's impact modal; every rule of the cancel still holds.
+ */
 export async function cancelRequirementItem(ctx: ErpContext, id: string, reason: string): Promise<Result<unknown>> {
-  return requisitions.actions!.cancel(ctx, id, { reason });
+  return cancelRequirement(ctx, id, { reason }, false);
+}
+
+/** The requirement's Cancel; `confirmed` says the ERP screen's impact confirmation must come with it. */
+async function cancelRequirement(ctx: ErpContext, id: string, values: Record<string, string>, confirmed: boolean): Promise<Result<unknown>> {
+  const reason = text(values.reason);
+  if (!reason) return fieldErr("reason", "Say why it is cancelled");
+  const [v] = await requirementViews({ ids: [id] });
+  if (!v) return err("That requirement no longer exists.", "not_found");
+  if (!requirementVisibleTo(ctx.department, v.r.department, v.r.createdById === ctx.user.id)) return err("That requirement belongs to another department.", "not_permitted");
+  if (v.r.status === "Cancelled") return err("Already cancelled.", "conflict");
+  if (v.po) return err(`It is on ${v.po.name} — cancel or send back the PO first.`, "conflict");
+  if (v.r.status === "Received") return err("It has been received.", "conflict");
+  if (confirmed) {
+    const refusal = await confirmImpact("erp-requirement-cancel", id, readConfirmation(values));
+    if (refusal) return refusal;
+  }
+  await db.update(erpRequisitions).set({ status: "Cancelled", cancelReason: reason, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpRequisitions.id, id));
+  await erpAudit(ctx, "erp.requisition.cancel", "erp_requisition", id, { status: v.r.status }, { status: "Cancelled", reason });
+  return okVoid("Requirement cancelled");
 }
 
 const requisitions: ScreenModule = {
@@ -718,6 +743,7 @@ const requisitions: ScreenModule = {
             id: "cancel",
             l: "Cancel requirement",
             prompt: { title: "Cancel this requirement", sub: `${v.item} · ${nf(r.requiredQty)} ${r.unit}`, submit: "Cancel requirement", fields: [{ k: "reason", l: "Reason", t: "area", req: true }] },
+            impact: { kind: "erp-requirement-cancel", id: r.id },
           });
         else if (v.po && st.step >= 0 && st.step < FLOW_STEPS.length)
           actions.push({ id: "cancel", l: "Cancel requirement", why: `It is on ${v.po.name} — cancel or send back the PO first` });
@@ -789,8 +815,8 @@ const requisitions: ScreenModule = {
     async linkPo(ctx, id, values) {
       return (await import("./requirement-po")).linkRequirementPo(ctx, id, values.poNo ?? "");
     },
-    async unlinkPo(ctx, id) {
-      return (await import("./requirement-po")).unlinkRequirementPo(ctx, id);
+    async unlinkPo(ctx, id, values) {
+      return (await import("./requirement-po")).unlinkRequirementPo(ctx, id, readConfirmation(values));
     },
     async createPo(ctx, id, values) {
       return (await import("./requirement-po")).createRequirementPo(ctx, id, values);
@@ -845,18 +871,9 @@ const requisitions: ScreenModule = {
       await erpAudit(ctx, "erp.requisition.selectVendor", "erp_requisition", id, { supplierId: v.r.supplierId }, { supplierId: sup.id });
       return okVoid(`${sup.name} is the vendor · raise the PO next`);
     },
+    /* The person saw what cancelling it leaves behind — the counts and quotations it opened (`erp-requirement-cancel`). */
     async cancel(ctx, id, values) {
-      const reason = text(values.reason);
-      if (!reason) return fieldErr("reason", "Say why it is cancelled");
-      const [v] = await requirementViews({ ids: [id] });
-      if (!v) return err("That requirement no longer exists.", "not_found");
-      if (!requirementVisibleTo(ctx.department, v.r.department, v.r.createdById === ctx.user.id)) return err("That requirement belongs to another department.", "not_permitted");
-      if (v.r.status === "Cancelled") return err("Already cancelled.", "conflict");
-      if (v.po) return err(`It is on ${v.po.name} — cancel or send back the PO first.`, "conflict");
-      if (v.r.status === "Received") return err("It has been received.", "conflict");
-      await db.update(erpRequisitions).set({ status: "Cancelled", cancelReason: reason, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpRequisitions.id, id));
-      await erpAudit(ctx, "erp.requisition.cancel", "erp_requisition", id, { status: v.r.status }, { status: "Cancelled", reason });
-      return okVoid("Requirement cancelled");
+      return cancelRequirement(ctx, id, values, true);
     },
   },
 };
@@ -1428,6 +1445,7 @@ const purchaseOrders: ScreenModule = {
           id: "close",
           l: "Close short",
           prompt: { title: `Close ${poName(p.po)} short`, sub: "Nothing more is expected against it; its requirements count as received.", submit: "Close PO", fields: [{ k: "reason", l: "Why", t: "area", req: true }] },
+          impact: { kind: "erp-po-close", id: p.po.id },
         });
       if (["Pending approval", "Approved", "Sent"].includes(s))
         actions.push({
@@ -1435,6 +1453,7 @@ const purchaseOrders: ScreenModule = {
           l: "Cancel PO",
           why: anyReceived ? "Goods were received against it — close it short instead" : "",
           prompt: { title: `Cancel ${poName(p.po)}`, sub: "Its requirements return to Ready for PO, keeping their vendor.", submit: "Cancel PO", fields: [{ k: "reason", l: "Reason", t: "area", req: true }] },
+          impact: { kind: "erp-po-cancel", id: p.po.id },
         });
       if (p.po.approvedAt && s !== "Rejected") actions.push({ id: "print", l: "Print / PDF", href: erpPoHref(p.po.id) });
       const flags: string[] = [];
@@ -1545,6 +1564,9 @@ const purchaseOrders: ScreenModule = {
     async close(ctx, id, values) {
       const reason = text(values.reason);
       if (!reason) return fieldErr("reason", "Say why it is closed short");
+      /* Its requirements count as received, short or not (`erp-po-close`). The report mirrors the refusals below. */
+      const unconfirmed = await confirmImpact("erp-po-close", id, readConfirmation(values));
+      if (unconfirmed) return unconfirmed;
       const res = await inTx(async (tx) => {
         const [po] = await tx.select().from(erpPurchaseOrders).where(eq(erpPurchaseOrders.id, id)).for("update");
         if (!po) return err("That PO no longer exists.", "not_found");
@@ -1563,6 +1585,9 @@ const purchaseOrders: ScreenModule = {
     async cancel(ctx, id, values) {
       const reason = text(values.reason);
       if (!reason) return fieldErr("reason", "Say why it is cancelled");
+      /* Its requirements, the vendor who was sent it, the rates still bought on the sheet (`erp-po-cancel`). */
+      const unconfirmed = await confirmImpact("erp-po-cancel", id, readConfirmation(values));
+      if (unconfirmed) return unconfirmed;
       const res = await inTx(async (tx) => {
         const [po] = await tx.select().from(erpPurchaseOrders).where(eq(erpPurchaseOrders.id, id)).for("update");
         if (!po) return err("That PO no longer exists.", "not_found");

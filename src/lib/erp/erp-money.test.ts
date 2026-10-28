@@ -22,6 +22,16 @@ import * as M from "@/lib/erp/money";
 import { recordReceipt as recordScrapReceipt, voidReceipt as voidScrapReceipt } from "@/lib/erp/drums";
 import { FROM_CUSTOMER_CASH, FROM_WITHDRAWAL } from "@/lib/erp/engines/money";
 import * as V from "@/lib/erp/money-views";
+import { impactReport } from "@/lib/impact/registry";
+import { IMPACT_FIELD, type ImpactReport } from "@/lib/impact/types";
+
+/** The report the impact modal shows to `u`, and the payload it sends back with the act — typed exactly as asked. */
+async function confirmed(u: typeof users.$inferSelect, kind: string, recordId: string): Promise<{ report: ImpactReport; values: Record<string, string> }> {
+  setTestUser(u);
+  const r = await impactReport(kind, recordId);
+  assert.ok(r.ok, r.ok ? "" : r.error);
+  return { report: r.data, values: { [IMPACT_FIELD]: JSON.stringify({ typed: r.data.confirmWord, fingerprint: r.data.fingerprint }) } };
+}
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const msg = (r: { ok: boolean; fieldErrors?: { message: string }[]; error?: string }) => (r.ok ? "ok" : (r.fieldErrors?.[0]?.message ?? r.error ?? "?"));
@@ -104,7 +114,11 @@ describe("expenses are entered when paid", () => {
     assert.match(msg(await M.saveExpense(a, { ...base, invoiceNo: "spc 2627 0912", amountPaise: 48_500_00 })), /^Already on TXN-\d\d-00001/);
     const dup = await M.saveExpense(a, { ...base, amountPaise: 48_500_00, duplicateOverride: true });
     assert.ok(dup.ok);
-    assert.ok((await M.cancelTxn(actor(head, false), dup.data.id, "Entered twice by mistake")).ok);
+    /* Cancelled from its own row: the bare act is refused, and the modal says which balance moves back. */
+    assert.match(msg(await mod("expenses").actions!.cancel(await as(head), dup.data.id, { reason: "Entered twice by mistake" })), /Check what this affects/);
+    const undo = await confirmed(head, "erp-money-txn", dup.data.id);
+    assert.deepEqual(undo.report.items.find((i) => /account balance in Petty Cash changes/.test(i.label))?.examples, ["Kotak Bank +₹48,500"]);
+    assert.ok((await mod("expenses").actions!.cancel(await as(head), dup.data.id, { reason: "Entered twice by mistake", ...undo.values })).ok);
     assert.equal(await balance("Kotak Bank"), 10_00_000_00 - 48_500_00, "a cancelled row moves nothing");
 
     const big = await M.saveExpense(a, { ...base, invoiceNo: "MSEB-1", payee: "MSEDCL", category: "Electricity", amountPaise: 63_140_00 });
@@ -217,7 +231,10 @@ describe("advances", () => {
     const before = await balance("Petty Cash");
     const g = await M.giveAdvance(actor(head, false), { employee: "Anil P", amountPaise: 3_000_00, date: today(), purpose: null, billsDueOn: null, from: "Petty Cash", mode: "Cash", reference: null, note: null });
     assert.ok(g.ok);
-    assert.ok((await M.cancelAdvance(actor(head, false), g.data.id, "Given to the wrong person")).ok);
+    assert.match(msg(await mod("advances").actions!.cancelAdvance(await as(head), g.data.id, { reason: "Given to the wrong person" })), /Check what this affects/);
+    const undo = await confirmed(head, "erp-money-advance", g.data.id);
+    assert.match(undo.report.items.find((i) => /transaction on it cancelled/.test(i.label))?.note ?? "", /Petty Cash \+₹3,000/);
+    assert.ok((await mod("advances").actions!.cancelAdvance(await as(head), g.data.id, { reason: "Given to the wrong person", ...undo.values })).ok);
     assert.equal(await balance("Petty Cash"), before);
   });
 });
@@ -262,7 +279,10 @@ describe("bank statements are matched, never re-entered", () => {
     /* A matched transaction cannot be cancelled until the match is undone. */
     const [exp] = await M.txnRows(sql`t.invoice_no = 'SPC/2627/0912' and t.status = 'active'`);
     assert.match(msg(await M.cancelTxn(actor(accountant, true), exp.id, "Testing the guard on it")), /Undo the match first/);
-    assert.ok((await M.unmatchBankLine(actor(accountant, true), neft.id)).ok);
+    assert.match(msg(await mod("bankLines").actions!.unmatch(await as(accountant), neft.id, {})), /Check what this affects/);
+    const unmatch = await confirmed(accountant, "erp-bank-match", neft.id);
+    assert.ok(unmatch.report.items.some((i) => i.effect === "unlinked" && /Petty Cash transaction no longer explained/.test(i.label) && i.examples?.[0]?.startsWith(exp.label)), JSON.stringify(unmatch.report.items));
+    assert.ok((await mod("bankLines").actions!.unmatch(await as(accountant), neft.id, unmatch.values)).ok);
     assert.equal((await M.bankLineRows(sql`l.id = ${neft.id}`))[0].matchedPaise, 0);
     assert.ok((await M.matchBankLine(actor(accountant, true), neft.id, [exp.id])).ok);
   });

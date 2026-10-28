@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { cleanCell, cleanRate, columnStats, parseQuoteDate, parseTsv, quoteStatusRefusal, validQuoteId, newQuoteId } from "./quotes";
-import { applySheetOps, invertSheetOps, visibleColumns, visibleRows, type SheetOp, type SheetState } from "./quote-sheet";
+import { applySheetOps, impactAsks, invertSheetOps, visibleColumns, visibleRows, type SheetOp, type SheetState } from "./quote-sheet";
 
 test("a rate is a number, with the commas and rupee sign a paste carries taken out", () => {
   assert.deepEqual(cleanRate(" 1,48.75 "), { ok: true, value: "148.75" });
@@ -100,6 +100,17 @@ test("deleting a row hides it and undoing brings it back with its cells", () => 
   assert.equal(visibleRows(s1).length, 0);
   const back = applySheetOps(s1, invertSheetOps(s0, ops));
   assert.deepEqual(visibleRows(back)[0].cells.c1, { value: "48.5", status: null, drums: null, poNo: null, poBy: null, poAt: null });
+});
+
+test("only undoing a purchase, or deleting a row that holds one, waits for the impact modal", () => {
+  const bought = applySheetOps(base(), [{ op: "cell", rowId: "r1", columnId: "c1", status: "po", drums: 2, poNo: "PO-7" }]);
+  /* The spreadsheet's own changes ask nothing — Ctrl+Z on a paste deletes the rows it made. */
+  assert.deepEqual(impactAsks(base(), [{ op: "deleteRow", rowId: "r1" }, { op: "cell", rowId: "r1", columnId: "c1", value: "9" }]), []);
+  assert.deepEqual(impactAsks(bought, [{ op: "cell", rowId: "r1", columnId: "c1", status: "po", drums: 3 }]), [], "changing the drums keeps it bought");
+  assert.deepEqual(impactAsks(bought, [{ op: "cell", rowId: "r1", columnId: "c1", value: "50" }, { op: "cell", rowId: "r1", columnId: "c1", status: "ready", poNo: null }]), [
+    { kind: "erp-quote-purchase", id: "r1:c1", op: 1 },
+  ]);
+  assert.deepEqual(impactAsks(bought, [{ op: "deleteRow", rowId: "r1" }]), [{ kind: "erp-quote-row", id: "r1", op: 0 }]);
 });
 
 test("a rate is bought only once a manager has marked it Ready to buy, and never without drums — the PO number is the server's", () => {

@@ -10,6 +10,7 @@ import { addDays, lrUploadName, rankForLr, shortDay } from "@/lib/erp/engines/lo
 import type { Consignment, UploadedLr } from "@/lib/erp/logistics";
 import { inr, rupeesField } from "@/lib/erp/ui";
 import { BillRef, DuePill, Empty, LrThumb, NotifyToggle, plural, ReasonDialog, sumPackages, useAct, lrLabel } from "./common";
+import { ErpImpactDialog } from "../../_ui/impact-confirm";
 
 /**
  * STEP 4 — BIFURCATION. On the left, every LR the dispatch team uploaded and
@@ -46,6 +47,8 @@ export function LrDesk({
   const [showAll, setShowAll] = useState(false);
   const [editing, setEditing] = useState<UploadedLr | null>(null);
   const [voiding, setVoiding] = useState<UploadedLr | null>(null);
+  /* The reason is asked first, then what voiding touches, with the LR number typed. */
+  const [voidImpact, setVoidImpact] = useState<{ lr: UploadedLr; reason: string } | null>(null);
 
   const lr = lrs.find((l) => l.id === pick) ?? null;
   const pool = useMemo(() => (showAll ? [...waiting, ...onTheWay] : waiting), [showAll, waiting, onTheWay]);
@@ -226,8 +229,21 @@ export function LrDesk({
         tone="danger"
         pending={pending}
         onClose={() => setVoiding(null)}
-        onConfirm={(reason) => voiding && run(() => erpLogisticsVoidLr(voiding.id, reason), (r) => r.ok && setVoiding(null))}
+        onConfirm={(reason) => {
+          if (!voiding) return;
+          setVoidImpact({ lr: voiding, reason });
+          setVoiding(null);
+        }}
       />
+      {voidImpact ? (
+        <ErpImpactDialog
+          kind="erp-lr-void"
+          id={voidImpact.lr.id}
+          confirmLabel="Void"
+          onClose={() => setVoidImpact(null)}
+          act={(confirmation) => erpLogisticsVoidLr(voidImpact.lr.id, voidImpact.reason, confirmation)}
+        />
+      ) : null}
     </div>
   );
 }

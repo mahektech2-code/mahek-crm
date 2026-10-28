@@ -10,6 +10,8 @@ import { manualMove, packLabel, UNIT_STATUS_LABEL, type UnitStatus } from "../en
 import { unitEvent } from "../units";
 import { erpDispatchHref, erpLabelsHref, erpTraceHref } from "../trace-links";
 import { inTx, refuse } from "./common";
+import { confirmImpact } from "@/lib/impact/registry";
+import { readConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * BOXES & LABELS — the unit register. Every box a packing batch made and
@@ -84,7 +86,8 @@ function unitScreen(key: "units" | "allUnits"): ScreenModule {
       const bulk: BulkSpec[] = [
         { id: "print", l: "Print labels" },
         { id: "hold", l: "Put on hold", prompt: { title: "Put the selected boxes on hold", submit: "Hold", fields: [{ k: "note", l: "Why", t: "area", req: true }] } },
-        { id: "release", l: "Release hold" },
+        /* Which of the selection goes back, and any it takes off an order or out of a return's quarantine. */
+        { id: "release", l: "Release hold", impact: { kind: "erp-unit-release" } },
       ];
       return {
         spec: {
@@ -110,7 +113,7 @@ function unitScreen(key: "units" | "allUnits"): ScreenModule {
             { id: "trace", l: "Trace this box", href: erpTraceHref(r.id) },
             ...(status === "scanned" && r.orderNo ? [{ id: "desk", l: `Open order ${r.orderNo} at the dispatch desk`, href: erpDispatchHref(r.orderNo) } as ActionSpec] : []),
             { id: "hold", l: "Put on hold", why: can("hold") ?? "", prompt: { title: `Hold ${r.id}`, sub: "A box on hold cannot be scanned for dispatch until it is released.", submit: "Hold", fields: [{ k: "note", l: "Why", t: "area", req: true }] } },
-            { id: "release", l: status === "returned" ? "Back into stock" : "Release hold", why: can("available") ?? "", confirm: `Put ${r.id} back into stock?` },
+            { id: "release", l: status === "returned" ? "Back into stock" : "Release hold", why: can("available") ?? "", impact: { kind: "erp-unit-release", id: r.id } },
             { id: "reject", l: "Reject", why: needPower("rejected"), prompt: { title: `Reject ${r.id}`, sub: "A rejected box never leaves. The reason stays on its history.", submit: "Reject", fields: [{ k: "note", l: "Why", t: "area", req: true }] } },
             { id: "return", l: "Mark returned by customer", why: needPower("returned"), prompt: { title: `${r.id} came back`, sub: "It returns to the godown it left from, as Returned, until somebody puts it back into stock or rejects it.", submit: "Mark returned", fields: [{ k: "note", l: "What came back and why", t: "area", req: true }] } },
           ];
@@ -150,7 +153,10 @@ function unitScreen(key: "units" | "allUnits"): ScreenModule {
     },
     actions: {
       hold: (ctx, id, v) => move(ctx, [id], "hold", text(v.note)),
-      release: (ctx, id) => move(ctx, [id], "available", null),
+      async release(ctx, id, v) {
+        const refusal = await confirmImpact("erp-unit-release", id, readConfirmation(v));
+        return refusal ?? move(ctx, [id], "available", null);
+      },
       reject: (ctx, id, v) => move(ctx, [id], "rejected", text(v.note)),
       return: (ctx, id, v) => move(ctx, [id], "returned", text(v.note)),
     },
@@ -159,7 +165,10 @@ function unitScreen(key: "units" | "allUnits"): ScreenModule {
         return ok<ToolResult>({ navigate: erpLabelsHref({ ids }) }, `Opening ${ids.length} label${ids.length === 1 ? "" : "s"}`);
       },
       hold: (ctx, ids, v) => move(ctx, ids, "hold", text(v.note)),
-      release: (ctx, ids) => move(ctx, ids, "available", null),
+      async release(ctx, ids, v) {
+        const refusal = await confirmImpact("erp-unit-release", ids.join(","), readConfirmation(v));
+        return refusal ?? move(ctx, ids, "available", null);
+      },
     },
   };
 }

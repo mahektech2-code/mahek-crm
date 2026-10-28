@@ -10,7 +10,7 @@ import { DialogBody, DialogTitle, DialogFooter, DialogHeader, ErpDialog, StepBar
 import { pageOfError, planPages, plural } from "./form-pages";
 import { useToast } from "@/components/ui/toast";
 import type { ActionSpec, BulkSpec, FieldSpec, FormSpec, PromptSpec, ToolResult, ToolSpec } from "@/lib/erp/ui";
-import { fillOf, resolveField, whenHolds } from "@/lib/erp/ui";
+import { fillOf, impactPart, resolveField, whenHolds } from "@/lib/erp/ui";
 import { runCalc } from "@/lib/erp/calc";
 import "@/lib/erp/calcs";
 import type { Result } from "@/lib/result";
@@ -79,7 +79,17 @@ export function ErpUiProvider({
   const [formKey, setFormKey] = useState(0);
   const [resultDialog, setResultDialog] = useState<{ screen: string; d: NonNullable<ToolResult["dialog"]> } | null>(null);
   const [share, setShare] = useState<{ screen: string; a: ActionSpec; recordId: string; after?: () => void; key: number } | null>(null);
-  const [impact, setImpact] = useState<{ screen: string; a: ActionSpec; recordId: string; after?: () => void; key: number } | null>(null);
+  /* `values` are what a prompt collected first (a reason); the impact modal sends them with its confirmation.
+     `bulk` is a selection's ids, run through `runBulk` rather than one record's action. */
+  const [impact, setImpact] = useState<{
+    screen: string;
+    a: { id: string; l: string; impact: { kind: string; id: string } };
+    recordId: string;
+    bulk?: string[];
+    values?: Record<string, string>;
+    after?: () => void;
+    key: number;
+  } | null>(null);
 
   const toast = useCallback((t: string, tone: "info" | "error" = "info") => push(t, tone), [push]);
 
@@ -121,9 +131,21 @@ export function ErpUiProvider({
         return;
       }
       /* A delete that reaches other records says what moves with it, and asks
-         for the name, instead of a bare "are you sure". */
+         for the name, instead of a bare "are you sure". Where the act also
+         wants a reason, the reason is asked first — it is part of what is
+         being confirmed — and travels with the confirmation. */
       if (a.impact) {
-        setImpact({ screen, a, recordId, after, key: Date.now() });
+        const spec = { id: a.id, l: a.l, impact: { kind: a.impact.kind, id: a.impact.id } };
+        const field = a.impact.withValue;
+        if (a.prompt) {
+          prompt(a.prompt, async (values) => {
+            /* The part of the record the prompt picked is part of what the report describes. */
+            const part = field ? { ...spec, impact: { ...spec.impact, id: impactPart(spec.impact.id, values[field]) } } : spec;
+            setImpact({ screen, a: part, recordId, values, after, key: Date.now() });
+          });
+          return;
+        }
+        setImpact({ screen, a: spec, recordId, after, key: Date.now() });
         return;
       }
       if (a.href) {
@@ -160,6 +182,18 @@ export function ErpUiProvider({
 
   const bulk = useCallback(
     (screen: string, b: BulkSpec, ids: string[], after?: () => void) => {
+      /* A selection's impact is asked about all of it at once: the report's id is the ids joined by commas. */
+      if (b.impact) {
+        const spec = { id: b.id, l: b.l, impact: { kind: b.impact.kind, id: ids.join(",") } };
+        if (b.prompt) {
+          prompt(b.prompt, async (values) => {
+            setImpact({ screen, a: spec, recordId: "", bulk: ids, values, after, key: Date.now() });
+          });
+          return;
+        }
+        setImpact({ screen, a: spec, recordId: "", bulk: ids, after, key: Date.now() });
+        return;
+      }
       const go = () => {
         if (b.prompt) {
           prompt(b.prompt, async (v) => {
@@ -266,9 +300,10 @@ export function ErpUiProvider({
             confirmLabel={impact.a.l}
             onClose={() => setImpact(null)}
             onConfirm={async (confirmation) => {
-              const res = await kit.runAction(impact.screen, impact.a.id, impact.recordId, {
-                [IMPACT_FIELD]: JSON.stringify(confirmation),
-              });
+              const values = { ...impact.values, [IMPACT_FIELD]: JSON.stringify(confirmation) };
+              const res = impact.bulk
+                ? await kit.runBulk(impact.screen, impact.a.id, impact.bulk, values)
+                : await kit.runAction(impact.screen, impact.a.id, impact.recordId, values);
               if (res.ok) finish(res, impact.after, impact.screen);
               return res;
             }}

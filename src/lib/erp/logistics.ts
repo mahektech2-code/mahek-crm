@@ -34,6 +34,8 @@ import {
 } from "./engines/logistics";
 import { erpAudit, erpId } from "./server";
 import { today } from "./screens/common";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * THE LOGISTICS DESK, wired to the data. The rules are `engines/logistics.ts`;
@@ -627,14 +629,19 @@ export async function editLr(ctx: ErpContext, lrId: string, input: LrInput): Pro
   return okVoid(lrNo ? `LR ${lrNo} saved` : "LR saved");
 }
 
-/** A wrong upload is voided with its reason, never deleted — and only while it carries nothing. */
-export async function voidLr(ctx: ErpContext, lrId: string, reason: string): Promise<Result<unknown>> {
+/**
+ * A wrong upload is voided with its reason, never deleted — and only while it
+ * carries nothing. The person saw what voiding it touches (`erp-lr-void`).
+ */
+export async function voidLr(ctx: ErpContext, lrId: string, reason: string, confirmation?: ImpactConfirmation | null): Promise<Result<unknown>> {
   const why = reason.trim();
   if (why.length < 3) return fieldErr("reason", "Say why this LR is being voided");
   const [lr] = await db.select().from(erpLrs).where(eq(erpLrs.id, lrId));
   if (!lr || lr.status === "void") return err("That LR is not on the desk.", "not_found");
   const [carrying] = await db.select({ id: erpTransports.id }).from(erpTransports).where(eq(erpTransports.lrId, lrId)).limit(1);
   if (carrying) return err("This LR is attached to bills. Take them off it first.", "rule_violation");
+  const refusal = await confirmImpact("erp-lr-void", lrId, confirmation);
+  if (refusal) return refusal;
   await db.update(erpLrs).set({ status: "void", voidReason: why }).where(eq(erpLrs.id, lrId));
   await erpAudit(ctx, "erp.logistics.lrVoid", "erp_lr", lrId, { status: lr.status }, { status: "void", reason: why });
   return okVoid(`${lrUploadName(lr.lrNo)} voided`);
@@ -835,12 +842,18 @@ export async function markDelivered(
   return ok({ notified }, `Delivered and closed${notifyWords(notified)}`);
 }
 
-/** Closed by mistake: back on the road (or back to waiting for its LR), with the reason. */
-export async function reopen(ctx: ErpContext, transportId: string, reason: string): Promise<Result<unknown>> {
+/**
+ * Closed by mistake: back on the road (or back to waiting for its LR), with
+ * the reason. It undoes somebody's confirmed delivery and the order book's
+ * "delivered", so it is confirmed against what it touches (`erp-delivery-reopen`).
+ */
+export async function reopen(ctx: ErpContext, transportId: string, reason: string, confirmation?: ImpactConfirmation | null): Promise<Result<unknown>> {
   const why = reason.trim();
   if (why.length < 3) return fieldErr("reason", "Say why it is being reopened");
   const [t] = await load([transportId]);
   if (!t || t.materialStage !== CLOSED) return err("That bill is not closed.", "rule_violation");
+  const refusal = await confirmImpact("erp-delivery-reopen", transportId, confirmation);
+  if (refusal) return refusal;
   const stage = t.lrNo ? "Reached Destination Area" : "At transport";
   await db.transaction(async (tx) => {
     await tx.update(erpTransports).set({ materialStage: stage, trackStatus: t.lrNo ? "Track" : "Don't Track", deliveredOn: null, receivedBy: null, deliveredById: null, deliveryProof: null, reminderDate: today(), updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpTransports.id, t.id));

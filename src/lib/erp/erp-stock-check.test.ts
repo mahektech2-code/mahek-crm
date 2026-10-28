@@ -23,6 +23,8 @@ import { screenModule } from "@/lib/erp/screens";
 import { requirementViews, stageOf } from "@/lib/erp/screens/purchase-flow";
 import { rmItemStockAt } from "@/lib/erp/stock";
 import { controlWork, missingRecords, planCycleCounts } from "@/lib/erp/stock-check";
+import { impactReport } from "@/lib/impact/registry";
+import { IMPACT_FIELD } from "@/lib/impact/types";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const TODAY = "2026-10-11";
@@ -328,5 +330,28 @@ describe("a stock check of anything, by anybody", () => {
     const viaErp = await screen.forms!.new(await as(store2), { kind: "Raw material", item: "Butanol", godown: "Bhiwandi", qty: "120", reason: "" }, []);
     assert.ok(viaErp.ok, viaErp.ok ? "" : viaErp.error);
     assert.match(viaErp.message ?? "", /Matches the book/);
+  });
+});
+
+describe("a count cancelled says what it lets go of", () => {
+  test("the factory phone loses the task, and the requisition stays held until somebody counts", async () => {
+    await db.insert(erpRawMaterials).values({ id: "rm_mek", serialNo: 50, name: "MEK", code: "MEK", unit: "Litre", materialType: "Chemical", purchaseMethod: "direct", preferredSupplierId: "sup_a" });
+    await stock("rm_mek", "AS-MEK-1", 80);
+    assert.ok((await raise(store1, "MEK", "40")).ok);
+    const req = await reqOf("rm_mek");
+    const count = await rootCount("rm_mek");
+    const why = { reason: "Raised against the wrong godown" };
+    const bare = await mod("countTasks").actions!.cancel(await as(controller), count.id, why);
+    assert.ok(!bare.ok && /Check what this affects/.test(bare.error), "the bare act is refused");
+    setTestUser(controller);
+    const report = await impactReport("erp-stock-count", count.id);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    assert.equal(report.data.confirmWord, `SC-${count.countNo}`);
+    assert.ok(report.data.items.some((i) => i.app === "Factory" && /counting task leaves/.test(i.label)), JSON.stringify(report.data.items));
+    assert.ok(report.data.items.some((i) => i.effect === "kept" && /stays held at Blind count/.test(i.label)), "the requisition is not let through by a cancel");
+    const done = await mod("countTasks").actions!.cancel(await as(controller), count.id, { ...why, [IMPACT_FIELD]: JSON.stringify({ typed: report.data.confirmWord, fingerprint: report.data.fingerprint }) });
+    assert.ok(done.ok, done.ok ? "" : done.error);
+    assert.equal((await db.select().from(erpStockCounts).where(eq(erpStockCounts.id, count.id)))[0].status, "cancelled");
+    assert.equal((await stage(req.id)).stage, "Blind count", "and it is still held");
   });
 });

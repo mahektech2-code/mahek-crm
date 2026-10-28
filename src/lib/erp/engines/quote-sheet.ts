@@ -11,6 +11,7 @@
  * ------------------------------------------------------------------------- */
 
 import type { QuoteColumnKind, QuoteStatus } from "./quotes";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 
 export type SheetOp =
   | {
@@ -27,14 +28,36 @@ export type SheetOp =
       poAt?: string | null;
       /** Purchase it: how much, where and by when — the server writes the ERP purchase order with it. */
       order?: { requisitionId?: string | null; qty: number; godown: string; deliveryDate: string };
+      /** The impact modal's confirmation, where this takes a bought rate off. */
+      impact?: ImpactConfirmation;
     }
   | { op: "row"; rowId: string; create?: boolean; date?: string; party?: string; status?: QuoteStatus | null }
-  | { op: "deleteRow"; rowId: string }
+  | { op: "deleteRow"; rowId: string; impact?: ImpactConfirmation }
   | { op: "restoreRow"; rowId: string }
   | { op: "column"; columnId: string; create?: boolean; pack?: string; name?: string; brand?: string; kind?: QuoteColumnKind; rawMaterialId?: string | null }
   | { op: "order"; columnIds: string[] }
   | { op: "archiveColumn"; columnId: string }
   | { op: "restoreColumn"; columnId: string };
+
+/**
+ * The change in `ops` the server will not take without the impact modal: a
+ * bought rate taken off (it withdraws its ERP purchase order line) or a row
+ * deleted while it holds one — the same two `applyQuoteOps` checks. Whatever
+ * else is in the save is the spreadsheet's own and asks nothing.
+ */
+export function impactAsks(s: SheetState, ops: SheetOp[]): { kind: "erp-quote-purchase" | "erp-quote-row"; id: string; op: number }[] {
+  const rows = new Map(s.rows.map((r) => [r.id, r]));
+  const out: { kind: "erp-quote-purchase" | "erp-quote-row"; id: string; op: number }[] = [];
+  ops.forEach((o, i) => {
+    if (o.op === "deleteRow") {
+      const r = rows.get(o.rowId);
+      if (r && !r.deleted && Object.values(r.cells).some((c) => c.status === "po" || c.status === "pickup")) out.push({ kind: "erp-quote-row", id: o.rowId, op: i });
+    } else if (o.op === "cell" && o.status !== undefined && o.status !== "po" && o.status !== "pickup") {
+      if (rows.get(o.rowId)?.cells[o.columnId]?.status === "po") out.push({ kind: "erp-quote-purchase", id: `${o.rowId}:${o.columnId}`, op: i });
+    }
+  });
+  return out;
+}
 
 export type SheetColumn = {
   id: string;

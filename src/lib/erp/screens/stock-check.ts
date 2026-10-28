@@ -30,6 +30,8 @@ import { checkableItems, floorCheckRows, recordFloorCheck, STAGE_LABEL, type Che
 import type { ActionSpec, ColSpec, FieldSpec, ListRow } from "../ui";
 import { nf } from "../ui";
 import { godownField, godownOptions, inTx, isErpManager, materials, refuse, type Tx } from "./common";
+import { confirmImpact } from "@/lib/impact/registry";
+import { readConfirmation } from "@/lib/impact/types";
 import { requirementLabel } from "../engines/purchase-flow";
 
 /* ---------------------------------------------------------------------------
@@ -294,7 +296,7 @@ const countTasks: ScreenModule = {
           header: `${c.godown} · ${COUNT_KIND_LABEL[c.kind]} · due ${c.due}`,
           actions: [
             { id: "count", l: "Count it", primary: true, prompt: countPrompt(c), why: sameCounter ? "A recount is done by somebody other than whoever counted first" : "" },
-            ...(runsCounts(ctx) ? [{ id: "cancel", l: "Cancel count", prompt: { title: "Cancel this count", sub: `${countLabel(c.no)} · ${c.item} at ${c.godown}`, submit: "Cancel count", fields: [{ k: "reason", l: "Why", t: "area" as const, req: true }] } }] : []),
+            ...(runsCounts(ctx) ? [{ id: "cancel", l: "Cancel count", prompt: { title: "Cancel this count", sub: `${countLabel(c.no)} · ${c.item} at ${c.godown}`, submit: "Cancel count", fields: [{ k: "reason", l: "Why", t: "area" as const, req: true }] }, impact: { kind: "erp-stock-count", id: c.id } }] : []),
           ],
           panel: panelFor(c, rows, null, null),
           by: stampLine(c.createdBy, c.createdAt),
@@ -336,6 +338,8 @@ const countTasks: ScreenModule = {
       if (!reason) return fieldErr("reason", "Say why");
       const [c] = await countRows(sql`c.id = ${id}`);
       if (!c || c.status !== "open") return err("That count is no longer open.", "conflict");
+      const refusal = await confirmImpact("erp-stock-count", id, readConfirmation(v));
+      if (refusal) return refusal;
       await db.transaction(async (tx) => {
         await tx.update(erpStockCounts).set({ status: "cancelled", resolution: "cancelled", resolutionNote: reason, resolvedById: ctx.user.id, resolvedAt: new Date() }).where(eq(erpStockCounts.id, id));
         /* A cancelled recount hands its parent back to the red flags, to be recounted again. */
@@ -523,7 +527,7 @@ const stockFlags: ScreenModule = {
               },
             });
         }
-        if (runsCounts(ctx)) actions.push({ id: "cancelFlag", l: "Cancel", prompt: { title: "Cancel this check", sub: "Only for a count opened by mistake. A real difference is resolved, not cancelled.", submit: "Cancel check", fields: [{ k: "reason", l: "Why", t: "area", req: true }] } });
+        if (runsCounts(ctx)) actions.push({ id: "cancelFlag", l: "Cancel", prompt: { title: "Cancel this check", sub: "Only for a count opened by mistake. A real difference is resolved, not cancelled.", submit: "Cancel check", fields: [{ k: "reason", l: "Why", t: "area", req: true }] }, impact: { kind: "erp-stock-check", id: c.id } });
         return {
           id: c.id,
           v: {
@@ -614,6 +618,8 @@ const stockFlags: ScreenModule = {
       if (!reason) return fieldErr("reason", "Say why");
       const pending = await adjustmentRows(sql`a.count_id = ${id} and a.status = 'pending'`);
       if (pending.length) return err("An adjustment for this check is waiting for a decision — decide it first.", "conflict");
+      const refusal = await confirmImpact("erp-stock-check", id, readConfirmation(v));
+      if (refusal) return refusal;
       await db.transaction(async (tx) => {
         await tx.update(erpStockCounts).set({ status: "cancelled", resolution: "cancelled", resolutionNote: reason, resolvedById: ctx.user.id, resolvedAt: new Date() }).where(eq(erpStockCounts.id, id));
         await tx.update(erpStockCounts).set({ status: "cancelled", resolution: "cancelled", resolutionNote: reason }).where(and(eq(erpStockCounts.recountOfId, id), eq(erpStockCounts.status, "open")));

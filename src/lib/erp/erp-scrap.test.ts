@@ -33,6 +33,18 @@ import {
   type Actor,
 } from "@/lib/erp/drums";
 import { DRUM_CATEGORY, RETURNABLE_NOT_FOR_SALE } from "@/lib/erp/engines/drums";
+import { impactPart } from "@/lib/erp/ui";
+import { impactReport } from "@/lib/impact/registry";
+import { IMPACT_FIELD, type ImpactReport } from "@/lib/impact/types";
+
+/** The report the impact modal shows to `u`, and the payload it sends back with the act — typed exactly as asked. */
+async function confirmed(u: typeof users.$inferSelect, kind: string, recordId: string): Promise<{ report: ImpactReport; values: Record<string, string> }> {
+  setTestUser(u);
+  const r = await impactReport(kind, recordId);
+  assert.ok(r.ok, r.ok ? "" : r.error);
+  return { report: r.data, values: { [IMPACT_FIELD]: JSON.stringify({ typed: r.data.confirmWord, fingerprint: r.data.fingerprint }) } };
+}
+const ctxOf = async (u: typeof users.$inferSelect) => (setTestUser(u), erpContext());
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const BHW = "erpg_bhiwandi";
@@ -308,5 +320,74 @@ describe("ownership, review and corrections", () => {
     assert.equal(over.ok, false);
     const ok = await sellScrap(actor(head), { date: "2026-10-11", buyerId: "buyer_a", category: "Plastic Scrap", quantity: 100, unit: "Kg", ratePaise: 1500, refKind: "none", externalRef: null, dueDate: null, remark: null, godownId: null });
     assert.ok(ok.ok, ok.ok ? "" : ok.error);
+  });
+});
+
+describe("a cancel or a void says what moves before it is confirmed", () => {
+  const why = { reason: "Recorded against the wrong lot by mistake" };
+
+  test("a drum's entry: it leaves the stock it was counted in, and the bare act is refused", async () => {
+    await grn("OD-VOID-1", "sup_own", 4, 8, null);
+    await empties(staff, "OD-VOID-1", 3);
+    const [d] = await db.select().from(erpEmptyDrums).where(sql`status = 'available' and lot_no = 'OD-VOID-1'`).limit(1);
+    const bare = await screenModule("emptyDrums")!.actions!.cancel(await ctxOf(head), d.id, why);
+    assert.ok(!bare.ok && /Check what this affects/.test(bare.error));
+    const { report, values } = await confirmed(head, "erp-drum-entry", d.id);
+    assert.equal(report.confirmWord, `DRM-${d.drumNo}`);
+    assert.ok(report.items.some((i) => i.effect === "changed" && /comes out of Mahek's empty drums in stock/.test(i.label)), JSON.stringify(report.items));
+    const r = await screenModule("emptyDrums")!.actions!.cancel(await ctxOf(head), d.id, { ...why, ...values });
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    assert.equal((await db.select().from(erpEmptyDrums).where(eq(erpEmptyDrums.id, d.id)))[0].status, "cancelled");
+  });
+
+  test("a scrap sale: its drums go back; one with money matched to it is refused in the modal", async () => {
+    const sale = await sellScrap(actor(head), { date: "2026-10-12", buyerId: "buyer_a", category: DRUM_CATEGORY, quantity: 2, unit: "Pcs", ratePaise: 30_000, refKind: "none", externalRef: null, dueDate: null, remark: null, godownId: null });
+    assert.ok(sale.ok, sale.ok ? "" : sale.error);
+    const { report, values } = await confirmed(head, "erp-scrap-sale", sale.data.id);
+    assert.equal(report.items.find((i) => /sold drums go back/.test(i.label))?.count, 2);
+    assert.ok(report.items.some((i) => /scrap receivable closed/.test(i.label)));
+    const r = await screenModule("scrapSales")!.actions!.cancel(await ctxOf(head), sale.data.id, { ...why, ...values });
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    assert.equal(await db.$count(erpEmptyDrums, sql`scrap_sale_id = ${sale.data.id}`), 0, "the drums are back in stock");
+    const [paid] = (await db.execute(sql`select id from erp_scrap_sales where external_ref = 'CH-77'`)) as unknown as { id: string }[];
+    const matched = await confirmed(head, "erp-scrap-sale", paid.id);
+    assert.deepEqual(matched.report.blockers, ["Money is matched to this sale. The accountant undoes the match first."]);
+  });
+
+  test("a receipt: the same money in Petty Cash is cancelled with it", async () => {
+    const rc = await recordReceipt(actor(accountant), { date: "2026-10-12", mode: "Bank transfer", amountPaise: 70_000, buyerId: "buyer_a", payer: null, reference: "UTR-VOID", note: null, into: "Kotak Bank" });
+    assert.ok(rc.ok, rc.ok ? "" : rc.error);
+    const bare = await screenModule("cashReceipts")!.actions!.void(await ctxOf(accountant), rc.data.id, why);
+    assert.ok(!bare.ok && /Check what this affects/.test(bare.error));
+    const { report, values } = await confirmed(accountant, "erp-scrap-receipt", rc.data.id);
+    assert.ok(report.items.some((i) => /receipt in Petty Cash cancelled — Kotak Bank's balance drops/.test(i.label)), JSON.stringify(report.items));
+    const r = await screenModule("cashReceipts")!.actions!.void(await ctxOf(accountant), rc.data.id, { ...why, ...values });
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    const [m] = (await db.execute(sql`select status from erp_money_txns where scrap_receipt_id = ${rc.data.id}`)) as unknown as { status: string }[];
+    assert.equal(m.status, "cancelled");
+  });
+
+  test("undoing one match: the modal is about the match the prompt picked", async () => {
+    const [r1] = (await db.execute(sql`select id from erp_cash_receipts where reference = 'UTR1'`)) as unknown as { id: string }[];
+    const row = (await screenModule("cashReceipts")!.load(await ctxOf(accountant))).rows.find((r) => r.id === r1.id)!;
+    const spec = row.actions!.find((a) => a.id === "unmatch")!;
+    assert.equal(spec.impact?.withValue, "alloc");
+    const line = spec.prompt!.fields[0].opts![0];
+    const values = { alloc: line, reason: "Matched to the wrong sale by mistake" };
+    const bare = await screenModule("cashReceipts")!.actions!.unmatch(await ctxOf(accountant), r1.id, values);
+    assert.ok(!bare.ok && /Check what this affects/.test(bare.error));
+    const undo = await confirmed(accountant, "erp-scrap-match", impactPart(r1.id, line));
+    assert.ok(undo.report.items.some((i) => /is owed ₹6,000 again/.test(i.label)), JSON.stringify(undo.report.items));
+    const r = await screenModule("cashReceipts")!.actions!.unmatch(await ctxOf(accountant), r1.id, { ...values, ...undo.values });
+    assert.ok(r.ok, r.ok ? "" : r.error);
+  });
+
+  test("a buyer retired keeps what they owe, and the modal says so", async () => {
+    const { report, values } = await confirmed(head, "erp-scrap-buyer", "buyer_a");
+    assert.equal(report.confirmWord, "Scrap Buyer A");
+    assert.ok(report.items.some((i) => i.effect === "kept" && /open receivable/.test(i.label)), JSON.stringify(report.items));
+    const r = await screenModule("scrapBuyers")!.actions!.retire(await ctxOf(head), "buyer_a", values);
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    await db.update(erpScrapBuyers).set({ active: true }).where(eq(erpScrapBuyers.id, "buyer_a"));
   });
 });

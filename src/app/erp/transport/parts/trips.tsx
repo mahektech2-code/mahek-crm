@@ -12,6 +12,7 @@ import { allocateByLitres, COST_STATUS_TONE, perLitreWords } from "@/lib/erp/eng
 import type { TripBill, TripPayment, TripView } from "@/lib/erp/trips";
 import { inr, inrRate, nf } from "@/lib/erp/ui";
 import { Empty, plural, ReasonDialog, useAct, useTicks } from "./common";
+import { ErpImpactDialog } from "../../_ui/impact-confirm";
 
 /**
  * TRIPS & FREIGHT (Order-to-Delivery PRD steps 10–11). One card per vehicle
@@ -29,12 +30,15 @@ type Dialog =
   | { kind: "add"; trip: TripView }
   | { kind: "pay"; trip: TripView }
   | { kind: "reverse"; payment: TripPayment; trip: TripView }
+  /* The reason is asked first; then what reversing it touches, with the name typed. */
+  | { kind: "reverseImpact"; payment: TripPayment; reason: string }
+  | { kind: "remove"; bill: TripBill }
   | null;
 
 const UNSETTLED = new Set(["Not Recorded", "Recorded", "Allocation Pending"]);
 
 export function Trips({ trips, unassigned, today, transporters, canWrite }: { trips: TripView[]; unassigned: TripBill[]; today: string; transporters: string[]; canWrite: boolean }) {
-  const { run, pending } = useAct();
+  const { pending } = useAct();
   const [filter, setFilter] = useState<Filter>("all");
   const [dialog, setDialog] = useState<Dialog>(null);
   const { ticked, toggle, setMany, clear } = useTicks();
@@ -158,7 +162,7 @@ export function Trips({ trips, unassigned, today, transporters, canWrite }: { tr
                     key={b.id}
                     b={b}
                     share
-                    onRemove={canWrite && b.sharePaise == null ? () => run(() => erpTripRemoveBill(b.id)) : undefined}
+                    onRemove={canWrite && b.sharePaise == null ? () => setDialog({ kind: "remove", bill: b }) : undefined}
                   />
                 ))}
               </>
@@ -210,8 +214,26 @@ export function Trips({ trips, unassigned, today, transporters, canWrite }: { tr
         tone="danger"
         pending={pending}
         onClose={() => setDialog(null)}
-        onConfirm={(reason) => dialog?.kind === "reverse" && run(() => erpTransportPaymentReverse(dialog.payment.id, reason), (r) => r.ok && setDialog(null))}
+        onConfirm={(reason) => dialog?.kind === "reverse" && setDialog({ kind: "reverseImpact", payment: dialog.payment, reason })}
       />
+      {dialog?.kind === "reverseImpact" ? (
+        <ErpImpactDialog
+          kind="erp-transport-payment"
+          id={dialog.payment.id}
+          confirmLabel="Reverse payment"
+          onClose={() => setDialog(null)}
+          act={(confirmation) => erpTransportPaymentReverse(dialog.payment.id, dialog.reason, confirmation)}
+        />
+      ) : null}
+      {dialog?.kind === "remove" ? (
+        <ErpImpactDialog
+          kind="erp-trip-bill"
+          id={dialog.bill.id}
+          confirmLabel="Take it off the trip"
+          onClose={() => setDialog(null)}
+          act={(confirmation) => erpTripRemoveBill(dialog.bill.id, confirmation)}
+        />
+      ) : null}
     </div>
   );
 }

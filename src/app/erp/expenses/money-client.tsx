@@ -11,6 +11,7 @@ import type { Result } from "@/lib/result";
 import { erpMoneyCancel, erpMoneyImport, erpMoneyMatch, erpMoneyReview, erpMoneySettle } from "@/lib/actions/erp-money";
 import { inr } from "@/lib/erp/ui";
 import { ErpDialog } from "../_ui/dialog";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { IconButton, linkClass } from "../_ui/look";
 import { boxClass, MField, MoneyFoot, MoneyHead, Note } from "./money-ui";
 
@@ -147,10 +148,15 @@ export function ReviewButtons({ ids, size = "sm" }: { ids: string[]; size?: "sm"
   );
 }
 
-/** Cancels a transaction, with the reason. */
+/**
+ * Cancels a transaction, with the reason — and then, before anything is
+ * written, the impact modal: which balances move and what else it held.
+ */
 export function CancelTxn({ id }: { id: string }) {
-  const { busy, act } = useAct();
+  const router = useRouter();
+  const { push } = useToast();
   const [asking, setAsking] = React.useState(false);
+  const [confirming, setConfirming] = React.useState(false);
   const [why, setWhy] = React.useState("");
   return (
     <>
@@ -168,11 +174,35 @@ export function CancelTxn({ id }: { id: string }) {
           </div>
           <MoneyFoot>
             <Button onClick={() => setAsking(false)}>Keep it</Button>
-            <Button variant="danger" disabled={busy || why.trim().length < 3} onClick={() => act(() => erpMoneyCancel(id, why), () => setAsking(false))}>
+            <Button
+              variant="danger"
+              disabled={why.trim().length < 3}
+              onClick={() => {
+                setAsking(false);
+                setConfirming(true);
+              }}
+            >
               Cancel transaction
             </Button>
           </MoneyFoot>
         </ErpDialog>
+      ) : null}
+      {confirming ? (
+        <ImpactDialog
+          key={id}
+          kind="erp-money-txn"
+          id={id}
+          confirmLabel="Cancel transaction"
+          onClose={() => setConfirming(false)}
+          onConfirm={async (confirmation) => {
+            const r = await erpMoneyCancel(id, why, confirmation);
+            if (r.ok) {
+              push(r.message ?? "Cancelled");
+              router.refresh();
+            }
+            return r;
+          }}
+        />
       ) : null}
     </>
   );

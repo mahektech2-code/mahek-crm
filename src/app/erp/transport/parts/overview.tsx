@@ -11,6 +11,7 @@ import { callDue, daysBetween, runningLate, shortDay } from "@/lib/erp/engines/l
 import type { Consignment } from "@/lib/erp/logistics";
 import { BillRef, byLr, CallLink, DuePill, Empty, plural, ReasonDialog, StageStrip, sumPackages, useAct, lrLabel } from "./common";
 import { useState } from "react";
+import { ErpImpactDialog } from "../../_ui/impact-confirm";
 
 /**
  * THE DAY ON ONE SCREEN. The four steps of the flow as a pipeline — each a
@@ -144,8 +145,10 @@ function Attention({ label, tone, href, items }: { label: string; tone: "danger"
 
 /** Closed in the last weeks: how long each took, who signed, and the way back for a mistake. */
 export function Delivered({ rows, canWrite }: { rows: Consignment[]; canWrite: boolean }) {
-  const { run, pending } = useAct();
+  const { pending } = useAct();
   const [reopen, setReopen] = useState<Consignment | null>(null);
+  /* The reason is asked first, then what reopening touches, with the order number typed. */
+  const [reopenImpact, setReopenImpact] = useState<{ c: Consignment; reason: string } | null>(null);
   const sorted = [...rows].sort((a, b) => (b.deliveredOn ?? "").localeCompare(a.deliveredOn ?? ""));
   const took = sorted.filter((c) => c.deliveredOn && c.billDate).map((c) => daysBetween(c.billDate!, c.deliveredOn!));
   const avg = took.length ? Math.round((took.reduce((a, b) => a + b, 0) / took.length) * 10) / 10 : null;
@@ -205,8 +208,21 @@ export function Delivered({ rows, canWrite }: { rows: Consignment[]; canWrite: b
         confirmLabel="Reopen"
         pending={pending}
         onClose={() => setReopen(null)}
-        onConfirm={(reason) => reopen && run(() => erpLogisticsReopen(reopen.id, reason), (r) => r.ok && setReopen(null))}
+        onConfirm={(reason) => {
+          if (!reopen) return;
+          setReopenImpact({ c: reopen, reason });
+          setReopen(null);
+        }}
       />
+      {reopenImpact ? (
+        <ErpImpactDialog
+          kind="erp-delivery-reopen"
+          id={reopenImpact.c.id}
+          confirmLabel="Reopen"
+          onClose={() => setReopenImpact(null)}
+          act={(confirmation) => erpLogisticsReopen(reopenImpact.c.id, reopenImpact.reason, confirmation)}
+        />
+      ) : null}
     </div>
   );
 }

@@ -24,6 +24,8 @@ import { erpContext } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
 import { erpNavCounts } from "@/lib/erp/counts";
 import type { FieldSpec } from "@/lib/erp/ui";
+import { impactReport } from "@/lib/impact/registry";
+import { IMPACT_FIELD } from "@/lib/impact/types";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const TODAY = "2026-10-07";
@@ -206,8 +208,19 @@ describe("each department sees its own requirements", () => {
     const [mix] = await db.select().from(erpRequisitions).where(sql`department = 'Mixing & Blending'`).limit(1);
     const r = await mod("requisitions").actions!.cancel(await as(packer), mix.id, { reason: "not ours" });
     assert.ok(!r.ok && r.code === "not_permitted");
-    const ok = await mod("requisitions").actions!.cancel(await as(head), mix.id, { reason: "ordered twice" });
-    assert.ok(ok.ok);
+    /* Nor read what cancelling it would touch: the modal is not a way into another department's purchases. */
+    const peek = await impactReport("erp-requirement-cancel", mix.id);
+    assert.ok(!peek.ok && peek.code === "not_permitted" && /another department/.test(peek.error), JSON.stringify(peek));
+    const h = await as(head);
+    assert.equal((await mod("requisitions").actions!.cancel(h, mix.id, { reason: "ordered twice" })).ok, false, "not without the impact modal's confirmation");
+    const report = await impactReport("erp-requirement-cancel", mix.id);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    assert.ok(report.data.items.some((i) => /marked cancelled/.test(i.label)), JSON.stringify(report.data.items));
+    const ok = await mod("requisitions").actions!.cancel(h, mix.id, {
+      reason: "ordered twice",
+      [IMPACT_FIELD]: JSON.stringify({ typed: report.data.confirmWord, fingerprint: report.data.fingerprint }),
+    });
+    assert.ok(ok.ok, JSON.stringify(ok));
   });
 
   test("the sidebar badge counts only the department's own requirements", async () => {

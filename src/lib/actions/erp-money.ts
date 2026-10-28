@@ -7,6 +7,8 @@ import { err, fromThrown, ok, type Result } from "@/lib/result";
 import { ErpNotPermitted, requireErpWrite, erpContext, type ErpContext } from "@/lib/erp/access";
 import * as M from "@/lib/erp/money";
 import { duplicateOf, invoiceKey } from "@/lib/erp/engines/money";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * Petty Cash's own dialogs write through these — the same services the ERP's
@@ -127,8 +129,13 @@ export async function erpMoneyReview(ids: string[], decision: "approved" | "sent
   return run((a) => M.reviewTxns(a, list(ids), decision, s(note)));
 }
 
-export async function erpMoneyCancel(id: string, reason: string) {
-  return run((a) => M.cancelTxn(a, String(id), typeof reason === "string" ? reason : ""));
+/** Cancels a transaction once the impact modal has been confirmed — the same check the screen's own Cancel makes. */
+export async function erpMoneyCancel(id: string, reason: string, confirmation?: ImpactConfirmation | null) {
+  return run(async (a) => {
+    const refusal = await confirmImpact("erp-money-txn", String(id), confirmation);
+    if (refusal) return refusal;
+    return M.cancelTxn(a, String(id), typeof reason === "string" ? reason : "");
+  });
 }
 
 export async function erpMoneySettle(advanceId: string, account: string) {

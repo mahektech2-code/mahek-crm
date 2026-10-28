@@ -46,6 +46,8 @@ import { applyQuoteOps } from "@/lib/erp/quotes";
 import { lookupRequirementPo, purchaseChoices } from "@/lib/erp/screens/requirement-po";
 import type { GrnItem } from "@/lib/erp/engines/grn-pick";
 import type { ShareOutcome } from "@/lib/erp/ui";
+import { impactReport } from "@/lib/impact/registry";
+import { IMPACT_FIELD } from "@/lib/impact/types";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -76,6 +78,16 @@ const mod = (k: string) => {
   if (!m) throw new Error(`no module ${k}`);
   return m;
 };
+
+/** What the impact modal shows for a record, and what the act receives once the name is typed. */
+async function impact(kind: string, recordId: string) {
+  const r = await impactReport(kind, recordId);
+  assert.ok(r.ok, r.ok ? "" : r.error);
+  const confirmation = { typed: r.data.confirmWord, fingerprint: r.data.fingerprint };
+  return { report: r.data, confirmation, values: { [IMPACT_FIELD]: JSON.stringify(confirmation) } };
+}
+const UNCONFIRMED = "Check what this affects and confirm it first.";
+const labelled = <T extends { label: string }>(r: { items: T[] }, re: RegExp): T | undefined => r.items.find((i) => re.test(i.label));
 
 /**
  * Goods received against a fresh approved PO for exactly these items — for the
@@ -672,12 +684,22 @@ describe("after the PO: cancelling, unlinking, closing short", () => {
     const a = await as(admin);
     const blocked = await mod("requisitions").actions!.cancel(a, req.id, { reason: "Not needed" });
     assert.ok(!blocked.ok, "it is on a PO");
-    assert.ok((await mod("purchaseOrders").actions!.cancel(a, po, { reason: "Vendor out of stock" })).ok);
+    assert.match((await impact("erp-requirement-cancel", req.id)).report.blockers[0] ?? "", /cancel or send back the PO first/);
+    /* Cancelling the PO asks first, and names the requirement that goes back to waiting. */
+    const cancelPo = await mod("purchaseOrders").actions!.cancel(a, po, { reason: "Vendor out of stock" });
+    assert.equal(cancelPo.ok ? "ok" : cancelPo.error, UNCONFIRMED);
+    const first = await impact("erp-po-cancel", po);
+    assert.equal(labelled(first.report, /go back to waiting for a PO/)?.count, 1, JSON.stringify(first.report.items));
+    assert.ok((await mod("purchaseOrders").actions!.cancel(a, po, { reason: "Vendor out of stock", ...first.values })).ok);
     assert.equal(await stageOf(req.id), "Create PO");
     const second = await createPo(req.id);
     assert.ok(second, "a new PO for the same requirement");
-    assert.ok((await mod("purchaseOrders").actions!.cancel(a, second, { reason: "Bought from the market" })).ok);
-    assert.ok((await mod("requisitions").actions!.cancel(a, req.id, { reason: "Bought from the market" })).ok);
+    assert.ok((await mod("purchaseOrders").actions!.cancel(a, second, { reason: "Bought from the market", ...(await impact("erp-po-cancel", second)).values })).ok);
+    assert.equal(((await mod("requisitions").actions!.cancel(a, req.id, { reason: "Bought from the market" })) as { error?: string }).error, UNCONFIRMED);
+    const cancelling = await impact("erp-requirement-cancel", req.id);
+    assert.match(cancelling.report.confirmWord, /^REQ-\d+$/);
+    assert.ok(labelled(cancelling.report, /marked cancelled/), JSON.stringify(cancelling.report.items));
+    assert.ok((await mod("requisitions").actions!.cancel(a, req.id, { reason: "Bought from the market", ...cancelling.values })).ok);
     assert.equal(await stageOf(req.id), "Cancelled");
   });
 
@@ -691,7 +713,12 @@ describe("after the PO: cancelling, unlinking, closing short", () => {
     const poNo = bought.data.minted[0].poNo;
     assert.ok((await mod("requisitions").actions!.linkPo(a, mek.id, { poNo })).ok);
     assert.equal(await stageOf(mek.id), "Waiting for goods");
-    assert.ok((await mod("requisitions").actions!.unlinkPo(a, mek.id, {})).ok);
+    assert.equal(((await mod("requisitions").actions!.unlinkPo(a, mek.id, {})) as { error?: string }).error, UNCONFIRMED);
+    const unlinking = await impact("erp-requirement-unlink", mek.id);
+    assert.equal(unlinking.report.confirmWord, poNo);
+    assert.ok(labelled(unlinking.report, /cancelled — this was its only line/), JSON.stringify(unlinking.report.items));
+    assert.ok(labelled(unlinking.report, /rate bought on the Quotation manager/), "the sheet keeps the purchase, and the modal says so");
+    assert.ok((await mod("requisitions").actions!.unlinkPo(a, mek.id, unlinking.values)).ok);
     assert.equal(await stageOf(mek.id), "Waiting for PO number");
     const [po] = await db.select().from(erpPurchaseOrders).where(sql`qm_po_no = ${poNo}`);
     assert.equal(po.status, "Cancelled", "a PO left with nothing on it is cancelled");
@@ -701,6 +728,7 @@ describe("after the PO: cancelling, unlinking, closing short", () => {
     assert.equal(back.id, po.id);
     assert.equal(back.status, "Sent");
     assert.ok(!(await mod("requisitions").actions!.unlinkPo(a, (await req0("rm_tol")).id, {})).ok, "goods arrived against PO-1 — it stays");
+    assert.match((await impact("erp-requirement-unlink", (await req0("rm_tol")).id)).report.blockers[0] ?? "", /Goods were received against PO-1/);
   });
 
   test("a partly received PO is closed short with a reason, and its requirements count as received", async () => {
@@ -708,7 +736,11 @@ describe("after the PO: cancelling, unlinking, closing short", () => {
     assert.equal(po.status, "Partly received");
     const a = await as(admin);
     assert.ok(!(await mod("purchaseOrders").actions!.cancel(a, po.id, { reason: "x" })).ok, "goods arrived — close it short instead");
-    assert.ok((await mod("purchaseOrders").actions!.close(a, po.id, { reason: "Vendor short-shipped" })).ok);
+    assert.equal((await impact("erp-po-cancel", po.id)).report.blockers[0], "PO-1 is Partly received.", "the modal refuses in the act's own words");
+    assert.equal(((await mod("purchaseOrders").actions!.close(a, po.id, { reason: "Vendor short-shipped" })) as { error?: string }).error, UNCONFIRMED);
+    const closing = await impact("erp-po-close", po.id);
+    assert.ok((labelled(closing.report, /count as received, short or not/)?.count ?? 0) >= 1, JSON.stringify(closing.report.items));
+    assert.ok((await mod("purchaseOrders").actions!.close(a, po.id, { reason: "Vendor short-shipped", ...closing.values })).ok);
     const [tol] = await db.select().from(erpRequisitions).where(sql`raw_material_id = 'rm_tol' and purchase_rule = 'quotation'`);
     assert.equal(tol.status, "Received");
     assert.equal(await stageOf(tol.id), "Closed short");
@@ -856,8 +888,14 @@ describe("Purchase it on the Quotation manager writes the purchase order", () =>
     assert.ok((await applyQuoteOps(a, [{ op: "cell", rowId: "eqr_asian9", columnId: "eqc_toluene", status: "po", drums: 5 }])).ok);
     const [after1] = await db.select().from(erpPoLines).where(eq(erpPoLines.id, line.id));
     assert.equal(after1.drums, 5);
-    /* Undoing the purchase cancels the PO and the requirement it raised. */
-    assert.ok((await applyQuoteOps(a, [{ op: "cell", rowId: "eqr_asian9", columnId: "eqc_toluene", status: "ready", poNo: null }])).ok);
+    /* Undoing the purchase cancels the PO and the requirement it raised — said first, in the modal. */
+    const undo = { op: "cell" as const, rowId: "eqr_asian9", columnId: "eqc_toluene", status: "ready" as const, poNo: null };
+    assert.equal(((await applyQuoteOps(a, [undo])) as { error?: string }).error, UNCONFIRMED);
+    const undoing = await impact("erp-quote-purchase", "eqr_asian9:eqc_toluene");
+    assert.equal(undoing.report.confirmWord, m.poNo);
+    assert.ok(labelled(undoing.report, /cancelled — this was its only line/), JSON.stringify(undoing.report.items));
+    assert.ok(labelled(undoing.report, /cancelled — this purchase raised it/), JSON.stringify(undoing.report.items));
+    assert.ok((await applyQuoteOps(a, [{ ...undo, impact: undoing.confirmation }])).ok);
     assert.equal((await poOf(m.poNo)).status, "Cancelled");
     assert.equal((await db.select().from(erpRequisitions).where(eq(erpRequisitions.id, req.id)))[0].status, "Cancelled");
   });
@@ -873,7 +911,9 @@ describe("Purchase it on the Quotation manager writes the purchase order", () =>
     const po = await poOf(bought.data.minted[0].poNo);
     const [line] = await db.select().from(erpPoLines).where(eq(erpPoLines.poId, po.id));
     assert.equal(line.requisitionId, mek.id);
-    assert.ok((await applyQuoteOps(a, [{ op: "cell", rowId: "eqr_bharat9", columnId: "eqc_mekdrum", status: "ready", poNo: null }])).ok);
+    const undoing = await impact("erp-quote-purchase", "eqr_bharat9:eqc_mekdrum");
+    assert.ok(labelled(undoing.report, /goes back to waiting for a PO/), JSON.stringify(undoing.report.items));
+    assert.ok((await applyQuoteOps(a, [{ op: "cell", rowId: "eqr_bharat9", columnId: "eqc_mekdrum", status: "ready", poNo: null, impact: undoing.confirmation }])).ok);
     const [back] = await db.select().from(erpRequisitions).where(eq(erpRequisitions.id, mek.id));
     assert.equal(back.status, "Pending", "a requirement somebody raised is never cancelled by an undo");
   });
@@ -909,10 +949,24 @@ describe("Purchase it on the Quotation manager writes the purchase order", () =>
     const other = await applyQuoteOps(a, [{ op: "cell", rowId: "eqr_bharatm", columnId: "eqc_mekdrum", status: "po", drums: 1, order: order({ addTo: poNo }) }]);
     assert.ok(!other.ok, "never onto another vendor's PO");
 
-    assert.ok((await applyQuoteOps(a, [{ op: "cell", rowId: "eqr_asianm", columnId: "eqc_toluene", status: "ready", poNo: null }])).ok);
+    const undoing = await impact("erp-quote-purchase", "eqr_asianm:eqc_toluene");
+    assert.ok(labelled(undoing.report, /rewritten without it/), JSON.stringify(undoing.report.items));
+    assert.ok((await applyQuoteOps(a, [{ op: "cell", rowId: "eqr_asianm", columnId: "eqc_toluene", status: "ready", poNo: null, impact: undoing.confirmation }])).ok);
     const kept = await poOf(poNo);
     assert.equal(kept.status, "Sent", "the PO stays for the material still on it");
     assert.deepEqual((await db.select().from(erpPoLines).where(eq(erpPoLines.poId, kept.id))).map((l) => l.rawMaterialId), ["rm_mek"]);
+
+    /* Deleting a row that holds a bought rate asks first — its PO stays, and the sheet stops showing it. A row
+       holding none is the spreadsheet's own, and Ctrl+Z on a paste deletes rows without asking anybody. */
+    assert.equal(((await applyQuoteOps(a, [{ op: "deleteRow", rowId: "eqr_asianm" }])) as { error?: string }).error, UNCONFIRMED);
+    const deleting = await impact("erp-quote-row", "eqr_asianm");
+    assert.equal(deleting.report.confirmWord, "Asian Solvents");
+    assert.equal(labelled(deleting.report, /their purchase orders stay/)?.count, 1, JSON.stringify(deleting.report.items));
+    assert.ok((await applyQuoteOps(a, [{ op: "deleteRow", rowId: "eqr_asianm", impact: deleting.confirmation }])).ok);
+    assert.ok((await applyQuoteOps(a, [{ op: "deleteRow", rowId: "eqr_asianm2" }])).ok);
+    const gone = await db.select().from(erpQuoteRows).where(sql`id in ('eqr_asianm', 'eqr_asianm2') and deleted_at is not null`);
+    assert.equal(gone.length, 2);
+    assert.equal((await poOf(poNo)).status, "Sent", "deleting the row leaves its PO alone");
   });
 
   test("a row whose party is not a supplier is refused, and nothing is bought", async () => {

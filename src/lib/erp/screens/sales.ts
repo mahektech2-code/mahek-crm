@@ -1191,7 +1191,8 @@ function orderList(scope: Scope): ScreenModule {
               { id: "ready", l: "Ready" },
               { id: "underProcess", l: "Under Process" },
               { id: "hold", l: "Hold From Office" },
-              { id: "cancel", l: "Cancel" },
+              /* Which of the selection can be cancelled, and what the order book does with it. */
+              { id: "cancel", l: "Cancel", impact: { kind: "erp-order-cancel" } },
               ...(approver ? [{ id: "approve", l: "Approved By Admin" }] : []),
             ];
       const byNo = new Map<number, OrderLine[]>();
@@ -1253,7 +1254,7 @@ function orderList(scope: Scope): ScreenModule {
                 ...statusActions(l),
                 ...(billed
                   ? [
-                      { id: "unbill", l: "Undo billing", why: dispatched ? "It has been dispatch-verified" : "", confirm: `Take order ${l.o.orderNo} back out of billing? Its invoice check is cleared.` } as ActionSpec,
+                      { id: "unbill", l: "Undo billing", why: dispatched ? "It has been dispatch-verified" : "", impact: { kind: "erp-order-unbill", id: l.o.id } } as ActionSpec,
                       {
                         id: "changeInvoice",
                         l: "Change invoice",
@@ -1520,7 +1521,7 @@ function statusActions(l: OrderLine): ActionSpec[] {
         : st === "Cancel" && l.allocations
           ? "Release its batch codes first"
           : "";
-    out.push({ id: STATUS_ACTION[st], l: st, why, confirm: st === "Cancel" ? `Cancel order ${l.o.orderNo} · ${l.sku.name}?` : undefined } as ActionSpec);
+    out.push({ id: STATUS_ACTION[st], l: st, why, impact: st === "Cancel" ? { kind: "erp-order-cancel", id: l.o.id } : undefined } as ActionSpec);
   }
   return out;
 }
@@ -1840,8 +1841,14 @@ function lineHandlers(scope: Scope): Pick<ScreenModule, "actions" | "bulk" | "fo
       ready: (ctx, ids) => doReady(ctx, ids),
       underProcess: (ctx, ids) => doUnder(ctx, ids),
       hold: (ctx, ids) => doStatus(ctx, ids, "Hold From Office"),
-      cancel: (ctx, ids) => doStatus(ctx, ids, "Cancel"),
-      unbill: (ctx, ids) => doUnbill(ctx, ids),
+      async cancel(ctx, ids, values) {
+        const refusal = await confirmImpact("erp-order-cancel", ids.join(","), readConfirmation(values));
+        return refusal ?? doStatus(ctx, ids, "Cancel");
+      },
+      async unbill(ctx, ids, values) {
+        const refusal = await confirmImpact("erp-order-unbill", ids.join(","), readConfirmation(values));
+        return refusal ?? doUnbill(ctx, ids);
+      },
       approve: (ctx, ids) => doApprove(ctx, ids),
       stickers: (ctx, ids) => doStickers(ctx, ids),
     },
@@ -1851,9 +1858,15 @@ function lineHandlers(scope: Scope): Pick<ScreenModule, "actions" | "bulk" | "fo
       ready: (ctx, id) => doReady(ctx, [id]),
       underProcess: (ctx, id) => doUnder(ctx, [id]),
       hold: (ctx, id) => doStatus(ctx, [id], "Hold From Office"),
-      cancel: (ctx, id) => doStatus(ctx, [id], "Cancel"),
+      async cancel(ctx, id, values) {
+        const refusal = await confirmImpact("erp-order-cancel", id, readConfirmation(values));
+        return refusal ?? doStatus(ctx, [id], "Cancel");
+      },
       bill: (ctx, id, values) => doBill(ctx, id, values),
-      unbill: (ctx, id) => doUnbill(ctx, [id]),
+      async unbill(ctx, id, values) {
+        const refusal = await confirmImpact("erp-order-unbill", id, readConfirmation(values));
+        return refusal ?? doUnbill(ctx, [id]);
+      },
       changeInvoice: (ctx, id, values) => doChangeInvoice(ctx, id, values),
       approveInvoice: (ctx, id) => doApproveInvoice(ctx, id),
       rejectInvoice: (ctx, id, values) => doRejectInvoice(ctx, id, values),
@@ -2160,7 +2173,7 @@ const batchCodes: ScreenModule = {
               why: dispatched ? "The order has been dispatch-verified" : "",
               prompt: { title: "Change the allocated quantity", sub: `${r.b.lotCode} · order ${r.o.orderNo}`, submit: "Save", fields: [{ k: "qty", l: "Quantity", t: "num", req: true, min: 1 }], init: { qty: String(r.b.quantity) } },
             },
-            { id: "release", l: "Release", why: dispatched ? "The order has been dispatch-verified" : "", confirm: `Release ${nf(r.b.quantity)} from ${r.b.lotCode} back to stock?` },
+            { id: "release", l: "Release", why: dispatched ? "The order has been dispatch-verified" : "", impact: { kind: "erp-batch-release", id: r.b.id } },
           ],
           by: stampLine(r.by, r.b.createdAt),
         };
@@ -2193,9 +2206,11 @@ const batchCodes: ScreenModule = {
         return okVoid("Allocation saved");
       });
     },
-    async release(ctx, id) {
+    async release(ctx, id, values) {
       const [b] = await db.select().from(erpBatchCodes).where(eq(erpBatchCodes.id, id));
       if (!b) return err("That allocation no longer exists.", "not_found");
+      const refusal = await confirmImpact("erp-batch-release", id, readConfirmation(values));
+      if (refusal) return refusal;
       const [d] = await db.select({ v: erpOrderDetails.verification }).from(erpOrderDetails).where(eq(erpOrderDetails.orderId, b.orderId));
       if (d?.v === "Verified") return err("The order has been dispatch-verified.", "rule_violation");
       /* A billed line was billed on these lots. Taking one away would leave a
@@ -2422,7 +2437,7 @@ const orderDetails: ScreenModule = {
               prompt: DISPATCH_PROMPT(`Order ${l.o.orderNo} leaves whole — every billed line of it.`),
             },
             { id: "stickers", l: "Stickers are on", why: d.verification === "Verified" ? "It has left" : d.stickersAt ? "Already recorded" : "" },
-            ...(ctx.administrator && d.verification !== "Not Verify" ? [{ id: "notVerify", l: "Mark not verified", confirm: "Mark this line not verified?" } as ActionSpec] : []),
+            ...(ctx.administrator && d.verification !== "Not Verify" ? [{ id: "notVerify", l: "Mark not verified", impact: { kind: "erp-dispatch-unverify", id: d.orderId } } as ActionSpec] : []),
             {
               id: "extra",
               l: "Extra expenses",
@@ -2515,8 +2530,10 @@ const orderDetails: ScreenModule = {
     verify: (ctx, id, values) => verify(ctx, [id], values),
     stickers: (ctx, id) => doStickers(ctx, [id]),
     extra: (ctx, id, values) => setExtraExpenses(ctx, [id], values),
-    async notVerify(ctx, id) {
+    async notVerify(ctx, id, values) {
       if (!ctx.administrator) return err("Only an administrator marks a line not verified.", "not_permitted");
+      const refusal = await confirmImpact("erp-dispatch-unverify", id, readConfirmation(values));
+      if (refusal) return refusal;
       await db.update(erpOrderDetails).set({ verification: "Not Verify", updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpOrderDetails.orderId, id));
       await erpAudit(ctx, "erp.detail.notVerify", "erp_order_detail", id);
       await syncBookOrders(await orderNosOf([id]));

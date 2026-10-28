@@ -44,9 +44,16 @@ import { dueOf, orderForm } from "@/lib/erp/screens/sales";
 import { dispatchLabels } from "@/lib/erp/label-data";
 import { withFills, type FieldSpec } from "@/lib/erp/ui";
 import { impactReport } from "@/lib/impact/registry";
-import { IMPACT_FIELD } from "@/lib/impact/types";
+import { IMPACT_FIELD, type ImpactReport } from "@/lib/impact/types";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
+
+/** The report the impact modal shows, and the payload it sends back with the act — typed exactly as asked. */
+async function confirmed(kind: string, recordId: string): Promise<{ report: ImpactReport; values: Record<string, string> }> {
+  const r = await impactReport(kind, recordId);
+  assert.ok(r.ok, r.ok ? "" : r.error);
+  return { report: r.data, values: { [IMPACT_FIELD]: JSON.stringify({ typed: r.data.confirmWord, fingerprint: r.data.fingerprint }) } };
+}
 const TODAY = "2026-09-20";
 const tag = randomUUID().slice(0, 6);
 const LOOSE = `ERPS Thinner ${tag} - 1 Liter (Loose)`;
@@ -267,7 +274,11 @@ describe("marking Ready", () => {
     assert.equal(await statusNow(), "Hold From Office");
     assert.ok((await a.underProcess(ctx, line.id, {})).ok, "Hold goes back to Under Process");
     assert.equal(await statusNow(), "Under Process");
-    assert.ok((await a.cancel(ctx, line.id, {})).ok);
+    assert.match(msg(await a.cancel(ctx, line.id, {})), /Check what this affects/, "a cancel is confirmed through the impact modal");
+    const cancel = await confirmed("erp-order-cancel", line.id);
+    assert.ok(cancel.report.items.some((i) => i.effect === "changed" && /order line cancelled/.test(i.label)), JSON.stringify(cancel.report.items));
+    assert.equal(cancel.report.confirmWord, String(line.orderNo));
+    assert.ok((await a.cancel(ctx, line.id, cancel.values)).ok);
     assert.equal(await statusNow(), "Cancel");
     assert.ok((await mod("orders").bulk!.hold(ctx, [line.id], {})).ok, "a cancelled line can be put back");
     assert.equal(await statusNow(), "Hold From Office");
@@ -307,7 +318,10 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
     assert.match(msg(await a.bill(ctx, loose.id, {})), /The Tally invoice number is required/);
     assert.equal(msg(await a.moveOut(ctx, boxed.id, { qty: "24" })), "Release its batch codes first; they hold stock for this order.");
     const [bc] = await db.select().from(erpBatchCodes).where(eq(erpBatchCodes.orderId, boxed.id));
-    assert.ok((await mod("batchCodes").actions!.release(ctx, bc.id, {})).ok);
+    assert.match(msg(await mod("batchCodes").actions!.release(ctx, bc.id, {})), /Check what this affects/);
+    const release = await confirmed("erp-batch-release", bc.id);
+    assert.ok(release.report.items.some((i) => new RegExp(`go back into packing lot ${bc.lotCode}`).test(i.label)), JSON.stringify(release.report.items));
+    assert.ok((await mod("batchCodes").actions!.release(ctx, bc.id, release.values)).ok);
     assert.equal((await packLots())[0].stock, 10, "releasing gives the stock back");
     assert.equal(msg(await a.moveOut(ctx, boxed.id, { qty: "6" })), "Both parts must be whole boxes of 4.");
     assert.match(say(await a.moveOut(ctx, boxed.id, { qty: "24" })), /moved to order \d+, linked to order/);
@@ -356,7 +370,9 @@ describe("the order to the bill to the lorry (Order-to-Delivery PRD)", () => {
     assert.equal(d.vehicleNo, "MH 04 AB 1234");
     assert.equal(d.driver, "Ramesh");
     const [bc] = await db.select().from(erpBatchCodes).where(eq(erpBatchCodes.orderId, loose.id));
-    assert.equal(msg(await mod("batchCodes").actions!.release(ctx, bc.id, {})), "The order has been dispatch-verified.");
+    const late = await confirmed("erp-batch-release", bc.id);
+    assert.deepEqual(late.report.blockers, ["The order has been dispatch-verified."], "the modal says why before the button would");
+    assert.equal(msg(await mod("batchCodes").actions!.release(ctx, bc.id, late.values)), "The order has been dispatch-verified.");
   });
 
   test("dispatch stickers go on while the goods are under process or ready, before any bill", async () => {
