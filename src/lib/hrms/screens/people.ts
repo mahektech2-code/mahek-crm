@@ -35,6 +35,9 @@ import { personFrom, personOption, scopeFor } from "./attendance";
 import { ADMIN } from "@/lib/admin-routes";
 import { ASSET_CATEGORIES, ASSET_EQUIPMENT, OFFICE_ALL_HOURS, OFFICE_TIMINGS } from "../values";
 import { tellPowerHolders } from "../services/notify";
+import { confirmImpact } from "@/lib/impact/registry";
+import { readConfirmation } from "@/lib/impact/types";
+import { impactBatchKey } from "@/lib/impact/batch-key";
 
 /* ---------------------------------------------------------------------------
  * People (spec §4, §5, §15): the employee directory and its sign-up form, ID
@@ -142,6 +145,23 @@ async function historyCounts(id: string): Promise<Record<string, number>> {
   const parts = HISTORY.map((h) => sql`select ${h.k} as k, count(*)::int as n from ${sql.raw(`"${h.table}"`)} where ${sql.raw(`"${h.col}"`)} = ${id}`);
   const rows = (await db.execute(sql.join(parts, sql` union all `))) as unknown as { k: string; n: number | string }[];
   return Object.fromEntries(rows.map((r) => [r.k, Number(r.n)]));
+}
+
+/**
+ * Why this person cannot be deleted, in one set of words: the act refuses in
+ * them and the impact modal shows them before the button. Every HRMS table
+ * cascades from the employee, so EVERY kind of history is counted — the check
+ * used to look at six of them and a delete took the person's help requests,
+ * checklists, sales entries, calls, reviews and grievances with it.
+ */
+export async function employeeDeleteRefusal(e: Pick<Employee, "id" | "name" | "source" | "sheetStatus">): Promise<string | null> {
+  const c = await historyCounts(e.id);
+  const history = HISTORY.filter((h) => c[h.k]).map((h) => plural(c[h.k], h.one, h.many));
+  // A49: history outlives the person. Deactivating keeps it; deleting would cascade it away.
+  if (history.length) return `${e.name} has ${history.join(", ")}. Deactivate instead — deleting would erase that history.`;
+  if (e.source !== "hrms" && e.sheetStatus === "present")
+    return `${e.name} is still on the employee sheet, so the next pull would bring them back. Remove the row from the sheet, or deactivate.`;
+  return null;
 }
 
 async function relatedCounts(ids?: string[]): Promise<Map<string, Record<string, number>>> {
@@ -253,7 +273,7 @@ function employeeRow(ctx: HrmsContext, e: Employee, counts: Record<string, numbe
     actions.push({
       id: "deactivate",
       l: "Deactivate",
-      confirm: `Deactivate ${e.name}? They can no longer sign in to MahekOne, and any open session ends.`,
+      impact: { kind: "hrms-employee-deactivate", id: e.id },
       why: !hr ? "Deactivating an employee needs the HR power" : own ? "You cannot deactivate your own record" : undefined,
     });
   if (e.status !== "active") actions.push({ id: "activate", l: "Activate", why: hr ? undefined : "Activating an employee needs the HR power" });
@@ -272,7 +292,7 @@ function employeeRow(ctx: HrmsContext, e: Employee, counts: Record<string, numbe
         fields: [{ k: "photo", l: "Photo", t: "photo", req: true, hint: "Face the camera in good light. It appears on the ID card and attendance." }],
       },
     });
-  if (has(ctx, "admin")) actions.push({ id: "delete", l: "Delete", confirm: `Delete ${e.name}? This cannot be undone. Deactivate instead if they have left.` });
+  if (has(ctx, "admin")) actions.push({ id: "delete", l: "Delete", impact: { kind: "hrms-employee", id: e.id } });
 
   return {
     id: e.id,
@@ -546,7 +566,7 @@ async function readEmployee(
  * employee (spec §2.1): disabled with its sessions ended, or enabled again.
  * Stamps `hrmsDecidedAt` so the sheet's own status column cannot undo it.
  */
-async function setEmployeeStatus(ctx: HrmsContext, ids: string[], active: boolean) {
+async function setEmployeeStatus(ctx: HrmsContext, ids: string[], active: boolean, values?: Values) {
   if (!has(ctx, "hr")) return err(`${active ? "Activating" : "Deactivating"} an employee needs the HR power`, "not_permitted");
   if (!active && ctx.employee && ids.includes(ctx.employee.id)) return err("You cannot deactivate your own record.");
   const rows = await db
@@ -555,6 +575,12 @@ async function setEmployeeStatus(ctx: HrmsContext, ids: string[], active: boolea
     .where(inArray(employees.id, ids));
   const change = rows.filter((r) => (active ? r.status !== "active" : r.status !== "inactive"));
   if (!change.length) return okVoid("Nothing to change.");
+  /* Deactivating switches sign-ins off and ends sessions: the person saw who,
+     and it is still who. The selection is one record to the modal, by its key. */
+  if (!active) {
+    const refusal = await confirmImpact("hrms-employee-deactivate", impactBatchKey(ids), readConfirmation(values));
+    if (refusal) return refusal;
+  }
   const changeIds = change.map((r) => r.id);
   const t = today();
   let ended = 0;
@@ -638,7 +664,7 @@ const employeesScreen: HrmsScreenModule = {
         bulk: hr
           ? [
               { id: "empActivate", l: "Activate", confirm: "Activate the selected employees? Their MahekOne sign-in works again." },
-              { id: "empDeactivate", l: "Deactivate", confirm: "Deactivate the selected employees? They can no longer sign in, and open sessions end." },
+              { id: "empDeactivate", l: "Deactivate", impact: { kind: "hrms-employee-deactivate" } },
             ]
           : undefined,
         newForm: hr ? await employeeForm(ctx, "new") : undefined,
@@ -784,8 +810,8 @@ const employeesScreen: HrmsScreenModule = {
     },
   },
   actions: {
-    async deactivate(ctx, id) {
-      return setEmployeeStatus(ctx, [id], false);
+    async deactivate(ctx, id, values) {
+      return setEmployeeStatus(ctx, [id], false, values);
     },
     async activate(ctx, id) {
       return setEmployeeStatus(ctx, [id], true);
@@ -803,21 +829,16 @@ const employeesScreen: HrmsScreenModule = {
       if (res.ok) await hrmsAudit(ctx, "hrms.employee.photo", "employees", id, null, { photo });
       return res;
     },
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       if (!has(ctx, "admin")) return err("Deleting an employee needs the HRMS administration power", "not_permitted");
       const e = await employeeById(id);
       if (!e) return err("That employee no longer exists.", "not_found");
-      /* Every HRMS table cascades from the employee, so EVERY kind of history
-         has to be counted here — the check used to look at six of them and a
-         delete took the person's help requests, checklists, sales entries,
-         calls, reviews and grievances with it. Configuration (working hours,
-         task templates, leave credits, reporting lines) goes with the person. */
-      const c = await historyCounts(id);
-      const history = HISTORY.filter((h) => c[h.k]).map((h) => plural(c[h.k], h.one, h.many));
-      // A49: history outlives the person. Deactivating keeps it; deleting would cascade it away.
-      if (history.length) return err(`${e.name} has ${history.join(", ")}. Deactivate instead — deleting would erase that history.`, "rule_violation");
-      if (e.source !== "hrms" && e.sheetStatus === "present")
-        return err(`${e.name} is still on the employee sheet, so the next pull would bring them back. Remove the row from the sheet, or deactivate.`, "rule_violation");
+      /* Configuration (working hours, task templates, leave credits, reporting
+         lines) goes with the person; history refuses the delete. */
+      const refused = await employeeDeleteRefusal(e);
+      if (refused) return err(refused, "rule_violation");
+      const refusal = await confirmImpact("hrms-employee", id, readConfirmation(values));
+      if (refusal) return refusal;
       await db.delete(employees).where(eq(employees.id, id));
       await hrmsAudit(ctx, "hrms.employee.delete", "employees", id, { code: e.employeeCode, name: e.name }, null);
       return okVoid(`${e.name} deleted`);
@@ -827,8 +848,8 @@ const employeesScreen: HrmsScreenModule = {
     async empActivate(ctx, ids) {
       return setEmployeeStatus(ctx, ids, true);
     },
-    async empDeactivate(ctx, ids) {
-      return setEmployeeStatus(ctx, ids, false);
+    async empDeactivate(ctx, ids, values) {
+      return setEmployeeStatus(ctx, ids, false, values);
     },
   },
   tools: {
@@ -887,7 +908,7 @@ const idCards: HrmsScreenModule = {
           why: hr ? undefined : "Uploading an ID card needs the HR power",
           prompt: { title: "ID card image", sub: `${r.name} · ${r.code}`, submit: "Save ID card", fields: [{ k: "image", l: "ID card image", t: "photo", req: true }] },
         });
-        if (r.card) actions.push({ id: "remove", l: "Remove ID card", why: has(ctx, "admin") ? undefined : "Removing an ID card needs the HRMS administration power", confirm: `Remove ${r.name}’s ID card image?` });
+        if (r.card) actions.push({ id: "remove", l: "Remove ID card", why: has(ctx, "admin") ? undefined : "Removing an ID card needs the HRMS administration power", impact: { kind: "hrms-id-card", id: r.id } });
         const contacts: Contact[] = [];
         if (r.card) contacts.push({ l: "ID card", href: attHref(r.card) });
         if (r.photo) contacts.push({ l: "Photo", href: attHref(r.photo) });
@@ -917,10 +938,12 @@ const idCards: HrmsScreenModule = {
       if (res.ok) await hrmsAudit(ctx, "hrms.employee.idCard", "employees", id, null, { idCard: image });
       return res;
     },
-    async remove(ctx, id) {
+    async remove(ctx, id, values) {
       if (!has(ctx, "admin")) return err("Removing an ID card needs the HRMS administration power", "not_permitted");
       const [e] = await db.select({ card: employees.idCardAttachmentId }).from(employees).where(eq(employees.id, id)).limit(1);
       if (!e?.card) return err("There is no ID card to remove.", "not_found");
+      const refusal = await confirmImpact("hrms-id-card", id, readConfirmation(values));
+      if (refusal) return refusal;
       await inTx(async (tx) => {
         await tx.update(employees).set({ idCardAttachmentId: null, updatedAt: new Date() }).where(eq(employees.id, id));
         /* Removing is a status, never a delete (the attachment rule): the
@@ -1068,6 +1091,20 @@ async function saveOffice(ctx: HrmsContext, h: Values, existing?: Office) {
   return res;
 }
 
+/** Why an office cannot be deleted — the act's refusal and the impact modal's blocker, one reading. */
+export async function officeDeleteRefusal(o: { name: string }): Promise<string | null> {
+  const n = (await allPeople()).filter((p) => isActive(p) && p.office === o.name).length;
+  if (n) return `${staffCount(n, ["works", "work"])} at ${o.name}. Move them to another office first.`;
+  /* Assets and documents are filed under the office's NAME, so deleting it
+     would leave stock nobody can find by office and documents meant for an
+     office that no longer exists. */
+  const [stock] = (await db.execute(sql`select count(*)::int as n from hrms_asset_stock where office_name = ${o.name}`)) as unknown as { n: number }[];
+  if (Number(stock?.n)) return `${plural(Number(stock.n), "asset stock lot")} ${Number(stock.n) === 1 ? "is" : "are"} filed under ${o.name}. Move them first.`;
+  const [docs] = (await db.execute(sql`select count(*)::int as n from mbos_documents where audience = ${o.name} and active`)) as unknown as { n: number }[];
+  if (Number(docs?.n)) return `${plural(Number(docs.n), "document")} ${Number(docs.n) === 1 ? "is" : "are"} meant for ${o.name}. Change who ${Number(docs.n) === 1 ? "it is" : "they are"} for first.`;
+  return null;
+}
+
 const officesScreen: HrmsScreenModule = {
   key: "offices",
   async load(ctx) {
@@ -1117,7 +1154,8 @@ const officesScreen: HrmsScreenModule = {
         ];
         if (pin) actions.push({ id: "map", l: "View map", href: mapHref(pin) });
         if (has(ctx, "admin"))
-          actions.push({ id: "delete", l: "Delete", confirm: `Delete ${o.name}? Its QR code stops working.`, why: n ? `${staffCount(n, ["works", "work"])} here` : undefined });
+          /* Staff, stock and documents still filed under it are refused in the modal, with the reason. */
+          actions.push({ id: "delete", l: "Delete", impact: { kind: "hrms-office", id: o.id } });
         return {
           id: o.id,
           v: { name: o.name, city: o.city ?? "", region: o.region ?? "", radius: o.radiusM, open: o.openingTime ?? "", close: o.closingTime ?? "", timing: o.timingType, emp: n },
@@ -1150,19 +1188,14 @@ const officesScreen: HrmsScreenModule = {
     },
   },
   actions: {
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       if (!has(ctx, "admin")) return err("Deleting an office needs the HRMS administration power", "not_permitted");
       const [o] = await db.select().from(hrmsOffices).where(eq(hrmsOffices.id, id)).limit(1);
       if (!o) return err("That office no longer exists.", "not_found");
-      const n = (await allPeople()).filter((p) => isActive(p) && p.office === o.name).length;
-      if (n) return err(`${staffCount(n, ["works", "work"])} at ${o.name}. Move them to another office first.`, "rule_violation");
-      /* Assets and documents are filed under the office's NAME, so deleting it
-         would leave stock nobody can find by office and documents meant for
-         an office that no longer exists. */
-      const [stock] = (await db.execute(sql`select count(*)::int as n from hrms_asset_stock where office_name = ${o.name}`)) as unknown as { n: number }[];
-      if (Number(stock?.n)) return err(`${plural(Number(stock.n), "asset stock lot")} ${Number(stock.n) === 1 ? "is" : "are"} filed under ${o.name}. Move them first.`, "rule_violation");
-      const [docs] = (await db.execute(sql`select count(*)::int as n from mbos_documents where audience = ${o.name} and active`)) as unknown as { n: number }[];
-      if (Number(docs?.n)) return err(`${plural(Number(docs.n), "document")} ${Number(docs.n) === 1 ? "is" : "are"} meant for ${o.name}. Change who ${Number(docs.n) === 1 ? "it is" : "they are"} for first.`, "rule_violation");
+      const refused = await officeDeleteRefusal(o);
+      if (refused) return err(refused, "rule_violation");
+      const refusal = await confirmImpact("hrms-office", id, readConfirmation(values));
+      if (refusal) return refusal;
       await db.delete(hrmsOffices).where(eq(hrmsOffices.id, id));
       await hrmsAudit(ctx, "hrms.office.delete", "hrms_offices", id, o, null);
       return okVoid(`${o.name} deleted`);
@@ -1174,7 +1207,7 @@ const officesScreen: HrmsScreenModule = {
 
 /** Monday first — the working week the way people read it. */
 const WEEK: string[] = [...WEEKDAYS.slice(1), WEEKDAYS[0]];
-const canTimings = (ctx: HrmsContext) => has(ctx, "timings") || has(ctx, "hr");
+export const canTimings = (ctx: HrmsContext) => has(ctx, "timings") || has(ctx, "hr");
 const dutyHours = (i: string, o: string) => {
   const a = tmin(i);
   const b = tmin(o);
@@ -1287,7 +1320,7 @@ const timings: HrmsScreenModule = {
           },
           { id: "employee", l: "View employee", href: hrmsLink("employees", { open: r.employeeId, scope: "all" }) },
         ];
-        if (can) actions.push({ id: "delete", l: "Delete", confirm: `Delete ${p?.name ?? "this person"}’s ${r.weekday} timing? That weekday then has no official in time.` });
+        if (can) actions.push({ id: "delete", l: "Delete", impact: { kind: "hrms-timing", id: r.id } });
         return {
           id: r.id,
           v: { emp: p?.name ?? "", weekday: r.weekday, in: r.inTime, out: r.outTime, duty: dutyHours(r.inTime, r.outTime), office: p?.office ?? "" },
@@ -1338,10 +1371,12 @@ const timings: HrmsScreenModule = {
       await hrmsAudit(ctx, "hrms.timing.edit", "hrms_staff_timings", id, { in: r.inTime, out: r.outTime }, { in: v.in, out: v.out });
       return okVoid("Timing updated · days already recorded keep the timing they were stamped with");
     },
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       if (!canTimings(ctx)) return err("Deleting timings needs the “Set staff timings” or HR power", "not_permitted");
       const [r] = await db.select().from(hrmsStaffTimings).where(eq(hrmsStaffTimings.id, id)).limit(1);
       if (!r) return err("That timing no longer exists.", "not_found");
+      const refusal = await confirmImpact("hrms-timing", id, readConfirmation(values));
+      if (refusal) return refusal;
       await db.delete(hrmsStaffTimings).where(eq(hrmsStaffTimings.id, id));
       await hrmsAudit(ctx, "hrms.timing.delete", "hrms_staff_timings", id, r, null);
       return okVoid(`${r.weekday} timing deleted`);
@@ -1443,6 +1478,12 @@ async function saveStock(ctx: HrmsContext, h: Values, existing?: Stock) {
   return res;
 }
 
+/** Why a stock lot cannot be deleted — the act's refusal and the impact modal's blocker, one reading. */
+export async function assetLotRefusal(s: { id: string; code: string }): Promise<string | null> {
+  const [used] = await db.select({ id: hrmsAssetAssignments.id }).from(hrmsAssetAssignments).where(eq(hrmsAssetAssignments.stockId, s.id)).limit(1);
+  return used ? `${s.code} has assignments — deleting it would erase who holds it.` : null;
+}
+
 const assetStock: HrmsScreenModule = {
   key: "assetStock",
   async load(ctx) {
@@ -1485,7 +1526,8 @@ const assetStock: HrmsScreenModule = {
             ? [{ id: "assignments", l: "View assignments", href: hrmsLink("assignments", { scope: "all", f: assigned.filter((a) => a.stockId === s.id).map((a) => a.id).join(","), fl: `${s.name} · ${s.code}` }) }]
             : []),
         ];
-        if (hr) actions.push({ id: "delete", l: "Delete", confirm: `Delete ${s.code}?`, why: n ? `${n === 1 ? "1 assignment uses" : `${n} assignments use`} this lot` : undefined });
+        /* A lot with assignments is refused in the modal, with the reason. */
+        if (hr) actions.push({ id: "delete", l: "Delete", impact: { kind: "hrms-asset-lot", id: s.id } });
         return {
           id: s.id,
           v: {
@@ -1535,12 +1577,14 @@ const assetStock: HrmsScreenModule = {
     },
   },
   actions: {
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       if (!has(ctx, "hr")) return err("Managing the asset stock needs the HR power", "not_permitted");
       const [s] = await db.select().from(hrmsAssetStock).where(eq(hrmsAssetStock.id, id)).limit(1);
       if (!s) return err("That stock no longer exists.", "not_found");
-      const [used] = await db.select({ id: hrmsAssetAssignments.id }).from(hrmsAssetAssignments).where(eq(hrmsAssetAssignments.stockId, id)).limit(1);
-      if (used) return err(`${s.code} has assignments — deleting it would erase who holds it.`, "rule_violation");
+      const refused = await assetLotRefusal(s);
+      if (refused) return err(refused, "rule_violation");
+      const refusal = await confirmImpact("hrms-asset-lot", id, readConfirmation(values));
+      if (refusal) return refusal;
       await db.delete(hrmsAssetStock).where(eq(hrmsAssetStock.id, id));
       await hrmsAudit(ctx, "hrms.asset.delete", "hrms_asset_stock", id, s, null);
       return okVoid(`${s.code} deleted`);
@@ -1640,7 +1684,7 @@ const assignments: HrmsScreenModule = {
             },
           });
         actions.push({ id: "asset", l: "View asset", href: hrmsLink("assetStock", { open: a.stockId }) });
-        if (has(ctx, "admin")) actions.push({ id: "delete", l: "Delete", confirm: "Delete this assignment? The quantity goes back into stock." });
+        if (has(ctx, "admin")) actions.push({ id: "delete", l: "Delete", impact: { kind: "hrms-asset-assignment", id: a.id } });
         return {
           id: a.id,
           v: {
@@ -1762,10 +1806,12 @@ const assignments: HrmsScreenModule = {
       if (res.ok) await hrmsAudit(ctx, "hrms.asset.restore", "hrms_asset_assignments", id, { status: a.status, restoredQty: before }, { status: done ? "Restored" : "Assigned", restoredQty: total, qty, date });
       return res;
     },
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       if (!has(ctx, "admin")) return err("Deleting an assignment needs the HRMS administration power", "not_permitted");
       const [a] = await db.select().from(hrmsAssetAssignments).where(eq(hrmsAssetAssignments.id, id)).limit(1);
       if (!a) return err("That assignment no longer exists.", "not_found");
+      const refusal = await confirmImpact("hrms-asset-assignment", id, readConfirmation(values));
+      if (refusal) return refusal;
       await db.delete(hrmsAssetAssignments).where(eq(hrmsAssetAssignments.id, id));
       await hrmsAudit(ctx, "hrms.asset.assignmentDelete", "hrms_asset_assignments", id, a, null);
       return okVoid("Assignment deleted");

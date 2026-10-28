@@ -337,8 +337,9 @@ export type BulkSpec = {
   prompt?: PromptSpec;
   /**
    * The impact modal for the whole selection, in place of `confirm`: the
-   * report is asked for with the selected ids joined by commas, and the bulk
-   * act receives the confirmation under `IMPACT_FIELD`. A `prompt` is asked
+   * selection is one record whose id is `impactBatchKey(ids)`
+   * (`lib/impact/batch-key.ts`), and the bulk act checks the confirmation
+   * against the same key, received under `IMPACT_FIELD`. A `prompt` is asked
    * first and its values travel with the confirmation.
    */
   impact?: { kind: string };

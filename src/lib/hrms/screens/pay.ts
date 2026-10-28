@@ -14,6 +14,8 @@ import { hrmsLink } from "../registry";
 import { personFrom, personOption } from "./attendance";
 import { EXPENSE_CLAIM, EXPENSE_PAID } from "../values";
 import { tell } from "../services/notify";
+import { confirmImpact } from "@/lib/impact/registry";
+import { readConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * Payroll, advances and expenses (spec §10, §11).
@@ -186,7 +188,7 @@ function work(
 }
 
 /** Advances given less advance deductions on salaries, per employee (spec §10.4). */
-async function advanceTotals(ids?: string[]): Promise<{ given: Map<string, number>; deducted: Map<string, number> }> {
+export async function advanceTotals(ids?: string[]): Promise<{ given: Map<string, number>; deducted: Map<string, number> }> {
   if (ids && !ids.length) return { given: new Map(), deducted: new Map() };
   const [g, d] = await Promise.all([
     db
@@ -335,7 +337,8 @@ function salaryActions(ctx: HrmsContext, s: HrmsSalary, f: StoredFigures, name: 
       id: "delete",
       l: "Delete",
       why: has(ctx, "admin") ? undefined : "Deleting a salary needs the “Administer HRMS” power",
-      confirm: `Delete ${name}’s ${mon} salary? Its advance deduction goes back to the outstanding advance. It cannot be undone.`,
+      /* The advance it deducted goes back, and a paid one takes its payment record: the modal says so. */
+      impact: { kind: "hrms-salary", id: s.id },
     });
   return a;
 }
@@ -679,10 +682,12 @@ const payroll: HrmsScreenModule = {
       await hrmsAudit(ctx, "hrms.salary.regeneratePayslip", "hrms_salaries", id, { payslipCode: s.payslipCode }, { payslipCode: code });
       return okVoid("New payslip code issued");
     },
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       if (!has(ctx, "admin")) return err("Deleting a salary needs the “Administer HRMS” power", "not_permitted");
       const s = await salaryById(id);
       if (!s) return err("That salary no longer exists.", "not_found");
+      const refusal = await confirmImpact("hrms-salary", id, readConfirmation(values));
+      if (refusal) return refusal;
       await db.delete(hrmsSalaries).where(eq(hrmsSalaries.id, id));
       await hrmsAudit(ctx, "hrms.salary.delete", "hrms_salaries", id, s, null);
       return okVoid("Salary deleted");
@@ -794,7 +799,7 @@ function advanceForm(people: Person[], init?: { id: string; date: string; emp: s
 }
 
 /** How much of each advance salaries have recovered, oldest advance first. */
-function recoveredByAdvance(advances: { id: string; employeeId: string; date: string; amountPaise: number }[], deducted: Map<string, number>): Map<string, number> {
+export function recoveredByAdvance(advances: { id: string; employeeId: string; date: string; amountPaise: number }[], deducted: Map<string, number>): Map<string, number> {
   const left = new Map(deducted);
   const out = new Map<string, number>();
   for (const a of [...advances].sort((x, y) => x.date.localeCompare(y.date) || x.id.localeCompare(y.id))) {
@@ -879,12 +884,9 @@ const advances: HrmsScreenModule = {
               {
                 id: "delete",
                 l: "Delete",
-                why: !has(ctx, "admin")
-                  ? "Deleting an advance needs the “Administer HRMS” power"
-                  : rec > 0
-                    ? "Part of this advance has already been recovered from salary, so it can’t be deleted"
-                    : undefined,
-                confirm: `Delete the ${money(a.amountPaise)} advance to ${e?.name ?? ""}?`,
+                why: has(ctx, "admin") ? undefined : "Deleting an advance needs the “Administer HRMS” power",
+                /* A part-recovered advance is refused in the modal, with the reason, rather than by a greyed button. */
+                impact: { kind: "hrms-advance", id: a.id },
               },
             ]
           : [];
@@ -920,12 +922,14 @@ const advances: HrmsScreenModule = {
     };
   },
   actions: {
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       if (!has(ctx, "admin")) return err("Deleting an advance needs the “Administer HRMS” power", "not_permitted");
       const [a] = await db.select().from(hrmsAdvances).where(eq(hrmsAdvances.id, id));
       if (!a) return err("That advance no longer exists.", "not_found");
       const [all, totals] = await Promise.all([db.select().from(hrmsAdvances).where(eq(hrmsAdvances.employeeId, a.employeeId)), advanceTotals([a.employeeId])]);
       if ((recoveredByAdvance(all, totals.deducted).get(a.id) ?? 0) > 0) return err("Part of this advance has already been recovered from salary, so it can’t be deleted");
+      const refusal = await confirmImpact("hrms-advance", id, readConfirmation(values));
+      if (refusal) return refusal;
       await db.delete(hrmsAdvances).where(eq(hrmsAdvances.id, id));
       await hrmsAudit(ctx, "hrms.advance.delete", "hrms_advances", id, a, null);
       return okVoid("Advance deleted");
@@ -1127,7 +1131,7 @@ const expenses: HrmsScreenModule = {
         else if (verifier) acts.push({ id: "unverify", l: "Mark pending" });
         if (wide || (own && x.verify !== "Verified")) acts.push({ id: "edit", l: "Edit", loadsForm: true });
         if (has(ctx, "admin") || has(ctx, "hr") || (own && x.verify !== "Verified"))
-          acts.push({ id: "delete", l: "Delete", confirm: `Delete ${x.serial}, ${money(amount)}? It cannot be undone.` });
+          acts.push({ id: "delete", l: "Delete", impact: { kind: "hrms-expense", id: x.id } });
         return {
           id: x.id,
           v: {
@@ -1178,11 +1182,13 @@ const expenses: HrmsScreenModule = {
       const n = await setVerify(ctx, [id], "Pending");
       return n ? okVoid("Marked pending") : err("Already pending.");
     },
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       const [x] = await db.select().from(hrmsExpenses).where(eq(hrmsExpenses.id, id));
       if (!x) return err("That expense no longer exists.", "not_found");
       const own = x.employeeId === ctx.employee?.id && x.verify !== "Verified";
       if (!(has(ctx, "admin") || has(ctx, "hr") || own)) return err("Only HR or an HRMS administrator can delete a verified expense or another person’s expense.", "not_permitted");
+      const refusal = await confirmImpact("hrms-expense", id, readConfirmation(values));
+      if (refusal) return refusal;
       await db.delete(hrmsExpenses).where(eq(hrmsExpenses.id, id));
       await hrmsAudit(ctx, "hrms.expense.delete", "hrms_expenses", id, x, null);
       return okVoid(`${x.serial} deleted`);

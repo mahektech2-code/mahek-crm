@@ -23,6 +23,7 @@ import { installHire } from "@/lib/hire/install";
 import { runTask } from "@/lib/hire/ai/orchestrator";
 import { z } from "zod";
 import { invalidateConfig } from "@/lib/config/store";
+import { confirmImpact, impactReport } from "@/lib/impact/registry";
 
 const uid = () => `usr_${randomUUID().slice(0, 12)}`;
 
@@ -177,5 +178,36 @@ describe("Hire core", () => {
       await db.execute(sql`delete from app_settings where key = 'hire.ai.enabled'`);
       invalidateConfig();
     }
+  });
+
+  test("a withdrawal says what it leaves behind, and is refused without the confirmation", async () => {
+    const ctx = await as(recruiter);
+    const r = await createApplication(ctx, { fullName: "Meena Joshi", phone: "98111 22233", blueprintId: SE, consent: true, location: "Nashik" });
+    assert.ok(r.ok, !r.ok ? r.error : "");
+    const appId = r.data.applicationId;
+    /* An interview already booked for her stays booked — the thing a person recording a withdrawal assumes goes. */
+    await db.insert(hireStageExecutions).values({ id: `hex_${randomUUID().slice(0, 12)}`, applicationId: appId, stageKey: "app", status: "scheduled", scheduledAt: new Date(Date.now() + 86_400_000), conductedById: interviewer.id });
+
+    const report = await impactReport("hire-withdraw", appId);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    const kept = report.data.items.find((i) => i.app === "Hire" && i.effect === "kept" && /interview/.test(i.label));
+    assert.equal(kept?.count, 1, JSON.stringify(report.data.items));
+    assert.match(kept?.examples?.[0] ?? "", /Rakesh Interviewer/);
+    assert.equal(report.data.confirmWord, "Meena Joshi");
+
+    /* `changeStatus` cannot be imported here — it pulls Hire's client kit, which
+       calls createContext, and this runner loads the react-server build. So the
+       gate it calls before writing is asked directly, exactly as it asks it. */
+    assert.ok(await confirmImpact("hire-withdraw", appId, undefined), "no confirmation, no withdrawal");
+    const stale = await confirmImpact("hire-withdraw", appId, { typed: "Meena Joshi", fingerprint: "1:stale" });
+    assert.equal(stale?.code, "conflict");
+    assert.equal(await confirmImpact("hire-withdraw", appId, { typed: "meena  joshi", fingerprint: report.data.fingerprint }), null);
+
+    /* Withdrawn, it is closed: the modal says so instead of offering the button. */
+    await db.update(hireApplications).set({ status: "withdrawn", closedAt: new Date() }).where(eq(hireApplications.id, appId));
+    const closed = await impactReport("hire-withdraw", appId);
+    assert.ok(closed.ok, closed.ok ? "" : closed.error);
+    assert.deepEqual(closed.data.blockers, ["This application is already closed."]);
+    assert.equal((await confirmImpact("hire-withdraw", appId, { typed: "Meena Joshi", fingerprint: closed.data.fingerprint }))?.code, "rule_violation");
   });
 });

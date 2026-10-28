@@ -2,7 +2,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
-import { hrmsNotifications, notifications } from "@/db/schema";
+import { hrmsNotifications, mbosDeletions, notifications } from "@/db/schema";
 import { notifyUsers } from "@/lib/notify";
 
 /* ---------------------------------------------------------------------------
@@ -74,9 +74,24 @@ export async function rewordAnnouncement(bellIds: string[], text: string): Promi
   if (bellIds.length) await db.update(notifications).set({ body: text }).where(inArray(notifications.id, bellIds));
 }
 
-/** A deleted message leaves the bell too. */
+/**
+ * A deleted message leaves the bell too — and the handsets. A phone pulls its
+ * unread bell rows and keeps them, so deleting the row alone left a message
+ * the office had taken back sitting in a salesman's bell; only a tombstone,
+ * one per person it reached, takes it off the phone.
+ */
 export async function withdrawAnnouncement(bellIds: string[]): Promise<void> {
-  if (bellIds.length) await db.delete(notifications).where(inArray(notifications.id, bellIds));
+  if (!bellIds.length) return;
+  await db.transaction(async (tx) => {
+    const gone = await tx
+      .delete(notifications)
+      .where(inArray(notifications.id, bellIds))
+      .returning({ id: notifications.id, userId: notifications.userId });
+    if (gone.length)
+      await tx.insert(mbosDeletions).values(
+        gone.map((b) => ({ id: `del_${randomUUID().replace(/-/g, "").slice(0, 16)}`, entity: "notifications", entityId: b.id, userId: b.userId, reason: "withdrawn" })),
+      );
+  });
 }
 
 /** "Seen" is the recipient's own bell row marked read. */

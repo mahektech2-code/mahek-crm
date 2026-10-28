@@ -76,6 +76,7 @@ import {
 import { assignTripsAtDispatch } from "../trips";
 import { loadCustomers, partyStatus, type CustomerRow } from "./masters";
 import { confirmImpact } from "@/lib/impact/registry";
+import { impactBatchKey } from "@/lib/impact/batch-key";
 import { readConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
@@ -1842,11 +1843,11 @@ function lineHandlers(scope: Scope): Pick<ScreenModule, "actions" | "bulk" | "fo
       underProcess: (ctx, ids) => doUnder(ctx, ids),
       hold: (ctx, ids) => doStatus(ctx, ids, "Hold From Office"),
       async cancel(ctx, ids, values) {
-        const refusal = await confirmImpact("erp-order-cancel", ids.join(","), readConfirmation(values));
+        const refusal = await confirmImpact("erp-order-cancel", impactBatchKey(ids), readConfirmation(values));
         return refusal ?? doStatus(ctx, ids, "Cancel");
       },
       async unbill(ctx, ids, values) {
-        const refusal = await confirmImpact("erp-order-unbill", ids.join(","), readConfirmation(values));
+        const refusal = await confirmImpact("erp-order-unbill", impactBatchKey(ids), readConfirmation(values));
         return refusal ?? doUnbill(ctx, ids);
       },
       approve: (ctx, ids) => doApprove(ctx, ids),

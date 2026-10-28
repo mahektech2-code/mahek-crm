@@ -1,7 +1,9 @@
 import "server-only";
-import { and, eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { db } from "@/db";
-import { hrmsAttendance, hrmsLeaveRequests } from "@/db/schema";
+import { attachments, hrmsAttendance, hrmsLeaveRequests } from "@/db/schema";
+import { confirmImpact } from "@/lib/impact/registry";
+import { readConfirmation } from "@/lib/impact/types";
 import { parseCsv } from "@/lib/csv";
 import type { ActionSpec, ColSpec, Contact, FormSpec, ListRow, RowField, ToolSpec } from "@/lib/erp/ui";
 import { has, scopeOf, type HrmsContext, type Scope } from "../access";
@@ -118,7 +120,8 @@ function actionsFor(ctx: HrmsContext, r: DayRow, t: string): ActionSpec[] {
       prompt: { title: "Remark", submit: "Save remark", init: { remark: r.remark ?? "" }, fields: [{ k: "remark", l: "Remark", t: "area", req: true }] },
     });
   if (r.method === "qr" && has(ctx, "admin") && !r.editHelp) a.push({ id: "editHelp", l: "Edit help" });
-  if (has(ctx, "editAtt")) a.push({ id: "delete", l: "Delete", confirm: "Delete this attendance day? It cannot be undone." });
+  /* The day feeds payroll and carries its photographs: the impact modal says so. */
+  if (has(ctx, "editAtt")) a.push({ id: "delete", l: "Delete", impact: { kind: "hrms-attendance-day", id: r.id } });
   return a;
 }
 
@@ -349,11 +352,23 @@ const attendance: HrmsScreenModule = {
       await hrmsAudit(ctx, "hrms.attendance.editHelp", "hrms_attendance", id, { editHelp: false }, { editHelp: true });
       return okVoid("Edit help switched on for this day");
     },
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       if (!has(ctx, "editAtt")) return err("Only someone who can edit attendance can delete it", "not_permitted");
       const [r] = await db.select().from(hrmsAttendance).where(eq(hrmsAttendance.id, id));
       if (!r) return err("That day no longer exists.", "not_found");
-      await db.delete(hrmsAttendance).where(eq(hrmsAttendance.id, id));
+      const refusal = await confirmImpact("hrms-attendance-day", id, readConfirmation(values));
+      if (refusal) return refusal;
+      await db.transaction(async (tx) => {
+        await tx.delete(hrmsAttendance).where(eq(hrmsAttendance.id, id));
+        /* Removing is a status, never a delete (the attachment rule), and the
+           day's photographs used to be left bound to a day that no longer
+           exists: `canReadHrmsAttachment` looks the day up, so nobody could
+           open them again, and the orphan sweep never reaches a bound file. */
+        await tx
+          .update(attachments)
+          .set({ status: "removed", parentType: null, parentId: null, removedAt: new Date(), updatedAt: new Date() })
+          .where(and(eq(attachments.parentType, "hrms_attendance"), eq(attachments.parentId, id), ne(attachments.status, "removed")));
+      });
       await hrmsAudit(ctx, "hrms.attendance.delete", "hrms_attendance", id, r, null);
       return okVoid("Attendance deleted");
     },

@@ -89,6 +89,9 @@ const files = [
   // The HRMS restructure: tabs open with their screen, a head reaches their
   // team and office only, and the audit's fixes hold.
   "src/lib/hrms/integration/restructure.test.ts",
+  // Every HRMS delete says what it takes with it, is refused bare, and does
+  // what its report said once confirmed.
+  "src/lib/hrms/integration/impact.test.ts",
   // Hire: identity is the phone, gating is enforced, an override is a named
   // act, an interviewer's scope is narrow, and the record is append-only.
   "src/lib/hire/integration/core.test.ts",

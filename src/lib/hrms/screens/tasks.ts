@@ -36,6 +36,8 @@ import { addDaysISO, fdShort, hm, monthOf, weekdayOf, WEEKDAYS } from "../time";
 import { hrmsLink } from "../registry";
 import { BUDDY_DONE, CHECKLIST_NA } from "../values";
 import { tell, usersOfEmployees } from "../services/notify";
+import { confirmImpact } from "@/lib/impact/registry";
+import { readConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * Tasks (spec §13): templates, the daily checklist they are copied into, the
@@ -61,7 +63,7 @@ const fromShown = (label: string) => (label === MONTHLY_FROM ? "Monthly template
 const NOT_LINKED = "Your account is not linked to an employee record yet. Ask HR to link it on the Access screen.";
 
 /** Manages everyone's tasks: the power, or HRMS administration. */
-const taskAdmin = (ctx: HrmsContext) => has(ctx, "tasksAdmin") || has(ctx, "admin");
+export const taskAdmin = (ctx: HrmsContext) => has(ctx, "tasksAdmin") || has(ctx, "admin");
 
 const isISO = (v: string | null | undefined): v is string => !!v && /^\d{4}-\d{2}-\d{2}$/.test(v);
 
@@ -279,7 +281,7 @@ function templateRow(ctx: HrmsContext, r: Template, p: Person | undefined, peopl
   const copy = templateForm(ctx, people, { ...templateInit(r, p), task: "" });
   if (copy) actions.push({ id: "addMore", l: "Add more", primary: true, form: copy, why: own || admin ? undefined : "Adding a template for someone else needs the “Manage everyone's tasks” power" });
   actions.push({ id: "edit", l: "Edit", loadsForm: true, why: admin ? undefined : "Editing a template needs the “Manage everyone's tasks” power" });
-  actions.push({ id: "delete", l: "Delete", confirm: `Delete the template “${r.task}”?`, why: admin ? undefined : "Deleting a template needs the “Manage everyone's tasks” power" });
+  actions.push({ id: "delete", l: "Delete", impact: { kind: "hrms-task-template", id: r.id }, why: admin ? undefined : "Deleting a template needs the “Manage everyone's tasks” power" });
   return {
     id: r.id,
     v: {
@@ -389,10 +391,12 @@ const templates: HrmsScreenModule = {
     },
   },
   actions: {
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       if (!taskAdmin(ctx)) return err("Deleting a template needs the “Manage everyone's tasks” power", "not_permitted");
       const [r] = await db.select().from(hrmsTaskTemplates).where(eq(hrmsTaskTemplates.id, id));
       if (!r) return err("That template no longer exists.", "not_found");
+      const refusal = await confirmImpact("hrms-task-template", id, readConfirmation(values));
+      if (refusal) return refusal;
       await db.delete(hrmsTaskTemplates).where(eq(hrmsTaskTemplates.id, id));
       await hrmsAudit(ctx, "hrms.tasks.template.delete", "hrms_task_templates", id, r, null);
       return okVoid("Template deleted");
@@ -437,7 +441,7 @@ function checklistActions(ctx: HrmsContext, r: Checklist, t: string): ActionSpec
       l: "Write remark",
       prompt: { title: "Remark", sub: r.task, submit: "Save remark", init: { remark: r.remark ?? "" }, fields: [{ k: "remark", l: "Remark", t: "area", req: true, mic: true }] },
     });
-  if (taskAdmin(ctx)) a.push({ id: "delete", l: "Delete", confirm: `Delete “${r.task}” from the checklist of ${fdShort(r.date)}?` });
+  if (taskAdmin(ctx)) a.push({ id: "delete", l: "Delete", impact: { kind: "hrms-checklist-item", id: r.id } });
   return a;
 }
 
@@ -578,10 +582,12 @@ const checklist: HrmsScreenModule = {
       await hrmsAudit(ctx, "hrms.tasks.checklist.remark", "hrms_checklist", id, { remark: r.remark }, { remark });
       return okVoid("Remark saved");
     },
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       if (!taskAdmin(ctx)) return err("Deleting a checklist item needs the “Manage everyone's tasks” power", "not_permitted");
       const [r] = await db.select().from(hrmsChecklist).where(eq(hrmsChecklist.id, id));
       if (!r) return err("That task no longer exists.", "not_found");
+      const refusal = await confirmImpact("hrms-checklist-item", id, readConfirmation(values));
+      if (refusal) return refusal;
       await db.delete(hrmsChecklist).where(eq(hrmsChecklist.id, id));
       await hrmsAudit(ctx, "hrms.tasks.checklist.delete", "hrms_checklist", id, r, null);
       return okVoid("Removed from the checklist");
@@ -631,7 +637,7 @@ const TODO_COLS: ColSpec[] = [
  * their own template — so its assignee stands in: otherwise nobody but tasks
  * admin could ever verify it or send it back.
  */
-const assignerOf = (r: Todo): string | null => r.fromEmployeeId ?? (r.fromLabel === MONTHLY_FROM ? r.toEmployeeId : null);
+export const assignerOf = (r: Todo): string | null => r.fromEmployeeId ?? (r.fromLabel === MONTHLY_FROM ? r.toEmployeeId : null);
 
 function todoActions(ctx: HrmsContext, r: Todo, t: string): ActionSpec[] {
   const me = ctx.employee?.id;
@@ -663,7 +669,7 @@ function todoActions(ctx: HrmsContext, r: Todo, t: string): ActionSpec[] {
       l: "Write remark",
       prompt: { title: "Remark", sub: r.task, submit: "Save remark", init: { remark: r.remark ?? "" }, fields: [{ k: "remark", l: "Remark", t: "area", req: true, mic: true }] },
     });
-  if (assigner || admin) a.push({ id: "delete", l: "Delete", confirm: `Delete the to-do “${r.task}”?` });
+  if (assigner || admin) a.push({ id: "delete", l: "Delete", impact: { kind: "hrms-todo", id: r.id } });
   return a;
 }
 
@@ -883,10 +889,12 @@ const todos: HrmsScreenModule = {
       await hrmsAudit(ctx, "hrms.tasks.todo.remark", "hrms_todos", id, { remark: r.remark }, { remark });
       return okVoid("Remark saved");
     },
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       const r = await todoFor(id);
       if (!r) return err("That to-do no longer exists.", "not_found");
       if (!(assignerOf(r) === ctx.employee?.id || taskAdmin(ctx))) return err("Only the person who gave this to-do, or someone with the “Manage everyone's tasks” power, can delete it", "not_permitted");
+      const refusal = await confirmImpact("hrms-todo", id, readConfirmation(values));
+      if (refusal) return refusal;
       await db.delete(hrmsTodos).where(eq(hrmsTodos.id, id));
       await hrmsAudit(ctx, "hrms.tasks.todo.delete", "hrms_todos", id, r, null);
       return okVoid("To-do deleted");
@@ -914,7 +922,7 @@ function buddyRow(ctx: HrmsContext, r: Buddy, pb: Map<string, Person>, t: string
   const actions: ActionSpec[] = [];
   if (r.status === "Shared" && isBuddy) actions.push({ id: "accept", l: "Accept", primary: true });
   if (r.status === "Accepted" && isBuddy) actions.push({ id: "done", l: "Mark done", primary: true, confirm: "Mark this task as done?" });
-  if (sender || taskAdmin(ctx)) actions.push({ id: "delete", l: "Delete", confirm: `Delete the shared task “${r.task}”?` });
+  if (sender || taskAdmin(ctx)) actions.push({ id: "delete", l: "Delete", impact: { kind: "hrms-shared-task", id: r.id } });
   const flags: string[] = [];
   if (isBuddy) flags.push("toMe");
   else if (sender) flags.push("byMe");
@@ -1052,10 +1060,12 @@ const buddy: HrmsScreenModule = {
       const sender = byId(await allPeople()).get(r.fromEmployeeId);
       return okVoid(`Done · ${first(sender?.name)} has been told`);
     },
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       const r = await buddyFor(id);
       if (!r) return err("That task no longer exists.", "not_found");
       if (!(r.fromEmployeeId === ctx.employee?.id || taskAdmin(ctx))) return err("Only the person who shared this task, or someone with the “Manage everyone's tasks” power, can delete it", "not_permitted");
+      const refusal = await confirmImpact("hrms-shared-task", id, readConfirmation(values));
+      if (refusal) return refusal;
       await db.delete(hrmsBuddyTasks).where(eq(hrmsBuddyTasks.id, id));
       await hrmsAudit(ctx, "hrms.tasks.buddy.delete", "hrms_buddy_tasks", id, r, null);
       return okVoid("Shared task deleted");

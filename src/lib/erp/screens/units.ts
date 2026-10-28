@@ -11,6 +11,7 @@ import { unitEvent } from "../units";
 import { erpDispatchHref, erpLabelsHref, erpTraceHref } from "../trace-links";
 import { inTx, refuse } from "./common";
 import { confirmImpact } from "@/lib/impact/registry";
+import { impactBatchKey } from "@/lib/impact/batch-key";
 import { readConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
@@ -166,7 +167,7 @@ function unitScreen(key: "units" | "allUnits"): ScreenModule {
       },
       hold: (ctx, ids, v) => move(ctx, ids, "hold", text(v.note)),
       async release(ctx, ids, v) {
-        const refusal = await confirmImpact("erp-unit-release", ids.join(","), readConfirmation(v));
+        const refusal = await confirmImpact("erp-unit-release", impactBatchKey(ids), readConfirmation(v));
         return refusal ?? move(ctx, ids, "available", null);
       },
     },

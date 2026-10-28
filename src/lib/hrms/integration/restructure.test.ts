@@ -216,6 +216,11 @@ describe("employees", () => {
     const r = await mod("employees").actions!.delete(ctx, officeEmp.id, {});
     assert.equal(r.ok, false);
     assert.match(!r.ok ? r.error : "", /help request/);
+    /* The impact modal says the same refusal before the button, and lists nothing it would take. */
+    const report = await impactReport("hrms-employee", officeEmp.id);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    assert.match(report.data.blockers[0] ?? "", /help request/);
+    assert.deepEqual(report.data.items, []);
   });
 
   test("editing your own details does not take your row from the sheet", async () => {
@@ -281,7 +286,14 @@ describe("one document library", () => {
     assert.deepEqual(d.visibleToRoles, ["hrms"], "a link never reaches a handset");
     const staffView = await mod("documents").load(await as(staff), {});
     assert.ok(staffView.rows.some((x) => x.v.title === "Leave policy"));
-    const w = await mod("documents").actions!.delete(await as(hr), d.id, {});
+    const bare = await mod("documents").actions!.delete(await as(hr), d.id, {});
+    assert.equal(bare.ok, false, "no confirmation, no withdrawal");
+    const report = await impactReport("hrms-document", d.id);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    assert.ok(report.data.items.some((i) => i.app === "HRMS" && i.effect === "kept"), "the record stays, and the modal says so");
+    assert.ok(!report.data.items.some((i) => i.app === "MBOS handsets"), "a link never reached a handset, so none is named");
+    assert.equal(report.data.confirmWord, "Leave policy");
+    const w = await mod("documents").actions!.delete(await as(hr), d.id, { [IMPACT_FIELD]: JSON.stringify({ typed: "Leave policy", fingerprint: report.data.fingerprint }) });
     assert.equal(w.ok, true, JSON.stringify(w));
     const [after] = await db.select().from(mbosDocuments).where(eq(mbosDocuments.id, d.id));
     assert.equal(after.active, false, "withdrawn, not deleted");
@@ -304,8 +316,18 @@ describe("one announcement sender", () => {
     assert.equal(seen.ok, true, JSON.stringify(seen));
     const [read] = await db.select().from(notifications).where(eq(notifications.id, n.bellIds[0]));
     assert.equal(read.read, true);
-    await mod("notifications").actions!.delete(await as(hr), n.id, {});
+    const bare = await mod("notifications").actions!.delete(await as(hr), n.id, {});
+    assert.equal(bare.ok, false, "no confirmation, no delete");
+    const report = await impactReport("hrms-announcement", n.id);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    assert.equal(report.data.items.find((i) => i.app === "Notifications" && i.effect === "deleted")?.count, 1);
+    const del = await mod("notifications").actions!.delete(await as(hr), n.id, { [IMPACT_FIELD]: JSON.stringify({ typed: "delete", fingerprint: report.data.fingerprint }) });
+    assert.equal(del.ok, true, JSON.stringify(del));
     assert.equal((await db.select().from(notifications).where(eq(notifications.id, n.bellIds[0]))).length, 0);
+    /* …and off the phone: a handset keeps the bell rows it pulled, and only a tombstone takes one back. */
+    const tomb = await db.select().from(mbosDeletions).where(and(eq(mbosDeletions.entity, "notifications"), eq(mbosDeletions.entityId, n.bellIds[0])));
+    assert.equal(tomb.length, 1);
+    assert.equal(tomb[0].userId, staff.id);
   });
 });
 

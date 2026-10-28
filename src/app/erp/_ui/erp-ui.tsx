@@ -20,6 +20,7 @@ import { GrnDialog } from "./grn-dialog";
 import { ShareDialog } from "./share-dialog";
 import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { IMPACT_FIELD } from "@/lib/impact/types";
+import { impactBatchKey } from "@/lib/impact/batch-key";
 import { CardGrid } from "@/components/ui/card-grid";
 import { LineTable } from "./line-table";
 import { ErpVoice } from "./voice";
@@ -79,14 +80,16 @@ export function ErpUiProvider({
   const [formKey, setFormKey] = useState(0);
   const [resultDialog, setResultDialog] = useState<{ screen: string; d: NonNullable<ToolResult["dialog"]> } | null>(null);
   const [share, setShare] = useState<{ screen: string; a: ActionSpec; recordId: string; after?: () => void; key: number } | null>(null);
-  /* `values` are what a prompt collected first (a reason); the impact modal sends them with its confirmation.
-     `bulk` is a selection's ids, run through `runBulk` rather than one record's action. */
+  /* A record action or a bulk act over a selection: the modal asks about one
+     record (a selection is one, by its batch key) and `run` sends the act.
+     Where a prompt asked for a reason first, `run` carries those values too —
+     the reason is part of what is being confirmed. */
   const [impact, setImpact] = useState<{
-    screen: string;
-    a: { id: string; l: string; impact: { kind: string; id: string } };
-    recordId: string;
-    bulk?: string[];
-    values?: Record<string, string>;
+    kind: string;
+    id: string;
+    label: string;
+    run: (values: Record<string, string>) => Promise<Result<unknown>>;
+    screen?: string;
     after?: () => void;
     key: number;
   } | null>(null);
@@ -135,17 +138,18 @@ export function ErpUiProvider({
          wants a reason, the reason is asked first — it is part of what is
          being confirmed — and travels with the confirmation. */
       if (a.impact) {
-        const spec = { id: a.id, l: a.l, impact: { kind: a.impact.kind, id: a.impact.id } };
-        const field = a.impact.withValue;
+        const imp = a.impact;
+        const open = (values?: Record<string, string>) => {
+          /* The part of the record a prompt picked is part of what the report describes. */
+          const id = imp.withValue && values ? impactPart(imp.id, values[imp.withValue]) : imp.id;
+          const run = (v: Record<string, string>) => kit.runAction(screen, a.id, recordId, { ...values, ...v });
+          setImpact({ kind: imp.kind, id, label: a.l, run, screen, after, key: Date.now() });
+        };
         if (a.prompt) {
-          prompt(a.prompt, async (values) => {
-            /* The part of the record the prompt picked is part of what the report describes. */
-            const part = field ? { ...spec, impact: { ...spec.impact, id: impactPart(spec.impact.id, values[field]) } } : spec;
-            setImpact({ screen, a: part, recordId, values, after, key: Date.now() });
-          });
+          prompt(a.prompt, async (values) => open(values));
           return;
         }
-        setImpact({ screen, a: spec, recordId, after, key: Date.now() });
+        open();
         return;
       }
       if (a.href) {
@@ -182,16 +186,19 @@ export function ErpUiProvider({
 
   const bulk = useCallback(
     (screen: string, b: BulkSpec, ids: string[], after?: () => void) => {
-      /* A selection's impact is asked about all of it at once: the report's id is the ids joined by commas. */
+      /* The selection is one record to the impact modal, named by its batch
+         key — the same spelling the bulk act checks the confirmation against. */
       if (b.impact) {
-        const spec = { id: b.id, l: b.l, impact: { kind: b.impact.kind, id: ids.join(",") } };
+        const kind = b.impact.kind;
+        const open = (values?: Record<string, string>) => {
+          const run = (v: Record<string, string>) => kit.runBulk(screen, b.id, ids, { ...values, ...v });
+          setImpact({ kind, id: impactBatchKey(ids), label: b.l, run, screen, after, key: Date.now() });
+        };
         if (b.prompt) {
-          prompt(b.prompt, async (values) => {
-            setImpact({ screen, a: spec, recordId: "", bulk: ids, values, after, key: Date.now() });
-          });
+          prompt(b.prompt, async (values) => open(values));
           return;
         }
-        setImpact({ screen, a: spec, recordId: "", bulk: ids, after, key: Date.now() });
+        open();
         return;
       }
       const go = () => {
@@ -292,18 +299,15 @@ export function ErpUiProvider({
             }}
           />
         ) : null}
-        {impact?.a.impact ? (
+        {impact ? (
           <ImpactDialog
             key={impact.key}
-            kind={impact.a.impact.kind}
-            id={impact.a.impact.id}
-            confirmLabel={impact.a.l}
+            kind={impact.kind}
+            id={impact.id}
+            confirmLabel={impact.label}
             onClose={() => setImpact(null)}
             onConfirm={async (confirmation) => {
-              const values = { ...impact.values, [IMPACT_FIELD]: JSON.stringify(confirmation) };
-              const res = impact.bulk
-                ? await kit.runBulk(impact.screen, impact.a.id, impact.bulk, values)
-                : await kit.runAction(impact.screen, impact.a.id, impact.recordId, values);
+              const res = await impact.run({ [IMPACT_FIELD]: JSON.stringify(confirmation) });
               if (res.ok) finish(res, impact.after, impact.screen);
               return res;
             }}
