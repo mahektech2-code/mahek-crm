@@ -113,7 +113,7 @@ test("each corrected field gets its own timeline row", () => {
   );
 });
 
-test("the action accepts exactly the nine findings the screen draws", () => {
+test("the action accepts exactly the findings the screen draws", () => {
   /* One validator, so the list a screen offers and the list the action stores
      cannot drift — a tenth finding added to the form and not to the validator
      is a correction silently dropped, which reads afterwards as a manager who

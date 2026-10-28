@@ -1393,9 +1393,13 @@ export async function recordLeadValidationCall(
      */
     corrections?: {
       field: string;
+      /** Absent means `corrected`, which is all an older client ever sent. */
+      verdict?: "confirmed" | "corrected" | "unverified";
       original?: string | null;
-      corrected: string;
-      reason: string;
+      /** Required where the verdict is `corrected`; ignored otherwise. */
+      corrected?: string | null;
+      /** Required where the verdict is `corrected`; optional otherwise. */
+      reason?: string | null;
     }[];
   },
 ): Promise<Result<null>> {
@@ -1413,21 +1417,30 @@ export async function recordLeadValidationCall(
         failureReasonCode: z.string().trim().max(80).optional(),
         corrections: z
           .array(
-            z.object({
-              field: z.string().trim().max(80),
-              original: z.string().trim().max(1000).nullish(),
-              corrected: z.string().trim().min(1).max(1000),
+            z
+              .object({
+                field: z.string().trim().max(80),
+                /* Absent is `corrected`: every client before this field
+                   existed sent corrections and nothing else. */
+                verdict: z.enum(["confirmed", "corrected", "unverified"]).default("corrected"),
+                original: z.string().trim().max(1000).nullish(),
+                corrected: z.string().trim().max(1000).nullish(),
+                reason: z.string().trim().max(1000).nullish(),
+              })
               /*
-               * REQUIRED HERE AND NOT ONLY ON THE FORM. The screen already
-               * refuses a correction with no reason, and a server action is a
-               * URL: a rule that lives in an interface is not a rule. What it
-               * buys is the whole value of the row — a correction with nothing
-               * behind it is the manager's word against the salesman's with
-               * nothing to settle it, read in March by somebody deciding
-               * whether the salesman or the shop was mistaken.
+               * A CORRECTION STILL HAS TO SAY WHAT AND WHY, HERE AND NOT ONLY
+               * ON THE FORM. The screen already refuses one with no reason, and
+               * a server action is a URL: a rule that lives in an interface is
+               * not a rule. What it buys is the whole value of the row — a
+               * correction with nothing behind it is the manager's word against
+               * the salesman's with nothing to settle it, read in March by
+               * somebody deciding whether the salesman or the shop was
+               * mistaken. A confirmation and an "unable to verify" assert no
+               * new value, so neither is asked for one.
                */
-              reason: z.string().trim().min(1).max(1000),
-            }),
+              .refine((e) => e.verdict !== "corrected" || Boolean(e.corrected?.trim() && e.reason?.trim()), {
+                message: "A correction has to say what the shop said and why the two differ.",
+              }),
           )
           .max(40)
           .optional(),
@@ -1470,15 +1483,32 @@ export async function recordLeadValidationCall(
      * final answer rather than a first draft of it. Two rows for one field on
      * one call would read on the summary as a shop that contradicted itself.
      */
-    const corrections = new Map<string, { original: string | null; corrected: string; reason: string }>();
+    const checks = new Map<
+      string,
+      {
+        verdict: "confirmed" | "corrected" | "unverified";
+        original: string | null;
+        corrected: string | null;
+        reason: string | null;
+      }
+    >();
     for (const entry of c.corrections ?? []) {
       if (!isVerificationFinding(entry.field)) continue;
-      corrections.set(entry.field, {
+      const verdict = entry.verdict ?? "corrected";
+      checks.set(entry.field, {
+        verdict,
         original: entry.original?.trim() || null,
-        corrected: entry.corrected,
-        reason: entry.reason,
+        /* Only a correction asserts a new value; the other two never carry one,
+           whatever a client sent. */
+        corrected: verdict === "corrected" ? entry.corrected?.trim() || null : null,
+        reason: entry.reason?.trim() || null,
       });
     }
+    /* What this call CORRECTED — the narrower set. The timeline, the audit
+       entry and every count of "corrections made" are about these alone: a
+       confirmation or an unable-to-verify is recorded, but it is not a
+       correction and must never be counted or worded as one. */
+    const corrections = new Map([...checks].filter(([, v]) => v.verdict === "corrected"));
 
     /* Both unsuccessful outcomes demand a sentence, and they demand it for two
        different reasons — which is why the refusals are two sentences rather
@@ -1651,19 +1681,19 @@ export async function recordLeadValidationCall(
        * that — so this is a record OF a correction and never an application of
        * one.
        */
-      for (const [field, entry] of corrections) {
+      for (const [field, entry] of checks) {
         await tx.insert(leadVerificationCorrections).values({
           id: gen("lvc"),
           customerId,
           validationId: callId,
           field,
-          /* This door only ever produces corrections: on a validation call a
-             figure the shop agreed with was not worth a row, which is why the
-             table had no verdict column until the salesman's own second visit
-             needed one. Stated rather than defaulted — the column's default
-             was dropped in `0155` so that a writer has to SAY which of the
-             three it means instead of inheriting the historical one. */
-          verdict: "corrected" as const,
+          /* All three answers are kept, as the table has allowed since `0155`:
+             a confirmation is the evidence somebody asked and the figure stood,
+             and "unable to verify" is a third fact that is neither. Stated
+             rather than defaulted — the column has no default, so a writer has
+             to SAY which of the three it means. Only `corrected` carries a
+             value, and a CHECK constraint keeps it and its reason present. */
+          verdict: entry.verdict,
           original: entry.original,
           corrected: entry.corrected,
           reason: entry.reason,
@@ -1787,6 +1817,9 @@ export async function recordLeadValidationCall(
              was wrong on this lead" is the question an audit log is opened
              with, and a count cannot answer it. */
           corrected: [...corrections.keys()],
+          /* Every finding the call answered, including the ones it confirmed or
+             could not verify — `corrected` above stays the narrow list. */
+          checked: [...checks.keys()],
         },
       });
     });
