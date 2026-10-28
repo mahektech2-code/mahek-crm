@@ -655,7 +655,7 @@ describe("R — a Sales Manager who raises a lead is its Sales Manager, at once"
 
     assert.equal(lead.salesManagerId, smA.id);
     assert.ok(lead.salesManagerDecidedAt, "stamped as a person's choice");
-    assert.equal(lead.ownerId, null, "the owner rule is unchanged: a manager raising a lead leaves it unowned");
+    assert.equal(lead.ownerId, smA.id, "the Sales Manager who raises a lead owns it (her lead is self-raised, so the designated approver still verifies it)");
 
     assert.ok((await listIds()).includes(lead.id), "listed straight away");
     assert.ok(await pipelineLead(lead.id, DAY), "the record opens");

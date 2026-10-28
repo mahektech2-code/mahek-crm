@@ -345,10 +345,18 @@ export async function captureLead(
      * Who raised the lead is not stored here at all: it is the actor on the
      * append-only `lead_created` event, and no reassignment can edit that.
      */
+    /* THE PERSON WHO RAISES A LEAD OWNS IT: a Telecaller (the Calling desk) and a Sales Manager
+       (the CRM Sales Manager screen) both. A Sales Manager used to be left owner-less; her lead is
+       "self-raised" (`isSelfRaised`: she holds the seat and owns it, or nobody does), so the
+       existing designated-approver rule already keeps her from approving her own lead — owning it
+       changes nothing about who may verify. A manager or administrator with neither screen is still
+       handing the lead to the desk and stays unassigned, as before. `ownerId: null` is still a
+       deliberate "unassigned", and a named owner is used as named. */
     if (v.ownerId === undefined) {
       const holdsDesk = await canOpenModule(ctx.user.id, DESK_MODULE);
       const isManager = await canFor(ctx.user, "lead.verify");
-      v = { ...v, ownerId: holdsDesk && !isManager ? ctx.user.id : null };
+      const holdsSeat = ctx.user.role !== "admin" && (await canOpenModule(ctx.user.id, SALES_MANAGER_MODULE));
+      v = { ...v, ownerId: (holdsDesk && !isManager) || holdsSeat ? ctx.user.id : null };
     }
 
     if (v.priority && !(await canFor(ctx.user, "lead.verify"))) {
