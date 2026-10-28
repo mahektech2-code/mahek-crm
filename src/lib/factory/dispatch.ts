@@ -86,7 +86,9 @@ export async function scanBox(fc: FactoryCtx, order: string, raw: string): Promi
   const v = res.data.verdict;
   if (!v.ok) {
     const [title, fix] = VERDICT_TITLE[v.result] ?? VERDICT_TITLE.blocked;
-    return { ok: false, code, title, text: v.message, fix, board };
+    /* Scanned again while it is on this order: no harm, and the loader is not stopped for it. */
+    const repeat = v.result === "duplicate" && board.boxes.some((b) => b.id === code);
+    return { ok: false, code, title, text: v.message, fix, board, repeat };
   }
   await factoryAudit(fc, "factory.dispatch.box", null, `${code} loaded for ${orderKey(no)} · ${v.allocation}`, { order: no });
   /* A scan that allocated or swapped a lot changed the order the phone holds. */

@@ -19,7 +19,8 @@
       "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "android.permission.CAMERA",
-        "android.permission.REQUEST_INSTALL_PACKAGES"
+        "android.permission.REQUEST_INSTALL_PACKAGES",
+        "android.permission.VIBRATE"
       ],
       "blockedPermissions": [
         "android.permission.RECORD_AUDIO"

@@ -11,7 +11,20 @@ import type { DrumLotView, DrumSaved } from "@/lib/factory/types";
 
 export type Net = "online" | "weak" | "offline";
 export type Flow = { task: Task; step: number; d: Draft; key: string };
-export type Scan = { purpose: ScanPurpose; meta: ScanMeta; res: (ScanResult & { manual?: boolean }) | null; torch: boolean; typed?: string | null; camAsked?: boolean };
+/** A box that went on: shown as a band over the camera, and the next scan is taken straight away. */
+export type Feed = { tone: "ok" | "warn"; code: string; title: string; text: string; at: number; count?: string };
+export type Scan = {
+  purpose: ScanPurpose;
+  meta: ScanMeta;
+  res: (ScanResult & { manual?: boolean }) | null;
+  torch: boolean;
+  typed?: string | null;
+  camAsked?: boolean;
+  /** Loading: the last box that went on. */
+  feed?: Feed | null;
+  /** Loading: scans that came in behind a refused one and were not counted. */
+  dropped?: number;
+};
 export type Res =
   | { kind: "sending"; key: string }
   | { kind: "pending"; key: string; task: string; proc: Proc }

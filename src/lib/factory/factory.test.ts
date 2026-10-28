@@ -462,6 +462,7 @@ describe("dispatch", () => {
     const again = await scanBox(fc, t.order!, id);
     assert.equal(again.ok, false);
     assert.equal((again as { title: string }).title, "Already scanned");
+    assert.ok(!again.ok && again.repeat, "the phone is told it is on this order already — amber, not a stop");
     assert.equal((await loadBoard(fc, t.order!))?.boxes.length, 1, "scanned twice, counted once");
 
     const info = await boxInfo(id);
@@ -571,6 +572,8 @@ describe("dispatch", () => {
     const again = await lorryScan(fc, key, id, first.ok ? first.task : null);
     assert.equal(again.ok, false);
     assert.equal((again as { title: string }).title, "Already on the lorry");
+    assert.ok(!again.ok && again.repeat, "the phone is told it is on this lorry already — amber, not a stop");
+    assert.ok(!bad.ok && !bad.repeat, "wrong stock is a refusal, never a repeat");
 
     const off = await lorryUnload(fc, key, id);
     assert.equal(off.ok, true, JSON.stringify(off));

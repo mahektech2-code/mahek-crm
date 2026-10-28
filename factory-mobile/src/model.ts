@@ -25,7 +25,20 @@ export type Net = "online" | "weak" | "offline";
 export type Flow = { task: Task; step: number; d: Draft; key: string };
 /** A box label the server judged: loaded onto the order, or looked up from the home scan. */
 export type BoxOk = { ok: true; code: string; kind: "box"; name: string; text: string; facts: { l: string; v: string }[] };
-export type Scan = { purpose: ScanPurpose; meta: ScanMeta; res: ((ScanResult | BoxOk) & { manual?: boolean }) | null; torch: boolean; typed?: string | null; camAsked?: boolean };
+/** A box that went on: shown as a band over the camera, and the next scan is taken straight away. */
+export type Feed = { tone: "ok" | "warn"; code: string; title: string; text: string; at: number };
+export type Scan = {
+  purpose: ScanPurpose;
+  meta: ScanMeta;
+  res: ((ScanResult | BoxOk) & { manual?: boolean }) | null;
+  torch: boolean;
+  typed?: string | null;
+  camAsked?: boolean;
+  /** Loading: the last box that went on. */
+  feed?: Feed | null;
+  /** Loading: scans that came in behind a refused one and were not counted. */
+  dropped?: number;
+};
 export type Res =
   | { kind: "sending"; key: string }
   | { kind: "pending"; key: string; task: string; proc: Proc }

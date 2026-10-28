@@ -214,7 +214,7 @@ async function orderForBox(lines: LoadingLine[], code: string): Promise<number> 
 export async function lorryScan(fc: FactoryCtx, key: string, raw: string, taskId: string | null): Promise<LorryScan> {
   key = String(key ?? "");
   const code = normaliseCode(String(raw ?? ""));
-  const fail = (title: string, text: string, fix: string, board: LorryBoard | null, task: string | null, override: { sku: string; label: string }[] | null = null): LorryScan => ({ ok: false, code, title, text, fix, board, task, override });
+  const fail = (title: string, text: string, fix: string, board: LorryBoard | null, task: string | null, override: { sku: string; label: string }[] | null = null, repeat = false): LorryScan => ({ ok: false, code, title, text, fix, board, task, override, repeat });
   if (!fc.dispatch) return fail(NOT_YOURS.title, NOT_YOURS.text, NOT_YOURS.fix, null, null);
   if (!code) return fail("Nothing was read", "The label was empty.", "Scan the label again.", null, null);
   const lines = await linesOf(fc, key);
@@ -233,7 +233,9 @@ export async function lorryScan(fc: FactoryCtx, key: string, raw: string, taskId
       const [title, fix] = VERDICT[v.ok ? "blocked" : v.result] ?? VERDICT.blocked;
       /* A mismatch can be asked about: in place of which item still short on this lorry. */
       const short = !v.ok && v.result === "mismatch" ? (board.lorry?.items ?? []).filter((i) => lorryLeft(i) > 0).map((i) => ({ sku: i.sku, label: i.label })) : null;
-      return fail(title, lorryWords(v.message), fix, board, board.lorry?.task ?? null, short?.length ? short : null);
+      /* The same box scanned again while it is on this lorry is no harm: the phone says so and does not stop the loader. */
+      const repeat = !v.ok && v.result === "duplicate" && board.boxes.some((b) => b.id === code);
+      return fail(title, lorryWords(v.message), fix, board, board.lorry?.task ?? null, short?.length ? short : null, repeat);
     }
     const v = res.data.verdict;
     const job = await jobFor(fc, key, asked);
