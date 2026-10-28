@@ -464,6 +464,11 @@ describe("the back office's check", () => {
     assert.ok((await mod("orders").forms!.edit(ctx, { status: "Under Process", delivery: "No List Traders", qty: "12", rate: "300", transport: "0" }, [], o.id)).ok);
     assert.equal((await db.select().from(erpOrders).where(eq(erpOrders.id, o.id)))[0].orderCheck, "Pending", "corrected, it is sent to verify again");
     assert.ok((await a.verifyOrder(ctx, o.id, {})).ok);
+    assert.ok((await a.unverifyOrder(ctx, o.id, {})).ok, "a verification given by mistake is taken back");
+    assert.equal((await db.select().from(erpOrders).where(eq(erpOrders.id, o.id)))[0].orderCheck, "Pending");
+    assert.ok((await mod("verifyOrders").load(ctx)).rows.some((r) => r.id === o.id), "it waits on To verify again");
+    assert.match(msg(await a.unverifyOrder(ctx, o.id, {})), /not verified/);
+    assert.ok((await a.verifyOrder(ctx, o.id, {})).ok);
     assert.ok((await mod("orders").forms!.edit(ctx, { status: "Under Process", delivery: "No List Traders", qty: "12", rate: "300", transport: "0", remark: "Call first" }, [], o.id)).ok);
     assert.equal((await db.select().from(erpOrders).where(eq(erpOrders.id, o.id)))[0].orderCheck, "Verified", "a remark is not a material change");
     assert.ok((await mod("orders").forms!.edit(ctx, { status: "Under Process", delivery: "No List Traders", qty: "13", rate: "300", transport: "0" }, [], o.id)).ok);

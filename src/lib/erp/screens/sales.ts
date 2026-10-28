@@ -1246,7 +1246,9 @@ function orderList(scope: Scope): ScreenModule {
                 { id: "editOrder", l: "Edit order", loadsForm: true, why: l.o.status === "Cancel" ? "This line is cancelled" : "" },
                 ...(verifier && !billed && l.o.status !== "Cancel"
                   ? [
-                      { id: "verifyOrder", l: "Verify order", primary: l.o.orderCheck !== "Verified", why: l.o.orderCheck === "Verified" ? "Already verified" : "", confirm: `Verify order ${l.o.orderNo} — ${l.billing.name}, ${live.length} line${live.length === 1 ? "" : "s"} — against what the customer asked for?` } as ActionSpec,
+                      l.o.orderCheck === "Verified"
+                        ? ({ id: "unverifyOrder", l: "Undo verification", confirm: `Take back the verification of order ${l.o.orderNo} — ${l.billing.name}? It goes back to To verify, and cannot be billed until it is verified again.` } as ActionSpec)
+                        : ({ id: "verifyOrder", l: "Verify order", primary: true, confirm: `Verify order ${l.o.orderNo} — ${l.billing.name}, ${live.length} line${live.length === 1 ? "" : "s"} — against what the customer asked for?` } as ActionSpec),
                       { id: "correctOrder", l: "Send back for correction", why: l.o.orderCheck === "Correction" ? "Already sent back" : "", prompt: CORRECTION_PROMPT(`order ${l.o.orderNo}`) } as ActionSpec,
                     ]
                   : []),
@@ -1599,6 +1601,26 @@ async function doVerifyOrder(ctx: ErpContext, ids: string[]) {
   return okVoid(`Verified · order${done.length === 1 ? "" : "s"} ${done.join(", ")}${refused.length ? `. Not verified: ${refused.join("; ")}` : ""}`);
 }
 
+/** A verification given by mistake is taken back: Pending again, back on To verify, and the history says who undid it. Billed is the invoice checker's. */
+async function doUnverifyOrder(ctx: ErpContext, id: string) {
+  if (!ctx.powers.has("verifyOrders")) return err("The back office verifies orders: it needs the Verify orders power.", "not_permitted");
+  const [order] = [...(await wholeOrders([id])).values()];
+  const live = (order ?? []).filter((l) => l.o.status !== "Cancel");
+  if (!live.length) return err("That order has no live lines.", "not_found");
+  if (live.some((l) => l.inDetails)) return err("The order is billed; undo the billing first.", "rule_violation");
+  if (!live.some((l) => l.o.orderCheck === "Verified")) return err("That order is not verified.", "rule_violation");
+  const no = live[0].o.orderNo;
+  await db.transaction(async (tx) => {
+    await tx
+      .update(erpOrders)
+      .set({ orderCheck: "Pending", orderCheckedById: null, orderCheckedAt: null, orderCheckNote: null, updatedAt: new Date(), updatedById: ctx.user.id })
+      .where(inArray(erpOrders.id, live.map((l) => l.o.id)));
+    await addReview(tx, ctx, no, "order", "reset", "Verification undone");
+  });
+  await erpAudit(ctx, "erp.order.unverify", "erp_order", String(no), { orderCheck: "Verified" }, { orderCheck: "Pending" });
+  return okVoid(`Order ${no} is back on To verify`);
+}
+
 async function doCorrectOrder(ctx: ErpContext, id: string, values: Record<string, string>) {
   if (!ctx.powers.has("verifyOrders")) return err("The back office verifies orders: it needs the Verify orders power.", "not_permitted");
   const reason = text(values.reason);
@@ -1847,6 +1869,7 @@ function lineHandlers(scope: Scope): Pick<ScreenModule, "actions" | "bulk" | "fo
     },
     actions: {
       verifyOrder: (ctx, id) => doVerifyOrder(ctx, [id]),
+      unverifyOrder: (ctx, id) => doUnverifyOrder(ctx, id),
       correctOrder: (ctx, id, values) => doCorrectOrder(ctx, id, values),
       ready: (ctx, id) => doReady(ctx, [id]),
       underProcess: (ctx, id) => doUnder(ctx, [id]),
