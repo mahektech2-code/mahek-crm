@@ -2,7 +2,6 @@
 
 import { z } from "zod";
 import { requireCapability } from "@/lib/access-control";
-import { canOpenModule } from "@/lib/access";
 import { err, fromThrown, type Result } from "@/lib/result";
 import {
   analyseLeadCall,
@@ -25,13 +24,6 @@ import {
  * `logQualificationCall` keeps.
  * ------------------------------------------------------------------------- */
 
-const DESK_MODULE = "crm.lead-calling-desk";
-
-async function deskRefusal(userId: string): Promise<ReturnType<typeof err> | null> {
-  if (await canOpenModule(userId, DESK_MODULE)) return null;
-  return err("You have not been given the Calling desk. Ask whoever manages access to grant it.", "not_permitted");
-}
-
 const analyseSchema = z.object({
   customerId: z.string().min(1),
   spoken: z.string().max(8000).default(""),
@@ -48,9 +40,9 @@ export async function analyseLeadCallAction(
     const parsed = analyseSchema.safeParse(raw);
     if (!parsed.success) return err("That could not be read.", "validation");
 
-    const ctx = await requireCapability("lead.work");
-    const barred = await deskRefusal(ctx.user.id);
-    if (barred) return barred;
+    /* The reading is of a call this person may log: `lead.work`, and
+       `analyseLeadCall` asks the lead's scope itself. */
+    await requireCapability("lead.work");
 
     return await analyseLeadCall(parsed.data);
   } catch (e) {

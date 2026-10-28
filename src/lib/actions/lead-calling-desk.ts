@@ -289,9 +289,12 @@ export async function logQualificationCall(
       ]);
     }
 
+    /* WHO MAY CALL. Not "who holds the Calling desk" any more: `lead.work` plus
+       THIS lead being in the person's own scope, asked just below by
+       `reachable` (every seat a person may hold on the record). Everything the
+       desk does AFTER a call - requesting a Prospect, converting, the manager's
+       verification - keeps its own checks and still needs the desk. */
     const ctx = await requireCapability("lead.work");
-    const barred = await deskRefusal(ctx.user.id);
-    if (barred) return barred;
     const found = await reachable(p.customerId);
     if (!found.ok) return found.refusal;
     const lead = found.lead;

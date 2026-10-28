@@ -152,6 +152,11 @@ function CheckVisitsDialog({ customerId, leadName, onClose }: { customerId: stri
 
       {error ? (
         <p className="m-0 text-sm text-danger">{error}</p>
+      ) : data !== null && data.team.length === 0 ? (
+        <p className="m-0 rounded-[8px] border border-line px-4 py-6 text-center text-sm text-muted">
+          No salesmen report to you, so there are no visits to show here. Visits appear for the salesmen who report to you
+          in the Org Chart.
+        </p>
       ) : data === null ? (
         <p className="m-0 text-sm text-muted">Loading…</p>
       ) : data.visits.length === 0 ? (

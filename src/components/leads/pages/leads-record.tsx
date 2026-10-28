@@ -4,7 +4,7 @@ import { sampleEligibility } from "@/lib/services/lead-qualification-flow-servic
 import { type LeadWorkspace } from "@/lib/lead-workspace";
 import { qualificationAccess } from "@/lib/lead-qualification-access";
 import { canOpenModule } from "@/lib/access";
-import { canCheckVisits } from "@/lib/services/visit-oversight-service";
+import { canLogQualificationCall } from "@/lib/services/lead-reach-service";
 import { workableLeadIds } from "@/lib/services/lead-reach-service";
 import { DESK_MODULE, ownerChoices } from "@/lib/services/lead-desk-assignment-service";
 import { deskLeadRecord } from "@/lib/services/lead-calling-desk-service";
@@ -188,6 +188,15 @@ export async function Body({
       ? await deskLeadRecord(id, day)
       : null;
 
+  /* THE SAME CALL BUTTON FOR EVERYONE WHO MAY CALL. Somebody without the Calling
+     desk gets the call form's data in a prop of its own, never in `desk`: that
+     one also decides whether Convert to Prospect is offered, and converting is
+     still the desk's. The action asks the lead's scope again. */
+  const callRecord =
+    !desk && workspace === "crm" && (await canLead(user, "lead.work")) && (await canLogQualificationCall(id))
+      ? await deskLeadRecord(id, day)
+      : null;
+
   const freshDays = config["leads.figuresFreshDays"];
   const gateInput = gateInputFor(record, freshDays);
   const figuresStale = Boolean(gateInput.figuresStale);
@@ -366,7 +375,6 @@ export async function Body({
         (await canOpenModule(user.id, "crm.sales-manager")) &&
         (await workableLeadIds([record.customerId], user.id)).length > 0
       }
-      canCheckVisits={await canCheckVisits(user)}
       canOverride={(await canLead(user, "lead.override")) && config["leads.allowManagerOverride"]}
       /* §4.1 — how hard to push this lead is the manager's word, and
          `lead.verify` is the capability that already means exactly that: the
@@ -392,6 +400,7 @@ export async function Body({
       nowMs={nowMs()}
       requireNextAction={config["leads.requireNextAction"]}
       desk={desk}
+      callRecord={callRecord}
       defaultNextDate={onOrAfterWorkingDay(addDays(day as BusinessDate, 2), {
         timezone: config["workingDay.timezone"],
         dayBoundaryHour: config["workingDay.dayBoundaryHour"],

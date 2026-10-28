@@ -313,7 +313,7 @@ export function LeadRecordScreen({
   assignees,
   canReassign,
   canReassignSalesman,
-  canCheckVisits = false,
+  callRecord = null,
   canOverride,
   canPrioritise,
   canTrash,
@@ -431,8 +431,12 @@ export function LeadRecordScreen({
   canReassign: boolean;
   /** Holds the Sales Manager screen, and this lead is in their own book — see `ReassignLead`. */
   canReassignSalesman: boolean;
-  /** Salesmen report to this person (the Org Chart); the server asks again. */
-  canCheckVisits?: boolean;
+  /**
+   * The call form's data for somebody who may log a call on this lead without
+   * holding the Calling desk. Drives the Call button and its dialog ONLY — never
+   * `desk`, which also decides whether converting is offered.
+   */
+  callRecord?: DeskLeadRecord | null;
   canOverride: boolean;
   /**
    * §4.1 — whether this person may say how hard to push the lead. The control
@@ -507,13 +511,14 @@ export function LeadRecordScreen({
   openCall?: boolean;
 }) {
   const [verifying, setVerifying] = React.useState(false);
-  const nextCall = desk ? nextCallNumber(desk.phase, desk.callCount) : null;
+  const callLead = desk ?? callRecord;
+  const nextCall = callLead ? nextCallNumber(callLead.phase, callLead.callCount) : null;
   const canCall = canWork && nextCall !== null;
-  const [calling, setCalling] = React.useState(Boolean(openCall && desk && canCall));
-  const deskCalls = desk
+  const [calling, setCalling] = React.useState(Boolean(openCall && callLead && canCall));
+  const deskCalls = callLead
     ? {
-        calls: desk.calls,
-        nextDate: desk.nextAction?.kind === "message" ? null : (desk.nextAction?.date ?? null),
+        calls: callLead.calls,
+        nextDate: callLead.nextAction?.kind === "message" ? null : (callLead.nextAction?.date ?? null),
       }
     : null;
 
@@ -597,7 +602,7 @@ export function LeadRecordScreen({
             <div className="mt-1 text-[13px] text-muted">{contact || detail}</div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {desk ? (
+            {callLead ? (
               <Button
                 tone="default"
                 disabled={!canCall}
@@ -616,7 +621,7 @@ export function LeadRecordScreen({
                 {nextCall ? `Call ${nextCall}` : `${plural(callsMade, "call")} made`}
               </Button>
             ) : null}
-            {canCheckVisits ? <CheckVisitsButton customerId={record.customerId} leadName={record.name} /> : null}
+            <CheckVisitsButton customerId={record.customerId} leadName={record.name} />
             <Link
               href={`${base}?tab=communication`}
               className="inline-flex h-9 items-center rounded-[6px] border border-line bg-surface px-3.5 text-sm font-medium text-body no-underline hover:bg-canvas hover:text-ink hover:no-underline"
@@ -1064,9 +1069,9 @@ export function LeadRecordScreen({
         </aside>
       </div>
 
-      {calling && desk && defaultNextDate ? (
+      {calling && callLead && defaultNextDate ? (
         <LogCallDialog
-          lead={desk}
+          lead={callLead}
           defaultNextDate={defaultNextDate}
           today={day}
           onClose={() => setCalling(false)}
