@@ -16,6 +16,8 @@ import { personFrom, personOption } from "./attendance";
 import { GRIEVANCE_ANSWERED, HELP } from "../values";
 import { hrmsUserIds, powerHolderUserIds, tell, usersOfEmployees } from "../services/notify";
 import { announce, bellsOf, markAnnouncementSeen, rewordAnnouncement, withdrawAnnouncement } from "@/lib/services/announcement-service";
+import { confirmImpact } from "@/lib/impact/registry";
+import { readConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * Help & grievance (spec §16), Documents and Notifications (§17), and the
@@ -113,7 +115,7 @@ function helpActions(ctx: HrmsContext, r: HelpRow, attendanceId: string | undefi
       href: attendanceId ? hrmsLink("attendance", { scope: "all", open: attendanceId }) : hrmsLink("attendance", { scope: "all", from: r.date }),
     });
   const own = r.employeeId === ctx.employee?.id;
-  if ((own && r.status === "Pending") || has(ctx, "admin")) a.push({ id: "delete", l: "Delete", confirm: "Delete this help request? It cannot be undone." });
+  if ((own && r.status === "Pending") || has(ctx, "admin")) a.push({ id: "delete", l: "Delete", impact: { kind: "hrms-help", id: r.id } });
   return a;
 }
 
@@ -239,11 +241,13 @@ const help: HrmsScreenModule = {
       await hrmsAudit(ctx, "hrms.help.remark", "hrms_help", id, null, { remark });
       return okVoid("Remark saved");
     },
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       const [r] = await db.select().from(hrmsHelp).where(eq(hrmsHelp.id, id));
       if (!r) return err("That request no longer exists.", "not_found");
       const own = r.employeeId === ctx.employee?.id && r.status === "Pending";
       if (!own && !has(ctx, "admin")) return err("Only a pending request of your own can be deleted. Deleting any other needs the HRMS administration power.", "not_permitted");
+      const refusal = await confirmImpact("hrms-help", id, readConfirmation(values));
+      if (refusal) return refusal;
       await db.delete(hrmsHelp).where(eq(hrmsHelp.id, id));
       await hrmsAudit(ctx, "hrms.help.delete", "hrms_help", id, r, null);
       return okVoid("Help request deleted");
@@ -338,7 +342,7 @@ function grievanceActions(ctx: HrmsContext, r: GrievanceRow): ActionSpec[] {
       prompt: { title: "How was it solved?", sub: r.solution ?? "", submit: "Send feedback", fields: [{ k: "stars", l: "Stars", t: "select", req: true, opts: STAR_OPTS }] },
     });
   if (mayEditGrievance(ctx, r)) a.push({ id: "edit", l: "Edit", loadsForm: true });
-  if (has(ctx, "admin")) a.push({ id: "delete", l: "Delete", confirm: `Delete grievance #${r.no}? It cannot be undone.` });
+  if (has(ctx, "admin")) a.push({ id: "delete", l: "Delete", impact: { kind: "hrms-grievance", id: r.id } });
   return a;
 }
 
@@ -419,10 +423,12 @@ const grievances: HrmsScreenModule = {
       await hrmsAudit(ctx, "hrms.grievance.feedback", "hrms_grievances", id, null, { stars: n });
       return okVoid("Thanks for the feedback");
     },
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       if (!has(ctx, "admin")) return err("Deleting a grievance needs the HRMS administration power", "not_permitted");
       const [r] = await db.select().from(hrmsGrievances).where(eq(hrmsGrievances.id, id));
       if (!r) return err("That grievance no longer exists.", "not_found");
+      const refusal = await confirmImpact("hrms-grievance", id, readConfirmation(values));
+      if (refusal) return refusal;
       await db.delete(hrmsGrievances).where(eq(hrmsGrievances.id, id));
       await hrmsAudit(ctx, "hrms.grievance.delete", "hrms_grievances", id, r, null);
       return okVoid("Grievance deleted");
@@ -485,7 +491,7 @@ const grievances: HrmsScreenModule = {
 const DOC_TYPES = ["PDF & audio", "Image", "Video", "Link"];
 const EVERYONE = "All employees";
 const FIELD = "Field staff";
-const manageDocs = (ctx: HrmsContext) => has(ctx, "hr") || has(ctx, "admin");
+export const manageDocs = (ctx: HrmsContext) => has(ctx, "hr") || has(ctx, "admin");
 
 type DocRow = typeof mbosDocuments.$inferSelect;
 
@@ -582,7 +588,7 @@ const documents: HrmsScreenModule = {
         const href = docHref(d);
         const named = d.audienceEmployeeIds.map((id) => people.get(id)?.name).filter(Boolean).join(", ");
         const actions: ActionSpec[] = [href ? { id: "open", l: "Open", primary: true, href } : { id: "open", l: "Open", primary: true, why: "Nothing was attached to this document" }];
-        if (manager && d.active) actions.push({ id: "delete", l: "Withdraw", confirm: `Withdraw “${d.title}”? It comes off the list, and off every handset on its next sync. The record is kept.` });
+        if (manager && d.active) actions.push({ id: "delete", l: "Withdraw", impact: { kind: "hrms-document", id: d.id } });
         const fields: RowField[] = [
           { l: "File or link", v: d.media === "Link" ? (d.linkUrl ?? "") : d.attachmentId ? "Attached" : "None" },
           { l: "On the field app", v: d.visibleToRoles.length === 0 ? "Yes" : "No" },
@@ -606,11 +612,13 @@ const documents: HrmsScreenModule = {
     /* Withdrawn, never deleted — the library's rule: a policy somebody quoted
        in March is a fact about March. The tombstone is what takes it off the
        handsets that already pulled it. */
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       if (!manageDocs(ctx)) return err("Withdrawing a document needs the HR or HRMS administration power", "not_permitted");
       const [d] = await db.select().from(mbosDocuments).where(and(eq(mbosDocuments.id, id), isNotNull(mbosDocuments.audience)));
       if (!d) return err("That document no longer exists.", "not_found");
       if (!d.active) return err(`${d.title} is already withdrawn.`);
+      const refusal = await confirmImpact("hrms-document", id, readConfirmation(values));
+      if (refusal) return refusal;
       await db.update(mbosDocuments).set({ active: false, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(mbosDocuments.id, id));
       await db.insert(mbosDeletions).values({ id: hrmsId("del"), entity: "documents", entityId: id, userId: null, reason: "withdrawn" });
       await hrmsAudit(ctx, "hrms.document.withdraw", "mbos_documents", id, { active: true }, { active: false });
@@ -736,7 +744,7 @@ const notifications: HrmsScreenModule = {
         if (mine && !mine.read) actions.push({ id: "seen", l: "Mark as seen" });
         else if (!n.bellIds.length && personal && !!me && n.toEmployeeId === me && !n.seenAt) actions.push({ id: "seen", l: "Mark as seen" });
         if (sender) actions.push({ id: "edit", l: "Edit", prompt: { title: "Edit announcement", sub: "Everybody it was sent to sees the new words in their bell.", submit: "Save", init: { text: n.text }, fields: [{ k: "text", l: "Message", t: "area", req: true }] } });
-        if (sender || admin) actions.push({ id: "delete", l: "Delete", confirm: "Delete this announcement? It is taken out of everybody’s bell too." });
+        if (sender || admin) actions.push({ id: "delete", l: "Delete", impact: { kind: "hrms-announcement", id: n.id } });
         const fields: RowField[] = [
           { l: "To", v: n.toLabel },
           { l: "Opens", v: landingLabel(n.landing) },
@@ -784,11 +792,13 @@ const notifications: HrmsScreenModule = {
       await hrmsAudit(ctx, "hrms.notification.edit", "hrms_notifications", id, { text: n.text }, { text: body });
       return okVoid(n.bellIds.length ? "Announcement updated, in everybody’s bell too" : "Announcement updated");
     },
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       const [n] = await db.select().from(hrmsNotifications).where(eq(hrmsNotifications.id, id));
       if (!n) return err("That notification no longer exists.", "not_found");
       const sender = n.createdById === ctx.user.id || (!!ctx.employee && n.fromEmployeeId === ctx.employee.id);
       if (!sender && !has(ctx, "admin")) return err("Only the sender can delete a notification. Deleting anyone else’s needs the HRMS administration power.", "not_permitted");
+      const refusal = await confirmImpact("hrms-announcement", id, readConfirmation(values));
+      if (refusal) return refusal;
       await db.delete(hrmsNotifications).where(eq(hrmsNotifications.id, id));
       await withdrawAnnouncement(n.bellIds);
       await hrmsAudit(ctx, "hrms.notification.delete", "hrms_notifications", id, n, null);

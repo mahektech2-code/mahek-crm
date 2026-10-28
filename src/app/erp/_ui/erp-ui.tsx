@@ -20,6 +20,7 @@ import { GrnDialog } from "./grn-dialog";
 import { ShareDialog } from "./share-dialog";
 import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { IMPACT_FIELD } from "@/lib/impact/types";
+import { impactBatchKey } from "@/lib/impact/batch-key";
 import { CardGrid } from "@/components/ui/card-grid";
 import { LineTable } from "./line-table";
 import { ErpVoice } from "./voice";
@@ -79,7 +80,17 @@ export function ErpUiProvider({
   const [formKey, setFormKey] = useState(0);
   const [resultDialog, setResultDialog] = useState<{ screen: string; d: NonNullable<ToolResult["dialog"]> } | null>(null);
   const [share, setShare] = useState<{ screen: string; a: ActionSpec; recordId: string; after?: () => void; key: number } | null>(null);
-  const [impact, setImpact] = useState<{ screen: string; a: ActionSpec; recordId: string; after?: () => void; key: number } | null>(null);
+  /* A record action or a bulk act over a selection: the modal asks about one
+     record (a selection is one, by its batch key) and `run` sends the act. */
+  const [impact, setImpact] = useState<{
+    kind: string;
+    id: string;
+    label: string;
+    run: (values: Record<string, string>) => Promise<Result<unknown>>;
+    screen?: string;
+    after?: () => void;
+    key: number;
+  } | null>(null);
 
   const toast = useCallback((t: string, tone: "info" | "error" = "info") => push(t, tone), [push]);
 
@@ -123,7 +134,8 @@ export function ErpUiProvider({
       /* A delete that reaches other records says what moves with it, and asks
          for the name, instead of a bare "are you sure". */
       if (a.impact) {
-        setImpact({ screen, a, recordId, after, key: Date.now() });
+        const run = (v: Record<string, string>) => kit.runAction(screen, a.id, recordId, v);
+        setImpact({ kind: a.impact.kind, id: a.impact.id, label: a.l, run, screen, after, key: Date.now() });
         return;
       }
       if (a.href) {
@@ -160,6 +172,12 @@ export function ErpUiProvider({
 
   const bulk = useCallback(
     (screen: string, b: BulkSpec, ids: string[], after?: () => void) => {
+      /* The selection is one record to the impact modal, named by its batch key. */
+      if (b.impact) {
+        const run = (v: Record<string, string>) => kit.runBulk(screen, b.id, ids, v);
+        setImpact({ kind: b.impact.kind, id: impactBatchKey(ids), label: b.l, run, after, key: Date.now() });
+        return;
+      }
       const go = () => {
         if (b.prompt) {
           prompt(b.prompt, async (v) => {
@@ -258,17 +276,15 @@ export function ErpUiProvider({
             }}
           />
         ) : null}
-        {impact?.a.impact ? (
+        {impact ? (
           <ImpactDialog
             key={impact.key}
-            kind={impact.a.impact.kind}
-            id={impact.a.impact.id}
-            confirmLabel={impact.a.l}
+            kind={impact.kind}
+            id={impact.id}
+            confirmLabel={impact.label}
             onClose={() => setImpact(null)}
             onConfirm={async (confirmation) => {
-              const res = await kit.runAction(impact.screen, impact.a.id, impact.recordId, {
-                [IMPACT_FIELD]: JSON.stringify(confirmation),
-              });
+              const res = await impact.run({ [IMPACT_FIELD]: JSON.stringify(confirmation) });
               if (res.ok) finish(res, impact.after, impact.screen);
               return res;
             }}

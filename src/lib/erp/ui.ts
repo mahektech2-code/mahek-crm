@@ -304,7 +304,20 @@ export type ToolResult = {
   navigate?: string;
 };
 
-export type BulkSpec = { id: string; l: string; confirm?: string; /** Values to collect once for the whole selection. */ prompt?: PromptSpec };
+export type BulkSpec = {
+  id: string;
+  l: string;
+  confirm?: string;
+  /** Values to collect once for the whole selection. */
+  prompt?: PromptSpec;
+  /**
+   * A bulk act that reaches other records: opens the impact modal for the
+   * whole selection, as one record whose id is `impactBatchKey(ids)`
+   * (`lib/impact/batch-key.ts`). The bulk handler receives the confirmation
+   * under `IMPACT_FIELD` and checks it against the same key.
+   */
+  impact?: { kind: string };
+};
 
 /* -------------------------------------------------------------------- rows */
 

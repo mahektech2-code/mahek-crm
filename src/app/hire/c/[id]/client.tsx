@@ -22,6 +22,8 @@ import {
   uploadCv,
 } from "@/lib/hire/actions/candidate";
 import { AiField, Btn, Callout, Icon, Label, Pill } from "../../_ui/kit";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * The candidate record's interactive pieces. Each one calls a server action
@@ -70,6 +72,7 @@ export function ReasonButton({
   danger,
   kind = "secondary",
   onSubmit,
+  impact,
 }: {
   label: string;
   title: string;
@@ -78,12 +81,23 @@ export function ReasonButton({
   min?: number;
   danger?: boolean;
   kind?: "primary" | "secondary" | "ghost";
-  onSubmit: (reason: string) => Promise<Result<unknown>>;
+  onSubmit: (reason: string, confirmation?: ImpactConfirmation) => Promise<Result<unknown>>;
+  /** The reason first, then the impact modal: what stays behind, with the name typed to confirm. */
+  impact?: { kind: string; id: string };
 }) {
+  const toast = useToast();
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
+  /* The impact modal, keyed per opening so it loads afresh. */
+  const [confirming, setConfirming] = useState<number | null>(null);
   const { run, pending } = useRun();
   const short = reason.trim().length < min;
+  const submit = () => {
+    if (!impact) return run(() => onSubmit(reason), (r) => r.ok && setOpen(false));
+    setOpen(false);
+    setConfirming(Date.now());
+  };
   return (
     <>
       <Btn kind={kind} onClick={() => setOpen(true)}>
@@ -96,7 +110,7 @@ export function ReasonButton({
         footer={
           <>
             <Btn onClick={() => setOpen(false)}>Cancel</Btn>
-            <Btn kind={danger ? "danger" : "primary"} disabled={short || pending} title={short ? `At least ${min} characters — it is kept on the record` : undefined} onClick={() => run(() => onSubmit(reason), (r) => r.ok && setOpen(false))}>
+            <Btn kind={danger ? "danger" : "primary"} disabled={short || pending} title={short ? `At least ${min} characters — it is kept on the record` : undefined} onClick={submit}>
               {pending ? "Saving…" : okLabel}
             </Btn>
           </>
@@ -109,6 +123,23 @@ export function ReasonButton({
           {reason.trim().length} / {min} characters minimum
         </div>
       </Modal>
+      {impact && confirming ? (
+        <ImpactDialog
+          key={confirming}
+          kind={impact.kind}
+          id={impact.id}
+          confirmLabel={okLabel}
+          onClose={() => setConfirming(null)}
+          onConfirm={async (confirmation) => {
+            const r = await onSubmit(reason, confirmation);
+            if (r.ok) {
+              if (r.message) toast.push(r.message);
+              router.refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
     </>
   );
 }
@@ -121,7 +152,15 @@ export function StatusButtons({ applicationId, status }: { applicationId: string
       ) : null}
       {status === "on_hold" ? <ReasonButton label="Resume" title="Resume the application" sub="They return to the stage they were held at." okLabel="Resume" onSubmit={(r) => changeStatus(applicationId, "resume", r)} /> : null}
       {status === "in_progress" || status === "on_hold" ? (
-        <ReasonButton label="Withdraw" danger title="Record a withdrawal" sub="Use this when the candidate has withdrawn. It is not a rejection — rejecting is a decision at a gate or the rejection queue." okLabel="Record withdrawal" onSubmit={(r) => changeStatus(applicationId, "withdraw", r)} />
+        <ReasonButton
+          label="Withdraw"
+          danger
+          title="Record a withdrawal"
+          sub="Use this when the candidate has withdrawn. It is not a rejection — rejecting is a decision at a gate or the rejection queue."
+          okLabel="Record withdrawal"
+          impact={{ kind: "hire-withdraw", id: applicationId }}
+          onSubmit={(r, c) => changeStatus(applicationId, "withdraw", r, c)}
+        />
       ) : null}
     </>
   );
