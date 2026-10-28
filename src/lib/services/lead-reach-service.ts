@@ -3,6 +3,7 @@ import { assertCustomerInScope } from "@/lib/access-control";
 import { inCrmSalesManagerWorkspace } from "@/lib/services/crm-sales-manager-scope";
 import { leadsInScope } from "@/lib/services/sales-service";
 import { leadRow } from "@/lib/services/lead-service";
+import { assertLeadInScope } from "@/lib/services/lead-scope";
 
 type Lead = NonNullable<Awaited<ReturnType<typeof leadRow>>>;
 
@@ -41,6 +42,29 @@ export async function reachLead(lead: Lead, userId: string): Promise<void> {
       return;
     }
     throw e;
+  }
+}
+
+/**
+ * MAY THIS PERSON LOG A QUALIFICATION CALL ON THIS LEAD — the page's version of
+ * the question `logQualificationCall` asks: the lead is in their own scope
+ * (`assertLeadInScope` over the same seats, no territory carve-out). It only
+ * decides whether the Call button is drawn; the action asks again.
+ */
+export async function canLogQualificationCall(leadId: string): Promise<boolean> {
+  const lead = await leadRow(leadId);
+  if (!lead || lead.kind !== "lead") return false;
+  try {
+    await assertLeadInScope(leadId, {
+      kind: lead.kind,
+      ownerId: lead.ownerId,
+      salesAmId: lead.salesAmId,
+      backOfficeAmId: lead.backOfficeAmId,
+      leadManagerId: lead.leadManagerId,
+    });
+    return true;
+  } catch {
+    return false;
   }
 }
 

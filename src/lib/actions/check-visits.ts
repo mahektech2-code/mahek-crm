@@ -2,14 +2,13 @@
 
 import { requireUser } from "@/lib/auth";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
-import { reportingSalesmen, teamVisits, type TeamVisit } from "@/lib/services/visit-oversight-service";
+import { reportingSalesmen, teamVisits, visitRange, type TeamVisit } from "@/lib/services/visit-oversight-service";
 
-/* The one door Check Visits has. It asks the Org Chart again on the server —
-   the button being drawn is a convenience, never the permission. A salesman,
-   or anybody nobody reports to, gets the same plain refusal; nothing about who
+/* The one door Check Visits has. The button is drawn for everyone on the lead
+   page, so the permission is HERE and nowhere else: the Org Chart is asked on
+   every request, and whoever has nobody reporting to them - a salesman
+   included - gets an empty answer with no visits in it and nothing about who
    else exists. Dates and page are validated and bounded by the service. */
-
-const REFUSAL = "Check Visits is for the people salesmen report to.";
 
 export async function checkVisitsAction(input: {
   customerId?: string;
@@ -23,9 +22,14 @@ export async function checkVisitsAction(input: {
   try {
     const user = await requireUser();
     const team = await reportingSalesmen(user);
-    if (!team.length) return err(REFUSAL, "not_permitted");
-    const r = await teamVisits(user, { ...input, now: new Date() });
-    if (r === null) return err(REFUSAL, "not_permitted");
+    const now = new Date();
+    if (!team.length) {
+      const range = visitRange(input, now);
+      if (!range.ok) return err(range.error, "validation");
+      return ok({ visits: [], team: [], more: false, fromDay: range.fromDay, toDay: range.toDay });
+    }
+    const r = await teamVisits(user, { ...input, now });
+    if (r === null) return err("Check Visits could not be read.", "not_permitted");
     if ("error" in r) return err(r.error, "validation");
     return ok({ ...r, team });
   } catch (e) {

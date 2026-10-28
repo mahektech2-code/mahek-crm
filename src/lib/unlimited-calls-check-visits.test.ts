@@ -12,7 +12,7 @@ import { appAccess, appModuleAccess, calls, customers, employeeReporting, employ
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { captureLead } from "@/lib/actions/lead-intake";
-import { logQualificationCall as realLog } from "@/lib/actions/lead-calling-desk";
+import { logQualificationCall as realLog, requestProspect } from "@/lib/actions/lead-calling-desk";
 import { checkVisitsAction } from "@/lib/actions/check-visits";
 import { canCheckVisits, reportingSalesmen } from "@/lib/services/visit-oversight-service";
 import { DESK_MODULE } from "@/lib/services/lead-desk-assignment-service";
@@ -181,6 +181,39 @@ describe("every call needs a remark", () => {
   });
 });
 
+describe("the Call button is for whoever may call THIS lead", () => {
+  let plain: typeof users.$inferSelect; // a Telecaller without the Calling desk
+  let outsider: typeof users.$inferSelect;
+
+  beforeEach(async () => {
+    plain = await makeUser("Plain Telecaller", "associate", "crm", ["crm.dashboard", "crm.leads"]);
+    outsider = await makeUser("Outsider", "associate", "crm", ["crm.dashboard", "crm.leads"]);
+    await db.update(customers).set({ ownerId: plain.id }).where(eq(customers.id, leadId));
+  });
+
+  test("the owner without the Calling desk can log a call on her own lead — remark still required", async () => {
+    setTestUser(plain);
+    const noRemark = await realLog({ customerId: leadId, outcome: "no_answer", noAnswerReason: "no_response", answers: {} });
+    assert.equal(noRemark.ok, false);
+    const r = await realLog({ customerId: leadId, outcome: "no_answer", noAnswerReason: "no_response", answers: {}, notes: "Phone switched off" });
+    assert.ok(r.ok, r.ok ? "" : r.error);
+  });
+
+  test("somebody the lead is not in the scope of is refused, desk or no desk", async () => {
+    setTestUser(outsider);
+    const r = await realLog({ customerId: leadId, outcome: "spoke_callback", answers: {}, notes: "Hello" });
+    assert.equal(r.ok, false, "a lead outside the person's scope cannot be called");
+    assert.equal((await db.select().from(calls).where(sql`${calls.outcomeDetail}->>'qualCall' is not null`)).length, 0);
+  });
+
+  test("what follows a call is still the desk's: requesting a Prospect refuses without the Calling desk", async () => {
+    setTestUser(plain);
+    const r = await requestProspect({ customerId: leadId });
+    assert.equal(r.ok, false);
+    assert.match(!r.ok ? r.error : "", /Calling desk/);
+  });
+});
+
 describe("Check Visits", () => {
   test("a date range reaches older visits, bounded and paged", async () => {
     const old = new Date(Date.now() - 100 * 86_400_000);
@@ -210,7 +243,10 @@ describe("Check Visits", () => {
     assert.equal((await checkVisitsAction({ from: "2026-02-01", to: "2026-01-01" })).ok, false, "end before start");
     assert.equal((await checkVisitsAction({ from: "yesterday" })).ok, false, "not a date");
     setTestUser(sA);
-    assert.equal((await checkVisitsAction({ from: "2026-01-01", to: "2026-01-31" })).ok, false);
+    const mine = await checkVisitsAction({ from: "2020-01-01", to: "2030-01-01" });
+    assert.equal(mine.ok, false, "the range limit applies to everybody");
+    const salesman = await checkVisitsAction({ from: "2026-01-01", to: "2026-12-31" });
+    assert.ok(salesman.ok && salesman.data.visits.length === 0, "a salesman still sees no visits, not even his own");
   });
 
   test("a superior by reports_to_id sees exactly their own salesman's visits", async () => {
@@ -230,11 +266,13 @@ describe("Check Visits", () => {
     assert.deepEqual(r.data.visits.map((v) => v.salesmanName), ["Salesman B"]);
   });
 
-  test("a salesman, an unrelated manager and a CRM user with nobody under them are refused on the server", async () => {
+  test("a salesman, an unrelated manager and a CRM user with nobody under them get an EMPTY answer — never anybody's visits", async () => {
     for (const who of [sA, sC, stranger, tele]) {
       setTestUser(who);
       const r = await checkVisitsAction({});
-      assert.equal(r.ok, false, `${who.name} must be refused`);
+      assert.ok(r.ok, `${who.name} gets the empty state, not an error`);
+      assert.equal(r.data.visits.length, 0, `${who.name} sees no visits`);
+      assert.equal(r.data.team.length, 0, `${who.name} has nobody reporting`);
       assert.equal(await canCheckVisits(who), false);
     }
   });
@@ -250,7 +288,8 @@ describe("Check Visits", () => {
     await db.update(users).set({ reportsToId: sA.id }).where(eq(users.id, sC.id));
     setTestUser(sA);
     assert.equal((await reportingSalesmen(sA)).length, 0);
-    assert.equal((await checkVisitsAction({})).ok, false);
+    const r = await checkVisitsAction({});
+    assert.ok(r.ok && r.data.visits.length === 0 && r.data.team.length === 0);
   });
 
   test("direct reports only: a head of the head sees nobody through them", async () => {
