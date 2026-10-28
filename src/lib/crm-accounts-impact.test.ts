@@ -43,6 +43,7 @@ import {
   waTemplates,
 } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
+import { today as businessToday } from "@/lib/format";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { impactReport } from "@/lib/impact/registry";
 import type { ImpactSource } from "@/lib/impact/registry";
@@ -68,7 +69,9 @@ import { bulkArchiveLeads } from "@/lib/actions/sales";
 import { unlinkOrderAction } from "@/lib/actions/enquiries";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
-const TODAY = new Date().toISOString().slice(0, 10);
+/* India's business day, as `today()` reads it — not UTC's, which runs a day
+   behind from 18:30 to midnight UTC and made the held-reminder check fail then. */
+const TODAY = businessToday();
 
 let admin: typeof users.$inferSelect;
 let shop: string;
