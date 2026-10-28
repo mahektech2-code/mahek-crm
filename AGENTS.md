@@ -2540,7 +2540,13 @@ any list can opt into: a funnel on every heading opens the column's values,
 counted over what the OTHER column filters leave, or a min/max on a number
 column (`ListQuery.cf`, URL key `cf`, `passColFilter` / `colFacetsOf` in
 `list-query.ts`, `_ui/column-filter.tsx`). They are applied on the server
-before the page is cut, so they reach every page and the export.
+before the page is cut, so they reach every page and the export. Ticking rows
+adds them up: `ListSpec.selectSum` puts a checkbox on every row of any list
+(bulk action or not) and the selection bar says what the ticked rows come to —
+weight, boxes, cans, how many orders — through `selectionTotals`, in the
+browser while every ticked row is on the page and through `erpListTotals` once
+"Select all" reaches past it. A row with no figure is counted, never added as
+zero.
 
 **READY MEANS THE STOCK IS ON THE SHELF, AND THE SCAN ALLOCATES IT.** Ready
 (the button, the bulk action and the edit form alike) is refused unless the

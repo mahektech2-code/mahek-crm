@@ -4,8 +4,9 @@ import { createContext, useContext } from "react";
 import type { FormSpec, Tone } from "@/lib/erp/ui";
 import { FLAG, ST_TONE } from "@/lib/erp/ui";
 import type { Result } from "@/lib/result";
+import type { SelectionTotal } from "@/lib/erp/list-query";
 import { actionFailure } from "@/lib/version-skew";
-import { erpListExport, erpListIds, erpLoadForm, erpRunAction, erpRunBulk, erpRunTool, erpSubmitForm } from "@/lib/actions/erp";
+import { erpListExport, erpListIds, erpListTotals, erpLoadForm, erpRunAction, erpRunBulk, erpRunTool, erpSubmitForm } from "@/lib/actions/erp";
 
 /* ---------------------------------------------------------------------------
  * What makes the generic screens one app's rather than another's.
@@ -39,6 +40,8 @@ export type ScreenKit = {
   exportList?: (screen: string, query: Record<string, string>) => Promise<Result<{ csv: string; n: number }>>;
   /** A server-paged list's filtered ids, for "Select all" across pages. */
   listIds?: (screen: string, query: Record<string, string>) => Promise<Result<string[]>>;
+  /** What the selection bar adds up, for ticked rows a paged list does not hold in the browser. */
+  listTotals?: (screen: string, query: Record<string, string>, ids: string[]) => Promise<Result<{ counted: number; totals: SelectionTotal[] }>>;
   /** Where a photo or video field posts the file it was given. */
   uploadUrl: string;
   /** Where a pin field asks for the map key; absent, the pin is typed. */
@@ -61,6 +64,7 @@ export const ERP_KIT: ScreenKit = {
   runTool: erpRunTool,
   exportList: erpListExport,
   listIds: erpListIds,
+  listTotals: erpListTotals,
   uploadUrl: "/api/erp/attachments",
   mapKeyUrl: "/api/erp/map-key",
   flags: FLAG,
@@ -104,6 +108,7 @@ export function safeKit(kit: ScreenKit): ScreenKit {
       runTool: kit.runTool && guard(kit.runTool),
       exportList: kit.exportList && guard(kit.exportList),
       listIds: kit.listIds && guard(kit.listIds),
+      listTotals: kit.listTotals && guard(kit.listTotals),
     };
     SAFE.set(kit, safe);
     SAFE.set(safe, safe); // wrapping a wrapped kit hands it straight back

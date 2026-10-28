@@ -14,7 +14,7 @@
  * ------------------------------------------------------------------------- */
 
 import { validPeriod } from "./period";
-import { aggsOf, cellText, type ColSpec, type ListRow, type ListSpec, type Tone } from "./ui";
+import { aggsOf, cellText, type ColSpec, type ListRow, type ListSpec, type SelectSum, type Tone } from "./ui";
 
 export type ListSort = { k: string; d: 1 | -1 };
 
@@ -468,4 +468,44 @@ export function listCsv(spec: ListSpec, rows: ListRow[], query: ListQuery, flagW
     )
     .join("\n");
   return { csv: `${head}\n${body}`, n: list.length };
+}
+
+/** One figure of the selection bar, added up. `missing` counts the ticked rows with no value. */
+export type SelectionTotal = { k: string; l: string; v: number; missing: number; missingLabel?: string; allMissing?: boolean };
+
+/** One total as the bar says it: "1,240 kg", "1 order", "(2 without a weight)". */
+export function selectionTotalText(t: SelectionTotal): string {
+  const n = (v: number) => new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 }).format(v);
+  const label = t.missingLabel ?? "with no value";
+  /* Not one ticked row carries the figure: "0 kg" would read as weightless goods. */
+  if (t.allMissing) return `— ${t.l} (all ${n(t.missing)} ${label})`;
+  return `${n(t.v)} ${t.l}${t.missing ? ` (${n(t.missing)} ${label})` : ""}`;
+}
+
+/**
+ * What the selection bar says about the ticked rows: each `selectSum` figure,
+ * over the rows among `rows` (folded rows included) whose id is ticked. `counted`
+ * is how many of the ticked ids were found — a paged register cannot add up a
+ * row outside the period it read, and says so rather than pretending.
+ */
+export function selectionTotals(spec: Pick<ListSpec, "selectSum">, rows: ListRow[], ids: string[]): { counted: number; totals: SelectionTotal[] } {
+  const want = new Set(ids);
+  const picked = rows.flatMap((r) => [r, ...(r.sub ?? [])]).filter((r) => want.has(r.id));
+  const totals = (spec.selectSum ?? []).map((f: SelectSum): SelectionTotal => {
+    const blank = (r: ListRow) => r.v[f.k] == null || r.v[f.k] === "";
+    const missing = picked.filter(blank).length;
+    const v =
+      f.kind === "distinct"
+        ? new Set(picked.filter((r) => !blank(r)).map((r) => String(r.v[f.k]))).size
+        : picked.reduce((t, r) => t + (Number(r.v[f.k]) || 0), 0);
+    return {
+      k: f.k,
+      l: v === 1 && f.one ? f.one : f.l,
+      v,
+      missing: f.missing ? missing : 0,
+      ...(f.missing ? { missingLabel: f.missing } : {}),
+      ...(f.missing && picked.length > 0 && missing === picked.length ? { allMissing: true } : {}),
+    };
+  });
+  return { counted: new Set(picked.map((r) => r.id)).size, totals };
 }

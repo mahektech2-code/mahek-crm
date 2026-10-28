@@ -470,7 +470,7 @@ export function SelectionBar({
   if (!count) return null;
   return (
     <div className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3.5 rounded-card bg-ink px-3.5 py-2.5 text-white shadow-[0_8px_24px_rgba(22,22,22,0.12)]">
-      <span className="text-sm font-medium">{count} selected</span>
+      <span className="text-sm font-medium whitespace-nowrap">{count} selected</span>
       <span className="h-[18px] w-px bg-body" />
       {children}
       <button

@@ -2896,8 +2896,17 @@ const dispatchRegister: ScreenModule = {
         hidden: [],
         readOnly: true,
         colFilters: true,
+        /* Ticking rows reads what they add up to — the lorry is booked by the weight. */
+        selectSum: [
+          { k: "weight", l: "kg", missing: "without a weight" },
+          { k: "boxes", l: "boxes", one: "box" },
+          { k: "qty", l: "cans", one: "can" },
+          { k: "orderNo", l: "orders", one: "order", kind: "distinct" },
+          { k: "delivery", l: "delivery parties", one: "delivery party", kind: "distinct" },
+        ],
         chips: "status",
         groups: ["orderNo"],
+        groupSel: true,
         agg: [
           { k: "boxes", l: "boxes" },
           { k: "weight", l: "kg", missing: "without a weight" },

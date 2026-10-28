@@ -1,7 +1,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import type { ListRow, ListSpec, Tone } from "./ui";
-import { groupHeadValues, listCsv, listQueryParams, pageOf, parseListQuery, queryRows, type ListQuery } from "./list-query";
+import { groupHeadValues, listCsv, listQueryParams, pageOf, parseListQuery, queryRows, selectionTotalText, selectionTotals, type ListQuery } from "./list-query";
 
 const FLAGS: Record<string, [string, Tone]> = { late: ["Running late", "danger"] };
 const spec: ListSpec = {
@@ -208,4 +208,33 @@ describe("Excel column filters", () => {
   test("a list that does not offer them ignores them", () => {
     assert.equal(queryRows(spec, ROWS, Q({ cf: { item: { in: ["Toluene"] } } }), FLAGS).list.length, 4);
   });
+});
+
+describe("what the ticked rows add up to", () => {
+  const sspec: Pick<ListSpec, "selectSum"> = {
+    selectSum: [
+      { k: "qty", l: "litres", missing: "without a quantity" },
+      { k: "no", l: "orders", one: "order", kind: "distinct" },
+    ],
+  };
+  const rows = [...ROWS, { id: "e", v: { no: "1", item: "Mystery", qty: null, status: "Open", godown: "Vasai" }, flags: [] }];
+
+  test("sums a number, counts the distinct values, and names the rows with none", () => {
+    const r = selectionTotals(sspec, rows, ["a", "c", "e"]);
+    assert.equal(r.counted, 3);
+    assert.deepEqual(r.totals.map((t) => [t.v, t.l, t.missing]), [[17, "litres", 1], [1, "order", 0]]);
+    assert.equal(selectionTotalText(r.totals[0]), "17 litres (1 without a quantity)");
+    assert.equal(selectionTotalText(r.totals[1]), "1 order");
+  });
+
+  test("a ticked id the rows do not hold is not counted, and is said to be missing", () => {
+    const r = selectionTotals(sspec, rows, ["a", "gone"]);
+    assert.equal(r.counted, 1);
+    assert.equal(r.totals[0].v, 10);
+  });
+});
+
+test("a figure no ticked row carries reads as unknown, never as zero", () => {
+  const r = selectionTotals({ selectSum: [{ k: "qty", l: "kg", missing: "without a weight" }] }, [{ id: "x", v: { qty: null }, flags: [] }, { id: "y", v: { qty: "" }, flags: [] }], ["x", "y"]);
+  assert.equal(selectionTotalText(r.totals[0]), "— kg (all 2 without a weight)");
 });
