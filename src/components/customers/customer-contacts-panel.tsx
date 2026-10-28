@@ -6,6 +6,7 @@ import { Modal, RowMenu } from "@/components/ui/overlays";
 import { CardGrid } from "@/components/ui/card-grid";
 import { Icon } from "@/components/shell/icons";
 import { useToast } from "@/components/ui/toast";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import {
   BIRTH_MONTH_NAMES,
   CONTACT_ROLES,
@@ -65,10 +66,13 @@ export function CustomerContactsPanel({
   /** Told after every saved change, with the list as the server now holds it. */
   onChange?: (contacts: CustomerContact[]) => void;
 }) {
-  const { run } = useToast();
+  const { run, push } = useToast();
   const [contacts, setContacts] = React.useState(() => sortContacts(initial));
   const [editing, setEditing] = React.useState<string | "new" | null>(null);
   const [busy, setBusy] = React.useState(false);
+  /* The contact being taken off: the impact modal says which number WhatsApp
+     and the reminders move to, and asks for the name. */
+  const [removing, setRemoving] = React.useState<string | null>(null);
 
   const apply = (next: CustomerContact[]) => {
     const sorted = sortContacts(next);
@@ -139,11 +143,7 @@ export function CustomerContactsPanel({
               birthdayHeadsUpDays={birthdayHeadsUpDays}
               onEdit={() => setEditing(c.id)}
               onDesignate={(d, on) => void act(designateCustomerContact(c.id, d, on))}
-              onRemove={() => {
-                if (window.confirm(`Remove ${c.name || phoneForReading(c.phone)} from this customer?`)) {
-                  void act(removeCustomerContact(c.id));
-                }
-              }}
+              onRemove={() => setRemoving(c.id)}
             />
           ))}
         </div>
@@ -152,6 +152,23 @@ export function CustomerContactsPanel({
           No numbers recorded for this customer yet.
         </div>
       )}
+
+      {removing ? (
+        <ImpactDialog
+          key={removing}
+          kind="crm-customer-contact"
+          id={removing}
+          onClose={() => setRemoving(null)}
+          onConfirm={async (confirmation) => {
+            const r = await removeCustomerContact(removing, confirmation);
+            if (r.ok) {
+              if (r.data) apply(r.data);
+              push(r.message ?? "Contact removed");
+            }
+            return r;
+          }}
+        />
+      ) : null}
 
       {canEdit ? (
         <div>

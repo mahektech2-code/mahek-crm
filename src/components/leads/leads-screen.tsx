@@ -27,6 +27,7 @@ import { bulkAdvanceLeadStage } from "@/lib/actions/leads";
 import { trashLeads } from "@/lib/actions/lead-trash";
 import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { LEAD_TRASH_KIND, leadTrashKey } from "@/lib/impact/kinds/lead-key";
+import { impactBatch } from "@/lib/impact/kinds/crm-keys";
 import {
   EMPTY_BULK_HOLD,
   bulkStagePayload,
@@ -432,6 +433,9 @@ export function LeadsScreen({
   /* Moving to the trash asks for the reason, then opens the impact modal —
      what leaves the phones, which tasks close, what stays — with this batch. */
   const [trashing, setTrashing] = React.useState<{ ids: string[]; reason: string; bulk: boolean; key: number } | null>(null);
+  /* Archiving the same way: the reason first, then the impact modal — off the
+     working list and the phones' Leads tab, owners told, tasks and stops kept. */
+  const [archiving, setArchiving] = React.useState<{ ids: string[]; reason: string; bulk: boolean; key: number } | null>(null);
   const [error, setError] = React.useState<string | null>(null);
 
 
@@ -512,6 +516,11 @@ export function LeadsScreen({
       setTrashing({ ids: leadIds, reason, bulk: true, key: Date.now() });
       return;
     }
+    if (bulk === "archive") {
+      setBulk(null);
+      setArchiving({ ids: leadIds, reason, bulk: true, key: Date.now() });
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -522,9 +531,7 @@ export function LeadsScreen({
             ? await bulkAdvanceLeadStage(
                 bulkStagePayload(leadIds, stage, stage === "on_hold" ? holdCode : lostCode, lostNote, hold),
               )
-            : bulk === "archive"
-              ? await bulkArchiveLeads({ leadIds, reason })
-              : bulk === "restore"
+            : bulk === "restore"
                 ? await bulkRestoreLeads({ leadIds })
                 : await bulkChaseLeadOwners({ leadIds });
 
@@ -579,15 +586,18 @@ export function LeadsScreen({
       setActing(null);
       return;
     }
+    if (acting.kind === "archive") {
+      setArchiving({ ids: [acting.lead.id], reason, bulk: false, key: Date.now() });
+      setActing(null);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
       const result =
         acting.kind === "reassign"
           ? await assignDeskLead({ customerId: acting.lead.id, ownerId: ownerIdFor(salesmanId) })
-          : acting.kind === "archive"
-            ? await archiveLead({ leadId: acting.lead.id, reason })
-            : acting.kind === "priority"
+          : acting.kind === "priority"
               ? await setLeadPriority({
                   customerId: acting.lead.id,
                   /* "" is the cleared answer, and it has to reach the server as
@@ -1286,7 +1296,7 @@ export function LeadsScreen({
             }
             onClick={() => void submitBulk()}
           >
-            {busy ? "Working…" : bulk === "trash" ? "Next: what this affects" : `Apply to ${picked.size}`}
+            {busy ? "Working…" : bulk === "trash" || bulk === "archive" ? "Next: what this affects" : `Apply to ${picked.size}`}
           </Button>
         </div>
       </Modal>
@@ -1311,6 +1321,33 @@ export function LeadsScreen({
         />
       ) : null}
 
+      {archiving ? (
+        <ImpactDialog
+          key={archiving.key}
+          kind="lead-archive"
+          id={impactBatch(archiving.ids)}
+          onClose={() => setArchiving(null)}
+          onConfirm={async (confirmation) => {
+            if (archiving.bulk) {
+              const result = await bulkArchiveLeads({ leadIds: archiving.ids, reason: archiving.reason }, confirmation);
+              if (result.ok) {
+                /* Exactly what was refused stays ticked — see submitBulk. */
+                setPicked(new Set(result.data?.failed.map((f) => f.id) ?? []));
+                toast.push(result.message ?? "Archived.");
+                router.refresh();
+              }
+              return result;
+            }
+            const result = await archiveLead({ leadId: archiving.ids[0], reason: archiving.reason }, confirmation);
+            if (result.ok) {
+              toast.push(result.message ?? "Archived.");
+              router.refresh();
+            }
+            return result;
+          }}
+        />
+      ) : null}
+
       <ReasonModal
         open={acting?.kind === "archive"}
         onClose={() => setActing(null)}
@@ -1324,7 +1361,7 @@ export function LeadsScreen({
         fieldLabel="Why · required"
         reason={reason}
         onReasonChange={setReason}
-        confirmLabel="Archive"
+        confirmLabel="Next: what this affects"
         busy={busy}
         error={error}
         onConfirm={() => void submit()}

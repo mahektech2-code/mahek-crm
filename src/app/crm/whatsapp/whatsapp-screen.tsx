@@ -24,6 +24,7 @@ import {
 import { Drawer, DrawerHeader, Modal } from "@/components/ui/overlays";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import {
   actionReply,
   advanceRun,
@@ -256,11 +257,15 @@ export function WhatsappScreen(props: {
   } = props;
 
   const router = useRouter();
-  const { run: act } = useToast();
+  const { run: act, push } = useToast();
 
   const [connOpen, setConnOpen] = React.useState(false);
   const [groupOpen, setGroupOpen] = React.useState(false);
   const [editingTpl, setEditingTpl] = React.useState<Template | null>(null);
+  /* A copied message being discarded, and a template being archived — each
+     through the impact modal, keyed per opening so it loads afresh. */
+  const [discarding, setDiscarding] = React.useState<{ id: string; key: number } | null>(null);
+  const [archivingTpl, setArchivingTpl] = React.useState<{ id: string; key: number } | null>(null);
 
   // Copied but never confirmed. Counted from the server's own sweep for
   // managers; telecallers see their own copies still sitting unconfirmed —
@@ -380,10 +385,7 @@ export function WhatsappScreen(props: {
                 </button>
                 <button
                   className="flex-none cursor-pointer text-muted"
-                  onClick={async () => {
-                    const r = await act(cancelMessage(unconfirmed[0].id));
-                    if (r.ok) router.refresh();
-                  }}
+                  onClick={() => setDiscarding({ id: unconfirmed[0].id, key: Date.now() })}
                 >
                   Discard
                 </button>
@@ -517,6 +519,11 @@ export function WhatsappScreen(props: {
           }
         }}
         onArchive={async (id, archived) => {
+          /* Archiving goes through the impact modal; restoring takes nothing away. */
+          if (archived) {
+            setArchivingTpl({ id, key: Date.now() });
+            return;
+          }
           const result = await act(archiveTemplate(id, archived));
           if (result.ok) {
             setEditingTpl(null);
@@ -524,6 +531,41 @@ export function WhatsappScreen(props: {
           }
         }}
       />
+
+      {discarding ? (
+        <ImpactDialog
+          key={discarding.key}
+          kind="crm-wa-message"
+          id={discarding.id}
+          onClose={() => setDiscarding(null)}
+          onConfirm={async (confirmation) => {
+            const r = await cancelMessage(discarding.id, confirmation);
+            if (r.ok) {
+              push(r.message ?? "Discarded");
+              router.refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
+
+      {archivingTpl ? (
+        <ImpactDialog
+          key={archivingTpl.key}
+          kind="crm-wa-template-archive"
+          id={archivingTpl.id}
+          onClose={() => setArchivingTpl(null)}
+          onConfirm={async (confirmation) => {
+            const r = await archiveTemplate(archivingTpl.id, true, confirmation);
+            if (r.ok) {
+              push(r.message ?? "Template archived");
+              setEditingTpl(null);
+              router.refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
     </>
   );
 }
@@ -578,7 +620,7 @@ function SendComposer({
   onPickTemplate: (id: string) => void;
 }) {
   const router = useRouter();
-  const { run: act } = useToast();
+  const { run: act, push } = useToast();
 
   const customer = customers.find((c) => c.id === customerId) ?? customers[0];
   const template = templates.find((t) => t.id === templateId);
@@ -634,6 +676,9 @@ function SendComposer({
     Record<string, { id: string | null; copied: boolean }>
   >({});
   const legOf = (leg: string) => legState[leg] ?? { id: null, copied: false };
+  /* "Not sent? Cancel" discards a copied leg — through the impact modal, since
+     a copy may already be in the customer's chat. */
+  const [cancellingLeg, setCancellingLeg] = React.useState<{ id: string; leg: string; key: number } | null>(null);
   const [copyFallback, setCopyFallback] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
 
@@ -723,6 +768,23 @@ function SendComposer({
 
   return (
     <div className="grid grid-cols-[minmax(0,58fr)_minmax(340px,42fr)] items-start gap-4">
+      {cancellingLeg ? (
+        <ImpactDialog
+          key={cancellingLeg.key}
+          kind="crm-wa-message"
+          id={cancellingLeg.id}
+          onClose={() => setCancellingLeg(null)}
+          onConfirm={async (confirmation) => {
+            const r = await cancelMessage(cancellingLeg.id, confirmation);
+            if (r.ok) {
+              push(r.message ?? "Discarded");
+              setLegState((s) => ({ ...s, [cancellingLeg.leg]: { id: null, copied: false } }));
+              router.refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
       <div className="flex min-w-0 flex-col gap-4">
         <Card className="p-5">
           <Field label="Customer">
@@ -1068,14 +1130,9 @@ function SendComposer({
                       </span>
                       <button
                         disabled={!state.id}
-                        onClick={async () => {
+                        onClick={() => {
                           if (!state.id) return;
-                          await act(cancelMessage(state.id));
-                          setLegState((s) => ({
-                            ...s,
-                            [leg]: { id: null, copied: false },
-                          }));
-                          router.refresh();
+                          setCancellingLeg({ id: state.id, leg, key: Date.now() });
                         }}
                         className="cursor-pointer text-[13px] text-brand disabled:cursor-not-allowed disabled:text-line-strong"
                       >
@@ -1206,6 +1263,8 @@ function RunTab({
   const [copied, setCopied] = React.useState(false);
   const [bulkArmed, setBulkArmed] = React.useState(false);
   const [bulkBusy, setBulkBusy] = React.useState(false);
+  /* Ending a run part-way: the impact modal names who is still waiting. */
+  const [ending, setEnding] = React.useState<number | null>(null);
 
   // The hint in the header promises these, so they have to work. Ignored while
   // a field has focus, or typing "s" in a note would skip the customer.
@@ -1433,14 +1492,28 @@ function RunTab({
         <Button
           size="sm"
           variant="secondary"
-          onClick={async () => {
-            await act(clearRun(run.id));
-            router.refresh();
-          }}
+          onClick={() => setEnding(Date.now())}
         >
           End run
         </Button>
       </Card>
+
+      {ending !== null ? (
+        <ImpactDialog
+          key={ending}
+          kind="crm-wa-run-end"
+          id={run.id}
+          onClose={() => setEnding(null)}
+          onConfirm={async (confirmation) => {
+            const r = await clearRun(run.id, confirmation);
+            if (r.ok) {
+              push(r.message ?? "Run ended");
+              router.refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
 
       <div className="grid grid-cols-[clamp(220px,20%,300px)_minmax(0,1fr)] items-start gap-4">
         <Card className="overflow-hidden">

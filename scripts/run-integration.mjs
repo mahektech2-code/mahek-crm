@@ -42,6 +42,7 @@ const files = [
      place to start reading than one sentence naming the table. */
   "src/lib/mbos-columns.test.ts",
   "src/lib/journeys.test.ts",
+  "src/lib/crm-accounts-impact.test.ts",
   // Adding a customer from Accounts, and it reaching every app on its own.
   "src/lib/customer-create.test.ts",
   // A lead is raised inside the salesman's own area, and lands there.

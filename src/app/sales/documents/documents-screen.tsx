@@ -30,7 +30,8 @@ import {
   ScreenHeader,
   Table,
 } from "@/components/console/parts";
-import { ConfirmDialog, Drawer, DrawerHeader, Modal } from "@/components/ui/overlays";
+import { Drawer, DrawerHeader, Modal } from "@/components/ui/overlays";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { cx } from "@/components/ui/primitives";
 import { plural } from "@/components/console/words";
 import { callAction } from "@/lib/call-action";
@@ -357,27 +358,27 @@ export function DocumentsScreen({
         />
       ) : null}
 
-      <ConfirmDialog
-        open={!!withdrawing}
-        title="Withdraw this document?"
-        body={
-          withdrawing ? (
-            <>
-              <span className="font-medium text-ink">{withdrawing.title}</span> comes off{" "}
-              {withdrawing.tagged.length
-                ? `the handsets of the ${plural(withdrawing.tagged.length, "person", "people")} tagged`
-                : "every handset in the field"}{" "}
-              on their next sync. The record stays here, with who it was for, and it can be published
-              again.
-            </>
-          ) : null
-        }
-        confirmLabel="Withdraw"
-        cancelLabel="Keep it published"
-        destructive
-        onConfirm={() => (withdrawing ? setPublished(withdrawing, false) : undefined)}
-        onClose={() => setWithdrawing(null)}
-      />
+      {/* Whose phones it leaves, and that the record stays — read off the
+          database, with the title typed to confirm. */}
+      {withdrawing ? (
+        <ImpactDialog
+          key={withdrawing.id}
+          kind="sales-document-withdraw"
+          id={withdrawing.id}
+          onClose={() => setWithdrawing(null)}
+          onConfirm={async (confirmation) => {
+            /* Called directly rather than through `callAction`: its "updated
+               while open" answer is a conflict, and the modal reads a conflict
+               as "the list moved" and asks again. A throw shows as itself. */
+            const result = await setDocumentPublished({ documentId: withdrawing.id, published: false }, confirmation);
+            if (result.ok) {
+              toast.push(result.message ?? "Withdrawn.");
+              router.refresh();
+            }
+            return result;
+          }}
+        />
+      ) : null}
     </div>
   );
 }

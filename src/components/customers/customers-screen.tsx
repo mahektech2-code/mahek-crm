@@ -50,6 +50,7 @@ import {
   type PlaceNames,
 } from "@/lib/place-filters";
 import { useToast } from "@/components/ui/toast";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { AccountManagerDialog } from "@/components/crm/account-manager-dialog";
 import { SalesManagerDialog } from "@/components/crm/sales-manager-dialog";
 import { updateAccountManagers } from "@/lib/actions/account-manager";
@@ -430,6 +431,9 @@ export function CustomersScreen({
   );
   const [deactivating, setDeactivating] = React.useState(false);
   const [reactivating, setReactivating] = React.useState(false);
+  /* Approving a deactivation goes through the impact modal: what leaves the
+     Call Log, the ERP and the phones, and the money that stays owed. */
+  const [approvingDeactivation, setApprovingDeactivation] = React.useState<string | null>(null);
   /** The rows the convert dialog is open over — one from a menu, many from the bar. */
   const [converting, setConverting] = React.useState<Row[] | null>(null);
 
@@ -1351,10 +1355,7 @@ export function CustomersScreen({
                                   {
                                     label: "Approve deactivation",
                                     destructive: true,
-                                    onSelect: async () => {
-                                      await run(decideDeactivation(r.id, true));
-                                      router.refresh();
-                                    },
+                                    onSelect: () => setApprovingDeactivation(r.id),
                                   },
                                   {
                                     label: "Reject the request",
@@ -1929,6 +1930,23 @@ export function CustomersScreen({
               setSelected(new Set());
               router.refresh();
             }
+          }}
+        />
+      ) : null}
+
+      {approvingDeactivation ? (
+        <ImpactDialog
+          key={approvingDeactivation}
+          kind="crm-customer-deactivate"
+          id={approvingDeactivation}
+          onClose={() => setApprovingDeactivation(null)}
+          onConfirm={async (confirmation) => {
+            const r = await decideDeactivation(approvingDeactivation, true, undefined, confirmation);
+            if (r.ok) {
+              push(r.message ?? "Customer deactivated");
+              router.refresh();
+            }
+            return r;
           }}
         />
       ) : null}

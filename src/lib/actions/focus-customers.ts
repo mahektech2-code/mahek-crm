@@ -9,6 +9,8 @@ import { auditLog, customers, focusCustomers } from "@/db/schema";
 import { assertCustomerInScope, requireCapability } from "@/lib/access-control";
 import { isManager, requireUser } from "@/lib/auth";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * Adding a customer to Focus customers, and taking one off.
@@ -93,6 +95,7 @@ const removeSchema = z.object({ entryId: z.string().min(1) });
 
 export async function removeFocusCustomer(
   input: z.infer<typeof removeSchema>,
+  confirmation?: ImpactConfirmation,
 ): Promise<Result<null>> {
   try {
     const parsed = removeSchema.safeParse(input);
@@ -126,6 +129,8 @@ export async function removeFocusCustomer(
         "not_permitted",
       );
     }
+    const refusal = await confirmImpact("crm-focus-customer", entry.id, confirmation);
+    if (refusal) return refusal;
 
     await db.transaction(async (tx) => {
       await tx.delete(focusCustomers).where(eq(focusCustomers.id, entry.id));

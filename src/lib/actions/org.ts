@@ -8,6 +8,8 @@ import { auditLog, employeeReporting, employees } from "@/db/schema";
 import { requireUser } from "@/lib/auth";
 import { listUserApps, listUserModules } from "@/lib/access";
 import { err, fromThrown, okVoid, type Result } from "@/lib/result";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * WHO REPORTS TO WHOM.
@@ -163,7 +165,7 @@ export async function setManager(
  * disappearing from it — somebody with no manager recorded is a fact worth
  * seeing, and is how every employee starts out.
  */
-export async function clearManager(employeeId: string): Promise<Result> {
+export async function clearManager(employeeId: string, confirmation?: ImpactConfirmation): Promise<Result> {
   try {
     const { user, error } = await requireHrms();
     if (error) return error;
@@ -173,6 +175,10 @@ export async function clearManager(employeeId: string): Promise<Result> {
       .from(employeeReporting)
       .where(eq(employeeReporting.employeeId, employeeId));
     if (!existing) return okVoid("They had no manager recorded.");
+    /* The CRM names an account's sales manager off this line, so the person
+       saw which accounts lose theirs on the nightly pass. */
+    const refusal = await confirmImpact("crm-reporting-line", employeeId, confirmation);
+    if (refusal) return refusal;
 
     await db.delete(employeeReporting).where(eq(employeeReporting.employeeId, employeeId));
 

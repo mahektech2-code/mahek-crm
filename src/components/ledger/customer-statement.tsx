@@ -4,6 +4,7 @@ import * as React from "react";
 import { cx } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
 import { ConfirmDialog, RowMenu } from "@/components/ui/overlays";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { Pager } from "@/components/ui/pager";
 import { ALL_TIME, CUSTOM_DATES, YearFilter } from "@/components/ui/year-filter";
 import { reverseReceiptAction } from "@/lib/actions/payments";
@@ -265,9 +266,12 @@ export function StatementTable({
    */
   compact?: boolean;
 }) {
-  const { run } = useToast();
+  const { push } = useToast();
   /* Which receipt is being reversed. The reason is held by the dialog. */
   const [reversing, setReversing] = React.useState<LedgerEntry | null>(null);
+  /* The reason first, then the impact modal: which bills are owed again and
+     what the outstanding becomes. Keyed per opening so it loads afresh. */
+  const [confirmingReverse, setConfirmingReverse] = React.useState<{ receiptId: string; reason: string; key: number } | null>(null);
   const [page, setPage] = React.useState(1);
   const [perPage, setPerPage] = React.useState(25);
   /*
@@ -435,19 +439,33 @@ export function StatementTable({
             ? reversing.links.map((l) => l.label).join(", ")
             : "the account"
         }. Use this when a payment counted and then failed — a bounced cheque, a duplicate entry, money applied to the wrong customer. If accounts simply never found it, reject it instead.`}
-        confirmLabel="Reverse payment"
+        confirmLabel="Next: what this affects"
         destructive
         needsReason
         onClose={() => setReversing(null)}
         onConfirm={async (why) => {
           if (!reversing?.receiptId) return;
-          const result = await run(reverseReceiptAction(reversing.receiptId, why));
-          if (result.ok) {
-            setReversing(null);
-            onReversed();
-          }
+          setConfirmingReverse({ receiptId: reversing.receiptId, reason: why, key: Date.now() });
         }}
       />
+
+      {confirmingReverse ? (
+        <ImpactDialog
+          key={confirmingReverse.key}
+          kind="accounts-receipt-reverse"
+          id={confirmingReverse.receiptId}
+          confirmLabel="Reverse payment"
+          onClose={() => setConfirmingReverse(null)}
+          onConfirm={async (confirmation) => {
+            const r = await reverseReceiptAction(confirmingReverse.receiptId, confirmingReverse.reason, confirmation);
+            if (r.ok) {
+              push(r.message ?? "Reversed");
+              onReversed();
+            }
+            return r;
+          }}
+        />
+      ) : null}
     </>
   );
 }

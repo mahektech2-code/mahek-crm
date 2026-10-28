@@ -14,6 +14,8 @@ import {
 import { err, fromThrown, ok, okVoid, type Result } from "@/lib/result";
 import { checkDistributors as distributorProblem } from "@/lib/services/distributor-service";
 import { voidReviewForDistributorChange } from "@/lib/services/lead-qualification-flow-service";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * Converting a lead into a third-party customer, and keeping the arrangement.
@@ -560,7 +562,7 @@ export async function updateDistributor(
  * makes it no better. The refusal says the way out: the shop either has
  * another distributor, or it is not a third-party customer any more.
  */
-export async function removeDistributor(linkId: string): Promise<Result> {
+export async function removeDistributor(linkId: string, confirmation?: ImpactConfirmation): Promise<Result> {
   try {
     if (!linkId) return err("Nothing to remove.", "validation");
     const ctx = await requireCapability("customer.classify");
@@ -591,6 +593,10 @@ export async function removeDistributor(linkId: string): Promise<Result> {
         "rule_violation",
       );
     }
+    /* What the person was shown — the review it sets aside, the phones that
+       list who bills the shop — is still the true picture. */
+    const refusal = await confirmImpact("crm-distributor-link", linkId, confirmation);
+    if (refusal) return refusal;
 
     await db.transaction(async (tx) => {
       await tx.delete(customerDistributors).where(eq(customerDistributors.id, linkId));

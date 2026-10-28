@@ -15,6 +15,7 @@ import {
   cx,
 } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { OrgTree } from "./org-tree";
 import { BodyPortal } from "@/components/ui/body-portal";
 
@@ -51,9 +52,12 @@ export function OrgScreen({
   company: string;
 }) {
   const router = useRouter();
-  const { run } = useToast();
+  const { run, push } = useToast();
   const [editing, setEditing] = React.useState<OrgPerson | null>(null);
   const [busy, setBusy] = React.useState(false);
+  /* Removing a reporting line empties the sales manager seat on the accounts
+     sold under that person, so it goes through the impact modal first. */
+  const [clearing, setClearing] = React.useState<OrgPerson | null>(null);
 
   const { roots, all, totals } = chart;
 
@@ -204,6 +208,11 @@ export function OrgScreen({
           busy={busy}
           onClose={() => setEditing(null)}
           onSave={async (managerId) => {
+            if (!managerId && editing.managerId) {
+              setClearing(editing);
+              setEditing(null);
+              return;
+            }
             setBusy(true);
             const result = await run(
               managerId ? setManager(editing.id, managerId) : clearManager(editing.id),
@@ -212,6 +221,28 @@ export function OrgScreen({
             if (result.ok) {
               setEditing(null);
               router.refresh();
+            }
+          }}
+        />
+      ) : null}
+
+      {clearing ? (
+        <ImpactDialog
+          key={clearing.id}
+          kind="crm-reporting-line"
+          id={clearing.id}
+          onClose={() => setClearing(null)}
+          onConfirm={async (confirmation) => {
+            setBusy(true);
+            try {
+              const r = await clearManager(clearing.id, confirmation);
+              if (r.ok) {
+                push(r.message ?? "Reporting line removed.");
+                router.refresh();
+              }
+              return r;
+            } finally {
+              setBusy(false);
             }
           }}
         />

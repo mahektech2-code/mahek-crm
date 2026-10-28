@@ -4,7 +4,8 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Card, Input } from "@/components/ui/primitives";
-import { ConfirmDialog, Modal } from "@/components/ui/overlays";
+import { Modal } from "@/components/ui/overlays";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { useToast } from "@/components/ui/toast";
 import { shortDate } from "@/lib/format";
 import {
@@ -70,7 +71,7 @@ export function DeliveryRelations({
   isThirdParty: boolean;
 }) {
   const router = useRouter();
-  const { run: toasted } = useToast();
+  const { run: toasted, push } = useToast();
   const [adding, setAdding] = React.useState(false);
   const [editing, setEditing] = React.useState<Relation | null>(null);
   const [removing, setRemoving] = React.useState<Relation | null>(null);
@@ -290,23 +291,25 @@ export function DeliveryRelations({
         }}
       />
 
-      <ConfirmDialog
-        open={Boolean(removing)}
-        title="Remove this arrangement?"
-        body={
-          removing
-            ? isShopSide
-              ? `${removing.name} will no longer be recorded as billing ${anchorName}. Orders already delivered here on their bill are untouched, and the row stays in this list as something the order sheet has seen.`
-              : `${removing.name} will no longer be recorded as a delivery address for ${anchorName}. Orders already delivered there are untouched.`
-            : ""
-        }
-        confirmLabel="Remove"
-        destructive
-        onConfirm={async () => {
-          if (removing?.linkId) await run(removeDistributor(removing.linkId), "remove");
-        }}
-        onClose={() => setRemoving(null)}
-      />
+      {/* What removing it reaches — a lead's qualification review set aside,
+          the phones that list who bills the shop, the deliveries that stay —
+          read off the database, with the distributor's name typed to confirm. */}
+      {removing?.linkId ? (
+        <ImpactDialog
+          key={removing.linkId}
+          kind="crm-distributor-link"
+          id={removing.linkId}
+          onClose={() => setRemoving(null)}
+          onConfirm={async (confirmation) => {
+            const r = await removeDistributor(removing.linkId!, confirmation);
+            if (r.ok) {
+              push(r.message ?? "Distributor removed.");
+              router.refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
     </Card>
   );
 }

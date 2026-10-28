@@ -5,6 +5,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cx } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
+import { impactPair } from "@/lib/impact/kinds/crm-keys";
 import { bankAccept, bankAcceptAll, bankConfirmAmount, bankDismiss, bankIgnore, bankRestore, bankReverseForReturn, bankUndo } from "@/lib/actions/bank-statements";
 import { BANK_FLAGS, type Candidate } from "@/lib/engines/bank-statements";
 import type { LineDetail, LineView, ReconcileFilter, ReconcileTab, ReconcileView } from "@/lib/services/bank-statement-service";
@@ -44,6 +46,10 @@ export function ReconcileScreen({
   const [mark, setMark] = React.useState<{ id: string; as?: string } | null>(null);
   const [edit, setEdit] = React.useState<LineView | null>(null);
   const [ignore, setIgnore] = React.useState<{ id: string; reason: string } | null>(null);
+  /* A returned cheque reversed, or a match undone — each through the impact
+     modal: the bills owed again, or the records a match leaves standing. */
+  const [returning, setReturning] = React.useState<{ lineId: string; receiptId: string; key: number } | null>(null);
+  const [undoing, setUndoing] = React.useState<{ lineId: string; key: number } | null>(null);
   const [q, setQ] = React.useState(filter.q ?? "");
 
   const href = React.useCallback(
@@ -180,7 +186,7 @@ export function ReconcileScreen({
               onMark={(id) => setMark({ id })}
               onEdit={(l) => setEdit(l)}
               onIgnore={(id, reason) => setIgnore({ id, reason })}
-              onReverse={(l) => act(bankReverseForReturn(l.id, l.flagReceiptId!))}
+              onReverse={(l) => setReturning({ lineId: l.id, receiptId: l.flagReceiptId!, key: Date.now() })}
               onShort={(l) => act(bankConfirmAmount(l.id, l.flagReceiptId!))}
               onHeld={(l) => l.suggestion && act(bankAccept(l.id, l.suggestion))}
             />
@@ -207,9 +213,9 @@ export function ReconcileScreen({
             onMark={(as) => setMark({ id: detail.line.id, as })}
             onIgnore={(reason) => setIgnore({ id: detail.line.id, reason })}
             onRestore={() => act(bankRestore(detail.line.id))}
-            onUndo={() => act(bankUndo(detail.line.id))}
+            onUndo={() => setUndoing({ lineId: detail.line.id, key: Date.now() })}
             onEdit={() => setEdit(detail.line)}
-            onReverse={() => act(bankReverseForReturn(detail.line.id, detail.line.flagReceiptId!))}
+            onReverse={() => setReturning({ lineId: detail.line.id, receiptId: detail.line.flagReceiptId!, key: Date.now() })}
             onShort={() => act(bankConfirmAmount(detail.line.id, detail.line.flagReceiptId!))}
           />
         ) : (
@@ -217,6 +223,39 @@ export function ReconcileScreen({
         )}
       </div>
 
+      {returning ? (
+        <ImpactDialog
+          key={returning.key}
+          kind="accounts-bank-return"
+          id={impactPair(returning.lineId, returning.receiptId)}
+          confirmLabel="Reverse the receipt"
+          onClose={() => setReturning(null)}
+          onConfirm={async (confirmation) => {
+            const r = await bankReverseForReturn(returning.lineId, returning.receiptId, confirmation);
+            if (r.ok) {
+              toast.push(r.message ?? "Receipt reversed");
+              router.refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
+      {undoing ? (
+        <ImpactDialog
+          key={undoing.key}
+          kind="accounts-bank-unmatch"
+          id={undoing.lineId}
+          onClose={() => setUndoing(null)}
+          onConfirm={async (confirmation) => {
+            const r = await bankUndo(undoing.lineId, confirmation);
+            if (r.ok) {
+              toast.push(r.message ?? "Match undone");
+              router.refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
       {mark ? <MarkDialog lineId={mark.id} preset={mark.as} onClose={() => setMark(null)} onDone={() => router.refresh()} /> : null}
       {edit ? <EditLineDialog line={edit} onClose={() => setEdit(null)} onDone={() => router.refresh()} /> : null}
       {ignore ? (
