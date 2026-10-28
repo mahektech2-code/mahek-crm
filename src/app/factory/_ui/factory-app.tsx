@@ -107,6 +107,7 @@ export class FactoryApp extends Component<Props, State> {
   /* Loading scans waiting their turn: a gun scans faster than the server answers, and none may be lost to that. */
   private scanQ: string[] = [];
   private scanRunning = false;
+  private staleTimer: ReturnType<typeof setTimeout> | undefined;
   private ot = 0;
   private photoInput: HTMLInputElement | null = null;
 
@@ -680,14 +681,13 @@ export class FactoryApp extends Component<Props, State> {
       return this.toast("Not counted. Tap the card first, then scan it again.", "warn");
     }
     this.scanQ.push(code);
-    this.showChecking();
     void this.pumpScans();
   }
 
-  /** How many scans are still with the server, on the band: the loader does not wait for them. */
-  showChecking() {
-    const n = this.scanQ.length + (this.scanRunning ? 1 : 0);
-    this.setState((st) => (st.scan && (st.scan.checking ?? 0) !== n ? { scan: { ...st.scan, checking: n } } : null));
+  /** A scan changed the factory's data on the server: fetched a moment after loading pauses, never while a scan waits for it. */
+  refreshSoon() {
+    clearTimeout(this.staleTimer);
+    this.staleTimer = setTimeout(() => void this.poll(), 3000);
   }
 
   /** The loading scan screen is waiting on the loader: a refusal, a lorry to pick, an override, or how many to load from a lot. */
@@ -702,7 +702,6 @@ export class FactoryApp extends Component<Props, State> {
     try {
       while (this.scanQ.length && this.state.scan?.purpose === "load" && !this.halted()) {
         await this.doScan(this.scanQ.shift()!);
-        this.showChecking();
         await new Promise<void>((done) => this.setState({}, done));
         if (!this.halted()) continue;
         /* What came in behind it is not counted: the loader is told how many, to scan them again. */
@@ -712,7 +711,6 @@ export class FactoryApp extends Component<Props, State> {
       }
     } finally {
       this.scanRunning = false;
-      this.showChecking();
     }
   }
 
@@ -814,8 +812,10 @@ export class FactoryApp extends Component<Props, State> {
         const given = new Set((db.orders[order]?.lines ?? []).flatMap((ln) => ln.alloc.map((a) => a[0])));
         this.setD((z) => {
           z.loads = { ...(z.loads ?? {}) };
-          for (const lot of Object.keys(r.board.perLot)) if (given.has(lot)) z.loads[lot] = r.board.perLot[lot];
+          /* A scan that allocated its lot has not reached the phone's copy of the order yet: every lot with a box on the order is the order's. */
+          for (const lot of Object.keys(r.board.perLot)) if (given.has(lot) || r.stale) z.loads[lot] = r.board.perLot[lot];
         });
+        if (r.stale) this.refreshSoon();
         return this.fed("ok", code, "Box loaded", r.message, boxesOn(r.board.boxes.length));
       }
       const st = this.state;
@@ -950,6 +950,7 @@ export class FactoryApp extends Component<Props, State> {
       this.setLorry({ busy: false });
       /* What went on is a band and a buzz; only a refusal stops the loader. */
       const l = r.board?.lorry, count = l ? nf(l.loaded) + " of " + nf(l.target) + " loaded" : undefined;
+      if (r.ok && r.stale) this.refreshSoon();
       if (r.ok) this.fed(r.tone, r.code, r.title, r.message, count);
       else if (r.repeat) this.fed("warn", r.code, "Already on — not counted again", r.text, count);
       else this.setLorry({ res: { tone: "bad", code: r.code, title: r.title, text: r.text, fix: r.fix, override: r.override } });
@@ -3220,7 +3221,7 @@ export class FactoryApp extends Component<Props, State> {
     const db = st.db;
     const rmName = m.item && db?.rm[m.item] ? db.rm[m.item].n : "";
     const title = { badge: T.scanBadge, home: T.scanQR, rm: rmName, sfg: "Base liquid", pm: "Empty cans", fg: "Filled cans", load: f ? (f.task.order ?? taskName(this.db(), f.task)) : "", drum: "Empty drum", lr: "LR number" }[P] || T.scanQR;
-    const hint = { badge: "Show your company badge", home: "Scan a task sheet, order or lot label", rm: "Scan the " + rmName + " drum", sfg: "Scan the base-liquid tank", pm: "Scan the empty-can stack", fg: "Scan the filled-can pallet", load: "Scan each box as it goes on. A scanning gun works too.", drum: "Scan the GRN label on the empty drum", lr: "Scan the barcode printed on the LR" }[P];
+    const hint = { badge: "Show your company badge", home: "Scan a task sheet, order or lot label", rm: "Scan the " + rmName + " drum", sfg: "Scan the base-liquid tank", pm: "Scan the empty-can stack", fg: "Scan the filled-can pallet", load: "Scan each box as it goes on", drum: "Scan the GRN label on the empty drum", lr: "Scan the barcode printed on the LR" }[P];
     const hasManual = ["rm", "sfg", "pm", "fg", "load"].indexOf(P) > -1 && !(P === "load" && f && isLorryTask(f.task));
     const noCam = st.cam === "none" || st.cam === "denied";
     const labels = noCam && (this.props.dev || st.cam === "none") ? this.scanLabels() : [];
@@ -3235,7 +3236,6 @@ export class FactoryApp extends Component<Props, State> {
           {typing ? <span style={{ width: "48px", height: "48px", flex: "none" }} /> : <button onClick={() => this.setState({ scan: { ...sc, torch: !sc.torch } })} aria-label="Torch" style={{ width: "48px", height: "48px", borderRadius: "50%", border: "none", background: sc.torch ? "#C6FF34" : "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{ic("torch", 23, "#FFFFFF")}</button>}
         </div>
         {P === "load" && !!sc.feed && this.renderFeed(sc.feed)}
-        {P === "load" && !!sc.checking && <div style={{ flex: "none", alignSelf: "center", margin: "0 12px 4px 12px", padding: "4px 12px", borderRadius: "12px", background: "rgba(255,255,255,0.14)", fontSize: "14px", fontWeight: 700 }}>{"Checking " + sc.checking + (sc.checking === 1 ? " scan…" : " scans…") + " keep scanning"}</div>}
         {typing ? this.renderTyping(labels) : (
           <>
         <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "0 24px", position: "relative" }}>

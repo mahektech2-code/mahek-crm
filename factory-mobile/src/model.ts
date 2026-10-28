@@ -38,8 +38,6 @@ export type Scan = {
   feed?: Feed | null;
   /** Loading: scans that came in behind a refused one and were not counted. */
   dropped?: number;
-  /** Loading: scans taken and still with the server — the loader has moved on to the next box. */
-  checking?: number;
 };
 export type Res =
   | { kind: "sending"; key: string }
@@ -124,8 +122,6 @@ export type State = {
   /** The department the screen is showing, for somebody who works several; null is all of them. */
   dept: Proc | null;
   scan: Scan | null;
-  /** The scanning gun's letters are landing in the app (its hidden field has the focus). */
-  gunOn?: boolean;
   flow: Flow | null;
   result: Res | null;
   sheet: Sheet | null;

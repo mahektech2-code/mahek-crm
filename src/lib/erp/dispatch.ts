@@ -283,12 +283,14 @@ export type LoadingLine = ScanLine & { transporter: string | null; dispatchOn: s
  * dispatch-verified, whatever its day — the desk's own queue, read line by
  * line with the transporter typed on it, so the factory can load a whole
  * transporter's goods item by item. The counts are `scanLines`', the desk's.
+ * `keep` narrows by the transporter typed on the order BEFORE the lines are
+ * read: one lorry's scan reads that lorry's orders, not the whole godown's.
  */
-export async function loadingLines(ex: Ex, godownId: string): Promise<LoadingLine[]> {
+export async function loadingLines(ex: Ex, godownId: string, keep?: (transporter: string | null) => boolean): Promise<LoadingLine[]> {
   const meta = await q<{ id: string; no: number; transporter: string | null; dispatchOn: string | null; billed: boolean }>(ex, sql`
     select o.id, o.order_no as no, o.transporter, o.dispatch_on::text as "dispatchOn", d.order_id is not null as billed
       from erp_orders o left join erp_order_details d on d.order_id = o.id
-     where o.godown_id = ${godownId} and o.status = 'Ready' and coalesce(d.verification, '') <> 'Verified'`);
+     where o.godown_id = ${godownId} and o.status = 'Ready' and coalesce(d.verification, '') <> 'Verified'`).then((rows) => (keep ? rows.filter((r) => keep(r.transporter)) : rows));
   if (!meta.length) return [];
   const byId = new Map(meta.map((m) => [m.id, m]));
   const nos = [...new Set(meta.map((m) => Number(m.no)))];

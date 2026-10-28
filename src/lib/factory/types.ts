@@ -349,7 +349,8 @@ export type LorryOverride = { id: string; unit: string; ordered: string; scanned
 export type LorryBoard = { lorry: Lorry | null; boxes: LorryBox[]; overrides: LorryOverride[]; canDecide: boolean };
 
 export type LorryScan =
-  | { ok: true; code: string; tone: "ok" | "warn"; title: string; message: string; board: LorryBoard; task: string; data: FactoryData | null }
+  /* `stale`: the scan changed what the phone's factory data says (a lot allocated, a job made), and the phone fetches it in the background rather than the scan waiting for it. */
+  | { ok: true; code: string; tone: "ok" | "warn"; title: string; message: string; board: LorryBoard; task: string; data: FactoryData | null; stale?: boolean }
   | { ok: false; code: string; title: string; text: string; fix: string; board: LorryBoard | null; task: string | null; override: { sku: string; label: string }[] | null; repeat?: boolean };
 
 /** A box scanned on Home: which lorries still need its item. */
@@ -358,7 +359,7 @@ export type LorryFind =
   | { ok: false; title: string; text: string; fix: string };
 
 export type BoxScan =
-  | { ok: true; code: string; message: string; board: LoadBoard; data: FactoryData | null }
+  | { ok: true; code: string; message: string; board: LoadBoard; data: FactoryData | null; stale?: boolean }
   | { ok: false; code: string; title: string; text: string; fix: string; board: LoadBoard | null; repeat?: boolean };
 
 /** What a box label is, for the home scan. */

@@ -24,8 +24,6 @@ export type Scan = {
   feed?: Feed | null;
   /** Loading: scans that came in behind a refused one and were not counted. */
   dropped?: number;
-  /** Loading: scans taken and still with the server — the loader has moved on to the next box. */
-  checking?: number;
 };
 export type Res =
   | { kind: "sending"; key: string }

@@ -77,16 +77,13 @@ export async function shrinkPhoto(uri: string, max = 1600): Promise<string> {
  * the last character: a gun types a whole code in a few milliseconds.
  * ------------------------------------------------------------------------- */
 
-export function GunInput({ onCode, onListen, wake }: { onCode: (code: string) => void; onListen?: (on: boolean) => void; wake?: { current: (() => void) | null } }) {
+export function GunInput({ onCode }: { onCode: (code: string) => void }) {
   const field = useRef<TextInput>(null);
   const text = useRef("");
   const idle = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const send = useRef(onCode);
-  const listen = useRef(onListen);
   useEffect(() => {
     send.current = onCode;
-    listen.current = onListen;
-    if (wake) wake.current = () => field.current?.focus();
   });
   useEffect(() => () => clearTimeout(idle.current), []);
 
@@ -98,39 +95,33 @@ export function GunInput({ onCode, onListen, wake }: { onCode: (code: string) =>
     if (code.length >= 3) send.current(code);
   };
   return (
-    <>
-      <TextInput
-        ref={field}
-        autoFocus
-        showSoftInputOnFocus={false}
-        caretHidden
-        autoCorrect={false}
-        autoCapitalize="none"
-        autoComplete="off"
-        submitBehavior="submit"
-        onChangeText={(v) => {
-          /* Some guns put the Enter into the text rather than pressing it. */
-          if (/[\r\n\t]/.test(v)) {
-            text.current = v.split(/[\r\n\t]/)[0];
-            return flush();
-          }
-          text.current = v;
-          clearTimeout(idle.current);
-          idle.current = setTimeout(flush, 120);
-        }}
-        onSubmitEditing={flush}
-        onFocus={() => listen.current?.(true)}
-        /* A tap elsewhere takes the focus; the gun needs it back. */
-        onBlur={() => {
-          listen.current?.(false);
-          setTimeout(() => field.current?.focus(), 200);
-        }}
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
-        /* On the screen, not off it: Android will not give the focus to a field drawn outside the window. */
-        style={{ position: "absolute", width: 2, height: 2, opacity: 0, left: 0, top: 0 }}
-      />
-    </>
+    <TextInput
+      ref={field}
+      autoFocus
+      showSoftInputOnFocus={false}
+      caretHidden
+      autoCorrect={false}
+      autoCapitalize="none"
+      autoComplete="off"
+      submitBehavior="submit"
+      onChangeText={(v) => {
+        /* Some guns put the Enter into the text rather than pressing it. */
+        if (/[\r\n\t]/.test(v)) {
+          text.current = v.split(/[\r\n\t]/)[0];
+          return flush();
+        }
+        text.current = v;
+        clearTimeout(idle.current);
+        idle.current = setTimeout(flush, 120);
+      }}
+      onSubmitEditing={flush}
+      /* A tap elsewhere takes the focus; the gun needs it back. */
+      onBlur={() => setTimeout(() => field.current?.focus(), 200)}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      /* On the screen, not off it: Android will not give the focus to a field drawn outside the window. */
+      style={{ position: "absolute", width: 2, height: 2, opacity: 0, left: 0, top: 0 }}
+    />
   );
 }
 
