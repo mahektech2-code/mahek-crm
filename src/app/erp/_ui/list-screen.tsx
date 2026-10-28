@@ -547,6 +547,8 @@ export function ListScreen({
   /* Columns that are facts about the group are drawn once in its header while
      grouped, so the rows carry only what differs from line to line. */
   const headCols = gk && spec.groupHead ? spec.groupHead.map((k) => cols.find((c) => c.k === k)).filter((c): c is ColSpec => !!c) : [];
+  /* With one godown open there is nothing for the header to tell apart, so it does not say it on every group. */
+  const headShown = headCols.filter((c) => !(c.k === spec.godownKey && godowns.length <= 1));
   /* The group's own key is the header's first word, so while grouped its rows
      do not repeat it — a godown column reading "Bhiwandi" fourteen times under
      a header that says Bhiwandi is noise. */
@@ -986,10 +988,12 @@ export function ListScreen({
                                 <span className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
                                   <span className={eyebrowClass}>{gk.map((k) => colOf(k).l).join(" · ")}</span>
                                   <span className="text-meta font-semibold text-ink">{g || "—"}</span>
-                                  {headCols.map((c) => (
-                                    <GroupFact key={c.k} c={c} v={grp.head[c.k]} />
-                                  ))}
-                                  <span className={cx("text-xs text-muted", headCols.length > 0 && "ml-auto")}>{aggText}</span>
+                                  {headShown.map((c) => {
+                                    const same = spec.groupHeadUnlessSame?.[c.k];
+                                    if (same && grp.head[c.k] != null && String(grp.head[c.k]) === String(grp.head[same] ?? "")) return null;
+                                    return <GroupFact key={c.k} c={c} v={grp.head[c.k]} strong={spec.groupHeadStrong?.includes(c.k)} />;
+                                  })}
+                                  <span className={cx("text-xs text-muted", headShown.length > 0 && "ml-auto")}>{aggText}</span>
                                   {spec.groupSel && bulkOn ? (
                                     <LinkButton
                                       onClick={() => {
@@ -1142,14 +1146,14 @@ function lowerFirst(s: string): string {
   return /^[A-Z][a-z]/.test(s) ? s[0].toLowerCase() + s.slice(1) : s;
 }
 
-function GroupFact({ c, v }: { c: ColSpec; v: ListRow["v"][string] | undefined }) {
+function GroupFact({ c, v, strong }: { c: ColSpec; v: ListRow["v"][string] | undefined; strong?: boolean }) {
   const text = cellText(c, v);
   if (v == null || text === "" || text === "—") return null;
   if (c.t === "s") return <StatusBadge value={String(v)} />;
   if (c.t === "b") return <span className="text-meta font-semibold text-ink">{text}</span>;
   return (
     <span className="text-xs text-muted">
-      {c.l} <span className={cx("text-body", c.t === "mono" && "font-mono")}>{text}</span>
+      {c.l} <span className={cx(strong ? "text-meta font-semibold text-ink" : "text-body", c.t === "mono" && "font-mono")}>{text}</span>
     </span>
   );
 }
