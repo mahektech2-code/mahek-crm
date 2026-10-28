@@ -364,9 +364,14 @@ function PromptDialog({ state, onClose }: { state: PromptState; onClose: () => v
   });
   const [errs, setErrs] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  /* A prompt's fields as they stand for what is typed: shown by `when`, and
+     `reqWhen` folded into `req` the way the form dialog folds it. Drawn raw,
+     a field the server demands on this answer — the chemical scrap weight on a
+     scrap decision — wore the "Optional" tag and was only refused after Save. */
+  const shown = spec.fields.filter((f) => whenHolds(f.when, v)).map((f) => resolveField(f, v));
   const submit = async () => {
     const e: Record<string, string> = {};
-    spec.fields.filter((f) => whenHolds(f.when, v)).forEach((f) => {
+    shown.forEach((f) => {
       const m = checkField(f, v[f.k] ?? "");
       if (m) e[f.k] = m;
     });
@@ -406,7 +411,7 @@ function PromptDialog({ state, onClose }: { state: PromptState; onClose: () => v
       }
     >
       <div className="grid gap-3.5">
-        {promptRuns(spec.fields.filter((f) => whenHolds(f.when, v))).map((run) => {
+        {promptRuns(shown).map((run) => {
           const field = (f: FieldSpec) => {
             const onChange = (x: string) => {
               setV((s) => ({ ...s, [f.k]: x }));

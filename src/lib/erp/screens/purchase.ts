@@ -1356,7 +1356,8 @@ async function purchaseForm(ctx: ErpContext, id?: string): Promise<FormSpec | nu
     { k: "lot", l: "Raw-material lot no", t: "derived", calc: "register.lot" },
     { k: "qty", l: "Quantity", t: "num", req: true, min: 0.001, sec: "Quantity", ...(id ? {} : { fillBy: { by: ["po", "poLine"], map: rx.qtyOf } }) },
     { k: "unit", l: "Unit", t: "select", req: true, opts: ["Kg", "Litre", "Pcs"], ...(id ? {} : { fillBy: { by: ["po", "poLine"], map: unitOfLine } }) },
-    { k: "density", l: "Density", t: "num", min: 0 },
+    /* A kilogram purchase is turned into litres by its density, and the save refuses one without it. */
+    { k: "density", l: "Density", t: "num", min: 0, reqWhen: { k: "unit", eq: "Kg" } },
     { k: "drums", l: "No. of drum", t: "num", min: 0 },
     { k: "weight", l: "Weight with drum", t: "num", min: 0 },
     { k: "litres", l: "In litre", t: "derived", calc: "register.litres" },

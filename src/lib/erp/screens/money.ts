@@ -223,8 +223,9 @@ async function receiptForm(t?: TxnRow): Promise<FormSpec> {
       { k: "amount", l: "Amount (₹)", t: "num", req: true, min: 0.01, sec: "Money" },
       { k: "mode", l: "How it came", t: "select", req: true, opts: [...PAY_MODES], sec: "Money", hint: "Cash in Hand and Petty Cash take only cash." },
       { k: "reference", l: "UTR / cheque no. / slip", t: "text", sec: "Money" },
-      { k: "customer", l: "Customer", t: "select", opts: cust.map((c) => c.label), sec: "From", hint: "A customer of the book. Leave empty and name the payer for anybody else." },
-      { k: "payer", l: "Paid by (not a customer)", t: "text", sec: "From" },
+      /* One of the two is needed — the save refuses a receipt from nobody — so each is required while the other is empty. */
+      { k: "customer", l: "Customer", t: "select", opts: cust.map((c) => c.label), sec: "From", reqWhen: { k: "payer", eq: "" }, hint: "A customer of the book. Leave empty and name the payer for anybody else." },
+      { k: "payer", l: "Paid by (not a customer)", t: "text", sec: "From", reqWhen: { k: "customer", eq: "" } },
       { k: "billsText", l: "Bills it pays", t: "text", sec: "From", hint: "As the customer said, e.g. MMI/0981, MMI/1044. Accounts confirm it against the ledger." },
       { k: "file1", l: "Slip / screenshot", t: "photo", sec: "From" },
       { k: "note", l: "Notes", t: "area", sec: "From" },
@@ -301,8 +302,9 @@ async function billsForm(a: AdvanceRow): Promise<FormSpec> {
       { k: "payee", l: "Paid to", t: "text" },
       { k: "invoiceNo", l: "Bill no.", t: "text" },
       { k: "amount", l: "Amount (₹)", t: "num", req: true, min: 0.01 },
-      { k: "photo", l: "Bill photo", t: "photo" },
-      { k: "noBillReason", l: "No bill? Why", t: "text" },
+      /* A bill number needs its photo and no number needs the reason — the save refuses either gap — so the line says which it is asking for. */
+      { k: "photo", l: "Bill photo", t: "photo", reqWhen: { k: "invoiceNo", notEmpty: true } },
+      { k: "noBillReason", l: "No bill? Why", t: "text", reqWhen: { k: "invoiceNo", eq: "" } },
       { k: "description", l: "What for", t: "text" },
     ],
     lineLabel: "Bill",
@@ -1087,7 +1089,8 @@ const bankLines: ScreenModule = {
                       submit: "Create and match",
                       fields: [
                         { k: "counter", l: "Transfer to / from our own account", t: "select", opts: all.filter((n) => n !== l.account) },
-                        { k: "category", l: "Category", t: "select", opts: cats, when: { k: "counter", eq: "" } },
+                        /* A debit with no transfer account becomes an expense, and an expense is refused without its category. */
+                        { k: "category", l: "Category", t: "select", req: !!l.debitPaise, opts: cats, when: { k: "counter", eq: "" } },
                         { k: "party", l: l.debitPaise ? "Paid to" : "Received from", t: "text" },
                         { k: "description", l: "What it is", t: "text" },
                       ],
