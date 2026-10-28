@@ -39,20 +39,24 @@ export const LEGACY_LADDER: readonly LeadStage[] = [
 /**
  * §3A — Mahek to the shop.
  *
- * SAMPLE / TRIAL IS ONE RUNG WITH TWO STEPS INSIDE IT: Step 1, Sample Request;
- * Step 2, Sample Received & Review. It used to be three rungs, and a sample
- * dispatched and not received is still a courier problem while one received and
- * not reviewed is still a customer problem — but that difference is a fact about
- * the SAMPLE (`mbos_samples.state`), which keeps every one of its dates, chases
- * and owners. It is not a place the LEAD stands, so the ladder no longer pretends
- * it is. `sample_received` and `sample_review` stay in the enum for the history
- * they already wrote; `foldStage` reads a lead sitting on one as sitting here.
+ * TWO SAMPLE RUNGS: Sample / Trial (asking for the sample, its approval and its
+ * dispatch) and Sample received & review (the shop has it, and what they thought
+ * is written down). It was three rungs, then briefly one; two is what Mahek
+ * asked for, because "dispatched and not received" is a courier problem and
+ * "received and not reviewed" is a customer problem, and they are different
+ * calls to different people.
+ *
+ * The rung stored as `sample_review` IS Sample received & review. The older
+ * `sample_received` stays in the enum for the leads and transition rows that
+ * carry it, and `foldStage` reads a lead sitting on it as sitting here: nothing
+ * is rewritten.
  */
 export const DIRECT_LADDER: readonly LeadStage[] = [
   "suspect",
   "prospect",
   "qualification",
   "sample_trial",
+  "sample_review",
   "negotiation",
   "first_order",
   "delivery",
@@ -64,16 +68,16 @@ export const DIRECT_LADDER: readonly LeadStage[] = [
 /**
  * §3C — Mahek to a distributor to the shop.
  *
- * The same climb as a direct customer, with the same single Sample / Trial rung
- * and the same two steps inside it. What makes it a different ladder at all is
- * not the rungs — it is that the gates ask who invoices the shop, and
- * `lead-gates.ts` is where that is asked.
+ * The same climb as a direct customer, with the same two sample rungs. What makes
+ * it a different ladder at all is not the rungs — it is that the gates ask who
+ * invoices the shop, and `lead-gates.ts` is where that is asked.
  */
 export const THIRD_PARTY_LADDER: readonly LeadStage[] = [
   "suspect",
   "prospect",
   "qualification",
   "sample_trial",
+  "sample_review",
   "negotiation",
   "first_order",
   "delivery",
@@ -112,19 +116,15 @@ export const TERMINAL_STAGES: readonly LeadStage[] = [
 ] as const;
 
 /**
- * THE TWO RUNGS THAT USED TO FOLLOW SAMPLE / TRIAL, kept in the enum for history.
+ * A stored stage as the ladder reads it.
  *
- * A lead stored at either one was moved there by an older build and is still
- * standing in the same place from the salesman's point of view: somewhere in the
- * single Sample / Trial rung. `foldStage` is the compatibility mapping: nothing
- * is rewritten, no transition row is touched, and a lead whose last recorded
- * stage is `sample_review` simply reads as Sample / Trial wherever the ladder is
- * asked where it is.
- *
- * A stored stage as the ladder reads it: the two retired sample rungs are Sample / Trial.
+ * `sample_received` is no longer a rung of its own: Sample received & review is
+ * the rung stored as `sample_review`. A lead or a transition row an older build
+ * left on `sample_received` is standing in the same place, so it reads as that.
+ * Nothing is rewritten, and no transition row is touched.
  */
 export function foldStage(stage: LeadStage): LeadStage {
-  return stage === "sample_received" || stage === "sample_review" ? "sample_trial" : stage;
+  return stage === "sample_received" ? "sample_review" : stage;
 }
 
 /** The rungs a lead climbs, given what kind of sale it is. */

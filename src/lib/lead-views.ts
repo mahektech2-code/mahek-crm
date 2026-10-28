@@ -293,8 +293,7 @@ export const LEAD_TILES: readonly LeadTile[] = [
   {
     id: "sample",
     label: "In sample",
-    /* ONE rung, Sample / Trial. The stage list still names the two retired stored
-       stages so a lead an older build left on either is counted, not lost. */
+    /* Both sample rungs, and the older sample_received, are "in sample". */
     hint: "Sample asked for, sent or with the customer, waiting for feedback.",
     tone: "warn",
     params: { stage: "sample_trial,sample_received,sample_review" },

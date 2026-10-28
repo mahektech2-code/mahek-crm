@@ -469,10 +469,10 @@ describe("V — the prototype's views read the same book, narrowed", () => {
     assert.deepEqual(await names({ priority: "low" }), ["Third lead"]);
   });
 
-  test("the pipeline draws eight bars (one Sample / Trial), second order among them, and a lead standing on it is counted", async () => {
+  test("the pipeline draws nine bars (Sample / Trial and Sample received & review), second order among them, and a lead standing on it is counted", async () => {
     await makeLead({ name: "Repeat", salesManagerId: smA.id, ownerId: salesman.id, leadStage: "second_order" });
     const funnel = await pipelineFunnel(DAY);
-    assert.equal(funnel.direct.length, 8);
+    assert.equal(funnel.direct.length, 9);
     assert.equal(funnel.direct.find((f) => f.stage === "second_order")?.count, 1);
   });
 

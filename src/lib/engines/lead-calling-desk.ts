@@ -240,10 +240,10 @@ const STAGE_PHASE: Partial<Record<LeadStage, DeskPhase>> = {
   qualification: "qualification",
   qualified: "qualification",
   sample_trial: "sample_trial",
-  /* Sample / Trial is ONE stage with two steps. A lead an older build left on
-     either retired step is read as standing in it; the stored stage is untouched. */
-  sample_received: "sample_trial",
-  sample_review: "sample_trial",
+  /* Sample received & review is its own stage, stored as `sample_review`. The older
+     `sample_received` is the same stage; the stored value is untouched. */
+  sample_received: "sample_review",
+  sample_review: "sample_review",
   negotiation: "negotiation",
   first_order: "first_order",
   delivery: "delivery",
@@ -697,9 +697,9 @@ export const DESK_VIEW_LABEL: Record<DeskView, string> = {
   prospect: "Prospects",
   qualification: "Qualification",
   sample_trial: "Sample / Trial",
-  sample_received: "Sample / Trial",
-  sample_review: "Sample / Trial",
-  sample: "Sample / Trial",
+  sample_received: "Sample received & review",
+  sample_review: "Sample received & review",
+  sample: "Sample / Trial and review",
   negotiation: "Negotiation",
   orders: "Orders and customers",
   first_order: "1st Order",

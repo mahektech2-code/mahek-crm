@@ -152,14 +152,24 @@ describe("§5's forks are the ones the table names", () => {
     }
   });
 
-  /* STEP 2 of the one rung is read off the SAMPLE's state, not a second rung. */
-  test("on Sample / Trial a received sample asks for the review and a reviewed one for Negotiation", () => {
-    for (const state of ["received", "trial_done"] as SampleState[]) {
+  /* Sample received & review is its own rung. A sample the shop already has while the
+     lead is still on Sample / Trial is a MOVE; on the rung itself the review is owed
+     until a verdict is written, then Negotiation. */
+  test("a received sample on Sample / Trial asks to move to Sample received & review", () => {
+    for (const state of ["received", "trial_done", "reviewed"] as SampleState[]) {
       const a = gateAction(facts("sample_trial", { sampleState: state }));
+      assert.equal(a.control, "advance", state);
+      assert.match(a.label, /Sample received & review/);
+    }
+  });
+
+  test("on Sample received & review the review is owed, then Negotiation", () => {
+    for (const state of ["received", "trial_done"] as SampleState[]) {
+      const a = gateAction(facts("sample_review", { sampleState: state }));
       assert.equal(a.control, "sample_desk", state);
       assert.match(a.label, /trial review/i);
     }
-    const reviewed = gateAction(facts("sample_trial", { sampleState: "reviewed" }));
+    const reviewed = gateAction(facts("sample_review", { sampleState: "reviewed" }));
     assert.equal(reviewed.control, "advance");
     assert.match(reviewed.label, /Negotiation/);
   });

@@ -685,8 +685,8 @@ export function SampleTab({ lead }: { lead: Lead }) {
         ) : (
           <>
           <div className="mb-2 flex gap-6 text-[11px] font-medium tracking-[0.04em] text-muted uppercase">
-            <span>Step 1 · Sample Request</span>
-            <span>Step 2 · Sample Received &amp; Review</span>
+            <span>Sample / Trial</span>
+            <span>Sample received &amp; review</span>
           </div>
           <div className="flex items-center gap-1 overflow-x-auto">
             {steps.map((st, i) => (

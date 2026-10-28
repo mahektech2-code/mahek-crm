@@ -408,7 +408,7 @@ export function SampleDeskScreen({
           <>
             <Subject row={acting.row} />
             <span className="mb-1 block text-[13px] font-medium text-ink">
-              Step 2 of 2 · Has the sample been received? · required
+              Sample received & review · Has the sample been received? · required
             </span>
             <div className="flex gap-2">
               <Button

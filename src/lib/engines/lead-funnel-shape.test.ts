@@ -55,14 +55,14 @@ function tally(
   };
 }
 
-test("the shared funnel is eight rungs, with ONE Sample / Trial, and the two it leaves out are named", () => {
+test("the shared funnel is nine rungs: Sample / Trial, then Sample received & review, and the two it leaves out are named", () => {
   const order = sharedRungOrder();
-  assert.equal(order.length, 8);
+  assert.equal(order.length, 9);
   for (const s of OPERATIONAL_STAGES) assert.ok(!order.includes(s));
   assert.equal(order.filter((s) => s === "sample_trial").length, 1);
-  /* Step 2 of the sample is not a rung, so the funnel draws neither retired one. */
+  assert.equal(order.filter((s) => s === "sample_review").length, 1);
+  /* The older spelling is folded into Sample received & review, not drawn twice. */
   assert.ok(!order.includes("sample_received"));
-  assert.ok(!order.includes("sample_review"));
 });
 
 test("every rung of both shop ladders is drawn somewhere", () => {

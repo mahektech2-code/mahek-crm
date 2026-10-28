@@ -2061,7 +2061,7 @@ function SamplesPanel({
                 <p className="mt-1.5 text-[12px] text-warn-ink">
                   {s.feedbackAt
                     ? `Somebody opened the feedback ${stamp(s.feedbackAt)} and left every answer empty.`
-                    : "Nothing recorded about what they thought. Step 2 of Sample / Trial asks Quality, Vs. the Brand and Anything Else, and the verdict."}
+                    : "Nothing recorded about what they thought. Sample received & review asks Quality, Vs. the Brand and Anything Else, and the verdict."}
                 </p>
               )}
             </div>

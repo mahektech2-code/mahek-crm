@@ -84,12 +84,12 @@ export const DESK_LIST_CAP = 300;
 export const TILE_VIEWS: DeskView[] = [
   "queue", "all", "new", "today", "followups", "overdue", "call1", "call2", "call3", "ready",
   "suspect", "verify", "requested", "followup", "returned", "handed", "prospect", "qualification",
-  "sample_trial", "sample", "negotiation", "orders",
+  "sample_trial", "sample_review", "sample", "negotiation", "orders",
   "first_order", "delivery", "payment", "second_order", "customer", "lost",
 ];
 
 export const LADDER: LadderKey[] = [
-  "suspect", "prospect", "qualification", "sample_trial",
+  "suspect", "prospect", "qualification", "sample_trial", "sample_review",
   "negotiation", "first_order", "delivery", "payment", "second_order", "customer",
 ];
 

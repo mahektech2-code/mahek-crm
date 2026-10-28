@@ -97,10 +97,10 @@ function narrowing(filter: LeadBookFilter): { where: string; args: string[] } {
      sub-chips are built from what is in the book, so this can only ever name a
      rung something is standing on. */
   if (filter.rung && match) {
-    /* The one Sample / Trial chip answers for the two stored values an older build
-       used for its steps, so a lead left on either is not lost behind it. */
-    if (filter.rung === 'sample_trial') {
-      parts.push("funnelStage IN ('sample_trial', 'sample_received', 'sample_review')");
+    /* Sample received & review is stored as `sample_review`; the older
+       `sample_received` is the same rung, so the chip answers for both. */
+    if (filter.rung === 'sample_review') {
+      parts.push("funnelStage IN ('sample_review', 'sample_received')");
     } else {
       parts.push('funnelStage = ?');
       args.push(filter.rung);
@@ -274,10 +274,9 @@ export function rungCountsQuery(
   const search = searching(query);
   return {
     sql:
-      /* The two retired sample rungs are counted as Sample / Trial: it is one rung
-         with two steps, and a salesman is not shown a place he cannot be sent. */
-      `SELECT CASE WHEN funnelStage IN ('sample_received', 'sample_review')` +
-      ` THEN 'sample_trial' ELSE funnelStage END AS rung, COUNT(*) AS count FROM leads` +
+      /* The older sample_received is counted as Sample received & review. */
+      `SELECT CASE WHEN funnelStage = 'sample_received'` +
+      ` THEN 'sample_review' ELSE funnelStage END AS rung, COUNT(*) AS count FROM leads` +
       ` WHERE ${narrow.where}${search.where} AND funnelStage IS NOT NULL` +
       ` GROUP BY rung ORDER BY count DESC, rung`,
     params: [...narrow.args, ...search.args],

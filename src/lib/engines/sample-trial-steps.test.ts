@@ -29,14 +29,15 @@ import { gateTo, type LeadGateInput } from "./lead-gates";
 
 const SHOP_LADDERS: LeadSalesType[] = ["direct", "third_party"];
 
-describe("one Sample / Trial stage on the pipeline", () => {
-  test("neither shop ladder draws Sample Received or Sample Review", () => {
+describe("two sample stages on the pipeline", () => {
+  test("both shop ladders draw Sample / Trial, then Sample received & review, then Negotiation", () => {
     for (const type of SHOP_LADDERS) {
       const ladder = ladderFor(type);
       assert.equal(ladder.filter((s) => s === "sample_trial").length, 1, type);
-      assert.ok(!ladder.includes("sample_received"), `${type} still draws Sample Received`);
-      assert.ok(!ladder.includes("sample_review"), `${type} still draws Sample Review`);
-      assert.equal(ladder[ladder.indexOf("sample_trial") + 1], "negotiation", type);
+      assert.equal(ladder.filter((s) => s === "sample_review").length, 1, type);
+      assert.ok(!ladder.includes("sample_received"), `${type} still draws the older Sample Received`);
+      assert.equal(ladder[ladder.indexOf("sample_trial") + 1], "sample_review", type);
+      assert.equal(ladder[ladder.indexOf("sample_review") + 1], "negotiation", type);
     }
   });
 
@@ -48,11 +49,11 @@ describe("one Sample / Trial stage on the pipeline", () => {
     assert.ok(!ladderFor("distributor").includes("sample_trial"));
   });
 
-  test("a lead an older build left on a retired rung reads as Sample / Trial", () => {
-    for (const old of ["sample_received", "sample_review"] as LeadStage[]) {
-      assert.equal(foldStage(old), "sample_trial");
-      assert.equal(stageLabel(old), stageLabel("sample_trial"), `${old} should read as the one stage`);
-    }
+  test("a lead an older build left on sample_received reads as Sample received & review", () => {
+    assert.equal(foldStage("sample_received" as LeadStage), "sample_review");
+    assert.equal(stageLabel("sample_received"), stageLabel("sample_review"));
+    assert.equal(stageLabel("sample_review"), "Sample received & review");
+    assert.equal(stageLabel("sample_trial"), "Sample / trial");
   });
 });
 

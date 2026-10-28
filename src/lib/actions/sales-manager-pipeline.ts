@@ -299,7 +299,7 @@ export async function markLeadLost(input: z.input<typeof lostSchema>): Promise<R
  */
 async function thenMoveTo(
   customerId: string,
-  to: "sample_trial",
+  to: "sample_trial" | "sample_review",
   done: string,
 ): Promise<Result<null>> {
   const moved = await advanceLeadStage({ customerId, to });
@@ -339,19 +339,18 @@ export async function requestSampleForLead(input: z.input<typeof requestSchema>)
   }
 }
 
-/** Step 2 — the shop has it. Confirms receipt; the lead stays on Sample / Trial. */
+/** The shop has it. Confirms receipt, then puts the lead on Sample received & review if its gate allows it. */
 export async function receiveSampleForLead(input: { customerId: string; sampleId: string }): Promise<Result<null>> {
   try {
     const got = await confirmSampleReceived(input.sampleId, {});
     if (!got.ok) return got;
-    refresh();
-    return ok(null, "Receipt recorded. The review questions are open.");
+    return thenMoveTo(input.customerId, "sample_review", "Receipt recorded. The review questions are open.");
   } catch (e) {
     return fromThrown(e);
   }
 }
 
-/** Step 2 — the trial review (Quality, Vs. the Brand, Anything Else) and the verdict. The lead stays on Sample / Trial. */
+/** The trial review (Quality, Vs. the Brand, Anything Else) and the verdict. The lead is already on Sample received & review; Negotiation is its own move. */
 export async function reviewSampleForLead(input: {
   customerId: string;
   sampleId: string;
