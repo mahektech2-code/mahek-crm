@@ -7,6 +7,7 @@ import { leadHref, type LeadWorkspace } from "@/lib/lead-workspace";
 import { SalesmanLink } from "@/components/leads/salesman-link";
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { GeneralCallDialog, HistoryDialog, ManualVisitDialog } from "@/components/leads/activity/lead-activity";
 import Link from "next/link";
 import { money, shortDate, stamp } from "@/lib/format";
 import { Modal } from "@/components/ui/overlays";
@@ -23,6 +24,7 @@ import {
   restoreLead,
 } from "@/lib/actions/sales";
 import { assignDeskLead, bulkAssignDeskLeads } from "@/lib/actions/lead-desk-assignment";
+import { reassignLead } from "@/lib/actions/sales";
 import { bulkAdvanceLeadStage } from "@/lib/actions/leads";
 import { trashLeads } from "@/lib/actions/lead-trash";
 import { ImpactDialog } from "@/components/ui/impact-dialog";
@@ -167,6 +169,8 @@ export function LeadsScreen({
   team,
   desks,
   canPrioritise,
+  workableIds,
+  canReassignSalesman,
   canReassign,
   canTrash,
   viewer,
@@ -275,6 +279,10 @@ export function LeadsScreen({
    * disabled menu item is a fact about a component.
    */
   canPrioritise: boolean;
+  /** The rows this person may log a call or a visit on. The server asks again on every write. */
+  workableIds: string[];
+  /** Whether this person holds the Sales Manager screen — which lets them hand a lead of their own to somebody. */
+  canReassignSalesman: boolean;
   /** `lead.verify` and the Calling desk — the same two questions `assignDeskLead` asks. */
   canReassign: boolean;
   /**
@@ -405,6 +413,8 @@ export function LeadsScreen({
 
   const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
   const [acting, setActing] = React.useState<Acting | null>(null);
+  const [activity, setActivity] = React.useState<{ kind: "call" | "visit" | "history"; lead: LeadRow } | null>(null);
+  const workable = React.useMemo(() => new Set(workableIds), [workableIds]);
   const [bulk, setBulk] = React.useState<Bulk | null>(null);
   const [picked, setPicked] = React.useState<Set<string>>(new Set());
   const [salesmanId, setSalesmanId] = React.useState("");
@@ -584,7 +594,9 @@ export function LeadsScreen({
     try {
       const result =
         acting.kind === "reassign"
-          ? await assignDeskLead({ customerId: acting.lead.id, ownerId: ownerIdFor(salesmanId) })
+          ? canReassign
+            ? await assignDeskLead({ customerId: acting.lead.id, ownerId: ownerIdFor(salesmanId) })
+            : await reassignLead({ leadId: acting.lead.id, salesmanId: ownerIdFor(salesmanId) ?? "" })
           : acting.kind === "archive"
             ? await archiveLead({ leadId: acting.lead.id, reason })
             : acting.kind === "priority"
@@ -969,12 +981,26 @@ export function LeadsScreen({
                           items={[
                             { label: "Open the record", href: leadHref(workspace, `leads/${l.id}`) },
                             {
+                              label: "Log a call",
+                              run: () => setActivity({ kind: "call", lead: l }),
+                              disabled: !workable.has(l.id),
+                              title: workable.has(l.id) ? undefined : "You can log a call only on a lead in your own book.",
+                            },
+                            {
+                              label: "Log a visit",
+                              run: () => setActivity({ kind: "visit", lead: l }),
+                              disabled: !workable.has(l.id),
+                              title: workable.has(l.id) ? undefined : "You can log a visit only on a lead in your own book.",
+                            },
+                            { label: "Calls & visits", run: () => setActivity({ kind: "history", lead: l }) },
+                            {
                               label: "Reassign the lead",
                               run: () => begin(l, "reassign"),
-                              disabled: !canReassign,
-                              title: canReassign
-                                ? undefined
-                                : "Handing a lead to another Telecaller is a manager's, on the Calling desk. Yours is not one of the hats that carries it.",
+                              disabled: !(canReassign || (canReassignSalesman && workable.has(l.id))),
+                              title:
+                                canReassign || (canReassignSalesman && workable.has(l.id))
+                                  ? undefined
+                                  : "Handing a lead to another Telecaller is a manager's, on the Calling desk. Yours is not one of the hats that carries it.",
                             },
                             {
                               /* Named for what it is rather than "Set the
@@ -1348,6 +1374,16 @@ export function LeadsScreen({
         error={error}
         onConfirm={() => void submit()}
       />
+
+      {activity?.kind === "call" ? (
+        <GeneralCallDialog customerId={activity.lead.id} leadName={activity.lead.name} onClose={() => setActivity(null)} onSaved={() => router.refresh()} />
+      ) : null}
+      {activity?.kind === "visit" ? (
+        <ManualVisitDialog customerId={activity.lead.id} leadName={activity.lead.name} onClose={() => setActivity(null)} onSaved={() => router.refresh()} />
+      ) : null}
+      {activity?.kind === "history" ? (
+        <HistoryDialog customerId={activity.lead.id} leadName={activity.lead.name} onClose={() => setActivity(null)} />
+      ) : null}
 
       <Modal
         open={acting?.kind === "reassign" || acting?.kind === "restore"}

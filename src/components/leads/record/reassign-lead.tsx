@@ -1,11 +1,12 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { Button } from "@/components/console/parts";
 import { assignDeskLead } from "@/lib/actions/lead-desk-assignment";
+import { reassignLead } from "@/lib/actions/sales";
 import { OwnerOptions, UNASSIGNED, ownerIdFor, type OwnerPerson } from "@/components/leads/owner-options";
 
 export type Assignee = OwnerPerson;
@@ -36,6 +37,7 @@ export function ReassignLead({
   currentName,
   assignees,
   canReassign,
+  viaSalesManager = false,
   label,
 }: {
   customerId: string;
@@ -44,10 +46,17 @@ export function ReassignLead({
   currentName: string | null;
   assignees: Assignee[];
   canReassign: boolean;
+  /**
+   * The person holds the Sales Manager screen and this lead is in their own book, so they may hand it
+   * on without the Calling desk — through `reassignLead`, exactly as the Leads list does. The action
+   * checks the module, the lead's scope and the new owner again.
+   */
+  viaSalesManager?: boolean;
   /** The trigger's words, where it sits beside a name. */
   label?: string;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
   const toast = useToast();
   const [open, setOpen] = React.useState(false);
   const [chosen, setChosen] = React.useState("");
@@ -72,7 +81,9 @@ export function ReassignLead({
     setError(null);
     let result;
     try {
-      result = await assignDeskLead({ customerId, ownerId: ownerIdFor(chosen) });
+      result = canReassign
+        ? await assignDeskLead({ customerId, ownerId: ownerIdFor(chosen) })
+        : await reassignLead({ leadId: customerId, salesmanId: ownerIdFor(chosen) ?? "" });
     } finally {
       setBusy(false);
     }
@@ -82,7 +93,10 @@ export function ReassignLead({
     }
     setOpen(false);
     toast.push(result.message ?? "Reassigned.");
-    router.refresh();
+    /* A Sales Manager handing on a lead of her own book no longer has that lead in it, so this page
+       would answer "not found" on refresh. Take her back to the list it came from instead. */
+    if (!canReassign) router.push(pathname.slice(0, pathname.lastIndexOf("/")) || "/");
+    else router.refresh();
   }
 
   return (
@@ -90,11 +104,13 @@ export function ReassignLead({
       <Button
         size="sm"
         tone="quiet"
-        disabled={!canReassign}
+        disabled={!(canReassign || viaSalesManager)}
         title={
           canReassign
             ? "Hand this lead to another Telecaller."
-            : "Handing a lead to another Telecaller is a manager's, on the Calling desk. Yours is not one of the hats that carries it."
+            : viaSalesManager
+              ? "Hand this lead, which is in your own book, to somebody else."
+              : "Handing a lead to another Telecaller is a manager's, on the Calling desk. Yours is not one of the hats that carries it."
         }
         onClick={begin}
       >

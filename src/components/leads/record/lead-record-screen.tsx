@@ -91,6 +91,7 @@ import { RelationshipChain } from "./relationship-chain";
 import type { LeadActionFacts } from "@/lib/engines/lead-role-action";
 import type { LeadGateActionFacts } from "@/lib/engines/lead-gate-action";
 import { PrimaryGateAction } from "./move-forward";
+import { ActivityMenuItems, CallsVisitsCardActions } from "@/components/leads/activity/lead-activity";
 import { ConvertButton, ConvertProvider } from "./convert-to-prospect";
 import type { VantageViewer } from "@/lib/lead-vantage";
 
@@ -313,6 +314,7 @@ export function LeadRecordScreen({
   leadManagers,
   assignees,
   canReassign,
+  canReassignSalesman,
   canOverride,
   canPrioritise,
   canTrash,
@@ -428,6 +430,8 @@ export function LeadRecordScreen({
   assignees: Assignee[];
   /** `lead.verify` and the desk, the two questions `assignDeskLead` asks. */
   canReassign: boolean;
+  /** Holds the Sales Manager screen, and this lead is in their own book — see `ReassignLead`. */
+  canReassignSalesman: boolean;
   canOverride: boolean;
   /**
    * §4.1 — whether this person may say how hard to push the lead. The control
@@ -675,7 +679,9 @@ export function LeadRecordScreen({
                 currentName={record.salesmanName}
                 assignees={assignees}
                 canReassign={canReassign}
+                viaSalesManager={canReassignSalesman}
               />
+              <ActivityMenuItems customerId={record.customerId} leadName={record.name} canWork={canWork} />
               {/* §2 — not on a distributor (`MigrateDistributor` is that path)
                   and not on a closed lead, which has no ladder left to climb. */}
               {distributor || closed ? null : (
@@ -883,6 +889,7 @@ export function LeadRecordScreen({
               <CallsVisitsCard
                 calls={callBoxes}
                 visits={visits.map((v) => ({ date: v.visitDate, who: v.salesmanName }))}
+                action={<CallsVisitsCardActions customerId={record.customerId} leadName={record.name} canWork={canWork} />}
               />
               {record.thirdParty ? (
                 <RelationshipChain
@@ -1012,6 +1019,7 @@ export function LeadRecordScreen({
                     currentName={record.salesmanName}
                     assignees={assignees}
                     canReassign={canReassign}
+                    viaSalesManager={canReassignSalesman}
                     label="Change"
                   />
                 ),

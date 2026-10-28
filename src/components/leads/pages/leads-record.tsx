@@ -4,6 +4,7 @@ import { sampleEligibility } from "@/lib/services/lead-qualification-flow-servic
 import { type LeadWorkspace } from "@/lib/lead-workspace";
 import { qualificationAccess } from "@/lib/lead-qualification-access";
 import { canOpenModule } from "@/lib/access";
+import { workableLeadIds } from "@/lib/services/lead-reach-service";
 import { DESK_MODULE, ownerChoices } from "@/lib/services/lead-desk-assignment-service";
 import { deskLeadRecord } from "@/lib/services/lead-calling-desk-service";
 import { notFound } from "next/navigation";
@@ -359,6 +360,10 @@ export async function Body({
       assignees={await ownerChoices()}
       canReassign={
         (await canLead(user, "lead.verify")) && (await canOpenModule(user.id, DESK_MODULE))
+      }
+      canReassignSalesman={
+        (await canOpenModule(user.id, "crm.sales-manager")) &&
+        (await workableLeadIds([record.customerId], user.id)).length > 0
       }
       canOverride={(await canLead(user, "lead.override")) && config["leads.allowManagerOverride"]}
       /* §4.1 — how hard to push this lead is the manager's word, and
