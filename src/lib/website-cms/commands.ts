@@ -2,6 +2,8 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { websiteContent, websiteMedia } from "@/db/schema";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 import { err, fromThrown, type Result } from "@/lib/result";
 import {
   activeAssignments,
@@ -106,6 +108,17 @@ async function heldByRequest(id: string): Promise<ReturnType<typeof err> | null>
   );
 }
 
+/**
+ * THE IMPACT CHECK, handed to the service as its last word before writing.
+ *
+ * A destructive command takes the confirmation its modal sent back and the
+ * service asks this after every refusal of its own — so a published item
+ * still answers "only a draft can be deleted" rather than "confirm first",
+ * and an act that would change nothing needs no confirmation at all.
+ */
+const confirming = (kind: string, id: string, confirmation: ImpactConfirmation | null | undefined) => () =>
+  confirmImpact(kind, id, confirmation);
+
 /* ------------------------------------------------------------------ editing */
 
 export function createContent(kind: unknown, data: unknown): Promise<Result<ItemView>> {
@@ -129,7 +142,7 @@ export function saveContent(id: unknown, data: unknown, expectedVersion?: unknow
   });
 }
 
-export function discardContentChanges(id: unknown): Promise<Result<ItemView>> {
+export function discardContentChanges(id: unknown, confirmation?: ImpactConfirmation): Promise<Result<ItemView>> {
   return guard(async () => {
     const kind = await kindOfItem(id);
     if (!kind) return gone();
@@ -137,11 +150,11 @@ export function discardContentChanges(id: unknown): Promise<Result<ItemView>> {
     if (gate.error) return refused(gate, `discard changes to a ${KINDS[kind].noun}`, id as string);
     const held = await heldByRequest(id as string);
     if (held) return held;
-    return discardChanges(gate.user, id as string);
+    return discardChanges(gate.user, id as string, confirming("site-content-discard", id as string, confirmation));
   });
 }
 
-export function deleteContentDraft(id: unknown): Promise<Result> {
+export function deleteContentDraft(id: unknown, confirmation?: ImpactConfirmation): Promise<Result> {
   return guard(async () => {
     const kind = await kindOfItem(id);
     if (!kind) return gone();
@@ -149,7 +162,7 @@ export function deleteContentDraft(id: unknown): Promise<Result> {
     if (gate.error) return refused(gate, `delete a ${KINDS[kind].noun}`, id as string);
     const held = await heldByRequest(id as string);
     if (held) return held;
-    return deleteDraft(gate.user, id as string);
+    return deleteDraft(gate.user, id as string, confirming("site-content-delete", id as string, confirmation));
   });
 }
 
@@ -169,7 +182,10 @@ export function moveContent(id: unknown, direction: unknown): Promise<Result> {
 
 type Action = "publish" | "unpublish" | "archive" | "restore";
 
-export function transitionContent(ids: unknown, action: Action): Promise<Result<PublishOutcome>> {
+/** The two transitions that take something off mahekindia.com, and the kind each is confirmed under. */
+const TAKES_DOWN: Partial<Record<Action, string>> = { unpublish: "site-content-unpublish", archive: "site-content-archive" };
+
+export function transitionContent(ids: unknown, action: Action, confirmation?: ImpactConfirmation): Promise<Result<PublishOutcome>> {
   return guard(async () => {
     if (!Array.isArray(ids) || ids.length === 0 || ids.length > 500 || ids.some((i) => typeof i !== "string")) {
       return err("Nothing was selected.", "validation");
@@ -184,7 +200,11 @@ export function transitionContent(ids: unknown, action: Action): Promise<Result<
       const edit = await gateEdit(kind, { item: id });
       if (edit.error) return edit.error;
     }
-    return transitionItems(gate.user, ids as string[], action);
+    /* Taking something off the live site is confirmed against the ids
+       joined, exactly as the modal was asked about them. */
+    const takesDown = TAKES_DOWN[action];
+    const check = takesDown ? confirming(takesDown, (ids as string[]).join(","), confirmation) : undefined;
+    return transitionItems(gate.user, ids as string[], action, check);
   });
 }
 
@@ -260,7 +280,7 @@ export function previewKind(kind: unknown, path?: unknown): Promise<Result<{ url
  * otherwise anybody holding any Website module could rename or remove the
  * pictures of content that was assigned to somebody else.
  */
-async function gateMediaWrite(id: unknown): Promise<Gate> {
+export async function gateMediaWrite(id: unknown): Promise<Gate> {
   const gate = await gateAnyEdit();
   if (gate.error) return gate;
   if (!(await assignmentsEnforced()) || (await isDirectEditor(gate.user.id))) return gate;
@@ -286,11 +306,11 @@ export function setMediaAlt(id: unknown, alt: unknown): Promise<Result> {
   });
 }
 
-export function removeMedia(id: unknown): Promise<Result> {
+export function removeMedia(id: unknown, confirmation?: ImpactConfirmation): Promise<Result> {
   return guard(async () => {
     const gate = await gateMediaWrite(id);
     if (gate.error) return refused(gate, "delete an image", String(id));
-    return deleteMedia(gate.user, String(id));
+    return deleteMedia(gate.user, String(id), confirming("site-media", String(id), confirmation));
   });
 }
 
@@ -316,11 +336,11 @@ export function assignWork(employeeId: unknown, kind: unknown, contentId?: unkno
   });
 }
 
-export function revokeAssignment(assignmentId: unknown): Promise<Result> {
+export function revokeAssignment(assignmentId: unknown, confirmation?: ImpactConfirmation): Promise<Result> {
   return guard(async () => {
     const gate = await gateReview();
     if (gate.error) return refused(gate, "take away website work", typeof assignmentId === "string" ? assignmentId : null);
-    return review.revokeAssignment(gate.user, assignmentId);
+    return review.revokeAssignment(gate.user, assignmentId, confirming("site-assignment", String(assignmentId), confirmation));
   });
 }
 
@@ -371,20 +391,22 @@ export function rejectRequest(requestId: unknown, reason: unknown): Promise<Resu
   });
 }
 
-export function revokeApproval(requestId: unknown): Promise<Result> {
+export function revokeApproval(requestId: unknown, confirmation?: ImpactConfirmation): Promise<Result> {
   return guard(async () => {
     const gate = await gateReview();
     if (gate.error) return refused(gate, "revoke an approval", typeof requestId === "string" ? requestId : null);
-    return remembered(gate.user.id, "revoke an approval", requestId, await review.revokeApproval(gate.user, requestId));
+    const check = confirming("site-approval-revoke", String(requestId), confirmation);
+    return remembered(gate.user.id, "revoke an approval", requestId, await review.revokeApproval(gate.user, requestId, check));
   });
 }
 
-export function withdrawRequest(requestId: unknown): Promise<Result> {
+export function withdrawRequest(requestId: unknown, confirmation?: ImpactConfirmation): Promise<Result> {
   return guard(async () => {
     const gate = await gateWorkflow();
     if (gate.error) return refused(gate, "withdraw a website change request", typeof requestId === "string" ? requestId : null);
     const asReviewer = await holdsReview(gate.user.id);
-    return remembered(gate.user.id, "withdraw a website change request", requestId, await review.withdrawRequest(gate.user, requestId, { asReviewer }));
+    const beforeWrite = confirming("site-request-withdraw", String(requestId), confirmation);
+    return remembered(gate.user.id, "withdraw a website change request", requestId, await review.withdrawRequest(gate.user, requestId, { asReviewer, beforeWrite }));
   });
 }
 

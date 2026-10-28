@@ -27,6 +27,7 @@ import {
   finishedGoods,
   priceListDocuments,
   priceListParseRows,
+  priceListRates,
   priceListScopes,
   priceLists,
   productBrands,
@@ -50,13 +51,18 @@ import {
   createDerivedList,
   createPriceList,
   decidePriceRequest,
+  deleteDocument,
   deleteDraftPriceList,
   publishDocument,
   publishPriceList,
+  removeDiscountTerm,
+  removeRate,
   removeScope,
   requestSpecialPrice,
+  setDiscountTerm,
   setRate,
   withdrawPriceList,
+  withdrawPriceRequest,
 } from "@/lib/actions/price-lists";
 import { impactReport } from "@/lib/impact/registry";
 import {
@@ -629,6 +635,89 @@ describe("a special price", () => {
       select body from notifications where user_id = ${telecaller.id} order by created_at desc limit 1
     `);
     assert.match(notification.body, /not approved/i);
+  });
+});
+
+describe("the price desk's other removals say what they reach first", () => {
+  /** What the impact modal hands back once somebody has read it and typed the word. */
+  async function confirmed(kind: string, target: string) {
+    const r = await impactReport(kind, target);
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    return { typed: r.data.confirmWord, fingerprint: r.data.fingerprint };
+  }
+
+  test("a rate comes off a draft once confirmed, and a published list's rate cannot come off at all", async () => {
+    const listId = await publishStateList({ name: "Pan Maharashtra", state: key("Maharashtra"), inclTwenty: 228_600, inclFive: 58_400 });
+    const [live] = await db.select({ id: priceListRates.id }).from(priceListRates).where(eq(priceListRates.priceListId, listId)).limit(1);
+    const report = await impactReport("price-rate", live.id);
+    assert.ok(report.ok);
+    assert.match(report.data.blockers[0] ?? "", /published/, "the modal says why before the button");
+    const refused = await removeRate(live.id);
+    assert.equal(!refused.ok && refused.code, "rule_violation");
+
+    const draft = await createPriceList({ name: "Draft rates", effectiveFrom: TODAY, freightTerm: "not_stated", deliveryBasis: "for_mumbai" });
+    assert.ok(draft.ok);
+    const rate = await setRate({ priceListId: draft.data.id, productId: nano20.id, rateInclGstPaise: 200_000 });
+    assert.ok(rate.ok);
+    const bare = await removeRate(rate.data.id);
+    assert.equal(!bare.ok && bare.code, "validation", "a removal nobody confirmed is refused");
+    const done = await removeRate(rate.data.id, await confirmed("price-rate", rate.data.id));
+    assert.ok(done.ok, done.ok ? "" : done.error);
+  });
+
+  test("a discount off a published list names the parties whose sales orders stop offering it", async () => {
+    const shop = await makeCustomer({ name: "Kamal Hardware", region: "Maharashtra" });
+    const listId = await publishStateList({ name: "Pan Maharashtra", state: key("Maharashtra"), inclTwenty: 228_600, inclFive: 58_400 });
+    const term = await setDiscountTerm({ priceListId: listId, kind: "advance_payment", percentBp: 300 });
+    assert.ok(term.ok, term.ok ? "" : term.error);
+    const report = await impactReport("price-discount-term", term.data.id);
+    assert.ok(report.ok);
+    const erp = report.data.items.find((i) => i.app === "ERP");
+    assert.deepEqual(erp?.examples, [shop.name]);
+    assert.equal(report.data.confirmWord, "3% off for advance payment");
+    const bare = await removeDiscountTerm(term.data.id);
+    assert.equal(!bare.ok && bare.code, "validation");
+    assert.ok((await removeDiscountTerm(term.data.id, await confirmed("price-discount-term", term.data.id))).ok);
+  });
+
+  test("deleting a document names every price read off it", async () => {
+    const documentId = id("pld");
+    await db.insert(priceListDocuments).values({ id: documentId, fileHash: randomUUID(), filename: "Old list.pdf", parseStatus: "needs_review", uploadedById: manager.id });
+    await db.insert(priceListParseRows).values({
+      id: id("plp"),
+      documentId,
+      rowIndex: 0,
+      colIndex: 0,
+      rawProductText: "Nano Thinner 20 L",
+      rateInclGstPaise: 10_000,
+      matchStatus: "held",
+    });
+    const report = await impactReport("price-document", documentId);
+    assert.ok(report.ok);
+    assert.equal(report.data.items.find((i) => /read off it/.test(i.label))?.count, 1);
+    const bare = await deleteDocument(documentId);
+    assert.equal(!bare.ok && bare.code, "validation");
+    assert.ok((await deleteDocument(documentId, await confirmed("price-document", documentId))).ok);
+    assert.equal((await db.select().from(priceListParseRows).where(eq(priceListParseRows.documentId, documentId))).length, 0);
+  });
+
+  test("a special-price request is the asker's to withdraw, and nobody else may even read what it reaches", async () => {
+    const shop = await makeCustomer({ name: "Kamal Hardware", region: "Maharashtra" });
+    await publishStateList({ name: "Pan Maharashtra", state: key("Maharashtra"), inclTwenty: 228_600, inclFive: 58_400 });
+    setTestUser(telecaller);
+    const asked = await requestSpecialPrice({ customerId: shop.id, productId: nano20.id, requestedRateInclGstPaise: 210_000, reason: "A hundred cans" });
+    assert.ok(asked.ok, asked.ok ? "" : asked.error);
+
+    setTestUser(manager);
+    const stranger = await impactReport("price-request-withdraw", asked.data.id);
+    assert.equal(!stranger.ok && stranger.code, "not_permitted");
+
+    setTestUser(telecaller);
+    const bare = await withdrawPriceRequest(asked.data.id);
+    assert.equal(!bare.ok && bare.code, "validation");
+    const done = await withdrawPriceRequest(asked.data.id, await confirmed("price-request-withdraw", asked.data.id));
+    assert.ok(done.ok, done.ok ? "" : done.error);
+    assert.equal((await ratesForCustomer(shop.id, [nano20.id], TODAY))[nano20.id].rateInclGstPaise, 228_600);
   });
 });
 

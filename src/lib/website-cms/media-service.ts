@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { db } from "@/db";
 import { websiteChangeItem, websiteContent, websiteMedia, websitePublishLog, type User } from "@/db/schema";
-import { err, ok, type Result } from "@/lib/result";
+import { err, ok, type Err, type Result } from "@/lib/result";
 import { fileStorage } from "@/lib/storage";
 import { checkWebsiteImage, mediaIdsIn, mediaPublicPath, safeMediaFilename } from "./media-types";
 
@@ -182,20 +182,33 @@ export async function updateMediaAlt(id: string, alt: string): Promise<Result> {
   return row ? { ok: true, data: undefined, message: "Description saved." } : err("That image no longer exists.", "not_found");
 }
 
-export async function deleteMedia(user: User, id: string): Promise<Result> {
+/**
+ * Why an image cannot be deleted, or null — every refusal `deleteMedia` makes
+ * once it has found the row, said in the same words, so the impact report can
+ * explain it before the button is pressed.
+ */
+export async function mediaDeleteRefusal(row: { id: string; source: string }): Promise<string | null> {
+  if (row.source !== "upload") return "This file is part of the website itself. It can be used here but not deleted from MahekOne.";
+  const users = await mediaUsers(row.id);
+  if (users.length) {
+    return `This image is in use by ${users.slice(0, 3).join(", ")}${users.length > 3 ? ` and ${users.length - 3} more` : ""}. Remove it from that content first.`;
+  }
+  return null;
+}
+
+/** Everything that points at an uploaded image: content, live or working, and content waiting in review. */
+export async function mediaUsers(id: string): Promise<string[]> {
+  const { byId } = await usageIndex();
+  return [...new Set(byId.get(id) ?? [])];
+}
+
+export async function deleteMedia(user: User, id: string, beforeWrite?: () => Promise<Err | null>): Promise<Result> {
   const [row] = await db.select().from(websiteMedia).where(eq(websiteMedia.id, id)).limit(1);
   if (!row || row.deletedAt) return err("That image no longer exists.", "not_found");
-  if (row.source !== "upload") {
-    return err("This file is part of the website itself. It can be used here but not deleted from MahekOne.", "rule_violation");
-  }
-  const { byId } = await usageIndex();
-  const users = [...new Set(byId.get(id) ?? [])];
-  if (users.length) {
-    return err(
-      `This image is in use by ${users.slice(0, 3).join(", ")}${users.length > 3 ? ` and ${users.length - 3} more` : ""}. Remove it from that content first.`,
-      "rule_violation",
-    );
-  }
+  const refused = await mediaDeleteRefusal(row);
+  if (refused) return err(refused, "rule_violation");
+  const refusal = beforeWrite ? await beforeWrite() : null;
+  if (refusal) return refusal;
   await db.update(websiteMedia).set({ deletedAt: new Date(), deletedById: user.id }).where(eq(websiteMedia.id, id));
   await db.insert(websitePublishLog).values({
     id: `wl_${randomUUID().slice(0, 12)}`,

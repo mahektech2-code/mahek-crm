@@ -274,6 +274,8 @@ const files = [
   "src/lib/field-verifier-routing.test.ts",
   // Editing a SKU end to end: a rename keeps the old name as an alias and survives a re-import; the ERP packing row.
   "src/lib/catalogue-edit.test.ts",
+  // Turning a sign-in off and clearing a saved key, through the impact modal: refused until confirmed, and the report names what moves.
+  "src/lib/impact/admin-removals.test.ts",
   // Saving where a salesman works can hand him the shops in those places — only the count shown, only with customer.reassign.
   "src/lib/area-handover.test.ts",
   "src/lib/org-chart-verifier-routing.test.ts",

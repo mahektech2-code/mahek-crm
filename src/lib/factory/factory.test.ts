@@ -8,6 +8,8 @@
  */
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { impactReport } from "@/lib/impact/registry";
+import { accessRevokeKey } from "@/lib/impact/kinds/access-revoke-key";
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 
@@ -779,7 +781,10 @@ describe("staffed from Admin Console → Access, with department-level permissio
     assert.equal(fc.head, false);
 
     setTestUser(admin);
-    const gone = await setAccess({ userId: p.id, grants: [] });
+    const report = await impactReport("admin-access-revoke", accessRevokeKey(p.id, ["factory"]));
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    assert.equal(report.data.items.find((i) => i.label === "place on the factory floor")?.count, 1);
+    const gone = await setAccess({ userId: p.id, grants: [], confirmation: { typed: report.data.confirmWord, fingerprint: report.data.fingerprint } });
     assert.ok(gone.ok);
     assert.equal((await q(sql`select 1 from factory_staff where user_id = ${p.id}`)).length, 0);
   });

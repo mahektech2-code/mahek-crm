@@ -51,8 +51,16 @@ import { parseSeed } from "@/lib/website-cms/seed";
 import seedJson from "@/lib/website-cms/seed/cms-seed.bundle.json";
 import { GET as readContent } from "@/app/api/public/website/content/route";
 import { GET as readMediaRoute } from "@/app/api/public/website/media/[id]/route";
+import { impactReport } from "@/lib/impact/registry";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
+
+/** What the impact modal hands back once somebody has read it and typed the word. */
+async function confirmed(kind: string, target: string) {
+  const r = await impactReport(kind, target);
+  assert.ok(r.ok, r.ok ? "" : r.error);
+  return { typed: r.data.confirmWord, fingerprint: r.data.fingerprint };
+}
 const READ = "read-secret-for-tests-0123456789";
 const PUBLISH = "publish-secret-for-tests-0123456789";
 
@@ -266,13 +274,21 @@ describe("saving content", () => {
     assert.ok(pub.ok);
     const refused = await cms.deleteContentDraft(made.data.id);
     assert.equal(refused.ok, false, "a live item cannot be deleted");
-    assert.ok((await cms.transitionContent([made.data.id], "unpublish")).ok);
+    assert.ok((await cms.transitionContent([made.data.id], "unpublish", await confirmed("site-content-unpublish", made.data.id))).ok);
     const stillRefused = await cms.deleteContentDraft(made.data.id);
     assert.equal(stillRefused.ok, false, "one that has been live is archived, never deleted");
 
     const draft = await cms.createContent("product", product({ id: "MTI-95", slug: "never-live", name: "Never live" }));
     assert.ok(draft.ok);
-    assert.ok((await cms.deleteContentDraft(draft.data.id)).ok);
+    const bare = await cms.deleteContentDraft(draft.data.id);
+    assert.equal(!bare.ok && bare.code, "validation", "a delete nobody confirmed is refused");
+    const report = await impactReport("site-content-delete", draft.data.id);
+    assert.ok(report.ok);
+    assert.equal(report.data.confirmWord, "Never live", "the draft's own name is typed");
+    assert.ok(report.data.items.some((i) => i.app === "mahekindia.com" && i.effect === "kept"), "nothing on the live site moves");
+    const stale = await cms.deleteContentDraft(draft.data.id, { typed: "Never live", fingerprint: "0:stale" });
+    assert.equal(!stale.ok && stale.code, "conflict");
+    assert.ok((await cms.deleteContentDraft(draft.data.id, await confirmed("site-content-delete", draft.data.id))).ok);
     assert.equal(await getItem(draft.data.id), null);
   });
 
@@ -282,7 +298,12 @@ describe("saving content", () => {
     assert.ok((await cms.transitionContent([made.data.id], "publish")).ok);
     const edited = await cms.saveContent(made.data.id, product({ name: "Draft rename" }));
     assert.ok(edited.ok && edited.data.hasChanges);
-    const back = await cms.discardContentChanges(made.data.id);
+    const refused = await cms.discardContentChanges(made.data.id);
+    assert.equal(!refused.ok && refused.code, "validation", "throwing edits away needs a confirmation");
+    const report = await impactReport("site-content-discard", made.data.id);
+    assert.ok(report.ok);
+    assert.ok(report.data.items.some((i) => i.effect === "deleted" && i.examples?.includes("name")), "it names the field that is lost");
+    const back = await cms.discardContentChanges(made.data.id, await confirmed("site-content-discard", made.data.id));
     assert.ok(back.ok);
     assert.equal(back.data.label, "Test Thinner");
     assert.equal(back.data.hasChanges, false);
@@ -328,7 +349,9 @@ describe("publishing", () => {
     assert.ok(made.ok);
     assert.ok((await cms.transitionContent([made.data.id], "publish")).ok);
 
-    const down = await cms.transitionContent([made.data.id], "unpublish");
+    const unconfirmed = await cms.transitionContent([made.data.id], "unpublish");
+    assert.equal(!unconfirmed.ok && unconfirmed.code, "validation", "taking a page down needs a confirmation");
+    const down = await cms.transitionContent([made.data.id], "unpublish", await confirmed("site-content-unpublish", made.data.id));
     assert.ok(down.ok);
     assert.deepEqual((await liveBundle()).products, []);
     const item = await getItem(made.data.id);
@@ -337,7 +360,7 @@ describe("publishing", () => {
     assert.equal(item?.label, "Test Thinner");
 
     assert.ok((await cms.transitionContent([made.data.id], "publish")).ok);
-    assert.ok((await cms.transitionContent([made.data.id], "archive")).ok);
+    assert.ok((await cms.transitionContent([made.data.id], "archive", await confirmed("site-content-archive", made.data.id))).ok);
     assert.equal((await getItem(made.data.id))?.state, "archived");
     assert.deepEqual((await liveBundle()).products, []);
     assert.deepEqual((await currentBundle(true)).products, [], "an archived item is not even in a preview");
@@ -379,7 +402,12 @@ describe("publishing", () => {
     assert.ok((await cms.transitionContent([p.data.id], "publish")).ok);
     assert.deepEqual((await liveBundle()).industries?.[0].productSlugs, ["test-thinner"]);
 
-    const down = await cms.transitionContent([p.data.id], "unpublish");
+    const report = await impactReport("site-content-unpublish", p.data.id);
+    assert.ok(report.ok);
+    const listing = report.data.items.find((i) => /live industr/.test(i.label));
+    assert.equal(listing?.count, 1, "the modal names the live industry that loses it");
+    assert.deepEqual(listing?.examples, ["Test Industry"]);
+    const down = await cms.transitionContent([p.data.id], "unpublish", { typed: report.data.confirmWord, fingerprint: report.data.fingerprint });
     assert.ok(down.ok);
     assert.ok((down.warnings ?? []).some((w) => /no longer shown under/.test(w)), "the editor is told what unpublishing breaks");
   });
@@ -390,7 +418,7 @@ describe("publishing", () => {
     const c = await cms.createContent("product", product({ id: "MTI-92", slug: "third", name: "Third" }));
     assert.ok(a.ok && b.ok && c.ok);
     assert.ok((await cms.transitionContent([a.data.id, b.data.id], "publish")).ok);
-    assert.ok((await cms.transitionContent([b.data.id], "unpublish")).ok); // taken down on purpose
+    assert.ok((await cms.transitionContent([b.data.id], "unpublish", await confirmed("site-content-unpublish", b.data.id))).ok); // taken down on purpose
     assert.ok((await cms.saveContent(a.data.id, product({ name: "A changed" }))).ok);
 
     const r = await cms.publishAllPending(["product"]);
@@ -722,10 +750,15 @@ describe("website media", () => {
     const blocked = await cms.removeMedia(up.data.id);
     assert.equal(blocked.ok, false);
     assert.match(!blocked.ok ? blocked.error : "", /in use by/);
+    const explained = await impactReport("site-media", up.data.id);
+    assert.ok(explained.ok);
+    assert.match(explained.data.blockers[0] ?? "", /in use by/, "the modal says why before the button");
     assert.equal((await listMedia()).find((m) => m.id === up.data.id)?.usedBy.length, 1);
 
     assert.ok((await cms.saveContent(made.data.id, product({ image: "/images/other.webp" }))).ok);
-    assert.ok((await cms.removeMedia(up.data.id)).ok);
+    const bare = await cms.removeMedia(up.data.id);
+    assert.equal(!bare.ok && bare.code, "validation", "no longer in use, it still needs a confirmation");
+    assert.ok((await cms.removeMedia(up.data.id, await confirmed("site-media", up.data.id))).ok);
     assert.equal(await readMedia(up.data.id), null);
     assert.equal((await listMedia()).some((m) => m.id === up.data.id), false);
   });
@@ -930,7 +963,7 @@ describe("importing the website's actual content", () => {
     assert.ok((await cms.saveContent(settings.id, { ...data, company: { ...data.company, workingHours: "Mon–Fri, 10:00–5:00" } }, settings.version)).ok);
     assert.ok((await cms.transitionContent([settings.id], "publish")).ok);
     assert.equal((await liveBundle()).settings?.company.workingHours, "Mon–Fri, 10:00–5:00");
-    assert.ok((await cms.transitionContent([settings.id], "unpublish")).ok);
+    assert.ok((await cms.transitionContent([settings.id], "unpublish", await confirmed("site-content-unpublish", settings.id))).ok);
     assert.equal((await liveBundle()).settings, null, "unpublished settings are null: the site uses its own");
     const archive = await cms.transitionContent([settings.id], "archive");
     assert.equal(archive.ok, false, "settings cannot be archived");

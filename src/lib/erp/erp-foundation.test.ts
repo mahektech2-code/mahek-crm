@@ -29,6 +29,7 @@ import { erpContext, requireErpWrite, ErpNotPermitted } from "@/lib/erp/access";
 import { screenModule } from "@/lib/erp/screens";
 import { partyStatus, loadCustomers } from "@/lib/erp/screens/masters";
 import { impactReport } from "@/lib/impact/registry";
+import { accessRevokeKey } from "@/lib/impact/kinds/access-revoke-key";
 import { IMPACT_FIELD } from "@/lib/impact/types";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
@@ -241,7 +242,15 @@ describe("powers and godowns", () => {
     await db.insert(appAccess).values({ id: id("aca"), userId: other.id, app: "crm", role: "associate" });
     await setAccess({ userId: other.id, grants: [whole, { app: "crm", modules: moduleKeysForApp("crm"), role: "associate" }], erpPowers: ["viewCost"] });
     assert.equal((await db.select().from(erpUserPowers).where(eq(erpUserPowers.userId, other.id))).length, 1);
-    await setAccess({ userId: other.id, grants: [{ app: "crm", modules: moduleKeysForApp("crm"), role: "associate" }] });
+    const report = await impactReport("admin-access-revoke", accessRevokeKey(other.id, ["erp"]));
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    assert.equal(report.data.items.find((i) => i.label === "ERP power")?.count, 1, "the modal names the power going with it");
+    const taken = await setAccess({
+      userId: other.id,
+      grants: [{ app: "crm", modules: moduleKeysForApp("crm"), role: "associate" }],
+      confirmation: { typed: report.data.confirmWord, fingerprint: report.data.fingerprint },
+    });
+    assert.ok(taken.ok, taken.ok ? "" : taken.error);
     assert.equal((await db.select().from(erpUserPowers).where(eq(erpUserPowers.userId, other.id))).length, 0);
   });
 

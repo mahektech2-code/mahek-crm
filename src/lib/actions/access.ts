@@ -25,6 +25,9 @@ import { newPassword } from "@/lib/password";
 import { initialsOf } from "@/lib/format";
 import { err as fail, fieldErr, ok, type Result } from "@/lib/result";
 import { requirePlatformAdminUser, widestRole, type Role } from "@/lib/access-control";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
+import { ACCESS_REVOKE_KIND, accessRevokeKey } from "@/lib/impact/kinds/access-revoke-key";
 import { ERP_POWERS } from "@/lib/erp/powers";
 import { HRMS_POWERS } from "@/lib/hrms/powers";
 import { HIRE_ROLES, ROLE_LABEL } from "@/lib/hire/roles";
@@ -186,6 +189,13 @@ export type SetAccessInput = {
    * it. It goes with the ERP, like the powers.
    */
   erpDesignationId?: string | null;
+  /**
+   * What the impact modal handed back, where this save takes an app away. A
+   * revocation is a small gesture for a large consequence — the ERP's powers,
+   * the factory place, a phone shut out — so it is confirmed against the
+   * report the person read. Grants, narrowing and levels need none.
+   */
+  confirmation?: ImpactConfirmation;
   /** Only read when an account has to be created. */
   account?: {
     /** At least one of these two. Both is fine and often better. */
@@ -755,6 +765,11 @@ export async function setAccess(
       { userId, created: false, resetLinkSent: false, granted: [], revoked: [], changed: [] },
       "No change.",
     );
+  }
+
+  if (revoked.length) {
+    const refusal = await confirmImpact(ACCESS_REVOKE_KIND, accessRevokeKey(userId, revoked), input.confirmation);
+    if (refusal) return refusal;
   }
 
   await db.transaction(async (tx) => {

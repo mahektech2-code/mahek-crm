@@ -50,15 +50,12 @@ const META: Record<string, SecretMeta> = {
     env: "SARVAM_API_KEY",
     what: "Hears the speech, and gives back both the original language and the English. Built for Indian languages and for sentences that switch language halfway. Refuses audio over 30 seconds.",
     where: "dashboard.sarvam.ai → API keys",
-    removalConsequence:
-      "Dictation falls back to whatever the deployment sets, and to OpenAI where that is allowed.",
   },
   "openai.apiKey": {
     label: "OpenAI",
     env: "OPENAI_API_KEY",
     what: "Takes the recordings Sarvam cannot — anything over 30 seconds, and anything it fails on. Also the only thing that can do Tighten and Rewrite, which are a text call.",
     where: "platform.openai.com → API keys",
-    removalConsequence: "Tighten and Rewrite disappear from the dictation modal.",
   },
 };
 

@@ -28,7 +28,7 @@ export function SettingsScreen({ item, canPublish, canSubmit = false, review }: 
   return (
     <div className="max-w-[900px] p-6">
       <PageHeader title="Settings" subtitle="Company details, the figures quoted across the site, social links and analytics." />
-      {item ? <DocEditor key={docKey(item)} kind="settings" item={item} fields={SETTINGS_FIELDS} canPublish={canPublish} canSubmit={canSubmit} review={review} what="the site settings" /> : NOT_IMPORTED("The site settings")}
+      {item ? <DocEditor key={docKey(item)} kind="settings" item={item} fields={SETTINGS_FIELDS} canPublish={canPublish} canSubmit={canSubmit} review={review} /> : NOT_IMPORTED("The site settings")}
     </div>
   );
 }
@@ -37,7 +37,7 @@ export function NavigationScreen({ item, canPublish, canSubmit = false, review }
   return (
     <div className="max-w-[900px] p-6">
       <PageHeader title="Navigation" subtitle="The header menu and the footer links. The order here is the order visitors see." />
-      {item ? <DocEditor key={docKey(item)} kind="navigation" item={item} fields={NAVIGATION_FIELDS} canPublish={canPublish} canSubmit={canSubmit} review={review} what="the menus" /> : NOT_IMPORTED("The menus")}
+      {item ? <DocEditor key={docKey(item)} kind="navigation" item={item} fields={NAVIGATION_FIELDS} canPublish={canPublish} canSubmit={canSubmit} review={review} /> : NOT_IMPORTED("The menus")}
     </div>
   );
 }
@@ -111,7 +111,6 @@ export function PagesScreen({ items, canPublish, canSubmit = false, review = {} 
                 canPublish={canPublish}
                 canSubmit={canSubmit}
                 review={review[page.id]}
-                what="this page's wording"
                 stacked
               />
             </div>

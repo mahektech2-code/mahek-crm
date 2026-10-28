@@ -31,7 +31,7 @@ import {
   type RequestStatus,
 } from "./review-status";
 import { notifyApproved, notifyAssigned, notifyClosed, notifySubmitted, runAfterCommit, type AfterCommit } from "./review-notify";
-import { describeLive, type PublishOutcome } from "./service";
+import { describeLive, type BeforeWrite, type PublishOutcome } from "./service";
 
 /* ---------------------------------------------------------------------------
  * THE WEBSITE REVIEW WORKFLOW — assignments, submissions and decisions.
@@ -240,12 +240,14 @@ export async function assignWork(
   }
 }
 
-export async function revokeAssignment(user: User, assignmentId: unknown): Promise<Result> {
+export async function revokeAssignment(user: User, assignmentId: unknown, beforeWrite?: BeforeWrite): Promise<Result> {
   if (typeof assignmentId !== "string" || !assignmentId) return err("That assignment no longer exists.", "not_found");
   return db.transaction(async (tx) => {
     const [row] = await tx.select().from(websiteAssignment).where(eq(websiteAssignment.id, assignmentId)).for("update");
     if (!row) return err("That assignment no longer exists.", "not_found");
     if (row.revokedAt) return { ok: true as const, data: undefined, message: "That assignment was already taken away." };
+    const refusal = beforeWrite ? await beforeWrite() : null;
+    if (refusal) return refusal;
     await tx.update(websiteAssignment).set({ revokedAt: new Date(), revokedById: user.id }).where(eq(websiteAssignment.id, row.id));
     await audit(tx, user.id, "website.assignment.revoked", "website_assignment", row.id, {
       before: { employeeId: row.employeeId, kind: row.kind, contentId: row.contentId },
@@ -533,8 +535,8 @@ async function lockRequest(tx: Tx, requestId: string): Promise<Locked | null> {
   return { req, items };
 }
 
-/** Why a request is not in the state a command needs. */
-const wrongState = (req: { status: string }, wanted: string): string =>
+/** Why a request is not in the state a command needs. Exported for the impact report, which says it before the button. */
+export const wrongState = (req: { status: string }, wanted: string): string =>
   `This request is “${STATUS_LABEL[req.status as RequestStatus] ?? req.status}”, so it cannot be ${wanted}.`;
 
 /**
@@ -616,7 +618,7 @@ export async function rejectRequest(user: User, requestId: unknown, reason: unkn
   return result;
 }
 
-export async function revokeApproval(user: User, requestId: unknown): Promise<Result> {
+export async function revokeApproval(user: User, requestId: unknown, beforeWrite?: BeforeWrite): Promise<Result> {
   if (typeof requestId !== "string" || !requestId) return err("That request no longer exists.", "not_found");
   const after: AfterCommit[] = [];
   const result = await db.transaction(async (tx) => {
@@ -625,6 +627,8 @@ export async function revokeApproval(user: User, requestId: unknown): Promise<Re
     const { req } = locked;
     if (req.submitterId === user.id) return err("You cannot revoke the approval of your own submission — withdraw it instead.", "not_permitted");
     if (req.status !== "approved") return err(wrongState(req, "revoked"), "conflict");
+    const refusal = beforeWrite ? await beforeWrite() : null;
+    if (refusal) return refusal;
     await closeRequest(tx, req, "revoked", user.id, { revokedAt: new Date(), revokedById: user.id }, { revokedById: user.id }, after);
     return { ok: true as const, data: undefined, message: "Approval revoked. Nothing was published." };
   });
@@ -633,7 +637,11 @@ export async function revokeApproval(user: User, requestId: unknown): Promise<Re
 }
 
 /** Takes a request back. The submitter's way to edit an item again; a reviewer may do it for them. */
-export async function withdrawRequest(user: User, requestId: unknown, opts: { asReviewer: boolean }): Promise<Result> {
+export async function withdrawRequest(
+  user: User,
+  requestId: unknown,
+  opts: { asReviewer: boolean; beforeWrite?: BeforeWrite },
+): Promise<Result> {
   if (typeof requestId !== "string" || !requestId) return err("That request no longer exists.", "not_found");
   const after: AfterCommit[] = [];
   const result = await db.transaction(async (tx) => {
@@ -642,6 +650,8 @@ export async function withdrawRequest(user: User, requestId: unknown, opts: { as
     const { req } = locked;
     if (req.submitterId !== user.id && !opts.asReviewer) return err("Only the person who submitted this can withdraw it.", "not_permitted");
     if (!canTransition(req.status as RequestStatus, "withdrawn")) return err(wrongState(req, "withdrawn"), "conflict");
+    const refusal = opts.beforeWrite ? await opts.beforeWrite() : null;
+    if (refusal) return refusal;
     await closeRequest(tx, req, "withdrawn", user.id, {}, { by: user.id }, after);
     return { ok: true as const, data: undefined, message: "Request withdrawn. You can edit these items again." };
   });

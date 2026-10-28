@@ -22,6 +22,8 @@ import {
 } from "@/lib/password-reset";
 import { ADMIN } from "@/lib/admin-routes";
 import { ConsoleNotConfirmedError } from "@/lib/console-confirm";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * Writes for the People section.
@@ -116,6 +118,7 @@ function refresh() {
 export async function setUserActive(
   userId: string,
   active: boolean,
+  confirmation?: ImpactConfirmation,
 ): Promise<Result<null>> {
   let actor;
   try {
@@ -143,6 +146,12 @@ export async function setUserActive(
     if (admin) {
       return fail(`${before.name} is the only platform administrator, so their sign-in cannot be turned off.`);
     }
+  }
+  /* Turning a sign-in OFF ends their sessions and shuts their phone out, and
+     the person saw that by name. Turning it back on takes nothing away. */
+  if (!active) {
+    const refusal = await confirmImpact("admin-user-disable", userId, confirmation);
+    if (refusal) return refusal;
   }
 
   const ended = await db.transaction(async (tx) => {

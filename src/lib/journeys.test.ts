@@ -14,6 +14,7 @@
 import { after, before, beforeEach, describe, test } from "node:test";
 import { COMPLAINT_CATEGORIES } from "@/lib/constants";
 import assert from "node:assert/strict";
+import { impactReport } from "@/lib/impact/registry";
 import { randomUUID } from "node:crypto";
 import { NO_ORDER_REASONS } from "@/lib/call-outcomes";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
@@ -5846,7 +5847,13 @@ describe("The product master — importing it, and what an import must not touch
       .where(and(eq(productsTable.status, "ok"), eq(productsTable.active, true)))
       .limit(1);
 
-    const retired = await setSkuActive(live.id, false);
+    /* Retiring asks first: the order forms, the handsets and the price lists it leaves. */
+    const unconfirmed = await setSkuActive(live.id, false);
+    assert.equal(!unconfirmed.ok && unconfirmed.code, "validation", "a retirement nobody confirmed is refused");
+    const report = await impactReport("admin-sku-retire", live.id);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    assert.ok(report.data.items.some((i) => i.app === "CRM" && i.effect === "changed"), "it names the order form it leaves");
+    const retired = await setSkuActive(live.id, false, { typed: report.data.confirmWord, fingerprint: report.data.fingerprint });
     assert.equal(retired.ok, true, retired.ok ? "" : retired.error);
 
     await importCatalogue();

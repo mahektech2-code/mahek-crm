@@ -40,7 +40,7 @@ import {
   Tr,
   cx,
 } from "@/components/ui/primitives";
-import { ConfirmDialog, RowMenu, Tabs } from "@/components/ui/overlays";
+import { RowMenu, Tabs } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { useRouter } from "next/navigation";
@@ -90,7 +90,7 @@ export function PriceListDetailScreen({
   options: PricingOptions;
 }) {
   const router = useRouter();
-  const { run, push } = useToast();
+  const { push } = useToast();
   const list = detail.list;
   const draft = list.status === "draft";
   const published = list.status === "published";
@@ -121,14 +121,6 @@ export function PriceListDetailScreen({
     const direction = sort.direction === "asc" ? 1 : -1;
     return [...detail.rates].sort((a, b) => direction * compareRates(a, b, sort.column));
   }, [detail.rates, sort]);
-
-  async function dropTerm(id: string) {
-    const r = await run(removeDiscountTerm(id));
-    if (r.ok) {
-      setTermToRemove(null);
-      router.refresh();
-    }
-  }
 
   return (
     <div>
@@ -793,15 +785,25 @@ export function PriceListDetailScreen({
           }}
         />
       ) : null}
-      <ConfirmDialog
-        open={termToRemove !== null}
-        title="Remove this discount?"
-        body="It stops being printed under the prices and stops being offered."
-        confirmLabel="Remove it"
-        destructive
-        onConfirm={() => (termToRemove ? dropTerm(termToRemove) : undefined)}
-        onClose={() => setTermToRemove(null)}
-      />
+      {/* On a published list a discount leaves the printed sheet and every
+          ERP sales order that names the list — the parties, by name. */}
+      {termToRemove ? (
+        <ImpactDialog
+          key={termToRemove}
+          kind="price-discount-term"
+          id={termToRemove}
+          confirmLabel="Remove it"
+          onClose={() => setTermToRemove(null)}
+          onConfirm={async (confirmation) => {
+            const r = await removeDiscountTerm(termToRemove, confirmation);
+            if (r.ok) {
+              push(r.message ?? "Removed.");
+              router.refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
       <PriceListEditor open={editor} onClose={() => setEditor(null)} app={app} basePath={basePath} options={options} todayIso={todayIso} />
       {duplicating ? (
         <DuplicateModal

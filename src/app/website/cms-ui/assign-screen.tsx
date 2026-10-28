@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Callout, Card, CardHeader, EmptyState, Field, Input, PageHeader, Select, Td, Th, Tr } from "@/components/ui/primitives";
 import { ConfirmDialog } from "@/components/ui/overlays";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { useToast } from "@/components/ui/toast";
 import { assignWorkAction, revokeAssignmentAction, setEnforceAssignmentsAction } from "@/lib/actions/website-cms";
 import { KINDS, KIND_KEYS } from "@/lib/website-cms/kinds";
@@ -56,15 +57,6 @@ export function AssignScreen({ data }: { data: AssignScreenData }) {
         setNote("");
         router.refresh();
       }
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function revoke(id: string) {
-    setBusy(true);
-    try {
-      if (reportResult(toast, await revokeAssignmentAction(id))) router.refresh();
     } finally {
       setBusy(false);
     }
@@ -193,19 +185,25 @@ export function AssignScreen({ data }: { data: AssignScreenData }) {
         )}
       </Card>
 
-      <ConfirmDialog
-        open={revoking !== null}
-        title="Take this assignment away"
-        body="They will no longer be able to edit it if assignments are enforced. A request they already submitted stays for you to decide."
-        destructive
-        confirmLabel="Take away"
-        onClose={() => setRevoking(null)}
-        onConfirm={async () => {
-          const id = revoking;
-          setRevoking(null);
-          if (id) await revoke(id);
-        }}
-      />
+      {/* What they can no longer edit, if assignments are enforced, and the
+          requests of theirs that stay for a reviewer — their name to confirm. */}
+      {revoking ? (
+        <ImpactDialog
+          key={revoking}
+          kind="site-assignment"
+          id={revoking}
+          confirmLabel="Take away"
+          onClose={() => setRevoking(null)}
+          onConfirm={async (confirmation) => {
+            const r = await revokeAssignmentAction(revoking, confirmation);
+            if (r.ok) {
+              reportResult(toast, r);
+              router.refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
       <ConfirmDialog
         open={switching}
         title={data.enforced ? "Stop enforcing assignments" : "Start enforcing assignments"}
