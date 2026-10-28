@@ -1172,12 +1172,10 @@ export async function requestProspect(
     if (managerId && managerId !== ctx.user.id) {
       await notifyUser({
         userId: managerId,
-        title: `${lead.name} is ready to review`,
-        /* Sent to the designated verifier with the review, which draws every Suspect
-           and Prospect answer on one page. A verification call is optional. */
-        body: `${ctx.user.name} ${resubmitted ? "resubmitted" : "asked for"} ${lead.name} to be put forward as a Prospect after qualifying it by phone. Read every Suspect and Prospect answer, then confirm it or return it. It is not a Prospect until you do.`,
+        title: `${lead.name} is ready to verify`,
+        body: `${ctx.user.name} ${resubmitted ? "resubmitted" : "asked for"} ${lead.name} to be put forward as a Prospect after qualifying it by phone. It is not a Prospect until you verify it.`,
         kind: "info",
-        href: `/crm/leads/${p.customerId}/review`,
+        href: `/crm/leads/${p.customerId}/verify`,
       }).then(() => {
         managerNotified = true;
       });
@@ -1346,10 +1344,10 @@ export async function convertLeadToProspect(
     if (managerId !== ctx.user.id) {
       await notifyUser({
         userId: managerId,
-        title: `${lead.name} is ready to review`,
-        body: `${ctx.user.name} created a Prospect from ${lead.name}. Read every Suspect and Prospect answer, then confirm it or return it — Qualification opens when you confirm.`,
+        title: `${lead.name} is ready to verify`,
+        body: `${ctx.user.name} created a Prospect from ${lead.name}. Qualification opens when you verify it.`,
         kind: "info",
-        href: `/crm/leads/${p.customerId}/review`,
+        href: `/crm/leads/${p.customerId}/verify`,
       }).catch(() => {});
     }
 
