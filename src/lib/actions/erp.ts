@@ -15,7 +15,7 @@ import { ErpNotPermitted, VIEW_AS_COOKIE, erpContext, isErpAdministrator, previe
 import { screenModule } from "@/lib/erp/screens";
 import { erpScreen, erpHref, erpLink } from "@/lib/erp/registry";
 import { FLAG, type FormSpec } from "@/lib/erp/ui";
-import { listCsv, parseListQuery, queryRows } from "@/lib/erp/list-query";
+import { listCsv, parseListQuery, queryRows, selectionTotals, type SelectionTotal } from "@/lib/erp/list-query";
 import { withReadMemo } from "@/lib/erp/read-memo";
 import { scopeFor } from "@/lib/erp/window";
 import { erpAudit } from "@/lib/erp/server";
@@ -148,6 +148,25 @@ export async function erpListIds(screen: string, query: Record<string, string>):
     const q = parseListQuery(query);
     const { spec, rows } = await withReadMemo(() => mod.load(ctx, { ...scopeFor(mod.window, q, null), forms: "defer" }));
     return ok(queryRows(spec, rows, q, FLAG).list.map((r) => r.id));
+  } catch (e) {
+    return refused(e);
+  }
+}
+
+/**
+ * What the selection bar adds up, for ticked rows the page in the browser does
+ * not hold — "Select all" across pages, or an order's "Select all" reaching past
+ * this page. Read access only, like the export.
+ */
+export async function erpListTotals(screen: string, query: Record<string, string>, ids: string[]): Promise<Result<{ counted: number; totals: SelectionTotal[] }>> {
+  try {
+    const ctx = await requireErpForm(screen);
+    const mod = screenModule(screen);
+    if (!mod) return err("That list is not available.", "not_found");
+    if (!Array.isArray(ids) || ids.length > 20_000) return err("Too many rows to add up.", "rule_violation");
+    const q = parseListQuery(query);
+    const { spec, rows } = await withReadMemo(() => mod.load(ctx, { ...scopeFor(mod.window, q, null), forms: "defer" }));
+    return ok(selectionTotals(spec, rows, ids.filter((x) => typeof x === "string")));
   } catch (e) {
     return refused(e);
   }

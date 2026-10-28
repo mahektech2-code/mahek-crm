@@ -7,7 +7,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ColSpec, FormSpec, ListRow, ListSpec, Tone } from "@/lib/erp/ui";
 import type { Result } from "@/lib/result";
 import { aggsOf, cellText, inr, nf, NEW_FORM_ACTION } from "@/lib/erp/ui";
-import { colOf as colIn, listCsv, listQueryParams, LIST_QUERY_KEYS, pageOf, subMatches, type ColFilter, type ListPage, type ListQuery } from "@/lib/erp/list-query";
+import { colOf as colIn, listCsv, listQueryParams, LIST_QUERY_KEYS, pageOf, selectionTotals, selectionTotalText, subMatches, type ColFilter, type ListPage, type ListQuery, type SelectionTotal } from "@/lib/erp/list-query";
 import { ColumnFilter } from "./column-filter";
 import { Icon as ShellIcon } from "@/components/shell/icons";
 import { Button, Card, checkboxClass, cx, EmptyState, Input, Select, SortableTh, Td, Th, Tr } from "@/components/ui/primitives";
@@ -427,7 +427,7 @@ export function ListScreen({
   bare?: boolean;
 }) {
   const ui = useErpUi();
-  const { flags: FLAG, place, exportList, listIds, loadForm, tones, look } = useKit();
+  const { flags: FLAG, place, exportList, listIds, listTotals, loadForm, tones, look } = useKit();
   const v4 = look === "v4";
   const [asTable, setAsTable] = useState(false);
   const showCards = !!spec.cards && !(spec.cards.toggle && asTable);
@@ -545,6 +545,10 @@ export function ListScreen({
   const chosen = Object.keys(sel).filter((id) => sel[id] && (!inView || inView.has(id)));
   const allOnPage = pageRows.length > 0 && pageRows.every((r) => sel[r.id]);
   const bulkOn = !!spec.bulk?.length;
+  /* A row carries a checkbox where something can be done with a selection —
+     a bulk action, or only reading what the ticked rows add up to. */
+  const sumOn = !!spec.selectSum?.length;
+  const selectOn = bulkOn || sumOn;
   /* Columns that are facts about the group are drawn once in its header while
      grouped, so the rows carry only what differs from line to line. */
   const headCols = gk && spec.groupHead ? spec.groupHead.map((k) => cols.find((c) => c.k === k)).filter((c): c is ColSpec => !!c) : [];
@@ -559,7 +563,7 @@ export function ListScreen({
   /* A row's ⋯ menu takes a narrow column of its own at the end. */
   const menuIds = spec.rowMenu ?? [];
   const menuOn = menuIds.length > 0;
-  const fit = fitColumns({ cols: lineCols, avail: menuOn ? Math.max(0, avail - MENU_COL) : avail, check: bulkOn, chosen: chosenCols, badgeChars, headExtra: spec.colFilters ? 26 : 0 });
+  const fit = fitColumns({ cols: lineCols, avail: menuOn ? Math.max(0, avail - MENU_COL) : avail, check: selectOn, chosen: chosenCols, badgeChars, headExtra: spec.colFilters ? 26 : 0 });
   const shownCols = fit.shown;
 
   const exportCsv = async () => {
@@ -595,6 +599,38 @@ export function ListScreen({
       return n;
     });
   };
+
+  /* WHAT THE TICKED ROWS ADD UP TO. Added up here while every ticked row is in
+     the browser — a whole list, or a paged one ticked on this page — and asked
+     of the server once a tick reaches past the page ("Select all", an order's
+     "Select all"), because only the server holds those rows. */
+  const chosenKey = chosen.slice().sort().join(",");
+  const heldRows = server ? pageRows : rows;
+  const heldIds = new Set(heldRows.flatMap((r) => [r.id, ...(r.sub ?? []).map((x) => x.id)]));
+  const allHeld = chosen.every((id) => heldIds.has(id));
+  const localSum = sumOn && chosen.length > 0 && allHeld ? selectionTotals(spec, heldRows, chosen) : null;
+  const needRemote = sumOn && chosen.length > 0 && !allHeld && !!server && !!listTotals;
+  const queryKey = server ? JSON.stringify(listQueryParamsWithIds(query)) : "";
+  const [remoteSum, setRemoteSum] = useState<{ key: string; counted: number; totals: SelectionTotal[] } | null>(null);
+  useEffect(() => {
+    if (!needRemote || !listTotals) return;
+    let gone = false;
+    const t = setTimeout(async () => {
+      const res = await listTotals(spec.screen, JSON.parse(queryKey) as Record<string, string>, chosenKey.split(","));
+      if (!gone && res.ok) setRemoteSum({ key: chosenKey, ...res.data });
+    }, 250);
+    return () => {
+      gone = true;
+      clearTimeout(t);
+    };
+  }, [needRemote, listTotals, spec.screen, queryKey, chosenKey]);
+  const shownSum = localSum ?? (remoteSum && remoteSum.key === chosenKey ? remoteSum : null);
+  const sumText = shownSum
+    ? [
+        ...shownSum.totals.map(selectionTotalText),
+        ...(shownSum.counted < chosen.length ? [`${nf(chosen.length - shownSum.counted)} not in this period`] : []),
+      ].join(" · ")
+    : "Adding up…";
 
   /* A folded row opens its own record, so it is looked for under its total too. */
   const withSubs = (rs: ListRow[]) => rs.flatMap((r) => [r, ...(r.sub ?? [])]);
@@ -963,7 +999,7 @@ export function ListScreen({
             <div ref={tableBox} className="overflow-x-auto">
               <table className="w-full table-fixed">
                 <colgroup>
-                  {bulkOn ? <col style={{ width: CHECK_COL }} /> : null}
+                  {selectOn ? <col style={{ width: CHECK_COL }} /> : null}
                   {shownCols.map((c) => (
                     <col key={c.k} style={{ width: fit.widths[c.k] }} />
                   ))}
@@ -971,7 +1007,7 @@ export function ListScreen({
                 </colgroup>
                 <thead>
                   <tr>
-                    {bulkOn ? (
+                    {selectOn ? (
                       <Th>
                         <input
                           type="checkbox" className={checkboxClass}
@@ -1031,7 +1067,7 @@ export function ListScreen({
                           const allSel = grp.ids.every((id) => sel[id]);
                           out.push(
                             <Tr key={`g:${g}`} className="bg-canvas">
-                              <Td colSpan={shownCols.length + (bulkOn ? 1 : 0) + (menuOn ? 1 : 0)} className="py-2 whitespace-normal">
+                              <Td colSpan={shownCols.length + (selectOn ? 1 : 0) + (menuOn ? 1 : 0)} className="py-2 whitespace-normal">
                                 <span className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
                                   <span className={eyebrowClass}>{gk.map((k) => colOf(k).l).join(" · ")}</span>
                                   <span className="text-meta font-semibold text-ink">{g || "—"}</span>
@@ -1041,7 +1077,7 @@ export function ListScreen({
                                     return <GroupFact key={c.k} c={c} v={grp.head[c.k]} strong={spec.groupHeadStrong?.includes(c.k)} />;
                                   })}
                                   <span className={cx("text-xs text-muted", headShown.length > 0 && "ml-auto")}>{aggText}</span>
-                                  {spec.groupSel && bulkOn ? (
+                                  {spec.groupSel && selectOn ? (
                                     <LinkButton
                                       onClick={() => {
                                         const n = { ...sel };
@@ -1063,7 +1099,7 @@ export function ListScreen({
                       const tone = rowTone(r.flags, FLAG);
                       out.push(
                         <Tr key={r.id} onClick={() => setOpenId(r.id)} className={cx("cursor-pointer", sel[r.id] ? "bg-brand-soft" : "hover:bg-canvas")}>
-                          {bulkOn ? (
+                          {selectOn ? (
                             <Td className={cx(tone && EDGE[tone])} onClick={(e) => e.stopPropagation()}>
                               <input
                                 type="checkbox" className={checkboxClass}
@@ -1079,7 +1115,7 @@ export function ListScreen({
                               c={c}
                               r={r}
                               cols={cols}
-                              edge={!bulkOn && i === 0 && tone ? EDGE[tone] : undefined}
+                              edge={!selectOn && i === 0 && tone ? EDGE[tone] : undefined}
                               lead={
                                 i === 0 && r.sub?.length ? (
                                   <FoldToggle
@@ -1099,7 +1135,7 @@ export function ListScreen({
                         for (const x of r.sub) {
                           out.push(
                             <Tr key={`${r.id}>${x.id}`} onClick={() => setOpenId(x.id)} className="cursor-pointer bg-canvas/60 hover:bg-canvas">
-                              {bulkOn ? <Td /> : null}
+                              {selectOn ? <Td /> : null}
                               {shownCols.map((c, i) =>
                                 i === 0 ? (
                                   <Td key={c.k} className="truncate pl-10 text-meta text-body" title={x.subLine ?? cellText(c, x.v[c.k])}>
@@ -1137,22 +1173,30 @@ export function ListScreen({
         )}
       </Card>
 
-      {bulkOn ? (
+      {selectOn ? (
         <SelectionBar count={chosen.length} onClear={() => setSel({})}>
+          {sumOn ? (
+            <>
+              <span className="text-meta font-semibold whitespace-nowrap tabular-nums" aria-live="polite">
+                {sumText}
+              </span>
+              <span className="h-[18px] w-px bg-body" />
+            </>
+          ) : null}
           {/* The header box takes this page; this takes everything the
               search, chips and godown filter leave, across every page. */}
           {chosen.length < total ? (
             <button
               onClick={selectAll}
               className={cx(
-                "cursor-pointer text-meta underline-offset-2 hover:underline",
+                "cursor-pointer text-meta whitespace-nowrap underline-offset-2 hover:underline",
                 v4 ? "font-semibold text-brand-lime" : "text-line-strong hover:text-white",
               )}
             >
               Select all {nf(total)}
             </button>
           ) : null}
-          {spec.bulk!.map((b) => (
+          {(spec.bulk ?? []).map((b) => (
             <Button key={b.id} variant="dark" size="sm" onClick={() => ui.bulk(spec.screen, b, chosen, () => setSel({}))}>
               {b.l}
             </Button>

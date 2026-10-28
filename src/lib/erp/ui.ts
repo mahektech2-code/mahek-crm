@@ -387,6 +387,13 @@ export type ListRow = {
   subLine?: string;
 };
 
+/**
+ * One figure the selection bar adds up: the sum of a number column, or — `distinct`
+ * — how many different values it holds (three orders among twelve lines).
+ * `missing` names the rows with no value, so a total is never read as the whole.
+ */
+export type SelectSum = { k: string; l: string; one?: string; kind?: "sum" | "distinct"; missing?: string };
+
 export type ListSpec = {
   screen: string;
   cols: ColSpec[];
@@ -445,6 +452,12 @@ export type ListSpec = {
    * column. Applied on the server with the rest of the reading (`list-query.ts`).
    */
   colFilters?: boolean;
+  /**
+   * What the selection bar adds up over the ticked rows ("1,240 kg · 86 boxes ·
+   * 3 orders"). Naming any draws a checkbox on every row even where the list
+   * has no bulk action — ticking is then for reading the totals.
+   */
+  selectSum?: SelectSum[];
   sortDefault?: [string, 1 | -1];
   bulk?: BulkSpec[];
   /** Key of the godown column the godown filter applies to. */
