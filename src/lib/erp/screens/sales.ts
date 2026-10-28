@@ -2843,6 +2843,112 @@ export async function setExtraExpenses(ctx: ErpContext, ids: string[], values: R
   return okVoid(`Extra expenses on ${plural(res.length)}`);
 }
 
+/* ============================================================ dispatch register */
+
+/**
+ * WHAT IS STILL TO GO OUT, for the dispatch team: every line Under Process or
+ * Ready that has not been dispatch-verified — who it is billed to, where it is
+ * delivered, what it is, what it weighs and who carries it. Nothing that has
+ * left is here; that is Billing & dispatch and Logistics. A billed line still
+ * on the floor stays until it is verified, because the lorry has not taken it.
+ *
+ * Read-only: every column carries an Excel filter (`ListSpec.colFilters`), and
+ * the work itself is done where it always was — a row opens the order on the
+ * Orders screen, the dispatch desk or the sticker print.
+ */
+export function isRegisterLine(l: OrderLine): boolean {
+  return (
+    (l.o.status === "Under Process" || l.o.status === "Ready") &&
+    !l.dispatched &&
+    /* An old sheet line finished outside the ERP (entry Done, never billed here) is not waiting for anything. */
+    (l.o.entryStatus !== "Done" || l.inDetails)
+  );
+}
+
+const DUE_SHORT: Record<NonNullable<Due>, string> = { today: "Today", tomorrow: "Tomorrow", late: "Late" };
+
+const dispatchRegister: ScreenModule = {
+  key: "dispatchRegister",
+  async load(ctx, s) {
+    const all = s?.ids?.length ? await orderLines({ ids: s.ids }) : await orderLines({ openWork: true });
+    const shown = all.filter(isRegisterLine);
+    const cols: Col[] = [
+      orderCol("orderNo", { l: "Order ID" }),
+      orderCol("billing", { l: "Customer (billing party)" }),
+      orderCol("delivery"),
+      orderCol("sku", { l: "Product" }),
+      orderCol("weight", { l: "Weight" }),
+      orderCol("transporter", { l: "Transport" }),
+      orderCol("status"),
+      { k: "dispatchOn", l: "Dispatch on", t: "d" },
+      { k: "when", l: "Due", t: "t" },
+      orderCol("qty", { l: "Cans" }),
+      orderCol("boxes"),
+      orderCol("city", { l: "Delivery city" }),
+      orderCol("bill", { l: "Bill no." }),
+      orderCol("date"),
+      orderCol("godown"),
+    ];
+    return {
+      spec: {
+        screen: "dispatchRegister",
+        cols,
+        hidden: [],
+        readOnly: true,
+        colFilters: true,
+        chips: "status",
+        groups: ["orderNo"],
+        agg: [
+          { k: "boxes", l: "boxes" },
+          { k: "weight", l: "kg", missing: "without a weight" },
+        ],
+        godownKey: "godown",
+        noDataLine: "Nothing waiting to go out. Lines appear here once they are Under Process or Ready, and leave once they are dispatch-verified.",
+      },
+      rows: shown.map((l): ListRow => ({
+        id: l.o.id,
+        v: {
+          orderNo: String(l.o.orderNo),
+          billing: l.billing.name,
+          delivery: l.delivery.name,
+          sku: l.sku.name,
+          weight: l.weightKg,
+          transporter: l.o.transporter ?? l.delivery.p?.transporter ?? "—",
+          status: l.o.status,
+          dispatchOn: l.o.dispatchOn,
+          when: l.due ? DUE_SHORT[l.due] : l.o.dispatchOn ? "Later" : "Not planned",
+          qty: l.o.qtyCans,
+          boxes: l.boxed ? l.boxes : null,
+          city: l.delivery.city,
+          bill: l.o.tallyBillNo,
+          date: l.o.orderDate,
+          godown: l.godown,
+        },
+        flags: lineFlags(l),
+        title: l.delivery.name,
+        header: [`Order ${l.o.orderNo}`, l.due ? DUE_WORD[l.due] : "", l.si.replace(/( - )+$/, "")].filter(Boolean).join(" · "),
+        fields: [
+          { l: "Billing party", v: l.billing.name },
+          { l: "Delivery party", v: `${l.delivery.name}${l.delivery.city ? ` · ${l.delivery.city}` : ""}` },
+          { l: "Product", v: `${l.sku.name} · ${nf(l.o.qtyCans)} cans${l.boxed ? ` · ${nf(l.boxes)} boxes` : ""}` },
+          { l: "Weight", v: l.weightKg == null ? "No weight in the catalogue for this SKU" : `${nf(l.weightKg)} kg`, der: true },
+          { l: "Transport", v: l.o.transporter ?? l.delivery.p?.transporter ?? "—" },
+          { l: "Dispatch on", v: l.o.dispatchOn ? fd(l.o.dispatchOn) : "Not planned" },
+          { l: "Tally invoice", v: l.o.tallyBillNo ? `${l.o.tallyBillNo}${l.o.invoiceDate ? ` · ${fd(l.o.invoiceDate)}` : ""}` : "Not billed yet" },
+          { l: "Standing instructions", v: l.si || "—", der: true },
+          { l: "Remark / customer instructions", v: l.o.remark || "—" },
+        ],
+        actions: [
+          { id: "open", l: "Open the order", primary: true, href: erpLink("readyOrders", { f: l.o.id, fl: `Order ${l.o.orderNo}` }) },
+          ...(l.o.status === "Ready" ? [{ id: "scan", l: "Scan boxes at dispatch", href: erpDispatchHref(l.o.orderNo) } as ActionSpec] : []),
+          { id: "labels", l: "Print dispatch stickers", href: erpLabelsHref({ order: l.o.orderNo }) },
+        ],
+        by: stampLine(l.by, l.o.createdAt),
+      })),
+    };
+  },
+};
+
 export const SALES_SCREENS: ScreenModule[] = [
   orderList("orders"),
   orderList("verifyOrders"),
@@ -2853,4 +2959,5 @@ export const SALES_SCREENS: ScreenModule[] = [
   batchCodes,
   orderList("labels"),
   orderDetails,
+  dispatchRegister,
 ];

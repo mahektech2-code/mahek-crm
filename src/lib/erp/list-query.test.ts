@@ -173,3 +173,39 @@ describe("column filters", () => {
     assert.equal(queryRows(spec, ROWS, Q({ fx: { item: "Toluene" } }), FLAGS).list.length, 4);
   });
 });
+
+describe("Excel column filters", () => {
+  const cspec: ListSpec = { ...spec, groups: undefined, colFilters: true };
+
+  test("a tick list keeps only the ticked values, across every page and the export", () => {
+    const q = Q({ cf: { item: { in: ["Toluene", "Acetone"] } } });
+    assert.deepEqual(queryRows(cspec, ROWS, q, FLAGS).list.map((r) => r.id), ["a", "c", "d"]);
+    assert.equal(listCsv(cspec, ROWS, q, FLAGS).n, 3);
+  });
+
+  test("a number column filters by a range, either end open, and a blank fails a bound", () => {
+    const rows = [...ROWS, { id: "e", v: { no: "4", item: "Mystery", qty: null, status: "Open", godown: "Vasai" }, flags: [] }];
+    assert.deepEqual(queryRows(cspec, rows, Q({ cf: { qty: { min: 5, max: 10 } } }), FLAGS).list.map((r) => r.id), ["a", "b", "c"]);
+    assert.deepEqual(queryRows(cspec, rows, Q({ cf: { qty: { min: null, max: 4 } } }), FLAGS).list.map((r) => r.id), ["d"]);
+    assert.equal(queryRows(cspec, rows, Q(), FLAGS).list.length, 5);
+  });
+
+  test("each column's choices are counted over what the OTHER column filters leave", () => {
+    const p = pageOf(cspec, ROWS, Q({ cf: { godown: { in: ["Vasai"] } } }), FLAGS);
+    assert.deepEqual(p.colFacets?.item, { kind: "list", opts: [{ v: "Toluene", n: 1 }, { v: "Xylene", n: 1 }], more: 0 });
+    assert.deepEqual(p.colFacets?.godown, { kind: "list", opts: [{ v: "Bhiwandi", n: 2 }, { v: "Vasai", n: 2 }], more: 0 });
+    assert.deepEqual(p.colFacets?.qty, { kind: "range", lo: 1, hi: 5 });
+    assert.equal(p.colFacets?.flags, undefined, "flags carry no column filter");
+  });
+
+  test("the filters survive the URL, and anything malformed is dropped", () => {
+    const q = Q({ cf: { item: { in: ["Toluene"] }, qty: { min: 2, max: null } } });
+    assert.deepEqual(parseListQuery(listQueryParams(q)).cf, q.cf);
+    assert.deepEqual(parseListQuery({ cf: "not json" }).cf, {});
+    assert.deepEqual(parseListQuery({ cf: JSON.stringify({ qty: { min: "x" }, item: { in: [1, "A"] } }) }).cf, { item: { in: ["A"] } });
+  });
+
+  test("a list that does not offer them ignores them", () => {
+    assert.equal(queryRows(spec, ROWS, Q({ cf: { item: { in: ["Toluene"] } } }), FLAGS).list.length, 4);
+  });
+});

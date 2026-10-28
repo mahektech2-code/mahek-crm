@@ -102,6 +102,7 @@ export function fitColumns({
   check = false,
   chosen = null,
   badgeChars,
+  headExtra = 0,
 }: {
   cols: ColSpec[];
   /** The width the table has, in px. */
@@ -112,8 +113,10 @@ export function fitColumns({
   chosen?: string[] | null;
   /** For a status or flags column, the longest badge it will draw, in characters. */
   badgeChars?: Record<string, number>;
+  /** Width every heading carries beside its words — a column filter's funnel. */
+  headExtra?: number;
 }): ColumnFit {
-  const mw = (c: ColSpec) => minWidth(c, badgeChars?.[c.k]);
+  const mw = (c: ColSpec) => minWidth(c, badgeChars?.[c.k]) + (c.t === "f" ? 0 : headExtra);
   const room = Math.max(0, avail - (check ? CHECK_COL : 0));
   const known = new Set(cols.map((c) => c.k));
   const pick = chosen?.filter((k) => known.has(k)) ?? null;

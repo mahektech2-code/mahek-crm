@@ -7,7 +7,8 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ColSpec, FormSpec, ListRow, ListSpec, Tone } from "@/lib/erp/ui";
 import type { Result } from "@/lib/result";
 import { aggsOf, cellText, inr, nf, NEW_FORM_ACTION } from "@/lib/erp/ui";
-import { colOf as colIn, listCsv, listQueryParams, LIST_QUERY_KEYS, pageOf, subMatches, type ListPage, type ListQuery } from "@/lib/erp/list-query";
+import { colOf as colIn, listCsv, listQueryParams, LIST_QUERY_KEYS, pageOf, subMatches, type ColFilter, type ListPage, type ListQuery } from "@/lib/erp/list-query";
+import { ColumnFilter } from "./column-filter";
 import { Icon as ShellIcon } from "@/components/shell/icons";
 import { Button, Card, checkboxClass, cx, EmptyState, Input, Select, SortableTh, Td, Th, Tr } from "@/components/ui/primitives";
 import { eyebrowClass, LinkButton, linkClass } from "./look";
@@ -434,7 +435,7 @@ export function ListScreen({
   const router = useRouter();
   const path = usePathname();
   const params = useSearchParams();
-  const [local, setLocal] = useState<ListQuery>({ q: "", chip: "", gf: "", grp: true, sort: null, page: 1, size: 25, ids: filter?.ids ?? null, pd: "", parts: false, fx: {} });
+  const [local, setLocal] = useState<ListQuery>({ q: "", chip: "", gf: "", grp: true, sort: null, page: 1, size: 25, ids: filter?.ids ?? null, pd: "", parts: false, fx: {}, cf: {} });
   /* While the server cuts the next page the current one stays, dimmed — never a blank table between two pages. */
   const [pending, startTransition] = useTransition();
   /* The search box answers as it is typed; the server is asked once the typing pauses. */
@@ -558,7 +559,7 @@ export function ListScreen({
   /* A row's ⋯ menu takes a narrow column of its own at the end. */
   const menuIds = spec.rowMenu ?? [];
   const menuOn = menuIds.length > 0;
-  const fit = fitColumns({ cols: lineCols, avail: menuOn ? Math.max(0, avail - MENU_COL) : avail, check: bulkOn, chosen: chosenCols, badgeChars });
+  const fit = fitColumns({ cols: lineCols, avail: menuOn ? Math.max(0, avail - MENU_COL) : avail, check: bulkOn, chosen: chosenCols, badgeChars, headExtra: spec.colFilters ? 26 : 0 });
   const shownCols = fit.shown;
 
   const exportCsv = async () => {
@@ -612,9 +613,9 @@ export function ListScreen({
   };
   const clearAll = () => {
     setQInput("");
-    if (server) go({ ...server.query, q: "", chip: "", gf: "", fx: {}, page: 1, ids: null }, (p) => (p.delete("f"), p.delete("fl")));
+    if (server) go({ ...server.query, q: "", chip: "", gf: "", fx: {}, cf: {}, page: 1, ids: null }, (p) => (p.delete("f"), p.delete("fl")));
     else {
-      setLocal((l) => ({ ...l, q: "", chip: "", gf: "", fx: {}, page: 1 }));
+      setLocal((l) => ({ ...l, q: "", chip: "", gf: "", fx: {}, cf: {}, page: 1 }));
       if (filter) router.replace(home);
     }
   };
@@ -623,7 +624,46 @@ export function ListScreen({
   const [emptyTitle, emptyBody] = splitFirstSentence(spec.noDataLine ?? "Nothing here yet.");
   /* A register read through a window: the period picker, and what to say when the period is empty or too long. */
   const win = server?.window ?? null;
-  const noMatchBits = [q ? `“${q}”` : "", chip, filter ? filter.label.toLowerCase() : "", gf, ...Object.values(query.fx)].filter(Boolean).join(" · ");
+  const noMatchBits = [q ? `“${q}”` : "", chip, filter ? filter.label.toLowerCase() : "", gf, ...Object.values(query.fx), ...Object.keys(query.cf ?? {}).map((k) => `the ${colOf(k).l.toLowerCase()} filter`)].filter(Boolean).join(" · ");
+  const pickCf = (k: string, f: ColFilter | null) => {
+    const cf = { ...(query.cf ?? {}) };
+    if (f) cf[k] = f;
+    else delete cf[k];
+    setQuery({ cf, page: 1 });
+  };
+  /* What each Excel filter says, as a chip: the first value ticked and how many more, or the range. */
+  const cfChips = spec.colFilters
+    ? Object.entries(query.cf ?? {}).map(([k, f]) => {
+        const c = colOf(k);
+        const blank = (v: string) => (v === "—" || v === "" ? "(Blanks)" : v);
+        const u = c.u ?? "";
+        const text = f.in
+          ? f.in.length === 0
+            ? "nothing"
+            : `${blank(f.in[0])}${f.in.length > 1 ? ` + ${nf(f.in.length - 1)}` : ""}`
+          : f.min != null && f.max != null
+            ? `${nf(f.min)}–${nf(f.max)}${u}`
+            : f.min != null
+              ? `${nf(f.min)}${u} or more`
+              : `up to ${nf(f.max ?? 0)}${u}`;
+        return { k, l: c.l, text };
+      })
+    : [];
+  const cfRow = cfChips.length ? (
+    <div className={cx("flex flex-wrap items-center gap-2", v4 ? "mb-3" : "border-b border-divider px-4 py-2.5")}>
+      <span className="text-xs font-medium text-muted">Filtered by</span>
+      {cfChips.map((c) => (
+        <span key={c.k} className="inline-flex h-7 items-center gap-1.5 rounded-full bg-ink pr-1 pl-3 text-xs text-white">
+          <span className="opacity-70">{c.l}:</span>
+          <span className="max-w-[220px] truncate font-semibold">{c.text}</span>
+          <button type="button" onClick={() => pickCf(c.k, null)} aria-label={`Remove the ${c.l} filter`} className="flex h-5 w-5 cursor-pointer items-center justify-center rounded-full hover:bg-body">
+            <ShellIcon name="close" size={12} />
+          </button>
+        </span>
+      ))}
+      <LinkButton onClick={() => setQuery({ cf: {}, page: 1 })}>Clear all filters</LinkButton>
+    </div>
+  ) : null;
   const pickFx = (k: string, v: string) => {
     const fx = { ...query.fx };
     if (v) fx[k] = v;
@@ -821,6 +861,7 @@ export function ListScreen({
         <ChipRow total={lp.beforeChip} chips={chips} value={chip} onPick={pickChip} />
       ) : null}
       {v4 ? toolbar : null}
+      {v4 ? cfRow : null}
 
       {/* Not overflow-hidden: the filter bar's menus open over the rows, and on a short list they would be cut off at the card's edge. */}
       <Card className="relative">
@@ -838,6 +879,7 @@ export function ListScreen({
         {/* An empty list has nothing to search, group or choose columns of:
             the toolbar is drawn once there is something to work on. */}
         {v4 ? null : toolbar}
+        {v4 ? null : cfRow}
 
         {spec.fold?.note && !query.parts && lp.all > 0 ? <div className="border-b border-divider px-4 py-2 text-meta text-muted">{spec.fold.note}</div> : null}
 
@@ -952,6 +994,11 @@ export function ListScreen({
                           active={on}
                           direction={on && view.srt!.d < 0 ? "desc" : "asc"}
                           onSort={() => sortBy(c.k)}
+                          after={
+                            spec.colFilters && c.t !== "f" ? (
+                              <ColumnFilter col={c} facet={lp.colFacets?.[c.k]} value={query.cf?.[c.k]} onApply={(f) => pickCf(c.k, f)} onSort={(d) => setQuery({ sort: { k: c.k, d } })} />
+                            ) : undefined
+                          }
                         >
                           {/* A heading wraps onto a second line rather than widening its column. */}
                           <span className={cx("whitespace-normal leading-[1.3]", c.t === "n" || c.t === "m" ? "text-right" : "text-left")}>{c.l}</span>

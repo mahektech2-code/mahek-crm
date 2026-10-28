@@ -183,6 +183,23 @@
   color: #b8c2d3;
 }
 
+/* A column's Excel filter: quiet until it is on, then coral like a sort. */
+:root:has([data-erp-v4]) th button[data-col-filter] svg {
+  color: #b8c2d3;
+}
+
+:root:has([data-erp-v4]) th button[data-col-filter]:hover svg {
+  color: #ffffff;
+}
+
+:root:has([data-erp-v4]) th button[data-col-filter][data-on] {
+  background: #26324d;
+}
+
+:root:has([data-erp-v4]) th button[data-col-filter][data-on] svg {
+  color: #ff7a59;
+}
+
 /* A table's first and last heading round into the card around it. */
 :root:has([data-erp-v4]) thead tr:first-child th:first-child {
   border-top-left-radius: 7px;
