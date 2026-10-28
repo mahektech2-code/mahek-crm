@@ -25,9 +25,14 @@ import { db } from "@/db";
 import { appAccess, callAiDrafts, customers, products, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
-import { logQualificationCall } from "@/lib/actions/lead-calling-desk";
+import { logQualificationCall as realLogQualificationCall } from "@/lib/actions/lead-calling-desk";
 import { analyseLeadCallAction } from "@/lib/actions/lead-call-intel";
 import { questionsForCall } from "@/lib/engines/lead-calling-desk";
+
+/* Every call needs a remark now; the tests that are not about that supply one. */
+const logQualificationCall = (i: Parameters<typeof realLogQualificationCall>[0]) =>
+  realLogQualificationCall({ notes: "Spoke to the contact.", ...i });
+
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 

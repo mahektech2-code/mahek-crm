@@ -8,7 +8,6 @@ import { money, shortDate, stamp } from "@/lib/format";
 import { NO_ANSWER_REASONS } from "@/lib/call-outcomes";
 import {
   DESK_FIELDS,
-  MAX_QUALIFICATION_CALLS,
   OUTCOME_LABEL,
   answeredCount,
   isAnswered,
@@ -114,6 +113,7 @@ export function RecordScreen({
   const all = answeredCount(lead.values);
   const suspect = lead.ladderIndex === 0;
   const status = stageStatus({
+    callCount: lead.callCount,
     phase,
     qualDone: lead.qualification?.done ?? 0,
     qualTotal: lead.qualification?.total ?? 8,
@@ -301,7 +301,7 @@ export function RecordScreen({
             {working && next ? (
               <Button size="sm" variant="primary" disabled={!canCall} onClick={() => open("call")}>
                 <DeskIcon name="phone" size={14} />
-                Start call {next} / {MAX_QUALIFICATION_CALLS}
+                Start call {next}
               </Button>
             ) : null}
             {working || phase === "ready" ? (
@@ -376,7 +376,7 @@ export function RecordScreen({
               >
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-semibold text-ink">
-                    Call {n} / {MAX_QUALIFICATION_CALLS}
+                    Call {n}
                   </span>
                   {call ? (
                     <Badge
@@ -414,10 +414,8 @@ export function RecordScreen({
           })}
         </div>
         <p className="mt-3 mb-0 text-[12.5px] text-muted">
-          At most {MAX_QUALIFICATION_CALLS} calls. Everything a Prospect needs within them →{" "}
-          <b className="text-success">Ready for Prospect</b>. Calls used up with only Product or the monthly requirement
-          still blank → <b className="text-ink">stays a Suspect</b>, nothing is lost. Calls used up with no competitor →{" "}
-          <b className="text-danger">Lost</b>. Messages do not use a call.
+          There is no limit on calls. Everything a Prospect needs →{" "}
+          <b className="text-success">Ready for Prospect</b>. Anything still blank → <b className="text-ink">another call</b>. A lead is <b className="text-danger">Lost</b> only by a decision, never because calls ran out. Messages do not use a call.
         </p>
       </Card>
 
@@ -804,14 +802,14 @@ function SuspectCallsTracker({
   onOpenCalls: () => void;
 }) {
   const phase = lead.phase;
-  const next = nextCallNumber(phase);
+  const next = nextCallNumber(phase, lead.callCount);
   const req = prospectProgress(lead.values);
   const canDecide = phase === "ready";
   const showButtons = isWorking(phase) || phase === "ready";
   return (
     <Card className="p-5">
       <div className="mb-3 text-xs font-medium tracking-[0.04em] text-muted uppercase">
-        Suspect calls (maximum {MAX_QUALIFICATION_CALLS} before a decision is forced)
+        Suspect calls (as many as it takes — a lead is only closed by a decision)
       </div>
       <div className="flex gap-2">
         {[1, 2, 3].map((i) => {
@@ -1126,7 +1124,7 @@ function GateActionCard({
   onLost: () => void;
 }) {
   const p = lead.phase;
-  const next = nextCallNumber(p);
+  const next = nextCallNumber(p, lead.callCount);
   const note = (t: React.ReactNode) => <Card className="px-5 py-4 text-sm text-muted">{t}</Card>;
   const box = (text: React.ReactNode, buttons: React.ReactNode) => (
     <Card className="px-5 py-4">
@@ -1174,12 +1172,12 @@ function GateActionCard({
       </Button>,
     );
   if (isWorking(p)) {
-    const { askNow } = questionsForCall(lead.values, next ?? MAX_QUALIFICATION_CALLS);
+    const { askNow } = questionsForCall(lead.values, next ?? 3);
     const req = prospectProgress(lead.values);
     const compulsory = requiredProgress(lead.values);
     return (
       <Card className="px-5 py-4">
-        {next === MAX_QUALIFICATION_CALLS ? (
+        {false ? (
           <Callout tone="warn" className="mb-3">
             <div className="text-[13px]">
               <b>Last call.</b>{" "}
@@ -1203,7 +1201,7 @@ function GateActionCard({
         <div className="flex flex-wrap gap-2">
           <Button variant="primary" disabled={!canWork} onClick={onCall}>
             <DeskIcon name="phone" size={14} />
-            Start call {next} / {MAX_QUALIFICATION_CALLS}
+            Start call {next}
           </Button>
           <Button variant="secondary" disabled={!canWork} onClick={onMessage}>
             Send a message first
@@ -1229,7 +1227,7 @@ function CallsTab({ lead }: { lead: DeskLeadRecord }) {
           return (
             <Card key={n} className="border-dashed px-5 py-4">
               <div className="text-sm font-semibold text-ink">
-                Call {n} / {MAX_QUALIFICATION_CALLS}
+                Call {n}
               </div>
               <div className="text-[13px] text-muted">
                 {!working ? "Not needed — the lead was decided before this call." : "Not made yet."}
@@ -1250,7 +1248,7 @@ function CallsTab({ lead }: { lead: DeskLeadRecord }) {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold text-ink">
-                  Call {n} / {MAX_QUALIFICATION_CALLS}
+                  Call {n}
                 </div>
                 <div className="font-mono text-[11px] text-muted">
                   {stamp(call.at)} · {call.byName}
@@ -1341,7 +1339,7 @@ function CommsTab({
   onMessage: (code: string) => void;
 }) {
   const open = canWork && (isWorking(lead.phase) || lead.phase === "ready");
-  const canCall = canWork && nextCallNumber(lead.phase) !== null;
+  const canCall = canWork && nextCallNumber(lead.phase, lead.callCount) !== null;
   const acts = [
     { code: "call", label: "Call customer", icon: "phone" as const, done: lead.callCount > 0, disabled: !canCall, run: onCall },
     ...MESSAGE_KINDS.map((k) => ({
@@ -1386,7 +1384,7 @@ function CommsTab({
       </div>
       <p className="mt-3 mb-0 text-[12.5px] text-muted">
         {open
-          ? `Sending information is part of the same conversation and does not use one of the ${MAX_QUALIFICATION_CALLS} calls. Calling does.`
+          ? `Sending information is part of the same conversation and is not a call. Calling is.`
           : "Once a Prospect is requested, the Sales Manager leads communication with the customer. The Telecaller's earlier messages stay below."}
       </p>
       <div className="mt-4 mb-2 text-xs font-medium tracking-[0.04em] text-muted uppercase">Messages sent</div>

@@ -49,7 +49,7 @@ export type DeskLeadRow = {
   callOutcomes: CallOutcome[];
   phase: DeskPhase;
   /** The call the lead is owed, where one is. */
-  nextCall: 1 | 2 | 3 | null;
+  nextCall: number | null;
   /** Answers a Prospect needs that are in, out of `needed` — not what a call demands. */
   answered: number;
   needed: number;

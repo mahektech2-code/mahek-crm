@@ -15,7 +15,7 @@
  *   M  the manager's three outcomes, and the one thing the form has no outcome
  *      for — sending it back — with the desk resubmitting or closing it;
  *   B  Call 3 becomes the call owed after two incomplete ones;
- *   C  Call 3 finished and still short is Lost, and there is no Call 4;
+ *   C  Call 3 finished and still short closes nothing — Call 4 is owed;
  *   D  what one call captured is not asked, and not overwritten, by the next;
  *   S  the salesman's own path is untouched by any of it.
  */
@@ -41,7 +41,7 @@ import { invalidateConfig, seedConfig, updateSetting } from "@/lib/config/store"
 import {
   convertLeadToProspect,
   logDeskMessage,
-  logQualificationCall,
+  logQualificationCall as realLogQualificationCall,
   markDeskLost,
   requestProspect,
   returnProspectRequest,
@@ -55,6 +55,11 @@ import {
 } from "@/lib/services/lead-calling-desk-service";
 import { verificationQueue } from "@/lib/services/lead-console-service";
 import { questionsForCall } from "@/lib/engines/lead-calling-desk";
+
+/* Every call needs a remark now; the tests that are not about that supply one. */
+const logQualificationCall = (i: Parameters<typeof realLogQualificationCall>[0]) =>
+  realLogQualificationCall({ notes: "Spoke to the contact.", ...i });
+
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const DAY = "2026-09-24";
@@ -647,17 +652,16 @@ describe("Test X — Convert to Prospect: the calling desk's own direct promotio
     assert.equal(three.ok, true, three.ok ? "" : three.error);
   });
 
-  test("no competitor after Call 3 → the lead is Lost, and there is no path to convert it", async () => {
+  test("no competitor after Call 3 → the lead is NOT lost, and it still cannot be converted until the competitor is in", async () => {
     const lead = await makeLead();
     await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: { monthlyLitres: 200 }, next: { kind: "call", text: "x", date: tomorrow } });
     await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: { requiredProductId: productId }, next: { kind: "call", text: "x", date: tomorrow } });
     const last = await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: {} });
-    assert.equal(last.ok && last.data.result, "lost");
-    assert.equal((await stageOf(lead.id)).leadStage, "lost");
+    assert.equal(last.ok && last.data.result, "next");
+    assert.equal((await stageOf(lead.id)).leadStage, "suspect");
 
     const r = await convert(lead.id);
-    assert.equal(r.ok, false, "the required information is still incomplete, and the lead is closed besides");
-    assert.match(!r.ok ? r.error : "", /Only a Suspect/);
+    assert.equal(r.ok, false, "the required information is still incomplete");
   });
 
   test("there is no Call 4 after a conversion either — the lead is no longer a Suspect", async () => {
@@ -831,7 +835,7 @@ describe("Test B — Call 3 becomes available", () => {
   });
 });
 
-describe("Test C — lost after Call 3, and no Call 4", () => {
+describe("Test C — no count of calls closes a lead; calls go on past the third", () => {
   /* Three calls that never learn the COMPULSORY competitor. */
   async function threeShortCalls(leadId: string) {
     await logQualificationCall({ customerId: leadId, outcome: "spoke_callback", answers: { monthlyLitres: 200 }, next: { kind: "call", text: "x", date: tomorrow } });
@@ -839,39 +843,39 @@ describe("Test C — lost after Call 3, and no Call 4", () => {
     return logQualificationCall({ customerId: leadId, outcome: "spoke_callback", answers: {} });
   }
 
-  test("Call 3 finished with the competitor still missing closes the lead as lost", async () => {
+  test("Call 3 finished with the competitor still missing does NOT close the lead — Call 4 is owed", async () => {
     const lead = await makeLead();
     const last = await threeShortCalls(lead.id);
     assert.equal(last.ok, true, last.ok ? "" : last.error);
-    assert.equal(last.ok && last.data.result, "lost");
+    assert.equal(last.ok && last.data.result, "next");
     const row = await stageOf(lead.id);
-    assert.equal(row.leadStage, "lost");
-    assert.ok(row.leadLostReason);
+    assert.equal(row.leadStage, "suspect");
+    assert.equal(row.leadLostReason, null);
     const rec = await deskLeadRecord(lead.id, DAY);
-    assert.equal(rec?.phase, "lost");
-    assert.match(rec?.calls[2].finalDisposition ?? "", /Lost/);
-    assert.match(rec?.lost?.detail ?? "", /Three qualification calls/);
-    assert.ok(rec?.lost?.deskLabel, "the desk's own label is read back off the note");
+    assert.equal(rec?.phase, "call3");
+    assert.equal(rec?.callCount, 3);
   });
 
   test("the desk's own lost reason is honoured, filed under a configured code", async () => {
     const lead = await makeLead();
     await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: { monthlyLitres: 200 }, next: { kind: "call", text: "x", date: tomorrow } });
     await logQualificationCall({ customerId: lead.id, outcome: "no_answer", noAnswerReason: "busy", answers: {}, next: { kind: "call", text: "x", date: tomorrow } });
-    await logQualificationCall({ customerId: lead.id, outcome: "no_answer", noAnswerReason: "busy", answers: {}, lostReasonCode: "not_genuine" });
+    await logQualificationCall({ customerId: lead.id, outcome: "not_interested", answers: {}, lostReasonCode: "not_genuine" });
     assert.equal((await stageOf(lead.id)).leadLostReason, "no_requirement");
   });
 
-  test("there is no Call 4 — by the stage, and by the count if the lead is put back", async () => {
+  test("Call 4 and Call 5 are saved; a closed lead still takes no call", async () => {
     const lead = await makeLead();
     await threeShortCalls(lead.id);
-    assert.equal((await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: {} })).ok, false);
+    for (const n of [4, 5]) {
+      const r = await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: {} });
+      assert.equal(r.ok, true, r.ok ? "" : r.error);
+      assert.equal(r.ok && r.data.callNumber, n);
+    }
+    assert.equal((await db.select().from(calls).where(eq(calls.customerId, lead.id))).length, 5);
 
-    await db.update(customers).set({ leadStage: "suspect" }).where(eq(customers.id, lead.id));
-    const count = await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: {} });
-    assert.equal(count.ok, false);
-    assert.match(!count.ok ? count.error : "", /no Call 4/i);
-    assert.equal((await db.select().from(calls).where(eq(calls.customerId, lead.id))).length, 3);
+    await db.update(customers).set({ leadStage: "lost" }).where(eq(customers.id, lead.id));
+    assert.equal((await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: {} })).ok, false, "the stage still stops a closed lead");
   });
 
   test("the last answer arriving on Call 3 is ready, not lost", async () => {
@@ -889,8 +893,7 @@ describe("Test C — lost after Call 3, and no Call 4", () => {
     await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: {}, next: { kind: "call", text: "x", date: tomorrow } });
     const last = await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: {} });
     assert.equal(last.ok, true, last.ok ? "" : last.error);
-    assert.equal(last.ok && last.data.result, "exhausted");
-    assert.match(last.ok ? last.message ?? "" : "", /Not yet captured: Monthly requirement, Product/);
+    assert.equal(last.ok && last.data.result, "next");
 
     const row = await stageOf(lead.id);
     assert.equal(row.leadStage, "suspect", "a blank answer never closes a lead");
@@ -898,15 +901,14 @@ describe("Test C — lost after Call 3, and no Call 4", () => {
     assert.equal(row.leadMonthlyVolumeLitres, null);
     assert.equal(row.leadRequiredProductId, null);
     assert.equal(row.leadDecisionMaker, null);
-    assert.match(row.leadNextAction ?? "", /Capture what is still missing/);
+    assert.match(row.leadNextAction ?? "", /Call 4/);
 
     const rec = await deskLeadRecord(lead.id, DAY);
-    assert.equal(rec?.phase, "exhausted", "it is where the desk already puts a lead after three calls");
-    assert.match(rec?.calls[2].finalDisposition ?? "", /not yet captured/i);
-    assert.equal((await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: {} })).ok, false, "still no Call 4");
+    assert.equal(rec?.phase, "call3", "three calls made, and the desk goes on offering the next");
+    assert.equal((await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: {} })).ok, true, "Call 4 is accepted");
   });
 
-  test("an exhausted lead can be filled in on the record, and then asked for as a Prospect", async () => {
+  test("a lead with three calls can be filled in on the record, and then asked for as a Prospect", async () => {
     const lead = await makeLead();
     await logQualificationCall({ customerId: lead.id, outcome: "spoke_collected", answers: { competitor: "Local thinner" }, next: { kind: "call", text: "x", date: tomorrow } });
     await logQualificationCall({ customerId: lead.id, outcome: "spoke_callback", answers: {}, next: { kind: "call", text: "x", date: tomorrow } });
@@ -1185,10 +1187,10 @@ describe("round three: the record reads the way V6 draws it", () => {
       next: { kind: "call", text: "the rest", date: "2026-12-05" },
     });
     assert.ok(one.ok);
-    assert.equal(said(one), "Call 1 / 3 saved. Call 2 due 5 Dec.");
+    assert.equal(said(one), "Call 1 saved. Call 2 due 5 Dec.");
 
     const two = await logQualificationCall({ customerId: lead.id, outcome: "spoke_collected", answers: call2() });
-    assert.equal(said(two), "Call 2 / 3 saved. Everything a Prospect needs is in — Ready for Prospect.");
+    assert.equal(said(two), "Call 2 saved. Everything a Prospect needs is in — Ready for Prospect.");
 
     const other = await makeLead();
     const msg = await logQualificationCall({
@@ -1197,7 +1199,7 @@ describe("round three: the record reads the way V6 draws it", () => {
       answers: {},
       next: { kind: "message", text: "Send the price list", date: "2026-12-06" },
     });
-    assert.equal(said(msg), "Call 1 / 3 saved. Message due 6 Dec.");
+    assert.equal(said(msg), "Call 1 saved. Message due 6 Dec.");
 
     const closed = await logQualificationCall({ customerId: other.id, outcome: "not_interested", answers: {} });
     assert.equal(said(closed), "Customer not interested — lead marked Lost.");

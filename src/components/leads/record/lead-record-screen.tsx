@@ -72,7 +72,6 @@ import {
 } from "@/lib/engines/lead-ladder";
 import {
   Card,
-  CallsVisitsCard,
   GateCard,
   KV,
   LadderStepper,
@@ -80,18 +79,18 @@ import {
   MoreMenu,
   NextStepCard,
   PeopleCard,
-  type CallBox,
 } from "./record-chrome";
 import { priorityLabel, priorityTone } from "@/lib/lead-priority";
 import type { DeskLeadRecord } from "@/lib/services/lead-calling-desk-service";
-import { isWorkingStage, nextCallNumber, type CallOutcome } from "@/lib/engines/lead-calling-desk";
+import { isWorkingStage, nextCallNumber } from "@/lib/engines/lead-calling-desk";
 import { LogCallDialog } from "@/components/leads/calling-desk/dialogs";
 import { timelineActor, type TimelineActorKind } from "./timeline-actor";
 import { RelationshipChain } from "./relationship-chain";
 import type { LeadActionFacts } from "@/lib/engines/lead-role-action";
 import type { LeadGateActionFacts } from "@/lib/engines/lead-gate-action";
 import { PrimaryGateAction } from "./move-forward";
-import { ActivityMenuItems, CallsVisitsCardActions } from "@/components/leads/activity/lead-activity";
+import { ActivityMenuItems } from "@/components/leads/activity/lead-activity";
+import { CheckVisitsButton } from "@/components/leads/activity/check-visits";
 import { ConvertButton, ConvertProvider } from "./convert-to-prospect";
 import type { VantageViewer } from "@/lib/lead-vantage";
 
@@ -290,7 +289,6 @@ export function LeadRecordScreen({
   orders,
   receipts,
   samples,
-  visits,
   approvals,
   profile,
   counts,
@@ -315,6 +313,7 @@ export function LeadRecordScreen({
   assignees,
   canReassign,
   canReassignSalesman,
+  canCheckVisits = false,
   canOverride,
   canPrioritise,
   canTrash,
@@ -432,6 +431,8 @@ export function LeadRecordScreen({
   canReassign: boolean;
   /** Holds the Sales Manager screen, and this lead is in their own book — see `ReassignLead`. */
   canReassignSalesman: boolean;
+  /** Salesmen report to this person (the Org Chart); the server asks again. */
+  canCheckVisits?: boolean;
   canOverride: boolean;
   /**
    * §4.1 — whether this person may say how hard to push the lead. The control
@@ -506,7 +507,7 @@ export function LeadRecordScreen({
   openCall?: boolean;
 }) {
   const [verifying, setVerifying] = React.useState(false);
-  const nextCall = desk ? nextCallNumber(desk.phase) : null;
+  const nextCall = desk ? nextCallNumber(desk.phase, desk.callCount) : null;
   const canCall = canWork && nextCall !== null;
   const [calling, setCalling] = React.useState(Boolean(openCall && desk && canCall));
   const deskCalls = desk
@@ -526,49 +527,6 @@ export function LeadRecordScreen({
     [record.companyName, record.city].filter(Boolean).join(" · ") || record.mobile || "—";
   const contact = [record.city, record.contactPerson, record.mobile].filter(Boolean).join(" · ");
 
-  /* The calls box: the Calling desk's three attempts where the desk has this
-     lead, numbered as the desk numbers them. */
-  const callBoxes: CallBox[] = (() => {
-    if (!deskCalls) return [];
-    const round = deskCalls.calls.filter((c) => !c.earlier);
-    const boxes: CallBox[] = [];
-    for (let n = 1; n <= Math.max(3, round.length); n++) {
-      const made = round.find((c) => c.callNumber === n);
-      if (made) {
-        boxes.push({
-          n,
-          state: callOutcomeLabel(made.outcome),
-          tone:
-            made.outcome === "spoke_collected"
-              ? "success"
-              : made.outcome === "spoke_callback"
-                ? "warn"
-                : made.outcome === "no_answer"
-                  ? "neutral"
-                  : "danger",
-          sub: `${shortDate(made.at)} · ${made.byName}`,
-        });
-      } else if (n === round.length + 1 && !closed) {
-        const due = deskCalls.nextDate;
-        const late = due ? due < day : false;
-        boxes.push({
-          n,
-          state: due ? (late ? "Late" : "Due") : "Next",
-          tone: late ? "danger" : due ? "warn" : "neutral",
-          sub: due ? `${shortDate(due)}${late ? " · late" : ""}` : "Not booked",
-          hot: late,
-        });
-      } else {
-        boxes.push({
-          n,
-          state: "Later",
-          tone: "neutral",
-          sub: n === 3 ? "Last attempt" : "—",
-        });
-      }
-    }
-    return boxes;
-  })();
 
   const callsMade = deskCalls ? deskCalls.calls.filter((c) => !c.earlier).length : 0;
 
@@ -655,9 +613,10 @@ export function LeadRecordScreen({
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true" className="mr-1.5">
                   <path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2" />
                 </svg>
-                {nextCall ? `Call ${nextCall} of 3` : `${plural(callsMade, "call")} made`}
+                {nextCall ? `Call ${nextCall}` : `${plural(callsMade, "call")} made`}
               </Button>
             ) : null}
+            {canCheckVisits ? <CheckVisitsButton customerId={record.customerId} leadName={record.name} /> : null}
             <Link
               href={`${base}?tab=communication`}
               className="inline-flex h-9 items-center rounded-[6px] border border-line bg-surface px-3.5 text-sm font-medium text-body no-underline hover:bg-canvas hover:text-ink hover:no-underline"
@@ -886,11 +845,6 @@ export function LeadRecordScreen({
                   ) : null}
                 </CardGrid>
               </Card>
-              <CallsVisitsCard
-                calls={callBoxes}
-                visits={visits.map((v) => ({ date: v.visitDate, who: v.salesmanName }))}
-                action={<CallsVisitsCardActions customerId={record.customerId} leadName={record.name} canWork={canWork} />}
-              />
               {record.thirdParty ? (
                 <RelationshipChain
                   shopName={record.name}
@@ -1144,16 +1098,6 @@ export function LeadRecordScreen({
     </ConvertProvider>
   );
 }
-
-/** A call's outcome as the record's call box says it. */
-const SHORT_OUTCOME: Record<CallOutcome, string> = {
-  spoke_collected: "Spoke",
-  spoke_callback: "Call back",
-  no_answer: "No answer",
-  wrong_number: "Wrong number",
-  not_interested: "Not interested",
-};
-const callOutcomeLabel = (o: CallOutcome) => SHORT_OUTCOME[o] ?? o;
 
 /** What a tab's badge counts, from SQL. Null where a count says nothing. */
 function countFor(

@@ -8,7 +8,6 @@ import { shortDate } from "@/lib/format";
 import { ladderFor } from "@/lib/engines/lead-ladder";
 import {
   DESK_VIEW_LABEL,
-  MAX_QUALIFICATION_CALLS,
   deskLadderSalesType,
   isWorking,
   type DeskPhase,
@@ -443,9 +442,9 @@ export function Dashboard({
 
       {callView ? (
         <p className="mb-3 text-[12.5px] text-muted">
-          Each lead gets at most {MAX_QUALIFICATION_CALLS} calls. Get every answer a Prospect needs within them and it is
+          Call a lead as often as it takes. Get every answer a Prospect needs and it is
           Ready for Prospect — then you <b>request</b> the conversion. The Sales Manager verifies what you collected; only then
-          is it a Prospect. Run out of calls without the answers and it is Lost.
+          is it a Prospect. A lead is only Lost by a decision, never because calls ran out.
         </p>
       ) : null}
 

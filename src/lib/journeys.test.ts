@@ -98,7 +98,7 @@ import {
 } from "@/lib/services/delivery-party-service";
 import { customerRecordDetail } from "@/lib/services/customer-record-service";
 import { saveInteraction } from "@/lib/services/interaction-service";
-import { logQualificationCall } from "@/lib/actions/lead-calling-desk";
+import { logQualificationCall as realLogQualificationCall } from "@/lib/actions/lead-calling-desk";
 import { seedCatalogue } from "@/db/seed-catalogue";
 import {
   products as productsTable,
@@ -224,6 +224,11 @@ import {
   projectSheet,
   revertSheetSettledBills,
 } from "@/lib/services/sheet-projection-service";
+
+/* Every call needs a remark now; the tests that are not about that supply one. */
+const logQualificationCall = (i: Parameters<typeof realLogQualificationCall>[0]) =>
+  realLogQualificationCall({ notes: "Spoke to the contact.", ...i });
+
 
 /* ------------------------------------------------------------------ harness */
 

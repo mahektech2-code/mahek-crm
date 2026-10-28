@@ -7,7 +7,6 @@ import { assertCustomerInScope, resolveScope } from "@/lib/access-control";
 import { getConfig } from "@/lib/config/store";
 import {
   CALL_MARK,
-  MAX_QUALIFICATION_CALLS,
   isWorkingStage,
   questionsForCall,
   type DeskValues,
@@ -189,12 +188,6 @@ export async function analyseLeadCall(
   }
 
   const made = await callsMade(input.customerId);
-  if (made >= MAX_QUALIFICATION_CALLS) {
-    return err(
-      `Three calls have already been made on this lead. There is no Call ${MAX_QUALIFICATION_CALLS + 1}.`,
-      "rule_violation",
-    );
-  }
   /* THE CALL NUMBER IS COMPUTED, NEVER TRUSTED FROM THE CALLER — the same
      count `logQualificationCall` itself re-reads inside its own transaction. */
   const callNumber = made + 1;
