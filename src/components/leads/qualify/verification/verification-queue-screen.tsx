@@ -233,9 +233,15 @@ export function VerificationQueueScreen({
                       tried {plural(r.attempts, "time")}
                     </span>
                   ) : null}
+                  <a
+                    href={leadHref(workspace, `${r.customerId}/review`)}
+                    className="mr-2 inline-flex h-7 items-center rounded-[6px] bg-brand px-2.5 text-[12px] font-medium text-white hover:opacity-90"
+                  >
+                    Review answers
+                  </a>
                   <Button
                     size="sm"
-                    tone="primary"
+                    tone="default"
                     disabled={!canVerify}
                     title={
                       canVerify
@@ -244,7 +250,7 @@ export function VerificationQueueScreen({
                     }
                     onClick={() => setCalling(r)}
                   >
-                    Call
+                    Call (optional)
                   </Button>
                 </Cell>
               </Row>

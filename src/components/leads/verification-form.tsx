@@ -104,7 +104,7 @@ export function VerificationForm({
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Verification call" width={720}>
+    <Modal open={open} onClose={onClose} title="Verification call (optional)" width={720}>
       <div className="mb-3 rounded-[6px] border border-line bg-canvas px-3 py-2.5 text-[13px]">
         <div className="font-medium text-ink">{customerName}</div>
         {detail ? <div className="text-muted">{detail}</div> : null}
@@ -117,6 +117,9 @@ export function VerificationForm({
             ))}
           </div>
         ) : null}
+        <div className="mt-1.5 text-[12px] text-muted">
+          A call is optional. Confirming or returning the Suspect and Prospect answers does not wait for it.
+        </div>
         {reviewHref ? (
           /* A new tab, so the call in progress — and what has been typed into it —
              is not lost by going to read the lead's answers. */

@@ -14,8 +14,12 @@ import {
   type ReviewRow,
 } from "@/lib/qualification-review";
 import { qualificationAccess } from "@/lib/lead-qualification-access";
+import { PROSPECT_REVIEW_AUDIT, prospectReviewStateOf } from "@/lib/prospect-review";
+import { gateTo } from "@/lib/engines/lead-gates";
+import { requestOf } from "./lead-prospect-request-service";
 import { leadGateInput, leadRow } from "./lead-service";
 import { canVerifyLeadById, creatorFactsFor, qualificationCollectorRefusal } from "./lead-verifier";
+import { canDecideProspect } from "./prospect-verifier";
 import { assertDesignatedQualificationApprover, designatedQualificationApprover } from "./qualification-approver";
 
 /* ---------------------------------------------------------------------------
@@ -38,7 +42,9 @@ export type ReviewState =
   | "in_progress" // Qualification is open and not yet complete
   | "pending" // complete, waiting for the approver
   | "sent_back" // the approver rejected it; the Salesman owes a correction
-  | "verified";
+  | "verified"
+  | "prospect_pending" // a Prospect submitted for Qualification, with its designated verifier
+  | "prospect_returned"; // the verifier returned it; its owner owes a correction
 
 export type HistoryEntry = {
   at: string;
@@ -55,6 +61,8 @@ export type QualificationReviewModel = {
   stage: string;
   salesType: string | null;
   state: ReviewState;
+  /** Which decision this is: the Prospect review (before Qualification opens) or the Qualification review. */
+  kind: "prospect" | "qualification" | "none";
   people: {
     creatorName: string | null;
     ownerName: string | null;
@@ -77,6 +85,8 @@ export type QualificationReviewModel = {
     /** Said in words when canDecide is false and the viewer might expect it. */
     why: string | null;
     isOwner: boolean;
+    /** The owner may send a returned Prospect back for review. */
+    canResubmit: boolean;
   };
   products: { id: string; name: string }[];
   history: HistoryEntry[];
@@ -130,11 +140,29 @@ export async function loadQualificationReview(
     ? (await db.select({ name: products.name }).from(products).where(eq(products.id, lead.leadRequiredProductId)).limit(1))[0]?.name ?? null
     : null;
 
-  /* Who may decide — the same function the decision itself asks. */
+  /* WHICH DECISION THIS IS. Before Qualification opens, the lead is with its
+     designated VERIFIER for the Prospect review; once it is open it is the
+     Qualification review. The same screen, the same answers, two decisions. */
   const access = qualificationAccess(lead.leadStage);
+  const req = await requestOf(customerId);
+  const pstate = prospectReviewStateOf({
+    stage: lead.leadStage,
+    verifiedAt: lead.leadVerifiedAt,
+    nextAction: lead.leadNextAction,
+    requestState: req?.state ?? null,
+  });
+  const kind: QualificationReviewModel["kind"] = access.writable
+    ? "qualification"
+    : pstate === "pending" || pstate === "returned"
+      ? "prospect"
+      : "none";
+
+  /* Who may decide — the same function the decision itself asks. */
   let canDecide = false;
   let why: string | null = null;
-  if (!access.writable) {
+  if (kind === "prospect") {
+    if (pstate === "pending" && (await canDecideProspect(viewer, customerId))) canDecide = true;
+  } else if (!access.writable) {
     why = access.reason;
   } else if (await canVerifyLeadById(viewer, customerId)) {
     const check = await assertDesignatedQualificationApprover(customerId, viewer.id);
@@ -145,7 +173,9 @@ export async function loadQualificationReview(
   /* Where the CRM keeps Qualification answers for the Salesman who collects, the
      Sales Manager is refused them — said in the CRM's own words, never worked round. */
   const collectorOnlyReason = canDecide
-    ? await qualificationCollectorRefusal(viewer, {
+    ? kind === "prospect"
+      ? access.reason
+      : await qualificationCollectorRefusal(viewer, {
         id: customerId,
         ownerId: lead.ownerId,
         salesManagerId: lead.salesManagerId,
@@ -156,7 +186,7 @@ export async function loadQualificationReview(
   const unmetProspect = gate ? unmetAt(gate, "prospect") : new Set<string>();
   const unmetQualification = gate ? unmetAt(gate, "sample_trial") : new Set<string>();
 
-  const rows = buildReviewRows(
+  const allRows = buildReviewRows(
     {
       salesType: lead.leadSalesType as never,
       customerType: lead.customerType,
@@ -183,7 +213,18 @@ export async function loadQualificationReview(
     { editable: canDecide, collectorOnlyReason },
   );
 
-  const blockers = gate ? confirmBlockers(gate) : [];
+  /* BEFORE QUALIFICATION OPENS the review is of the Suspect and Prospect answers
+     ONLY. The Qualification questions are not asked yet, so they are neither
+     shown nor counted as missing. */
+  const rows = kind === "prospect" ? allRows.filter((r) => r.section !== "qualification") : allRows;
+
+  /* What holds Confirm: the Prospect gate's own words before Qualification opens,
+     the Qualification gate's after. */
+  const blockers = !gate
+    ? []
+    : kind === "prospect"
+      ? gateTo({ ...gate, prospectReasonRecorded: true }, "prospect").missing.map((c) => c.says)
+      : confirmBlockers(gate);
 
   /* History: approver edits, verdicts and resubmissions, newest first. */
   const audits = await db
@@ -198,7 +239,15 @@ export async function loadQualificationReview(
       and(
         eq(auditLog.entityType, "customer"),
         eq(auditLog.entityId, customerId),
-        inArray(auditLog.action, [REVIEW_EDIT_ACTION, "lead.qualificationReview", "lead.qualificationReview.resubmit"]),
+        inArray(auditLog.action, [
+          REVIEW_EDIT_ACTION,
+          "lead.qualificationReview",
+          "lead.qualificationReview.resubmit",
+          PROSPECT_REVIEW_AUDIT.confirm,
+          PROSPECT_REVIEW_AUDIT.returned,
+          PROSPECT_REVIEW_AUDIT.resubmit,
+          PROSPECT_REVIEW_AUDIT.requestReturned,
+        ]),
       ),
     )
     .orderBy(desc(auditLog.at))
@@ -227,6 +276,16 @@ export async function loadQualificationReview(
         note: null,
       };
     }
+    if (a.action === PROSPECT_REVIEW_AUDIT.confirm) {
+      return { at: a.at.toISOString(), byName, kind: "verified", summary: `${byName} confirmed the Suspect and Prospect answers`, changes: [], note: null };
+    }
+    if (a.action === PROSPECT_REVIEW_AUDIT.returned || a.action === PROSPECT_REVIEW_AUDIT.requestReturned) {
+      const note = ((a.after as { note?: string } | null)?.note ?? null) || null;
+      return { at: a.at.toISOString(), byName, kind: "incomplete", summary: `${byName} returned it for correction`, changes: [], note };
+    }
+    if (a.action === PROSPECT_REVIEW_AUDIT.resubmit) {
+      return { at: a.at.toISOString(), byName, kind: "resubmitted", summary: `${byName} resubmitted it for review`, changes: [], note: null };
+    }
     if (a.action === "lead.qualificationReview.resubmit") {
       return { at: a.at.toISOString(), byName, kind: "resubmitted", summary: `${byName} sent it back for review`, changes: [], note: null };
     }
@@ -248,7 +307,11 @@ export async function loadQualificationReview(
   });
 
   const verdict = lead.leadQualificationReview;
-  const state: ReviewState = !access.writable
+  const state: ReviewState = kind === "prospect"
+    ? pstate === "returned"
+      ? "prospect_returned"
+      : "prospect_pending"
+    : !access.writable
     ? "not_open"
     : verdict === "verified"
       ? "verified"
@@ -276,6 +339,7 @@ export async function loadQualificationReview(
     stage: lead.leadStage,
     salesType: lead.leadSalesType,
     state,
+    kind,
     people: {
       creatorName: creator.actorUserId ? (names.get(creator.actorUserId) ?? null) : null,
       ownerName: lead.ownerId ? (names.get(lead.ownerId) ?? null) : null,
@@ -285,7 +349,13 @@ export async function loadQualificationReview(
     rows,
     tally: reviewTally(rows),
     blockers,
-    decision: verdict
+    decision: kind === "prospect"
+      ? (() => {
+          if (pstate !== "returned") return null;
+          const h = history.find((x) => x.kind === "incomplete");
+          return h ? { verdict: "incomplete" as const, note: h.note, at: h.at, byName: h.byName } : null;
+        })()
+      : verdict
       ? {
           verdict,
           note: lead.leadQualificationReviewNote,
@@ -293,7 +363,12 @@ export async function loadQualificationReview(
           byName: lead.leadQualificationReviewedById ? (names.get(lead.leadQualificationReviewedById) ?? null) : null,
         }
       : null,
-    viewer: { canDecide, why, isOwner: lead.ownerId === viewer.id },
+    viewer: {
+      canDecide,
+      why,
+      isOwner: lead.ownerId === viewer.id,
+      canResubmit: pstate === "returned" && lead.leadStage === "prospect" && lead.ownerId === viewer.id,
+    },
     products: productList,
     history,
   };

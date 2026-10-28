@@ -12,6 +12,9 @@ import { distributorOptions } from "@/lib/services/distributor-service";
 import { qualificationAccess } from "@/lib/lead-qualification-access";
 import { QualifyScreen, type QualifyValues } from "@/components/leads/record/qualify/qualify-screen";
 import { ReviewEntry } from "@/components/leads/review/review-entry";
+import { loadQualificationReview } from "@/lib/services/lead-qualification-review-service";
+import { QualificationReviewScreen } from "@/components/leads/review/qualification-review-screen";
+import { leadHref } from "@/lib/lead-workspace";
 
 
 /**
@@ -43,6 +46,23 @@ export async function Body({
   const { id } = await params;
   const day = await today();
   const user = await requireUser();
+
+  /* THE UNIFIED REVIEW IS THE PRIMARY SURFACE for the lead's designated
+     verifier: they land on every Suspect and Prospect answer with Confirm and
+     Return, not on the checklist. Everyone else keeps the checklist, with the
+     review one click away. The verification call is optional and sits on the
+     record, after the decision. */
+  const reviewModel = await loadQualificationReview(id, user);
+  if (reviewModel?.viewer.canDecide) {
+    return (
+      <QualificationReviewScreen
+        key={reviewModel.customerId}
+        workspace={workspace}
+        model={reviewModel}
+        closeHref={leadHref(workspace, reviewModel.customerId)}
+      />
+    );
+  }
 
   const record = await leadRecord(id, day);
   /* Null is both "no such lead" and "not in this manager's territory", and the

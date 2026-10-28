@@ -19,7 +19,10 @@ import {
 import { saveLeadQualification, saveProspectFields } from "@/lib/actions/leads";
 import { assertLeadInScope } from "@/lib/services/lead-scope";
 import { leadRow, type LeadRow } from "@/lib/services/lead-service";
-import { qualificationCollectorRefusal, requireQualificationApprover } from "@/lib/services/lead-verifier";
+import { qualificationCollectorRefusal, requireLeadVerifier, requireQualificationApprover } from "@/lib/services/lead-verifier";
+import { requireProspectVerifier } from "@/lib/services/prospect-verifier";
+import { prospectReviewStateOf } from "@/lib/prospect-review";
+import { requestOf } from "@/lib/services/lead-prospect-request-service";
 import { assertDesignatedQualificationApprover } from "@/lib/services/qualification-approver";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
 
@@ -109,27 +112,47 @@ export async function saveQualificationReviewEdits(
     if (!before || !before.leadStage) return err("That lead is not on MahekOne.", "not_found");
     await assertLeadInScope(customerId, before);
 
-    /* The existing approver gate first (it audits the hat and refuses the owner
-       and a different Sales Manager), then the one person it is designated to. */
-    const approver = await requireQualificationApprover(customerId);
-    if (!approver.ok) return err(approver.message, "not_permitted");
-    const ctx = approver.ctx;
-    const designated = await assertDesignatedQualificationApprover(customerId, ctx.user.id);
-    if (!designated.ok) return err(designated.message, "not_permitted");
-
+    /* WHICH DECISION THIS IS decides who may edit. Before Qualification opens the
+       lead is with its designated VERIFIER (the Prospect review); once it is open
+       it is the Qualification review, and the approver rules above apply. */
     const access = qualificationAccess(before.leadStage);
-    if (!access.writable) return err(access.reason, "rule_violation");
+    let ctx: Awaited<ReturnType<typeof requireLeadVerifier>>;
+    if (access.writable) {
+      /* The existing approver gate first (it audits the hat and refuses the owner
+         and a different Sales Manager), then the one person it is designated to. */
+      const approver = await requireQualificationApprover(customerId);
+      if (!approver.ok) return err(approver.message, "not_permitted");
+      ctx = approver.ctx;
+      const designated = await assertDesignatedQualificationApprover(customerId, ctx.user.id);
+      if (!designated.ok) return err(designated.message, "not_permitted");
 
-    /* The Salesman collects; the Sales Manager does not fill in Qualification
-       answers. Asked of the CRM's own rule, for the whole request. */
-    if ([...fieldKeys, ...answerKeys].some(isCollectorEdit)) {
-      const barred = await qualificationCollectorRefusal(ctx.user, {
-        id: customerId,
-        ownerId: before.ownerId,
-        salesManagerId: before.salesManagerId,
-        leadStage: before.leadStage,
+      /* The Salesman collects; the Sales Manager does not fill in Qualification
+         answers. Asked of the CRM's own rule, for the whole request. */
+      if ([...fieldKeys, ...answerKeys].some(isCollectorEdit)) {
+        const barred = await qualificationCollectorRefusal(ctx.user, {
+          id: customerId,
+          ownerId: before.ownerId,
+          salesManagerId: before.salesManagerId,
+          leadStage: before.leadStage,
+        });
+        if (barred) return err(`${barred} Nothing was saved.`, "rule_violation");
+      }
+    } else {
+      const req = await requestOf(customerId);
+      const pstate = prospectReviewStateOf({
+        stage: before.leadStage,
+        verifiedAt: before.leadVerifiedAt,
+        nextAction: before.leadNextAction,
+        requestState: req?.state ?? null,
       });
-      if (barred) return err(`${barred} Nothing was saved.`, "rule_violation");
+      if (pstate !== "pending") return err(access.reason, "rule_violation");
+      /* The one gate the verification call asks — the org chart's designated
+         verifier — asked unchanged. */
+      ctx = await requireProspectVerifier(customerId);
+      /* Qualification has not opened: its answers are collected there, not here. */
+      if ([...fieldKeys, ...answerKeys].some(isCollectorEdit)) {
+        return err(`${access.reason} Nothing was saved.`, "rule_violation");
+      }
     }
 
     const wasSnapshot = snapshot(before);
