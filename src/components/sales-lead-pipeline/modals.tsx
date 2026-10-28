@@ -796,12 +796,10 @@ function OnFileRow({ label, value }: { label: string; value?: string }) {
   );
 }
 
-function StepBadge({ step, of, name }: { step: number; of: number; name: string }) {
+function StepBadge({ stage, name }: { stage: string; name: string }) {
   return (
     <div className="mb-3 flex items-center gap-2 text-[12px] font-medium tracking-[0.04em] text-muted uppercase">
-      <span className="rounded-full bg-brand-soft px-2 py-0.5 text-brand-ink">
-        Step {step} of {of}
-      </span>
+      <span className="rounded-full bg-brand-soft px-2 py-0.5 text-brand-ink">{stage}</span>
       <span>{name}</span>
     </div>
   );
@@ -850,7 +848,7 @@ function RequestSampleModal({ lead, onClose }: ModalProps) {
       }
     >
       <FormError />
-      <StepBadge step={1} of={2} name="Sample Request" />
+      <StepBadge stage="Sample / Trial" name="Sample Request" />
       <Field label="Sample requested?" className="mb-3">
         <div className="mt-1.5 flex gap-2">
           <RadioCard name="sr" label="Yes" checked={requested === "yes"} onChange={() => setRequested("yes")} />
@@ -1036,7 +1034,7 @@ function SampleReviewModal({ lead, onClose }: ModalProps) {
       }
     >
       <FormError />
-      <StepBadge step={2} of={2} name="Sample Received & Review" />
+      <StepBadge stage="Sample received & review" name="Receipt and review" />
       <Field label="Has the sample been received?" className="mb-3">
         <div className="mt-1.5 flex gap-2">
           <RadioCard

@@ -316,26 +316,17 @@ export function gateAction(facts: LeadGateActionFacts): LeadGateAction {
             control: "sample_desk",
             says: "A request is a salesman asking. Until a manager says yes there is nothing for the godown to pack.",
           };
-        /* STEP 2 OF THIS RUNG. Sample Received & Review is not a rung of its own:
-           the shop has it, and what is owed now is the review. */
+        /* The parcel has overtaken the rung: the shop has it, and the lead is still
+           on Sample / Trial. The next rung is Sample received & review, and getting
+           there is a move, not a chase. */
         case "received":
         case "trial_done":
-          return {
-            label: "Record the trial review",
-            tone: "brand",
-            control: "sample_desk",
-            says: "Quality, how it compares with the brand they use, anything else, and the verdict. A trial nobody reviewed is stock given away for nothing, which is why it is chased until there is an answer.",
-          };
-        /* Reviewed: the only move left is the one the gate decides. It is asked
-           here with the same verb whatever the verdict was, and the gate refuses
-           More Testing and Rejected with the reason; asking it in both places is
-           the second opinion this file is written against. */
         case "reviewed":
           return {
-            label: "Move to Negotiation",
-            tone: "brand",
+            label: "Move to Sample received & review",
+            tone: "warn",
             control: "advance",
-            says: "An approved sample is what authorises a commercial conversation, not the salesman deciding he is ready for one.",
+            says: "The sample is further along than the lead is. The rung is behind the parcel, which is how a trial goes quiet with everybody assuming somebody else is holding it.",
           };
         /* Refused, called off, or never asked for. All three leave this rung
            standing on nothing, and a fresh request is the only way out. */
@@ -350,28 +341,28 @@ export function gateAction(facts: LeadGateActionFacts): LeadGateAction {
           };
       }
 
+    /*
+     * SAMPLE RECEIVED & REVIEW. `sample_received` is the older spelling of the same
+     * rung. What is owed on it is read off the SAMPLE: the review until a verdict is
+     * written, then the move to Negotiation.
+     */
     case "sample_received":
+    case "sample_review":
+      if (facts.sampleState === "reviewed") {
+        return {
+          label: "Move to Negotiation",
+          tone: "brand",
+          control: "advance",
+          says: "An approved sample is what authorises a commercial conversation, not the salesman deciding he is ready for one. More Testing Required and Rejected are refused by the gate with the reason.",
+        };
+      }
       return {
         label: "Record the trial review",
         tone: "brand",
         control: "sample_desk",
-        says: "Seven answers and a verdict. A trial nobody reviewed is stock given away for nothing, which is why it is chased until there is an answer.",
+        says: "Quality, how it compares with the brand they use, anything else, and the verdict. A trial nobody reviewed is stock given away for nothing, which is why it is chased until there is an answer.",
       };
 
-    /*
-     * §5.4's gate to Negotiation is `trialOutcome === 'approved'`, and that is
-     * deliberately NOT asked here — a rejected trial gets the same verb and
-     * the gate refuses it with the reason. Asking it in both places is the
-     * second opinion this file is written against, and the half that drifts is
-     * always the half somebody is reading.
-     */
-    case "sample_review":
-      return {
-        label: "Move to Negotiation",
-        tone: "brand",
-        control: "advance",
-        says: "An approved sample is what authorises a commercial conversation — not the salesman deciding he is ready for one.",
-      };
 
     /*
      * §5.5 — TWO SEQUENTIAL ACTS, DELIBERATELY NEVER MERGED, and §7's own

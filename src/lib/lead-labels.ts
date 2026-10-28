@@ -204,18 +204,18 @@ const STAGE_TEXT: Record<LeadStage, { short: string; long: string }> = {
   },
   sample_trial: {
     short: "Sample / trial",
-    long: "Step 1: ask for the sample, then approval and dispatch. Step 2: confirm it arrived and write down what they thought. The lead stays on this one rung through both.",
+    long: "Ask for the sample (product, planned sending date and mode). It stays here for approval and dispatch.",
   },
-  /* The two below are NOT rungs any more: Sample Received & Review is Step 2 of
-     Sample / Trial. They stay in the enum so a lead and a transition row an older
-     build wrote still read, and they read as the one rung they are inside. */
+  /* `sample_received` is no longer a rung: Sample received & review is the rung
+     stored as `sample_review`. The older value stays in the enum so a lead and a
+     transition row an earlier build wrote still read, as the same rung. */
   sample_received: {
-    short: "Sample / trial",
-    long: "Step 2 of Sample / trial. Recorded by an older version as its own rung.",
+    short: "Sample received & review",
+    long: "The shop has the sample. Confirm it, then write down what they thought and the verdict.",
   },
   sample_review: {
-    short: "Sample / trial",
-    long: "Step 2 of Sample / trial. Recorded by an older version as its own rung.",
+    short: "Sample received & review",
+    long: "The shop has the sample. Confirm it, then write down what they thought and the verdict.",
   },
   first_order: {
     short: "1st order",
@@ -274,15 +274,14 @@ export const ALL_LEAD_STAGES = Object.keys(STAGE_TEXT) as LeadStage[];
 /**
  * A stage as a HISTORY row reads it.
  *
- * The active pipeline draws one Sample / Trial stage, so `stageLabel` says
- * "Sample / trial" for the two retired steps. A transition row written by an
+ * The active pipeline draws Sample received & review, so `stageLabel` says
+ * that for the older `sample_received` too. A transition row written by an
  * older build carries the stage that was true on the day, and a reader of the
  * history should be able to tell "arrived at Sample Received" from "arrived at
  * Sample / trial". Stored values are never rewritten; only the words differ.
  */
 export function historicalStageLabel(stage: LeadStage): string {
-  if (stage === "sample_received") return "Sample / trial (Sample Received)";
-  if (stage === "sample_review") return "Sample / trial (Sample Review)";
+  if (stage === "sample_received") return "Sample received & review (Sample Received)";
   return stageLabel(stage);
 }
 

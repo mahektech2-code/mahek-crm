@@ -489,7 +489,7 @@ function RequestSheet({
       <T style={[{ fontSize: 19, lineHeight: 25, letterSpacing: -0.285, color: C.ink }, weight(600)]}>
         Request a sample
       </T>
-      <T s="caption" style={{ marginTop: 2 }}>Sample / Trial · Step 1 of 2 · Sample Request</T>
+      <T s="caption" style={{ marginTop: 2 }}>Sample / Trial · Sample Request</T>
       {/* WHOSE TRIAL IT IS, on the sheet, before anything is typed. The sheet
           named the product, the cans, the application and the reason and never
           once named the shop — so there was nothing on any screen that could

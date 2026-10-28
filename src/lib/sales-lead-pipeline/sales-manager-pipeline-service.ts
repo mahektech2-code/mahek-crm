@@ -189,6 +189,7 @@ const DIRECT_BARS: Stage[] = [
   "prospect",
   "qualification",
   "sample_trial",
+  "sample_review",
   "negotiation",
   "first_order",
   "second_order",

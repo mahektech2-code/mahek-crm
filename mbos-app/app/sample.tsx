@@ -327,7 +327,7 @@ export default function SampleRecord() {
 
           {s.state === 'Dispatched' ? (
             <>
-              <SectionLabel style={{ marginBottom: 0 }}>Step 2 of 2 · Sample received &amp; review</SectionLabel>
+              <SectionLabel style={{ marginBottom: 0 }}>Sample received &amp; review</SectionLabel>
               <T style={[{ fontSize: 15, lineHeight: 21, color: C.ink }, weight(500)]}>Has the sample been received?</T>
               <View style={{ flexDirection: 'row', gap: 8 }}>
                 <Choice label="Yes" selected={receivedAnswer === 'yes'} onPress={() => setReceivedAnswer('yes')} style={{ paddingHorizontal: 16 }} />
@@ -909,7 +909,7 @@ function ReviewSheet({
         What did they think?
       </T>
       <T s="caption" style={{ marginTop: 2 }}>
-        Step 2 of 2 · Write what they said, in their words. At least one box, and the verdict.
+        Sample received & review · Write what they said, in their words. At least one box, and the verdict.
       </T>
 
       {/* All seven are prose and all seven get the microphone. Six of them were

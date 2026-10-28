@@ -110,12 +110,17 @@ test('a rung narrows the band it was picked under', () => {
   seed(db, [
     { id: 'trial', funnelStage: 'sample_trial', salesType: 'direct' },
     { id: 'qual', funnelStage: 'qualification', salesType: 'direct' },
-    /* Left on a retired step-rung by an older build: still inside Sample / Trial. */
     { id: 'review', funnelStage: 'sample_review', salesType: 'direct' },
+    /* The older spelling of Sample received & review: the same rung. */
+    { id: 'old-received', funnelStage: 'sample_received', salesType: 'direct' },
   ]);
   assert.deepEqual(
-    ids(db, leadBookQuery({ view: 'qualified', rung: 'sample_trial', today: TODAY })).sort(),
-    ['review', 'trial'],
+    ids(db, leadBookQuery({ view: 'qualified', rung: 'sample_trial', today: TODAY })),
+    ['trial'],
+  );
+  assert.deepEqual(
+    ids(db, leadBookQuery({ view: 'qualified', rung: 'sample_review', today: TODAY })).sort(),
+    ['old-received', 'review'],
   );
   assert.deepEqual(
     ids(db, leadBookQuery({ view: 'qualified', rung: 'qualification', today: TODAY })),
@@ -136,8 +141,11 @@ test('the rung chips count the whole band, never the rung already picked', () =>
   const counts = (db.prepare(q.sql).all(...q.params) as { rung: string; count: number }[]).map(
     (r) => ({ rung: r.rung, count: r.count }),
   );
-  /* ONE Sample / Trial chip: the lead an older build left on sample_review counts under it. */
-  assert.deepEqual(counts, [{ rung: 'sample_trial', count: 3 }]);
+  /* Two chips: the older sample_received counts under Sample received & review. */
+  assert.deepEqual(counts, [
+    { rung: 'sample_trial', count: 2 },
+    { rung: 'sample_review', count: 1 },
+  ]);
   /* All and Archived have no band to break down, so they are not asked. */
   assert.equal(rungCountsQuery({ view: 'all', today: TODAY }), null);
 });

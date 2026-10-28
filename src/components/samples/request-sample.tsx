@@ -248,7 +248,7 @@ function RequestForm({
       <div className="mb-3 rounded-[6px] border border-line bg-canvas px-3 py-2.5 text-[13px]">
         <div className="font-medium text-ink">{customerName}</div>
         <div className="text-muted">
-          Step 1 of 2 · Sample Request. Nothing leaves the godown on this. It is a request, and a
+          Sample / Trial · Sample Request. Nothing leaves the godown on this. It is a request, and a
           manager approves it before anybody packs a can.
         </div>
         {/*

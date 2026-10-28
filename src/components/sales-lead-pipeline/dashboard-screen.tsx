@@ -83,7 +83,7 @@ export function DashboardScreen({ data, workspace = "sales" }: { data: Dashboard
           { label: "Prospects Pending Verification", value: String(mgr.pendingVerification), tone: mgr.pendingVerification ? undefined : "ink", sub: "incl. calling-desk requests", onClick: () => goto(`${BASE}?view=verify`) },
           { label: "Verified Prospects", value: String(mgr.verifiedProspects), tone: "success", sub: "verified, not yet qualifying", onClick: () => goto(`${BASE}/list?stage=prospect,contacted`) },
           { label: "Verification Failed", value: String(mgr.verificationFailed), tone: mgr.verificationFailed ? "danger" : "ink", sub: "closed in the last 30 days" },
-          { label: "Sample Reviews Pending", value: String(mgr.sampleReviewsPending), sub: "shop has it, no verdict", onClick: () => goto(`${BASE}/list?stage=sample_trial,sample_received,sample_review`) },
+          { label: "Sample Reviews Pending", value: String(mgr.sampleReviewsPending), sub: "shop has it, no verdict", onClick: () => goto(`${BASE}/list?stage=sample_received,sample_review`) },
           { label: "Negotiations Pending", value: String(mgr.negotiationsPending), onClick: () => goto(`${BASE}/list?stage=negotiation`) },
           { label: "Awaiting Actual Order Confirmation", value: String(mgr.awaitingActualOrder), sub: "forecast only, not yet a sale" },
           { label: "Expected Orders This Week", value: String(mgr.expectedThisWeek), tone: "success", sub: "forecast dates due soon" },

@@ -665,7 +665,8 @@ describe("M — every mutation persists, and the screen is told what the databas
     assert.equal(rec.sample?.state, "received");
     assert.ok(rec.sample?.receivedAt);
     /* Step 2 happens INSIDE the one Sample / Trial rung: receipt moves the sample, never the lead. */
-    assert.equal(rec.stage, "sample_trial");
+    /* Receipt puts the lead on its own rung: Sample received & review. */
+    assert.equal(rec.stage, "sample_review");
     assert.equal(rec.gate.kind, "sampleReview");
 
     const blank = await reviewSampleForLead({ customerId: lead.id, sampleId: rec.sample!.id, fields: {}, trialOutcome: "approved" });
@@ -678,7 +679,7 @@ describe("M — every mutation persists, and the screen is told what the databas
     });
     assert.equal(reviewed.ok, true, reviewed.ok ? "" : reviewed.error);
     rec = (await pipelineLead(lead.id, DAY))!.lead;
-    assert.equal(rec.stage, "sample_trial", "a review is Step 2 of the one rung, not a rung of its own");
+    assert.equal(rec.stage, "sample_review", "the review is written on Sample received & review; Negotiation is its own move");
     assert.equal(rec.gate.kind, "moveToNegotiation", "an approved trial is what opens the commercial conversation");
     assert.equal(rec.gate.kind === "moveToNegotiation" && rec.gate.disabled, false);
     assert.equal(rec.sample?.feedbackRecorded, true);
@@ -755,7 +756,7 @@ describe("M — every mutation persists, and the screen is told what the databas
     const more = await reviewSampleForLead({ customerId: lead.id, sampleId: s.id, fields: { quality: "Try on teak" }, trialOutcome: "more_testing" });
     assert.equal(more.ok, true, more.ok ? "" : more.error);
     const rec = (await pipelineLead(lead.id, DAY))!.lead;
-    assert.equal(rec.stage, "sample_trial");
+    assert.equal(rec.stage, "sample_review");
     assert.notEqual(rec.gate.kind, "moveToNegotiation", "More Testing Required does not advance the lead");
     assert.equal(rec.gate.kind, "requestSample", "another sample may be asked for; there is no lifetime limit");
   });

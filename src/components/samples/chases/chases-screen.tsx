@@ -396,7 +396,7 @@ export function ChasesScreen({
             </div>
 
             <p className="mb-3 text-[13px] text-body">
-              Step 2 of 2 · The sample has been received, so the review is open. Quality, how it
+              Sample received & review · The sample has been received, so the review is open. Quality, how it
               compares with the brand they use now, anything else, and the verdict.
             </p>
 

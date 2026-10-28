@@ -23,9 +23,9 @@ export const STAGE_OPTIONS: { value: string; label: string }[] = [
   { value: "suspect,new", label: "Suspect" },
   { value: "prospect,contacted", label: "Prospect" },
   { value: "qualification,qualified", label: "Qualification" },
-  /* ONE rung. The value still lists the two retired stored stages so a lead an older
-     build left on one of them is found; it is not three places a lead can stand. */
-  { value: "sample_trial,sample_received,sample_review", label: "Sample / Trial" },
+  { value: "sample_trial", label: "Sample / Trial" },
+  /* The older sample_received is the same rung, so a lead stored on it is found. */
+  { value: "sample_review,sample_received", label: "Sample received & review" },
   { value: "negotiation", label: "Negotiation" },
   { value: "first_order", label: "1st Order" },
   { value: "delivery", label: "Delivery" },
