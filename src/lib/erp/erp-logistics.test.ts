@@ -451,6 +451,69 @@ describe("transporters", () => {
 
 
 
+describe("renaming and merging a transporter carries the name everywhere it is written", () => {
+  test("a rename rewrites bills, LRs and party defaults in any case, and is refused until confirmed", async () => {
+    const ctx = await as(admin);
+    const old = `Swift ${tag}`;
+    assert.ok((await L.saveTransporter(ctx, { name: old })).ok);
+    const [t] = await db.select().from(erpTransporters).where(eq(erpTransporters.name, old));
+    await db.insert(erpTransports).values({ id: id("tr"), orderNo: 90001, billingCustomerId: "cus_shree", transporter: old.toUpperCase() });
+    await db.execute(sql`insert into erp_lrs (id, lr_no, transporter) values (${id("lr")}, ${`R${tag}`}, ${` ${old} `})`);
+    await db.update(erpCustomerProfiles).set({ transporter: old.toLowerCase() }).where(eq(erpCustomerProfiles.customerId, "cus_shree"));
+
+    const renamed = `Swift Roadways ${tag}`;
+    assert.equal((await L.saveTransporter(ctx, { id: t.id, name: renamed })).ok, false, "a rename is confirmed first");
+    const { report, confirmation } = await confirmed("erp-transporter-rename", `${t.id}|${renamed}`);
+    assert.deepEqual(report.items.map((i) => [i.label, i.count]).sort(), [["LR", 1], ["bill", 1], ["party using it as their transporter", 1]]);
+    assert.ok((await L.saveTransporter(ctx, { id: t.id, name: renamed, confirmation })).ok);
+
+    const [bill] = (await db.execute(sql`select transporter from erp_transports where order_no = 90001`)) as unknown as { transporter: string }[];
+    assert.equal(bill.transporter, renamed);
+    const [lr] = (await db.execute(sql`select transporter from erp_lrs where lr_no = ${`R${tag}`}`)) as unknown as { transporter: string }[];
+    assert.equal(lr.transporter, renamed);
+    const [p] = await db.select().from(erpCustomerProfiles).where(eq(erpCustomerProfiles.customerId, "cus_shree"));
+    assert.equal(p.transporter, renamed);
+    await db.update(erpCustomerProfiles).set({ transporter: "VRL" }).where(eq(erpCustomerProfiles.customerId, "cus_shree"));
+  });
+
+  test("renaming onto a name already in the list is blocked and points at Merge into", async () => {
+    const ctx = await as(admin);
+    assert.ok((await L.saveTransporter(ctx, { name: `Alpha ${tag}` })).ok);
+    assert.ok((await L.saveTransporter(ctx, { name: `Beta ${tag}` })).ok);
+    const [a] = await db.select().from(erpTransporters).where(eq(erpTransporters.name, `Alpha ${tag}`));
+    const r = await impactReport("erp-transporter-rename", `${a.id}|beta ${tag}`);
+    assert.ok(r.ok);
+    assert.match(r.data.blockers[0], /Merge into/);
+  });
+
+  test("a merge rewrites the dropped spelling, moves its godowns and drops its row; clashing LR numbers block it", async () => {
+    const ctx = await as(admin);
+    const dup = `V.R.L. ${tag}`;
+    const keep = `VRL Logistics ${tag}`;
+    assert.ok((await L.saveTransporter(ctx, { name: dup })).ok);
+    assert.ok((await L.saveTransporter(ctx, { name: keep })).ok);
+    const [from] = await db.select().from(erpTransporters).where(eq(erpTransporters.name, dup));
+    const [into] = await db.select().from(erpTransporters).where(eq(erpTransporters.name, keep));
+    await db.insert(erpTransporterGodowns).values({ id: id("etg"), transporterId: from.id, label: "Hub" });
+    await db.insert(erpTransports).values({ id: id("tr"), orderNo: 90002, billingCustomerId: "cus_shree", transporter: dup });
+    await db.execute(sql`insert into erp_lrs (id, lr_no, transporter) values (${id("lr")}, ${`M${tag}`}, ${dup}), (${id("lr")}, ${`M${tag}`}, ${keep})`);
+
+    const key = `${from.id}>${into.id}`;
+    const blocked = await impactReport("erp-transporter-merge", key);
+    assert.ok(blocked.ok);
+    assert.match(blocked.data.blockers[0], /LRs numbered/);
+    await db.execute(sql`update erp_lrs set status = 'void' where lr_no = ${`M${tag}`} and transporter = ${keep}`);
+
+    const godownsBefore = (await db.select().from(erpTransporterGodowns).where(eq(erpTransporterGodowns.transporterId, from.id))).length;
+    const { confirmation } = await confirmed("erp-transporter-merge", key);
+    assert.ok((await L.mergeTransporter(ctx, from.id, into.id, confirmation)).ok);
+    assert.equal((await db.select().from(erpTransporters).where(eq(erpTransporters.id, from.id))).length, 0);
+    assert.equal((await db.select().from(erpTransporterGodowns).where(eq(erpTransporterGodowns.transporterId, into.id))).length, godownsBefore);
+    const [bill] = (await db.execute(sql`select transporter from erp_transports where order_no = 90002`)) as unknown as { transporter: string }[];
+    assert.equal(bill.transporter, keep);
+  });
+});
+
 describe("every dispatch reaches Logistics (0279)", () => {
   const lot = `FGD${tag}`;
   let fgId = "";

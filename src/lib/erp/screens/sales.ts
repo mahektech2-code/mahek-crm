@@ -26,6 +26,7 @@ import { weightFor } from "@/lib/catalogue";
 import { stamp } from "@/lib/format";
 import { activeScopesAndLists, geographyOf } from "@/lib/services/price-list-service";
 import type { ErpContext } from "../access";
+import { knownTransporterName } from "../transporter-rename";
 import { erpAudit, erpId, int, nextNumber, num, paise, rupeesField, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
 import { newFormIn } from "../lazy-forms";
 import type { ActionSpec, BulkSpec, CellValue, FieldSpec, FormSpec, ListRow } from "../ui";
@@ -2081,7 +2082,7 @@ async function saveEdit(ctx: ErpContext, h: Record<string, string>, id?: string)
     dispatchOn: text(h.dispatchOn),
     qtyCans: qty,
     deliveryCustomerId: l.inDetails ? l.o.deliveryCustomerId : delivery.id,
-    transporter: text(h.transporter),
+    transporter: await knownTransporterName(db, text(h.transporter), ctx.user.id),
     transportCostPaise: paise(h.transport) ?? 0,
     remark: text(h.remark),
   };
@@ -2095,7 +2096,18 @@ async function saveEdit(ctx: ErpContext, h: Record<string, string>, id?: string)
   if (qty !== l.o.qtyCans && l.o.entryStatus === "Done") values.entryStatus = "Not Done";
   const order = await orderLines({ orderNos: [l.o.orderNo] });
   const before = invoiceSnapshot(order);
-  await db.update(erpOrders).set({ ...values, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpOrders.id, id));
+  await db.transaction(async (tx) => {
+    await tx.update(erpOrders).set({ ...values, updatedAt: new Date(), updatedById: ctx.user.id }).where(eq(erpOrders.id, id));
+    /* The bill took the order's transporter when it was raised, and the
+       Logistics desk reads the bill — so a changed transporter follows onto
+       it. Not where an LR is attached: the goods are already with whoever
+       issued that LR, and the LR is the word on who has them. */
+    if (values.transporter && values.transporter !== l.o.transporter)
+      await tx
+        .update(erpTransports)
+        .set({ transporter: values.transporter, updatedAt: new Date(), updatedById: ctx.user.id })
+        .where(and(eq(erpTransports.orderNo, l.o.orderNo), isNull(erpTransports.lrId)));
+  });
   await erpAudit(ctx, "erp.order.edit", "erp_order", id, l.o, values);
   /* What the back office verified, or what the checker approved, has to be looked at again when it moves. */
   const material = [

@@ -157,3 +157,7 @@ export async function erpTransportPaymentRecord(input: T.PaymentInput) {
 export async function erpTransportPaymentReverse(paymentId: string, reason: string, confirmation?: ImpactConfirmation) {
   return run((ctx) => T.reverseTransportPayment(ctx, String(paymentId ?? ""), reason ?? "", confirmation));
 }
+
+export async function erpLogisticsMergeTransporter(fromId: string, intoId: string, confirmation?: ImpactConfirmation) {
+  return run((ctx) => L.mergeTransporter(ctx, String(fromId ?? ""), String(intoId ?? ""), confirmation));
+}
