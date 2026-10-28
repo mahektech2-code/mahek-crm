@@ -399,7 +399,9 @@ describe("D: a lead the Sales Manager raised herself", () => {
     assert.ok(made.ok, made.ok ? "" : made.error);
     const leadId = made.data.customerId;
     assert.equal((await row(leadId)).salesManagerId, seema.id);
-    assert.equal((await row(leadId)).ownerId, null);
+    /* Whoever raises a lead owns it — a Sales Manager included. Her lead is still self-raised
+       (she holds the seat and owns it), so the designated approver rule below is unchanged. */
+    assert.equal((await row(leadId)).ownerId, seema.id);
 
     await db.update(customers).set({ leadStage: "prospect", ...prospectFields() }).where(eq(customers.id, leadId));
     assert.equal((await verify(leadId)).ok, true);
