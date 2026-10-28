@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/overlays";
 import { useToast } from "@/components/ui/toast";
 import { Button } from "@/components/console/parts";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { trashLeads } from "@/lib/actions/lead-trash";
+import { LEAD_TRASH_KIND, leadTrashKey } from "@/lib/impact/kinds/lead-key";
 
 /**
  * DELETE THIS LEAD — move it to the trash, from its own record.
@@ -15,6 +17,9 @@ import { trashLeads } from "@/lib/actions/lead-trash";
  * record then has nothing left to show, so the screen goes back to the list.
  * Not destructive: an administrator restores it from the Admin Console's
  * Trash with its whole history.
+ *
+ * The reason first, then the impact modal: what leaves the phones, which open
+ * field tasks close, and what stays — with the lead's name typed to confirm.
  */
 export function DeleteLead({
   customerId,
@@ -32,28 +37,18 @@ export function DeleteLead({
   const toast = useToast();
   const [open, setOpen] = React.useState(false);
   const [reason, setReason] = React.useState("");
-  const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  /* The impact modal, keyed per opening so it loads afresh. */
+  const [confirming, setConfirming] = React.useState<number | null>(null);
 
-  async function submit() {
+  function submit() {
     if (reason.trim().length < 3) {
       setError("Say why — it is shown to whoever looks in the trash.");
       return;
     }
-    setBusy(true);
     setError(null);
-    try {
-      const r = await trashLeads({ ids: [customerId], reason });
-      if (!r.ok) {
-        setError(r.error);
-        return;
-      }
-      setOpen(false);
-      toast.push(r.message ?? `${name} moved to the trash.`);
-      router.push(backHref);
-    } finally {
-      setBusy(false);
-    }
+    setOpen(false);
+    setConfirming(Date.now());
   }
 
   return (
@@ -100,11 +95,28 @@ export function DeleteLead({
           <Button tone="quiet" onClick={() => setOpen(false)}>
             Cancel
           </Button>
-          <Button tone="danger" disabled={busy || reason.trim().length < 3} onClick={() => void submit()}>
-            {busy ? "Moving…" : "Move to trash"}
+          <Button tone="danger" disabled={reason.trim().length < 3} onClick={submit}>
+            Next: what this affects
           </Button>
         </div>
       </Modal>
+      {confirming !== null ? (
+        <ImpactDialog
+          key={confirming}
+          kind={LEAD_TRASH_KIND}
+          id={leadTrashKey([customerId])}
+          confirmLabel="Move to trash"
+          onClose={() => setConfirming(null)}
+          onConfirm={async (confirmation) => {
+            const r = await trashLeads({ ids: [customerId], reason }, confirmation);
+            if (r.ok) {
+              toast.push(r.message ?? `${name} moved to the trash.`);
+              router.push(backHref);
+            }
+            return r;
+          }}
+        />
+      ) : null}
     </>
   );
 }

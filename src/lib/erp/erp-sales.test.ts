@@ -18,6 +18,7 @@ import {
   erpBatchCodes,
   erpCustomerProfiles,
   erpFgEntries,
+  erpFollowups,
   erpOrderDetails,
   erpOrderReviews,
   erpOrders,
@@ -42,6 +43,8 @@ import { fgLots, packLots } from "@/lib/erp/stock";
 import { dueOf, orderForm } from "@/lib/erp/screens/sales";
 import { dispatchLabels } from "@/lib/erp/label-data";
 import { withFills, type FieldSpec } from "@/lib/erp/ui";
+import { impactReport } from "@/lib/impact/registry";
+import { IMPACT_FIELD } from "@/lib/impact/types";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const TODAY = "2026-09-20";
@@ -531,5 +534,44 @@ describe("editing the whole order in one modal", () => {
     assert.equal(bad.ok ? "" : bad.fieldErrors?.[0]?.field, "l0.qty", "the error lands on the line it is about");
     const [still] = await db.select().from(erpOrders).where(eq(erpOrders.id, line.id));
     assert.equal(still.qtyCans, 9, "nothing written");
+  });
+});
+
+describe("deleting a line", () => {
+  test("says what goes with it first, and a retired follow-up remark no longer pins the line in place", async () => {
+    const ctx = await as(admin);
+    const made = await mod("orders").forms!.new(ctx, { source: "Phone", date: "2026-09-22", godown: "Bhiwandi", billing: "No List Traders", dupOk: "Yes — it is a separate order" }, [
+      { sku: LOOSE, qty: "3", rate: "300" },
+      { sku: BOXED, qty: "4", rate: "300" },
+    ]);
+    assert.ok(made.ok, msg(made));
+    const lines = await db.select().from(erpOrders).where(eq(erpOrders.orderDate, "2026-09-22"));
+    const doomed = lines.find((l) => l.qtyCans === 3)!;
+    /* Mahek Plus's follow-up remark: a foreign key that used to make the delete fail in the database. */
+    await db.insert(erpFollowups).values({ orderId: doomed.id, remark: "Call after Diwali" });
+
+    const report = await impactReport("erp-order-line", doomed.id);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    assert.equal(report.data.confirmWord, String(doomed.orderNo));
+    assert.deepEqual(report.data.blockers, []);
+    assert.equal(report.data.items.find((i) => i.effect === "deleted" && /follow-up/.test(i.label))?.count, 1);
+    assert.equal(report.data.items.find((i) => i.effect === "kept" && /other line/.test(i.label))?.count, 1);
+
+    assert.equal((await mod("orders").actions!.delete(ctx, doomed.id, {})).ok, false, "no confirmation, no delete");
+    const r = await mod("orders").actions!.delete(ctx, doomed.id, {
+      [IMPACT_FIELD]: JSON.stringify({ typed: String(doomed.orderNo), fingerprint: report.data.fingerprint }),
+    });
+    assert.ok(r.ok, msg(r));
+    assert.equal((await db.select().from(erpOrders).where(eq(erpOrders.id, doomed.id))).length, 0);
+    assert.equal((await db.select().from(erpFollowups).where(eq(erpFollowups.orderId, doomed.id))).length, 0);
+  });
+
+  test("a line with batch codes holding stock is a blocker before anybody types", async () => {
+    await as(admin);
+    const [held] = await db.select({ orderId: erpBatchCodes.orderId }).from(erpBatchCodes).limit(1);
+    assert.ok(held, "the fixture allocated a lot earlier");
+    const report = await impactReport("erp-order-line", held.orderId);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    assert.ok(report.data.blockers.length >= 1, JSON.stringify(report.data.blockers));
   });
 });

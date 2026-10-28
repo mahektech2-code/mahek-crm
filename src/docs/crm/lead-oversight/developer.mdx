@@ -60,6 +60,8 @@ The rung a lead was lost from is the `from_stage` of its newest `to_stage = 'los
 
 `customers.deleted_at` is the mark; `leadsVisible` adds `and c.deleted_at is null` for every viewer, so a trashed lead leaves every list, count and record loader.
 
+The act checks the impact report first (`confirmImpact`, kind `lead-trash`, the batch as one id from `leadTrashKey`); the report is `src/lib/impact/kinds/lead.ts`. Open `mbos_tasks` on the lead are set `cancelled` with `TRASHED_TASK_NOTE` and the trash's moment as `completed_at`, so they leave the handsets; `restoreLeads` reopens exactly those.
+
 ## The cohort
 
 <Code file="src/lib/services/lead-funnel-service.ts" symbol="Cohort" />

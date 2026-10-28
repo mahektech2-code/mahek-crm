@@ -15,6 +15,7 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appAccess,
+  attachments,
   auditLog,
   bills,
   complaints,
@@ -30,6 +31,7 @@ import {
   erpTransporters,
   erpOrderDetails,
   erpTransports,
+  erpVideos,
   finishedGoods,
   places,
   productBrands,
@@ -44,6 +46,8 @@ import * as L from "@/lib/erp/logistics";
 import { erpAudit } from "@/lib/erp/server";
 import * as T from "@/lib/erp/trips";
 import { createComplaint } from "@/lib/services/complaint-create";
+import { impactReport } from "@/lib/impact/registry";
+import { IMPACT_FIELD } from "@/lib/impact/types";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const tag = randomUUID().slice(0, 6);
@@ -643,5 +647,27 @@ describe("a bulk action is audited one row per record", () => {
     await erpAudit(ctx, "erp.logistics.packages", "erp_transport", one, null, null);
     const rows = await db.select().from(auditLog).where(eq(auditLog.entityId, one));
     assert.equal(rows.length, 1);
+  });
+});
+
+describe("help videos", () => {
+  test("removing an uploaded video says the file goes too, and takes it off rather than leaving it behind", async () => {
+    const ctx = await as(admin);
+    const file = id("att");
+    await db.insert(attachments).values({ id: file, filename: "packing-walkthrough.mp4", storedRef: `test/${file}`, contentType: "video/mp4", sizeBytes: 10, status: "available", uploadedById: admin.id } as never);
+    const made = await mod("videos").forms!.new(ctx, { title: "Packing a batch", source: "From File Upload", file }, []);
+    assert.ok(made.ok, msg(made));
+    const [v] = await db.select().from(erpVideos).where(eq(erpVideos.title, "Packing a batch"));
+
+    const report = await impactReport("erp-video", v.id);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    assert.equal(report.data.confirmWord, "Packing a batch");
+    assert.deepEqual(report.data.items.map((i) => [i.effect, i.count, i.examples]), [["deleted", 1, ["packing-walkthrough.mp4"]]]);
+    assert.equal((await mod("videos").actions!.delete(ctx, v.id, {})).ok, false, "no confirmation, no removal");
+    const r = await mod("videos").actions!.delete(ctx, v.id, { [IMPACT_FIELD]: JSON.stringify({ typed: "packing a batch", fingerprint: report.data.fingerprint }) });
+    assert.ok(r.ok, msg(r));
+    assert.equal((await db.select().from(erpVideos).where(eq(erpVideos.id, v.id))).length, 0);
+    const [f] = await db.select({ status: attachments.status }).from(attachments).where(eq(attachments.id, file));
+    assert.equal(f.status, "removed");
   });
 });

@@ -582,6 +582,14 @@ export async function documentDetail(
 
 /* -------------------------------------------------------------- resolving */
 
+/** A scope row as the resolver takes it, read off `price_list_scopes sc`. */
+const SCOPE_COLUMNS = sql`
+  sc.id, sc.price_list_id as "priceListId", sc.scope_kind as "scopeKind",
+  sc.scope_value as "scopeValue", sc.scope_label as "scopeLabel",
+  sc.parent_key as "parentKey", sc.freight_term_match as "freightTermMatch",
+  sc.priority, sc.valid_from::text as "validFrom", sc.valid_to::text as "validTo"
+`;
+
 /**
  * Every published list and every scope row, once per request.
  *
@@ -595,10 +603,7 @@ export const activeScopesAndLists = cache(async function activeScopesAndLists():
 }> {
   const [scopeRows, listRows] = await Promise.all([
     db.execute<ScopeRow>(sql`
-      select sc.id, sc.price_list_id as "priceListId", sc.scope_kind as "scopeKind",
-             sc.scope_value as "scopeValue", sc.scope_label as "scopeLabel",
-             sc.parent_key as "parentKey", sc.freight_term_match as "freightTermMatch",
-             sc.priority, sc.valid_from::text as "validFrom", sc.valid_to::text as "validTo"
+      select ${SCOPE_COLUMNS}
         from price_list_scopes sc
         join price_lists l on l.id = sc.price_list_id
        where l.status = 'published'
@@ -696,6 +701,82 @@ export async function resolveForCustomer(customerId: string, todayIso: string): 
   const [geo, { scopes, lists }] = await Promise.all([customerGeo(customerId), activeScopesAndLists()]);
   if (!geo) return null;
   return resolvePriceList(geo, scopes, lists, todayIso);
+}
+
+/* ----------------------------------------------- taking one away */
+
+export type PricingShift = {
+  /** Shops the list, or the one rule, names on the day asked about — whether or not it is the list they are priced from. */
+  named: number;
+  /** Shops whose list changes without it, by name, and the list each lands on — null where nothing else names them. */
+  moves: Array<{ customerId: string; name: string; toListId: string | null; toListName: string | null }>;
+};
+
+/**
+ * WHO MOVES IF A LIST, OR ONE RULE ON IT, IS TAKEN AWAY — what the impact
+ * report says before a list is withdrawn or a scope removed.
+ *
+ * The resolver is asked twice for every shop the target names: once with the
+ * book as it stands and once without the target, and a shop moves where the
+ * two answers differ. Narrowest-wins makes the second answer impossible to
+ * guess — a shop on its city's list may fall to its state's, to everybody's,
+ * or to nothing — so it is asked rather than inferred, by the same engine the
+ * order form prices with.
+ *
+ * Every account that is not deactivated is read, leads included, and NOT the
+ * caller's own book: a withdrawal reaches the whole company whoever presses
+ * it, and only the price desk can press it.
+ */
+export async function pricingShiftWithout(
+  take: { listId: string } | { scopeId: string },
+  asOf: string,
+): Promise<PricingShift> {
+  const targets = await db.execute<ScopeRow & { listFreightTerm: PriceFreightTerm }>(sql`
+    select ${SCOPE_COLUMNS}, l.freight_term as "listFreightTerm"
+      from price_list_scopes sc
+      join price_lists l on l.id = sc.price_list_id
+     where ${"listId" in take ? sql`sc.price_list_id = ${take.listId}` : sql`sc.id = ${take.scopeId}`}
+  `);
+  if (!targets.length) return { named: 0, moves: [] };
+
+  /* "Does the target name this shop at all" is the target alone, on a list
+     forced into force — the same trick `namesCustomer` plays, but on the day
+     asked about, so a rule's own validity dates still count. */
+  const probe: ListMeta = {
+    id: "__probe",
+    name: "",
+    status: "published",
+    effectiveFrom: "0001-01-01",
+    effectiveTo: null,
+    freightTerm: targets[0].listFreightTerm,
+    version: 1,
+  };
+  const probeScopes = targets.map((t) => ({ ...t, priceListId: probe.id }));
+
+  const [{ scopes, lists }, rows] = await Promise.all([
+    activeScopesAndLists(),
+    db.execute<GeoRow & { name: string }>(sql`
+      select g.*, named.name
+        from (${GEO_SELECT} where c.status <> 'deactivated') g
+        join customers named on named.id = g."customerId"
+    `),
+  ]);
+  const scopesAfter = "scopeId" in take ? scopes.filter((s) => s.id !== take.scopeId) : scopes;
+  const listsAfter = "listId" in take ? lists.filter((l) => l.id !== take.listId) : lists;
+
+  let named = 0;
+  const moves: PricingShift["moves"] = [];
+  for (const row of rows) {
+    const geo = toGeo(row);
+    if (!resolvePriceList(geo, probeScopes, [probe], asOf)) continue;
+    named++;
+    const before = resolvePriceList(geo, scopes, lists, asOf);
+    const after = resolvePriceList(geo, scopesAfter, listsAfter, asOf);
+    if ((before?.listId ?? null) === (after?.listId ?? null)) continue;
+    moves.push({ customerId: row.customerId, name: row.name, toListId: after?.listId ?? null, toListName: after?.listName ?? null });
+  }
+  moves.sort((a, b) => a.name.localeCompare(b.name));
+  return { named, moves };
 }
 
 /* ------------------------------------------------------- one customer */

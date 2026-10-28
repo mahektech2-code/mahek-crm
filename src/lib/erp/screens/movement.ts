@@ -31,6 +31,8 @@ import { departmentForCategory, requirementDepartmentsFor } from "../departments
 import { levelSuggestions } from "../suggest";
 import { moveUnitsForTransfer, trimLooseUnits } from "../units";
 import type { LevelSuggestion } from "../engines/production";
+import { confirmImpact } from "@/lib/impact/registry";
+import { readConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * Item transfer (spec §10.1) and re-order levels (§10.2–§10.3).
@@ -487,7 +489,7 @@ function rmLevelList(key: "rmLevels" | "reorderRm"): ScreenModule {
             if (!reorder) {
               actions.push({ id: "edit", l: "Edit", loadsForm: true });
               actions.push({ id: "copy", l: "Add another", loadsForm: true });
-              actions.push({ id: "delete", l: "Delete", confirm: `Remove the level for ${r.item} at ${r.godown}?` });
+              actions.push({ id: "delete", l: "Delete", impact: { kind: "erp-rm-level", id: r.id } });
             }
             return {
               id: r.id,
@@ -549,9 +551,12 @@ function rmLevelList(key: "rmLevels" | "reorderRm"): ScreenModule {
               await erpAudit(ctx, "erp.rmLevel.autoOn", "erp_rm_level", id, l, { min: p.min, max: p.max, autoManaged: true });
               return okVoid("The planner keeps this level now");
             },
-            async delete(ctx, id) {
+            async delete(ctx, id, values) {
               const [before] = await db.select().from(erpRmLevels).where(eq(erpRmLevels.id, id));
               if (!before) return err("That level no longer exists.", "not_found");
+              /* The person saw what goes with it — the re-order line, the requirements read against it, and whether the planner puts it back tonight. */
+              const refusal = await confirmImpact("erp-rm-level", id, readConfirmation(values));
+              if (refusal) return refusal;
               await db.delete(erpRmLevels).where(eq(erpRmLevels.id, id));
               await erpAudit(ctx, "erp.rmLevel.delete", "erp_rm_level", id, before, null);
               return okVoid("Level removed");
@@ -728,7 +733,7 @@ function fgLevelList(key: "fgLevels" | "reorderFg"): ScreenModule {
                 ...(r.suggestion && r.suggestion.min !== r.min ? [{ id: "apply", l: "Apply suggestion", confirm: `Set the minimum for ${r.sku} at ${r.godown} to ${r.suggestion.min}? ${r.suggestion.basis}` }] : []),
                 { id: "edit", l: "Edit", loadsForm: true },
                 { id: "copy", l: "Add another", loadsForm: true },
-                { id: "delete", l: "Delete", confirm: `Remove the level for ${r.sku} at ${r.godown}?` },
+                { id: "delete", l: "Delete", impact: { kind: "erp-fg-level", id: r.id } },
               ],
           by: stampLine(r.by, r.updatedAt).replace(/^Created/, "Updated"),
         })),
@@ -751,9 +756,11 @@ function fgLevelList(key: "fgLevels" | "reorderFg"): ScreenModule {
       key === "fgLevels"
         ? {
             apply: (ctx, id) => applyFg(ctx, [id]),
-            async delete(ctx, id) {
+            async delete(ctx, id, values) {
               const [before] = await db.select().from(erpFgLevels).where(eq(erpFgLevels.id, id));
               if (!before) return err("That level no longer exists.", "not_found");
+              const refusal = await confirmImpact("erp-fg-level", id, readConfirmation(values));
+              if (refusal) return refusal;
               await db.delete(erpFgLevels).where(eq(erpFgLevels.id, id));
               await erpAudit(ctx, "erp.fgLevel.delete", "erp_fg_level", id, before, null);
               return okVoid("Level removed");

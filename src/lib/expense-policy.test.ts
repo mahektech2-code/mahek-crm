@@ -30,10 +30,12 @@ import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import {
   createPolicyDraft,
+  deleteRule,
   publishPolicy,
   saveRule,
   policyReadiness,
 } from "@/lib/actions/expense-policy";
+import { impactReport } from "@/lib/impact/registry";
 import { policyForDate, readPolicy } from "@/lib/services/expense-policy-service";
 import {
   STANDARD_DEFAULTS_VERSION,
@@ -337,6 +339,39 @@ describe("authoring a policy", () => {
       confirmVersionNo: draft.data.versionNo,
     });
     assert.equal(published.ok, false);
+  });
+
+  test("a rule comes off a draft once its impact is confirmed, and a published version's rule never does", async () => {
+    const draft = await createPolicyDraft({ title: "Rule off", effectiveFrom: "2027-03-01", notes: null });
+    assert.ok(draft.ok);
+    const saved = await saveRule({
+      policyId: draft.data.id,
+      kind: "per_km",
+      scopeKey: "travel_mode:own_bike",
+      grade: null,
+      cityClass: null,
+      value: { paisePerKm: 350, dailyKmCap: null },
+    });
+    assert.ok(saved.ok, saved.ok ? "" : saved.error);
+    const report = await impactReport("expense-rule", saved.data.ruleId);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    assert.equal(report.data.blockers.length, 0);
+    assert.ok(report.data.items.some((i) => i.effect === "deleted" && i.app === "Admin Console"));
+    assert.match(report.data.items.find((i) => i.effect === "kept")?.note ?? "", /draft/);
+
+    assert.equal((await deleteRule({ policyId: draft.data.id, ruleId: saved.data.ruleId })).ok, false, "no confirmation, no removal");
+    const removed = await deleteRule({
+      policyId: draft.data.id,
+      ruleId: saved.data.ruleId,
+      confirmation: { typed: report.data.confirmWord, fingerprint: report.data.fingerprint },
+    });
+    assert.ok(removed.ok, removed.ok ? "" : removed.error);
+
+    const published = await publishPolicyV("2026-04-01", 350);
+    const detail = await readPolicy(published, "2026-06-15");
+    const ruleId = detail!.rules[0]!.id;
+    const locked = await impactReport("expense-rule", ruleId);
+    assert.ok(locked.ok && locked.data.blockers.length === 1, "a published version's rule is a blocker, not a button");
   });
 
   test("publishing with the wrong version number typed back is refused", async () => {
@@ -1050,6 +1085,10 @@ describe("named policies", () => {
     const del = await deletePolicySet({ id: copy.data.id });
     assert.equal(del.ok, false);
     assert.match(del.ok ? "" : del.error, /switch it off instead/i);
+    /* The modal says the same before anybody types anything. */
+    const report = await impactReport("expense-policy-set", copy.data.id);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    assert.match(report.data.blockers[0] ?? "", /switch it off instead/i);
   });
 
   test("a stale save is refused rather than overwriting somebody else's", async () => {
@@ -1089,8 +1128,28 @@ describe("named policies", () => {
     assert.match(copy.name, /^Copy of /);
     assert.deepEqual(copy.rules, (await readPolicySet(STANDARD_POLICY_ID))!.rules);
     assert.equal(copy.memberCount, 0);
-    assert.ok((await deletePolicySet({ id: copy.id })).ok);
+
+    /* A copy of the copy, and one salesman on it: the report says he goes back
+       to standard, his phone follows, and the copy of it loses only its
+       "copied from". */
+    const grandchild = await duplicatePolicySet({ id: copy.id });
+    assert.ok(grandchild.ok);
+    assert.ok((await assignPolicySet({ userIds: [salesman.id], setId: copy.id, notify: false })).ok);
+    const report = await impactReport("expense-policy-set", copy.id);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    const where = report.data.items.map((i) => `${i.app}:${i.effect}:${i.count}`);
+    assert.ok(where.includes("Admin Console:changed:1"), where.join(", "));
+    assert.ok(where.includes("MBOS handsets:phones:1"), where.join(", "));
+    assert.ok(where.includes("Admin Console:unlinked:1"), where.join(", "));
+    assert.equal(report.data.blockers.length, 0);
+    assert.equal(report.data.confirmWord, copy.name);
+
+    assert.equal((await deletePolicySet({ id: copy.id })).ok, false, "no confirmation, no delete");
+    const del = await deletePolicySet({ id: copy.id, confirmation: { typed: copy.name, fingerprint: report.data.fingerprint } });
+    assert.ok(del.ok, del.ok ? "" : del.error);
     assert.equal(await readPolicySet(copy.id), null);
+    assert.equal((await readPolicySet(grandchild.data.id))!.clonedFromId, null, "a copy is not left naming a policy that is gone");
+    assert.equal((await policyForDate("2026-06-16", salesman.id))!.id, STANDARD_POLICY_ID);
   });
 
   test("guidelines are saved with the rules, copied with a duplicate, and kept in the history", async () => {

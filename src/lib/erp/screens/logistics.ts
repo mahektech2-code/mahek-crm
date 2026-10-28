@@ -1,7 +1,7 @@
 import "server-only";
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { customers, erpTransports, erpVideos, users } from "@/db/schema";
+import { attachments, customers, erpTransports, erpVideos, users } from "@/db/schema";
 import { err, fieldErr, okVoid } from "@/lib/result";
 import { bindErpFiles } from "../attachments";
 import { erpAudit, erpId, multi, stampLine, text, visibleCols, withoutHidden, type ScreenModule } from "../server";
@@ -10,6 +10,8 @@ import { monthId } from "../engines/sales";
 import { refValues } from "../refs";
 import { type Col, has, isErpManager, today } from "./common";
 import { countLines, detailRows, EXTRA_EXPENSE_PROMPT, type LineFilter, monthlySalesFor, setExtraExpenses } from "./sales";
+import { confirmImpact } from "@/lib/impact/registry";
+import { readConfirmation } from "@/lib/impact/types";
 import { tooWide, unscoped, windowWhere } from "../window";
 import { syncBookOrders } from "../book";
 import { CLOSED, freightWord, isPaidFreight, STAGES } from "../engines/logistics";
@@ -312,7 +314,7 @@ const videos: ScreenModule = {
           title: r.v.title,
           header: r.v.tags.join(" · "),
           panel: { kind: "video", data: { youtube: yt, file: r.v.fileId, url: r.v.youtubeUrl } },
-          actions: editor ? [{ id: "delete", l: "Delete", confirm: `Remove "${r.v.title}"?` }] : [],
+          actions: editor ? [{ id: "delete", l: "Delete", impact: { kind: "erp-video", id: r.v.id } }] : [],
           by: stampLine(r.by, r.v.createdAt),
         };
       }),
@@ -338,10 +340,24 @@ const videos: ScreenModule = {
     },
   },
   actions: {
-    async delete(ctx, id) {
+    async delete(ctx, id, values) {
       if (!isErpManager(ctx)) return err("A manager removes help videos.", "not_permitted");
-      await db.delete(erpVideos).where(eq(erpVideos.id, id));
-      await erpAudit(ctx, "erp.video.delete", "erp_video", id);
+      const [v] = await db.select().from(erpVideos).where(eq(erpVideos.id, id));
+      if (!v) return err("That video was already removed.", "not_found");
+      const refusal = await confirmImpact("erp-video", id, readConfirmation(values));
+      if (refusal) return refusal;
+      await db.transaction(async (tx) => {
+        await tx.delete(erpVideos).where(eq(erpVideos.id, id));
+        /* An uploaded file went on being an available attachment of a video
+           that no longer existed — never swept, since it still named a parent,
+           and stored for good. It is taken off with the video, as a removed
+           photo is: the row stays, retention decides the bytes. */
+        await tx
+          .update(attachments)
+          .set({ status: "removed", removedAt: new Date(), updatedAt: new Date() })
+          .where(and(eq(attachments.parentType, "erp_video"), eq(attachments.parentId, id), eq(attachments.status, "available")));
+      });
+      await erpAudit(ctx, "erp.video.delete", "erp_video", id, v, null);
       return okVoid("Video removed");
     },
   },

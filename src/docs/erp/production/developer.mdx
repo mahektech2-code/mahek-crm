@@ -157,5 +157,4 @@ Read stock with the transaction (`rmLots(tx)`, `sfgLots(tx)`, `fgLotStock(…, t
 
 | Gap | Where |
 |---|---|
-| Deleting an SFG line or a fill removes the consumption but leaves its output entry, so its stock is counted in both stages until corrected | `sfgBatches.actions.delete`, `fgFill.actions.delete` |
 | Drum fills are never subtracted from drum availability (company-wide drums bought on purchases − drums sold) | `stock.ts` `rmLevelAvailable`, `packingUse` (`packing_type = 'Can'` only) |

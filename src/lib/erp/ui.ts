@@ -207,6 +207,14 @@ export type ActionSpec = {
   why?: string;
   /** "Are you sure" text, when the act needs one. */
   confirm?: string;
+  /**
+   * A delete or change that reaches other records: opens the impact modal
+   * (`components/ui/impact-dialog.tsx`) in place of `confirm`, which lists
+   * everything that moves with it across MahekOne and asks for the name to be
+   * typed. The act receives the confirmation under `IMPACT_FIELD` and checks it
+   * with `confirmImpact` before it writes.
+   */
+  impact?: { kind: string; id: string };
   /** Values to collect before acting. */
   prompt?: PromptSpec;
   /** Opens a form instead of acting directly (e.g. "Add more"). */

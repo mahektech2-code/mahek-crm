@@ -22,12 +22,10 @@ import {
   type PriceDerivation,
   type PriceParsedHeader,
 } from "@/db/schema";
-import {
-  requireCapability,
-  assertCustomerInScope,
-  NotPermittedError,
-} from "@/lib/access-control";
-import { canOpenModule } from "@/lib/access";
+import { requireCapability, assertCustomerInScope } from "@/lib/access-control";
+import { removeDraftList, requirePriceDesk } from "@/lib/services/price-desk";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 import { getConfig } from "@/lib/config/store";
 import { addDays } from "@/lib/business-date";
 import { today } from "@/lib/recompute";
@@ -104,32 +102,8 @@ const derivationSchema: z.ZodType<PriceDerivation> = z.union([
   z.object({ kind: z.literal("per_can_paise"), paise: z.number().int() }),
 ]);
 
-/** A list row as the writes need it. */
-/**
- * `pricelist.manage`, AND THE DESK IT WAS WORN AT.
- *
- * The capability rides on the APP grant — every Founder Dashboard and Accounts
- * level carries it — while the price desk inside each of those apps is a
- * MODULE that can be withheld. Asking only the capability meant a Command
- * Centre delegate given Money alone, or an Accounts clerk narrowed off the
- * Price lists screen, could still create, edit and publish a list by posting to
- * these actions, which are URLs whatever the sidebar draws. So the hat that
- * carried the capability is asked for its desk too: worn as the founder, the
- * founder's Price lists module; worn at the ledger desk, Accounts' own.
- */
-async function requirePriceDesk() {
-  const ctx = await requireCapability("pricelist.manage");
-  const desk =
-    ctx.authorisedIn === "founder"
-      ? "founder.price-lists"
-      : ctx.authorisedIn === "accounts"
-        ? "accounts.price-lists"
-        : null;
-  if (desk && !(await canOpenModule(ctx.user.id, desk))) {
-    throw new NotPermittedError("pricelist.manage");
-  }
-  return ctx;
-}
+/* `requirePriceDesk` — the capability AND the desk it was worn at — lives in
+   `services/price-desk.ts`, beside the one delete both action files share. */
 
 async function listRow(id: string) {
   const [row] = await db.select().from(priceLists).where(eq(priceLists.id, id));
@@ -333,7 +307,7 @@ export async function updatePriceList(id: string, input: Partial<ListFields>): P
   }
 }
 
-export async function deleteDraftPriceList(id: string): Promise<Result> {
+export async function deleteDraftPriceList(id: string, confirmation?: ImpactConfirmation): Promise<Result> {
   try {
     const ctx = await requirePriceDesk();
     const row = await listRow(id);
@@ -344,9 +318,13 @@ export async function deleteDraftPriceList(id: string): Promise<Result> {
         "rule_violation",
       );
     }
+    /* The person saw what goes with it — rates, scopes, the document it was
+       read from, the lists derived from it — and that is still the picture. */
+    const refusal = await confirmImpact("price-list-draft", id, confirmation);
+    if (refusal) return refusal;
     await db.transaction(async (tx) => {
       await audit(tx, ctx, { action: "pricelist.delete", entityType: "price_list", entityId: id, before: { name: row.name } });
-      await tx.delete(priceLists).where(eq(priceLists.id, id));
+      await removeDraftList(tx, id);
     });
     refresh();
     return okVoid("Draft deleted.");
@@ -661,11 +639,14 @@ export async function updateScope(
   }
 }
 
-export async function removeScope(id: string): Promise<Result> {
+export async function removeScope(id: string, confirmation?: ImpactConfirmation): Promise<Result> {
   try {
     const ctx = await requirePriceDesk();
     const [row] = await db.select().from(priceListScopes).where(eq(priceListScopes.id, id));
     if (!row) return err("That scope does not exist.", "not_found");
+    /* Which shops stop being priced from this list, and where each lands. */
+    const refusal = await confirmImpact("price-list-scope", id, confirmation);
+    if (refusal) return refusal;
     await db.transaction(async (tx) => {
       await audit(tx, ctx, {
         action: "pricelist.scope.remove",
@@ -886,7 +867,7 @@ export async function publishPriceList(
   }
 }
 
-export async function withdrawPriceList(id: string, reason: string): Promise<Result> {
+export async function withdrawPriceList(id: string, reason: string, confirmation?: ImpactConfirmation): Promise<Result> {
   try {
     const ctx = await requirePriceDesk();
     if (!reason.trim()) {
@@ -895,6 +876,10 @@ export async function withdrawPriceList(id: string, reason: string): Promise<Res
     const row = await listRow(id);
     if (!row) return err("That price list does not exist.", "not_found");
     if (row.status === "withdrawn") return err("That list has already been withdrawn.", "rule_violation");
+    /* Every shop it prices falls to another list or to none — the person saw
+       which, by name, and nothing has moved since. */
+    const refusal = await confirmImpact("price-list-withdrawal", id, confirmation);
+    if (refusal) return refusal;
 
     const day = await today();
     await db.transaction(async (tx) => {

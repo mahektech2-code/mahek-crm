@@ -25,6 +25,7 @@ import { erpContext, setTestViewAs } from "@/lib/erp/access";
 import { draftFor } from "@/lib/erp/designations";
 import { designationStandings, listErpDesignations } from "@/lib/services/erp-designation-service";
 import { listAccess } from "@/lib/services/access-service";
+import { impactReport } from "@/lib/impact/registry";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const ALL = moduleKeysForApp("erp");
@@ -176,12 +177,30 @@ describe("designations", () => {
 
   test("deleting it keeps every holder's access and drops only the name", async () => {
     setTestUser(platform);
-    const temp = await saveErpDesignation({ ...TESTER, name: "Temporary" });
+    const temp = await saveErpDesignation({ ...TESTER, name: "Temporary", department: "mixing" });
     assert.ok(temp.ok);
     const y = await makeUser("Asha Temp", "associate");
     await setAccess({ userId: y.id, ...grantFor(TESTER), erpDesignationId: temp.data.id });
-    const del = await deleteErpDesignation(temp.data.id);
-    assert.ok(del.ok && del.data.unlinked === 1);
+
+    /* The modal names the holder, says their access stays, and says the one
+       thing that does move: a departmental job stops narrowing them. */
+    const report = await impactReport("erp-designation", temp.data.id);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    const where = report.data.items.map((i) => `${i.app}:${i.effect}:${i.count}`);
+    assert.ok(where.includes("Admin Console:unlinked:1"), where.join(", "));
+    assert.ok(where.includes("ERP:kept:1"), where.join(", "));
+    assert.ok(where.includes("ERP:changed:1"), where.join(", "));
+    assert.ok(where.includes("Admin Console:deleted:3"), "its three screens");
+    assert.deepEqual(report.data.items.find((i) => i.effect === "unlinked")?.examples, ["Asha Temp"]);
+    assert.equal(report.data.confirmWord, "Temporary");
+
+    setTestUser(meena);
+    assert.equal((await impactReport("erp-designation", temp.data.id)).ok, false, "the report is a platform administrator's, like the delete");
+    setTestUser(platform);
+
+    assert.equal((await deleteErpDesignation(temp.data.id)).ok, false, "no confirmation, no delete");
+    const del = await deleteErpDesignation(temp.data.id, { typed: "temporary", fingerprint: report.data.fingerprint });
+    assert.ok(del.ok && del.data.unlinked === 1, del.ok ? "" : del.error);
     setTestUser(y);
     assert.ok((await erpContext()).screens.has("testing"), "deleting a designation took a screen away");
   });

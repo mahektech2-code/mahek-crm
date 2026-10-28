@@ -1,9 +1,10 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLog, customers, leadTrashEvents } from "@/db/schema";
+import { auditLog, customers, leadTrashEvents, mbosTasks } from "@/db/schema";
 import { leadsLeftHandsets } from "./lead-trash-sync";
+import { TRASHED_TASK_NOTE } from "./lead-trash-service";
 
 /* ---------------------------------------------------------------------------
  * A LEAD WHO SHARES A CUSTOMER'S NAME IS THAT CUSTOMER'S PAST.
@@ -127,6 +128,11 @@ export async function trashLeadTwins({ dryRun = false }: { dryRun?: boolean } = 
       );
       // Off the salesmen's phones too — on the next pull, not the next sign-in.
       await leadsLeftHandsets(tx, moved.map((t) => t.leadId));
+      // And off their task lists, exactly as `trashLeads` does, so a restore reopens them.
+      await tx
+        .update(mbosTasks)
+        .set({ status: "cancelled", completionNote: TRASHED_TASK_NOTE, completedAt: now, updatedAt: now })
+        .where(and(inArray(mbosTasks.customerId, moved.map((t) => t.leadId)), inArray(mbosTasks.status, ["open", "in_progress"])));
       trashed += moved.length;
     });
   }

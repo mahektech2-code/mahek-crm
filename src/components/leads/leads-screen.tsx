@@ -25,6 +25,8 @@ import {
 import { assignDeskLead, bulkAssignDeskLeads } from "@/lib/actions/lead-desk-assignment";
 import { bulkAdvanceLeadStage } from "@/lib/actions/leads";
 import { trashLeads } from "@/lib/actions/lead-trash";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
+import { LEAD_TRASH_KIND, leadTrashKey } from "@/lib/impact/kinds/lead-key";
 import {
   EMPTY_BULK_HOLD,
   bulkStagePayload,
@@ -427,6 +429,9 @@ export function LeadsScreen({
    */
   const [priority, setPriority] = React.useState<LeadPriority | "">("");
   const [busy, setBusy] = React.useState(false);
+  /* Moving to the trash asks for the reason, then opens the impact modal —
+     what leaves the phones, which tasks close, what stays — with this batch. */
+  const [trashing, setTrashing] = React.useState<{ ids: string[]; reason: string; bulk: boolean; key: number } | null>(null);
   const [error, setError] = React.useState<string | null>(null);
 
 
@@ -502,6 +507,11 @@ export function LeadsScreen({
   async function submitBulk() {
     if (!bulk) return;
     const leadIds = Array.from(picked);
+    if (bulk === "trash") {
+      setBulk(null);
+      setTrashing({ ids: leadIds, reason, bulk: true, key: Date.now() });
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -514,11 +524,9 @@ export function LeadsScreen({
               )
             : bulk === "archive"
               ? await bulkArchiveLeads({ leadIds, reason })
-              : bulk === "trash"
-                ? await trashLeads({ ids: leadIds, reason })
-                : bulk === "restore"
-                  ? await bulkRestoreLeads({ leadIds })
-                  : await bulkChaseLeadOwners({ leadIds });
+              : bulk === "restore"
+                ? await bulkRestoreLeads({ leadIds })
+                : await bulkChaseLeadOwners({ leadIds });
 
       if (!result.ok) {
         setError(result.error);
@@ -566,6 +574,11 @@ export function LeadsScreen({
 
   async function submit() {
     if (!acting) return;
+    if (acting.kind === "trash") {
+      setTrashing({ ids: [acting.lead.id], reason, bulk: false, key: Date.now() });
+      setActing(null);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -574,8 +587,6 @@ export function LeadsScreen({
           ? await assignDeskLead({ customerId: acting.lead.id, ownerId: ownerIdFor(salesmanId) })
           : acting.kind === "archive"
             ? await archiveLead({ leadId: acting.lead.id, reason })
-            : acting.kind === "trash"
-              ? await trashLeads({ ids: [acting.lead.id], reason })
             : acting.kind === "priority"
               ? await setLeadPriority({
                   customerId: acting.lead.id,
@@ -1275,10 +1286,30 @@ export function LeadsScreen({
             }
             onClick={() => void submitBulk()}
           >
-            {busy ? "Working…" : `Apply to ${picked.size}`}
+            {busy ? "Working…" : bulk === "trash" ? "Next: what this affects" : `Apply to ${picked.size}`}
           </Button>
         </div>
       </Modal>
+
+      {trashing ? (
+        <ImpactDialog
+          key={trashing.key}
+          kind={LEAD_TRASH_KIND}
+          id={leadTrashKey(trashing.ids)}
+          confirmLabel="Move to trash"
+          onClose={() => setTrashing(null)}
+          onConfirm={async (confirmation) => {
+            const result = await trashLeads({ ids: trashing.ids, reason: trashing.reason }, confirmation);
+            if (result.ok) {
+              /* Exactly what was refused stays ticked — see submitBulk. */
+              if (trashing.bulk) setPicked(new Set(result.data?.failed.map((f) => f.id) ?? []));
+              toast.push(result.message ?? "Moved to the trash.");
+              router.refresh();
+            }
+            return result;
+          }}
+        />
+      ) : null}
 
       <ReasonModal
         open={acting?.kind === "archive"}
@@ -1312,7 +1343,7 @@ export function LeadsScreen({
         fieldLabel="Why · required — e.g. duplicate, test entry, not a real business"
         reason={reason}
         onReasonChange={setReason}
-        confirmLabel="Move to trash"
+        confirmLabel="Next: what this affects"
         busy={busy}
         error={error}
         onConfirm={() => void submit()}

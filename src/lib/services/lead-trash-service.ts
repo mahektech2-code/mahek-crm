@@ -2,7 +2,10 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLog, customers, leadTrashEvents } from "@/db/schema";
+import { auditLog, customers, leadTrashEvents, mbosTasks } from "@/db/schema";
+import { confirmImpact } from "@/lib/impact/registry";
+import { LEAD_TRASH_KIND, leadTrashKey } from "@/lib/impact/kinds/lead-key";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 import { assertCustomerInScope, requireCapability } from "../access-control";
 import { APP_TIMEZONE, asDate } from "../business-date";
 import { err, ok, type Result } from "../result";
@@ -16,7 +19,11 @@ import { leadsLeftHandsets, leadsReturnedToHandsets } from "./lead-trash-sync";
  * visits, WhatsApp — so a lead deleted by mistake comes back whole. While it is
  * in the trash it is on no screen: every list, count, search, calling queue,
  * message rule and handset leaves it out (`deleted_at is not null`), and the
- * Admin Console's Trash is the one place it is listed.
+ * Admin Console's Trash is the one place it is listed. The one thing it does
+ * change is the open field tasks about it, which are closed so they leave the
+ * salesmen's lists and phones — and reopened by a restore (TRASHED_TASK_NOTE).
+ * What it moves is said first, in the impact modal (`impact/kinds/lead.ts`),
+ * and the act re-reads that report before it writes.
  *
  * Who: a manager or admin deletes (`lead.trash`, beside deactivating), and only
  * an administrator lists the trash or restores from it (`lead.restore`).
@@ -31,6 +38,18 @@ const iso = (v: unknown) => (v === null || v === undefined ? null : asDate(v)?.t
 /** How many leads one click may move — a page's worth, and a stop on accidents. */
 export const TRASH_BATCH_LIMIT = 200;
 
+/**
+ * WHAT CLOSES AN OPEN FIELD TASK WHEN ITS LEAD GOES TO THE TRASH, and what a
+ * restore looks for to reopen it. A task about a lead in the trash — a
+ * validation call, a sample to chase — sat on the salesman's list and phone
+ * asking for work on a shop no screen showed any more: a task moves to a
+ * handset by its status, and a trashed lead changed nothing about its tasks.
+ * They are closed now, with this note and the trash's own moment as
+ * `completed_at`, so a restore reopens exactly the ones the trash closed and
+ * never one somebody cancelled for a reason of their own.
+ */
+export const TRASHED_TASK_NOTE = "Closed when the lead was moved to the trash";
+
 /** One lead that was not moved, and why — named back so it can be dealt with. */
 export type TrashRefusal = { id: string; name: string; why: string };
 
@@ -43,10 +62,14 @@ export type TrashRefusal = { id: string; name: string; why: string };
  * billed is deactivated, never trashed), is already in the trash, or is not in
  * the caller's book.
  */
-export async function trashLeads(input: {
-  ids: string[];
-  reason: string;
-}): Promise<Result<{ moved: number; failed: TrashRefusal[] }>> {
+export async function trashLeads(
+  input: {
+    ids: string[];
+    reason: string;
+  },
+  /** What the impact modal hands back: the person saw what moves, and it is still true. */
+  confirmation?: ImpactConfirmation | null,
+): Promise<Result<{ moved: number; failed: TrashRefusal[] }>> {
   const ctx = await requireCapability("lead.trash");
   const ids = [...new Set(input.ids.map(String).filter(Boolean))];
   const reason = input.reason.trim();
@@ -54,6 +77,9 @@ export async function trashLeads(input: {
   if (ids.length > TRASH_BATCH_LIMIT) return err(`Delete at most ${TRASH_BATCH_LIMIT} leads at a time.`, "validation");
   if (reason.length < 3) return err("Say why — it is shown to whoever looks in the trash.", "validation");
   if (reason.length > 500) return err("Keep the reason under 500 characters.", "validation");
+  /* The batch is the record the person confirmed: the same ids, spelt the same way. */
+  const refusal = await confirmImpact(LEAD_TRASH_KIND, leadTrashKey(ids), confirmation);
+  if (refusal) return refusal;
 
   const rows = await db.select().from(customers).where(inArray(customers.id, ids));
   const failed: TrashRefusal[] = ids
@@ -109,6 +135,11 @@ export async function trashLeads(input: {
     );
     // Off the salesmen's phones too — on the next pull, not the next sign-in.
     await leadsLeftHandsets(tx, movingIds);
+    // And off their task lists: see TRASHED_TASK_NOTE.
+    await tx
+      .update(mbosTasks)
+      .set({ status: "cancelled", completionNote: TRASHED_TASK_NOTE, completedAt: now, updatedAt: now, updatedById: ctx.user.id })
+      .where(and(inArray(mbosTasks.customerId, movingIds), inArray(mbosTasks.status, ["open", "in_progress"])));
   });
 
   const head =
@@ -141,6 +172,19 @@ export async function restoreLeads(input: { ids: string[] }): Promise<Result<{ r
 
   const now = new Date();
   await db.transaction(async (tx) => {
+    /* The field tasks the trash closed come back open — matched on the trash's
+       own note and moment, read BEFORE `deleted_at` is cleared below. Their
+       `updated_at` moves, so the phones are sent them again. */
+    await tx.execute(sql`
+      update mbos_tasks t
+         set status = 'open', completion_note = null, completed_at = null, updated_at = ${now.toISOString()}, updated_by_id = ${ctx.user.id}
+        from customers c
+       where c.id = t.customer_id
+         and c.id in ${ids}
+         and t.status = 'cancelled'
+         and t.completion_note = ${TRASHED_TASK_NOTE}
+         and t.completed_at = c.deleted_at
+    `);
     // `updated_at` moves so every handset's next pull sends the lead back.
     await tx
       .update(customers)
