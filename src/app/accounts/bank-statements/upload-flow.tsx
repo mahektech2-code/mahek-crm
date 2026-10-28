@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { cx } from "@/components/ui/primitives";
 import { useToast } from "@/components/ui/toast";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { bankDiscardUpload, bankEditUploadRows, bankImportUpload, bankUploadStatus } from "@/lib/actions/bank-statements";
 import { addDays } from "@/lib/business-date";
 import type { CheckedRow } from "@/lib/engines/bank-statements";
@@ -392,6 +393,8 @@ function ReviewStep({
   const [edits, setEdits] = React.useState<Record<number, Edit>>({});
   const [editing, setEditing] = React.useState<{ line: number; field: keyof Edit } | null>(null);
   const [busy, setBusy] = React.useState(false);
+  /* Discarding deletes the PDF and the lines read from it: the impact modal says so first. */
+  const [discarding, setDiscarding] = React.useState<number | null>(null);
   const imported = detail.status === "imported";
   const rows = detail.rows.map((r) => ({ ...r, ...(edits[r.lineNo] ?? {}) })) as CheckedRow[];
   const check = detail.check;
@@ -433,14 +436,8 @@ function ReviewStep({
     }
   }
 
-  async function discard() {
-    setBusy(true);
-    const r = await toast.run(bankDiscardUpload(detail.id));
-    setBusy(false);
-    if (r.ok) {
-      onClose();
-      router.refresh();
-    }
+  function discard() {
+    setDiscarding(Date.now());
   }
 
   const cell = (r: CheckedRow, field: keyof Edit, shownText: React.ReactNode, cls?: string) => {
@@ -519,6 +516,23 @@ function ReviewStep({
               <Btn tone="danger" className="ml-auto" disabled={busy || !canRecord} onClick={discard}>
                 Discard upload
               </Btn>
+              {discarding !== null ? (
+                <ImpactDialog
+                  key={discarding}
+                  kind="accounts-bank-upload-discard"
+                  id={detail.id}
+                  onClose={() => setDiscarding(null)}
+                  onConfirm={async (confirmation) => {
+                    const r = await bankDiscardUpload(detail.id, confirmation);
+                    if (r.ok) {
+                      toast.push(r.message ?? "Upload discarded");
+                      onClose();
+                      router.refresh();
+                    }
+                    return r;
+                  }}
+                />
+              ) : null}
               {dirty ? (
                 <Btn disabled={busy} onClick={() => void saveEdits()}>
                   Check again

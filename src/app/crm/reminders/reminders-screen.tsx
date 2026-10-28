@@ -21,6 +21,7 @@ import {
 } from "@/components/crm/customer-search-field";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import {
   cancelReminder,
   completeReminder,
@@ -124,13 +125,16 @@ export function RemindersScreen({
   closedWithinDays: number;
 }) {
   const router = useRouter();
-  const { run } = useToast();
+  const { run, push } = useToast();
   const t = today();
 
   const [tab, setTab] = React.useState<Tab>("due");
   const [newOpen, setNewOpen] = React.useState(false);
   const [rescheduling, setRescheduling] = React.useState<Row | null>(null);
   const [dismissing, setDismissing] = React.useState<Row | null>(null);
+  /* The reason first, then the impact modal: the day it leaves on the Call
+     Log, and any order chasing it was holding back. Keyed per opening. */
+  const [confirmingDismiss, setConfirmingDismiss] = React.useState<{ id: string; reason: string; key: number } | null>(null);
 
   // displayStatus is derived on the server against the business day. Deriving
   // it again here from a browser clock is how the two end up disagreeing.
@@ -552,13 +556,27 @@ export function RemindersScreen({
         onClose={() => setDismissing(null)}
         onSubmit={async (reason) => {
           if (!dismissing) return;
-          const result = await run(cancelReminder(dismissing.id, reason));
-          if (result.ok) {
-            setDismissing(null);
-            router.refresh();
-          }
+          setConfirmingDismiss({ id: dismissing.id, reason, key: Date.now() });
+          setDismissing(null);
         }}
       />
+
+      {confirmingDismiss ? (
+        <ImpactDialog
+          key={confirmingDismiss.key}
+          kind="crm-reminder-dismiss"
+          id={confirmingDismiss.id}
+          onClose={() => setConfirmingDismiss(null)}
+          onConfirm={async (confirmation) => {
+            const r = await cancelReminder(confirmingDismiss.id, confirmingDismiss.reason, confirmation);
+            if (r.ok) {
+              push(r.message ?? "Reminder dismissed");
+              router.refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -608,7 +626,7 @@ function DismissModal({
               }
             }}
           >
-            Dismiss
+            Next: what this affects
           </Button>
         </>
       }

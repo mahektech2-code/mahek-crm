@@ -21,6 +21,7 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appAccess, customerContacts, customers, mbosDevices, mbosTasks, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
+import { impactReport } from "@/lib/impact/registry";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import {
   assignTaskCampaign,
@@ -271,8 +272,15 @@ describe("answering on the handset and reading it back", () => {
     assert.equal(list[0].salesmen, 2);
 
     /* Withdrawing takes what is open and leaves the answer standing. */
-    const closed = await closeTaskCampaign(campaignId);
-    assert.ok(closed.ok);
+    const report = await impactReport("sales-task-campaign-withdraw", campaignId);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    const leaving = report.data.items.find((i) => i.effect === "phones");
+    assert.equal(leaving?.count, 2, "the two open tasks are named as leaving the phones");
+    assert.ok(report.data.items.some((i) => i.effect === "kept" && /answer/.test(i.label)), "and the answer as staying");
+    const bare = await closeTaskCampaign(campaignId);
+    assert.equal(bare.ok, false, "no confirmation, nothing withdrawn");
+    const closed = await closeTaskCampaign(campaignId, { typed: report.data.confirmWord, fingerprint: report.data.fingerprint });
+    assert.ok(closed.ok, closed.ok ? "" : closed.error);
     assert.equal(closed.data.cancelled, 2);
     const [still] = await db.select().from(mbosTasks).where(eq(mbosTasks.id, first.id));
     assert.equal(still.status, "done");

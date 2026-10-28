@@ -19,6 +19,7 @@ import {
 import { FilterPills, Modal, RowMenu } from "@/components/ui/overlays";
 import { VoiceTextarea } from "@/components/ui/dictate";
 import { useToast } from "@/components/ui/toast";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { Icon } from "@/components/shell/icons";
 import { money, shortDateWithYear, stampDate } from "@/lib/format";
 import {
@@ -58,8 +59,10 @@ export function FocusCustomersPanel({
   today: string;
 }) {
   const router = useRouter();
-  const { run } = useToast();
+  const { run, push } = useToast();
   const [adding, setAdding] = React.useState(false);
+  /* The entry being taken off: the impact modal says the note goes and the customer stays. */
+  const [removing, setRemoving] = React.useState<string | null>(null);
   const { rows, months, span, limit } = data;
   const crossesYear = months[0].slice(0, 4) !== months[months.length - 1].slice(0, 4);
   const already = React.useMemo(() => new Set(rows.map((r) => r.id)), [rows]);
@@ -196,10 +199,7 @@ export function FocusCustomersPanel({
                           title: r.canRemove
                             ? undefined
                             : "Only the person who added it, or a manager, can take it off",
-                          onSelect: async () => {
-                            const result = await run(removeFocusCustomer({ entryId: r.entryId }));
-                            if (result.ok) router.refresh();
-                          },
+                          onSelect: () => setRemoving(r.entryId),
                         },
                       ]}
                     />
@@ -220,6 +220,23 @@ export function FocusCustomersPanel({
           />
         )}
       </Card>
+
+      {removing ? (
+        <ImpactDialog
+          key={removing}
+          kind="crm-focus-customer"
+          id={removing}
+          onClose={() => setRemoving(null)}
+          onConfirm={async (confirmation) => {
+            const r = await removeFocusCustomer({ entryId: removing }, confirmation);
+            if (r.ok) {
+              push(r.message ?? "Taken off focus customers.");
+              router.refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
 
       {adding ? (
         <AddFocusCustomerModal

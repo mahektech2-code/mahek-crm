@@ -1,7 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { fromThrown, type Result } from "@/lib/result";
+import { err, fromThrown, type Result } from "@/lib/result";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
+import { accountsDeskRefusal, CASH_FLOW } from "@/lib/impact/kinds/accounts";
 import {
   addPayoutInvoice,
   cancelPayout,
@@ -52,11 +55,34 @@ export async function markPayoutPaidAction(
 ) {
   return run(() => markPayoutPaid(payoutId, input));
 }
-export async function reopenPayoutAction(payoutId: string, reason: string) {
-  return run(() => reopenPayout(payoutId, reason));
+/*
+ * Reopening, cancelling and taking an invoice off are confirmed against what
+ * the person was shown — the payment record cleared, the calendar changed, the
+ * file gone. The desk's own question comes first, in the service's words; the
+ * reason is asked before the confirmation, as it always was.
+ */
+async function confirmed(
+  capability: "payment.confirm" | "payment.record",
+  kind: string,
+  id: string,
+  confirmation: ImpactConfirmation | undefined,
+): Promise<Result<never> | null> {
+  const closed = await accountsDeskRefusal("payouts", CASH_FLOW, capability);
+  if (closed) return err(closed, "not_permitted");
+  return confirmImpact(kind, id, confirmation);
 }
-export async function cancelPayoutAction(payoutId: string, reason: string) {
-  return run(() => cancelPayout(payoutId, reason));
+
+export async function reopenPayoutAction(payoutId: string, reason: string, confirmation?: ImpactConfirmation) {
+  return run(async () => {
+    const refusal = reason.trim() ? await confirmed("payment.confirm", "accounts-payout-reopen", payoutId, confirmation) : null;
+    return refusal ?? reopenPayout(payoutId, reason);
+  });
+}
+export async function cancelPayoutAction(payoutId: string, reason: string, confirmation?: ImpactConfirmation) {
+  return run(async () => {
+    const refusal = reason.trim() ? await confirmed("payment.confirm", "accounts-payout-cancel", payoutId, confirmation) : null;
+    return refusal ?? cancelPayout(payoutId, reason);
+  });
 }
 export async function updatePayoutNotesAction(payoutId: string, notes: string) {
   return run(() => updatePayoutNotes(payoutId, notes));
@@ -64,6 +90,6 @@ export async function updatePayoutNotesAction(payoutId: string, notes: string) {
 export async function addPayoutInvoiceAction(payoutId: string, invoice: InvoiceInput) {
   return run(() => addPayoutInvoice(payoutId, invoice));
 }
-export async function removePayoutInvoiceAction(invoiceId: string) {
-  return run(() => removePayoutInvoice(invoiceId));
+export async function removePayoutInvoiceAction(invoiceId: string, confirmation?: ImpactConfirmation) {
+  return run(async () => (await confirmed("payment.record", "accounts-payout-invoice", invoiceId, confirmation)) ?? removePayoutInvoice(invoiceId));
 }

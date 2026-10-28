@@ -105,6 +105,8 @@ import {
   type TimelineKind,
 } from "@/lib/queries";
 import { err, fromThrown, ok, okVoid, type Result } from "@/lib/result";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 import { initialsOf } from "@/lib/format";
 import { notifyUsers } from "../notify";
 import { gstinChangeClear, reviewVoidPatch } from "../lead-review-void";
@@ -405,8 +407,17 @@ export async function completeReminder(reminderId: string): Promise<Result> {
 export async function cancelReminder(
   reminderId: string,
   reason: string,
+  confirmation?: ImpactConfirmation,
 ): Promise<Result> {
   try {
+    /* Here and not in `dismissReminder`, which the service's own callers
+       share: a person dismissing a promise takes a day off somebody's Call
+       Log, and they saw which. The reason is asked first, as it always was. */
+    if (reason.trim()) {
+      await requireCapability("reminder.close");
+      const refusal = await confirmImpact("crm-reminder-dismiss", reminderId, confirmation);
+      if (refusal) return refusal;
+    }
     const r = await dismissReminder(reminderId, reason);
     refreshAll();
     return r;
@@ -1111,6 +1122,7 @@ export async function decideDeactivation(
   customerId: string,
   approve: boolean,
   reason?: string,
+  confirmation?: ImpactConfirmation,
 ): Promise<Result> {
   try {
     const ctx = await requireCapability("customer.deactivate");
@@ -1125,6 +1137,13 @@ export async function decideDeactivation(
         "A reason is required to deactivate a customer.",
         "validation",
       );
+    }
+    /* Approving is the half that moves other screens — the Call Log, Monthly
+       targets, the ERP's order form, the phones — so it is confirmed against
+       the picture the manager read. Rejecting a request changes nothing. */
+    if (approve) {
+      const refusal = await confirmImpact("crm-customer-deactivate", customerId, confirmation);
+      if (refusal) return refusal;
     }
 
     await db
@@ -1851,10 +1870,14 @@ export async function sendMessageAutomatic(messageId: string): Promise<Result> {
   }
 }
 
-export async function cancelMessage(messageId: string): Promise<Result> {
+export async function cancelMessage(messageId: string, confirmation?: ImpactConfirmation): Promise<Result> {
   try {
     const refused = await whatsappRefusal("send");
     if (refused) return refused;
+    /* A copied message may already be in the customer's chat; discarding it
+       says they were never contacted, so the person confirms that picture. */
+    const refusal = await confirmImpact("crm-wa-message", messageId, confirmation);
+    if (refusal) return refusal;
     const r = await cancelMessageService(messageId);
     refreshAll();
     return r;
@@ -1951,11 +1974,18 @@ export async function saveTemplate(input: {
 export async function archiveTemplate(
   templateId: string,
   archived: boolean,
+  confirmation?: ImpactConfirmation,
 ): Promise<Result> {
   try {
     const refused = await whatsappRefusal("send");
     if (refused) return refused;
     await requireCapability("whatsapp.template.write");
+    /* Archiving takes it off three pickers and leaves the automation rules
+       sending on it; restoring asks nothing. */
+    if (archived) {
+      const refusal = await confirmImpact("crm-wa-template-archive", templateId, confirmation);
+      if (refusal) return refusal;
+    }
     await db.execute(
       sql`update wa_templates set active = ${!archived}, updated_at = now() where id = ${templateId}`,
     );
@@ -2013,10 +2043,20 @@ export async function pauseRun(
   }
 }
 
-export async function clearRun(runId: string): Promise<Result> {
+export async function clearRun(runId: string, confirmation?: ImpactConfirmation): Promise<Result> {
   try {
     const refused = await whatsappRefusal("send");
     if (refused) return refused;
+    /* Ending a run part-way leaves its waiting customers unmessaged, and that
+       is confirmed against the list of them. Closing a finished run — "Start
+       another run" — leaves nobody behind and asks nothing. */
+    const [waiting] = await db.execute<{ n: number }>(
+      sql`select count(*)::int as n from wa_messages where run_id = ${runId} and status in ('prepared', 'copied')`,
+    );
+    if (Number(waiting?.n ?? 0) > 0) {
+      const refusal = await confirmImpact("crm-wa-run-end", runId, confirmation);
+      if (refusal) return refusal;
+    }
     const r = await setRunStatus(runId, "completed");
     refreshAll();
     return r;

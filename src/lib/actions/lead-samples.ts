@@ -37,6 +37,8 @@ import { today } from "@/lib/recompute";
 import { sampleEligibility } from "@/lib/services/lead-qualification-flow-service";
 import { err, fromThrown, ok, type Result } from "@/lib/result";
 import { writeTimelineEvent, MBOS_EVENT } from "@/lib/timeline";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 
 /* ---------------------------------------------------------------------------
  * §15 and §16 — a sample, from the asking to the answer.
@@ -1008,6 +1010,7 @@ export async function recordSampleFeedback(
 export async function cancelSample(
   sampleId: string,
   input: { reasonCode: string; remarks?: string | null },
+  confirmation?: ImpactConfirmation,
 ): Promise<Result<null>> {
   try {
     const reasonCode = (input?.reasonCode ?? "").trim();
@@ -1042,6 +1045,9 @@ export async function cancelSample(
     const ctx = await requireCapability("lead.work");
     const loaded = await loadForTransition(sampleId, "cancelled");
     if (!loaded.ok) return loaded.error;
+    /* The approval it refuses and the chases it closes are what the person saw. */
+    const refusal = await confirmImpact("lead-sample-cancel", sampleId, confirmation);
+    if (refusal) return refusal;
 
     const now = new Date();
     /* The wording comes off the CONFIGURED option that was matched above, so a

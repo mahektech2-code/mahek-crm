@@ -14,6 +14,12 @@ import {
   type RecordReceiptInput,
 } from "@/lib/services/receipt-service";
 import { fromThrown, type Result } from "@/lib/result";
+import { eq } from "drizzle-orm";
+import { db } from "@/db";
+import { paymentReceipts } from "@/db/schema";
+import { requireCapability } from "@/lib/access-control";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 
 /**
  * Thin over the service, which owns the capability checks. Whether a receipt
@@ -152,8 +158,29 @@ export async function confirmAsMatchAction(input: {
 export async function reverseReceiptAction(
   receiptId: string,
   reason: string,
+  confirmation?: ImpactConfirmation,
 ): Promise<Result> {
   try {
+    /*
+     * The person saw which bills are owed again and what the outstanding
+     * becomes — checked here rather than in `reverseReceipt`, which the bank
+     * reconcile's returned-cheque path also calls with its own door.
+     *
+     * Only a CONFIRMED receipt with a reason reaches the check: every other
+     * case is one the service already answers (no reason, already reversed,
+     * never counted), and answering those first keeps its words.
+     */
+    await requireCapability("payment.confirm");
+    if (reason.trim()) {
+      const [receipt] = await db
+        .select({ status: paymentReceipts.status })
+        .from(paymentReceipts)
+        .where(eq(paymentReceipts.id, receiptId));
+      if (receipt?.status === "confirmed") {
+        const refusal = await confirmImpact("accounts-receipt-reverse", receiptId, confirmation);
+        if (refusal) return refusal;
+      }
+    }
     const r = await reverseReceipt(receiptId, reason);
     if (r.ok) refresh();
     return r.ok ? { ok: true, data: undefined, message: r.message } : r;

@@ -4,19 +4,20 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/toast";
 import { Button } from "@/components/console/parts";
-import { ConfirmDialog } from "@/components/ui/overlays";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { closeTaskCampaign, remindTaskCampaign } from "@/lib/actions/sales";
 
 /**
- * Nudge and withdraw. Withdrawing asks first, because it takes work off
- * somebody's phone; reminding does not, because one bell per salesman is the
- * whole of what it does.
+ * Nudge and withdraw. Withdrawing asks first — through the impact modal, which
+ * names whose phones the open tasks leave and keeps the answers already given —
+ * because it takes work off somebody's phone; reminding does not, because one
+ * bell per salesman is the whole of what it does.
  */
 export function CampaignActions({ campaignId, open }: { campaignId: string; open: number }) {
   const router = useRouter();
   const toast = useToast();
   const [busy, setBusy] = React.useState(false);
-  const [confirming, setConfirming] = React.useState(false);
+  const [confirming, setConfirming] = React.useState<number | null>(null);
 
   async function remind() {
     setBusy(true);
@@ -28,16 +29,6 @@ export function CampaignActions({ campaignId, open }: { campaignId: string; open
     }
   }
 
-  async function withdraw() {
-    setBusy(true);
-    try {
-      const r = await closeTaskCampaign(campaignId);
-      toast.push(r.ok ? (r.message ?? "Withdrawn.") : r.error);
-      router.refresh();
-    } finally {
-      setBusy(false);
-    }
-  }
 
   return (
     <div className="flex gap-2">
@@ -55,19 +46,32 @@ export function CampaignActions({ campaignId, open }: { campaignId: string; open
         tone="danger"
         disabled={busy || open === 0}
         title={open === 0 ? "Nothing is still open." : undefined}
-        onClick={() => setConfirming(true)}
+        onClick={() => setConfirming(Date.now())}
       >
         Withdraw open tasks
       </Button>
-      <ConfirmDialog
-        open={confirming}
-        title="Withdraw the open tasks?"
-        body={`${open} task${open === 1 ? "" : "s"} still open will leave the salesmen's phones. Answers already given are kept.`}
-        confirmLabel="Withdraw"
-        destructive
-        onClose={() => setConfirming(false)}
-        onConfirm={withdraw}
-      />
+      {confirming !== null ? (
+        <ImpactDialog
+          key={confirming}
+          kind="sales-task-campaign-withdraw"
+          id={campaignId}
+          confirmLabel="Withdraw open tasks"
+          onClose={() => setConfirming(null)}
+          onConfirm={async (confirmation) => {
+            setBusy(true);
+            try {
+              const r = await closeTaskCampaign(campaignId, confirmation);
+              if (r.ok) {
+                toast.push(r.message ?? "Withdrawn.");
+                router.refresh();
+              }
+              return r;
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />
+      ) : null}
     </div>
   );
 }

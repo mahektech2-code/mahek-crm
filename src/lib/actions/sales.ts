@@ -86,6 +86,7 @@ import { announce } from "@/lib/services/announcement-service";
 import { mirrorToHrms, removeEverywhere } from "@/lib/services/holiday-calendar";
 import { confirmImpact } from "@/lib/impact/registry";
 import type { ImpactConfirmation } from "@/lib/impact/types";
+import { impactBatch } from "@/lib/impact/kinds/crm-keys";
 import {
   previewAudience,
   rebuildHolidayMembers,
@@ -938,7 +939,10 @@ export async function recordExpensePayout(input: z.input<typeof payoutSchema>): 
  * VOID a payout recorded wrongly. Never deleted and never edited: the
  * statement goes on listing it, struck through, with who voided it and why.
  */
-export async function voidExpensePayout(input: { payoutId: string; reason: string }): Promise<Result> {
+export async function voidExpensePayout(
+  input: { payoutId: string; reason: string },
+  confirmation?: ImpactConfirmation,
+): Promise<Result> {
   try {
     const user = await requireSalesAccess({ modules: ["sales.expenses"], manager: true });
     const reason = input.reason?.trim() ?? "";
@@ -956,6 +960,8 @@ export async function voidExpensePayout(input: { payoutId: string; reason: strin
     if (!row) return err("That payment no longer exists.", "not_found");
     if (await salesmanOutsideScope(row.userId)) return err(NOT_YOUR_TEAM, "not_permitted");
     if (row.voidedAt) return err("That payment was already voided.", "conflict");
+    const refusal = await confirmImpact("sales-expense-payout-void", row.id, confirmation);
+    if (refusal) return refusal;
 
     await db
       .update(mbosExpensePayouts)
@@ -2786,7 +2792,10 @@ export async function chaseLeadOwner(input: {
  * is about to stop being chased, and a manager who cannot say why in a
  * sentence is usually acting on a hunch rather than a decision.
  */
-export async function archiveLead(input: { leadId: string; reason: string }): Promise<Result> {
+export async function archiveLead(
+  input: { leadId: string; reason: string },
+  confirmation?: ImpactConfirmation,
+): Promise<Result> {
   try {
     const user = await requireSalesAccess({ modules: LEAD_MODULES });
 
@@ -2801,6 +2810,10 @@ export async function archiveLead(input: { leadId: string; reason: string }): Pr
       return err("That lead is no longer here, or not yours to change.", "not_found");
     }
     if (lead.leadArchived) return ok(undefined, "Already archived.");
+    /* Off the working list and the phones' Leads tab, its owner told — and
+       its tasks and planned stops left standing. The person saw which. */
+    const refusal = await confirmImpact("lead-archive", impactBatch([input.leadId]), confirmation);
+    if (refusal) return refusal;
 
     await db
       .update(customers)
@@ -3122,10 +3135,13 @@ export async function bulkReassignLeads(input: {
 }
 
 /** Filing a selection away, with the one reason that covers all of them. */
-export async function bulkArchiveLeads(input: {
-  leadIds: string[];
-  reason: string;
-}): Promise<Result<BulkOutcome>> {
+export async function bulkArchiveLeads(
+  input: {
+    leadIds: string[];
+    reason: string;
+  },
+  confirmation?: ImpactConfirmation,
+): Promise<Result<BulkOutcome>> {
   try {
     const user = await requireSalesAccess({ modules: LEAD_MODULES, manager: true });
 
@@ -3145,6 +3161,9 @@ export async function bulkArchiveLeads(input: {
     });
 
     if (filing.length) {
+      /* The same report the modal showed, for the same selection. */
+      const refusal = await confirmImpact("lead-archive", impactBatch(input.leadIds), confirmation);
+      if (refusal) return refusal;
       await db
         .update(customers)
         .set({ leadArchived: true, leadArchivedAt: new Date(), updatedAt: new Date() })
@@ -4053,10 +4072,13 @@ export async function updateDocument(input: {
  * tombstone: a handset applies upserts before tombstones, so one that slept
  * through both would receive the row and delete it in the same pull.
  */
-export async function setDocumentPublished(input: {
-  documentId: string;
-  published: boolean;
-}): Promise<Result> {
+export async function setDocumentPublished(
+  input: {
+    documentId: string;
+    published: boolean;
+  },
+  confirmation?: ImpactConfirmation,
+): Promise<Result> {
   try {
     const user = await requireSalesAccess(SALES_MANAGER("sales.documents"));
 
@@ -4067,6 +4089,11 @@ export async function setDocumentPublished(input: {
     if (!doc) return err("That document is not here any more.", "not_found");
     if (doc.active === input.published) {
       return ok(undefined, input.published ? "Already published." : "Already withdrawn.");
+    }
+    /* Withdrawing takes it off every phone it reached; publishing again asks nothing. */
+    if (!input.published) {
+      const refusal = await confirmImpact("sales-document-withdraw", input.documentId, confirmation);
+      if (refusal) return refusal;
     }
 
     await db
@@ -4192,10 +4219,13 @@ export async function publishCourse(input: {
   }
 }
 
-export async function setCoursePublished(input: {
-  courseId: string;
-  published: boolean;
-}): Promise<Result> {
+export async function setCoursePublished(
+  input: {
+    courseId: string;
+    published: boolean;
+  },
+  confirmation?: ImpactConfirmation,
+): Promise<Result> {
   try {
     const user = await requireSalesAccess(SALES_MANAGER("sales.knowledge"));
 
@@ -4206,6 +4236,10 @@ export async function setCoursePublished(input: {
     if (!course) return err("That course is not here any more.", "not_found");
     if (course.active === input.published) {
       return ok(undefined, input.published ? "Already published." : "Already withdrawn.");
+    }
+    if (!input.published) {
+      const refusal = await confirmImpact("sales-course-withdraw", input.courseId, confirmation);
+      if (refusal) return refusal;
     }
 
     await db
@@ -4699,10 +4733,23 @@ export async function aiSummariseCampaign(campaignId: string): Promise<Result<Ta
  * Withdraw what is still open. Answered tasks keep their answers — a reply
  * somebody gave is a fact about the shop whatever happens to the question.
  */
-export async function closeTaskCampaign(campaignId: string): Promise<Result<{ cancelled: number }>> {
+export async function closeTaskCampaign(
+  campaignId: string,
+  confirmation?: ImpactConfirmation,
+): Promise<Result<{ cancelled: number }>> {
   try {
     const user = await requireSalesAccess(SALES_MANAGER(TASK_MODULE));
     const scope = await managerScope();
+    /* Work leaving the salesmen's phones is confirmed against the list of it.
+       With nothing still open there is nothing to withdraw, and nothing asked. */
+    const [open] = await db.execute<{ n: number }>(sql`
+      select count(*)::int as n from mbos_tasks t
+       where t.campaign_id = ${campaignId} and t.status in ('open', 'in_progress')
+         ${onlyMine(scope, "t.assigned_to_user_id")}`);
+    if (Number(open?.n ?? 0) > 0) {
+      const refusal = await confirmImpact("sales-task-campaign-withdraw", campaignId, confirmation);
+      if (refusal) return refusal;
+    }
     const rows = (await db.execute<{ id: string }>(sql`
       update mbos_tasks t
          set status = 'cancelled', updated_at = now(), updated_by_id = ${user.id}

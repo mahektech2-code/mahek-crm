@@ -21,6 +21,7 @@ import {
 } from "@/db/schema";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { setTestUser } from "@/lib/auth";
+import { impactReport } from "@/lib/impact/registry";
 import {
   activityHistory,
   activityHistoryCounts,
@@ -284,8 +285,15 @@ describe("which shop a typed name is", () => {
     }
     assert.ok((await db.select().from(timelineEvents)).length >= 1);
 
-    const undone = await undoActivityShopDecision({ rowId: one.id });
-    assert.ok(undone.ok);
+    /* Taking it back says first which visits come off the shop's timeline. */
+    const report = await impactReport("sales-activity-shop-undo", one.id);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    const leaving = report.data.items.find((i) => i.effect === "deleted" && /timeline/.test(i.label));
+    assert.ok(leaving && leaving.count >= 1, report.data.items.map((i) => `${i.app}:${i.label}:${i.count}`).join(", "));
+    const bare = await undoActivityShopDecision({ rowId: one.id });
+    assert.equal(bare.ok, false, "no confirmation, nothing taken back");
+    const undone = await undoActivityShopDecision({ rowId: one.id }, { typed: report.data.confirmWord, fingerprint: report.data.fingerprint });
+    assert.ok(undone.ok, undone.ok ? "" : undone.error);
     for (const row of await rowsNamed("Sai Paint")) assert.equal(row.matchedCustomerId, null);
     assert.equal((await db.select().from(timelineEvents)).length, 0);
     setTestUser(null);
