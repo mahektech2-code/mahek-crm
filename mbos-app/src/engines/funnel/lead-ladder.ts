@@ -17,7 +17,7 @@
  * that answers "may we". One is the map and the other is the toll.
  */
 
-import type { LeadSalesType, LeadStage } from "../lead-labels";
+import type { LeadSalesType, LeadStage } from "./lead-labels";
 
 /**
  * The ladder a lead raised before any of this existed is on.

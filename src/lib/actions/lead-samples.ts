@@ -232,8 +232,10 @@ const requestSchema = z.object({
 });
 
 function isRealDate(ymd: string): boolean {
-  const d = new Date(`${ymd}T00:00:00Z`);
-  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === ymd;
+  /* Compared field by field in UTC: a calendar check, not a zone conversion. */
+  const [y, m, day] = ymd.split("-").map(Number);
+  const d = new Date(Date.UTC(y, m - 1, day));
+  return d.getUTCFullYear() === y && d.getUTCMonth() === m - 1 && d.getUTCDate() === day;
 }
 
 /**

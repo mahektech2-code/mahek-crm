@@ -1130,6 +1130,8 @@ export const VERBS: Record<string, string> = {
   communication: "sent material to",
   sent_back: "sent back",
   requested: "requested",
+  /* sample.not_requested: Step 1's "Sample requested?" answered No. */
+  not_requested: "decided against requesting",
   reviewed: "reviewed",
   cancelled: "cancelled",
   saved: "saved",
