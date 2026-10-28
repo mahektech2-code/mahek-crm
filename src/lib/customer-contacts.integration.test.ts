@@ -19,7 +19,7 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 
 import { db } from "@/db";
-import { appAccess, customerContacts, customers, users } from "@/db/schema";
+import { appAccess, customerContacts, customers, erpCustomerProfiles, sheetPartyRows, sheetSyncRuns, users } from "@/db/schema";
 import { setTestUser } from "@/lib/auth";
 import { setTestCustomerEditApp } from "@/lib/customer-edit-gate";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
@@ -35,6 +35,8 @@ import { updateCustomer } from "@/lib/actions/crm";
 import { reconcileContacts } from "@/lib/services/customer-contact-service";
 import { customerIdForNumber } from "@/lib/services/whatsapp-service";
 import { impactReport } from "@/lib/impact/registry";
+import { foldName } from "@/lib/customer-rename";
+import { seedErpCustomerProfiles } from "@/lib/erp/profile-seed";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -86,7 +88,7 @@ before(() => {
 beforeEach(async () => {
   await db.execute(sql`
     truncate table customer_contacts, audit_log, notifications, app_module_access, app_access,
-      customers, users, app_settings
+      customers, users, app_settings, erp_customer_profiles, sheet_party_rows, sheet_sync_runs
     restart identity cascade
   `);
   invalidateConfig();
@@ -296,6 +298,65 @@ describe("E — the full edit form", () => {
     assert.equal(e.data.canDecideCredit, true);
     const after = await record(c.id);
     assert.equal(after.potentialEstimatedById, admin.id);
+  });
+
+  test("the dispatch fields save onto the ERP profile, and the company name onto the customer", async () => {
+    const c = await makeCustomer();
+    const r = await updateCustomer(c.id, {
+      companyName: "Shree Traders Pvt Ltd",
+      transporter: "Jai Malhar Transport",
+      weightType: "Net",
+      partySegment: "Hardware",
+      grade: "A",
+      counterTypes: ["Paint", "Hardware", "Paint"],
+      standingInstructions: "Call before dispatch",
+      allocateEmail: "orders@shree.in",
+    });
+    assert.ok(r.ok, r.ok ? "" : r.error);
+    const e = await loadCustomerEditor(c.id);
+    assert.ok(e.ok);
+    const d = e.data.customer;
+    assert.equal(d.companyName, "Shree Traders Pvt Ltd");
+    assert.equal(d.transporter, "Jai Malhar Transport");
+    assert.equal(d.partySegment, "Hardware");
+    assert.deepEqual(d.counterTypes, ["Paint", "Hardware"], "a repeated counter is kept once");
+    assert.equal(d.standingInstructions, "Call before dispatch");
+    assert.ok((await updateCustomer(c.id, { transporter: "" })).ok);
+    const [p] = await db.select().from(erpCustomerProfiles).where(eq(erpCustomerProfiles.customerId, c.id));
+    assert.equal(p.transporter, null, "a blank clears it");
+    assert.equal(p.grade, "A", "a field not sent is not touched");
+    assert.equal(p.pendingActivation, false);
+  });
+
+  test("the Sales Party sheet fills blanks only, skips a shared email, and never holds a party for approval", async () => {
+    const typed = await makeCustomer({ name: "Typed Paints", email: "own@typed.in" });
+    const blank = await makeCustomer({ name: "Blank Paints" });
+    const shared = await makeCustomer({ name: "Shared Paints" });
+    await db.insert(erpCustomerProfiles).values({ customerId: typed.id, transporter: "Our Transport" });
+    const [run] = await db.insert(sheetSyncRuns).values({ id: id("ssr"), source: "party", spreadsheetId: "x", tabTitle: "Sales Party" }).returning();
+    const row = (n: number, name: string, over: Partial<typeof sheetPartyRows.$inferInsert>) => ({
+      id: id("spr"), syncId: run.id, rowNumber: n, partyName: name, partyKey: foldName(name), raw: {}, rowHash: String(n), ...over,
+    });
+    await db.insert(sheetPartyRows).values([
+      row(1, "Typed Paints", { email: "sheet@typed.in", transportDetail: "Sheet Transport", grade: "B", partyStatus: "Pending" }),
+      row(2, "Blank Paints", { email: "Blank @Paints .in", companyName: "Blank Paints LLP", transportDetail: "Sheet Transport", counterType: "Paint, Hardware", partyStatus: "Pending" }),
+      row(3, "Shared Paints", { email: "abc@gmail.com" }),
+      row(4, "Nobody A", { email: "abc@gmail.com" }),
+      row(5, "Nobody B", { email: "ABC@gmail.com" }),
+    ]);
+    const r = await seedErpCustomerProfiles();
+    assert.equal(r.matched, 3);
+    assert.equal((await record(typed.id)).email, "own@typed.in", "a typed email is never overwritten");
+    assert.equal((await record(blank.id)).email, "blank@paints.in", "spaces and case are cleaned");
+    assert.equal((await record(blank.id)).companyName, "Blank Paints LLP");
+    assert.equal((await record(shared.id)).email, null, "an address on three parties is a placeholder");
+    const profiles = new Map((await db.select().from(erpCustomerProfiles)).map((p) => [p.customerId, p]));
+    assert.equal(profiles.get(typed.id)!.transporter, "Our Transport", "a typed transporter stands");
+    assert.equal(profiles.get(typed.id)!.grade, "B", "a blank one is filled");
+    assert.deepEqual(profiles.get(blank.id)!.counterTypes, ["Paint", "Hardware"]);
+    assert.ok([...profiles.values()].every((p) => !p.pendingActivation), "the sheet's Pending never holds a party");
+    const again = await seedErpCustomerProfiles();
+    assert.equal(again.created + again.filled + again.customersFilled, 0, "a second run changes nothing");
   });
 
   test("a blank clears a field, and stopping supply needs a reason", async () => {

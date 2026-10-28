@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { customers } from "@/db/schema";
+import { customers, erpCustomerProfiles } from "@/db/schema";
 import { assertCustomerInScope, resolveScope } from "@/lib/access-control";
 import { canFor } from "@/lib/access-control";
 import { customerEditRefusal } from "@/lib/customer-edit-gate";
@@ -223,6 +223,15 @@ export type CustomerEditorData = {
     freightTerm: string | null;
     deliveryType: string | null;
     doNotContact: boolean;
+    companyName: string | null;
+    /* From the ERP profile; all blank where the customer has none yet. */
+    transporter: string | null;
+    weightType: string | null;
+    partySegment: string | null;
+    grade: string | null;
+    counterTypes: string[];
+    standingInstructions: string | null;
+    allocateEmail: string | null;
   };
   contacts: CustomerContact[];
   /** The business date, so the panel can say "birthday in 3 days". */
@@ -240,6 +249,7 @@ export async function loadCustomerEditor(customerId: string): Promise<Result<Cus
     if (!c) return err("That customer no longer exists.", "not_found");
     await assertCustomerInScope(c);
     const contacts = await listCustomerContacts(customerId);
+    const [p] = await db.select().from(erpCustomerProfiles).where(eq(erpCustomerProfiles.customerId, customerId));
     return ok({
       customer: {
         id: c.id,
@@ -274,6 +284,14 @@ export async function loadCustomerEditor(customerId: string): Promise<Result<Cus
         freightTerm: c.freightTerm,
         deliveryType: c.deliveryType,
         doNotContact: c.doNotContact,
+        companyName: c.companyName,
+        transporter: p?.transporter ?? null,
+        weightType: p?.weightType ?? null,
+        partySegment: p?.segment ?? null,
+        grade: p?.grade ?? null,
+        counterTypes: p?.counterTypes ?? [],
+        standingInstructions: p?.standingInstructions ?? null,
+        allocateEmail: p?.allocateEmail ?? null,
       },
       contacts,
       today: await today(),

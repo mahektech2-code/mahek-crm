@@ -17,6 +17,7 @@ import { notificationAppSql } from "@/lib/notification-app-sql";
 import {
   auditLog,
   customers,
+  erpCustomerProfiles,
   eodReports,
   notifications,
   users,
@@ -691,7 +692,19 @@ const customerDetailSchema = z.object({
   freightTerm: z.enum(["paid", "to_pay", ""]).optional(),
   deliveryType: blankable(60),
   doNotContact: z.boolean().optional(),
+  companyName: blankable(200),
+  /* The dispatch side, kept on `erp_customer_profiles` — the ERP reads them on every order and slip. */
+  transporter: blankable(200),
+  weightType: blankable(60),
+  partySegment: blankable(120),
+  grade: blankable(60),
+  counterTypes: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
+  standingInstructions: blankable(1000),
+  allocateEmail: blankable(200),
 });
+
+/** The detail fields that live on the ERP profile, not on `customers`. */
+const PROFILE_KEYS = ["transporter", "weightType", "partySegment", "grade", "counterTypes", "standingInstructions", "allocateEmail"] as const;
 
 export async function createCustomer(
   raw: Record<string, unknown>,
@@ -864,6 +877,7 @@ export async function updateCustomer(
     put("freightTerm", d.freightTerm === undefined ? undefined : d.freightTerm || null);
     put("deliveryType", blank(d.deliveryType));
     put("doNotContact", d.doNotContact);
+    put("companyName", blank(d.companyName));
     const whatsappDestAfter = d.whatsappDest ?? existing.whatsappDest;
     const groupAfter = d.whatsappGroupName !== undefined ? d.whatsappGroupName || null : existing.whatsappGroupName;
     if (whatsappDestAfter !== "personal" && !groupAfter) {
@@ -937,6 +951,25 @@ export async function updateCustomer(
       })
       .where(eq(customers.id, customerId));
 
+    /* The dispatch fields, on the ERP profile — created here if this customer has none yet. */
+    const profile: Partial<typeof erpCustomerProfiles.$inferInsert> = {};
+    if (d.transporter !== undefined) profile.transporter = d.transporter || null;
+    if (d.weightType !== undefined) profile.weightType = d.weightType || null;
+    if (d.partySegment !== undefined) profile.segment = d.partySegment || null;
+    if (d.grade !== undefined) profile.grade = d.grade || null;
+    if (d.counterTypes !== undefined) profile.counterTypes = [...new Set(d.counterTypes)];
+    if (d.standingInstructions !== undefined) profile.standingInstructions = d.standingInstructions || null;
+    if (d.allocateEmail !== undefined) profile.allocateEmail = d.allocateEmail || null;
+    const [profileBefore] = Object.keys(profile).length
+      ? await db.select().from(erpCustomerProfiles).where(eq(erpCustomerProfiles.customerId, customerId))
+      : [];
+    if (Object.keys(profile).length) {
+      await db
+        .insert(erpCustomerProfiles)
+        .values({ customerId, ...profile, updatedById: ctx.user.id })
+        .onConflictDoUpdate({ target: erpCustomerProfiles.customerId, set: { ...profile, updatedAt: new Date(), updatedById: ctx.user.id } });
+    }
+
     /* A phone or a contact person sent here — an older caller, the sales
        manager's edit — is folded into the contacts list rather than left as a
        column the panel does not know. */
@@ -956,7 +989,12 @@ export async function updateCustomer(
       entityType: "customer",
       entityId: customerId,
       beforeState: Object.fromEntries(
-        Object.keys(parsed.data).map((k) => [k, (existing as Record<string, unknown>)[k] ?? null]),
+        Object.keys(parsed.data).map((k) => [
+          k,
+          (PROFILE_KEYS as readonly string[]).includes(k)
+            ? ((profileBefore as Record<string, unknown> | undefined)?.[k === "partySegment" ? "segment" : k] ?? null)
+            : ((existing as Record<string, unknown>)[k] ?? null),
+        ]),
       ) as never,
       afterState: parsed.data as never,
     });

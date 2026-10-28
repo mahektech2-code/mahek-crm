@@ -257,6 +257,15 @@ export async function runNightly(triggeredById?: string): Promise<JobResult[]> {
     }, triggeredById),
   );
 
+  /* What the Sales Party sheet says about a party, onto its record wherever the record is still blank. */
+  results.push(
+    await run("erp-seed-profiles", async () => {
+      const { seedErpCustomerProfiles } = await import("./erp/profile-seed");
+      const r = await seedErpCustomerProfiles();
+      return { recordsAffected: r.created + r.filled + r.customersFilled, detail: `${r.matched} matched · ${r.created} profiles created · ${r.filled} filled · ${r.customersFilled} customers filled` };
+    }, triggeredById),
+  );
+
   /* Re-order levels first, so tonight's alert pass reads tonight's levels. */
   results.push(await run("erp-levels-plan", () => erpLevelsPlanStep({}), triggeredById));
 
@@ -1260,7 +1269,7 @@ export async function runJob(
             const r = await seedErpCustomerProfiles();
             return {
               recordsAffected: r.created + r.filled,
-              detail: `${r.matched} sheet parties matched · ${r.created} profiles created · ${r.filled} filled · ${r.refAdded} reference values added`,
+              detail: `${r.matched} sheet parties matched · ${r.created} profiles created · ${r.filled} filled · ${r.customersFilled} customers given an email or company name · ${r.refAdded} reference values added`,
             };
           },
           triggeredById,

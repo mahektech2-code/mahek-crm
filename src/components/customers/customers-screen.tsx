@@ -329,7 +329,7 @@ export function CustomersScreen({
   // The filter URLs need no base path — `navigate()` pushes a relative query
   // string, so the address it builds is already whichever list is open.
   const recordHref = (id: string) =>
-    isCrm ? `/crm/customers/${id}` : `/accounts/ledger?customer=${id}`;
+    isCrm ? `/crm/customers/${id}` : `/accounts/customers/${id}`;
   const { run, push } = useToast();
 
   const search = useSearchParams();
@@ -1239,9 +1239,10 @@ export function CustomersScreen({
                       <RowMenu
                         items={[
                           {
-                            label: isCrm ? "Open record" : "Open account",
+                            label: isCrm ? "Open record" : "Open customer",
                             onSelect: () => router.push(recordHref(r.id)),
                           },
+                          ...(isCrm ? [] : [{ label: "Open account", onSelect: () => router.push(`/accounts/ledger?customer=${r.id}`) }]),
                           /* Customer details are edited in Accounts only
                              (lib/customer-edit-gate.ts); the CRM reads them. */
                           ...(app === "accounts"
@@ -1654,134 +1655,12 @@ export function CustomersScreen({
         onClose={() => setEditing(null)}
         onSubmit={async (values) => {
           if (!editing) return false;
-
-          /*
-           * Two saves, because two different things can be in this form and
-           * only one of them is an ordinary edit.
-           *
-           * The ordinary fields go to `updateCustomer`. Moving an account
-           * between managers goes to `updateAccountManagers`, which is the one
-           * place that writes a history row, notifies both people and marks
-           * the account so the nightly sheet sync stops restating the old
-           * answer. Writing those columns here instead would be a second door
-           * to the same fact, and the unaudited one always wins in the end.
-           *
-           * The managers go FIRST. If that call is refused — no permission, a
-           * missing reason — nothing has been written yet, and the form comes
-           * back with everything still in it rather than half saved.
-           */
-          // Against the ASSIGNED person the form opened with, not the owner:
-          // comparing the owner would report "moved" on every save of a
-          // customer whose sales AM is anybody but the importer.
-          /*
-           * The SAME function the field opened with. If the two disagreed,
-           * opening a form and pressing Save would report a reassignment
-           * nobody made — and on this book that would clear the account
-           * holding the queue on every customer somebody edited.
-           */
-          const assignedBefore = openingSalesValue(
-            editing.kind,
-            editing,
-            backOfficePeople,
-          );
-          const salesPicked = String(values.assignedId ?? "");
-          const backOfficePicked = String(values.backOfficeAmId ?? "");
-          /*
-           * The sheet sentinel is not a value, it is "nothing was touched".
-           * Treating it as a move would send a string no column can hold, and
-           * would stamp the decision mark on an account nobody decided about.
-           */
-          const salesMoved =
-            salesPicked !== SHEET_NAME_VALUE && salesPicked !== assignedBefore;
-          const backOfficeMoved =
-            backOfficePicked !== SHEET_NAME_VALUE &&
-            backOfficePicked !== openingBackOfficeValue(editing, backOfficePeople);
-
-          if (salesMoved || backOfficeMoved) {
-            const backOfficeId = backOfficePicked;
-            /*
-             * Only the seat that MOVED is sent. This used to send both
-             * whenever either changed, which stamps the decision mark — the
-             * thing that stops the sheet restating the old answer — on a seat
-             * nobody touched.
-             *
-             * This form asks for one reason, so the seat that moved carries
-             * it. Where both moved it is the same answer twice, which is what
-             * the person typed; the bulk dialog asks per seat because there
-             * the two are usually different decisions.
-             */
-            const reasonCode = String(values.amReasonCode ?? "");
-            const moved = await run(
-              updateAccountManagers({
-                customerIds: [editing.id],
-                ...(salesMoved
-                  ? salesPicked.startsWith("emp:")
-                    ? {
-                        salesEmployeeId: salesPicked.slice(4),
-                        sales: { reasonCode },
-                      }
-                    : { salesAmId: salesPicked || null, sales: { reasonCode } }
-                  : {}),
-                ...(backOfficeMoved
-                  ? {
-                      backOffice: !backOfficeId
-                        ? ({ kind: "none" } as const)
-                        : backOfficeId.startsWith("emp:")
-                          ? ({
-                              kind: "employee",
-                              employeeId: backOfficeId.slice(4),
-                            } as const)
-                          : ({ kind: "user", userId: backOfficeId } as const),
-                      backOfficeReason: { reasonCode },
-                    }
-                  : {}),
-              }),
-            );
-            if (!moved.ok) return false;
-          }
-
-          /*
-           * The sales manager seat is its OWN action and its own capability
-           * — see `sales-manager.ts` on why folding it into
-           * `updateAccountManagers` would be wrong — so it is a separate call
-           * rather than a third branch above. Still gone first, for the same
-           * reason: a refusal here must not leave the ordinary fields half
-           * saved underneath it.
-           */
-          const salesManagerPicked = String(values.salesManagerId ?? "");
-          const salesManagerMoved =
-            salesManagerPicked !== SHEET_NAME_VALUE &&
-            salesManagerPicked !== openingSalesManagerValue(editing, salesManagerPeople);
-          if (salesManagerMoved) {
-            const smResult = await run(
-              assignSalesManager({
-                scope: { kind: "ids", customerIds: [editing.id] },
-                target: !salesManagerPicked
-                  ? { kind: "none" }
-                  : salesManagerPicked.startsWith("emp:")
-                    ? { kind: "employee", employeeId: salesManagerPicked.slice(4) }
-                    : { kind: "user", userId: salesManagerPicked },
-                reasonCode: String(values.amReasonCode ?? ""),
-              }),
-            );
-            if (!smResult.ok) return false;
-          }
-
-          // The manager columns and the reason are never sent as ordinary
-          // fields, whether or not they moved — `updateCustomer` has no
-          // business writing them.
-          const rest = Object.fromEntries(
-            Object.entries(values).filter(
-              ([k]) =>
-                !["assignedId", "backOfficeAmId", "salesManagerId", "amReasonCode"].includes(k),
-            ),
-          );
-          const result = await run(updateCustomer(editing.id, rest));
-          if (result.ok) {
+          const ok = await saveCustomerEdit(editing, values, { people: backOfficePeople, salesManagerPeople, run });
+          if (ok) {
             setEditing(null);
             router.refresh();
           }
-          return result.ok;
+          return ok;
         }}
       />
 
@@ -2154,10 +2033,156 @@ type CustomerFormProps = {
   onSubmit: (values: Record<string, unknown>) => Promise<boolean>;
 };
 
+/**
+ * The edit form's save, shared by the customers list and the Accounts
+ * customer page so the two cannot drift: the seats through their own audited
+ * actions first, then everything else through `updateCustomer`.
+ */
+type ToastRun = ReturnType<typeof useToast>["run"];
+
+export async function saveCustomerEdit(
+  editing: Row,
+  values: Record<string, unknown>,
+  {
+    people: backOfficePeople,
+    salesManagerPeople,
+    run,
+  }: {
+    people: Array<{ id: string; name: string }>;
+    salesManagerPeople: Array<{ id: string; name: string }>;
+    run: ToastRun;
+  },
+): Promise<boolean> {
+
+  /*
+   * Two saves, because two different things can be in this form and
+   * only one of them is an ordinary edit.
+   *
+   * The ordinary fields go to `updateCustomer`. Moving an account
+   * between managers goes to `updateAccountManagers`, which is the one
+   * place that writes a history row, notifies both people and marks
+   * the account so the nightly sheet sync stops restating the old
+   * answer. Writing those columns here instead would be a second door
+   * to the same fact, and the unaudited one always wins in the end.
+   *
+   * The managers go FIRST. If that call is refused — no permission, a
+   * missing reason — nothing has been written yet, and the form comes
+   * back with everything still in it rather than half saved.
+   */
+  // Against the ASSIGNED person the form opened with, not the owner:
+  // comparing the owner would report "moved" on every save of a
+  // customer whose sales AM is anybody but the importer.
+  /*
+   * The SAME function the field opened with. If the two disagreed,
+   * opening a form and pressing Save would report a reassignment
+   * nobody made — and on this book that would clear the account
+   * holding the queue on every customer somebody edited.
+   */
+  const assignedBefore = openingSalesValue(
+    editing.kind,
+    editing,
+    backOfficePeople,
+  );
+  const salesPicked = String(values.assignedId ?? "");
+  const backOfficePicked = String(values.backOfficeAmId ?? "");
+  /*
+   * The sheet sentinel is not a value, it is "nothing was touched".
+   * Treating it as a move would send a string no column can hold, and
+   * would stamp the decision mark on an account nobody decided about.
+   */
+  const salesMoved =
+    salesPicked !== SHEET_NAME_VALUE && salesPicked !== assignedBefore;
+  const backOfficeMoved =
+    backOfficePicked !== SHEET_NAME_VALUE &&
+    backOfficePicked !== openingBackOfficeValue(editing, backOfficePeople);
+
+  if (salesMoved || backOfficeMoved) {
+    const backOfficeId = backOfficePicked;
+    /*
+     * Only the seat that MOVED is sent. This used to send both
+     * whenever either changed, which stamps the decision mark — the
+     * thing that stops the sheet restating the old answer — on a seat
+     * nobody touched.
+     *
+     * This form asks for one reason, so the seat that moved carries
+     * it. Where both moved it is the same answer twice, which is what
+     * the person typed; the bulk dialog asks per seat because there
+     * the two are usually different decisions.
+     */
+    const reasonCode = String(values.amReasonCode ?? "");
+    const moved = await run(
+      updateAccountManagers({
+        customerIds: [editing.id],
+        ...(salesMoved
+          ? salesPicked.startsWith("emp:")
+            ? {
+                salesEmployeeId: salesPicked.slice(4),
+                sales: { reasonCode },
+              }
+            : { salesAmId: salesPicked || null, sales: { reasonCode } }
+          : {}),
+        ...(backOfficeMoved
+          ? {
+              backOffice: !backOfficeId
+                ? ({ kind: "none" } as const)
+                : backOfficeId.startsWith("emp:")
+                  ? ({
+                      kind: "employee",
+                      employeeId: backOfficeId.slice(4),
+                    } as const)
+                  : ({ kind: "user", userId: backOfficeId } as const),
+              backOfficeReason: { reasonCode },
+            }
+          : {}),
+      }),
+    );
+    if (!moved.ok) return false;
+  }
+
+  /*
+   * The sales manager seat is its OWN action and its own capability
+   * — see `sales-manager.ts` on why folding it into
+   * `updateAccountManagers` would be wrong — so it is a separate call
+   * rather than a third branch above. Still gone first, for the same
+   * reason: a refusal here must not leave the ordinary fields half
+   * saved underneath it.
+   */
+  const salesManagerPicked = String(values.salesManagerId ?? "");
+  const salesManagerMoved =
+    salesManagerPicked !== SHEET_NAME_VALUE &&
+    salesManagerPicked !== openingSalesManagerValue(editing, salesManagerPeople);
+  if (salesManagerMoved) {
+    const smResult = await run(
+      assignSalesManager({
+        scope: { kind: "ids", customerIds: [editing.id] },
+        target: !salesManagerPicked
+          ? { kind: "none" }
+          : salesManagerPicked.startsWith("emp:")
+            ? { kind: "employee", employeeId: salesManagerPicked.slice(4) }
+            : { kind: "user", userId: salesManagerPicked },
+        reasonCode: String(values.amReasonCode ?? ""),
+      }),
+    );
+    if (!smResult.ok) return false;
+  }
+
+  // The manager columns and the reason are never sent as ordinary
+  // fields, whether or not they moved — `updateCustomer` has no
+  // business writing them.
+  const rest = Object.fromEntries(
+    Object.entries(values).filter(
+      ([k]) =>
+        !["assignedId", "backOfficeAmId", "salesManagerId", "amReasonCode"].includes(k),
+    ),
+  );
+  const result = await run(updateCustomer(editing.id, rest));
+  return result.ok;
+}
+
 /** A tab not on screen stays mounted, so nothing typed in it is lost. */
 const HIDDEN: React.CSSProperties = { display: "none" };
 
-type EditTab = "details" | "contacts" | "address" | "commercial" | "managers";
+type EditTab = "details" | "contacts" | "address" | "commercial" | "dispatch" | "managers";
 
 /** The extra fields as the inputs hold them — strings, and two switches. */
 type DetailValues = {
@@ -2187,6 +2212,15 @@ type DetailValues = {
   freightTerm: string;
   deliveryType: string;
   doNotContact: boolean;
+  companyName: string;
+  transporter: string;
+  weightType: string;
+  partySegment: string;
+  grade: string;
+  /** Comma-separated in the box; a list on the wire. */
+  counterTypes: string;
+  standingInstructions: string;
+  allocateEmail: string;
 };
 
 const rupeesOf = (paise: number | null) => (paise === null ? "" : String(paise / 100));
@@ -2219,6 +2253,14 @@ export function detailValuesOf(c: CustomerEditorData["customer"]): DetailValues 
     freightTerm: c.freightTerm ?? "",
     deliveryType: c.deliveryType ?? "",
     doNotContact: c.doNotContact,
+    companyName: c.companyName ?? "",
+    transporter: c.transporter ?? "",
+    weightType: c.weightType ?? "",
+    partySegment: c.partySegment ?? "",
+    grade: c.grade ?? "",
+    counterTypes: c.counterTypes.join(", "),
+    standingInstructions: c.standingInstructions ?? "",
+    allocateEmail: c.allocateEmail ?? "",
   };
 }
 
@@ -2242,13 +2284,14 @@ export function detailChanges(before: DetailValues, after: DetailValues): Record
     if (k === "potentialMonthly") out.potentialMonthlyPaise = paiseOf(after.potentialMonthly);
     else if (k === "creditLimit") out.creditLimitPaise = paiseOf(after.creditLimit);
     else if (k === "visitFrequencyDays") out.visitFrequencyDays = after.visitFrequencyDays ? Number(after.visitFrequencyDays) : null;
+    else if (k === "counterTypes") out.counterTypes = after.counterTypes.split(",").map((x) => x.trim()).filter(Boolean);
     else out[k] = typeof after[k] === "string" ? (after[k] as string).trim() : after[k];
   }
   return out;
 }
 
 /** Keyed on the customer so editing one never leaks fields into the next. */
-function CustomerForm(props: CustomerFormProps) {
+export function CustomerForm(props: CustomerFormProps) {
   if (!props.open) return null;
   return <CustomerFormBody key={props.initial?.id ?? "new"} {...props} />;
 }
@@ -2441,6 +2484,7 @@ function CustomerFormBody({
           { key: "contacts", label: "Contacts", ...(editor ? { count: editor.contacts.length } : {}) },
           { key: "address", label: "Address & area" },
           { key: "commercial", label: "Commercial" },
+          { key: "dispatch", label: "Dispatch & ERP" },
           { key: "managers", label: "Account managers" },
         ]}
       />
@@ -2706,6 +2750,37 @@ function CustomerFormBody({
           Outstanding, the buying cycle and the last order are worked out from the ledger and are
           not edited here.
         </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3" style={tab === "dispatch" ? undefined : HIDDEN}>
+        {detail ? (
+          <>
+            <Field label="Company name" hint="The legal name, where it differs from the business name.">
+              <Input value={detail.companyName} onChange={setD("companyName")} />
+            </Field>
+            <Field label="Transporter" hint="The ERP fills an order's transporter from this.">
+              <Input value={detail.transporter} onChange={setD("transporter")} />
+            </Field>
+            <Field label="Weight type">
+              <Input value={detail.weightType} onChange={setD("weightType")} />
+            </Field>
+            <Field label="Party segment" hint="As the Sales Party sheet names it.">
+              <Input value={detail.partySegment} onChange={setD("partySegment")} />
+            </Field>
+            <Field label="Grade">
+              <Input value={detail.grade} onChange={setD("grade")} />
+            </Field>
+            <Field label="Counter types" hint="Separate with commas.">
+              <Input value={detail.counterTypes} onChange={setD("counterTypes")} />
+            </Field>
+            <Field label="Allocate email" className="col-span-2">
+              <Input value={detail.allocateEmail} onChange={setD("allocateEmail")} />
+            </Field>
+            <Field label="Standing instructions" hint="Read by dispatch on every order." className="col-span-2">
+              <Textarea rows={2} value={detail.standingInstructions} onChange={setD("standingInstructions")} />
+            </Field>
+          </>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-2 gap-3" style={tab === "managers" ? undefined : HIDDEN}>
