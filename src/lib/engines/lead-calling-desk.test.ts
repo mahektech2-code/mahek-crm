@@ -204,8 +204,8 @@ describe("Test B — Call 3 becomes available", () => {
   });
 });
 
-describe("Test C — lost after Call 3, and there is no Call 4", () => {
-  test("Call 3 finished with the COMPULSORY competitor still missing is lost", () => {
+describe("Test C — no count of calls closes a lead, and there is no last call", () => {
+  test("Call 3 finished with the COMPULSORY competitor still missing is NOT lost — Call 4 is owed", () => {
     assert.deepEqual(
       afterCall({
         callNumber: 3,
@@ -213,14 +213,14 @@ describe("Test C — lost after Call 3, and there is no Call 4", () => {
         merged: { monthlyLitres: 200, requiredProductId: "prd_1" },
         priorOutcomes: ["spoke_callback", "spoke_callback"],
       }),
-      { kind: "lost", cause: "information_missing" },
+      { kind: "next", callNumber: 4 },
     );
   });
 
   test("Call 3 finished with Product still blank is NOT lost — the lead stays a Suspect", () => {
     assert.deepEqual(
       afterCall({ callNumber: 3, outcome: "spoke_callback", merged: call1Answers, priorOutcomes: ["spoke_callback", "spoke_callback"] }),
-      { kind: "exhausted" },
+      { kind: "next", callNumber: 4 },
     );
   });
 
@@ -232,37 +232,37 @@ describe("Test C — lost after Call 3, and there is no Call 4", () => {
         merged: { competitor: "Asian" },
         priorOutcomes: ["spoke_callback", "spoke_callback"],
       }),
-      { kind: "exhausted" },
+      { kind: "next", callNumber: 4 },
     );
   });
 
-  test("an exhausted lead is not a ready one — Prospect still needs what is blank", () => {
-    assert.equal(phaseOf("suspect", { competitor: "Asian" }, 3), "exhausted");
+  test("a lead with three calls and blanks is still being called, not ready — Prospect still needs what is blank", () => {
+    assert.equal(phaseOf("suspect", { competitor: "Asian" }, 3), "call3");
     assert.equal(prospectProgress({ competitor: "Asian" }).complete, false);
   });
 
-  test("three calls nobody answered is a different loss from three that would not say", () => {
+  test("three calls nobody answered close nothing — the fourth is owed", () => {
     assert.deepEqual(
       afterCall({ callNumber: 3, outcome: "no_answer", merged: {}, priorOutcomes: ["no_answer", "no_answer"] }),
-      { kind: "lost", cause: "no_response" },
+      { kind: "next", callNumber: 4 },
     );
   });
 
-  test("no phase ever offers a call above the third", () => {
+  test("every call is offered, however many have been made — the phase never becomes exhausted", () => {
     assert.equal(MAX_QUALIFICATION_CALLS, 3);
-    assert.equal(phaseOf("suspect", call1Answers, 3), "exhausted");
-    assert.equal(phaseOf("suspect", call1Answers, 9), "exhausted");
+    assert.equal(phaseOf("suspect", call1Answers, 3), "call3");
+    assert.equal(phaseOf("suspect", call1Answers, 9), "call3");
     assert.equal(nextCallNumber("exhausted"), null);
     for (const n of [0, 1, 2, 3, 4, 10]) {
-      const next = nextCallNumber(phaseOf("suspect", {}, n));
-      assert.ok(next === null || next <= 3, `call ${next} offered at ${n} made`);
+      assert.equal(nextCallNumber(phaseOf("suspect", {}, n), n), n + 1, `call ${n + 1} is offered at ${n} made`);
     }
   });
 
-  test("a Call 3 can never be answered with a Call 4 disposition", () => {
+  test("a Call 3 is answered with a Call 4 unless the outcome itself ends the lead", () => {
     for (const outcome of CALL_OUTCOMES.map((o) => o.code)) {
       const d = afterCall({ callNumber: 3, outcome, merged: {}, priorOutcomes: [] });
-      assert.notEqual(d.kind, "next", `${outcome} on Call 3 asked for another call`);
+      const ends = outcome === "not_interested" || outcome === "wrong_number";
+      assert.equal(d.kind, ends ? "lost" : "next", `${outcome} on Call 3`);
     }
   });
 

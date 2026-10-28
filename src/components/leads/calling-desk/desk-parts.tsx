@@ -2,7 +2,6 @@ import * as React from "react";
 import { Badge, Card, cx, type Tone } from "@/components/ui/primitives";
 import { PHASE_LABEL, PHASE_TONE } from "@/lib/calling-desk-labels";
 import {
-  MAX_QUALIFICATION_CALLS,
   nextCallNumber,
   type CallOutcome,
   type DeskPhase,
@@ -97,13 +96,13 @@ export function CallMeter({
   outcomes: readonly CallOutcome[];
   size?: "sm" | "lg";
 }) {
-  const next = nextCallNumber(phase);
   const made = outcomes.length;
+  const next = nextCallNumber(phase, made);
   const lg = size === "lg";
   return (
     <span
       className="inline-flex items-center gap-2"
-      title={`${made} of ${MAX_QUALIFICATION_CALLS} call attempts used`}
+      title={`${made} call ${made === 1 ? "attempt" : "attempts"} made`}
     >
       <span className="inline-flex items-center gap-1">
         {[0, 1, 2].map((i) => {
@@ -128,7 +127,7 @@ export function CallMeter({
         })}
       </span>
       <span className={cx("font-medium text-ink", lg ? "text-sm" : "text-[12px]")}>
-        {next !== null ? `Call ${next} / ${MAX_QUALIFICATION_CALLS}` : `${made} / ${MAX_QUALIFICATION_CALLS} used`}
+        {next !== null ? `Call ${next}` : `${made} made`}
       </span>
     </span>
   );

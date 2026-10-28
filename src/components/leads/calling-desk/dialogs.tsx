@@ -14,7 +14,7 @@ import {
   afterCall,
   DESK_FIELDS,
   DESK_LOST_REASONS,
-  MAX_QUALIFICATION_CALLS,
+  MIN_CALL_REMARK,
   isAnswered,
   isWorkingStage,
   lostCodeForCause,
@@ -353,7 +353,8 @@ export function LogCallDialog({
   const q = questionsForCall(lead.values, n);
   const spoke = outcome === "spoke_collected" || outcome === "spoke_callback";
   const endsLead = outcome === "not_interested" || outcome === "wrong_number";
-  const exhausted = n >= MAX_QUALIFICATION_CALLS;
+  /* No call is the last one: a lead is only ever closed by a decision. */
+  const exhausted = false;
 
   /* What has been typed on this call, read the way the server reads it, so the
      foot can say what saving is about to do. */
@@ -406,6 +407,10 @@ export function LogCallDialog({
 
   async function save() {
     if (!outcome) return;
+    if (notes.trim().length < MIN_CALL_REMARK) {
+      setError("Write a short remark about the call — even a no answer needs one.");
+      return;
+    }
     if (outcome === "no_answer" && !noAnswerReason) {
       setError("Say what kind of no answer it was.");
       return;
@@ -467,8 +472,7 @@ export function LogCallDialog({
       title={
         <div>
           <div className="flex items-center gap-2">
-            Call {n} of {MAX_QUALIFICATION_CALLS}
-            {exhausted ? <Badge tone="danger">Last call</Badge> : null}
+            Call {n}
           </div>
           <div className="mt-0.5 text-[13px] font-normal text-muted">
             {[lead.name, lead.contactPerson, lead.phone].filter(Boolean).join(" · ")}
@@ -487,7 +491,7 @@ export function LogCallDialog({
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" disabled={!outcome || busy} onClick={() => void save()}>
+          <Button variant="primary" disabled={!outcome || busy || notes.trim().length < MIN_CALL_REMARK} title={outcome && notes.trim().length < MIN_CALL_REMARK ? "Write a short remark about the call first." : undefined} onClick={() => void save()}>
             {busy ? "Saving…" : willBeLost ? "Save call and mark Lost" : "Save call"}
           </Button>
         </>
@@ -590,9 +594,9 @@ export function LogCallDialog({
         {outcome ? (
           <div>
             <label htmlFor="call-notes" className="mb-1.5 block text-[13px] font-medium text-ink">
-              Notes
+              Remarks <span className="font-normal text-danger">(required)</span>
             </label>
-            <Textarea id="call-notes" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} />
+            <Textarea id="call-notes" rows={3} value={notes} placeholder="What happened on this call — even “phone switched off” will do." onChange={(e) => setNotes(e.target.value)} />
           </div>
         ) : null}
 
@@ -623,7 +627,7 @@ export function LogCallDialog({
           </div>
         ) : willBeExhausted ? (
           <div className="rounded-[8px] border border-warn-line bg-warn-soft px-4 py-3 text-[13px] text-warn-ink">
-            Last of {MAX_QUALIFICATION_CALLS} calls. Not yet captured: {progress.missing.map((f) => f.label).join(", ")}.
+            Not yet captured: {progress.missing.map((f) => f.label).join(", ")}.
           </div>
         ) : needsNext ? (
           <div>
@@ -715,7 +719,7 @@ export function MessageDialog({
         <div>
           <div>Log a message</div>
           <div className="mt-0.5 text-[13px] font-normal text-muted">
-            {lead.name} · uses no call attempt ({lead.callCount} of {MAX_QUALIFICATION_CALLS} used)
+            {lead.name} · uses no call attempt ({lead.callCount} made)
           </div>
         </div>
       }
@@ -764,7 +768,7 @@ export function NextActionDialog({
   onClose: () => void;
 }) {
   const done = useDone();
-  const upcoming = Math.min(lead.callCount + 1, MAX_QUALIFICATION_CALLS);
+  const upcoming = lead.callCount + 1;
   const current = lead.nextAction;
   const [kind, setKind] = React.useState<NextActionKind>(nextActionKindOf(current?.text) === "message" ? "message" : "call");
   const [text, setText] = React.useState(current?.text ?? `Call ${upcoming} — the remaining questions`);
@@ -808,7 +812,7 @@ export function NextActionDialog({
     >
       <FieldLabel label="Type" className="mb-2.5">
         <Select value={kind} onChange={(e) => setKind(e.target.value as NextActionKind)} className="w-full">
-          <option value="call">Phone call — uses call {upcoming} / {MAX_QUALIFICATION_CALLS}</option>
+          <option value="call">Phone call — uses call {upcoming}</option>
           <option value="message">Message — uses no call</option>
         </Select>
       </FieldLabel>

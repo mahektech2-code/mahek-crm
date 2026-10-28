@@ -27,6 +27,7 @@ import {
   CALL_MARK,
   DESK_LOST_REASONS,
   MAX_QUALIFICATION_CALLS,
+  MIN_CALL_REMARK,
   OUTCOME_LABEL,
   afterCall,
   crmOutcomeFor,
@@ -279,6 +280,15 @@ export async function logQualificationCall(
     if (!isCallOutcome(p.outcome)) return err("Pick what came of the call.", "validation");
     const outcome: CallOutcome = p.outcome;
 
+    /* EVERY CALL SAYS WHAT HAPPENED, a no answer included: a short remark is
+       enough, and none is not. Asked on the server — the dialog only stops
+       offering the button. */
+    if ((p.notes ?? "").trim().length < MIN_CALL_REMARK) {
+      return err("Write a short remark about the call — even a no answer needs one.", "validation", [
+        { field: "notes", message: "A short remark is required." },
+      ]);
+    }
+
     const ctx = await requireCapability("lead.work");
     const barred = await deskRefusal(ctx.user.id);
     if (barred) return barred;
@@ -390,16 +400,6 @@ export async function logQualificationCall(
         .map((r) => (r.detail as Record<string, string> | null)?.qualOutcome)
         .filter(isCallOutcome);
 
-      /* THERE IS NO CALL 4. Refused by the count rather than trusted to the
-         screen, which stops offering the button but is not the rule. */
-      if (prior.length >= MAX_QUALIFICATION_CALLS) {
-        throw new Refusal(
-          err(
-            `Three calls have already been made on this lead. There is no Call ${MAX_QUALIFICATION_CALLS + 1} — close it as lost, or request Prospect if the answers are in.`,
-            "rule_violation",
-          ),
-        );
-      }
       if (prospectProgress(values).complete) {
         throw new Refusal(
           err(
@@ -565,7 +565,7 @@ export async function logQualificationCall(
         occurredAt: now,
         actorUserId: ctx.user.id,
         summary:
-          `Qualification call ${callNumber} of ${MAX_QUALIFICATION_CALLS} — ${outcomeText}` +
+          `Qualification call ${callNumber} — ${outcomeText}` +
           (appliedKeys.length ? ` · ${appliedKeys.map((k) => deskField(k).label).join(", ")}` : "") +
           (p.notes ? ` · ${p.notes}` : ""),
       });
@@ -620,14 +620,14 @@ export async function logQualificationCall(
       (disposition.kind === "lost" ? lostNote(disposition.cause) : "");
     const message =
       disposition.kind === "ready"
-        ? `Call ${callNumber} / ${MAX_QUALIFICATION_CALLS} saved. Everything a Prospect needs is in — Ready for Prospect.`
+        ? `Call ${callNumber} saved. Everything a Prospect needs is in — Ready for Prospect.`
         : disposition.kind === "exhausted"
-          ? `Call ${callNumber} / ${MAX_QUALIFICATION_CALLS} saved. Not yet captured: ${notCaptured}. The lead stays a Suspect — add them on the record when known, or close it.`
+          ? `Call ${callNumber} saved. Not yet captured: ${notCaptured}. The lead stays a Suspect — add them on the record when known, or close it.`
           : disposition.kind === "lost"
             ? closeFailed
-              ? `Call ${callNumber} / ${MAX_QUALIFICATION_CALLS} saved, but the lead could not be closed: ${closeFailed}`
+              ? `Call ${callNumber} saved, but the lead could not be closed: ${closeFailed}`
               : `${lostLabel} — lead marked Lost.`
-            : `Call ${callNumber} / ${MAX_QUALIFICATION_CALLS} saved. ${
+            : `Call ${callNumber} saved. ${
               (p.next?.kind ?? "call") === "call" ? `Call ${disposition.callNumber}` : "Message"
             } due ${shortDay(nextDate)}.`;
 

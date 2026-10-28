@@ -10,7 +10,7 @@
  * ------------------------------------------------------------------------- */
 
 import type { DeskPhase, LadderKey } from "./engines/lead-calling-desk";
-import { MAX_QUALIFICATION_CALLS, nextCallNumber } from "./engines/lead-calling-desk";
+import { nextCallNumber } from "./engines/lead-calling-desk";
 import { calendarDate } from "./business-date";
 import { shortDate, stamp } from "./format";
 
@@ -210,6 +210,8 @@ export type StageStatusFacts = {
   qualReview?: "verified" | "incomplete" | "clarification" | null;
   /** The Telecaller has answered everything they own. */
   qualComplete?: boolean;
+  /** Qualification calls made so far — names the call that is owed. */
+  callCount?: number;
 };
 
 /**
@@ -228,7 +230,7 @@ export function stageStatus(f: StageStatusFacts): { text: string; who: string | 
     case "call2":
     case "call3":
       return {
-        text: `Calls in progress — Call ${nextCallNumber(f.phase)} of ${MAX_QUALIFICATION_CALLS} to make`,
+        text: `Calls in progress — Call ${nextCallNumber(f.phase, f.callCount ?? 0)} to make`,
         who: desk,
       };
     case "exhausted":

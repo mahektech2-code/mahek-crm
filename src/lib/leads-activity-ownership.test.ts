@@ -21,9 +21,14 @@ import { today } from "@/lib/recompute";
 import { captureLead } from "@/lib/actions/lead-intake";
 import { reassignLead } from "@/lib/actions/sales";
 import { leadActivityHistoryAction, logLeadCall, logLeadVisit, visitSalesmenAction } from "@/lib/actions/lead-activity";
-import { logQualificationCall } from "@/lib/actions/lead-calling-desk";
+import { logQualificationCall as realLogQualificationCall } from "@/lib/actions/lead-calling-desk";
 import { workableLeadIds } from "@/lib/services/lead-reach-service";
 import { DESK_MODULE } from "@/lib/services/lead-desk-assignment-service";
+
+/* Every call needs a remark now; the tests that are not about that supply one. */
+const logQualificationCall = (i: Parameters<typeof realLogQualificationCall>[0]) =>
+  realLogQualificationCall({ notes: "Spoke to the contact.", ...i });
+
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const key = () => randomUUID().replaceAll("-", "").slice(0, 20);

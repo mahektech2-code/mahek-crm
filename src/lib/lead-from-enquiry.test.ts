@@ -42,12 +42,17 @@ import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { captureLead } from "@/lib/actions/lead-intake";
 import { leadFromEnquiryContextAction } from "@/lib/actions/enquiries";
 import { assignDeskLead } from "@/lib/actions/lead-desk-assignment";
-import { logQualificationCall } from "@/lib/actions/lead-calling-desk";
+import { logQualificationCall as realLogQualificationCall } from "@/lib/actions/lead-calling-desk";
 import { bandOf } from "@/lib/engines/lead-ladder";
 import { modulesForApp } from "@/lib/modules";
 import { createEnquiryFromWebsite } from "@/lib/services/enquiry-service";
 import { callingDesk, deskLeadRecord } from "@/lib/services/lead-calling-desk-service";
 import { DESK_MODULE, deskAssigners, deskHolders } from "@/lib/services/lead-desk-assignment-service";
+
+/* Every call needs a remark now; the tests that are not about that supply one. */
+const logQualificationCall = (i: Parameters<typeof realLogQualificationCall>[0]) =>
+  realLogQualificationCall({ notes: "Spoke to the contact.", ...i });
+
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 const DAY = "2026-09-24";

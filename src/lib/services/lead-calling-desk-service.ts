@@ -186,7 +186,7 @@ function toRow(r: RawRow, sources: readonly { code: string; label: string }[] = 
     callCount: Number(r.callCount),
     callOutcomes: (r.callOutcomes ?? []).filter(isCallOutcome),
     phase,
-    nextCall: nextCallNumber(phase),
+    nextCall: nextCallNumber(phase, Number(r.callCount)),
     answered: progress.done,
     needed: progress.total,
     ladderKey:

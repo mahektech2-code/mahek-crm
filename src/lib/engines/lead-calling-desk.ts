@@ -42,6 +42,9 @@ export const CALL_MARK = "qualCall";
 /** There is no fourth call. The number is the rule, so it is named once. */
 export const MAX_QUALIFICATION_CALLS = 3;
 
+/** The shortest remark that counts as saying something about a call. */
+export const MIN_CALL_REMARK = 3;
+
 export type DeskFieldKey =
   | "customerType"
   | "decisionMaker"
@@ -265,8 +268,10 @@ export function phaseOf(
     /* Ready wins over the call count: a lead whose last answer came on Call 3 is
        ready, not exhausted. Ready means what the Prospect gate needs is in. */
     if (prospectProgress(values).complete) return "ready";
-    if (callCount >= MAX_QUALIFICATION_CALLS) return "exhausted";
-    return (["call1", "call2", "call3"] as const)[Math.max(0, callCount)];
+    /* THERE IS NO LAST CALL. Calls 1 and 2 are their own phases; "call3" is
+       "Call 3 and every call after it", so a lead that has had three calls and
+       still lacks answers is simply owed another, never closed for it. */
+    return (["call1", "call2", "call3"] as const)[Math.min(Math.max(0, callCount), 2)];
   }
   return (stage && STAGE_PHASE[stage]) || "beyond";
 }
@@ -281,9 +286,18 @@ export function isPending(phase: DeskPhase): boolean {
   return phase === "requested" || phase === "followup";
 }
 
-/** The call a lead is owed, or null where none is. Never above three. */
-export function nextCallNumber(phase: DeskPhase): 1 | 2 | 3 | null {
-  return phase === "call1" ? 1 : phase === "call2" ? 2 : phase === "call3" ? 3 : null;
+/**
+ * The call a lead is owed, or null where none is. From the third onwards the
+ * phase no longer says which, so the number of calls already made does.
+ */
+export function nextCallNumber(phase: DeskPhase, callCount = 0): number | null {
+  return phase === "call1"
+    ? 1
+    : phase === "call2"
+      ? 2
+      : phase === "call3"
+        ? Math.max(3, callCount + 1)
+        : null;
 }
 
 /** The rung the ladder draws a lead on. Every phase before Prospect is Suspect. */
@@ -442,9 +456,9 @@ export type LostCause = "wrong_number" | "not_interested" | "no_response" | "inf
 export type CallDisposition =
   | { kind: "ready" }
   | { kind: "lost"; cause: LostCause }
-  /** Three calls made, nothing compulsory missing, not yet ready for Prospect. Stays a Suspect. */
+  /** Retired: no call count ends the calling any more. Kept so stored results still read. */
   | { kind: "exhausted" }
-  | { kind: "next"; callNumber: 2 | 3 };
+  | { kind: "next"; callNumber: number };
 
 /**
  * What a call that has just been made does to the lead.
@@ -477,12 +491,11 @@ export function afterCall(input: {
 
   if (prospectProgress(merged).complete) return { kind: "ready" };
 
-  if (callNumber >= MAX_QUALIFICATION_CALLS) {
-    if (requiredProgress(merged).complete) return { kind: "exhausted" };
-    const everSpoke = spoke(outcome) || priorOutcomes.some(spoke);
-    return { kind: "lost", cause: everSpoke ? "information_missing" : "no_response" };
-  }
-  return { kind: "next", callNumber: (callNumber + 1) as 2 | 3 };
+  /* No count of calls closes a lead. After the third the next call is simply
+     owed, asking what is still missing; Lost is only ever somebody's decision
+     (an explicit outcome above, or closing the lead by hand). */
+  void priorOutcomes;
+  return { kind: "next", callNumber: callNumber + 1 };
 }
 
 /** Words for the loss, written onto the transition so the reason is readable. */
