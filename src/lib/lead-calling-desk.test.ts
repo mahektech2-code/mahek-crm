@@ -266,7 +266,7 @@ describe("Test R — Request Prospect is a request, not a Prospect", () => {
 
     const bells = await db.select().from(notifications).where(eq(notifications.userId, manager.id));
     assert.equal(bells.length, 1);
-    assert.match(bells[0].href ?? "", /\/verify$/);
+    assert.match(bells[0].href ?? "", /\/review$/);
   });
 
   test("while it is with the manager the desk cannot ring, re-ask, message-close or close it", async () => {
