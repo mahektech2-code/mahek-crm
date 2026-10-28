@@ -428,6 +428,10 @@ export type ListSpec = {
    * line as before.
    */
   groupHead?: string[];
+  /** Header facts whose VALUE is drawn bold — the ones somebody reads a group by. */
+  groupHeadStrong?: string[];
+  /** A header fact left out when it says the same as another: { delivery: "billing" }. */
+  groupHeadUnlessSame?: Record<string, string>;
   chips?: string;
   /**
    * Columns offered as filters on the toolbar: one "All …" select each, its

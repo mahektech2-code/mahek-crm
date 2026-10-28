@@ -1223,6 +1223,8 @@ function orderList(scope: Scope): ScreenModule {
           hidden,
           groups: labels ? ["transporter"] : ["orderNo"],
           groupHead: labels ? undefined : ["date", "billing", "delivery", "transporter", "city", "godown"],
+          groupHeadStrong: ["delivery", "transporter", "city"],
+          groupHeadUnlessSame: { delivery: "billing" },
           groupSel: !labels,
           /* An order's weight, or a transporter's on the Stickers tab — what
              the lorry is booked by. A line whose SKU has no weight in the
