@@ -381,6 +381,7 @@ export function SortableTh({
   active,
   direction,
   onSort,
+  after,
 }: {
   children: React.ReactNode;
   align?: "left" | "right";
@@ -390,9 +391,10 @@ export function SortableTh({
   /** The direction to show — only meaningful while `active`. */
   direction: SortDirection;
   onSort: () => void;
+  /** A control drawn beside the sort button — a column's filter. */
+  after?: React.ReactNode;
 }) {
-  return (
-    <Th align={align} className={className} aria-sort={active ? (direction === "asc" ? "ascending" : "descending") : undefined}>
+  const sortButton = (
       <button
         type="button"
         onClick={onSort}
@@ -416,6 +418,17 @@ export function SortableTh({
           )}
         />
       </button>
+  );
+  return (
+    <Th align={align} className={className} aria-sort={active ? (direction === "asc" ? "ascending" : "descending") : undefined}>
+      {after ? (
+        <span className={cx("flex min-w-0 items-center gap-0.5", align === "right" ? "justify-end" : undefined)}>
+          {sortButton}
+          {after}
+        </span>
+      ) : (
+        sortButton
+      )}
     </Th>
   );
 }

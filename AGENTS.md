@@ -2530,6 +2530,18 @@ scan, refused ones included, is a row in `erp_dispatch_scans`. Scanning works
 on a Ready line; the allocation may change by scan before dispatch, never
 after.
 
+**THE DISPATCH REGISTER IS WHAT HAS NOT LEFT, AND EVERY COLUMN FILTERS LIKE
+EXCEL.** Sales → Dispatch register (`dispatchRegister` in `screens/sales.ts`)
+is every line Under Process or Ready and not dispatch-verified
+(`isRegisterLine`) — billing party, delivery party, product, weight, transport,
+dispatch day — grouped by order with its boxes and kg. It is read-only; the
+work stays on Orders and the desk. Its filters are `ListSpec.colFilters`, which
+any list can opt into: a funnel on every heading opens the column's values,
+counted over what the OTHER column filters leave, or a min/max on a number
+column (`ListQuery.cf`, URL key `cf`, `passColFilter` / `colFacetsOf` in
+`list-query.ts`, `_ui/column-filter.tsx`). They are applied on the server
+before the page is cut, so they reach every page and the export.
+
 **READY MEANS THE STOCK IS ON THE SHELF, AND THE SCAN ALLOCATES IT.** Ready
 (the button, the bulk action and the edit form alike) is refused unless the
 line's godown holds the boxes — or, for a loose SKU, the cans — it still needs,

@@ -100,6 +100,14 @@ It then marks each scanned box **dispatched** with the date, the lines Verified 
 The **box label** (50 mm, with its QR) is made by the box-id system and is what the desk scans. The **dispatch sticker** (80 mm) carries the delivery and billing party, the order, the product, quantity, weight, lot size, remark and transporter — never a lot or box code — and is printed as soon as the line is under process or ready, before billing. The two are never combined.
 </Rule>
 
+## The register lists what has not left
+
+<Rule title="Under Process or Ready, and not dispatch-verified">
+The Dispatch register is every order line whose status is Under Process or Ready and which has not been dispatch-verified. A billed line stays on it until it is verified, because billing does not move goods. An old sheet line finished outside the ERP (its entry marked Done, never billed here) is not waiting for anything and is left out. A cancelled or held line is not on it either.
+</Rule>
+
+Its filters are applied on the server before the page is cut, so a filter reaches every page and the export, not only the 25 rows on screen. Each column's choices are counted over the rows the other filters leave. The register writes nothing: the work is done on Orders and at this desk.
+
 ## What is recorded
 
 | Record | What it holds |

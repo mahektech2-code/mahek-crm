@@ -872,7 +872,7 @@ export const DOC_APPS: DocApp[] = [
         title: "The dispatch desk",
         summary: "Scanning every box onto its order before the lorry leaves, and the override when one is wrong.",
         group: "Sell and ship",
-        modules: ["erp.dispatch"],
+        modules: ["erp.dispatch", "erp.dispatchRegister"],
         written: ALL,
       },
       {

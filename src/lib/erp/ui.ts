@@ -439,6 +439,12 @@ export type ListSpec = {
    * column withheld by a power) is simply not offered.
    */
   filters?: string[];
+  /**
+   * Every drawn column heading carries an Excel-style filter: a funnel that
+   * opens the column's values, counted, to tick — or a min/max on a number
+   * column. Applied on the server with the rest of the reading (`list-query.ts`).
+   */
+  colFilters?: boolean;
   sortDefault?: [string, 1 | -1];
   bulk?: BulkSpec[];
   /** Key of the godown column the godown filter applies to. */

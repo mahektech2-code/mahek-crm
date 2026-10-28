@@ -153,6 +153,32 @@ An old packing batch can be given box ids on **Stock on hand → Packed** with *
 
 The sheet has three buttons. **Send to printer** sends the stickers straight to a USB label printer; **Save print file** saves the same printer commands as a `.prn` file; **Print…** opens the browser's print dialog. All three print exactly what the sheet shows. See [Orders → Dispatch stickers and labels](/docs/erp/orders) for how the label printer is set up.
 
+## The dispatch register
+
+**Sales → Dispatch register** is the list of everything still to go out: every order line that is **Under Process** or **Ready** and has not been dispatch-verified. Nothing that has left is on it — that is [Orders → Billing & dispatch](/docs/erp/orders) and [Logistics](/docs/erp/transport). A billed line stays until it is verified, because the lorry has not taken it yet.
+
+<Wireframe url="/erp/dispatch-register" nav={["Dashboard", "Alerts", "#Sales", "Orders", "Dispatch desk", "Dispatch register"]} active="Dispatch register" caption="The Dispatch register, filtered to two transporters">
+  <WfBar>
+    <WfTitle sub="Every order still to go out — who it is for, what is in it, what it weighs and who carries it.">Dispatch register</WfTitle>
+  </WfBar>
+  <WfBar><WfInput placeholder="Search this list" /><WfText muted>Filtered by Transport: Transporter X + 1 · Clear all filters</WfText><Hotspot n={2} /></WfBar>
+  <WfTable
+    highlight={0}
+    columns={["Order ID", "Customer (billing party)", "Delivery party", "Product", "Weight", "Transport", "Status"]}
+    rows={[
+      ["1256", <b key="a">Customer A</b>, "Shop B", "Product 1 – 5 L", "412 kg", <span key="t">Transporter X <Hotspot n={1} /></span>, <WfPill key="p">Ready</WfPill>],
+      ["1251", <b key="c">Customer C</b>, "Customer C", "Product 2 – 20 L", "88 kg", "Transporter Y", <WfPill key="q" tone="warn">Under Process</WfPill>],
+    ]}
+  />
+</Wireframe>
+
+<Hotspots items={[
+  <span key="1"><b>Filter any column like Excel.</b> The funnel on a heading opens its values, each with how many rows carry it: tick the ones to keep and press Apply. Weight, cans and boxes take a range instead — say, 100 to 500 kg. The values offered follow the other filters, so picking a transporter narrows the parties to the ones it carries.</span>,
+  <span key="2"><b>Filtered by.</b> Every filter that is on, as a chip; the × takes one off and Clear all filters takes them all off. Export gives exactly the filtered rows.</span>,
+]} />
+
+The list is grouped by order, with each order's boxes and weight on its heading; **Group** turns that off. The two cards above it count Under Process and Ready. The register only reads — clicking a row shows the line, and its buttons open the order on Orders, the order at this desk (once Ready) and the dispatch stickers.
+
 ## Questions people ask
 
 <Faq q="The order is not in the queue.">

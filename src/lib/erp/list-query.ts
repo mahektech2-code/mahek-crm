@@ -41,12 +41,24 @@ export type ListQuery = {
   parts: boolean;
   /** The column filters (`ListSpec.filters`): column key → the value it must show, as the list draws it. */
   fx: Record<string, string>;
+  /**
+   * The Excel-style column filters (`ListSpec.colFilters`): column key → the
+   * values it may show (a tick list), or a number range on a number column.
+   */
+  cf: Record<string, ColFilter>;
 };
+
+/**
+ * One column's Excel-style filter. `in` is the ticked values, as the list
+ * draws them ("—" is a blank cell); `min` / `max` bound a number column, either
+ * end open. A filter that names nothing is no filter.
+ */
+export type ColFilter = { in?: string[]; min?: number | null; max?: number | null };
 
 export const PAGE_SIZES = [25, 50, 100] as const;
 
 /** The query keys a list owns in the URL, beside the page's own (`view`, `open`, `f`, `fl`, `new`). */
-export const LIST_QUERY_KEYS = ["q", "chip", "gf", "grp", "sort", "page", "size", "pd", "parts", "fx"] as const;
+export const LIST_QUERY_KEYS = ["q", "chip", "gf", "grp", "sort", "page", "size", "pd", "parts", "fx", "cf"] as const;
 
 type Raw = Record<string, string | string[] | undefined>;
 const one = (raw: Raw, k: string) => (typeof raw[k] === "string" ? (raw[k] as string) : "");
@@ -58,6 +70,38 @@ function parseFx(s: string): Record<string, string> {
     const o: unknown = JSON.parse(s);
     if (!o || typeof o !== "object" || Array.isArray(o)) return {};
     return Object.fromEntries(Object.entries(o).filter((e): e is [string, string] => typeof e[1] === "string" && e[1] !== ""));
+  } catch {
+    return {};
+  }
+}
+
+const finite = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+
+/** One column filter, cleaned: ticked strings, or finite bounds. Null where it says nothing. */
+export function cleanColFilter(v: unknown): ColFilter | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const o = v as Record<string, unknown>;
+  if (Array.isArray(o.in)) {
+    const vals = [...new Set(o.in.filter((x): x is string => typeof x === "string"))];
+    return { in: vals };
+  }
+  const min = finite(o.min);
+  const max = finite(o.max);
+  return min == null && max == null ? null : { min, max };
+}
+
+/** The Excel filters as they travel: a JSON object of column filters. Anything malformed is dropped, never an error page. */
+function parseCf(s: string): Record<string, ColFilter> {
+  if (!s) return {};
+  try {
+    const o: unknown = JSON.parse(s);
+    if (!o || typeof o !== "object" || Array.isArray(o)) return {};
+    const out: Record<string, ColFilter> = {};
+    for (const [k, v] of Object.entries(o)) {
+      const f = cleanColFilter(v);
+      if (f) out[k] = f;
+    }
+    return out;
   } catch {
     return {};
   }
@@ -80,6 +124,7 @@ export function parseListQuery(raw: Raw): ListQuery {
     pd: validPeriod(one(raw, "pd")) ? one(raw, "pd") : "",
     parts: one(raw, "parts") === "1",
     fx: parseFx(one(raw, "fx")),
+    cf: parseCf(one(raw, "cf")),
   };
 }
 
@@ -97,6 +142,8 @@ export function listQueryParams(q: ListQuery): Record<string, string> {
   if (q.parts) out.parts = "1";
   const fx = Object.keys(q.fx).sort().filter((k) => q.fx[k]);
   if (fx.length) out.fx = JSON.stringify(Object.fromEntries(fx.map((k) => [k, q.fx[k]])));
+  const cf = Object.keys(q.cf ?? {}).sort();
+  if (cf.length) out.cf = JSON.stringify(Object.fromEntries(cf.map((k) => [k, q.cf[k]])));
   return out;
 }
 
@@ -127,6 +174,12 @@ export type ListPage = {
   chips: { v: string; n: number }[];
   /** Each column filter's choices, counted over the rows every OTHER filter leaves. */
   facets: Facet[];
+  /**
+   * The Excel filters' choices (`ListSpec.colFilters`), per column: its values
+   * counted over the rows every OTHER column filter leaves, or a number
+   * column's range. Absent where the list offers none.
+   */
+  colFacets?: Record<string, ColFacet>;
   sort: ListSort | null;
   /** The group label of each row on the page, by id. */
   groupOf: Record<string, string>;
@@ -144,6 +197,67 @@ export type ListPage = {
 };
 
 export type Facet = { k: string; l: string; opts: { v: string; n: number }[] };
+
+/** One column's Excel-filter choices: the values it draws, or — a number column — its range. `more` counts values past the cap. */
+export type ColFacet = { kind: "list"; opts: { v: string; n: number }[]; more: number } | { kind: "range"; lo: number | null; hi: number | null };
+
+/** The most values one column's tick list carries; past it the menu's search finds the rest. */
+export const COL_FACET_CAP = 500;
+
+/** Whether a column is filtered by a range rather than a tick list. */
+export const isRangeCol = (c: Pick<ColSpec, "t">) => c.t === "n";
+
+/** The columns an Excel filter may be put on: every drawn column but the flags. */
+function excelCols(spec: Pick<ListSpec, "cols" | "colFilters">): ColSpec[] {
+  return spec.colFilters ? spec.cols.filter((c) => c.t !== "f") : [];
+}
+
+/** Whether a row passes one column's Excel filter. A blank number fails any bound. */
+export function passColFilter(c: ColSpec, f: ColFilter, r: ListRow): boolean {
+  if (f.in) return f.in.includes(cellText(c, r.v[c.k]));
+  const raw = r.v[c.k];
+  const n = raw == null || raw === "" ? NaN : Number(raw);
+  if (f.min != null && !(n >= f.min)) return false;
+  if (f.max != null && !(n <= f.max)) return false;
+  return true;
+}
+
+function byColFilters(rows: ListRow[], cols: ColSpec[], cf: Record<string, ColFilter>, skip: string | null): ListRow[] {
+  const on = cols.filter((c) => c.k !== skip && cf[c.k]);
+  return on.length ? rows.filter((r) => on.every((c) => passColFilter(c, cf[c.k], r))) : rows;
+}
+
+/** Each column's Excel-filter choices, over the rows every other column filter leaves. A value still ticked is offered even at zero. */
+export function colFacetsOf(spec: Pick<ListSpec, "cols" | "colFilters">, rows: ListRow[], cf: Record<string, ColFilter>): Record<string, ColFacet> {
+  const cols = excelCols(spec);
+  const out: Record<string, ColFacet> = {};
+  for (const c of cols) {
+    const rs = byColFilters(rows, cols, cf, c.k);
+    if (isRangeCol(c)) {
+      let lo: number | null = null;
+      let hi: number | null = null;
+      for (const r of rs) {
+        const raw = r.v[c.k];
+        if (raw == null || raw === "") continue;
+        const n = Number(raw);
+        if (!Number.isFinite(n)) continue;
+        if (lo == null || n < lo) lo = n;
+        if (hi == null || n > hi) hi = n;
+      }
+      out[c.k] = { kind: "range", lo, hi };
+      continue;
+    }
+    const n = new Map<string, number>();
+    for (const r of rs) {
+      const v = cellText(c, r.v[c.k]);
+      n.set(v, (n.get(v) ?? 0) + 1);
+    }
+    for (const v of cf[c.k]?.in ?? []) if (!n.has(v)) n.set(v, 0);
+    const all = Array.from(n, ([v, x]) => ({ v, n: x })).sort((a, b) => (a.v === "—" ? 1 : b.v === "—" ? -1 : a.v.localeCompare(b.v, undefined, { numeric: true })));
+    out[c.k] = { kind: "list", opts: all.slice(0, COL_FACET_CAP), more: Math.max(0, all.length - COL_FACET_CAP) };
+  }
+  return out;
+}
 
 export function colOf(cols: ColSpec[], k: string): ColSpec {
   return (
@@ -195,11 +309,11 @@ function byFilter(rows: ListRow[], c: ColSpec, v: string): ListRow[] {
 
 /** The rows the filters, chip and search leave, sorted and grouped — every page of them. */
 export function queryRows(
-  spec: Pick<ListSpec, "cols" | "chips" | "godownKey" | "sortDefault" | "groups" | "fold" | "filters">,
+  spec: Pick<ListSpec, "cols" | "chips" | "godownKey" | "sortDefault" | "groups" | "fold" | "filters" | "colFilters">,
   rows: ListRow[],
   query: ListQuery,
   flagWords: Record<string, [string, Tone]>,
-): { list: ListRow[]; beforeFx: ListRow[]; beforeChip: ListRow[]; sort: ListSort | null; gk: string[] | null; gOf: (r: ListRow) => string; by: Map<string, ListRow[]> | null } {
+): { list: ListRow[]; beforeFx: ListRow[]; beforeCf: ListRow[]; beforeChip: ListRow[]; sort: ListSort | null; gk: string[] | null; gOf: (r: ListRow) => string; by: Map<string, ListRow[]> | null } {
   const cols = spec.cols;
   let all = unfold(spec, rows, query);
   if (query.ids) {
@@ -210,6 +324,8 @@ export function queryRows(
   if (spec.godownKey && query.gf) all = all.filter((r) => String(r.v[spec.godownKey!] ?? "") === query.gf);
   const beforeFx = all;
   for (const c of filterCols(spec)) if (query.fx[c.k]) all = byFilter(all, c, query.fx[c.k]);
+  const beforeCf = all;
+  all = byColFilters(all, excelCols(spec), query.cf ?? {}, null);
   const beforeChip = all;
   if (spec.chips && query.chip) all = all.filter((r) => String(r.v[spec.chips!] ?? "") === query.chip);
   const ql = query.q.trim().toLowerCase();
@@ -225,7 +341,7 @@ export function queryRows(
   }
   const gk = spec.groups && query.grp ? spec.groups : null;
   const gOf = (r: ListRow) => (gk ?? []).map((k) => cellText(colOf(cols, k), r.v[k])).join(" · ");
-  if (!gk) return { list: all, beforeFx, beforeChip, sort, gk, gOf, by: null };
+  if (!gk) return { list: all, beforeFx, beforeCf, beforeChip, sort, gk, gOf, by: null };
   /* Each group contiguous, in the order its first row appears. Pushed onto
      its own array — spreading a fresh copy per row was quadratic, and on a
      group of eight thousand that is the whole page load. */
@@ -236,7 +352,7 @@ export function queryRows(
     if (at) at.push(r);
     else by.set(g, [r]);
   }
-  return { list: Array.from(by.values()).flat(), beforeFx, beforeChip, sort, gk, gOf, by };
+  return { list: Array.from(by.values()).flat(), beforeFx, beforeCf, beforeChip, sort, gk, gOf, by };
 }
 
 /** The status-value chips over the rows before a chip is picked. */
@@ -331,6 +447,7 @@ export function pageOf(spec: ListSpec, rows: ListRow[], query: ListQuery, flagWo
     beforeChip: r.beforeChip.length,
     chips: chipCounts(spec, r.beforeChip),
     facets: facetCounts(spec, r.beforeFx, query.fx),
+    ...(spec.colFilters ? { colFacets: colFacetsOf(spec, r.beforeCf, query.cf ?? {}) } : {}),
     sort: r.sort,
     groupOf,
     groups,
