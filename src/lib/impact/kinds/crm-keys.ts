@@ -25,12 +25,7 @@ export function impactPairOf(key: string): [string, string] {
   return at < 0 ? [key, ""] : [key.slice(0, at), key.slice(at + 1)];
 }
 
-/** A selection as one id: unique, sorted, comma-joined. */
-export function impactBatch(ids: readonly string[]): string {
-  return [...new Set(ids.map((x) => String(x).trim()).filter(Boolean))].sort().join(",");
-}
-
-/** The ids back out of `impactBatch`. */
-export function impactBatchIds(key: string): string[] {
-  return impactBatch(key.split(",")).split(",").filter(Boolean);
-}
+/* A selection as one id, spelled by the one helper the ERP and HRMS runner
+   uses too — three spellings of "these twelve leads" would be three ways for
+   a confirmation to stop matching. */
+export { impactBatchKey as impactBatch, impactBatchIds } from "../batch-key";

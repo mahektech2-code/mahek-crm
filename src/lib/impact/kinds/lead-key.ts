@@ -11,12 +11,5 @@
 /** The impact kind for moving leads to the trash. */
 export const LEAD_TRASH_KIND = "lead-trash";
 
-/** The batch as one id: unique, sorted, comma-joined. */
-export function leadTrashKey(ids: string[]): string {
-  return [...new Set(ids.map((x) => String(x).trim()).filter(Boolean))].sort().join(",");
-}
-
-/** The ids back out of the key. */
-export function leadTrashIds(key: string): string[] {
-  return leadTrashKey(key.split(",")).split(",").filter(Boolean);
-}
+/** The batch as one id — the same spelling every batch act uses (`batch-key.ts`). */
+export { impactBatchKey as leadTrashKey, impactBatchIds as leadTrashIds } from "../batch-key";

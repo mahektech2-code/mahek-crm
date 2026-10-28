@@ -10,7 +10,7 @@
  * ------------------------------------------------------------------------- */
 
 /** The selection as one id: unique, sorted, comma-joined. */
-export function impactBatchKey(ids: string[]): string {
+export function impactBatchKey(ids: readonly string[]): string {
   return [...new Set(ids.map((x) => String(x).trim()).filter(Boolean))].sort().join(",");
 }
 
