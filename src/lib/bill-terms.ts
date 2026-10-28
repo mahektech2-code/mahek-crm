@@ -18,13 +18,21 @@ import { sql } from "drizzle-orm";
  * `${bills.customerId}` as a bare `"customer_id"`, which inside these
  * correlated subqueries would bind to `orders` instead and silently match
  * nothing. See AGENTS.md — this one shipped once.
+ *
+ * "Ordered on or before the bill's date, in India" is written as "ordered
+ * before the Indian midnight that ends the bill's date" — the same rows, but a
+ * test on the column itself rather than on a date worked out from it, so
+ * `orders_customer_terms_idx` (0290) answers it newest-first and stops at the
+ * first hit. As a cast it was a scan of the customer's whole order history per
+ * bill: on the real book, 2 million buffer reads and about a second for every
+ * screen and job that asks for every bill's term.
  */
 export const billCreditDaysSql = sql<number | null>`coalesce(
   (select o.credit_days
      from orders o
     where o.customer_id = bills.customer_id
       and o.credit_days is not null
-      and (o.ordered_at at time zone 'Asia/Kolkata')::date <= bills.bill_date
+      and o.ordered_at < ((bills.bill_date + 1)::timestamp at time zone 'Asia/Kolkata')
     order by o.ordered_at desc
     limit 1),
   (select c.credit_days from customers c where c.id = bills.customer_id)

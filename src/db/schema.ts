@@ -3395,6 +3395,11 @@ export const orders = pgTable(
      * drizzle/0138_stop_scanning_the_book.sql instead. Drizzle cannot express
      * INCLUDE, and the covered columns are the whole point: they are what makes
      * the queue's median-order subplan stop going back to the heap.
+     *
+     * orders_customer_terms_idx -- (customer_id, ordered_at desc) INCLUDE
+     * (credit_days) WHERE credit_days IS NOT NULL -- is in
+     * drizzle/0290_orders_terms_index.sql for the same reason: it is what
+     * `billCreditDaysSql` reads a bill's term off.
      */
     uniqueIndex("orders_external_ref_key").on(t.externalRef),
     uniqueIndex("orders_order_no_key").on(t.orderNo),
@@ -15583,6 +15588,8 @@ export const factorySubmissions = pgTable(
 export const erpLedgerTicks = pgTable("erp_ledger_ticks", {
   id: bigserial("id", { mode: "number" }).primaryKey(),
   at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  /** The table the write was to — so an order write does not throw away stock (`ledger-cache.ts`). Null on ticks from before 0289. */
+  tbl: text("tbl"),
 });
 
 export const factoryRequirementSends = pgTable("factory_requirement_sends", {

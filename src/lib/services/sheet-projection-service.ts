@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, getTableColumns, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   bills,
@@ -529,11 +529,26 @@ export async function projectCustomers(
 
 /* ---------------------------------------------------------------- orders */
 
+/*
+ * EVERY COLUMN BUT `raw`, for the two passes that read the whole order tab.
+ *
+ * `raw` is the sheet row as Google sent it — a few kilobytes of jsonb on each
+ * of ~25,000 rows — and neither pass reads it: everything they need was parsed
+ * into its own column when the row was synced. `select()` pulled it anyway,
+ * twice a cycle: measured against prod, 119 MB of heap and ~15 s per read
+ * against 5 MB and ~1 s without it, inside a Node process capped at 320 MB
+ * that is serving every screen at the same moment. Leaving it out by
+ * destructuring keeps the row type, so a pass that starts needing `raw` fails
+ * to compile rather than reading `undefined`.
+ */
+const { raw: _raw, ...LINE_COLUMNS } = getTableColumns(sheetOrderRows);
+void _raw;
+
 export async function projectOrders(
   options: ProjectionOptions = {},
 ): Promise<{ orders: ProjectionReport["orders"]; skipped: ProjectionReport["skipped"] }> {
   const lines = await db
-    .select()
+    .select(LINE_COLUMNS)
     .from(sheetOrderRows)
     .where(
       and(
@@ -1016,7 +1031,7 @@ export async function projectBillsFromOrders(
   options: ProjectionOptions = {},
 ): Promise<ProjectionReport["bills"]> {
   const lines = await db
-    .select()
+    .select(LINE_COLUMNS)
     .from(sheetOrderRows)
     .where(
       and(
@@ -1470,11 +1485,12 @@ export async function projectSheet(
     // only to warn that nothing was derived from these rows — which stopped
     // being true the moment a projection existed, leaving the console
     // contradicting the screens next to it. Marking the batches that have been
-    // projected is the fact worth showing.
+    // projected is the fact worth showing. Only the runs not yet marked: every
+    // run since the first was rewritten on every pass, ~15,000 rows each time.
     await db
       .update(sheetSyncRuns)
       .set({ feedsCrm: true })
-      .where(eq(sheetSyncRuns.status, "ok"));
+      .where(and(eq(sheetSyncRuns.status, "ok"), eq(sheetSyncRuns.feedsCrm, false)));
   }
 
   return {
