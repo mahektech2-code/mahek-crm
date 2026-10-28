@@ -444,9 +444,11 @@ type InputProps = {
   autoComplete?: string;
   /** Several lines — the web's textarea. */
   multiline?: boolean;
+  /** Enter sends without leaving the box, as a browser's does — Android's own default is to drop the focus. */
+  keepFocus?: boolean;
 };
 
-export function Input({ value, onChange, onKeyDown, inputMode, type, maxLength, autoFocus, placeholder, style, "aria-label": label, autoComplete, multiline }: InputProps) {
+export function Input({ value, onChange, onKeyDown, inputMode, type, maxLength, autoFocus, placeholder, style, "aria-label": label, autoComplete, multiline, keepFocus }: InputProps) {
   const inh = useContext(TextCtx);
   const reveal = useContext(ScrollCtx);
   const field = useRef<TextInput>(null);
@@ -471,6 +473,7 @@ export function Input({ value, onChange, onKeyDown, inputMode, type, maxLength, 
       value={value}
       onChangeText={(v) => onChange({ target: { value: v } })}
       onSubmitEditing={() => onKeyDown?.({ key: "Enter" })}
+      submitBehavior={keepFocus ? "submit" : undefined}
       keyboardType={inputMode === "numeric" ? "number-pad" : inputMode === "decimal" ? "decimal-pad" : "default"}
       secureTextEntry={type === "password"}
       maxLength={maxLength}
