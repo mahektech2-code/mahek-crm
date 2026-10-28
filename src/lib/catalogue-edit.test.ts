@@ -21,7 +21,8 @@ import { appAccess, erpProductPacking, erpRawMaterials, finishedGoods, productAl
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { importCatalogue } from "@/lib/services/catalogue-import";
-import { moveBrandLine, moveFinishedGood, renameLevel, renameSku, setLevelActive, updateSku, updateSkuPacking } from "@/lib/actions/catalogue";
+import { addAlias, moveBrandLine, moveFinishedGood, removeAlias, renameLevel, renameSku, setLevelActive, updateSku, updateSkuPacking } from "@/lib/actions/catalogue";
+import { impactReport } from "@/lib/impact/registry";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -220,5 +221,21 @@ describe("a console edit survives the deploy-time import", () => {
     await importCatalogue();
     const [after] = await db.select().from(products).where(eq(products.id, other.id));
     assert.notEqual(after.packingCostPaise, 1, "an unedited row is still the seed's to correct");
+  });
+});
+
+describe("removing an alias", () => {
+  test("says what stops resolving, and is refused until that is confirmed", async () => {
+    assert.ok((await addAlias(sku.id, "Old Spelling Thinner")).ok);
+    const [alias] = await db.select().from(productAliases).where(eq(productAliases.name, "Old Spelling Thinner"));
+    const bare = await removeAlias(alias.id);
+    assert.equal(!bare.ok && bare.code, "validation", "a removal nobody confirmed is refused");
+    const report = await impactReport("admin-catalogue-alias", alias.id);
+    assert.ok(report.ok, report.ok ? "" : report.error);
+    assert.equal(report.data.confirmWord, "Old Spelling Thinner");
+    assert.ok(report.data.items.some((i) => i.label === "product search on the order form" && i.note?.includes(sku.name)));
+    const done = await removeAlias(alias.id, { typed: "old spelling thinner", fingerprint: report.data.fingerprint });
+    assert.ok(done.ok, JSON.stringify(done));
+    assert.equal((await db.select().from(productAliases).where(eq(productAliases.id, alias.id))).length, 0);
   });
 });

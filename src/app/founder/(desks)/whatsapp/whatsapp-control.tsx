@@ -75,8 +75,6 @@ const KEY_META: SecretMeta = {
   env: "WATI_API_TOKEN",
   what: "Sends approved WhatsApp templates from the business number, and signs the webhook address Wati reports delivery back to. Holding it switches nothing on — the switch above does.",
   where: "Wati dashboard → API Docs → API tokens",
-  removalConsequence:
-    "Nothing can go through the API until a key is set again; every screen falls back to copy and paste. The webhook address changes with the next key.",
 };
 
 const CATEGORY_LABEL: Record<string, string> = {

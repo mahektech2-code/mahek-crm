@@ -44,6 +44,7 @@ import { notificationAppOf } from "@/lib/notification-apps";
 import type { Result } from "@/lib/result";
 import { MODULE_SLUGS, PUBLISH_MODULE_KEY, REVIEW_MODULE_KEY } from "@/lib/website-cms/kinds";
 import * as cms from "@/lib/website-cms/commands";
+import { impactReport } from "@/lib/impact/registry";
 import { APPROVED_TITLE, summarise } from "@/lib/website-cms/review-notify";
 import * as review from "@/lib/website-cms/review-service";
 import { createItem, transitionItems } from "@/lib/website-cms/service";
@@ -152,6 +153,13 @@ after(async () => {
 function must<T>(r: Result<T>): T {
   assert.ok(r.ok, r.ok ? "" : `${r.error} (${r.code})`);
   return r.data;
+}
+
+/** What the impact modal hands back once somebody has read it and typed the word. */
+async function confirmed(kind: string, target: string) {
+  const r = await impactReport(kind, target);
+  assert.ok(r.ok, r.ok ? "" : r.error);
+  return { typed: r.data.confirmWord, fingerprint: r.data.fingerprint };
 }
 
 const as = (p: Person) => setTestUser(p);
@@ -426,7 +434,14 @@ describe("revocation, expiry and a voided approval each tell the employee, and o
   test("revoked — by name, and that nothing went live", async () => {
     const { requestId } = await approved();
     as(rita);
-    must(await cms.revokeApproval(requestId));
+    const bare = await cms.revokeApproval(requestId);
+    assert.equal(!bare.ok && bare.code, "validation", "a revocation nobody confirmed is refused");
+    assert.equal((await bellOf(eva)).length, 0, "and tells nobody anything");
+    const report = await impactReport("site-approval-revoke", requestId);
+    assert.ok(report.ok);
+    const told = report.data.items.find((i) => /notification/.test(i.label));
+    assert.deepEqual(told?.examples, [eva.name], "the modal names who will be told");
+    must(await cms.revokeApproval(requestId, await confirmed("site-approval-revoke", requestId)));
     const mine = await bellOf(eva);
     assert.equal(mine.length, 1);
     assert.equal(mine[0].title, "Approval revoked");
@@ -487,7 +502,7 @@ describe("revocation, expiry and a voided approval each tell the employee, and o
   test("an approval revoked or voided by a reviewer who is not the one who approved it still tells only the submitter", async () => {
     const { requestId } = await approved();
     as(ravi);
-    must(await cms.revokeApproval(requestId));
+    must(await cms.revokeApproval(requestId, await confirmed("site-approval-revoke", requestId)));
     assert.deepEqual(await recipients(), ["Eva Editor"]);
     assert.match((await bellOf(eva))[0].body, /^Ravi Reviewer took back the approval/);
   });
@@ -499,7 +514,7 @@ describe("the steps nobody needs telling about", () => {
   test("withdrawing, publishing and saving a draft tell nobody", async () => {
     const one = await submitted("one");
     as(eva);
-    must(await cms.withdrawRequest(one.requestId));
+    must(await cms.withdrawRequest(one.requestId, await confirmed("site-request-withdraw", one.requestId)));
     assert.equal((await bell()).length, 0, "withdrawn: she did it herself, and the reviewers have nothing left to do");
 
     const two = await approved("two");
@@ -544,7 +559,7 @@ describe("every notification the workflow writes", () => {
     must(await cms.approveRequest(ra));
     must(await cms.rejectRequest(rb, "No."));
     must(await cms.approveRequest(rc));
-    must(await cms.revokeApproval(rc));
+    must(await cms.revokeApproval(rc, await confirmed("site-approval-revoke", rc)));
 
     const all = await bell();
     assert.ok(all.length >= 9, "assigned, three submissions to three reviewers, approved, rejected, approved, revoked");
@@ -605,7 +620,7 @@ describe("a notification is a courtesy: it never changes what the workflow did",
     as(rita);
     must(await cms.approveRequest(one.requestId));
     must(await cms.rejectRequest(two.requestId, "No."));
-    must(await cms.revokeApproval(three.requestId));
+    must(await cms.revokeApproval(three.requestId, await confirmed("site-approval-revoke", three.requestId)));
     const status = async (rid: string) => (await db.select().from(websiteChangeRequest).where(eq(websiteChangeRequest.id, rid)))[0].status;
     assert.equal(await status(one.requestId), "approved");
     assert.equal(await status(two.requestId), "rejected");
@@ -754,7 +769,7 @@ describe("the Website tile on the launcher", () => {
   test("withdrawn, published and decided requests are not waiting on anybody", async () => {
     const one = await submitted("one");
     as(eva);
-    must(await cms.withdrawRequest(one.requestId));
+    must(await cms.withdrawRequest(one.requestId, await confirmed("site-request-withdraw", one.requestId)));
     const two = await approved("two");
     as(eva);
     must(await cms.publishApproved(two.requestId));

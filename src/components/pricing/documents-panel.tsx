@@ -34,6 +34,7 @@ import {
   Tr,
 } from "@/components/ui/primitives";
 import { ConfirmDialog, RowMenu, type MenuItem } from "@/components/ui/overlays";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { useToast } from "@/components/ui/toast";
 import { DOCUMENT_STATUS_LABEL, DOCUMENT_STATUS_TONE } from "@/lib/price-list-labels";
 import type { DocumentView } from "@/lib/price-list-views";
@@ -61,7 +62,7 @@ export function DocumentsPanel({
   todayIso: string;
 }) {
   const router = useRouter();
-  const { run } = useToast();
+  const { run, push } = useToast();
   const [importing, setImporting] = React.useState(openImport && canManage);
   const [importKey, setImportKey] = React.useState(0);
   const [dialog, setDialog] = React.useState<Dialog | null>(null);
@@ -270,20 +271,25 @@ export function DocumentsPanel({
         }}
       />
 
-      <ConfirmDialog
-        open={dialog?.kind === "delete"}
-        title="Delete this document?"
-        body="The file and everything read off it go. Rejecting it instead keeps the record and your reason."
-        confirmLabel="Delete"
-        destructive
-        onClose={() => setDialog(null)}
-        onConfirm={async () => {
-          if (dialog?.kind !== "delete") return;
-          await run(deleteDocument(dialog.document.id));
-          setDialog(null);
-          router.refresh();
-        }}
-      />
+      {/* Every price read off it, and any matching a person already did.
+          Rejecting it instead keeps the record and the reason. */}
+      {dialog?.kind === "delete" ? (
+        <ImpactDialog
+          key={dialog.document.id}
+          kind="price-document"
+          id={dialog.document.id}
+          confirmLabel="Delete"
+          onClose={() => setDialog(null)}
+          onConfirm={async (confirmation) => {
+            const r = await deleteDocument(dialog.document.id, confirmation);
+            if (r.ok) {
+              push(r.message ?? "Deleted.");
+              router.refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
     </>
   );
 }

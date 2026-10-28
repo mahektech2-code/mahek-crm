@@ -31,6 +31,8 @@ import {
 import { setTestUser } from "@/lib/auth";
 import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import { ruleAudience, runAutomation } from "@/lib/services/whatsapp-automation-service";
+import { deleteRuleAction } from "@/lib/actions/whatsapp-founder";
+import { impactReport } from "@/lib/impact/registry";
 
 const id = (p: string) => `${p}_${randomUUID().slice(0, 12)}`;
 
@@ -163,6 +165,24 @@ test("opening a rule shows who it reaches, even an Off rule, and writes and send
     0,
     "looking at a rule is not a run — the log stays a record of real checks",
   );
+});
+
+test("deleting a live rule names the shops it would message next, and is refused until that is confirmed", async () => {
+  await serviceOn();
+  const r1 = await rule(await template("payment_followup_1", "payment_followup_1_v2"));
+  setTestUser(founder);
+  const bare = await deleteRuleAction(r1);
+  assert.equal(!bare.ok && bare.code, "validation", "a delete nobody confirmed is refused");
+  const report = await impactReport("founder-wa-rule", r1);
+  assert.ok(report.ok, report.ok ? "" : report.error);
+  assert.deepEqual(report.data.items.find((i) => i.app === "CRM")?.examples, ["Colour Camp"]);
+  assert.equal(report.data.confirmWord, "payment_followup_1", "the template's name is typed");
+  /* The action refreshes a Next path afterwards, which has no request scope
+     here — so the proof is the row, not the answer. */
+  await deleteRuleAction(r1, { typed: report.data.confirmWord, fingerprint: report.data.fingerprint });
+  setTestUser(null);
+  assert.equal((await db.select().from(waTriggers).where(eq(waTriggers.id, r1))).length, 0);
+  assert.equal(sends.length, 0, "working out who it reaches sent nothing");
 });
 
 test("a pass that can send is logged whatever the caller asks", async () => {

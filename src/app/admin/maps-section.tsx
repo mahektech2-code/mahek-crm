@@ -89,8 +89,6 @@ const SPARE_META = (position: number): SecretMeta => ({
     position - 1
   } for quota. It is insurance: nothing is spread across the pool, so every account but the one in force sits at zero usage and an exhaustion is attributable to exactly one of them.`,
   where: "maps.olakrutrim.com → a separate project → API Keys",
-  removalConsequence:
-    "The pool gets shorter. Nothing changes today unless the keys ahead of this one have already run out, in which case the maps stop drawing streets the moment the last one does.",
 });
 
 const META: Record<string, SecretMeta> = {
@@ -99,8 +97,6 @@ const META: Record<string, SecretMeta> = {
     env: "OLAMAPS_API_KEY",
     what: 'Draws the streets under the Live map, Territory\'s shop map and the handset\'s own map (vector tiles), snaps the "today" trail of whoever a manager selects on the Live map onto the road network, and is what a phone spends when a salesman saves an area to work offline. Sent to the browser to load tiles — restrict it to this domain in Ola Maps’ own console.',
     where: "maps.olakrutrim.com → your project → API Keys",
-    removalConsequence:
-      "Neither the Live map nor Territory's shop map draws streets — both say so, rather than showing a blank canvas — and the trail line the Live map would otherwise snap onto the road goes back to a raw GPS line between fixes. Handsets stop being able to save new areas for offline use; what is already on a phone goes on working, because reading a saved tile back needs no key.",
   },
 };
 

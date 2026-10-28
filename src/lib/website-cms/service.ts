@@ -9,7 +9,7 @@ import {
   type User,
   type WebsiteContentRow,
 } from "@/db/schema";
-import { err, ok, type FieldError, type Result } from "@/lib/result";
+import { err, ok, type Err, type FieldError, type Result } from "@/lib/result";
 import { buildBundle, type ContentRowLike } from "./bundle";
 import type { WebsiteBundle } from "./contract";
 import {
@@ -100,6 +100,14 @@ async function writeLog(
     detail: detail?.slice(0, 500) ?? null,
   });
 }
+
+/**
+ * A last word before a destructive write, after every refusal of the service's
+ * own has had its say. The command passes the impact check here (what the
+ * person confirmed is still the picture); a caller that passes nothing — a
+ * test, the seed — writes as it always did.
+ */
+export type BeforeWrite = () => Promise<Err | null>;
 
 const toFieldErrors = (issues: { path: string; message: string }[]): FieldError[] =>
   issues.map((i) => ({ field: i.path, message: i.message }));
@@ -239,13 +247,15 @@ export async function updateItem(
 }
 
 /** Throws the person's own working copy away and goes back to what is live. */
-export async function discardChanges(user: User, id: string): Promise<Result<ItemView>> {
+export async function discardChanges(user: User, id: string, beforeWrite?: BeforeWrite): Promise<Result<ItemView>> {
   const [row] = await db.select().from(websiteContent).where(eq(websiteContent.id, id)).limit(1);
   if (!row) return err("That item no longer exists.", "not_found");
   if (row.state !== "published" || !row.publishedData) {
     return err("Only an item that is live has a published version to go back to.", "rule_violation");
   }
   if (row.version === row.publishedVersion) return ok(view(row), "There were no unpublished changes.");
+  const refusal = beforeWrite ? await beforeWrite() : null;
+  if (refusal) return refusal;
   const [updated] = await db
     .update(websiteContent)
     .set({
@@ -261,15 +271,24 @@ export async function discardChanges(user: User, id: string): Promise<Result<Ite
   return ok(view(updated), "Unpublished changes discarded.");
 }
 
+/** Why this row cannot be deleted, or null — read by the delete and by its impact report alike. */
+export function deleteDraftRefusal(row: Pick<WebsiteContentRow, "kind" | "state" | "publishedAt">): string | null {
+  const kind = row.kind as KindKey;
+  if (KINDS[kind].singleton || kind === "page") return "This cannot be deleted.";
+  if (row.state !== "draft" || row.publishedAt !== null) {
+    return "Only a draft that was never published can be deleted. Archive anything that has been live instead.";
+  }
+  return null;
+}
+
 /** Only a draft that has never been live can be deleted. Anything a visitor may have seen is archived instead. */
-export async function deleteDraft(user: User, id: string): Promise<Result> {
+export async function deleteDraft(user: User, id: string, beforeWrite?: BeforeWrite): Promise<Result> {
   const [row] = await db.select().from(websiteContent).where(eq(websiteContent.id, id)).limit(1);
   if (!row) return err("That item no longer exists.", "not_found");
-  const kind = row.kind as KindKey;
-  if (KINDS[kind].singleton || kind === "page") return err("This cannot be deleted.", "rule_violation");
-  if (row.state !== "draft" || row.publishedAt !== null) {
-    return err("Only a draft that was never published can be deleted. Archive anything that has been live instead.", "rule_violation");
-  }
+  const refused = deleteDraftRefusal(row);
+  if (refused) return err(refused, "rule_violation");
+  const refusal = beforeWrite ? await beforeWrite() : null;
+  if (refusal) return refusal;
   await db.delete(websiteContent).where(and(eq(websiteContent.id, id), eq(websiteContent.state, "draft")));
   await writeLog(db, user.id, "delete", row);
   return { ok: true, data: undefined, message: "Draft deleted." };
@@ -325,6 +344,7 @@ export async function transitionItems(
   user: User,
   ids: string[],
   action: Transition,
+  beforeWrite?: BeforeWrite,
 ): Promise<Result<PublishOutcome>> {
   if (ids.length === 0) return err("Nothing was selected.", "validation");
   const result = await db.transaction(async (tx) => {
@@ -352,6 +372,13 @@ export async function transitionItems(
       if (action === "restore" && r.state !== "archived") {
         return { error: err("Only an archived item can be restored.", "rule_violation") as Result<PublishOutcome> };
       }
+    }
+
+    /* Asked only where something would actually change: unpublishing what
+       is already down is "Nothing changed", and needs no confirmation. */
+    if (beforeWrite && rows.some((r) => transitionChanges(r, action))) {
+      const refusal = await beforeWrite();
+      if (refusal) return { error: refusal as Result<PublishOutcome> };
     }
 
     const touched: WebsiteContentRow[] = [];
@@ -408,6 +435,14 @@ export async function transitionItems(
   const subject = touched.length === 1 ? `“${items[0].label}”` : `${touched.length} items`;
   const warnings = await crossReferenceWarnings(touched, action);
   return ok({ changed: touched.length, items, live }, describeLive(`${verb} ${subject} in MahekOne.`, live), warnings);
+}
+
+/** Whether a transition moves this row at all — the same tests the loop above patches on. */
+export function transitionChanges(r: Pick<WebsiteContentRow, "state" | "version" | "publishedVersion">, action: Transition): boolean {
+  if (action === "publish") return !(r.state === "published" && r.version === r.publishedVersion);
+  if (action === "unpublish") return r.state === "published";
+  if (action === "archive") return r.state !== "archived";
+  return true;
 }
 
 async function syncPublishedOrder(client: Db, kind: string) {

@@ -51,6 +51,7 @@ import { invalidateConfig, seedConfig } from "@/lib/config/store";
 import type { Result } from "@/lib/result";
 import { MODULE_SLUGS, PUBLISH_MODULE_KEY, REVIEW_MODULE_KEY } from "@/lib/website-cms/kinds";
 import * as cms from "@/lib/website-cms/commands";
+import { impactReport } from "@/lib/impact/registry";
 import { assignmentsEnforced } from "@/lib/website-cms/access";
 import * as review from "@/lib/website-cms/review-service";
 import { createItem, currentBundle, listItems, orderChangedKinds, transitionItems } from "@/lib/website-cms/service";
@@ -184,6 +185,13 @@ function must<T>(r: Result<T>): T {
   return r.data;
 }
 
+/** What the impact modal hands back once somebody has read it and typed the word. */
+async function confirmed(kind: string, target: string) {
+  const r = await impactReport(kind, target);
+  assert.ok(r.ok, r.ok ? "" : r.error);
+  return { typed: r.data.confirmWord, fingerprint: r.data.fingerprint };
+}
+
 function refusedWith(r: Result<unknown>, code: string, pattern?: RegExp) {
   assert.equal(r.ok, false, "expected a refusal");
   if (!r.ok) {
@@ -278,10 +286,10 @@ describe("with assignments off — the default — nobody who could edit before 
     const b = must(await cms.createContent("product", product({ slug: "b", id: "MTI-b", name: "B" })));
     must(await cms.saveContent(a.id, product({ slug: "a", id: "MTI-a", name: "A2" }), a.version));
     must(await cms.moveContent(b.id, "up"));
-    must(await cms.deleteContentDraft(b.id));
+    must(await cms.deleteContentDraft(b.id, await confirmed("site-content-delete", b.id)));
     const live = await liveProduct("c");
     must(await editAs(eli, live, { name: "C2" }));
-    must(await cms.discardContentChanges(live));
+    must(await cms.discardContentChanges(live, await confirmed("site-content-discard", live)));
     assert.ok((await cms.readContent(a.id)).ok);
     const preview = await cms.previewKind("product");
     assert.ok(preview.ok || preview.code !== "not_permitted", "a preview may need the site to be connected, never an assignment");
@@ -307,8 +315,8 @@ describe("with assignments off — the default — nobody who could edit before 
     must(await cms.moveContent(b, "up"));
     must(await cms.transitionContent([a, b], "publish"));
     assert.equal((await currentBundle(false)).products?.length, 2);
-    must(await cms.transitionContent([a], "unpublish"));
-    must(await cms.transitionContent([b], "archive"));
+    must(await cms.transitionContent([a], "unpublish", await confirmed("site-content-unpublish", a)));
+    must(await cms.transitionContent([b], "archive", await confirmed("site-content-archive", b)));
     assert.equal((await cms.publishAllPending()).ok, true);
     assert.equal((await db.select().from(websiteChangeRequest)).length, 0, "no request was needed or created");
   });
@@ -402,7 +410,7 @@ describe("with assignments enforced, an editor changes only what was assigned to
     as(eva);
     const fresh = must(await cms.createContent("product", product({ slug: "n", id: "MTI-n", name: "New" })));
     must(await cms.moveContent(b, "up"));
-    must(await cms.deleteContentDraft(fresh.id));
+    must(await cms.deleteContentDraft(fresh.id, await confirmed("site-content-delete", fresh.id)));
     // …but the same person holds the Industries module and was assigned nothing there.
     as(pat);
     const industry = must(await createItem(pat, "industry", { slug: "paint", name: "Paint", icon: "droplet", short: "x", productSlugs: [] }));
@@ -442,7 +450,7 @@ describe("with assignments enforced, an editor changes only what was assigned to
     const given = await assign(eva, "product", a);
     must(await editAs(eva, a, { name: "While assigned" }));
     as(rita);
-    must(await cms.revokeAssignment(given.id));
+    must(await cms.revokeAssignment(given.id, await confirmed("site-assignment", given.id)));
     refusedWith(await editAs(eva, a, { name: "After" }), "not_permitted");
     assert.equal((await row(a)).data.name, "While assigned");
   });
@@ -820,7 +828,14 @@ describe("an item waiting in review cannot be changed under the reviewer", () =>
       assert.equal((await row(itemId)).data.name, "Renamed by Eva");
     }
     as(eva);
-    must(await cms.withdrawRequest(requestId));
+    const bare = await cms.withdrawRequest(requestId);
+    assert.equal(!bare.ok && bare.code, "validation", "a withdrawal nobody confirmed is refused");
+    const report = await impactReport("site-request-withdraw", requestId);
+    assert.ok(report.ok);
+    assert.equal(report.data.items.find((i) => /edited again/.test(i.label))?.count, 1, "the modal names the item it frees");
+    const stale = await cms.withdrawRequest(requestId, { typed: "WITHDRAW", fingerprint: "0:stale" });
+    assert.equal(!stale.ok && stale.code, "conflict");
+    must(await cms.withdrawRequest(requestId, await confirmed("site-request-withdraw", requestId)));
     assert.equal((await request(requestId)).status, "withdrawn");
     assert.deepEqual(await slots(requestId), [null]);
     must(await editAs(eva, itemId, { name: "After withdrawing" }));
@@ -834,8 +849,8 @@ describe("an item waiting in review cannot be changed under the reviewer", () =>
     const made = must(await submitAs(eva, [draft.id]));
     as(eva);
     refusedWith(await cms.deleteContentDraft(draft.id), "conflict");
-    must(await cms.withdrawRequest(made.id));
-    must(await cms.deleteContentDraft(draft.id));
+    must(await cms.withdrawRequest(made.id, await confirmed("site-request-withdraw", made.id)));
+    must(await cms.deleteContentDraft(draft.id, await confirmed("site-content-delete", draft.id)));
   });
 
   test("only the submitter, or a reviewer, withdraws", async () => {
@@ -845,7 +860,7 @@ describe("an item waiting in review cannot be changed under the reviewer", () =>
     as(pat);
     refusedWith(await cms.withdrawRequest(requestId), "not_permitted");
     as(rita);
-    must(await cms.withdrawRequest(requestId));
+    must(await cms.withdrawRequest(requestId, await confirmed("site-request-withdraw", requestId)));
   });
 });
 
@@ -966,7 +981,7 @@ describe("expired and revoked approvals cannot be used", () => {
   test("a reviewer revokes before publication: it cannot be published, and the employee can resubmit", async () => {
     const { itemId, requestId } = await approved();
     as(rita);
-    must(await cms.revokeApproval(requestId));
+    must(await cms.revokeApproval(requestId, await confirmed("site-approval-revoke", requestId)));
     assert.equal((await request(requestId)).status, "revoked");
     assert.deepEqual(await slots(requestId), [null]);
     as(eva);
@@ -1056,13 +1071,13 @@ describe("an item is in at most one open request", () => {
     // withdrawn
     const wd = await submitted("withdrawn-one");
     as(eva);
-    must(await cms.withdrawRequest(wd.requestId));
+    must(await cms.withdrawRequest(wd.requestId, await confirmed("site-request-withdraw", wd.requestId)));
     await free(wd.requestId);
 
     // revoked
     const rv = await approved("revoked-one");
     as(rita);
-    must(await cms.revokeApproval(rv.requestId));
+    must(await cms.revokeApproval(rv.requestId, await confirmed("site-approval-revoke", rv.requestId)));
     await free(rv.requestId);
 
     // expired
@@ -1140,7 +1155,7 @@ describe("what can be submitted", () => {
   test("an archived item cannot be submitted — restoring is for whoever publishes", async () => {
     const a = await liveProduct("a");
     as(pat);
-    must(await cms.transitionContent([a], "archive"));
+    must(await cms.transitionContent([a], "archive", await confirmed("site-content-archive", a)));
     await enforce(true);
     await assign(eva, "product", a);
     refusedWith(await submitAs(eva, [a]), "validation", /archived/);
@@ -1226,9 +1241,9 @@ describe("images in a request", () => {
     // Once the request is closed, an image nothing points at can go.
     const [open] = await db.select().from(websiteChangeRequest);
     as(eva);
-    must(await cms.withdrawRequest(open.id));
+    must(await cms.withdrawRequest(open.id, await confirmed("site-request-withdraw", open.id)));
     as(pat);
-    must(await cms.removeMedia(incoming.id));
+    must(await cms.removeMedia(incoming.id, await confirmed("site-media", incoming.id)));
   });
 
   test("with assignments enforced, an editor changes only images they uploaded, unless assigned the media library", async () => {
@@ -1239,20 +1254,20 @@ describe("images in a request", () => {
     refusedWith(await cms.setMediaAlt(patsPic.id, "mine now"), "not_permitted", /uploaded/);
     refusedWith(await cms.removeMedia(patsPic.id), "not_permitted");
     must(await cms.setMediaAlt(evasPic.id, "Mine"));
-    must(await cms.removeMedia(evasPic.id));
+    must(await cms.removeMedia(evasPic.id, await confirmed("site-media", evasPic.id)));
     assert.ok((await audits("website.access.denied")).some((r) => r.actorId === eva.id && r.entityId === patsPic.id));
 
     await assign(eva, "media");
     as(eva);
     must(await cms.setMediaAlt(patsPic.id, "Now allowed"));
-    must(await cms.removeMedia(patsPic.id));
+    must(await cms.removeMedia(patsPic.id, await confirmed("site-media", patsPic.id)));
   });
 
   test("with assignments off, the media rules are as they were", async () => {
     const patsPic = await upload(pat, 7);
     as(eva);
     must(await cms.setMediaAlt(patsPic.id, "Anyone with a module"));
-    must(await cms.removeMedia(patsPic.id));
+    must(await cms.removeMedia(patsPic.id, await confirmed("site-media", patsPic.id)));
   });
 });
 

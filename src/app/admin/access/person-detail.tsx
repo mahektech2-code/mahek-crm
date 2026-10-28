@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Card, CardHeader, cx } from "@/components/ui/primitives";
-import { ConfirmDialog } from "@/components/ui/overlays";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { useToast } from "@/components/ui/toast";
 import { CardGrid } from "@/components/ui/card-grid";
 import { APPS, webApps } from "@/lib/apps";
@@ -146,26 +146,25 @@ export function PersonDetail({
       }
       tabs={{ items: ADMIN_TABS.person, active: tab, href: (s) => ADMIN.person(person.id, s as TabsOf<"person">) }}
     >
-      <ConfirmDialog
-        open={confirmingDeactivate}
-        title="Disable this sign-in"
-        destructive
-        confirmLabel="Disable"
-        body={
-          <>
-            {person.name} will not be able to sign in with their email or their work number,
-            and any session they have open stops working. Nothing is deleted — their calls,
-            orders and customers stay exactly where they are.
-            <p className="mt-2">
-              {person.apps.length
-                ? "The apps they hold are kept, so enabling them again restores what they had. To take an app away instead, use Manage access on the Access screen."
-                : "They hold no app, so there is nothing to keep."}
-            </p>
-          </>
-        }
-        onConfirm={() => run(setUserActive(person.id, false))}
-        onClose={() => setConfirmingDeactivate(false)}
-      />
+      {/* The sessions it ends, the phone it shuts out and the book left with
+          nobody working it — their name typed to confirm. The apps are kept. */}
+      {confirmingDeactivate ? (
+        <ImpactDialog
+          key={person.id}
+          kind="admin-user-disable"
+          id={person.id}
+          confirmLabel="Disable"
+          onClose={() => setConfirmingDeactivate(false)}
+          onConfirm={async (confirmation) => {
+            const r = await setUserActive(person.id, false, confirmation);
+            if (r.ok) {
+              notify(r.message ?? "Done.");
+              router.refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
       {tab === "profile" ? (
         <Card className="mt-5 overflow-hidden shadow-[0_1px_2px_rgba(22,22,22,0.06)]">
           <CardHeader

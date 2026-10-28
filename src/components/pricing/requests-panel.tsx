@@ -19,7 +19,8 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Badge, Card, EmptyState, Td, Th, Tr } from "@/components/ui/primitives";
-import { ConfirmDialog, FilterPills, RowMenu } from "@/components/ui/overlays";
+import { FilterPills, RowMenu } from "@/components/ui/overlays";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
 import { useToast } from "@/components/ui/toast";
 import { money, stamp } from "@/lib/format";
 import { REQUEST_STATUS_LABEL } from "@/lib/price-list-labels";
@@ -53,7 +54,7 @@ export function RequestsPanel({
   todayIso: string;
 }) {
   const router = useRouter();
-  const { run } = useToast();
+  const { push } = useToast();
   const [filter, setFilter] = React.useState<"pending" | "all">("pending");
   const [deciding, setDeciding] = React.useState<RequestView | null>(null);
   const [withdrawing, setWithdrawing] = React.useState<RequestView | null>(null);
@@ -221,24 +222,24 @@ export function RequestsPanel({
         />
       ) : null}
 
-      <ConfirmDialog
-        open={!!withdrawing}
-        title="Withdraw this request?"
-        body={
-          withdrawing
-            ? `${withdrawing.customerName} — ${withdrawing.productName}. Nobody will decide it. You can ask again.`
-            : ""
-        }
-        confirmLabel="Withdraw"
-        destructive
-        onClose={() => setWithdrawing(null)}
-        onConfirm={async () => {
-          if (!withdrawing) return;
-          const r = await run(withdrawPriceRequest(withdrawing.id));
-          setWithdrawing(null);
-          if (r.ok) router.refresh();
-        }}
-      />
+      {/* The request leaves the deciders' list; the shop's price stays where it is. */}
+      {withdrawing ? (
+        <ImpactDialog
+          key={withdrawing.id}
+          kind="price-request-withdraw"
+          id={withdrawing.id}
+          confirmLabel="Withdraw"
+          onClose={() => setWithdrawing(null)}
+          onConfirm={async (confirmation) => {
+            const r = await withdrawPriceRequest(withdrawing.id, confirmation);
+            if (r.ok) {
+              push(r.message ?? "Withdrawn.");
+              router.refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
     </>
   );
 }

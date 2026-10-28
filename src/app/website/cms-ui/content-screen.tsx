@@ -3,7 +3,10 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Button, Callout, Card, EmptyState, PageHeader, Td, Th, Tr } from "@/components/ui/primitives";
-import { ConfirmDialog, Drawer, DrawerHeader, FilterPills, Modal, RowMenu, type MenuItem } from "@/components/ui/overlays";
+import { Drawer, DrawerHeader, FilterPills, Modal, RowMenu, type MenuItem } from "@/components/ui/overlays";
+import { ImpactDialog } from "@/components/ui/impact-dialog";
+import type { ImpactConfirmation } from "@/lib/impact/types";
+import type { Result } from "@/lib/result";
 import { useToast } from "@/components/ui/toast";
 import {
   archiveItemAction,
@@ -21,7 +24,7 @@ import {
 } from "@/lib/actions/website-cms";
 import { validateKindData } from "@/lib/website-cms/kinds";
 import type { ItemReview } from "@/lib/website-cms/review-queries";
-import type { ItemView } from "@/lib/website-cms/service";
+import type { ItemView, PublishOutcome } from "@/lib/website-cms/service";
 import { FieldEditor, firstPerPath, type Errors } from "./field-editor";
 import { LIST_UI, type ListKind } from "./field-defs";
 import { MediaThumb } from "./media-picker";
@@ -45,6 +48,22 @@ import { ReviewBadge, ReviewLockNotice, ReviewReturnNotice, SubmitDialog } from 
 
 type Filter = "all" | "live" | "draft" | "archived";
 type Confirm = { action: "unpublish" | "archive" | "delete" | "discard"; item: ItemView } | null;
+
+/* Each of the four is confirmed under its own impact kind: what the modal
+   lists for taking a product down (the industries it leaves, the address that
+   goes "not found") is nothing like what it lists for discarding an edit. */
+const IMPACT_KIND: Record<NonNullable<Confirm>["action"], string> = {
+  unpublish: "site-content-unpublish",
+  archive: "site-content-archive",
+  delete: "site-content-delete",
+  discard: "site-content-discard",
+};
+const CONFIRM_LABEL: Record<NonNullable<Confirm>["action"], string> = {
+  unpublish: "Unpublish",
+  archive: "Archive",
+  delete: "Delete draft",
+  discard: "Discard changes",
+};
 
 const plainDate = (iso: string) => new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 
@@ -82,6 +101,8 @@ export function ContentScreen({
   const [creating, setCreating] = React.useState(false);
   const [editing, setEditing] = React.useState<ItemView | null>(null);
   const [confirm, setConfirm] = React.useState<Confirm>(null);
+  /** A review request being taken back — the items it frees, and the approval it gives up. */
+  const [withdrawing, setWithdrawing] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState<ItemView | null>(null);
   const [busy, setBusy] = React.useState(false);
 
@@ -130,7 +151,7 @@ export function ContentScreen({
       if (held(item)) {
         m.push({
           label: "Withdraw request",
-          onSelect: () => void run(async () => void reportResult(toast, await withdrawRequestAction(request.requestId))),
+          onSelect: () => setWithdrawing(request.requestId),
         });
       }
     }
@@ -143,43 +164,25 @@ export function ContentScreen({
     return m;
   }
 
-  async function confirmed() {
-    if (!confirm) return;
+  async function confirmed(confirmation: ImpactConfirmation): Promise<Result<unknown>> {
+    if (!confirm) return { ok: false, error: "Nothing was chosen." };
     const { action, item } = confirm;
-    await run(async () => {
-      if (action === "unpublish") reportPublish(toast, await unpublishItemAction(item.id));
-      else if (action === "archive") reportPublish(toast, await archiveItemAction(item.id));
-      else if (action === "delete") reportResult(toast, await deleteDraftAction(item.id));
-      else reportResult(toast, await discardChangesAction(item.id));
-    });
+    const r =
+      action === "unpublish"
+        ? await unpublishItemAction(item.id, confirmation)
+        : action === "archive"
+          ? await archiveItemAction(item.id, confirmation)
+          : action === "delete"
+            ? await deleteDraftAction(item.id, confirmation)
+            : await discardChangesAction(item.id, confirmation);
+    /* A refusal is the dialog's to show — it reloads the list on `conflict`. */
+    if (r.ok) {
+      if (action === "unpublish" || action === "archive") reportPublish(toast, r as Result<PublishOutcome>);
+      else reportResult(toast, r as Result<unknown>);
+      router.refresh();
+    }
+    return r;
   }
-
-  const confirmCopy: Record<NonNullable<Confirm>["action"], { title: string; body: (i: ItemView) => string; label: string; destructive: boolean }> = {
-    unpublish: {
-      title: `Unpublish this ${ui.noun}`,
-      body: (i) => `“${i.label}” will be taken off mahekindia.com${kind === "product" || kind === "industry" ? ` and its page will show "not found"` : ""}. Your working copy is kept and you can publish it again.`,
-      label: "Unpublish",
-      destructive: true,
-    },
-    archive: {
-      title: `Archive this ${ui.noun}`,
-      body: (i) => `“${i.label}” will be taken off mahekindia.com and moved to Archived. Nothing is deleted — you can restore it as a draft later.`,
-      label: "Archive",
-      destructive: true,
-    },
-    delete: {
-      title: "Delete this draft",
-      body: (i) => `“${i.label}” has never been published and will be deleted for good.`,
-      label: "Delete draft",
-      destructive: true,
-    },
-    discard: {
-      title: "Discard unpublished changes",
-      body: (i) => `Your edits to “${i.label}” will be thrown away and it goes back to exactly what is live now.`,
-      label: "Discard changes",
-      destructive: true,
-    },
-  };
 
   return (
     <div className="p-6">
@@ -290,15 +293,35 @@ export function ContentScreen({
         }}
       />
 
-      <ConfirmDialog
-        open={confirm !== null}
-        title={confirm ? confirmCopy[confirm.action].title : ""}
-        body={confirm ? confirmCopy[confirm.action].body(confirm.item) : ""}
-        destructive={confirm ? confirmCopy[confirm.action].destructive : false}
-        confirmLabel={confirm ? confirmCopy[confirm.action].label : "Confirm"}
-        onClose={() => setConfirm(null)}
-        onConfirm={confirmed}
-      />
+      {/* What the act reaches on mahekindia.com and in the editors' own work,
+          read off the database, with the item's name typed to confirm. */}
+      {confirm ? (
+        <ImpactDialog
+          key={`${confirm.action}:${confirm.item.id}`}
+          kind={IMPACT_KIND[confirm.action]}
+          id={confirm.item.id}
+          confirmLabel={CONFIRM_LABEL[confirm.action]}
+          onClose={() => setConfirm(null)}
+          onConfirm={confirmed}
+        />
+      ) : null}
+      {withdrawing ? (
+        <ImpactDialog
+          key={withdrawing}
+          kind="site-request-withdraw"
+          id={withdrawing}
+          confirmLabel="Withdraw"
+          onClose={() => setWithdrawing(null)}
+          onConfirm={async (confirmation) => {
+            const r = await withdrawRequestAction(withdrawing, confirmation);
+            if (r.ok) {
+              reportResult(toast, r);
+              router.refresh();
+            }
+            return r;
+          }}
+        />
+      ) : null}
     </div>
   );
 }

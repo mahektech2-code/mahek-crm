@@ -1,6 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { confirmImpact } from "@/lib/impact/registry";
+import type { ImpactConfirmation } from "@/lib/impact/types";
 import { fromThrown, ok, type Result } from "@/lib/result";
 import {
   linkWatiTemplate,
@@ -146,8 +148,14 @@ export async function setRuleStatusAction(id: string, status: RuleStatus): Promi
   }
 }
 
-export async function deleteRuleAction(id: string): Promise<Result> {
+export async function deleteRuleAction(id: string, confirmation?: ImpactConfirmation): Promise<Result> {
   try {
+    /* The founder saw the shops it would have reached next — and that is
+       still the list. Asked here, where the founder desk is, so the service
+       stays callable on its own. */
+    await requireFounderDesk();
+    const refusal = await confirmImpact("founder-wa-rule", id, confirmation);
+    if (refusal) return refusal;
     const r = await deleteRule(id);
     refreshAutomation();
     return r;
